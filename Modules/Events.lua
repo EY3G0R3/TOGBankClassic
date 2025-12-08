@@ -25,6 +25,7 @@ function TOGBankClassic_Events:RegisterEvents()
     self:RegisterEvent("MAIL_SHOW")
     self:RegisterEvent("MAIL_INBOX_UPDATE")
     self:RegisterEvent("MAIL_CLOSED")
+    self:RegisterEvent("MAIL_SEND_SUCCESS")
     self:RegisterEvent("TRADE_SHOW")
     self:RegisterEvent("TRADE_CLOSED")
     self:RegisterEvent("AUCTION_HOUSE_SHOW")
@@ -52,6 +53,7 @@ function TOGBankClassic_Events:UnregisterEvents()
     self:UnregisterEvent("MAIL_SHOW")
     self:UnregisterEvent("MAIL_INBOX_UPDATE")
     self:UnregisterEvent("MAIL_CLOSED")
+    self:UnregisterEvent("MAIL_SEND_SUCCESS")
     self:UnregisterEvent("TRADE_SHOW")
     self:UnregisterEvent("TRADE_CLOSED")
     self:UnregisterEvent("AUCTION_HOUSE_SHOW")
@@ -129,6 +131,7 @@ end
 function TOGBankClassic_Events:MAIL_SHOW(_)
     TOGBankClassic_Bank:OnUpdateStart()
     TOGBankClassic_Mail.isOpen = true
+    TOGBankClassic_Mail:InitSendHook()
     TOGBankClassic_Mail:Check()
 end
 
@@ -141,6 +144,11 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
     TOGBankClassic_Mail.isScanning = false
     TOGBankClassic_Bank:OnUpdateStop()
     TOGBankClassic_UI_Mail:Close()
+end
+
+function TOGBankClassic_Events:MAIL_SEND_SUCCESS(_)
+    -- safety: ensure hook is registered when mail UI is opened
+    TOGBankClassic_Mail:InitSendHook()
 end
 
 function TOGBankClassic_Events:TRADE_SHOW(_)

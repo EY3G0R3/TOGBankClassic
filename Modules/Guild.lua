@@ -168,6 +168,39 @@ function TOGBankClassic_Guild:AddRequest(request)
     return true
 end
 
+-- Increment fulfillment for matching requests; returns amount applied
+function TOGBankClassic_Guild:FulfillRequest(bank, requester, itemName, count)
+    if not self.Info or not self.Info.requests or not bank or not requester or not itemName or not count or count <= 0 then
+        return 0
+    end
+
+    local normalize = TOGBankClassic_Guild.NormalizePlayerName
+    local normBank = normalize and normalize(bank) or bank
+    local normRequester = normalize and normalize(requester) or requester
+    local targetItem = string.lower(itemName)
+
+    local applied = 0
+    for _, req in ipairs(self.Info.requests) do
+        local reqBank = req.bank
+        local reqRequester = req.requester
+        local reqItem = req.item and string.lower(req.item) or ""
+        local qty = tonumber(req.quantity or 0) or 0
+        local fulfilled = tonumber(req.fulfilled or 0) or 0
+
+        if reqBank == normBank and reqRequester == normRequester and reqItem == targetItem and fulfilled < qty then
+            local remaining = qty - fulfilled
+            local delta = math.min(remaining, count)
+            req.fulfilled = fulfilled + delta
+            count = count - delta
+            applied = applied + delta
+        end
+
+        if count <= 0 then break end
+    end
+
+    return applied
+end
+
 function TOGBankClassic_Guild:GetBanks()
     local hasBanks = false
     local banks = {}

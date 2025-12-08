@@ -74,6 +74,58 @@ function TOGBankClassic_Mail:Scan()
     end
 end
 
+-- Hook SendMail to update request fulfillment when sending items from bank alts
+function TOGBankClassic_Mail:InitSendHook()
+    if self.sendHooked then return end
+    self.sendHooked = true
+
+    hooksecurefunc("SendMail", function(recipient, subject, body)
+        TOGBankClassic_Mail:OnSendMail(recipient)
+    end)
+end
+
+function TOGBankClassic_Mail:IsBankCharacter(name)
+    local banks = TOGBankClassic_Guild:GetBanks()
+    if not banks then return false end
+    local normalize = TOGBankClassic_Guild.NormalizePlayerName
+    local normName = normalize and normalize(name) or name
+    for _, v in pairs(banks) do
+        local norm = normalize and normalize(v) or v
+        if norm == normName then
+            return true
+        end
+    end
+    return false
+end
+
+function TOGBankClassic_Mail:OnSendMail(recipient)
+    local info = TOGBankClassic_Guild.Info
+    if not info or not info.requests or #info.requests == 0 then return end
+
+    local sender = TOGBankClassic_Guild:GetPlayer()
+    if not sender or not self:IsBankCharacter(sender) then return end
+
+    local normalize = TOGBankClassic_Guild.NormalizePlayerName
+    local normRecipient = normalize and normalize(recipient) or recipient
+
+    local totalApplied = 0
+
+    for attachmentIndex = 1, ATTACHMENTS_MAX_SEND do
+        local itemName, itemID, texture, quantity = GetSendMailItem(attachmentIndex)
+        if itemName and quantity and quantity > 0 then
+            local applied = TOGBankClassic_Guild:FulfillRequest(sender, normRecipient, itemName, quantity)
+            totalApplied = totalApplied + applied
+        end
+    end
+
+    if totalApplied > 0 then
+        TOGBankClassic_Core:Printf("Applied %d item(s) toward requests for %s.", totalApplied, normRecipient)
+        if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+            TOGBankClassic_UI_Requests:DrawContent()
+        end
+    end
+end
+
 function TOGBankClassic_Mail:ResetScan()
     -- have to wait for server to remove item from inbox before we can take another
     -- so we wait a second before trying the next item
