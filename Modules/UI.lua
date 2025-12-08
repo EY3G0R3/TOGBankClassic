@@ -4,6 +4,7 @@ function TOGBankClassic_UI:Init()
     TOGBankClassic_UI_Minimap:Init()
     TOGBankClassic_UI_Inventory:Init()
     TOGBankClassic_UI_Donations:Init()
+    TOGBankClassic_UI_Requests:Init()
     TOGBankClassic_UI_Search:Init()
     TOGBankClassic_UI_Mail:Init()
 end

@@ -9,6 +9,7 @@ local function OnClose(_)
     TOGBankClassic_UI_Inventory.Window:Hide()
 
     TOGBankClassic_UI_Donations:Close()
+    TOGBankClassic_UI_Requests:Close()
     TOGBankClassic_UI_Search:Close()
 end
 
@@ -72,11 +73,15 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
     buttonContainer:SetUserData("table", {
         columns = {
             {
-                width = 0.5,
+                width = 0.33,
                 align = "start",
             },
             {
-                width = 0.5,
+                width = 0.34,
+                align = "end",
+            },
+            {
+                width = 0.33,
                 align = "end",
             },
         },
@@ -108,6 +113,15 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
     scoreboardButton:SetWidth(175)
     scoreboardButton:SetHeight(24)
     buttonContainer:AddChild(scoreboardButton)
+
+    local requestsButton = TOGBankClassic_UI:Create("Button")
+    requestsButton:SetText("Requests")
+    requestsButton:SetCallback("OnClick", function(_)
+        TOGBankClassic_UI_Requests:Toggle()
+    end)
+    requestsButton:SetWidth(175)
+    requestsButton:SetHeight(24)
+    buttonContainer:AddChild(requestsButton)
 
     local tabGroup = TOGBankClassic_UI:Create("TabGroup")
     tabGroup:SetLayout("Flow")
