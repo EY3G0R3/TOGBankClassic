@@ -1,6 +1,6 @@
-GBankClassic_Guild = {}
+TOGBankClassic_Guild = {}
 
-GBankClassic_Guild.Info = nil
+TOGBankClassic_Guild.Info = nil
 
 ---START CHANGES
 function GetPlayerWithNormalizedRealm(name)
@@ -26,23 +26,23 @@ local function NormalizePlayerName(name)
     return name.."-"..GetNormalizedRealmName("player")
 end
 -- expose for other modules
-GBankClassic_Guild.NormalizePlayerName = NormalizePlayerName
+TOGBankClassic_Guild.NormalizePlayerName = NormalizePlayerName
 ---END CHANGES
 
-function GBankClassic_Guild:GetPlayer()
+function TOGBankClassic_Guild:GetPlayer()
     ---START CHANGES
     --return UnitName("player")
-    if GBankClassic_Bank.player then return GBankClassic_Bank.player end
+    if TOGBankClassic_Bank.player then return TOGBankClassic_Bank.player end
 
     -- The below code should never be called, but is here for safety
     local function try()
       local name, realm = UnitName("player"), GetNormalizedRealmName()
       if name and realm then
-        GBankClassic_Bank.player = name .. "-" .. realm
+        TOGBankClassic_Bank.player = name .. "-" .. realm
         return true
       end
     end
-    if try() then return GBankClassic_Bank.player end
+    if try() then return TOGBankClassic_Bank.player end
     local count, max, delay, timer = 0, 10, 15
     timer = C_Timer.NewTicker(delay, function()
       count = count + 1
@@ -55,11 +55,11 @@ function GBankClassic_Guild:GetPlayer()
     ---END CHANGES
 end
 
-function GBankClassic_Guild:GetGuild()
+function TOGBankClassic_Guild:GetGuild()
     return IsInGuild("player") and GetGuildInfo("player") or nil
 end
 
-function GBankClassic_Guild:GetPlayerInfo(name)
+function TOGBankClassic_Guild:GetPlayerInfo(name)
     for i = 1, GetNumGuildMembers() do
         local playerRealm, _, _, _, _, _, _, _, _, _, class = GetGuildRosterInfo(i)
         player, _ = string.match(playerRealm, "(.*)%-(.*)")
@@ -73,22 +73,22 @@ function GBankClassic_Guild:GetPlayerInfo(name)
     return nil
 end
 
-function GBankClassic_Guild:Reset(name)
+function TOGBankClassic_Guild:Reset(name)
     if not name then return end
 
-    GBankClassic_UI_Inventory:Close()
-    GBankClassic_Database:Reset(name)
-    self.Info = GBankClassic_Database:Load(name)
+    TOGBankClassic_UI_Inventory:Close()
+    TOGBankClassic_Database:Reset(name)
+    self.Info = TOGBankClassic_Database:Load(name)
 end
 
-function GBankClassic_Guild:Init(name)
+function TOGBankClassic_Guild:Init(name)
     if not name then return false end
     if self.Info and self.Info.name == name then return false end
 
     self.hasRequested = false
     self.requestCount = 0
 
-    self.Info = GBankClassic_Database:Load(name)
+    self.Info = TOGBankClassic_Database:Load(name)
     if self.Info then return true end
 
     self:Reset(name)
@@ -101,7 +101,7 @@ end
 -- - remove per-alt entries that have badly shaped bank/bags item lists
 -- - ensure roster.alts is a proper array
 -- Returns number of alts cleaned
-function GBankClassic_Guild:CleanupMalformedAlts()
+function TOGBankClassic_Guild:CleanupMalformedAlts()
     if not self.Info or not self.Info.alts then return 0 end
 
     local cleaned = 0
@@ -155,7 +155,7 @@ function GBankClassic_Guild:CleanupMalformedAlts()
     return cleaned
 end
 
-function GBankClassic_Guild:GetBanks()
+function TOGBankClassic_Guild:GetBanks()
     local hasBanks = false
     local banks = {}
     for i = 1, GetNumGuildMembers() do
@@ -177,8 +177,8 @@ function GBankClassic_Guild:GetBanks()
     return banks
 end
 
-function GBankClassic_Guild:IsBank(player)
-    local banks = GBankClassic_Guild:GetBanks()
+function TOGBankClassic_Guild:IsBank(player)
+    local banks = TOGBankClassic_Guild:GetBanks()
     if banks == nil then return false end
 
     local isBank = false
@@ -191,7 +191,7 @@ function GBankClassic_Guild:IsBank(player)
     return isBank
 end
 
-function GBankClassic_Guild:CheckVersion(version)
+function TOGBankClassic_Guild:CheckVersion(version)
     if self.Info then return false end
 
     if version > self.Info.roster.version then
@@ -201,7 +201,7 @@ function GBankClassic_Guild:CheckVersion(version)
     return true
 end
 
-function GBankClassic_Guild:GetVersion()
+function TOGBankClassic_Guild:GetVersion()
     if not self.Info then return nil end
 
     local versionInfo = GetAddOnMetadata("GBankClassic", "Version"):gsub("%.", "")
@@ -233,35 +233,35 @@ function GBankClassic_Guild:GetVersion()
     return data
 end
 
-function GBankClassic_Guild:RequestRosterSync(player, version)
+function TOGBankClassic_Guild:RequestRosterSync(player, version)
     self.hasRequested = true
     if self.requestCount == nil then self.requestCount = 1 else self.requestCount = self.requestCount + 1 end
-    local data = GBankClassic_Core:Serialize({player = player, type = "roster", version = version})
-    GBankClassic_Core:SendCommMessage("gbank-r", data, "Guild", nil, "BULK")
+    local data = TOGBankClassic_Core:Serialize({player = player, type = "roster", version = version})
+    TOGBankClassic_Core:SendCommMessage("gbank-r", data, "Guild", nil, "BULK")
 end
 
-function GBankClassic_Guild:RequestAltSync(player, name, version)
+function TOGBankClassic_Guild:RequestAltSync(player, name, version)
     self.hasRequested = true
     if self.requestCount == nil then self.requestCount = 1 else self.requestCount = self.requestCount + 1 end
-    local data = GBankClassic_Core:Serialize({player = player, type = "alt", name = name, version = version})
-    GBankClassic_Core:SendCommMessage("gbank-r", data, "Guild", nil, "BULK")
+    local data = TOGBankClassic_Core:Serialize({player = player, type = "alt", name = name, version = version})
+    TOGBankClassic_Core:SendCommMessage("gbank-r", data, "Guild", nil, "BULK")
 end
 
-function GBankClassic_Guild:SendRosterData()
-    local data = GBankClassic_Core:Serialize({type = "roster", roster = self.Info.roster})
-    GBankClassic_Core:SendCommMessage("gbank-d", data, "Guild", nil, "BULK")
+function TOGBankClassic_Guild:SendRosterData()
+    local data = TOGBankClassic_Core:Serialize({type = "roster", roster = self.Info.roster})
+    TOGBankClassic_Core:SendCommMessage("gbank-d", data, "Guild", nil, "BULK")
 end
 
-function GBankClassic_Guild:ReceiveRosterData(roster)
+function TOGBankClassic_Guild:ReceiveRosterData(roster)
     if not self.Info then return end
     if self.Info.roster.version and roster.version and roster.version < self.Info.roster.version then return end
     if self.hasRequested then
       if self.requestCount == nil then self.requestCount = 0 else self.requestCount = self.requestCount - 1 end
         if self.requestCount == 0 then
             self.hasRequested = false
-            shutup = GBankClassic_Options:GetBankVerbosity()
+            shutup = TOGBankClassic_Options:GetBankVerbosity()
             if shutup == false then
-                GBankClassic_Core:Print("Sync completed.")
+                TOGBankClassic_Core:Print("Sync completed.")
             end
         end
     end
@@ -270,7 +270,7 @@ function GBankClassic_Guild:ReceiveRosterData(roster)
 end
 
 -- returns true if the given normalized sender has a public or officer note containing 'gbank'
-function GBankClassic_Guild:SenderHasGbankNote(sender)
+function TOGBankClassic_Guild:SenderHasGbankNote(sender)
     if not sender then return false end
     for i = 1, GetNumGuildMembers() do
         local playerRealm, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
@@ -286,7 +286,7 @@ function GBankClassic_Guild:SenderHasGbankNote(sender)
     return false
 end
 
-function GBankClassic_Guild:SendAltData(name, force)
+function TOGBankClassic_Guild:SendAltData(name, force)
     if not name then return end
     local norm = NormalizePlayerName(name)
     if not self.Info or not self.Info.alts or not self.Info.alts[norm] then return end
@@ -296,22 +296,22 @@ function GBankClassic_Guild:SendAltData(name, force)
         self.Info.alts[norm].version = GetServerTime()
     end
 
-    local data = GBankClassic_Core:Serialize({type = "alt", name = norm, alt = self.Info.alts[norm]})
+    local data = TOGBankClassic_Core:Serialize({type = "alt", name = norm, alt = self.Info.alts[norm]})
     ---START CHANGES
-    GBankClassic_Core:SendCommMessage("gbank-d", data, "Guild", nil, "BULK", OnChunkSent)
+    TOGBankClassic_Core:SendCommMessage("gbank-d", data, "Guild", nil, "BULK", OnChunkSent)
 end
 
 ---START CHANGES
 function OnChunkSent(arg, sent, total)
-    shutup = GBankClassic_Options:GetBankVerbosity()
+    shutup = TOGBankClassic_Options:GetBankVerbosity()
     if shutup == false then
-        if sent <= 255 then GBankClassic_Core:Print("Sharing guild bank data...") end
-        if sent == total then GBankClassic_Core:Print("Sharing guild bank data has completed.") end
+        if sent <= 255 then TOGBankClassic_Core:Print("Sharing guild bank data...") end
+        if sent == total then TOGBankClassic_Core:Print("Sharing guild bank data has completed.") end
     end
 end
 ---END CHANGES
 
-function GBankClassic_Guild:ReceiveAltData(name, alt)
+function TOGBankClassic_Guild:ReceiveAltData(name, alt)
     if not self.Info then return end
 
     -- Sanitize incoming alt data
@@ -361,9 +361,9 @@ function GBankClassic_Guild:ReceiveAltData(name, alt)
         if self.requestCount == nil then self.requestCount = 0 else self.requestCount = self.requestCount - 1 end
         if self.requestCount == 0 then
             self.hasRequested = false
-            shutup = GBankClassic_Options:GetBankVerbosity()
+            shutup = TOGBankClassic_Options:GetBankVerbosity()
             if shutup == false then
-                GBankClassic_Core:Print("Sync completed.")
+                TOGBankClassic_Core:Print("Sync completed.")
             end
         end
     end
@@ -381,13 +381,13 @@ function s(a)
     return b 
 end 
 
-function GBankClassic_Guild:Hello(type)
-    local addon_data = GBankClassic_Guild:GetVersion()
-    local current_data = GBankClassic_Guild.Info
+function TOGBankClassic_Guild:Hello(type)
+    local addon_data = TOGBankClassic_Guild:GetVersion()
+    local current_data = TOGBankClassic_Guild.Info
     if addon_data and current_data then
         local roster_alts = ""
         local guild_bank_alts = ""
-        local hello = "Hi! "..GBankClassic_Guild:GetPlayer().." is using version "..addon_data.addon.."."
+        local hello = "Hi! "..TOGBankClassic_Guild:GetPlayer().." is using version "..addon_data.addon.."."
         if s(current_data.roster) > 0 and s(current_data.alts) > 0 then
             for _, v in pairs(current_data.roster.alts) do if roster_alts ~= "" then roster_alts = roster_alts..", " end roster_alts = roster_alts..v end
             if roster_alts ~= "" then roster_alts = " ("..roster_alts..")" end
@@ -402,61 +402,61 @@ function GBankClassic_Guild:Hello(type)
         else
             hello = hello.." I know about 0 guild bank alts on the roster, and have guild bank data from 0 alts."
         end
-        GBankClassic_Core:Print(hello)
-        local data = GBankClassic_Core:Serialize(hello)
+        TOGBankClassic_Core:Print(hello)
+        local data = TOGBankClassic_Core:Serialize(hello)
         if type ~= "reply" then
-            GBankClassic_Core:SendCommMessage("gbank-h", data, "Guild", nil, "BULK")
+            TOGBankClassic_Core:SendCommMessage("gbank-h", data, "Guild", nil, "BULK")
         else
-            GBankClassic_Core:SendCommMessage("gbank-hr", data, "Guild", nil, "BULK")
+            TOGBankClassic_Core:SendCommMessage("gbank-hr", data, "Guild", nil, "BULK")
         end
     end
 end
 
-function GBankClassic_Guild:Wipe(type)
-    local guild = GBankClassic_Guild:GetGuild()
+function TOGBankClassic_Guild:Wipe(type)
+    local guild = TOGBankClassic_Guild:GetGuild()
     if not guild and not CanViewOfficerNote() then return end
     local wipe = "I wiped all addon data from "..guild.."."
-    GBankClassic_Guild:Reset(guild)
+    TOGBankClassic_Guild:Reset(guild)
 
-    local data = GBankClassic_Core:Serialize(wipe)
+    local data = TOGBankClassic_Core:Serialize(wipe)
     if type ~= "reply" then
-        GBankClassic_Core:SendCommMessage("gbank-w", data, "Guild", nil, "BULK")
+        TOGBankClassic_Core:SendCommMessage("gbank-w", data, "Guild", nil, "BULK")
     else
-        GBankClassic_Core:SendCommMessage("gbank-wr", data, "Guild", nil, "BULK")
+        TOGBankClassic_Core:SendCommMessage("gbank-wr", data, "Guild", nil, "BULK")
     end
 end
 
-function GBankClassic_Guild:WipeMine(type)
-    local guild = GBankClassic_Guild:GetGuild()
+function TOGBankClassic_Guild:WipeMine(type)
+    local guild = TOGBankClassic_Guild:GetGuild()
     if not guild then return end
     local wipe = "I wiped all my addon data from "..guild.."."
-    GBankClassic_Guild:Reset(guild)
+    TOGBankClassic_Guild:Reset(guild)
 end
 
-function GBankClassic_Guild:Share(type)
-    local guild = GBankClassic_Guild:GetGuild()
+function TOGBankClassic_Guild:Share(type)
+    local guild = TOGBankClassic_Guild:GetGuild()
     if not guild then return end
-    self.Info = GBankClassic_Database:Load(guild)
-    local player = GBankClassic_Guild:GetPlayer()
-    local normPlayer = (GBankClassic_Guild and GBankClassic_Guild.NormalizePlayerName) and GBankClassic_Guild.NormalizePlayerName(player) or player
+    self.Info = TOGBankClassic_Database:Load(guild)
+    local player = TOGBankClassic_Guild:GetPlayer()
+    local normPlayer = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName) and TOGBankClassic_Guild.NormalizePlayerName(player) or player
     local share = "I'm sharing my bank data. Share yours please."
     if not self.Info.alts[normPlayer] then if type ~= "reply" then share = "Share your bank data please." else share = "Nothing to share." end end
-    if self.Info.alts[normPlayer] and GBankClassic_Guild:IsBank(normPlayer) then GBankClassic_Guild:SendAltData(normPlayer) end
+    if self.Info.alts[normPlayer] and TOGBankClassic_Guild:IsBank(normPlayer) then TOGBankClassic_Guild:SendAltData(normPlayer) end
 
-    local data = GBankClassic_Core:Serialize(share)
+    local data = TOGBankClassic_Core:Serialize(share)
     if type ~= "reply" then
-        GBankClassic_Core:SendCommMessage("gbank-s", data, "Guild", nil, "BULK")
+        TOGBankClassic_Core:SendCommMessage("gbank-s", data, "Guild", nil, "BULK")
     else
-        GBankClassic_Core:SendCommMessage("gbank-sr", data, "Guild", nil, "BULK")
+        TOGBankClassic_Core:SendCommMessage("gbank-sr", data, "Guild", nil, "BULK")
     end
 end
 
-function GBankClassic_Guild:AuthorRosterData()
+function TOGBankClassic_Guild:AuthorRosterData()
   if not self.Info then return end
   local info = self.Info
   local isBank = false
-  local banks = GBankClassic_Guild:GetBanks()
-  local player = GBankClassic_Guild:GetPlayer()
+  local banks = TOGBankClassic_Guild:GetBanks()
+  local player = TOGBankClassic_Guild:GetPlayer()
   if banks then
       for _, v in pairs(banks) do
           if v == player then
@@ -469,33 +469,33 @@ function GBankClassic_Guild:AuthorRosterData()
       info.roster.alts = banks
       info.roster.version = GetServerTime()
       if not banks then info.roster.version = nil end
-      GBankClassic_Guild:SendRosterData()
+      TOGBankClassic_Guild:SendRosterData()
       if banks then
           local characterNames = {}
           for _, bankChar in pairs(banks) do
               table.insert(characterNames, bankChar)
           end
           if #characterNames > 0 then
-              GBankClassic_Core:Print("Sent updated roster containing the follow banks: " .. table.concat(characterNames, ", "))
+              TOGBankClassic_Core:Print("Sent updated roster containing the follow banks: " .. table.concat(characterNames, ", "))
           else
-              GBankClassic_Core:Print("Sent empty roster.")
+              TOGBankClassic_Core:Print("Sent empty roster.")
           end
       else
-          GBankClassic_Core:Print("Sent empty roster.")
+          TOGBankClassic_Core:Print("Sent empty roster.")
       end
   else
-      GBankClassic_Core:Print("You lack permissions to share the roster.")
+      TOGBankClassic_Core:Print("You lack permissions to share the roster.")
       return
   end
 end
 
-function GBankClassic_Guild:SenderIsGM(player)
+function TOGBankClassic_Guild:SenderIsGM(player)
     if not player then return false end
     if not IsInGuild() then return false end
     for i = 1, GetNumGuildMembers() do
         local playerRealm, _, rankIndex, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
         if playerRealm then
-            local norm = GBankClassic_Guild.NormalizePlayerName(playerRealm)
+            local norm = TOGBankClassic_Guild.NormalizePlayerName(playerRealm)
             if rankIndex == 0 and norm == player then
                 return true
             end

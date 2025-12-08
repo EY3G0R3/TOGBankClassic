@@ -1,22 +1,22 @@
-GBankClassic_Events = {}
+TOGBankClassic_Events = {}
 
-function GBankClassic_Events:RegisterMessage(message, callback)
+function TOGBankClassic_Events:RegisterMessage(message, callback)
     if not callback then callback = message end
-    GBankClassic_Core:RegisterMessage(message, callback)
+    TOGBankClassic_Core:RegisterMessage(message, callback)
 end
 
-function GBankClassic_Events:SendMessage(message, ...) GBankClassic_Core:SendMessage(message, ...) end
-function GBankClassic_Events:UnregisterMessage(message) GBankClassic_Core:UnregisterMessage(message) end
+function TOGBankClassic_Events:SendMessage(message, ...) TOGBankClassic_Core:SendMessage(message, ...) end
+function TOGBankClassic_Events:UnregisterMessage(message) TOGBankClassic_Core:UnregisterMessage(message) end
 
-function GBankClassic_Events:RegisterEvent(event, callback)
+function TOGBankClassic_Events:RegisterEvent(event, callback)
     if not callback then callback = event end
-    GBankClassic_Core:RegisterEvent(event, function(...) self[callback](self, ...) end)
+    TOGBankClassic_Core:RegisterEvent(event, function(...) self[callback](self, ...) end)
 end
 
-function GBankClassic_Events:UnregisterEvent(...) GBankClassic_Core:UnregisterEvent(...) end
+function TOGBankClassic_Events:UnregisterEvent(...) TOGBankClassic_Core:UnregisterEvent(...) end
 
-function GBankClassic_Events:RegisterEvents()
-    if GBankClassic_Bank.eventsRegistered then return end
+function TOGBankClassic_Events:RegisterEvents()
+    if TOGBankClassic_Bank.eventsRegistered then return end
 
     self:RegisterEvent("PLAYER_LOGIN")
     self:RegisterEvent("GUILD_RANKS_UPDATE")
@@ -32,18 +32,18 @@ function GBankClassic_Events:RegisterEvents()
     self:RegisterEvent("MERCHANT_SHOW")
     self:RegisterEvent("MERCHANT_CLOSED")
     self:RegisterEvent("PLAYER_REGEN_DISABLED")--player entered combat
-    hooksecurefunc("ChatEdit_InsertLink", function(link) GBankClassic_UI:OnInsertLink(link) end)
+    hooksecurefunc("ChatEdit_InsertLink", function(link) TOGBankClassic_UI:OnInsertLink(link) end)
 
     self:SetTimer()
     ---START CHANGES
     self:SetShareTimer()
     ---END CHANGES
-    GBankClassic_Bank.eventsRegistered = true
+    TOGBankClassic_Bank.eventsRegistered = true
 end
 
-function GBankClassic_Events:UnregisterEvents()
-    if not GBankClassic_Bank.eventsRegistered then return end
-    GBankClassic_Bank.eventsRegistered = false
+function TOGBankClassic_Events:UnregisterEvents()
+    if not TOGBankClassic_Bank.eventsRegistered then return end
+    TOGBankClassic_Bank.eventsRegistered = false
 
     self:UnregisterEvent("PLAYER_LOGIN")
     self:UnregisterEvent("GUILD_RANKS_UPDATE")
@@ -62,115 +62,115 @@ function GBankClassic_Events:UnregisterEvents()
 
 end
 
-function GBankClassic_Events:SetTimer()
-    GBankClassic_Core:ScheduleTimer(function (...) GBankClassic_Events:OnTimer() end, 600)
+function TOGBankClassic_Events:SetTimer()
+    TOGBankClassic_Core:ScheduleTimer(function (...) TOGBankClassic_Events:OnTimer() end, 600)
 end
 
-function GBankClassic_Events:OnTimer()
-    GBankClassic_Events:Sync()
+function TOGBankClassic_Events:OnTimer()
+    TOGBankClassic_Events:Sync()
 
     self:SetTimer()
 end
 
 ---START CHANGES
-function GBankClassic_Events:SetShareTimer()
-    GBankClassic_Core:ScheduleTimer(function (...) GBankClassic_Events:OnShareTimer() end, 180)
+function TOGBankClassic_Events:SetShareTimer()
+    TOGBankClassic_Core:ScheduleTimer(function (...) TOGBankClassic_Events:OnShareTimer() end, 180)
 end
 
-function GBankClassic_Events:OnShareTimer()
-    GBankClassic_Guild:Share("reply")
+function TOGBankClassic_Events:OnShareTimer()
+    TOGBankClassic_Guild:Share("reply")
 
     self:SetShareTimer()
 end
 ---END CHANGES
 
-function GBankClassic_Events:Sync()
-    local guild = GBankClassic_Guild:GetGuild()
+function TOGBankClassic_Events:Sync()
+    local guild = TOGBankClassic_Guild:GetGuild()
     if not guild then return end
 
-    local version = GBankClassic_Guild:GetVersion()
+    local version = TOGBankClassic_Guild:GetVersion()
     if version == nil then return end
     if version.roster == nil then return end
 
-    local data = GBankClassic_Core:Serialize(version)
-    GBankClassic_Core:SendCommMessage("gbank-v", data, "Guild", nil, "BULK")
+    local data = TOGBankClassic_Core:Serialize(version)
+    TOGBankClassic_Core:SendCommMessage("gbank-v", data, "Guild", nil, "BULK")
 end
 
-function GBankClassic_Events:PLAYER_LOGIN(_)
-    GBankClassic_Guild:GetPlayer()
+function TOGBankClassic_Events:PLAYER_LOGIN(_)
+    TOGBankClassic_Guild:GetPlayer()
 end
 
-function GBankClassic_Events:GUILD_RANKS_UPDATE(_)
-    local guild = GBankClassic_Guild:GetGuild()
+function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
+    local guild = TOGBankClassic_Guild:GetGuild()
     if not guild then return end
 
     -- Load guild data and perform a one-time cleanup of malformed alt entries
-    if GBankClassic_Guild:Init(guild) then
-        GBankClassic_Options:InitGuild()
+    if TOGBankClassic_Guild:Init(guild) then
+        TOGBankClassic_Options:InitGuild()
         if IsInRaid() then
-            if self.debug then GBankClassic_Core:Print('GUILD_RANKS_UPDATE: ignoring cleanup', prefix, 'from', sender, '(in raid)') end
+            if self.debug then TOGBankClassic_Core:Print('GUILD_RANKS_UPDATE: ignoring cleanup', prefix, 'from', sender, '(in raid)') end
             return
         end
-        local cleaned = GBankClassic_Guild:CleanupMalformedAlts()
+        local cleaned = TOGBankClassic_Guild:CleanupMalformedAlts()
         if cleaned and cleaned > 0 then
-            GBankClassic_Core:Printf("Cleaned %d malformed alt entries from saved database", cleaned)
+            TOGBankClassic_Core:Printf("Cleaned %d malformed alt entries from saved database", cleaned)
         end
     end
 end
 
-function GBankClassic_Events:BANKFRAME_OPENED(_)
-    GBankClassic_Bank:OnUpdateStart()
+function TOGBankClassic_Events:BANKFRAME_OPENED(_)
+    TOGBankClassic_Bank:OnUpdateStart()
 end
 
-function GBankClassic_Events:BANKFRAME_CLOSED(_)
-    GBankClassic_Bank:OnUpdateStop()
+function TOGBankClassic_Events:BANKFRAME_CLOSED(_)
+    TOGBankClassic_Bank:OnUpdateStop()
 end
 
-function GBankClassic_Events:MAIL_SHOW(_)
-    GBankClassic_Bank:OnUpdateStart()
-    GBankClassic_Mail.isOpen = true
-    GBankClassic_Mail:Check()
+function TOGBankClassic_Events:MAIL_SHOW(_)
+    TOGBankClassic_Bank:OnUpdateStart()
+    TOGBankClassic_Mail.isOpen = true
+    TOGBankClassic_Mail:Check()
 end
 
-function GBankClassic_Events:MAIL_INBOX_UPDATE(_)
-    GBankClassic_Mail:Scan()
+function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
+    TOGBankClassic_Mail:Scan()
 end
 
-function GBankClassic_Events:MAIL_CLOSED(_)
-    GBankClassic_Mail.isOpen = false
-    GBankClassic_Mail.isScanning = false
-    GBankClassic_Bank:OnUpdateStop()
-    GBankClassic_UI_Mail:Close()
+function TOGBankClassic_Events:MAIL_CLOSED(_)
+    TOGBankClassic_Mail.isOpen = false
+    TOGBankClassic_Mail.isScanning = false
+    TOGBankClassic_Bank:OnUpdateStop()
+    TOGBankClassic_UI_Mail:Close()
 end
 
-function GBankClassic_Events:TRADE_SHOW(_)
-    GBankClassic_Bank:OnUpdateStart()
+function TOGBankClassic_Events:TRADE_SHOW(_)
+    TOGBankClassic_Bank:OnUpdateStart()
 end
 
-function GBankClassic_Events:TRADE_CLOSED(_)
+function TOGBankClassic_Events:TRADE_CLOSED(_)
     -- FIXME: Isn't rescanning?
-    GBankClassic_Bank:OnUpdateStop()
+    TOGBankClassic_Bank:OnUpdateStop()
 end
 
-function GBankClassic_Events:AUCTION_HOUSE_SHOW(_)
-    GBankClassic_Bank:OnUpdateStart()
+function TOGBankClassic_Events:AUCTION_HOUSE_SHOW(_)
+    TOGBankClassic_Bank:OnUpdateStart()
 end
 
-function GBankClassic_Events:AUCTION_HOUSE_CLOSED(_)
-    GBankClassic_Bank:OnUpdateStop()
+function TOGBankClassic_Events:AUCTION_HOUSE_CLOSED(_)
+    TOGBankClassic_Bank:OnUpdateStop()
 end
 
-function GBankClassic_Events:MERCHANT_SHOW(_)
-    GBankClassic_Bank:OnUpdateStart()
+function TOGBankClassic_Events:MERCHANT_SHOW(_)
+    TOGBankClassic_Bank:OnUpdateStart()
 end
 
-function GBankClassic_Events:MERCHANT_CLOSED(_)
-    GBankClassic_Bank:OnUpdateStop()
+function TOGBankClassic_Events:MERCHANT_CLOSED(_)
+    TOGBankClassic_Bank:OnUpdateStop()
 end
 
 --close frame on combat
-function GBankClassic_Events:PLAYER_REGEN_DISABLED(_)
-    if GBankClassic_Options:GetCombatHide() then
-        GBankClassic_UI_Inventory:Close()
+function TOGBankClassic_Events:PLAYER_REGEN_DISABLED(_)
+    if TOGBankClassic_Options:GetCombatHide() then
+        TOGBankClassic_UI_Inventory:Close()
     end
 end

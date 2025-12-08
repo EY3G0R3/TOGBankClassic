@@ -1,6 +1,6 @@
-GBankClassic_Item = {}
+TOGBankClassic_Item = {}
 
-function GBankClassic_Item:GetItems(items, callback)
+function TOGBankClassic_Item:GetItems(items, callback)
     -- Only consider items that have a valid ID
     local total = 0
     for _, item in pairs(items) do
@@ -31,12 +31,12 @@ function GBankClassic_Item:GetItems(items, callback)
             end)
         else
             -- Skip malformed entry
-            -- GBankClassic_Core:Print("[GBankClassic_Item:GetItems] skipping malformed item:", tostring(item))
+            -- TOGBankClassic_Core:Print("[TOGBankClassic_Item:GetItems] skipping malformed item:", tostring(item))
         end
     end
 end
 
-function GBankClassic_Item:GetInfo(id, link)
+function TOGBankClassic_Item:GetInfo(id, link)
     local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(link)
     local equip = C_Item.GetItemInventoryTypeByID(id)
 
@@ -57,7 +57,7 @@ local function BasicSort(a, b)
 end
 
 -- NOTE: Sort was adapted from ElvUI
-function GBankClassic_Item:Sort(items)
+function TOGBankClassic_Item:Sort(items)
     table.sort(items, function (a, b)
         if a.Info.rarity ~= b.Info.rarity and a.Info.rarity and b.Info.rarity then
             return a.Info.rarity < b.Info.rarity
@@ -81,7 +81,7 @@ function GBankClassic_Item:Sort(items)
     end)
 end
 
-function GBankClassic_Item:Aggregate(a, b)
+function TOGBankClassic_Item:Aggregate(a, b)
     local items = {}
     if a then
         for _, v in pairs(a) do
@@ -118,7 +118,7 @@ function GBankClassic_Item:Aggregate(a, b)
     return items
 end
 
-function GBankClassic_Item:IsUnique(link)
+function TOGBankClassic_Item:IsUnique(link)
     local tip = CreateFrame("GameTooltip", "scanTip", UIParent, "GameTooltipTemplate")
     tip:ClearLines()
     tip:SetOwner(UIParent, "ANCHOR_NONE")

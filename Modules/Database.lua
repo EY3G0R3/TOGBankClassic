@@ -1,10 +1,10 @@
-GBankClassic_Database = {}
+TOGBankClassic_Database = {}
 
-function GBankClassic_Database:Init()
+function TOGBankClassic_Database:Init()
     self.db = LibStub("AceDB-3.0"):New("GBankClassicDB")
 end
 
-function GBankClassic_Database:Reset(name)
+function TOGBankClassic_Database:Reset(name)
     if not name then return end
 
     ---START CHANGES
@@ -16,10 +16,10 @@ function GBankClassic_Database:Reset(name)
         alts = {},
     }
 
-    GBankClassic_Core:Printf("Reset Database")
+    TOGBankClassic_Core:Printf("Reset Database")
 end
 
-function GBankClassic_Database:ResetPlayer(name, player)
+function TOGBankClassic_Database:ResetPlayer(name, player)
     if not name then return end
     if not player then return end
 
@@ -31,10 +31,10 @@ function GBankClassic_Database:ResetPlayer(name, player)
     self.db.faction[name].alts[player] = {}
     ---END CHANGES
 
-    GBankClassic_Core:Printf("Reset Player Database")
+    TOGBankClassic_Core:Printf("Reset Player Database")
 end
 
-function GBankClassic_Database:Load(name)
+function TOGBankClassic_Database:Load(name)
     if not name then return end
 
     ---START CHANGES
@@ -43,7 +43,7 @@ function GBankClassic_Database:Load(name)
     ---END CHANGES
 
     if db == nil or db.roster == nil then
-        GBankClassic_Database:Reset(name)
+        TOGBankClassic_Database:Reset(name)
         ---START CHANGES
         --db = self.db.factionrealm[name]
         db = self.db.faction[name]

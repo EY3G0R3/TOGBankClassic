@@ -1,15 +1,15 @@
-GBankClassic_UI_Search = {}
+TOGBankClassic_UI_Search = {}
 
-function GBankClassic_UI_Search:Init()
+function TOGBankClassic_UI_Search:Init()
     self:DrawWindow()
 end
 
 local function OnClose(_)
-    GBankClassic_UI_Search.isOpen = false
-    GBankClassic_UI_Search.Window:Hide()
+    TOGBankClassic_UI_Search.isOpen = false
+    TOGBankClassic_UI_Search.Window:Hide()
 end
 
-function GBankClassic_UI_Search:Toggle()
+function TOGBankClassic_UI_Search:Toggle()
     if self.isOpen then
         self:Close()
     else
@@ -17,7 +17,7 @@ function GBankClassic_UI_Search:Toggle()
     end
 end
 
-function GBankClassic_UI_Search:Open()
+function TOGBankClassic_UI_Search:Open()
     if self.isOpen then return end
     self.isOpen = true
 
@@ -26,9 +26,9 @@ function GBankClassic_UI_Search:Open()
     end
 
     self.Window:Show()
-    if GBankClassic_UI_Inventory.isOpen and GBankClassic_UI_Inventory.Window then
+    if TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
         self.Window:ClearAllPoints()
-        self.Window:SetPoint("TOPRIGHT", GBankClassic_UI_Inventory.Window.frame, "TOPLEFT", 0, 0)
+        self.Window:SetPoint("TOPRIGHT", TOGBankClassic_UI_Inventory.Window.frame, "TOPLEFT", 0, 0)
     end
 
     self:DrawContent()
@@ -38,23 +38,23 @@ function GBankClassic_UI_Search:Open()
     if _G["GBankClassic"] then
         _G["GBankClassic"]:Show()
     else
-        GBankClassic_UI:Controller()
+        TOGBankClassic_UI:Controller()
     end
 end
 
-function GBankClassic_UI_Search:Close()
+function TOGBankClassic_UI_Search:Close()
     if not self.isOpen then return end
     if not self.Window then return end
 
     OnClose(self.Window)
 
-    if GBankClassic_UI_Inventory.isOpen == false then
+    if TOGBankClassic_UI_Inventory.isOpen == false then
         _G["GBankClassic"]:Hide()
     end
 end
 
-function GBankClassic_UI_Search:DrawWindow()
-    local searchWindow = GBankClassic_UI:Create("Frame")
+function TOGBankClassic_UI_Search:DrawWindow()
+    local searchWindow = TOGBankClassic_UI:Create("Frame")
     searchWindow:Hide()
     searchWindow:SetCallback("OnClose", OnClose)
     searchWindow:SetTitle("Search")
@@ -64,7 +64,7 @@ function GBankClassic_UI_Search:DrawWindow()
 
     self.Window = searchWindow
 
-    local searchInput = GBankClassic_UI:Create("EditBox")
+    local searchInput = TOGBankClassic_UI:Create("EditBox")
     searchInput:SetMaxLetters(50)
     searchInput:SetLabel("Item Name")
     searchInput:SetCallback("OnTextChanged", function (input)
@@ -91,13 +91,13 @@ function GBankClassic_UI_Search:DrawWindow()
 
     searchWindow:AddChild(searchInput)
 
-    local scrollGroup = GBankClassic_UI:Create("SimpleGroup")
+    local scrollGroup = TOGBankClassic_UI:Create("SimpleGroup")
     scrollGroup:SetLayout("Fill")
     scrollGroup:SetFullWidth(true)
     scrollGroup:SetFullHeight(true)
     searchWindow:AddChild(scrollGroup)
 
-    local resultGroup = GBankClassic_UI:Create("ScrollFrame")
+    local resultGroup = TOGBankClassic_UI:Create("ScrollFrame")
     resultGroup:SetLayout("Table")
     resultGroup:SetUserData("table", {
         columns = {
@@ -123,36 +123,36 @@ function GBankClassic_UI_Search:DrawWindow()
     self.Results = resultGroup
 end
 
-function GBankClassic_UI_Search:BuildSearchData()
+function TOGBankClassic_UI_Search:BuildSearchData()
     self.SearchData = {
         Corpus = {},
         Lookup = {},
     }
 
-    local info = GBankClassic_Guild.Info
+    local info = TOGBankClassic_Guild.Info
     if not info or not info.roster.version then
         return
     end
 
     local items = {}
     for _, player in pairs(info.roster.alts) do
-        local norm = (GBankClassic_Guild and GBankClassic_Guild.NormalizePlayerName) and GBankClassic_Guild.NormalizePlayerName(player) or player
+        local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName) and TOGBankClassic_Guild.NormalizePlayerName(player) or player
         local alt = info.alts[norm]
         ---START CHANGES
         --if alt then
         if alt and type(alt) == "table" then
             ---END CHANGES
             if alt.bank then
-                items = GBankClassic_Item:Aggregate(items, alt.bank.items)
+                items = TOGBankClassic_Item:Aggregate(items, alt.bank.items)
             end
             if alt.bags then
-                items = GBankClassic_Item:Aggregate(items, alt.bags.items)
+                items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
             end
         end
     end
 
     local itemNames = {}
-    GBankClassic_Item:GetItems(items, function (list)
+    TOGBankClassic_Item:GetItems(items, function (list)
         for _, v in pairs(list) do
             -- Skip malformed list entries
             if v and v.ID and v.Info and v.Info.name and not itemNames[v.ID] then
@@ -163,17 +163,17 @@ function GBankClassic_UI_Search:BuildSearchData()
 
         for _, player in pairs(info.roster.alts) do
             local altItems = {}
-            local norm = (GBankClassic_Guild and GBankClassic_Guild.NormalizePlayerName) and GBankClassic_Guild.NormalizePlayerName(player) or player
+            local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName) and TOGBankClassic_Guild.NormalizePlayerName(player) or player
             local alt = info.alts[norm]
             ---START CHANGES
             --if alt then
             if alt and type(alt) == "table" then
                 ---END CHANGES
                 if alt.bank then
-                    altItems = GBankClassic_Item:Aggregate(altItems, alt.bank.items)
+                    altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bank.items)
                 end
                 if alt.bags then
-                    altItems = GBankClassic_Item:Aggregate(altItems, alt.bags.items)
+                    altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)
                 end
             end
 
@@ -191,7 +191,7 @@ function GBankClassic_UI_Search:BuildSearchData()
                         end
                     end
                     if not found then
-                        local info = GBankClassic_Item:GetInfo(itemEntry.ID, itemEntry.Link)
+                        local info = TOGBankClassic_Item:GetInfo(itemEntry.ID, itemEntry.Link)
                         table.insert(self.SearchData.Lookup[name], {alt = player, item = {ID = itemEntry.ID, Count = itemEntry.Count, Link = itemEntry.Link, Info = info}})
                     end
                 end
@@ -200,7 +200,7 @@ function GBankClassic_UI_Search:BuildSearchData()
     end)
 end
 
-function GBankClassic_UI_Search:DrawContent()
+function TOGBankClassic_UI_Search:DrawContent()
     if not self.Results then return end
 
     self.Results:ReleaseChildren()
@@ -250,9 +250,9 @@ function GBankClassic_UI_Search:DrawContent()
                 else
                     for _, vv in pairs(lookupList) do
                         --draw item larger to add pading - icon and label smaller by the same to get dimensions
-                        GBankClassic_UI:DrawItem(vv.item, self.Results, 30, 35, 30, 30, 0, 5)
+                        TOGBankClassic_UI:DrawItem(vv.item, self.Results, 30, 35, 30, 30, 0, 5)
 
-                        local label = GBankClassic_UI:Create("Label")
+                        local label = TOGBankClassic_UI:Create("Label")
                         label:SetText(vv.alt)
                         label.label:SetSize(100, 30)
                         label.label:SetJustifyV("MIDDLE")

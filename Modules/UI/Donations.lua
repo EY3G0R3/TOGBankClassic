@@ -1,15 +1,15 @@
-GBankClassic_UI_Donations = {}
+TOGBankClassic_UI_Donations = {}
 
-function GBankClassic_UI_Donations:Init()
+function TOGBankClassic_UI_Donations:Init()
     self:DrawWindow()
 end
 
 local function OnClose(_)
-    GBankClassic_UI_Donations.isOpen = false
-    GBankClassic_UI_Donations.Window:Hide()
+    TOGBankClassic_UI_Donations.isOpen = false
+    TOGBankClassic_UI_Donations.Window:Hide()
 end
 
-function GBankClassic_UI_Donations:Toggle()
+function TOGBankClassic_UI_Donations:Toggle()
     if self.isOpen then
         self:Close()
     else
@@ -17,7 +17,7 @@ function GBankClassic_UI_Donations:Toggle()
     end
 end
 
-function GBankClassic_UI_Donations:Open()
+function TOGBankClassic_UI_Donations:Open()
     if self.isOpen then return end
     self.isOpen = true
 
@@ -26,9 +26,9 @@ function GBankClassic_UI_Donations:Open()
     end
 
     self.Window:Show()
-    if GBankClassic_UI_Inventory.isOpen and GBankClassic_UI_Inventory.Window then
+    if TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
         self.Window:ClearAllPoints()
-        self.Window:SetPoint("TOPLEFT", GBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
+        self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
     end
 
     self:DrawContent()
@@ -36,23 +36,23 @@ function GBankClassic_UI_Donations:Open()
     if _G["GBankClassic"] then
         _G["GBankClassic"]:Show()
     else
-        GBankClassic_UI:Controller()
+        TOGBankClassic_UI:Controller()
     end
 end
 
-function GBankClassic_UI_Donations:Close()
+function TOGBankClassic_UI_Donations:Close()
     if not self.isOpen then return end
     if not self.Window then return end
 
     OnClose(self.Window)
 
-    if GBankClassic_UI_Inventory.isOpen == false then
+    if TOGBankClassic_UI_Inventory.isOpen == false then
         _G["GBankClassic"]:Hide()
     end
 end
 
-function GBankClassic_UI_Donations:DrawWindow()
-    local donations = GBankClassic_UI:Create("Frame")
+function TOGBankClassic_UI_Donations:DrawWindow()
+    local donations = TOGBankClassic_UI:Create("Frame")
     donations:Hide()
     donations:SetCallback("OnClose", OnClose)
     donations:SetTitle("Donations")
@@ -65,12 +65,12 @@ function GBankClassic_UI_Donations:DrawWindow()
     donations.frame:EnableKeyboard(true)
     donations.frame:SetPropagateKeyboardInput(true)
     donations.frame:SetScript("OnKeyDown", function (self, event)
-        GBankClassic_UI:EventHandler(self, event)
+        TOGBankClassic_UI:EventHandler(self, event)
     end)
 
     self.Window = donations
 
-    local content = GBankClassic_UI:Create("SimpleGroup")
+    local content = TOGBankClassic_UI:Create("SimpleGroup")
     content:SetLayout("Table")
     content:SetUserData("table", {
         columns = {
@@ -101,11 +101,11 @@ function GBankClassic_UI_Donations:DrawWindow()
     self.Content = content
 end
 
-function GBankClassic_UI_Donations:DrawContent()
+function TOGBankClassic_UI_Donations:DrawContent()
     self.Window:SetStatusText("")
     self.Content:ReleaseChildren()
 
-    local info = GBankClassic_Guild.Info
+    local info = TOGBankClassic_Guild.Info
     if not info or not info.roster.version then
         return
     end
@@ -134,15 +134,15 @@ function GBankClassic_UI_Donations:DrawContent()
 
     table.sort(scoreboard, function (a, b) return a.score > b.score end)
 
-    local header = GBankClassic_UI:Create("Label")
+    local header = TOGBankClassic_UI:Create("Label")
     header:SetText("")
     self.Content:AddChild(header)
 
-    header = GBankClassic_UI:Create("Label")
+    header = TOGBankClassic_UI:Create("Label")
     header:SetText("Name")
     self.Content:AddChild(header)
 
-    header = GBankClassic_UI:Create("Label")
+    header = TOGBankClassic_UI:Create("Label")
     header:SetText("Score")
     self.Content:AddChild(header)
 
@@ -151,7 +151,7 @@ function GBankClassic_UI_Donations:DrawContent()
         count = count + 1
 
         if count <= 25 then
-            local rank = GBankClassic_UI:Create("Label")
+            local rank = TOGBankClassic_UI:Create("Label")
             local formatString = " %d)"
             if count < 10 then
                 formatString = "  " .. formatString
@@ -160,15 +160,15 @@ function GBankClassic_UI_Donations:DrawContent()
             self.Content:AddChild(rank)
 
             local color = "ff888888"
-            local class = GBankClassic_Guild:GetPlayerInfo(v.player)
+            local class = TOGBankClassic_Guild:GetPlayerInfo(v.player)
             if class then
                 _, _, _, color = GetClassColor(class)
             end
-            local contributor = GBankClassic_UI:Create("Label")
+            local contributor = TOGBankClassic_UI:Create("Label")
             contributor:SetText(string.format("|c%s%s|r", color, v.player))
             self.Content:AddChild(contributor)
 
-            local score = GBankClassic_UI:Create("Label")
+            local score = TOGBankClassic_UI:Create("Label")
             score:SetText(string.format("|c%s%d|r", color, math.ceil(v.score)))
             self.Content:AddChild(score)
         end

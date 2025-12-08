@@ -1,4 +1,4 @@
-GBankClassic_Bank = {...}
+TOGBankClassic_Bank = {...}
 
 local function IsBankAvailable()
     ---START CHANGES
@@ -8,7 +8,7 @@ local function IsBankAvailable()
 end
 
 local function HasUpdated()
-    return GBankClassic_Bank.hasUpdated
+    return TOGBankClassic_Bank.hasUpdated
 end
 
 local function ScanBag(bag, slots)
@@ -96,32 +96,32 @@ local function ScanBank(bank_info)
     return total, numslots
 end
 
-function GBankClassic_Bank:Scan()
-    if GBankClassic_Bank.eventsRegistered then
+function TOGBankClassic_Bank:Scan()
+    if TOGBankClassic_Bank.eventsRegistered then
         if not HasUpdated() then
             return
         end
     end
 
-    local info = GBankClassic_Guild.Info
+    local info = TOGBankClassic_Guild.Info
     if not info then return end
 
-    local player = GBankClassic_Guild:GetPlayer()
+    local player = TOGBankClassic_Guild:GetPlayer()
     -- normalize player name to ensure consistent keying in saved DB
-    if player then player = (GBankClassic_Guild and GBankClassic_Guild.NormalizePlayerName) and GBankClassic_Guild.NormalizePlayerName(player) or player end
+    if player then player = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName) and TOGBankClassic_Guild.NormalizePlayerName(player) or player end
 
     local isBank = false
-    local banks = GBankClassic_Guild:GetBanks()
+    local banks = TOGBankClassic_Guild:GetBanks()
     if banks == nil then return end
     for _, v in pairs(banks) do
-        local normV = (GBankClassic_Guild and GBankClassic_Guild.NormalizePlayerName) and GBankClassic_Guild.NormalizePlayerName(v) or v
+        local normV = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName) and TOGBankClassic_Guild.NormalizePlayerName(v) or v
         if normV == player then
             isBank = true
             break
         end
     end
     if not isBank then return end
-    if not GBankClassic_Options:GetBankEnabled() then return end
+    if not TOGBankClassic_Options:GetBankEnabled() then return end
 
     local updateRoster = false
     if info.roster["version"] ~= nil then
@@ -173,7 +173,7 @@ function GBankClassic_Bank:Scan()
     info.alts[player] = alt
 end
 
-function GBankClassic_Bank:HasInventorySpace()
+function TOGBankClassic_Bank:HasInventorySpace()
     local total = 0
     for bag = 0, 4 do
         ---START CHANGES
@@ -184,11 +184,11 @@ function GBankClassic_Bank:HasInventorySpace()
     return total > 0
 end
 
-function GBankClassic_Bank:OnUpdateStart()
+function TOGBankClassic_Bank:OnUpdateStart()
     self.hasUpdated = true
 end
 
-function GBankClassic_Bank:OnUpdateStop()
+function TOGBankClassic_Bank:OnUpdateStop()
     if self.hasUpdated then
         self:Scan()
     end

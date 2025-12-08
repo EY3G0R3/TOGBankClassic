@@ -1,6 +1,6 @@
-GBankClassic_Options = {}
+TOGBankClassic_Options = {}
 
-function GBankClassic_Options:Init()
+function TOGBankClassic_Options:Init()
     self.db = LibStub("AceDB-3.0"):New("GBankClassicOptionDB")
     if self.db.char.minimap == nil then
         self.db.char.minimap = {enabled = true}
@@ -32,7 +32,7 @@ function GBankClassic_Options:Init()
                 desc = "Toggles visibility of the minimap button",
                 set = function(_, v)
                     self.db.char.minimap["enabled"] = v
-                    GBankClassic_UI_Minimap:Toggle()
+                    TOGBankClassic_UI_Minimap:Toggle()
                 end,
                 get = function() return self.db.char.minimap["enabled"] end,
             },
@@ -59,9 +59,9 @@ function GBankClassic_Options:Init()
                 name = "Reset Database",
                 type = "execute",
                 func = function()
-                    local guild = GBankClassic_Guild:GetGuild()
+                    local guild = TOGBankClassic_Guild:GetGuild()
                     if not guild then return end
-                    GBankClassic_Guild:Reset(guild)
+                    TOGBankClassic_Guild:Reset(guild)
                 end,
             }
         }
@@ -75,14 +75,14 @@ function GBankClassic_Options:Init()
     ---END CHANGES
 end
 
-function GBankClassic_Options:InitGuild()
+function TOGBankClassic_Options:InitGuild()
     ---START CHANGES
     -- Guild banks shouldn't be required to read the officer note, perhaps we want to use public note
     --if not CanViewOfficerNote() then return end
     ---END CHANGES
 
-    local player = GBankClassic_Guild:GetPlayer()
-    if not GBankClassic_Guild:IsBank(player) then return end
+    local player = TOGBankClassic_Guild:GetPlayer()
+    if not TOGBankClassic_Guild:IsBank(player) then return end
 
     -- If this character is recognized as a bank and the per-character option
     -- hasn't been set yet, enable bank reporting by default to avoid manual steps.
@@ -123,9 +123,9 @@ function GBankClassic_Options:InitGuild()
                 name = "Reset Player Database",
                 type = "execute",
                 func = function()
-                    local guild = GBankClassic_Guild:GetGuild()
+                    local guild = TOGBankClassic_Guild:GetGuild()
                     if not guild then return end
-                    GBankClassic_Database:ResetPlayer(guild, player)
+                    TOGBankClassic_Database:ResetPlayer(guild, player)
                 end,
             }
         },
@@ -139,34 +139,34 @@ function GBankClassic_Options:InitGuild()
     ---END CHANGES
 end
 
-function GBankClassic_Options:GetBankEnabled()
+function TOGBankClassic_Options:GetBankEnabled()
     return self.db.char.bank['enabled']
 end
 
-function GBankClassic_Options:GetDonationEnabled()
+function TOGBankClassic_Options:GetDonationEnabled()
     return self.db.char.bank['donations']
 end
 
-function GBankClassic_Options:GetBankReporting()
+function TOGBankClassic_Options:GetBankReporting()
     return self.db.global.bank['report']
 end
 
-function GBankClassic_Options:GetBankVerbosity()
+function TOGBankClassic_Options:GetBankVerbosity()
     if self.db.global.bank['shutup'] == nil then
         return false
     end
     return self.db.global.bank['shutup']
 end
 
-function GBankClassic_Options:GetMinimapEnabled()
+function TOGBankClassic_Options:GetMinimapEnabled()
     return self.db.char.minimap["enabled"]
 end
 
-function GBankClassic_Options:GetCombatHide()
+function TOGBankClassic_Options:GetCombatHide()
     return self.db.char.combat["hide"]
 end
 
-function GBankClassic_Options:Open()
+function TOGBankClassic_Options:Open()
     -- NOTE: WoW API bug, requires call twice to open to specific category
     ---START CHANGES    
     Settings.OpenToCategory("GBankClassic - Revived")

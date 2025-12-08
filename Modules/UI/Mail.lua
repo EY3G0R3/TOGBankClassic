@@ -1,15 +1,15 @@
-GBankClassic_UI_Mail = {}
+TOGBankClassic_UI_Mail = {}
 
-function GBankClassic_UI_Mail:Init()
+function TOGBankClassic_UI_Mail:Init()
     self:DrawWindow()
 end
 
 local function OnClose(_)
-    GBankClassic_UI_Mail.isOpen = false
-    GBankClassic_UI_Mail.Window:Hide()
+    TOGBankClassic_UI_Mail.isOpen = false
+    TOGBankClassic_UI_Mail.Window:Hide()
 end
 
-function GBankClassic_UI_Mail:Open()
+function TOGBankClassic_UI_Mail:Open()
     if self.isOpen then return end
     self.isOpen = true
 
@@ -24,19 +24,19 @@ function GBankClassic_UI_Mail:Open()
     self:RedrawContent()
 end
 
-function GBankClassic_UI_Mail:Close()
+function TOGBankClassic_UI_Mail:Close()
     if not self.isOpen then return end
     if not self.Window then return end
 
     OnClose(self.Window)
 end
 
-function GBankClassic_UI_Mail:SetMailId(id)
+function TOGBankClassic_UI_Mail:SetMailId(id)
     self.MailId = id
 end
 
-function GBankClassic_UI_Mail:DrawWindow()
-    local window = GBankClassic_UI:Create("Frame")
+function TOGBankClassic_UI_Mail:DrawWindow()
+    local window = TOGBankClassic_UI:Create("Frame")
     window:Hide()
     window:SetCallback("OnClose", OnClose)
     window:SetTitle("Donation")
@@ -48,19 +48,19 @@ function GBankClassic_UI_Mail:DrawWindow()
 
     self.Window = window
 
-    local openButton = GBankClassic_UI:Create("Button")
+    local openButton = TOGBankClassic_UI:Create("Button")
     openButton:SetText("Open")
     openButton:SetWidth(100)
     openButton:SetHeight(21)
     openButton:SetCallback("OnClick", function(_)
         openButton:SetDisabled(true)
-        GBankClassic_Mail:Open(self.MailId)
+        TOGBankClassic_Mail:Open(self.MailId)
     end)
     window:AddChild(openButton)
 
     self.OpenButton = openButton
 
-    local content = GBankClassic_UI:Create("SimpleGroup")
+    local content = TOGBankClassic_UI:Create("SimpleGroup")
     content:SetLayout("List")
     content:SetFullWidth(true)
     content:SetFullHeight(true)
@@ -72,58 +72,58 @@ function GBankClassic_UI_Mail:DrawWindow()
     self.Content = content
 end
 
-function GBankClassic_UI_Mail:DrawContent()
+function TOGBankClassic_UI_Mail:DrawContent()
     self.Content:ReleaseChildren()
     self.Content:ResumeLayout()
 
     local _, _, sender, subject, money, CODAmount, _, itemCount, _, wasReturned, _, _, _, _ = GetInboxHeaderInfo(self.MailId)
     if not sender then
-        GBankClassic_UI_Mail:RedrawContent()
+        TOGBankClassic_UI_Mail:RedrawContent()
         return
     end
 
     local color = "ff888888"
-    local class = GBankClassic_Guild:GetPlayerInfo(sender)
+    local class = TOGBankClassic_Guild:GetPlayerInfo(sender)
     if class then
         _, _, _, color = GetClassColor(class)
     end
 
-    local senderGroup = GBankClassic_UI:Create("InlineGroup")
+    local senderGroup = TOGBankClassic_UI:Create("InlineGroup")
     senderGroup:SetTitle("Sender")
     senderGroup:SetLayout("Flow")
     senderGroup:SetFullWidth(true)
     self.Content:AddChild(senderGroup)
 
-    local senderField = GBankClassic_UI:Create("Label")
+    local senderField = TOGBankClassic_UI:Create("Label")
     senderField:SetText(string.format("|c%s%s|r", color, sender))
     senderGroup:AddChild(senderField)
 
-    local subjectGroup = GBankClassic_UI:Create("InlineGroup")
+    local subjectGroup = TOGBankClassic_UI:Create("InlineGroup")
     subjectGroup:SetTitle("Subject")
     subjectGroup:SetLayout("Flow")
     subjectGroup:SetFullWidth(true)
     self.Content:AddChild(subjectGroup)
 
-    local subjectField = GBankClassic_UI:Create("Label")
+    local subjectField = TOGBankClassic_UI:Create("Label")
     subjectField:SetText(subject)
     subjectGroup:AddChild(subjectField)
 
     local bodyText, _, _, _ = GetInboxText(self.MailId)
     if bodyText then
-        local bodyGroup = GBankClassic_UI:Create("InlineGroup")
+        local bodyGroup = TOGBankClassic_UI:Create("InlineGroup")
         bodyGroup:SetTitle("Body")
         bodyGroup:SetLayout("Fill")
         bodyGroup:SetFullWidth(true)
         bodyGroup:SetHeight(150)
         self.Content:AddChild(bodyGroup)
 
-        local scrollBody = GBankClassic_UI:Create("ScrollFrame")
+        local scrollBody = TOGBankClassic_UI:Create("ScrollFrame")
         scrollBody:SetLayout("Flow")
         scrollBody:SetFullHeight(true)
         scrollBody:SetFullWidth(true)
         bodyGroup:AddChild(scrollBody)
 
-        local body = GBankClassic_UI:Create("Label")
+        local body = TOGBankClassic_UI:Create("Label")
         body:SetFullWidth(true)
         body:SetFullHeight(true)
         body:SetText(bodyText)
@@ -131,18 +131,18 @@ function GBankClassic_UI_Mail:DrawContent()
     end
 
     if money and money > 0 then
-        local moneyGroup = GBankClassic_UI:Create("InlineGroup")
+        local moneyGroup = TOGBankClassic_UI:Create("InlineGroup")
         moneyGroup:SetTitle("Money")
         moneyGroup:SetLayout("Flow")
         moneyGroup:SetFullWidth(true)
         self.Content:AddChild(moneyGroup)
 
-        local moneyField = GBankClassic_UI:Create("Label")
+        local moneyField = TOGBankClassic_UI:Create("Label")
         moneyField:SetText(GetCoinTextureString(money))
         moneyGroup:AddChild(moneyField)
     end
 
-    local itemGroup = GBankClassic_UI:Create("InlineGroup")
+    local itemGroup = TOGBankClassic_UI:Create("InlineGroup")
     itemGroup:SetTitle("Items")
     itemGroup:SetLayout("Flow")
     itemGroup:SetFullWidth(true)
@@ -158,7 +158,7 @@ function GBankClassic_UI_Mail:DrawContent()
                     showItems = true
                 end
 
-                if not GBankClassic_Item:IsUnique(link) then
+                if not TOGBankClassic_Item:IsUnique(link) then
                     local id = GetItemInfoInstant(link)
                     local _, _, _, quantity, _ = GetInboxItem(self.MailId, attachmentIndex)
                     table.insert(items, {ID = id, Link = link, Count = quantity})
@@ -174,15 +174,15 @@ function GBankClassic_UI_Mail:DrawContent()
 
     if showItems then
         self.Content:AddChild(itemGroup)
-        GBankClassic_Item:GetItems(items, function (list)
+        TOGBankClassic_Item:GetItems(items, function (list)
             for _, item in pairs(list) do
-                GBankClassic_UI:DrawItem(item, itemGroup, 30, 35, 30, 30, 0, 5)
+                TOGBankClassic_UI:DrawItem(item, itemGroup, 30, 35, 30, 30, 0, 5)
             end
         end)
     end
 
     self.ScoreMail = true
-    local checkbox = GBankClassic_UI:Create("CheckBox")
+    local checkbox = TOGBankClassic_UI:Create("CheckBox")
     checkbox:SetValue(self.ScoreMail)
     checkbox:SetLabel("Add to score")
     checkbox:SetWidth(100)
@@ -202,10 +202,10 @@ function GBankClassic_UI_Mail:DrawContent()
     self.OpenButton:SetDisabled(false)
 end
 
-function GBankClassic_UI_Mail:RedrawContent()
-    GBankClassic_Core:ScheduleTimer(function (...) GBankClassic_UI_Mail:OnTimer() end, 0.25)
+function TOGBankClassic_UI_Mail:RedrawContent()
+    TOGBankClassic_Core:ScheduleTimer(function (...) TOGBankClassic_UI_Mail:OnTimer() end, 0.25)
 end
 
-function GBankClassic_UI_Mail:OnTimer()
-    GBankClassic_UI_Mail:DrawContent()
+function TOGBankClassic_UI_Mail:OnTimer()
+    TOGBankClassic_UI_Mail:DrawContent()
 end

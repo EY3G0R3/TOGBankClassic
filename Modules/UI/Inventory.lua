@@ -1,18 +1,18 @@
-GBankClassic_UI_Inventory = {}
+TOGBankClassic_UI_Inventory = {}
 
-function GBankClassic_UI_Inventory:Init()
+function TOGBankClassic_UI_Inventory:Init()
     self:DrawWindow()
 end
 
 local function OnClose(_)
-    GBankClassic_UI_Inventory.isOpen = false
-    GBankClassic_UI_Inventory.Window:Hide()
+    TOGBankClassic_UI_Inventory.isOpen = false
+    TOGBankClassic_UI_Inventory.Window:Hide()
 
-    GBankClassic_UI_Donations:Close()
-    GBankClassic_UI_Search:Close()
+    TOGBankClassic_UI_Donations:Close()
+    TOGBankClassic_UI_Search:Close()
 end
 
-function GBankClassic_UI_Inventory:Toggle()
+function TOGBankClassic_UI_Inventory:Toggle()
     if self.isOpen then
         self:Close()
     else
@@ -20,7 +20,7 @@ function GBankClassic_UI_Inventory:Toggle()
     end
 end
 
-function GBankClassic_UI_Inventory:Open()
+function TOGBankClassic_UI_Inventory:Open()
     if self.isOpen then return end
     self.isOpen = true
 
@@ -35,11 +35,11 @@ function GBankClassic_UI_Inventory:Open()
     if _G["GBankClassic"] then
         _G["GBankClassic"]:Show()
     else
-        GBankClassic_UI:Controller()
+        TOGBankClassic_UI:Controller()
     end
 end
 
-function GBankClassic_UI_Inventory:Close()
+function TOGBankClassic_UI_Inventory:Close()
     if not self.isOpen then return end
     if not self.Window then return end
 
@@ -48,8 +48,8 @@ end
 
 
 
-function GBankClassic_UI_Inventory:DrawWindow()
-    local window = GBankClassic_UI:Create("Frame")
+function TOGBankClassic_UI_Inventory:DrawWindow()
+    local window = TOGBankClassic_UI:Create("Frame")
     window:Hide()
     window:SetCallback("OnClose", OnClose)
     window:SetTitle("GBankClassic")
@@ -62,12 +62,12 @@ function GBankClassic_UI_Inventory:DrawWindow()
     window.frame:EnableKeyboard(true)
     window.frame:SetPropagateKeyboardInput(true)
     window.frame:SetScript("OnKeyDown", function (self, event)
-        GBankClassic_UI:EventHandler(self, event)
+        TOGBankClassic_UI:EventHandler(self, event)
     end)
 
     self.Window = window
 
-    local buttonContainer = GBankClassic_UI:Create("SimpleGroup")
+    local buttonContainer = TOGBankClassic_UI:Create("SimpleGroup")
     buttonContainer:SetLayout("Table")
     buttonContainer:SetUserData("table", {
         columns = {
@@ -91,25 +91,25 @@ function GBankClassic_UI_Inventory:DrawWindow()
     buttonContainer.content:SetPoint("BOTTOMRIGHT", 0, -5)
     window:AddChild(buttonContainer)
 
-    local searchButton = GBankClassic_UI:Create("Button")
+    local searchButton = TOGBankClassic_UI:Create("Button")
     searchButton:SetText("Search")
     searchButton:SetCallback("OnClick", function(_)
-        GBankClassic_UI_Search:Toggle()
+        TOGBankClassic_UI_Search:Toggle()
     end)
     searchButton:SetWidth(175)
     searchButton:SetHeight(24)
     buttonContainer:AddChild(searchButton)
 
-    local scoreboardButton = GBankClassic_UI:Create("Button")
+    local scoreboardButton = TOGBankClassic_UI:Create("Button")
     scoreboardButton:SetText("Donations")
     scoreboardButton:SetCallback("OnClick", function(_)
-        GBankClassic_UI_Donations:Toggle()
+        TOGBankClassic_UI_Donations:Toggle()
     end)
     scoreboardButton:SetWidth(175)
     scoreboardButton:SetHeight(24)
     buttonContainer:AddChild(scoreboardButton)
 
-    local tabGroup = GBankClassic_UI:Create("TabGroup")
+    local tabGroup = TOGBankClassic_UI:Create("TabGroup")
     tabGroup:SetLayout("Flow")
     tabGroup:SetFullWidth(true)
     tabGroup:SetFullHeight(true)
@@ -118,15 +118,15 @@ function GBankClassic_UI_Inventory:DrawWindow()
     self.TabGroup = tabGroup
 end
 
-function GBankClassic_UI_Inventory:DrawContent()
-    local info = GBankClassic_Guild.Info
+function TOGBankClassic_UI_Inventory:DrawContent()
+    local info = TOGBankClassic_Guild.Info
     if not info or not info.roster.version then
         OnClose()
-        GBankClassic_Core:Print("Database is empty; wait for sync.")
+        TOGBankClassic_Core:Print("Database is empty; wait for sync.")
         return
     end
 
-    GBankClassic_UI_Search:BuildSearchData()
+    TOGBankClassic_UI_Search:BuildSearchData()
 
     local players = {}
     local n = 0
@@ -144,7 +144,7 @@ function GBankClassic_UI_Inventory:DrawContent()
     local total_slots = 0
     local i = 1
     for _, player in pairs(players) do
-        local norm = (GBankClassic_Guild and GBankClassic_Guild.NormalizePlayerName) and GBankClassic_Guild.NormalizePlayerName(player) or player
+        local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName) and TOGBankClassic_Guild.NormalizePlayerName(player) or player
         local alt = info.alts[norm]
         ---START CHANGES
         --if alt then
@@ -171,12 +171,12 @@ function GBankClassic_UI_Inventory:DrawContent()
 
     self.TabGroup:SetTabs(tabs)
 
-    local color = GBankClassic_UI_Inventory:GetPercentColor(slots / total_slots)
+    local color = TOGBankClassic_UI_Inventory:GetPercentColor(slots / total_slots)
     local defaultStatus = string.format("%s    |c%s%d/%d|r", GetCoinTextureString(total_gold), color, slots, total_slots)
     self.Window:SetStatusText(defaultStatus)
     self.Window:SetCallback("OnEnterStatusBar", function(_)
         local tab = self.TabGroup.localstatus.selected
-    local normTab = (GBankClassic_Guild and GBankClassic_Guild.NormalizePlayerName) and GBankClassic_Guild.NormalizePlayerName(tab) or tab
+    local normTab = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName) and TOGBankClassic_Guild.NormalizePlayerName(tab) or tab
     local alt = info.alts[normTab]
 
         local datetime = date("%Y-%m-%d %H:%M:%S", alt.version)
@@ -196,7 +196,7 @@ function GBankClassic_UI_Inventory:DrawContent()
             money = alt.money
         end
 
-        local color = GBankClassic_UI_Inventory:GetPercentColor(slot_count / slot_total)
+        local color = TOGBankClassic_UI_Inventory:GetPercentColor(slot_count / slot_total)
         local status = string.format("As of %s    %s    |c%s%d/%d|r", datetime, GetCoinTextureString(money),    color, slot_count, slot_total)
         self.Window:SetStatusText(status)
     end)
@@ -209,13 +209,13 @@ function GBankClassic_UI_Inventory:DrawContent()
 
         self.TabGroup:ReleaseChildren()
 
-        local g = GBankClassic_UI:Create("SimpleGroup")
+        local g = TOGBankClassic_UI:Create("SimpleGroup")
         g:SetFullWidth(true)
         g:SetFullHeight(true)
         g:SetLayout("Flow")
         self.TabGroup:AddChild(g)
 
-        local scroll = GBankClassic_UI:Create("ScrollFrame")
+        local scroll = TOGBankClassic_UI:Create("ScrollFrame")
         scroll:SetLayout("Flow")
         scroll:SetFullHeight(true)
         scroll:SetFullWidth(true)
@@ -227,12 +227,12 @@ function GBankClassic_UI_Inventory:DrawContent()
             bank = alt.bank.items
         end
         if alt.bags then
-            local items = GBankClassic_Item:Aggregate(bank, alt.bags.items)
-            GBankClassic_Item:GetItems(items, function (list)
-                GBankClassic_Item:Sort(list)
+            local items = TOGBankClassic_Item:Aggregate(bank, alt.bags.items)
+            TOGBankClassic_Item:GetItems(items, function (list)
+                TOGBankClassic_Item:Sort(list)
 
                 for _, item in pairs(list) do
-                    GBankClassic_UI:DrawItem(item, scroll)
+                    TOGBankClassic_UI:DrawItem(item, scroll)
                 end
             end)
         end
@@ -241,7 +241,7 @@ function GBankClassic_UI_Inventory:DrawContent()
     self.TabGroup:SelectTab(first_tab)
 end
 
-function GBankClassic_UI_Inventory:GetPercentColor(percent)
+function TOGBankClassic_UI_Inventory:GetPercentColor(percent)
     local color = nil
     if percent <= 0.25 then
         color = "ffffffff"
