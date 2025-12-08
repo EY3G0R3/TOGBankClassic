@@ -10,12 +10,12 @@ end
 
 function TOGBankClassic_UI:Controller()
     --this is used to process escape to exit events
-    local controller = CreateFrame("Frame","GBankClassic",UIParent)
+    local controller = CreateFrame("Frame","TOGBankClassic",UIParent)
     controller:SetScript("OnHide", function()
         TOGBankClassic_UI_Inventory:Close()
     end)
     --insert to global escape table
-    table.insert(UISpecialFrames, "GBankClassic")
+    table.insert(UISpecialFrames, "TOGBankClassic")
 end
 
 --handle all events

@@ -1,7 +1,7 @@
 TOGBankClassic_Database = {}
 
 function TOGBankClassic_Database:Init()
-    self.db = LibStub("AceDB-3.0"):New("GBankClassicDB")
+    self.db = LibStub("AceDB-3.0"):New("TOGBankClassicDB")
 end
 
 function TOGBankClassic_Database:Reset(name)

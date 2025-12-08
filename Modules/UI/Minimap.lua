@@ -2,9 +2,9 @@ TOGBankClassic_UI_Minimap = {}
 
 function TOGBankClassic_UI_Minimap:Init()
     self.icon = LibStub("LibDBIcon-1.0")
-    local iconDB = LibStub("LibDataBroker-1.1"):NewDataObject("GBankClassicIcon", {
+    local iconDB = LibStub("LibDataBroker-1.1"):NewDataObject("TOGBankClassicIcon", {
         type = "data source",
-        text = "GBankClassic",
+        text = "TOGBankClassic",
         icon = "Interface/ICONS/INV_Box_04", --purplebox
         OnEnter = function ()
             self:ShowTooltip()
@@ -20,27 +20,27 @@ function TOGBankClassic_UI_Minimap:Init()
             end
         end,
     })
-    self.db = LibStub("AceDB-3.0"):New("GBankClassicIconDB", {
+    self.db = LibStub("AceDB-3.0"):New("TOGBankClassicIconDB", {
         profile = {
             minimap = {
                 hide = not TOGBankClassic_Options.db.char.minimap["enabled"],
             },
         },
     })
-    self.icon:Register("GBankClassic", iconDB, self.db.profile.minimap)
+    self.icon:Register("TOGBankClassic", iconDB, self.db.profile.minimap)
 end
 
 function TOGBankClassic_UI_Minimap:Toggle()
     if not TOGBankClassic_Options:GetMinimapEnabled() then
-        self.icon:Hide("GBankClassic")
+        self.icon:Hide("TOGBankClassic")
     else
-        self.icon:Show("GBankClassic")
+        self.icon:Show("TOGBankClassic")
     end
 end
 
 function TOGBankClassic_UI_Minimap:ShowTooltip()
     GameTooltip:SetOwner(WorldFrame, "ANCHOR_CURSOR")
-    GameTooltip:AddLine("GBankClassic")
+    GameTooltip:AddLine("TOGBankClassic")
     GameTooltip:AddDoubleLine("Click", "Inventory", 1, 1, 1)
     GameTooltip:AddDoubleLine("Shift-Click", "Options", 1, 1, 1)
     GameTooltip:Show()

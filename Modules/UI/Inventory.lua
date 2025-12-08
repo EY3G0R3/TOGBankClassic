@@ -32,8 +32,8 @@ function TOGBankClassic_UI_Inventory:Open()
 
     self:DrawContent()
 
-    if _G["GBankClassic"] then
-        _G["GBankClassic"]:Show()
+    if _G["TOGBankClassic"] then
+        _G["TOGBankClassic"]:Show()
     else
         TOGBankClassic_UI:Controller()
     end
@@ -52,7 +52,7 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
     local window = TOGBankClassic_UI:Create("Frame")
     window:Hide()
     window:SetCallback("OnClose", OnClose)
-    window:SetTitle("GBankClassic")
+    window:SetTitle("TOGBankClassic")
     window:SetLayout("Flow")
     window:SetWidth(550)
     --handle keyboard events

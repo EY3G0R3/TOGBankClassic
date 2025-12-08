@@ -204,7 +204,7 @@ end
 function TOGBankClassic_Guild:GetVersion()
     if not self.Info then return nil end
 
-    local versionInfo = GetAddOnMetadata("GBankClassic", "Version"):gsub("%.", "")
+    local versionInfo = GetAddOnMetadata("TOGBankClassic", "Version"):gsub("%.", "")
     local versionNumber = tonumber(versionInfo)
     local data = {
         addon = versionNumber,

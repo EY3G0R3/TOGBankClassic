@@ -33,8 +33,8 @@ function TOGBankClassic_UI_Donations:Open()
 
     self:DrawContent()
 
-    if _G["GBankClassic"] then
-        _G["GBankClassic"]:Show()
+    if _G["TOGBankClassic"] then
+        _G["TOGBankClassic"]:Show()
     else
         TOGBankClassic_UI:Controller()
     end
@@ -47,7 +47,7 @@ function TOGBankClassic_UI_Donations:Close()
     OnClose(self.Window)
 
     if TOGBankClassic_UI_Inventory.isOpen == false then
-        _G["GBankClassic"]:Hide()
+        _G["TOGBankClassic"]:Hide()
     end
 end
 
