@@ -7,6 +7,133 @@ end
 local function OnClose(_)
     TOGBankClassic_UI_Search.isOpen = false
     TOGBankClassic_UI_Search.Window:Hide()
+    if TOGBankClassic_UI_Search.RequestDialog then
+        TOGBankClassic_UI_Search.RequestDialog:Hide()
+    end
+end
+
+-- Build (once) and show the request dialog for clicking search results
+function TOGBankClassic_UI_Search:EnsureRequestDialog()
+    if self.RequestDialog then return end
+
+    local dialog = TOGBankClassic_UI:Create("Frame")
+    dialog:Hide()
+    dialog:SetTitle("Item Request")
+    dialog:SetLayout("Flow")
+    dialog:SetWidth(320)
+    dialog:EnableResize(false)
+    dialog:SetCallback("OnClose", function(widget) widget:Hide() end)
+
+    local prompt = TOGBankClassic_UI:Create("Label")
+    prompt:SetFullWidth(true)
+    prompt:SetText("")
+    dialog:AddChild(prompt)
+    dialog.Prompt = prompt
+
+    local quantityInput = TOGBankClassic_UI:Create("EditBox")
+    quantityInput:SetLabel("Quantity")
+    quantityInput:SetText("1")
+    quantityInput:SetMaxLetters(6)
+    quantityInput:SetFullWidth(true)
+    quantityInput:SetCallback("OnEnterPressed", function() self:SubmitRequest() end)
+    dialog:AddChild(quantityInput)
+    dialog.QuantityInput = quantityInput
+
+    local buttons = TOGBankClassic_UI:Create("SimpleGroup")
+    buttons:SetLayout("Table")
+    buttons:SetUserData("table", {
+        columns = {
+            {width = 0.5, align = "start"},
+            {width = 0.5, align = "end"},
+        },
+    })
+    buttons:SetFullWidth(true)
+    dialog:AddChild(buttons)
+
+    local save = TOGBankClassic_UI:Create("Button")
+    save:SetText("Save Request")
+    save:SetWidth(140)
+    save:SetCallback("OnClick", function() self:SubmitRequest() end)
+    buttons:AddChild(save)
+
+    local cancel = TOGBankClassic_UI:Create("Button")
+    cancel:SetText("Cancel")
+    cancel:SetWidth(120)
+    cancel:SetCallback("OnClick", function() dialog:Hide() end)
+    buttons:AddChild(cancel)
+
+    self.RequestDialog = dialog
+end
+
+function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
+    if not itemEntry or not itemEntry.Info or not bankAlt then return end
+
+    self:EnsureRequestDialog()
+
+    local itemName = itemEntry.Info.name or (itemEntry.Link and itemEntry.Link:match("%[(.-)%]")) or "Unknown item"
+    self.requestContext = {
+        item = itemEntry,
+        bank = bankAlt,
+        itemName = itemName,
+    }
+
+    local itemLabel = itemEntry.Link or itemName
+    local prompt = string.format("Request how many %s from %s?", itemLabel, bankAlt)
+    self.RequestDialog.Prompt:SetText(prompt)
+    self.RequestDialog.QuantityInput:SetText("1")
+    self.RequestDialog:SetStatusText("")
+    self.RequestDialog:Show()
+    if self.RequestDialog.QuantityInput.SetFocus then
+        self.RequestDialog.QuantityInput:SetFocus()
+    end
+end
+
+function TOGBankClassic_UI_Search:SubmitRequest()
+    if not self.requestContext or not self.RequestDialog then return end
+
+    local quantity = tonumber(self.RequestDialog.QuantityInput:GetText())
+    if not quantity or quantity <= 0 then
+        self.RequestDialog:SetStatusText("Enter a quantity greater than 0.")
+        return
+    end
+
+    local requester = TOGBankClassic_Guild:GetPlayer()
+    if not requester then
+        local name, realm = UnitName("player"), GetNormalizedRealmName()
+        if name then
+            requester = realm and (name .. "-" .. realm) or name
+        end
+    end
+
+    local normalize = TOGBankClassic_Guild.NormalizePlayerName
+    if normalize then
+        if requester then requester = normalize(requester) end
+    end
+
+    local bank = self.requestContext.bank
+    if normalize then
+        bank = normalize(bank)
+    end
+
+    local request = {
+        date = GetServerTime(),
+        requester = requester or "Unknown",
+        bank = bank or self.requestContext.bank,
+        item = self.requestContext.itemName,
+        quantity = quantity,
+        fulfilled = 0,
+        notes = "",
+    }
+
+    if not TOGBankClassic_Guild:AddRequest(request) then
+        self.RequestDialog:SetStatusText("Unable to save request.")
+        return
+    end
+
+    self.RequestDialog:Hide()
+    self.requestContext = nil
+
+    TOGBankClassic_Core:Printf("Requested %d x %s from %s", quantity, request.item, request.bank)
 end
 
 function TOGBankClassic_UI_Search:Toggle()
@@ -250,10 +377,21 @@ function TOGBankClassic_UI_Search:DrawContent()
                 else
                     for _, vv in pairs(lookupList) do
                         --draw item larger to add pading - icon and label smaller by the same to get dimensions
-                        TOGBankClassic_UI:DrawItem(vv.item, self.Results, 30, 35, 30, 30, 0, 5)
+                        local resultItem = vv.item
+                        local bankAlt = vv.alt
+                        local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
+                        if itemWidget then
+                            itemWidget:SetCallback("OnClick", function(widget, event)
+                                if IsShiftKeyDown() or IsControlKeyDown() then
+                                    TOGBankClassic_UI:EventHandler(widget, event)
+                                    return
+                                end
+                                TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)
+                            end)
+                        end
 
                         local label = TOGBankClassic_UI:Create("Label")
-                        label:SetText(vv.alt)
+                        label:SetText(bankAlt)
                         label.label:SetSize(100, 30)
                         label.label:SetJustifyV("MIDDLE")
                         self.Results:AddChild(label)

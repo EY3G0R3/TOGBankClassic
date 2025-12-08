@@ -114,6 +114,8 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 
     slot.border = border
     parent:AddChild(slot)
+
+    return slot
 end
 
 

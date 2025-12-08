@@ -155,6 +155,19 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
     return cleaned
 end
 
+-- Record a bank item request alongside guild bank data
+function TOGBankClassic_Guild:AddRequest(request)
+    if not self.Info then return false end
+    if not request or type(request) ~= "table" then return false end
+
+    if not self.Info.requests then
+        self.Info.requests = {}
+    end
+
+    table.insert(self.Info.requests, request)
+    return true
+end
+
 function TOGBankClassic_Guild:GetBanks()
     local hasBanks = false
     local banks = {}
