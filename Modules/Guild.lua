@@ -246,6 +246,12 @@ end
 function TOGBankClassic_Guild:GetBanks()
 	local hasBanks = false
 	local banks = {}
+
+	-- TODO: TESTING CODE, REMOVE
+	table.insert(banks, "Cattlechaser-Myzrael")
+	hasBanks = true
+	-- END TESTING CODE
+
 	for i = 1, GetNumGuildMembers() do
 		---START CHANGES
 		-- Allow use of either public or officer note, and allow the note to contain "gbank" instead of requiring it to be equal to "gbank" only (and no other characters)
