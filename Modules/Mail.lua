@@ -85,9 +85,6 @@ function TOGBankClassic_Mail:InitSendHook()
 end
 
 function TOGBankClassic_Mail:IsBankCharacter(name)
-    -- TESTING ONLY: treat Cattlechaser as a bank toon for fulfillment checks
-    if name == "Cattlechaser" then return true end
-
     local banks = TOGBankClassic_Guild:GetBanks()
     if not banks then return false end
     local normalize = TOGBankClassic_Guild.NormalizePlayerName
