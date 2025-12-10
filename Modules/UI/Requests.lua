@@ -41,6 +41,7 @@ function TOGBankClassic_UI_Requests:Open()
     if TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
         self.Window:ClearAllPoints()
         self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
+        -- self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPLEFT", -200, 0)
     end
 
     self:DrawContent()
@@ -71,13 +72,13 @@ local function ColumnLayout()
     return cols
 end
 
-function TOGBankClassic_UI_Requests:DrawWindow()
+function TOGBankClassic_UI_Requests:DrawWindow_OLD()
     local window = TOGBankClassic_UI:Create("Frame")
     window:Hide()
     window:SetCallback("OnClose", OnClose)
     window:SetTitle("Requests")
     window:SetLayout("Flow")
-    window:SetWidth(900)
+    window:SetWidth(1200)
     window:EnableResize(false)
 
     self.Window = window
@@ -97,6 +98,61 @@ function TOGBankClassic_UI_Requests:DrawWindow()
     window:AddChild(scroll)
     self.Content = scroll
 end
+
+function TOGBankClassic_UI_Requests:DrawWindow()
+    local window = TOGBankClassic_UI:Create("Frame")
+    window:Hide()
+    window:SetCallback("OnClose", OnClose)
+    window:SetTitle("Requests")
+    window:SetLayout("Flow")
+    window:SetWidth(1200)
+    window:EnableResize(false)
+    self.Window = window
+
+    -------------------------------------------------------
+    -- HEADER (TABLE LAYOUT)
+    -------------------------------------------------------
+    local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")
+    headerGroup:SetLayout("Table")
+    headerGroup:SetUserData("table", {
+        columns = ColumnLayout(),
+        spaceH = 5,
+    })
+    headerGroup:SetFullWidth(true)
+    window:AddChild(headerGroup)
+    self.Header = headerGroup
+
+    -------------------------------------------------------
+    -- SCROLLABLE CONTENT AREA (ScrollFrame + inner group)
+    -------------------------------------------------------
+
+	local scroll = TOGBankClassic_UI:Create("ScrollFrame")
+	scroll:SetFullWidth(true)
+	scroll:SetFullHeight(true)
+
+	-- REQUIRED because ScrollFrame is inside "Flow" parent
+	scroll:SetLayout("Table")
+
+	window:AddChild(scroll)
+
+	local contentGroup = TOGBankClassic_UI:Create("SimpleGroup")
+	contentGroup:SetFullWidth(true)
+	contentGroup:SetLayout("Table")
+	contentGroup:SetUserData("table", {
+		columns = ColumnLayout(),
+		spaceH = 5,
+		spaceV = 2,
+	})
+
+	contentGroup:SetAutoAdjustHeight(true)
+
+	scroll:AddChild(contentGroup)
+	self.Content = contentGroup
+
+    -- Store this as the place where rows should be added
+    self.Content = contentGroup
+end
+
 
 local function valueForSort(request, key)
     if key == "date" or key == "quantity" or key == "fulfilled" then
@@ -173,6 +229,8 @@ end
 function TOGBankClassic_UI_Requests:DrawContent()
     if not self.Content then return end
 
+	print("Height before:", self.Content.frame:GetHeight())
+
     self:DrawHeader()
     self.Content:ReleaseChildren()
     self.Window:SetStatusText("")
@@ -206,16 +264,24 @@ function TOGBankClassic_UI_Requests:DrawContent()
             req.notes or "",
         }
 
+        TOGBankClassic_Core:Print("Rendering request from ", req.requester, " to ", req.bank, " item ", req.item, "x", req.quantity, " fulfilled ", req.fulfilled)
+
         for i, cell in ipairs(cells) do
+			TOGBankClassic_Core:Print("Creating label for", cell)
             local label = TOGBankClassic_UI:Create("Label")
             label:SetText(colorize(cell, completed))
-            label.label:SetHeight(18)
+            label.label:SetHeight(20)
+            -- label:SetHeight(20)
+			-- label:SetRelativeWidth(100)
+			label:SetWidth(100)
             self.Content:AddChild(label)
         end
 
         count = count + 1
     end
 
+	print("Height after:", self.Content.frame:GetHeight())
+	
     local status = string.format("%d Request%s", count, count == 1 and "" or "s")
     self.Window:SetStatusText(status)
 end
