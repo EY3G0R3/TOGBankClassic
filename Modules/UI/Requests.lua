@@ -1,24 +1,34 @@
 TOGBankClassic_UI_Requests = {}
 
 local COLUMNS = {
-    {key = "date", label = "Date", width = 140},
-    {key = "requester", label = "Requester", width = 120},
-    {key = "bank", label = "Bank", width = 120},
-    {key = "item", label = "Item", width = 220},
+    {key = "date", label = "Date", width = 150},
+    {key = "requester", label = "Requester", width = 140},
+    {key = "bank", label = "Bank", width = 140},
+    {key = "item", label = "Item", width = 240},
     {key = "quantity", label = "Qty", width = 60},
     {key = "fulfilled", label = "Fulfilled", width = 80},
     {key = "notes", label = "Notes", width = 200},
 }
 
-function TOGBankClassic_UI_Requests:Init()
-    self.sortColumn = "date"
-    self.sortDirection = "desc"
-    self:DrawWindow()
+local function ColumnLayout()
+    local cols = {}
+    for _, col in ipairs(COLUMNS) do
+        table.insert(cols, {width = col.width, align = "start"})
+    end
+    return cols
 end
 
 local function OnClose(_)
     TOGBankClassic_UI_Requests.isOpen = false
-    TOGBankClassic_UI_Requests.Window:Hide()
+    if TOGBankClassic_UI_Requests.Window then
+        TOGBankClassic_UI_Requests.Window:Hide()
+    end
+end
+
+function TOGBankClassic_UI_Requests:Init()
+    self.sortColumn = "date"
+    self.sortDirection = "desc"
+    self:DrawWindow()
 end
 
 function TOGBankClassic_UI_Requests:Toggle()
@@ -38,10 +48,10 @@ function TOGBankClassic_UI_Requests:Open()
     end
 
     self.Window:Show()
-    if TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
+
+    if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
         self.Window:ClearAllPoints()
         self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
-        -- self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPLEFT", -200, 0)
     end
 
     self:DrawContent()
@@ -64,95 +74,35 @@ function TOGBankClassic_UI_Requests:Close()
     end
 end
 
-local function ColumnLayout()
-    local cols = {}
-    for _, col in ipairs(COLUMNS) do
-        table.insert(cols, {width = col.width, align = "start"})
-    end
-    return cols
-end
-
-function TOGBankClassic_UI_Requests:DrawWindow_OLD()
-    local window = TOGBankClassic_UI:Create("Frame")
-    window:Hide()
-    window:SetCallback("OnClose", OnClose)
-    window:SetTitle("Requests")
-    window:SetLayout("Flow")
-    window:SetWidth(1200)
-    window:EnableResize(false)
-
-    self.Window = window
-
-    local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")
-    headerGroup:SetLayout("Table")
-    headerGroup:SetUserData("table", {columns = ColumnLayout(), spaceH = 5})
-    headerGroup:SetFullWidth(true)
-    window:AddChild(headerGroup)
-    self.Header = headerGroup
-
-    local scroll = TOGBankClassic_UI:Create("ScrollFrame")
-    scroll:SetLayout("Table")
-    scroll:SetUserData("table", {columns = ColumnLayout(), spaceH = 5, spaceV = 2})
-    scroll:SetFullWidth(true)
-    scroll:SetFullHeight(true)
-    window:AddChild(scroll)
-    self.Content = scroll
-end
-
 function TOGBankClassic_UI_Requests:DrawWindow()
     local window = TOGBankClassic_UI:Create("Frame")
     window:Hide()
     window:SetCallback("OnClose", OnClose)
     window:SetTitle("Requests")
-    window:SetLayout("Flow")
+    window:SetLayout("Fill")
     window:SetWidth(1200)
     window:EnableResize(false)
     self.Window = window
 
-    -------------------------------------------------------
-    -- HEADER (TABLE LAYOUT)
-    -------------------------------------------------------
-    local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")
-    headerGroup:SetLayout("Table")
-    headerGroup:SetUserData("table", {
+    local tableFrame = TOGBankClassic_UI:Create("ScrollFrame")
+    tableFrame:SetLayout("Table")
+    tableFrame:SetUserData("table", {
         columns = ColumnLayout(),
         spaceH = 5,
+        spaceV = 2,
     })
-    headerGroup:SetFullWidth(true)
-    window:AddChild(headerGroup)
-    self.Header = headerGroup
+    tableFrame:SetFullWidth(true)
+    tableFrame:SetFullHeight(true)
 
-    -------------------------------------------------------
-    -- SCROLLABLE CONTENT AREA (ScrollFrame + inner group)
-    -------------------------------------------------------
+    tableFrame.scrollframe:ClearAllPoints()
+    tableFrame.scrollframe:SetPoint("TOPLEFT", 8, -8)
+    tableFrame.scrollbar:ClearAllPoints()
+    tableFrame.scrollbar:SetPoint("TOPLEFT", tableFrame.scrollframe, "TOPRIGHT", -6, -12)
+    tableFrame.scrollbar:SetPoint("BOTTOMLEFT", tableFrame.scrollframe, "BOTTOMRIGHT", -6, 22)
 
-	local scroll = TOGBankClassic_UI:Create("ScrollFrame")
-	scroll:SetFullWidth(true)
-	scroll:SetFullHeight(true)
-
-	-- REQUIRED because ScrollFrame is inside "Flow" parent
-	scroll:SetLayout("Table")
-
-	window:AddChild(scroll)
-
-	local contentGroup = TOGBankClassic_UI:Create("SimpleGroup")
-	contentGroup:SetFullWidth(true)
-	contentGroup:SetLayout("Table")
-	contentGroup:SetUserData("table", {
-		columns = ColumnLayout(),
-		spaceH = 5,
-		spaceV = 2,
-	})
-
-	contentGroup:SetAutoAdjustHeight(true)
-
-	scroll:AddChild(contentGroup)
-	self.Content = contentGroup
-
-    -- Store this as the place where rows should be added
-    self.Content = contentGroup
+    window:AddChild(tableFrame)
+    self.Content = tableFrame
 end
-
 
 local function valueForSort(request, key)
     if key == "date" or key == "quantity" or key == "fulfilled" then
@@ -164,21 +114,23 @@ end
 local function isComplete(request)
     local qty = tonumber(request.quantity or 0) or 0
     local fulfilled = tonumber(request.fulfilled or 0) or 0
-    return fulfilled >= qty
+    return fulfilled >= qty and qty > 0
 end
 
 function TOGBankClassic_UI_Requests:SortedRequests()
     local info = TOGBankClassic_Guild.Info
-    if not info then return {} end
+    if not info or not info.requests then
+        return {}
+    end
 
-    local requests = info.requests or {}
     local list = {}
-    for _, req in ipairs(requests) do
+    for _, req in ipairs(info.requests) do
         table.insert(list, req)
     end
 
     local column = self.sortColumn or "date"
     local direction = self.sortDirection or "desc"
+
     table.sort(list, function(a, b)
         local va = valueForSort(a, column)
         local vb = valueForSort(b, column)
@@ -200,9 +152,7 @@ local function colorize(text, completed)
 end
 
 function TOGBankClassic_UI_Requests:DrawHeader()
-    if not self.Header then return end
-
-    self.Header:ReleaseChildren()
+    if not self.Content then return end
 
     for _, col in ipairs(COLUMNS) do
         local label = col.label
@@ -222,18 +172,17 @@ function TOGBankClassic_UI_Requests:DrawHeader()
             end
             self:DrawContent()
         end)
-        self.Header:AddChild(button)
+        self.Content:AddChild(button)
     end
 end
 
 function TOGBankClassic_UI_Requests:DrawContent()
-    if not self.Content then return end
+    if not self.Content or not self.Window then return end
 
-	print("Height before:", self.Content.frame:GetHeight())
-
-    self:DrawHeader()
     self.Content:ReleaseChildren()
     self.Window:SetStatusText("")
+
+    self:DrawHeader()
 
     local sorted = self:SortedRequests()
     if #sorted == 0 then
@@ -249,7 +198,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
     for _, req in ipairs(sorted) do
         local completed = isComplete(req)
         local ts = tonumber(req.date or 0) or 0
-        local dateText = ts > 0 and date("%Y-%m-%d %H:%M:%S", ts) or "Unknown"
+        local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
         if completed then
             dateText = "✔ " .. dateText
         end
@@ -264,24 +213,16 @@ function TOGBankClassic_UI_Requests:DrawContent()
             req.notes or "",
         }
 
-        TOGBankClassic_Core:Print("Rendering request from ", req.requester, " to ", req.bank, " item ", req.item, "x", req.quantity, " fulfilled ", req.fulfilled)
-
-        for i, cell in ipairs(cells) do
-			TOGBankClassic_Core:Print("Creating label for", cell)
+        for _, cell in ipairs(cells) do
             local label = TOGBankClassic_UI:Create("Label")
             label:SetText(colorize(cell, completed))
-            label.label:SetHeight(20)
-            -- label:SetHeight(20)
-			-- label:SetRelativeWidth(100)
-			label:SetWidth(100)
+            label.label:SetHeight(18)
             self.Content:AddChild(label)
         end
 
         count = count + 1
     end
 
-	print("Height after:", self.Content.frame:GetHeight())
-	
     local status = string.format("%d Request%s", count, count == 1 and "" or "s")
     self.Window:SetStatusText(status)
 end
