@@ -168,7 +168,7 @@ function TOGBankClassic_UI_Requests:DrawHeader()
     for _, col in ipairs(COLUMNS) do
         local label = col.label
         if self.sortColumn == col.key then
-            label = label .. (self.sortDirection == "asc" and " ▲" or " ▼")
+            label = label .. (self.sortDirection == "asc" and " ^" or " v")
         end
 
         local button = TOGBankClassic_UI:Create("Button")
