@@ -1,21 +1,32 @@
 TOGBankClassic_UI_Requests = {}
 
 local COLUMNS = {
-    {key = "date", label = "Date", width = 150},
-    {key = "requester", label = "Requester", width = 140},
-    {key = "bank", label = "Bank", width = 140},
-    {key = "item", label = "Item", width = 240},
-    {key = "quantity", label = "Qty", width = 60},
-    {key = "fulfilled", label = "Fulfilled", width = 80},
-    {key = "notes", label = "Notes", width = 200},
+    {key = "date", label = "Date", width = 150, align = "center"},
+    {key = "requester", label = "Requester", width = 140, align = "center"},
+    {key = "bank", label = "Bank", width = 140, align = "center"},
+    {key = "quantity", label = "#", width = 60, align = "end"},
+    {key = "item", label = "Item", width = 240, align = "start"},
+    {key = "fulfilled", label = "Fulfilled", width = 110, align = "end"},
+    {key = "notes", label = "Notes", width = 200, align = "start"},
 }
 
 local function ColumnLayout()
     local cols = {}
     for _, col in ipairs(COLUMNS) do
-        table.insert(cols, {width = col.width, align = "start"})
+        table.insert(cols, {width = col.width, align = col.align or "start"})
     end
     return cols
+end
+
+local function justifyForAlign(align)
+    align = tostring(align or "start"):lower()
+    if align == "end" or align == "right" then
+        return "RIGHT"
+    end
+    if align == "center" or align == "middle" then
+        return "CENTER"
+    end
+    return "LEFT"
 end
 
 local function OnClose(_)
@@ -163,6 +174,9 @@ function TOGBankClassic_UI_Requests:DrawHeader()
         local button = TOGBankClassic_UI:Create("Button")
         button:SetText(label)
         button:SetWidth(col.width - 5)
+        if button.text and button.text.SetJustifyH then
+            button.text:SetJustifyH(justifyForAlign(col.align))
+        end
         button:SetCallback("OnClick", function()
             if self.sortColumn == col.key then
                 self.sortDirection = (self.sortDirection == "asc") and "desc" or "asc"
@@ -207,16 +221,18 @@ function TOGBankClassic_UI_Requests:DrawContent()
             dateText,
             req.requester or "",
             req.bank or "",
-            req.item or "",
             tostring(req.quantity or ""),
+            req.item or "",
             tostring(req.fulfilled or ""),
             req.notes or "",
         }
 
-        for _, cell in ipairs(cells) do
+        for idx, cell in ipairs(cells) do
+            local col = COLUMNS[idx]
             local label = TOGBankClassic_UI:Create("Label")
             label:SetText(colorize(cell, completed))
             label.label:SetHeight(18)
+            label.label:SetJustifyH(justifyForAlign(col and col.align))
             self.Content:AddChild(label)
         end
 
