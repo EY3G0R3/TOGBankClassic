@@ -19,25 +19,43 @@ function TOGBankClassic_UI_Search:EnsureRequestDialog()
     local dialog = TOGBankClassic_UI:Create("Frame")
     dialog:Hide()
     dialog:SetTitle("Item Request")
-    dialog:SetLayout("Flow")
-    dialog:SetWidth(320)
+    dialog:SetLayout("List")
+    dialog:SetWidth(340)
+    dialog:SetHeight(200)
     dialog:EnableResize(false)
     dialog:SetCallback("OnClose", function(widget) widget:Hide() end)
+    dialog.frame:SetBackdropColor(0, 0, 0, 1)
+    dialog.frame:SetAlpha(1)
 
     local prompt = TOGBankClassic_UI:Create("Label")
     prompt:SetFullWidth(true)
     prompt:SetText("")
+    prompt:SetJustifyH("LEFT")
+    if prompt.label and prompt.label.SetWordWrap then
+        prompt.label:SetWordWrap(true)
+    end
     dialog:AddChild(prompt)
     dialog.Prompt = prompt
 
-    local quantityInput = TOGBankClassic_UI:Create("EditBox")
+    local quantityInput = TOGBankClassic_UI:Create("Slider")
     quantityInput:SetLabel("Quantity")
-    quantityInput:SetText("1")
-    quantityInput:SetMaxLetters(6)
+    quantityInput:SetSliderValues(1, 1, 1)
+    quantityInput:SetValue(1)
     quantityInput:SetFullWidth(true)
-    quantityInput:SetCallback("OnEnterPressed", function() self:SubmitRequest() end)
+    if quantityInput.editbox and quantityInput.editbox.HookScript then
+        quantityInput.editbox:HookScript("OnEnterPressed", function()
+            self:SubmitRequest()
+        end)
+    end
     dialog:AddChild(quantityInput)
     dialog.QuantityInput = quantityInput
+
+    local availableLabel = TOGBankClassic_UI:Create("Label")
+    availableLabel:SetFullWidth(true)
+    availableLabel:SetJustifyH("LEFT")
+    availableLabel:SetText("")
+    dialog:AddChild(availableLabel)
+    dialog.AvailableLabel = availableLabel
 
     local buttons = TOGBankClassic_UI:Create("SimpleGroup")
     buttons:SetLayout("Table")
@@ -75,26 +93,48 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
         item = itemEntry,
         bank = bankAlt,
         itemName = itemName,
+        available = tonumber(itemEntry.Count) or 0,
     }
 
     local itemLabel = itemEntry.Link or itemName
     local prompt = string.format("Request how many %s from %s?", itemLabel, bankAlt)
     self.RequestDialog.Prompt:SetText(prompt)
-    self.RequestDialog.QuantityInput:SetText("1")
+    local available = self.requestContext.available
+    local minQuantity = available > 0 and 1 or 0
+    local maxQuantity = available > 0 and available or 0
+    if maxQuantity < minQuantity then
+        maxQuantity = minQuantity
+    end
+    self.RequestDialog.QuantityInput:SetSliderValues(minQuantity, maxQuantity, 1)
+    self.RequestDialog.QuantityInput:SetValue(minQuantity > 0 and 1 or 0)
+    self.RequestDialog.QuantityInput:SetDisabled(maxQuantity == 0)
+    if self.RequestDialog.AvailableLabel then
+        if available > 0 then
+            self.RequestDialog.AvailableLabel:SetText(string.format("Available: %d", available))
+        else
+            self.RequestDialog.AvailableLabel:SetText("Available: none right now")
+        end
+    end
     self.RequestDialog:SetStatusText("")
     self.RequestDialog:Show()
-    if self.RequestDialog.QuantityInput.SetFocus then
-        self.RequestDialog.QuantityInput:SetFocus()
+    self.RequestDialog:DoLayout()
+    if self.RequestDialog.QuantityInput.editbox and self.RequestDialog.QuantityInput.editbox.SetFocus then
+        self.RequestDialog.QuantityInput.editbox:SetFocus()
+        self.RequestDialog.QuantityInput.editbox:HighlightText()
     end
 end
 
 function TOGBankClassic_UI_Search:SubmitRequest()
     if not self.requestContext or not self.RequestDialog then return end
 
-    local quantity = tonumber(self.RequestDialog.QuantityInput:GetText())
+    local quantity = tonumber(self.RequestDialog.QuantityInput:GetValue())
+    local available = tonumber(self.requestContext.available) or 0
     if not quantity or quantity <= 0 then
         self.RequestDialog:SetStatusText("Enter a quantity greater than 0.")
         return
+    end
+    if available > 0 and quantity > available then
+        quantity = available
     end
 
     local requester = TOGBankClassic_Guild:GetPlayer()
