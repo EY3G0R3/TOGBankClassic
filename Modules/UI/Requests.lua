@@ -217,20 +217,28 @@ function TOGBankClassic_UI_Requests:DrawContent()
             dateText = "✔ " .. dateText
         end
 
-        local cells = {
-            dateText,
-            req.requester or "",
-            req.bank or "",
-            tostring(req.quantity or ""),
-            req.item or "",
-            tostring(req.fulfilled or ""),
-            req.notes or "",
-        }
+        local function cellText(colKey)
+            if colKey == "date" then
+                return dateText
+            elseif colKey == "requester" then
+                return req.requester or ""
+            elseif colKey == "bank" then
+                return req.bank or ""
+            elseif colKey == "quantity" then
+                return tostring(req.quantity or "")
+            elseif colKey == "item" then
+                return req.item or ""
+            elseif colKey == "fulfilled" then
+                return tostring(req.fulfilled or "")
+            elseif colKey == "notes" then
+                return req.notes or ""
+            end
+            return tostring(req[colKey] or "")
+        end
 
-        for idx, cell in ipairs(cells) do
-            local col = COLUMNS[idx]
+        for _, col in ipairs(COLUMNS) do
             local label = TOGBankClassic_UI:Create("Label")
-            label:SetText(colorize(cell, completed))
+            label:SetText(colorize(cellText(col.key), completed))
             label.label:SetHeight(18)
             label.label:SetJustifyH(justifyForAlign(col and col.align))
             self.Content:AddChild(label)
