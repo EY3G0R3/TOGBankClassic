@@ -126,6 +126,10 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
         end
     end
     self.RequestDialog:SetStatusText("")
+    if self.Window and self.Window.frame and self.RequestDialog.frame then
+        self.RequestDialog.frame:ClearAllPoints()
+        self.RequestDialog.frame:SetPoint("TOPRIGHT", self.Window.frame, "TOPLEFT", -10, 0)
+    end
     self.RequestDialog:Show()
     self.RequestDialog:DoLayout()
     if self.RequestDialog.QuantityInput.editbox and self.RequestDialog.QuantityInput.editbox.SetFocus then
