@@ -173,7 +173,7 @@ function TOGBankClassic_UI_Requests:DrawHeader()
 
         local button = TOGBankClassic_UI:Create("Button")
         button:SetText(label)
-        button:SetWidth(col.width - 5)
+        button:SetWidth(col.width)
         if button.text and button.text.SetJustifyH then
             button.text:SetJustifyH(justifyForAlign(col.align))
         end
@@ -239,6 +239,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
         for _, col in ipairs(COLUMNS) do
             local label = TOGBankClassic_UI:Create("Label")
             label:SetText(colorize(cellText(col.key), completed))
+            label:SetWidth(col.width)
             label.label:SetHeight(18)
             label.label:SetJustifyH(justifyForAlign(col and col.align))
             self.Content:AddChild(label)
