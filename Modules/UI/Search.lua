@@ -26,6 +26,16 @@ function TOGBankClassic_UI_Search:EnsureRequestDialog()
     dialog:SetCallback("OnClose", function(widget) widget:Hide() end)
     dialog.frame:SetBackdropColor(0, 0, 0, 1)
     dialog.frame:SetAlpha(1)
+    if dialog.frame and dialog.frame.GetChildren then
+        for _, child in ipairs({dialog.frame:GetChildren()}) do
+            -- Hide the built-in close button so we only show Send/Cancel actions
+            if child.GetText and (child:GetText() == CLOSE or child:GetText() == "Close") then
+                child:Hide()
+                child:EnableMouse(false)
+                break
+            end
+        end
+    end
 
     local prompt = TOGBankClassic_UI:Create("Label")
     prompt:SetFullWidth(true)
@@ -68,11 +78,11 @@ function TOGBankClassic_UI_Search:EnsureRequestDialog()
     buttons:SetFullWidth(true)
     dialog:AddChild(buttons)
 
-    local save = TOGBankClassic_UI:Create("Button")
-    save:SetText("Save Request")
-    save:SetWidth(140)
-    save:SetCallback("OnClick", function() self:SubmitRequest() end)
-    buttons:AddChild(save)
+    local send = TOGBankClassic_UI:Create("Button")
+    send:SetText("Send Request")
+    send:SetWidth(140)
+    send:SetCallback("OnClick", function() self:SubmitRequest() end)
+    buttons:AddChild(send)
 
     local cancel = TOGBankClassic_UI:Create("Button")
     cancel:SetText("Cancel")
@@ -166,7 +176,7 @@ function TOGBankClassic_UI_Search:SubmitRequest()
     }
 
     if not TOGBankClassic_Guild:AddRequest(request) then
-        self.RequestDialog:SetStatusText("Unable to save request.")
+        self.RequestDialog:SetStatusText("Unable to send request.")
         return
     end
 
