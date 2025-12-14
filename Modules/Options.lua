@@ -22,7 +22,7 @@ function TOGBankClassic_Options:Init()
         type = "group",
         ---START CHANGES
         --name = "TOGBankClassic",
-        name = "TOGBankClassic - Revived",
+        name = "TOGBankClassic",
         ---END CHANGES
         args = {
             ["minimap"] = {
@@ -70,8 +70,8 @@ function TOGBankClassic_Options:Init()
     ---START CHANGES
     --LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic", options)
     --LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic", "TOGBankClassic")
-    LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic - Revived", options)
-    LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic - Revived", "TOGBankClassic - Revived")
+    LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic", options)
+    LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic", "TOGBankClassic")
     ---END CHANGES
 end
 
@@ -134,8 +134,8 @@ function TOGBankClassic_Options:InitGuild()
     ---START CHANGES
     --LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic/Bank", bankOptions)
     --LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic/Bank", "Bank", "TOGBankClassic")
-    LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic - Revived/Bank", bankOptions)
-    LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic - Revived/Bank", "Bank", "TOGBankClassic - Revived")
+    LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic/Bank", bankOptions)
+    LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic/Bank", "Bank", "TOGBankClassic")
     ---END CHANGES
 end
 
@@ -169,6 +169,6 @@ end
 function TOGBankClassic_Options:Open()
     -- NOTE: WoW API bug, requires call twice to open to specific category
     ---START CHANGES    
-    Settings.OpenToCategory("TOGBankClassic - Revived")
+    Settings.OpenToCategory("TOGBankClassic")
     ---END CHANGES
 end
