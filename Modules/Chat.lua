@@ -86,7 +86,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
                         if not self.addon_outdated then
                             -- only make the callout once
                             self.addon_outdated = true
-                            TOGBankClassic_Core:Print("A newer version is available! Download it from https://www.curseforge.com/wow/addons/gbankclassic-revived/")
+                            TOGBankClassic_Core:Print("A newer version is available! Download it from https://www.curseforge.com/wow/addons/togbankclassic/")
                         end
                     end
                 end
