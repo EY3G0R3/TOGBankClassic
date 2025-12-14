@@ -36,6 +36,13 @@ function TOGBankClassic_UI_Search:EnsureRequestDialog()
             end
         end
     end
+    -- Hide the AceGUI status bar; we use an inline label instead
+    if dialog.frame and dialog.frame.statusbg then
+        dialog.frame.statusbg:Hide()
+    end
+    if dialog.statustext then
+        dialog.statustext:Hide()
+    end
 
     local prompt = TOGBankClassic_UI:Create("Label")
     prompt:SetFullWidth(true)
@@ -66,6 +73,13 @@ function TOGBankClassic_UI_Search:EnsureRequestDialog()
     availableLabel:SetText("")
     dialog:AddChild(availableLabel)
     dialog.AvailableLabel = availableLabel
+
+    local statusLabel = TOGBankClassic_UI:Create("Label")
+    statusLabel:SetFullWidth(true)
+    statusLabel:SetJustifyH("LEFT")
+    statusLabel:SetText("")
+    dialog:AddChild(statusLabel)
+    dialog.StatusLabel = statusLabel
 
     local buttons = TOGBankClassic_UI:Create("SimpleGroup")
     buttons:SetLayout("Table")
@@ -125,7 +139,9 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
             self.RequestDialog.AvailableLabel:SetText("Available: none right now")
         end
     end
-    self.RequestDialog:SetStatusText("")
+    if self.RequestDialog.StatusLabel then
+        self.RequestDialog.StatusLabel:SetText("")
+    end
     if self.Window and self.Window.frame and self.RequestDialog.frame then
         self.RequestDialog.frame:ClearAllPoints()
         self.RequestDialog.frame:SetPoint("TOPRIGHT", self.Window.frame, "TOPLEFT", -10, 0)
@@ -144,7 +160,9 @@ function TOGBankClassic_UI_Search:SubmitRequest()
     local quantity = tonumber(self.RequestDialog.QuantityInput:GetValue())
     local available = tonumber(self.requestContext.available) or 0
     if not quantity or quantity <= 0 then
-        self.RequestDialog:SetStatusText("Enter a quantity greater than 0.")
+        if self.RequestDialog.StatusLabel then
+            self.RequestDialog.StatusLabel:SetText("|cffff2020Enter a quantity greater than 0.|r")
+        end
         return
     end
     if available > 0 and quantity > available then
@@ -180,7 +198,9 @@ function TOGBankClassic_UI_Search:SubmitRequest()
     }
 
     if not TOGBankClassic_Guild:AddRequest(request) then
-        self.RequestDialog:SetStatusText("Unable to send request.")
+        if self.RequestDialog.StatusLabel then
+            self.RequestDialog.StatusLabel:SetText("|cffff2020Unable to send request.|r")
+        end
         return
     end
 
