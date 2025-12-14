@@ -29,6 +29,85 @@ local function NormalizePlayerName(name)
 end
 -- expose for other modules
 TOGBankClassic_Guild.NormalizePlayerName = NormalizePlayerName
+
+-- Request sync helpers
+local VALID_REQUEST_STATUS = {
+	open = true,
+	fulfilled = true,
+	cancelled = true,
+}
+
+-- Completed/cancelled requests older than this many seconds will be pruned
+local REQUEST_EXPIRY_SECONDS = 30 * 24 * 60 * 60
+
+local function legacyRequestId(req)
+	if not req or type(req) ~= "table" then
+		return nil
+	end
+	local ts = tonumber(req.date or req.updatedAt or 0) or 0
+	local requester = tostring(req.requester or "")
+	local bank = tostring(req.bank or "")
+	local item = tostring(req.item or "")
+	if requester == "" and bank == "" and item == "" and ts == 0 then
+		return nil
+	end
+	return string.format("%s-%s-%s-%d", bank, requester, item, ts)
+end
+
+local function generateRequestId()
+	local now = GetServerTime()
+	local rand = math.random(100000, 999999)
+	return string.format("%d-%d", now, rand)
+end
+
+local function sanitizeRequest(req)
+	if not req or type(req) ~= "table" then
+		return nil
+	end
+
+	local normalize = TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName
+	local now = GetServerTime()
+
+	local quantity = math.max(tonumber(req.quantity or 0) or 0, 0)
+	local fulfilled = math.max(tonumber(req.fulfilled or 0) or 0, 0)
+	if quantity > 0 then
+		fulfilled = math.min(fulfilled, quantity)
+	end
+
+	local bank = req.bank
+	if bank and normalize then
+		bank = normalize(bank)
+	end
+	local requester = req.requester
+	if requester and normalize then
+		requester = normalize(requester)
+	end
+
+	local updatedAt = tonumber(req.updatedAt or req.date or now) or now
+	local dateVal = tonumber(req.date or updatedAt) or updatedAt
+	local status = req.status
+	if not VALID_REQUEST_STATUS[status] then
+		status = "open"
+	end
+	if quantity > 0 and fulfilled >= quantity then
+		status = "fulfilled"
+	end
+
+	local id = req.id or legacyRequestId(req) or generateRequestId()
+
+	return {
+		id = id,
+		date = dateVal,
+		updatedAt = updatedAt,
+		requester = requester or "Unknown",
+		bank = bank or "",
+		item = tostring(req.item or ""),
+		quantity = quantity,
+		fulfilled = fulfilled,
+		status = status,
+		notes = tostring(req.notes or ""),
+	}
+end
 ---END CHANGES
 
 function TOGBankClassic_Guild:GetPlayer()
@@ -67,6 +146,106 @@ function TOGBankClassic_Guild:GetGuild()
 	return IsInGuild("player") and GetGuildInfo("player") or nil
 end
 
+local function buildRequestIndex(list)
+	local map = {}
+	for idx, req in ipairs(list) do
+		if req and req.id then
+			map[req.id] = idx
+		end
+	end
+	return map
+end
+
+function TOGBankClassic_Guild:EnsureRequestsInitialized()
+	if not self.Info then
+		return
+	end
+	if not self.Info.requests then
+		self.Info.requests = {}
+	end
+	if not self.Info.requestsVersion then
+		self.Info.requestsVersion = 0
+	end
+	self:NormalizeRequestList()
+end
+
+function TOGBankClassic_Guild:NormalizeRequestList()
+	if not self.Info or not self.Info.requests then
+		return
+	end
+
+	local normalized = {}
+	local byId = {}
+	local latest = tonumber(self.Info.requestsVersion or 0) or 0
+
+	for _, req in ipairs(self.Info.requests) do
+		local clean = sanitizeRequest(req)
+		if clean and clean.id then
+			local existingIdx = byId[clean.id]
+			if existingIdx then
+				local existing = normalized[existingIdx]
+				local existingUpdated = tonumber(existing.updatedAt or existing.date or 0) or 0
+				local incomingUpdated = tonumber(clean.updatedAt or clean.date or 0) or 0
+				if incomingUpdated > existingUpdated then
+					normalized[existingIdx] = clean
+				end
+			else
+				table.insert(normalized, clean)
+				byId[clean.id] = #normalized
+			end
+			if clean.updatedAt and clean.updatedAt > latest then
+				latest = clean.updatedAt
+			end
+		end
+	end
+
+	self.Info.requests = normalized
+	self.Info.requestsVersion = latest
+	self:PruneRequests()
+end
+
+function TOGBankClassic_Guild:PruneRequests()
+	if not self.Info or not self.Info.requests then
+		return
+	end
+
+	local now = GetServerTime()
+	local keep = {}
+	local changed = false
+	local latest = tonumber(self.Info.requestsVersion or 0) or 0
+
+	for _, req in ipairs(self.Info.requests) do
+		local updated = tonumber(req.updatedAt or req.date or 0) or 0
+		local quantity = tonumber(req.quantity or 0) or 0
+		local fulfilled = tonumber(req.fulfilled or 0) or 0
+		local isDone = req.status == "fulfilled" or req.status == "cancelled" or (quantity > 0 and fulfilled >= quantity)
+		local tooOld = isDone and (now - updated) > REQUEST_EXPIRY_SECONDS
+		if not tooOld then
+			table.insert(keep, req)
+			if updated > latest then
+				latest = updated
+			end
+		else
+			changed = true
+		end
+	end
+
+	self.Info.requests = keep
+	self.Info.requestsVersion = latest
+	return changed
+end
+
+function TOGBankClassic_Guild:TouchRequestsVersion(ts)
+	if not self.Info then
+		return
+	end
+	local current = tonumber(self.Info.requestsVersion or 0) or 0
+	local incoming = tonumber(ts or GetServerTime()) or current
+	if incoming > current then
+		self.Info.requestsVersion = incoming
+	end
+end
+
 function TOGBankClassic_Guild:GetPlayerInfo(name)
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, _, _, _, _, _, _, _, _, class = GetGuildRosterInfo(i)
@@ -89,6 +268,7 @@ function TOGBankClassic_Guild:Reset(name)
 	TOGBankClassic_UI_Inventory:Close()
 	TOGBankClassic_Database:Reset(name)
 	self.Info = TOGBankClassic_Database:Load(name)
+	self:EnsureRequestsInitialized()
 end
 
 function TOGBankClassic_Guild:Init(name)
@@ -104,6 +284,7 @@ function TOGBankClassic_Guild:Init(name)
 
 	self.Info = TOGBankClassic_Database:Load(name)
 	if self.Info then
+		self:EnsureRequestsInitialized()
 		return true
 	end
 
@@ -183,6 +364,94 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
 	return cleaned
 end
 
+function TOGBankClassic_Guild:GetRequestsVersion()
+	if not self.Info then
+		return 0
+	end
+	return tonumber(self.Info.requestsVersion or 0) or 0
+end
+
+function TOGBankClassic_Guild:SendRequestsData(target)
+	if not self.Info or not self.Info.requests then
+		return
+	end
+	self:NormalizeRequestList()
+	local payload = {
+		type = "requests",
+		version = self:GetRequestsVersion(),
+		requests = self.Info.requests,
+	}
+	local data = TOGBankClassic_Core:Serialize(payload)
+	TOGBankClassic_Core:SendCommMessage("gbank-d", data, "Guild", target, "BULK")
+end
+
+function TOGBankClassic_Guild:RequestRequestsSync(player, version)
+	if not player then
+		return
+	end
+	local data = TOGBankClassic_Core:Serialize({ player = player, type = "requests", version = version })
+	TOGBankClassic_Core:SendCommMessage("gbank-r", data, "Guild", nil, "BULK")
+end
+
+function TOGBankClassic_Guild:RequestRequestsFromBanks()
+	local banks = self:GetBanks()
+	if not banks then
+		return
+	end
+	local version = self:GetRequestsVersion()
+	for _, bank in ipairs(banks) do
+		local norm = NormalizePlayerName(bank)
+		self:RequestRequestsSync(norm, version)
+	end
+end
+
+function TOGBankClassic_Guild:ReceiveRequestsData(payload)
+	if not payload or type(payload) ~= "table" then
+		return
+	end
+	if not self.Info then
+		return
+	end
+	self:EnsureRequestsInitialized()
+
+	local incomingList = payload.requests
+	if not incomingList or type(incomingList) ~= "table" then
+		return
+	end
+	local incomingVersion = tonumber(payload.version or 0) or 0
+
+	local byId = buildRequestIndex(self.Info.requests)
+	local changed = false
+
+	for _, req in ipairs(incomingList) do
+		local clean = sanitizeRequest(req)
+		if clean and clean.id then
+			local idx = byId[clean.id]
+			if idx then
+				local existing = self.Info.requests[idx]
+				local existingUpdated = tonumber(existing.updatedAt or existing.date or 0) or 0
+				local incomingUpdated = tonumber(clean.updatedAt or clean.date or 0) or 0
+				if incomingUpdated > existingUpdated then
+					self.Info.requests[idx] = clean
+					changed = true
+				end
+			else
+				table.insert(self.Info.requests, clean)
+				byId[clean.id] = #self.Info.requests
+				changed = true
+			end
+		end
+	end
+
+	if changed or incomingVersion > (self.Info.requestsVersion or 0) then
+		self:TouchRequestsVersion(math.max(incomingVersion, self.Info.requestsVersion or 0))
+		self:PruneRequests()
+		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+			TOGBankClassic_UI_Requests:DrawContent()
+		end
+	end
+end
+
 -- Record a bank item request alongside guild bank data
 function TOGBankClassic_Guild:AddRequest(request)
 	if not self.Info then
@@ -192,11 +461,33 @@ function TOGBankClassic_Guild:AddRequest(request)
 		return false
 	end
 
-	if not self.Info.requests then
-		self.Info.requests = {}
+	self:EnsureRequestsInitialized()
+
+	local now = GetServerTime()
+	request.date = request.date or now
+	request.updatedAt = now
+	request.status = request.status or "open"
+	request.fulfilled = tonumber(request.fulfilled or 0) or 0
+
+	local clean = sanitizeRequest(request)
+	if not clean then
+		return false
 	end
 
-	table.insert(self.Info.requests, request)
+	local byId = buildRequestIndex(self.Info.requests)
+	if byId[clean.id] then
+		self.Info.requests[byId[clean.id]] = clean
+	else
+		table.insert(self.Info.requests, clean)
+	end
+
+	self:TouchRequestsVersion(clean.updatedAt)
+	self:PruneRequests()
+	self:SendRequestsData()
+
+	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+		TOGBankClassic_UI_Requests:DrawContent()
+	end
 	return true
 end
 
@@ -220,6 +511,8 @@ function TOGBankClassic_Guild:FulfillRequest(bank, requester, itemName, count)
 	local targetItem = string.lower(itemName)
 
 	local applied = 0
+	local updated = false
+	local now = GetServerTime()
 	for _, req in ipairs(self.Info.requests) do
 		local reqBank = req.bank
 		local reqRequester = req.requester
@@ -231,12 +524,26 @@ function TOGBankClassic_Guild:FulfillRequest(bank, requester, itemName, count)
 			local remaining = qty - fulfilled
 			local delta = math.min(remaining, count)
 			req.fulfilled = fulfilled + delta
+			req.updatedAt = now
+			if req.fulfilled >= qty and qty > 0 then
+				req.status = "fulfilled"
+			end
 			count = count - delta
 			applied = applied + delta
+			updated = true
 		end
 
 		if count <= 0 then
 			break
+		end
+	end
+
+	if updated then
+		self:TouchRequestsVersion(now)
+		self:PruneRequests()
+		self:SendRequestsData()
+		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+			TOGBankClassic_UI_Requests:DrawContent()
 		end
 	end
 
@@ -312,6 +619,7 @@ function TOGBankClassic_Guild:GetVersion()
 		addon = versionNumber,
 		roster = nil,
 		alts = {},
+		requests = self:GetRequestsVersion(),
 	}
 
 	if self.Info.name then
@@ -642,6 +950,9 @@ function TOGBankClassic_Guild:Share(type)
 	if self.Info.alts[normPlayer] and TOGBankClassic_Guild:IsBank(normPlayer) then
 		TOGBankClassic_Guild:SendAltData(normPlayer)
 	end
+
+	-- Share current requests state alongside bank data so everyone stays in sync
+	self:SendRequestsData()
 
 	local data = TOGBankClassic_Core:Serialize(share)
 	if type ~= "reply" then

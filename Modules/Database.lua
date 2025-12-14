@@ -15,6 +15,7 @@ function TOGBankClassic_Database:Reset(name)
         roster = {},
         alts = {},
         requests = {},
+        requestsVersion = 0,
     }
 
     TOGBankClassic_Core:Printf("Reset Database")
@@ -55,6 +56,10 @@ function TOGBankClassic_Database:Load(name)
 
     if not db.requests then
         db.requests = {}
+    end
+
+    if not db.requestsVersion then
+        db.requestsVersion = 0
     end
 
     return db

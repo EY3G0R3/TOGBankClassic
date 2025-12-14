@@ -125,6 +125,9 @@ end
 local function isComplete(request)
     local qty = tonumber(request.quantity or 0) or 0
     local fulfilled = tonumber(request.fulfilled or 0) or 0
+    if request.status == "cancelled" then
+        return true
+    end
     return fulfilled >= qty and qty > 0
 end
 
