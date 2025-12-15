@@ -228,7 +228,11 @@ function TOGBankClassic_UI_Requests:DrawContent()
             elseif colKey == "bank" then
                 return req.bank or ""
             elseif colKey == "quantity" then
-                return tostring(req.quantity or "")
+                local qty = req.quantity
+                if qty == nil or qty == "" then
+                    return ""
+                end
+                return tostring(qty) .. "x"
             elseif colKey == "item" then
                 return req.item or ""
             elseif colKey == "fulfilled" then
