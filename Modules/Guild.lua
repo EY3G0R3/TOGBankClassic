@@ -218,7 +218,9 @@ function TOGBankClassic_Guild:PruneRequests()
 		local updated = tonumber(req.updatedAt or req.date or 0) or 0
 		local quantity = tonumber(req.quantity or 0) or 0
 		local fulfilled = tonumber(req.fulfilled or 0) or 0
-		local isDone = req.status == "fulfilled" or req.status == "cancelled" or (quantity > 0 and fulfilled >= quantity)
+		local isDone = req.status == "fulfilled"
+			or req.status == "cancelled"
+			or (quantity > 0 and fulfilled >= quantity)
 		local tooOld = isDone and (now - updated) > REQUEST_EXPIRY_SECONDS
 		if not tooOld then
 			table.insert(keep, req)
