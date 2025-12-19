@@ -301,9 +301,9 @@ function TOGBankClassic_Chat:ChatCommand(input)
 				TOGBankClassic_Guild:Reset(guild)
 			end,
 			["requestssync"] = function()
-				TOGBankClassic_Guild:RequestRequestsFromBanks()
+				TOGBankClassic_Guild:RequestRequestsFromGuild()
 				TOGBankClassic_Guild:SendRequestsData()
-				TOGBankClassic_Core:Print("Requested request log sync from bank alts.")
+				TOGBankClassic_Core:Print("Requested request log sync from guild members.")
 			end,
 			["share"] = function()
 				TOGBankClassic_Bank:OnUpdateStart()
@@ -367,7 +367,7 @@ end
 
 function TOGBankClassic_Chat:ShowHelp()
 	TOGBankClassic_Core:Print(
-		"\n|cff33ff99Commands:|r\n|cffe6cc80/bank|r (to display the GBankClassic interface) \n|cffe6cc80/bank help|r (this message) \n|cffe6cc80/bank sync|r (to manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically) \n|cffe6cc80/bank share|r (to manually share the contents of your guild bank with other online users of GBankClassic; this is done every 3 minutes automatically), \n|cffe6cc80/bank reset|r (to reset your own GBankClassic database) \n|cffe6cc80/bank requestssync|r (ask bank alts to resend the request log)\n"
+		"\n|cff33ff99Commands:|r\n|cffe6cc80/bank|r (to display the GBankClassic interface) \n|cffe6cc80/bank help|r (this message) \n|cffe6cc80/bank sync|r (to manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically) \n|cffe6cc80/bank share|r (to manually share the contents of your guild bank with other online users of GBankClassic; this is done every 3 minutes automatically), \n|cffe6cc80/bank reset|r (to reset your own GBankClassic database) \n|cffe6cc80/bank requestssync|r (ask guild members to resend the request log)\n"
 	)
 	TOGBankClassic_Core:Print(
 		"\n|cff33ff99Expert commands:|r\n|cffe6cc80/bank roster|r (guild banks and members that can read the officer note can use this command to share updated roster data with online guild members)\n|cffe6cc80/bank hello|r (understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserliazed addon communication)\n|cffe6cc80/bank wipe|r (reset your own GBankClassic database)\n|cffe6cc80/bank wipeall|r (officer only: reset your own GBankClassic database and that of all online guild members)"
