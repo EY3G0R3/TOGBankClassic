@@ -395,31 +395,6 @@ function TOGBankClassic_Guild:RequestRequestsSync(player, version)
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
-function TOGBankClassic_Guild:RequestRequestsFromGuild()
-	local version = self:GetRequestsVersion()
-	local numMembers = GetNumGuildMembers()
-	if not numMembers or numMembers <= 0 then
-		return
-	end
-
-	local requester = self:GetPlayer()
-	if requester then
-		requester = NormalizePlayerName(requester)
-	end
-
-	local seen = {}
-	for i = 1, numMembers do
-		local name = select(1, GetGuildRosterInfo(i))
-		if name then
-			local norm = NormalizePlayerName(name)
-			if norm and norm ~= requester and not seen[norm] then
-				seen[norm] = true
-				self:RequestRequestsSync(norm, version)
-			end
-		end
-	end
-end
-
 function TOGBankClassic_Guild:ReceiveRequestsData(payload)
 	if not payload or type(payload) ~= "table" then
 		return
