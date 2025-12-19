@@ -16,38 +16,38 @@ function TOGBankClassic_Chat:Init()
     self.sync_queue = {}
     self.is_syncing = false
 
-    TOGBankClassic_Core:RegisterComm("gbank-d", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-d", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
 
-    TOGBankClassic_Core:RegisterComm("gbank-v", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-v", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
 
-    TOGBankClassic_Core:RegisterComm("gbank-r", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-r", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
 
     ---START CHANGES
-    TOGBankClassic_Core:RegisterComm("gbank-h", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-h", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
 
-    TOGBankClassic_Core:RegisterComm("gbank-hr", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-hr", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
 
-    TOGBankClassic_Core:RegisterComm("gbank-s", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-s", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
-    TOGBankClassic_Core:RegisterComm("gbank-sr", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-sr", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
 
-    TOGBankClassic_Core:RegisterComm("gbank-w", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-w", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
-    TOGBankClassic_Core:RegisterComm("gbank-wr", function (prefix, message, distribution, sender)
+    TOGBankClassic_Core:RegisterComm("togbank-wr", function (prefix, message, distribution, sender)
         TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
     end)
     ---END CHANGES
@@ -72,7 +72,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
         return
     end
 
-    if prefix == "gbank-v" then
+    if prefix == "togbank-v" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if not success then
             if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize gbank-v from', sender) end
@@ -117,7 +117,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
         end
     end
 
-    if prefix == "gbank-r" then
+    if prefix == "togbank-r" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if not success then
             if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize gbank-r from', sender) end
@@ -146,7 +146,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
         end
     end
 
-    if prefix == "gbank-d" then
+    if prefix == "togbank-d" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if not success then
             if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize gbank-d from', sender) end
@@ -200,13 +200,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
     end
     
     ---START CHANGES
-    if prefix == "gbank-h" then
+    if prefix == "togbank-h" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if success then
             TOGBankClassic_Guild:Hello("reply")
         end
     end
-	if prefix == "gbank-hr" then
+	if prefix == "togbank-hr" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if success then
             if self.debug then
@@ -214,13 +214,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
             end
         end
     end	
-    if prefix == "gbank-s" then
+    if prefix == "togbank-s" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if success then
             TOGBankClassic_Guild:Share("reply")
         end
     end
-    if prefix == "gbank-w" then
+    if prefix == "togbank-w" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if success then
             TOGBankClassic_Guild:Wipe("reply")

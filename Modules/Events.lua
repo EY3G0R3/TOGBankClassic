@@ -95,7 +95,7 @@ function TOGBankClassic_Events:Sync()
     if version.roster == nil then return end
 
     local data = TOGBankClassic_Core:Serialize(version)
-    TOGBankClassic_Core:SendCommMessage("gbank-v", data, "Guild", nil, "BULK")
+    TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
 end
 
 function TOGBankClassic_Events:PLAYER_LOGIN(_)

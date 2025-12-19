@@ -382,7 +382,7 @@ function TOGBankClassic_Guild:SendRequestsData(target)
 		requests = self.Info.requests,
 	}
 	local data = TOGBankClassic_Core:Serialize(payload)
-	TOGBankClassic_Core:SendCommMessage("gbank-d", data, "Guild", target, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 end
 
 function TOGBankClassic_Guild:RequestRequestsSync(player, version)
@@ -390,7 +390,7 @@ function TOGBankClassic_Guild:RequestRequestsSync(player, version)
 		return
 	end
 	local data = TOGBankClassic_Core:Serialize({ player = player, type = "requests", version = version })
-	TOGBankClassic_Core:SendCommMessage("gbank-r", data, "Guild", nil, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
 function TOGBankClassic_Guild:RequestRequestsFromBanks()
@@ -651,7 +651,7 @@ function TOGBankClassic_Guild:RequestRosterSync(player, version)
 		self.requestCount = self.requestCount + 1
 	end
 	local data = TOGBankClassic_Core:Serialize({ player = player, type = "roster", version = version })
-	TOGBankClassic_Core:SendCommMessage("gbank-r", data, "Guild", nil, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
 function TOGBankClassic_Guild:RequestAltSync(player, name, version)
@@ -662,12 +662,12 @@ function TOGBankClassic_Guild:RequestAltSync(player, name, version)
 		self.requestCount = self.requestCount + 1
 	end
 	local data = TOGBankClassic_Core:Serialize({ player = player, type = "alt", name = name, version = version })
-	TOGBankClassic_Core:SendCommMessage("gbank-r", data, "Guild", nil, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
 function TOGBankClassic_Guild:SendRosterData()
 	local data = TOGBankClassic_Core:Serialize({ type = "roster", roster = self.Info.roster })
-	TOGBankClassic_Core:SendCommMessage("gbank-d", data, "Guild", nil, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
 end
 
 function TOGBankClassic_Guild:ReceiveRosterData(roster)
@@ -733,7 +733,7 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 
 	local data = TOGBankClassic_Core:Serialize({ type = "alt", name = norm, alt = self.Info.alts[norm] })
 	---START CHANGES
-	TOGBankClassic_Core:SendCommMessage("gbank-d", data, "Guild", nil, "BULK", OnChunkSent)
+	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
 end
 
 ---START CHANGES
@@ -897,9 +897,9 @@ function TOGBankClassic_Guild:Hello(type)
 		TOGBankClassic_Core:Print(hello)
 		local data = TOGBankClassic_Core:Serialize(hello)
 		if type ~= "reply" then
-			TOGBankClassic_Core:SendCommMessage("gbank-h", data, "Guild", nil, "BULK")
+			TOGBankClassic_Core:SendCommMessage("togbank-h", data, "Guild", nil, "BULK")
 		else
-			TOGBankClassic_Core:SendCommMessage("gbank-hr", data, "Guild", nil, "BULK")
+			TOGBankClassic_Core:SendCommMessage("togbank-hr", data, "Guild", nil, "BULK")
 		end
 	end
 end
@@ -914,9 +914,9 @@ function TOGBankClassic_Guild:Wipe(type)
 
 	local data = TOGBankClassic_Core:Serialize(wipe)
 	if type ~= "reply" then
-		TOGBankClassic_Core:SendCommMessage("gbank-w", data, "Guild", nil, "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-w", data, "Guild", nil, "BULK")
 	else
-		TOGBankClassic_Core:SendCommMessage("gbank-wr", data, "Guild", nil, "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-wr", data, "Guild", nil, "BULK")
 	end
 end
 
@@ -956,9 +956,9 @@ function TOGBankClassic_Guild:Share(type)
 
 	local data = TOGBankClassic_Core:Serialize(share)
 	if type ~= "reply" then
-		TOGBankClassic_Core:SendCommMessage("gbank-s", data, "Guild", nil, "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-s", data, "Guild", nil, "BULK")
 	else
-		TOGBankClassic_Core:SendCommMessage("gbank-sr", data, "Guild", nil, "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-sr", data, "Guild", nil, "BULK")
 	end
 end
 
