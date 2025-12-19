@@ -69,6 +69,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		sender = GetPlayerWithNormalizedRealm(sender)
 	end
 	---END CHANGES
+
+	if self.debug then
+		TOGBankClassic_Core:Print("OnCommReceived:", prefix, "from", sender)
+	end
+
 	if player == sender then
 		if self.debug then
 			TOGBankClassic_Core:Print("OnCommReceived: ignoring own message from", sender)
@@ -134,6 +139,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				TOGBankClassic_Core:Print("OnCommReceived: failed to deserialize togbank-r from", sender)
 			end
 		else
+			if self.debug then
+				TOGBankClassic_Core:Print("OnCommReceived: togbank-r: player:", data.player, "type:", data.type)
+			end
 			if data.player == player then
 				if data.type == "roster" then
 					local time = GetServerTime()
@@ -167,6 +175,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				TOGBankClassic_Core:Print("OnCommReceived: failed to deserialize togbank-d from", sender)
 			end
 		else
+			if self.debug then
+				TOGBankClassic_Core:Print("OnCommReceived: togbank-d: type:", data.type)
+			end
 			if data.type == "roster" then
 				-- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
 				local allowed = (
