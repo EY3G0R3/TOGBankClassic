@@ -305,12 +305,6 @@ function TOGBankClassic_Chat:ChatCommand(input)
 				TOGBankClassic_Guild:SendRequestsData()
 				TOGBankClassic_Core:Print("Requested request log sync from guild members.")
 			end,
-			-- Backwards compatibility for the old command name
-			["requestssync"] = function()
-				TOGBankClassic_Guild:RequestRequestsFromGuild()
-				TOGBankClassic_Guild:SendRequestsData()
-				TOGBankClassic_Core:Print("Requested request log sync from guild members.")
-			end,
 			["share"] = function()
 				TOGBankClassic_Bank:OnUpdateStart()
 				TOGBankClassic_Bank:OnUpdateStop()
