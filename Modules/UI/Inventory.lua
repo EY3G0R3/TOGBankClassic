@@ -262,7 +262,16 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 				TOGBankClassic_Item:Sort(list)
 
 				for _, item in pairs(list) do
-					TOGBankClassic_UI:DrawItem(item, scroll)
+					local itemWidget = TOGBankClassic_UI:DrawItem(item, scroll)
+					if itemWidget then
+						itemWidget:SetCallback("OnClick", function(widget, event)
+							if IsShiftKeyDown() or IsControlKeyDown() then
+								TOGBankClassic_UI:EventHandler(widget, event)
+								return
+							end
+							TOGBankClassic_UI_Search:ShowRequestDialog(item, tab)
+						end)
+					end
 				end
 			end)
 		end
