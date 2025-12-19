@@ -75,7 +75,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
     if prefix == "togbank-v" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if not success then
-            if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize gbank-v from', sender) end
+            if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize togbank-v from', sender) end
         else
             local current_data = TOGBankClassic_Guild:GetVersion()
             if current_data then
@@ -120,7 +120,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
     if prefix == "togbank-r" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if not success then
-            if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize gbank-r from', sender) end
+            if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize togbank-r from', sender) end
         else
             if data.player == player then
                 if data.type == "roster" then
@@ -149,12 +149,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
     if prefix == "togbank-d" then
         local success, data = TOGBankClassic_Core:Deserialize(message)
         if not success then
-            if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize gbank-d from', sender) end
+            if self.debug then TOGBankClassic_Core:Print('OnCommReceived: failed to deserialize togbank-d from', sender) end
         else
             if data.type == "roster" then
                 -- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
                 local allowed = (TOGBankClassic_Guild and TOGBankClassic_Guild.SenderHasGbankNote and TOGBankClassic_Guild:SenderHasGbankNote(sender)) or TOGBankClassic_Guild:SenderIsGM(sender)
-                if self.debug then TOGBankClassic_Core:Print('OnCommReceived: gbank-d roster from', sender, 'allowed=', tostring(allowed)) end
+                if self.debug then TOGBankClassic_Core:Print('OnCommReceived: togbank-d roster from', sender, 'allowed=', tostring(allowed)) end
                 if allowed then
                     TOGBankClassic_Guild:ReceiveRosterData(data.roster)
                 end
@@ -168,7 +168,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
                 -- only accept alt data if the sender matches the claimed alt name
                 local claimed = data.name
                 local claimedNorm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName) and TOGBankClassic_Guild.NormalizePlayerName(claimed) or claimed
-                if self.debug then TOGBankClassic_Core:Print('OnCommReceived: gbank-d alt from', sender, 'claims', claimed, 'normClaim=', claimedNorm) end
+                if self.debug then TOGBankClassic_Core:Print('OnCommReceived: togbank-d alt from', sender, 'claims', claimed, 'normClaim=', claimedNorm) end
                 -- 'sender' was normalized near the top of this function
                 local allowed = false
                 -- If the sender is the claimed owner, always accept
