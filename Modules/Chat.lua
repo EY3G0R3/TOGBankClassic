@@ -6,7 +6,11 @@ function TOGBankClassic_Chat:Init()
     end)
 
     self.addon_outdated = false
-    self.debug = false
+    
+    -- TOG Testing code: enable debug from the start
+    -- self.debug = false
+    self.debug = true
+    
     self.last_roster_sync = nil
     self.last_alt_sync = {}
     self.sync_queue = {}
