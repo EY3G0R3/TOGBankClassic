@@ -331,12 +331,15 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 	}
 
 	local info = TOGBankClassic_Guild.Info
-	if not info or not info.roster.version then
+	local roster_alts = (TOGBankClassic_Guild and TOGBankClassic_Guild.GetRosterAlts)
+			and TOGBankClassic_Guild:GetRosterAlts()
+		or nil
+	if not info or not roster_alts then
 		return
 	end
 
 	local items = {}
-	for _, player in pairs(info.roster.alts) do
+	for _, player in pairs(roster_alts) do
 		local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
 				and TOGBankClassic_Guild.NormalizePlayerName(player)
 			or player
@@ -364,7 +367,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			end
 		end
 
-		for _, player in pairs(info.roster.alts) do
+		for _, player in pairs(roster_alts) do
 			local altItems = {}
 			local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
 					and TOGBankClassic_Guild.NormalizePlayerName(player)

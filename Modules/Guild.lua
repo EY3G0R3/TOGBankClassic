@@ -565,6 +565,39 @@ function TOGBankClassic_Guild:GetBanks()
 	return banks
 end
 
+function TOGBankClassic_Guild:GetRosterAlts()
+	if not self.Info then
+		return nil
+	end
+
+	local roster = self.Info.roster
+	local list = {}
+
+	if roster and roster.alts then
+		for _, v in pairs(roster.alts) do
+			if type(v) == "string" and v ~= "" then
+				table.insert(list, v)
+			end
+		end
+	end
+
+	if #list > 0 then
+		return list
+	end
+
+	for name, alt in pairs(self.Info.alts or {}) do
+		if type(alt) == "table" then
+			table.insert(list, name)
+		end
+	end
+
+	if #list == 0 then
+		return nil
+	end
+
+	return list
+end
+
 function TOGBankClassic_Guild:IsBank(player)
 	local banks = TOGBankClassic_Guild:GetBanks()
 	if banks == nil then

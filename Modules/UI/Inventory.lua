@@ -138,7 +138,10 @@ end
 
 function TOGBankClassic_UI_Inventory:DrawContent()
 	local info = TOGBankClassic_Guild.Info
-	if not info or not info.roster.version then
+	local roster_alts = (TOGBankClassic_Guild and TOGBankClassic_Guild.GetRosterAlts)
+			and TOGBankClassic_Guild:GetRosterAlts()
+		or nil
+	if not info or not roster_alts then
 		OnClose()
 		TOGBankClassic_Core:Print("Database is empty; wait for sync.")
 		return
@@ -148,7 +151,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 	local players = {}
 	local n = 0
-	for _, v in pairs(info.roster.alts) do
+	for _, v in pairs(roster_alts) do
 		n = n + 1
 		players[n] = v
 	end
@@ -189,9 +192,16 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		end
 	end
 
+	if #tabs == 0 then
+		OnClose()
+		TOGBankClassic_Core:Print("Database is empty; wait for sync.")
+		return
+	end
+
 	self.TabGroup:SetTabs(tabs)
 
-	local color = TOGBankClassic_UI_Inventory:GetPercentColor(slots / total_slots)
+	local percent = total_slots > 0 and (slots / total_slots) or 0
+	local color = TOGBankClassic_UI_Inventory:GetPercentColor(percent)
 	local defaultStatus =
 		string.format("%s    |c%s%d/%d|r", GetCoinTextureString(total_gold), color, slots, total_slots)
 	self.Window:SetStatusText(defaultStatus)
@@ -219,7 +229,8 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			money = alt.money
 		end
 
-		local color = TOGBankClassic_UI_Inventory:GetPercentColor(slot_count / slot_total)
+		local percent = slot_total > 0 and (slot_count / slot_total) or 0
+		local color = TOGBankClassic_UI_Inventory:GetPercentColor(percent)
 		local status = string.format(
 			"As of %s    %s    |c%s%d/%d|r",
 			datetime,

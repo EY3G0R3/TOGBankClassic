@@ -112,22 +112,26 @@ function TOGBankClassic_UI_Donations:DrawContent()
 	self.Content:ReleaseChildren()
 
 	local info = TOGBankClassic_Guild.Info
-	if not info or not info.roster.version then
+	local roster_alts = (TOGBankClassic_Guild and TOGBankClassic_Guild.GetRosterAlts)
+			and TOGBankClassic_Guild:GetRosterAlts()
+		or nil
+	if not info or not roster_alts then
 		return
 	end
 
 	local players = {}
 	local alts = info.alts
-	for _, v in pairs(info.roster.alts) do
-		if alts[v] then
-			local alt = alts[v]
-			if alt.ledger then
-				for p, s in pairs(alt.ledger) do
-					if not players[p] then
-						players[p] = s
-					else
-						players[p] = players[p] + s
-					end
+	for _, v in pairs(roster_alts) do
+		local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
+				and TOGBankClassic_Guild.NormalizePlayerName(v)
+			or v
+		local alt = alts[norm]
+		if alt and alt.ledger then
+			for p, s in pairs(alt.ledger) do
+				if not players[p] then
+					players[p] = s
+				else
+					players[p] = players[p] + s
 				end
 			end
 		end
