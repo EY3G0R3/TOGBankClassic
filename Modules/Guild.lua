@@ -913,6 +913,49 @@ function TOGBankClassic_Guild:Hello(type)
 		else
 			hello = hello .. " I know about 0 guild bank alts on the roster, and have guild bank data from 0 alts."
 		end
+
+		local pending_count = 0
+		local fulfilled_count = 0
+		local pending_banks = {}
+		for _, req in pairs(current_data.requests or {}) do
+			local clean = sanitizeRequest(req)
+			if clean and clean.item and clean.item ~= "" then
+				local qty = tonumber(clean.quantity or 0) or 0
+				local fulfilled = tonumber(clean.fulfilled or 0) or 0
+				if qty > 0 then
+					local is_fulfilled = clean.status == "fulfilled" or fulfilled >= qty
+					local is_pending = clean.status == "open" or fulfilled < qty
+					if is_fulfilled then
+						fulfilled_count = fulfilled_count + 1
+					elseif is_pending then
+						pending_count = pending_count + 1
+						if clean.bank and clean.bank ~= "" then
+							pending_banks[clean.bank] = true
+						end
+					end
+				end
+			end
+		end
+
+		local pending_bank_list = {}
+		for name in pairs(pending_banks) do
+			table.insert(pending_bank_list, name)
+		end
+		table.sort(pending_bank_list)
+
+		hello = hello
+			.. "\n"
+			.. string.format(
+				"I have %d pending item requests and %d fulfilled item requests.",
+				pending_count,
+				fulfilled_count
+			)
+		if #pending_bank_list > 0 then
+			hello = hello .. "\n" .. "Pending requests for bank alts: " .. table.concat(pending_bank_list, ", ") .. "."
+		else
+			hello = hello .. "\n" .. "Pending requests for bank alts: none."
+		end
+
 		TOGBankClassic_Core:Print(hello)
 		local data = TOGBankClassic_Core:Serialize(hello)
 		if type ~= "reply" then
