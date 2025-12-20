@@ -347,6 +347,7 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
 		end
 
 		if remove then
+			TOGBankClassic_Core:Print("Removing malformed bank entry for", name)
 			self.Info.alts[name] = nil
 			cleaned = cleaned + 1
 		end
