@@ -121,12 +121,40 @@ function TOGBankClassic_Mail:IsBankCharacter(name)
 end
 
 function TOGBankClassic_Mail:OnSendMail(recipient)
+	self.pendingSend = nil
+	self.pendingSendAt = nil
+
+	local sender = TOGBankClassic_Guild:GetPlayer()
+	local items = {}
+
+	for attachmentIndex = 1, ATTACHMENTS_MAX_SEND do
+		local itemName, itemID, texture, quantity = GetSendMailItem(attachmentIndex)
+		if itemName and quantity and quantity > 0 then
+			table.insert(items, { name = itemName, quantity = quantity })
+		end
+	end
+
+	if TOGBankClassic_Chat and TOGBankClassic_Chat.debug then
+		TOGBankClassic_Core:DebugPrint(
+			"OnSendMail:",
+			"sender",
+			tostring(sender),
+			"recipient",
+			tostring(recipient),
+			"items",
+			#items
+		)
+	end
+
+	if #items == 0 then
+		return
+	end
+
 	local info = TOGBankClassic_Guild.Info
 	if not info or not info.requests or #info.requests == 0 then
 		return
 	end
 
-	local sender = TOGBankClassic_Guild:GetPlayer()
 	if not sender or not self:IsBankCharacter(sender) then
 		return
 	end
@@ -134,18 +162,35 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	local normalize = TOGBankClassic_Guild.NormalizePlayerName
 	local normRecipient = normalize and normalize(recipient) or recipient
 
-	local totalApplied = 0
+	self.pendingSend = {
+		sender = sender,
+		recipient = normRecipient,
+		items = items,
+	}
+	self.pendingSendAt = GetTime()
+end
 
-	for attachmentIndex = 1, ATTACHMENTS_MAX_SEND do
-		local itemName, itemID, texture, quantity = GetSendMailItem(attachmentIndex)
-		if itemName and quantity and quantity > 0 then
-			local applied = TOGBankClassic_Guild:FulfillRequest(sender, normRecipient, itemName, quantity)
-			totalApplied = totalApplied + applied
-		end
+function TOGBankClassic_Mail:ApplyPendingSend()
+	local pending = self.pendingSend
+	if not pending then
+		return
+	end
+	self.pendingSend = nil
+	self.pendingSendAt = nil
+
+	local totalApplied = 0
+	for _, item in ipairs(pending.items) do
+		local applied = TOGBankClassic_Guild:FulfillRequest(
+			pending.sender,
+			pending.recipient,
+			item.name,
+			item.quantity
+		)
+		totalApplied = totalApplied + applied
 	end
 
 	if totalApplied > 0 then
-		TOGBankClassic_Core:Printf("Applied %d item(s) toward requests for %s.", totalApplied, normRecipient)
+		TOGBankClassic_Core:Printf("Applied %d item(s) toward requests for %s.", totalApplied, pending.recipient)
 		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
 			TOGBankClassic_UI_Requests:DrawContent()
 		end

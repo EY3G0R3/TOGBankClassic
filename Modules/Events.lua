@@ -180,6 +180,7 @@ end
 function TOGBankClassic_Events:MAIL_SEND_SUCCESS(_)
 	-- safety: ensure hook is registered when mail UI is opened
 	TOGBankClassic_Mail:InitSendHook()
+	TOGBankClassic_Mail:ApplyPendingSend()
 end
 
 function TOGBankClassic_Events:TRADE_SHOW(_)
