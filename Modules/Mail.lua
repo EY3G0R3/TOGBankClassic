@@ -104,22 +104,6 @@ function TOGBankClassic_Mail:InitSendHook()
 	end)
 end
 
-function TOGBankClassic_Mail:IsBankCharacter(name)
-	local banks = TOGBankClassic_Guild:GetBanks()
-	if not banks then
-		return false
-	end
-	local normalize = TOGBankClassic_Guild.NormalizePlayerName
-	local normName = normalize and normalize(name) or name
-	for _, v in pairs(banks) do
-		local norm = normalize and normalize(v) or v
-		if norm == normName then
-			return true
-		end
-	end
-	return false
-end
-
 function TOGBankClassic_Mail:OnSendMail(recipient)
 	self.pendingSend = nil
 	self.pendingSendAt = nil
@@ -155,7 +139,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 		return
 	end
 
-	if not sender or not self:IsBankCharacter(sender) then
+	if not sender or not TOGBankClassic_Guild:IsBank(sender) then
 		return
 	end
 

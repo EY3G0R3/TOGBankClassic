@@ -600,14 +600,20 @@ function TOGBankClassic_Guild:GetRosterAlts()
 end
 
 function TOGBankClassic_Guild:IsBank(player)
+	if not player then
+		return false
+	end
 	local banks = TOGBankClassic_Guild:GetBanks()
 	if banks == nil then
 		return false
 	end
 
+	local normalize = TOGBankClassic_Guild.NormalizePlayerName
+	local normPlayer = normalize and normalize(player) or player
 	local isBank = false
 	for _, v in pairs(banks) do
-		if v == player then
+		local norm = normalize and normalize(v) or v
+		if norm == normPlayer then
 			isBank = true
 		end
 	end
