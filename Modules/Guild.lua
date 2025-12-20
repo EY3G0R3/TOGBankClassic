@@ -766,10 +766,10 @@ function OnChunkSent(arg, sent, total)
 	shutup = TOGBankClassic_Options:GetBankVerbosity()
 	if shutup == false then
 		if sent <= 255 then
-			TOGBankClassic_Core:Print("Sharing guild bank data...")
+			TOGBankClassic_Core:Print("Sharing guild bank data, chunk", sent, "of", total)
 		end
 		if sent == total then
-			TOGBankClassic_Core:Print("Sharing guild bank data has completed.")
+			TOGBankClassic_Core:Print("Sharing guild bank data has completed. (", sent, "of", total, "chunks)")
 		end
 	end
 end
