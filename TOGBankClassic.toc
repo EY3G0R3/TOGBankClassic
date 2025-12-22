@@ -2,7 +2,7 @@
 ## Title: TOGBankClassic
 ## Notes: A simple way to aggregate, view and request items from the inventories of multiple guild bank alts.
 ## Author: Dominion-Myzrael, GrumpyPlayers (also known as <SG>Soul), Lothsahn, Huntmehuntme-Myzrael
-## Version: 0.3.0
+## Version: 0.3.1
 
 ## SavedVariables: TOGBankClassicDB, TOGBankClassicIcon, TOGBankClassicIconDB, TOGBankClassicOptionDB
 ## OptionalDeps: Ace3
