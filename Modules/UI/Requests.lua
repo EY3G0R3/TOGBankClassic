@@ -6,7 +6,7 @@ local COLUMNS = {
 	{ key = "bank", label = "Bank", width = 140, align = "center" },
 	{ key = "quantity", label = "#", width = 60, align = "end" },
 	{ key = "item", label = "Item", width = 180, align = "start" },
-	{ key = "fulfilled", label = "Fulfilled", width = 110, align = "end" },
+	{ key = "fulfilled", label = "Sent", width = 60, align = "end" },
 	{ key = "notes", label = "Notes", width = 200, align = "start" },
 }
 
