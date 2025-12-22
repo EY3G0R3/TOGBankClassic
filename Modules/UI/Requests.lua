@@ -7,7 +7,6 @@ local COLUMNS = {
 	{ key = "quantity", label = "#", width = 60, align = "end" },
 	{ key = "item", label = "Item", width = 180, align = "start" },
 	{ key = "fulfilled", label = "Sent", width = 60, align = "end" },
-	{ key = "notes", label = "Notes", width = 200, align = "start" },
 }
 
 local function ColumnLayout()
