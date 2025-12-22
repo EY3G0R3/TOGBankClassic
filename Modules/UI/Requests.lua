@@ -176,10 +176,13 @@ function TOGBankClassic_UI_Requests:DrawHeader()
 		return
 	end
 
+	local ArrowUpIcon = " |TInterface\\Buttons\\Arrow-Up-Up:0|t"
+	local ArrowDownIcon = " |TInterface\\Buttons\\Arrow-Down-Up:0|t"
+
 	for _, col in ipairs(COLUMNS) do
 		local label = col.label
 		if self.sortColumn == col.key then
-			label = label .. (self.sortDirection == "asc" and " ↑" or " ↓")
+			label = label .. (self.sortDirection == "asc" and ArrowUpIcon or ArrowDownIcon)
 		end
 
 		local button = TOGBankClassic_UI:Create("Button")
@@ -221,13 +224,15 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		return
 	end
 
+	local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
+
 	local count = 0
 	for _, req in ipairs(sorted) do
 		local completed = isComplete(req)
 		local ts = tonumber(req.date or 0) or 0
 		local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
 		if completed then
-			dateText = "✔ " .. dateText
+			dateText = CheckMarkIcon .. dateText
 		end
 
 		local function cellText(colKey)
