@@ -96,7 +96,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	window:SetCallback("OnClose", OnClose)
 	window:SetTitle("Requests")
 	window:SetLayout("Fill")
-	window:SetWidth(1100)
+	window:SetWidth(800)
 	window:EnableResize(false)
 	self.Window = window
 
