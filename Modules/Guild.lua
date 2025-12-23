@@ -256,6 +256,19 @@ function TOGBankClassic_Guild:TouchRequestsVersion(ts)
 	end
 end
 
+function TOGBankClassic_Guild:RefreshRequestsUI()
+	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+		TOGBankClassic_UI_Requests:DrawContent()
+	end
+end
+
+function TOGBankClassic_Guild:BroadcastRequestsUpdate(ts)
+	self:TouchRequestsVersion(ts)
+	self:PruneRequests()
+	self:SendRequestsData()
+	self:RefreshRequestsUI()
+end
+
 function TOGBankClassic_Guild:GetPlayerInfo(name)
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, _, _, _, _, _, _, _, _, class = GetGuildRosterInfo(i)
@@ -445,9 +458,7 @@ function TOGBankClassic_Guild:ReceiveRequestsData(payload)
 	if changed or incomingVersion > (self.Info.requestsVersion or 0) then
 		self:TouchRequestsVersion(math.max(incomingVersion, self.Info.requestsVersion or 0))
 		self:PruneRequests()
-		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
-			TOGBankClassic_UI_Requests:DrawContent()
-		end
+		self:RefreshRequestsUI()
 	end
 end
 
@@ -480,13 +491,7 @@ function TOGBankClassic_Guild:AddRequest(request)
 		table.insert(self.Info.requests, clean)
 	end
 
-	self:TouchRequestsVersion(clean.updatedAt)
-	self:PruneRequests()
-	self:SendRequestsData()
-
-	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
-		TOGBankClassic_UI_Requests:DrawContent()
-	end
+	self:BroadcastRequestsUpdate(clean.updatedAt)
 	return true
 end
 
@@ -567,13 +572,7 @@ function TOGBankClassic_Guild:CancelRequest(requestId, actor)
 		self.Info.requests[idx] = clean
 	end
 
-	self:TouchRequestsVersion(now)
-	self:PruneRequests()
-	self:SendRequestsData()
-
-	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
-		TOGBankClassic_UI_Requests:DrawContent()
-	end
+	self:BroadcastRequestsUpdate(now)
 
 	return true
 end
@@ -625,12 +624,7 @@ function TOGBankClassic_Guild:FulfillRequest(bank, requester, itemName, count)
 	end
 
 	if updated then
-		self:TouchRequestsVersion(now)
-		self:PruneRequests()
-		self:SendRequestsData()
-		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
-			TOGBankClassic_UI_Requests:DrawContent()
-		end
+		self:BroadcastRequestsUpdate(now)
 	end
 
 	return applied

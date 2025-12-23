@@ -172,9 +172,7 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 
 	if totalApplied > 0 then
 		TOGBankClassic_Core:Printf("Applied %d item(s) toward requests for %s.", totalApplied, pending.recipient)
-		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
-			TOGBankClassic_UI_Requests:DrawContent()
-		end
+		TOGBankClassic_Guild:RefreshRequestsUI()
 	end
 end
 
