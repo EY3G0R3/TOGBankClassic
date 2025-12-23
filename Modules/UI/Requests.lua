@@ -2,11 +2,11 @@ TOGBankClassic_UI_Requests = {}
 
 local COLUMNS = {
 	{ key = "date", label = "Date", width = 150, align = "center" },
-	{ key = "requester", label = "Requester", width = 140, align = "center" },
-	{ key = "bank", label = "Bank", width = 140, align = "center" },
-	{ key = "quantity", label = "#", width = 60, align = "end" },
+	{ key = "requester", label = "Requester", width = 160, align = "center" },
+	{ key = "bank", label = "Bank", width = 160, align = "center" },
+	{ key = "quantity", label = "#", width = 50, align = "end" },
 	{ key = "item", label = "Item", width = 180, align = "start" },
-	{ key = "fulfilled", label = "Sent", width = 60, align = "end" },
+	{ key = "fulfilled", label = "Sent", width = 70, align = "start" },
 }
 
 local function ColumnLayout()
@@ -96,7 +96,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	window:SetCallback("OnClose", OnClose)
 	window:SetTitle("Requests")
 	window:SetLayout("Fill")
-	window:SetWidth(820)
+	window:SetWidth(850)
 	window:EnableResize(false)
 	self.Window = window
 
