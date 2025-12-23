@@ -125,9 +125,7 @@ end
 
 function TOGBankClassic_UI_Inventory:DrawContent()
 	local info = TOGBankClassic_Guild.Info
-	local roster_alts = (TOGBankClassic_Guild and TOGBankClassic_Guild.GetRosterAlts)
-			and TOGBankClassic_Guild:GetRosterAlts()
-		or nil
+	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
 	if not info or not roster_alts then
 		OnClose()
 		TOGBankClassic_Core:Print("Database is empty; wait for sync.")
@@ -152,9 +150,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	local total_slots = 0
 	local i = 1
 	for _, player in pairs(players) do
-		local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-				and TOGBankClassic_Guild.NormalizePlayerName(player)
-			or player
+		local norm = TOGBankClassic_Guild:NormalizeName(player)
 		local alt = info.alts[norm]
 		---START CHANGES
 		--if alt then
@@ -194,9 +190,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	self.Window:SetStatusText(defaultStatus)
 	self.Window:SetCallback("OnEnterStatusBar", function(_)
 		local tab = self.TabGroup.localstatus.selected
-		local normTab = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-				and TOGBankClassic_Guild.NormalizePlayerName(tab)
-			or tab
+		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
 
 		local datetime = date("%Y-%m-%d %H:%M:%S", alt.version)

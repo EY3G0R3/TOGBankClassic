@@ -225,22 +225,13 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	end
 
 	local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
-	local normalize = TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName
-	local actor = TOGBankClassic_Guild and TOGBankClassic_Guild.GetPlayer and TOGBankClassic_Guild:GetPlayer() or nil
-	if actor and normalize then
-		actor = normalize(actor)
-	end
-	local canManage = TOGBankClassic_Guild and TOGBankClassic_Guild.CanManageRequests
-			and TOGBankClassic_Guild:CanManageRequests(actor)
-		or false
+	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local canManage = TOGBankClassic_Guild:CanManageRequests(actor)
 
 	local count = 0
 	for _, req in ipairs(sorted) do
 		local completed = isComplete(req)
-		local requester = req.requester
-		if requester and normalize then
-			requester = normalize(requester)
-		end
+		local requester = TOGBankClassic_Guild:NormalizeName(req.requester)
 		local canCancel = not completed and (canManage or (actor and requester and actor == requester))
 		local ts = tonumber(req.date or 0) or 0
 		local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"

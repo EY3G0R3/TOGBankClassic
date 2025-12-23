@@ -21,7 +21,7 @@ function TOGBankClassic_Mail:Scan()
 		return
 	end
 
-	local player = TOGBankClassic_Guild:GetPlayer()
+	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
 
 	local isBank = false
 	local banks = TOGBankClassic_Guild:GetBanks()
@@ -30,9 +30,7 @@ function TOGBankClassic_Mail:Scan()
 	end
 	self.Roster = {}
 	for _, v in pairs(banks) do
-		local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-				and TOGBankClassic_Guild.NormalizePlayerName(v)
-			or v
+		local norm = TOGBankClassic_Guild:NormalizeName(v)
 		self.Roster[norm] = true
 		if norm == player then
 			isBank = true
@@ -108,7 +106,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	self.pendingSend = nil
 	self.pendingSendAt = nil
 
-	local sender = TOGBankClassic_Guild:GetPlayer()
+	local sender = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local items = {}
 
 	for attachmentIndex = 1, ATTACHMENTS_MAX_SEND do
@@ -143,8 +141,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 		return
 	end
 
-	local normalize = TOGBankClassic_Guild.NormalizePlayerName
-	local normRecipient = normalize and normalize(recipient) or recipient
+	local normRecipient = TOGBankClassic_Guild:NormalizeName(recipient)
 
 	self.pendingSend = {
 		sender = sender,
@@ -208,9 +205,7 @@ function TOGBankClassic_Mail:Open(mailId)
 	end
 	---END CHANGES
 	local player = TOGBankClassic_Guild:GetPlayer()
-	local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-			and TOGBankClassic_Guild.NormalizePlayerName(player)
-		or player
+	local norm = TOGBankClassic_Guild:GetNormalizedPlayer(player)
 
 	if not info.alts[norm] then
 		info.alts[norm] = {}

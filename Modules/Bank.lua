@@ -108,13 +108,8 @@ function TOGBankClassic_Bank:Scan()
 		return
 	end
 
-	local player = TOGBankClassic_Guild:GetPlayer()
-	-- normalize player name to ensure consistent keying in saved DB
-	if player then
-		player = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-				and TOGBankClassic_Guild.NormalizePlayerName(player)
-			or player
-	end
+	-- Normalize player name to ensure consistent keying in saved DB
+	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
 
 	local isBank = false
 	local banks = TOGBankClassic_Guild:GetBanks()
@@ -122,9 +117,7 @@ function TOGBankClassic_Bank:Scan()
 		return
 	end
 	for _, v in pairs(banks) do
-		local normV = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-				and TOGBankClassic_Guild.NormalizePlayerName(v)
-			or v
+		local normV = TOGBankClassic_Guild:NormalizeName(v)
 		if normV == player then
 			isBank = true
 			break

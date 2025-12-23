@@ -30,6 +30,21 @@ end
 -- expose for other modules
 TOGBankClassic_Guild.NormalizePlayerName = NormalizePlayerName
 
+function TOGBankClassic_Guild:NormalizeName(name)
+	if not name then
+		return nil
+	end
+	local normalize = self.NormalizePlayerName
+	if normalize then
+		return normalize(name)
+	end
+	return name
+end
+
+function TOGBankClassic_Guild:GetNormalizedPlayer(name)
+	return self:NormalizeName(name or self:GetPlayer())
+end
+
 -- Request sync helpers
 local VALID_REQUEST_STATUS = {
 	open = true,
@@ -65,7 +80,6 @@ local function sanitizeRequest(req)
 		return nil
 	end
 
-	local normalize = TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName
 	local now = GetServerTime()
 
 	local quantity = math.max(tonumber(req.quantity or 0) or 0, 0)
@@ -74,14 +88,8 @@ local function sanitizeRequest(req)
 		fulfilled = math.min(fulfilled, quantity)
 	end
 
-	local bank = req.bank
-	if bank and normalize then
-		bank = normalize(bank)
-	end
-	local requester = req.requester
-	if requester and normalize then
-		requester = normalize(requester)
-	end
+	local bank = TOGBankClassic_Guild:NormalizeName(req.bank)
+	local requester = TOGBankClassic_Guild:NormalizeName(req.requester)
 
 	local updatedAt = tonumber(req.updatedAt or req.date or now) or now
 	local dateVal = tonumber(req.date or updatedAt) or updatedAt
@@ -487,11 +495,7 @@ function TOGBankClassic_Guild:CanManageRequests(actor)
 		return true
 	end
 
-	local normalize = self.NormalizePlayerName
-	local normActor = actor
-	if normActor and normalize then
-		normActor = normalize(normActor)
-	end
+	local normActor = self:NormalizeName(actor)
 
 	if normActor and self.IsBank and self:IsBank(normActor) then
 		return true
@@ -509,16 +513,8 @@ function TOGBankClassic_Guild:CanCancelRequest(req, actor)
 		return false
 	end
 
-	local normalize = self.NormalizePlayerName
-	local normActor = actor or self:GetPlayer()
-	if normActor and normalize then
-		normActor = normalize(normActor)
-	end
-
-	local requester = req.requester
-	if requester and normalize then
-		requester = normalize(requester)
-	end
+	local normActor = self:NormalizeName(actor or self:GetPlayer())
+	local requester = self:NormalizeName(req.requester)
 
 	if normActor and requester and normActor == requester then
 		return true
@@ -596,9 +592,8 @@ function TOGBankClassic_Guild:FulfillRequest(bank, requester, itemName, count)
 		return 0
 	end
 
-	local normalize = TOGBankClassic_Guild.NormalizePlayerName
-	local normBank = normalize and normalize(bank) or bank
-	local normRequester = normalize and normalize(requester) or requester
+	local normBank = self:NormalizeName(bank) or bank
+	local normRequester = self:NormalizeName(requester) or requester
 	local targetItem = string.lower(itemName)
 
 	local applied = 0
@@ -708,11 +703,10 @@ function TOGBankClassic_Guild:IsBank(player)
 		return false
 	end
 
-	local normalize = TOGBankClassic_Guild.NormalizePlayerName
-	local normPlayer = normalize and normalize(player) or player
+	local normPlayer = self:NormalizeName(player) or player
 	local isBank = false
 	for _, v in pairs(banks) do
-		local norm = normalize and normalize(v) or v
+		local norm = self:NormalizeName(v) or v
 		if norm == normPlayer then
 			isBank = true
 		end
@@ -828,7 +822,7 @@ function TOGBankClassic_Guild:SenderHasGbankNote(sender)
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
 		if playerRealm then
-			local norm = NormalizePlayerName(playerRealm)
+			local norm = self:NormalizeName(playerRealm)
 			if norm == sender then
 				if
 					(publicNote and string.match(publicNote, "(.*)gbank(.*)"))
@@ -846,7 +840,7 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 	if not name then
 		return
 	end
-	local norm = NormalizePlayerName(name)
+	local norm = self:NormalizeName(name)
 	if not self.Info or not self.Info.alts or not self.Info.alts[norm] then
 		return
 	end
@@ -907,7 +901,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 		return
 	end
 
-	local norm = NormalizePlayerName(name)
+	local norm = self:NormalizeName(name)
 	local existing = self.Info.alts[norm]
 	if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
 		return
@@ -1104,9 +1098,7 @@ function TOGBankClassic_Guild:Share(type)
 	end
 	self.Info = TOGBankClassic_Database:Load(guild)
 	local player = TOGBankClassic_Guild:GetPlayer()
-	local normPlayer = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-			and TOGBankClassic_Guild.NormalizePlayerName(player)
-		or player
+	local normPlayer = TOGBankClassic_Guild:GetNormalizedPlayer(player)
 	local share = "I'm sharing my bank data. Share yours please."
 	if not self.Info.alts[normPlayer] then
 		if type ~= "reply" then
@@ -1184,7 +1176,7 @@ function TOGBankClassic_Guild:SenderIsGM(player)
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, rankIndex, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
 		if playerRealm then
-			local norm = TOGBankClassic_Guild.NormalizePlayerName(playerRealm)
+			local norm = self:NormalizeName(playerRealm)
 			if rankIndex == 0 and norm == player then
 				return true
 			end

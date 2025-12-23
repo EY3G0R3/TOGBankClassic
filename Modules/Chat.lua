@@ -60,12 +60,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	end
 	local player = TOGBankClassic_Guild:GetPlayer()
 	---START CHANGES
-	-- Normalize the sender using the shared helper so spacing/hyphen formats match
-	if TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName then
-		sender = TOGBankClassic_Guild.NormalizePlayerName(sender)
-	elseif GetPlayerWithNormalizedRealm then
-		sender = GetPlayerWithNormalizedRealm(sender)
-	end
+	-- Normalize the sender so spacing/hyphen formats match
+	sender = TOGBankClassic_Guild:NormalizeName(sender)
 	---END CHANGES
 
 	if player == sender and self.debug then
@@ -114,9 +110,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				end
 				if data.alts then
 					for k, v in pairs(data.alts) do
-						local kNorm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-								and TOGBankClassic_Guild.NormalizePlayerName(k)
-							or k
+						local kNorm = TOGBankClassic_Guild:NormalizeName(k)
 						if not current_data.alts[kNorm] or v > current_data.alts[kNorm] then
 							TOGBankClassic_Guild:RequestAltSync(sender, kNorm, v)
 						end
@@ -150,9 +144,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				end
 
 				if data.type == "alt" then
-					local nameNorm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-							and TOGBankClassic_Guild.NormalizePlayerName(data.name)
-						or data.name
+					local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
 					table.insert(self.sync_queue, nameNorm)
 					if not self.is_syncing then
 						TOGBankClassic_Chat:ProcessQueue()
@@ -199,9 +191,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			if data.type == "alt" then
 				-- only accept alt data if the sender matches the claimed alt name
 				local claimed = data.name
-				local claimedNorm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-						and TOGBankClassic_Guild.NormalizePlayerName(claimed)
-					or claimed
+				local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
 				if self.debug then
 					TOGBankClassic_Core:Print(
 						"OnCommReceived: togbank-d alt from",
@@ -220,9 +210,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					allowed = true
 				else
 					-- If the claimed owner is a registered bank toon, only accept from bank-marked senders
-					claimedIsBank = (TOGBankClassic_Guild and TOGBankClassic_Guild.IsBank)
-							and TOGBankClassic_Guild:IsBank(claimedNorm)
-						or false
+					claimedIsBank = TOGBankClassic_Guild:IsBank(claimedNorm)
 					if claimedIsBank then
 						if
 							TOGBankClassic_Guild

@@ -186,25 +186,16 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 		quantity = available
 	end
 
-	local requester = TOGBankClassic_Guild:GetPlayer()
+	local requester = TOGBankClassic_Guild:GetNormalizedPlayer()
 	if not requester then
 		local name, realm = UnitName("player"), GetNormalizedRealmName()
 		if name then
 			requester = realm and (name .. "-" .. realm) or name
+			requester = TOGBankClassic_Guild:NormalizeName(requester)
 		end
 	end
 
-	local normalize = TOGBankClassic_Guild.NormalizePlayerName
-	if normalize then
-		if requester then
-			requester = normalize(requester)
-		end
-	end
-
-	local bank = self.requestContext.bank
-	if normalize then
-		bank = normalize(bank)
-	end
+	local bank = TOGBankClassic_Guild:NormalizeName(self.requestContext.bank)
 
 	local request = {
 		date = GetServerTime(),
@@ -354,18 +345,14 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 	}
 
 	local info = TOGBankClassic_Guild.Info
-	local roster_alts = (TOGBankClassic_Guild and TOGBankClassic_Guild.GetRosterAlts)
-			and TOGBankClassic_Guild:GetRosterAlts()
-		or nil
+	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
 	if not info or not roster_alts then
 		return
 	end
 
 	local items = {}
 	for _, player in pairs(roster_alts) do
-		local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-				and TOGBankClassic_Guild.NormalizePlayerName(player)
-			or player
+		local norm = TOGBankClassic_Guild:NormalizeName(player)
 		local alt = info.alts[norm]
 		---START CHANGES
 		--if alt then
@@ -392,9 +379,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 
 		for _, player in pairs(roster_alts) do
 			local altItems = {}
-			local norm = (TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName)
-					and TOGBankClassic_Guild.NormalizePlayerName(player)
-				or player
+			local norm = TOGBankClassic_Guild:NormalizeName(player)
 			local alt = info.alts[norm]
 			---START CHANGES
 			--if alt then
