@@ -153,7 +153,30 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 		return
 	end
 
-	local quantity = tonumber(self.RequestDialog.QuantityInput:GetValue())
+	local quantityInput = self.RequestDialog.QuantityInput
+	if quantityInput and quantityInput.editbox and quantityInput.editbox.GetText then
+		local text = quantityInput.editbox:GetText()
+		if text and text ~= "" then
+			local typed = tonumber(text) or tonumber(text:match("%d+"))
+			if typed then
+				local minValue = tonumber(quantityInput.min)
+				local maxValue = tonumber(quantityInput.max)
+				if minValue and typed < minValue then
+					typed = minValue
+				end
+				if maxValue and typed > maxValue then
+					typed = maxValue
+				end
+				local step = tonumber(quantityInput.step)
+				if step and step > 0 and minValue then
+					typed = math.floor((typed - minValue) / step + 0.5) * step + minValue
+				end
+				quantityInput:SetValue(typed)
+			end
+		end
+	end
+
+	local quantity = tonumber(quantityInput and quantityInput:GetValue())
 	local available = tonumber(self.requestContext.available) or 0
 	if not quantity or quantity <= 0 then
 		self.RequestDialog:SetStatusText("Enter a quantity greater than 0.")
