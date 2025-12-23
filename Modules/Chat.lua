@@ -218,12 +218,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				end
 				-- 'sender' was normalized near the top of this function
 				local allowed = false
+				local claimedIsBank = false
 				-- If the sender is the claimed owner, always accept
 				if sender == claimedNorm then
 					allowed = true
 				else
 					-- If the claimed owner is a registered bank toon, only accept from bank-marked senders
-					local claimedIsBank = (TOGBankClassic_Guild and TOGBankClassic_Guild.IsBank)
+					claimedIsBank = (TOGBankClassic_Guild and TOGBankClassic_Guild.IsBank)
 							and TOGBankClassic_Guild:IsBank(claimedNorm)
 						or false
 					if claimedIsBank then
