@@ -482,6 +482,106 @@ function TOGBankClassic_Guild:AddRequest(request)
 	return true
 end
 
+function TOGBankClassic_Guild:CanManageRequests(actor)
+	if CanViewOfficerNote and CanViewOfficerNote() then
+		return true
+	end
+
+	local normalize = self.NormalizePlayerName
+	local normActor = actor
+	if normActor and normalize then
+		normActor = normalize(normActor)
+	end
+
+	if normActor and self.IsBank and self:IsBank(normActor) then
+		return true
+	end
+
+	if normActor and self.SenderIsGM and self:SenderIsGM(normActor) then
+		return true
+	end
+
+	return false
+end
+
+function TOGBankClassic_Guild:CanCancelRequest(req, actor)
+	if not req or type(req) ~= "table" then
+		return false
+	end
+
+	local normalize = self.NormalizePlayerName
+	local normActor = actor or self:GetPlayer()
+	if normActor and normalize then
+		normActor = normalize(normActor)
+	end
+
+	local requester = req.requester
+	if requester and normalize then
+		requester = normalize(requester)
+	end
+
+	if normActor and requester and normActor == requester then
+		return true
+	end
+
+	return self:CanManageRequests(normActor)
+end
+
+function TOGBankClassic_Guild:CancelRequest(requestId, actor)
+	if not self.Info or not self.Info.requests then
+		return false
+	end
+	if not requestId then
+		return false
+	end
+
+	self:EnsureRequestsInitialized()
+
+	local byId = buildRequestIndex(self.Info.requests)
+	local idx = byId[requestId]
+	if not idx then
+		return false
+	end
+
+	local req = self.Info.requests[idx]
+	if not req then
+		return false
+	end
+
+	local quantity = tonumber(req.quantity or 0) or 0
+	local fulfilled = tonumber(req.fulfilled or 0) or 0
+	if req.status == "cancelled" then
+		return false
+	end
+	if req.status == "fulfilled" or (quantity > 0 and fulfilled >= quantity) then
+		return false
+	end
+
+	local actorName = actor or self:GetPlayer()
+	if not self:CanCancelRequest(req, actorName) then
+		return false
+	end
+
+	local now = GetServerTime()
+	req.status = "cancelled"
+	req.updatedAt = now
+
+	local clean = sanitizeRequest(req)
+	if clean then
+		self.Info.requests[idx] = clean
+	end
+
+	self:TouchRequestsVersion(now)
+	self:PruneRequests()
+	self:SendRequestsData()
+
+	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+		TOGBankClassic_UI_Requests:DrawContent()
+	end
+
+	return true
+end
+
 -- Increment fulfillment for matching requests; returns amount applied
 function TOGBankClassic_Guild:FulfillRequest(bank, requester, itemName, count)
 	if

@@ -1,12 +1,13 @@
 TOGBankClassic_UI_Requests = {}
 
 local COLUMNS = {
-	{ key = "date", label = "Date", width = 150, align = "center" },
-	{ key = "requester", label = "Requester", width = 160, align = "center" },
-	{ key = "bank", label = "Bank", width = 160, align = "center" },
+	{ key = "date", label = "Date", width = 140, align = "center" },
+	{ key = "requester", label = "Requester", width = 150, align = "center" },
+	{ key = "bank", label = "Bank", width = 150, align = "center" },
 	{ key = "quantity", label = "#", width = 50, align = "end" },
-	{ key = "item", label = "Item", width = 180, align = "start" },
-	{ key = "fulfilled", label = "Sent", width = 70, align = "start" },
+	{ key = "item", label = "Item", width = 170, align = "start" },
+	{ key = "fulfilled", label = "Sent", width = 60, align = "start" },
+	{ key = "actions", label = "Action", width = 70, align = "center" },
 }
 
 local function ColumnLayout()
@@ -224,15 +225,29 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	end
 
 	local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
+	local normalize = TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizePlayerName
+	local actor = TOGBankClassic_Guild and TOGBankClassic_Guild.GetPlayer and TOGBankClassic_Guild:GetPlayer() or nil
+	if actor and normalize then
+		actor = normalize(actor)
+	end
+	local canManage = TOGBankClassic_Guild and TOGBankClassic_Guild.CanManageRequests
+			and TOGBankClassic_Guild:CanManageRequests(actor)
+		or false
 
 	local count = 0
 	for _, req in ipairs(sorted) do
 		local completed = isComplete(req)
+		local requester = req.requester
+		if requester and normalize then
+			requester = normalize(requester)
+		end
+		local canCancel = not completed and (canManage or (actor and requester and actor == requester))
 		local ts = tonumber(req.date or 0) or 0
 		local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
 		if completed then
 			dateText = CheckMarkIcon .. dateText
 		end
+		local requestId = req.id
 
 		local function cellText(colKey)
 			if colKey == "date" then
@@ -258,12 +273,32 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		end
 
 		for _, col in ipairs(COLUMNS) do
-			local label = TOGBankClassic_UI:Create("Label")
-			label:SetText(colorize(cellText(col.key), completed))
-			label:SetWidth(col.width)
-			label.label:SetHeight(18)
-			label.label:SetJustifyH(justifyForAlign(col and col.align))
-			self.Content:AddChild(label)
+			if col.key == "actions" then
+				if canCancel and requestId then
+					local button = TOGBankClassic_UI:Create("Button")
+					button:SetText("Cancel")
+					button:SetWidth(col.width)
+					button:SetHeight(18)
+					button:SetCallback("OnClick", function()
+						if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
+							self.Window:SetStatusText("Unable to cancel request.")
+						end
+					end)
+					self.Content:AddChild(button)
+				else
+					local empty = TOGBankClassic_UI:Create("Label")
+					empty:SetText("")
+					empty:SetWidth(col.width)
+					self.Content:AddChild(empty)
+				end
+			else
+				local label = TOGBankClassic_UI:Create("Label")
+				label:SetText(colorize(cellText(col.key), completed))
+				label:SetWidth(col.width)
+				label.label:SetHeight(18)
+				label.label:SetJustifyH(justifyForAlign(col and col.align))
+				self.Content:AddChild(label)
+			end
 		end
 
 		count = count + 1
