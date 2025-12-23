@@ -77,15 +77,11 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	buttonContainer:SetUserData("table", {
 		columns = {
 			{
-				width = 0.33,
+				width = 0.5,
 				align = "start",
 			},
 			{
-				width = 0.34,
-				align = "end",
-			},
-			{
-				width = 0.33,
+				width = 0.5,
 				align = "end",
 			},
 		},
@@ -108,15 +104,6 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	searchButton:SetWidth(175)
 	searchButton:SetHeight(24)
 	buttonContainer:AddChild(searchButton)
-
-	local scoreboardButton = TOGBankClassic_UI:Create("Button")
-	scoreboardButton:SetText("Donations")
-	scoreboardButton:SetCallback("OnClick", function(_)
-		TOGBankClassic_UI_Donations:Toggle()
-	end)
-	scoreboardButton:SetWidth(175)
-	scoreboardButton:SetHeight(24)
-	buttonContainer:AddChild(scoreboardButton)
 
 	local requestsButton = TOGBankClassic_UI:Create("Button")
 	requestsButton:SetText("Requests")
