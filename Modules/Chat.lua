@@ -68,15 +68,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	end
 	---END CHANGES
 
-	if self.debug then
-		TOGBankClassic_Core:Print("OnCommReceived:", prefix, "from", sender)
-	end
-
-	if player == sender then
-		if self.debug then
-			TOGBankClassic_Core:Print("OnCommReceived: ignoring own message from", sender)
-		end
+	if player == sender and self.debug then
+		TOGBankClassic_Core:Print("OnCommReceived: (own, ignoring)", prefix, "from", sender)
 		return
+	elseif self.debug then
+		TOGBankClassic_Core:Print("OnCommReceived:", prefix, "from", sender)
 	end
 
 	if prefix == "togbank-v" then
