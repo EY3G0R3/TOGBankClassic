@@ -13,6 +13,7 @@ function TOGBankClassic_Chat:Init()
 	self.last_alt_sync = {}
 	self.sync_queue = {}
 	self.is_syncing = false
+	self.last_share_sync = nil
 
 	TOGBankClassic_Core:RegisterComm("togbank-d", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
@@ -192,6 +193,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				-- only accept alt data if the sender matches the claimed alt name
 				local claimed = data.name
 				local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
+				local hasExistingAlt = false
+				if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
+					local existingAlt = TOGBankClassic_Guild.Info.alts[claimedNorm]
+					hasExistingAlt = existingAlt ~= nil and type(existingAlt) == "table"
+				end
 				if self.debug then
 					TOGBankClassic_Core:Print(
 						"OnCommReceived: togbank-d alt from",
@@ -220,6 +226,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 							allowed = true
 						else
 							allowed = false
+							-- Allow relayed data only when we have no entry yet
+							if not hasExistingAlt then
+								allowed = true
+							end
 						end
 					else
 						-- claimed owner is not a bank toon: accept delegated shares from anyone
@@ -267,6 +277,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if success then
 			TOGBankClassic_Guild:Share("reply")
+			local now = GetServerTime()
+			if not self.last_share_sync or now - self.last_share_sync > 30 then
+				self.last_share_sync = now
+				TOGBankClassic_Events:Sync()
+			end
 		end
 	end
 	if prefix == "togbank-w" then
