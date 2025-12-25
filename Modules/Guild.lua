@@ -756,6 +756,70 @@ function TOGBankClassic_Guild:GetVersion()
 	return data
 end
 
+local PENDING_SYNC_TTL_SECONDS = 180
+
+function TOGBankClassic_Guild:MarkPendingSync(syncType, sender, name)
+	if not syncType or not sender then
+		return
+	end
+	local now = GetServerTime()
+	local normSender = self:NormalizeName(sender)
+	if not self.pending_sync then
+		self.pending_sync = { roster = {}, alts = {} }
+	end
+	if syncType == "roster" then
+		self.pending_sync.roster[normSender] = now
+	elseif syncType == "alt" and name then
+		local normName = self:NormalizeName(name)
+		if not self.pending_sync.alts[normName] then
+			self.pending_sync.alts[normName] = {}
+		end
+		self.pending_sync.alts[normName][normSender] = now
+	end
+end
+
+function TOGBankClassic_Guild:ConsumePendingSync(syncType, sender, name)
+	if not syncType or not sender then
+		return false
+	end
+	if not self.pending_sync then
+		return false
+	end
+	local now = GetServerTime()
+	local normSender = self:NormalizeName(sender)
+	if syncType == "roster" then
+		local roster = self.pending_sync.roster
+		local ts = roster and roster[normSender]
+		if ts and now - ts <= PENDING_SYNC_TTL_SECONDS then
+			roster[normSender] = nil
+			return true
+		end
+		if ts then
+			roster[normSender] = nil
+		end
+		return false
+	end
+	if syncType == "alt" and name then
+		local normName = self:NormalizeName(name)
+		local alts = self.pending_sync.alts and self.pending_sync.alts[normName]
+		local ts = alts and alts[normSender]
+		if ts and now - ts <= PENDING_SYNC_TTL_SECONDS then
+			alts[normSender] = nil
+			if next(alts) == nil then
+				self.pending_sync.alts[normName] = nil
+			end
+			return true
+		end
+		if ts then
+			alts[normSender] = nil
+			if next(alts) == nil then
+				self.pending_sync.alts[normName] = nil
+			end
+		end
+	end
+	return false
+end
+
 function TOGBankClassic_Guild:RequestRosterSync(player, version)
 	self.hasRequested = true
 	if self.requestCount == nil then
@@ -763,6 +827,7 @@ function TOGBankClassic_Guild:RequestRosterSync(player, version)
 	else
 		self.requestCount = self.requestCount + 1
 	end
+	self:MarkPendingSync("roster", player)
 	local data = TOGBankClassic_Core:Serialize({ player = player, type = "roster", version = version })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
@@ -774,6 +839,7 @@ function TOGBankClassic_Guild:RequestAltSync(player, name, version)
 	else
 		self.requestCount = self.requestCount + 1
 	end
+	self:MarkPendingSync("alt", player, name)
 	local data = TOGBankClassic_Core:Serialize({ player = player, type = "alt", name = name, version = version })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end

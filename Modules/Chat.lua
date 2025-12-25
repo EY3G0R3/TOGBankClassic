@@ -172,6 +172,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					and TOGBankClassic_Guild.SenderHasGbankNote
 					and TOGBankClassic_Guild:SenderHasGbankNote(sender)
 				) or TOGBankClassic_Guild:SenderIsGM(sender)
+				if TOGBankClassic_Guild:ConsumePendingSync("roster", sender) then
+					allowed = true
+				end
 				if self.debug then
 					TOGBankClassic_Core:Print(
 						"OnCommReceived: togbank-d roster from",
@@ -235,6 +238,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 						-- claimed owner is not a bank toon: accept delegated shares from anyone
 						allowed = true
 					end
+				end
+				if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
+					allowed = true
 				end
 				if self.debug then
 					TOGBankClassic_Core:Print(
