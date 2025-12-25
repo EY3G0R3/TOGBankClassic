@@ -225,7 +225,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	end
 
 	local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
-	local CancelIcon = "|TInterface\\Buttons\\CancelButton-Up:0|t"
+	local CancelIcon = "|TInterface\\Buttons\\CancelButton-Up:16:16:0:0|t"
 	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local canManage = TOGBankClassic_Guild:CanManageRequests(actor)
 
@@ -272,6 +272,8 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					button:SetWidth(20)
 					button:SetHeight(18)
 					if button.text and button.text.SetJustifyH then
+						button.text:ClearAllPoints()
+						button.text:SetPoint("CENTER")
 						button.text:SetJustifyH("CENTER")
 					end
 					button:SetCallback("OnClick", function()
