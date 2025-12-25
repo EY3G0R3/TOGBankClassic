@@ -7,7 +7,7 @@ local COLUMNS = {
 	{ key = "quantity", label = "#", width = 50, align = "end" },
 	{ key = "item", label = "Item", width = 170, align = "start" },
 	{ key = "fulfilled", label = "Sent", width = 60, align = "start" },
-	{ key = "actions", label = "Action", width = 70, align = "center" },
+	{ key = "actions", label = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:14:14:0:0|t", width = 70, align = "center" },
 }
 
 local function ColumnLayout()
