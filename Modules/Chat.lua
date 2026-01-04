@@ -55,7 +55,7 @@ end
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	if IsInRaid() then
 		if self.debug then
-			TOGBankClassic_Core:Print("OnCommReceived: ignoring prefix", prefix, "from", sender, "(in raid)")
+			TOGBankClassic_Core:Print("Comm: ignoring prefix", prefix, "from", sender, "(in raid)")
 		end
 		return
 	end
@@ -66,17 +66,17 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	---END CHANGES
 
 	if player == sender and self.debug then
-		TOGBankClassic_Core:Print("OnCommReceived: (own, ignoring)", prefix, "from", sender)
+		TOGBankClassic_Core:Print("Comm: (own, ignoring)", prefix, "from", sender)
 		return
 	elseif self.debug then
-		TOGBankClassic_Core:Print("OnCommReceived:", prefix, "from", sender)
+		TOGBankClassic_Core:Print("Comm:", prefix, "from", sender)
 	end
 
 	if prefix == "togbank-v" then
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if not success then
 			if self.debug then
-				TOGBankClassic_Core:Print("OnCommReceived: failed to deserialize togbank-v from", sender)
+				TOGBankClassic_Core:Print("Comm: failed to deserialize togbank-v from", sender)
 			end
 		else
 			local current_data = TOGBankClassic_Guild:GetVersion()
@@ -125,11 +125,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if not success then
 			if self.debug then
-				TOGBankClassic_Core:Print("OnCommReceived: failed to deserialize togbank-r from", sender)
+				TOGBankClassic_Core:Print("Comm: failed to deserialize togbank-r from", sender)
 			end
 		else
 			if self.debug then
-				TOGBankClassic_Core:Print("OnCommReceived: togbank-r: player:", data.player, "type:", data.type)
+				TOGBankClassic_Core:Print("Comm: togbank-r: player:", data.player, "type:", data.type)
 			end
 			if data.player == player then
 				if data.type == "roster" then
@@ -159,11 +159,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if not success then
 			if self.debug then
-				TOGBankClassic_Core:Print("OnCommReceived: failed to deserialize togbank-d from", sender)
+				TOGBankClassic_Core:Print("Comm: failed to deserialize togbank-d from", sender)
 			end
 		else
 			if self.debug then
-				TOGBankClassic_Core:Print("OnCommReceived: togbank-d: type:", data.type)
+				TOGBankClassic_Core:Print("Comm: togbank-d: type:", data.type)
 			end
 			if data.type == "roster" then
 				-- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
