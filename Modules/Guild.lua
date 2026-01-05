@@ -518,7 +518,7 @@ function TOGBankClassic_Guild:AddRequest(request)
 	return true
 end
 
-function TOGBankClassic_Guild:CanManageRequests(actor)
+function TOGBankClassic_Guild:CanManageRequests(actor, actorIsGM)
 	if CanViewOfficerNote and CanViewOfficerNote() then
 		return true
 	end
@@ -527,6 +527,10 @@ function TOGBankClassic_Guild:CanManageRequests(actor)
 
 	if normActor and self.IsBank and self:IsBank(normActor) then
 		return true
+	end
+
+	if actorIsGM ~= nil then
+		return actorIsGM
 	end
 
 	if normActor and self.SenderIsGM and self:SenderIsGM(normActor) then
@@ -551,7 +555,7 @@ function TOGBankClassic_Guild:CanCancelRequest(req, actor)
 	return self:CanManageRequests(normActor)
 end
 
-function TOGBankClassic_Guild:CanCompleteRequest(req, actor)
+function TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
 	if not req or type(req) ~= "table" then
 		return false
 	end
@@ -564,6 +568,10 @@ function TOGBankClassic_Guild:CanCompleteRequest(req, actor)
 	local bank = self:NormalizeName(req.bank)
 	if bank and bank ~= "" and normActor == bank then
 		return true
+	end
+
+	if actorIsGM ~= nil then
+		return actorIsGM
 	end
 
 	if self.SenderIsGM and self:SenderIsGM(normActor) then

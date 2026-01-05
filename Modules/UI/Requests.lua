@@ -378,14 +378,17 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	local CancelIcon = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
 	local CompleteIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
 	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
-	local canManage = TOGBankClassic_Guild:CanManageRequests(actor)
+	local actorIsGM = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
+	local canManage = TOGBankClassic_Guild:CanManageRequests(actor, actorIsGM)
 
 	local count = 0
 	for _, req in ipairs(sorted) do
 		local completed = isComplete(req)
 		local requester = TOGBankClassic_Guild:NormalizeName(req.requester)
 		local canCancel = not completed and (canManage or (actor and requester and actor == requester))
-		local canComplete = not completed and req.id and TOGBankClassic_Guild:CanCompleteRequest(req, actor)
+		local canComplete = not completed
+			and req.id
+			and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
 		local ts = tonumber(req.date or 0) or 0
 		local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
 		if completed then
