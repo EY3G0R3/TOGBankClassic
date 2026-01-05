@@ -14,6 +14,9 @@ local COLUMNS = {
 	{ key = "actions", label = "Actions", width = 70, align = "center" },
 }
 
+local CANCEL_ICON = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
+local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
+
 local function ColumnLayout(contentWidth)
 	local cols = {}
 	local widths = {}
@@ -92,6 +95,17 @@ local function centerButtonText(button)
 		button.text:ClearAllPoints()
 		button.text:SetPoint("CENTER")
 		button.text:SetJustifyH("CENTER")
+	end
+end
+
+local function setWidgetShown(widget, shown)
+	if not widget or not widget.frame then
+		return
+	end
+	if shown then
+		widget.frame:Show()
+	else
+		widget.frame:Hide()
 	end
 end
 
@@ -264,6 +278,9 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 	window:AddChild(tableFrame)
 	self.Content = tableFrame
+	self.HeaderWidgets = nil
+	self.RowPool = nil
+	self.EmptyRow = nil
 	self:UpdateColumnLayout()
 end
 
@@ -312,6 +329,89 @@ function TOGBankClassic_UI_Requests:SortedRequests()
 	return list
 end
 
+function TOGBankClassic_UI_Requests:EnsureRow(index)
+	if not self.Content then
+		return nil
+	end
+
+	self.RowPool = self.RowPool or {}
+	local row = self.RowPool[index]
+	if row then
+		return row
+	end
+
+	row = { cells = {} }
+	for i, col in ipairs(COLUMNS) do
+		if col.key == "actions" then
+			local actionGroup = TOGBankClassic_UI:Create("SimpleGroup")
+			actionGroup:SetLayout("Flow")
+			tagColumnWidget(actionGroup, i, false)
+			self.Content:AddChild(actionGroup)
+
+			local completeButton = TOGBankClassic_UI:Create("Button")
+			completeButton:SetText(COMPLETE_ICON)
+			completeButton:SetWidth(24)
+			completeButton:SetHeight(20)
+			centerButtonText(completeButton)
+			actionGroup:AddChild(completeButton)
+
+			local spacer = TOGBankClassic_UI:Create("Label")
+			spacer:SetText("")
+			spacer:SetWidth(4)
+			actionGroup:AddChild(spacer)
+
+			local cancelButton = TOGBankClassic_UI:Create("Button")
+			cancelButton:SetText(CANCEL_ICON)
+			cancelButton:SetWidth(24)
+			cancelButton:SetHeight(20)
+			centerButtonText(cancelButton)
+			actionGroup:AddChild(cancelButton)
+
+			row.actionGroup = actionGroup
+			row.completeButton = completeButton
+			row.cancelButton = cancelButton
+			row.actionSpacer = spacer
+			row.cells[i] = actionGroup
+		else
+			local label = TOGBankClassic_UI:Create("Label")
+			label.label:SetHeight(18)
+			label.label:SetJustifyH(justifyForAlign(col.align))
+			tagColumnWidget(label, i, false)
+			self.Content:AddChild(label)
+			row.cells[i] = label
+		end
+	end
+
+	self.RowPool[index] = row
+	return row
+end
+
+function TOGBankClassic_UI_Requests:SetRowVisible(row, visible)
+	if not row or not row.cells then
+		return
+	end
+	for _, cell in ipairs(row.cells) do
+		setWidgetShown(cell, visible)
+	end
+end
+
+function TOGBankClassic_UI_Requests:EnsureEmptyLabel()
+	if not self.Content then
+		return nil
+	end
+	if self.EmptyRow then
+		return self.EmptyRow
+	end
+
+	local empty = TOGBankClassic_UI:Create("Label")
+	empty:SetText("No requests yet.")
+	empty:SetFullWidth(true)
+	tagColumnWidget(empty, 1, false)
+	self.Content:AddChild(empty)
+	self.EmptyRow = empty
+	return empty
+end
+
 local function colorize(text, completed)
 	local color = completed and "ff7f7f7f" or "ffffffff"
 	return string.format("|c%s%s|r", color, text)
@@ -324,6 +424,7 @@ function TOGBankClassic_UI_Requests:DrawHeader()
 
 	local ArrowUpIcon = " |TInterface\\Buttons\\Arrow-Up-Up:0|t"
 	local ArrowDownIcon = " |TInterface\\Buttons\\Arrow-Down-Up:0|t"
+	self.HeaderWidgets = self.HeaderWidgets or {}
 
 	for i, col in ipairs(COLUMNS) do
 		local label = col.label
@@ -331,24 +432,31 @@ function TOGBankClassic_UI_Requests:DrawHeader()
 			label = label .. (self.sortDirection == "asc" and ArrowUpIcon or ArrowDownIcon)
 		end
 
-		local button = TOGBankClassic_UI:Create("Button")
+		local button = self.HeaderWidgets[i]
+		if not button then
+			button = TOGBankClassic_UI:Create("Button")
+			self.HeaderWidgets[i] = button
+			tagColumnWidget(button, i, false)
+			if button.text and button.text.SetJustifyH then
+				button.text:SetJustifyH(justifyForAlign(col.align))
+			end
+			local colKey = col.key
+			button:SetCallback("OnClick", function()
+				if self.sortColumn == colKey then
+					self.sortDirection = (self.sortDirection == "asc") and "desc" or "asc"
+				else
+					self.sortColumn = colKey
+					self.sortDirection = "desc"
+				end
+				self:DrawContent()
+			end)
+			self.Content:AddChild(button)
+		end
+
 		button:SetText(label)
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
 		button:SetWidth(columnWidth)
-		tagColumnWidget(button, i, false)
-		if button.text and button.text.SetJustifyH then
-			button.text:SetJustifyH(justifyForAlign(col.align))
-		end
-		button:SetCallback("OnClick", function()
-			if self.sortColumn == col.key then
-				self.sortDirection = (self.sortDirection == "asc") and "desc" or "asc"
-			else
-				self.sortColumn = col.key
-				self.sortDirection = "desc"
-			end
-			self:DrawContent()
-		end)
-		self.Content:AddChild(button)
+		setWidgetShown(button, true)
 	end
 end
 
@@ -357,134 +465,124 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		return
 	end
 
-	self.Content:ReleaseChildren()
+	local content = self.Content
+	content:PauseLayout()
+
 	self.Window:SetStatusText("")
 
 	self:UpdateColumnLayout()
 	self:DrawHeader()
 
 	local sorted = self:SortedRequests()
-	if #sorted == 0 then
-		local empty = TOGBankClassic_UI:Create("Label")
-		empty:SetText("No requests yet.")
-		empty:SetFullWidth(true)
-		tagColumnWidget(empty, 1, false)
-		self.Content:AddChild(empty)
-		self.Window:SetStatusText("0 Requests")
-		return
-	end
-
-	local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
-	local CancelIcon = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
-	local CompleteIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
-	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
-	local actorIsGM = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
-	local canManage = TOGBankClassic_Guild:CanManageRequests(actor, actorIsGM)
-
-	local count = 0
-	for _, req in ipairs(sorted) do
-		local completed = isComplete(req)
-		local requester = TOGBankClassic_Guild:NormalizeName(req.requester)
-		local canCancel = not completed and (canManage or (actor and requester and actor == requester))
-		local canComplete = not completed
-			and req.id
-			and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
-		local ts = tonumber(req.date or 0) or 0
-		local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
-		if completed then
-			dateText = CheckMarkIcon .. dateText
-		end
-		local requestId = req.id
-
-		local function cellText(colKey)
-			if colKey == "date" then
-				return dateText
-			elseif colKey == "requester" then
-				return req.requester or ""
-			elseif colKey == "bank" then
-				return req.bank or ""
-			elseif colKey == "quantity" then
-				local qty = req.quantity
-				if qty == nil or qty == "" then
-					return ""
-				end
-				return tostring(qty) .. "x"
-			elseif colKey == "item" then
-				return req.item or ""
-			elseif colKey == "fulfilled" then
-				return tostring(req.fulfilled or "")
-			elseif colKey == "notes" then
-				return req.notes or ""
+	local count = #sorted
+	if count == 0 then
+		local empty = self:EnsureEmptyLabel()
+		local columnWidth = (self.ColumnWidths and self.ColumnWidths[1]) or COLUMNS[1].width
+		empty:SetWidth(columnWidth)
+		setWidgetShown(empty, true)
+		if self.RowPool then
+			for _, row in ipairs(self.RowPool) do
+				self:SetRowVisible(row, false)
 			end
-			return tostring(req[colKey] or "")
+		end
+	else
+		if self.EmptyRow then
+			setWidgetShown(self.EmptyRow, false)
 		end
 
-		for i, col in ipairs(COLUMNS) do
-			local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
-			if col.key == "actions" then
-				if canComplete or (canCancel and requestId) then
-					local actionGroup = TOGBankClassic_UI:Create("SimpleGroup")
-					actionGroup:SetLayout("Flow")
-					actionGroup:SetWidth(columnWidth)
-					tagColumnWidget(actionGroup, i, false)
+		local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
+		local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+		local actorIsGM = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
+		local canManage = TOGBankClassic_Guild:CanManageRequests(actor, actorIsGM)
 
-					if canComplete then
-						local button = TOGBankClassic_UI:Create("Button")
-						button:SetText(CompleteIcon)
-						button:SetWidth(24)
-						button:SetHeight(20)
-						centerButtonText(button)
-						button:SetCallback("OnClick", function()
-							if not TOGBankClassic_Guild:CompleteRequest(requestId, actor) then
-								self.Window:SetStatusText("Unable to complete request.")
-							end
-						end)
-						actionGroup:AddChild(button)
+		for index, req in ipairs(sorted) do
+			local row = self:EnsureRow(index)
+			self:SetRowVisible(row, true)
+
+			local completed = isComplete(req)
+			local requester = TOGBankClassic_Guild:NormalizeName(req.requester)
+			local canCancel = not completed and (canManage or (actor and requester and actor == requester))
+			local canComplete = not completed
+				and req.id
+				and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
+			local ts = tonumber(req.date or 0) or 0
+			local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
+			if completed then
+				dateText = CheckMarkIcon .. dateText
+			end
+			local requestId = req.id
+
+			local function cellText(colKey)
+				if colKey == "date" then
+					return dateText
+				elseif colKey == "requester" then
+					return req.requester or ""
+				elseif colKey == "bank" then
+					return req.bank or ""
+				elseif colKey == "quantity" then
+					local qty = req.quantity
+					if qty == nil or qty == "" then
+						return ""
 					end
+					return tostring(qty) .. "x"
+				elseif colKey == "item" then
+					return req.item or ""
+				elseif colKey == "fulfilled" then
+					return tostring(req.fulfilled or "")
+				elseif colKey == "notes" then
+					return req.notes or ""
+				end
+				return tostring(req[colKey] or "")
+			end
 
-					if canComplete and canCancel then
-						local spacer = TOGBankClassic_UI:Create("Label")
-						spacer:SetText("")
-						spacer:SetWidth(4)
-						actionGroup:AddChild(spacer)
-					end
+			for i, col in ipairs(COLUMNS) do
+				local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
+				if col.key == "actions" then
+					local showComplete = canComplete and true or false
+					local showCancel = canCancel and requestId and true or false
+					row.actionGroup:SetWidth(columnWidth)
+					setWidgetShown(row.completeButton, showComplete)
+					setWidgetShown(row.cancelButton, showCancel)
+					setWidgetShown(row.actionSpacer, showComplete and showCancel)
 
-					if canCancel and requestId then
-						local button = TOGBankClassic_UI:Create("Button")
-						button:SetText(CancelIcon)
-						button:SetWidth(24)
-						button:SetHeight(20)
-						centerButtonText(button)
-						button:SetCallback("OnClick", function()
-							if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
-								self.Window:SetStatusText("Unable to cancel request.")
-							end
-						end)
-						actionGroup:AddChild(button)
-					end
+					row.completeButton:SetCallback("OnClick", function()
+						if not requestId then
+							return
+						end
+						if not TOGBankClassic_Guild:CompleteRequest(requestId, actor) then
+							self.Window:SetStatusText("Unable to complete request.")
+						end
+					end)
 
-					self.Content:AddChild(actionGroup)
+					row.cancelButton:SetCallback("OnClick", function()
+						if not requestId then
+							return
+						end
+						if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
+							self.Window:SetStatusText("Unable to cancel request.")
+						end
+					end)
+
+					row.actionGroup:DoLayout()
 				else
-					local empty = TOGBankClassic_UI:Create("Label")
-					empty:SetText("")
-					empty:SetWidth(columnWidth)
-					tagColumnWidget(empty, i, false)
-					self.Content:AddChild(empty)
+					local label = row.cells[i]
+					label:SetText(colorize(cellText(col.key), completed))
+					label:SetWidth(columnWidth)
+					setWidgetShown(label, true)
 				end
-			else
-				local label = TOGBankClassic_UI:Create("Label")
-				label:SetText(colorize(cellText(col.key), completed))
-				label:SetWidth(columnWidth)
-				label.label:SetHeight(18)
-				label.label:SetJustifyH(justifyForAlign(col and col.align))
-				tagColumnWidget(label, i, false)
-				self.Content:AddChild(label)
 			end
 		end
 
-		count = count + 1
+		if self.RowPool then
+			for i = count + 1, #self.RowPool do
+				self:SetRowVisible(self.RowPool[i], false)
+			end
+		end
 	end
 
 	local status = string.format("%d Request%s", count, count == 1 and "" or "s")
 	self.Window:SetStatusText(status)
+
+	content:ResumeLayout()
+	content:DoLayout()
 end
