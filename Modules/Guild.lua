@@ -71,6 +71,7 @@ local VALID_REQUEST_STATUS = {
 	open = true,
 	fulfilled = true,
 	cancelled = true,
+	complete = true,
 }
 
 -- Completed/cancelled requests older than this many seconds will be pruned
@@ -118,7 +119,7 @@ local function sanitizeRequest(req)
 	if not VALID_REQUEST_STATUS[status] then
 		status = "open"
 	end
-	if quantity > 0 and fulfilled >= quantity then
+	if quantity > 0 and fulfilled >= quantity and status ~= "cancelled" and status ~= "complete" then
 		status = "fulfilled"
 	end
 
@@ -248,6 +249,7 @@ function TOGBankClassic_Guild:PruneRequests()
 		local quantity = tonumber(req.quantity or 0) or 0
 		local fulfilled = tonumber(req.fulfilled or 0) or 0
 		local isDone = req.status == "fulfilled"
+			or req.status == "complete"
 			or req.status == "cancelled"
 			or (quantity > 0 and fulfilled >= quantity)
 		local tooOld = isDone and (now - updated) > REQUEST_EXPIRY_SECONDS
@@ -549,6 +551,28 @@ function TOGBankClassic_Guild:CanCancelRequest(req, actor)
 	return self:CanManageRequests(normActor)
 end
 
+function TOGBankClassic_Guild:CanCompleteRequest(req, actor)
+	if not req or type(req) ~= "table" then
+		return false
+	end
+
+	local normActor = self:NormalizeName(actor or self:GetPlayer())
+	if not normActor then
+		return false
+	end
+
+	local bank = self:NormalizeName(req.bank)
+	if bank and bank ~= "" and normActor == bank then
+		return true
+	end
+
+	if self.SenderIsGM and self:SenderIsGM(normActor) then
+		return true
+	end
+
+	return false
+end
+
 function TOGBankClassic_Guild:CancelRequest(requestId, actor)
 	if not self.Info or not self.Info.requests then
 		return false
@@ -575,7 +599,7 @@ function TOGBankClassic_Guild:CancelRequest(requestId, actor)
 	if req.status == "cancelled" then
 		return false
 	end
-	if req.status == "fulfilled" or (quantity > 0 and fulfilled >= quantity) then
+	if req.status == "fulfilled" or req.status == "complete" or (quantity > 0 and fulfilled >= quantity) then
 		return false
 	end
 
@@ -586,6 +610,58 @@ function TOGBankClassic_Guild:CancelRequest(requestId, actor)
 
 	local now = GetServerTime()
 	req.status = "cancelled"
+	req.updatedAt = now
+
+	local clean = sanitizeRequest(req)
+	if clean then
+		self.Info.requests[idx] = clean
+	end
+
+	self:BroadcastRequestsUpdate(now)
+
+	return true
+end
+
+function TOGBankClassic_Guild:CompleteRequest(requestId, actor)
+	if not self.Info or not self.Info.requests then
+		return false
+	end
+	if not requestId then
+		return false
+	end
+
+	self:EnsureRequestsInitialized()
+
+	local byId = buildRequestIndex(self.Info.requests)
+	local idx = byId[requestId]
+	if not idx then
+		return false
+	end
+
+	local req = self.Info.requests[idx]
+	if not req then
+		return false
+	end
+
+	local quantity = tonumber(req.quantity or 0) or 0
+	local fulfilled = tonumber(req.fulfilled or 0) or 0
+	if req.status == "cancelled" then
+		return false
+	end
+	if req.status == "complete" then
+		return false
+	end
+	if req.status == "fulfilled" or (quantity > 0 and fulfilled >= quantity) then
+		return false
+	end
+
+	local actorName = actor or self:GetPlayer()
+	if not self:CanCompleteRequest(req, actorName) then
+		return false
+	end
+
+	local now = GetServerTime()
+	req.status = "complete"
 	req.updatedAt = now
 
 	local clean = sanitizeRequest(req)
@@ -1102,8 +1178,8 @@ function TOGBankClassic_Guild:Hello(type)
 				local qty = tonumber(clean.quantity or 0) or 0
 				local fulfilled = tonumber(clean.fulfilled or 0) or 0
 				if qty > 0 then
-					local is_fulfilled = clean.status == "fulfilled" or fulfilled >= qty
-					local is_pending = clean.status == "open" or fulfilled < qty
+					local is_fulfilled = clean.status == "fulfilled" or clean.status == "complete" or fulfilled >= qty
+					local is_pending = clean.status == "open" and fulfilled < qty
 					if is_fulfilled then
 						fulfilled_count = fulfilled_count + 1
 					elseif is_pending then

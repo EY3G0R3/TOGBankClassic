@@ -87,6 +87,14 @@ local function tagColumnWidget(widget, colIndex, keepWidth)
 	widget:SetUserData("togRequestsKeepWidth", keepWidth and true or false)
 end
 
+local function centerButtonText(button)
+	if button.text and button.text.SetJustifyH then
+		button.text:ClearAllPoints()
+		button.text:SetPoint("CENTER")
+		button.text:SetJustifyH("CENTER")
+	end
+end
+
 local function currentContentWidth(self)
 	if self.Content and self.Content.content and self.Content.content.GetWidth then
 		local width = self.Content.content:GetWidth()
@@ -269,7 +277,7 @@ end
 local function isComplete(request)
 	local qty = tonumber(request.quantity or 0) or 0
 	local fulfilled = tonumber(request.fulfilled or 0) or 0
-	if request.status == "cancelled" then
+	if request.status == "cancelled" or request.status == "complete" or request.status == "fulfilled" then
 		return true
 	end
 	return fulfilled >= qty and qty > 0
@@ -368,6 +376,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 	local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
 	local CancelIcon = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
+	local CompleteIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
 	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local canManage = TOGBankClassic_Guild:CanManageRequests(actor)
 
@@ -376,6 +385,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		local completed = isComplete(req)
 		local requester = TOGBankClassic_Guild:NormalizeName(req.requester)
 		local canCancel = not completed and (canManage or (actor and requester and actor == requester))
+		local canComplete = not completed and req.id and TOGBankClassic_Guild:CanCompleteRequest(req, actor)
 		local ts = tonumber(req.date or 0) or 0
 		local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
 		if completed then
@@ -409,23 +419,48 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		for i, col in ipairs(COLUMNS) do
 			local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
 			if col.key == "actions" then
-				if canCancel and requestId then
-					local button = TOGBankClassic_UI:Create("Button")
-					button:SetText(CancelIcon)
-					button:SetWidth(24)
-					button:SetHeight(20)
-					tagColumnWidget(button, i, true)
-					if button.text and button.text.SetJustifyH then
-						button.text:ClearAllPoints()
-						button.text:SetPoint("CENTER")
-						button.text:SetJustifyH("CENTER")
+				if canComplete or (canCancel and requestId) then
+					local actionGroup = TOGBankClassic_UI:Create("SimpleGroup")
+					actionGroup:SetLayout("Flow")
+					actionGroup:SetWidth(columnWidth)
+					tagColumnWidget(actionGroup, i, false)
+
+					if canComplete then
+						local button = TOGBankClassic_UI:Create("Button")
+						button:SetText(CompleteIcon)
+						button:SetWidth(24)
+						button:SetHeight(20)
+						centerButtonText(button)
+						button:SetCallback("OnClick", function()
+							if not TOGBankClassic_Guild:CompleteRequest(requestId, actor) then
+								self.Window:SetStatusText("Unable to complete request.")
+							end
+						end)
+						actionGroup:AddChild(button)
 					end
-					button:SetCallback("OnClick", function()
-						if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
-							self.Window:SetStatusText("Unable to cancel request.")
-						end
-					end)
-					self.Content:AddChild(button)
+
+					if canComplete and canCancel then
+						local spacer = TOGBankClassic_UI:Create("Label")
+						spacer:SetText("")
+						spacer:SetWidth(4)
+						actionGroup:AddChild(spacer)
+					end
+
+					if canCancel and requestId then
+						local button = TOGBankClassic_UI:Create("Button")
+						button:SetText(CancelIcon)
+						button:SetWidth(24)
+						button:SetHeight(20)
+						centerButtonText(button)
+						button:SetCallback("OnClick", function()
+							if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
+								self.Window:SetStatusText("Unable to cancel request.")
+							end
+						end)
+						actionGroup:AddChild(button)
+					end
+
+					self.Content:AddChild(actionGroup)
 				else
 					local empty = TOGBankClassic_UI:Create("Label")
 					empty:SetText("")
