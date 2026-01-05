@@ -56,7 +56,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	local prefixDescriptions = {
 		["togbank-v"] = "Version",
 		["togbank-d"] = "Data",
-		["togbank-r"] = "Request",
+		["togbank-r"] = "Query",
 		["togbank-h"] = "Hello",
 		["togbank-hr"] = "Hello Reply",
 		["togbank-s"] = "Share",
