@@ -120,6 +120,27 @@ local function setWidgetShown(widget, shown)
 	end
 end
 
+local function attachActionTooltip(button, title, detail)
+	if not button or not button.SetCallback then
+		return
+	end
+	button:SetCallback("OnEnter", function()
+		if not button.frame then
+			return
+		end
+		GameTooltip:SetOwner(button.frame, "ANCHOR_RIGHT")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine(title or "")
+		if detail and detail ~= "" then
+			GameTooltip:AddLine(detail, 0.9, 0.9, 0.9, true)
+		end
+		GameTooltip:Show()
+	end)
+	button:SetCallback("OnLeave", function()
+		TOGBankClassic_UI:HideTooltip()
+	end)
+end
+
 local function currentContentWidth(self)
 	if self.Content and self.Content.content and self.Content.content.GetWidth then
 		local width = self.Content.content:GetWidth()
@@ -364,6 +385,7 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			completeButton:SetWidth(24)
 			completeButton:SetHeight(20)
 			centerButtonText(completeButton)
+			attachActionTooltip(completeButton, "Complete request", "Marks the request as completed by the bank.")
 			actionGroup:AddChild(completeButton)
 
 			local spacer = TOGBankClassic_UI:Create("Label")
@@ -376,6 +398,7 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			cancelButton:SetWidth(24)
 			cancelButton:SetHeight(20)
 			centerButtonText(cancelButton)
+			attachActionTooltip(cancelButton, "Cancel request", "Cancels the request without fulfilling it.")
 			actionGroup:AddChild(cancelButton)
 
 			row.actionGroup = actionGroup
