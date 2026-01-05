@@ -144,11 +144,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if not success then
 			if self.debug then
-				TOGBankClassic_Core:Print("Comm: failed to deserialize togbank-r from", sender)
+				TOGBankClassic_Core:Print("Comm: failed to deserialize togbank-r (Query) from", sender)
 			end
 		else
 			if self.debug then
-				TOGBankClassic_Core:Print("Comm: togbank-r: player:", data.player, "type:", data.type)
+				TOGBankClassic_Core:Print("Comm: togbank-r: (Query) from player:", data.player, "type:", data.type)
 			end
 			if data.player == player then
 				if data.type == "roster" then
@@ -165,6 +165,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 
 				if data.type == "alt" then
 					local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
+					if self.debug then
+						TOGBankClassic_Core:Print("Comm:", data.player, "requests bank data about", nameNorm)
+					end
 					table.insert(self.sync_queue, nameNorm)
 					if not self.is_syncing then
 						TOGBankClassic_Chat:ProcessQueue()
@@ -198,7 +201,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					TOGBankClassic_Core:Print(
 						"OnCommReceived: togbank-d roster from",
 						sender,
-						"allowed=",
+						"allowed:",
 						tostring(allowed)
 					)
 				end
@@ -221,14 +224,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					hasExistingAlt = existingAlt ~= nil and type(existingAlt) == "table"
 				end
 				if self.debug then
-					TOGBankClassic_Core:Print(
-						"OnCommReceived: togbank-d alt from",
-						sender,
-						"claims",
-						claimed,
-						"normClaim=",
-						claimedNorm
-					)
+					TOGBankClassic_Core:Print("Comm:", sender, "shares bank data about", claimedNorm)
 				end
 				-- 'sender' was normalized near the top of this function
 				local allowed = false
@@ -263,13 +259,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				end
 				if self.debug then
 					TOGBankClassic_Core:Print(
-						"OnCommReceived: alt allowed=",
-						tostring(allowed),
+						"Comm: alt data about",
+						claimedNorm,
 						"from",
 						sender,
-						"claimedNorm=",
-						claimedNorm,
-						"claimedIsBank=",
+						"allowed:",
+						tostring(allowed),
+						"isBank:",
 						tostring(claimedIsBank)
 					)
 				end
@@ -396,10 +392,10 @@ end
 
 function TOGBankClassic_Chat:ShowHelp()
 	TOGBankClassic_Core:Print(
-		"\n|cff33ff99Commands:|r\n|cffe6cc80/togbank|r (to display the GBankClassic interface) \n|cffe6cc80/togbank help|r (this message) \n|cffe6cc80/togbank sync|r (to manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically) \n|cffe6cc80/togbank share|r (to manually share the contents of your guild bank with other online users of GBankClassic; this is done every 3 minutes automatically), \n|cffe6cc80/togbank reset|r (to reset your own GBankClassic database)\n"
+		"\n|cff33ff99Commands:|r\n|cffe6cc80/togbank|r (to display the TOGBankClassic interface) \n|cffe6cc80/togbank help|r (this message) \n|cffe6cc80/togbank sync|r (to manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically) \n|cffe6cc80/togbank share|r (to manually share the contents of your guild bank with other online users of TOGBankClassic; this is done every 3 minutes automatically), \n|cffe6cc80/togbank reset|r (to reset your own TOGBankClassic database)\n"
 	)
 	TOGBankClassic_Core:Print(
-		"\n|cff33ff99Expert commands:|r\n|cffe6cc80/togbank roster|r (guild banks and members that can read the officer note can use this command to share updated roster data with online guild members)\n|cffe6cc80/togbank hello|r (understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserliazed addon communication)\n|cffe6cc80/togbank wipe|r (reset your own GBankClassic database)\n|cffe6cc80/togbank wipeall|r (officer only: reset your own GBankClassic database and that of all online guild members)"
+		"\n|cff33ff99Expert commands:|r\n|cffe6cc80/togbank roster|r (guild banks and members that can read the officer note can use this command to share updated roster data with online guild members)\n|cffe6cc80/togbank hello|r (understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserliazed addon communication)\n|cffe6cc80/togbank wipe|r (reset your own TOGBankClassic database)\n|cffe6cc80/togbank wipeall|r (officer only: reset your own TOGBankClassic database and that of all online guild members)"
 	)
 	TOGBankClassic_Core:Print(
 		"\n|cff33ff99Instructions for setting up a new guild bank:|r\n1. Log in with the guild bank character, ensuring they are in the guild.\n2. Add |cffe6cc80gbank|r to their guild or officer note, then type |cffe6cc80/reload|r.\n3. In addon options (Escape -> Options -> Addons -> TOGBankClassic), click on the |cffe6cc80-|r icon (expand/collapse) to the left of the entry, enable reporting and scanning for the bank character in the |cffe6cc80Bank|r section.\n4. Open and close your bags and bank.\n5. Type |cffe6cc80/togbank roster|r and confirm your bank character is included in the sent roster.\n6. Type |cffe6cc80/reload|r.  Wait up to 3 minutes (or type |cffe6cc80/togbank share|r for immediate sharing) until |cffe6cc80Sharing guild bank data...|r completes.\n7. Verify with a guild member (they type |cffe6cc80/togbank|r).\n"
