@@ -1,8 +1,8 @@
 TOGBankClassic_UI_Requests = {}
 
-local MIN_WIDTH = 880
 local COLUMN_SPACING_H = 5
 local COLUMN_SPACING_V = 2
+local CONTENT_WIDTH_PADDING = 60
 
 local COLUMNS = {
 	{ key = "date", label = "Date", width = 140, align = "center" },
@@ -11,8 +11,19 @@ local COLUMNS = {
 	{ key = "quantity", label = "#", width = 50, align = "end" },
 	{ key = "item", label = "Item", width = 170, align = "start", flex = true, weight = 2 },
 	{ key = "fulfilled", label = "Sent", width = 60, align = "start" },
-	{ key = "actions", label = "Actions", width = 70, align = "center" },
+	{ key = "actions", label = "Actions", width = 90, align = "center" },
 }
+
+local function minContentWidth()
+	local total = 0
+	for _, col in ipairs(COLUMNS) do
+		total = total + (col.width or 0)
+	end
+	total = total + COLUMN_SPACING_H * (#COLUMNS - 1)
+	return total
+end
+
+local MIN_WIDTH = minContentWidth() + CONTENT_WIDTH_PADDING
 
 local CANCEL_ICON = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
 local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
@@ -119,10 +130,10 @@ local function currentContentWidth(self)
 	if self.Window and self.Window.frame and self.Window.frame.GetWidth then
 		local width = self.Window.frame:GetWidth()
 		if width and width > 0 then
-			return width - 34
+			return width - CONTENT_WIDTH_PADDING
 		end
 	end
-	return MIN_WIDTH - 34
+	return MIN_WIDTH - CONTENT_WIDTH_PADDING
 end
 
 function TOGBankClassic_UI_Requests:Init()
@@ -263,7 +274,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	local tableFrame = TOGBankClassic_UI:Create("ScrollFrame")
 	tableFrame:SetLayout("Table")
 	tableFrame:SetUserData("table", {
-		columns = ColumnLayout(MIN_WIDTH - 34),
+		columns = ColumnLayout(MIN_WIDTH - CONTENT_WIDTH_PADDING),
 		spaceH = COLUMN_SPACING_H,
 		spaceV = COLUMN_SPACING_V,
 	})
@@ -492,25 +503,24 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 		local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
 		local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
-		local actorIsGM = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
-		local canManage = TOGBankClassic_Guild:CanManageRequests(actor, actorIsGM)
 
 		for index, req in ipairs(sorted) do
 			local row = self:EnsureRow(index)
 			self:SetRowVisible(row, true)
 
 			local completed = isComplete(req)
-			local requester = TOGBankClassic_Guild:NormalizeName(req.requester)
-			local canCancel = not completed and (canManage or (actor and requester and actor == requester))
+			local requestId = req.id
+			local canCancel = not completed
+				and requestId
+				and TOGBankClassic_Guild:CanCancelRequest(req, actor)
 			local canComplete = not completed
-				and req.id
-				and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
+				and requestId
+				and TOGBankClassic_Guild:CanCompleteRequest(req, actor)
 			local ts = tonumber(req.date or 0) or 0
 			local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
 			if completed then
 				dateText = CheckMarkIcon .. dateText
 			end
-			local requestId = req.id
 
 			local function cellText(colKey)
 				if colKey == "date" then
@@ -539,7 +549,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
 				if col.key == "actions" then
 					local showComplete = canComplete and true or false
-					local showCancel = canCancel and requestId and true or false
+					local showCancel = canCancel and true or false
 					row.actionGroup:SetWidth(columnWidth)
 					setWidgetShown(row.completeButton, showComplete)
 					setWidgetShown(row.cancelButton, showCancel)
