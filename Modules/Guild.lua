@@ -15,17 +15,38 @@ local function NormalizePlayerName(name)
 	if not name then
 		return nil
 	end
+	if type(name) ~= "string" then
+		name = tostring(name)
+	end
+	local trimmed = string.gsub(name, "^%s+", "")
+	trimmed = string.gsub(trimmed, "%s+$", "")
+	if trimmed == "" then
+		return nil
+	end
 	-- Canonicalize hyphen spacing: convert "Name - Realm" or "Name- Realm" to "Name-Realm"
-	local normalized = string.gsub(name, "%s*%-%s*", "-")
-	if string.match(normalized, "^(.-)%-(.-)$") then
-		return normalized
+	local normalized = string.gsub(trimmed, "%s*%-%s*", "-")
+	local left, right = string.match(normalized, "^(.-)%-(.-)$")
+	if left and right then
+		if left == "" then
+			return nil
+		end
+		if string.lower(left) == "unknown" then
+			return "Unknown"
+		end
+		if right ~= "" then
+			return normalized
+		end
+		normalized = left
+	end
+	if string.lower(normalized) == "unknown" then
+		return "Unknown"
 	end
 	-- If helper exists, use it
 	if GetPlayerWithNormalizedRealm then
-		return GetPlayerWithNormalizedRealm(name)
+		return GetPlayerWithNormalizedRealm(normalized)
 	end
 	-- Fallback: append current realm
-	return name .. "-" .. GetNormalizedRealmName("player")
+	return normalized .. "-" .. GetNormalizedRealmName("player")
 end
 -- expose for other modules
 TOGBankClassic_Guild.NormalizePlayerName = NormalizePlayerName
