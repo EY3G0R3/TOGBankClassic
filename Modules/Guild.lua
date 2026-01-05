@@ -652,7 +652,6 @@ function TOGBankClassic_Guild:FulfillRequest(bank, requester, itemName, count)
 end
 
 function TOGBankClassic_Guild:GetBanks()
-	local hasBanks = false
 	local banks = {}
 
 	for i = 1, GetNumGuildMembers() do
@@ -666,11 +665,10 @@ function TOGBankClassic_Guild:GetBanks()
 				--local player, _ = string.match(name, "(.*)%-(.*)")
 				table.insert(banks, name)
 				---END CHANGES
-				hasBanks = true
 			end
 		end
 	end
-	if not hasBanks then
+	if #banks == 0 then
 		return nil
 	end
 	return banks
