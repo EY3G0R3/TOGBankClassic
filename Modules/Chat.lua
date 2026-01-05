@@ -53,9 +53,28 @@ function TOGBankClassic_Chat:Init()
 end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
+	local prefixDescriptions = {
+		["togbank-v"] = "Version",
+		["togbank-d"] = "Data",
+		["togbank-r"] = "Request",
+		["togbank-h"] = "Hello",
+		["togbank-hr"] = "Hello Reply",
+		["togbank-s"] = "Share",
+		["togbank-sr"] = "Share Reply",
+		["togbank-w"] = "Wipe",
+		["togbank-wr"] = "Wipe Reply",
+	}
+	local prefixDesc = prefixDescriptions[prefix] or "Unknown"
 	if IsInRaid() then
 		if self.debug then
-			TOGBankClassic_Core:Print("Comm: ignoring prefix", prefix, "from", sender, "(in raid)")
+			TOGBankClassic_Core:Print(
+				"Comm: ignoring prefix",
+				prefix,
+				"(" .. prefixDesc .. ")",
+				"from",
+				sender,
+				"(in raid)"
+			)
 		end
 		return
 	end
@@ -66,10 +85,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	---END CHANGES
 
 	if player == sender and self.debug then
-		TOGBankClassic_Core:Print("Comm: (own, ignoring)", prefix, "from", sender)
+		TOGBankClassic_Core:Print("Comm: (own, ignoring)", prefix, "(" .. prefixDesc .. ")", "from", sender)
 		return
 	elseif self.debug then
-		TOGBankClassic_Core:Print("Comm:", prefix, "from", sender)
+		TOGBankClassic_Core:Print("Comm:", prefix, "(" .. prefixDesc .. ")", "from", sender)
 	end
 
 	if prefix == "togbank-v" then
