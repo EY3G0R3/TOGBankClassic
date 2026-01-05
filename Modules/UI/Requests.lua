@@ -79,6 +79,14 @@ local function OnClose(_)
 	end
 end
 
+local function tagColumnWidget(widget, colIndex, keepWidth)
+	if not widget or not widget.SetUserData then
+		return
+	end
+	widget:SetUserData("togRequestsColIndex", colIndex)
+	widget:SetUserData("togRequestsKeepWidth", keepWidth and true or false)
+end
+
 local function currentContentWidth(self)
 	if self.Content and self.Content.content and self.Content.content.GetWidth then
 		local width = self.Content.content:GetWidth()
@@ -150,6 +158,27 @@ function TOGBankClassic_UI_Requests:Close()
 	end
 end
 
+function TOGBankClassic_UI_Requests:ApplyColumnWidths()
+	if not self.Content or not self.ColumnWidths then
+		return
+	end
+
+	local widths = self.ColumnWidths
+	local children = self.Content.children
+	if not children then
+		return
+	end
+
+	for _, child in ipairs(children) do
+		if child and child.SetWidth then
+			local colIndex = child:GetUserData("togRequestsColIndex")
+			if colIndex and widths[colIndex] and not child:GetUserData("togRequestsKeepWidth") then
+				child:SetWidth(widths[colIndex])
+			end
+		end
+	end
+end
+
 function TOGBankClassic_UI_Requests:UpdateColumnLayout()
 	if not self.Content then
 		return
@@ -183,7 +212,9 @@ function TOGBankClassic_UI_Requests:HandleResize()
 		return
 	end
 
-	self:DrawContent()
+	self:UpdateColumnLayout()
+	self:ApplyColumnWidths()
+	self.Content:DoLayout()
 end
 
 function TOGBankClassic_UI_Requests:DrawWindow()
@@ -296,6 +327,7 @@ function TOGBankClassic_UI_Requests:DrawHeader()
 		button:SetText(label)
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
 		button:SetWidth(columnWidth)
+		tagColumnWidget(button, i, false)
 		if button.text and button.text.SetJustifyH then
 			button.text:SetJustifyH(justifyForAlign(col.align))
 		end
@@ -328,6 +360,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		local empty = TOGBankClassic_UI:Create("Label")
 		empty:SetText("No requests yet.")
 		empty:SetFullWidth(true)
+		tagColumnWidget(empty, 1, false)
 		self.Content:AddChild(empty)
 		self.Window:SetStatusText("0 Requests")
 		return
@@ -381,6 +414,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					button:SetText(CancelIcon)
 					button:SetWidth(24)
 					button:SetHeight(20)
+					tagColumnWidget(button, i, true)
 					if button.text and button.text.SetJustifyH then
 						button.text:ClearAllPoints()
 						button.text:SetPoint("CENTER")
@@ -396,6 +430,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					local empty = TOGBankClassic_UI:Create("Label")
 					empty:SetText("")
 					empty:SetWidth(columnWidth)
+					tagColumnWidget(empty, i, false)
 					self.Content:AddChild(empty)
 				end
 			else
@@ -404,6 +439,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				label:SetWidth(columnWidth)
 				label.label:SetHeight(18)
 				label.label:SetJustifyH(justifyForAlign(col and col.align))
+				tagColumnWidget(label, i, false)
 				self.Content:AddChild(label)
 			end
 		end
