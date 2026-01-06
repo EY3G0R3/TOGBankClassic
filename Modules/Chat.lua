@@ -100,7 +100,7 @@ function TOGBankClassic_Chat:IsAltDataAllowed_Permissive(_, _)
 end
 
 function TOGBankClassic_Chat:IsAltDataAllowed(sender, claimedNorm)
-	return self:IsAltDataAllowed_Restrictive(sender, claimedNorm)
+	return self:IsAltDataAllowed_Permissive(sender, claimedNorm)
 end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
