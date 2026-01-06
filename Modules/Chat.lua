@@ -314,6 +314,10 @@ function TOGBankClassic_Chat:ChatCommand(input)
 			["help"] = function()
 				TOGBankClassic_Chat:ShowHelp()
 			end,
+			["version"] = function()
+				local version = GetAddOnMetadata("TOGBankClassic", "Version") or "unknown"
+				TOGBankClassic_Core:Print("TOGBankClassic version:", version)
+			end,
 			["debug"] = function()
 				self.debug = not self.debug
 				TOGBankClassic_Core:Print("Debug:", tostring(self.debug))
