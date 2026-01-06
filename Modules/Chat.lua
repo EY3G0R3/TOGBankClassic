@@ -59,6 +59,50 @@ function TOGBankClassic_Chat:Debug(...)
 	return false
 end
 
+function TOGBankClassic_Chat:IsAltDataAllowed_Restrictive(sender, claimedNorm)
+	-- 'sender' was normalized near the top of OnCommReceived
+	local hasExistingAlt = false
+	if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
+		local existingAlt = TOGBankClassic_Guild.Info.alts[claimedNorm]
+		hasExistingAlt = existingAlt ~= nil and type(existingAlt) == "table"
+	end
+	local allowed = false
+	-- If the sender is the claimed owner, always accept
+	if sender == claimedNorm then
+		allowed = true
+	else
+		-- If the claimed owner is a registered bank toon, only accept from bank-marked senders
+		local claimedIsBank = TOGBankClassic_Guild:IsBank(claimedNorm)
+		if claimedIsBank then
+			if
+				TOGBankClassic_Guild
+				and TOGBankClassic_Guild.SenderHasGbankNote
+				and TOGBankClassic_Guild:SenderHasGbankNote(sender)
+			then
+				allowed = true
+			else
+				allowed = false
+				-- Allow relayed data only when we have no entry yet
+				if not hasExistingAlt then
+					allowed = true
+				end
+			end
+		else
+			-- claimed owner is not a bank toon: accept delegated shares from anyone
+			allowed = true
+		end
+	end
+	return allowed
+end
+
+function TOGBankClassic_Chat:IsAltDataAllowed_Permissive(_, _)
+	return true
+end
+
+function TOGBankClassic_Chat:IsAltDataAllowed(sender, claimedNorm)
+	return self:IsAltDataAllowed_Restrictive(sender, claimedNorm)
+end
+
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	local prefixDescriptions = {
 		["togbank-v"] = "(Version)",
@@ -194,54 +238,19 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				-- only accept alt data if the sender matches the claimed alt name
 				local claimed = data.name
 				local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
-				local hasExistingAlt = false
-				if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
-					local existingAlt = TOGBankClassic_Guild.Info.alts[claimedNorm]
-					hasExistingAlt = existingAlt ~= nil and type(existingAlt) == "table"
-				end
-				self:Debug("  >>>  ", sender, "shares bank data about", claimedNorm)
-				-- 'sender' was normalized near the top of this function
-				local allowed = false
-				local claimedIsBank = false
-				-- If the sender is the claimed owner, always accept
-				if sender == claimedNorm then
-					allowed = true
-				else
-					-- If the claimed owner is a registered bank toon, only accept from bank-marked senders
-					claimedIsBank = TOGBankClassic_Guild:IsBank(claimedNorm)
-					if claimedIsBank then
-						if
-							TOGBankClassic_Guild
-							and TOGBankClassic_Guild.SenderHasGbankNote
-							and TOGBankClassic_Guild:SenderHasGbankNote(sender)
-						then
-							allowed = true
-						else
-							allowed = false
-							-- Allow relayed data only when we have no entry yet
-							if not hasExistingAlt then
-								allowed = true
-							end
-						end
-					else
-						-- claimed owner is not a bank toon: accept delegated shares from anyone
-						allowed = true
-					end
-				end
+				local allowed = self:IsAltDataAllowed(sender, claimedNorm)
 				if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
 					allowed = true
 				end
 				self:Debug(
-					"Comm: alt data about",
-					claimedNorm,
-					"from",
+					"  >>>  ",
 					sender,
-					"allowed:",
-					tostring(allowed),
-					"isBank:",
-					tostring(claimedIsBank)
+					"shares bank data about",
+					claimedNorm .. ". We",
+					allowed and "accept it." or "do not accept it."
 				)
 				if allowed then
+					-- this can still result in nothing because ReceiveAltData() compares the timestamps
 					TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
 				else
 					-- ignore spoofed alt data
