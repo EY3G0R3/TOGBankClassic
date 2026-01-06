@@ -81,7 +81,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
 	if player == sender and self.debug then
-		TOGBankClassic_Core:Print("Comm: (own, ignoring)", prefix, "(" .. prefixDesc .. ")", "from", sender)
+		TOGBankClassic_Core:Print("Comm: //own,ignoring//", prefix, "(" .. prefixDesc .. ")", "from", sender)
 		return
 	elseif self.debug then
 		TOGBankClassic_Core:Print("Comm:", prefix, "(" .. prefixDesc .. ")", "from", sender)
@@ -144,7 +144,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			end
 		else
 			if self.debug then
-				TOGBankClassic_Core:Print("Comm: togbank-r: (Query) from player:", data.player, "type:", data.type)
+				TOGBankClassic_Core:Print("  >>>  ", sender, "queries", data.type, "data from", data.player)
 			end
 			if data.player == player then
 				if data.type == "roster" then
@@ -162,7 +162,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				if data.type == "alt" then
 					local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
 					if self.debug then
-						TOGBankClassic_Core:Print("Comm:", data.player, "requests bank data about", nameNorm)
+						TOGBankClassic_Core:Print("  >>>  ", "Bank of interest:", nameNorm)
 					end
 					table.insert(self.sync_queue, nameNorm)
 					if not self.is_syncing then
@@ -219,9 +219,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					local existingAlt = TOGBankClassic_Guild.Info.alts[claimedNorm]
 					hasExistingAlt = existingAlt ~= nil and type(existingAlt) == "table"
 				end
-				if self.debug then
-					TOGBankClassic_Core:Print("Comm:", sender, "shares bank data about", claimedNorm)
-				end
+				self:Debug("  >>>  ", sender, "shares bank data about", claimedNorm)
 				-- 'sender' was normalized near the top of this function
 				local allowed = false
 				local claimedIsBank = false
