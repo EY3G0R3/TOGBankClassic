@@ -240,7 +240,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		if not success then
 			self:Debug("Comm: failed to deserialize togbank-d from", ColorPlayerName(sender))
 		else
-			self:Debug("Comm: togbank-d: type:", data.type)
 			if data.type == "roster" then
 				-- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
 				local allowed = (
@@ -252,10 +251,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					allowed = true
 				end
 				self:Debug(
-					"OnCommReceived: togbank-d roster from",
+					"  >>>  ",
 					ColorPlayerName(sender),
-					"allowed:",
-					tostring(allowed)
+					"shares roster data. We",
+					allowed and "accept it." or "do not accept it."
 				)
 				if allowed then
 					TOGBankClassic_Guild:ReceiveRosterData(data.roster)
@@ -263,6 +262,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			end
 
 			if data.type == "requests" then
+				self:Debug(
+					"  >>>  ",
+					ColorPlayerName(sender),
+					"shares requests data. We accept it by default."
+				)
 				TOGBankClassic_Guild:ReceiveRequestsData(data)
 			end
 
