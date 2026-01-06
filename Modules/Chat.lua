@@ -52,23 +52,23 @@ end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	local prefixDescriptions = {
-		["togbank-v"] = "Version",
-		["togbank-d"] = "Data",
-		["togbank-r"] = "Query",
-		["togbank-h"] = "Hello",
-		["togbank-hr"] = "Hello Reply",
-		["togbank-s"] = "Share",
-		["togbank-sr"] = "Share Reply",
-		["togbank-w"] = "Wipe",
-		["togbank-wr"] = "Wipe Reply",
+		["togbank-v"] = "(Version)",
+		["togbank-d"] = "(Data)",
+		["togbank-r"] = "(Query)",
+		["togbank-h"] = "(Hello)",
+		["togbank-hr"] = "(Hello Reply)",
+		["togbank-s"] = "(Share)",
+		["togbank-sr"] = "(Share Reply)",
+		["togbank-w"] = "(Wipe)",
+		["togbank-wr"] = "(Wipe Reply)",
 	}
-	local prefixDesc = prefixDescriptions[prefix] or "Unknown"
+	local prefixDesc = prefixDescriptions[prefix] or "(Unknown)"
 	if IsInRaid() then
 		if self.debug then
 			TOGBankClassic_Core:Print(
 				"Comm: ignoring prefix",
 				prefix,
-				"(" .. prefixDesc .. ")",
+				prefixDesc,
 				"from",
 				sender,
 				"(in raid)"
@@ -81,10 +81,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
 	if player == sender and self.debug then
-		TOGBankClassic_Core:Print("Comm: //own,ignoring//", prefix, "(" .. prefixDesc .. ")", "from", sender)
+		TOGBankClassic_Core:Print("Comm: //own,ignoring//", prefix, prefixDesc, "from", sender)
 		return
 	elseif self.debug then
-		TOGBankClassic_Core:Print("Comm:", prefix, "(" .. prefixDesc .. ")", "from", sender)
+		TOGBankClassic_Core:Print("Comm:", prefix, prefixDesc, "from", sender)
 	end
 
 	if prefix == "togbank-v" then
