@@ -59,6 +59,26 @@ function TOGBankClassic_Chat:Debug(...)
 	return false
 end
 
+local function ColorPlayerName(name)
+	if not name or name == "" then
+		return ""
+	end
+	local normalized = name
+	if TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizeName then
+		normalized = TOGBankClassic_Guild:NormalizeName(name) or name
+	end
+	if TOGBankClassic_Guild and TOGBankClassic_Guild.GetPlayerInfo then
+		local class = TOGBankClassic_Guild:GetPlayerInfo(normalized)
+		if class then
+			local _, _, _, color = GetClassColor(class)
+			if color then
+				return string.format("|c%s%s|r", color, name)
+			end
+		end
+	end
+	return string.format("|cff80bfff%s|r", name)
+end
+
 function TOGBankClassic_Chat:IsAltDataAllowed_Restrictive(sender, claimedNorm)
 	-- 'sender' was normalized near the top of OnCommReceived
 	local hasExistingAlt = false
@@ -117,7 +137,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	}
 	local prefixDesc = prefixDescriptions[prefix] or "(Unknown)"
 	if IsInRaid() then
-		self:Debug("Comm: ignoring prefix", prefix, prefixDesc, "from", sender, "(in raid)")
+		self:Debug("Comm: ignoring prefix", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
 		return
 	end
 	local player = TOGBankClassic_Guild:GetPlayer()
@@ -125,15 +145,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
 	if player == sender then
-		self:Debug("Comm: //own,ignoring//", prefix, prefixDesc, "from", sender)
+		self:Debug("Comm: //own,ignoring//", prefix, prefixDesc, "from", ColorPlayerName(sender))
 		return
 	end
-	self:Debug("Comm:", prefix, prefixDesc, "from", sender)
+	self:Debug("Comm:", prefix, prefixDesc, "from", ColorPlayerName(sender))
 
 	if prefix == "togbank-v" then
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if not success then
-			self:Debug("Comm: failed to deserialize togbank-v from", sender)
+			self:Debug("Comm: failed to deserialize togbank-v from", ColorPlayerName(sender))
 		else
 			local current_data = TOGBankClassic_Guild:GetVersion()
 			if current_data then
@@ -180,9 +200,16 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	if prefix == "togbank-r" then
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if not success then
-			self:Debug("Comm: failed to deserialize togbank-r (Query) from", sender)
+			self:Debug("Comm: failed to deserialize togbank-r (Query) from", ColorPlayerName(sender))
 		else
-			self:Debug("  >>>  ", sender, "queries", data.type, "data from", data.player)
+			self:Debug(
+				"  >>>  ",
+				ColorPlayerName(sender),
+				"queries",
+				data.type,
+				"data from",
+				ColorPlayerName(data.player)
+			)
 			if data.player == player then
 				if data.type == "roster" then
 					local time = GetServerTime()
@@ -198,7 +225,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 
 				if data.type == "alt" then
 					local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
-					self:Debug("  >>>  ", "Bank of interest:", nameNorm)
+					self:Debug("  >>>  ", "Bank of interest:", ColorPlayerName(nameNorm))
 					table.insert(self.sync_queue, nameNorm)
 					if not self.is_syncing then
 						TOGBankClassic_Chat:ProcessQueue()
@@ -211,7 +238,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	if prefix == "togbank-d" then
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if not success then
-			self:Debug("Comm: failed to deserialize togbank-d from", sender)
+			self:Debug("Comm: failed to deserialize togbank-d from", ColorPlayerName(sender))
 		else
 			self:Debug("Comm: togbank-d: type:", data.type)
 			if data.type == "roster" then
@@ -224,7 +251,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				if TOGBankClassic_Guild:ConsumePendingSync("roster", sender) then
 					allowed = true
 				end
-				self:Debug("OnCommReceived: togbank-d roster from", sender, "allowed:", tostring(allowed))
+				self:Debug(
+					"OnCommReceived: togbank-d roster from",
+					ColorPlayerName(sender),
+					"allowed:",
+					tostring(allowed)
+				)
 				if allowed then
 					TOGBankClassic_Guild:ReceiveRosterData(data.roster)
 				end
@@ -244,9 +276,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				end
 				self:Debug(
 					"  >>>  ",
-					sender,
+					ColorPlayerName(sender),
 					"shares bank data about",
-					claimedNorm .. ". We",
+					ColorPlayerName(claimedNorm) .. ". We",
 					allowed and "accept it." or "do not accept it."
 				)
 				if allowed then
