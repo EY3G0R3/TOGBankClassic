@@ -27,7 +27,6 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
-	---START CHANGES
 	TOGBankClassic_Core:RegisterComm("togbank-h", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -49,7 +48,6 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Core:RegisterComm("togbank-wr", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
-	---END CHANGES
 end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
@@ -79,10 +77,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		return
 	end
 	local player = TOGBankClassic_Guild:GetPlayer()
-	---START CHANGES
 	-- Normalize the sender so spacing/hyphen formats match
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
-	---END CHANGES
 
 	if player == sender and self.debug then
 		TOGBankClassic_Core:Print("Comm: (own, ignoring)", prefix, "(" .. prefixDesc .. ")", "from", sender)
@@ -279,7 +275,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		end
 	end
 
-	---START CHANGES
 	if prefix == "togbank-h" then
 		local success, data = TOGBankClassic_Core:Deserialize(message)
 		if success then
@@ -311,7 +306,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			TOGBankClassic_Guild:Wipe("reply")
 		end
 	end
-	---END CHANGES
 end
 
 function TOGBankClassic_Chat:ChatCommand(input)
@@ -322,7 +316,6 @@ function TOGBankClassic_Chat:ChatCommand(input)
 			["sync"] = function()
 				TOGBankClassic_Events:Sync()
 			end,
-			---START CHANGES
 			["reset"] = function()
 				local guild = TOGBankClassic_Guild:GetGuild()
 				if not guild then
@@ -375,7 +368,6 @@ function TOGBankClassic_Chat:ChatCommand(input)
 			["roster"] = function()
 				TOGBankClassic_Guild:AuthorRosterData()
 			end,
-			---END CHANGES
 		}
 
 		local prefix, _ = TOGBankClassic_Core:GetArgs(input, 1)
