@@ -113,10 +113,23 @@ local function setWidgetShown(widget, shown)
 	if not widget or not widget.frame then
 		return
 	end
+	local frame = widget.frame
+	if not frame.togRequestsOrigShow then
+		frame.togRequestsOrigShow = frame.Show
+	end
 	if shown then
-		widget.frame:Show()
+		if frame.togRequestsHidden then
+			frame.Show = frame.togRequestsOrigShow
+			frame.togRequestsHidden = false
+		end
+		frame:Show()
 	else
-		widget.frame:Hide()
+		if not frame.togRequestsHidden then
+			-- AceGUI Flow layout calls frame:Show() during layout; override to keep hidden.
+			frame.togRequestsHidden = true
+			frame.Show = function() end
+		end
+		frame:Hide()
 	end
 end
 
