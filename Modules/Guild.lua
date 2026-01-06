@@ -1219,7 +1219,9 @@ function TOGBankClassic_Guild:Hello(type)
 			hello = hello .. "\n" .. "Pending requests for bank alts: none."
 		end
 
-		TOGBankClassic_Core:Print(hello)
+		if type ~= "reply" then
+			TOGBankClassic_Core:Print(hello)
+		end
 		local data = TOGBankClassic_Core:Serialize(hello)
 		if type ~= "reply" then
 			TOGBankClassic_Core:SendCommMessage("togbank-h", data, "Guild", nil, "BULK")
