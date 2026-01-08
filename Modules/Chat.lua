@@ -386,7 +386,8 @@ function TOGBankClassic_Chat:ChatCommand(input)
 		if cmd ~= nil then
 			cmd()
 		else
-			TOGBankClassic_UI_Inventory:Toggle()
+			TOGBankClassic_Core:Print("Unknown command: ", prefix)
+			TOGBankClassic_Chat:ShowHelp()
 		end
 	end
 
