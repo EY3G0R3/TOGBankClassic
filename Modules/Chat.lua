@@ -148,49 +148,51 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		self:Debug("Comm: //own,ignoring//", prefix, prefixDesc, "from", ColorPlayerName(sender))
 		return
 	end
+
 	self:Debug("Comm:", prefix, prefixDesc, "from", ColorPlayerName(sender))
 
+	local success, data = TOGBankClassic_Core:Deserialize(message)
+	if not success then
+		self:Debug("Comm: failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender))
+		return
+	end
+
 	if prefix == "togbank-v" then
-		local success, data = TOGBankClassic_Core:Deserialize(message)
-		if not success then
-			self:Debug("Comm: failed to deserialize togbank-v from", ColorPlayerName(sender))
-		else
-			local current_data = TOGBankClassic_Guild:GetVersion()
-			if current_data then
-				if data.name then
-					if current_data.name ~= data.name then
-						TOGBankClassic_Core:Print("A non-guild version!")
-						return
+		local current_data = TOGBankClassic_Guild:GetVersion()
+		if current_data then
+			if data.name then
+				if current_data.name ~= data.name then
+					TOGBankClassic_Core:Print("A non-guild version!")
+					return
+				end
+			end
+			if data.addon and current_data.addon then
+				if data.addon > current_data.addon then
+					if not self.addon_outdated then
+						-- only make the callout once
+						self.addon_outdated = true
+						TOGBankClassic_Core:Print(
+							"A newer version is available! Download it from https://www.curseforge.com/wow/addons/togbankclassic/"
+						)
 					end
 				end
-				if data.addon and current_data.addon then
-					if data.addon > current_data.addon then
-						if not self.addon_outdated then
-							-- only make the callout once
-							self.addon_outdated = true
-							TOGBankClassic_Core:Print(
-								"A newer version is available! Download it from https://www.curseforge.com/wow/addons/togbankclassic/"
-							)
-						end
-					end
+			end
+			if data.roster then
+				if current_data.roster == nil or data.roster > current_data.roster then
+					TOGBankClassic_Guild:RequestRosterSync(sender, data.roster)
 				end
-				if data.roster then
-					if current_data.roster == nil or data.roster > current_data.roster then
-						TOGBankClassic_Guild:RequestRosterSync(sender, data.roster)
-					end
+			end
+			if data.requests then
+				local currentRequests = current_data.requests
+				if currentRequests == nil or data.requests > currentRequests then
+					TOGBankClassic_Guild:RequestRequestsSync(sender, data.requests)
 				end
-				if data.requests then
-					local currentRequests = current_data.requests
-					if currentRequests == nil or data.requests > currentRequests then
-						TOGBankClassic_Guild:RequestRequestsSync(sender, data.requests)
-					end
-				end
-				if data.alts then
-					for k, v in pairs(data.alts) do
-						local kNorm = TOGBankClassic_Guild:NormalizeName(k)
-						if not current_data.alts[kNorm] or v > current_data.alts[kNorm] then
-							TOGBankClassic_Guild:RequestAltSync(sender, kNorm, v)
-						end
+			end
+			if data.alts then
+				for k, v in pairs(data.alts) do
+					local kNorm = TOGBankClassic_Guild:NormalizeName(k)
+					if not current_data.alts[kNorm] or v > current_data.alts[kNorm] then
+						TOGBankClassic_Guild:RequestAltSync(sender, kNorm, v)
 					end
 				end
 			end
@@ -198,132 +200,116 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	end
 
 	if prefix == "togbank-r" then
-		local success, data = TOGBankClassic_Core:Deserialize(message)
-		if not success then
-			self:Debug("Comm: failed to deserialize togbank-r (Query) from", ColorPlayerName(sender))
-		else
-			self:Debug(
-				"  >>>  ",
-				ColorPlayerName(sender),
-				"queries",
-				data.type,
-				"data from",
-				ColorPlayerName(data.player)
-			)
-			if data.player == player then
-				if data.type == "roster" then
-					local time = GetServerTime()
-					if self.last_roster_sync == nil or time - self.last_roster_sync > 300 then
-						self.last_roster_sync = time
-						TOGBankClassic_Guild:SendRosterData()
-					end
-				end
+		self:Debug(
+			"  >>>  ",
+			ColorPlayerName(sender),
+			"queries",
+			data.type,
+			"data from",
+			ColorPlayerName(data.player)
+		)
 
-				if data.type == "requests" then
-					TOGBankClassic_Guild:SendRequestsData()
-				end
+		if data.type == "alt" then
+			local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
+			self:Debug("  >>>  ", "Bank of interest:", ColorPlayerName(nameNorm))
+		end
 
-				if data.type == "alt" then
-					local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
-					self:Debug("  >>>  ", "Bank of interest:", ColorPlayerName(nameNorm))
-					table.insert(self.sync_queue, nameNorm)
-					if not self.is_syncing then
-						TOGBankClassic_Chat:ProcessQueue()
-					end
+		if data.player == player then
+			if data.type == "roster" then
+				local time = GetServerTime()
+				if self.last_roster_sync == nil or time - self.last_roster_sync > 300 then
+					self.last_roster_sync = time
+					TOGBankClassic_Guild:SendRosterData()
+				end
+			end
+
+			if data.type == "requests" then
+				TOGBankClassic_Guild:SendRequestsData()
+			end
+
+			if data.type == "alt" then
+				local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
+				self:Debug("  >>>  ", "Bank of interest:", ColorPlayerName(nameNorm))
+				table.insert(self.sync_queue, nameNorm)
+				if not self.is_syncing then
+					TOGBankClassic_Chat:ProcessQueue()
 				end
 			end
 		end
 	end
 
 	if prefix == "togbank-d" then
-		local success, data = TOGBankClassic_Core:Deserialize(message)
-		if not success then
-			self:Debug("Comm: failed to deserialize togbank-d from", ColorPlayerName(sender))
-		else
-			if data.type == "roster" then
-				-- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
-				local allowed = (
-					TOGBankClassic_Guild
-					and TOGBankClassic_Guild.SenderHasGbankNote
-					and TOGBankClassic_Guild:SenderHasGbankNote(sender)
-				) or TOGBankClassic_Guild:SenderIsGM(sender)
-				if TOGBankClassic_Guild:ConsumePendingSync("roster", sender) then
-					allowed = true
-				end
-				self:Debug(
-					"  >>>  ",
-					ColorPlayerName(sender),
-					"shares roster data. We",
-					allowed and "accept it." or "do not accept it."
-				)
-				if allowed then
-					TOGBankClassic_Guild:ReceiveRosterData(data.roster)
-				end
+		if data.type == "roster" then
+			-- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
+			local allowed = (
+				TOGBankClassic_Guild
+				and TOGBankClassic_Guild.SenderHasGbankNote
+				and TOGBankClassic_Guild:SenderHasGbankNote(sender)
+			) or TOGBankClassic_Guild:SenderIsGM(sender)
+			if TOGBankClassic_Guild:ConsumePendingSync("roster", sender) then
+				allowed = true
 			end
-
-			if data.type == "requests" then
-				self:Debug(
-					"  >>>  ",
-					ColorPlayerName(sender),
-					"shares requests data. We accept it by default."
-				)
-				TOGBankClassic_Guild:ReceiveRequestsData(data)
+			self:Debug(
+				"  >>>  ",
+				ColorPlayerName(sender),
+				"shares roster data. We",
+				allowed and "accept it." or "do not accept it."
+			)
+			if allowed then
+				TOGBankClassic_Guild:ReceiveRosterData(data.roster)
 			end
+		end
 
-			if data.type == "alt" then
-				-- only accept alt data if the sender matches the claimed alt name
-				local claimed = data.name
-				local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
-				local allowed = self:IsAltDataAllowed(sender, claimedNorm)
-				if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
-					allowed = true
-				end
-				self:Debug(
-					"  >>>  ",
-					ColorPlayerName(sender),
-					"shares bank data about",
-					ColorPlayerName(claimedNorm) .. ". We",
-					allowed and "accept it." or "do not accept it."
-				)
-				if allowed then
-					-- this can still result in nothing because ReceiveAltData() compares the timestamps
-					TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
-				else
-					-- ignore spoofed alt data
-					return
-				end
+		if data.type == "requests" then
+			self:Debug(
+				"  >>>  ",
+				ColorPlayerName(sender),
+				"shares requests data. We accept it by default."
+			)
+			TOGBankClassic_Guild:ReceiveRequestsData(data)
+		end
+
+		if data.type == "alt" then
+			-- only accept alt data if the sender matches the claimed alt name
+			local claimed = data.name
+			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
+			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
+			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
+				allowed = true
+			end
+			self:Debug(
+				"  >>>  ",
+				ColorPlayerName(sender),
+				"shares bank data about",
+				ColorPlayerName(claimedNorm) .. ". We",
+				allowed and "accept it." or "do not accept it."
+			)
+			if allowed then
+				-- this can still result in nothing because ReceiveAltData() compares the timestamps
+				TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
+			else
+				-- ignore spoofed alt data
+				return
 			end
 		end
 	end
 
 	if prefix == "togbank-h" then
-		local success, data = TOGBankClassic_Core:Deserialize(message)
-		if success then
-			TOGBankClassic_Guild:Hello("reply")
-		end
+		TOGBankClassic_Guild:Hello("reply")
 	end
 	if prefix == "togbank-hr" then
-		local success, data = TOGBankClassic_Core:Deserialize(message)
-		if success then
-			self:Debug(data)
-		end
+		self:Debug(data)
 	end
 	if prefix == "togbank-s" then
-		local success, data = TOGBankClassic_Core:Deserialize(message)
-		if success then
-			TOGBankClassic_Guild:Share("reply")
-			local now = GetServerTime()
-			if not self.last_share_sync or now - self.last_share_sync > 30 then
-				self.last_share_sync = now
-				TOGBankClassic_Events:Sync()
-			end
+		TOGBankClassic_Guild:Share("reply")
+		local now = GetServerTime()
+		if not self.last_share_sync or now - self.last_share_sync > 30 then
+			self.last_share_sync = now
+			TOGBankClassic_Events:Sync()
 		end
 	end
 	if prefix == "togbank-w" then
-		local success, data = TOGBankClassic_Core:Deserialize(message)
-		if success then
-			TOGBankClassic_Guild:Wipe("reply")
-		end
+		TOGBankClassic_Guild:Wipe("reply")
 	end
 end
 
