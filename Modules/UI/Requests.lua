@@ -234,18 +234,23 @@ function TOGBankClassic_UI_Requests:ApplyColumnWidths()
 	end
 
 	local widths = self.ColumnWidths
-	local children = self.Content.children
-	if not children then
-		return
-	end
-
-	for _, child in ipairs(children) do
-		if child and child.SetWidth then
-			local colIndex = child:GetUserData("togRequestsColIndex")
-			if colIndex and widths[colIndex] and not child:GetUserData("togRequestsKeepWidth") then
-				child:SetWidth(widths[colIndex])
+	local function applyTo(children)
+		if not children then
+			return
+		end
+		for _, child in ipairs(children) do
+			if child and child.SetWidth then
+				local colIndex = child:GetUserData("togRequestsColIndex")
+				if colIndex and widths[colIndex] and not child:GetUserData("togRequestsKeepWidth") then
+					child:SetWidth(widths[colIndex])
+				end
 			end
 		end
+	end
+
+	applyTo(self.Content.children)
+	if self.HeaderGroup then
+		applyTo(self.HeaderGroup.children)
 	end
 end
 
@@ -256,13 +261,19 @@ function TOGBankClassic_UI_Requests:UpdateColumnLayout()
 
 	local width = currentContentWidth(self)
 	local columns, widths = ColumnLayout(width)
-	local tableData = self.Content:GetUserData("table") or {}
+	local function applyTable(group)
+		if not group then
+			return
+		end
+		local tableData = group:GetUserData("table") or {}
+		tableData.columns = columns
+		tableData.spaceH = COLUMN_SPACING_H
+		tableData.spaceV = COLUMN_SPACING_V
+		group:SetUserData("table", tableData)
+	end
 
-	tableData.columns = columns
-	tableData.spaceH = COLUMN_SPACING_H
-	tableData.spaceV = COLUMN_SPACING_V
-
-	self.Content:SetUserData("table", tableData)
+	applyTable(self.Content)
+	applyTable(self.HeaderGroup)
 	self.ColumnWidths = widths
 	self.lastLayoutWidth = math.floor((width or 0) + 0.5)
 end
@@ -284,7 +295,29 @@ function TOGBankClassic_UI_Requests:HandleResize()
 
 	self:UpdateColumnLayout()
 	self:ApplyColumnWidths()
+	if self.HeaderGroup then
+		self.HeaderGroup:DoLayout()
+	end
+	self:AdjustTableHeight()
 	self.Content:DoLayout()
+end
+
+function TOGBankClassic_UI_Requests:AdjustTableHeight()
+	if not self.Window or not self.Window.content or not self.Content then
+		return
+	end
+
+	local contentHeight = self.Window.content:GetHeight() or 0
+	local headerHeight = 0
+	if self.HeaderGroup and self.HeaderGroup.frame then
+		headerHeight = self.HeaderGroup.frame:GetHeight() or 0
+	end
+	local gap = 3 -- AceGUI Flow row spacing
+	local height = contentHeight - headerHeight - gap
+	if height < 50 then
+		height = 50
+	end
+	self.Content:SetHeight(height)
 end
 
 function TOGBankClassic_UI_Requests:DrawWindow()
@@ -308,51 +341,21 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	end
 	self.Window = window
 
-	local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
-	filterGroup:SetLayout("Table")
-	filterGroup:SetUserData("table", {
-		columns = {
-			{ width = 0.5, align = "start" },
-			{ width = 0.5, align = "start" },
-		},
-		spaceH = 10,
+	local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")
+	headerGroup:SetLayout("Table")
+	headerGroup:SetUserData("table", {
+		columns = ColumnLayout(MIN_WIDTH - CONTENT_WIDTH_PADDING),
+		spaceH = COLUMN_SPACING_H,
+		spaceV = COLUMN_SPACING_V,
 	})
-	filterGroup:SetFullWidth(true)
-	window:AddChild(filterGroup)
-
-	local requesterFilter = TOGBankClassic_UI:Create("Dropdown")
-	requesterFilter:SetLabel("Requester")
-	requesterFilter:SetFullWidth(true)
-	requesterFilter:SetCallback("OnValueChanged", function(_, _, value)
-		if value == FILTER_ANY then
-			self.requesterFilter = nil
-		else
-			self.requesterFilter = value
-		end
-		self:DrawContent()
-	end)
-	filterGroup:AddChild(requesterFilter)
-	self.FilterRequester = requesterFilter
-
-	local bankFilter = TOGBankClassic_UI:Create("Dropdown")
-	bankFilter:SetLabel("Bank")
-	bankFilter:SetFullWidth(true)
-	bankFilter:SetCallback("OnValueChanged", function(_, _, value)
-		if value == FILTER_ANY then
-			self.bankFilter = nil
-		else
-			self.bankFilter = value
-		end
-		self:DrawContent()
-	end)
-	filterGroup:AddChild(bankFilter)
-	self.FilterBank = bankFilter
-
-	local scrollGroup = TOGBankClassic_UI:Create("SimpleGroup")
-	scrollGroup:SetLayout("Fill")
-	scrollGroup:SetFullWidth(true)
-	scrollGroup:SetFullHeight(true)
-	window:AddChild(scrollGroup)
+	headerGroup:SetFullWidth(true)
+	if headerGroup.content and headerGroup.content.SetPoint then
+		headerGroup.content:ClearAllPoints()
+		headerGroup.content:SetPoint("TOPLEFT", 8, 0)
+		headerGroup.content:SetPoint("BOTTOMRIGHT", 0, 0)
+	end
+	window:AddChild(headerGroup)
+	self.HeaderGroup = headerGroup
 
 	local tableFrame = TOGBankClassic_UI:Create("ScrollFrame")
 	tableFrame:SetLayout("Table")
@@ -370,9 +373,12 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	tableFrame.scrollbar:SetPoint("TOPLEFT", tableFrame.scrollframe, "TOPRIGHT", -6, -12)
 	tableFrame.scrollbar:SetPoint("BOTTOMLEFT", tableFrame.scrollframe, "BOTTOMRIGHT", -6, 22)
 
-	scrollGroup:AddChild(tableFrame)
+	window:AddChild(tableFrame)
 	self.Content = tableFrame
 	self.HeaderWidgets = nil
+	self.FilterWidgets = nil
+	self.FilterRequester = nil
+	self.FilterBank = nil
 	self.RowPool = nil
 	self.EmptyRow = nil
 	self:UpdateColumnLayout()
@@ -603,21 +609,15 @@ local function colorize(text, completed)
 	return string.format("|c%s%s|r", color, text)
 end
 
-function TOGBankClassic_UI_Requests:DrawHeader()
-	if not self.Content then
+function TOGBankClassic_UI_Requests:EnsureHeaderRows()
+	if not self.HeaderGroup then
 		return
 	end
 
-	local ArrowUpIcon = " |TInterface\\Buttons\\Arrow-Up-Up:0|t"
-	local ArrowDownIcon = " |TInterface\\Buttons\\Arrow-Down-Up:0|t"
 	self.HeaderWidgets = self.HeaderWidgets or {}
+	self.FilterWidgets = self.FilterWidgets or {}
 
 	for i, col in ipairs(COLUMNS) do
-		local label = col.label
-		if self.sortColumn == col.key then
-			label = label .. (self.sortDirection == "asc" and ArrowUpIcon or ArrowDownIcon)
-		end
-
 		local button = self.HeaderWidgets[i]
 		if not button then
 			button = TOGBankClassic_UI:Create("Button")
@@ -636,13 +636,79 @@ function TOGBankClassic_UI_Requests:DrawHeader()
 				end
 				self:DrawContent()
 			end)
-			self.Content:AddChild(button)
+			self.HeaderGroup:AddChild(button)
 		end
+	end
+
+	for i, col in ipairs(COLUMNS) do
+		local widget = self.FilterWidgets[i]
+		if not widget then
+			if col.key == "requester" then
+				local requesterFilter = TOGBankClassic_UI:Create("Dropdown")
+				requesterFilter:SetCallback("OnValueChanged", function(_, _, value)
+					if value == FILTER_ANY then
+						self.requesterFilter = nil
+					else
+						self.requesterFilter = value
+					end
+					self:DrawContent()
+				end)
+				widget = requesterFilter
+				self.FilterRequester = requesterFilter
+			elseif col.key == "bank" then
+				local bankFilter = TOGBankClassic_UI:Create("Dropdown")
+				bankFilter:SetCallback("OnValueChanged", function(_, _, value)
+					if value == FILTER_ANY then
+						self.bankFilter = nil
+					else
+						self.bankFilter = value
+					end
+					self:DrawContent()
+				end)
+				widget = bankFilter
+				self.FilterBank = bankFilter
+			else
+				local spacer = TOGBankClassic_UI:Create("Label")
+				spacer:SetText("")
+				widget = spacer
+			end
+
+			tagColumnWidget(widget, i, false)
+			self.FilterWidgets[i] = widget
+			self.HeaderGroup:AddChild(widget)
+		end
+	end
+end
+
+function TOGBankClassic_UI_Requests:DrawHeader()
+	if not self.HeaderGroup then
+		return
+	end
+
+	local ArrowUpIcon = " |TInterface\\Buttons\\Arrow-Up-Up:0|t"
+	local ArrowDownIcon = " |TInterface\\Buttons\\Arrow-Down-Up:0|t"
+	self:EnsureHeaderRows()
+
+	for i, col in ipairs(COLUMNS) do
+		local label = col.label
+		if self.sortColumn == col.key then
+			label = label .. (self.sortDirection == "asc" and ArrowUpIcon or ArrowDownIcon)
+		end
+		local button = self.HeaderWidgets[i]
 
 		button:SetText(label)
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
 		button:SetWidth(columnWidth)
 		setWidgetShown(button, true)
+	end
+
+	for i, _ in ipairs(COLUMNS) do
+		local widget = self.FilterWidgets[i]
+		if widget and widget.SetWidth then
+			local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or COLUMNS[i].width
+			widget:SetWidth(columnWidth)
+			setWidgetShown(widget, true)
+		end
 	end
 end
 
@@ -706,6 +772,10 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	self:UpdateColumnLayout()
 	self:DrawHeader()
 	self:UpdateFilters()
+	if self.HeaderGroup then
+		self.HeaderGroup:DoLayout()
+	end
+	self:AdjustTableHeight()
 
 	local sorted = self:SortedRequests()
 	sorted = self:ApplyFilters(sorted)
