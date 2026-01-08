@@ -532,7 +532,7 @@ local function buildRequesterOptions(currentPlayer, requesterCounts)
 		list[FILTER_SEPARATOR_ME_ANY] = FILTER_SEPARATOR_LABEL
 		table.insert(order, FILTER_SEPARATOR_ME_ANY)
 	end
-	list[FILTER_ANY] = "Any"
+	list[FILTER_ANY] = "Any Requester"
 	table.insert(order, FILTER_ANY)
 
 	local names = {}
@@ -563,7 +563,7 @@ local function buildBankOptions(currentPlayer, bankCounts)
 		list[FILTER_SEPARATOR_ME_ANY] = FILTER_SEPARATOR_LABEL
 		table.insert(order, FILTER_SEPARATOR_ME_ANY)
 	end
-	list[FILTER_ANY] = "Any"
+	list[FILTER_ANY] = "Any Bank"
 	table.insert(order, FILTER_ANY)
 
 	local names = {}
