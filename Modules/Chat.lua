@@ -137,7 +137,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	}
 	local prefixDesc = prefixDescriptions[prefix] or "(Unknown)"
 	if IsInRaid() then
-		self:Debug("Comm: ignoring prefix", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
+		self:Debug("> /ignoring/", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
 		return
 	end
 	local player = TOGBankClassic_Guild:GetPlayer()
@@ -145,16 +145,19 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
 	if player == sender then
-		self:Debug("Comm: //own,ignoring//", prefix, prefixDesc, "from", ColorPlayerName(sender))
+		self:Debug("> /ignoring/", prefix, prefixDesc, "(our own)")
 		return
 	end
 
-	self:Debug("Comm:", prefix, prefixDesc, "from", ColorPlayerName(sender))
-
 	local success, data = TOGBankClassic_Core:Deserialize(message)
 	if not success then
-		self:Debug("Comm: failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender))
+		self:Debug("> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender))
 		return
+	end
+
+	if prefix ~= "togbank-r" and prefix ~= "togbank-d" then
+		-- togbank-r and togbank-d do their own output
+		self:Debug(">", ColorPlayerName(sender), ">", prefix, prefixDesc)
 	end
 
 	if prefix == "togbank-v" then
@@ -179,12 +182,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			end
 			if data.roster then
 				if current_data.roster == nil or data.roster > current_data.roster then
+					self:Debug(">", ColorPlayerName(sender), "has fresher roster data, querying.")
 					TOGBankClassic_Guild:RequestRosterSync(sender, data.roster)
 				end
 			end
 			if data.requests then
 				local currentRequests = current_data.requests
 				if currentRequests == nil or data.requests > currentRequests then
+					self:Debug(">", ColorPlayerName(sender), "has fresher requests data, querying.")
 					TOGBankClassic_Guild:RequestRequestsSync(sender, data.requests)
 				end
 			end
@@ -192,6 +197,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				for k, v in pairs(data.alts) do
 					local kNorm = TOGBankClassic_Guild:NormalizeName(k)
 					if not current_data.alts[kNorm] or v > current_data.alts[kNorm] then
+						self:Debug(
+							">",
+							ColorPlayerName(sender),
+							"has fresher alt data for",
+							ColorPlayerName(kNorm) .. ", querying."
+						)
 						TOGBankClassic_Guild:RequestAltSync(sender, kNorm, v)
 					end
 				end
@@ -201,18 +212,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 
 	if prefix == "togbank-r" then
 		self:Debug(
-			"  >>>  ",
+			">",
 			ColorPlayerName(sender),
 			"queries",
+			ColorPlayerName(data.player),
+			"about",
 			data.type,
-			"data from",
-			ColorPlayerName(data.player)
+			data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or ""
 		)
-
-		if data.type == "alt" then
-			local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
-			self:Debug("  >>>  ", "Bank of interest:", ColorPlayerName(nameNorm))
-		end
 
 		if data.player == player then
 			if data.type == "roster" then
@@ -229,7 +236,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 
 			if data.type == "alt" then
 				local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
-				self:Debug("  >>>  ", "Bank of interest:", ColorPlayerName(nameNorm))
 				table.insert(self.sync_queue, nameNorm)
 				if not self.is_syncing then
 					TOGBankClassic_Chat:ProcessQueue()
@@ -261,11 +267,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		end
 
 		if data.type == "requests" then
-			self:Debug(
-				"  >>>  ",
-				ColorPlayerName(sender),
-				"shares requests data. We accept it by default."
-			)
+			self:Debug("  >>>  ", ColorPlayerName(sender), "shares requests data. We accept it by default.")
 			TOGBankClassic_Guild:ReceiveRequestsData(data)
 		end
 
