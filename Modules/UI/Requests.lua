@@ -27,6 +27,7 @@ local MIN_WIDTH = minContentWidth() + CONTENT_WIDTH_PADDING
 
 local CANCEL_ICON = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
 local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
+local FILTER_ANY = "__tog_any__"
 
 local function ColumnLayout(contentWidth)
 	local cols = {}
@@ -173,6 +174,8 @@ end
 function TOGBankClassic_UI_Requests:Init()
 	self.sortColumn = "date"
 	self.sortDirection = "desc"
+	self.requesterFilter = nil
+	self.bankFilter = nil
 	self:DrawWindow()
 end
 
@@ -289,7 +292,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	window:Hide()
 	window:SetCallback("OnClose", OnClose)
 	window:SetTitle("Requests")
-	window:SetLayout("Fill")
+	window:SetLayout("Flow")
 	window:SetWidth(MIN_WIDTH)
 	window:EnableResize(true)
 	if window.frame.SetResizeBounds then
@@ -304,6 +307,52 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		end)
 	end
 	self.Window = window
+
+	local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
+	filterGroup:SetLayout("Table")
+	filterGroup:SetUserData("table", {
+		columns = {
+			{ width = 0.5, align = "start" },
+			{ width = 0.5, align = "start" },
+		},
+		spaceH = 10,
+	})
+	filterGroup:SetFullWidth(true)
+	window:AddChild(filterGroup)
+
+	local requesterFilter = TOGBankClassic_UI:Create("Dropdown")
+	requesterFilter:SetLabel("Requester")
+	requesterFilter:SetFullWidth(true)
+	requesterFilter:SetCallback("OnValueChanged", function(_, _, value)
+		if value == FILTER_ANY then
+			self.requesterFilter = nil
+		else
+			self.requesterFilter = value
+		end
+		self:DrawContent()
+	end)
+	filterGroup:AddChild(requesterFilter)
+	self.FilterRequester = requesterFilter
+
+	local bankFilter = TOGBankClassic_UI:Create("Dropdown")
+	bankFilter:SetLabel("Bank")
+	bankFilter:SetFullWidth(true)
+	bankFilter:SetCallback("OnValueChanged", function(_, _, value)
+		if value == FILTER_ANY then
+			self.bankFilter = nil
+		else
+			self.bankFilter = value
+		end
+		self:DrawContent()
+	end)
+	filterGroup:AddChild(bankFilter)
+	self.FilterBank = bankFilter
+
+	local scrollGroup = TOGBankClassic_UI:Create("SimpleGroup")
+	scrollGroup:SetLayout("Fill")
+	scrollGroup:SetFullWidth(true)
+	scrollGroup:SetFullHeight(true)
+	window:AddChild(scrollGroup)
 
 	local tableFrame = TOGBankClassic_UI:Create("ScrollFrame")
 	tableFrame:SetLayout("Table")
@@ -321,7 +370,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	tableFrame.scrollbar:SetPoint("TOPLEFT", tableFrame.scrollframe, "TOPRIGHT", -6, -12)
 	tableFrame.scrollbar:SetPoint("BOTTOMLEFT", tableFrame.scrollframe, "BOTTOMRIGHT", -6, 22)
 
-	window:AddChild(tableFrame)
+	scrollGroup:AddChild(tableFrame)
 	self.Content = tableFrame
 	self.HeaderWidgets = nil
 	self.RowPool = nil
@@ -343,6 +392,96 @@ local function isComplete(request)
 		return true
 	end
 	return fulfilled >= qty and qty > 0
+end
+
+local function isPending(request)
+	if not request then
+		return false
+	end
+	local qty = tonumber(request.quantity or 0) or 0
+	if qty <= 0 then
+		return false
+	end
+	local fulfilled = tonumber(request.fulfilled or 0) or 0
+	if (request.status or "open") ~= "open" then
+		return false
+	end
+	return fulfilled < qty
+end
+
+local function pendingCounts(requests)
+	local requesterCounts = {}
+	local bankCounts = {}
+	for _, req in ipairs(requests or {}) do
+		if isPending(req) then
+			local requester = req.requester
+			if requester and requester ~= "" then
+				requesterCounts[requester] = (requesterCounts[requester] or 0) + 1
+			end
+			local bank = req.bank
+			if bank and bank ~= "" then
+				bankCounts[bank] = (bankCounts[bank] or 0) + 1
+			end
+		end
+	end
+	return requesterCounts, bankCounts
+end
+
+local function buildRequesterOptions(currentPlayer, requesterCounts)
+	local list = {}
+	local order = {}
+	if currentPlayer and currentPlayer ~= "" then
+		list[currentPlayer] = currentPlayer
+		table.insert(order, currentPlayer)
+	end
+	list[FILTER_ANY] = "Any"
+	table.insert(order, FILTER_ANY)
+
+	local names = {}
+	for name in pairs(requesterCounts or {}) do
+		if name ~= currentPlayer then
+			table.insert(names, name)
+		end
+	end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		list[name] = string.format("%d %s", requesterCounts[name], name)
+		table.insert(order, name)
+	end
+
+	return list, order
+end
+
+local function buildBankOptions(currentPlayer, bankCounts)
+	local list = {}
+	local order = {}
+	if currentPlayer and currentPlayer ~= "" then
+		list[currentPlayer] = currentPlayer
+		table.insert(order, currentPlayer)
+	end
+	list[FILTER_ANY] = "Any"
+	table.insert(order, FILTER_ANY)
+
+	local names = {}
+	for name in pairs(bankCounts or {}) do
+		if name ~= currentPlayer then
+			table.insert(names, name)
+		end
+	end
+	table.sort(names, function(a, b)
+		local countA = bankCounts[a] or 0
+		local countB = bankCounts[b] or 0
+		if countA == countB then
+			return tostring(a) < tostring(b)
+		end
+		return countA > countB
+	end)
+	for _, name in ipairs(names) do
+		list[name] = string.format("(%d) %s", bankCounts[name], name)
+		table.insert(order, name)
+	end
+
+	return list, order
 end
 
 function TOGBankClassic_UI_Requests:SortedRequests()
@@ -507,6 +646,53 @@ function TOGBankClassic_UI_Requests:DrawHeader()
 	end
 end
 
+function TOGBankClassic_UI_Requests:UpdateFilters()
+	if not self.FilterRequester or not self.FilterBank then
+		return
+	end
+
+	local info = TOGBankClassic_Guild.Info
+	local requests = info and info.requests or {}
+	local requesterCounts, bankCounts = pendingCounts(requests)
+	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+
+	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
+	self.FilterRequester:SetList(requesterList, requesterOrder)
+
+	local bankList, bankOrder = buildBankOptions(currentPlayer, bankCounts)
+	self.FilterBank:SetList(bankList, bankOrder)
+
+	local requesterValue = self.requesterFilter or FILTER_ANY
+	if requesterValue ~= FILTER_ANY and not requesterList[requesterValue] then
+		self.requesterFilter = nil
+		requesterValue = FILTER_ANY
+	end
+	self.FilterRequester:SetValue(requesterValue)
+
+	local bankValue = self.bankFilter or FILTER_ANY
+	if bankValue ~= FILTER_ANY and not bankList[bankValue] then
+		self.bankFilter = nil
+		bankValue = FILTER_ANY
+	end
+	self.FilterBank:SetValue(bankValue)
+end
+
+function TOGBankClassic_UI_Requests:ApplyFilters(requests)
+	if not self.requesterFilter and not self.bankFilter then
+		return requests
+	end
+
+	local filtered = {}
+	for _, req in ipairs(requests or {}) do
+		if (not self.requesterFilter or req.requester == self.requesterFilter)
+			and (not self.bankFilter or req.bank == self.bankFilter) then
+			table.insert(filtered, req)
+		end
+	end
+
+	return filtered
+end
+
 function TOGBankClassic_UI_Requests:DrawContent()
 	if not self.Content or not self.Window then
 		return
@@ -519,8 +705,10 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 	self:UpdateColumnLayout()
 	self:DrawHeader()
+	self:UpdateFilters()
 
 	local sorted = self:SortedRequests()
+	sorted = self:ApplyFilters(sorted)
 	local count = #sorted
 	if count == 0 then
 		local empty = self:EnsureEmptyLabel()
