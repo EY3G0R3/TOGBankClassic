@@ -499,7 +499,7 @@ local function buildRequesterOptions(currentPlayer, requesterCounts)
 	local list = {}
 	local order = {}
 	if currentPlayer and currentPlayer ~= "" then
-		list[currentPlayer] = currentPlayer
+		list[currentPlayer] = string.format("(%d) %s", requesterCounts[currentPlayer] or 0, currentPlayer)
 		table.insert(order, currentPlayer)
 	end
 	list[FILTER_ANY] = "Any"
@@ -524,7 +524,7 @@ local function buildBankOptions(currentPlayer, bankCounts)
 	local list = {}
 	local order = {}
 	if currentPlayer and currentPlayer ~= "" then
-		list[currentPlayer] = currentPlayer
+		list[currentPlayer] = string.format("(%d) %s", bankCounts[currentPlayer] or 0, currentPlayer)
 		table.insert(order, currentPlayer)
 	end
 	list[FILTER_ANY] = "Any"
