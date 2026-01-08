@@ -94,7 +94,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 	local items = {}
 	if a then
 		for _, v in pairs(a) do
-			if not v or not v.ID then
+			if not v or not v.ID or not v.Link then
 				-- Skip malformed entries
 			else
 				local key = v.ID .. v.Link
@@ -110,7 +110,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 
 	if b then
 		for _, v in pairs(b) do
-			if not v or not v.ID then
+			if not v or not v.ID or not v.Link then
 				-- Skip malformed entries
 			else
 				local key = v.ID .. v.Link
