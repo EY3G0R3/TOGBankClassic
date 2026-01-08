@@ -364,23 +364,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	self.FilterRequester = nil
 	self.FilterBank = nil
 
-	if useTwoHeaderLayout() then
-		local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")
-		headerGroup:SetLayout("Table")
-		headerGroup:SetUserData("table", {
-			columns = ColumnLayout(MIN_WIDTH - CONTENT_WIDTH_PADDING),
-			spaceH = COLUMN_SPACING_H,
-			spaceV = COLUMN_SPACING_V,
-		})
-		headerGroup:SetFullWidth(true)
-		if headerGroup.content and headerGroup.content.SetPoint then
-			headerGroup.content:ClearAllPoints()
-			headerGroup.content:SetPoint("TOPLEFT", 8, 0)
-			headerGroup.content:SetPoint("BOTTOMRIGHT", 0, 0)
-		end
-		window:AddChild(headerGroup)
-		self.HeaderGroup = headerGroup
-	else
+	if not useTwoHeaderLayout() then
 		local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
 		filterGroup:SetLayout("Table")
 		filterGroup:SetUserData("table", {
@@ -422,6 +406,22 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		filterGroup:AddChild(bankFilter)
 		self.FilterBank = bankFilter
 	end
+
+	local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")
+	headerGroup:SetLayout("Table")
+	headerGroup:SetUserData("table", {
+		columns = ColumnLayout(MIN_WIDTH - CONTENT_WIDTH_PADDING),
+		spaceH = COLUMN_SPACING_H,
+		spaceV = COLUMN_SPACING_V,
+	})
+	headerGroup:SetFullWidth(true)
+	if headerGroup.content and headerGroup.content.SetPoint then
+		headerGroup.content:ClearAllPoints()
+		headerGroup.content:SetPoint("TOPLEFT", 8, 0)
+		headerGroup.content:SetPoint("BOTTOMRIGHT", 0, 0)
+	end
+	window:AddChild(headerGroup)
+	self.HeaderGroup = headerGroup
 
 	local tableFrame = TOGBankClassic_UI:Create("ScrollFrame")
 	tableFrame:SetLayout("Table")
@@ -702,6 +702,10 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 		end
 	end
 
+	if not useTwoHeaderLayout() then
+		return
+	end
+
 	for i, col in ipairs(COLUMNS) do
 		local widget = self.FilterWidgets[i]
 		if not widget then
@@ -745,74 +749,32 @@ end
 function TOGBankClassic_UI_Requests:DrawHeader()
 	local ArrowUpIcon = " |TInterface\\Buttons\\Arrow-Up-Up:0|t"
 	local ArrowDownIcon = " |TInterface\\Buttons\\Arrow-Down-Up:0|t"
-	if useTwoHeaderLayout() then
-		if not self.HeaderGroup then
-			return
-		end
-
-		self:EnsureHeaderRows()
-
-		for i, col in ipairs(COLUMNS) do
-			local label = col.label
-			if self.sortColumn == col.key then
-				label = label .. (self.sortDirection == "asc" and ArrowUpIcon or ArrowDownIcon)
-			end
-			local button = self.HeaderWidgets[i]
-
-			button:SetText(label)
-			local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
-			button:SetWidth(columnWidth)
-			setWidgetShown(button, true)
-		end
-
-		for i, _ in ipairs(COLUMNS) do
-			local widget = self.FilterWidgets[i]
-			if widget and widget.SetWidth then
-				local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or COLUMNS[i].width
-				widget:SetWidth(columnWidth)
-				setWidgetShown(widget, true)
-			end
-		end
+	if not self.HeaderGroup then
 		return
 	end
 
-	if not self.Content then
-		return
-	end
-
-	self.HeaderWidgets = self.HeaderWidgets or {}
+	self:EnsureHeaderRows()
 
 	for i, col in ipairs(COLUMNS) do
 		local label = col.label
 		if self.sortColumn == col.key then
 			label = label .. (self.sortDirection == "asc" and ArrowUpIcon or ArrowDownIcon)
 		end
-
 		local button = self.HeaderWidgets[i]
-		if not button then
-			button = TOGBankClassic_UI:Create("Button")
-			self.HeaderWidgets[i] = button
-			tagColumnWidget(button, i, false)
-			if button.text and button.text.SetJustifyH then
-				button.text:SetJustifyH(justifyForAlign(col.align))
-			end
-			local colKey = col.key
-			button:SetCallback("OnClick", function()
-				if self.sortColumn == colKey then
-					self.sortDirection = (self.sortDirection == "asc") and "desc" or "asc"
-				else
-					self.sortColumn = colKey
-					self.sortDirection = "desc"
-				end
-				self:DrawContent()
-			end)
-			self.Content:AddChild(button)
-		end
 
 		button:SetText(label)
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
 		button:SetWidth(columnWidth)
 		setWidgetShown(button, true)
+	end
+
+	for i, _ in ipairs(COLUMNS) do
+		local widget = self.FilterWidgets[i]
+		if widget and widget.SetWidth then
+			local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or COLUMNS[i].width
+			widget:SetWidth(columnWidth)
+			setWidgetShown(widget, true)
+		end
 	end
 end
 
