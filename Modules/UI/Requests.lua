@@ -513,7 +513,7 @@ local function buildRequesterOptions(currentPlayer, requesterCounts)
 	end
 	table.sort(names)
 	for _, name in ipairs(names) do
-		list[name] = string.format("%d %s", requesterCounts[name], name)
+		list[name] = string.format("(%d) %s", requesterCounts[name], name)
 		table.insert(order, name)
 	end
 
