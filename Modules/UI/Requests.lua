@@ -31,9 +31,47 @@ local MIN_WIDTH = minContentWidth() + CONTENT_WIDTH_PADDING
 local CANCEL_ICON = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
 local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
 local FILTER_ANY = "__tog_any__"
+local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
+local FILTER_SEPARATOR_ANY_REST = "__tog_sep_any_rest__"
+local FILTER_SEPARATOR_LABEL = "----------"
 
 local function useTwoHeaderLayout()
 	return FILTER_LAYOUT == FILTER_LAYOUT_TWO_HEADERS
+end
+
+local function isFilterSeparator(value)
+	return value == FILTER_SEPARATOR_ME_ANY or value == FILTER_SEPARATOR_ANY_REST
+end
+
+local function currentFilterValue(self, key)
+	if key == "requester" then
+		return self.requesterFilter
+	end
+	return self.bankFilter
+end
+
+local function setFilterValue(self, key, value)
+	if key == "requester" then
+		self.requesterFilter = value
+	else
+		self.bankFilter = value
+	end
+end
+
+local function handleFilterChange(self, key, widget, value)
+	if isFilterSeparator(value) then
+		local currentValue = currentFilterValue(self, key) or FILTER_ANY
+		if widget and widget.SetValue then
+			widget:SetValue(currentValue)
+		end
+		return
+	end
+	if value == FILTER_ANY then
+		setFilterValue(self, key, nil)
+	else
+		setFilterValue(self, key, value)
+	end
+	self:DrawContent()
 end
 
 local function ColumnLayout(contentWidth)
@@ -381,13 +419,8 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		local requesterFilter = TOGBankClassic_UI:Create("Dropdown")
 		requesterFilter:SetLabel("Requester")
 		requesterFilter:SetFullWidth(true)
-		requesterFilter:SetCallback("OnValueChanged", function(_, _, value)
-			if value == FILTER_ANY then
-				self.requesterFilter = nil
-			else
-				self.requesterFilter = value
-			end
-			self:DrawContent()
+		requesterFilter:SetCallback("OnValueChanged", function(widget, _, value)
+			handleFilterChange(self, "requester", widget, value)
 		end)
 		filterGroup:AddChild(requesterFilter)
 		self.FilterRequester = requesterFilter
@@ -395,13 +428,8 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		local bankFilter = TOGBankClassic_UI:Create("Dropdown")
 		bankFilter:SetLabel("Bank")
 		bankFilter:SetFullWidth(true)
-		bankFilter:SetCallback("OnValueChanged", function(_, _, value)
-			if value == FILTER_ANY then
-				self.bankFilter = nil
-			else
-				self.bankFilter = value
-			end
-			self:DrawContent()
+		bankFilter:SetCallback("OnValueChanged", function(widget, _, value)
+			handleFilterChange(self, "bank", widget, value)
 		end)
 		filterGroup:AddChild(bankFilter)
 		self.FilterBank = bankFilter
@@ -501,6 +529,8 @@ local function buildRequesterOptions(currentPlayer, requesterCounts)
 	if currentPlayer and currentPlayer ~= "" then
 		list[currentPlayer] = string.format("(%d) Me - %s", requesterCounts[currentPlayer] or 0, currentPlayer)
 		table.insert(order, currentPlayer)
+		list[FILTER_SEPARATOR_ME_ANY] = FILTER_SEPARATOR_LABEL
+		table.insert(order, FILTER_SEPARATOR_ME_ANY)
 	end
 	list[FILTER_ANY] = "Any"
 	table.insert(order, FILTER_ANY)
@@ -512,6 +542,10 @@ local function buildRequesterOptions(currentPlayer, requesterCounts)
 		end
 	end
 	table.sort(names)
+	if #names > 0 then
+		list[FILTER_SEPARATOR_ANY_REST] = FILTER_SEPARATOR_LABEL
+		table.insert(order, FILTER_SEPARATOR_ANY_REST)
+	end
 	for _, name in ipairs(names) do
 		list[name] = string.format("(%d) %s", requesterCounts[name], name)
 		table.insert(order, name)
@@ -526,6 +560,8 @@ local function buildBankOptions(currentPlayer, bankCounts)
 	if currentPlayer and currentPlayer ~= "" then
 		list[currentPlayer] = string.format("(%d) Me - %s", bankCounts[currentPlayer] or 0, currentPlayer)
 		table.insert(order, currentPlayer)
+		list[FILTER_SEPARATOR_ME_ANY] = FILTER_SEPARATOR_LABEL
+		table.insert(order, FILTER_SEPARATOR_ME_ANY)
 	end
 	list[FILTER_ANY] = "Any"
 	table.insert(order, FILTER_ANY)
@@ -544,6 +580,10 @@ local function buildBankOptions(currentPlayer, bankCounts)
 		end
 		return countA > countB
 	end)
+	if #names > 0 then
+		list[FILTER_SEPARATOR_ANY_REST] = FILTER_SEPARATOR_LABEL
+		table.insert(order, FILTER_SEPARATOR_ANY_REST)
+	end
 	for _, name in ipairs(names) do
 		list[name] = string.format("(%d) %s", bankCounts[name], name)
 		table.insert(order, name)
@@ -711,25 +751,15 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 		if not widget then
 			if col.key == "requester" then
 				local requesterFilter = TOGBankClassic_UI:Create("Dropdown")
-				requesterFilter:SetCallback("OnValueChanged", function(_, _, value)
-					if value == FILTER_ANY then
-						self.requesterFilter = nil
-					else
-						self.requesterFilter = value
-					end
-					self:DrawContent()
+				requesterFilter:SetCallback("OnValueChanged", function(widget, _, value)
+					handleFilterChange(self, "requester", widget, value)
 				end)
 				widget = requesterFilter
 				self.FilterRequester = requesterFilter
 			elseif col.key == "bank" then
 				local bankFilter = TOGBankClassic_UI:Create("Dropdown")
-				bankFilter:SetCallback("OnValueChanged", function(_, _, value)
-					if value == FILTER_ANY then
-						self.bankFilter = nil
-					else
-						self.bankFilter = value
-					end
-					self:DrawContent()
+				bankFilter:SetCallback("OnValueChanged", function(widget, _, value)
+					handleFilterChange(self, "bank", widget, value)
 				end)
 				widget = bankFilter
 				self.FilterBank = bankFilter
