@@ -18,6 +18,10 @@ function TOGBankClassic_Database:Reset(name)
 		alts = {},
 		requests = {},
 		requestsVersion = 0,
+		requestLog = {},
+		requestLogSeq = {},
+		requestLogApplied = {},
+		requestsTombstones = {},
 	}
 
 	TOGBankClassic_Core:Printf("Reset Database")
@@ -70,6 +74,18 @@ function TOGBankClassic_Database:Load(name)
 
 	if not db.requestsVersion then
 		db.requestsVersion = 0
+	end
+	if not db.requestLog then
+		db.requestLog = {}
+	end
+	if not db.requestLogSeq then
+		db.requestLogSeq = {}
+	end
+	if not db.requestLogApplied then
+		db.requestLogApplied = {}
+	end
+	if not db.requestsTombstones then
+		db.requestsTombstones = {}
 	end
 
 	return db

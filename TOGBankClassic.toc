@@ -18,6 +18,7 @@ Modules/Chat.lua
 Modules/Database.lua
 Modules/Events.lua
 Modules/Guild.lua
+Modules/RequestLog.lua
 Modules/Item.lua
 Modules/Mail.lua
 Modules/Options.lua
