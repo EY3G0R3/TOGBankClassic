@@ -221,6 +221,7 @@ function TOGBankClassic_UI_Requests:Init()
 	self.sortDirection = "desc"
 	self.requesterFilter = nil
 	self.bankFilter = nil
+	self.defaultFiltersApplied = false
 	self:DrawWindow()
 end
 
@@ -817,6 +818,18 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 	local requests = info and info.requests or {}
 	local requesterCounts, bankCounts = pendingCounts(requests)
 	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	if not self.defaultFiltersApplied then
+		if self.requesterFilter ~= nil or self.bankFilter ~= nil then
+			self.defaultFiltersApplied = true
+		elseif currentPlayer and currentPlayer ~= "" then
+			if TOGBankClassic_Guild:IsBank(currentPlayer) then
+				self.bankFilter = currentPlayer
+			else
+				self.requesterFilter = currentPlayer
+			end
+			self.defaultFiltersApplied = true
+		end
+	end
 
 	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
 	self.FilterRequester:SetList(requesterList, requesterOrder)
