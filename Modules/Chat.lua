@@ -183,14 +183,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			if data.roster then
 				if current_data.roster == nil or data.roster > current_data.roster then
 					self:Debug(">", ColorPlayerName(sender), "has fresher roster data, querying.")
-					TOGBankClassic_Guild:RequestRosterSync(sender, data.roster)
+					TOGBankClassic_Guild:QueryRoster(sender, data.roster)
 				end
 			end
 			if data.requests then
 				local currentRequests = current_data.requests
 				if currentRequests == nil or data.requests > currentRequests then
 					self:Debug(">", ColorPlayerName(sender), "has fresher requests data, querying.")
-					TOGBankClassic_Guild:RequestRequestsSync(sender, data.requests)
+					TOGBankClassic_Guild:QueryRequests(sender, data.requests)
 				end
 			end
 			if data.alts then
@@ -203,7 +203,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 							"has fresher bank data about",
 							ColorPlayerName(kNorm) .. ", querying."
 						)
-						TOGBankClassic_Guild:RequestAltSync(sender, kNorm, v)
+						TOGBankClassic_Guild:QueryAlt(sender, kNorm, v)
 					end
 				end
 			end

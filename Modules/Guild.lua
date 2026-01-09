@@ -432,7 +432,7 @@ function TOGBankClassic_Guild:SendRequestsData(target)
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 end
 
-function TOGBankClassic_Guild:RequestRequestsSync(player, version)
+function TOGBankClassic_Guild:QueryRequests(player, version)
 	if not player then
 		return
 	end
@@ -982,7 +982,7 @@ function TOGBankClassic_Guild:ConsumePendingSync(syncType, sender, name)
 	return false
 end
 
-function TOGBankClassic_Guild:RequestRosterSync(player, version)
+function TOGBankClassic_Guild:QueryRoster(player, version)
 	self.hasRequested = true
 	if self.requestCount == nil then
 		self.requestCount = 1
@@ -994,7 +994,7 @@ function TOGBankClassic_Guild:RequestRosterSync(player, version)
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
-function TOGBankClassic_Guild:RequestAltSync(player, name, version)
+function TOGBankClassic_Guild:QueryAlt(player, name, version)
 	self.hasRequested = true
 	if self.requestCount == nil then
 		self.requestCount = 1

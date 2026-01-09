@@ -4,7 +4,7 @@ function TOGBankClassic_UI_Inventory:Init()
 	self:DrawWindow()
 end
 
-local function RequestEmptySync()
+local function QueryEmpty()
 	local now = GetServerTime()
 	local last = TOGBankClassic_UI_Inventory.last_empty_sync or 0
 	if now - last > 30 then
@@ -136,7 +136,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	local info = TOGBankClassic_Guild.Info
 	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
 	if not info or not roster_alts then
-		RequestEmptySync()
+		QueryEmpty()
 		OnClose()
 		TOGBankClassic_Core:Print("Database is empty; wait for sync.")
 		return
@@ -186,7 +186,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	end
 
 	if #tabs == 0 then
-		RequestEmptySync()
+		QueryEmpty()
 		OnClose()
 		TOGBankClassic_Core:Print("Database is empty; wait for sync.")
 		return
