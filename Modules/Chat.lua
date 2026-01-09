@@ -200,7 +200,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 						self:Debug(
 							">",
 							ColorPlayerName(sender),
-							"has fresher alt data for",
+							"has fresher bank data about",
 							ColorPlayerName(kNorm) .. ", querying."
 						)
 						TOGBankClassic_Guild:RequestAltSync(sender, kNorm, v)
@@ -256,7 +256,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				allowed = true
 			end
 			self:Debug(
-				"  >>>  ",
+				">",
 				ColorPlayerName(sender),
 				"shares roster data. We",
 				allowed and "accept it." or "do not accept it."
@@ -267,7 +267,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		end
 
 		if data.type == "requests" then
-			self:Debug("  >>>  ", ColorPlayerName(sender), "shares requests data. We accept it by default.")
+			self:Debug(">", ColorPlayerName(sender), "shares requests data. We accept it by default.")
 			TOGBankClassic_Guild:ReceiveRequestsData(data)
 		end
 
@@ -280,7 +280,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				allowed = true
 			end
 			self:Debug(
-				"  >>>  ",
+				">",
 				ColorPlayerName(sender),
 				"shares bank data about",
 				ColorPlayerName(claimedNorm) .. ". We",
