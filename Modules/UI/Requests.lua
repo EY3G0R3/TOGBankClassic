@@ -117,7 +117,7 @@ local function ColumnLayout(contentWidth)
 	end
 
 	for i, col in ipairs(COLUMNS) do
-		cols[i] = { width = widths[i], align = col.align or "start" }
+		cols[i] = { width = widths[i], alignH = col.align or "start" }
 	end
 
 	return cols, widths
