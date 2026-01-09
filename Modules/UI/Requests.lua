@@ -348,6 +348,9 @@ function TOGBankClassic_UI_Requests:HandleResize()
 		self.FilterGroup:DoLayout()
 	end
 	self:AdjustTableHeight()
+	if self.Window then
+		self.Window:DoLayout()
+	end
 	self.Content:DoLayout()
 end
 
@@ -460,7 +463,6 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		spaceV = COLUMN_SPACING_V,
 	})
 	tableFrame:SetFullWidth(true)
-	tableFrame:SetFullHeight(true)
 
 	tableFrame.scrollframe:ClearAllPoints()
 	tableFrame.scrollframe:SetPoint("TOPLEFT", 8, -8)
@@ -888,6 +890,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		self.FilterGroup:DoLayout()
 	end
 	self:AdjustTableHeight()
+	if self.Window then
+		self.Window:DoLayout()
+	end
 
 	local sorted = self:SortedRequests()
 	sorted = self:ApplyFilters(sorted)
