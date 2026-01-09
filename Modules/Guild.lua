@@ -581,6 +581,27 @@ function TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
 	return false
 end
 
+function TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
+	if not req or type(req) ~= "table" then
+		return false
+	end
+
+	local normActor = self:NormalizeName(actor or self:GetPlayer())
+	if not normActor then
+		return false
+	end
+
+	if actorIsGM ~= nil then
+		return actorIsGM
+	end
+
+	if self.SenderIsGM and self:SenderIsGM(normActor) then
+		return true
+	end
+
+	return false
+end
+
 function TOGBankClassic_Guild:CancelRequest(requestId, actor)
 	if not self.Info or not self.Info.requests then
 		return false
@@ -677,6 +698,39 @@ function TOGBankClassic_Guild:CompleteRequest(requestId, actor)
 		self.Info.requests[idx] = clean
 	end
 
+	self:BroadcastRequestsUpdate(now)
+
+	return true
+end
+
+function TOGBankClassic_Guild:DeleteRequest(requestId, actor)
+	if not self.Info or not self.Info.requests then
+		return false
+	end
+	if not requestId then
+		return false
+	end
+
+	self:EnsureRequestsInitialized()
+
+	local byId = buildRequestIndex(self.Info.requests)
+	local idx = byId[requestId]
+	if not idx then
+		return false
+	end
+
+	local req = self.Info.requests[idx]
+	if not req then
+		return false
+	end
+
+	local actorName = actor or self:GetPlayer()
+	if not self:CanDeleteRequest(req, actorName) then
+		return false
+	end
+
+	local now = GetServerTime()
+	table.remove(self.Info.requests, idx)
 	self:BroadcastRequestsUpdate(now)
 
 	return true

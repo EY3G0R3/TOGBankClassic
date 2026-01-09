@@ -30,6 +30,8 @@ local MIN_WIDTH = minContentWidth() + CONTENT_WIDTH_PADDING
 
 local CANCEL_ICON = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
 local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
+local DELETE_ICON = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:18:18:0:0|t"
+local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local FILTER_ANY = "__tog_any__"
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
 local FILTER_SEPARATOR_ANY_REST = "__tog_sep_any_rest__"
@@ -198,6 +200,59 @@ local function attachActionTooltip(button, title, detail)
 	button:SetCallback("OnLeave", function()
 		TOGBankClassic_UI:HideTooltip()
 	end)
+end
+
+local function ensureDeleteDialog()
+	if not StaticPopupDialogs then
+		return
+	end
+	if StaticPopupDialogs[DELETE_REQUEST_DIALOG] then
+		return
+	end
+	StaticPopupDialogs[DELETE_REQUEST_DIALOG] = {
+		text = "%s",
+		button1 = YES,
+		button2 = CANCEL,
+		timeout = 0,
+		whileDead = true,
+		hideOnEscape = true,
+		OnAccept = function(_, data)
+			if not data or not data.requestId then
+				return
+			end
+			if not TOGBankClassic_Guild:DeleteRequest(data.requestId, data.actor) then
+				if data.ui and data.ui.Window then
+					data.ui.Window:SetStatusText("Unable to delete request.")
+				end
+			end
+		end,
+	}
+end
+
+local function confirmDeleteRequest(request, actor)
+	if not request or not StaticPopup_Show then
+		return
+	end
+
+	ensureDeleteDialog()
+
+	local qty = tonumber(request.quantity or 0) or 0
+	local item = request.item or "Unknown"
+	local requester = request.requester or "Unknown"
+	local bank = request.bank or "Unknown"
+	local message = string.format(
+		"Are you sure you want to permanently delete the request for %dx %s from %s to %s?",
+		qty,
+		item,
+		requester,
+		bank
+	)
+
+	StaticPopup_Show(DELETE_REQUEST_DIALOG, message, nil, {
+		requestId = request.id,
+		actor = actor,
+		ui = TOGBankClassic_UI_Requests,
+	})
 end
 
 local function currentContentWidth(self)
@@ -664,10 +719,25 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			attachActionTooltip(cancelButton, "Cancel request", "Cancels the request without fulfilling it.")
 			actionGroup:AddChild(cancelButton)
 
+			local deleteSpacer = TOGBankClassic_UI:Create("Label")
+			deleteSpacer:SetText("")
+			deleteSpacer:SetWidth(4)
+			actionGroup:AddChild(deleteSpacer)
+
+			local deleteButton = TOGBankClassic_UI:Create("Button")
+			deleteButton:SetText(DELETE_ICON)
+			deleteButton:SetWidth(24)
+			deleteButton:SetHeight(20)
+			centerButtonText(deleteButton)
+			attachActionTooltip(deleteButton, "Delete permanently", "Permanently removes the request.")
+			actionGroup:AddChild(deleteButton)
+
 			row.actionGroup = actionGroup
 			row.completeButton = completeButton
 			row.cancelButton = cancelButton
+			row.deleteButton = deleteButton
 			row.actionSpacer = spacer
+			row.deleteSpacer = deleteSpacer
 			row.cells[i] = actionGroup
 		else
 			local label = TOGBankClassic_UI:Create("Label")
@@ -914,6 +984,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 		local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
 		local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+		local actorIsGM = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
 
 		for index, req in ipairs(sorted) do
 			local row = self:EnsureRow(index)
@@ -926,7 +997,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				and TOGBankClassic_Guild:CanCancelRequest(req, actor)
 			local canComplete = not completed
 				and requestId
-				and TOGBankClassic_Guild:CanCompleteRequest(req, actor)
+				and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
+			local canDelete = requestId
+				and TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
 			local ts = tonumber(req.date or 0) or 0
 			local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
 			if completed then
@@ -961,10 +1034,13 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				if col.key == "actions" then
 					local showComplete = canComplete and true or false
 					local showCancel = canCancel and true or false
+					local showDelete = canDelete and true or false
 					row.actionGroup:SetWidth(columnWidth)
 					setWidgetShown(row.completeButton, showComplete)
 					setWidgetShown(row.cancelButton, showCancel)
+					setWidgetShown(row.deleteButton, showDelete)
 					setWidgetShown(row.actionSpacer, showComplete and showCancel)
+					setWidgetShown(row.deleteSpacer, showCancel and showDelete)
 
 					row.completeButton:SetCallback("OnClick", function()
 						if not requestId then
@@ -982,6 +1058,13 @@ function TOGBankClassic_UI_Requests:DrawContent()
 						if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
 							self.Window:SetStatusText("Unable to cancel request.")
 						end
+					end)
+
+					row.deleteButton:SetCallback("OnClick", function()
+						if not requestId then
+							return
+						end
+						confirmDeleteRequest(req, actor)
 					end)
 
 					row.actionGroup:DoLayout()
