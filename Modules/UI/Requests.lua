@@ -14,7 +14,7 @@ local COLUMNS = {
 	{ key = "quantity", label = "#", width = 50, align = "end" },
 	{ key = "item", label = "Item", width = 170, align = "start", flex = true, weight = 2 },
 	{ key = "fulfilled", label = "Sent", width = 60, align = "start" },
-	{ key = "actions", label = "Actions", width = 90, align = "center" },
+	{ key = "actions", label = "Actions", width = 110, align = "center" },
 }
 
 local function minContentWidth()
