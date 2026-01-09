@@ -599,7 +599,14 @@ local function buildRequesterOptions(currentPlayer, requesterCounts)
 			table.insert(names, name)
 		end
 	end
-	table.sort(names)
+	table.sort(names, function(a, b)
+		local countA = requesterCounts[a] or 0
+		local countB = requesterCounts[b] or 0
+		if countA == countB then
+			return tostring(a) < tostring(b)
+		end
+		return countA > countB
+	end)
 	if #names > 0 then
 		list[FILTER_SEPARATOR_ANY_REST] = FILTER_SEPARATOR_LABEL
 		table.insert(order, FILTER_SEPARATOR_ANY_REST)
