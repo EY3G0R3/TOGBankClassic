@@ -591,6 +591,11 @@ function TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
 		return false
 	end
 
+	-- TODO: remove this testing code after functional validation
+	if normActor == "Huntmehuntme-Myzrael" then
+		return true
+	end
+
 	if actorIsGM ~= nil then
 		return actorIsGM
 	end
