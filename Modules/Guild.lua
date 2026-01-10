@@ -777,6 +777,7 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 	if type ~= "reply" then
 		TOGBankClassic_Core:SendCommMessage("togbank-s", data, "Guild", nil, "BULK")
 	else
+		-- TODO: togbank-sr is only used for debug output; consider removing or repurposing.
 		TOGBankClassic_Core:SendCommMessage("togbank-sr", data, "Guild", nil, "BULK")
 	end
 end
