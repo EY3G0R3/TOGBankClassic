@@ -674,13 +674,6 @@ function Guild:RefreshRequestsUI()
 	end
 end
 
-function Guild:BroadcastRequestsUpdate(ts)
-	self:TouchRequestsVersion(ts)
-	self:PruneRequests()
-	self:SendRequestsData()
-	self:RefreshRequestsUI()
-end
-
 -- Snapshot and log sync messaging.
 function Guild:GetRequestsVersion()
 	if not self.Info then
