@@ -726,6 +726,55 @@ function Guild:QueryRequestLog(player, logFrom)
 end
 
 function Guild:ReceiveRequestsData(payload)
+	if not payload or type(payload) ~= "table" then
+		return
+	end
+	if not self.Info then
+		return
+	end
+	self:EnsureRequestsInitialized()
+
+	local function maxUpdatedAt(list)
+		local latest = 0
+		for _, req in ipairs(list or {}) do
+			local updated = tonumber(req.updatedAt or req.date or 0) or 0
+			if updated > latest then
+				latest = updated
+			end
+		end
+		return latest
+	end
+
+	local localVersion = tonumber(self.Info.requestsVersion or 0) or 0
+	if localVersion == 0 and self.Info.requests and #self.Info.requests > 0 then
+		localVersion = maxUpdatedAt(self.Info.requests)
+	end
+
+	local incomingVersion = tonumber(payload.version or 0) or 0
+	if incomingVersion == 0 then
+		incomingVersion = maxUpdatedAt(payload.requests)
+	end
+
+	local isNewer = incomingVersion > localVersion
+	if not isNewer then
+		local incomingLog = payload.requestLogApplied
+		if type(incomingLog) == "table" then
+			local localLog = self.Info.requestLogApplied or {}
+			for actor, seq in pairs(incomingLog) do
+				local incomingSeq = tonumber(seq or 0) or 0
+				local localSeq = tonumber(localLog[actor] or 0) or 0
+				if incomingSeq > localSeq then
+					isNewer = true
+					break
+				end
+			end
+		end
+	end
+
+	if not isNewer and localVersion > 0 then
+		return
+	end
+
 	self:ApplyRequestSnapshot(payload)
 end
 
