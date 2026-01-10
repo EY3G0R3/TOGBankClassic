@@ -294,6 +294,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			TOGBankClassic_Guild:ReceiveRequestsData(data)
 		end
 		if data.type == "requests-log" then
+			self:Debug(">", ColorPlayerName(sender), "shares requests log. We accept it by default.")
 			TOGBankClassic_Guild:ReceiveRequestLogEntries(data, sender)
 		end
 
