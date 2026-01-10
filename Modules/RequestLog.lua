@@ -720,10 +720,10 @@ end
 
 function Guild:ReceiveRequestsData(payload)
 	if not payload or type(payload) ~= "table" then
-		return
+		return ADOPTION_STATUS.INVALID
 	end
 	if not self.Info then
-		return
+		return ADOPTION_STATUS.IGNORED
 	end
 	self:EnsureRequestsInitialized()
 
@@ -765,10 +765,13 @@ function Guild:ReceiveRequestsData(payload)
 	end
 
 	if not isNewer and localVersion > 0 then
-		return
+		return ADOPTION_STATUS.STALE
 	end
 
-	self:ApplyRequestSnapshot(payload)
+	if self:ApplyRequestSnapshot(payload) then
+		return ADOPTION_STATUS.ADOPTED
+	end
+	return ADOPTION_STATUS.INVALID
 end
 
 function Guild:GetRequestLogSummary()

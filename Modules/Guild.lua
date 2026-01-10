@@ -522,7 +522,7 @@ end
 
 function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 	if not self.Info then
-		return
+		return ADOPTION_STATUS.IGNORED
 	end
 
 	-- Sanitize incoming alt data
@@ -549,13 +549,13 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 
 	alt = sanitizeAlt(alt)
 	if not alt then
-		return
+		return ADOPTION_STATUS.INVALID
 	end
 
 	local norm = self:NormalizeName(name)
 	local existing = self.Info.alts[norm]
 	if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
-		return
+		return ADOPTION_STATUS.STALE
 	end
 
 	-- Accept incoming if newer version
@@ -581,16 +581,16 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 
 	if existing and existing.version and alt.version and alt.version < existing.version then
 		-- Incoming is older; ignore
-		return
+		return ADOPTION_STATUS.STALE
 	elseif existing and existing.version and alt.version and alt.version == existing.version then
 		-- Tie-breaker: choose the one with more items
 		if itemCount(alt) <= itemCount(existing) then
-			return
+			return ADOPTION_STATUS.STALE
 		end
 	end
 
 	if self.Info.alts[name] and alt.version ~= nil and alt.version < self.Info.alts[name].version then
-		return
+		return ADOPTION_STATUS.STALE
 	end
 	if self.hasRequested then
 		if self.requestCount == nil then
@@ -608,6 +608,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 	end
 
 	self.Info.alts[norm] = alt
+	return ADOPTION_STATUS.ADOPTED
 end
 
 ---START CHANGES

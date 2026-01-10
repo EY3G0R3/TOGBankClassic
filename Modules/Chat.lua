@@ -79,6 +79,25 @@ local function ColorPlayerName(name)
 	return string.format("|cff80bfff%s|r", name)
 end
 
+local function FormatSyncStatus(status)
+	if status == ADOPTION_STATUS.ADOPTED then
+		return "(newer, integrating)"
+	end
+	if status == ADOPTION_STATUS.STALE then
+		return "(older, discarding)"
+	end
+	if status == ADOPTION_STATUS.INVALID then
+		return "(invalid, ignoring)"
+	end
+	if status == ADOPTION_STATUS.UNAUTHORIZED then
+		return "(unauthorized, ignoring)"
+	end
+	if status == ADOPTION_STATUS.IGNORED then
+		return "(ignored)"
+	end
+	return ""
+end
+
 function TOGBankClassic_Chat:IsAltDataAllowed_Restrictive(sender, claimedNorm)
 	-- 'sender' was normalized near the top of OnCommReceived
 	local hasExistingAlt = false
@@ -290,8 +309,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		end
 
 		if data.type == "requests" then
-			self:Debug(">", ColorPlayerName(sender), "shares requests snapshot. We accept it by default.")
-			TOGBankClassic_Guild:ReceiveRequestsData(data)
+			local status = TOGBankClassic_Guild:ReceiveRequestsData(data)
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				"shares requests snapshot. We accept it by default.",
+				FormatSyncStatus(status)
+			)
 		end
 		if data.type == "requests-log" then
 			self:Debug(">", ColorPlayerName(sender), "shares requests log. We accept it by default.")
@@ -306,16 +330,18 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
 				allowed = true
 			end
+			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
+				or ADOPTION_STATUS.UNAUTHORIZED
 			self:Debug(
 				">",
 				ColorPlayerName(sender),
 				"shares bank data about",
 				ColorPlayerName(claimedNorm) .. ". We",
-				allowed and "accept it." or "do not accept it."
+				allowed and "accept it." or "do not accept it.",
+				FormatSyncStatus(status)
 			)
 			if allowed then
-				-- this can still result in nothing because ReceiveAltData() compares the timestamps
-				TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
+				-- ReceiveAltData already applied/rejected; nothing else to do.
 			else
 				-- ignore spoofed alt data
 				return
