@@ -101,7 +101,7 @@ function TOGBankClassic_Events:SetShareTimer()
 end
 
 function TOGBankClassic_Events:OnShareTimer()
-	TOGBankClassic_Guild:Share("reply")
+	TOGBankClassic_Guild:Share("reply", "version")
 
 	self:SetShareTimer()
 end

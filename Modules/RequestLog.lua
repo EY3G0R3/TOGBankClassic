@@ -785,6 +785,18 @@ function Guild:GetRequestLogSummary()
 	return summary
 end
 
+function Guild:SendRequestsVersionPing()
+	if not self.Info then
+		return
+	end
+	local payload = {
+		requests = self:GetRequestsVersion(),
+		requestLog = self:GetRequestLogSummary(),
+	}
+	local data = TOGBankClassic_Core:Serialize(payload)
+	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
+end
+
 function Guild:SendRequestLogEntry(entry, target)
 	if not entry or type(entry) ~= "table" then
 		return

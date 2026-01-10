@@ -744,7 +744,7 @@ function TOGBankClassic_Guild:WipeMine(type)
 	TOGBankClassic_Guild:Reset(guild)
 end
 
-function TOGBankClassic_Guild:Share(type)
+function TOGBankClassic_Guild:Share(type, requestsMode)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then
 		return
@@ -753,6 +753,7 @@ function TOGBankClassic_Guild:Share(type)
 	local player = TOGBankClassic_Guild:GetPlayer()
 	local normPlayer = TOGBankClassic_Guild:GetNormalizedPlayer(player)
 	local share = "I'm sharing my bank data. Share yours please."
+	local mode = requestsMode or "snapshot"
 	if not self.Info.alts[normPlayer] then
 		if type ~= "reply" then
 			share = "Share your bank data please."
@@ -764,8 +765,13 @@ function TOGBankClassic_Guild:Share(type)
 		TOGBankClassic_Guild:SendAltData(normPlayer)
 	end
 
-	-- Share current requests state alongside bank data so everyone stays in sync
-	self:SendRequestsData()
+	if mode == "snapshot" then
+		-- Share current requests state alongside bank data so everyone stays in sync
+		self:SendRequestsData()
+	elseif mode == "version" then
+		-- Lightweight ping; snapshots are sent only when queried.
+		self:SendRequestsVersionPing()
+	end
 
 	local data = TOGBankClassic_Core:Serialize(share)
 	if type ~= "reply" then
