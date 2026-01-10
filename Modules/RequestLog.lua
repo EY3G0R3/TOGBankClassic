@@ -60,6 +60,7 @@ local function legacyRequestId(req)
 	local requester = tostring(req.requester or "")
 	local bank = tostring(req.bank or "")
 	local item = tostring(req.item or "")
+	-- TODO: why _and_ here?
 	if requester == "" and bank == "" and item == "" and ts == 0 then
 		return nil
 	end
@@ -626,8 +627,7 @@ function Guild:RecordRequestLogEntry(entry, broadcast)
 		local actor = entry.actor or "unknown"
 		local seq = tonumber(entry.seq or 0) or 0
 		if seq > 0 then
-			self.Info.requestLogApplied[actor] =
-				math.max(tonumber(self.Info.requestLogApplied[actor] or 0) or 0, seq)
+			self.Info.requestLogApplied[actor] = math.max(tonumber(self.Info.requestLogApplied[actor] or 0) or 0, seq)
 		end
 		return true
 	end
@@ -1221,7 +1221,7 @@ function Guild:PrintRequestLog(limitArg)
 		local delta = entry.delta and (" delta=" .. tostring(entry.delta)) or ""
 
 		local line = string.format(
-			"[%s] %s#%s %s id=%s item=\"%s\" qty=%s requester=%s bank=%s status=%s%s",
+			'[%s] %s#%s %s id=%s item="%s" qty=%s requester=%s bank=%s status=%s%s',
 			tsText,
 			actor,
 			seq,
