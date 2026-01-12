@@ -59,6 +59,9 @@ function TOGBankClassic_Chat:Debug(...)
 	return false
 end
 
+local SHARES_COLOR = "|cff80bfffshares|r"
+local QUERIES_COLOR = "|cffffff00queries|r"
+
 local function ColorPlayerName(name)
 	if not name or name == "" then
 		return ""
@@ -253,7 +256,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		self:Debug(
 			">",
 			ColorPlayerName(sender),
-			"queries",
+			QUERIES_COLOR,
 			ColorPlayerName(data.player),
 			"about",
 			data.type,
@@ -300,7 +303,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			self:Debug(
 				">",
 				ColorPlayerName(sender),
-				"shares roster data. We",
+				SHARES_COLOR,
+				"roster data. We",
 				allowed and "accept it." or "do not accept it."
 			)
 			if allowed then
@@ -313,12 +317,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			self:Debug(
 				">",
 				ColorPlayerName(sender),
-				"shares requests snapshot. We accept it by default.",
+				SHARES_COLOR,
+				"requests snapshot. We accept it by default.",
 				FormatSyncStatus(status)
 			)
 		end
 		if data.type == "requests-log" then
-			self:Debug(">", ColorPlayerName(sender), "shares requests log. We accept it by default.")
+			self:Debug(">", ColorPlayerName(sender), SHARES_COLOR, "requests log. We accept it by default.")
 			TOGBankClassic_Guild:ReceiveRequestLogEntries(data, sender)
 		end
 
@@ -335,7 +340,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			self:Debug(
 				">",
 				ColorPlayerName(sender),
-				"shares bank data about",
+				SHARES_COLOR,
+				"bank data about",
 				ColorPlayerName(claimedNorm) .. ". We",
 				allowed and "accept it." or "do not accept it.",
 				FormatSyncStatus(status)
