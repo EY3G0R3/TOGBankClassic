@@ -507,15 +507,108 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 end
 
 ---START CHANGES
-function OnChunkSent(arg, sent, total)
-	shutup = TOGBankClassic_Options:GetBankVerbosity()
-	if shutup == false then
-		if sent <= 255 then
-			TOGBankClassic_Core:Print("Sharing guild bank data, chunk", sent, "of", total)
+-- Tracking stats for current send operation
+local SendStats = {
+	startTime = nil,
+	lastBytes = 0,
+	chunksSent = 0,
+	failures = 0,
+	throttled = 0,
+}
+
+-- SendAddonMessageResult enum values from ChatThrottleLib
+local SEND_RESULT = {
+	Success = 0,
+	AddonMessageThrottle = 3,
+	NotInGroup = 5,
+	ChannelThrottle = 8,
+	GeneralError = 9,
+}
+
+local function GetSendResultName(result)
+	if result == SEND_RESULT.Success or result == true then return "Success"
+	elseif result == SEND_RESULT.AddonMessageThrottle then return "AddonMessageThrottle"
+	elseif result == SEND_RESULT.NotInGroup then return "NotInGroup"
+	elseif result == SEND_RESULT.ChannelThrottle then return "ChannelThrottle"
+	elseif result == SEND_RESULT.GeneralError then return "GeneralError"
+	elseif result == false then return "Failed"
+	else return tostring(result)
+	end
+end
+
+function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
+	local shutup = TOGBankClassic_Options:GetBankVerbosity()
+	local debug = TOGBankClassic_Chat and TOGBankClassic_Chat.debug
+
+	-- Track chunk count (each callback = one chunk sent, ~254 bytes each)
+	local bytesThisChunk = bytesSent - SendStats.lastBytes
+	if bytesThisChunk > 0 then
+		SendStats.chunksSent = SendStats.chunksSent + 1
+	end
+	SendStats.lastBytes = bytesSent
+
+	-- Track failures
+	local isSuccess = (sendResult == SEND_RESULT.Success or sendResult == true or sendResult == nil)
+	local isThrottled = (sendResult == SEND_RESULT.AddonMessageThrottle or sendResult == SEND_RESULT.ChannelThrottle)
+	if isThrottled then
+		SendStats.throttled = SendStats.throttled + 1
+	elseif not isSuccess then
+		SendStats.failures = SendStats.failures + 1
+	end
+
+	-- Initialize start time on first chunk
+	if SendStats.startTime == nil then
+		SendStats.startTime = GetTime()
+	end
+
+	local totalChunks = math.ceil(totalBytes / 254)
+	local pct = math.floor((bytesSent / totalBytes) * 100)
+
+	-- Print error on failed send
+	if not isSuccess then
+		local resultStr = GetSendResultName(sendResult)
+		TOGBankClassic_Core:Print(string.format(
+			"|cffff0000[SEND ERROR]|r chunk %d/%d failed: %s",
+			SendStats.chunksSent, totalChunks, resultStr
+		))
+	end
+
+	-- Show progress at start
+	if not shutup then
+		if SendStats.chunksSent == 1 then
+			TOGBankClassic_Core:Print(string.format(
+				"Sharing guild bank data: %d bytes in ~%d chunks...",
+				totalBytes, totalChunks
+			))
 		end
-		if sent == total then
-			TOGBankClassic_Core:Print("Sharing guild bank data has completed. (", sent, "of", total, "chunks)")
+	end
+
+	-- Completion summary
+	if bytesSent >= totalBytes then
+		local elapsed = GetTime() - (SendStats.startTime or GetTime())
+		local summary = string.format(
+			"Send complete: %d chunks, %d bytes in %.1fs",
+			SendStats.chunksSent, totalBytes, elapsed
+		)
+		if SendStats.failures > 0 or SendStats.throttled > 0 then
+			summary = summary .. string.format(" | failures: %d, throttled: %d", SendStats.failures, SendStats.throttled)
 		end
+
+		if debug or not shutup then
+			TOGBankClassic_Core:Print(summary)
+		end
+
+		-- Warn on failures even if shutup is enabled
+		if SendStats.failures > 0 then
+			TOGBankClassic_Core:Print(string.format("|cffff0000Warning:|r %d send failures occurred!", SendStats.failures))
+		end
+
+		-- Reset stats for next operation
+		SendStats.startTime = nil
+		SendStats.lastBytes = 0
+		SendStats.chunksSent = 0
+		SendStats.failures = 0
+		SendStats.throttled = 0
 	end
 end
 ---END CHANGES
