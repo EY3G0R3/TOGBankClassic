@@ -715,7 +715,7 @@ function Guild:SendRequestsSnapshot(target)
 		requestLogApplied = self.Info.requestLogApplied,
 		tombstones = self.Info.requestsTombstones,
 	}
-	local data = TOGBankClassic_Core:Serialize(payload)
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 end
 
@@ -727,7 +727,7 @@ function Guild:QueryRequestsSnapshot(player)
 	if not player then
 		return
 	end
-	local data = TOGBankClassic_Core:Serialize({ player = player, type = "requests" })
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "requests" })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
@@ -735,7 +735,7 @@ function Guild:QueryRequestLog(player, logFrom)
 	if not player then
 		return
 	end
-	local data = TOGBankClassic_Core:Serialize({ player = player, type = "requests-log", logFrom = logFrom })
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "requests-log", logFrom = logFrom })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
@@ -817,7 +817,7 @@ function Guild:SendRequestsVersionPing()
 		requests = self:GetRequestsVersion(),
 		requestLog = self:GetRequestLogSummary(),
 	}
-	local data = TOGBankClassic_Core:Serialize(payload)
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
 end
 
@@ -826,7 +826,7 @@ function Guild:SendRequestLogEntry(entry, target)
 		return
 	end
 	local payload = { type = "requests-log", logEntries = { entry } }
-	local data = TOGBankClassic_Core:Serialize(payload)
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 end
 
@@ -873,7 +873,7 @@ function Guild:SendRequestLogEntries(target, logFrom)
 		count = count + 1
 		if count >= maxPerChunk then
 			local payload = { type = "requests-log", logEntries = chunk }
-			local data = TOGBankClassic_Core:Serialize(payload)
+			local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 			TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 			chunk = {}
 			count = 0
@@ -882,7 +882,7 @@ function Guild:SendRequestLogEntries(target, logFrom)
 
 	if #chunk > 0 then
 		local payload = { type = "requests-log", logEntries = chunk }
-		local data = TOGBankClassic_Core:Serialize(payload)
+		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 	end
 end

@@ -155,9 +155,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		return
 	end
 
-	local success, data = TOGBankClassic_Core:Deserialize(message)
+	local success, data = TOGBankClassic_Core:DeserializeWithChecksum(message)
 	if not success then
-		self:Debug("> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender))
+		self:Debug("> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender), "error:", tostring(data))
 		return
 	end
 

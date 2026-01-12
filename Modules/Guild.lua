@@ -419,7 +419,7 @@ function TOGBankClassic_Guild:QueryRoster(player, version)
 		self.requestCount = self.requestCount + 1
 	end
 	self:MarkPendingSync("roster", player)
-	local data = TOGBankClassic_Core:Serialize({ player = player, type = "roster", version = version })
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "roster", version = version })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
@@ -431,12 +431,12 @@ function TOGBankClassic_Guild:QueryAlt(player, name, version)
 		self.requestCount = self.requestCount + 1
 	end
 	self:MarkPendingSync("alt", player, name)
-	local data = TOGBankClassic_Core:Serialize({ player = player, type = "alt", name = name, version = version })
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "alt", name = name, version = version })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
 function TOGBankClassic_Guild:SendRosterData()
-	local data = TOGBankClassic_Core:Serialize({ type = "roster", roster = self.Info.roster })
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "roster", roster = self.Info.roster })
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
 end
 
@@ -498,7 +498,7 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 		self.Info.alts[norm].version = GetServerTime()
 	end
 
-	local data = TOGBankClassic_Core:Serialize({ type = "alt", name = norm, alt = self.Info.alts[norm] })
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = self.Info.alts[norm] })
 	---START CHANGES
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
 end
@@ -784,7 +784,7 @@ function TOGBankClassic_Guild:Hello(type)
 		if type ~= "reply" then
 			TOGBankClassic_Output:Info(hello)
 		end
-		local data = TOGBankClassic_Core:Serialize(hello)
+		local data = TOGBankClassic_Core:SerializeWithChecksum(hello)
 		if type ~= "reply" then
 			TOGBankClassic_Core:SendCommMessage("togbank-h", data, "Guild", nil, "BULK")
 		else
@@ -801,7 +801,7 @@ function TOGBankClassic_Guild:Wipe(type)
 	local wipe = "I wiped all addon data from " .. guild .. "."
 	TOGBankClassic_Guild:Reset(guild)
 
-	local data = TOGBankClassic_Core:Serialize(wipe)
+	local data = TOGBankClassic_Core:SerializeWithChecksum(wipe)
 	if type ~= "reply" then
 		TOGBankClassic_Core:SendCommMessage("togbank-w", data, "Guild", nil, "BULK")
 	else
@@ -847,7 +847,7 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		self:SendRequestsVersionPing()
 	end
 
-	local data = TOGBankClassic_Core:Serialize(share)
+	local data = TOGBankClassic_Core:SerializeWithChecksum(share)
 	if type ~= "reply" then
 		TOGBankClassic_Core:SendCommMessage("togbank-s", data, "Guild", nil, "BULK")
 	else

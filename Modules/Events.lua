@@ -121,7 +121,7 @@ function TOGBankClassic_Events:Sync()
 		return
 	end
 
-	local data = TOGBankClassic_Core:Serialize(version)
+	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
 	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
 end
 
