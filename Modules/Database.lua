@@ -24,7 +24,7 @@ function TOGBankClassic_Database:Reset(name)
 		requestsTombstones = {},
 	}
 
-	TOGBankClassic_Core:Printf("Reset Database")
+	TOGBankClassic_Output:Response("Reset Database")
 end
 
 function TOGBankClassic_Database:ResetPlayer(name, player)
@@ -45,7 +45,7 @@ function TOGBankClassic_Database:ResetPlayer(name, player)
 	self.db.faction[name].alts[player] = {}
 	---END CHANGES
 
-	TOGBankClassic_Core:Printf("Reset Player Database")
+	TOGBankClassic_Output:Response("Reset Player Database")
 end
 
 function TOGBankClassic_Database:Load(name)

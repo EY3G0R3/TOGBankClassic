@@ -215,7 +215,7 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 	self.RequestDialog:Hide()
 	self.requestContext = nil
 
-	TOGBankClassic_Core:Printf("Requested %d x %s from %s", quantity, request.item, request.bank)
+	TOGBankClassic_Output:Response("Requested %d x %s from %s", quantity, request.item, request.bank)
 end
 
 function TOGBankClassic_UI_Search:Toggle()

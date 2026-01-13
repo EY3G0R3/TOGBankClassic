@@ -116,17 +116,15 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 		end
 	end
 
-	if TOGBankClassic_Chat and TOGBankClassic_Chat.debug then
-		TOGBankClassic_Core:DebugPrint(
-			"OnSendMail:",
-			"sender",
-			tostring(sender),
-			"recipient",
-			tostring(recipient),
-			"items",
-			#items
-		)
-	end
+	TOGBankClassic_Output:Debug(
+		"OnSendMail:",
+		"sender",
+		tostring(sender),
+		"recipient",
+		tostring(recipient),
+		"items",
+		#items
+	)
 
 	if #items == 0 then
 		return
@@ -171,7 +169,7 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 	end
 
 	if totalApplied > 0 then
-		TOGBankClassic_Core:Printf("Applied %d item(s) toward requests for %s.", totalApplied, pending.recipient)
+		TOGBankClassic_Output:Info("Applied %d item(s) toward requests for %s.", totalApplied, pending.recipient)
 		TOGBankClassic_Guild:RefreshRequestsUI()
 	end
 end
@@ -228,7 +226,7 @@ function TOGBankClassic_Mail:Open(mailId)
 		score = money / 10000
 
 		if TOGBankClassic_Options:GetBankReporting() then
-			TOGBankClassic_Core:Printf("Received %s gold from %s", score, sender)
+			TOGBankClassic_Output:Info("Received %s gold from %s", score, sender)
 		end
 
 		if TOGBankClassic_UI_Mail.ScoreMail and not self.Roster[sender] then
@@ -243,7 +241,7 @@ function TOGBankClassic_Mail:Open(mailId)
 	end
 	if itemCount then
 		if not TOGBankClassic_Bank:HasInventorySpace() then
-			TOGBankClassic_Core:Print("Inventory is full.")
+			TOGBankClassic_Output:Warn("Inventory is full.")
 			return
 		end
 
@@ -261,7 +259,7 @@ function TOGBankClassic_Mail:Open(mailId)
 					score = ((price + 1) / 10000) * quantity
 
 					if TOGBankClassic_Options:GetBankReporting() then
-						TOGBankClassic_Core:Printf("Received %s (%d) from %s", name, quantity, sender)
+						TOGBankClassic_Output:Info("Received %s (%d) from %s", name, quantity, sender)
 					end
 
 					if TOGBankClassic_UI_Mail.ScoreMail and not self.Roster[sender] then

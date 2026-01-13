@@ -7,8 +7,6 @@ function TOGBankClassic_Chat:Init()
 
 	self.addon_outdated = false
 
-	self.debug = false
-
 	self.last_roster_sync = nil
 	self.last_alt_sync = {}
 	self.sync_queue = {}
@@ -50,13 +48,9 @@ function TOGBankClassic_Chat:Init()
 	end)
 end
 
--- TODO: extend this pattern to all other classes
+-- Wrapper for debug logging (delegates to centralized logger)
 function TOGBankClassic_Chat:Debug(...)
-	if self.debug then
-		TOGBankClassic_Core:Print(...)
-		return true
-	end
-	return false
+	return TOGBankClassic_Output:Debug(...)
 end
 
 local SHARES_COLOR = "|cff80bfffshares|r"
@@ -187,7 +181,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		if current_data then
 			if data.name then
 				if current_data.name ~= data.name then
-					TOGBankClassic_Core:Print("A non-guild version!")
+					TOGBankClassic_Output:Warn("A non-guild version!")
 					return
 				end
 			end
@@ -196,7 +190,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					if not self.addon_outdated then
 						-- only make the callout once
 						self.addon_outdated = true
-						TOGBankClassic_Core:Print(
+						TOGBankClassic_Output:Info(
 							"A newer version is available! Download it from https://www.curseforge.com/wow/addons/togbankclassic/"
 						)
 					end
@@ -399,30 +393,36 @@ function TOGBankClassic_Chat:ChatCommand(input)
 			end,
 			["version"] = function()
 				local version = GetAddOnMetadata("TOGBankClassic", "Version") or "unknown"
-				TOGBankClassic_Core:Print("TOGBankClassic version:", version)
+				TOGBankClassic_Output:Response("TOGBankClassic version:", version)
 			end,
 			["debug"] = function()
-				self.debug = not self.debug
-				TOGBankClassic_Core:Print("Debug:", tostring(self.debug))
+				local currentLevel = TOGBankClassic_Output:GetLevel()
+				if currentLevel == LOG_LEVEL.DEBUG then
+					TOGBankClassic_Output:SetLevel(LOG_LEVEL.INFO)
+					TOGBankClassic_Output:Response("Debug: off (log level: Info)")
+				else
+					TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
+					TOGBankClassic_Output:Response("Debug: on (log level: Debug)")
+				end
 			end,
 			["debugdump"] = function()
 				local G = TOGBankClassic_Guild
 				if not G or not G.Info or not G.Info.alts then
-					TOGBankClassic_Core:Print("no alts table available")
+					TOGBankClassic_Output:Response("no alts table available")
 					return
 				end
-				TOGBankClassic_Core:Print("Listing Info.alts keys:")
+				TOGBankClassic_Output:Response("Listing Info.alts keys:")
 				local i = 0
 				for k, v in pairs(G.Info.alts) do
 					i = i + 1
-					TOGBankClassic_Core:Print(i, tostring(k), type(v))
+					TOGBankClassic_Output:Response(i, tostring(k), type(v))
 					if i >= 200 then
-						TOGBankClassic_Core:Print("truncated at 200 entries")
+						TOGBankClassic_Output:Response("truncated at 200 entries")
 						break
 					end
 				end
 				if i == 0 then
-					TOGBankClassic_Core:Print("no entries")
+					TOGBankClassic_Output:Response("no entries")
 				end
 			end,
 
@@ -448,7 +448,7 @@ function TOGBankClassic_Chat:ChatCommand(input)
 		if cmd ~= nil then
 			cmd(arg1)
 		else
-			TOGBankClassic_Core:Print("Unknown command: ", prefix)
+			TOGBankClassic_Output:Response("Unknown command: ", prefix)
 			TOGBankClassic_Chat:ShowHelp()
 		end
 	end
@@ -457,16 +457,16 @@ function TOGBankClassic_Chat:ChatCommand(input)
 end
 
 function TOGBankClassic_Chat:ShowHelp()
-	TOGBankClassic_Core:Print(
+	TOGBankClassic_Output:Response(
 		"\n|cff33ff99Commands:|r\n|cffe6cc80/togbank|r (to display the TOGBankClassic interface) \n|cffe6cc80/togbank help|r (this message) \n|cffe6cc80/togbank version|r (to display the TOGBankClassic version) \n|cffe6cc80/togbank sync|r (to manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically) \n|cffe6cc80/togbank share|r (to manually share the contents of your guild bank with other online users of TOGBankClassic; this is done every 3 minutes automatically), \n|cffe6cc80/togbank reset|r (to reset your own TOGBankClassic database)\n"
 	)
-	TOGBankClassic_Core:Print(
+	TOGBankClassic_Output:Response(
 		"\n|cff33ff99Expert commands:|r\n|cffe6cc80/togbank roster|r (guild banks and members that can read the officer note can use this command to share updated roster data with online guild members)\n|cffe6cc80/togbank hello|r (understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserliazed addon communication)\n|cffe6cc80/togbank requestlog [N|all]|r (print the request log, optionally limited to N entries)\n|cffe6cc80/togbank wipe|r (reset your own TOGBankClassic database)\n|cffe6cc80/togbank wipeall|r (officer only: reset your own TOGBankClassic database and that of all online guild members)"
 	)
-	TOGBankClassic_Core:Print(
+	TOGBankClassic_Output:Response(
 		"\n|cff33ff99Instructions for setting up a new guild bank:|r\n1. Log in with the guild bank character, ensuring they are in the guild.\n2. Add |cffe6cc80gbank|r to their guild or officer note, then type |cffe6cc80/reload|r.\n3. In addon options (Escape -> Options -> Addons -> TOGBankClassic), click on the |cffe6cc80-|r icon (expand/collapse) to the left of the entry, enable reporting and scanning for the bank character in the |cffe6cc80Bank|r section.\n4. Open and close your bags and bank.\n5. Type |cffe6cc80/togbank roster|r and confirm your bank character is included in the sent roster.\n6. Type |cffe6cc80/reload|r.  Wait up to 3 minutes (or type |cffe6cc80/togbank share|r for immediate sharing) until |cffe6cc80Sharing guild bank data...|r completes.\n7. Verify with a guild member (they type |cffe6cc80/togbank|r).\n"
 	)
-	TOGBankClassic_Core:Print(
+	TOGBankClassic_Output:Response(
 		"\n|cff33ff99Instructions for removing a guild bank:|r\n1. Log in with an officer or another bank character in the same guild (or a character from a different guild).\n2. If the bank character is still in the guild, remove |cffe6cc80gbank|r from their notes.\n3. Type |cffe6cc80/togbank roster|r and confirm the bank character is no longer listed or the roster is empty.\n4. Verify with a guild member (they type |cffe6cc80/togbank|r).\n"
 	)
 end

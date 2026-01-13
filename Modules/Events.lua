@@ -139,14 +139,12 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 	if TOGBankClassic_Guild:Init(guild) then
 		TOGBankClassic_Options:InitGuild()
 		if IsInRaid() then
-			if self.debug then
-				TOGBankClassic_Core:Print("GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
-			end
+			TOGBankClassic_Output:Debug("GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
 			return
 		end
 		local cleaned = TOGBankClassic_Guild:CleanupMalformedAlts()
 		if cleaned and cleaned > 0 then
-			TOGBankClassic_Core:Printf("Cleaned %d malformed alt entries from saved database", cleaned)
+			TOGBankClassic_Output:Info("Cleaned %d malformed alt entries from saved database", cleaned)
 		end
 	end
 end

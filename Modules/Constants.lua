@@ -12,3 +12,12 @@ TIMER_INTERVALS = {
 	VERSION_BROADCAST = 180,        -- 3 minutes: lightweight version ping
 	ALT_DATA_QUEUE_RETRY = 5,       -- 5 seconds: queue reprocessing delay
 }
+
+-- Log levels (lower = more verbose)
+LOG_LEVEL = {
+	DEBUG = 1,       -- development/troubleshooting details
+	INFO = 2,        -- sync status, normal operations
+	WARN = 3,        -- something unexpected but recoverable
+	ERROR = 4,       -- something failed
+	RESPONSE = 5,    -- response to user commands (always shown)
+}

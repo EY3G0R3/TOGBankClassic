@@ -1212,7 +1212,7 @@ end
 -- Diagnostics: print request log entries to chat.
 function Guild:PrintRequestLog(limitArg)
 	if not self.Info then
-		TOGBankClassic_Core:Print("Request log: no guild info loaded.")
+		TOGBankClassic_Output:Response("Request log: no guild info loaded.")
 		return
 	end
 	self:EnsureRequestsInitialized()
@@ -1220,7 +1220,7 @@ function Guild:PrintRequestLog(limitArg)
 	local log = self.Info.requestLog or {}
 	local total = #log
 	if total == 0 then
-		TOGBankClassic_Core:Print("Request log is empty.")
+		TOGBankClassic_Output:Response("Request log is empty.")
 		return
 	end
 
@@ -1259,7 +1259,7 @@ function Guild:PrintRequestLog(limitArg)
 	if limit and total > limit then
 		header = header .. " Use /togbank requestlog all for full log."
 	end
-	TOGBankClassic_Core:Print(header)
+	TOGBankClassic_Output:Response(header)
 
 	for i = startIndex, total do
 		local entry = entries[i]
@@ -1291,6 +1291,6 @@ function Guild:PrintRequestLog(limitArg)
 			status,
 			delta
 		)
-		TOGBankClassic_Core:Print(line)
+		TOGBankClassic_Output:Response(line)
 	end
 end

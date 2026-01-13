@@ -202,7 +202,7 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
 		end
 
 		if remove then
-			TOGBankClassic_Core:Print("Removing malformed bank entry for", name)
+			TOGBankClassic_Output:Debug("Removing malformed bank entry for", name)
 			self.Info.alts[name] = nil
 			cleaned = cleaned + 1
 		end
@@ -455,10 +455,7 @@ function TOGBankClassic_Guild:ReceiveRosterData(roster)
 		end
 		if self.requestCount == 0 then
 			self.hasRequested = false
-			shutup = TOGBankClassic_Options:GetBankVerbosity()
-			if shutup == false then
-				TOGBankClassic_Core:Print("Sync completed.")
-			end
+			TOGBankClassic_Output:Info("Sync completed.")
 		end
 	end
 
@@ -537,9 +534,6 @@ local function GetSendResultName(result)
 end
 
 function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
-	local shutup = TOGBankClassic_Options:GetBankVerbosity()
-	local debug = TOGBankClassic_Chat and TOGBankClassic_Chat.debug
-
 	-- Track chunk count (each callback = one chunk sent, ~254 bytes each)
 	local bytesThisChunk = bytesSent - SendStats.lastBytes
 	if bytesThisChunk > 0 then
@@ -562,25 +556,16 @@ function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
 	end
 
 	local totalChunks = math.ceil(totalBytes / 254)
-	local pct = math.floor((bytesSent / totalBytes) * 100)
 
 	-- Print error on failed send
 	if not isSuccess then
 		local resultStr = GetSendResultName(sendResult)
-		TOGBankClassic_Core:Print(string.format(
-			"|cffff0000[SEND ERROR]|r chunk %d/%d failed: %s",
-			SendStats.chunksSent, totalChunks, resultStr
-		))
+		TOGBankClassic_Output:Error("chunk %d/%d failed: %s", SendStats.chunksSent, totalChunks, resultStr)
 	end
 
 	-- Show progress at start
-	if not shutup then
-		if SendStats.chunksSent == 1 then
-			TOGBankClassic_Core:Print(string.format(
-				"Sharing guild bank data: %d bytes in ~%d chunks...",
-				totalBytes, totalChunks
-			))
-		end
+	if SendStats.chunksSent == 1 then
+		TOGBankClassic_Output:Info("Sharing guild bank data: %d bytes in ~%d chunks...", totalBytes, totalChunks)
 	end
 
 	-- Completion summary
@@ -594,13 +579,11 @@ function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
 			summary = summary .. string.format(" | failures: %d, throttled: %d", SendStats.failures, SendStats.throttled)
 		end
 
-		if debug or not shutup then
-			TOGBankClassic_Core:Print(summary)
-		end
+		TOGBankClassic_Output:Debug(summary)
 
-		-- Warn on failures even if shutup is enabled
+		-- Warn on failures
 		if SendStats.failures > 0 then
-			TOGBankClassic_Core:Print(string.format("|cffff0000Warning:|r %d send failures occurred!", SendStats.failures))
+			TOGBankClassic_Output:Warn("%d send failures occurred!", SendStats.failures)
 		end
 
 		-- Reset stats for next operation
@@ -693,10 +676,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 		end
 		if self.requestCount == 0 then
 			self.hasRequested = false
-			shutup = TOGBankClassic_Options:GetBankVerbosity()
-			if shutup == false then
-				TOGBankClassic_Core:Print("Sync completed.")
-			end
+			TOGBankClassic_Output:Info("Sync completed.")
 		end
 	end
 
@@ -802,7 +782,7 @@ function TOGBankClassic_Guild:Hello(type)
 		end
 
 		if type ~= "reply" then
-			TOGBankClassic_Core:Print(hello)
+			TOGBankClassic_Output:Info(hello)
 		end
 		local data = TOGBankClassic_Core:Serialize(hello)
 		if type ~= "reply" then
@@ -905,17 +885,17 @@ function TOGBankClassic_Guild:AuthorRosterData()
 				table.insert(characterNames, bankChar)
 			end
 			if #characterNames > 0 then
-				TOGBankClassic_Core:Print(
+				TOGBankClassic_Output:Info(
 					"Sent updated roster containing the follow banks: " .. table.concat(characterNames, ", ")
 				)
 			else
-				TOGBankClassic_Core:Print("Sent empty roster.")
+				TOGBankClassic_Output:Info("Sent empty roster.")
 			end
 		else
-			TOGBankClassic_Core:Print("Sent empty roster.")
+			TOGBankClassic_Output:Info("Sent empty roster.")
 		end
 	else
-		TOGBankClassic_Core:Print("You lack permissions to share the roster.")
+		TOGBankClassic_Output:Warn("You lack permissions to share the roster.")
 		return
 	end
 end

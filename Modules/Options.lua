@@ -15,8 +15,20 @@ function TOGBankClassic_Options:Init()
 		self.db.char.bank["donations"] = true
 	end
 	if self.db.global.bank == nil then
-		self.db.global.bank = { report = true, shutup = false }
+		self.db.global.bank = { report = true, logLevel = LOG_LEVEL.INFO }
 	end
+	-- Migrate from old shutup toggle to new logLevel
+	if self.db.global.bank["shutup"] ~= nil then
+		if self.db.global.bank["shutup"] == true then
+			self.db.global.bank["logLevel"] = LOG_LEVEL.RESPONSE
+		end
+		self.db.global.bank["shutup"] = nil
+	end
+	if self.db.global.bank["logLevel"] == nil then
+		self.db.global.bank["logLevel"] = LOG_LEVEL.INFO
+	end
+	-- Initialize logger with saved level
+	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
 
 	local options = {
 		type = "group",
@@ -50,16 +62,25 @@ function TOGBankClassic_Options:Init()
 					return self.db.char.combat["hide"]
 				end,
 			},
-			["shutup"] = {
+			["logLevel"] = {
 				order = 2,
-				type = "toggle",
-				name = "Mute addon messages",
-				desc = "Stops the addon from sending messages to the chat window",
+				type = "select",
+				name = "Log Level",
+				desc = "Controls which messages are shown in chat",
+				values = {
+					[LOG_LEVEL.DEBUG] = "Debug (show everything)",
+					[LOG_LEVEL.INFO] = "Info (default)",
+					[LOG_LEVEL.WARN] = "Warnings only",
+					[LOG_LEVEL.ERROR] = "Errors only",
+					[LOG_LEVEL.RESPONSE] = "Silent (commands only)",
+				},
+				sorting = { LOG_LEVEL.DEBUG, LOG_LEVEL.INFO, LOG_LEVEL.WARN, LOG_LEVEL.ERROR, LOG_LEVEL.RESPONSE },
 				set = function(_, v)
-					self.db.global.bank["shutup"] = v
+					self.db.global.bank["logLevel"] = v
+					TOGBankClassic_Output:SetLevel(v)
 				end,
 				get = function()
-					return self.db.global.bank["shutup"]
+					return self.db.global.bank["logLevel"]
 				end,
 			},
 			["reset"] = {
@@ -177,11 +198,8 @@ function TOGBankClassic_Options:GetBankReporting()
 	return self.db.global.bank["report"]
 end
 
-function TOGBankClassic_Options:GetBankVerbosity()
-	if self.db.global.bank["shutup"] == nil then
-		return false
-	end
-	return self.db.global.bank["shutup"]
+function TOGBankClassic_Options:GetLogLevel()
+	return self.db.global.bank["logLevel"] or LOG_LEVEL.INFO
 end
 
 function TOGBankClassic_Options:GetMinimapEnabled()
