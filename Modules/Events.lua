@@ -84,7 +84,7 @@ end
 function TOGBankClassic_Events:SetTimer()
 	TOGBankClassic_Core:ScheduleTimer(function(...)
 		TOGBankClassic_Events:OnTimer()
-	end, 600)
+	end, TIMER_INTERVALS.ROSTER_AND_ALT_SYNC)
 end
 
 function TOGBankClassic_Events:OnTimer()
@@ -97,7 +97,7 @@ end
 function TOGBankClassic_Events:SetShareTimer()
 	TOGBankClassic_Core:ScheduleTimer(function(...)
 		TOGBankClassic_Events:OnShareTimer()
-	end, 180)
+	end, TIMER_INTERVALS.VERSION_BROADCAST)
 end
 
 function TOGBankClassic_Events:OnShareTimer()

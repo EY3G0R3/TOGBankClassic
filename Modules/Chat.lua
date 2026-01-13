@@ -496,7 +496,7 @@ end
 function TOGBankClassic_Chat:ReprocessQueue()
 	TOGBankClassic_Core:ScheduleTimer(function(...)
 		TOGBankClassic_Chat:OnTimer()
-	end, 5)
+	end, TIMER_INTERVALS.ALT_DATA_QUEUE_RETRY)
 end
 
 function TOGBankClassic_Chat:OnTimer()
