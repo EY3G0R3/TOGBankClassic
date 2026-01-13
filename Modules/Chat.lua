@@ -153,7 +153,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	}
 	local prefixDesc = prefixDescriptions[prefix] or "(Unknown)"
 	if IsInRaid() then
-		self:Debug("> /ignoring/", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
+		self:Debug("> (ignoring)", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
 		return
 	end
 	local player = TOGBankClassic_Guild:GetPlayer()
@@ -161,7 +161,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
 	if player == sender then
-		self:Debug("> /ignoring/", prefix, prefixDesc, "(our own)")
+		self:Debug("> (ignoring)", prefix, prefixDesc, "(our own)")
 		return
 	end
 

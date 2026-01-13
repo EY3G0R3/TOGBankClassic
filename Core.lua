@@ -16,7 +16,7 @@ local prefixDescriptions = {
 function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target, prio, callbackFn, callbackArg)
     if IsInRaid() then
         local prefixDesc = prefixDescriptions[prefix] or "(Unknown)"
-        TOGBankClassic_Output:Debug("< /skipping/", prefix, prefixDesc, "(in raid)")
+        TOGBankClassic_Output:Debug("< (suppressing)", prefix, prefixDesc, "(in raid)")
         return
     end
     if not AceComm_SendCommMessage then
