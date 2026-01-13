@@ -140,7 +140,7 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 		TOGBankClassic_Options:InitGuild()
 		if IsInRaid() then
 			if self.debug then
-				TOGBankClassic_Core:Print("GUILD_RANKS_UPDATE: ignoring cleanup", prefix, "from", sender, "(in raid)")
+				TOGBankClassic_Core:Print("GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
 			end
 			return
 		end
