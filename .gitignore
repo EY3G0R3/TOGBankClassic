@@ -1,0 +1,5 @@
+# Claude Code temp files
+tmpclaude-*
+
+# Build artifacts
+dist/
