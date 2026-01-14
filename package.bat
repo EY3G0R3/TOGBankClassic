@@ -21,14 +21,14 @@ mkdir "%ADDONDIR%"
 mkdir "%ADDONDIR%\Modules\UI"
 mkdir "%ADDONDIR%\Libs"
 
-:: Copy addon files
+:: Copy addon files (exclude temp files and build artifacts)
 copy TOGBankClassic.toc "%ADDONDIR%\" >nul
 copy Core.lua "%ADDONDIR%\" >nul
 copy embeds.xml "%ADDONDIR%\" >nul
 copy LICENSE "%ADDONDIR%\" >nul
 copy CHANGELOG.md "%ADDONDIR%\" >nul
-xcopy /E /I /Q Modules "%ADDONDIR%\Modules" >nul
-xcopy /E /I /Q Libs "%ADDONDIR%\Libs" >nul
+robocopy Modules "%ADDONDIR%\Modules" /E /XF tmpclaude-* /NFL /NDL /NJH /NJS /NC /NS /NP >nul
+robocopy Libs "%ADDONDIR%\Libs" /E /XF tmpclaude-* /NFL /NDL /NJH /NJS /NC /NS /NP >nul
 
 :: Create zip using PowerShell
 powershell -Command "Compress-Archive -Path '%ADDONDIR%' -DestinationPath '%ZIPNAME%'"
