@@ -65,6 +65,8 @@ function TOGBankClassic_Options:Init()
 			["logLevel"] = {
 				order = 2,
 				type = "select",
+				style = "radio",
+				width = "full",
 				name = "Log Level",
 				desc = "Controls which messages are shown in chat",
 				values = {
