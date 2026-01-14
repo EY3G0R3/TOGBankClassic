@@ -138,7 +138,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	if not info or not roster_alts then
 		QueryEmpty()
 		OnClose()
-		TOGBankClassic_Output:Info("Database is empty; wait for sync.")
+		TOGBankClassic_Output:Response("Database is empty; wait for sync.")
 		return
 	end
 
@@ -188,7 +188,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	if #tabs == 0 then
 		QueryEmpty()
 		OnClose()
-		TOGBankClassic_Output:Info("Database is empty; wait for sync.")
+		TOGBankClassic_Output:Response("Database is empty; wait for sync.")
 		return
 	end
 
