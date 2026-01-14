@@ -70,13 +70,13 @@ function TOGBankClassic_Options:Init()
 				name = "Log Level",
 				desc = "Controls which messages are shown in chat",
 				values = {
+					[LOG_LEVEL.RESPONSE] = "Quiet (only respond to /togbank commands)",
+					[LOG_LEVEL.ERROR] = "Errors and above",
+					[LOG_LEVEL.WARN] = "Warnings and above",
+					[LOG_LEVEL.INFO] = "Info and above (default)",
 					[LOG_LEVEL.DEBUG] = "Debug (show everything)",
-					[LOG_LEVEL.INFO] = "Info (default)",
-					[LOG_LEVEL.WARN] = "Warnings only",
-					[LOG_LEVEL.ERROR] = "Errors only",
-					[LOG_LEVEL.RESPONSE] = "Silent (commands only)",
 				},
-				sorting = { LOG_LEVEL.DEBUG, LOG_LEVEL.INFO, LOG_LEVEL.WARN, LOG_LEVEL.ERROR, LOG_LEVEL.RESPONSE },
+				sorting = { LOG_LEVEL.RESPONSE, LOG_LEVEL.ERROR, LOG_LEVEL.WARN, LOG_LEVEL.INFO, LOG_LEVEL.DEBUG },
 				set = function(_, v)
 					self.db.global.bank["logLevel"] = v
 					TOGBankClassic_Output:SetLevel(v)
