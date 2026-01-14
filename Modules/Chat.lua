@@ -141,18 +141,7 @@ function TOGBankClassic_Chat:IsAltDataAllowed(sender, claimedNorm)
 end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
-	local prefixDescriptions = {
-		["togbank-v"] = "(Version)",
-		["togbank-d"] = "(Data)",
-		["togbank-r"] = "(Query)",
-		["togbank-h"] = "(Hello)",
-		["togbank-hr"] = "(Hello Reply)",
-		["togbank-s"] = "(Share)",
-		["togbank-sr"] = "(Share Reply)",
-		["togbank-w"] = "(Wipe)",
-		["togbank-wr"] = "(Wipe Reply)",
-	}
-	local prefixDesc = prefixDescriptions[prefix] or "(Unknown)"
+	local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
 	if IsInRaid() then
 		self:Debug("> (ignoring)", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
 		return

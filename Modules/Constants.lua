@@ -29,3 +29,16 @@ REQUEST_LOG = {
 	MAX_ENTRIES = 2000,                       -- max log entries to keep after time-based pruning
 	PRUNE_INTERVAL = 300,                     -- 5 minutes: minimum interval between automatic prunes
 }
+
+-- Communication prefix descriptions for debug logging
+COMM_PREFIX_DESCRIPTIONS = {
+	["togbank-v"] = "(Version)",
+	["togbank-d"] = "(Data)",
+	["togbank-r"] = "(Query)",
+	["togbank-h"] = "(Hello)",
+	["togbank-hr"] = "(Hello Reply)",
+	["togbank-s"] = "(Share)",
+	["togbank-sr"] = "(Share Reply)",
+	["togbank-w"] = "(Wipe)",
+	["togbank-wr"] = "(Wipe Reply)",
+}
