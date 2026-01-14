@@ -6,6 +6,7 @@ function TOGBankClassic_Chat:Init()
 	end)
 
 	self.addon_outdated = false
+	self.guild_versions = {}  -- tracks addon versions of guild members
 
 	self.last_roster_sync = nil
 	self.last_alt_sync = {}
@@ -185,8 +186,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					return
 				end
 			end
-			if data.addon and current_data.addon then
-				if data.addon > current_data.addon then
+			if data.addon then
+				-- Track this user's addon version
+				self.guild_versions[sender] = {
+					version = data.addon,
+					seen = time(),
+				}
+
+				if current_data.addon and data.addon > current_data.addon then
 					if not self.addon_outdated then
 						-- only make the callout once
 						self.addon_outdated = true
@@ -429,6 +436,9 @@ function TOGBankClassic_Chat:ChatCommand(input)
 			["hello"] = function()
 				TOGBankClassic_Guild:Hello()
 			end,
+			["versions"] = function()
+				TOGBankClassic_Chat:PrintVersions()
+			end,
 			["wipeall"] = function()
 				TOGBankClassic_Guild:Wipe()
 			end,
@@ -501,4 +511,61 @@ end
 
 function TOGBankClassic_Chat:OnTimer()
 	TOGBankClassic_Chat:ProcessQueue()
+end
+
+function TOGBankClassic_Chat:PrintVersions()
+	-- Get our own version
+	local myVersion = GetAddOnMetadata("TOGBankClassic", "Version") or "unknown"
+	local myPlayer = TOGBankClassic_Guild:GetPlayer()
+
+	-- Collect versions into a sortable list
+	local versions = {}
+
+	-- Add ourselves
+	table.insert(versions, {
+		name = myPlayer,
+		version = myVersion,
+		seen = time(),
+		isSelf = true,
+	})
+
+	-- Add tracked guild members
+	for name, info in pairs(self.guild_versions) do
+		table.insert(versions, {
+			name = name,
+			version = tostring(info.version),
+			seen = info.seen,
+			isSelf = false,
+		})
+	end
+
+	-- Sort by version (descending), then by name
+	table.sort(versions, function(a, b)
+		if a.version ~= b.version then
+			return a.version > b.version
+		end
+		return a.name < b.name
+	end)
+
+	-- Print header
+	local count = #versions
+	TOGBankClassic_Output:Response("Addon versions (%d members):", count)
+
+	-- Print each version
+	local now = time()
+	for _, entry in ipairs(versions) do
+		local age = ""
+		if not entry.isSelf then
+			local seconds = now - entry.seen
+			if seconds < 60 then
+				age = " (just now)"
+			elseif seconds < 3600 then
+				age = (" (%dm ago)"):format(math.floor(seconds / 60))
+			else
+				age = (" (%dh ago)"):format(math.floor(seconds / 3600))
+			end
+		end
+		local marker = entry.isSelf and " (you)" or ""
+		TOGBankClassic_Output:Response("  %s: %s%s%s", entry.name, entry.version, marker, age)
+	end
 end
