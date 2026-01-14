@@ -45,11 +45,7 @@ local VALID_REQUEST_STATUS = {
 	complete = true,
 }
 
--- Completed/cancelled requests older than this many seconds will be pruned.
-local REQUEST_EXPIRY_SECONDS = 30 * 24 * 60 * 60
--- Request log entries older than this many seconds may be pruned.
-local REQUEST_LOG_RETENTION_SECONDS = 30 * 24 * 60 * 60
-local REQUEST_LOG_MAX = 2000
+-- Compaction settings are defined in Constants.lua (REQUEST_LOG table)
 
 -- Legacy requests without IDs are deterministically derived from older fields.
 local function legacyRequestId(req)
@@ -293,16 +289,16 @@ function Guild:PruneRequestLog()
 	local keep = {}
 	for _, entry in ipairs(self.Info.requestLog) do
 		local ts = tonumber(entry.ts or 0) or 0
-		if ts > 0 and (now - ts) <= REQUEST_LOG_RETENTION_SECONDS then
+		if ts > 0 and (now - ts) <= REQUEST_LOG.RETENTION_SECONDS then
 			table.insert(keep, entry)
 		end
 	end
 
-	if #keep > REQUEST_LOG_MAX then
+	if #keep > REQUEST_LOG.MAX_ENTRIES then
 		table.sort(keep, function(a, b)
 			return (tonumber(a.ts or 0) or 0) < (tonumber(b.ts or 0) or 0)
 		end)
-		local startIndex = #keep - REQUEST_LOG_MAX + 1
+		local startIndex = #keep - REQUEST_LOG.MAX_ENTRIES + 1
 		local trimmed = {}
 		for i = startIndex, #keep do
 			table.insert(trimmed, keep[i])
@@ -322,7 +318,7 @@ function Guild:PruneRequestTombstones()
 	local keep = {}
 	for requestId, ts in pairs(self.Info.requestsTombstones) do
 		local deletedAt = tonumber(ts or 0) or 0
-		if deletedAt > 0 and (now - deletedAt) <= REQUEST_EXPIRY_SECONDS then
+		if deletedAt > 0 and (now - deletedAt) <= REQUEST_LOG.EXPIRY_SECONDS then
 			keep[requestId] = deletedAt
 		end
 	end
@@ -458,7 +454,7 @@ function Guild:PruneRequests()
 			or req.status == "complete"
 			or req.status == "cancelled"
 			or (quantity > 0 and fulfilled >= quantity)
-		local tooOld = isDone and (now - updated) > REQUEST_EXPIRY_SECONDS
+		local tooOld = isDone and (now - updated) > REQUEST_LOG.EXPIRY_SECONDS
 		if not tooOld then
 			table.insert(keep, req)
 			if updated > latest then

@@ -21,3 +21,10 @@ LOG_LEVEL = {
 	ERROR = 4,       -- something failed
 	RESPONSE = 5,    -- response to user commands (always shown)
 }
+
+-- Request log compaction settings
+REQUEST_LOG = {
+	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests removed after this
+	RETENTION_SECONDS = 30 * 24 * 60 * 60,   -- 30 days: log entries older than this may be pruned
+	MAX_ENTRIES = 2000,                       -- max log entries to keep after time-based pruning
+}
