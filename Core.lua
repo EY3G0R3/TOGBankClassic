@@ -2,18 +2,17 @@ TOGBankClassic_Core = LibStub("AceAddon-3.0"):NewAddon("TOGBankClassic", "AceCom
 local AceComm_SendCommMessage = TOGBankClassic_Core.SendCommMessage
 
 function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target, prio, callbackFn, callbackArg)
+    local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
     if IsInRaid() then
-        local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
-        TOGBankClassic_Output:Debug("< (suppressing)", prefix, prefixDesc, "(in raid)")
+        TOGBankClassic_Output:Debug("< (suppressing) %s %s (in raid)", prefix, prefixDesc)
         return
     end
     if not AceComm_SendCommMessage then
         return
     end
 
-    local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
     local bytes = text and #text or 0
-    TOGBankClassic_Output:Debug("<", prefix, prefixDesc, "to", distribution, "(%d bytes)", bytes)
+    TOGBankClassic_Output:Debug("< %s %s to %s (%d bytes)", prefix, prefixDesc, distribution, bytes)
 
     return AceComm_SendCommMessage(self, prefix, text, distribution, target, prio, callbackFn, callbackArg)
 end

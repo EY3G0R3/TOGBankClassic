@@ -16,15 +16,26 @@ function TOGBankClassic_Output:GetLevel()
 end
 
 -- Core logging function
--- If multiple args are passed and first arg contains %, uses string.format
+-- If fmt contains %, uses string.format with varargs
+-- Otherwise concatenates all arguments with spaces
 local function Log(level, prefix, fmt, ...)
 	if level < TOGBankClassic_Output.level and level ~= LOG_LEVEL.RESPONSE then
 		return false
 	end
 
 	local message
-	if select("#", ...) > 0 then
+	local numArgs = select("#", ...)
+	if numArgs > 0 and fmt:find("%%") then
+		-- Format string detected, use string.format
 		message = string.format(fmt, ...)
+	elseif numArgs > 0 then
+		-- No format specifiers, concatenate all args with spaces
+		local parts = { tostring(fmt) }
+		for i = 1, numArgs do
+			local arg = select(i, ...)
+			parts[#parts + 1] = tostring(arg)
+		end
+		message = table.concat(parts, " ")
 	else
 		message = fmt
 	end
