@@ -338,6 +338,21 @@ function Guild:PruneRequestTombstones()
 	return before - after, before, after
 end
 
+-- Throttled pruning: only runs if enough time has passed since last prune.
+-- Returns true if pruning was performed, false if skipped.
+function Guild:PruneIfNeeded()
+	local now = GetServerTime()
+	local lastPrune = self.lastPruneTime or 0
+	if (now - lastPrune) < REQUEST_LOG.PRUNE_INTERVAL then
+		return false
+	end
+	self.lastPruneTime = now
+	self:PruneRequests()
+	self:PruneRequestLog()
+	self:PruneRequestTombstones()
+	return true
+end
+
 -- Sequence allocation for local actors.
 function Guild:NextRequestLogSeq(actor)
 	if not self.Info then
@@ -654,9 +669,7 @@ function Guild:RecordRequestLogEntry(entry, broadcast)
 	if entry.ts and entry.ts > 0 then
 		self:TouchRequestsVersion(entry.ts)
 	end
-	self:PruneRequests()
-	self:PruneRequestLog()
-	self:PruneRequestTombstones()
+	self:PruneIfNeeded()
 	if broadcast then
 		self:SendRequestLogEntry(entry)
 	end
