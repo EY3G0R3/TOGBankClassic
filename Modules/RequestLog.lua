@@ -1290,3 +1290,65 @@ function Guild:PrintRequestLog(limitArg)
 		TOGBankClassic_Output:Response(line)
 	end
 end
+
+-- Manual compaction with stats output.
+function Guild:Compact()
+	if not self.Info then
+		TOGBankClassic_Output:Response("Compact: no guild info loaded.")
+		return
+	end
+	self:EnsureRequestsInitialized()
+
+	-- Capture counts before compaction
+	local requestsBefore = self.Info.requests and #self.Info.requests or 0
+	local logBefore = self.Info.requestLog and #self.Info.requestLog or 0
+	local tombstonesBefore = 0
+	if self.Info.requestsTombstones then
+		for _ in pairs(self.Info.requestsTombstones) do
+			tombstonesBefore = tombstonesBefore + 1
+		end
+	end
+
+	-- Run compaction
+	self:PruneRequests()
+	self:PruneRequestLog()
+	self:PruneRequestTombstones()
+
+	-- Capture counts after compaction
+	local requestsAfter = self.Info.requests and #self.Info.requests or 0
+	local logAfter = self.Info.requestLog and #self.Info.requestLog or 0
+	local tombstonesAfter = 0
+	if self.Info.requestsTombstones then
+		for _ in pairs(self.Info.requestsTombstones) do
+			tombstonesAfter = tombstonesAfter + 1
+		end
+	end
+
+	-- Report results
+	local requestsPruned = requestsBefore - requestsAfter
+	local logPruned = logBefore - logAfter
+	local tombstonesPruned = tombstonesBefore - tombstonesAfter
+	local totalPruned = requestsPruned + logPruned + tombstonesPruned
+
+	if totalPruned == 0 then
+		TOGBankClassic_Output:Response("Compact: nothing to prune.")
+		TOGBankClassic_Output:Response("  Requests: %d, Log entries: %d, Tombstones: %d", requestsAfter, logAfter, tombstonesAfter)
+	else
+		TOGBankClassic_Output:Response("Compact: pruned %d entries.", totalPruned)
+		if requestsPruned > 0 then
+			TOGBankClassic_Output:Response("  Requests: %d -> %d (-%d)", requestsBefore, requestsAfter, requestsPruned)
+		else
+			TOGBankClassic_Output:Response("  Requests: %d", requestsAfter)
+		end
+		if logPruned > 0 then
+			TOGBankClassic_Output:Response("  Log entries: %d -> %d (-%d)", logBefore, logAfter, logPruned)
+		else
+			TOGBankClassic_Output:Response("  Log entries: %d", logAfter)
+		end
+		if tombstonesPruned > 0 then
+			TOGBankClassic_Output:Response("  Tombstones: %d -> %d (-%d)", tombstonesBefore, tombstonesAfter, tombstonesPruned)
+		else
+			TOGBankClassic_Output:Response("  Tombstones: %d", tombstonesAfter)
+		end
+	end
+end
