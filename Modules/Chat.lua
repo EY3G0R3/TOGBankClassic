@@ -364,91 +364,194 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	end
 end
 
+-- Help text color codes
+local HELP_COLOR = {
+	HEADER = "|cff33ff99",
+	COMMAND = "|cffe6cc80",
+	RESET = "|r",
+}
+
+-- Command registry: name, usage, help, expert, handler
+-- Commands are displayed in help in the order they appear here.
+-- Set help = nil to hide from help output.
+local COMMAND_REGISTRY = {
+	-- Basic commands
+	{
+		name = "help",
+		help = "this message",
+		handler = function()
+			TOGBankClassic_Chat:ShowHelp()
+		end,
+	},
+	{
+		name = "version",
+		help = "display the TOGBankClassic version",
+		handler = function()
+			local version = GetAddOnMetadata("TOGBankClassic", "Version") or "unknown"
+			TOGBankClassic_Output:Response("TOGBankClassic version:", version)
+		end,
+	},
+	{
+		name = "sync",
+		help = "manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically",
+		handler = function()
+			TOGBankClassic_Events:Sync()
+		end,
+	},
+	{
+		name = "share",
+		help = "manually share the contents of your guild bank with other online users of TOGBankClassic; this is done every 3 minutes automatically",
+		handler = function()
+			TOGBankClassic_Bank:OnUpdateStart()
+			TOGBankClassic_Bank:OnUpdateStop()
+			TOGBankClassic_Guild:Share()
+		end,
+	},
+	{
+		name = "reset",
+		help = "reset your own TOGBankClassic database",
+		handler = function()
+			local guild = TOGBankClassic_Guild:GetGuild()
+			if not guild then
+				return
+			end
+			TOGBankClassic_Guild:Reset(guild)
+		end,
+	},
+	-- Expert commands
+	{
+		name = "roster",
+		help = "guild banks and members that can read the officer note can use this command to share updated roster data with online guild members",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:AuthorRosterData()
+		end,
+	},
+	{
+		name = "hello",
+		help = "understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserialized addon communication",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:Hello()
+		end,
+	},
+	{
+		name = "versions",
+		help = "show addon versions of online guild members",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Chat:PrintVersions()
+		end,
+	},
+	{
+		name = "requestlog",
+		usage = "[N|all]",
+		help = "print the request log, optionally limited to N entries",
+		expert = true,
+		handler = function(arg1)
+			TOGBankClassic_Guild:PrintRequestLog(arg1)
+		end,
+	},
+	{
+		name = "compact",
+		help = "manually run compaction to prune old requests and log entries",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:Compact()
+		end,
+	},
+	{
+		name = "wipe",
+		help = "reset your own TOGBankClassic database",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:WipeMine()
+		end,
+	},
+	{
+		name = "wipeall",
+		help = "officer only: reset your own TOGBankClassic database and that of all online guild members",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:Wipe()
+		end,
+	},
+	-- Hidden commands (no help text)
+	{
+		name = "debug",
+		handler = function()
+			local currentLevel = TOGBankClassic_Output:GetLevel()
+			if currentLevel == LOG_LEVEL.DEBUG then
+				TOGBankClassic_Output:SetLevel(LOG_LEVEL.INFO)
+				TOGBankClassic_Output:Response("Debug: off (log level: Info)")
+			else
+				TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
+				TOGBankClassic_Output:Response("Debug: on (log level: Debug)")
+			end
+		end,
+	},
+	{
+		name = "debugdump",
+		handler = function()
+			local G = TOGBankClassic_Guild
+			if not G or not G.Info or not G.Info.alts then
+				TOGBankClassic_Output:Response("no alts table available")
+				return
+			end
+			TOGBankClassic_Output:Response("Listing Info.alts keys:")
+			local i = 0
+			for k, v in pairs(G.Info.alts) do
+				i = i + 1
+				TOGBankClassic_Output:Response(i, tostring(k), type(v))
+				if i >= 200 then
+					TOGBankClassic_Output:Response("truncated at 200 entries")
+					break
+				end
+			end
+			if i == 0 then
+				TOGBankClassic_Output:Response("no entries")
+			end
+		end,
+	},
+}
+
+-- Build lookup table for fast command dispatch
+local COMMAND_HANDLERS = {}
+for _, cmd in ipairs(COMMAND_REGISTRY) do
+	COMMAND_HANDLERS[cmd.name] = cmd.handler
+end
+
+-- Instructions as multiline strings for readability
+local HELP_INSTRUCTIONS = {
+	{
+		title = "Instructions for setting up a new guild bank:",
+		text = [[
+1. Log in with the guild bank character, ensuring they are in the guild.
+2. Add |cffe6cc80gbank|r to their guild or officer note, then type |cffe6cc80/reload|r.
+3. In addon options (Escape -> Options -> Addons -> TOGBankClassic), click on the |cffe6cc80-|r icon (expand/collapse) to the left of the entry, enable reporting and scanning for the bank character in the |cffe6cc80Bank|r section.
+4. Open and close your bags and bank.
+5. Type |cffe6cc80/togbank roster|r and confirm your bank character is included in the sent roster.
+6. Type |cffe6cc80/reload|r. Wait up to 3 minutes (or type |cffe6cc80/togbank share|r for immediate sharing) until |cffe6cc80Sharing guild bank data...|r completes.
+7. Verify with a guild member (they type |cffe6cc80/togbank|r).]],
+	},
+	{
+		title = "Instructions for removing a guild bank:",
+		text = [[
+1. Log in with an officer or another bank character in the same guild (or a character from a different guild).
+2. If the bank character is still in the guild, remove |cffe6cc80gbank|r from their notes.
+3. Type |cffe6cc80/togbank roster|r and confirm the bank character is no longer listed or the roster is empty.
+4. Verify with a guild member (they type |cffe6cc80/togbank|r).]],
+	},
+}
+
 function TOGBankClassic_Chat:ChatCommand(input)
 	if input == nil or input == "" then
 		TOGBankClassic_UI_Inventory:Toggle()
 	else
-		local commands = {
-			["sync"] = function()
-				TOGBankClassic_Events:Sync()
-			end,
-			["reset"] = function()
-				local guild = TOGBankClassic_Guild:GetGuild()
-				if not guild then
-					return
-				end
-				TOGBankClassic_Guild:Reset(guild)
-			end,
-			["share"] = function()
-				TOGBankClassic_Bank:OnUpdateStart()
-				TOGBankClassic_Bank:OnUpdateStop()
-				TOGBankClassic_Guild:Share()
-			end,
-			["help"] = function()
-				TOGBankClassic_Chat:ShowHelp()
-			end,
-			["version"] = function()
-				local version = GetAddOnMetadata("TOGBankClassic", "Version") or "unknown"
-				TOGBankClassic_Output:Response("TOGBankClassic version:", version)
-			end,
-			["debug"] = function()
-				local currentLevel = TOGBankClassic_Output:GetLevel()
-				if currentLevel == LOG_LEVEL.DEBUG then
-					TOGBankClassic_Output:SetLevel(LOG_LEVEL.INFO)
-					TOGBankClassic_Output:Response("Debug: off (log level: Info)")
-				else
-					TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
-					TOGBankClassic_Output:Response("Debug: on (log level: Debug)")
-				end
-			end,
-			["debugdump"] = function()
-				local G = TOGBankClassic_Guild
-				if not G or not G.Info or not G.Info.alts then
-					TOGBankClassic_Output:Response("no alts table available")
-					return
-				end
-				TOGBankClassic_Output:Response("Listing Info.alts keys:")
-				local i = 0
-				for k, v in pairs(G.Info.alts) do
-					i = i + 1
-					TOGBankClassic_Output:Response(i, tostring(k), type(v))
-					if i >= 200 then
-						TOGBankClassic_Output:Response("truncated at 200 entries")
-						break
-					end
-				end
-				if i == 0 then
-					TOGBankClassic_Output:Response("no entries")
-				end
-			end,
-
-			["hello"] = function()
-				TOGBankClassic_Guild:Hello()
-			end,
-			["versions"] = function()
-				TOGBankClassic_Chat:PrintVersions()
-			end,
-			["wipeall"] = function()
-				TOGBankClassic_Guild:Wipe()
-			end,
-			["wipe"] = function()
-				TOGBankClassic_Guild:WipeMine()
-			end,
-			["roster"] = function()
-				TOGBankClassic_Guild:AuthorRosterData()
-			end,
-			["requestlog"] = function(arg1)
-				TOGBankClassic_Guild:PrintRequestLog(arg1)
-			end,
-			["compact"] = function()
-				TOGBankClassic_Guild:Compact()
-			end,
-		}
-
 		local prefix, arg1 = TOGBankClassic_Core:GetArgs(input, 2)
-		local cmd = commands[prefix]
-		if cmd ~= nil then
-			cmd(arg1)
+		local handler = COMMAND_HANDLERS[prefix]
+		if handler then
+			handler(arg1)
 		else
 			TOGBankClassic_Output:Response("Unknown command: ", prefix)
 			TOGBankClassic_Chat:ShowHelp()
@@ -459,18 +562,38 @@ function TOGBankClassic_Chat:ChatCommand(input)
 end
 
 function TOGBankClassic_Chat:ShowHelp()
-	TOGBankClassic_Output:Response(
-		"\n|cff33ff99Commands:|r\n|cffe6cc80/togbank|r (to display the TOGBankClassic interface) \n|cffe6cc80/togbank help|r (this message) \n|cffe6cc80/togbank version|r (to display the TOGBankClassic version) \n|cffe6cc80/togbank sync|r (to manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically) \n|cffe6cc80/togbank share|r (to manually share the contents of your guild bank with other online users of TOGBankClassic; this is done every 3 minutes automatically), \n|cffe6cc80/togbank reset|r (to reset your own TOGBankClassic database)\n"
-	)
-	TOGBankClassic_Output:Response(
-		"\n|cff33ff99Expert commands:|r\n|cffe6cc80/togbank roster|r (guild banks and members that can read the officer note can use this command to share updated roster data with online guild members)\n|cffe6cc80/togbank hello|r (understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserliazed addon communication)\n|cffe6cc80/togbank requestlog [N|all]|r (print the request log, optionally limited to N entries)\n|cffe6cc80/togbank compact|r (manually run compaction to prune old requests and log entries)\n|cffe6cc80/togbank wipe|r (reset your own TOGBankClassic database)\n|cffe6cc80/togbank wipeall|r (officer only: reset your own TOGBankClassic database and that of all online guild members)"
-	)
-	TOGBankClassic_Output:Response(
-		"\n|cff33ff99Instructions for setting up a new guild bank:|r\n1. Log in with the guild bank character, ensuring they are in the guild.\n2. Add |cffe6cc80gbank|r to their guild or officer note, then type |cffe6cc80/reload|r.\n3. In addon options (Escape -> Options -> Addons -> TOGBankClassic), click on the |cffe6cc80-|r icon (expand/collapse) to the left of the entry, enable reporting and scanning for the bank character in the |cffe6cc80Bank|r section.\n4. Open and close your bags and bank.\n5. Type |cffe6cc80/togbank roster|r and confirm your bank character is included in the sent roster.\n6. Type |cffe6cc80/reload|r.  Wait up to 3 minutes (or type |cffe6cc80/togbank share|r for immediate sharing) until |cffe6cc80Sharing guild bank data...|r completes.\n7. Verify with a guild member (they type |cffe6cc80/togbank|r).\n"
-	)
-	TOGBankClassic_Output:Response(
-		"\n|cff33ff99Instructions for removing a guild bank:|r\n1. Log in with an officer or another bank character in the same guild (or a character from a different guild).\n2. If the bank character is still in the guild, remove |cffe6cc80gbank|r from their notes.\n3. Type |cffe6cc80/togbank roster|r and confirm the bank character is no longer listed or the roster is empty.\n4. Verify with a guild member (they type |cffe6cc80/togbank|r).\n"
-	)
+	local H = HELP_COLOR.HEADER
+	local C = HELP_COLOR.COMMAND
+	local R = HELP_COLOR.RESET
+
+	-- Basic commands header
+	TOGBankClassic_Output:Response("\n%sCommands:%s", H, R)
+	TOGBankClassic_Output:Response("%s/togbank%s - display the TOGBankClassic interface", C, R)
+
+	-- Print basic commands
+	for _, cmd in ipairs(COMMAND_REGISTRY) do
+		if cmd.help and not cmd.expert then
+			local usage = cmd.usage and (" " .. cmd.usage) or ""
+			TOGBankClassic_Output:Response("%s/togbank %s%s%s - %s", C, cmd.name, usage, R, cmd.help)
+		end
+	end
+
+	-- Expert commands header
+	TOGBankClassic_Output:Response("\n%sExpert commands:%s", H, R)
+
+	-- Print expert commands
+	for _, cmd in ipairs(COMMAND_REGISTRY) do
+		if cmd.help and cmd.expert then
+			local usage = cmd.usage and (" " .. cmd.usage) or ""
+			TOGBankClassic_Output:Response("%s/togbank %s%s%s - %s", C, cmd.name, usage, R, cmd.help)
+		end
+	end
+
+	-- Print instructions
+	for _, instruction in ipairs(HELP_INSTRUCTIONS) do
+		TOGBankClassic_Output:Response("\n%s%s%s", H, instruction.title, R)
+		TOGBankClassic_Output:Response(instruction.text)
+	end
 end
 
 function TOGBankClassic_Chat:ProcessQueue()
