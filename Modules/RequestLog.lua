@@ -280,11 +280,12 @@ function Guild:NormalizeRequestList()
 	self:PruneRequests()
 end
 
--- Log retention and pruning.
+-- Log retention and pruning. Returns (pruned, before, after).
 function Guild:PruneRequestLog()
 	if not self.Info or not self.Info.requestLog then
-		return
+		return 0, 0, 0
 	end
+	local before = #self.Info.requestLog
 	local now = GetServerTime()
 	local keep = {}
 	for _, entry in ipairs(self.Info.requestLog) do
@@ -308,11 +309,18 @@ function Guild:PruneRequestLog()
 
 	self.Info.requestLog = keep
 	self:RebuildRequestLogIndex()
+	local after = #keep
+	return before - after, before, after
 end
 
+-- Tombstone pruning. Returns (pruned, before, after).
 function Guild:PruneRequestTombstones()
 	if not self.Info or not self.Info.requestsTombstones then
-		return
+		return 0, 0, 0
+	end
+	local before = 0
+	for _ in pairs(self.Info.requestsTombstones) do
+		before = before + 1
 	end
 	local now = GetServerTime()
 	local keep = {}
@@ -323,6 +331,11 @@ function Guild:PruneRequestTombstones()
 		end
 	end
 	self.Info.requestsTombstones = keep
+	local after = 0
+	for _ in pairs(keep) do
+		after = after + 1
+	end
+	return before - after, before, after
 end
 
 -- Sequence allocation for local actors.
@@ -435,15 +448,15 @@ function Guild:ReplayRequestLogEntries()
 	self.Info.requestLogApplied = applied
 end
 
--- Request list pruning based on expiry.
+-- Request list pruning based on expiry. Returns (pruned, before, after).
 function Guild:PruneRequests()
 	if not self.Info or not self.Info.requests then
-		return
+		return 0, 0, 0
 	end
 
+	local before = #self.Info.requests
 	local now = GetServerTime()
 	local keep = {}
-	local changed = false
 	local latest = tonumber(self.Info.requestsVersion or 0) or 0
 
 	for _, req in ipairs(self.Info.requests) do
@@ -460,14 +473,13 @@ function Guild:PruneRequests()
 			if updated > latest then
 				latest = updated
 			end
-		else
-			changed = true
 		end
 	end
 
 	self.Info.requests = keep
 	self.Info.requestsVersion = latest
-	return changed
+	local after = #keep
+	return before - after, before, after
 end
 
 -- Apply a single log entry to the current request state.
@@ -1299,35 +1311,12 @@ function Guild:Compact()
 	end
 	self:EnsureRequestsInitialized()
 
-	-- Capture counts before compaction
-	local requestsBefore = self.Info.requests and #self.Info.requests or 0
-	local logBefore = self.Info.requestLog and #self.Info.requestLog or 0
-	local tombstonesBefore = 0
-	if self.Info.requestsTombstones then
-		for _ in pairs(self.Info.requestsTombstones) do
-			tombstonesBefore = tombstonesBefore + 1
-		end
-	end
-
-	-- Run compaction
-	self:PruneRequests()
-	self:PruneRequestLog()
-	self:PruneRequestTombstones()
-
-	-- Capture counts after compaction
-	local requestsAfter = self.Info.requests and #self.Info.requests or 0
-	local logAfter = self.Info.requestLog and #self.Info.requestLog or 0
-	local tombstonesAfter = 0
-	if self.Info.requestsTombstones then
-		for _ in pairs(self.Info.requestsTombstones) do
-			tombstonesAfter = tombstonesAfter + 1
-		end
-	end
+	-- Run compaction and collect stats
+	local requestsPruned, requestsBefore, requestsAfter = self:PruneRequests()
+	local logPruned, logBefore, logAfter = self:PruneRequestLog()
+	local tombstonesPruned, tombstonesBefore, tombstonesAfter = self:PruneRequestTombstones()
 
 	-- Report results
-	local requestsPruned = requestsBefore - requestsAfter
-	local logPruned = logBefore - logAfter
-	local tombstonesPruned = tombstonesBefore - tombstonesAfter
 	local totalPruned = requestsPruned + logPruned + tombstonesPruned
 
 	if totalPruned == 0 then
