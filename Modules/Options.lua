@@ -40,6 +40,7 @@ function TOGBankClassic_Options:Init()
 			["minimap"] = {
 				order = 0,
 				type = "toggle",
+				width = "full",
 				name = "Show Minimap Button",
 				desc = "Toggles visibility of the minimap button",
 				set = function(_, v)
@@ -53,6 +54,7 @@ function TOGBankClassic_Options:Init()
 			["combat"] = {
 				order = 1,
 				type = "toggle",
+				width = "full",
 				name = "Hide During Combat",
 				desc = "Toggles visibility of the window during combat",
 				set = function(_, v)
@@ -132,6 +134,7 @@ function TOGBankClassic_Options:InitGuild()
 			["enabled"] = {
 				order = 0,
 				type = "toggle",
+				width = "full",
 				name = "Enable for " .. player,
 				desc = "Enables reporting and scanning for this player",
 				set = function(_, v)
@@ -142,8 +145,9 @@ function TOGBankClassic_Options:InitGuild()
 				end,
 			},
 			["report"] = {
-				order = 0,
+				order = 1,
 				type = "toggle",
+				width = "full",
 				name = "Report contributions",
 				desc = "Enables contribution reports",
 				set = function(_, v)
@@ -154,8 +158,9 @@ function TOGBankClassic_Options:InitGuild()
 				end,
 			},
 			["donations"] = {
-				order = 1,
+				order = 2,
 				type = "toggle",
+				width = "full",
 				name = "Enable donations",
 				desc = "Displays donation window at mailbox",
 				set = function(_, v)
@@ -166,7 +171,7 @@ function TOGBankClassic_Options:InitGuild()
 				end,
 			},
 			["reset"] = {
-				order = 2,
+				order = 3,
 				name = "Reset Player Database",
 				type = "execute",
 				func = function()
