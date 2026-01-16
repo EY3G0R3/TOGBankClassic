@@ -1,22 +1,17 @@
 TOGBankClassic_Options = {}
 
 function TOGBankClassic_Options:Init()
-	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicOptionDB")
-	if self.db.char.minimap == nil then
-		self.db.char.minimap = { enabled = true }
-	end
-	if self.db.char.combat == nil then
-		self.db.char.combat = { hide = true }
-	end
-	if self.db.char.bank == nil then
-		self.db.char.bank = {}
-	end
-	if self.db.char.bank["donations"] == nil then
-		self.db.char.bank["donations"] = true
-	end
-	if self.db.global.bank == nil then
-		self.db.global.bank = { report = true, logLevel = LOG_LEVEL.INFO }
-	end
+	local defaults = {
+		char = {
+			minimap = { enabled = true },
+			combat = { hide = true },
+			bank = { donations = true },
+		},
+		global = {
+			bank = { report = true, logLevel = LOG_LEVEL.INFO },
+		},
+	}
+	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicOptionDB", defaults)
 	-- Migrate from old shutup toggle to new logLevel
 	if self.db.global.bank["shutup"] ~= nil then
 		if self.db.global.bank["shutup"] == true then
