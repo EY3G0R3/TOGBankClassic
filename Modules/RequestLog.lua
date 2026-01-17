@@ -919,6 +919,12 @@ function Guild:ReceiveRequestLogEntries(payload, sender)
 		table.sort(list, function(a, b)
 			return (tonumber(a.seq or 0) or 0) < (tonumber(b.seq or 0) or 0)
 		end)
+		
+		-- Safety check: Info might be nil if guild data not loaded yet
+		if not self.Info then
+			return
+		end
+		
 		local applied = self.Info.requestLogApplied or {}
 		local lastSeq = tonumber(applied[actor] or 0) or 0
 		for _, entry in ipairs(list) do

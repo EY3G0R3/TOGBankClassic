@@ -93,3 +93,189 @@ function TOGBankClassic_Core:DeserializeWithChecksum(message)
 
     return self:Deserialize(serialized)
 end
+-- Delta Validation Functions
+
+-- Validate that a delta structure is well-formed
+function TOGBankClassic_Core:ValidateDeltaStructure(delta)
+	if not delta or type(delta) ~= "table" then
+		return false, "delta is not a table"
+	end
+
+	-- Check required fields
+	if delta.type ~= "alt-delta" then
+		return false, "invalid delta type"
+	end
+
+	if not delta.name or type(delta.name) ~= "string" then
+		return false, "missing or invalid name"
+	end
+
+	if not delta.version or type(delta.version) ~= "number" then
+		return false, "missing or invalid version"
+	end
+
+	if not delta.baseVersion or type(delta.baseVersion) ~= "number" then
+		return false, "missing or invalid baseVersion"
+	end
+
+	if not delta.changes or type(delta.changes) ~= "table" then
+		return false, "missing or invalid changes"
+	end
+
+	-- Validate changes structure
+	local changes = delta.changes
+
+	-- Money is optional but must be number if present
+	if changes.money and type(changes.money) ~= "number" then
+		return false, "invalid money in changes"
+	end
+
+	-- Validate bank delta if present
+	if changes.bank then
+		local valid, err = self:ValidateItemDelta(changes.bank)
+		if not valid then
+			return false, "invalid bank delta: " .. err
+		end
+	end
+
+	-- Validate bags delta if present
+	if changes.bags then
+		local valid, err = self:ValidateItemDelta(changes.bags)
+		if not valid then
+			return false, "invalid bags delta: " .. err
+		end
+	end
+
+	return true
+end
+
+-- Validate an item delta structure (added/modified/removed)
+function TOGBankClassic_Core:ValidateItemDelta(itemDelta)
+	if not itemDelta or type(itemDelta) ~= "table" then
+		return false, "itemDelta is not a table"
+	end
+
+	-- Check added array
+	if itemDelta.added then
+		if type(itemDelta.added) ~= "table" then
+			return false, "added is not a table"
+		end
+		for _, item in pairs(itemDelta.added) do
+			if type(item) ~= "table" then
+				return false, "added item is not a table"
+			end
+			if not item.ID or type(item.ID) ~= "number" then
+				return false, "added item missing or invalid ID"
+			end
+			if not item.slot or type(item.slot) ~= "number" then
+				return false, "added item missing or invalid slot"
+			end
+		end
+	end
+
+	-- Check modified array
+	if itemDelta.modified then
+		if type(itemDelta.modified) ~= "table" then
+			return false, "modified is not a table"
+		end
+		for _, item in pairs(itemDelta.modified) do
+			if type(item) ~= "table" then
+				return false, "modified item is not a table"
+			end
+			if not item.slot or type(item.slot) ~= "number" then
+				return false, "modified item missing or invalid slot"
+			end
+		end
+	end
+
+	-- Check removed array
+	if itemDelta.removed then
+		if type(itemDelta.removed) ~= "table" then
+			return false, "removed is not a table"
+		end
+		for _, slot in pairs(itemDelta.removed) do
+			if type(slot) ~= "number" then
+				return false, "removed slot is not a number"
+			end
+		end
+	end
+
+	return true
+end
+
+-- Sanitize a delta structure by removing malformed data
+function TOGBankClassic_Core:SanitizeDelta(delta)
+	if not delta or type(delta) ~= "table" then
+		return nil
+	end
+
+	-- Create sanitized copy
+	local sanitized = {
+		type = delta.type,
+		name = delta.name,
+		version = delta.version,
+		baseVersion = delta.baseVersion,
+		changes = {},
+	}
+
+	if not delta.changes or type(delta.changes) ~= "table" then
+		return sanitized
+	end
+
+	local changes = delta.changes
+
+	-- Sanitize money
+	if changes.money and type(changes.money) == "number" then
+		sanitized.changes.money = changes.money
+	end
+
+	-- Sanitize bank delta
+	if changes.bank and type(changes.bank) == "table" then
+		sanitized.changes.bank = self:SanitizeItemDelta(changes.bank)
+	end
+
+	-- Sanitize bags delta
+	if changes.bags and type(changes.bags) == "table" then
+		sanitized.changes.bags = self:SanitizeItemDelta(changes.bags)
+	end
+
+	return sanitized
+end
+
+-- Sanitize an item delta structure
+function TOGBankClassic_Core:SanitizeItemDelta(itemDelta)
+	local sanitized = {
+		added = {},
+		modified = {},
+		removed = {},
+	}
+
+	-- Sanitize added items
+	if itemDelta.added and type(itemDelta.added) == "table" then
+		for _, item in pairs(itemDelta.added) do
+			if type(item) == "table" and item.ID and item.slot then
+				table.insert(sanitized.added, item)
+			end
+		end
+	end
+
+	-- Sanitize modified items
+	if itemDelta.modified and type(itemDelta.modified) == "table" then
+		for _, item in pairs(itemDelta.modified) do
+			if type(item) == "table" and item.slot then
+				table.insert(sanitized.modified, item)
+			end
+		end
+	end
+
+	-- Sanitize removed slots
+	if itemDelta.removed and type(itemDelta.removed) == "table" then
+		for _, slot in pairs(itemDelta.removed) do
+			if type(slot) == "number" then
+				table.insert(sanitized.removed, slot)
+			end
+		end
+	end
+
+	return sanitized
+end

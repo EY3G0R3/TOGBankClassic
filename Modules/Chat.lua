@@ -18,6 +18,10 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	TOGBankClassic_Core:RegisterComm("togbank-d2", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
 	TOGBankClassic_Core:RegisterComm("togbank-v", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -182,6 +186,16 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					seen = time(),
 				}
 
+				-- Track protocol capabilities
+				local protocolVersion = data.protocol_version or 1
+				local supportsDelta = data.supports_delta or false
+				TOGBankClassic_Database:UpdatePeerProtocol(
+					current_data.name,
+					sender,
+					protocolVersion,
+					supportsDelta
+				)
+
 				if current_data.addon and data.addon > current_data.addon then
 					if not self.addon_outdated then
 						-- only make the callout once
@@ -345,6 +359,61 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		end
 	end
 
+	if prefix == "togbank-d2" then
+		if data.type == "alt-delta" then
+			-- only accept delta data if the sender matches the claimed alt name
+			local claimed = data.name
+			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
+			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
+			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
+				allowed = true
+			end
+
+			if allowed then
+				-- Validate and sanitize delta structure
+				local valid, err = TOGBankClassic_Core:ValidateDeltaStructure(data)
+				if not valid then
+					local errorMsg = "Validation failed: " .. (err or "unknown error")
+					self:Debug(
+						">",
+						ColorPlayerName(sender),
+						SHARES_COLOR,
+						"delta for",
+						ColorPlayerName(claimedNorm),
+						"- validation failed:",
+						err
+					)
+					-- Record error and request full sync
+					TOGBankClassic_Guild:RecordDeltaError(claimedNorm, "VALIDATION_FAILED", errorMsg)
+					TOGBankClassic_Guild:QueryAlt(sender, claimedNorm, nil)
+					if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
+						TOGBankClassic_Database:RecordDeltaFailed(TOGBankClassic_Guild.Info.name)
+					end
+					return
+				end
+
+				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data)
+				self:Debug(
+					">",
+					ColorPlayerName(sender),
+					SHARES_COLOR,
+					"delta for",
+					ColorPlayerName(claimedNorm) .. ".",
+					FormatSyncStatus(status)
+				)
+			else
+				self:Debug(
+					">",
+					ColorPlayerName(sender),
+					SHARES_COLOR,
+					"delta for",
+					ColorPlayerName(claimedNorm) .. ". We do not accept it.",
+					FormatSyncStatus(ADOPTION_STATUS.UNAUTHORIZED)
+				)
+			end
+		end
+	end
+
 	if prefix == "togbank-h" then
 		TOGBankClassic_Guild:Hello("reply")
 	end
@@ -444,6 +513,75 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		name = "deltastats",
+		help = "show delta sync statistics and bandwidth savings",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Chat:PrintDeltaStats()
+		end,
+	},
+	{
+		name = "protocol",
+		help = "show protocol version distribution across guild members",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Chat:PrintProtocolInfo()
+		end,
+	},
+	{
+		name = "clearsnapshots",
+		help = "clear all delta snapshots (forces full syncs next time)",
+		expert = true,
+		handler = function()
+			local guild = TOGBankClassic_Guild:GetGuild()
+			if not guild then
+				TOGBankClassic_Output:Response("Not in a guild")
+				return
+			end
+			local db = TOGBankClassic_Database.db.faction[guild]
+			if db and db.deltaSnapshots then
+				local count = 0
+				for _ in pairs(db.deltaSnapshots) do
+					count = count + 1
+				end
+				db.deltaSnapshots = {}
+				TOGBankClassic_Output:Response("Cleared %d delta snapshot(s)", count)
+			else
+				TOGBankClassic_Output:Response("No snapshots to clear")
+			end
+		end,
+	},
+	{
+		name = "forcefull",
+		help = "toggle forcing full sync (disables delta temporarily)",
+		expert = true,
+		handler = function()
+			FEATURES.FORCE_FULL_SYNC = not FEATURES.FORCE_FULL_SYNC
+			if FEATURES.FORCE_FULL_SYNC then
+				TOGBankClassic_Output:Response("|cffff0000Full sync forced|r - delta sync temporarily disabled")
+			else
+				TOGBankClassic_Output:Response("|cff00ff00Full sync force removed|r - delta sync re-enabled")
+			end
+		end,
+	},
+	{
+		name = "resetmetrics",
+		help = "reset delta sync statistics and metrics",
+		expert = true,
+		handler = function()
+			local guild = TOGBankClassic_Guild:GetGuild()
+			if not guild then
+				TOGBankClassic_Output:Response("Not in a guild")
+				return
+			end
+			if TOGBankClassic_Database:ResetDeltaMetrics(guild) then
+				TOGBankClassic_Output:Response("Delta metrics reset")
+			else
+				TOGBankClassic_Output:Response("Failed to reset metrics")
+			end
+		end,
+	},
+	{
 		name = "requestlog",
 		usage = "[N|all]",
 		help = "print the request log, optionally limited to N entries",
@@ -487,6 +625,50 @@ local COMMAND_REGISTRY = {
 			else
 				TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
 				TOGBankClassic_Output:Response("Debug: on (log level: Debug)")
+			end
+		end,
+	},
+	{
+		name = "debugtab",
+		help = "create a dedicated chat tab for debug output",
+		expert = true,
+		handler = function()
+			if TOGBankClassic_Output:CreateDebugTab() then
+				TOGBankClassic_Output:Response("Debug output will now appear in 'TOGBank Debug' tab")
+				TOGBankClassic_Output:Response("Use /togbank debug to enable debug logging")
+			end
+		end,
+	},
+	{
+		name = "debugtabremove",
+		help = "remove the TOGBank Debug chat tab",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Output:RemoveDebugTab()
+		end,
+	},
+	{
+		name = "test",
+		help = "run automated delta sync tests (use 'test help' for options)",
+		expert = true,
+		handler = function(arg)
+			if not TOGBankClassic_Tests then
+				TOGBankClassic_Output:Response("Test module not loaded")
+				return
+			end
+			
+			arg = arg and arg:trim():lower() or ""
+			
+			if arg == "" or arg == "all" then
+				TOGBankClassic_Tests:RunAllTests()
+			elseif arg == "help" then
+				TOGBankClassic_Output:Response("TOGBank Test Commands:")
+				TOGBankClassic_Output:Response("  /togbank test - Run all tests")
+				TOGBankClassic_Output:Response("  /togbank test all - Run all tests")
+				TOGBankClassic_Output:Response("  /togbank test <test-name> - Run specific test")
+				TOGBankClassic_Output:Response("  /togbank test help - Show this help")
+			else
+				TOGBankClassic_Tests:RunTest(arg)
 			end
 		end,
 	},
@@ -682,5 +864,231 @@ function TOGBankClassic_Chat:PrintVersions()
 		end
 		local marker = entry.isSelf and " (you)" or ""
 		TOGBankClassic_Output:Response("  %s: %s%s%s", entry.name, entry.version, marker, age)
+	end
+end
+
+function TOGBankClassic_Chat:PrintDeltaStats()
+	local guild = TOGBankClassic_Guild:GetGuild()
+	if not guild then
+		TOGBankClassic_Output:Response("Not in a guild")
+		return
+	end
+
+	local metrics = TOGBankClassic_Database:GetDeltaMetrics(guild)
+	if not metrics then
+		TOGBankClassic_Output:Response("No delta sync metrics available")
+		return
+	end
+
+	-- Helper to format bytes
+	local function formatBytes(bytes)
+		if bytes < 1024 then
+			return string.format("%d B", bytes)
+		elseif bytes < 1024 * 1024 then
+			return string.format("%.1f KB", bytes / 1024)
+		else
+			return string.format("%.1f MB", bytes / (1024 * 1024))
+		end
+	end
+
+	TOGBankClassic_Output:Response("|cff00ffffDelta Sync Statistics|r")
+	TOGBankClassic_Output:Response("")
+
+	-- Bandwidth stats
+	local deltaBytes = metrics.bytesSentDelta or 0
+	local fullBytes = metrics.bytesSentFull or 0
+	local totalBytes = deltaBytes + fullBytes
+
+	if totalBytes > 0 then
+		TOGBankClassic_Output:Response("|cffffff00Bandwidth:|r")
+		TOGBankClassic_Output:Response("  Delta syncs: %s (%.1f%%)", 
+			formatBytes(deltaBytes), 
+			(deltaBytes / totalBytes) * 100)
+		TOGBankClassic_Output:Response("  Full syncs:  %s (%.1f%%)", 
+			formatBytes(fullBytes), 
+			(fullBytes / totalBytes) * 100)
+		TOGBankClassic_Output:Response("  Total sent:  %s", formatBytes(totalBytes))
+
+		-- Estimate bandwidth saved (assume delta would have been full sync)
+		local deltasApplied = metrics.deltasApplied or 0
+		if deltasApplied > 0 and deltaBytes > 0 then
+			-- Estimate: if we sent full syncs instead of deltas, how much more data?
+			local avgFullSize = fullBytes > 0 and (fullBytes / math.max(1, (metrics.fullSyncFallbacks or 0) + 1)) or 5000
+			local estimatedFullBytes = deltasApplied * avgFullSize
+			local saved = estimatedFullBytes - deltaBytes
+			if saved > 0 then
+				local reduction = (saved / estimatedFullBytes) * 100
+				TOGBankClassic_Output:Response("  |cff00ff00Saved: ~%s (%.1f%% reduction)|r", 
+					formatBytes(saved), reduction)
+			end
+		end
+		TOGBankClassic_Output:Response("")
+	end
+
+	-- Operation stats
+	local deltasApplied = metrics.deltasApplied or 0
+	local deltasFailed = metrics.deltasFailed or 0
+	local fullSyncFallbacks = metrics.fullSyncFallbacks or 0
+	local totalOps = deltasApplied + deltasFailed
+
+	if totalOps > 0 then
+		TOGBankClassic_Output:Response("|cffffff00Operations:|r")
+		TOGBankClassic_Output:Response("  Deltas applied:      %d", deltasApplied)
+		TOGBankClassic_Output:Response("  Deltas failed:       %d", deltasFailed)
+		TOGBankClassic_Output:Response("  Full sync fallbacks: %d", fullSyncFallbacks)
+
+		local successRate = (deltasApplied / totalOps) * 100
+		local rateColor = "|cff00ff00" -- green
+		if successRate < 95 then
+			rateColor = "|cffffff00" -- yellow
+		end
+		if successRate < 80 then
+			rateColor = "|cffff0000" -- red
+		end
+		TOGBankClassic_Output:Response("  Success rate:        %s%.1f%%|r", rateColor, successRate)
+		TOGBankClassic_Output:Response("")
+	end
+
+	-- Performance stats
+	local computeCount = metrics.computeCount or 0
+	local applyCount = metrics.applyCount or 0
+
+	if computeCount > 0 or applyCount > 0 then
+		TOGBankClassic_Output:Response("|cffffff00Performance:|r")
+		if computeCount > 0 then
+			local avgCompute = (metrics.totalComputeTime or 0) / computeCount
+			TOGBankClassic_Output:Response("  Avg compute time: %.2fms (%d computed)", avgCompute, computeCount)
+		end
+		if applyCount > 0 then
+			local avgApply = (metrics.totalApplyTime or 0) / applyCount
+			TOGBankClassic_Output:Response("  Avg apply time:   %.2fms (%d applied)", avgApply, applyCount)
+		end
+	end
+
+	if totalOps == 0 and totalBytes == 0 then
+		TOGBankClassic_Output:Response("No delta sync activity yet")
+	end
+end
+
+function TOGBankClassic_Chat:PrintProtocolInfo()
+	local guild = TOGBankClassic_Guild:GetGuild()
+	if not guild then
+		TOGBankClassic_Output:Response("Not in a guild")
+		return
+	end
+
+	TOGBankClassic_Output:Response("|cff00ffffProtocol Version Distribution|r")
+	TOGBankClassic_Output:Response("")
+
+	-- Get guild delta support
+	local support = TOGBankClassic_Database:GetGuildDeltaSupport(guild)
+	local threshold = PROTOCOL.DELTA_SUPPORT_THRESHOLD
+
+	-- Count versions
+	local db = TOGBankClassic_Database.db.faction[guild]
+	if not db or not db.guildProtocolVersions then
+		TOGBankClassic_Output:Response("No protocol data available")
+		return
+	end
+
+	local now = GetServerTime()
+	local onlineV1 = 0
+	local onlineV2 = 0
+	local allTimeV1 = 0
+	local allTimeV2 = 0
+	local recentMembers = {}
+
+	for sender, info in pairs(db.guildProtocolVersions) do
+		if info then
+			local version = info.version or 1
+			local isOnline = info.lastSeen and (now - info.lastSeen) < 600
+
+			-- All time counts
+			if version >= 2 then
+				allTimeV2 = allTimeV2 + 1
+			else
+				allTimeV1 = allTimeV1 + 1
+			end
+
+			-- Online counts (last 10 minutes)
+			if isOnline then
+				if version >= 2 then
+					onlineV2 = onlineV2 + 1
+				else
+					onlineV1 = onlineV1 + 1
+				end
+			end
+
+			-- Track recent members for display
+			if isOnline then
+				table.insert(recentMembers, {
+					name = sender,
+					version = version,
+					lastSeen = info.lastSeen,
+				})
+			end
+		end
+	end
+
+	-- Sort recent members by last seen
+	table.sort(recentMembers, function(a, b)
+		return a.lastSeen > b.lastSeen
+	end)
+
+	-- Display online distribution
+	local totalOnline = onlineV1 + onlineV2
+	if totalOnline > 0 then
+		TOGBankClassic_Output:Response("|cffffff00Online (last 10 minutes):|r")
+		TOGBankClassic_Output:Response("  Protocol v2 (delta): %d (%.1f%%)", onlineV2, (onlineV2 / totalOnline) * 100)
+		TOGBankClassic_Output:Response("  Protocol v1 (full):  %d (%.1f%%)", onlineV1, (onlineV1 / totalOnline) * 100)
+		TOGBankClassic_Output:Response("  Total online: %d", totalOnline)
+		TOGBankClassic_Output:Response("")
+	end
+
+	-- Display all-time distribution
+	local totalAllTime = allTimeV1 + allTimeV2
+	if totalAllTime > 0 then
+		TOGBankClassic_Output:Response("|cffffff00All time:|r")
+		TOGBankClassic_Output:Response("  Protocol v2: %d", allTimeV2)
+		TOGBankClassic_Output:Response("  Protocol v1: %d", allTimeV1)
+		TOGBankClassic_Output:Response("")
+	end
+
+	-- Display threshold status
+	local statusIcon = support >= threshold and "|cff00ff00✓|r" or "|cffff0000⚠|r"
+	local statusText = support >= threshold and "enabled" or "disabled"
+	TOGBankClassic_Output:Response("%s Delta sync %s (%.1f%% %s %.0f%% threshold)",
+		statusIcon, statusText, support * 100,
+		support >= threshold and "≥" or "<",
+		threshold * 100)
+
+	-- Display recent members
+	if #recentMembers > 0 then
+		TOGBankClassic_Output:Response("")
+		TOGBankClassic_Output:Response("|cffffff00Recently seen members:|r")
+		local shown = 0
+		for _, member in ipairs(recentMembers) do
+			if shown >= 10 then
+				TOGBankClassic_Output:Response("  ... and %d more", #recentMembers - shown)
+				break
+			end
+
+			local age = ""
+			local seconds = now - member.lastSeen
+			if seconds < 60 then
+				age = "now"
+			elseif seconds < 3600 then
+				age = string.format("%dm ago", math.floor(seconds / 60))
+			else
+				age = string.format("%dh ago", math.floor(seconds / 3600))
+			end
+
+			TOGBankClassic_Output:Response("  %s: v%d (%s)", member.name, member.version, age)
+			shown = shown + 1
+		end
+	end
+
+	if totalOnline == 0 and totalAllTime == 0 then
+		TOGBankClassic_Output:Response("No protocol version data available")
 	end
 end

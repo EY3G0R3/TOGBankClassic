@@ -34,6 +34,7 @@ REQUEST_LOG = {
 COMM_PREFIX_DESCRIPTIONS = {
 	["togbank-v"] = "(Version)",
 	["togbank-d"] = "(Data)",
+	["togbank-d2"] = "(Delta Data)",
 	["togbank-r"] = "(Query)",
 	["togbank-h"] = "(Hello)",
 	["togbank-hr"] = "(Hello Reply)",
@@ -41,4 +42,19 @@ COMM_PREFIX_DESCRIPTIONS = {
 	["togbank-sr"] = "(Share Reply)",
 	["togbank-w"] = "(Wipe)",
 	["togbank-wr"] = "(Wipe Reply)",
+}
+
+-- Protocol version and capabilities
+PROTOCOL = {
+	VERSION = 2,                    -- Current protocol version (bump for breaking changes)
+	SUPPORTS_DELTA = true,          -- This client supports delta updates
+	MIN_DELTA_SIZE_RATIO = 0.3,     -- Only use delta if <30% of full sync size
+	DELTA_SNAPSHOT_MAX_AGE = 3600,  -- 1 hour: snapshots older than this are invalid
+	DELTA_SUPPORT_THRESHOLD = 0.5,  -- Use delta if >50% of online guild supports it
+}
+
+-- Feature flags (for easy enable/disable during development/testing)
+FEATURES = {
+	DELTA_ENABLED = true,           -- Enable delta sync protocol
+	FORCE_FULL_SYNC = false,        -- Force full sync (disable delta) for testing
 }

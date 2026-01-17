@@ -1,0 +1,60 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"Lua.runtime.version": "Lua 5.1",
+		"Lua.runtime.builtin": {
+			"basic": "disable",
+			"debug": "disable",
+			"io": "disable",
+			"math": "disable",
+			"os": "disable",
+			"package": "disable",
+			"string": "disable",
+			"table": "disable",
+			"utf8": "disable"
+		},
+		"Lua.workspace.library": [
+			"~\\.vscode\\extensions\\ketho.wow-api-0.21.0\\Annotations\\Core"
+		],
+		"Lua.diagnostics.globals": [
+			"DEFAULT_CHAT_FRAME",
+			"SELECTED_CHAT_FRAME",
+			"ACCEPT",
+			"CANCEL",
+			"Settings",
+			"SlashCmdList",
+			"hash_SlashCmdList",
+			"CLOSE",
+			"FONT_COLOR_CODE_CLOSE",
+			"SetDesaturation",
+			"ColorPickerFrame",
+			"OKAY",
+			"NOT_BOUND",
+			"AddonCompartmentFrame",
+			"ITEM_UNIQUE",
+			"ATTACHMENTS_MAX_SEND",
+			"ATTACHMENTS_MAX_RECEIVE",
+			"GameTooltip_SetDefaultAnchor",
+			"UISpecialFrames",
+			"WorldFrame",
+			"ChatEdit_InsertLink",
+			"DressUpItemLink",
+			"StaticPopupDialogs",
+			"StaticPopup_Show",
+			"YES",
+			"NUM_CHAT_WINDOWS",
+			"FCF_SetWindowName",
+			"FCF_SetWindowColor",
+			"ChatFrame_RemoveAllMessageGroups",
+			"ChatFrame_RemoveAllChannels",
+			"FCF_ResetChatWindows",
+			"FCF_SetLocked",
+			"FCF_DockFrame",
+			"FCF_Close"
+		]
+	}
+}
