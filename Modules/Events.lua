@@ -51,6 +51,27 @@ function TOGBankClassic_Events:RegisterEvents()
 		TOGBankClassic_UI:OnInsertLink(link)
 	end)
 
+	-- Hook MailFrame visibility changes directly for more reliable detection
+	if MailFrame and not MailFrame.togBankHooked then
+		MailFrame.togBankHooked = true
+		MailFrame:HookScript("OnShow", function()
+			TOGBankClassic_Mail.isOpen = true
+			C_Timer.After(0.1, function()
+				if TOGBankClassic_UI_Requests.isOpen then
+					TOGBankClassic_UI_Requests:DrawContent()
+				end
+			end)
+		end)
+		MailFrame:HookScript("OnHide", function()
+			TOGBankClassic_Mail.isOpen = false
+			C_Timer.After(0.1, function()
+				if TOGBankClassic_UI_Requests.isOpen then
+					TOGBankClassic_UI_Requests:DrawContent()
+				end
+			end)
+		end)
+	end
+
 	self:SetTimer()
 	---START CHANGES
 	self:SetShareTimer()

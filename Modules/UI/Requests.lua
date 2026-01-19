@@ -1164,12 +1164,8 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
 			end
 			local showFulfill = isActorBank and not completed and requestId
-			-- Check mailbox state: sync flag with actual frame state
-			local frameShown = MailFrame and MailFrame:IsShown()
-			local mailboxOpen = frameShown or false
-			if TOGBankClassic_Mail.isOpen ~= mailboxOpen then
-				TOGBankClassic_Mail.isOpen = mailboxOpen
-			end
+			-- Check mailbox state: flag is authoritative (set by events), frame is backup
+			local mailboxOpen = TOGBankClassic_Mail.isOpen or (MailFrame and MailFrame:IsShown()) or false
 			local fulfillEnabled = canFulfill and mailboxOpen
 
 			local qtyNeeded = 0
