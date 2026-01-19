@@ -315,6 +315,52 @@ local function currentContentWidth(self)
 	return MIN_WIDTH - CONTENT_WIDTH_PADDING
 end
 
+-- Throttled bag update handling - only active when window is open
+local BAG_UPDATE_THROTTLE = 0.5 -- seconds
+local bagUpdateFrame = nil
+local lastBagUpdate = 0
+local pendingBagUpdate = false
+
+local function OnBagUpdate()
+	if not TOGBankClassic_UI_Requests.isOpen then
+		return
+	end
+
+	local now = GetTime()
+	if now - lastBagUpdate < BAG_UPDATE_THROTTLE then
+		-- Throttled - schedule a delayed refresh if not already pending
+		if not pendingBagUpdate then
+			pendingBagUpdate = true
+			C_Timer.After(BAG_UPDATE_THROTTLE, function()
+				pendingBagUpdate = false
+				if TOGBankClassic_UI_Requests.isOpen then
+					lastBagUpdate = GetTime()
+					TOGBankClassic_UI_Requests:DrawContent()
+				end
+			end)
+		end
+		return
+	end
+
+	lastBagUpdate = now
+	TOGBankClassic_UI_Requests:DrawContent()
+end
+
+local function RegisterBagEvents()
+	if not bagUpdateFrame then
+		bagUpdateFrame = CreateFrame("Frame")
+		bagUpdateFrame:SetScript("OnEvent", OnBagUpdate)
+	end
+	-- BAG_UPDATE_DELAYED fires once after all bag changes from a single action
+	bagUpdateFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+end
+
+local function UnregisterBagEvents()
+	if bagUpdateFrame then
+		bagUpdateFrame:UnregisterAllEvents()
+	end
+end
+
 function TOGBankClassic_UI_Requests:Init()
 	self.sortColumn = "date"
 	self.sortDirection = "desc"
@@ -351,6 +397,12 @@ function TOGBankClassic_UI_Requests:Open()
 
 	self:DrawContent()
 
+	-- Start listening for bag changes to update fulfill button states (bank alts only)
+	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
+	if player and TOGBankClassic_Guild:IsBank(player) then
+		RegisterBagEvents()
+	end
+
 	if _G["TOGBankClassic"] then
 		_G["TOGBankClassic"]:Show()
 	else
@@ -365,6 +417,9 @@ function TOGBankClassic_UI_Requests:Close()
 	if not self.Window then
 		return
 	end
+
+	-- Stop listening for bag changes
+	UnregisterBagEvents()
 
 	OnClose(self.Window)
 
