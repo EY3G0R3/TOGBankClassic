@@ -28,7 +28,7 @@ end
 
 local MIN_WIDTH = minContentWidth() + CONTENT_WIDTH_PADDING
 
-local CANCEL_ICON = "|TInterface\\Buttons\\CancelButton-Up:18:18:0:0|t"
+local CANCEL_ICON = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:18:18:0:0|t"
 local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
 local DELETE_ICON = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:18:18:0:0|t"
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
