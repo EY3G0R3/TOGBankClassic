@@ -203,6 +203,43 @@ local function attachActionTooltip(button, title, detail)
 	end)
 end
 
+-- Special tooltip handler for fulfill button that works even when disabled
+-- Hooks frame directly and stores tooltip data for dynamic updates
+local function setupFulfillButtonTooltip(button)
+	if not button or not button.frame then
+		return
+	end
+	local frame = button.frame
+	if frame.togFulfillTooltipHooked then
+		return
+	end
+	frame.togFulfillTooltipHooked = true
+	frame.togTooltipTitle = "Fulfill request"
+	frame.togTooltipDetail = ""
+
+	-- Hook scripts directly on the frame (works even when button is disabled)
+	frame:HookScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine(self.togTooltipTitle or "")
+		if self.togTooltipDetail and self.togTooltipDetail ~= "" then
+			GameTooltip:AddLine(self.togTooltipDetail, 0.9, 0.9, 0.9, true)
+		end
+		GameTooltip:Show()
+	end)
+	frame:HookScript("OnLeave", function()
+		TOGBankClassic_UI:HideTooltip()
+	end)
+end
+
+local function updateFulfillButtonTooltip(button, title, detail)
+	if not button or not button.frame then
+		return
+	end
+	button.frame.togTooltipTitle = title or "Fulfill request"
+	button.frame.togTooltipDetail = detail or ""
+end
+
 local function ensureDeleteDialog()
 	if not StaticPopupDialogs then
 		return
@@ -750,7 +787,7 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			fulfillButton:SetWidth(24)
 			fulfillButton:SetHeight(20)
 			centerButtonText(fulfillButton)
-			attachActionTooltip(fulfillButton, "Fulfill request", "Prepare mail with requested items.")
+			setupFulfillButtonTooltip(fulfillButton)
 			actionGroup:AddChild(fulfillButton)
 
 			row.actionGroup = actionGroup
@@ -1084,18 +1121,21 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					setWidgetShown(row.fulfillSpacer, showDelete and showFulfill)
 
 					-- Update fulfill button state and tooltip
+					-- Don't use SetDisabled - it blocks mouse events including tooltips
+					-- Instead, store disabled state and check in OnClick, use alpha for visual
 					if row.fulfillButton and row.fulfillButton.frame then
-						row.fulfillButton:SetDisabled(not fulfillEnabled)
+						row.fulfillButton.frame.togDisabled = not fulfillEnabled
+						row.fulfillButton.frame:SetAlpha(fulfillEnabled and 1.0 or 0.4)
 						if fulfillEnabled then
 							local attachCount = math.min(itemsInBags, qtyNeeded)
-							attachActionTooltip(row.fulfillButton, "Fulfill request",
+							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request",
 								string.format("Attach %d %s to mail for %s.", attachCount, req.item or "items", req.requester or "requester"))
 						elseif not TOGBankClassic_Mail.isOpen then
-							attachActionTooltip(row.fulfillButton, "Fulfill request", "Open a mailbox to fulfill this request.")
+							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", "Open a mailbox to fulfill this request.")
 						elseif itemsInBags == 0 then
-							attachActionTooltip(row.fulfillButton, "Fulfill request", "Pick up items from bank first.")
+							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", "Pick up items from bank first.")
 						else
-							attachActionTooltip(row.fulfillButton, "Fulfill request", fulfillReason or "Cannot fulfill.")
+							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", fulfillReason or "Cannot fulfill.")
 						end
 					end
 
@@ -1126,6 +1166,10 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 					row.fulfillButton:SetCallback("OnClick", function()
 						if not requestId then
+							return
+						end
+						-- Check manual disabled state (we don't use SetDisabled to keep tooltips working)
+						if row.fulfillButton.frame and row.fulfillButton.frame.togDisabled then
 							return
 						end
 						local success, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
