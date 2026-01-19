@@ -191,6 +191,48 @@ function TOGBankClassic_Bank:HasInventorySpace()
 	return total > 0
 end
 
+-- Find all slots containing an item by name (case-insensitive)
+-- Returns: table of {bag, slot, count, link}
+function TOGBankClassic_Bank:FindItemsByName(itemName)
+	local results = {}
+	if not itemName or itemName == "" then
+		return results
+	end
+
+	local targetName = string.lower(itemName)
+
+	for bag = 0, 4 do
+		local slots = C_Container.GetContainerNumSlots(bag)
+		for slot = 1, slots do
+			local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
+			if itemInfo and itemInfo.hyperlink then
+				local name = GetItemInfo(itemInfo.hyperlink)
+				if name and string.lower(name) == targetName then
+					table.insert(results, {
+						bag = bag,
+						slot = slot,
+						count = itemInfo.stackCount or 1,
+						link = itemInfo.hyperlink,
+					})
+				end
+			end
+		end
+	end
+
+	return results
+end
+
+-- Count total of named item in bags (0-4)
+-- Returns: totalCount, itemsTable
+function TOGBankClassic_Bank:CountItemInBags(itemName)
+	local items = self:FindItemsByName(itemName)
+	local total = 0
+	for _, item in ipairs(items) do
+		total = total + item.count
+	end
+	return total, items
+end
+
 function TOGBankClassic_Bank:OnUpdateStart()
 	self.hasUpdated = true
 end

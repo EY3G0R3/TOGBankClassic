@@ -291,3 +291,110 @@ end
 function TOGBankClassic_Mail:OnRetryTimer(mailId)
 	TOGBankClassic_Mail:Open(mailId)
 end
+
+-- Check if a request can be fulfilled by the current player
+-- Returns: canFulfill (boolean), reason (string), itemsInBags (number)
+function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
+	local normActor = TOGBankClassic_Guild:NormalizeName(actor or TOGBankClassic_Guild:GetPlayer())
+
+	-- Must be a bank alt
+	if not TOGBankClassic_Guild:IsBank(normActor) then
+		return false, "Only bank alts can fulfill requests.", 0
+	end
+
+	-- Request must be valid and not completed
+	if not request or not request.item then
+		return false, "Invalid request.", 0
+	end
+
+	local qtyRequested = tonumber(request.quantity or 0) or 0
+	local qtyFulfilled = tonumber(request.fulfilled or 0) or 0
+
+	if request.status == "complete" or request.status == "fulfilled" or request.status == "cancelled" then
+		return false, "Request is already completed.", 0
+	end
+
+	if qtyFulfilled >= qtyRequested and qtyRequested > 0 then
+		return false, "Request is already fulfilled.", 0
+	end
+
+	-- Check if items are in bags
+	local totalInBags = TOGBankClassic_Bank:CountItemInBags(request.item)
+
+	if totalInBags == 0 then
+		return false, "Items not in bags. Pick up from bank first.", 0
+	end
+
+	return true, nil, totalInBags
+end
+
+-- Prepare mail to fulfill a request: sets recipient and attaches items
+-- Returns: success (boolean), message (string), attachedCount (number)
+function TOGBankClassic_Mail:PrepareFulfillMail(request)
+	if not self.isOpen then
+		return false, "Mailbox is not open.", 0
+	end
+
+	if not request or not request.item or not request.requester then
+		return false, "Invalid request.", 0
+	end
+
+	local itemName = request.item
+	local requester = request.requester
+	local qtyRequested = tonumber(request.quantity or 0) or 0
+	local qtyFulfilled = tonumber(request.fulfilled or 0) or 0
+	local qtyNeeded = qtyRequested - qtyFulfilled
+
+	if qtyNeeded <= 0 then
+		return false, "Request is already fulfilled.", 0
+	end
+
+	-- Find items in inventory
+	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(itemName)
+
+	if totalInBags == 0 then
+		return false, "No " .. itemName .. " found in bags.", 0
+	end
+
+	-- Check if mail already has items attached
+	if GetSendMailItem(1) then
+		return false, "Mail already has items attached. Send or clear first.", 0
+	end
+
+	-- Set recipient
+	if SendMailNameEditBox then
+		SendMailNameEditBox:SetText(requester)
+	end
+
+	-- Attach items (up to ATTACHMENTS_MAX_SEND slots)
+	local attached = 0
+	local attachmentSlot = 1
+	local maxSlots = ATTACHMENTS_MAX_SEND or 12
+
+	for _, item in ipairs(items) do
+		if attached >= qtyNeeded then
+			break
+		end
+		if attachmentSlot > maxSlots then
+			break
+		end
+
+		-- Pick up item and attach to mail
+		C_Container.PickupContainerItem(item.bag, item.slot)
+		ClickSendMailItemButton(attachmentSlot)
+
+		attached = attached + item.count
+		attachmentSlot = attachmentSlot + 1
+	end
+
+	local message
+	if attached >= qtyNeeded then
+		message = string.format("Attached %d %s for %s. Click Send to complete.",
+			math.min(attached, qtyNeeded), itemName, requester)
+	else
+		message = string.format("Attached %d of %d %s for %s (partial). Click Send to complete.",
+			attached, qtyNeeded, itemName, requester)
+	end
+
+	return true, message, attached
+end

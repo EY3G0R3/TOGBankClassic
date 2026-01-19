@@ -162,6 +162,8 @@ function TOGBankClassic_Events:MAIL_SHOW(_)
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()
+	-- Refresh requests UI to update fulfill button states
+	TOGBankClassic_Guild:RefreshRequestsUI()
 end
 
 function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
@@ -173,6 +175,8 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
 	TOGBankClassic_Mail.isScanning = false
 	TOGBankClassic_Bank:OnUpdateStop()
 	TOGBankClassic_UI_Mail:Close()
+	-- Refresh requests UI to update fulfill button states
+	TOGBankClassic_Guild:RefreshRequestsUI()
 end
 
 function TOGBankClassic_Events:MAIL_SEND_SUCCESS(_)

@@ -14,7 +14,7 @@ local COLUMNS = {
 	{ key = "quantity", label = "#", width = 50, align = "end" },
 	{ key = "item", label = "Item", width = 170, align = "start", flex = true, weight = 2 },
 	{ key = "fulfilled", label = "Sent", width = 70, align = "center" },
-	{ key = "actions", label = "Actions", width = 110, align = "center" },
+	{ key = "actions", label = "Actions", width = 140, align = "center" },
 }
 
 local function minContentWidth()
@@ -31,6 +31,7 @@ local MIN_WIDTH = minContentWidth() + CONTENT_WIDTH_PADDING
 local CANCEL_ICON = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:18:18:0:0|t"
 local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
 local DELETE_ICON = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:18:18:0:0|t"
+local FULFILL_ICON = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local FILTER_ANY = "__tog_any__"
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
@@ -739,12 +740,27 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			attachActionTooltip(deleteButton, "Delete permanently", "Permanently removes the request.")
 			actionGroup:AddChild(deleteButton)
 
+			local fulfillSpacer = TOGBankClassic_UI:Create("Label")
+			fulfillSpacer:SetText("")
+			fulfillSpacer:SetWidth(4)
+			actionGroup:AddChild(fulfillSpacer)
+
+			local fulfillButton = TOGBankClassic_UI:Create("Button")
+			fulfillButton:SetText(FULFILL_ICON)
+			fulfillButton:SetWidth(24)
+			fulfillButton:SetHeight(20)
+			centerButtonText(fulfillButton)
+			attachActionTooltip(fulfillButton, "Fulfill request", "Prepare mail with requested items.")
+			actionGroup:AddChild(fulfillButton)
+
 			row.actionGroup = actionGroup
 			row.completeButton = completeButton
 			row.cancelButton = cancelButton
 			row.deleteButton = deleteButton
+			row.fulfillButton = fulfillButton
 			row.actionSpacer = spacer
 			row.deleteSpacer = deleteSpacer
+			row.fulfillSpacer = fulfillSpacer
 			row.cells[i] = actionGroup
 		else
 			local label = TOGBankClassic_UI:Create("Label")
@@ -1036,6 +1052,22 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				return tostring(req[colKey] or "")
 			end
 
+			-- Check fulfill eligibility
+			local canFulfill, fulfillReason, itemsInBags = false, nil, 0
+			local isActorBank = TOGBankClassic_Guild:IsBank(actor)
+			if not completed and requestId and isActorBank then
+				canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
+			end
+			local showFulfill = isActorBank and not completed and requestId
+			local fulfillEnabled = canFulfill and TOGBankClassic_Mail.isOpen
+
+			local qtyNeeded = 0
+			if req.quantity and req.fulfilled then
+				qtyNeeded = (tonumber(req.quantity) or 0) - (tonumber(req.fulfilled) or 0)
+			elseif req.quantity then
+				qtyNeeded = tonumber(req.quantity) or 0
+			end
+
 			for i, col in ipairs(COLUMNS) do
 				local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
 				if col.key == "actions" then
@@ -1046,8 +1078,26 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					setWidgetShown(row.completeButton, showComplete)
 					setWidgetShown(row.cancelButton, showCancel)
 					setWidgetShown(row.deleteButton, showDelete)
+					setWidgetShown(row.fulfillButton, showFulfill)
 					setWidgetShown(row.actionSpacer, showComplete and showCancel)
 					setWidgetShown(row.deleteSpacer, showCancel and showDelete)
+					setWidgetShown(row.fulfillSpacer, showDelete and showFulfill)
+
+					-- Update fulfill button state and tooltip
+					if row.fulfillButton and row.fulfillButton.frame then
+						row.fulfillButton:SetDisabled(not fulfillEnabled)
+						if fulfillEnabled then
+							local attachCount = math.min(itemsInBags, qtyNeeded)
+							attachActionTooltip(row.fulfillButton, "Fulfill request",
+								string.format("Attach %d %s to mail for %s.", attachCount, req.item or "items", req.requester or "requester"))
+						elseif not TOGBankClassic_Mail.isOpen then
+							attachActionTooltip(row.fulfillButton, "Fulfill request", "Open a mailbox to fulfill this request.")
+						elseif itemsInBags == 0 then
+							attachActionTooltip(row.fulfillButton, "Fulfill request", "Pick up items from bank first.")
+						else
+							attachActionTooltip(row.fulfillButton, "Fulfill request", fulfillReason or "Cannot fulfill.")
+						end
+					end
 
 					row.completeButton:SetCallback("OnClick", function()
 						if not requestId then
@@ -1072,6 +1122,14 @@ function TOGBankClassic_UI_Requests:DrawContent()
 							return
 						end
 						confirmDeleteRequest(req, actor)
+					end)
+
+					row.fulfillButton:SetCallback("OnClick", function()
+						if not requestId then
+							return
+						end
+						local success, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
+						self.Window:SetStatusText(message or "")
 					end)
 
 					row.actionGroup:DoLayout()
