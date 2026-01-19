@@ -804,45 +804,7 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			tagColumnWidget(actionGroup, i, false)
 			self.Content:AddChild(actionGroup)
 
-			local completeButton = TOGBankClassic_UI:Create("Button")
-			completeButton:SetText(COMPLETE_ICON)
-			completeButton:SetWidth(24)
-			completeButton:SetHeight(20)
-			centerButtonText(completeButton)
-			attachActionTooltip(completeButton, "Complete request", "Marks the request as completed by the bank.")
-			actionGroup:AddChild(completeButton)
-
-			local spacer = TOGBankClassic_UI:Create("Label")
-			spacer:SetText("")
-			spacer:SetWidth(4)
-			actionGroup:AddChild(spacer)
-
-			local cancelButton = TOGBankClassic_UI:Create("Button")
-			cancelButton:SetText(CANCEL_ICON)
-			cancelButton:SetWidth(24)
-			cancelButton:SetHeight(20)
-			centerButtonText(cancelButton)
-			attachActionTooltip(cancelButton, "Cancel request", "Cancels the request without fulfilling it.")
-			actionGroup:AddChild(cancelButton)
-
-			local deleteSpacer = TOGBankClassic_UI:Create("Label")
-			deleteSpacer:SetText("")
-			deleteSpacer:SetWidth(4)
-			actionGroup:AddChild(deleteSpacer)
-
-			local deleteButton = TOGBankClassic_UI:Create("Button")
-			deleteButton:SetText(DELETE_ICON)
-			deleteButton:SetWidth(24)
-			deleteButton:SetHeight(20)
-			centerButtonText(deleteButton)
-			attachActionTooltip(deleteButton, "Delete permanently", "Permanently removes the request.")
-			actionGroup:AddChild(deleteButton)
-
-			local fulfillSpacer = TOGBankClassic_UI:Create("Label")
-			fulfillSpacer:SetText("")
-			fulfillSpacer:SetWidth(4)
-			actionGroup:AddChild(fulfillSpacer)
-
+			-- Fulfill button (first)
 			local fulfillButton = TOGBankClassic_UI:Create("Button")
 			fulfillButton:SetText(FULFILL_ICON)
 			fulfillButton:SetWidth(24)
@@ -851,14 +813,59 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			setupFulfillButtonTooltip(fulfillButton)
 			actionGroup:AddChild(fulfillButton)
 
+			-- Spacer between fulfill and complete/cancel
+			local fulfillSpacer = TOGBankClassic_UI:Create("Label")
+			fulfillSpacer:SetText("")
+			fulfillSpacer:SetWidth(8)
+			actionGroup:AddChild(fulfillSpacer)
+
+			-- Complete button
+			local completeButton = TOGBankClassic_UI:Create("Button")
+			completeButton:SetText(COMPLETE_ICON)
+			completeButton:SetWidth(24)
+			completeButton:SetHeight(20)
+			centerButtonText(completeButton)
+			attachActionTooltip(completeButton, "Complete request", "Marks the request as completed by the bank.")
+			actionGroup:AddChild(completeButton)
+
+			-- Small spacer between complete and cancel
+			local actionSpacer = TOGBankClassic_UI:Create("Label")
+			actionSpacer:SetText("")
+			actionSpacer:SetWidth(4)
+			actionGroup:AddChild(actionSpacer)
+
+			-- Cancel button
+			local cancelButton = TOGBankClassic_UI:Create("Button")
+			cancelButton:SetText(CANCEL_ICON)
+			cancelButton:SetWidth(24)
+			cancelButton:SetHeight(20)
+			centerButtonText(cancelButton)
+			attachActionTooltip(cancelButton, "Cancel request", "Cancels the request without fulfilling it.")
+			actionGroup:AddChild(cancelButton)
+
+			-- Spacer between cancel and delete
+			local deleteSpacer = TOGBankClassic_UI:Create("Label")
+			deleteSpacer:SetText("")
+			deleteSpacer:SetWidth(8)
+			actionGroup:AddChild(deleteSpacer)
+
+			-- Delete button (last)
+			local deleteButton = TOGBankClassic_UI:Create("Button")
+			deleteButton:SetText(DELETE_ICON)
+			deleteButton:SetWidth(24)
+			deleteButton:SetHeight(20)
+			centerButtonText(deleteButton)
+			attachActionTooltip(deleteButton, "Delete permanently", "Permanently removes the request.")
+			actionGroup:AddChild(deleteButton)
+
 			row.actionGroup = actionGroup
-			row.completeButton = completeButton
-			row.cancelButton = cancelButton
-			row.deleteButton = deleteButton
 			row.fulfillButton = fulfillButton
-			row.actionSpacer = spacer
-			row.deleteSpacer = deleteSpacer
 			row.fulfillSpacer = fulfillSpacer
+			row.completeButton = completeButton
+			row.actionSpacer = actionSpacer
+			row.cancelButton = cancelButton
+			row.deleteSpacer = deleteSpacer
+			row.deleteButton = deleteButton
 			row.cells[i] = actionGroup
 		else
 			local label = TOGBankClassic_UI:Create("Label")
@@ -1173,13 +1180,14 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					local showCancel = canCancel and true or false
 					local showDelete = canDelete and true or false
 					row.actionGroup:SetWidth(columnWidth)
-					setWidgetShown(row.completeButton, showComplete)
-					setWidgetShown(row.cancelButton, showCancel)
-					setWidgetShown(row.deleteButton, showDelete)
+					-- Layout: [Fulfill] [spacer] [Complete] [spacer] [Cancel] [spacer] [Delete]
 					setWidgetShown(row.fulfillButton, showFulfill)
+					setWidgetShown(row.fulfillSpacer, showFulfill and (showComplete or showCancel))
+					setWidgetShown(row.completeButton, showComplete)
 					setWidgetShown(row.actionSpacer, showComplete and showCancel)
-					setWidgetShown(row.deleteSpacer, showCancel and showDelete)
-					setWidgetShown(row.fulfillSpacer, showDelete and showFulfill)
+					setWidgetShown(row.cancelButton, showCancel)
+					setWidgetShown(row.deleteSpacer, showDelete and (showComplete or showCancel or showFulfill))
+					setWidgetShown(row.deleteButton, showDelete)
 
 					-- Update fulfill button state, icon, and tooltip
 					-- Don't use SetDisabled - it blocks mouse events including tooltips
