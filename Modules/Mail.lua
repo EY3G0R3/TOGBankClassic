@@ -371,6 +371,10 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	local attachmentSlot = 1
 	local maxSlots = ATTACHMENTS_MAX_SEND or 12
 
+	-- Use non-namespaced API for Classic Era compatibility
+	local SplitItem = SplitContainerItem or C_Container.SplitContainerItem
+	local PickupItem = PickupContainerItem or C_Container.PickupContainerItem
+
 	for _, item in ipairs(items) do
 		if attached >= qtyNeeded then
 			break
@@ -379,11 +383,21 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			break
 		end
 
-		-- Pick up item and attach to mail
-		C_Container.PickupContainerItem(item.bag, item.slot)
+		-- Clear cursor before each operation
+		ClearCursor()
+
+		local remaining = qtyNeeded - attached
+		local toAttach = math.min(item.count, remaining)
+
+		-- Pick up item (split stack if we only need part of it)
+		if toAttach < item.count then
+			SplitItem(item.bag, item.slot, toAttach)
+		else
+			PickupItem(item.bag, item.slot)
+		end
 		ClickSendMailItemButton(attachmentSlot)
 
-		attached = attached + item.count
+		attached = attached + toAttach
 		attachmentSlot = attachmentSlot + 1
 	end
 
