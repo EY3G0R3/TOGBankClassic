@@ -162,8 +162,19 @@ function TOGBankClassic_Events:MAIL_SHOW(_)
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()
-	-- Refresh requests UI to update fulfill button states
-	TOGBankClassic_Guild:RefreshRequestsUI()
+
+	-- Auto-open Requests window for banker alts (or refresh if already open)
+	-- Delay slightly to ensure MailFrame is fully visible
+	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
+	if player and TOGBankClassic_Guild:IsBank(player) then
+		C_Timer.After(0.1, function()
+			if TOGBankClassic_UI_Requests.isOpen then
+				TOGBankClassic_UI_Requests:DrawContent()
+			else
+				TOGBankClassic_UI_Requests:Open()
+			end
+		end)
+	end
 end
 
 function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
@@ -176,7 +187,12 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
 	TOGBankClassic_Bank:OnUpdateStop()
 	TOGBankClassic_UI_Mail:Close()
 	-- Refresh requests UI to update fulfill button states
-	TOGBankClassic_Guild:RefreshRequestsUI()
+	-- Delay slightly to ensure MailFrame state is updated
+	C_Timer.After(0.1, function()
+		if TOGBankClassic_UI_Requests.isOpen then
+			TOGBankClassic_UI_Requests:DrawContent()
+		end
+	end)
 end
 
 function TOGBankClassic_Events:MAIL_SEND_SUCCESS(_)

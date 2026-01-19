@@ -1164,7 +1164,13 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
 			end
 			local showFulfill = isActorBank and not completed and requestId
-			local fulfillEnabled = canFulfill and TOGBankClassic_Mail.isOpen
+			-- Check mailbox state: sync flag with actual frame state
+			local frameShown = MailFrame and MailFrame:IsShown()
+			local mailboxOpen = frameShown or false
+			if TOGBankClassic_Mail.isOpen ~= mailboxOpen then
+				TOGBankClassic_Mail.isOpen = mailboxOpen
+			end
+			local fulfillEnabled = canFulfill and mailboxOpen
 
 			local qtyNeeded = 0
 			if req.quantity and req.fulfilled then
@@ -1202,7 +1208,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 							icon = FULFILL_ICON_READY
 							local attachCount = math.min(itemsInBags, qtyNeeded)
 							tooltipDetail = string.format("Attach %d %s to mail for %s.", attachCount, req.item or "items", req.requester or "requester")
-						elseif not TOGBankClassic_Mail.isOpen then
+						elseif not mailboxOpen then
 							icon = FULFILL_ICON_NO_MAILBOX
 							tooltipDetail = "Open a mailbox to fulfill this request."
 						elseif fulfillReason and fulfillReason:find("Split") then

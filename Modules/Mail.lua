@@ -1,5 +1,15 @@
 TOGBankClassic_Mail = {}
 
+-- Check if mailbox is actually open (uses frame state as ground truth)
+function TOGBankClassic_Mail:IsMailboxOpen()
+	local frameOpen = MailFrame and MailFrame:IsShown() or false
+	-- Sync our flag with actual frame state
+	if self.isOpen ~= frameOpen then
+		self.isOpen = frameOpen
+	end
+	return frameOpen
+end
+
 function TOGBankClassic_Mail:Check()
 	CheckInbox()
 end
@@ -350,7 +360,7 @@ end
 -- Prepare mail to fulfill a request: sets recipient and attaches items
 -- Returns: success (boolean), message (string), attachedCount (number)
 function TOGBankClassic_Mail:PrepareFulfillMail(request)
-	if not self.isOpen then
+	if not self:IsMailboxOpen() then
 		return false, "Mailbox is not open.", 0
 	end
 
