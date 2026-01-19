@@ -293,39 +293,58 @@ function TOGBankClassic_Mail:OnRetryTimer(mailId)
 end
 
 -- Check if a request can be fulfilled by the current player
--- Returns: canFulfill (boolean), reason (string), itemsInBags (number)
+-- Returns: canFulfill (boolean), reason (string), itemsInBags (number), smallestStack (number)
 function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 	local normActor = TOGBankClassic_Guild:NormalizeName(actor or TOGBankClassic_Guild:GetPlayer())
 
 	-- Must be a bank alt
 	if not TOGBankClassic_Guild:IsBank(normActor) then
-		return false, "Only bank alts can fulfill requests.", 0
+		return false, "Only bank alts can fulfill requests.", 0, 0
 	end
 
 	-- Request must be valid and not completed
 	if not request or not request.item then
-		return false, "Invalid request.", 0
+		return false, "Invalid request.", 0, 0
 	end
 
 	local qtyRequested = tonumber(request.quantity or 0) or 0
 	local qtyFulfilled = tonumber(request.fulfilled or 0) or 0
+	local qtyNeeded = qtyRequested - qtyFulfilled
 
 	if request.status == "complete" or request.status == "fulfilled" or request.status == "cancelled" then
-		return false, "Request is already completed.", 0
+		return false, "Request is already completed.", 0, 0
 	end
 
 	if qtyFulfilled >= qtyRequested and qtyRequested > 0 then
-		return false, "Request is already fulfilled.", 0
+		return false, "Request is already fulfilled.", 0, 0
 	end
 
-	-- Check if items are in bags
-	local totalInBags = TOGBankClassic_Bank:CountItemInBags(request.item)
+	-- Check if items are in bags and find usable stacks
+	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(request.item)
 
 	if totalInBags == 0 then
-		return false, "Items not in bags. Pick up from bank first.", 0
+		return false, "Items not in bags. Pick up from bank first.", 0, 0
 	end
 
-	return true, nil, totalInBags
+	-- Find smallest stack and count usable items (stacks <= qtyNeeded)
+	local smallestStack = nil
+	local usableItems = 0
+	for _, item in ipairs(items) do
+		if not smallestStack or item.count < smallestStack then
+			smallestStack = item.count
+		end
+		if item.count <= qtyNeeded then
+			usableItems = usableItems + item.count
+		end
+	end
+
+	-- If no stacks are small enough, we can't auto-fulfill
+	if usableItems == 0 and smallestStack and smallestStack > qtyNeeded then
+		local reason = string.format("Smallest stack is %d. Split to %d or less.", smallestStack, qtyNeeded)
+		return false, reason, totalInBags, smallestStack
+	end
+
+	return true, nil, usableItems, smallestStack
 end
 
 -- Prepare mail to fulfill a request: sets recipient and attaches items
@@ -367,13 +386,15 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	end
 
 	-- Attach items (up to ATTACHMENTS_MAX_SEND slots)
+	-- NOTE: Classic Era doesn't support programmatic stack splitting,
+	-- so we only attach stacks that won't exceed the needed quantity
 	local attached = 0
 	local attachmentSlot = 1
 	local maxSlots = ATTACHMENTS_MAX_SEND or 12
+	local skippedLargeStack = nil
 
-	-- Use non-namespaced API for Classic Era compatibility
-	local SplitItem = SplitContainerItem or C_Container.SplitContainerItem
-	local PickupItem = PickupContainerItem or C_Container.PickupContainerItem
+	-- Sort items by stack size (smallest first) to maximize chance of exact fulfillment
+	table.sort(items, function(a, b) return a.count < b.count end)
 
 	for _, item in ipairs(items) do
 		if attached >= qtyNeeded then
@@ -383,31 +404,38 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			break
 		end
 
-		-- Clear cursor before each operation
-		ClearCursor()
-
 		local remaining = qtyNeeded - attached
-		local toAttach = math.min(item.count, remaining)
 
-		-- Pick up item (split stack if we only need part of it)
-		if toAttach < item.count then
-			SplitItem(item.bag, item.slot, toAttach)
+		-- Only attach if this stack won't exceed what we need
+		-- (Classic Era doesn't support programmatic splitting)
+		if item.count <= remaining then
+			ClearCursor()
+			C_Container.PickupContainerItem(item.bag, item.slot)
+			ClickSendMailItemButton(attachmentSlot)
+
+			attached = attached + item.count
+			attachmentSlot = attachmentSlot + 1
 		else
-			PickupItem(item.bag, item.slot)
+			-- Remember we skipped a stack that was too large
+			skippedLargeStack = item.count
 		end
-		ClickSendMailItemButton(attachmentSlot)
-
-		attached = attached + toAttach
-		attachmentSlot = attachmentSlot + 1
 	end
 
 	local message
 	if attached >= qtyNeeded then
 		message = string.format("Attached %d %s for %s. Click Send to complete.",
-			math.min(attached, qtyNeeded), itemName, requester)
+			attached, itemName, requester)
+	elseif attached > 0 then
+		message = string.format("Attached %d of %d %s (partial). Click Send, then fulfill again.",
+			attached, qtyNeeded, itemName)
+	elseif skippedLargeStack then
+		-- Couldn't attach anything because all stacks are too large
+		message = string.format("Your smallest stack has %d. Split to %d or less first.",
+			skippedLargeStack, qtyNeeded)
+		return false, message, 0
 	else
-		message = string.format("Attached %d of %d %s for %s (partial). Click Send to complete.",
-			attached, qtyNeeded, itemName, requester)
+		message = string.format("No %s found in bags.", itemName)
+		return false, message, 0
 	end
 
 	return true, message, attached

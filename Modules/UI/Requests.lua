@@ -1132,10 +1132,11 @@ function TOGBankClassic_UI_Requests:DrawContent()
 								string.format("Attach %d %s to mail for %s.", attachCount, req.item or "items", req.requester or "requester"))
 						elseif not TOGBankClassic_Mail.isOpen then
 							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", "Open a mailbox to fulfill this request.")
-						elseif itemsInBags == 0 then
-							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", "Pick up items from bank first.")
+						elseif fulfillReason then
+							-- Show specific reason (e.g., "Smallest stack is X. Split to Y or less.")
+							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", fulfillReason)
 						else
-							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", fulfillReason or "Cannot fulfill.")
+							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", "Pick up items from bank first.")
 						end
 					end
 
