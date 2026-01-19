@@ -32,6 +32,12 @@ local CANCEL_ICON = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:18:18:0:0|t"
 local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
 local DELETE_ICON = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:18:18:0:0|t"
 local FULFILL_ICON = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"
+-- Contextual fulfill button icons based on state
+local FULFILL_ICON_READY = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"        -- Envelope: ready to send
+local FULFILL_ICON_NO_MAILBOX = "|TInterface\\Icons\\INV_Letter_02:18:18:0:0|t"   -- Sealed letter: need mailbox
+local FULFILL_ICON_NOT_IN_BAGS = "|TInterface\\Icons\\INV_Misc_Bag_07:18:18:0:0|t" -- Bag: pick up from bank
+local FULFILL_ICON_NEED_SPLIT = "|TInterface\\Icons\\INV_Misc_Shovel_01:18:18:0:0|t" -- Shovel: manual work needed
+local FULFILL_ICON_NO_ITEMS = "|TInterface\\Icons\\INV_Misc_QuestionMark:18:18:0:0|t" -- Question mark: no items
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local FILTER_ANY = "__tog_any__"
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
@@ -1120,24 +1126,41 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					setWidgetShown(row.deleteSpacer, showCancel and showDelete)
 					setWidgetShown(row.fulfillSpacer, showDelete and showFulfill)
 
-					-- Update fulfill button state and tooltip
+					-- Update fulfill button state, icon, and tooltip
 					-- Don't use SetDisabled - it blocks mouse events including tooltips
 					-- Instead, store disabled state and check in OnClick, use alpha for visual
 					if row.fulfillButton and row.fulfillButton.frame then
 						row.fulfillButton.frame.togDisabled = not fulfillEnabled
 						row.fulfillButton.frame:SetAlpha(fulfillEnabled and 1.0 or 0.4)
+
+						-- Determine icon and tooltip based on state
+						local icon, tooltipDetail
 						if fulfillEnabled then
+							icon = FULFILL_ICON_READY
 							local attachCount = math.min(itemsInBags, qtyNeeded)
-							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request",
-								string.format("Attach %d %s to mail for %s.", attachCount, req.item or "items", req.requester or "requester"))
+							tooltipDetail = string.format("Attach %d %s to mail for %s.", attachCount, req.item or "items", req.requester or "requester")
 						elseif not TOGBankClassic_Mail.isOpen then
-							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", "Open a mailbox to fulfill this request.")
+							icon = FULFILL_ICON_NO_MAILBOX
+							tooltipDetail = "Open a mailbox to fulfill this request."
+						elseif fulfillReason and fulfillReason:find("Split") then
+							-- Stack size issue
+							icon = FULFILL_ICON_NEED_SPLIT
+							tooltipDetail = fulfillReason
+						elseif fulfillReason and fulfillReason:find("not in bags") then
+							-- Items in bank but not picked up
+							icon = FULFILL_ICON_NOT_IN_BAGS
+							tooltipDetail = fulfillReason
 						elseif fulfillReason then
-							-- Show specific reason (e.g., "Smallest stack is X. Split to Y or less.")
-							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", fulfillReason)
+							-- Other reason (no items at all, etc.)
+							icon = FULFILL_ICON_NO_ITEMS
+							tooltipDetail = fulfillReason
 						else
-							updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", "Pick up items from bank first.")
+							icon = FULFILL_ICON_NOT_IN_BAGS
+							tooltipDetail = "Pick up items from bank first."
 						end
+
+						row.fulfillButton:SetText(icon)
+						updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", tooltipDetail)
 					end
 
 					row.completeButton:SetCallback("OnClick", function()
