@@ -918,16 +918,15 @@ end
 
 -- Extract only the fields that changed between two items
 function TOGBankClassic_Guild:GetChangedFields(oldItem, newItem)
-	local changes = { slot = newItem.slot }
+	-- Always include ID and Link for identification (merged items use these as keys)
+	local changes = {
+		ID = newItem.ID,
+		Link = newItem.Link
+	}
 
-	if oldItem.ID ~= newItem.ID then
-		changes.ID = newItem.ID
-	end
+	-- Include changed fields
 	if oldItem.Count ~= newItem.Count then
 		changes.Count = newItem.Count
-	end
-	if oldItem.Link ~= newItem.Link then
-		changes.Link = newItem.Link
 	end
 	if oldItem.Info or newItem.Info then
 		if not oldItem.Info or not newItem.Info or not self:ItemsEqual(oldItem, newItem) then
@@ -939,15 +938,16 @@ function TOGBankClassic_Guild:GetChangedFields(oldItem, newItem)
 end
 
 -- Build a slot-indexed lookup table from items array
-function TOGBankClassic_Guild:BuildSlotIndex(items)
+function TOGBankClassic_Guild:BuildItemIndex(items)
 	local index = {}
 	if not items then
 		return index
 	end
 
 	for _, item in pairs(items) do
-		if item and item.slot then
-			index[item.slot] = item
+		if item and item.ID and item.Link then
+			local key = tostring(item.ID) .. item.Link
+			index[key] = item
 		end
 	end
 
@@ -961,30 +961,31 @@ function TOGBankClassic_Guild:ComputeItemDelta(oldItems, newItems)
 	oldItems = oldItems or {}
 	newItems = newItems or {}
 
-	-- Build slot index for old items
-	local oldBySlot = self:BuildSlotIndex(oldItems)
+	-- Build item index for old items by itemID+Link key
+	local oldByKey = self:BuildItemIndex(oldItems)
 
 	-- Find added and modified items
 	for _, newItem in pairs(newItems) do
-		if newItem and newItem.slot then
-			local oldItem = oldBySlot[newItem.slot]
+		if newItem and newItem.ID and newItem.Link then
+			local key = tostring(newItem.ID) .. newItem.Link
+			local oldItem = oldByKey[key]
 
 			if not oldItem then
 				-- Item was added
 				table.insert(delta.added, newItem)
 			elseif not self:ItemsEqual(oldItem, newItem) then
-				-- Item was modified
+				-- Item was modified (quantity or other field changed)
 				table.insert(delta.modified, self:GetChangedFields(oldItem, newItem))
 			end
 
 			-- Mark as processed
-			oldBySlot[newItem.slot] = nil
+			oldByKey[key] = nil
 		end
 	end
 
 	-- Remaining old items were removed
-	for slot, _ in pairs(oldBySlot) do
-		table.insert(delta.removed, slot)
+	for _, item in pairs(oldByKey) do
+		table.insert(delta.removed, { ID = item.ID, Link = item.Link })
 	end
 
 	return delta
@@ -1020,18 +1021,20 @@ function TOGBankClassic_Guild:ComputeDelta(name, currentAlt)
 	local previousBankItems = previous.bank and previous.bank.items or {}
 	local currentBankItems = currentAlt.bank and currentAlt.bank.items or {}
 	
-	-- Debug: Log item counts
-	TOGBankClassic_Output:Debug(
-		"Comparing %s: previous bank has %d items, current bank has %d items",
-		name,
-		#previousBankItems,
-		#currentBankItems
-	)
-	delta.changes.bank = self:ComputeItemDelta(previousBankItems, currentBankItems)
-
 	-- Bag items delta
 	local previousBagItems = previous.bags and previous.bags.items or {}
 	local currentBagItems = currentAlt.bags and currentAlt.bags.items or {}
+	
+	-- Debug: Log item counts for both bank and bags
+	TOGBankClassic_Output:Debug(
+		"Comparing %s: previous bank has %d items, bags have %d items; current bank has %d items, bags have %d items",
+		name,
+		#previousBankItems,
+		#previousBagItems,
+		#currentBankItems,
+		#currentBagItems
+	)
+	delta.changes.bank = self:ComputeItemDelta(previousBankItems, currentBankItems)
 	delta.changes.bags = self:ComputeItemDelta(previousBagItems, currentBagItems)
 
 	return delta
@@ -1084,18 +1087,33 @@ function TOGBankClassic_Guild:ApplyItemDelta(items, delta)
 		return false
 	end
 
+	-- Build current items index by itemKey
+	local itemsByKey = self:BuildItemIndex(items)
+
 	-- Remove items
 	if delta.removed then
-		for _, slot in ipairs(delta.removed) do
-			items[slot] = nil
+		for _, removedItem in ipairs(delta.removed) do
+			if removedItem and removedItem.ID and removedItem.Link then
+				local key = tostring(removedItem.ID) .. removedItem.Link
+				-- Find and remove item with matching key
+				for i, item in pairs(items) do
+					if item and item.ID and item.Link then
+						local itemKey = tostring(item.ID) .. item.Link
+						if itemKey == key then
+							items[i] = nil
+							break
+						end
+					end
+				end
+			end
 		end
 	end
 
 	-- Add new items
 	if delta.added then
 		for _, item in ipairs(delta.added) do
-			if item and item.slot then
-				items[item.slot] = item
+			if item and item.ID and item.Link then
+				table.insert(items, item)
 			end
 		end
 	end
@@ -1103,19 +1121,18 @@ function TOGBankClassic_Guild:ApplyItemDelta(items, delta)
 	-- Modify existing items
 	if delta.modified then
 		for _, changes in ipairs(delta.modified) do
-			if changes and changes.slot then
-				local slot = changes.slot
-				if items[slot] then
-					-- Apply only changed fields
-					for key, value in pairs(changes) do
-						if key ~= "slot" then
-							items[slot][key] = value
-						end
+			if changes and changes.ID and changes.Link then
+				local key = tostring(changes.ID) .. changes.Link
+				local existingItem = itemsByKey[key]
+				
+				if existingItem then
+					-- Apply changed fields to existing item
+					for field, value in pairs(changes) do
+						existingItem[field] = value
 					end
 				else
-					-- Item doesn't exist, might be added in same delta
-					-- Create new item with the changes
-					items[slot] = changes
+					-- Item doesn't exist (shouldn't happen), add as new
+					table.insert(items, changes)
 				end
 			end
 		end

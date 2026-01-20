@@ -36,7 +36,276 @@
 
 ### 🔴 CRITICAL
 
-#### 🟠 [DELTA-004] Delta computation not detecting inventory changes
+#### � [DELTA-005] Item merging removes slot field, breaking delta comparison
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Delta Computation / Database  
+**Reporter:** Testing Team  
+**Date Reported:** 2026-01-20  
+**Status:** Open - Blocks Delta Testing  
+**Assigned To:** Development Team
+
+**Description:**
+The scanning logic merges multiple stacks of the same item (e.g., 4x Mithril Bar stacks of 20 each = 80 total) into a single item entry by itemID+Link. However, merged items have NO `slot` field, which breaks delta comparison. `ComputeItemDelta()` compares items by slot (line 973), so when `newItem.slot` is nil, the comparison never runs and quantity changes are never detected.
+
+**Impact:**
+- **CRITICAL:** Delta sync completely non-functional - ALL quantity changes undetected
+- Affects stacked items (consumables, reagents, etc.) - the most common inventory changes
+- "No changes detected" shown even when 20+ items added/removed
+- Full sync always used (delta never selected)
+- Testing blocked until resolved
+
+**Steps to Reproduce:**
+1. Bank has 70 Mithril Bars (multiple stacks)
+2. Close bank (scan merges into single item: {ID, Count=70, Link})
+3. `/togbank share` (baseline snapshot saved)
+4. Remove 20 bars (70→50)
+5. Close bank (scan merges into single item: {ID, Count=50, Link})
+6. `/togbank share`
+7. Result: "No changes detected for Metals-Azuresong (delta would be empty)"
+
+**Expected Behavior:**
+Delta comparison should detect quantity changes:
+```
+Comparing Metals-Azuresong: previous bank has 9 items, bags have 7 items; current bank has 9 items, bags have 7 items
+✓ Delta selected for Metals-Azuresong (1 modifications: Mithril Bar 70→50)
+Sent delta update for Metals-Azuresong via togbank-d2
+```
+
+**Actual Behavior:**
+Item comparison skipped because `newItem.slot` is nil:
+```
+Comparing Metals-Azuresong: previous bank has 9 items, bags have 7 items; current bank has 9 items, bags have 7 items
+No changes detected for Metals-Azuresong (delta would be empty)
+Sent full sync for Metals-Azuresong via togbank-d
+```
+
+**Root Cause:**
+Bank.lua `ScanBag()` lines 13-38 merges items by key (itemID+Link):
+```lua
+local key = itemID .. itemLink
+if items[key] then
+    local item = items[key]
+    items[key] = { ID = item.ID, Count = item.Count + itemCount, Link = item.Link }
+else
+    items[key] = { ID = itemID, Count = itemCount, Link = itemLink }
+end
+```
+
+Merged items have only `{ID, Count, Link}` - **NO `slot` field**.
+
+Guild.lua `ComputeItemDelta()` line 970-977 tries to compare by slot:
+```lua
+for _, newItem in pairs(newItems) do
+    if newItem and newItem.slot then  -- ← FAILS: newItem.slot is nil
+        local oldItem = oldBySlot[newItem.slot]
+        -- comparison never runs
+    end
+end
+```
+
+Guild.lua `BuildSlotIndex()` line 942-953 builds index by slot:
+```lua
+for _, item in ipairs(items) do
+    if item and item.slot then  -- ← FAILS: item.slot is nil
+        index[item.slot] = item
+    end
+end
+```
+
+**Resolution - Option A Implemented:**
+Converted entire delta pipeline from slot-based to itemKey-based comparison:
+
+**Changes Made:**
+1. ✅ **Guild.lua lines 942-956**: `BuildSlotIndex()` → `BuildItemIndex()`
+   - Changed from `index[item.slot] = item` to `index[tostring(item.ID) .. item.Link] = item`
+   - Creates lookup table by itemKey (e.g., "2772[Mithril Bar]")
+
+2. ✅ **Guild.lua lines 958-990**: `ComputeItemDelta()` refactored
+   - Compare items by itemKey instead of slot
+   - Removed items now store `{ID, Link}` instead of slot number
+   - Correctly detects additions, modifications, and removals of merged items
+
+3. ✅ **Guild.lua lines 920-938**: `GetChangedFields()` updated
+   - Always includes `ID` and `Link` fields for identification (was conditional)
+   - Removed `slot` field dependency
+   - Returns minimal delta entry: `{ID, Link, Count, Info}` (only changed fields)
+
+4. ✅ **Guild.lua lines 1086-1143**: `ApplyItemDelta()` refactored
+   - Uses `BuildItemIndex()` to find items by key
+   - Applies modifications by itemKey matching
+   - Removes items by itemKey matching
+   - Adds new items to array
+
+5. ✅ **Core.lua lines 153-216**: `ValidateItemDelta()` updated
+   - Removed slot validation (merged items don't have slots)
+   - Now requires `ID` (number) and `Link` (string) for all items
+   - Validates structure of added/modified/removed arrays
+   - Slot is optional (backwards compatible)
+
+**Test Results:**
+- ✅ Delta transmitted successfully: 311 bytes vs 1748 bytes (82% smaller)
+- ✅ Validation passed: No errors on receiver
+- ✅ Application successful: "✓ Applied delta for Metals-Azuresong (v1768947985→v1768948029) in 0.06ms"
+- ✅ Quantity changes detected correctly (70→90 Mithril Bars)
+- ✅ Compute time: 0.42ms (efficient)
+
+**Why Option A:**
+- Maintains existing item merging design (data structure compatibility)
+- Minimal changes to scanning logic (Bank.lua unchanged)
+- itemKey (ID+Link) provides stable unique identifier for merged items
+- Slot field was meaningless for merged items anyway
+- Backwards compatible with existing data
+
+**Files Modified:**
+- `Modules/Guild.lua` (4 functions refactored: BuildItemIndex, ComputeItemDelta, GetChangedFields, ApplyItemDelta)
+- `Core.lua` (ValidateItemDelta updated)
+- `Modules/Bank.lua` (no changes - merging logic preserved)
+
+**Commit Required:**
+Changes uncommitted - ready for commit after Test Suite 1.2 completion
+
+---
+
+#### � [SCAN-001] Inventory scan only triggers on window close events (not BAG_UPDATE)
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Database / Inventory Scanning  
+**Reporter:** Testing Team  
+**Date Reported:** 2026-01-20  
+**Status:** Open - Needs Implementation  
+**Assigned To:** Development Team
+
+**Description:**
+Inventory scanning (character bags + bank) only triggers when closing specific WoW windows (bank, mail, trade, auction house, merchant). The addon does NOT monitor BAG_UPDATE events. When any tracked window closes, OnUpdateStop() calls Scan() which reads:
+- **Character bags (0-4)** - ALWAYS scanned on window close
+- **Bank bags (5-11) + vault** - Only if IsBankAvailable() returns true
+
+This means:
+1. Inventory changes made while windows are open are NOT detected until window close
+2. `/togbank share` sends cached data - it does NOT trigger a fresh scan
+3. Delta sync comparisons use stale data if inventory changed after last window close
+4. No real-time scanning on BAG_UPDATE, PLAYERBANKSLOTS_CHANGED, or similar events
+
+**Steps to Reproduce:**
+1. Open bank (BANKFRAME_OPENED fires, sets hasUpdated flag)
+2. Close bank (BANKFRAME_CLOSED fires, calls Scan(), updates cached data)
+3. Run `/togbank share` (baseline snapshot created from cached data)
+4. Open bank again
+5. Remove/add items from **character bags** (bags 0-4) while bank remains open
+6. Run `/togbank share` again (WITHOUT closing bank)
+7. Result: Shows "previous bank has X items, bags have Y items; current bank has X items, bags have Y items" with no changes detected
+8. Cached data was NOT updated because window still open
+
+**Expected Behavior:**
+Inventory scan should trigger in real-time whenever items change, not just on window close. Monitor:
+- **BAG_UPDATE** for bags 0-11 (character bags + bank bags)
+- **PLAYERBANKSLOTS_CHANGED** for bank vault slots
+- Continue existing window close scans as secondary trigger
+- `/togbank share` should either trigger fresh scan OR warn user if data is stale
+
+With debouncing to prevent spam during rapid changes (looting, crafting, etc.)
+
+**Actual Behavior:**
+Scan triggers ONLY when closing these windows (OnUpdateStop → Scan):
+- BANKFRAME_CLOSED (line 176)
+- MAIL_CLOSED (line 209)
+- TRADE_CLOSED (line 224)
+- AUCTION_HOUSE_CLOSED (line 229)
+- MERCHANT_CLOSED (line 234)
+
+Inventory changes made WHILE windows are open are not detected. `/togbank share` sends cached data without triggering a fresh scan.
+
+**Environment:**
+- WoW Version: Classic Era (11508)
+- TOGBankClassic Version: 0.7.0
+- Affects: ALL users who change character bag inventory while bank is open
+- Also affects: Bagnon, AdiBags, ArkInventory, or any bag replacement addon users
+- All versions affected
+
+**Root Cause:**
+Events.lua registers multiple window events but NO bag update events:
+
+**OnUpdateStart() triggers (sets hasUpdated flag):**
+- BANKFRAME_OPENED (line 173)
+- MAIL_SHOW (line 177)
+- TRADE_SHOW (line 221)
+- AUCTION_HOUSE_SHOW (line 226)
+- MERCHANT_SHOW (line 231)
+
+**OnUpdateStop() triggers (calls Scan if hasUpdated):**
+- BANKFRAME_CLOSED (line 176)
+- MAIL_CLOSED (line 209)
+- TRADE_CLOSED (line 224)
+- AUCTION_HOUSE_CLOSED (line 229)
+- MERCHANT_CLOSED (line 234)
+
+Bank.lua:OnUpdateStop (line 242) checks hasUpdated flag then calls Scan():
+```lua
+function TOGBankClassic_Bank:OnUpdateStop()
+    if self.hasUpdated then
+        self:Scan()
+    end
+    self.hasUpdated = false
+end
+```
+
+Scan() (lines 157-176) reads:
+- `alt.bank.items` - IF IsBankAvailable() (line 157-166)
+- `alt.bags.items` - ALWAYS (line 171-176)
+
+**Missing events:**
+- BAG_UPDATE for bags 0-11
+- PLAYERBANKSLOTS_CHANGED for vault
+- Real-time inventory change detection
+
+**Diagnostic Logging Issue:**
+Guild.lua lines 1020-1028 only shows bank item counts:
+```lua
+"Comparing %s: previous bank has %d items, current bank has %d items"
+```
+This is misleading - it doesn't show bag counts, making it appear bags aren't compared (but they are at lines 1032-1034).
+
+**Proposed Fix:**
+1. Monitor **BAG_UPDATE** events for all bags (0-11) - fires when bag contents change
+2. Monitor **PLAYERBANKSLOTS_CHANGED** for bank vault updates
+3. Add debouncing (500ms delay) to coalesce rapid changes during looting/crafting
+4. Keep existing window close triggers as fallback/secondary scan
+5. Option A: Make `/togbank share` trigger fresh scan before sending
+6. Option B: Add staleness check - warn if cached data older than X seconds
+7. Update diagnostic logging already done: "previous bank has X items, bags have Y items; current bank has X items, bags has Y items"
+
+**Impact:**
+- **CRITICAL:** Delta sync testing cannot proceed - inventory changes not detected until window close
+- ALL users affected when changing inventory with any tracked window open
+- `/togbank share` sends cached data without warning user it may be stale
+- Requires closing bank/mail/trade/auction/merchant window after changes to update cache
+- No indication to user that scan hasn't run
+- Delta comparison may show "no changes" when changes exist
+
+**Workaround:**
+After making inventory changes, BEFORE `/togbank share`:
+1. **Close any open window** (bank/mail/trade/auction/merchant) - triggers OnUpdateStop → Scan()
+2. OR `/reload` - Forces fresh scan on login
+3. OR open+close mailbox if nearby - MAIL_CLOSED triggers scan
+
+NOTE: Simply reopening a window does NOT rescan - must CLOSE it first.
+
+**Priority:**
+Critical - blocks delta sync testing, affects all users changing character bag inventory
+
+**Notes:**
+- Automatic 3-minute share broadcasts cached data - may be stale if no window closed recently
+- Delta computation DOES compare bags (Guild.lua lines 1032-1034)
+- Diagnostic logging updated to show both bank and bag counts
+- Guild.lua:SendAltData() does NOT call Scan() - only sends cached data from Info.alts[]
+- Character bags (0-4) always scanned on window close, bank bags (5-11) only if IsBankAvailable()
+- Issue affects manual `/togbank share` AND automatic shares if inventory changed after last window close
+- Related to DELTA-004 (exposed this issue via diagnostic logging)
+
+---
+
+#### �🟠 [DELTA-004] Delta computation not detecting inventory changes
 
 **Severity:** 🟠 HIGH  
 **Category:** Delta Computation  
@@ -81,18 +350,20 @@ After removing 1 stack of mithril from the banker's inventory, `/togbank share` 
 
 **Investigation Status:**
 - Added debug logging to ComputeDelta() to show item counts being compared
-- Checking if bank scan is updating currentAlt.bank.items
-- Verifying snapshot is being retrieved correctly
-- Need to run `/togbank share` again to see debug output with item counts
+- **ROOT CAUSE FOUND:** Bank scan shows 0 items because `/togbank share` was run immediately after opening bank
+- Bank scanning takes ~1 second after `BANKFRAME_OPENED` event fires
+- User must wait for scan to complete before running `/togbank share`
+- Diagnostic output: "Comparing Metals-Azuresong: previous bank has 0 items, current bank has 0 items"
+- This explains why delta always reports "no changes" - comparing empty to empty
 
 **Possible Root Causes:**
-1. Bank scan not updating currentAlt.bank.items before SendAltData is called
-2. Snapshot comparison logic incorrect in ComputeItemDelta()
-3. Snapshot not being saved/retrieved properly from database
-4. Item data structure mismatch (table vs array indexing)
+1. ~~Bank scan not updating currentAlt.bank.items before SendAltData is called~~ **CONFIRMED - timing issue**
+2. ~~Snapshot comparison logic incorrect in ComputeItemDelta()~~ Not the issue
+3. ~~Snapshot not being saved/retrieved properly from database~~ Not the issue  
+4. ~~Item data structure mismatch (table vs array indexing)~~ Not the issue
 
 **Workaround:**
-None - delta sync is not functioning for inventory changes.
+Open bank, wait ~1-2 seconds for scan to complete, then run `/togbank share`. The automatic 3-minute share timer handles this correctly because there's plenty of time for scan to complete.
 
 **Next Steps:**
 1. Test with new debug logging to see item counts

@@ -2,8 +2,8 @@
 
 **Project:** TOGBankClassic Delta Sync Protocol  
 **Target Version:** v0.7.0  
-**Status:** Phase 8 Complete - Ready for Release  
-**Last Updated:** January 17, 2026
+**Status:** Phase 8 Testing - DELTA-005 Resolved  
+**Last Updated:** January 20, 2026
 
 ---
 
@@ -871,13 +871,37 @@ Recently seen members:
 - Interface version remains 11508 (correct for WoW Classic Era)
 - Ready for git operations to finalize release
 
+### 8.5 Testing Execution 🔄 IN PROGRESS
+- [x] Test Suite 1.1: Initial Snapshot Creation ✅ PASSED
+- [x] Test Suite 1.2: Small Change Delta ✅ PASSED (2026-01-20)
+  - Fixed DELTA-005: Item merging breaks delta comparison
+  - Converted from slot-based to itemKey-based comparison
+  - Results: 311 bytes vs 1748 bytes (82% savings), 0.42ms compute, 0.06ms apply
+- [ ] Test Suite 1.3: Large Change Fallback (>30% threshold)
+- [ ] Test Suite 2: Error Handling & Recovery (3 tests)
+- [ ] Test Suite 3: Protocol Negotiation (3 tests)
+- [ ] Test Suite 4: Performance & Metrics (3 tests)
+- [ ] Test Suite 5: User Commands (2 tests)
+- [ ] Test Suite 6: Edge Cases (4 tests)
+- [ ] Test Suite 7: Stress Testing (3 tests)
+- [ ] Test Suite 8: Integration Testing (2 tests)
+
+**Test Summary:**
+- **Environment:** "The Old Gods" guild, 12.5% v2 adoption (2 of 8 members)
+- **Test Characters:** Metals-Azuresong (sender), Galdof-OldBlanchy (receiver)
+- **Bug Fixes:** DELTA-005 resolved with itemKey-based comparison
+- **Pending Commit:** Guild.lua (4 functions), Core.lua (ValidateItemDelta), DELTA_BUGS.md
+
 ---
 
 ## Phase 9: Deployment & Monitoring
 
-### 9.1 Beta Testing
-- [ ] Deploy to test environment
-  - [ ] Install on test characters
+### 9.1 Beta Testing 🔄 IN PROGRESS
+- [x] Deploy to test environment
+  - [x] Install on test characters
+  - [x] Test in small guild (8 members)
+  - [x] Monitor for errors or crashes
+  - [ ] Gather feedback on performance
   - [ ] Test in small guild (5-10 members)
   - [ ] Monitor for errors or crashes
   - [ ] Gather feedback on performance

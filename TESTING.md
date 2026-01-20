@@ -35,7 +35,7 @@
 
 ---
 
-### Test 1.2: Small Change Delta
+### Test 1.2: Small Change Delta ✅ PASSED
 **Objective:** Verify delta sync for minor inventory changes
 
 **Steps:**
@@ -50,6 +50,16 @@
 - Metrics show bytesSentDelta > 0
 - Delta size < 30% of full sync size
 - Receiving character sees updated inventory
+
+**Test Results (2026-01-20):**
+- ✅ **Delta transmitted**: 311 bytes vs 1748 bytes full (17.8% size, 82% savings)
+- ✅ **Validation passed**: No errors on receiver (Galdof-OldBlanchy)
+- ✅ **Application successful**: "✓ Applied delta for Metals-Azuresong (v1768947985→v1768948029) in 0.06ms"
+- ✅ **Quantity changes detected**: 70→90 Mithril Bars correctly reflected
+- ✅ **Compute time**: 0.42ms (efficient)
+- ✅ **Bandwidth metrics**: bytesSentDelta=1008B (0.8%), bytesSentFull=128.7KB (99.2%)
+- **Bug Fixed**: DELTA-005 (item merging broke slot-based comparison) - converted to itemKey-based comparison
+- **Test Environment**: Metals-Azuresong (sender) → Galdof-OldBlanchy (receiver), "The Old Gods" guild, 12.5% v2 adoption
 
 ---
 

@@ -168,9 +168,10 @@ function TOGBankClassic_Core:ValidateItemDelta(itemDelta)
 			if not item.ID or type(item.ID) ~= "number" then
 				return false, "added item missing or invalid ID"
 			end
-			if not item.slot or type(item.slot) ~= "number" then
-				return false, "added item missing or invalid slot"
+			if not item.Link or type(item.Link) ~= "string" then
+				return false, "added item missing or invalid Link"
 			end
+			-- slot is optional (merged items don't have slots)
 		end
 	end
 
@@ -183,9 +184,13 @@ function TOGBankClassic_Core:ValidateItemDelta(itemDelta)
 			if type(item) ~= "table" then
 				return false, "modified item is not a table"
 			end
-			if not item.slot or type(item.slot) ~= "number" then
-				return false, "modified item missing or invalid slot"
+			if not item.ID or type(item.ID) ~= "number" then
+				return false, "modified item missing or invalid ID"
 			end
+			if not item.Link or type(item.Link) ~= "string" then
+				return false, "modified item missing or invalid Link"
+			end
+			-- slot is optional (merged items don't have slots)
 		end
 	end
 
@@ -194,9 +199,15 @@ function TOGBankClassic_Core:ValidateItemDelta(itemDelta)
 		if type(itemDelta.removed) ~= "table" then
 			return false, "removed is not a table"
 		end
-		for _, slot in pairs(itemDelta.removed) do
-			if type(slot) ~= "number" then
-				return false, "removed slot is not a number"
+		for _, item in pairs(itemDelta.removed) do
+			if type(item) ~= "table" then
+				return false, "removed item is not a table"
+			end
+			if not item.ID or type(item.ID) ~= "number" then
+				return false, "removed item missing or invalid ID"
+			end
+			if not item.Link or type(item.Link) ~= "string" then
+				return false, "removed item missing or invalid Link"
 			end
 		end
 	end
