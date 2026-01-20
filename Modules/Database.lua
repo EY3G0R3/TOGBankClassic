@@ -24,6 +24,7 @@ function TOGBankClassic_Database:Reset(name)
 		requestsTombstones = {},
 		-- Delta sync fields
 		deltaSnapshots = {},
+		deltaHistory = {},  -- DELTA-006: Store delta chain for offline players
 		guildProtocolVersions = {},
 		deltaMetrics = {
 			bytesSentDelta = 0,
@@ -101,6 +102,9 @@ function TOGBankClassic_Database:Load(name)
 	-- Initialize delta sync fields if not present
 	if not db.deltaSnapshots then
 		db.deltaSnapshots = {}
+	end
+	if not db.deltaHistory then
+		db.deltaHistory = {}  -- DELTA-006: Initialize delta chain history
 	end
 	if not db.guildProtocolVersions then
 		db.guildProtocolVersions = {}
@@ -270,6 +274,129 @@ function TOGBankClassic_Database:DeepCopy(obj)
 	end
 
 	return copy
+end
+
+-- Delta History Management (DELTA-006: Delta Chain Replay)
+
+-- Save a delta to history for potential chain replay
+function TOGBankClassic_Database:SaveDeltaHistory(name, altName, baseVersion, version, delta)
+	if not name or not altName or not baseVersion or not version or not delta then
+		return false
+	end
+
+	local db = self.db.faction[name]
+	if not db then
+		return false
+	end
+
+	-- Initialize deltaHistory if needed
+	if not db.deltaHistory then
+		db.deltaHistory = {}
+	end
+
+	if not db.deltaHistory[altName] then
+		db.deltaHistory[altName] = {}
+	end
+
+	-- Add delta to history
+	table.insert(db.deltaHistory[altName], {
+		baseVersion = baseVersion,
+		version = version,
+		delta = self:DeepCopy(delta),  -- Deep copy to prevent mutation
+		timestamp = GetServerTime()
+	})
+
+	-- Enforce max count limit (keep most recent)
+	local maxCount = PROTOCOL.DELTA_HISTORY_MAX_COUNT or 10
+	while #db.deltaHistory[altName] > maxCount do
+		table.remove(db.deltaHistory[altName], 1)  -- Remove oldest
+	end
+
+	return true
+end
+
+-- Get delta history for an alt within a version range
+function TOGBankClassic_Database:GetDeltaHistory(name, altName, fromVersion, toVersion)
+	if not name or not altName then
+		return nil
+	end
+
+	local db = self.db.faction[name]
+	if not db or not db.deltaHistory or not db.deltaHistory[altName] then
+		return nil
+	end
+
+	-- Build chain of deltas from fromVersion to toVersion
+	local chain = {}
+	local currentVersion = fromVersion
+
+	for _, deltaEntry in ipairs(db.deltaHistory[altName]) do
+		if deltaEntry.baseVersion == currentVersion and deltaEntry.version <= toVersion then
+			table.insert(chain, {
+				baseVersion = deltaEntry.baseVersion,
+				version = deltaEntry.version,
+				delta = deltaEntry.delta
+			})
+			currentVersion = deltaEntry.version
+
+			-- Stop if we've reached the target
+			if currentVersion == toVersion then
+				break
+			end
+		end
+	end
+
+	-- Return nil if we couldn't build a complete chain
+	if currentVersion ~= toVersion then
+		return nil
+	end
+
+	return chain
+end
+
+-- Clean up old delta history (older than DELTA_HISTORY_MAX_AGE)
+function TOGBankClassic_Database:CleanupDeltaHistory(name)
+	if not name then
+		return 0
+	end
+
+	local db = self.db.faction[name]
+	if not db or not db.deltaHistory then
+		return 0
+	end
+
+	local currentTime = GetServerTime()
+	local maxAge = PROTOCOL.DELTA_HISTORY_MAX_AGE or 3600
+	local totalRemoved = 0
+
+	for altName, history in pairs(db.deltaHistory) do
+		if type(history) == "table" then
+			-- Remove old entries
+			local i = 1
+			while i <= #history do
+				if history[i] and history[i].timestamp then
+					local age = currentTime - history[i].timestamp
+					if age > maxAge then
+						table.remove(history, i)
+						totalRemoved = totalRemoved + 1
+					else
+						i = i + 1
+					end
+				else
+					-- Malformed entry
+					table.remove(history, i)
+					totalRemoved = totalRemoved + 1
+				end
+			end
+
+			-- Remove empty histories
+			if #history == 0 then
+				db.deltaHistory[altName] = nil
+			end
+		end
+	end
+
+	return totalRemoved
 end
 
 -- Protocol Version Tracking

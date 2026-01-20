@@ -621,6 +621,17 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 			TOGBankClassic_Database:RecordDeltaSent(self.Info.name, string.len(serialized or ""))
 		end
 		
+		-- Save delta to history for potential chain replay (DELTA-006)
+		if self.Info and self.Info.name and deltaData.baseVersion and deltaData.version and deltaData.changes then
+			TOGBankClassic_Database:SaveDeltaHistory(
+				self.Info.name,
+				norm,
+				deltaData.baseVersion,
+				deltaData.version,
+				deltaData.changes
+			)
+		end
+		
 		-- Save snapshot for next delta
 		if self.Info and self.Info.name then
 			TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
@@ -1142,7 +1153,7 @@ function TOGBankClassic_Guild:ApplyItemDelta(items, delta)
 end
 
 -- Apply a delta to alt data
-function TOGBankClassic_Guild:ApplyDelta(name, deltaData)
+function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 	if not self.Info then
 		return ADOPTION_STATUS.IGNORED
 	end
@@ -1168,20 +1179,36 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData)
 	local baseVersion = deltaData.baseVersion or 0
 
 	if currentVersion ~= baseVersion then
-		-- Version mismatch, request full sync
+		-- Version mismatch - try delta chain replay (DELTA-006)
 		local errorMsg = string.format(
 			"Version mismatch: have %d, delta expects %d",
 			currentVersion,
 			baseVersion
 		)
-		TOGBankClassic_Output:Debug(
-			"Version mismatch for %s (have %d, delta expects %d), requesting full sync",
-			norm,
-			currentVersion,
-			baseVersion
-		)
+		
+		-- Try delta chain if sender is known and we're behind
+		if sender and currentVersion < baseVersion then
+			TOGBankClassic_Output:Debug(
+				"Version mismatch for %s (have %d, delta expects %d), requesting delta chain",
+				norm,
+				currentVersion,
+				baseVersion
+			)
+			
+			-- Request delta chain to catch up
+			self:RequestDeltaChain(norm, currentVersion, baseVersion, sender)
+		else
+			-- Can't use delta chain, request full sync
+			TOGBankClassic_Output:Debug(
+				"Version mismatch for %s (have %d, delta expects %d), requesting full sync",
+				norm,
+				currentVersion,
+				baseVersion
+			)
+			TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
+		end
+		
 		self:RecordDeltaError(norm, "VERSION_MISMATCH", errorMsg)
-		TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
 		if self.Info and self.Info.name then
 			TOGBankClassic_Database:RecordDeltaFailed(self.Info.name)
 		end
@@ -1256,6 +1283,145 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData)
 
 	-- Trigger UI refresh
 	TOGBankClassic_Events:TriggerCallback(TOGBankClassic_Events.DB_UPDATE)
+
+	return ADOPTION_STATUS.ADOPTED
+end
+
+-- Request a chain of deltas to catch up from an old version (DELTA-006)
+function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion, sender)
+	if not altName or not fromVersion or not toVersion or not sender then
+		return false
+	end
+
+	-- Validate request parameters
+	if fromVersion >= toVersion then
+		TOGBankClassic_Output:Debug("Invalid delta chain request: fromVersion >= toVersion")
+		return false
+	end
+
+	-- Calculate expected hop count
+	local versionGap = toVersion - fromVersion
+	if versionGap > (PROTOCOL.DELTA_CHAIN_MAX_HOPS or 10) * 60 then
+		-- Gap too large (assuming ~60 seconds between updates), use full sync
+		TOGBankClassic_Output:Debug(
+			"Delta chain gap too large for %s (%d seconds), requesting full sync",
+			altName,
+			versionGap
+		)
+		TOGBankClassic_Guild:QueryAlt(nil, altName, sender)
+		return false
+	end
+
+	-- Send delta range request
+	local requestData = {
+		altName = altName,
+		fromVersion = fromVersion,
+		toVersion = toVersion
+	}
+	
+	local serialized = TOGBankClassic_Core:SerializeWithChecksum(requestData)
+	TOGBankClassic_Core:SendCommMessage("togbank-dr", serialized, "WHISPER", sender, "ALERT")
+	
+	TOGBankClassic_Output:Debug(
+		"Requesting delta chain for %s from v%d to v%d from %s",
+		altName,
+		fromVersion,
+		toVersion,
+		sender
+	)
+	
+	return true
+end
+
+-- Apply a chain of deltas sequentially (DELTA-006)
+function TOGBankClassic_Guild:ApplyDeltaChain(altName, deltaChain)
+	if not altName or not deltaChain or type(deltaChain) ~= "table" or #deltaChain == 0 then
+		return ADOPTION_STATUS.INVALID
+	end
+
+	local norm = self:NormalizeName(altName)
+	local current = self.Info and self.Info.alts and self.Info.alts[norm]
+
+	if not current then
+		TOGBankClassic_Output:Debug("No existing data for %s, cannot apply delta chain", norm)
+		return ADOPTION_STATUS.INVALID
+	end
+
+	-- Validate chain
+	if #deltaChain > (PROTOCOL.DELTA_CHAIN_MAX_HOPS or 10) then
+		TOGBankClassic_Output:Debug(
+			"Delta chain too long for %s (%d hops > %d max)",
+			norm,
+			#deltaChain,
+			PROTOCOL.DELTA_CHAIN_MAX_HOPS or 10
+		)
+		return ADOPTION_STATUS.INVALID
+	end
+
+	-- Estimate total chain size
+	local totalSize = self:EstimateSize(deltaChain)
+	if totalSize > (PROTOCOL.DELTA_CHAIN_MAX_SIZE or 5000) then
+		TOGBankClassic_Output:Debug(
+			"Delta chain too large for %s (%d bytes > %d max), requesting full sync",
+			norm,
+			totalSize,
+			PROTOCOL.DELTA_CHAIN_MAX_SIZE or 5000
+		)
+		TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
+		return ADOPTION_STATUS.INVALID
+	end
+
+	-- Apply each delta in sequence
+	local chainStart = debugprofilestop()
+	local currentVersion = current.version or 0
+
+	for i, deltaEntry in ipairs(deltaChain) do
+		-- Validate this delta applies to our current version
+		if deltaEntry.baseVersion ~= currentVersion then
+			TOGBankClassic_Output:Debug(
+				"Delta chain broken for %s at hop %d: have v%d, delta expects v%d",
+				norm,
+				i,
+				currentVersion,
+				deltaEntry.baseVersion
+			)
+			TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
+			return ADOPTION_STATUS.INVALID
+		end
+
+		-- Apply this delta
+		local deltaData = {
+			type = "alt-delta",
+			name = altName,
+			version = deltaEntry.version,
+			baseVersion = deltaEntry.baseVersion,
+			changes = deltaEntry.delta
+		}
+
+		local status = self:ApplyDelta(altName, deltaData)
+		if status ~= ADOPTION_STATUS.ADOPTED then
+			TOGBankClassic_Output:Debug(
+				"Failed to apply delta chain for %s at hop %d (v%d→v%d)",
+				norm,
+				i,
+				deltaEntry.baseVersion,
+				deltaEntry.version
+			)
+			return status
+		end
+
+		currentVersion = deltaEntry.version
+	end
+
+	local chainTime = debugprofilestop() - chainStart
+	TOGBankClassic_Output:Debug(
+		"✓ Applied delta chain for %s (%d hops, v%d→v%d) in %.2fms",
+		norm,
+		#deltaChain,
+		deltaChain[1].baseVersion,
+		deltaChain[#deltaChain].version,
+		chainTime
+	)
 
 	return ADOPTION_STATUS.ADOPTED
 end

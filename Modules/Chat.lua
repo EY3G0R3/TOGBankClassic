@@ -22,6 +22,15 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	-- DELTA-006: Delta chain replay handlers
+	TOGBankClassic_Core:RegisterComm("togbank-dr", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
+	TOGBankClassic_Core:RegisterComm("togbank-dc", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
 	TOGBankClassic_Core:RegisterComm("togbank-v", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -392,7 +401,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					return
 				end
 
-				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data)
+				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
 				self:Debug(
 					">",
 					ColorPlayerName(sender),
@@ -411,6 +420,82 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					FormatSyncStatus(ADOPTION_STATUS.UNAUTHORIZED)
 				)
 			end
+		end
+	end
+
+	-- DELTA-006: Delta Range Request handler
+	if prefix == "togbank-dr" then
+		if data.altName and data.fromVersion and data.toVersion then
+			local altName = data.altName
+			local fromVersion = data.fromVersion
+			local toVersion = data.toVersion
+			
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				QUERIES_COLOR,
+				"requests delta chain for",
+				ColorPlayerName(altName),
+				string.format("(v%d→v%d)", fromVersion, toVersion)
+			)
+			
+			-- Get delta history
+			if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
+				local deltaChain = TOGBankClassic_Database:GetDeltaHistory(
+					TOGBankClassic_Guild.Info.name,
+					altName,
+					fromVersion,
+					toVersion
+				)
+				
+				if deltaChain then
+					-- Send delta chain back via whisper
+					local chainData = {
+						altName = altName,
+						deltas = deltaChain
+					}
+					local serialized = TOGBankClassic_Core:SerializeWithChecksum(chainData)
+					TOGBankClassic_Core:SendCommMessage("togbank-dc", serialized, "WHISPER", sender, "ALERT")
+					
+					self:Debug(
+						"<",
+						"togbank-dc (Delta Chain) to",
+						ColorPlayerName(sender),
+						string.format("(%d hops, %d bytes)", #deltaChain, string.len(serialized or ""))
+					)
+				else
+					-- Can't build chain, let them request full sync
+					self:Debug(
+						"< Cannot build delta chain for",
+						ColorPlayerName(altName),
+						string.format("(v%d→v%d), no history", fromVersion, toVersion)
+					)
+				end
+			end
+		end
+	end
+
+	-- DELTA-006: Delta Chain response handler
+	if prefix == "togbank-dc" then
+		if data.altName and data.deltas then
+			local altName = data.altName
+			local deltaChain = data.deltas
+			
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				SHARES_COLOR,
+				"delta chain for",
+				ColorPlayerName(altName),
+				string.format("(%d hops)", #deltaChain)
+			)
+			
+			-- Apply delta chain
+			local status = TOGBankClassic_Guild:ApplyDeltaChain(altName, deltaChain)
+			self:Debug(
+				"Delta chain application",
+				FormatSyncStatus(status)
+			)
 		end
 	end
 
