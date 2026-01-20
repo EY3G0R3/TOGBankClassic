@@ -217,6 +217,7 @@ DEBUG COMMANDS:
 /togbank debug
   Toggles debug mode on/off for troubleshooting
   Shows detailed information about addon operations
+  Setting persists across reloads and is saved to your addon settings
 
 ================================================================================
 DELTA SYNC FEATURE (v0.7.0)

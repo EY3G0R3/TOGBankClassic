@@ -621,9 +621,11 @@ local COMMAND_REGISTRY = {
 			local currentLevel = TOGBankClassic_Output:GetLevel()
 			if currentLevel == LOG_LEVEL.DEBUG then
 				TOGBankClassic_Output:SetLevel(LOG_LEVEL.INFO)
+				TOGBankClassic_Options.db.global.bank["logLevel"] = LOG_LEVEL.INFO
 				TOGBankClassic_Output:Response("Debug: off (log level: Info)")
 			else
 				TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
+				TOGBankClassic_Options.db.global.bank["logLevel"] = LOG_LEVEL.DEBUG
 				TOGBankClassic_Output:Response("Debug: on (log level: Debug)")
 			end
 		end,

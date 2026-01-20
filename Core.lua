@@ -19,6 +19,7 @@ end
 
 function TOGBankClassic_Core:OnInitialize()
     -- Called when the addon is loaded
+    TOGBankClassic_Output:Init()
     TOGBankClassic_Database:Init()
     TOGBankClassic_Chat:Init()
     TOGBankClassic_Options:Init()

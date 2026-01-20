@@ -42,15 +42,27 @@ end
 
 -- Create or get dedicated debug chat frame
 function TOGBankClassic_Output:GetDebugFrame()
-	if self.debugFrame and self.debugFrame:IsShown() then
+	-- Return cached frame if we have it
+	if self.debugFrame then
 		return self.debugFrame
 	end
 	
-	-- Try to find existing TOGBank Debug tab
+	-- Try to find existing TOGBank Debug tab (even if hidden)
 	for i = 1, NUM_CHAT_WINDOWS do
 		local name = GetChatWindowInfo(i)
 		if name == "TOGBank Debug" then
 			self.debugFrame = _G["ChatFrame"..i]
+			
+			-- Ensure OnShow hook is set to redraw messages when tab becomes visible
+			if not self.debugFrame.togbankHooked then
+				self.debugFrame:HookScript("OnShow", function()
+					TOGBankClassic_Output:RedrawDebugMessages()
+				end)
+				self.debugFrame.togbankHooked = true
+			end
+			
+			-- Restore buffered messages when frame is found
+			self:RedrawDebugMessages()
 			return self.debugFrame
 		end
 	end

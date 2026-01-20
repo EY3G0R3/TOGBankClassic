@@ -722,6 +722,22 @@ Sent delta update for Bankalt-Server via togbank-d2
      - Disables: "|cff00ff00Full sync force removed|r - delta sync re-enabled"
   
   5. **`/togbank resetmetrics`** - Resets all delta metrics to zero
+  
+  6. **`/togbank debugtab`** - Creates dedicated debug chat tab:
+     - Creates "TOGBank Debug" chat frame for debug output
+     - Buffers up to 1000 debug messages
+     - Automatically redraws buffered messages when tab is shown
+     - Keeps debug messages separate from main chat
+  
+  7. **`/togbank debugtabremove`** - Removes debug chat tab:
+     - Cleans up and hides the debug tab
+     - Requires /reload to fully complete removal
+
+**Debug Toggle:**
+- `/togbank debug` - Quick toggle between INFO and DEBUG log levels
+  - Saves to `db.global.bank["logLevel"]` in saved variables
+  - Persists across reloads and sessions
+  - Alternative to using the Options panel dropdown
 
 **Command Examples:**
 ```

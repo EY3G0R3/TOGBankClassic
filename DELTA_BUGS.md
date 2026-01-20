@@ -290,6 +290,130 @@ Proceed with manual testing per TESTING.md until unit tests are rewritten.
 - Core delta functionality is implemented and can be manually tested
 - Tests need complete rewrite to match actual API
 
+---
+
+#### ✅ [UI-001] Debug tab doesn't persist when closed/hidden
+
+**Severity:** 🟡 MEDIUM  
+**Category:** UI/Commands  
+**Reporter:** Development Team  
+**Date Reported:** 2026-01-20  
+**Status:** Resolved  
+**Assigned To:** Development Team
+
+**Description:**
+When a user closes or hides the "TOGBank Debug" chat tab (right-click -> Hide Tab), debug messages stop going to the dedicated tab and start cluttering the main chat. Buffered messages are lost when the tab is hidden and not restored when recreated.
+
+**Steps to Reproduce:**
+1. Create debug tab with `/togbank debugtab`
+2. Enable debug logging with `/togbank debug`
+3. Observe debug messages going to the dedicated tab
+4. Right-click the "TOGBank Debug" tab and select "Hide Tab"
+5. Continue using the addon (trigger some debug messages)
+6. Debug messages now appear in main chat instead
+7. Create the debug tab again with `/togbank debugtab`
+8. Previous buffered messages are not restored to the tab
+
+**Expected Behavior:**
+- Debug tab should remain functional even when hidden temporarily
+- Buffered messages should be restored when tab is recreated or shown again
+- Debug messages should not fall through to main chat if debug tab exists but is hidden
+
+**Actual Behavior:**
+- `GetDebugFrame()` returns nil when tab is hidden (`IsShown()` check fails)
+- Debug messages fall through to normal print (main chat)
+- Buffered messages are stored but never displayed when tab is recreated
+- User loses all debug history from when tab was hidden
+
+**Environment:**
+- WoW Version: Classic Era (11508)
+- TOGBankClassic Version: 0.7.0
+- All versions affected
+
+**Root Cause:**
+`GetDebugFrame()` checks both `self.debugFrame` exists AND `self.debugFrame:IsShown()` is true. When user hides the tab:
+1. `IsShown()` returns false
+2. `GetDebugFrame()` returns nil
+3. Log function falls through to normal print
+4. Messages are buffered via `BufferDebugMessage()` but frame isn't found to display them
+5. `RedrawDebugMessages()` is called when tab is created, but `self.debugFrame` was set to nil
+
+Code in Output.lua lines 44-57:
+```lua
+function TOGBankClassic_Output:GetDebugFrame()
+	if self.debugFrame and self.debugFrame:IsShown() then
+		return self.debugFrame
+	end
+	
+	-- Try to find existing TOGBank Debug tab
+	for i = 1, NUM_CHAT_WINDOWS do
+		local name = GetChatWindowInfo(i)
+		if name == "TOGBank Debug" then
+			self.debugFrame = _G["ChatFrame"..i]
+			return self.debugFrame
+		end
+	end
+	
+	return nil
+end
+```
+
+**Proposed Fix:**
+Remove the `IsShown()` check from `GetDebugFrame()` or make it search for the frame even when hidden:
+```lua
+function TOGBankClassic_Output:GetDebugFrame()
+	if self.debugFrame then
+		return self.debugFrame
+	end
+	
+	-- Try to find existing TOGBank Debug tab (even if hidden)
+	for i = 1, NUM_CHAT_WINDOWS do
+		local name = GetChatWindowInfo(i)
+		if name == "TOGBank Debug" then
+			self.debugFrame = _G["ChatFrame"..i]
+			return self.debugFrame
+		end
+	end
+	
+	return nil
+end
+```
+
+Additionally, ensure `RedrawDebugMessages()` is called after finding the frame:
+```lua
+if name == "TOGBank Debug" then
+	self.debugFrame = _G["ChatFrame"..i]
+	self:RedrawDebugMessages()  -- Restore buffered messages
+	return self.debugFrame
+end
+```
+
+**Impact:**
+- Users lose debug history when tab is accidentally closed
+- Debug messages clutter main chat when debug tab exists but is hidden
+- Poor user experience for debugging and troubleshooting
+
+**Workaround:**
+- Don't close/hide the debug tab once created
+- Keep debug tab visible at all times when debug logging is enabled
+- Use `/togbank debugtabremove` and `/togbank debugtab` to fully recreate if needed
+
+**Notes:**
+- This is a pre-existing issue, not related to delta sync
+- Affects all versions with debug tab feature
+- Message buffer (1000 messages) works correctly
+- `RedrawDebugMessages()` logic works when frame is found
+
+**Fix Applied:**
+- Removed `IsShown()` check from `GetDebugFrame()` - now returns frame even when hidden
+- Added call to `RedrawDebugMessages()` when frame is found to restore buffered messages
+- Frame is now cached after first lookup for better performance
+- Added `OnShow` hook to automatically redraw messages when switching back to the debug tab
+- Debug messages will always go to debug tab if it exists, regardless of visibility
+- Buffered history (up to 1000 messages) is preserved and restored when tab becomes active
+
+**Resolution Date:** 2026-01-20
+
 *No other medium priority bugs reported*
 
 ---
@@ -415,20 +539,20 @@ Track which test suites have been executed and results:
 - ✅ Passed - All tests passed
 - ⚠️ Issues Found - Some tests failed, bugs reported
 - ❌ Blocked - Cannot test due to dependency
+1 (open), 1 (fixed)  
+**Low:** 0  
+**Fixed:** 5  
+**Open:** 1istics
 
----
-
-## Bug Statistics
-
-**Total Bugs:** 5  
+**Total Bugs:** 6  
 **Critical:** 0 (3 fixed)  
 **High:** 0 (1 fixed)  
-**Medium:** 1 (open)  
+**Medium:** 2 (open)  
 **Low:** 0  
 **Fixed:** 4  
-**Open:** 1  
+**Open:** 2  
 
-**By Category:**
+**By Category:**fixed
 - Delta Computation: 0
 - Delta Application: 0
 - Protocol Negotiation: 0
@@ -436,10 +560,11 @@ Track which test suites have been executed and results:
 - Error Handling: 1 (fixed)
 - Performance: 0
 - Metrics: 0
-- UI/Commands: 0
+- UI/Commands: 1 (open)
 - Database: 0
 - Backwards Compatibility: 1 (fixed)
 - Module Initialization: 3 (fixed)
+- Testing: 1 (open)
 
 ---
 
