@@ -594,8 +594,10 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 				)
 			end
 		else
-			if snapshot then
+			if deltaData then
 				TOGBankClassic_Output:Debug("No changes detected for %s (delta would be empty)", norm)
+			else
+				TOGBankClassic_Output:Debug("No previous snapshot for %s (first sync)", norm)
 			end
 		end
 	end
@@ -1017,6 +1019,14 @@ function TOGBankClassic_Guild:ComputeDelta(name, currentAlt)
 	-- Bank items delta
 	local previousBankItems = previous.bank and previous.bank.items or {}
 	local currentBankItems = currentAlt.bank and currentAlt.bank.items or {}
+	
+	-- Debug: Log item counts
+	TOGBankClassic_Output:Debug(
+		"Comparing %s: previous bank has %d items, current bank has %d items",
+		name,
+		#previousBankItems,
+		#currentBankItems
+	)
 	delta.changes.bank = self:ComputeItemDelta(previousBankItems, currentBankItems)
 
 	-- Bag items delta

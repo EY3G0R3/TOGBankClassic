@@ -104,13 +104,14 @@ function TOGBankClassic_Output:CreateDebugTab()
 		end
 	end
 	
-	-- Find first available chat frame slot
+	-- Find first available chat frame slot (first one with no name)
 	local frameIndex = nil
 	for i = 1, NUM_CHAT_WINDOWS do
 		local frame = _G["ChatFrame"..i]
 		if frame then
 			local name = GetChatWindowInfo(i)
-			if not name or name == "" or not frame:IsShown() then
+			-- Use first frame with no name (truly empty slot)
+			if not name or name == "" then
 				frameIndex = i
 				break
 			end
@@ -126,10 +127,14 @@ function TOGBankClassic_Output:CreateDebugTab()
 	-- Configure the frame
 	local frame = _G["ChatFrame"..frameIndex]
 	
-	-- Reset frame completely
-	FCF_ResetChatWindows()
-	FCF_SetWindowName(frame, "TOGBank Debug", frameIndex)
+	-- Use WoW's proper API to create a new named window
+	FCF_SetWindowName(frame, "TOGBank Debug")
 	FCF_SetWindowColor(frame, 0.3, 0.3, 0.3)
+	FCF_SetLocked(frame, false)
+	
+	-- Set font size (required for WoW to save the frame)
+	local fontFile, _, fontFlags = GameFontNormal:GetFont()
+	frame:SetFont(fontFile, 12, fontFlags)
 	
 	-- Clear all message groups and channels
 	ChatFrame_RemoveAllMessageGroups(frame)
@@ -141,16 +146,17 @@ function TOGBankClassic_Output:CreateDebugTab()
 	frame:SetTimeVisible(120)
 	frame:SetIndentedWordWrap(false)
 	
-	-- Hook OnShow to redraw messages when tab becomes visible
-	frame:HookScript("OnShow", function()
-		TOGBankClassic_Output:RedrawDebugMessages()
-	end)
-	frame.togbankHooked = true
-	
-	-- Make it visible and unlocked so user can move/resize/close it
-	FCF_SetLocked(frame, false)
+	-- Make visible and dock it
 	frame:Show()
 	FCF_DockFrame(frame)
+	
+	-- Hook OnShow to redraw messages when tab becomes visible
+	if not frame.togbankHooked then
+		frame:HookScript("OnShow", function()
+			TOGBankClassic_Output:RedrawDebugMessages()
+		end)
+		frame.togbankHooked = true
+	end
 	
 	self.debugFrame = frame
 	

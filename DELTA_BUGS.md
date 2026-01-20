@@ -36,6 +36,72 @@
 
 ### 🔴 CRITICAL
 
+#### 🟠 [DELTA-004] Delta computation not detecting inventory changes
+
+**Severity:** 🟠 HIGH  
+**Category:** Delta Computation  
+**Reporter:** Testing Team  
+**Date Reported:** 2026-01-20  
+**Status:** In Progress - Investigating  
+**Assigned To:** Development Team
+
+**Description:**
+After removing 1 stack of mithril from the banker's inventory, `/togbank share` still reports "No changes detected for Metals-Azuresong (delta would be empty)" and sends a full sync instead of a delta.
+
+**Steps to Reproduce:**
+1. Initial `/togbank share` on Metals-Azuresong (creates snapshot)
+2. Remove 1 stack of mithril from bank
+3. Close bank
+4. Wait 30 seconds
+5. Open bank again
+6. Run `/togbank share`
+
+**Expected Behavior:**
+```
+[DEBUG] Comparing Metals-Azuresong: previous bank has X items, current bank has X-1 items
+[DEBUG] ✓ Delta selected for Metals-Azuresong: XXX bytes vs YYY bytes full
+[DEBUG] Sent delta update for Metals-Azuresong via togbank-d2
+```
+
+**Actual Behavior:**
+```
+[DEBUG] No changes detected for Metals-Azuresong (delta would be empty)
+[DEBUG] Delta computation took 0.07ms
+[DEBUG] Sent full sync for Metals-Azuresong via togbank-d (824 bytes)
+```
+
+**Environment:**
+- WoW Version: Classic Era (11508)
+- TOGBankClassic Version: 0.7.0
+- Character: Metals-Azuresong (banker)
+- Guild: The Old Gods
+- Protocol v2 adoption: 12.5% (2 of 8 members)
+- DELTA_SUPPORT_THRESHOLD: 0.1 (lowered from 0.5 for testing)
+- Test phase: Test Suite 1.2 (Small Change Delta Sync)
+
+**Investigation Status:**
+- Added debug logging to ComputeDelta() to show item counts being compared
+- Checking if bank scan is updating currentAlt.bank.items
+- Verifying snapshot is being retrieved correctly
+- Need to run `/togbank share` again to see debug output with item counts
+
+**Possible Root Causes:**
+1. Bank scan not updating currentAlt.bank.items before SendAltData is called
+2. Snapshot comparison logic incorrect in ComputeItemDelta()
+3. Snapshot not being saved/retrieved properly from database
+4. Item data structure mismatch (table vs array indexing)
+
+**Workaround:**
+None - delta sync is not functioning for inventory changes.
+
+**Next Steps:**
+1. Test with new debug logging to see item counts
+2. Verify ComputeItemDelta() logic for detecting added/removed/modified items
+3. Check if items array is being compared correctly (slot-based vs index-based)
+4. Review snapshot storage/retrieval in Database.lua
+
+---
+
 #### ✅ [DELTA-001] Tests.lua NewModule initialization failure
 
 **Severity:** 🔴 CRITICAL  
@@ -412,7 +478,44 @@ end
 - Debug messages will always go to debug tab if it exists, regardless of visibility
 - Buffered history (up to 1000 messages) is preserved and restored when tab becomes active
 
-**Resolution Date:** 2026-01-20
+**Additional Issue Found (2026-01-20):**
+Debug tab not persisting across `/reload` on some characters (worked on Galdof but not on Metals).
+
+**Root Cause #1:** 
+`CreateDebugTab()` in Output.lua line 129 called `FCF_ResetChatWindows()` which resets **ALL** chat windows to defaults, preventing WoW from properly saving the new tab configuration to `chat-cache.txt`.
+
+**Root Cause #2:**
+WoW's `chat-cache.txt` only saves frames that have `SIZE > 0` and `LOCKED 0`. Metals had empty frames with `SIZE 0` and `LOCKED 1`, which WoW won't persist. The code was:
+1. Finding these locked, zero-size frames
+2. Setting their name but not unlocking or sizing them
+3. WoW discarding these changes on `/reload`
+
+**Root Cause #3:**
+`frame:SetFont(GameFontNormal:GetFont(), 12)` caused Lua error because `GetFont()` returns 3 values (fontFile, height, flags), resulting in wrong argument count to `SetFont()`.
+
+**Root Cause #4:**
+Code was selecting ChatFrame3 which is WoW's reserved "Voice" frame. WoW automatically resets this frame's name to "Voice" on reload, causing debug messages to fail routing.
+
+**Root Cause #5:**
+`FCF_SetWindowName()` was called with extra `frameIndex` parameter and operations were out of order. WoW requires specific API call sequence to properly initialize and save new chat frames.
+
+**Final Fixes Applied:**
+- Removed `FCF_ResetChatWindows()` call from `CreateDebugTab()` (caused all chat windows to reset)
+- Changed frame search to find first frame with no name (empty slot), avoiding all reserved frames
+- Removed `frameIndex` parameter from `FCF_SetWindowName()` call
+- Reordered operations: SetWindowName → SetWindowColor → SetLocked → SetFont → Show → Dock
+- Set font size properly: `local fontFile, _, fontFlags = GameFontNormal:GetFont(); frame:SetFont(fontFile, 12, fontFlags)`
+- Added safety check to hook (`if not frame.togbankHooked then`)
+- This ensures proper `NAME` and `SIZE 12` written to `chat-cache.txt`, making frame persist with correct name
+- Tab now persists correctly across reloads on all characters with proper name
+
+**Workaround for Corrupted Chat Configs:**
+If a character has malformed chat tabs, delete their `chat-cache.txt` file and restart WoW to reset to defaults:
+```powershell
+Remove-Item "C:\Program Files (x86)\World of Warcraft\_classic_era_\WTF\Account\<ACCOUNT>\<REALM>\<CHARACTER>\chat-cache.txt"
+```
+
+**Resolution Date:** 2026-01-20 (all issues resolved and tested)
 
 *No other medium priority bugs reported*
 
@@ -510,6 +613,7 @@ These are documented limitations of v0.7.0, not bugs to be fixed:
    - Severity: 🟡 MEDIUM
    - Reason: Design decision to ensure most members benefit
    - Workaround: Encourage guild to update, use `/togbank protocol` to check
+   - **Testing Note:** Threshold lowered to 10% in Constants.lua for testing purposes (2026-01-20)
 
 4. **30% Size Threshold** - Large changes (>30%) fall back to full sync
    - Severity: 🟢 LOW
@@ -524,7 +628,7 @@ Track which test suites have been executed and results:
 
 | Test Suite | Status | Date Tested | Tester | Result | Notes |
 |------------|--------|-------------|--------|--------|-------|
-| 1. Basic Delta Sync | ⏳ Pending | - | - | - | - |
+| 1. Basic Delta Sync | 🔄 In Progress | 2026-01-20 | Team | ⚠️ Issues | Threshold lowered to 10%. Debug: Delta computed but full sync sent via togbank-d instead of togbank-d2 |
 | 2. Error Handling | ⏳ Pending | - | - | - | - |
 | 3. Protocol Negotiation | ⏳ Pending | - | - | - | - |
 | 4. Performance & Metrics | ⏳ Pending | - | - | - | - |
@@ -532,6 +636,21 @@ Track which test suites have been executed and results:
 | 6. Edge Cases | ⏳ Pending | - | - | - | - |
 | 7. Stress Testing | ⏳ Pending | - | - | - | - |
 | 8. Integration | ⏳ Pending | - | - | - | - |
+
+**Test Environment:**
+- **Banker:** Metals-Azuresong (protocol v2, delta enabled)
+- **Receiver:** Galdof-OldBlanchy (protocol v2, delta enabled)
+- **Other guild members:** 6 members on protocol v1 (full sync only)
+- **Protocol distribution:** 12.5% v2 (2 of 8 online)
+- **Threshold:** Lowered to 10% for testing
+
+**Current Issue:**
+Delta computation completes (0.03-0.04ms) but full sync is sent via `togbank-d` instead of delta via `togbank-d2`. Missing log messages:
+- "Snapshot saved for X"
+- "✓ Delta selected" or "✗ Delta too large" 
+- "No changes detected"
+
+Investigating why `useDelta` flag is false despite delta being computed.
 
 **Status Legend:**
 - ⏳ Pending - Not yet tested

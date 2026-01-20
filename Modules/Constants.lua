@@ -50,7 +50,7 @@ PROTOCOL = {
 	SUPPORTS_DELTA = true,          -- This client supports delta updates
 	MIN_DELTA_SIZE_RATIO = 0.3,     -- Only use delta if <30% of full sync size
 	DELTA_SNAPSHOT_MAX_AGE = 3600,  -- 1 hour: snapshots older than this are invalid
-	DELTA_SUPPORT_THRESHOLD = 0.5,  -- Use delta if >50% of online guild supports it
+	DELTA_SUPPORT_THRESHOLD = 0.1,  -- Use delta if >10% of online guild supports it (lowered for testing)
 }
 
 -- Feature flags (for easy enable/disable during development/testing)

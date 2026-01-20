@@ -978,6 +978,32 @@ If critical issues arise post-release:
 
 ---
 
+## Testing Configuration Notes
+
+**Temporary Changes for Testing (2026-01-20):**
+
+⚠️ **DELTA_SUPPORT_THRESHOLD lowered to 0.1 (10%)**
+- Original value: 0.5 (50%)
+- Location: `Modules/Constants.lua` line 55
+- Reason: Guild has only 12.5% (1 of 8) members on protocol v2
+- Impact: Allows testing delta sync with minimal guild adoption
+- **TODO:** Restore to 0.5 before production release
+
+To check current guild protocol distribution:
+```
+/togbank protocol
+```
+
+Expected output during testing:
+```
+Online (last 10 minutes):
+  Protocol v2 (delta): 1 (12.5%)
+  Protocol v1 (full):  7 (87.5%)
+✓ Delta sync enabled (12.5% > 10% threshold)
+```
+
+---
+
 ## Notes & Decisions
 
 - **Decision:** Use 50% guild support threshold for delta adoption
