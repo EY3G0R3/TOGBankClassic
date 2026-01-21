@@ -17,13 +17,15 @@
 ### Progress Summary
 - ✅ New message types registered (togbank-rr, togbank-state, togbank-nochange, togbank-d3, togbank-d4)
 - ✅ Link removal implemented for full sync (5-7KB bandwidth savings)
+- ✅ Link removal implemented for deltas (togbank-d4)
 - ✅ Link reconstruction on receiver implemented
-- ✅ Backwards compatibility via dual-send (togbank-d + togbank-d3)
+- ✅ Backwards compatibility via dual-send (togbank-d + togbank-d3, togbank-d2 + togbank-d4)
 - ✅ User-configurable protocol mode (AUTO/LEGACY_ONLY/NEW_ONLY)
 - ✅ Protocol mode persists across reloads
-- 🔄 Link removal for deltas (togbank-d2) - IN PROGRESS
-- ⏳ Version management fix - PENDING
-- ⏳ Pull-based handshake flow - PENDING
+- ✅ Version management fix (only updates on actual inventory changes)
+- ✅ Remove baseVersion from deltas (8 bytes saved)
+- ✅ Minimal removes format (4 bytes per removed item saved)
+- ✅ Pull-based handshake flow (7-step protocol implemented)
 
 ### Core Philosophy
 - Receiver states what they have, sender computes the diff
@@ -54,12 +56,15 @@
 ### Message Optimizations
 
 #### 1. Remove Links from ALL Messages ✅ COMPLETE
-- **Status:** ✅ Implemented in full sync (togbank-d3), ⏳ Pending for deltas (togbank-d4)
+- **Status:** ✅ Fully implemented for both full sync and deltas
 - **Implementation:** 
   - ✅ `StripItemLinks()` function to remove Link fields
-  - ✅ `StripAltLinks()` for entire alt structure
+  - ✅ `StripAltLinks()` for entire alt structure (full sync)
+  - ✅ `StripDeltaLinks()` for delta structure (add/modify/remove arrays)
   - ✅ `ReconstructItemLinks()` rebuilds Links after receiving
-  - ✅ Dual-send: togbank-d (with Links) + togbank-d3 (without Links)
+  - ✅ Dual-send for full sync: togbank-d (with Links) + togbank-d3 (without Links)
+  - ✅ Dual-send for deltas: togbank-d2 (with Links) + togbank-d4 (without Links)
+  - ✅ Protocol mode configuration (AUTO/LEGACY_ONLY/NEW_ONLY)
 - **NEW:** Only send `{ ID = itemID, Count = count }`
 - **Receiver reconstructs Link locally:**
   ```lua
@@ -69,18 +74,27 @@
 - **Savings:** 60-80 bytes × number of items = **5-7KB per sync for typical alt**
 - **Storage:** After reconstruction, store Link in local database for UI display
 
-#### 2. Remove baseVersion from Delta ⏳ PENDING
+#### 2. Remove baseVersion from Delta ✅ COMPLETE
+- **Status:** ✅ Implemented
 - **Current:** Delta includes `baseVersion` to identify what it's built against
 - **Pull-based:** Receiver explicitly states what they have, baseVersion is redundant
-- **Savings:** 8 bytes
-- **TODO:** Remove from delta structure in ComputeDelta()
+- **Savings:** 8 bytes per delta
+- **Implementation:**
+  - Removed from ComputeDelta() output
+  - Removed from StripDeltaLinks() output
+  - ApplyDelta() still accepts it for backwards compatibility with v0.7.0
+  - SaveDeltaHistory() computes baseVersion from snapshot instead of using delta field
 
-#### 3. Remove Count from Delta Removes ⏳ PENDING
-- **Current:** Remove items include Count field
-- **Pull-based:** If removing, Count is irrelevant
-- **Format:** `remove = { { ID = 12345 }, { ID = 67890 }, ... }`
-- **Savings:** 4 bytes per removed item
-- **TODO:** Update ComputeItemDelta() to only include ID in removes
+#### 3. Remove Count and Link from Delta Removes ✅ COMPLETE
+- **Status:** ✅ Implemented
+- **Current:** Remove items include ID, Link, Count fields
+- **New:** Remove items only include ID field
+- **Format:** `remove = [{ ID = 12345 }, { ID = 67890 }, ...]`
+- **Savings:** 4 bytes per removed item (Count removed) + 60-80 bytes (Link already removed)
+- **Implementation:**
+  - ComputeItemDelta() only includes ID in removes
+  - ApplyItemDelta() matches by ID only (backwards compatible with old format)
+  - StripDeltaLinks() already handled minimal format correctly
 
 #### 4. State Summary Minimal
 - **Format:** Only `{[itemID] = quantity}`, no Links/bags/slots/metadata
@@ -129,46 +143,44 @@
 - [x] `togbank-d3` - Full sync without Links (registered, implemented)
 - [x] `togbank-d4` - Delta without Links (registered, pending implementation)
 
-#### Link Optimization ✅ PARTIAL
+#### Link Optimization ✅ COMPLETE
 - [x] Strip Links from full sync messages (togbank-d3)
 - [x] Dual-send togbank-d + togbank-d3 for compatibility
 - [x] Reconstruct Links on receiver with GetItemInfo()
 - [x] Store reconstructed Links in database
-- [ ] Strip Links from delta messages (togbank-d2 → togbank-d4)
-- [ ] Handle async Link loading with Item:CreateFromItemID()
+- [x] Strip Links from delta messages (togbank-d4)
+- [x] Dual-send togbank-d2 + togbank-d4 for compatibility
+- [x] Implement togbank-d4 receive handler
+- [x] Reconstruct Links in delta items (add/modify/remove)
+- [x] Handle async Link loading with Item:CreateFromItemID()
 
-#### Version Management Fixes ⏳ PENDING
-- [ ] Fix version creation to only happen on actual changes
-- [ ] Remove version updates from logout event (Guild.lua:679)
-- [ ] Track inventory state to detect changes
-- [ ] Never update version on: queries, responses, no-change replies
-  - Option 3: "New Protocol Only" - Requires all guild members on v0.8.0+, maximum savings
-- [ ] Display current selection and bandwidth impact in config UI
-- [ ] Add tooltip explaining each option
+#### Version Management Fixes ✅ COMPLETE
+- [x] Fix version creation to only happen on actual inventory changes
+- [x] Implement ComputeInventoryHash() to detect actual changes
+- [x] Compare hash in Bank:Scan(), only update version if different
+- [x] Remove force parameter from SendAltData()
+- [x] Versions now ONLY created by Bank:Scan() on actual inventory changes
+- [x] Never update version on: queries, responses, no-change replies
+- [x] Prevents version drift from communication
 
-#### New Message Types
+#### New Message Types ⏳ PENDING
 - [ ] `togbank-rr` - Query reply with isBanker flag
 - [ ] `togbank-state` - Receiver sends state summary `{[itemID] = quantity}`
 - [ ] `togbank-nochange` - Explicit no-change response
 
-#### Modified Message Types
-- [ ] `togbank-d` - Remove Link fields, receiver reconstructs
-- [ ] `togbank-d2` - Remove Link fields, remove baseVersion, minimal removes
+#### Pull-Based Handshake Flow ✅ COMPLETE
+- [x] Implement 7-step handshake protocol
+- [x] Banker announces on login (togbank-dv with isBanker flag)
+- [x] Non-banker requests data (togbank-r WHISPER/GUILD)
+- [x] Responder acknowledges (togbank-rr with isBanker flag)
+- [x] Non-banker sends state summary (togbank-state)
+- [x] Banker computes and sends delta or full sync
+- [x] No-change handler (togbank-nochange)
+- [x] Non-banker applies and reconstructs Links
 
-#### Version Management Fixes
-- [ ] Ensure version only created on actual inventory changes
-- [ ] Fix `Guild.lua:679` to not create version on logout if no changes
-- [ ] Never update version on query/response/no-change
-
-#### Link Reconstruction
-- [ ] Add `ReconstructItemLinks()` function to apply after receiving data
-- [ ] Call `GetItemInfo(itemID)` for each item
-- [ ] Store reconstructed Link in database for UI
-- [ ] Handle async loading with `Item:CreateFromItemID()`
-
-#### Banker Discovery
-- [ ] Implement banker discovery on init
-- [ ] Maintain list of online bankers from togbank-dv
+#### Banker Discovery ✅ COMPLETE
+- [x] Implement banker discovery on init
+- [x] Maintain list of online bankers from togbank-dv
 - [ ] Smart routing: whisper if banker known, GUILD if unknown
 
 #### Remove Old Code

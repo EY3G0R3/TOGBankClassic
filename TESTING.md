@@ -162,50 +162,91 @@ v0.8.0 replaces snapshot-based delta sync with a pull-based handshake protocol. 
 
 #### 4. Version Management Testing
 
-**Test 4.1: Version Only Updated on Changes**
+**Test 4.1: Version Only Updated on Actual Inventory Changes**
 ```lua
--- Setup:
--- 1. Banker has items
--- 2. Non-banker queries (no changes)
--- 3. Check banker's version timestamp
+-- v0.8.0: Uses ComputeInventoryHash() to detect real changes
+-- Version only updates when hash changes (items/money added/removed/modified)
 
--- Expected: Version NOT updated after query
+-- Test A: Open/close bank without changes
+-- 1. Note current version timestamp
+-- 2. Open bank, close bank (no items moved)
+-- 3. Check version - SHOULD BE UNCHANGED
 
-/togbank test version_on_change_only
+-- Test B: Open/close mailbox without changes
+-- 1. Note current version timestamp
+-- 2. Open mailbox, close mailbox (no items)
+-- 3. Check version - SHOULD BE UNCHANGED
 
--- Verify:
--- 1. Version before query: 1234567890
--- 2. Query received and responded
--- 3. Version after query: 1234567890 (UNCHANGED)
+-- Test C: Multiple scans without changes
+-- 1. Note current version timestamp
+-- 2. Open/close bank 5 times
+-- 3. Check version - SHOULD BE UNCHANGED
+
+-- Expected debug log: "No inventory changes for PlayerName-Realm, version unchanged"
 ```
 
-**Test 4.2: Version Updated on Inventory Change**
+**Test 4.2: Version Updated on Inventory Changes**
 ```lua
 -- Setup:
--- 1. Banker has items (version = 100)
+-- 1. Banker has items (note version = X)
 -- 2. Add item to bank
--- 3. Check version
+-- 3. Check version - should be NEW timestamp
 
--- Expected: Version updated to new timestamp
+-- Test A: Add item
+-- Expected: Version updates, hash changes
 
-/togbank test version_on_inventory_change
+-- Test B: Remove item
+-- Expected: Version updates, hash changes
 
--- Verify:
--- 1. Version before: 100
--- 2. Item added to bank
--- 3. Version after: 110 (NEW timestamp)
+-- Test C: Move item (same total, different arrangement)
+-- Expected: Version UNCHANGED (same items/quantities)
+
+-- Test D: Money change
+-- Expected: Version updates, hash changes
+
+-- Expected debug log: "Inventory changed for PlayerName-Realm, version updated to NNNNNN"
 ```
 
-**Test 4.3: No Version Drift**
+**Test 4.3: No Version Drift from Communication**
 ```lua
 -- Setup:
--- 1. Character A and B have identical data (version 100)
--- 2. Character C queries both
--- 3. Check versions after
+-- 1. Banker has stable inventory (version 100)
+-- 2. Non-banker queries 10 times
+-- 3. Check banker version
 
--- Expected: Both still version 100
+-- Expected: Version still 100 (no drift from queries)
 
 /togbank test no_version_drift
+
+-- Verify:
+-- 1. Version before queries: 100
+-- 2. Multiple queries received and responded
+-- 3. Version after queries: 100 (UNCHANGED)
+-- 4. No new snapshots created (only on version change)
+```
+
+**Test 4.4: Version Never Updated On**
+```lua
+-- These events should NEVER update version:
+-- ❌ Logout/login without inventory changes
+-- ❌ Query/response messages
+-- ❌ Opening bank/mail/AH/vendor without changes
+-- ❌ No-change replies
+-- ❌ SendAltData() calls
+
+-- Only updated by:
+-- ✅ Bank:Scan() when ComputeInventoryHash() detects change
+-- ✅ ApplyDelta() when receiving data from another player
+```
+
+**Test 4.5: Hash Consistency**
+```lua
+-- Setup:
+-- 1. Character A has: 10x [Item A], 5x [Item B], 100g
+-- 2. Character B has: 5x [Item B], 10x [Item A], 100g (different order)
+
+-- Expected: Same hash, same version behavior
+-- (Hash is order-independent due to sorting)
 ```
 
 #### 5. Response Prioritization Testing

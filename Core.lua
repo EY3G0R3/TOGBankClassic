@@ -254,6 +254,56 @@ function TOGBankClassic_Core:SanitizeDelta(delta)
 	return sanitized
 end
 
+-- Compute a hash of inventory state to detect actual changes (v0.8.0)
+-- Only updates version timestamps when this hash changes
+function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, money)
+	local parts = {}
+	
+	-- Include money
+	table.insert(parts, tostring(money or 0))
+	
+	-- Helper to hash an items array
+	local function hashItems(items)
+		if not items or type(items) ~= "table" then
+			return ""
+		end
+		
+		-- Sort items by ID+Count to get consistent order
+		local sorted = {}
+		for _, item in ipairs(items) do
+			if item and item.ID then
+				table.insert(sorted, string.format("%d:%d", item.ID, item.Count or 0))
+			end
+		end
+		table.sort(sorted)
+		return table.concat(sorted, ",")
+	end
+	
+	-- Include bank items
+	if bank and bank.items then
+		table.insert(parts, "B:" .. hashItems(bank.items))
+	end
+	
+	-- Include bag items
+	if bags and bags.items then
+		table.insert(parts, "G:" .. hashItems(bags.items))
+	end
+	
+	-- Concatenate all parts and compute simple hash
+	local combined = table.concat(parts, "|")
+	
+	-- Use same hash function as checksum for consistency
+	local sum = 0
+	local len = #combined
+	for i = 1, len do
+		local byte = string.byte(combined, i)
+		sum = (sum * 31 + byte) % 2147483647
+	end
+	sum = (sum * 31 + len) % 2147483647
+	
+	return sum
+end
+
 -- Sanitize an item delta structure
 function TOGBankClassic_Core:SanitizeItemDelta(itemDelta)
 	local sanitized = {

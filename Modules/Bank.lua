@@ -175,7 +175,20 @@ function TOGBankClassic_Bank:Scan()
 	local money = GetMoney()
 	alt.money = money
 
-	alt.version = GetServerTime()
+	-- v0.8.0: Only update version if inventory actually changed
+	-- Compute a hash of the current inventory state
+	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
+	local previousHash = alt.inventoryHash
+	
+	if currentHash ~= previousHash then
+		-- Inventory changed, update version timestamp
+		alt.version = GetServerTime()
+		alt.inventoryHash = currentHash
+		TOGBankClassic_Output:Debug("Inventory changed for %s, version updated to %d", player, alt.version)
+	else
+		-- No changes detected, preserve existing version
+		TOGBankClassic_Output:Debug("No inventory changes for %s, version unchanged", player)
+	end
 
 	info.alts[player] = alt
 end

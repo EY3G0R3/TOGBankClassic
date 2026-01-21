@@ -7,6 +7,7 @@ function TOGBankClassic_Chat:Init()
 
 	self.addon_outdated = false
 	self.guild_versions = {}  -- tracks addon versions of guild members
+	self.online_bankers = {}  -- v0.8.0: tracks online bankers for pull-based protocol
 
 	self.last_roster_sync = nil
 	self.last_alt_sync = {}
@@ -229,6 +230,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 					seen = time(),
 				}
 
+				-- v0.8.0: Track online bankers for pull-based protocol
+				if data.isBanker then
+					self.online_bankers[sender] = {
+						seen = time(),
+						version = data.addon,
+					}
+					TOGBankClassic_Output:Debug("Tracked online banker: %s", sender)
+				end
+
 				-- Track protocol capabilities
 				local protocolVersion = data.protocol_version or 1
 				local supportsDelta = data.supports_delta or false
@@ -328,6 +338,51 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	end
 
 	if prefix == "togbank-r" then
+		-- v0.8.0: Check if this is a pull-based request (has type == "alt-request")
+		if data.type == "alt-request" then
+			-- Pull-based request flow - respond with togbank-rr acknowledgment
+			local altName = data.name
+			local requester = data.requester or sender
+			
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				QUERIES_COLOR,
+				"pull-based request for",
+				ColorPlayerName(altName)
+			)
+			
+			-- Check if we have this alt
+			local player = TOGBankClassic_Guild:GetNormalizedPlayer()
+			local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
+			local hasData = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[altName] ~= nil
+			
+			if hasData or isBanker then
+				-- Send acknowledgment with banker flag
+				local ack = {
+					type = "alt-request-reply",
+					name = altName,
+					isBanker = isBanker,
+					hasData = hasData,
+				}
+				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
+				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
+				
+				self:Debug(
+					"<",
+					"Sent togbank-rr to",
+					ColorPlayerName(sender),
+					string.format("(isBanker=%s, hasData=%s)", tostring(isBanker), tostring(hasData))
+				)
+			else
+				-- Don't respond if we don't have the data
+				self:Debug("Ignoring pull-based request (no data for %s)", altName)
+			end
+			
+			return
+		end
+		
+		-- Legacy request handling
 		self:Debug(
 			">",
 			ColorPlayerName(sender),
@@ -384,6 +439,77 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				table.insert(self.sync_queue, nameNorm)
 				if not self.is_syncing then
 					TOGBankClassic_Chat:ProcessQueue()
+				end
+			end
+		end
+	end
+
+	-- v0.8.0: Pull-based request reply handler (togbank-rr)
+	if prefix == "togbank-rr" then
+		if data.type == "alt-request-reply" then
+			local altName = data.name
+			local isBanker = data.isBanker or false
+			local hasData = data.hasData or false
+			
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				QUERIES_COLOR,
+				string.format("acknowledged request for %s (banker=%s, hasData=%s)",
+					ColorPlayerName(altName),
+					tostring(isBanker),
+					tostring(hasData))
+			)
+			
+			-- If sender has the data, send our state summary to them
+			if hasData then
+				TOGBankClassic_Guild:SendStateSummary(altName, sender)
+			end
+		end
+	end
+
+	-- v0.8.0: State summary handler (togbank-state) - Step 5 & 6 of pull-based flow
+	if prefix == "togbank-state" then
+		if data.type == "state-summary" then
+			local altName = data.name
+			local summary = data.summary
+			
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				QUERIES_COLOR,
+				string.format("received state summary for %s", ColorPlayerName(altName))
+			)
+			
+			-- Compute and send response (full/delta/no-change)
+			TOGBankClassic_Guild:RespondToStateSummary(altName, summary, sender)
+		end
+	end
+
+	-- v0.8.0: No-change handler (togbank-nochange)
+	if prefix == "togbank-nochange" then
+		if data.type == "no-change" then
+			local altName = data.name
+			local version = data.version or 0
+			
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				QUERIES_COLOR,
+				string.format("no changes for %s (v%d)", ColorPlayerName(altName), version)
+			)
+			
+			-- Mark sync as complete
+			TOGBankClassic_Guild:ConsumePendingSync("alt", sender, altName)
+			if TOGBankClassic_Guild.hasRequested then
+				if TOGBankClassic_Guild.requestCount == nil then
+					TOGBankClassic_Guild.requestCount = 0
+				else
+					TOGBankClassic_Guild.requestCount = TOGBankClassic_Guild.requestCount - 1
+				end
+				if TOGBankClassic_Guild.requestCount == 0 then
+					TOGBankClassic_Guild.hasRequested = false
+					TOGBankClassic_Output:Info("Sync completed.")
 				end
 			end
 		end
@@ -486,9 +612,74 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 	end
 
 	-- togbank-d4: v0.8.0 Link-less delta (future - not yet implemented)
+	-- v0.8.0 Link-less delta handler (togbank-d4) - saves 60-80 bytes per item
 	if prefix == "togbank-d4" then
-		-- TODO: Implement Link-less delta handling
-		self:Debug(">", ColorPlayerName(sender), SHARES_COLOR, "togbank-d4 (not yet implemented)")
+		if data.type == "alt-delta" then
+			-- only accept delta data if the sender matches the claimed alt name
+			local claimed = data.name
+			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
+			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
+			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
+				allowed = true
+			end
+
+			if allowed then
+				-- Validate and sanitize delta structure
+				local valid, err = TOGBankClassic_Core:ValidateDeltaStructure(data)
+				if not valid then
+					local errorMsg = "Validation failed: " .. (err or "unknown error")
+					self:Debug(
+						">",
+						ColorPlayerName(sender),
+						SHARES_COLOR,
+						"delta (v0.8.0 Link-less) for",
+						ColorPlayerName(claimedNorm),
+						"- validation failed:",
+						err
+					)
+					-- Record error and request full sync
+					TOGBankClassic_Guild:RecordDeltaError(claimedNorm, "VALIDATION_FAILED", errorMsg)
+					TOGBankClassic_Guild:QueryAlt(sender, claimedNorm, nil)
+					if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
+						TOGBankClassic_Database:RecordDeltaFailed(TOGBankClassic_Guild.Info.name)
+					end
+					return
+				end
+
+				-- Reconstruct Links from ItemIDs before applying delta
+				if data.changes then
+					if data.changes.bank then
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.added)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.modified)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.removed)
+					end
+					if data.changes.bags then
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.added)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.modified)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.removed)
+					end
+				end
+
+				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
+				self:Debug(
+					">",
+					ColorPlayerName(sender),
+					SHARES_COLOR,
+					"delta (v0.8.0 Link-less) for",
+					ColorPlayerName(claimedNorm) .. ".",
+					FormatSyncStatus(status)
+				)
+			else
+				self:Debug(
+					">",
+					ColorPlayerName(sender),
+					SHARES_COLOR,
+					"delta (v0.8.0 Link-less) for",
+					ColorPlayerName(claimedNorm) .. ". We do not accept it.",
+					FormatSyncStatus(ADOPTION_STATUS.UNAUTHORIZED)
+				)
+			end
+		end
 	end
 
 	if prefix == "togbank-d2" then

@@ -166,6 +166,11 @@ function TOGBankClassic_Events:SyncDeltaVersion()
 		return
 	end
 
+	-- v0.8.0: Include banker status for pull-based protocol
+	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
+	version.isBanker = isBanker
+
 	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
 	TOGBankClassic_Core:SendCommMessage("togbank-dv", data, "Guild", nil, "BULK")
 end
