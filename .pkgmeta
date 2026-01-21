@@ -1,0 +1,32 @@
+# .pkgmeta
+package-as: TOGBankClassic
+
+curseforge-project-id: 1400244
+
+# Enable TOC file creation for multi-version support (Classic Era and BCC)
+enable-toc-creation: no
+enable-nolib-creation: yes
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+# Required dependencies for CurseForge auto-installation
+required-dependencies:
+  - versioncheck
+  - ace3
+
+# External dependencies (Ace3, VersionCheck) are handled via required-dependencies above
+
+# Keep noise out of the zip
+ignore:
+  - .git/
+  - .github/
+  - .vscode/
+  # - "*.txt"
+  - "**/*.ps1"
+  - "**/*.bat"
+  - "*.code-workspace"
+  - ".luarc.json"
+  - "*.md"
+  

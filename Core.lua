@@ -24,6 +24,20 @@ function TOGBankClassic_Core:OnInitialize()
     TOGBankClassic_Chat:Init()
     TOGBankClassic_Options:Init()
     TOGBankClassic_UI:Init()
+    
+    -- Enable VersionCheck-1.0 addon integration
+    do
+        local VC = LibStub:GetLibrary("VersionCheck-1.0", true)
+        if VC and VC.Enable then
+            -- Create a host addon object for VersionCheck
+            local hostAddon = {
+                GetName = function() return "TOGBankClassic" end,
+                Version = (C_AddOns and C_AddOns.GetAddOnMetadata("TOGBankClassic", "Version")) or GetAddOnMetadata("TOGBankClassic", "Version") or "@project-version@"
+            }
+            VC:Enable(hostAddon)
+            TOGBankClassic_Output:Debug("VersionCheck-1.0 integration enabled (v%s)", hostAddon.Version)
+        end
+    end
 end
 
 function TOGBankClassic_Core:OnEnable()
