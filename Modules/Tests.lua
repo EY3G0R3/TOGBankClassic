@@ -168,7 +168,7 @@ local function testDeltaComputationNoChanges()
     assertEquals("alt-delta", delta.type, "Delta type should be alt-delta")
     assertEquals("TestAlt1", delta.name, "Delta name should match")
     assertNotNil(delta.version, "Delta should have version")
-    assertNotNil(delta.baseVersion, "Delta should have baseVersion")
+    -- baseVersion is optional in v0.8.0 (removed for bandwidth savings)
     assert(not Guild:DeltaHasChanges(delta), "Delta should have no changes")
 end
 
@@ -464,19 +464,19 @@ end
 
 local function testDeltaSupportThreshold()
     -- Test threshold comparison logic
-    -- PROTOCOL.DELTA_SUPPORT_THRESHOLD is 0.1 (10%)
+    -- PROTOCOL.DELTA_SUPPORT_THRESHOLD is 0.05 (5%)
     
-    -- Test below threshold (5%)
-    local support = 0.05
-    assert(support < PROTOCOL.DELTA_SUPPORT_THRESHOLD, "5% should be below 10% threshold")
+    -- Test below threshold (3%)
+    local support = 0.03
+    assert(support < PROTOCOL.DELTA_SUPPORT_THRESHOLD, "3% should be below 5% threshold")
     
-    -- Test above threshold (30%)
-    support = 0.30
-    assert(support >= PROTOCOL.DELTA_SUPPORT_THRESHOLD, "30% should be above 10% threshold")
-    
-    -- Test exact threshold (10%)
+    -- Test above threshold (10%)
     support = 0.10
-    assert(support >= PROTOCOL.DELTA_SUPPORT_THRESHOLD, "10% should meet 10% threshold")
+    assert(support >= PROTOCOL.DELTA_SUPPORT_THRESHOLD, "10% should be above 5% threshold")
+    
+    -- Test exact threshold (5%)
+    support = 0.05
+    assert(support >= PROTOCOL.DELTA_SUPPORT_THRESHOLD, "5% should meet 5% threshold")
 end
 
 --============================================================================
@@ -773,15 +773,16 @@ local function testFallbackToFullSync()
     Guild.Info = Guild.Info or {}
     Guild.Info.name = "TestGuild"
     
-    -- Mock guild support below threshold (0% support)
+    -- v0.8.0: Guild support threshold removed - delta always enabled if feature flag is on
+    -- This test now validates that delta is enabled regardless of guild support percentage
     local oldGetGuildDeltaSupport = Database.GetGuildDeltaSupport
     Database.GetGuildDeltaSupport = function(name)
-        return 0  -- 0% support (below 10% threshold)
+        return 0  -- 0% support
     end
     
-    -- Should not use delta when support is below threshold
+    -- Should still use delta in v0.8.0 (threshold check removed)
     local shouldUse = Guild:ShouldUseDelta()
-    assert(not shouldUse, "Should not use delta when guild support below threshold")
+    assert(shouldUse, "v0.8.0: Should use delta even with 0% guild support (threshold removed)")
     
     -- Restore
     Database.GetGuildDeltaSupport = oldGetGuildDeltaSupport
