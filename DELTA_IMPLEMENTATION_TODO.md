@@ -2,16 +2,28 @@
 
 **Project:** TOGBankClassic Delta Sync Protocol  
 **Target Version:** v0.8.0  
-**Status:** Planning - Pull-Based Protocol Redesign  
-**Last Updated:** January 21, 2026
+**Status:** In Progress - Pull-Based Protocol Implementation  
+**Last Updated:** January 21, 2026  
+**Branch:** feature/pull-based-delta
 
 ---
 
 ## 🔄 NEW: Pull-Based Protocol Redesign (v0.8.0)
 
-**Status:** Planning Phase  
+**Status:** In Progress - Foundation Complete  
 **Branch:** feature/pull-based-delta  
 **Goal:** Replace snapshot-based delta sync with pull-based handshake protocol
+
+### Progress Summary
+- ✅ New message types registered (togbank-rr, togbank-state, togbank-nochange, togbank-d3, togbank-d4)
+- ✅ Link removal implemented for full sync (5-7KB bandwidth savings)
+- ✅ Link reconstruction on receiver implemented
+- ✅ Backwards compatibility via dual-send (togbank-d + togbank-d3)
+- ✅ User-configurable protocol mode (AUTO/LEGACY_ONLY/NEW_ONLY)
+- ✅ Protocol mode persists across reloads
+- 🔄 Link removal for deltas (togbank-d2) - IN PROGRESS
+- ⏳ Version management fix - PENDING
+- ⏳ Pull-based handshake flow - PENDING
 
 ### Core Philosophy
 - Receiver states what they have, sender computes the diff
@@ -41,9 +53,13 @@
 
 ### Message Optimizations
 
-#### 1. Remove Links from ALL Messages ✅
-- **Current:** Each item includes full Link string: `"|cff9d9d9d|Hitem:12345:0:0:0:0:0:0:0|h[Item Name]|h|r"`
-- **Size:** 60-80 bytes per item
+#### 1. Remove Links from ALL Messages ✅ COMPLETE
+- **Status:** ✅ Implemented in full sync (togbank-d3), ⏳ Pending for deltas (togbank-d4)
+- **Implementation:** 
+  - ✅ `StripItemLinks()` function to remove Link fields
+  - ✅ `StripAltLinks()` for entire alt structure
+  - ✅ `ReconstructItemLinks()` rebuilds Links after receiving
+  - ✅ Dual-send: togbank-d (with Links) + togbank-d3 (without Links)
 - **NEW:** Only send `{ ID = itemID, Count = count }`
 - **Receiver reconstructs Link locally:**
   ```lua
@@ -53,16 +69,18 @@
 - **Savings:** 60-80 bytes × number of items = **5-7KB per sync for typical alt**
 - **Storage:** After reconstruction, store Link in local database for UI display
 
-#### 2. Remove baseVersion from Delta ✅
+#### 2. Remove baseVersion from Delta ⏳ PENDING
 - **Current:** Delta includes `baseVersion` to identify what it's built against
 - **Pull-based:** Receiver explicitly states what they have, baseVersion is redundant
 - **Savings:** 8 bytes
+- **TODO:** Remove from delta structure in ComputeDelta()
 
-#### 3. Remove Count from Delta Removes ✅
+#### 3. Remove Count from Delta Removes ⏳ PENDING
 - **Current:** Remove items include Count field
 - **Pull-based:** If removing, Count is irrelevant
 - **Format:** `remove = { { ID = 12345 }, { ID = 67890 }, ... }`
 - **Savings:** 4 bytes per removed item
+- **TODO:** Update ComputeItemDelta() to only include ID in removes
 
 #### 4. State Summary Minimal
 - **Format:** Only `{[itemID] = quantity}`, no Links/bags/slots/metadata
@@ -90,14 +108,40 @@
 
 ### Implementation Tasks
 
-#### Config Flags (User-Selectable Protocol)
-- [ ] Add Options.lua config section for protocol selection
-- [ ] `FORCE_LEGACY_PROTOCOL` - Only send togbank-d/d2 with Links (v0.6.x/v0.7.0 compatible)
-- [ ] `FORCE_NEW_PROTOCOL` - Only send togbank-d3/d4 without Links (v0.8.0 only, not compatible with older)
-- [ ] `AUTO_PROTOCOL` (default) - Dual-send for maximum compatibility during migration
-- [ ] Add UI dropdown in config: "Communication Protocol"
-  - Option 1: "Auto (Recommended)" - Sends both formats
-  - Option 2: "Legacy Only" - Compatible with all versions, higher bandwidth
+#### Config Flags (User-Selectable Protocol) ✅ COMPLETE
+- [x] Add Options.lua config section for protocol selection
+- [x] `PROTOCOL_MODE` setting with three options
+- [x] `AUTO` (default) - Dual-send for maximum compatibility during migration
+- [x] `LEGACY_ONLY` - Only send togbank-d/d2 with Links (v0.6.x/v0.7.0 compatible)
+- [x] `NEW_ONLY` - Only send togbank-d3/d4 without Links (v0.8.0 only)
+- [x] Add UI dropdown in config: "Communication Protocol"
+  - ✅ Option 1: "Auto (Recommended)" - Sends both formats
+  - ✅ Option 2: "Legacy Only" - Compatible with all versions, higher bandwidth
+  - ✅ Option 3: "New Protocol Only" - Requires all guild members on v0.8.0+, maximum savings
+- [x] Display current selection and bandwidth impact in config UI
+- [x] Setting persists across reloads in saved variables
+- [x] Defaults to AUTO for new users
+
+#### New Message Types ✅ COMPLETE
+- [x] `togbank-rr` - Query reply (registered, handler stub)
+- [x] `togbank-state` - State summary (registered, handler stub)
+- [x] `togbank-nochange` - No-change response (registered, handler stub)
+- [x] `togbank-d3` - Full sync without Links (registered, implemented)
+- [x] `togbank-d4` - Delta without Links (registered, pending implementation)
+
+#### Link Optimization ✅ PARTIAL
+- [x] Strip Links from full sync messages (togbank-d3)
+- [x] Dual-send togbank-d + togbank-d3 for compatibility
+- [x] Reconstruct Links on receiver with GetItemInfo()
+- [x] Store reconstructed Links in database
+- [ ] Strip Links from delta messages (togbank-d2 → togbank-d4)
+- [ ] Handle async Link loading with Item:CreateFromItemID()
+
+#### Version Management Fixes ⏳ PENDING
+- [ ] Fix version creation to only happen on actual changes
+- [ ] Remove version updates from logout event (Guild.lua:679)
+- [ ] Track inventory state to detect changes
+- [ ] Never update version on: queries, responses, no-change replies
   - Option 3: "New Protocol Only" - Requires all guild members on v0.8.0+, maximum savings
 - [ ] Display current selection and bandwidth impact in config UI
 - [ ] Add tooltip explaining each option
