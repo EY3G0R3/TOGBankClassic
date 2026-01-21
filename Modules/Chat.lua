@@ -44,6 +44,18 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	TOGBankClassic_Core:RegisterComm("togbank-rr", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
+	TOGBankClassic_Core:RegisterComm("togbank-state", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
+	TOGBankClassic_Core:RegisterComm("togbank-nochange", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
 	TOGBankClassic_Core:RegisterComm("togbank-h", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)

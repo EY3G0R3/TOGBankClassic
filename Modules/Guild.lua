@@ -665,6 +665,76 @@ function TOGBankClassic_Guild:SenderHasGbankNote(sender)
 	return false
 end
 
+-- Strip Link fields from items for transmission (v0.8.0 bandwidth optimization)
+-- Saves 60-80 bytes per item, receiver reconstructs with GetItemInfo()
+function TOGBankClassic_Guild:StripItemLinks(items)
+	if not items then
+		return nil
+	end
+	
+	local stripped = {}
+	for _, item in ipairs(items) do
+		table.insert(stripped, {
+			ID = item.ID,
+			Count = item.Count
+			-- Link removed - receiver will reconstruct
+		})
+	end
+	return stripped
+end
+
+-- Reconstruct Link fields after receiving data (v0.8.0)
+-- Calls GetItemInfo() to recreate links from ItemID
+function TOGBankClassic_Guild:ReconstructItemLinks(items)
+	if not items then
+		return
+	end
+	
+	for _, item in ipairs(items) do
+		if item.ID and not item.Link then
+			-- Try to get link from item cache
+			local itemLink = select(2, GetItemInfo(item.ID))
+			if itemLink then
+				item.Link = itemLink
+			else
+				-- Item not in cache, use async loading
+				local itemObj = Item:CreateFromItemID(item.ID)
+				if itemObj then
+					itemObj:ContinueOnItemLoad(function()
+						local link = itemObj:GetItemLink()
+						if link then
+							item.Link = link
+						end
+					end)
+				end
+			end
+		end
+	end
+end
+
+-- Strip Links from entire alt structure before transmission
+function TOGBankClassic_Guild:StripAltLinks(alt)
+	if not alt then
+		return nil
+	end
+	
+	local stripped = {
+		version = alt.version,
+		money = alt.money,
+		bank = {
+			items = self:StripItemLinks(alt.bank and alt.bank.items),
+			numSlots = alt.bank and alt.bank.numSlots,
+			slotsFilled = alt.bank and alt.bank.slotsFilled
+		},
+		bags = {
+			items = self:StripItemLinks(alt.bags and alt.bags.items),
+			numSlots = alt.bags and alt.bags.numSlots,
+			slotsFilled = alt.bags and alt.bags.slotsFilled
+		}
+	}
+	return stripped
+end
+
 function TOGBankClassic_Guild:SendAltData(name, force)
 	if not name then
 		return
@@ -732,6 +802,7 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 
 	if useDelta then
 		-- Send delta via togbank-d2
+		-- TODO: Strip Links from delta changes (add/modify/remove arrays)
 		local serialized = TOGBankClassic_Core:SerializeWithChecksum(deltaData)
 		TOGBankClassic_Core:SendCommMessage("togbank-d2", serialized, "Guild", nil, "BULK", OnChunkSent)
 		
@@ -776,11 +847,12 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 				)
 			end
 			
-			-- Send full sync
-			local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
+			-- Send full sync (strip Links for v0.8.0)
+			local strippedAlt = self:StripAltLinks(currentAlt)
+			local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
 			TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
 			
-			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes)", norm, string.len(data or ""))
+			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes, Links stripped)", norm, string.len(data or ""))
 			
 			-- Track metrics
 			if self.Info and self.Info.name then
@@ -792,11 +864,12 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 				TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
 			end
 		elseif not deltaData then
-			-- No previous snapshot (first sync), send full sync
-			local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
+			-- No previous snapshot (first sync), send full sync (strip Links for v0.8.0)
+			local strippedAlt = self:StripAltLinks(currentAlt)
+			local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
 			TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
 			
-			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes)", norm, string.len(data or ""))
+			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes, Links stripped)", norm, string.len(data or ""))
 			
 			-- Track metrics
 			if self.Info and self.Info.name then
@@ -1003,6 +1076,14 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 	end
 
 	self.Info.alts[norm] = alt
+	
+	-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
+	if alt.bank and alt.bank.items then
+		self:ReconstructItemLinks(alt.bank.items)
+	end
+	if alt.bags and alt.bags.items then
+		self:ReconstructItemLinks(alt.bags.items)
+	end
 	
 	-- Reset error count on successful full sync
 	self:ResetDeltaErrorCount(norm)
