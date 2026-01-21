@@ -981,7 +981,8 @@ local COMMAND_REGISTRY = {
 		name = "sync",
 		help = "manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically",
 		handler = function()
-			TOGBankClassic_Events:Sync()
+			-- v0.8.0: Use delta version broadcast instead of legacy sync
+			TOGBankClassic_Events:SyncDeltaVersion()
 			TOGBankClassic_Guild:FastFillMissingAlts()
 		end,
 	},
