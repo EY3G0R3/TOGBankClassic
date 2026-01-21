@@ -8,7 +8,7 @@ function TOGBankClassic_Options:Init()
 			bank = { donations = true },
 		},
 		global = {
-			bank = { report = true, logLevel = LOG_LEVEL.INFO },
+			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO" },
 		},
 	}
 	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicOptionDB", defaults)
@@ -22,8 +22,13 @@ function TOGBankClassic_Options:Init()
 	if self.db.global.bank["logLevel"] == nil then
 		self.db.global.bank["logLevel"] = LOG_LEVEL.INFO
 	end
+	if self.db.global.bank["protocolMode"] == nil then
+		self.db.global.bank["protocolMode"] = "AUTO"
+	end
 	-- Initialize logger with saved level
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
+	-- Initialize protocol mode with saved setting
+	FEATURES.PROTOCOL_MODE = self.db.global.bank["protocolMode"]
 
 	local options = {
 		type = "group",
@@ -96,11 +101,12 @@ function TOGBankClassic_Options:Init()
 				},
 				sorting = { "AUTO", "LEGACY_ONLY", "NEW_ONLY" },
 				set = function(_, v)
+					self.db.global.bank["protocolMode"] = v
 					FEATURES.PROTOCOL_MODE = v
 					TOGBankClassic_Output:Info("Protocol mode changed to: %s", PROTOCOL_MODES[v].name)
 				end,
 				get = function()
-					return FEATURES.PROTOCOL_MODE
+					return self.db.global.bank["protocolMode"]
 				end,
 			},
 			["protocolModeDesc"] = {
