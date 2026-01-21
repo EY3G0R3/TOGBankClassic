@@ -2,16 +2,17 @@ TOGBankClassic_Guild = {}
 
 TOGBankClassic_Guild.Info = nil
 
--- Delta error tracking
-TOGBankClassic_Guild.deltaErrors = {
-	lastErrors = {},  -- Recent errors for debugging
-	maxErrors = 10,   -- Keep last 10 errors
-	failureCounts = {},  -- Track failures per alt
-	notifiedAlts = {},  -- Track which alts we've notified about
-}
-
--- Record a delta error with details
+-- Record a delta error with details (persisted to database)
 function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
+	if not self.Info or not self.Info.name then
+		return
+	end
+	
+	local db = TOGBankClassic_Database.db.faction[self.Info.name]
+	if not db or not db.deltaErrors then
+		return
+	end
+	
 	local error = {
 		altName = altName,
 		errorType = errorType,
@@ -19,47 +20,74 @@ function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 		timestamp = GetServerTime(),
 	}
 	
-	table.insert(self.deltaErrors.lastErrors, 1, error)
+	table.insert(db.deltaErrors.lastErrors, 1, error)
 	
-	-- Keep only recent errors
-	while #self.deltaErrors.lastErrors > self.deltaErrors.maxErrors do
-		table.remove(self.deltaErrors.lastErrors)
+	-- Keep only recent errors (max 10)
+	while #db.deltaErrors.lastErrors > 10 do
+		table.remove(db.deltaErrors.lastErrors)
 	end
 	
 	-- Track failure count per alt
-	if not self.deltaErrors.failureCounts[altName] then
-		self.deltaErrors.failureCounts[altName] = 0
+	if not db.deltaErrors.failureCounts[altName] then
+		db.deltaErrors.failureCounts[altName] = 0
 	end
-	self.deltaErrors.failureCounts[altName] = self.deltaErrors.failureCounts[altName] + 1
+	db.deltaErrors.failureCounts[altName] = db.deltaErrors.failureCounts[altName] + 1
 	
 	-- Notify user if repeated failures (3+ failures for same alt)
-	if self.deltaErrors.failureCounts[altName] >= 3 and not self.deltaErrors.notifiedAlts[altName] then
+	if db.deltaErrors.failureCounts[altName] >= 3 and not db.deltaErrors.notifiedAlts[altName] then
 		TOGBankClassic_Output:Warn(
 			"Repeated delta sync failures for %s. Falling back to full sync.",
 			altName
 		)
-		self.deltaErrors.notifiedAlts[altName] = true
+		db.deltaErrors.notifiedAlts[altName] = true
 	end
 end
 
 -- Reset failure count for an alt (called on successful sync)
 function TOGBankClassic_Guild:ResetDeltaErrorCount(altName)
-	if self.deltaErrors.failureCounts[altName] then
-		self.deltaErrors.failureCounts[altName] = 0
+	if not self.Info or not self.Info.name then
+		return
 	end
-	if self.deltaErrors.notifiedAlts[altName] then
-		self.deltaErrors.notifiedAlts[altName] = nil
+	
+	local db = TOGBankClassic_Database.db.faction[self.Info.name]
+	if not db or not db.deltaErrors then
+		return
+	end
+	
+	if db.deltaErrors.failureCounts[altName] then
+		db.deltaErrors.failureCounts[altName] = 0
+	end
+	if db.deltaErrors.notifiedAlts[altName] then
+		db.deltaErrors.notifiedAlts[altName] = nil
 	end
 end
 
 -- Get recent delta errors
 function TOGBankClassic_Guild:GetRecentDeltaErrors()
-	return self.deltaErrors.lastErrors
+	if not self.Info or not self.Info.name then
+		return {}
+	end
+	
+	local db = TOGBankClassic_Database.db.faction[self.Info.name]
+	if not db or not db.deltaErrors then
+		return {}
+	end
+	
+	return db.deltaErrors.lastErrors
 end
 
 -- Get failure count for an alt
 function TOGBankClassic_Guild:GetDeltaFailureCount(altName)
-	return self.deltaErrors.failureCounts[altName] or 0
+	if not self.Info or not self.Info.name then
+		return 0
+	end
+	
+	local db = TOGBankClassic_Database.db.faction[self.Info.name]
+	if not db or not db.deltaErrors then
+		return 0
+	end
+	
+	return db.deltaErrors.failureCounts[altName] or 0
 end
 
 ---START CHANGES

@@ -126,6 +126,11 @@ SHARING YOUR DATA:
   /togbank share
     Manually shares your bank character's inventory with other online
     guild members. This happens automatically every 3 minutes.
+    
+    IMPORTANT: You must have your bank open and wait ~1 second for the
+    scan to complete before using this command. The addon needs time to
+    read all items from your bank bags. For best results, open the bank,
+    wait a moment, then run /togbank share.
 
 ================================================================================
 COMMAND REFERENCE
@@ -143,7 +148,10 @@ BASIC COMMANDS:
   Shows your current TOGBankClassic version
 
 /togbank sync
-  Manually sync to receive latest data from online users
+  Manually sync to receive latest data from o
+  
+  NOTE: Bank must be open and scanned before sharing. Open your bank,
+  wait ~1 second for items to load, then run this command.nline users
   (Automatic sync happens every 10 minutes)
 
 /togbank share

@@ -1073,11 +1073,13 @@ function TOGBankClassic_Chat:PrintDeltaErrors()
 		return
 	end
 
-	local errors = TOGBankClassic_Guild.deltaErrors
-	if not errors then
+	local db = TOGBankClassic_Database.db.faction[guild]
+	if not db or not db.deltaErrors then
 		TOGBankClassic_Output:Response("No error tracking data available")
 		return
 	end
+
+	local errors = db.deltaErrors
 	
 	-- Print header
 	TOGBankClassic_Output:Response("|cff00ff00=== Delta Sync Errors ===|r")

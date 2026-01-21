@@ -33,6 +33,12 @@ function TOGBankClassic_Database:Reset(name)
 			deltasFailed = 0,
 			fullSyncFallbacks = 0,
 		},
+		-- Delta error tracking (persisted across reloads)
+		deltaErrors = {
+			lastErrors = {},  -- Recent errors for debugging (max 10)
+			failureCounts = {},  -- Track failures per alt
+			notifiedAlts = {},  -- Track which alts we've notified about
+		},
 	}
 
 	TOGBankClassic_Output:Response("Reset Database")
@@ -116,6 +122,13 @@ function TOGBankClassic_Database:Load(name)
 			deltasApplied = 0,
 			deltasFailed = 0,
 			fullSyncFallbacks = 0,
+		}
+	end
+	if not db.deltaErrors then
+		db.deltaErrors = {
+			lastErrors = {},
+			failureCounts = {},
+			notifiedAlts = {},
 		}
 	end
 
