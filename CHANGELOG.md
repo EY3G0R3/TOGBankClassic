@@ -2,6 +2,30 @@
 
 ## [v0.7.0](https://github.com/EY3G0R3/TOGBankClassic/tree/v0.7.0) (2025-01-17)
 
+**Latest Update:** 2026-01-20 - Fixed error tracking issues
+
+### 🐛 Bug Fixes (2026-01-20)
+
+#### Error Tracking System
+- **Fixed**: Error tracking now works even when Guild.Info is not initialized
+  - Implemented temporary in-memory storage for errors occurring before guild initialization
+  - Automatic migration to database when guild data loads
+  - No error data loss during addon startup phase
+  - Query functions check both temporary and database storage
+  
+- **Fixed**: `RecordDeltaError()` logs debug messages when using temporary storage
+  - Shows: "Using temporary error storage for <alt> (<type>): Guild.Info not initialized"
+  - Helps identify initialization timing issues
+  
+- **Fixed**: Test function `testDeltaErrorTracking()` parameter mismatch
+  - Was calling `RecordDeltaError()` with 2 parameters instead of required 3
+  - Now correctly passes: `altName`, `errorType`, `errorMessage`
+  - Ensures proper error categorization in test suite
+
+**Impact**: Error tracking is now fully functional throughout addon lifecycle, including early delta failures before guild initialization completes.
+
+---
+
 ### 🚀 Major Features
 
 #### Delta Sync Protocol

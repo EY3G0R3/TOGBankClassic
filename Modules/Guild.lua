@@ -2,8 +2,15 @@ TOGBankClassic_Guild = {}
 
 TOGBankClassic_Guild.Info = nil
 
--- Record a delta error with details (persisted to database)
-function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
+-- Temporary in-memory error storage for when Guild.Info is not initialized
+TOGBankClassic_Guild.tempDeltaErrors = {
+	lastErrors = {},
+	failureCounts = {},
+	notifiedAlts = {},
+}
+
+-- Migrate temporary errors to database once Guild.Info is initialized
+function TOGBankClassic_Guild:MigrateTempErrors()
 	if not self.Info or not self.Info.name then
 		return
 	end
@@ -13,6 +20,42 @@ function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 		return
 	end
 	
+	-- Migrate errors
+	if #self.tempDeltaErrors.lastErrors > 0 then
+		for i = #self.tempDeltaErrors.lastErrors, 1, -1 do
+			table.insert(db.deltaErrors.lastErrors, 1, self.tempDeltaErrors.lastErrors[i])
+		end
+		-- Keep only recent errors (max 10)
+		while #db.deltaErrors.lastErrors > 10 do
+			table.remove(db.deltaErrors.lastErrors)
+		end
+	end
+	
+	-- Migrate failure counts
+	for altName, count in pairs(self.tempDeltaErrors.failureCounts) do
+		if not db.deltaErrors.failureCounts[altName] then
+			db.deltaErrors.failureCounts[altName] = 0
+		end
+		db.deltaErrors.failureCounts[altName] = db.deltaErrors.failureCounts[altName] + count
+	end
+	
+	-- Migrate notification flags
+	for altName, flag in pairs(self.tempDeltaErrors.notifiedAlts) do
+		if flag then
+			db.deltaErrors.notifiedAlts[altName] = true
+		end
+	end
+	
+	-- Clear temp storage
+	self.tempDeltaErrors.lastErrors = {}
+	self.tempDeltaErrors.failureCounts = {}
+	self.tempDeltaErrors.notifiedAlts = {}
+	
+	TOGBankClassic_Output:Debug("Migrated temporary delta errors to database")
+end
+
+-- Record a delta error with details (persisted to database or temp storage)
+function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 	local error = {
 		altName = altName,
 		errorType = errorType,
@@ -20,74 +63,116 @@ function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 		timestamp = GetServerTime(),
 	}
 	
-	table.insert(db.deltaErrors.lastErrors, 1, error)
+	-- Try to use database storage first
+	if self.Info and self.Info.name then
+		local db = TOGBankClassic_Database.db.faction[self.Info.name]
+		if db and db.deltaErrors then
+			-- Use database storage
+			table.insert(db.deltaErrors.lastErrors, 1, error)
+			
+			-- Keep only recent errors (max 10)
+			while #db.deltaErrors.lastErrors > 10 do
+				table.remove(db.deltaErrors.lastErrors)
+			end
+			
+			-- Track failure count per alt
+			if not db.deltaErrors.failureCounts[altName] then
+				db.deltaErrors.failureCounts[altName] = 0
+			end
+			db.deltaErrors.failureCounts[altName] = db.deltaErrors.failureCounts[altName] + 1
+			
+			-- Notify user if repeated failures (3+ failures for same alt)
+			if db.deltaErrors.failureCounts[altName] >= 3 and not db.deltaErrors.notifiedAlts[altName] then
+				TOGBankClassic_Output:Warn(
+					"Repeated delta sync failures for %s. Falling back to full sync.",
+					altName
+				)
+				db.deltaErrors.notifiedAlts[altName] = true
+			end
+			return
+		end
+	end
+	
+	-- Fallback: Use temporary in-memory storage
+	TOGBankClassic_Output:Debug(
+		"Using temporary error storage for %s (%s): Guild.Info not initialized",
+		altName or "unknown",
+		errorType or "unknown"
+	)
+	
+	table.insert(self.tempDeltaErrors.lastErrors, 1, error)
 	
 	-- Keep only recent errors (max 10)
-	while #db.deltaErrors.lastErrors > 10 do
-		table.remove(db.deltaErrors.lastErrors)
+	while #self.tempDeltaErrors.lastErrors > 10 do
+		table.remove(self.tempDeltaErrors.lastErrors)
 	end
 	
 	-- Track failure count per alt
-	if not db.deltaErrors.failureCounts[altName] then
-		db.deltaErrors.failureCounts[altName] = 0
+	if not self.tempDeltaErrors.failureCounts[altName] then
+		self.tempDeltaErrors.failureCounts[altName] = 0
 	end
-	db.deltaErrors.failureCounts[altName] = db.deltaErrors.failureCounts[altName] + 1
+	self.tempDeltaErrors.failureCounts[altName] = self.tempDeltaErrors.failureCounts[altName] + 1
 	
 	-- Notify user if repeated failures (3+ failures for same alt)
-	if db.deltaErrors.failureCounts[altName] >= 3 and not db.deltaErrors.notifiedAlts[altName] then
+	if self.tempDeltaErrors.failureCounts[altName] >= 3 and not self.tempDeltaErrors.notifiedAlts[altName] then
 		TOGBankClassic_Output:Warn(
 			"Repeated delta sync failures for %s. Falling back to full sync.",
 			altName
 		)
-		db.deltaErrors.notifiedAlts[altName] = true
+		self.tempDeltaErrors.notifiedAlts[altName] = true
 	end
 end
 
 -- Reset failure count for an alt (called on successful sync)
 function TOGBankClassic_Guild:ResetDeltaErrorCount(altName)
-	if not self.Info or not self.Info.name then
-		return
+	-- Reset in database if available
+	if self.Info and self.Info.name then
+		local db = TOGBankClassic_Database.db.faction[self.Info.name]
+		if db and db.deltaErrors then
+			if db.deltaErrors.failureCounts[altName] then
+				db.deltaErrors.failureCounts[altName] = 0
+			end
+			if db.deltaErrors.notifiedAlts[altName] then
+				db.deltaErrors.notifiedAlts[altName] = nil
+			end
+		end
 	end
 	
-	local db = TOGBankClassic_Database.db.faction[self.Info.name]
-	if not db or not db.deltaErrors then
-		return
+	-- Also reset in temporary storage
+	if self.tempDeltaErrors.failureCounts[altName] then
+		self.tempDeltaErrors.failureCounts[altName] = 0
 	end
-	
-	if db.deltaErrors.failureCounts[altName] then
-		db.deltaErrors.failureCounts[altName] = 0
-	end
-	if db.deltaErrors.notifiedAlts[altName] then
-		db.deltaErrors.notifiedAlts[altName] = nil
+	if self.tempDeltaErrors.notifiedAlts[altName] then
+		self.tempDeltaErrors.notifiedAlts[altName] = nil
 	end
 end
 
 -- Get recent delta errors
 function TOGBankClassic_Guild:GetRecentDeltaErrors()
-	if not self.Info or not self.Info.name then
-		return {}
+	-- Return from database if available
+	if self.Info and self.Info.name then
+		local db = TOGBankClassic_Database.db.faction[self.Info.name]
+		if db and db.deltaErrors then
+			return db.deltaErrors.lastErrors
+		end
 	end
 	
-	local db = TOGBankClassic_Database.db.faction[self.Info.name]
-	if not db or not db.deltaErrors then
-		return {}
-	end
-	
-	return db.deltaErrors.lastErrors
+	-- Fallback to temporary storage
+	return self.tempDeltaErrors.lastErrors
 end
 
 -- Get failure count for an alt
 function TOGBankClassic_Guild:GetDeltaFailureCount(altName)
-	if not self.Info or not self.Info.name then
-		return 0
+	-- Check database first if available
+	if self.Info and self.Info.name then
+		local db = TOGBankClassic_Database.db.faction[self.Info.name]
+		if db and db.deltaErrors then
+			return db.deltaErrors.failureCounts[altName] or 0
+		end
 	end
 	
-	local db = TOGBankClassic_Database.db.faction[self.Info.name]
-	if not db or not db.deltaErrors then
-		return 0
-	end
-	
-	return db.deltaErrors.failureCounts[altName] or 0
+	-- Fallback to temporary storage
+	return self.tempDeltaErrors.failureCounts[altName] or 0
 end
 
 ---START CHANGES
@@ -214,6 +299,9 @@ function TOGBankClassic_Guild:Reset(name)
 	TOGBankClassic_Database:Reset(name)
 	self.Info = TOGBankClassic_Database:Load(name)
 	self:EnsureRequestsInitialized()
+	
+	-- Migrate any temporary errors to database
+	self:MigrateTempErrors()
 end
 
 function TOGBankClassic_Guild:Init(name)
@@ -230,6 +318,8 @@ function TOGBankClassic_Guild:Init(name)
 	self.Info = TOGBankClassic_Database:Load(name)
 	if self.Info then
 		self:EnsureRequestsInitialized()
+		-- Migrate any temporary errors to database
+		self:MigrateTempErrors()
 		return true
 	end
 

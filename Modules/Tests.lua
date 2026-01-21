@@ -410,11 +410,11 @@ local function testDeltaErrorTracking()
     assertEquals(0, errorCount, "Initial error count should be 0")
     
     -- Record errors
-    Guild:RecordDeltaError("TestRealm-ErrorAlt", "Test error 1")
+    Guild:RecordDeltaError("TestRealm-ErrorAlt", "TEST_ERROR", "Test error 1")
     errorCount = Guild:GetDeltaFailureCount("TestRealm-ErrorAlt")
     assertEquals(1, errorCount, "Error count should be 1")
     
-    Guild:RecordDeltaError("TestRealm-ErrorAlt", "Test error 2")
+    Guild:RecordDeltaError("TestRealm-ErrorAlt", "TEST_ERROR", "Test error 2")
     errorCount = Guild:GetDeltaFailureCount("TestRealm-ErrorAlt")
     assertEquals(2, errorCount, "Error count should be 2")
     

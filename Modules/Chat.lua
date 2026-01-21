@@ -1081,13 +1081,21 @@ function TOGBankClassic_Chat:PrintDeltaErrors()
 		return
 	end
 
+	-- Try to get errors from database first, fall back to temp storage
+	local errors = nil
 	local db = TOGBankClassic_Database.db.faction[guild]
-	if not db or not db.deltaErrors then
+	if db and db.deltaErrors then
+		errors = db.deltaErrors
+	elseif TOGBankClassic_Guild.tempDeltaErrors then
+		-- Use temp storage if database not available
+		errors = TOGBankClassic_Guild.tempDeltaErrors
+		TOGBankClassic_Output:Response("|cffffaa00Using temporary error storage (Guild.Info not initialized)|r")
+	end
+	
+	if not errors then
 		TOGBankClassic_Output:Response("No error tracking data available")
 		return
 	end
-
-	local errors = db.deltaErrors
 	
 	-- Print header
 	TOGBankClassic_Output:Response("|cff00ff00=== Delta Sync Errors ===|r")
