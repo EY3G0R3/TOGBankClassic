@@ -80,6 +80,54 @@
 
 ---
 
+### Test 1.4: Delta Chain Replay (Offline Player Recovery)
+**Objective:** Verify delta chain replay allows offline players to catch up efficiently
+
+**Steps:**
+1. **Setup**: Galdof (receiver) has Metals data at v100
+2. **Simulate offline**: Log out Galdof or go AFK
+3. **Banker makes updates**: On Metals, make 3-5 small changes over 10 minutes:
+   - Update 1: Add 2 items → v105 (delta saved to history)
+   - Update 2: Remove 1 item → v110 (delta saved to history)
+   - Update 3: Change quantity → v115 (delta saved to history)
+   - Each update: `/togbank share` to broadcast
+4. **Player returns**: Log back in with Galdof
+5. **Trigger sync**: Metals sends latest delta (expects v115, Galdof has v100)
+6. **Observe recovery**: Watch debug output with `/togbank debug`
+
+**Expected Result:**
+- ✅ Galdof receives delta expecting v115, detects version mismatch (have v100)
+- ✅ Galdof sends `togbank-dr` (Delta Range Request) to Metals for range [v100, v115]
+- ✅ Metals responds with `togbank-dc` (Delta Chain) containing 3 deltas
+- ✅ Galdof applies chain sequentially: v100→v105→v110→v115
+- ✅ Debug shows: "✓ Applied delta chain for Metals-Azuresong (3 hops, v100→v115) in XX.XXms"
+- ✅ Bandwidth: Chain (~900B) < Full sync (~1800B)
+- ✅ Final state matches if full sync was used
+
+**Debug Output Example:**
+```
+> Metals-Azuresong > togbank-d2 (Delta Data)
+Version mismatch for Metals-Azuresong (have 100, delta expects 115), requesting delta chain
+< togbank-dr (Delta Range Request) to Metals-Azuresong (v100→v115)
+> Metals-Azuresong > togbank-dc (Delta Chain) (3 hops)
+✓ Applied delta chain for Metals-Azuresong (3 hops, v100→v115) in 0.15ms
+Delta chain application (adopted)
+```
+
+**Fallback Scenarios:**
+- **Gap too large**: If v100→v115 requires >10 hops → requests full sync
+- **Chain too large**: If total chain >5KB → requests full sync
+- **Missing delta**: If Metals doesn't have complete history → requests full sync
+- **Chain broken**: If any delta's baseVersion doesn't match → requests full sync
+
+**Test Variations:**
+1. **Small gap** (2-3 updates): Should use delta chain
+2. **Large gap** (10+ updates): Should fall back to full sync
+3. **History expired** (>1 hour old): Should fall back to full sync
+4. **Mixed changes** (items + money + bags): Chain should handle all
+
+---
+
 ## Test Suite 2: Error Handling & Recovery
 
 ### Test 2.1: Version Mismatch Recovery

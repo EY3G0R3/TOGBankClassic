@@ -878,6 +878,7 @@ Recently seen members:
   - Converted from slot-based to itemKey-based comparison
   - Results: 311 bytes vs 1748 bytes (82% savings), 0.42ms compute, 0.06ms apply
 - [ ] Test Suite 1.3: Large Change Fallback (>30% threshold)
+- [ ] Test Suite 1.4: Delta Chain Replay (offline player recovery) ⭐ NEW
 - [ ] Test Suite 2: Error Handling & Recovery (3 tests)
 - [ ] Test Suite 3: Protocol Negotiation (3 tests)
 - [ ] Test Suite 4: Performance & Metrics (3 tests)
@@ -890,20 +891,189 @@ Recently seen members:
 - **Environment:** "The Old Gods" guild, 12.5% v2 adoption (2 of 8 members)
 - **Test Characters:** Metals-Azuresong (sender), Galdof-OldBlanchy (receiver)
 - **Bug Fixes:** DELTA-005 resolved with itemKey-based comparison
-- **Pending Commit:** Guild.lua (4 functions), Core.lua (ValidateItemDelta), DELTA_BUGS.md
+- **Feature Branch:** feature/delta-chain-replay (DELTA-006 implementation)
+- **Commits:** 08d83bf (delta chain), 28e3f7e (DELTA-005 fix), 2b8c87f (UI-001 fix)
 
 ---
 
-## Phase 9: Deployment & Monitoring
+## Phase 10: Delta Chain Replay (DELTA-006) ✅ COMPLETE
 
-### 9.1 Beta Testing 🔄 IN PROGRESS
+### 10.1 Architecture & Design ✅ COMPLETE
+**Problem Statement:**
+- Delta sync requires exact version matching (currentVersion == baseVersion)
+- Offline players miss updates and become permanently out of sync
+- Current recovery (togbank-r query) appears unreliable
+- Forces full sync for every offline player, negating bandwidth benefits
+
+**Solution:**
+Store recent delta history and replay missed deltas sequentially when players return online.
+
+**Design:**
+```
+Sender (Metals):                    Receiver (Galdof):
+v100 → v105 (delta saved)           Has v100
+v105 → v110 (delta saved)           (offline)
+v110 → v115 (delta saved)           (offline)
+                                    Returns online
+                                    Receives delta expecting v115
+                                    ❌ Mismatch: have v100, need v115
+                                    
+Galdof → togbank-dr(v100, v115) → Metals
+Metals ← togbank-dc([Δ1, Δ2, Δ3]) ← Metals
+Galdof applies: v100→v105→v110→v115 ✅
+```
+
+**Benefits:**
+- ✅ Works for offline players (primary use case)
+- ✅ Bandwidth efficient: Chain < Full sync (900B vs 1800B)
+- ✅ Automatic recovery without manual intervention
+- ✅ Graceful degradation via fallback rules
+
+### 10.2 Database Layer ✅ COMPLETE
+**Implementation Summary:**
+- Added `deltaHistory = {}` to database schema initialization
+- Implemented history management functions with automatic cleanup
+
+**Functions Added:**
+```lua
+-- Save delta after successful transmission
+SaveDeltaHistory(guildName, altName, baseVersion, version, delta)
+  → Stores delta with timestamp
+  → Enforces MAX_COUNT limit (keeps most recent 10)
+  → Deep copies delta to prevent mutation
+
+-- Retrieve delta chain for version range
+GetDeltaHistory(guildName, altName, fromVersion, toVersion)
+  → Builds sequential chain from history
+  → Returns nil if chain incomplete (missing link)
+  → Validates baseVersion → version continuity
+
+-- Cleanup old deltas (>1 hour)
+CleanupDeltaHistory(guildName)
+  → Removes deltas older than DELTA_HISTORY_MAX_AGE
+  → Removes empty history arrays
+  → Returns count of removed entries
+```
+
+**Storage Format:**
+```lua
+db.deltaHistory["Metals-Azuresong"] = {
+  {baseVersion=100, version=105, delta={...}, timestamp=1768948000},
+  {baseVersion=105, version=110, delta={...}, timestamp=1768948060},
+  {baseVersion=110, version=115, delta={...}, timestamp=1768948120}
+}
+```
+
+### 10.3 Protocol Layer ✅ COMPLETE
+**New Communication Prefixes:**
+- `togbank-dr` (Delta Range Request): Receiver requests chain from sender
+- `togbank-dc` (Delta Chain): Sender responds with delta array
+
+**Message Structures:**
+```lua
+-- Request (Galdof → Metals via WHISPER)
+{
+  altName = "Metals-Azuresong",
+  fromVersion = 100,
+  toVersion = 115
+}
+
+-- Response (Metals → Galdof via WHISPER)
+{
+  altName = "Metals-Azuresong",
+  deltas = [
+    {baseVersion=100, version=105, delta={bank:{modified:[...]}}},
+    {baseVersion=105, version=110, delta={bags:{added:[...]}}},
+    {baseVersion=110, version=115, delta={money:5000}}
+  ]
+}
+```
+
+**Chat.lua Handlers:**
+- `togbank-dr` handler: Receives request → GetDeltaHistory → Send togbank-dc
+- `togbank-dc` handler: Receives chain → ApplyDeltaChain → Log result
+
+### 10.4 Application Logic ✅ COMPLETE
+**Guild.lua Functions:**
+
+**RequestDeltaChain(altName, fromVersion, toVersion, sender):**
+- Validates version range (fromVersion < toVersion)
+- Checks gap size (rejects if >10 hops worth of time)
+- Sends togbank-dr request via WHISPER to sender
+- Falls back to full sync if gap too large
+
+**ApplyDeltaChain(altName, deltaChain):**
+- Validates chain length (<= DELTA_CHAIN_MAX_HOPS)
+- Estimates total chain size (<= DELTA_CHAIN_MAX_SIZE)
+- Applies deltas sequentially using existing ApplyDelta()
+- Validates baseVersion continuity at each step
+- Falls back to full sync on any failure
+
+**ApplyDelta() Enhancement:**
+- Now accepts optional `sender` parameter
+- On version mismatch: Tries RequestDeltaChain() first
+- Falls back to QueryAlt() if sender unknown or we're ahead
+
+**SendAltData() Enhancement:**
+- Saves computed delta to history via SaveDeltaHistory()
+- Stores: baseVersion, version, changes object
+- History available for future chain requests
+
+### 10.5 Configuration ✅ COMPLETE
+**Constants.lua (PROTOCOL table):**
+```lua
+DELTA_HISTORY_MAX_COUNT = 10,   -- Keep last N deltas per alt
+DELTA_HISTORY_MAX_AGE = 3600,   -- 1 hour retention
+DELTA_CHAIN_MAX_HOPS = 10,      -- Max deltas in one request
+DELTA_CHAIN_MAX_SIZE = 5000,    -- Fallback if chain >5KB
+```
+
+**Comm Prefix Descriptions:**
+```lua
+["togbank-dr"] = "(Delta Range Request)",
+["togbank-dc"] = "(Delta Chain)",
+```
+
+### 10.6 Fallback Rules ✅ COMPLETE
+Chain replay falls back to full sync if:
+1. **Chain too long**: >10 hops (prevents abuse)
+2. **Chain too large**: Total size >5KB (efficiency threshold)
+3. **History incomplete**: Missing delta in sequence
+4. **Gap too large**: Version span >10 minutes (prevents excessive history)
+5. **Application fails**: Any delta in chain fails validation
+6. **History expired**: Deltas older than 1 hour are purged
+
+### 10.7 Testing Plan ✅ COMPLETE
+**Test 1.4 Added to TESTING.md:**
+- **Objective**: Verify delta chain replay for offline players
+- **Scenario**: Player offline during 3-5 updates, returns and catches up
+- **Expected**: Chain replay succeeds, bandwidth < full sync
+- **Fallbacks**: Tests large gaps, expired history, missing deltas
+
+**Implementation Files:**
+- Database.lua: +125 lines (3 functions + schema)
+- Guild.lua: +165 lines (2 functions + ApplyDelta update)
+- Chat.lua: +75 lines (2 protocol handlers)
+- Constants.lua: +6 lines (4 constants + 2 prefixes)
+- DELTA-006-bug-report.md: Documentation
+- TESTING.md: Test 1.4 with variations
+
+**Branch Status:**
+- Feature branch: `feature/delta-chain-replay`
+- Commit: 08d83bf
+- Remote: origin/feature/delta-chain-replay ✅
+- Ready for testing and PR to main
+
+---
+
+## Phase 11: Deployment & Monitoring
+
+### 11.1 Beta Testing 🔄 IN PROGRESS
 - [x] Deploy to test environment
   - [x] Install on test characters
   - [x] Test in small guild (8 members)
   - [x] Monitor for errors or crashes
-  - [ ] Gather feedback on performance
-  - [ ] Test in small guild (5-10 members)
-  - [ ] Monitor for errors or crashes
+  - [ ] Test delta chain replay scenarios
   - [ ] Gather feedback on performance
 
 ### 9.2 Metrics Collection Period
