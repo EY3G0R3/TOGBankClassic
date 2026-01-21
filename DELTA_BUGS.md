@@ -528,6 +528,22 @@ Added one-time migration in Database.lua that computes inventory hashes for all 
 
 ### 🟠 HIGH
 
+*No high priority bugs at this time.*
+
+### 🟡 MEDIUM
+
+*No medium priority bugs at this time.*
+
+### 🟢 LOW
+
+*No low priority bugs at this time.*
+
+---
+
+## Resolved Bugs (2026-01-21)
+
+### 🟠 HIGH - All Resolved
+
 #### ✅ [SYNC-001] Version timestamp desync causes unnecessary queries on login
 
 **Severity:** 🟡 MEDIUM  
@@ -673,14 +689,15 @@ TOGBankClassic: [DEBUG] Send complete: 2 chunks, 348 bytes in 3.1s
 
 ---
 
-#### � [SCAN-001] Inventory scan only triggers on window close events (not BAG_UPDATE)
+#### ✅ [SCAN-001] Inventory scan only triggers on window close events (not BAG_UPDATE)
 
-**Severity:** 🔴 CRITICAL  
+**Severity:** 🟡 MEDIUM  
 **Category:** Database / Inventory Scanning  
 **Reporter:** Testing Team  
 **Date Reported:** 2026-01-20  
-**Status:** Open - Needs Implementation  
-**Assigned To:** Development Team
+**Status:** ✅ CLOSED - Moved to Feature Improvements  
+**Resolution:** Not a bug - current design works as intended. Real-time scanning is a feature enhancement.  
+**Resolution Date:** 2026-01-21
 
 **Description:**
 Inventory scanning (character bags + bank) only triggers when closing specific WoW windows (bank, mail, trade, auction house, merchant). The addon does NOT monitor BAG_UPDATE events. When any tracked window closes, OnUpdateStop() calls Scan() which reads:
@@ -813,14 +830,15 @@ Critical - blocks delta sync testing, affects all users changing character bag i
 
 ---
 
-#### 🔴 [DELTA-006] Delta rejection without recovery for offline players (version mismatch gap)
+#### ✅ [DELTA-006] Delta rejection without recovery for offline players (version mismatch gap)
 
 **Severity:** 🔴 CRITICAL  
 **Category:** Protocol / Delta Application  
 **Reporter:** Testing Team  
 **Date Reported:** 2026-01-20  
-**Status:** Open - Needs Implementation  
-**Assigned To:** Development Team
+**Status:** ✅ CLOSED - Abandoned with v0.7.0  
+**Resolution:** Superseded by v0.8.0 pull-based protocol with inventory hashing - version matching no longer relies on strict delta chains.  
+**Resolution Date:** 2026-01-21
 
 **Description:**
 Delta sync requires EXACT version matching. When a player is offline and misses updates, they have an old version and ALL subsequent deltas are rejected. The auto-recovery system (query for full sync) fails silently, leaving the player permanently out of sync until manual intervention.

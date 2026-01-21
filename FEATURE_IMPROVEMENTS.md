@@ -12,6 +12,8 @@
 - [ ] Display items in mail with indicator/tag showing they're in mail (not bags/bank)
 - [ ] Implement BigWigs package manager support
 - [ ] Implement version check (notify users of outdated addon)
+- [ ] **Communications buffer/queue on banker side** - Investigate if whispers are being dropped during high traffic; implement queue system to ensure all requests are processed
+- [ ] **Real-time inventory scanning** - Monitor BAG_UPDATE and PLAYERBANKSLOTS_CHANGED events instead of only scanning on window close; add debouncing (500ms) to prevent spam during rapid changes; current behavior requires closing bank/mail/trade windows to update cached data
 
 ---
 

@@ -982,6 +982,7 @@ local COMMAND_REGISTRY = {
 		help = "manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically",
 		handler = function()
 			TOGBankClassic_Events:Sync()
+			TOGBankClassic_Guild:FastFillMissingAlts()
 		end,
 	},
 	{

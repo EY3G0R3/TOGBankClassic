@@ -15,8 +15,9 @@
 - **NEW**: `/togbank share` command broadcasts version data with hashes
 - **NEW**: Selective querying - only request data when hashes mismatch
 - **NEW**: Data migration system computes hashes for existing alts on load
-- **NEW**: Fast-fill feature - automatically requests missing banker alts when UI opens
+- **NEW**: Fast-fill feature - automatically requests missing banker alts when UI opens or `/togbank sync` is used
 - **NEW**: Smart message prioritization - NORMAL priority for reliable delivery
+- **NEW**: Communication debug filtering - Optional "(comm)" prefixed debug messages with separate toggle
 
 #### Inventory Hashing System
 - `ComputeInventoryHash()` generates numeric hash from bank + bags + money
@@ -93,16 +94,20 @@
 - Events.lua: Changed all query messages from BULK to NORMAL priority
 - Chat.lua: Enhanced hash comparison logic with nil handling
 - Chat.lua: Added UI auto-refresh when data adopted (togbank-d and togbank-d3 handlers)
+- Chat.lua: `/togbank sync` command now also triggers fast-fill for missing alts
 - Database.lua: Added hash migration for existing alts
 - Database.lua: Added slots migration to prevent UI crashes
 - Core.lua: Made baseVersion optional in delta validation
 - UI/Inventory.lua: Calls `FastFillMissingAlts()` on Open() in delta mode (line 49)
+- Output.lua: Added `DebugComm()` function for filterable communication debug logging
+- Options.lua: Added `commDebug` toggle in config UI below log level
 
 ### 🎯 Performance Improvements
 - Message priority optimization: Changed queries and delta broadcasts from BULK to NORMAL
 - Improved responsiveness of pull-based protocol handshake
 - Faster UI updates with async item link reconstruction
 - Reduced query spam with fast-fill on-demand loading
+- Communication debug filtering: Separate toggle for comm debug messages with "(comm)" prefix
 
 ### ⚠️ Breaking Changes
 None - Full backwards compatibility maintained with v0.7.0 clients
