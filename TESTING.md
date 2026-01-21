@@ -1,5 +1,157 @@
 # TOGBankClassic v0.7.0 Testing Guide
 
+**Last Updated:** January 20, 2026  
+**Test Suite Status:** 25/25 automated tests passing (100%)
+
+---
+
+## Quick Start
+
+### Running Automated Tests
+```
+/togbank test              -- Run all 25 tests (~2 seconds)
+/togbank test <name>       -- Run specific test
+/togbank test phase5.1     -- Run Phase 5.1 tests only
+```
+
+### Running Manual Tests
+See manual testing procedures below for scenario-based testing.
+
+---
+
+## Automated Test Suite (25 Tests)
+
+### Overview
+The automated test suite validates all core delta sync functionality:
+- **Phase 5.1:** Delta Computation (8 tests) - Core algorithm
+- **Phase 5.2:** Size Estimation (4 tests) - Efficiency calculations  
+- **Phase 5.3:** Protocol Negotiation (3 tests) - Version detection
+- **Phase 5.4:** Error Handling (5 tests) - Graceful fallbacks
+- **Phase 5.5:** Integration (2 tests) - End-to-end workflows
+- **Phase 5.6:** Backwards Compatibility (3 tests) - v1 client support
+
+### What Each Phase Tests
+
+#### Phase 5.1: Delta Computation (Core Logic)
+Tests the algorithm that compares two snapshots and generates a delta:
+- ✅ No changes detection (empty delta)
+- ✅ Money changes (gold/silver/copper)
+- ✅ Item additions (new items appearing)
+- ✅ Item removals (items disappearing) ← **Caught critical bug!**
+- ✅ Item count changes (stack size modifications)
+- ✅ Multiple simultaneous changes
+- ✅ Item equality comparison
+- ✅ Changed field detection
+
+**Functions Tested:** `ComputeDelta()`, `ItemsEqual()`, `GetChangedFields()`, `ComputeItemDelta()`
+
+#### Phase 5.2: Size Estimation (Efficiency)
+Tests whether delta is smaller than full sync:
+- ✅ Empty data size calculation
+- ✅ Small delta size estimation
+- ✅ Large delta size estimation
+- ✅ Delta vs full sync size comparison
+
+**Functions Tested:** `EstimateSize()`  
+**Purpose:** Decides when delta is more efficient than full sync (< 30% threshold)
+
+#### Phase 5.3: Protocol Negotiation (Version Detection)
+Tests how clients detect each other's protocol versions:
+- ✅ Protocol version detection (v1 vs v2)
+- ✅ Delta usage decision logic
+- ✅ Guild support threshold (10% must support v2)
+
+**Functions Tested:** `GetPeerCapabilities()`, `ShouldUseDelta()`, `GetGuildDeltaSupport()`  
+**Purpose:** Ensures v2 clients only use delta when talking to other v2 clients
+
+#### Phase 5.4: Error Handling (Graceful Fallbacks)
+Tests what happens when things go wrong:
+- ✅ Applying delta with no existing data → Request full sync
+- ✅ Version mismatch → Request delta chain or full sync
+- ✅ Error tracking in metrics
+- ✅ Snapshot validation (rejects malformed data)
+- ✅ Delta validation (rejects invalid deltas)
+
+**Functions Tested:** `ApplyDelta()`, `ValidateSnapshot()`, `ValidateDeltaStructure()`  
+**Purpose:** Prevents data corruption and ensures system recovers from errors
+
+#### Phase 5.5: Integration (End-to-End)
+Tests complete workflows from start to finish:
+- ✅ **Full delta roundtrip:** Compute → Apply → Verify (tests additions, removals, money changes)
+- ✅ Delta size threshold decision making
+
+**Critical Test:** Roundtrip test caught the `ApplyItemDelta` bug where item removals left holes in arrays instead of actually removing items.
+
+#### Phase 5.6: Backwards Compatibility (v1 Support)
+Tests that v2 clients work with v1 clients:
+- ✅ V1 client detection (protocol version 1)
+- ✅ V2 client capabilities (supports both protocols)
+- ✅ Fallback to full sync when talking to v1 clients
+
+**Purpose:** Ensures smooth migration from v0.6.8 (v1) to v0.7.0 (v2)
+
+### Bug Discovered by Tests
+
+**Critical Bug:** `ApplyItemDelta` item removal broken  
+**File:** `Modules/Guild.lua:1221-1236`  
+**Discovered By:** Phase 5.5 Integration Test
+
+```lua
+-- BROKEN (before fix):
+items[i] = nil  -- Leaves hole in array, length unchanged
+
+-- FIXED (after):
+table.remove(items, i)  -- Properly removes and shifts elements
+```
+
+**Impact:** Item removals in delta sync were completely broken. Tests prevented this from reaching production!
+
+### Test Data Structures
+
+All tests use standardized data structures:
+
+**Item:**
+```lua
+{ID = 2589, Count = 20, Link = "[Linen Cloth]"}
+```
+
+**Alt Data:**
+```lua
+{
+  name = "CharName",
+  version = 1234567890,
+  money = 150000,  -- At root level (not bank.money!)
+  bank = {items = {...}},
+  bags = {items = {...}}
+}
+```
+
+**Delta:**
+```lua
+{
+  type = "alt-delta",
+  name = "CharName",
+  version = 2,
+  baseVersion = 1,
+  changes = {
+    money = 200000,
+    bank = {added=[...], modified=[...], removed=[...]},
+    bags = {added=[...], modified=[...], removed=[...]}
+  }
+}
+```
+
+### Adding New Tests
+
+1. Write test function in `Modules/Tests.lua`
+2. Use `setupDeltaTest()` to initialize
+3. Register in `runAllTests()` function
+4. Test with `/togbank test <name>`
+
+See inline comments in Tests.lua for examples.
+
+---
+
 ## Manual Testing Procedures
 
 ### Pre-Testing Setup
