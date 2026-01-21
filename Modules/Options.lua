@@ -82,6 +82,36 @@ function TOGBankClassic_Options:Init()
 					return self.db.global.bank["logLevel"]
 				end,
 			},
+			["protocolMode"] = {
+				order = 3,
+				type = "select",
+				style = "dropdown",
+				width = "full",
+				name = "Communication Protocol",
+				desc = "Choose which message format to use for syncing bank data",
+				values = {
+					AUTO = PROTOCOL_MODES.AUTO.name,
+					LEGACY_ONLY = PROTOCOL_MODES.LEGACY_ONLY.name,
+					NEW_ONLY = PROTOCOL_MODES.NEW_ONLY.name,
+				},
+				sorting = { "AUTO", "LEGACY_ONLY", "NEW_ONLY" },
+				set = function(_, v)
+					FEATURES.PROTOCOL_MODE = v
+					TOGBankClassic_Output:Info("Protocol mode changed to: %s", PROTOCOL_MODES[v].name)
+				end,
+				get = function()
+					return FEATURES.PROTOCOL_MODE
+				end,
+			},
+			["protocolModeDesc"] = {
+				order = 4,
+				type = "description",
+				width = "full",
+				name = function()
+					local mode = PROTOCOL_MODES[FEATURES.PROTOCOL_MODE] or PROTOCOL_MODES.AUTO
+					return "|cffFFFFFF" .. mode.desc .. "|r"
+				end,
+			},
 			["reset"] = {
 				order = -1,
 				name = "Reset Database",

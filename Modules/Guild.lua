@@ -847,27 +847,51 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 				)
 			end
 			
-			-- Send full sync - DUAL SEND for backwards compatibility
-			-- 1. Send togbank-d WITH Links (for v0.6.x, v0.7.0)
-			local dataWithLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
-			TOGBankClassic_Core:SendCommMessage("togbank-d", dataWithLinks, "Guild", nil, "BULK", OnChunkSent)
+			-- Send full sync based on protocol mode (user-configurable)
+			local mode = PROTOCOL_MODES[FEATURES.PROTOCOL_MODE] or PROTOCOL_MODES.AUTO
+			local dataWithLinks, dataNoLinks
 			
-			-- 2. Send togbank-d3 WITHOUT Links (for v0.8.0 bandwidth savings)
-			local strippedAlt = self:StripAltLinks(currentAlt)
-			local dataNoLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
-			TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, "Guild", nil, "BULK", OnChunkSent)
+			-- Prepare legacy format (with Links) if needed
+			if mode.sendLegacy then
+				dataWithLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
+				TOGBankClassic_Core:SendCommMessage("togbank-d", dataWithLinks, "Guild", nil, "BULK", OnChunkSent)
+			end
 			
-			TOGBankClassic_Output:Debug(
-				"Sent full sync for %s: togbank-d (%d bytes with Links) + togbank-d3 (%d bytes no Links, %.1f%% savings)",
-				norm,
-				string.len(dataWithLinks or ""),
-				string.len(dataNoLinks or ""),
-				100 - (string.len(dataNoLinks or "") / string.len(dataWithLinks or "") * 100)
-			)
+			-- Prepare new format (without Links) if needed
+			if mode.sendNew then
+				local strippedAlt = self:StripAltLinks(currentAlt)
+				dataNoLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
+				TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, "Guild", nil, "BULK", OnChunkSent)
+			end
+			
+			-- Log what was sent
+			if mode.sendLegacy and mode.sendNew then
+				TOGBankClassic_Output:Debug(
+					"Sent full sync for %s [%s]: togbank-d (%d bytes) + togbank-d3 (%d bytes, %.1f%% savings)",
+					norm,
+					FEATURES.PROTOCOL_MODE,
+					string.len(dataWithLinks or ""),
+					string.len(dataNoLinks or ""),
+					100 - (string.len(dataNoLinks or "") / string.len(dataWithLinks or "") * 100)
+				)
+			elseif mode.sendLegacy then
+				TOGBankClassic_Output:Debug(
+					"Sent full sync for %s [LEGACY_ONLY]: togbank-d (%d bytes with Links)",
+					norm,
+					string.len(dataWithLinks or "")
+				)
+			elseif mode.sendNew then
+				TOGBankClassic_Output:Debug(
+					"Sent full sync for %s [NEW_ONLY]: togbank-d3 (%d bytes without Links)",
+					norm,
+					string.len(dataNoLinks or "")
+				)
+			end
 			
 			-- Track metrics
 			if self.Info and self.Info.name then
-				TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, string.len(data or ""))
+				local totalSize = (dataWithLinks and string.len(dataWithLinks) or 0) + (dataNoLinks and string.len(dataNoLinks) or 0)
+				TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, totalSize)
 			end
 			
 			-- Save snapshot for next delta
@@ -875,27 +899,51 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 				TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
 			end
 		elseif not deltaData then
-			-- No previous snapshot (first sync), send full sync - DUAL SEND for backwards compatibility
-			-- 1. Send togbank-d WITH Links (for v0.6.x, v0.7.0)
-			local dataWithLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
-			TOGBankClassic_Core:SendCommMessage("togbank-d", dataWithLinks, "Guild", nil, "BULK", OnChunkSent)
+			-- No previous snapshot (first sync), send full sync based on protocol mode
+			local mode = PROTOCOL_MODES[FEATURES.PROTOCOL_MODE] or PROTOCOL_MODES.AUTO
+			local dataWithLinks, dataNoLinks
 			
-			-- 2. Send togbank-d3 WITHOUT Links (for v0.8.0 bandwidth savings)
-			local strippedAlt = self:StripAltLinks(currentAlt)
-			local dataNoLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
-			TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, "Guild", nil, "BULK", OnChunkSent)
+			-- Prepare legacy format (with Links) if needed
+			if mode.sendLegacy then
+				dataWithLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
+				TOGBankClassic_Core:SendCommMessage("togbank-d", dataWithLinks, "Guild", nil, "BULK", OnChunkSent)
+			end
 			
-			TOGBankClassic_Output:Debug(
-				"Sent full sync for %s: togbank-d (%d bytes with Links) + togbank-d3 (%d bytes no Links, %.1f%% savings)",
-				norm,
-				string.len(dataWithLinks or ""),
-				string.len(dataNoLinks or ""),
-				100 - (string.len(dataNoLinks or "") / string.len(dataWithLinks or "") * 100)
-			)
+			-- Prepare new format (without Links) if needed
+			if mode.sendNew then
+				local strippedAlt = self:StripAltLinks(currentAlt)
+				dataNoLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
+				TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, "Guild", nil, "BULK", OnChunkSent)
+			end
+			
+			-- Log what was sent
+			if mode.sendLegacy and mode.sendNew then
+				TOGBankClassic_Output:Debug(
+					"Sent full sync for %s [%s]: togbank-d (%d bytes) + togbank-d3 (%d bytes, %.1f%% savings)",
+					norm,
+					FEATURES.PROTOCOL_MODE,
+					string.len(dataWithLinks or ""),
+					string.len(dataNoLinks or ""),
+					100 - (string.len(dataNoLinks or "") / string.len(dataWithLinks or "") * 100)
+				)
+			elseif mode.sendLegacy then
+				TOGBankClassic_Output:Debug(
+					"Sent full sync for %s [LEGACY_ONLY]: togbank-d (%d bytes with Links)",
+					norm,
+					string.len(dataWithLinks or "")
+				)
+			elseif mode.sendNew then
+				TOGBankClassic_Output:Debug(
+					"Sent full sync for %s [NEW_ONLY]: togbank-d3 (%d bytes without Links)",
+					norm,
+					string.len(dataNoLinks or "")
+				)
+			end
 			
 			-- Track metrics
 			if self.Info and self.Info.name then
-				TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, string.len(data or ""))
+				local totalSize = (dataWithLinks and string.len(dataWithLinks) or 0) + (dataNoLinks and string.len(dataNoLinks) or 0)
+				TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, totalSize)
 			end
 			
 			-- Save snapshot for next delta
