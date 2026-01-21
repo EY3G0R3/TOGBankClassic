@@ -7,10 +7,231 @@
 - [ ] Move filled/completed orders to an archive tab
 - [ ] Add mouseover tooltip for truncated item names to show full text
 - [ ] Single-click button to fulfill request and send mail with all/some items (bulk mail addon?), possibly a popup to select quantity then fill?
-- [ ] Optimize bank data sync communications for efficiency/speed (encode data if possible)
+- [x] ~~Optimize bank data sync communications for efficiency/speed~~ **v0.7.0: Snapshot-based delta sync implemented**
+- [ ] **v0.8.0: Pull-based delta protocol** - Further optimization with handshake-based sync
 - [ ] Display items in mail with indicator/tag showing they're in mail (not bags/bank)
 - [ ] Implement BigWigs package manager support
 - [ ] Implement version check (notify users of outdated addon)
+
+---
+
+## 🔄 Pull-Based Delta Protocol (v0.8.0) - PLANNED
+
+### Overview
+Replace v0.7.0's snapshot-based delta sync with a pull-based handshake protocol for greater simplicity and efficiency.
+
+**Key Improvements over v0.7.0:**
+- No snapshots to maintain (eliminates deltaSnapshots table)
+- No version mismatch errors (receiver explicitly states what they have)
+- No chain replay complexity (sender computes custom delta)
+- Massive bandwidth savings (remove Links, baseVersion, unnecessary data)
+- Simpler logic (7-step flow, clear rules)
+
+### Core Philosophy
+- Receiver states what they have, sender computes the diff
+- If receiver has NO data → send everything
+- If receiver has SOME data → ALWAYS send delta
+- No thresholds, no size checks, no fallbacks, no stupid rules
+
+### Protocol Flow (7 Steps)
+
+1. **Banker announces presence**
+   - Channel: GUILD
+   - Message: `togbank-dv`
+   - Content: "I'm the banker, I'm online"
+
+2. **Non-banker requests data**
+   - Channel: WHISPER (if banker known) or GUILD (if banker unknown)
+   - Message: `togbank-r`
+   - Content: "I need data for alt X"
+
+3. **Responder acknowledges**
+   - Channel: WHISPER
+   - Message: `togbank-rr` (NEW)
+   - Content: `{ isBanker = true/false }` - identifies authority
+   - Purpose: "I can help, send me your state"
+
+4. **Non-banker sends state summary**
+   - Channel: WHISPER
+   - Message: `togbank-state` (NEW)
+   - Content: `{[itemID] = quantity}` - minimal state, no Links/bags/slots
+   - Size: ~800 bytes for 100 items
+
+5. **Responder computes response**
+   - Logic:
+     - If state is empty → full sync
+     - If state matches current → no-change
+     - Otherwise → compute delta from stated version to current
+
+6. **Responder sends data**
+   - Channel: GUILD
+   - Messages: `togbank-d` (full), `togbank-d2` (delta), or `togbank-nochange` (WHISPER)
+   - Optimization: No Links (60-80 bytes/item saved), no baseVersion (8 bytes saved)
+
+7. **Receiver applies data**
+   - Applies changes to local database
+   - **Reconstructs Links locally:** Calls `GetItemInfo(itemID)` for each item
+   - **Stores Links in database:** For UI display and functionality
+
+### Message Optimizations
+
+#### 1. Remove Links from Transmission (5-7KB savings)
+**Problem:** v0.7.0 sends full Link strings with every item
+```lua
+-- v0.7.0 (HEAVY):
+{ ID = 12345, Count = 5, Link = "|cff9d9d9d|Hitem:2589:0:0:0:0:0:0:0:20:0:0|h[Linen Cloth]|h|r" }
+```
+
+**Solution:** Send only ID/Count, receiver reconstructs
+```lua
+-- v0.8.0 (LIGHT):
+{ ID = 12345, Count = 5 }  -- Receiver calls GetItemInfo(12345)
+```
+
+**Reconstruction:**
+```lua
+function ReconstructItemLinks(items)
+  for _, item in ipairs(items) do
+    local itemLink = select(2, GetItemInfo(item.ID))
+    item.Link = itemLink  -- Store for UI display
+  end
+end
+```
+
+**Trade-off:** One API call per item vs. 60-80 bytes per item transmission  
+**Result:** 5-7KB bandwidth savings per sync (typical 100-item alt)
+
+#### 2. Remove baseVersion (8 bytes saved)
+**v0.7.0:** Delta includes `baseVersion` to identify what it's built against
+```lua
+{ type = "alt-delta", version = 110, baseVersion = 100, changes = {...} }
+```
+
+**v0.8.0:** Receiver explicitly stated what they have in step 4, baseVersion is redundant
+```lua
+{ type = "alt-delta", version = 110, changes = {...} }  -- No baseVersion needed
+```
+
+#### 3. Minimal Remove Format (4 bytes/item saved)
+**v0.7.0:** Remove items include Count and Link
+```lua
+remove = { { ID = 12345, Count = 5, Link = "|cff..." }, ... }
+```
+
+**v0.8.0:** Only send ID (count/link irrelevant for deletion)
+```lua
+remove = { { ID = 12345 }, { ID = 67890 }, ... }
+```
+
+#### 4. State Summary Format
+**Purpose:** Receiver tells sender what they have for delta computation  
+**Format:** `{[itemID] = quantity}` - ID to quantity mapping only  
+**Size:** ~8 bytes per item = ~800 bytes for 100 items  
+**Excludes:** Links, bag numbers, slot numbers, metadata
+
+### Channel Assignment
+
+**GUILD Channel (High Volume):**
+- togbank-v (version broadcasts)
+- togbank-dv (banker announcements)
+- togbank-d (full sync data)
+- togbank-d2 (delta data)
+- togbank-r (query fallback when banker unknown)
+
+**WHISPER Channel (Handshakes Only):**
+- togbank-r (query to specific banker)
+- togbank-rr (query reply - NEW)
+- togbank-state (state summary - NEW)
+- togbank-nochange (no-change reply - NEW)
+
+**Rule:** NO DATA SYNC IN WHISPER, ONLY HANDSHAKES
+
+### Version Management (CRITICAL FIX)
+
+**v0.7.0 Problem:** Versions created on logout regardless of changes
+```lua
+-- Guild.lua:679 (WRONG)
+self.Info.alts[norm].version = GetServerTime()  -- Always updates!
+```
+
+**v0.8.0 Solution:** Versions ONLY created when inventory actually changes
+```lua
+-- Only update version if items/money changed
+if inventoryChanged then
+  self.Info.alts[norm].version = GetServerTime()
+end
+```
+
+**Version Creation Rules:**
+- ✅ Create new version when: Items added/removed/modified, money changed
+- ❌ NEVER create version on: Queries, responses, no-change replies, failed requests
+
+**Why:** Prevents version drift where identical data has different versions due to communication events
+
+### Response Prioritization
+
+When multiple guild members respond to a query:
+
+1. **THE BANKER** (always authoritative)
+   - `isBanker = true` flag in togbank-rr
+   - If banker responds, use their data regardless of version
+
+2. **Highest version** (among non-bankers)
+   - If no banker responds, use data from member with newest version
+
+### Startup Optimization
+
+**Discovery Phase:**
+- On addon init: Broadcast "is any banker online?"
+- Listen for togbank-dv responses
+- Build list of online bankers
+- Update list as members log in/out
+
+**Smart Routing:**
+```lua
+if bankerKnownOnline then
+  SendCommMessage("togbank-r", data, "WHISPER", bankerName)
+else
+  SendCommMessage("togbank-r", data, "GUILD")
+end
+```
+
+### Implementation Checklist
+
+#### New Messages
+- [ ] `togbank-rr` - Query reply with `{ isBanker = bool, version = timestamp }`
+- [ ] `togbank-state` - State summary `{ items = {[itemID] = count} }`
+- [ ] `togbank-nochange` - Explicit no-change response
+
+#### Modified Messages
+- [ ] `togbank-d` - Remove Link fields from all items
+- [ ] `togbank-d2` - Remove Link fields, remove baseVersion, minimal removes
+
+#### Link Reconstruction
+- [ ] `ReconstructItemLinks(items)` - Call GetItemInfo for each item
+- [ ] Store reconstructed Links in database after applying delta
+- [ ] Handle async loading with `Item:CreateFromItemID()` if needed
+
+#### Version Management
+- [ ] Fix version creation to only happen on actual changes
+- [ ] Remove version updates from logout event (Guild.lua:679)
+- [ ] Track inventory state to detect changes
+
+#### Banker Discovery
+- [ ] Implement banker discovery on init
+- [ ] Maintain `onlineBankers = {}` table
+- [ ] Update from togbank-dv broadcasts
+- [ ] Smart routing based on banker availability
+
+#### Remove Old Code
+- [ ] Delete deltaSnapshots table and snapshot functions
+- [ ] Delete chain replay logic (RequestDeltaChain, ApplyDeltaChain)
+- [ ] Delete SEND_FULL_THRESHOLD and size comparison
+- [ ] Delete baseVersion from delta structure
+
+---
+
+## v0.7.0 Snapshot-Based Delta Sync (IMPLEMENTED)
 
 ### Current Bank Sync Implementation (Detailed Analysis)
 

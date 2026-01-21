@@ -36,6 +36,151 @@
 
 ### 🔴 CRITICAL
 
+#### ✅ [SYNC-001] Version timestamp desync causes unnecessary queries on login
+
+**Severity:** 🟡 MEDIUM  
+**Category:** Communication / Protocol  
+**Reporter:** Testing Team  
+**Date Reported:** 2026-01-20  
+**Status:** FIXED - Separate broadcast systems implemented  
+**Assigned To:** Development Team
+
+**Description:**
+When a bank alt logs in with no inventory changes, it broadcasts its version data. Other clients compare their cached version timestamps and query for updates even when they already have the current data. This creates unnecessary network traffic and query spam.
+
+**Observed Behavior (from logs):**
+```
+[Metals-Azuresong logs in]
+TOGBankClassic: [DEBUG] No changes detected for Metals-Azuresong (delta would be empty)
+TOGBankClassic: [DEBUG] No changes for Metals-Azuresong, skipping data send (queries will be answered)
+TOGBankClassic: [DEBUG] < togbank-v (Version) to Guild (3390 bytes)
+
+[Galdof receives version broadcast]
+TOGBankClassic: [DEBUG] > Hezzako-Myzrael has fresher bank data about Metals-Azuresong, querying.
+TOGBankClassic: [DEBUG] < togbank-r (Query) to Guild (99 bytes)
+```
+
+**Root Cause Analysis:**
+The issue appears to be that different clients have different cached version timestamps for the same alt's data, even when the actual inventory data is identical. When the alt broadcasts its version on login (even with no changes), clients with older cached timestamps trigger queries.
+
+**Possible Causes:**
+1. **Version timestamp inconsistency:** Different clients received different update timestamps for the same data
+2. **Missed broadcasts:** Some clients missed previous version broadcasts and have stale timestamps
+3. **Race conditions:** Rapid logins/logouts causing timestamp updates to propagate inconsistently
+4. **Database persistence:** Cached timestamps in SavedVariables may be out of sync between clients
+
+**Current Behavior:**
+When no changes detected:
+- Alt still broadcasts version (line 815 in Guild.lua: `TOGBankClassic_Events:Sync()`)
+- Broadcast includes cached version timestamps from `self.Info.alts[k].version`
+- Clients compare: `if not ourVersion or v > ourVersion` (Chat.lua line 254)
+- Any client with older cached timestamp triggers query
+
+**Design Intent:**
+The version broadcast on no-change login was intentional: "let clients with old versions can query" to ensure everyone has current data. This is CORRECT when clients genuinely have stale data.
+
+**The Bug:**
+The bug is NOT the broadcast itself - it's that clients have DIFFERENT cached version timestamps for the SAME data. Need to investigate why version timestamps desync between clients.
+
+**Investigation Needed:**
+1. Why do clients cache different version timestamps for same alt data?
+2. Are all clients receiving and properly storing version updates?
+3. Is there a race condition during version broadcast/processing?
+4. Should version timestamps be more deterministic (based on data hash, not time)?
+
+**Workarounds Considered:**
+- ❌ Remove version broadcast on no-change: Would prevent catching genuinely stale data
+- ❌ Add version broadcast throttling: Doesn't fix root cause of timestamp desync
+- ✅ **IMPLEMENTED: Separate broadcast systems for delta and legacy clients**
+
+**Solution Implemented:**
+Created a separate delta version broadcast system (`togbank-dv`) that operates independently from the legacy version broadcast (`togbank-v`):
+
+1. **New Protocol Prefix:** `togbank-dv` for delta-capable clients only
+2. **Dual Broadcasts:** When no changes detected, send both `togbank-v` (legacy) and `togbank-dv` (delta)
+3. **Conditional Processing:**
+   - Delta clients (`togbank-dv`): Only query if they support delta AND have older version
+   - Legacy clients (`togbank-v`): Continue existing behavior
+4. **Separation of Concerns:**
+   - Delta version tracking for precise delta computation
+   - Legacy version tracking for basic "is data fresh?" checks
+   - No interference between the two systems
+
+**Changes Made:**
+- `Constants.lua`: Added `togbank-dv` prefix description
+- `Chat.lua`: Register handler for `togbank-dv`, differentiate processing logic
+- `Events.lua`: Added `SyncDeltaVersion()` function for delta broadcasts
+- `Guild.lua`: Send both version types when no changes detected
+
+**Impact:**
+- Eliminates unnecessary query spam between delta and non-delta clients
+- Delta clients only respond to delta version broadcasts
+- Legacy clients unaffected, continue normal operation
+- Clean separation allows independent evolution of both systems
+
+**Impact:**
+- Eliminates unnecessary query spam between delta and non-delta clients
+- Delta clients only respond to delta version broadcasts
+- Legacy clients unaffected, continue normal operation
+- Clean separation allows independent evolution of both systems
+
+**Testing Required:**
+- ✅ Verify delta clients only query on `togbank-dv` broadcasts
+- ✅ Verify legacy clients continue to work with `togbank-v` broadcasts
+- ✅ **CONFIRMED: No query spam when bank alt logs in with no changes**
+- ✅ Verify legitimate stale data still triggers queries correctly
+
+**Test Results (2026-01-20):**
+```
+[Metals logs in with no changes]
+TOGBankClassic: [DEBUG] No changes detected for Metals-Azuresong (delta would be empty)
+TOGBankClassic: [DEBUG] < togbank-v (Version) to Guild (3391 bytes)
+TOGBankClassic: [DEBUG] < togbank-dv (Delta Version) to Guild (3391 bytes)
+
+[Galdof (delta client) - NO QUERY TRIGGERED]
+TOGBankClassic: [DEBUG] > Metals-Azuresong > togbank-s (Share)
+[No "has fresher bank data about Metals-Azuresong, querying" message]
+
+[Delta Sync Successfully Transmitting - 85% Bandwidth Savings]
+TOGBankClassic: [DEBUG] Comparing Metals-Azuresong: previous bank has 9 items, bags have 12 items; current bank has 9 items, bags have 13 items
+TOGBankClassic: [DEBUG] ✓ Delta selected for Metals-Azuresong: 348 bytes vs 2368 bytes full (14.7% size, 2020 bytes saved)
+TOGBankClassic: [DEBUG] < togbank-d2 (Delta Data) to Guild (348 bytes)
+TOGBankClassic: [DEBUG] Sent delta update for Metals-Azuresong via togbank-d2
+TOGBankClassic: [DEBUG] Send complete: 2 chunks, 348 bytes in 3.1s
+```
+
+**Results:** 
+- ✅ WORKING - Delta clients successfully ignore legacy broadcasts
+- ✅ WORKING - Delta sync transmission functional (348 bytes vs 2368 bytes = 85% savings)
+- ✅ FIXED - Self-query bug (clients no longer query sender about themselves)
+- ⚠️ TESTING - Delta chain replay with removed age check
+
+**Additional Fixes (Session 2 - 2026-01-20):**
+
+1. **Self-Query Prevention**: Added check to prevent clients from querying sender about the sender's own alt
+   - Line 257-262 in Chat.lua: Skip if `kNorm == senderNorm`
+   
+2. **Broken Age Check Removed**: Removed premature rejection in delta chain replay
+   - Guild.lua line ~1465: Removed `versionGap > MAX_HOPS * 60` check
+   - Was rejecting deltas older than 30 minutes (broken calculation)
+   - Now lets `BuildDeltaChain()` naturally fail if deltas don't exist
+   - Makes delta sync practical for real-world usage patterns
+
+**Current Status - End of Day 2026-01-20:**
+- Delta sync successfully transmitting with major bandwidth savings
+- Self-queries eliminated  
+- Legacy/delta broadcast separation working
+- Age check removed - needs testing with actual offline scenarios
+- Ready for continued testing of delta chain replay tomorrow
+
+**Next Steps:**
+1. Test delta chain replay with the fixed age logic
+2. Verify offline clients can catch up via delta chains
+3. Monitor for any remaining edge cases
+4. Consider additional optimizations if needed
+
+---
+
 #### � [SCAN-001] Inventory scan only triggers on window close events (not BAG_UPDATE)
 
 **Severity:** 🔴 CRITICAL  
@@ -326,6 +471,124 @@ Manual `/togbank share` from banker after player returns online forces full sync
 - History cleanup prevents unbounded memory growth
 - Chain validation ensures data integrity (each delta checks baseVersion)
 - Related to UI-001 debugging exposed version mismatch scenarios
+
+---
+
+#### 🔴 [DELTA-006-IMPL-001] Function name mismatch: BuildDeltaChain vs GetDeltaHistory
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Implementation / Function Call Error  
+**Reporter:** Testing Team  
+**Date Reported:** 2026-01-20  
+**Status:** ✅ FIXED - Awaiting Test Verification  
+**Assigned To:** Development Team  
+**Related To:** [DELTA-006] Delta Chain Replay Implementation
+
+**Description:**
+Proactive delta chain sending was failing silently due to calling non-existent function `BuildDeltaChain()` instead of the correct function name `GetDeltaHistory()`. This completely blocked the delta chain replay feature from working.
+
+**Impact:**
+- **CRITICAL:** Delta chain replay completely non-functional
+- Query-based offline player catch-up mechanism not working
+- Test Suite 1.4 blocked from completion
+- Feature appears to work (no errors) but silently fails to send chains
+
+**Steps to Reproduce:**
+1. Set up offline player scenario:
+   - Galdof has old version of Metals data (v1768964533)
+   - Metals has current version (v1768965902+)
+   - Delta history exists on Metals (3+ deltas spanning the gap)
+2. Metals broadcasts version via `/togbank share`
+3. Galdof receives broadcast, detects mismatch, sends query with old version
+4. Metals receives query in Chat.lua line 302-320 (proactive chain handler)
+5. **BUG:** Calls `TOGBankClassic_Database:BuildDeltaChain()` which doesn't exist
+6. Function returns nil, nil check prevents crash, but no chain is sent
+7. Galdof never receives delta chain, remains out of sync
+
+**Expected Behavior:**
+```
+[Metals] > Galdof-OldBlanchy queries Metals-Azuresong about alt Metals-Azuresong
+[Metals] Query from Galdof-OldBlanchy for Metals-Azuresong v1768964533 (have v1768965902), sending 3-delta chain
+[Metals] < togbank-dc (Delta Chain) to Galdof-OldBlanchy (XXX bytes)
+
+[Galdof] > Metals-Azuresong > togbank-dc (Delta Chain) (3 hops)
+[Galdof] ✓ Applied delta chain for Metals-Azuresong (3 hops, v1768964533→v1768965902)
+```
+
+**Actual Behavior:**
+```
+[Metals] > Galdof-OldBlanchy queries Metals-Azuresong about alt Metals-Azuresong
+(no chain-building log)
+(no delta chain sent)
+
+[Galdof] (waits indefinitely, never receives chain)
+```
+
+**Environment:**
+- WoW Version: Classic Era (11508)
+- TOGBankClassic Version: 0.7.0
+- Branch: feature/delta-chain-replay
+- Test Suite: 1.4 (Delta Chain Replay)
+
+**Root Cause:**
+File: `Modules/Chat.lua` line 307
+
+**Incorrect Code:**
+```lua
+local deltaChain = TOGBankClassic_Database:BuildDeltaChain(nameNorm, requestedVersion, currentVersion)
+```
+
+**Actual Function Name:** `GetDeltaHistory(name, altName, fromVersion, toVersion)` (Database.lua lines 333-369)
+
+**Why This Failed:**
+1. Function `BuildDeltaChain()` does not exist in Database.lua
+2. Lua returns nil for non-existent function calls (no error thrown)
+3. Nil check `if deltaChain and #deltaChain > 0` prevents crash but hides bug
+4. Function signature also missing required `guildName` parameter
+
+**Fix Applied:**
+Changed line 307 in Chat.lua from:
+```lua
+local deltaChain = TOGBankClassic_Database:BuildDeltaChain(nameNorm, requestedVersion, currentVersion)
+```
+
+To:
+```lua
+local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.Info.name, nameNorm, requestedVersion, currentVersion)
+```
+
+**Changes:**
+1. Function name: `BuildDeltaChain` → `GetDeltaHistory`
+2. Added missing parameter: `TOGBankClassic_Guild.Info.name` (guild name)
+
+**Verification:**
+- ✅ Confirmed function doesn't exist: `/dump TOGBankClassic_Database.BuildDeltaChain` → nil
+- ✅ Confirmed correct function exists: `/dump TOGBankClassic_Database.GetDeltaHistory` → function
+- ✅ No other incorrect calls found (grep search performed)
+- ✅ No Lua errors after fix
+
+**Testing Plan:**
+1. Check delta history exists: `/dump TOGBankClassic_Database.Info.deltaHistory["Metals-Azuresong"]`
+2. Both characters `/reload`
+3. Metals: `/togbank share`
+4. Verify chain-building log appears on Metals
+5. Verify chain received and applied on Galdof
+6. Verify Galdof's version updated to match Metals
+
+**Prevention:**
+- Search codebase for similar function name mismatches
+- Document all public API functions with exact signatures
+- Consider runtime validation to catch undefined function calls earlier
+
+**Resolution Date:** 2026-01-20  
+**Files Modified:**
+- `Modules/Chat.lua` (line 307)
+
+**Notes:**
+- Bug discovered during manual Test Suite 1.4 execution
+- Only affected new proactive chain sending feature (DELTA-006)
+- Did not affect basic delta sync functionality
+- No data corruption or loss occurred
 
 ---
 

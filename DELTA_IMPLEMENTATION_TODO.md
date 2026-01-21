@@ -1,11 +1,130 @@
 # Delta Updates Implementation TODO
 
 **Project:** TOGBankClassic Delta Sync Protocol  
-**Target Version:** v0.7.0  
-**Status:** Phase 8 Testing - DELTA-005 Resolved  
-**Last Updated:** January 20, 2026
+**Target Version:** v0.8.0  
+**Status:** Planning - Pull-Based Protocol Redesign  
+**Last Updated:** January 21, 2026
 
 ---
+
+## 🔄 NEW: Pull-Based Protocol Redesign (v0.8.0)
+
+**Status:** Planning Phase  
+**Branch:** feature/pull-based-delta  
+**Goal:** Replace snapshot-based delta sync with pull-based handshake protocol
+
+### Core Philosophy
+- Receiver states what they have, sender computes the diff
+- If receiver has NO data → send everything
+- If receiver has SOME data → ALWAYS send delta
+- No thresholds, no size checks, no fallbacks, no stupid rules
+
+### 7-Step Flow
+1. **Banker announces** (GUILD: togbank-dv) - "I'm the banker, I'm online"
+2. **Non-banker requests** (WHISPER if banker known, GUILD if unknown: togbank-r) - "I need data for alt X"
+3. **Responder acknowledges** (WHISPER: togbank-rr with isBanker flag) - "I can help, send me your state"
+4. **Non-banker sends state** (WHISPER: togbank-state) - `{[itemID] = quantity}` only
+5. **Banker computes response** - full sync / delta / no-change
+6. **Banker sends data** (GUILD: togbank-d or togbank-d2) - optimized messages
+7. **Non-banker applies data** - **reconstructs Links locally and stores them in database**
+
+### Channel Assignment
+- **GUILD:** Broadcasts (togbank-v, togbank-dv), Data transfers (togbank-d, togbank-d2), Query fallback
+- **WHISPER:** Handshakes only (togbank-r, togbank-rr, togbank-state, togbank-nochange)
+- **Rule:** NO DATA SYNC IN WHISPER, ONLY HANDSHAKES
+
+### Version Management (CRITICAL)
+- Versions = Unix timestamps from `GetServerTime()`
+- ONLY created when actual inventory changes occur
+- NEVER updated on: queries, responses, no-change replies
+- Prevents version drift from communication
+
+### Message Optimizations
+
+#### 1. Remove Links from ALL Messages ✅
+- **Current:** Each item includes full Link string: `"|cff9d9d9d|Hitem:12345:0:0:0:0:0:0:0|h[Item Name]|h|r"`
+- **Size:** 60-80 bytes per item
+- **NEW:** Only send `{ ID = itemID, Count = count }`
+- **Receiver reconstructs Link locally:**
+  ```lua
+  local itemLink = select(2, GetItemInfo(itemID))
+  item.Link = itemLink  -- Store for UI display and functionality
+  ```
+- **Savings:** 60-80 bytes × number of items = **5-7KB per sync for typical alt**
+- **Storage:** After reconstruction, store Link in local database for UI display
+
+#### 2. Remove baseVersion from Delta ✅
+- **Current:** Delta includes `baseVersion` to identify what it's built against
+- **Pull-based:** Receiver explicitly states what they have, baseVersion is redundant
+- **Savings:** 8 bytes
+
+#### 3. Remove Count from Delta Removes ✅
+- **Current:** Remove items include Count field
+- **Pull-based:** If removing, Count is irrelevant
+- **Format:** `remove = { { ID = 12345 }, { ID = 67890 }, ... }`
+- **Savings:** 4 bytes per removed item
+
+#### 4. State Summary Minimal
+- **Format:** Only `{[itemID] = quantity}`, no Links/bags/slots/metadata
+- **Size:** ~800 bytes for 100 items
+- **Purpose:** Minimal data for delta computation only
+
+### Response Prioritization
+1. THE BANKER response (authoritative)
+2. Highest version (among non-bankers)
+- `isBanker` flag in togbank-rr identifies authority
+
+### Startup Optimization
+- On init: Discover online bankers
+- Maintain list from togbank-dv broadcasts
+- Choose: whisper directly (if known) or GUILD broadcast (if unknown)
+
+### What Gets Eliminated
+- ❌ deltaSnapshots table
+- ❌ Chain replay logic
+- ❌ Thresholds (SEND_FULL_THRESHOLD)
+- ❌ Size checks and fallbacks
+- ❌ baseVersion in messages
+- ❌ Links in messages
+- ❌ Version tracking complexity
+
+### Implementation Tasks
+
+#### New Message Types
+- [ ] `togbank-rr` - Query reply with isBanker flag
+- [ ] `togbank-state` - Receiver sends state summary `{[itemID] = quantity}`
+- [ ] `togbank-nochange` - Explicit no-change response
+
+#### Modified Message Types
+- [ ] `togbank-d` - Remove Link fields, receiver reconstructs
+- [ ] `togbank-d2` - Remove Link fields, remove baseVersion, minimal removes
+
+#### Version Management Fixes
+- [ ] Ensure version only created on actual inventory changes
+- [ ] Fix `Guild.lua:679` to not create version on logout if no changes
+- [ ] Never update version on query/response/no-change
+
+#### Link Reconstruction
+- [ ] Add `ReconstructItemLinks()` function to apply after receiving data
+- [ ] Call `GetItemInfo(itemID)` for each item
+- [ ] Store reconstructed Link in database for UI
+- [ ] Handle async loading with `Item:CreateFromItemID()`
+
+#### Banker Discovery
+- [ ] Implement banker discovery on init
+- [ ] Maintain list of online bankers from togbank-dv
+- [ ] Smart routing: whisper if banker known, GUILD if unknown
+
+#### Remove Old Code
+- [ ] Remove deltaSnapshots table and all snapshot functions
+- [ ] Remove chain replay logic (RequestDeltaChain, ApplyDeltaChain)
+- [ ] Remove SEND_FULL_THRESHOLD and size comparison logic
+- [ ] Remove baseVersion from delta structure
+- [ ] Update all Link storage to only include ID/Count
+
+---
+
+## v0.7.0 Snapshot-Based Delta Implementation (COMPLETE)
 
 ## Phase 1: Foundation & Core Implementation ✅ COMPLETE
 

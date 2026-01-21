@@ -1,9 +1,420 @@
-# TOGBankClassic v0.7.0 Testing Guide
+# TOGBankClassic Testing Guide
 
-**Last Updated:** January 20, 2026  
-**Test Suite Status:** 25/25 automated tests passing (100%)
+**Current Version:** v0.7.0 (Snapshot-Based Delta Sync)  
+**Next Version:** v0.8.0 (Pull-Based Delta Protocol)  
+**Last Updated:** January 21, 2026
 
 ---
+
+## v0.8.0 Testing Plan - Pull-Based Protocol
+
+### Overview
+v0.8.0 replaces snapshot-based delta sync with a pull-based handshake protocol. Testing must validate the 7-step flow, message optimizations, and backwards compatibility.
+
+### Test Categories
+
+#### 1. Protocol Flow Testing (7 Steps)
+**Scenario:** Full handshake flow from request to data application
+
+**Setup:**
+- Character A: Banker (has all data)
+- Character B: Non-banker (needs data for alt X)
+
+**Test Steps:**
+1. **Step 1: Banker announces**
+   - Verify togbank-dv sent on GUILD channel
+   - Verify Character B receives and updates banker list
+   
+2. **Step 2: Non-banker requests**
+   - Verify Character B sends togbank-r (WHISPER if banker known)
+   - Verify togbank-r includes alt name
+   
+3. **Step 3: Banker acknowledges**
+   - Verify Character A sends togbank-rr on WHISPER
+   - Verify togbank-rr includes `isBanker = true`
+   
+4. **Step 4: Non-banker sends state**
+   - Verify Character B sends togbank-state on WHISPER
+   - Verify state format: `{[itemID] = quantity}`
+   - Verify state excludes Links, bags, slots
+   
+5. **Step 5: Banker computes response**
+   - Test A: Empty state → full sync chosen
+   - Test B: Matching state → no-change chosen
+   - Test C: Partial state → delta computed
+   
+6. **Step 6: Banker sends data**
+   - Verify togbank-d/togbank-d2 sent on GUILD (data)
+   - Verify togbank-nochange sent on WHISPER (no-change)
+   - Verify messages exclude Link fields
+   - Verify messages exclude baseVersion
+   
+7. **Step 7: Receiver applies data**
+   - Verify Character B applies changes
+   - Verify Character B reconstructs Links for all items
+   - Verify Links stored in database
+
+**Expected Results:**
+- ✅ All 7 steps complete successfully
+- ✅ Data synchronized correctly
+- ✅ Links reconstructed and stored
+- ✅ No errors in chat log
+
+#### 2. Message Optimization Testing
+
+**Test 2.1: Links Removed from Transmission**
+```lua
+-- Setup: Banker has 100 items
+-- Expected: togbank-d message size ~1-2KB (vs v0.7.0's 8-10KB)
+
+/togbank test link_removal
+
+-- Verify:
+-- 1. Sent message contains only { ID, Count }
+-- 2. Received message reconstructs Links
+-- 3. Database stores reconstructed Links
+-- 4. UI displays items correctly with Links
+```
+
+**Test 2.2: baseVersion Removed**
+```lua
+-- Setup: Send delta update
+-- Expected: togbank-d2 message excludes baseVersion field
+
+/togbank test no_baseversion
+
+-- Verify:
+-- 1. Delta structure has no baseVersion field
+-- 2. Delta applies correctly without baseVersion
+-- 3. No version mismatch errors
+```
+
+**Test 2.3: Minimal Remove Format**
+```lua
+-- Setup: Remove 10 items from banker
+-- Expected: Remove array only contains IDs
+
+/togbank test minimal_removes
+
+-- Verify:
+-- 1. remove = { { ID = 12345 }, ... }
+-- 2. No Count field
+-- 3. No Link field
+-- 4. Items removed correctly from receiver database
+```
+
+**Test 2.4: State Summary Format**
+```lua
+-- Setup: Non-banker has 100 items
+-- Expected: State summary ~800 bytes
+
+/togbank test state_summary
+
+-- Verify:
+-- 1. Format: {[itemID] = quantity}
+-- 2. No Link fields (60-80 bytes each saved)
+-- 3. No bag/slot fields
+-- 4. Correctly represents current state
+```
+
+#### 3. Channel Assignment Testing
+
+**Test 3.1: GUILD Channel Usage**
+```lua
+-- Verify these messages use GUILD:
+-- togbank-v, togbank-dv, togbank-d, togbank-d2
+
+/togbank test guild_channel
+
+-- Expected:
+-- 1. Version broadcasts → GUILD
+-- 2. Banker announcements → GUILD
+-- 3. Full sync data → GUILD
+-- 4. Delta data → GUILD
+-- 5. Query fallback (banker unknown) → GUILD
+```
+
+**Test 3.2: WHISPER Channel Usage**
+```lua
+-- Verify these messages use WHISPER:
+-- togbank-r (if banker known), togbank-rr, togbank-state, togbank-nochange
+
+/togbank test whisper_channel
+
+-- Expected:
+-- 1. Query to banker → WHISPER
+-- 2. Query reply → WHISPER
+-- 3. State summary → WHISPER
+-- 4. No-change reply → WHISPER
+-- 5. NO DATA SYNC IN WHISPER
+```
+
+**Test 3.3: Smart Routing**
+```lua
+-- Test A: Banker known online
+-- Expected: togbank-r sent via WHISPER
+
+-- Test B: Banker unknown/offline
+-- Expected: togbank-r sent via GUILD
+
+/togbank test smart_routing
+```
+
+#### 4. Version Management Testing
+
+**Test 4.1: Version Only Updated on Changes**
+```lua
+-- Setup:
+-- 1. Banker has items
+-- 2. Non-banker queries (no changes)
+-- 3. Check banker's version timestamp
+
+-- Expected: Version NOT updated after query
+
+/togbank test version_on_change_only
+
+-- Verify:
+-- 1. Version before query: 1234567890
+-- 2. Query received and responded
+-- 3. Version after query: 1234567890 (UNCHANGED)
+```
+
+**Test 4.2: Version Updated on Inventory Change**
+```lua
+-- Setup:
+-- 1. Banker has items (version = 100)
+-- 2. Add item to bank
+-- 3. Check version
+
+-- Expected: Version updated to new timestamp
+
+/togbank test version_on_inventory_change
+
+-- Verify:
+-- 1. Version before: 100
+-- 2. Item added to bank
+-- 3. Version after: 110 (NEW timestamp)
+```
+
+**Test 4.3: No Version Drift**
+```lua
+-- Setup:
+-- 1. Character A and B have identical data (version 100)
+-- 2. Character C queries both
+-- 3. Check versions after
+
+-- Expected: Both still version 100
+
+/togbank test no_version_drift
+```
+
+#### 5. Response Prioritization Testing
+
+**Test 5.1: Banker Response Priority**
+```lua
+-- Setup:
+-- 1. Banker (version 100)
+-- 2. Non-banker (version 110 - somehow newer)
+-- 3. Both respond to query
+
+-- Expected: Banker's data used (isBanker = true wins)
+
+/togbank test banker_priority
+
+-- Verify:
+-- 1. Both send togbank-rr
+-- 2. Banker's has isBanker = true
+-- 3. Banker's data applied (even with lower version)
+```
+
+**Test 5.2: Highest Version Among Non-Bankers**
+```lua
+-- Setup:
+-- 1. No banker online
+-- 2. Character A (version 100)
+-- 3. Character B (version 110)
+-- 4. Both respond to query
+
+-- Expected: Character B's data used (highest version)
+
+/togbank test highest_version_non_banker
+```
+
+#### 6. Link Reconstruction Testing
+
+**Test 6.1: GetItemInfo Reconstruction**
+```lua
+-- Setup: Receive delta with items (ID only)
+-- Expected: Links reconstructed correctly
+
+/togbank test link_reconstruction
+
+-- Test items:
+local testItems = {
+  { ID = 2589 },  -- Linen Cloth
+  { ID = 2592 },  -- Wool Cloth
+  { ID = 4306 },  -- Silk Cloth
+}
+
+-- Verify:
+-- 1. GetItemInfo(2589) returns correct link
+-- 2. Link stored in database: item.Link = "|cff..."
+-- 3. UI displays clickable, color-coded item
+```
+
+**Test 6.2: Async Loading Handling**
+```lua
+-- Setup: Receive item not in cache
+-- Expected: Item:CreateFromItemID with callback
+
+/togbank test async_link_loading
+
+-- Verify:
+-- 1. GetItemInfo returns nil (not cached)
+-- 2. Item:CreateFromItemID called
+-- 3. ContinueOnItemLoad callback fires
+-- 4. Link retrieved and stored after load
+```
+
+#### 7. Startup Optimization Testing
+
+**Test 7.1: Banker Discovery on Init**
+```lua
+-- Setup:
+-- 1. Start addon with banker already online
+-- 2. Wait for discovery broadcast
+
+-- Expected: Banker detected and added to list
+
+/togbank test banker_discovery_init
+
+-- Verify:
+-- 1. Discovery broadcast sent on load
+-- 2. Banker responds with togbank-dv
+-- 3. Banker added to onlineBankers table
+```
+
+**Test 7.2: Banker List Updates**
+```lua
+-- Setup:
+-- 1. Banker online (in list)
+-- 2. Banker logs out
+-- 3. Check list
+
+-- Expected: Banker removed from list
+
+/togbank test banker_list_updates
+
+-- Also test:
+-- - Banker logs in → added to list
+-- - Multiple bankers online → all in list
+```
+
+#### 8. Backwards Compatibility Testing
+
+**Test 8.1: v0.8.0 Client with v0.7.0 Client**
+```lua
+-- Setup:
+-- 1. Character A: v0.8.0 (new protocol)
+-- 2. Character B: v0.7.0 (old protocol)
+
+-- Expected: Fallback to full sync with Links
+
+/togbank test v07_compatibility
+
+-- Verify:
+-- 1. v0.8.0 detects v0.7.0 from version broadcast
+-- 2. v0.8.0 sends togbank-d with Links (full format)
+-- 3. v0.7.0 receives and applies correctly
+-- 4. No errors on either side
+```
+
+**Test 8.2: Mixed Guild**
+```lua
+-- Setup:
+-- 1. Guild has 3 v0.8.0 clients
+-- 2. Guild has 2 v0.7.0 clients
+
+-- Expected: v0.8.0 clients use new protocol with each other
+
+/togbank test mixed_guild
+```
+
+#### 9. Error Handling Testing
+
+**Test 9.1: Malformed State Summary**
+```lua
+-- Setup: Send invalid state format
+-- Expected: Request full sync fallback
+
+/togbank test malformed_state
+
+-- Test cases:
+-- 1. State is nil
+-- 2. State is string (not table)
+-- 3. State has wrong structure
+-- 4. State has negative quantities
+
+-- Expected: Graceful fallback to full sync
+```
+
+**Test 9.2: Link Reconstruction Failure**
+```lua
+-- Setup: Receive item with invalid ID
+-- Expected: Log error, continue processing
+
+/togbank test link_reconstruction_failure
+
+-- Verify:
+-- 1. GetItemInfo returns nil for bad ID
+-- 2. Error logged to debug
+-- 3. Item stored without Link (ID/Count only)
+-- 4. Other items process correctly
+```
+
+**Test 9.3: Channel Failure**
+```lua
+-- Setup: WHISPER channel throttled/unavailable
+-- Expected: Fallback to GUILD for query
+
+/togbank test channel_failure
+
+-- Verify:
+-- 1. WHISPER send fails
+-- 2. Addon retries on GUILD
+-- 3. Data still synchronized
+```
+
+#### 10. Performance Testing
+
+**Test 10.1: Bandwidth Savings**
+```lua
+-- Setup:
+-- 1. Banker with 100 items
+-- 2. Measure v0.7.0 sync size (with Links)
+-- 3. Measure v0.8.0 sync size (without Links)
+
+/togbank test bandwidth_savings
+
+-- Expected:
+-- v0.7.0: ~8-10KB (with 60-80 byte Links)
+-- v0.8.0: ~1-2KB (ID/Count only)
+-- Savings: ~6-8KB (75-80% reduction)
+```
+
+**Test 10.2: CPU Cost of Link Reconstruction**
+```lua
+-- Setup: Receive 100 items
+-- Measure: Time to reconstruct all Links
+
+/togbank test link_reconstruction_time
+
+-- Expected: <100ms for 100 items (negligible)
+```
+
+---
+
+## v0.7.0 Automated Test Suite (IMPLEMENTED)
 
 ## Quick Start
 

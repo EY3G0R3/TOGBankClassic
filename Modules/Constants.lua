@@ -33,6 +33,7 @@ REQUEST_LOG = {
 -- Communication prefix descriptions for debug logging
 COMM_PREFIX_DESCRIPTIONS = {
 	["togbank-v"] = "(Version)",
+	["togbank-dv"] = "(Delta Version)",
 	["togbank-d"] = "(Data)",
 	["togbank-d2"] = "(Delta Data)",
 	["togbank-dr"] = "(Delta Range Request)",
@@ -52,17 +53,18 @@ PROTOCOL = {
 	SUPPORTS_DELTA = true,          -- This client supports delta updates
 	MIN_DELTA_SIZE_RATIO = 0.3,     -- Only use delta if <30% of full sync size
 	DELTA_SNAPSHOT_MAX_AGE = 3600,  -- 1 hour: snapshots older than this are invalid
-	DELTA_SUPPORT_THRESHOLD = 0.1,  -- Use delta if >10% of online guild supports it (lowered for testing)
+	DELTA_SUPPORT_THRESHOLD = 0.05, -- Use delta if >5% of online guild supports it (lowered for testing: 1 of 14 = 7.1%)
 	
 	-- Delta Chain Replay (DELTA-006)
 	DELTA_HISTORY_MAX_COUNT = 10,   -- Keep last N deltas per alt (memory limit)
 	DELTA_HISTORY_MAX_AGE = 3600,   -- 1 hour: purge deltas older than this
-	DELTA_CHAIN_MAX_HOPS = 10,      -- Max deltas in one chain request
+	DELTA_CHAIN_MAX_HOPS = 30,      -- Max deltas in one chain request (increased for testing)
 	DELTA_CHAIN_MAX_SIZE = 5000,    -- If chain >5KB, fall back to full sync
 }
 
 -- Feature flags (for easy enable/disable during development/testing)
 FEATURES = {
 	DELTA_ENABLED = true,           -- Enable delta sync protocol
+	FORCE_DELTA_SYNC = false,       -- Force delta sync (bypass thresholds) for testing
 	FORCE_FULL_SYNC = false,        -- Force full sync (disable delta) for testing
 }

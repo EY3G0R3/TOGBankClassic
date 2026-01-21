@@ -1,3 +1,4 @@
+
 TOGBankClassic_Guild = {}
 
 TOGBankClassic_Guild.Info = nil
@@ -690,16 +691,18 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 			local deltaSize = self:EstimateSize(deltaData)
 			local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
 			
-			-- Use delta if significantly smaller
-			if deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
+			-- Use delta if significantly smaller OR if forced
+			local forceDelta = FEATURES and FEATURES.FORCE_DELTA_SYNC
+			if forceDelta or deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
 				useDelta = true
 				TOGBankClassic_Output:Debug(
-					"✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
+					"✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)%s",
 					norm,
 					deltaSize,
 					fullSize,
 					(deltaSize / fullSize) * 100,
-					fullSize - deltaSize
+					fullSize - deltaSize,
+					forceDelta and " [FORCED]" or ""
 				)
 			else
 				TOGBankClassic_Output:Debug(
@@ -746,7 +749,7 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 				norm,
 				deltaData.baseVersion,
 				deltaData.version,
-				deltaData.changes
+				deltaData  -- Save full delta, not just changes
 			)
 		end
 		
@@ -760,21 +763,64 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 			if self.Info and self.Info.name then
 				TOGBankClassic_Database:RecordFullSyncFallback(self.Info.name)
 			end
-		end
-		
-		local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
-		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
-		
-		TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes)", norm, string.len(data or ""))
-		
-		-- Track metrics
-		if self.Info and self.Info.name then
-			TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, string.len(data or ""))
-		end
-		
-		-- Save snapshot for next delta
-		if self.Info and self.Info.name then
-			TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
+			
+			-- Save delta to history even when falling back to full sync (DELTA-006)
+			-- This allows chain replay to work for offline players even when deltas were too large
+			if self.Info and self.Info.name and deltaData.baseVersion and deltaData.version and deltaData.changes then
+				TOGBankClassic_Database:SaveDeltaHistory(
+					self.Info.name,
+					norm,
+					deltaData.baseVersion,
+					deltaData.version,
+					deltaData  -- Save full delta, not just changes
+				)
+			end
+			
+			-- Send full sync
+			local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
+			TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
+			
+			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes)", norm, string.len(data or ""))
+			
+			-- Track metrics
+			if self.Info and self.Info.name then
+				TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, string.len(data or ""))
+			end
+			
+			-- Save snapshot for next delta
+			if self.Info and self.Info.name then
+				TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
+			end
+		elseif not deltaData then
+			-- No previous snapshot (first sync), send full sync
+			local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
+			TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
+			
+			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes)", norm, string.len(data or ""))
+			
+			-- Track metrics
+			if self.Info and self.Info.name then
+				TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, string.len(data or ""))
+			end
+			
+			-- Save snapshot for next delta
+			if self.Info and self.Info.name then
+				TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
+			end
+		else
+			-- No changes detected - don't send data, let version broadcast trigger queries
+			-- Send BOTH legacy and delta version broadcasts (SYNC-001 fix)
+			TOGBankClassic_Output:Debug("No changes for %s, skipping data send (queries will be answered)", norm)
+			
+			-- Broadcast legacy version for non-delta clients
+			if TOGBankClassic_Events and TOGBankClassic_Events.Sync then
+				TOGBankClassic_Events:Sync()
+			end
+			
+			-- Broadcast delta version for delta-capable clients
+			if TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion then
+				TOGBankClassic_Events:SyncDeltaVersion()
+			end
 		end
 	end
 end
@@ -977,7 +1023,12 @@ end
 
 -- Check if delta sync should be used based on guild support
 function TOGBankClassic_Guild:ShouldUseDelta()
-	-- Check feature flags first
+	-- Check force flags first (for testing)
+	if FEATURES and FEATURES.FORCE_DELTA_SYNC then
+		return true
+	end
+	
+	-- Check feature flags
 	if not FEATURES or not FEATURES.DELTA_ENABLED then
 		return false
 	end
@@ -1418,18 +1469,9 @@ function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion,
 		return false
 	end
 
-	-- Calculate expected hop count
-	local versionGap = toVersion - fromVersion
-	if versionGap > (PROTOCOL.DELTA_CHAIN_MAX_HOPS or 10) * 60 then
-		-- Gap too large (assuming ~60 seconds between updates), use full sync
-		TOGBankClassic_Output:Debug(
-			"Delta chain gap too large for %s (%d seconds), requesting full sync",
-			altName,
-			versionGap
-		)
-		TOGBankClassic_Guild:QueryAlt(nil, altName, sender)
-		return false
-	end
+	-- Note: We don't check version gap age here - if we have the deltas, we use them.
+	-- The delta history cleanup (DELTA_HISTORY_MAX_AGE) handles storage limits.
+	-- If we can't build the chain, BuildDeltaChain will return nil and we'll fall back.
 
 	-- Send delta range request
 	local requestData = {

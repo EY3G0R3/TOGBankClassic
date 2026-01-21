@@ -35,6 +35,11 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	-- Delta-specific version broadcast (SYNC-001 fix)
+	TOGBankClassic_Core:RegisterComm("togbank-dv", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
 	TOGBankClassic_Core:RegisterComm("togbank-r", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -179,7 +184,16 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 		self:Debug(">", ColorPlayerName(sender), ">", prefix, prefixDesc)
 	end
 
-	if prefix == "togbank-v" then
+	if prefix == "togbank-v" or prefix == "togbank-dv" then
+		local isDeltaVersion = (prefix == "togbank-dv")
+		
+		-- Delta clients ignore legacy version broadcasts (SYNC-001 fix)
+		local weUseDelta = TOGBankClassic_Guild:ShouldUseDelta()
+		if weUseDelta and prefix == "togbank-v" then
+			-- Silently ignore - delta clients only listen to togbank-dv
+			return
+		end
+		
 		local current_data = TOGBankClassic_Guild:GetVersion()
 		if current_data then
 			if data.name then
@@ -251,14 +265,42 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 			if data.alts then
 				for k, v in pairs(data.alts) do
 					local kNorm = TOGBankClassic_Guild:NormalizeName(k)
-					if not current_data.alts[kNorm] or v > current_data.alts[kNorm] then
-						self:Debug(
-							">",
-							ColorPlayerName(sender),
-							"has fresher bank data about",
-							ColorPlayerName(kNorm) .. ", querying."
-						)
-						TOGBankClassic_Guild:QueryAlt(sender, kNorm, v)
+					local ourVersion = current_data.alts[kNorm]
+					
+					-- Don't query sender about themselves (SYNC-001 fix)
+					local senderNorm = TOGBankClassic_Guild:NormalizeName(sender)
+					if kNorm ~= senderNorm then
+						-- For delta version broadcasts, only query if we support delta
+						-- For legacy version broadcasts, query as normal
+						local shouldQuery = false
+						if isDeltaVersion then
+							-- Delta version: only query if we support delta and version is newer
+							if TOGBankClassic_Guild:ShouldUseDelta() and (not ourVersion or v > ourVersion) then
+								shouldQuery = true
+								self:Debug(
+									">",
+									ColorPlayerName(sender),
+									"has fresher bank data about",
+									ColorPlayerName(kNorm) .. ", querying (delta)."
+								)
+							end
+						else
+							-- Legacy version: query as usual
+							if not ourVersion or v > ourVersion then
+								shouldQuery = true
+								self:Debug(
+									">",
+									ColorPlayerName(sender),
+									"has fresher bank data about",
+									ColorPlayerName(kNorm) .. ", querying."
+								)
+							end
+						end
+						
+						if shouldQuery then
+							-- Pass OUR version so sender can build delta chain from our version to theirs
+							TOGBankClassic_Guild:QueryAlt(sender, kNorm, ourVersion)
+						end
 					end
 				end
 			end
@@ -294,6 +336,31 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 
 			if data.type == "alt" then
 				local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
+				
+				-- Check if query includes version and we can send delta chain
+				if data.version and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts[nameNorm] then
+					local currentVersion = TOGBankClassic_Guild.Info.alts[nameNorm].version
+					local requestedVersion = data.version
+					
+					-- If requester has old version, try to send delta chain immediately
+					if requestedVersion < currentVersion then
+						local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.Info.name, nameNorm, requestedVersion, currentVersion)
+						if deltaChain and #deltaChain > 0 then
+							TOGBankClassic_Output:Debug(
+								"Query from %s for %s v%d (have v%d), sending %d-delta chain",
+								sender,
+								nameNorm,
+								requestedVersion,
+								currentVersion,
+								#deltaChain
+							)
+							TOGBankClassic_Guild:SendDeltaChain(nameNorm, deltaChain, sender)
+							return
+						end
+					end
+				end
+				
+				-- Fall back to normal query response
 				table.insert(self.sync_queue, nameNorm)
 				if not self.is_syncing then
 					TOGBankClassic_Chat:ProcessQueue()
@@ -649,6 +716,69 @@ local COMMAND_REGISTRY = {
 				TOGBankClassic_Output:Response("Cleared %d delta snapshot(s)", count)
 			else
 				TOGBankClassic_Output:Response("No snapshots to clear")
+			end
+		end,
+	},
+	{
+		name = "clearhistory",
+		help = "clear delta chain history (removes saved deltas)",
+		expert = true,
+		handler = function()
+			local guild = TOGBankClassic_Guild:GetGuild()
+			if not guild then
+				TOGBankClassic_Output:Response("Not in a guild")
+				return
+			end
+			local db = TOGBankClassic_Database.db.faction[guild]
+			if db and db.deltaHistory then
+				local count = 0
+				for _, deltas in pairs(db.deltaHistory) do
+					if type(deltas) == "table" then
+						count = count + #deltas
+					end
+				end
+				db.deltaHistory = {}
+				TOGBankClassic_Output:Response("Cleared %d delta(s) from history", count)
+			else
+				TOGBankClassic_Output:Response("No delta history to clear")
+			end
+		end,
+	},
+	{
+		name = "forcedelta",
+		help = "force delta sync mode (on|off) - bypass thresholds for testing",
+		expert = true,
+		handler = function(arg)
+			if arg == "on" then
+				FEATURES.FORCE_DELTA_SYNC = true
+				FEATURES.FORCE_FULL_SYNC = false
+				TOGBankClassic_Output:Response("Force delta sync: ENABLED (will always use delta)")
+			elseif arg == "off" then
+				FEATURES.FORCE_DELTA_SYNC = false
+				TOGBankClassic_Output:Response("Force delta sync: DISABLED (normal behavior)")
+			else
+				local status = FEATURES.FORCE_DELTA_SYNC and "ON" or "OFF"
+				TOGBankClassic_Output:Response("Force delta sync: %s", status)
+				TOGBankClassic_Output:Response("Usage: /togbank forcedelta [on|off]")
+			end
+		end,
+	},
+	{
+		name = "forcefull",
+		help = "force full sync mode (on|off) - disable delta for testing",
+		expert = true,
+		handler = function(arg)
+			if arg == "on" then
+				FEATURES.FORCE_FULL_SYNC = true
+				FEATURES.FORCE_DELTA_SYNC = false
+				TOGBankClassic_Output:Response("Force full sync: ENABLED (will never use delta)")
+			elseif arg == "off" then
+				FEATURES.FORCE_FULL_SYNC = false
+				TOGBankClassic_Output:Response("Force full sync: DISABLED (normal behavior)")
+			else
+				local status = FEATURES.FORCE_FULL_SYNC and "ON" or "OFF"
+				TOGBankClassic_Output:Response("Force full sync: %s", status)
+				TOGBankClassic_Output:Response("Usage: /togbank forcefull [on|off]")
 			end
 		end,
 	},
@@ -1188,10 +1318,12 @@ function TOGBankClassic_Chat:PrintDeltaHistory()
 					or string.format("%dh ago", math.floor(age / 3600))
 				
 				local changeCount = 0
-				if delta.changes then
-					if delta.changes.bank then changeCount = changeCount + 1 end
-					if delta.changes.bags then changeCount = changeCount + 1 end
-					if delta.changes.money then changeCount = changeCount + 1 end
+				-- Delta is nested: historyEntry.delta.changes
+				local changes = delta.delta and delta.delta.changes or nil
+				if changes then
+					if changes.bank then changeCount = changeCount + 1 end
+					if changes.bags then changeCount = changeCount + 1 end
+					if changes.money then changeCount = changeCount + 1 end
 				end
 				
 				TOGBankClassic_Output:Response(

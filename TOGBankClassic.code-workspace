@@ -55,7 +55,12 @@
 			"FCF_SetLocked",
 			"FCF_DockFrame",
 			"FCF_Close",
-			"MailFrame"
-		]
+			"MailFrame",
+			"SendMailNameEditBox"
+		],
+		"Lua.diagnostics.disable": [
+			"assign-type-mismatch"
+		],
+		"Lua.type.weakUnionCheck": true
 	}
 }
