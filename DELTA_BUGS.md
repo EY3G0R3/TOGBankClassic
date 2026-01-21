@@ -1,8 +1,16 @@
 # Delta Implementation Bug Tracker
 
-**Project:** TOGBankClassic v0.7.0 Delta Sync Protocol  
-**Last Updated:** January 20, 2026  
-**Status:** Testing Phase
+**Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol  
+**Last Updated:** January 21, 2026 (Evening)  
+**Status:** Testing Phase - Core Protocol Operational
+
+**Recent Fixes (2026-01-21):**
+- ✅ [PROTO-001] Delta validation now accepts link-less deltas without baseVersion
+- ✅ [UI-001] Inventory UI handles missing slots data gracefully
+- ✅ [UI-002] Item links now display after async reconstruction (UI refresh fixed)
+- ✅ [DATA-001] Inventory hashes migrated for all existing alt data
+- ✅ [PERF-001] Message priority optimization (BULK → NORMAL for queries/broadcasts)
+- ✅ Pull-based protocol operational: hash broadcasting, comparison, and selective queries working
 
 ---
 
@@ -32,9 +40,493 @@
 
 ---
 
+## Resolved Bugs (2026-01-21)
+
+### 🔴 CRITICAL - All Resolved
+
+#### ✅ [PROTO-001] Delta validation rejects link-less deltas without baseVersion
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Protocol / Backwards Compatibility  
+**Reporter:** Testing (Galdof logs)  
+**Date Reported:** 2026-01-21  
+**Status:** ✅ CLOSED  
+**Fixed In:** v0.8.0  
+**Assigned To:** Development Team
+
+**Description:**
+The delta validation in `Core:ValidateDeltaStructure()` requires `baseVersion` field, but v0.8.0 protocol removes this field for bandwidth savings. This causes all new protocol deltas to be rejected with "missing or invalid baseVersion" error.
+
+**Error Message:**
+```
+> Metals-Azuresong shares delta (v0.8.0 Link-less) for Metals-Azuresong - validation failed: missing or invalid baseVersion
+< togbank-r (Query) to Guild (80 bytes)
+```
+
+**Stack Trace:**
+- Metals sends togbank-d4 (link-less delta without baseVersion)
+- Galdof receives delta
+- `Chat:OnCommReceived()` calls `Core:ValidateDeltaStructure()`
+- Validation fails on line 119: `if not delta.baseVersion or type(delta.baseVersion) ~= "number" then`
+- Returns error: "missing or invalid baseVersion"
+- Galdof falls back to requesting full sync
+
+**Affected Code (Core.lua:118-120):**
+```lua
+-- OLD CODE:
+if not delta.baseVersion or type(delta.baseVersion) ~= "number" then
+    return false, "missing or invalid baseVersion"
+end
+```
+
+**Root Cause:**
+When we removed `baseVersion` from `ComputeDelta()` in Guild.lua (v0.8.0 optimization), we didn't update the validation logic in Core.lua to make baseVersion optional.
+
+**Impact:**
+- **User Impact:** New protocol deltas always rejected, forcing full sync fallback
+- **Frequency:** 100% of delta transmissions in NEW_ONLY mode
+- **Bandwidth Impact:** Completely negates delta bandwidth savings (falls back to full sync)
+- **Backwards Compatibility:** Breaks core functionality of v0.8.0 protocol
+
+**Implementation Details:**
+
+**✅ Fixed in Core.lua (line 118-122):**
+```lua
+-- v0.8.0: baseVersion is optional (removed from new protocol)
+-- Old protocol deltas will still have it, new protocol won't
+if delta.baseVersion and type(delta.baseVersion) ~= "number" then
+    return false, "invalid baseVersion"
+end
+```
+- Changed from `if not delta.baseVersion or ...` to `if delta.baseVersion and ...`
+- Now only validates baseVersion type IF it's present
+- Allows deltas without baseVersion (v0.8.0 new protocol)
+- Still validates baseVersion type if present (v0.7.0 old protocol)
+- Fully backwards compatible with both protocols
+
+**ApplyDelta Already Compatible:**
+The `Guild:ApplyDelta()` function already handles optional baseVersion correctly:
+```lua
+-- v0.8.0: baseVersion no longer sent, but accept it for backwards compatibility
+local baseVersion = deltaData.baseVersion or currentVersion
+
+-- Only check version mismatch if delta included baseVersion (v0.7.0 and earlier)
+if deltaData.baseVersion and currentVersion ~= baseVersion then
+    -- Version mismatch handling...
+end
+```
+
+**Testing Results:**
+- ✅ Validation fix implemented in Core.lua
+- ✅ In-game testing completed successfully
+- ✅ Link-less deltas (togbank-d4) now accepted without errors
+- ✅ No more "missing or invalid baseVersion" validation failures
+- ✅ Backwards compatible with old protocol deltas that include baseVersion
+
+**Resolution:**
+Made `baseVersion` field optional in delta validation. Changed Core.lua line 118 from requiring the field to only validating its type IF present. This allows v0.8.0 deltas (without baseVersion) while still supporting v0.7.0 deltas (with baseVersion).
+
+**Related Changes:**
+- Guild.lua: `ComputeDelta()` no longer includes baseVersion (line 1421)
+- Guild.lua: `ApplyDelta()` treats baseVersion as optional (line 1770)
+- Core.lua: Validation now treats baseVersion as optional (line 118)
+
+**Verified By:** In-game testing on 2026-01-21  
+**Closed:** 2026-01-21
+
+---
+
+#### ✅ [UI-001] Inventory UI crashes when alt.bank.slots is nil
+
+**Severity:** 🔴 CRITICAL  
+**Category:** UI / Database  
+**Reporter:** User  
+**Date Reported:** 2026-01-21  
+**Status:** ✅ CLOSED  
+**Fixed In:** v0.8.0  
+**Assigned To:** Development Team
+
+**Description:**
+The Inventory UI crashes when opening the window if an alt character has bank data but the `bank.slots` field is nil. This can occur with characters that were scanned before slots tracking was implemented, or with incomplete/corrupted data.
+
+**Error Message:**
+```
+1x ...rfaceTOGBankClassic/Modules/UI/Inventory.lua:177: attempt to index field 'slots' (a nil value)
+[TOGBankClassic/Modules/UI/Inventory.lua]:177: in function 'DrawContent'
+[TOGBankClassic/Modules/UI/Inventory.lua]:45: in function 'Open'
+[TOGBankClassic/Modules/UI/Inventory.lua]:29: in function 'Toggle'
+[TOGBankClassic/Modules/UI/Minimap.lua]:19: in function 'OnClick'
+```
+
+**Stack Trace:**
+- User clicks minimap icon
+- `Minimap.lua:19` calls `Toggle()`
+- `Inventory.lua:29` calls `Open()`
+- `Inventory.lua:45` calls `DrawContent()`
+- `Inventory.lua:177` tries to access `alt.bank.slots.count` when `alt.bank.slots` is nil
+
+**Affected Code (Inventory.lua:177):**
+```lua
+if alt.bank then
+    slots = slots + alt.bank.slots.count       -- Line 177: crashes if alt.bank.slots is nil
+    total_slots = total_slots + alt.bank.slots.total
+end
+if alt.bags then
+    slots = slots + alt.bags.slots.count       -- Line 181: same issue possible
+    total_slots = total_slots + alt.bags.slots.total
+end
+```
+
+**Character State:**
+- Character: Metals-Azuresong
+- Has `alt.money`, `alt.bags`, `alt.version`, `alt.bank` fields
+- Missing `alt.bank.slots` field (nil value)
+- Bank data exists but incomplete
+
+**Root Cause:**
+The `slots` field was added to track bank/bag slot usage, but existing characters scanned before this feature don't have this data. The UI code doesn't check if `slots` exists before accessing it.
+
+**Reproduction Steps:**
+1. Have a character with bank data from before slots tracking was added
+2. Character has `alt.bank` table but `alt.bank.slots` is nil
+3. Click minimap icon to open Inventory UI
+4. UI tries to access `alt.bank.slots.count`
+5. Crash with "attempt to index field 'slots' (a nil value)"
+
+**Impact:**
+- **User Impact:** Cannot open Inventory UI at all when any alt has incomplete data
+- **Frequency:** Affects all users upgrading from versions before slots tracking
+- **Workaround:** None - UI is completely inaccessible
+
+**Proposed Solutions:**
+
+**Option 1: Defensive nil checks (Quick fix)**
+```lua
+if alt.bank and alt.bank.slots then
+    slots = slots + alt.bank.slots.count
+    total_slots = total_slots + alt.bank.slots.total
+end
+if alt.bags and alt.bags.slots then
+    slots = slots + alt.bags.slots.count
+    total_slots = total_slots + alt.bags.slots.total
+end
+```
+
+**Option 2: Data migration on load (Better solution)**
+Add migration logic in Bank.lua or Database.lua to initialize missing `slots` fields:
+```lua
+-- During alt data load/validation
+if alt.bank and not alt.bank.slots then
+    alt.bank.slots = { count = 0, total = 0 }
+end
+if alt.bags and not alt.bags.slots then
+    alt.bags.slots = { count = 0, total = 0 }
+end
+```
+
+**Option 3: Compute slots on demand**
+Calculate slot counts from actual item data if `slots` field is missing.
+
+**Recommended Approach:**
+Implement both Option 1 (defensive checks in UI) AND Option 2 (data migration). This provides:
+- Immediate crash prevention in UI
+- Proper data structure for all characters
+- Backward compatibility with old data
+- Graceful handling of incomplete data
+
+**Implementation Details:**
+
+**✅ Fixed in Inventory.lua (lines 177-187):**
+```lua
+if alt.bank and alt.bank.slots then
+    slots = slots + alt.bank.slots.count
+    total_slots = total_slots + alt.bank.slots.total
+end
+if alt.bags and alt.bags.slots then
+    slots = slots + alt.bags.slots.count
+    total_slots = total_slots + alt.bags.slots.total
+end
+```
+- Added defensive nil checks before accessing `slots.count` and `slots.total`
+- Prevents crash when `slots` field is missing
+- UI gracefully handles incomplete data by skipping those characters' slot counts
+
+**✅ Fixed in Database.lua (Database:Load()):**
+```lua
+-- v0.8.0: Migrate old alt data to ensure slots fields exist
+if db.alts then
+    for name, alt in pairs(db.alts) do
+        if type(alt) == "table" then
+            if alt.bank and not alt.bank.slots then
+                alt.bank.slots = { count = 0, total = 0 }
+                TOGBankClassic_Output:Debug("Migrated alt data: initialized bank.slots for %s", name)
+            end
+            if alt.bags and not alt.bags.slots then
+                alt.bags.slots = { count = 0, total = 0 }
+                TOGBankClassic_Output:Debug("Migrated alt data: initialized bags.slots for %s", name)
+            end
+        end
+    end
+end
+```
+- Runs during database load on addon init
+- Initializes missing `slots` fields with zero values
+- One-time migration for each character
+- Debug output logs migrated characters
+- Ensures all existing data has proper structure going forward
+
+**Testing Results:**
+- ✅ Defensive checks prevent immediate crashes (Inventory.lua lines 177-187)
+- ✅ Data migration ensures proper structure on load (Database.lua)
+- ✅ In-game testing completed successfully
+- ✅ Inventory UI opens without crashes
+- ✅ Slot counts display correctly for all characters
+
+**Resolution:**
+Implemented dual-layer fix: defensive nil checks in UI code prevent crashes, and database migration ensures all alt data has proper structure. Migration runs once on addon load and initializes missing `slots` fields with zero values.
+
+**Verified By:** In-game testing on 2026-01-21  
+**Closed:** 2026-01-21
+
+---
+
+#### ✅ [UI-002] Items don't appear in UI after data integration
+
+**Severity:** 🔴 CRITICAL  
+**Category:** UI / Protocol  
+**Reporter:** User (Galdof testing)  
+**Date Reported:** 2026-01-21 (Evening)  
+**Status:** ✅ CLOSED  
+**Fixed In:** v0.8.0  
+**Assigned To:** Development Team
+
+**Description:**
+After receiving link-less data via togbank-d3 protocol, items don't appear in the UI even though data integration succeeds and shows "(newer, integrating)" status. Manual UI refresh (close/reopen) doesn't fix the issue. Items remain invisible indefinitely.
+
+**User Report:**
+```
+"what takes it so long for the data to actual appear after i get the integrating message"
+"closing and reopen DOESN'T work"
+```
+
+**Debug Observations:**
+- Data receives successfully: "We accept it. (newer, integrating)"
+- `ReceiveAltData()` returns `ADOPTION_STATUS.ADOPTED`
+- Items saved to database with correct structure
+- Manual UI refresh shows no items
+- Items permanently missing from display
+
+**Stack Trace:**
+1. Sender transmits togbank-d3 with link-less items (IDs only)
+2. Receiver calls `ReceiveAltData()` which saves data
+3. `ReconstructItemLinks()` called to rebuild Links from IDs
+4. For uncached items: `Item:CreateFromItemID()` + `ContinueOnItemLoad()` callback
+5. **BUG**: Async callback sets `item.Link` but doesn't trigger UI refresh
+6. UI already rendered without items, never updates when Links become available
+7. User sees "integrating" message but no items appear
+
+**Root Cause:**
+The `ReconstructItemLinks()` function in Guild.lua uses asynchronous `Item:ContinueOnItemLoad()` callbacks to fetch item data from the server. When the callback completes and sets `item.Link`, the UI has already been rendered and doesn't know the link is now available. There's no mechanism to refresh the UI after async link reconstruction completes.
+
+**Affected Code (Guild.lua:970-995 - Before Fix):**
+```lua
+function TOGBankClassic_Guild:ReconstructItemLinks(items)
+    -- ...
+    for _, item in ipairs(items) do
+        if item.ID and not item.Link then
+            local itemLink = select(2, GetItemInfo(item.ID))
+            if itemLink then
+                item.Link = itemLink  -- Cached - immediate
+            else
+                -- Uncached - async callback
+                local itemObj = Item:CreateFromItemID(item.ID)
+                if itemObj then
+                    itemObj:ContinueOnItemLoad(function()
+                        local link = itemObj:GetItemLink()
+                        if link then
+                            item.Link = link
+                            -- BUG: No UI refresh here!
+                        end
+                    end)
+                end
+            end
+        end
+    end
+end
+```
+
+**Impact:**
+- **User Impact:** Pull-based protocol completely broken - data integrates but never displays
+- **Frequency:** 100% of link-less data transmissions when items not in local cache
+- **Workaround:** None - items never appear even after waiting or manual refresh
+- **Protocol Impact:** Makes v0.8.0 protocol unusable for end users
+
+**Reproduction Steps:**
+1. Fresh client or cleared item cache
+2. Receive link-less data via togbank-d3
+3. Observe "integrating" message in chat
+4. Open UI - items don't appear
+5. Close and reopen UI - items still don't appear
+6. Wait indefinitely - items never appear
+
+**Implementation Details:**
+
+**✅ Fixed in Guild.lua (lines 970-1008):**
+```lua
+function TOGBankClassic_Guild:ReconstructItemLinks(items)
+    if not items then
+        return
+    end
+    
+    local needsAsyncLoad = false
+    
+    for _, item in ipairs(items) do
+        if item.ID and not item.Link then
+            local itemLink = select(2, GetItemInfo(item.ID))
+            if itemLink then
+                item.Link = itemLink
+            else
+                needsAsyncLoad = true
+                local itemObj = Item:CreateFromItemID(item.ID)
+                if itemObj then
+                    itemObj:ContinueOnItemLoad(function()
+                        local link = itemObj:GetItemLink()
+                        if link then
+                            item.Link = link
+                            -- NEW: Refresh UI when link becomes available
+                            if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+                                TOGBankClassic_UI_Inventory:DrawContent()
+                            end
+                        end
+                    end)
+                end
+            end
+        end
+    end
+    
+    -- NEW: If all links loaded from cache, refresh UI now
+    if not needsAsyncLoad and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+        TOGBankClassic_UI_Inventory:DrawContent()
+    end
+end
+```
+
+**Changes Made:**
+1. Track whether async loading is needed with `needsAsyncLoad` flag
+2. Add UI refresh inside async callback when link becomes available
+3. Add immediate UI refresh if all links loaded from cache (no async needed)
+4. Check if UI is open before refreshing to avoid unnecessary redraws
+
+**Behavior After Fix:**
+- Items with cached data: Links load immediately → UI refreshes once
+- Items needing server query: Links load async → UI refreshes as each completes
+- User sees items appear as soon as their data becomes available
+- No delay between "integrating" message and items displaying
+
+**Testing Results:**
+- ✅ Items now appear immediately after integration
+- ✅ Cached items display instantly
+- ✅ Uncached items appear within 1-2 seconds (server query time)
+- ✅ UI updates multiple times as async callbacks complete
+- ✅ No manual refresh required
+- ✅ Works for both togbank-d3 full sync and togbank-d4 deltas
+
+**Related Changes:**
+- Chat.lua: Added UI refresh in togbank-d/d3 handlers when status = ADOPTED (safety net)
+- Already had UI refresh attempts, but weren't effective because Links were nil
+- With this fix, those safety refreshes now work as intended
+
+**Resolution:**
+Added UI refresh mechanism to `ReconstructItemLinks()` that triggers `DrawContent()` after successful link reconstruction. Handles both immediate (cached) and async (server query) cases. Items now appear as soon as their links become available from WoW API.
+
+**Verified By:** In-game testing on 2026-01-21 (Evening)  
+**Closed:** 2026-01-21
+
+---
+
+### 🟠 HIGH
+
+#### ✅ [DATA-001] Inventory hash missing for existing alt data
+
+**Severity:** 🟠 HIGH  
+**Category:** Database / Protocol  
+**Reporter:** Testing (hash broadcasting logs)  
+**Date Reported:** 2026-01-21  
+**Status:** ✅ CLOSED  
+**Fixed In:** v0.8.0  
+**Assigned To:** Development Team
+
+**Description:**
+After implementing v0.8.0 pull-based delta protocol with inventory hashing, broadcasts showed "(no hash)" for all existing alts. The `inventoryHash` field is only computed during `Bank:Scan()` which requires opening/closing the bank on each character. Since most alts haven't been logged in since hash feature was added, they have no hash values.
+
+**Observed Behavior (from logs):**
+```
+TOGBankClassic: [DEBUG] Broadcasting Metals-Azuresong: version=1769020573 (no hash)
+TOGBankClassic: [DEBUG] Broadcasting Togbank-Azuresong: version=1746826634 (no hash)
+TOGBankClassic: [DEBUG] Broadcasting Toggear-Azuresong: version=1768949160 (no hash)
+[...60+ more alts without hashes...]
+```
+
+**Root Cause:**
+The `inventoryHash` field is computed by `Core:ComputeInventoryHash(bank, bags, money)` and stored in `alt.inventoryHash` during bank scan. However:
+- Hash feature is new in v0.8.0
+- Existing alt data from previous sessions doesn't have hash values
+- Bank:Scan() only runs when bank opened/closed on that specific character
+- Users have 60+ alts, haven't logged into most recently
+
+**Impact:**
+- **Protocol Impact:** Pull-based protocol relies on hashes for detecting inventory changes
+- **Without Hashes:** Cannot compare inventory states to determine if query needed
+- **Frequency:** Affects 100% of existing alt data on upgrade to v0.8.0
+- **Workaround:** Would require logging into every alt and opening bank (impractical)
+
+**Implementation Details:**
+
+**✅ Fixed in Database.lua (Database:InitializeDatabase()):**
+```lua
+-- v0.8.0: Migrate alt data to compute inventory hashes for existing data
+if db.alts then
+    for name, alt in pairs(db.alts) do
+        if type(alt) == "table" then
+            -- Compute hash for alts that have inventory but no hash yet
+            if not alt.inventoryHash and alt.bank and alt.bags then
+                local money = alt.money or 0
+                alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
+                TOGBankClassic_Output:Debug("Migrated alt data: computed inventory hash for %s (hash=%d)", name, alt.inventoryHash)
+            end
+        end
+    end
+end
+```
+
+**Migration Results (from logs):**
+- ✅ Successfully migrated 61 alts with inventory data
+- ✅ Computed hashes from existing bank/bags/money data  
+- ✅ One alt skipped (Engnschematc-Azuresong) - missing bank or bags data
+
+**Testing Results:**
+- ✅ Migration runs on addon load after /reload
+- ✅ Hash values computed from saved inventory data
+- ✅ Broadcasts now show hash values: `Broadcasting X: version=Y, hash=Z`
+- ✅ Pull-based protocol hash comparison now functional
+- ✅ Hash mismatch detection triggers selective queries
+- ✅ Galdof successfully queried and received updated data based on hash difference
+
+**Resolution:**
+Added one-time migration in Database.lua that computes inventory hashes for all existing alt data on addon load. Uses same `ComputeInventoryHash()` function as Bank:Scan() to ensure consistency. Migration only runs for alts with complete bank+bags data and missing hash.
+
+**Verified By:** In-game testing on 2026-01-21  
+**Closed:** 2026-01-21
+
+---
+
 ## Active Bugs
 
 ### 🔴 CRITICAL
+
+*No critical bugs at this time.*
+
+### 🟠 HIGH
 
 #### ✅ [SYNC-001] Version timestamp desync causes unnecessary queries on login
 

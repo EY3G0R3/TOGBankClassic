@@ -1,5 +1,114 @@
 # TOGBankClassic Changelog
 
+## [v0.8.0] (2026-01-21) - Pull-Based Delta Protocol
+
+**Branch:** feature/pull-based-delta  
+**Status:** Testing Phase  
+**Latest Update:** 2026-01-21 (Evening)
+
+### 🚀 Major Features
+
+#### Pull-Based Protocol with Inventory Hashing
+- **NEW**: Hash-based inventory comparison replaces version timestamps
+- **NEW**: Automatic pull sync when inventory hashes differ
+- **NEW**: Dual broadcast system (`togbank-v` + `togbank-dv`) for compatibility
+- **NEW**: `/togbank share` command broadcasts version data with hashes
+- **NEW**: Selective querying - only request data when hashes mismatch
+- **NEW**: Data migration system computes hashes for existing alts on load
+- **NEW**: Fast-fill feature - automatically requests missing banker alts when UI opens
+- **NEW**: Smart message prioritization - NORMAL priority for reliable delivery
+
+#### Inventory Hashing System
+- `ComputeInventoryHash()` generates numeric hash from bank + bags + money
+- Hash computed automatically on bank scan (BANKFRAME_CLOSED event)
+- Stored alongside version timestamp in `alt.inventoryHash` field
+- More reliable than version timestamps for detecting real changes
+- Minimal overhead (single number vs full data comparison)
+
+#### Protocol Simplification
+- **REMOVED**: Guild support threshold requirement (was 5% minimum)
+- **NEW**: Delta protocol always enabled if `PROTOCOL.SUPPORTS_DELTA = true`
+- **NEW**: Works immediately without waiting for guild adoption
+- **SIMPLIFIED**: `ShouldUseDelta()` now only checks feature flags
+
+#### Broadcast Enhancements
+- **Version Broadcast (`togbank-v`)**: Legacy format with version timestamps only
+- **Delta Version Broadcast (`togbank-dv`)**: New format with version + hash
+- **Format**: `data.alts[name] = {version = X, hash = Y}`
+- **Share Command**: Now sends BOTH broadcasts for maximum compatibility
+
+#### Hash Comparison Logic
+- Compares inventory hashes to detect changes
+- **We have no data**: Query for everything
+- **Hashes differ**: Query for update
+- **Hashes match**: Skip query (no changes)
+- **No hash available**: Fall back to version comparison
+- Handles nil checks gracefully after database wipes
+
+### 🐛 Bug Fixes
+
+#### [UI-002] Item Links Not Appearing After Integration
+- **Fixed**: Items now display immediately after async item link reconstruction
+- **Root Cause**: `ReconstructItemLinks()` was using async `Item:ContinueOnItemLoad()` callbacks without triggering UI refresh
+- **Solution**: Added UI refresh calls after successful link reconstruction (both immediate and async)
+- **Impact**: Items now appear in UI as soon as their links become available from WoW API
+- Location: Guild.lua lines 970-995
+
+#### [PROTO-001] Delta Validation
+- **Fixed**: Delta validation now accepts link-less deltas without `baseVersion`
+- Made `baseVersion` field optional in `ValidateDeltaStructure()`
+- Maintains backwards compatibility with old protocol deltas
+- Location: Core.lua line 118-122
+
+#### [UI-001] Inventory UI Crash
+- **Fixed**: UI handles missing `bank.slots` and `bags.slots` data
+- Added defensive nil checks in Inventory.lua lines 177-187
+- Data migration initializes missing slots fields with `{count = 0, total = 0}`
+- Prevents crashes when opening UI with incomplete alt data
+
+#### [DATA-001] Missing Inventory Hashes
+- **Fixed**: Existing alt data migrated to include inventory hashes
+- Migration runs once on addon load via `Database:InitializeDatabase()`
+- Computes hashes from saved bank/bags/money data
+- Successfully migrated 60+ existing alts in testing
+
+#### Hash Comparison Edge Cases
+- **Fixed**: Handles `nil` hash values after database wipe
+- **Fixed**: Pull decision logic checks for missing data
+- **Fixed**: Broadcasts send even when no alt data exists locally
+- Debug output shows "has bank data for X (we have none), querying"
+
+### 📝 Documentation Updates
+- Updated DELTA_IMPLEMENTATION_TODO.md with current architecture
+- Documented inventory hashing system and pull protocol flow
+- Removed outdated guild support threshold documentation
+- Added hash comparison algorithm documentation
+- Updated bug tracker (DELTA_BUGS.md) with resolved issues
+
+### 🔧 Technical Changes
+- Guild.lua: Added dual broadcast to `Share()` function
+- Guild.lua: `FastFillMissingAlts()` auto-requests missing banker alts (lines 458-498)
+- Guild.lua: `ReconstructItemLinks()` now refreshes UI after async link loading (lines 970-1008)
+- Events.lua: `SyncDeltaVersion()` uses NORMAL priority for reliable delivery (was BULK)
+- Events.lua: Changed all query messages from BULK to NORMAL priority
+- Chat.lua: Enhanced hash comparison logic with nil handling
+- Chat.lua: Added UI auto-refresh when data adopted (togbank-d and togbank-d3 handlers)
+- Database.lua: Added hash migration for existing alts
+- Database.lua: Added slots migration to prevent UI crashes
+- Core.lua: Made baseVersion optional in delta validation
+- UI/Inventory.lua: Calls `FastFillMissingAlts()` on Open() in delta mode (line 49)
+
+### 🎯 Performance Improvements
+- Message priority optimization: Changed queries and delta broadcasts from BULK to NORMAL
+- Improved responsiveness of pull-based protocol handshake
+- Faster UI updates with async item link reconstruction
+- Reduced query spam with fast-fill on-demand loading
+
+### ⚠️ Breaking Changes
+None - Full backwards compatibility maintained with v0.7.0 clients
+
+---
+
 ## [v0.7.0](https://github.com/EY3G0R3/TOGBankClassic/tree/v0.7.0) (2025-01-17)
 
 **Latest Update:** 2026-01-20 - Fixed error tracking issues

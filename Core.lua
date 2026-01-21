@@ -115,8 +115,10 @@ function TOGBankClassic_Core:ValidateDeltaStructure(delta)
 		return false, "missing or invalid version"
 	end
 
-	if not delta.baseVersion or type(delta.baseVersion) ~= "number" then
-		return false, "missing or invalid baseVersion"
+	-- v0.8.0: baseVersion is optional (removed from new protocol)
+	-- Old protocol deltas will still have it, new protocol won't
+	if delta.baseVersion and type(delta.baseVersion) ~= "number" then
+		return false, "invalid baseVersion"
 	end
 
 	if not delta.changes or type(delta.changes) ~= "table" then

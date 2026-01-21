@@ -8,7 +8,7 @@ function TOGBankClassic_Options:Init()
 			bank = { donations = true },
 		},
 		global = {
-			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO" },
+			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false },
 		},
 	}
 	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicOptionDB", defaults)
@@ -25,8 +25,13 @@ function TOGBankClassic_Options:Init()
 	if self.db.global.bank["protocolMode"] == nil then
 		self.db.global.bank["protocolMode"] = "AUTO"
 	end
+	if self.db.global.bank["commDebug"] == nil then
+		self.db.global.bank["commDebug"] = false
+	end
 	-- Initialize logger with saved level
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
+	-- Initialize comm debug with saved setting
+	TOGBankClassic_Output:SetCommDebug(self.db.global.bank["commDebug"])
 	-- Initialize protocol mode with saved setting
 	FEATURES.PROTOCOL_MODE = self.db.global.bank["protocolMode"]
 
@@ -85,6 +90,20 @@ function TOGBankClassic_Options:Init()
 				end,
 				get = function()
 					return self.db.global.bank["logLevel"]
+				end,
+			},
+			["commDebug"] = {
+				order = 2.5,
+				type = "toggle",
+				width = "full",
+				name = "Show Communication Debug",
+				desc = "Shows detailed protocol communication messages (only when Debug level is active)",
+				set = function(_, v)
+					self.db.global.bank["commDebug"] = v
+					TOGBankClassic_Output:SetCommDebug(v)
+				end,
+				get = function()
+					return self.db.global.bank["commDebug"]
 				end,
 			},
 			["protocolMode"] = {

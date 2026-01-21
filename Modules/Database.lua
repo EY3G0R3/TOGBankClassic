@@ -101,6 +101,30 @@ function TOGBankClassic_Database:Load(name)
 	if not db.requestLogApplied then
 		db.requestLogApplied = {}
 	end
+
+	-- v0.8.0: Migrate old alt data to ensure slots fields exist
+	-- Characters scanned before v0.6.0 may have bank/bags without slots
+	if db.alts then
+		for name, alt in pairs(db.alts) do
+			if type(alt) == "table" then
+				if alt.bank and not alt.bank.slots then
+					alt.bank.slots = { count = 0, total = 0 }
+					TOGBankClassic_Output:Debug("Migrated alt data: initialized bank.slots for %s", name)
+				end
+				if alt.bags and not alt.bags.slots then
+					alt.bags.slots = { count = 0, total = 0 }
+					TOGBankClassic_Output:Debug("Migrated alt data: initialized bags.slots for %s", name)
+				end
+				-- v0.8.0: Compute inventory hash for alts that don't have one
+				-- This enables pull-based protocol for existing alt data
+				if not alt.inventoryHash and alt.bank and alt.bags then
+					local money = alt.money or 0
+					alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
+					TOGBankClassic_Output:Debug("Migrated alt data: computed inventory hash for %s (hash=%d)", name, alt.inventoryHash)
+				end
+			end
+		end
+	end
 	if not db.requestsTombstones then
 		db.requestsTombstones = {}
 	end

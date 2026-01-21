@@ -8,98 +8,146 @@
 
 ---
 
-## 🔄 NEW: Pull-Based Protocol Redesign (v0.8.0)
+## 🔄 Pull-Based Protocol with Inventory Hashing (v0.8.0)
 
-**Status:** In Progress - Foundation Complete  
+**Status:** ✅ Core Implementation Complete, Testing Phase  
 **Branch:** feature/pull-based-delta  
-**Goal:** Replace snapshot-based delta sync with pull-based handshake protocol
+**Goal:** Hash-based inventory comparison with automatic pull sync
+
+### Architecture Overview
+
+**Pull-Based Protocol Flow:**
+1. **Banker shares** (`/togbank share`) → Broadcasts both legacy and delta versions
+2. **Version broadcast** (`togbank-v` + `togbank-dv`) → All alts with hashes
+3. **Hash comparison** → Receiver compares inventory hashes
+4. **Selective query** → Receiver requests only mismatched data
+5. **Data response** → Sender provides full sync or delta
+6. **Integration** → Receiver applies and updates local database
+
+### Inventory Hashing System ✅ COMPLETE
+
+**Purpose:** Detect real inventory changes without full data comparison
+
+**Implementation:**
+- `ComputeInventoryHash(bank, bags, money)` - Generates numeric hash of inventory state
+- Hash computed on every bank scan (BANKFRAME_CLOSED event)
+- Stored in `alt.inventoryHash` field alongside version timestamp
+- Used for pull-based comparison instead of version timestamps
+
+**Benefits:**
+- Detects actual inventory changes (version can change without inventory change)
+- More reliable than version timestamps for sync decisions
+- Minimal overhead (single number vs full inventory comparison)
+
+### Broadcast System ✅ COMPLETE
+
+**Legacy Version Broadcast (`togbank-v`):**
+- Contains version timestamps only (backwards compatible)
+- Sent to all clients (delta and non-delta)
+- Used by legacy clients for version comparison
+
+**Delta Version Broadcast (`togbank-dv`):**
+- Contains version timestamps AND inventory hashes
+- Only sent to delta-capable clients
+- Enables hash-based pull decisions
+- Format: `data.alts[name] = {version = X, hash = Y}`
+
+**Dual Broadcast Implementation:**
+- `/togbank share` command now sends BOTH broadcasts
+- `Events:Sync()` - Sends `togbank-v` (legacy)
+- `Events:SyncDeltaVersion()` - Sends `togbank-dv` (with hashes)
+- Ensures compatibility with mixed client versions
+
+### Hash Comparison Logic ✅ COMPLETE
+
+**Pull Decision Algorithm (Chat.lua OnCommReceived):**
+```lua
+if theirHash then
+    if not ourHash then
+        -- They have data, we don't → query
+        shouldQuery = true
+    elseif theirHash ~= ourHash then
+        -- Hashes differ → query for update
+        shouldQuery = true
+    end
+    -- else: hashes match → no query needed
+elseif not ourVersion or theirVersion > ourVersion then
+    -- No hash available, fall back to version comparison
+    shouldQuery = true
+end
+```
+
+**Handles:**
+- Fresh sync (we have no data)
+- Inventory changes (hash mismatch)
+- Missing hashes (fall back to version comparison)
+- Identical inventory (skip query)
+
+### Data Migration ✅ COMPLETE
+
+**Hash Migration System (Database.lua InitializeDatabase):**
+- Computes hashes for existing alt data on addon load
+- Processes all alts with bank + bags data
+- Uses same `ComputeInventoryHash()` as bank scan
+- One-time migration, subsequent hashes from bank scans
+- Debug output: "Migrated alt data: computed inventory hash for X (hash=Y)"
+
+**Slots Migration:**
+- Initializes missing `bank.slots` and `bags.slots` fields
+- Prevents UI crashes when accessing slot data
+- Sets default: `{count = 0, total = 0}`
+
+### Protocol Capabilities ✅ SIMPLIFIED
+
+**Delta Support Check:**
+- Removed guild support threshold requirement
+- Delta protocol always enabled if `PROTOCOL.SUPPORTS_DELTA = true`
+- No population percentage checks
+- Works immediately without waiting for guild adoption
+
+**Old Behavior (REMOVED):**
+```lua
+// Check guild support level
+local supportRatio = GetGuildDeltaSupport()
+return supportRatio >= 0.05  // Required 5% of guild
+```
+
+**New Behavior:**
+```lua
+// Delta always enabled if feature flag is on
+return PROTOCOL.SUPPORTS_DELTA
+```
 
 ### Progress Summary
-- ✅ New message types registered (togbank-rr, togbank-state, togbank-nochange, togbank-d3, togbank-d4)
-- ✅ Link removal implemented for full sync (5-7KB bandwidth savings)
-- ✅ Link removal implemented for deltas (togbank-d4)
-- ✅ Link reconstruction on receiver implemented
-- ✅ Backwards compatibility via dual-send (togbank-d + togbank-d3, togbank-d2 + togbank-d4)
-- ✅ User-configurable protocol mode (AUTO/LEGACY_ONLY/NEW_ONLY)
-- ✅ Protocol mode persists across reloads
-- ✅ Version management fix (only updates on actual inventory changes)
-- ✅ Remove baseVersion from deltas (8 bytes saved)
-- ✅ Minimal removes format (4 bytes per removed item saved)
-- ✅ Pull-based handshake flow (7-step protocol implemented)
+- ✅ New message types registered (togbank-dv, togbank-d3, togbank-d4)
+- ✅ Inventory hashing system (ComputeInventoryHash)
+- ✅ Hash broadcasting in version messages
+- ✅ Hash comparison logic for pull decisions
+- ✅ Data migration for existing alts
+- ✅ Dual broadcast system (legacy + delta)
+- ✅ `/togbank share` command updated
+- ✅ Guild support threshold removed
+- ✅ Link removal for bandwidth savings
+- ✅ Backwards compatibility maintained
+- ✅ Fast-fill feature (auto-request missing alts)
+- ✅ Link reconstruction with UI refresh
+- ✅ Message priority optimization (NORMAL for queries/broadcasts)
+- ✅ Async item loading with UI updates
 
-### Core Philosophy
-- Receiver states what they have, sender computes the diff
-- If receiver has NO data → send everything
-- If receiver has SOME data → ALWAYS send delta
-- No thresholds, no size checks, no fallbacks, no stupid rules
+### Bug Fixes Completed
+- ✅ [PROTO-001] Delta validation accepts link-less deltas
+- ✅ [UI-001] Inventory UI handles missing slots data
+- ✅ [UI-002] Item links now appear after async reconstruction (UI refresh added)
+- ✅ [DATA-001] Hash migration for existing alt data
+- ✅ Hash comparison handles missing data (nil checks)
+- ✅ Pull protocol triggers queries correctly
+- ✅ Message priority issues (changed BULK to NORMAL for reliability)
 
-### 7-Step Flow
-1. **Banker announces** (GUILD: togbank-dv) - "I'm the banker, I'm online"
-2. **Non-banker requests** (WHISPER if banker known, GUILD if unknown: togbank-r) - "I need data for alt X"
-3. **Responder acknowledges** (WHISPER: togbank-rr with isBanker flag) - "I can help, send me your state"
-4. **Non-banker sends state** (WHISPER: togbank-state) - `{[itemID] = quantity}` only
-5. **Banker computes response** - full sync / delta / no-change
-6. **Banker sends data** (GUILD: togbank-d or togbank-d2) - optimized messages
-7. **Non-banker applies data** - **reconstructs Links locally and stores them in database**
-
-### Channel Assignment
-- **GUILD:** Broadcasts (togbank-v, togbank-dv), Data transfers (togbank-d, togbank-d2), Query fallback
-- **WHISPER:** Handshakes only (togbank-r, togbank-rr, togbank-state, togbank-nochange)
-- **Rule:** NO DATA SYNC IN WHISPER, ONLY HANDSHAKES
-
-### Version Management (CRITICAL)
-- Versions = Unix timestamps from `GetServerTime()`
-- ONLY created when actual inventory changes occur
-- NEVER updated on: queries, responses, no-change replies
-- Prevents version drift from communication
-
-### Message Optimizations
-
-#### 1. Remove Links from ALL Messages ✅ COMPLETE
-- **Status:** ✅ Fully implemented for both full sync and deltas
-- **Implementation:** 
-  - ✅ `StripItemLinks()` function to remove Link fields
-  - ✅ `StripAltLinks()` for entire alt structure (full sync)
-  - ✅ `StripDeltaLinks()` for delta structure (add/modify/remove arrays)
-  - ✅ `ReconstructItemLinks()` rebuilds Links after receiving
-  - ✅ Dual-send for full sync: togbank-d (with Links) + togbank-d3 (without Links)
-  - ✅ Dual-send for deltas: togbank-d2 (with Links) + togbank-d4 (without Links)
-  - ✅ Protocol mode configuration (AUTO/LEGACY_ONLY/NEW_ONLY)
-- **NEW:** Only send `{ ID = itemID, Count = count }`
-- **Receiver reconstructs Link locally:**
-  ```lua
-  local itemLink = select(2, GetItemInfo(itemID))
-  item.Link = itemLink  -- Store for UI display and functionality
-  ```
-- **Savings:** 60-80 bytes × number of items = **5-7KB per sync for typical alt**
-- **Storage:** After reconstruction, store Link in local database for UI display
-
-#### 2. Remove baseVersion from Delta ✅ COMPLETE
-- **Status:** ✅ Implemented
-- **Current:** Delta includes `baseVersion` to identify what it's built against
-- **Pull-based:** Receiver explicitly states what they have, baseVersion is redundant
-- **Savings:** 8 bytes per delta
-- **Implementation:**
-  - Removed from ComputeDelta() output
-  - Removed from StripDeltaLinks() output
-  - ApplyDelta() still accepts it for backwards compatibility with v0.7.0
-  - SaveDeltaHistory() computes baseVersion from snapshot instead of using delta field
-
-#### 3. Remove Count and Link from Delta Removes ✅ COMPLETE
-- **Status:** ✅ Implemented
-- **Current:** Remove items include ID, Link, Count fields
-- **New:** Remove items only include ID field
-- **Format:** `remove = [{ ID = 12345 }, { ID = 67890 }, ...]`
-- **Savings:** 4 bytes per removed item (Count removed) + 60-80 bytes (Link already removed)
-- **Implementation:**
-  - ComputeItemDelta() only includes ID in removes
-  - ApplyItemDelta() matches by ID only (backwards compatible with old format)
-  - StripDeltaLinks() already handled minimal format correctly
-
-#### 4. State Summary Minimal
-- **Format:** Only `{[itemID] = quantity}`, no Links/bags/slots/metadata
-- **Size:** ~800 bytes for 100 items
-- **Purpose:** Minimal data for delta computation only
+### Current Features
+- **Fast-Fill**: Auto-requests missing banker alts when UI opens (delta mode only)
+- **Async Link Loading**: Items display as links become available from WoW API
+- **UI Auto-Refresh**: UI updates when data arrives and links reconstruct
+- **State Summary**: ~800 bytes for 100 items, minimal data for delta computation
 
 ### Response Prioritization
 1. THE BANKER response (authoritative)

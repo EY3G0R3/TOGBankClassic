@@ -172,7 +172,7 @@ function TOGBankClassic_Events:SyncDeltaVersion()
 	version.isBanker = isBanker
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
-	TOGBankClassic_Core:SendCommMessage("togbank-dv", data, "Guild", nil, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-dv", data, "Guild", nil, "NORMAL")
 end
 
 function TOGBankClassic_Events:PLAYER_LOGIN(_)
