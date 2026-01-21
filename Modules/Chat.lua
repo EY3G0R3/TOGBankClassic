@@ -614,6 +614,14 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		name = "deltahistory",
+		help = "show stored delta chain history for offline recovery",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Chat:PrintDeltaHistory()
+		end,
+	},
+	{
 		name = "protocol",
 		help = "show protocol version distribution across guild members",
 		expert = true,
@@ -1122,6 +1130,73 @@ function TOGBankClassic_Chat:PrintDeltaErrors()
 		end
 	end
 	TOGBankClassic_Output:Response("|cffffff00Summary:|r %d error(s) tracked, %d alt(s) affected", totalErrors, totalAlts)
+end
+
+-- Print stored delta chain history
+function TOGBankClassic_Chat:PrintDeltaHistory()
+	local guild = TOGBankClassic_Guild:GetGuild()
+	if not guild then
+		TOGBankClassic_Output:Response("Not in a guild")
+		return
+	end
+
+	local db = TOGBankClassic_Database.db.faction[guild]
+	if not db or not db.deltaHistory then
+		TOGBankClassic_Output:Response("No delta history available")
+		return
+	end
+
+	TOGBankClassic_Output:Response("|cff00ff00=== Delta Chain History ===|r")
+	
+	local totalDeltas = 0
+	local altCount = 0
+	
+	-- Count total deltas and alts
+	for altName, deltas in pairs(db.deltaHistory) do
+		altCount = altCount + 1
+		if type(deltas) == "table" then
+			totalDeltas = totalDeltas + #deltas
+		end
+	end
+	
+	if totalDeltas == 0 then
+		TOGBankClassic_Output:Response("No delta history stored yet")
+		return
+	end
+	
+	TOGBankClassic_Output:Response("|cffffff00Total:|r %d delta(s) stored for %d alt(s)", totalDeltas, altCount)
+	TOGBankClassic_Output:Response("")
+	
+	-- Show per-alt breakdown
+	for altName, deltas in pairs(db.deltaHistory) do
+		if type(deltas) == "table" and #deltas > 0 then
+			TOGBankClassic_Output:Response("|cff88ccff%s|r: %d delta(s)", altName, #deltas)
+			
+			-- Show details for each delta (newest first)
+			for i, delta in ipairs(deltas) do
+				local age = GetServerTime() - (delta.timestamp or 0)
+				local ageStr = age < 60 and string.format("%ds ago", age) 
+					or age < 3600 and string.format("%dm ago", math.floor(age / 60))
+					or string.format("%dh ago", math.floor(age / 3600))
+				
+				local changeCount = 0
+				if delta.changes then
+					if delta.changes.bank then changeCount = changeCount + 1 end
+					if delta.changes.bags then changeCount = changeCount + 1 end
+					if delta.changes.money then changeCount = changeCount + 1 end
+				end
+				
+				TOGBankClassic_Output:Response(
+					"  %d. v%d→v%d (%d change(s), %s)",
+					i,
+					delta.baseVersion or 0,
+					delta.version or 0,
+					changeCount,
+					ageStr
+				)
+			end
+		end
+	end
 end
 
 function TOGBankClassic_Chat:PrintProtocolInfo()
