@@ -7,7 +7,7 @@
 - [ ] Add mouseover tooltip for truncated item names to show full text
 - [ ] Single-click button to fulfill request and send mail with all/some items (bulk mail addon?), possibly a popup to select quantity then fill?
 - [x] ~~Optimize bank data sync communications for efficiency/speed~~ **v0.7.0: Snapshot-based delta sync implemented**
-- [ ] **v0.8.0: Pull-based delta protocol** - Further optimization with handshake-based sync
+- [x] ~~**v0.8.0: Pull-based delta protocol** - Further optimization with handshake-based sync~~ **CLOSED**
 - [ ] Display items in mail with indicator/tag showing they're in mail (not bags/bank)
 - [ ] Implement BigWigs package manager support
 - [ ] Implement version check (notify users of outdated addon)
