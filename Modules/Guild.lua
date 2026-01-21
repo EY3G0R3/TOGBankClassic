@@ -1225,11 +1225,12 @@ function TOGBankClassic_Guild:ApplyItemDelta(items, delta)
 			if removedItem and removedItem.ID and removedItem.Link then
 				local key = tostring(removedItem.ID) .. removedItem.Link
 				-- Find and remove item with matching key
-				for i, item in pairs(items) do
+				for i = #items, 1, -1 do  -- Iterate backwards to safely remove
+					local item = items[i]
 					if item and item.ID and item.Link then
 						local itemKey = tostring(item.ID) .. item.Link
 						if itemKey == key then
-							items[i] = nil
+							table.remove(items, i)
 							break
 						end
 					end
