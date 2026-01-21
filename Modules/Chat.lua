@@ -606,6 +606,14 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		name = "deltaerrors",
+		help = "show recent delta sync errors and failure counts",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Chat:PrintDeltaErrors()
+		end,
+	},
+	{
 		name = "protocol",
 		help = "show protocol version distribution across guild members",
 		expert = true,
@@ -1055,6 +1063,63 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 	if totalOps == 0 and totalBytes == 0 then
 		TOGBankClassic_Output:Response("No delta sync activity yet")
 	end
+end
+
+-- Print recent delta errors and failure counts
+function TOGBankClassic_Chat:PrintDeltaErrors()
+	local guild = TOGBankClassic_Guild:GetGuild()
+	if not guild then
+		TOGBankClassic_Output:Response("Not in a guild")
+		return
+	end
+
+	local errors = TOGBankClassic_Guild.deltaErrors
+	if not errors then
+		TOGBankClassic_Output:Response("No error tracking data available")
+		return
+	end
+	
+	-- Print header
+	TOGBankClassic_Output:Response("|cff00ff00=== Delta Sync Errors ===|r")
+	
+	-- Print recent errors
+	if errors.lastErrors and #errors.lastErrors > 0 then
+		TOGBankClassic_Output:Response("|cffffff00Recent Errors:|r (%d)", #errors.lastErrors)
+		for i, err in ipairs(errors.lastErrors) do
+			local timeStr = date("%H:%M:%S", err.timestamp or 0)
+			local typeColor = err.errorType == "VERSION_MISMATCH" and "|cffff8800" or "|cffff0000"
+			TOGBankClassic_Output:Response("  %d. %s[%s]|r |cffaaaaaa%s|r", i, typeColor, err.errorType, timeStr)
+			TOGBankClassic_Output:Response("     |cff88ccff%s|r: %s", err.altName or "Unknown", err.message or "No details")
+		end
+	else
+		TOGBankClassic_Output:Response("|cffffff00Recent Errors:|r None")
+	end
+	
+	-- Print failure counts per alt
+	if errors.failureCounts and next(errors.failureCounts) then
+		TOGBankClassic_Output:Response("|cffffff00Failure Counts by Alt:|r")
+		local sortedAlts = {}
+		for altName, count in pairs(errors.failureCounts) do
+			table.insert(sortedAlts, {name = altName, count = count})
+		end
+		table.sort(sortedAlts, function(a, b) return a.count > b.count end)
+		for _, entry in ipairs(sortedAlts) do
+			local notified = errors.notifiedAlts and errors.notifiedAlts[entry.name] and " |cffff0000(notified)|r" or ""
+			TOGBankClassic_Output:Response("  |cff88ccff%s|r: %d%s", entry.name, entry.count, notified)
+		end
+	else
+		TOGBankClassic_Output:Response("|cffffff00Failure Counts:|r None")
+	end
+	
+	-- Print summary
+	local totalErrors = #(errors.lastErrors or {})
+	local totalAlts = 0
+	if errors.failureCounts then
+		for _ in pairs(errors.failureCounts) do
+			totalAlts = totalAlts + 1
+		end
+	end
+	TOGBankClassic_Output:Response("|cffffff00Summary:|r %d error(s) tracked, %d alt(s) affected", totalErrors, totalAlts)
 end
 
 function TOGBankClassic_Chat:PrintProtocolInfo()
