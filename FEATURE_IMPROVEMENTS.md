@@ -198,6 +198,14 @@ end
 
 ### Implementation Checklist
 
+#### Config Flags (User-Selectable)
+- [ ] Add protocol selection option to addon config menu
+- [ ] `FORCE_LEGACY_PROTOCOL` - Force use of togbank-d/d2 with Links (v0.6.x compatible)
+- [ ] `FORCE_NEW_PROTOCOL` - Force use of togbank-d3/d4 without Links (v0.8.0 only)
+- [ ] `AUTO_PROTOCOL` (default) - Dual-send both formats for compatibility
+- [ ] Display current protocol mode in config UI
+- [ ] Show bandwidth savings in config UI when using new protocol
+
 #### New Messages
 - [ ] `togbank-rr` - Query reply with `{ isBanker = bool, version = timestamp }`
 - [ ] `togbank-state` - State summary `{ items = {[itemID] = count} }`

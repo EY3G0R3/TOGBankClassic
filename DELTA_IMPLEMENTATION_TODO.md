@@ -90,6 +90,18 @@
 
 ### Implementation Tasks
 
+#### Config Flags (User-Selectable Protocol)
+- [ ] Add Options.lua config section for protocol selection
+- [ ] `FORCE_LEGACY_PROTOCOL` - Only send togbank-d/d2 with Links (v0.6.x/v0.7.0 compatible)
+- [ ] `FORCE_NEW_PROTOCOL` - Only send togbank-d3/d4 without Links (v0.8.0 only, not compatible with older)
+- [ ] `AUTO_PROTOCOL` (default) - Dual-send for maximum compatibility during migration
+- [ ] Add UI dropdown in config: "Communication Protocol"
+  - Option 1: "Auto (Recommended)" - Sends both formats
+  - Option 2: "Legacy Only" - Compatible with all versions, higher bandwidth
+  - Option 3: "New Protocol Only" - Requires all guild members on v0.8.0+, maximum savings
+- [ ] Display current selection and bandwidth impact in config UI
+- [ ] Add tooltip explaining each option
+
 #### New Message Types
 - [ ] `togbank-rr` - Query reply with isBanker flag
 - [ ] `togbank-state` - Receiver sends state summary `{[itemID] = quantity}`
