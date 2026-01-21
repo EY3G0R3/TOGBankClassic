@@ -31,6 +31,17 @@
   - Operation counts and success rates
   - Average performance metrics (computation/application times)
 
+- `/togbank deltaerrors` - Show recent delta sync errors for debugging:
+  - Last 10 errors with timestamps and error types
+  - Failure counts per alt
+  - Highlights alts with repeated failures (3+)
+  - Persists across /reload
+
+- `/togbank deltahistory` - Show stored delta chain history:
+  - Delta storage per alt with version transitions
+  - Change types and ages for each delta
+  - Verifies chain replay infrastructure is working
+
 - `/togbank protocol` - Show protocol version distribution:
   - Online member protocol versions (v1 vs v2)
   - All-time protocol adoption statistics

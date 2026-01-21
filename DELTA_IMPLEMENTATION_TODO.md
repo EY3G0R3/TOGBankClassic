@@ -1064,6 +1064,70 @@ Chain replay falls back to full sync if:
 - Remote: origin/feature/delta-chain-replay ✅
 - Ready for testing and PR to main
 
+### 10.8 Diagnostic Tools ✅ COMPLETE
+**Commands Added:**
+
+1. **`/togbank deltaerrors`** - Shows recent delta sync errors
+   - Displays last 10 errors with timestamps and error types
+   - Shows failure counts per alt
+   - Highlights alts with repeated failures (3+)
+   - Color-coded: VERSION_MISMATCH (orange), other errors (red)
+   - **Persisted to database** - survives /reload
+
+2. **`/togbank deltahistory`** - Shows stored delta chain history
+   - Displays total deltas stored per alt
+   - Shows version transitions (baseVersion → version)
+   - Lists what changed (bank, bags, money)
+   - Shows age of each delta (seconds/minutes/hours ago)
+   - Helps verify SaveDeltaHistory() is working correctly
+
+**Example Output:**
+```
+/togbank deltaerrors
+=== Delta Sync Errors ===
+Recent Errors: (3)
+  1. [VERSION_MISMATCH] 14:25:30
+     Metals-Azuresong: Version mismatch: have 1768955355, delta expects 1768955969
+  2. [NO_DATA] 14:20:15
+     Galdof-OldBlanchy: No existing data for Togsquirrel-OldBlanchy
+  3. [APPLICATION_ERROR] 14:15:00
+     Metals-Azuresong: Invalid delta structure
+
+Failure Counts by Alt:
+  Metals-Azuresong: 5 (notified)
+  Galdof-OldBlanchy: 2
+
+Summary: 3 error(s) tracked, 2 alt(s) affected
+
+/togbank deltahistory
+=== Delta Chain History ===
+Total: 8 delta(s) stored for 2 alt(s)
+
+Metals-Azuresong: 5 delta(s)
+  1. v1768955355→v1768955969 (2 change(s), 5m ago)
+  2. v1768954800→v1768955355 (1 change(s), 15m ago)
+  3. v1768954200→v1768954800 (3 change(s), 25m ago)
+  4. v1768953600→v1768954200 (2 change(s), 35m ago)
+  5. v1768953000→v1768953600 (1 change(s), 45m ago)
+
+Galdof-OldBlanchy: 3 delta(s)
+  1. v1768955000→v1768955500 (1 change(s), 10m ago)
+  2. v1768954500→v1768955000 (2 change(s), 20m ago)
+  3. v1768954000→v1768954500 (1 change(s), 30m ago)
+```
+
+**Implementation Details:**
+- Chat.lua: Added PrintDeltaErrors() and PrintDeltaHistory() functions
+- Database.lua: Added deltaErrors{} to schema for persistence
+- Guild.lua: Updated error tracking to use database instead of in-memory storage
+- Commits: f3014d7 (deltaerrors), c7b7b49 (persistence), 30120d7 (deltahistory)
+
+**Benefits:**
+- Visibility into delta sync failures for debugging
+- Verify chain replay infrastructure is working
+- Identify patterns in failures (offline players, version mismatches)
+- Error tracking survives /reload (database persistence)
+
 ---
 
 ## Phase 11: Deployment & Monitoring

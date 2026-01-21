@@ -138,13 +138,22 @@ Delta chain application (adopted)
 2. Manually corrupt version data (development only)
 3. Attempt delta sync
 4. Observe error handling
+5. Check `/togbank deltaerrors` for error details
 
 **Expected Result:**
 - "Version mismatch" error logged
-- Automatic QueryAlt triggered
-- Full sync requested and received
+- Error recorded in `/togbank deltaerrors` with VERSION_MISMATCH type
+- Automatic QueryAlt triggered (or RequestDeltaChain if sender known)
+- Full sync requested and received (or delta chain applied)
 - Error recorded in deltaMetrics
 - Normal operation resumes
+
+**Diagnostic Commands:**
+```
+/togbank deltaerrors    → Shows recent errors with timestamps
+/togbank deltahistory   → Verifies delta history storage
+/togbank deltastats     → Confirms failure count incremented
+```
 
 ---
 
@@ -284,13 +293,15 @@ Delta chain application (adopted)
 
 ## Test Suite 5: User Commands
 
-### Test 5.1: All New Commands Work
-**Objective:** Verify each new command functions correctly
+### Test 5.1: All Delta Commands Work
+**Objective:** Verify each delta-related command functions correctly
 
 **Tests:**
 ```
-/togbank deltastats     → Shows statistics with no errors
-/togbank protocol       → Shows protocol distribution
+/togbank deltastats     → Shows statistics (bandwidth, operations, performance)
+/togbank deltaerrors    → Shows recent errors and failure counts
+/togbank deltahistory   → Shows stored delta chain history
+/togbank protocol       → Shows protocol version distribution
 /togbank clearsnapshots → Clears snapshots with confirmation
 /togbank forcefull      → Toggles full sync mode
 /togbank resetmetrics   → Resets metrics to zero
@@ -299,6 +310,46 @@ Delta chain application (adopted)
 **Expected Result:**
 - Each command executes without errors
 - Output is formatted correctly with colors
+- deltaerrors persists across /reload
+- deltahistory shows stored deltas with version transitions
+
+### Test 5.2: Diagnostic Commands Detail
+**Objective:** Verify diagnostic commands provide useful information
+
+**deltaerrors command:**
+- Shows last 10 errors with timestamps
+- Displays error types (VERSION_MISMATCH, NO_DATA, APPLICATION_ERROR, VALIDATION_FAILED)
+- Shows failure counts per alt
+- Highlights alts with 3+ failures (notified status)
+- Color-coded: VERSION_MISMATCH = orange, others = red
+- **Persists across /reload** (database storage)
+
+**deltahistory command:**
+- Shows total deltas stored per alt
+- Lists version transitions (baseVersion → version)
+- Shows what changed (bank, bags, money counts)
+- Displays age of each delta (seconds/minutes/hours)
+- Verifies SaveDeltaHistory() is working
+
+**Example Output:**
+```
+=== Delta Sync Errors ===
+Recent Errors: (2)
+  1. [VERSION_MISMATCH] 14:25:30
+     Metals-Azuresong: Version mismatch: have 100, delta expects 115
+  2. [NO_DATA] 14:20:15
+     Galdof-OldBlanchy: No existing data
+
+Failure Counts by Alt:
+  Metals-Azuresong: 3 (notified)
+
+=== Delta Chain History ===
+Total: 5 delta(s) stored for 1 alt(s)
+
+Metals-Azuresong: 5 delta(s)
+  1. v100→v105 (2 change(s), 5m ago)
+  2. v95→v100 (1 change(s), 15m ago)
+```
 - Data displayed matches internal state
 - State changes persist (forcefull, resetmetrics)
 
