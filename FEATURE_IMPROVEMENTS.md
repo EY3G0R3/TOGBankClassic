@@ -3,7 +3,6 @@
 **Development Note:** Use GitKraken for pushing updates to repository.
 
 ## Features
-- [ ] Right-click minimap button to open config/options
 - [ ] Move filled/completed orders to an archive tab
 - [ ] Add mouseover tooltip for truncated item names to show full text
 - [ ] Single-click button to fulfill request and send mail with all/some items (bulk mail addon?), possibly a popup to select quantity then fill?
