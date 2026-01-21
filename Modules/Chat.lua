@@ -22,6 +22,14 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	TOGBankClassic_Core:RegisterComm("togbank-d3", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
+	TOGBankClassic_Core:RegisterComm("togbank-d4", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
 	-- DELTA-006: Delta chain replay handlers
 	TOGBankClassic_Core:RegisterComm("togbank-dr", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
@@ -445,6 +453,42 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, _, sender)
 				return
 			end
 		end
+	end
+
+	-- togbank-d3: v0.8.0 Link-less full sync (same as togbank-d but without Links)
+	if prefix == "togbank-d3" then
+		if data.type == "alt" then
+			-- only accept alt data if the sender matches the claimed alt name
+			local claimed = data.name
+			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
+			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
+			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
+				allowed = true
+			end
+			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
+				or ADOPTION_STATUS.UNAUTHORIZED
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				SHARES_COLOR,
+				"bank data (v0.8.0 Link-less) about",
+				ColorPlayerName(claimedNorm) .. ". We",
+				allowed and "accept it." or "do not accept it.",
+				FormatSyncStatus(status)
+			)
+			if allowed then
+				-- ReceiveAltData already applied/rejected; nothing else to do.
+			else
+				-- ignore spoofed alt data
+				return
+			end
+		end
+	end
+
+	-- togbank-d4: v0.8.0 Link-less delta (future - not yet implemented)
+	if prefix == "togbank-d4" then
+		-- TODO: Implement Link-less delta handling
+		self:Debug(">", ColorPlayerName(sender), SHARES_COLOR, "togbank-d4 (not yet implemented)")
 	end
 
 	if prefix == "togbank-d2" then

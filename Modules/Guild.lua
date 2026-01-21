@@ -850,9 +850,9 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 			-- Send full sync (strip Links for v0.8.0)
 			local strippedAlt = self:StripAltLinks(currentAlt)
 			local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
-			TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
+			TOGBankClassic_Core:SendCommMessage("togbank-d3", data, "Guild", nil, "BULK", OnChunkSent)
 			
-			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes, Links stripped)", norm, string.len(data or ""))
+			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d3 (%d bytes, Links stripped)", norm, string.len(data or ""))
 			
 			-- Track metrics
 			if self.Info and self.Info.name then
@@ -867,9 +867,9 @@ function TOGBankClassic_Guild:SendAltData(name, force)
 			-- No previous snapshot (first sync), send full sync (strip Links for v0.8.0)
 			local strippedAlt = self:StripAltLinks(currentAlt)
 			local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
-			TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK", OnChunkSent)
+			TOGBankClassic_Core:SendCommMessage("togbank-d3", data, "Guild", nil, "BULK", OnChunkSent)
 			
-			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d (%d bytes, Links stripped)", norm, string.len(data or ""))
+			TOGBankClassic_Output:Debug("Sent full sync for %s via togbank-d3 (%d bytes, Links stripped)", norm, string.len(data or ""))
 			
 			-- Track metrics
 			if self.Info and self.Info.name then
