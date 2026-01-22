@@ -42,57 +42,7 @@
 
 ## Open Bugs
 
-### 🟠 HIGH
-
-#### 🟠 [ITEM-001] Item.Aggregate crashes when item.Count is nil
-
-**Severity:** 🟠 HIGH  
-**Category:** Database / Error Handling  
-**Reporter:** User (BugSack error)  
-**Date Reported:** 2026-01-22  
-**Status:** 🟠 OPEN - Initial fix did not resolve issue  
-**Assigned To:** Development Team
-
-**Description:**
-The `Item:Aggregate()` function crashes with "attempt to perform arithmetic on field 'Count' (a nil value)" when processing items that have nil Count fields. This occurs when opening the inventory UI and building search data.
-
-**Latest Error (after initial fix attempt):**
-```
-7x TOGBankClassic/Modules/Item.lua:119: attempt to perform arithmetic on field 'Count' (a nil value)
-```
-
-**Root Cause:**
-Initial fix added validation for `v.Count`, but the issue persists. The problem may be that `item.Count` (the already-stored item) is nil, not just `v.Count`. When an item with nil Count is stored via `items[key] = v`, subsequent aggregations will try to access `item.Count` which is also nil.
-
-**Current Code (Item.lua:103-119):**
-```lua
-if items[key] then
-    local item = items[key]
-    items[key] = { ID = item.ID, Count = item.Count + v.Count, Link = item.Link }  -- ← CRASH: item.Count might be nil
-else
-    items[key] = v
-end
-```
-
-**Issue Analysis:**
-Even with `not v.Count` validation, if an item somehow has Count=nil and gets stored in the first pass (`items[key] = v`), then when a second item with the same key arrives, the aggregation line `item.Count + v.Count` will crash because `item.Count` is nil.
-
-**Next Steps:**
-1. Add defensive programming to handle nil Count in both `item` and `v`
-2. Use default value (1 or 0) for missing Count fields
-3. Consider adding debug logging to identify where nil Count items originate
-
-**Proposed Fix v2:**
-```lua
-if items[key] then
-    local item = items[key]
-    local itemCount = item.Count or 0  -- Defensive: handle nil item.Count
-    local vCount = v.Count or 0        -- Defensive: handle nil v.Count
-    items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link }
-else
-    items[key] = v
-end
-```
+*No open bugs at this time.*
 
 ---
 
@@ -100,7 +50,64 @@ end
 
 ### 🟠 HIGH - All Resolved
 
-*None yet.*
+#### ✅ [ITEM-001] Item.Aggregate crashes when item.Count is nil
+
+**Severity:** 🟠 HIGH  
+**Category:** Database / Error Handling  
+**Reporter:** User (BugSack error)  
+**Date Reported:** 2026-01-22  
+**Status:** ✅ CLOSED  
+**Fixed In:** v0.8.0  
+**Assigned To:** Development Team
+
+**Description:**
+The `Item:Aggregate()` function crashed with "attempt to perform arithmetic on field 'Count' (a nil value)" when processing items that have nil Count fields. This occurred when opening the inventory UI and building search data.
+
+**Error Message:**
+```
+7x TOGBankClassic/Modules/Item.lua:119: attempt to perform arithmetic on field 'Count' (a nil value)
+[TOGBankClassic/Modules/Item.lua]:119: in function 'Aggregate'
+[TOGBankClassic/Modules/UI/Search.lua]:365: in function 'BuildSearchData'
+[TOGBankClassic/Modules/UI/Inventory.lua]:150: in function 'DrawContent'
+```
+
+**Root Cause:**
+The aggregation logic had two issues:
+1. Initial validation only checked `v.Count` but not `item.Count` (the already-stored item)
+2. When storing items with `items[key] = v`, items with nil Count would be stored as-is
+3. Subsequent aggregations would crash when trying `item.Count + v.Count` if either was nil
+
+Even with validation to skip items without Count, previously stored items from old data could still have nil Count fields, causing crashes during aggregation.
+
+**Fix Applied (v2):**
+Added defensive programming to handle nil Count on both sides of aggregation in Item.lua:
+```lua
+if items[key] then
+    local item = items[key]
+    -- Defensive: use default value if Count is missing
+    local itemCount = item.Count or 1
+    local vCount = v.Count or 1
+    items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link }
+else
+    -- Ensure stored item has Count field
+    items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link }
+end
+```
+
+**Fix Iterations:**
+1. **v1 (Commit 29f0c41):** Added `not v.Count` validation to skip malformed items - Did NOT resolve issue
+2. **v2 (Commit 3e2eec4):** Added defensive nil checks with default value (1) for both `item.Count` and `v.Count` - ✅ RESOLVED
+
+**Testing:**
+- ✅ In-game testing confirmed crash no longer occurs
+- ✅ UI opens successfully even with corrupted/old item data
+- ✅ Items with missing Count field now default to 1
+
+**Resolution:**
+Applied defensive programming approach using default value of 1 for any nil Count fields during aggregation. This handles both new items with missing Count and previously stored items from old data structures.
+
+**Verified By:** User in-game testing  
+**Closed:** 2026-01-22
 
 ---
 
