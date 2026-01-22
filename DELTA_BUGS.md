@@ -40,6 +40,98 @@
 
 ---
 
+## Open Bugs
+
+### 🟠 HIGH
+
+#### 🟠 [ITEM-001] Item.Aggregate crashes when item.Count is nil
+
+**Severity:** 🟠 HIGH  
+**Category:** Database / Error Handling  
+**Reporter:** User (BugSack error)  
+**Date Reported:** 2026-01-22  
+**Status:** 🟠 OPEN  
+**Assigned To:** TBD
+
+**Description:**
+The `Item:Aggregate()` function crashes with "attempt to perform arithmetic on field 'Count' (a nil value)" when processing items that have nil Count fields. This occurs when opening the inventory UI and building search data.
+
+**Error Message:**
+```
+4x TOGBankClassic/Modules/Item.lua:119: attempt to perform arithmetic on field 'Count' (a nil value)
+[TOGBankClassic/Modules/Item.lua]:119: in function 'Aggregate'
+[TOGBankClassic/Modules/UI/Search.lua]:365: in function 'BuildSearchData'
+[TOGBankClassic/Modules/UI/Inventory.lua]:150: in function 'DrawContent'
+[TOGBankClassic/Modules/UI/Inventory.lua]:45: in function 'Open'
+[TOGBankClassic/Modules/UI/Inventory.lua]:29: in function 'Toggle'
+[TOGBankClassic/Modules/UI/Minimap.lua]:19: in function 'OnClick'
+```
+
+**Stack Trace:**
+1. User clicks minimap button to open inventory UI
+2. `Inventory:Open()` calls `Inventory:DrawContent()`
+3. `DrawContent()` calls `Search:BuildSearchData()`
+4. `BuildSearchData()` calls `Item:Aggregate()` to combine bank and bag items
+5. `Aggregate()` tries to do `item.Count + v.Count` on line 119
+6. One or both Count fields is nil, causing arithmetic error
+
+**Affected Code (Item.lua:103-119):**
+```lua
+function TOGBankClassic_Item:Aggregate(a, b)
+	local items = {}
+	if a then
+		for _, v in pairs(a) do
+			if not v or not v.ID or not v.Link then
+				-- Skip malformed entries
+			else
+				local key = v.ID .. v.Link
+				if items[key] then
+					local item = items[key]
+					items[key] = { ID = item.ID, Count = item.Count + v.Count, Link = item.Link }  -- ← Line 119: CRASH HERE
+				else
+					items[key] = v
+				end
+			end
+		end
+	end
+	-- Similar code for 'b' parameter...
+end
+```
+
+**Root Cause:**
+The validation on line 97 checks if `v.ID` and `v.Link` exist, but does NOT check if `v.Count` exists before using it in arithmetic operations. Items with missing Count fields will pass validation but crash on aggregation.
+
+**Reproduction:**
+1. Have alt data with items that have nil Count field (possibly from old data or corrupted sync)
+2. Open TOGBank inventory UI
+3. Crash occurs when aggregating items
+
+**Impact:**
+- Prevents opening inventory UI for users with affected data
+- Affects multiple alts based on error locals showing many items
+- No workaround other than deleting/resetting database
+
+**Proposed Fix:**
+Add Count validation to the malformed entry check:
+```lua
+if not v or not v.ID or not v.Link or not v.Count then
+	-- Skip malformed entries
+else
+	-- Process item...
+end
+```
+
+OR use defensive programming with default value:
+```lua
+local count = v.Count or 1
+items[key] = { ID = item.ID, Count = item.Count + count, Link = item.Link }
+```
+
+**Priority Justification:**
+HIGH severity because it prevents UI access and has no user workaround except database reset. However, not CRITICAL because it doesn't affect core sync functionality and only impacts users with corrupted/old data.
+
+---
+
 ## Resolved Bugs (2026-01-21)
 
 ### 🔴 CRITICAL - All Resolved
