@@ -875,10 +875,11 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	
 	-- v0.8.0: Delta mode - ONLY use hashes, no version fallback
 	if self:ShouldUseDelta() then
-		-- If current alt doesn't have a hash, we can't use delta mode
+		-- If current alt doesn't have a hash, send full data (might be from pre-hash version)
 		if not currentHash then
-			TOGBankClassic_Output:DebugComm("DELTA MODE ERROR: Current alt missing hash (current=%s)", tostring(currentHash))
-			TOGBankClassic_Output:Debug("Cannot respond in delta mode for %s (missing current hash)", norm)
+			TOGBankClassic_Output:DebugComm("DELTA MODE: Current alt missing hash - sending full data for %s", norm)
+			TOGBankClassic_Output:Debug("Sending full data to %s for %s (responder has no hash)", requester, norm)
+			self:SendAltData(norm)
 			return
 		end
 		
