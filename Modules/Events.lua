@@ -72,6 +72,23 @@ function TOGBankClassic_Events:RegisterEvents()
 		end)
 	end
 
+	-- Hook Send Mail tab to auto-open Requests window for bank alts (like BulkMail)
+	if MailFrameTab2 and not MailFrameTab2.togBankHooked then
+		MailFrameTab2.togBankHooked = true
+		MailFrameTab2:HookScript("OnClick", function()
+			local player = TOGBankClassic_Guild:GetNormalizedPlayer()
+			if player and TOGBankClassic_Guild:IsBank(player) then
+				C_Timer.After(0.1, function()
+					if TOGBankClassic_UI_Requests.isOpen then
+						TOGBankClassic_UI_Requests:DrawContent()
+					else
+						TOGBankClassic_UI_Requests:Open()
+					end
+				end)
+			end
+		end)
+	end
+
 	self:SetTimer()
 	---START CHANGES
 	self:SetShareTimer()
@@ -212,19 +229,6 @@ function TOGBankClassic_Events:MAIL_SHOW(_)
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()
-
-	-- Auto-open Requests window for banker alts (or refresh if already open)
-	-- Delay slightly to ensure MailFrame is fully visible
-	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
-	if player and TOGBankClassic_Guild:IsBank(player) then
-		C_Timer.After(0.1, function()
-			if TOGBankClassic_UI_Requests.isOpen then
-				TOGBankClassic_UI_Requests:DrawContent()
-			else
-				TOGBankClassic_UI_Requests:Open()
-			end
-		end)
-	end
 end
 
 function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
