@@ -42,7 +42,57 @@
 
 ## Open Bugs
 
-*No open bugs at this time.*
+### 🟠 HIGH
+
+#### 🟠 [ITEM-001] Item.Aggregate crashes when item.Count is nil
+
+**Severity:** 🟠 HIGH  
+**Category:** Database / Error Handling  
+**Reporter:** User (BugSack error)  
+**Date Reported:** 2026-01-22  
+**Status:** 🟠 OPEN - Initial fix did not resolve issue  
+**Assigned To:** Development Team
+
+**Description:**
+The `Item:Aggregate()` function crashes with "attempt to perform arithmetic on field 'Count' (a nil value)" when processing items that have nil Count fields. This occurs when opening the inventory UI and building search data.
+
+**Latest Error (after initial fix attempt):**
+```
+7x TOGBankClassic/Modules/Item.lua:119: attempt to perform arithmetic on field 'Count' (a nil value)
+```
+
+**Root Cause:**
+Initial fix added validation for `v.Count`, but the issue persists. The problem may be that `item.Count` (the already-stored item) is nil, not just `v.Count`. When an item with nil Count is stored via `items[key] = v`, subsequent aggregations will try to access `item.Count` which is also nil.
+
+**Current Code (Item.lua:103-119):**
+```lua
+if items[key] then
+    local item = items[key]
+    items[key] = { ID = item.ID, Count = item.Count + v.Count, Link = item.Link }  -- ← CRASH: item.Count might be nil
+else
+    items[key] = v
+end
+```
+
+**Issue Analysis:**
+Even with `not v.Count` validation, if an item somehow has Count=nil and gets stored in the first pass (`items[key] = v`), then when a second item with the same key arrives, the aggregation line `item.Count + v.Count` will crash because `item.Count` is nil.
+
+**Next Steps:**
+1. Add defensive programming to handle nil Count in both `item` and `v`
+2. Use default value (1 or 0) for missing Count fields
+3. Consider adding debug logging to identify where nil Count items originate
+
+**Proposed Fix v2:**
+```lua
+if items[key] then
+    local item = items[key]
+    local itemCount = item.Count or 0  -- Defensive: handle nil item.Count
+    local vCount = v.Count or 0        -- Defensive: handle nil v.Count
+    items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link }
+else
+    items[key] = v
+end
+```
 
 ---
 
@@ -50,53 +100,7 @@
 
 ### 🟠 HIGH - All Resolved
 
-#### ✅ [ITEM-001] Item.Aggregate crashes when item.Count is nil
-
-**Severity:** 🟠 HIGH  
-**Category:** Database / Error Handling  
-**Reporter:** User (BugSack error)  
-**Date Reported:** 2026-01-22  
-**Status:** ✅ CLOSED  
-**Fixed In:** v0.8.0  
-**Assigned To:** Development Team
-
-**Description:**
-The `Item:Aggregate()` function crashed with "attempt to perform arithmetic on field 'Count' (a nil value)" when processing items that have nil Count fields. This occurred when opening the inventory UI and building search data.
-
-**Error Message:**
-```
-4x TOGBankClassic/Modules/Item.lua:119: attempt to perform arithmetic on field 'Count' (a nil value)
-[TOGBankClassic/Modules/Item.lua]:119: in function 'Aggregate'
-[TOGBankClassic/Modules/UI/Search.lua]:365: in function 'BuildSearchData'
-[TOGBankClassic/Modules/UI/Inventory.lua]:150: in function 'DrawContent'
-[TOGBankClassic/Modules/UI/Inventory.lua]:45: in function 'Open'
-[TOGBankClassic/Modules/UI/Inventory.lua]:29: in function 'Toggle'
-[TOGBankClassic/Modules/UI/Minimap.lua]:19: in function 'OnClick'
-```
-
-**Root Cause:**
-The validation checked if `v.ID` and `v.Link` exist, but did NOT check if `v.Count` exists before using it in arithmetic operations. Items with missing Count fields would pass validation but crash on aggregation.
-
-**Fix Applied:**
-Added Count validation to the malformed entry check in Item.lua lines 97 and 113:
-```lua
-if not v or not v.ID or not v.Link or not v.Count then
-	-- Skip malformed entries (missing required fields)
-else
-	-- Process item...
-end
-```
-
-**Testing:**
-- ✅ Code review confirms Count is now validated before arithmetic
-- ✅ Malformed items will be skipped instead of causing crashes
-- ✅ UI can now open even with corrupted item data
-
-**Resolution:**
-Added `not v.Count` to validation checks in both item processing loops. Items missing Count field will now be skipped silently instead of crashing the UI.
-
-**Verified By:** Code review  
-**Closed:** 2026-01-22
+*None yet.*
 
 ---
 

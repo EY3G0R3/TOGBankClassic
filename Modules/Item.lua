@@ -94,15 +94,19 @@ function TOGBankClassic_Item:Aggregate(a, b)
 	local items = {}
 	if a then
 		for _, v in pairs(a) do
-			if not v or not v.ID or not v.Link or not v.Count then
+			if not v or not v.ID or not v.Link then
 				-- Skip malformed entries (missing required fields)
 			else
 				local key = v.ID .. v.Link
 				if items[key] then
 					local item = items[key]
-					items[key] = { ID = item.ID, Count = item.Count + v.Count, Link = item.Link }
+					-- Defensive: use default value if Count is missing
+					local itemCount = item.Count or 1
+					local vCount = v.Count or 1
+					items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link }
 				else
-					items[key] = v
+					-- Ensure stored item has Count field
+					items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link }
 				end
 			end
 		end
@@ -110,15 +114,19 @@ function TOGBankClassic_Item:Aggregate(a, b)
 
 	if b then
 		for _, v in pairs(b) do
-			if not v or not v.ID or not v.Link or not v.Count then
+			if not v or not v.ID or not v.Link then
 				-- Skip malformed entries (missing required fields)
 			else
 				local key = v.ID .. v.Link
 				if items[key] then
 					local item = items[key]
-					items[key] = { ID = item.ID, Count = item.Count + v.Count, Link = item.Link }
+					-- Defensive: use default value if Count is missing
+					local itemCount = item.Count or 1
+					local vCount = v.Count or 1
+					items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link }
 				else
-					items[key] = v
+					-- Ensure stored item has Count field
+					items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link }
 				end
 			end
 		end
