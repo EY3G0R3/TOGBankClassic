@@ -25,13 +25,19 @@ function TOGBankClassic_UI:EventHandler(self, event, ...)
 		if IsShiftKeyDown() then
 			ChatEdit_InsertLink(self.link)
 		elseif IsControlKeyDown() then
-			DressUpItemLink(self.link)
+			if self.link then
+				DressUpItemLink(self.link)
+			end
 		else
-			PickupItem(self.link)
+			if self.link then
+				PickupItem(self.link)
+			end
 		end
 	end
 	if event == "OnDragStart" then
-		PickupItem(self.link)
+		if self.link then
+			PickupItem(self.link)
+		end
 	end
 end
 

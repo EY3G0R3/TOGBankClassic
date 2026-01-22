@@ -1,10 +1,12 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol  
-**Last Updated:** January 21, 2026 (Evening)  
+**Last Updated:** January 22, 2026  
 **Status:** Testing Phase - Core Protocol Operational
 
-**Recent Fixes (2026-01-21):**
+**Recent Fixes (2026-01-22):**
+- ✅ [ADDON-001] Nil itemLink handling - Added defensive nil checks throughout
+- ✅ [DELTA-007] TriggerCallback method missing - Replaced with direct UI refresh
 - ✅ [PROTO-001] Delta validation now accepts link-less deltas without baseVersion
 - ✅ [UI-001] Inventory UI handles missing slots data gracefully
 - ✅ [UI-002] Item links now display after async reconstruction (UI refresh fixed)
@@ -49,6 +51,194 @@
 ## Resolved Bugs (2026-01-22)
 
 ### 🟠 HIGH - All Resolved
+
+#### ✅ [ADDON-001] Nil itemLink passed to Pawn/BagBrother causes errors
+
+**Severity:** 🟠 HIGH  
+**Category:** Error Handling / Addon Compatibility  
+**Reporter:** User (BugSack error)  
+**Date Reported:** 2026-01-22  
+**Status:** ✅ CLOSED  
+**Fixed In:** v0.8.0  
+**Assigned To:** Development Team
+
+**Description:**
+When BagBrother addon updates the bank UI, it calls Pawn addon to display upgrade arrows, but encounters nil item links. While this is primarily a BagBrother/Pawn interaction issue, TOGBankClassic needed to add defensive nil checks to prevent propagating nil values to WoW API functions and other addons.
+
+**Error Message:**
+```
+2x bad argument #1 to '?' (Usage: local itemName, itemLink, itemQuality, itemLevel, itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture, sellPrice, classID, subclassID, bindTy
+[Pawn/Pawn.lua]:5965: in function <Pawn/Pawn.lua:5960>
+[Pawn/Pawn.lua]:5952: in function 'PawnShouldItemLinkHaveUpgradeArrow'
+[BagBrother/core/classes/item.lua]:288: in function 'IsUpgrade'
+[BagBrother/core/classes/item.lua]:211: in function 'UpdateUpgradeIcon'
+```
+
+**Stack Trace Context:**
+Error occurs when opening bank → BagBrother UI updates → Pawn checks for upgrades → nil itemLink passed
+
+**Locals:**
+```
+ItemLink = nil
+CheckLevel = nil
+PawnIsInitialized = true
+```
+
+**Root Cause:**
+Item links can be nil when:
+1. Item slots are empty
+2. Item data hasn't loaded from cache yet
+3. Desync between cached data and actual bank contents
+4. `GetItemInfo()` returns nil for uncached items
+
+TOGBankClassic was calling WoW API functions without checking for nil item links, which could contribute to error propagation.
+
+**Fix Applied:**
+Added comprehensive nil checks throughout TOGBankClassic in 6 files:
+
+**1. Item.lua:**
+- Added nil check in `GetInfo()` before calling `GetItemInfo()`
+- Added check for nil name return from `GetItemInfo()`
+- Added nil check in `GetItems()` to skip items with failed info loading
+- Added nil check in `IsUnique()` to safely handle nil links
+
+**2. Mail.lua:**
+- Enhanced nil checking for `GetInboxItemLink()` results
+- Added check for both nil link and nil name from `GetItemInfo()`
+
+**3. Guild.lua:**
+- Improved nil checking in `ReconstructItemLinks()` for item validation
+- Added item existence check before accessing properties
+
+**4. UI.lua:**
+- Added nil check before calling `DressUpItemLink()`
+- Added nil check before calling `PickupItem()` in drag handlers
+
+**5. UI/Mail.lua:**
+- Already had nil checks, validated they're sufficient
+
+**6. UI/Search.lua:**
+- Added nil checks for item link search operations
+- Added validation for `GetItemName()` results
+- Added check before creating `Item` object from link
+
+**Example Fix (Item.lua GetInfo):**
+```lua
+function TOGBankClassic_Item:GetInfo(id, link)
+	if not link then
+		return nil
+	end
+	
+	local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(link)
+	if not name then
+		return nil
+	end
+	
+	local equip = C_Item.GetItemInventoryTypeByID(id)
+	-- ... rest of function
+end
+```
+
+**Testing:**
+- ✅ Added defensive checks at all item data access points
+- ✅ Functions now gracefully handle nil item links
+- ✅ No nil values propagated to WoW API or other addons
+- ✅ UI handles missing item data without errors
+
+**Impact:**
+Prevents TOGBankClassic from contributing to error spam when other addons (like BagBrother) encounter nil item data. Makes the addon more robust when dealing with incomplete or loading item information.
+
+**Resolution:**
+Applied defensive programming throughout the codebase to check for nil item links and names before passing to WoW API functions or other processing. This ensures graceful degradation when item data is unavailable.
+
+**Verified By:** Code review and error path analysis  
+**Closed:** 2026-01-22
+
+---
+
+#### ✅ [DELTA-007] TriggerCallback method does not exist
+
+**Severity:** 🟠 HIGH  
+**Category:** Delta Application / UI Refresh  
+**Reporter:** User (BugSack error)  
+**Date Reported:** 2026-01-22  
+**Status:** ✅ CLOSED  
+**Fixed In:** v0.8.0  
+**Assigned To:** Development Team
+
+**Description:**
+After successfully applying a delta update, `ApplyDelta()` attempts to trigger a UI refresh by calling `TOGBankClassic_Events:TriggerCallback()`, but this method doesn't exist in the Events module, causing an error.
+
+**Error Message:**
+```
+20x TOGBankClassic/Modules/Guild.lua:1940: attempt to call method 'TriggerCallback' (a nil value)
+```
+
+**Stack Trace:**
+```
+[TOGBankClassic/Modules/Guild.lua]:1940: in function 'ApplyDelta'
+[TOGBankClassic/Modules/Chat.lua]:836: in function 'OnCommReceived'
+[TOGBankClassic/Modules/Chat.lua]:24: in function <TOGBankClassic/Modules/Chat.lua:23>
+[Ace3/CallbackHandler-1.0-8/CallbackHandler-1.0.lua]:19: in function
+[Ace3/AceComm-3.0-14/AceComm-3.0.lua]:214: in function 'OnReceiveMultipartLast'
+```
+
+**Affected Code (Guild.lua:1940):**
+```lua
+-- OLD CODE:
+-- Trigger UI refresh
+TOGBankClassic_Events:TriggerCallback(TOGBankClassic_Events.DB_UPDATE)
+```
+
+**Root Cause:**
+The `TriggerCallback()` method was mentioned in FEATURE_IMPROVEMENTS.md design specs and Tests.lua has a mock for it, but it was never actually implemented in the Events module. The Events module provides `RegisterMessage()` / `SendMessage()` / `UnregisterMessage()` through Ace3, but no `TriggerCallback()`.
+
+**Impact:**
+- **User Impact:** Delta updates applied successfully but UI doesn't auto-refresh
+- **Frequency:** 100% of delta synchronizations
+- **Workaround:** UI updates on next manual refresh or window reopen
+- **Error Spam:** Generates error on every delta received
+
+**Trigger Conditions:**
+- Receive delta update from guild member via AceComm
+- Delta successfully applied to local data
+- Attempt to trigger UI refresh fails with nil method error
+
+**Fix Applied:**
+Replaced the non-existent `TriggerCallback()` call with direct UI refresh that matches existing patterns in the codebase:
+
+```lua
+-- NEW CODE:
+-- Trigger UI refresh if Inventory window is open
+if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+	TOGBankClassic_UI_Inventory:DrawContent()
+end
+```
+
+This approach:
+- Directly refreshes the Inventory UI when delta is applied
+- Only refreshes if window is open (no unnecessary work)
+- Matches existing pattern used in `ReconstructItemLinks()`
+- No need to implement complex callback system for simple use case
+
+**Alternative Approaches Considered:**
+1. **Implement TriggerCallback method:** Would add unnecessary complexity since Ace3's `SendMessage` system already exists
+2. **Use SendMessage system:** Would require registering message handlers in UI components - overkill for this use case
+3. **Do nothing:** UI would only update on next manual refresh - poor UX
+
+**Testing:**
+- ✅ Delta updates now trigger immediate UI refresh
+- ✅ No more nil method errors
+- ✅ UI shows updated data in real-time when window is open
+- ✅ No performance impact when window is closed
+
+**Resolution:**
+Replaced conceptual `TriggerCallback()` with pragmatic direct UI refresh. This fixes the error and provides better UX by immediately showing delta updates to users who have the inventory window open.
+
+**Verified By:** In-game testing during delta synchronization  
+**Closed:** 2026-01-22
+
+---
 
 #### ✅ [ITEM-001] Item.Aggregate crashes when item.Count is nil
 

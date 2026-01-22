@@ -260,7 +260,7 @@ function TOGBankClassic_Mail:Open(mailId)
 			if link then
 				local _, _, _, quantity, _ = GetInboxItem(mailId, attachmentIndex)
 				local name, _, quality, level, _, _, _, _, _, _, price = GetItemInfo(link)
-				if level == nil then
+				if not name or level == nil then
 					TOGBankClassic_Mail:RetryOpen(mailId)
 					return
 				end

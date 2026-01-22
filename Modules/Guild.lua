@@ -976,7 +976,7 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 	local needsAsyncLoad = false
 	
 	for _, item in ipairs(items) do
-		if item.ID and not item.Link then
+		if item and item.ID and not item.Link then
 			-- Try to get link from item cache
 			local itemLink = select(2, GetItemInfo(item.ID))
 			if itemLink then
@@ -1936,8 +1936,10 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 	-- Reset error count on successful application
 	self:ResetDeltaErrorCount(norm)
 
-	-- Trigger UI refresh
-	TOGBankClassic_Events:TriggerCallback(TOGBankClassic_Events.DB_UPDATE)
+	-- Trigger UI refresh if Inventory window is open
+	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+		TOGBankClassic_UI_Inventory:DrawContent()
+	end
 
 	return ADOPTION_STATUS.ADOPTED
 end
