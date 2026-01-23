@@ -54,7 +54,9 @@
 			"FCF_ResetChatWindows",
 			"FCF_SetLocked",
 			"FCF_DockFrame",
-			"FCF_Close"
+			"FCF_Close",
+			"MailFrame",
+			"SendMailNameEditBox"
 		]
 	}
 }
