@@ -37,6 +37,18 @@ Sync flow:
 - Snapshot includes requestLogApplied + tombstones to reconcile state.
 ]]
 
+-- Helper function to count keys in a table
+local function countKeys(t)
+	if not t or type(t) ~= "table" then
+		return 0
+	end
+	local count = 0
+	for _ in pairs(t) do
+		count = count + 1
+	end
+	return count
+end
+
 -- Request status constants.
 local VALID_REQUEST_STATUS = {
 	open = true,
@@ -244,6 +256,8 @@ function Guild:NormalizeRequestList()
 		return
 	end
 
+	TOGBankClassic_Output:Debug(string.format("[UI-003] NormalizeRequestList: Starting with %d requests", #self.Info.requests))
+
 	local normalized = {}
 	local byId = {}
 	local tombstones = self.Info.requestsTombstones or {}
@@ -255,6 +269,7 @@ function Guild:NormalizeRequestList()
 			local tombstoneTs = tonumber(tombstones[clean.id] or 0) or 0
 			if tombstoneTs > 0 and (tonumber(clean.updatedAt or 0) or 0) <= tombstoneTs then
 				-- Skip entries that were deleted after their last update.
+				TOGBankClassic_Output:Debug(string.format("[UI-003] NormalizeRequestList: Skipping tombstoned request id=%s", clean.id))
 			else
 				local existingIdx = byId[clean.id]
 				if existingIdx then
@@ -263,6 +278,7 @@ function Guild:NormalizeRequestList()
 					local incomingUpdated = tonumber(clean.updatedAt or clean.date or 0) or 0
 					if incomingUpdated > existingUpdated then
 						normalized[existingIdx] = clean
+						TOGBankClassic_Output:Debug(string.format("[UI-003] NormalizeRequestList: Updated duplicate id=%s", clean.id))
 					end
 				else
 					table.insert(normalized, clean)
@@ -277,6 +293,9 @@ function Guild:NormalizeRequestList()
 
 	self.Info.requests = normalized
 	self.Info.requestsVersion = latest
+	
+	TOGBankClassic_Output:Debug(string.format("[UI-003] NormalizeRequestList: Finished with %d requests (calling PruneRequests)", #normalized))
+	
 	self:PruneRequests()
 end
 
@@ -384,17 +403,23 @@ end
 -- Snapshot application and replay.
 function Guild:ApplyRequestSnapshot(payload)
 	if not payload or type(payload) ~= "table" then
+		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: invalid payload")
 		return false
 	end
 	if not self.Info then
+		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: self.Info is nil")
 		return false
 	end
 	self:EnsureRequestsInitialized()
 
 	local incomingList = payload.requests
 	if not incomingList or type(incomingList) ~= "table" then
+		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: no requests in payload")
 		return false
 	end
+
+	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Received snapshot with %d requests, local has %d requests", 
+		#incomingList, #(self.Info.requests or {})))
 
 	local sanitized = {}
 	local latest = 0
@@ -407,6 +432,8 @@ function Guild:ApplyRequestSnapshot(payload)
 			end
 		end
 	end
+
+	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 
 	-- Merge with existing requests instead of replacing
 	-- Keep local requests that aren't in the incoming snapshot (unless tombstoned)
@@ -425,7 +452,10 @@ function Guild:ApplyRequestSnapshot(payload)
 		table.insert(merged, req)
 	end
 	
+	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Added %d incoming requests to merged list", #merged))
+	
 	-- Add local requests that aren't in incoming (and not tombstoned)
+	local localPreservedCount = 0
 	for _, localReq in ipairs(self.Info.requests or {}) do
 		if localReq.id and not incomingById[localReq.id] then
 			local tombstoneTs = tonumber(tombstones[localReq.id] or 0) or 0
@@ -433,10 +463,18 @@ function Guild:ApplyRequestSnapshot(payload)
 			-- Only keep if not tombstoned or if local update is newer than tombstone
 			if tombstoneTs == 0 or localUpdated > tombstoneTs then
 				table.insert(merged, localReq)
-				TOGBankClassic_Output:Debug(string.format("[UI-003] Preserving local request not in snapshot: %s", localReq.id))
+				localPreservedCount = localPreservedCount + 1
+				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserving local request id=%s, requester=%s, item=%s", 
+					localReq.id, localReq.requester or "nil", localReq.item or "nil"))
+			else
+				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: DROPPING local request id=%s (tombstoned at %d, updated at %d)", 
+					localReq.id, tombstoneTs, localUpdated))
 			end
 		end
 	end
+	
+	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserved %d local requests, merged list has %d total", 
+		localPreservedCount, #merged))
 
 	self.Info.requests = merged
 	self.Info.requestsVersion = latest
@@ -444,6 +482,8 @@ function Guild:ApplyRequestSnapshot(payload)
 	local logApplied = payload.requestLogApplied
 	if type(logApplied) == "table" then
 		self.Info.requestLogApplied = copyMap(logApplied)
+		TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Updated requestLogApplied with %d actors", 
+			countKeys(logApplied)))
 	end
 
 	local localActor = self:GetNormalizedPlayer()
@@ -451,6 +491,7 @@ function Guild:ApplyRequestSnapshot(payload)
 		local appliedSeq = tonumber(self.Info.requestLogApplied[localActor] or 0) or 0
 		local localSeq = tonumber(self.Info.requestLogSeq[localActor] or 0) or 0
 		if appliedSeq > localSeq then
+			TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Updating local seq from %d to %d", localSeq, appliedSeq))
 			self.Info.requestLogSeq[localActor] = appliedSeq
 		end
 	end
@@ -458,14 +499,25 @@ function Guild:ApplyRequestSnapshot(payload)
 	local tombstones = payload.tombstones
 	if type(tombstones) == "table" then
 		self.Info.requestsTombstones = copyMap(tombstones)
+		TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Updated tombstones with %d entries", 
+			countKeys(tombstones)))
 	end
 
+	TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot: Calling NormalizeRequestList")
 	self:NormalizeRequestList()
+	TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot: Calling RebuildRequestLogIndex")
 	self:RebuildRequestLogIndex()
+	TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot: Calling ReplayRequestLogEntries")
 	self:ReplayRequestLogEntries()
+	TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot: Calling PruneRequests")
 	self:PruneRequests()
+	TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot: Calling PruneRequestLog")
 	self:PruneRequestLog()
+	TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot: Calling PruneRequestTombstones")
 	self:PruneRequestTombstones()
+	
+	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: FINAL count = %d requests", #(self.Info.requests or {})))
+	
 	self:RefreshRequestsUI()
 	return true
 end
@@ -505,6 +557,8 @@ function Guild:PruneRequests()
 	local pruned = {}
 	local latest = tonumber(self.Info.requestsVersion or 0) or 0
 
+	TOGBankClassic_Output:Debug(string.format("[UI-003] PruneRequests: Starting with %d requests", before))
+
 	for _, req in ipairs(self.Info.requests) do
 		local updated = tonumber(req.updatedAt or req.date or 0) or 0
 		local quantity = tonumber(req.quantity or 0) or 0
@@ -521,6 +575,8 @@ function Guild:PruneRequests()
 			end
 		else
 			table.insert(pruned, req)
+			TOGBankClassic_Output:Debug(string.format("[UI-003] PruneRequests: Pruning request id=%s, status=%s, age=%d seconds", 
+				req.id or "nil", req.status or "nil", now - updated))
 		end
 	end
 
@@ -531,6 +587,9 @@ function Guild:PruneRequests()
 	self.Info.requests = keep
 	self.Info.requestsVersion = latest
 	local after = #keep
+	
+	TOGBankClassic_Output:Debug(string.format("[UI-003] PruneRequests: Finished with %d requests (%d pruned)", after, before - after))
+	
 	return before - after, before, after
 end
 
@@ -676,13 +735,20 @@ end
 -- Record an entry locally, update indices, and optionally broadcast it.
 function Guild:RecordRequestLogEntry(entry, broadcast)
 	if not entry or not entry.id then
+		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry FAILED: entry missing or no id")
 		return false
 	end
 	if not self.Info then
+		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry FAILED: self.Info is nil")
 		return false
 	end
 	self:EnsureRequestsInitialized()
+	
+	TOGBankClassic_Output:Debug(string.format("[UI-003] RecordRequestLogEntry: entry.id=%s, type=%s, requestId=%s, broadcast=%s", 
+		entry.id or "nil", entry.type or "nil", entry.requestId or "nil", tostring(broadcast)))
+	
 	if self.requestLogIndex and self.requestLogIndex[entry.id] then
+		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry: Entry already in log index (duplicate)")
 		self.Info.requestLogApplied = self.Info.requestLogApplied or {}
 		local actor = entry.actor or "unknown"
 		local seq = tonumber(entry.seq or 0) or 0
@@ -691,9 +757,15 @@ function Guild:RecordRequestLogEntry(entry, broadcast)
 		end
 		return true
 	end
+	
+	TOGBankClassic_Output:Debug(string.format("[UI-003] RecordRequestLogEntry: Applying log entry (requests before = %d)", #(self.Info.requests or {})))
+	
 	if not self:ApplyRequestLogEntry(entry) then
+		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry FAILED: ApplyRequestLogEntry returned false")
 		return false
 	end
+
+	TOGBankClassic_Output:Debug(string.format("[UI-003] RecordRequestLogEntry: Applied successfully (requests after = %d)", #(self.Info.requests or {})))
 
 	self:AppendRequestLogEntry(entry)
 	self.Info.requestLogApplied = self.Info.requestLogApplied or {}
@@ -706,8 +778,13 @@ function Guild:RecordRequestLogEntry(entry, broadcast)
 	if entry.ts and entry.ts > 0 then
 		self:TouchRequestsVersion(entry.ts)
 	end
+	
+	TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry: Calling PruneIfNeeded")
 	self:PruneIfNeeded()
+	TOGBankClassic_Output:Debug(string.format("[UI-003] RecordRequestLogEntry: After PruneIfNeeded (requests = %d)", #(self.Info.requests or {})))
+	
 	if broadcast then
+		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry: Broadcasting log entry to guild")
 		self:SendRequestLogEntry(entry)
 	end
 	self:RefreshRequestsUI()
@@ -989,9 +1066,11 @@ end
 -- Request mutation helpers.
 function Guild:AddRequest(request)
 	if not self.Info then
+		TOGBankClassic_Output:Debug("[UI-003] AddRequest FAILED: self.Info is nil")
 		return false
 	end
 	if not request or type(request) ~= "table" then
+		TOGBankClassic_Output:Debug("[UI-003] AddRequest FAILED: invalid request parameter")
 		return false
 	end
 
@@ -1005,14 +1084,30 @@ function Guild:AddRequest(request)
 
 	local clean = sanitizeRequest(request)
 	if not clean then
+		TOGBankClassic_Output:Debug("[UI-003] AddRequest FAILED: sanitizeRequest returned nil")
 		return false
 	end
 
+	TOGBankClassic_Output:Debug(string.format("[UI-003] AddRequest: Creating request id=%s, requester=%s, item=%s, quantity=%d", 
+		clean.id or "nil", clean.requester or "nil", clean.item or "nil", clean.quantity or 0))
+
 	local entry = self:BuildRequestLogEntry("add", clean)
 	if not entry then
+		TOGBankClassic_Output:Debug("[UI-003] AddRequest FAILED: BuildRequestLogEntry returned nil")
 		return false
 	end
-	return self:RecordRequestLogEntry(entry, true)
+
+	TOGBankClassic_Output:Debug(string.format("[UI-003] AddRequest: Built log entry id=%s, seq=%d, actor=%s", 
+		entry.id or "nil", entry.seq or 0, entry.actor or "nil"))
+
+	local result = self:RecordRequestLogEntry(entry, true)
+	TOGBankClassic_Output:Debug(string.format("[UI-003] AddRequest: RecordRequestLogEntry returned %s", tostring(result)))
+	
+	if result then
+		TOGBankClassic_Output:Debug(string.format("[UI-003] AddRequest SUCCESS: Total requests now = %d", #(self.Info.requests or {})))
+	end
+	
+	return result
 end
 
 -- Access control for requests.

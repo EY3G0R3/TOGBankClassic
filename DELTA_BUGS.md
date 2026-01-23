@@ -183,14 +183,14 @@ This was previously fixed in v2.3.0 of the original fork but was reintroduced du
 
 ---
 
-#### ✅ [UI-003] Intermittent request list visibility - requests sometimes don't appear
+#### [UI-003] Intermittent request list visibility - requests sometimes don't appear
 
 **Severity:** 🔴 CRITICAL  
 **Category:** Data Synchronization / Request System  
 **Reporter:** Multiple users + Developer  
 **Date Reported:** 2026-01-23  
-**Date Resolved:** 2026-01-23  
-**Status:** ✅ RESOLVED  
+**Date Resolved:** NOT RESOLVED - Bug still occurring  
+**Status:** 🔴 OPEN - Fix attempt unsuccessful  
 **Reproducibility:** Intermittent
 
 **Description:**

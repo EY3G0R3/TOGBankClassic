@@ -755,3 +755,334 @@ end
 5. **Fallback Testing**: Verify full sync on delta failure
 6. **Version Mix Testing**: v0.6.8 + v0.7.0 coexistence
 
+---
+
+## 📋 Request Communication System Architecture
+
+### Overview
+The request system uses a **full snapshot + operation log** architecture for synchronizing guild bank requests across all players. Unlike the delta-based inventory system, requests use complete snapshots with operation replay for conflict resolution.
+
+**Key Design Principles:**
+- **Snapshot-based sync**: Full request list transmitted on sync
+- **Operation log**: All changes recorded as discrete log entries
+- **Last-writer-wins**: Conflicts resolved by timestamp
+- **Tombstones**: Deleted requests tracked to prevent resurrection
+- **Merge on receive**: Incoming snapshots merged with local data (not replaced)
+
+### Communication Channels
+
+#### Primary Channels
+- **`togbank-r`** (Request): Query for request data (GUILD broadcast)
+- **`togbank-rr`** (Request Reply): Acknowledgment of request (WHISPER response)
+- **`togbank-d`** (Data): Full snapshots and log entries (GUILD broadcast)
+
+#### Message Types
+1. **`requests`** - Full snapshot of all requests
+2. **`requests-log`** - Individual log entries for incremental updates
+
+### Data Model (Guild.Info)
+
+```lua
+-- Core request storage
+requests = {
+    {
+        id = "Shamanoodles-OldBlanchy-1769171234-123456",  -- Unique ID
+        requester = "Shamanoodles-OldBlanchy",             -- Who requested
+        bank = "Bagsbagsbags-OldBlanchy",                  -- Target banker
+        item = "Silk Bag",                                 -- Item name
+        quantity = 4,                                      -- Amount requested
+        fulfilled = 0,                                     -- Amount fulfilled
+        status = "open",                                   -- open|fulfilled|cancelled|complete
+        date = 1769171234,                                 -- Creation timestamp
+        updatedAt = 1769171234,                            -- Last modification
+        statusUpdatedAt = 1769171234,                      -- Status change timestamp
+        notes = ""                                         -- Optional notes
+    }
+}
+
+-- Version tracking (max updatedAt for quick freshness check)
+requestsVersion = 1769171234
+
+-- Operation log (ordered by actor, seq)
+requestLog = {
+    {
+        id = "log-entry-uuid",                             -- Log entry ID
+        actor = "Shamanoodles-OldBlanchy",                 -- Who performed action
+        seq = 1,                                           -- Sequence number per actor
+        ts = 1769171234,                                   -- Timestamp
+        type = "add",                                      -- add|fulfill|cancel|complete|delete
+        requestId = "request-uuid",                        -- Target request ID
+        request = { ... },                                 -- Full snapshot (for add)
+        delta = { fulfilled = 2 }                          -- Changes (for fulfill)
+    }
+}
+
+-- Sequence tracking per actor
+requestLogSeq = {
+    ["Shamanoodles-OldBlanchy"] = 3,                      -- Next seq to emit
+}
+
+-- Applied sequence tracking (what we've processed)
+requestLogApplied = {
+    ["Shamanoodles-OldBlanchy"] = 2,                      -- Last applied seq
+}
+
+-- Tombstones (deleted requests)
+requestsTombstones = {
+    ["request-uuid"] = 1769171234,                        -- Delete timestamp
+}
+```
+
+### Request Lifecycle
+
+#### 1. Creating a Request
+**Flow:**
+1. Player calls `Guild:AddRequest(request)`
+2. Request sanitized and assigned unique ID
+3. Log entry created with type "add"
+4. Entry recorded in local requestLog
+5. Entry broadcast to guild via `togbank-d`
+6. Request added to local requests array
+7. UI refreshed
+
+**Code Path:**
+```
+UI/Requests.lua:OnAddButtonClick()
+  → Guild:AddRequest()
+    → sanitizeRequest()
+    → BuildRequestLogEntry("add")
+    → RecordRequestLogEntry(broadcast=true)
+      → AppendLogEntry()
+      → SendRequestLogEntry() → togbank-d
+      → ApplyRequestLogEntry()
+        → requests array updated
+      → RefreshRequestsUI()
+```
+
+#### 2. Fulfilling a Request
+**Flow:**
+1. Banker calls `Guild:FulfillRequest(requestId, quantity)`
+2. Validates request exists and is fulfillable
+3. Log entry created with type "fulfill" and delta
+4. Entry broadcast and applied locally
+5. If quantity >= request.quantity, status → "fulfilled"
+
+**Conflict Resolution:**
+- Multiple fulfillments are **additive** (clamped to quantity)
+- Example: Banker A fulfills 2, Banker B fulfills 3 → total 5 (clamped to quantity)
+
+#### 3. Cancelling/Completing
+**Flow:**
+1. Player calls `Guild:CancelRequest()` or `Guild:CompleteRequest()`
+2. Permission checked (requester can cancel, bankers can complete)
+3. Log entry created with type "cancel" or "complete"
+4. Entry broadcast and applied locally
+
+**Conflict Resolution:**
+- Last-writer-wins by statusUpdatedAt
+- Cancel beats fulfill if cancel.statusUpdatedAt > fulfill.statusUpdatedAt
+
+#### 4. Deleting (Pruning)
+**Flow:**
+1. Completed/cancelled requests older than 7 days automatically pruned
+2. Tombstone created with delete timestamp
+3. Tombstone prevents deleted requests from reappearing in snapshots
+
+### Synchronization Protocol
+
+#### Snapshot Sync (Full State)
+**When:** Initial sync, catch-up after being offline, or gap detection
+
+**Flow:**
+1. Player A broadcasts: `togbank-r` with type "requests" query
+2. Player B (has data) sends: `togbank-d` with type "requests"
+3. Player A receives snapshot via `ReceiveRequestsData()`
+4. Player A calls `ApplyRequestSnapshot()`
+   - **Merges** incoming with local (does NOT replace)
+   - Keeps local requests not in incoming (unless tombstoned)
+   - Updates requestLogApplied tracking
+   - Updates tombstones
+5. Replays any log entries newer than applied sequence
+6. UI refreshed
+
+**Payload Structure:**
+```lua
+{
+    type = "requests",
+    version = 1769171234,                    -- requestsVersion
+    requests = [ ... ],                      -- Full request array
+    requestLogApplied = { ... },             -- Applied sequences
+    tombstones = { ... }                     -- Deleted request IDs
+}
+```
+
+#### Log Entry Sync (Incremental)
+**When:** Real-time updates, gap filling
+
+**Flow:**
+1. Player creates/modifies request → log entry broadcast
+2. Other players receive via `ReceiveRequestLogEntries()`
+3. Entry validated against expected sequence (must be seq = last + 1)
+4. If gap detected → query missing entries via `QueryRequestLog()`
+5. Entry applied via `ApplyRequestLogEntry()`
+
+**Payload Structure:**
+```lua
+{
+    type = "requests-log",
+    logEntries = [
+        {
+            id = "...",
+            actor = "Shamanoodles-OldBlanchy",
+            seq = 3,
+            ts = 1769171234,
+            type = "add",
+            requestId = "...",
+            request = { ... }           -- Full data for add
+            -- OR
+            delta = { fulfilled = 2 }   -- Changes for fulfill
+        }
+    ]
+}
+```
+
+#### Gap Detection & Recovery
+**Problem:** Player offline, misses log entries 3-10
+
+**Solution:**
+1. Player receives entry with seq=11
+2. Detects gap (expected seq=3, got seq=11)
+3. Calls `QueryRequestLog(sender, { [actor] = 3 })`
+4. Sender responds with entries 3-11
+5. Entries applied in order
+
+**Fallback:** If too many gaps → request full snapshot
+
+### Merge Logic (Critical!)
+
+**Problem:** ApplyRequestSnapshot was **replacing** local requests with incoming snapshot, causing data loss.
+
+**Solution (v0.7.7):** Merge incoming with local
+```lua
+-- Build index of incoming requests
+local incomingById = {}
+for _, req in ipairs(sanitized) do
+    incomingById[req.id] = req
+end
+
+-- Start with all incoming requests
+local merged = {}
+for _, req in ipairs(sanitized) do
+    table.insert(merged, req)
+end
+
+-- Add local requests NOT in incoming (unless tombstoned)
+for _, localReq in ipairs(self.Info.requests or {}) do
+    if localReq.id and not incomingById[localReq.id] then
+        local tombstoneTs = tombstones[localReq.id] or 0
+        local localUpdated = localReq.updatedAt or 0
+        
+        -- Keep if not tombstoned OR if local update is newer
+        if tombstoneTs == 0 or localUpdated > tombstoneTs then
+            table.insert(merged, localReq)
+        end
+    end
+end
+
+self.Info.requests = merged
+```
+
+**Why This Matters:**
+- Player A creates request locally
+- Player B (who hasn't seen it) sends their snapshot
+- Without merge: Player A's request gets deleted
+- With merge: Player A's request is preserved
+
+### Conflict Resolution Rules
+
+#### Add (Create)
+- **Rule:** Last-writer-wins by updatedAt
+- **Example:** If request with same ID arrives from two sources, keep the one with newer updatedAt
+
+#### Fulfill
+- **Rule:** Additive, clamped to quantity
+- **Example:** 
+  - Request for 10 items
+  - Banker A fulfills 4
+  - Banker B fulfills 6
+  - Result: fulfilled = 10 (4+6)
+
+#### Cancel/Complete
+- **Rule:** Last-writer-wins by statusUpdatedAt
+- **Example:**
+  - Player cancels at timestamp 100
+  - Banker fulfills at timestamp 90
+  - Result: Request is cancelled (100 > 90)
+
+#### Delete
+- **Rule:** Tombstone wins over older updates
+- **Example:**
+  - Request deleted at timestamp 200
+  - Receive snapshot with request updatedAt=150
+  - Result: Request stays deleted (tombstone > update)
+
+### Retention & Pruning
+
+#### Request Pruning
+- **When:** Completed/cancelled requests older than 7 days
+- **How:** `PruneRequests()` called after sync operations
+- **Result:** Request removed, tombstone created
+
+#### Log Pruning
+- **When:** Log entries older than 30 days OR log exceeds 500 entries
+- **How:** `PruneRequestLog()` sorts by timestamp, keeps newest
+- **Result:** Old entries discarded (already applied to snapshots)
+
+#### Tombstone Pruning
+- **When:** Tombstones older than 30 days
+- **How:** `PruneRequestTombstones()` removes aged tombstones
+- **Result:** Very old deleted requests can theoretically resurrect (acceptable)
+
+### Known Issues & Fixes
+
+#### UI-003: Request Data Loss (CRITICAL)
+**Status:** Partially Fixed (v0.7.7), but still occurring
+
+**Root Cause:** Multiple potential causes identified:
+1. ✅ **Fixed:** ApplyRequestSnapshot was replacing instead of merging
+2. ❓ **Investigating:** Possible race conditions in log replay
+3. ❓ **Investigating:** Tombstone logic may be too aggressive
+4. ❓ **Investigating:** requestLogApplied tracking may have bugs
+
+**Current Symptoms:**
+- Requests created by users sometimes don't appear in UI
+- Requests visible, then disappear after reload
+- No entry in requestLog or requestLogSeq for missing requests
+
+**Debug Logging Added:**
+- All request sync operations tagged with `[UI-003]`
+- RefreshRequestsUI logs request count
+- ApplyRequestSnapshot logs preserved local requests
+- PruneRequests logs pruned requests
+
+**Next Steps:**
+1. Monitor debug logs for pattern detection
+2. Verify requestLog entries are created for all requests
+3. Check if tombstones are being created incorrectly
+4. Investigate requestLogApplied sequence tracking
+
+### Comparison: Request Sync vs. Delta Protocol
+
+| Aspect | Request System | Inventory Delta System |
+|--------|---------------|------------------------|
+| **Architecture** | Snapshot + Operation Log | Hash-based Delta |
+| **Sync Method** | Full state + log replay | Compute diff on-demand |
+| **Bandwidth** | High (full snapshots) | Low (only changes) |
+| **Complexity** | Moderate (merge logic) | High (hash computation) |
+| **Channels** | togbank-r, togbank-d | togbank-r, togbank-rr, togbank-d |
+| **Conflict Resolution** | Timestamps + log sequence | Version-based |
+| **Gap Handling** | Query missing log entries | Re-query full state |
+| **Storage** | Operation log + tombstones | Snapshots per alt |
+
+**Note:** Request system could be refactored to use delta-style protocol in future for bandwidth optimization.
+
