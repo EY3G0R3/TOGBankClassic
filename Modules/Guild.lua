@@ -2012,6 +2012,16 @@ function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion,
 		TOGBankClassic_Output:Debug("Invalid delta chain request: fromVersion >= toVersion")
 		return false
 	end
+	
+	-- Check if sender is online before attempting WHISPER (DELTA-008)
+	if not self:IsPlayerOnline(sender) then
+		TOGBankClassic_Output:Debug(
+			"Cannot request delta chain for %s from %s - sender is offline",
+			altName,
+			sender
+		)
+		return false
+	end
 
 	-- Note: We don't check version gap age here - if we have the deltas, we use them.
 	-- The delta history cleanup (DELTA_HISTORY_MAX_AGE) handles storage limits.

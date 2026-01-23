@@ -303,7 +303,8 @@
 			"PanelTemplates_TabResize",
 			"PanelTemplates_SelectTab",
 			"PanelTemplates_DeselectTab",
-			"UIDropDownMenu_GetText"
+			"UIDropDownMenu_GetText",
+			"MailFrameTab2"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

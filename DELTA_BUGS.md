@@ -377,61 +377,66 @@ Eliminates confusing error messages for players. System now gracefully handles b
 
 ---
 
-#### [DELTA-008] Repeated delta sync failures causing fallback to full sync
+#### ✅ [DELTA-008] Repeated delta sync failures causing fallback to full sync
 
 **Severity:** 🟡 MEDIUM  
 **Category:** Delta Application / Performance  
 **Reporter:** Developer (Console warning)  
 **Date Reported:** 2026-01-23  
-**Status:** 🔴 OPEN  
+**Date Resolved:** 2026-01-23  
+**Status:** ✅ RESOLVED  
 **Reproducibility:** Intermittent
 
 **Description:**
-The addon is logging repeated delta sync failures for specific bankers (e.g., "Shardsndust-Azuresong"), causing the system to fall back to full synchronization. This indicates that delta application is failing multiple times for this banker.
+The addon was logging repeated delta sync failures for specific bankers (e.g., "Shardsndust-Azuresong"), causing the system to fall back to full synchronization. This indicated that delta application was failing multiple times for specific bankers.
 
 **Warning Message:**
 ```
 TOGBankClassic: [WARN] Repeated delta sync failures for Shardsndust-Azuresong. Falling back to full sync.
 ```
 
-**Steps to Reproduce:**
-Unknown - appears to occur during normal sync operations for specific banker characters.
+**Root Cause:**
+In `RequestDeltaChain()` (Guild.lua:2028), the code sent WHISPER messages to request delta chains from senders without verifying they were still online. When the sender had logged off, the WHISPER would fail, causing repeated delta sync failures and triggering the fallback mechanism.
 
-**Expected Behavior:**
-Delta sync should succeed on first attempt. Fallback to full sync should be rare, only occurring in exceptional circumstances (e.g., significant version mismatch, corrupted data).
+**Affected Code:**
+```lua
+function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion, sender)
+    -- No online check before attempting WHISPER
+    SendCommMessage("togbank-dr", serialized, "WHISPER", sender, "ALERT")
+```
 
-**Actual Behavior:**
-Delta sync is failing repeatedly for specific bankers, triggering the fallback mechanism to full sync.
+**Fix Applied (2026-01-23):**
 
-**Environment:**
-- WoW Version: Classic Era
-- TOGBankClassic Version: v0.8.0+
-- Affected Banker: Shardsndust-Azuresong
+Added online validation before sending delta chain request:
 
-**Potential Root Causes:**
-1. ❓ Delta validation failing for specific data patterns
-2. ❓ baseVersion mismatch between sender and receiver
-3. ❓ Hash mismatch due to data inconsistency
-4. ❓ Delta computation producing invalid operations
-5. ❓ Corrupted local data causing delta application to fail
-6. ❓ Protocol version incompatibility between clients
-7. ❓ Race conditions in concurrent delta application
+```lua
+function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion, sender)
+    -- Check if sender is online before attempting WHISPER (DELTA-008)
+    if not self:IsPlayerOnline(sender) then
+        TOGBankClassic_Output:Debug(
+            "Cannot request delta chain for %s from %s - sender is offline",
+            altName, sender
+        )
+        return false
+    end
+    
+    -- Only send WHISPER if sender is currently online
+    SendCommMessage("togbank-dr", serialized, "WHISPER", sender, "ALERT")
+end
+```
 
-**Investigation Needed:**
-- Identify which validation step is failing (examine debug logs)
-- Check if this occurs only with specific bankers or is widespread
-- Verify delta structure is valid before rejection
-- Compare local and remote versions/hashes
-- Check if fallback full sync succeeds
+**How This Fixes DELTA-008:**
+- Delta chain requests only sent to online senders
+- Returns false when sender is offline, allowing system to use alternative sync methods
+- Eliminates repeated WHISPER failures to offline players
+- Prevents accumulation of delta sync errors
+- System gracefully handles sender logout scenarios
+
+**Related:**
+Fixed alongside COMM-001, which addressed the same root cause in `QueryAltData()`.
 
 **Impact:**
-Performance issue - fallback to full sync increases bandwidth usage and sync time. However, system continues functioning correctly through fallback mechanism. May indicate underlying data consistency problems.
-
-**Next Steps:**
-- Enable debug logging to capture exact failure reason
-- Check if ValidateDeltaStructure() is rejecting valid deltas
-- Verify hash calculation consistency between sender/receiver
-- Monitor if full sync fallback resolves the issue or if it recurs
+Eliminates unnecessary delta sync failures when senders are offline. System now properly detects offline senders and uses appropriate fallback mechanisms without generating error messages or warnings.
 
 ---
 
