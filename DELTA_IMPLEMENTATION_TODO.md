@@ -1,11 +1,246 @@
 # Delta Updates Implementation TODO
 
 **Project:** TOGBankClassic Delta Sync Protocol  
-**Target Version:** v0.7.0  
-**Status:** Phase 8 Testing - DELTA-005 Resolved  
-**Last Updated:** January 20, 2026
+**Target Version:** v0.8.0  
+**Status:** In Progress - Pull-Based Protocol Implementation  
+**Last Updated:** January 21, 2026  
+**Branch:** feature/pull-based-delta
 
 ---
+
+## 🔄 Pull-Based Protocol with Inventory Hashing (v0.8.0)
+
+**Status:** ✅ Core Implementation Complete, Testing Phase  
+**Branch:** feature/pull-based-delta  
+**Goal:** Hash-based inventory comparison with automatic pull sync
+
+### Architecture Overview
+
+**Pull-Based Protocol Flow:**
+1. **Banker shares** (`/togbank share`) → Broadcasts both legacy and delta versions
+2. **Version broadcast** (`togbank-v` + `togbank-dv`) → All alts with hashes
+3. **Hash comparison** → Receiver compares inventory hashes
+4. **Selective query** → Receiver requests only mismatched data
+5. **Data response** → Sender provides full sync or delta
+6. **Integration** → Receiver applies and updates local database
+
+### Inventory Hashing System ✅ COMPLETE
+
+**Purpose:** Detect real inventory changes without full data comparison
+
+**Implementation:**
+- `ComputeInventoryHash(bank, bags, money)` - Generates numeric hash of inventory state
+- Hash computed on every bank scan (BANKFRAME_CLOSED event)
+- Stored in `alt.inventoryHash` field alongside version timestamp
+- Used for pull-based comparison instead of version timestamps
+
+**Benefits:**
+- Detects actual inventory changes (version can change without inventory change)
+- More reliable than version timestamps for sync decisions
+- Minimal overhead (single number vs full inventory comparison)
+
+### Broadcast System ✅ COMPLETE
+
+**Legacy Version Broadcast (`togbank-v`):**
+- Contains version timestamps only (backwards compatible)
+- Sent to all clients (delta and non-delta)
+- Used by legacy clients for version comparison
+
+**Delta Version Broadcast (`togbank-dv`):**
+- Contains version timestamps AND inventory hashes
+- Only sent to delta-capable clients
+- Enables hash-based pull decisions
+- Format: `data.alts[name] = {version = X, hash = Y}`
+
+**Dual Broadcast Implementation:**
+- `/togbank share` command now sends BOTH broadcasts
+- `Events:Sync()` - Sends `togbank-v` (legacy)
+- `Events:SyncDeltaVersion()` - Sends `togbank-dv` (with hashes)
+- Ensures compatibility with mixed client versions
+
+### Hash Comparison Logic ✅ COMPLETE
+
+**Pull Decision Algorithm (Chat.lua OnCommReceived):**
+```lua
+if theirHash then
+    if not ourHash then
+        -- They have data, we don't → query
+        shouldQuery = true
+    elseif theirHash ~= ourHash then
+        -- Hashes differ → query for update
+        shouldQuery = true
+    end
+    -- else: hashes match → no query needed
+elseif not ourVersion or theirVersion > ourVersion then
+    -- No hash available, fall back to version comparison
+    shouldQuery = true
+end
+```
+
+**Handles:**
+- Fresh sync (we have no data)
+- Inventory changes (hash mismatch)
+- Missing hashes (fall back to version comparison)
+- Identical inventory (skip query)
+
+### Data Migration ✅ COMPLETE
+
+**Hash Migration System (Database.lua InitializeDatabase):**
+- Computes hashes for existing alt data on addon load
+- Processes all alts with bank + bags data
+- Uses same `ComputeInventoryHash()` as bank scan
+- One-time migration, subsequent hashes from bank scans
+- Debug output: "Migrated alt data: computed inventory hash for X (hash=Y)"
+
+**Slots Migration:**
+- Initializes missing `bank.slots` and `bags.slots` fields
+- Prevents UI crashes when accessing slot data
+- Sets default: `{count = 0, total = 0}`
+
+### Protocol Capabilities ✅ SIMPLIFIED
+
+**Delta Support Check:**
+- Removed guild support threshold requirement
+- Delta protocol always enabled if `PROTOCOL.SUPPORTS_DELTA = true`
+- No population percentage checks
+- Works immediately without waiting for guild adoption
+
+**Old Behavior (REMOVED):**
+```lua
+// Check guild support level
+local supportRatio = GetGuildDeltaSupport()
+return supportRatio >= 0.05  // Required 5% of guild
+```
+
+**New Behavior:**
+```lua
+// Delta always enabled if feature flag is on
+return PROTOCOL.SUPPORTS_DELTA
+```
+
+### Progress Summary
+- ✅ New message types registered (togbank-dv, togbank-d3, togbank-d4)
+- ✅ Inventory hashing system (ComputeInventoryHash)
+- ✅ Hash broadcasting in version messages
+- ✅ Hash comparison logic for pull decisions
+- ✅ Data migration for existing alts
+- ✅ Dual broadcast system (legacy + delta)
+- ✅ `/togbank share` command updated
+- ✅ Guild support threshold removed
+- ✅ Link removal for bandwidth savings
+- ✅ Backwards compatibility maintained
+- ✅ Fast-fill feature (auto-request missing alts)
+- ✅ Link reconstruction with UI refresh
+- ✅ Message priority optimization (NORMAL for queries/broadcasts)
+- ✅ Async item loading with UI updates
+
+### Bug Fixes Completed
+- ✅ [PROTO-001] Delta validation accepts link-less deltas
+- ✅ [UI-001] Inventory UI handles missing slots data
+- ✅ [UI-002] Item links now appear after async reconstruction (UI refresh added)
+- ✅ [DATA-001] Hash migration for existing alt data
+- ✅ Hash comparison handles missing data (nil checks)
+- ✅ Pull protocol triggers queries correctly
+- ✅ Message priority issues (changed BULK to NORMAL for reliability)
+
+### Current Features
+- **Fast-Fill**: Auto-requests missing banker alts when UI opens (delta mode only)
+- **Async Link Loading**: Items display as links become available from WoW API
+- **UI Auto-Refresh**: UI updates when data arrives and links reconstruct
+- **State Summary**: ~800 bytes for 100 items, minimal data for delta computation
+
+### Response Prioritization
+1. THE BANKER response (authoritative)
+2. Highest version (among non-bankers)
+- `isBanker` flag in togbank-rr identifies authority
+
+### Startup Optimization
+- On init: Discover online bankers
+- Maintain list from togbank-dv broadcasts
+- Choose: whisper directly (if known) or GUILD broadcast (if unknown)
+
+### What Gets Eliminated
+- ❌ deltaSnapshots table
+- ❌ Chain replay logic
+- ❌ Thresholds (SEND_FULL_THRESHOLD)
+- ❌ Size checks and fallbacks
+- ❌ baseVersion in messages
+- ❌ Links in messages
+- ❌ Version tracking complexity
+
+### Implementation Tasks
+
+#### Config Flags (User-Selectable Protocol) ✅ COMPLETE
+- [x] Add Options.lua config section for protocol selection
+- [x] `PROTOCOL_MODE` setting with three options
+- [x] `AUTO` (default) - Dual-send for maximum compatibility during migration
+- [x] `LEGACY_ONLY` - Only send togbank-d/d2 with Links (v0.6.x/v0.7.0 compatible)
+- [x] `NEW_ONLY` - Only send togbank-d3/d4 without Links (v0.8.0 only)
+- [x] Add UI dropdown in config: "Communication Protocol"
+  - ✅ Option 1: "Auto (Recommended)" - Sends both formats
+  - ✅ Option 2: "Legacy Only" - Compatible with all versions, higher bandwidth
+  - ✅ Option 3: "New Protocol Only" - Requires all guild members on v0.8.0+, maximum savings
+- [x] Display current selection and bandwidth impact in config UI
+- [x] Setting persists across reloads in saved variables
+- [x] Defaults to AUTO for new users
+
+#### New Message Types ✅ COMPLETE
+- [x] `togbank-rr` - Query reply (registered, handler stub)
+- [x] `togbank-state` - State summary (registered, handler stub)
+- [x] `togbank-nochange` - No-change response (registered, handler stub)
+- [x] `togbank-d3` - Full sync without Links (registered, implemented)
+- [x] `togbank-d4` - Delta without Links (registered, pending implementation)
+
+#### Link Optimization ✅ COMPLETE
+- [x] Strip Links from full sync messages (togbank-d3)
+- [x] Dual-send togbank-d + togbank-d3 for compatibility
+- [x] Reconstruct Links on receiver with GetItemInfo()
+- [x] Store reconstructed Links in database
+- [x] Strip Links from delta messages (togbank-d4)
+- [x] Dual-send togbank-d2 + togbank-d4 for compatibility
+- [x] Implement togbank-d4 receive handler
+- [x] Reconstruct Links in delta items (add/modify/remove)
+- [x] Handle async Link loading with Item:CreateFromItemID()
+
+#### Version Management Fixes ✅ COMPLETE
+- [x] Fix version creation to only happen on actual inventory changes
+- [x] Implement ComputeInventoryHash() to detect actual changes
+- [x] Compare hash in Bank:Scan(), only update version if different
+- [x] Remove force parameter from SendAltData()
+- [x] Versions now ONLY created by Bank:Scan() on actual inventory changes
+- [x] Never update version on: queries, responses, no-change replies
+- [x] Prevents version drift from communication
+
+#### New Message Types ⏳ PENDING
+- [ ] `togbank-rr` - Query reply with isBanker flag
+- [ ] `togbank-state` - Receiver sends state summary `{[itemID] = quantity}`
+- [ ] `togbank-nochange` - Explicit no-change response
+
+#### Pull-Based Handshake Flow ✅ COMPLETE
+- [x] Implement 7-step handshake protocol
+- [x] Banker announces on login (togbank-dv with isBanker flag)
+- [x] Non-banker requests data (togbank-r WHISPER/GUILD)
+- [x] Responder acknowledges (togbank-rr with isBanker flag)
+- [x] Non-banker sends state summary (togbank-state)
+- [x] Banker computes and sends delta or full sync
+- [x] No-change handler (togbank-nochange)
+- [x] Non-banker applies and reconstructs Links
+
+#### Banker Discovery ✅ COMPLETE
+- [x] Implement banker discovery on init
+- [x] Maintain list of online bankers from togbank-dv
+- [ ] Smart routing: whisper if banker known, GUILD if unknown
+
+#### Remove Old Code
+- [ ] Remove deltaSnapshots table and all snapshot functions
+- [ ] Remove chain replay logic (RequestDeltaChain, ApplyDeltaChain)
+- [ ] Remove SEND_FULL_THRESHOLD and size comparison logic
+- [ ] Remove baseVersion from delta structure
+- [ ] Update all Link storage to only include ID/Count
+
+---
+
+## v0.7.0 Snapshot-Based Delta Implementation (COMPLETE)
 
 ## Phase 1: Foundation & Core Implementation ✅ COMPLETE
 
@@ -878,6 +1113,7 @@ Recently seen members:
   - Converted from slot-based to itemKey-based comparison
   - Results: 311 bytes vs 1748 bytes (82% savings), 0.42ms compute, 0.06ms apply
 - [ ] Test Suite 1.3: Large Change Fallback (>30% threshold)
+- [ ] Test Suite 1.4: Delta Chain Replay (offline player recovery) ⭐ NEW
 - [ ] Test Suite 2: Error Handling & Recovery (3 tests)
 - [ ] Test Suite 3: Protocol Negotiation (3 tests)
 - [ ] Test Suite 4: Performance & Metrics (3 tests)
@@ -890,20 +1126,253 @@ Recently seen members:
 - **Environment:** "The Old Gods" guild, 12.5% v2 adoption (2 of 8 members)
 - **Test Characters:** Metals-Azuresong (sender), Galdof-OldBlanchy (receiver)
 - **Bug Fixes:** DELTA-005 resolved with itemKey-based comparison
-- **Pending Commit:** Guild.lua (4 functions), Core.lua (ValidateItemDelta), DELTA_BUGS.md
+- **Feature Branch:** feature/delta-chain-replay (DELTA-006 implementation)
+- **Commits:** 08d83bf (delta chain), 28e3f7e (DELTA-005 fix), 2b8c87f (UI-001 fix)
 
 ---
 
-## Phase 9: Deployment & Monitoring
+## Phase 10: Delta Chain Replay (DELTA-006) ✅ COMPLETE
 
-### 9.1 Beta Testing 🔄 IN PROGRESS
+### 10.1 Architecture & Design ✅ COMPLETE
+**Problem Statement:**
+- Delta sync requires exact version matching (currentVersion == baseVersion)
+- Offline players miss updates and become permanently out of sync
+- Current recovery (togbank-r query) appears unreliable
+- Forces full sync for every offline player, negating bandwidth benefits
+
+**Solution:**
+Store recent delta history and replay missed deltas sequentially when players return online.
+
+**Design:**
+```
+Sender (Metals):                    Receiver (Galdof):
+v100 → v105 (delta saved)           Has v100
+v105 → v110 (delta saved)           (offline)
+v110 → v115 (delta saved)           (offline)
+                                    Returns online
+                                    Receives delta expecting v115
+                                    ❌ Mismatch: have v100, need v115
+                                    
+Galdof → togbank-dr(v100, v115) → Metals
+Metals ← togbank-dc([Δ1, Δ2, Δ3]) ← Metals
+Galdof applies: v100→v105→v110→v115 ✅
+```
+
+**Benefits:**
+- ✅ Works for offline players (primary use case)
+- ✅ Bandwidth efficient: Chain < Full sync (900B vs 1800B)
+- ✅ Automatic recovery without manual intervention
+- ✅ Graceful degradation via fallback rules
+
+### 10.2 Database Layer ✅ COMPLETE
+**Implementation Summary:**
+- Added `deltaHistory = {}` to database schema initialization
+- Implemented history management functions with automatic cleanup
+
+**Functions Added:**
+```lua
+-- Save delta after successful transmission
+SaveDeltaHistory(guildName, altName, baseVersion, version, delta)
+  → Stores delta with timestamp
+  → Enforces MAX_COUNT limit (keeps most recent 10)
+  → Deep copies delta to prevent mutation
+
+-- Retrieve delta chain for version range
+GetDeltaHistory(guildName, altName, fromVersion, toVersion)
+  → Builds sequential chain from history
+  → Returns nil if chain incomplete (missing link)
+  → Validates baseVersion → version continuity
+
+-- Cleanup old deltas (>1 hour)
+CleanupDeltaHistory(guildName)
+  → Removes deltas older than DELTA_HISTORY_MAX_AGE
+  → Removes empty history arrays
+  → Returns count of removed entries
+```
+
+**Storage Format:**
+```lua
+db.deltaHistory["Metals-Azuresong"] = {
+  {baseVersion=100, version=105, delta={...}, timestamp=1768948000},
+  {baseVersion=105, version=110, delta={...}, timestamp=1768948060},
+  {baseVersion=110, version=115, delta={...}, timestamp=1768948120}
+}
+```
+
+### 10.3 Protocol Layer ✅ COMPLETE
+**New Communication Prefixes:**
+- `togbank-dr` (Delta Range Request): Receiver requests chain from sender
+- `togbank-dc` (Delta Chain): Sender responds with delta array
+
+**Message Structures:**
+```lua
+-- Request (Galdof → Metals via WHISPER)
+{
+  altName = "Metals-Azuresong",
+  fromVersion = 100,
+  toVersion = 115
+}
+
+-- Response (Metals → Galdof via WHISPER)
+{
+  altName = "Metals-Azuresong",
+  deltas = [
+    {baseVersion=100, version=105, delta={bank:{modified:[...]}}},
+    {baseVersion=105, version=110, delta={bags:{added:[...]}}},
+    {baseVersion=110, version=115, delta={money:5000}}
+  ]
+}
+```
+
+**Chat.lua Handlers:**
+- `togbank-dr` handler: Receives request → GetDeltaHistory → Send togbank-dc
+- `togbank-dc` handler: Receives chain → ApplyDeltaChain → Log result
+
+### 10.4 Application Logic ✅ COMPLETE
+**Guild.lua Functions:**
+
+**RequestDeltaChain(altName, fromVersion, toVersion, sender):**
+- Validates version range (fromVersion < toVersion)
+- Checks gap size (rejects if >10 hops worth of time)
+- Sends togbank-dr request via WHISPER to sender
+- Falls back to full sync if gap too large
+
+**ApplyDeltaChain(altName, deltaChain):**
+- Validates chain length (<= DELTA_CHAIN_MAX_HOPS)
+- Estimates total chain size (<= DELTA_CHAIN_MAX_SIZE)
+- Applies deltas sequentially using existing ApplyDelta()
+- Validates baseVersion continuity at each step
+- Falls back to full sync on any failure
+
+**ApplyDelta() Enhancement:**
+- Now accepts optional `sender` parameter
+- On version mismatch: Tries RequestDeltaChain() first
+- Falls back to QueryAlt() if sender unknown or we're ahead
+
+**SendAltData() Enhancement:**
+- Saves computed delta to history via SaveDeltaHistory()
+- Stores: baseVersion, version, changes object
+- History available for future chain requests
+
+### 10.5 Configuration ✅ COMPLETE
+**Constants.lua (PROTOCOL table):**
+```lua
+DELTA_HISTORY_MAX_COUNT = 10,   -- Keep last N deltas per alt
+DELTA_HISTORY_MAX_AGE = 3600,   -- 1 hour retention
+DELTA_CHAIN_MAX_HOPS = 10,      -- Max deltas in one request
+DELTA_CHAIN_MAX_SIZE = 5000,    -- Fallback if chain >5KB
+```
+
+**Comm Prefix Descriptions:**
+```lua
+["togbank-dr"] = "(Delta Range Request)",
+["togbank-dc"] = "(Delta Chain)",
+```
+
+### 10.6 Fallback Rules ✅ COMPLETE
+Chain replay falls back to full sync if:
+1. **Chain too long**: >10 hops (prevents abuse)
+2. **Chain too large**: Total size >5KB (efficiency threshold)
+3. **History incomplete**: Missing delta in sequence
+4. **Gap too large**: Version span >10 minutes (prevents excessive history)
+5. **Application fails**: Any delta in chain fails validation
+6. **History expired**: Deltas older than 1 hour are purged
+
+### 10.7 Testing Plan ✅ COMPLETE
+**Test 1.4 Added to TESTING.md:**
+- **Objective**: Verify delta chain replay for offline players
+- **Scenario**: Player offline during 3-5 updates, returns and catches up
+- **Expected**: Chain replay succeeds, bandwidth < full sync
+- **Fallbacks**: Tests large gaps, expired history, missing deltas
+
+**Implementation Files:**
+- Database.lua: +125 lines (3 functions + schema)
+- Guild.lua: +165 lines (2 functions + ApplyDelta update)
+- Chat.lua: +75 lines (2 protocol handlers)
+- Constants.lua: +6 lines (4 constants + 2 prefixes)
+- DELTA-006-bug-report.md: Documentation
+- TESTING.md: Test 1.4 with variations
+
+**Branch Status:**
+- Feature branch: `feature/delta-chain-replay`
+- Commit: 08d83bf
+- Remote: origin/feature/delta-chain-replay ✅
+- Ready for testing and PR to main
+
+### 10.8 Diagnostic Tools ✅ COMPLETE
+**Commands Added:**
+
+1. **`/togbank deltaerrors`** - Shows recent delta sync errors
+   - Displays last 10 errors with timestamps and error types
+   - Shows failure counts per alt
+   - Highlights alts with repeated failures (3+)
+   - Color-coded: VERSION_MISMATCH (orange), other errors (red)
+   - **Persisted to database** - survives /reload
+
+2. **`/togbank deltahistory`** - Shows stored delta chain history
+   - Displays total deltas stored per alt
+   - Shows version transitions (baseVersion → version)
+   - Lists what changed (bank, bags, money)
+   - Shows age of each delta (seconds/minutes/hours ago)
+   - Helps verify SaveDeltaHistory() is working correctly
+
+**Example Output:**
+```
+/togbank deltaerrors
+=== Delta Sync Errors ===
+Recent Errors: (3)
+  1. [VERSION_MISMATCH] 14:25:30
+     Metals-Azuresong: Version mismatch: have 1768955355, delta expects 1768955969
+  2. [NO_DATA] 14:20:15
+     Galdof-OldBlanchy: No existing data for Togsquirrel-OldBlanchy
+  3. [APPLICATION_ERROR] 14:15:00
+     Metals-Azuresong: Invalid delta structure
+
+Failure Counts by Alt:
+  Metals-Azuresong: 5 (notified)
+  Galdof-OldBlanchy: 2
+
+Summary: 3 error(s) tracked, 2 alt(s) affected
+
+/togbank deltahistory
+=== Delta Chain History ===
+Total: 8 delta(s) stored for 2 alt(s)
+
+Metals-Azuresong: 5 delta(s)
+  1. v1768955355→v1768955969 (2 change(s), 5m ago)
+  2. v1768954800→v1768955355 (1 change(s), 15m ago)
+  3. v1768954200→v1768954800 (3 change(s), 25m ago)
+  4. v1768953600→v1768954200 (2 change(s), 35m ago)
+  5. v1768953000→v1768953600 (1 change(s), 45m ago)
+
+Galdof-OldBlanchy: 3 delta(s)
+  1. v1768955000→v1768955500 (1 change(s), 10m ago)
+  2. v1768954500→v1768955000 (2 change(s), 20m ago)
+  3. v1768954000→v1768954500 (1 change(s), 30m ago)
+```
+
+**Implementation Details:**
+- Chat.lua: Added PrintDeltaErrors() and PrintDeltaHistory() functions
+- Database.lua: Added deltaErrors{} to schema for persistence
+- Guild.lua: Updated error tracking to use database instead of in-memory storage
+- Commits: f3014d7 (deltaerrors), c7b7b49 (persistence), 30120d7 (deltahistory)
+
+**Benefits:**
+- Visibility into delta sync failures for debugging
+- Verify chain replay infrastructure is working
+- Identify patterns in failures (offline players, version mismatches)
+- Error tracking survives /reload (database persistence)
+
+---
+
+## Phase 11: Deployment & Monitoring
+
+### 11.1 Beta Testing 🔄 IN PROGRESS
 - [x] Deploy to test environment
   - [x] Install on test characters
   - [x] Test in small guild (8 members)
   - [x] Monitor for errors or crashes
-  - [ ] Gather feedback on performance
-  - [ ] Test in small guild (5-10 members)
-  - [ ] Monitor for errors or crashes
+  - [ ] Test delta chain replay scenarios
   - [ ] Gather feedback on performance
 
 ### 9.2 Metrics Collection Period

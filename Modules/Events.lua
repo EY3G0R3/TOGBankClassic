@@ -146,6 +146,35 @@ function TOGBankClassic_Events:Sync()
 	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
 end
 
+-- Delta-specific version broadcast (SYNC-001 fix)
+function TOGBankClassic_Events:SyncDeltaVersion()
+	local guild = TOGBankClassic_Guild:GetGuild()
+	if not guild then
+		return
+	end
+
+	-- Only broadcast delta version if we support delta
+	if not TOGBankClassic_Guild:ShouldUseDelta() then
+		return
+	end
+
+	local version = TOGBankClassic_Guild:GetVersion()
+	if version == nil then
+		return
+	end
+	if version.roster == nil then
+		return
+	end
+
+	-- v0.8.0: Include banker status for pull-based protocol
+	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
+	version.isBanker = isBanker
+
+	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
+	TOGBankClassic_Core:SendCommMessage("togbank-dv", data, "Guild", nil, "NORMAL")
+end
+
 function TOGBankClassic_Events:PLAYER_LOGIN(_)
 	TOGBankClassic_Guild:GetPlayer()
 end

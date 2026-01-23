@@ -448,16 +448,20 @@ function TOGBankClassic_UI_Search:DrawContent()
 	end
 
 	local search = self.SearchText
-	if string.sub(search, 0, 2) == "|c" then
+	if search and string.sub(search, 0, 2) == "|c" then
 		self.searchField:SetText("")
 		local item = Item:CreateFromItemLink(search)
-		item:ContinueOnItemLoad(function()
-			local name = item:GetItemName()
-			self.SearchText = name
-			self.searchField:SetText(name)
-			self:DrawContent()
-			self.searchField:ClearFocus()
-		end)
+		if item then
+			item:ContinueOnItemLoad(function()
+				local name = item:GetItemName()
+				if name then
+					self.SearchText = name
+					self.searchField:SetText(name)
+					self:DrawContent()
+					self.searchField:ClearFocus()
+				end
+			end)
+		end
 		return
 	end
 

@@ -24,6 +24,20 @@ function TOGBankClassic_Core:OnInitialize()
     TOGBankClassic_Chat:Init()
     TOGBankClassic_Options:Init()
     TOGBankClassic_UI:Init()
+    
+    -- Enable VersionCheck-1.0 addon integration
+    do
+        local VC = LibStub:GetLibrary("VersionCheck-1.0", true)
+        if VC and VC.Enable then
+            -- Create a host addon object for VersionCheck
+            local hostAddon = {
+                GetName = function() return "TOGBankClassic" end,
+                Version = (C_AddOns and C_AddOns.GetAddOnMetadata("TOGBankClassic", "Version")) or GetAddOnMetadata("TOGBankClassic", "Version") or "@project-version@"
+            }
+            VC:Enable(hostAddon)
+            TOGBankClassic_Output:Debug("VersionCheck-1.0 integration enabled (v%s)", hostAddon.Version)
+        end
+    end
 end
 
 function TOGBankClassic_Core:OnEnable()
@@ -115,8 +129,10 @@ function TOGBankClassic_Core:ValidateDeltaStructure(delta)
 		return false, "missing or invalid version"
 	end
 
-	if not delta.baseVersion or type(delta.baseVersion) ~= "number" then
-		return false, "missing or invalid baseVersion"
+	-- v0.8.0: baseVersion is optional (removed from new protocol)
+	-- Old protocol deltas will still have it, new protocol won't
+	if delta.baseVersion and type(delta.baseVersion) ~= "number" then
+		return false, "invalid baseVersion"
 	end
 
 	if not delta.changes or type(delta.changes) ~= "table" then
@@ -252,6 +268,56 @@ function TOGBankClassic_Core:SanitizeDelta(delta)
 	end
 
 	return sanitized
+end
+
+-- Compute a hash of inventory state to detect actual changes (v0.8.0)
+-- Only updates version timestamps when this hash changes
+function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, money)
+	local parts = {}
+	
+	-- Include money
+	table.insert(parts, tostring(money or 0))
+	
+	-- Helper to hash an items array
+	local function hashItems(items)
+		if not items or type(items) ~= "table" then
+			return ""
+		end
+		
+		-- Sort items by ID+Count to get consistent order
+		local sorted = {}
+		for _, item in ipairs(items) do
+			if item and item.ID then
+				table.insert(sorted, string.format("%d:%d", item.ID, item.Count or 0))
+			end
+		end
+		table.sort(sorted)
+		return table.concat(sorted, ",")
+	end
+	
+	-- Include bank items
+	if bank and bank.items then
+		table.insert(parts, "B:" .. hashItems(bank.items))
+	end
+	
+	-- Include bag items
+	if bags and bags.items then
+		table.insert(parts, "G:" .. hashItems(bags.items))
+	end
+	
+	-- Concatenate all parts and compute simple hash
+	local combined = table.concat(parts, "|")
+	
+	-- Use same hash function as checksum for consistency
+	local sum = 0
+	local len = #combined
+	for i = 1, len do
+		local byte = string.byte(combined, i)
+		sum = (sum * 31 + byte) % 2147483647
+	end
+	sum = (sum * 31 + len) % 2147483647
+	
+	return sum
 end
 
 -- Sanitize an item delta structure

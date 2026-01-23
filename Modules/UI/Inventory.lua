@@ -43,6 +43,11 @@ function TOGBankClassic_UI_Inventory:Open()
 	self.Window:Show()
 
 	self:DrawContent()
+	
+	-- Fast-fill: Request missing banker alts (delta mode only)
+	if TOGBankClassic_Guild and TOGBankClassic_Guild.ShouldUseDelta and TOGBankClassic_Guild:ShouldUseDelta() then
+		TOGBankClassic_Guild:FastFillMissingAlts()
+	end
 
 	if _G["TOGBankClassic"] then
 		_G["TOGBankClassic"]:Show()
@@ -173,11 +178,11 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			if alt.money then
 				total_gold = total_gold + alt.money
 			end
-			if alt.bank then
+			if alt.bank and alt.bank.slots then
 				slots = slots + alt.bank.slots.count
 				total_slots = total_slots + alt.bank.slots.total
 			end
-			if alt.bags then
+			if alt.bags and alt.bags.slots then
 				slots = slots + alt.bags.slots.count
 				total_slots = total_slots + alt.bags.slots.total
 			end

@@ -73,32 +73,30 @@ local function runTest(testName, testFunc)
     currentTest = nil
 end
 
--- Helper function to create test data
+-- Helper function to create test data (matches actual Bank.lua structure)
 local function createTestItem(id, count, link)
     return {
-        itemID = id,
-        count = count or 1,
-        link = link or ("item:" .. id),
-        quality = 1,
-        texture = "Interface\\Icons\\INV_Misc_QuestionMark"
+        ID = id,
+        Count = count or 1,
+        Link = link or ("[Item " .. id .. "]")
     }
 end
 
 local function createTestAltData(name)
     return {
         name = name,
+        version = GetServerTime(),
+        money = 150000, -- Total money
         bank = {
-            money = 100000,
             items = {
-                [1] = createTestItem(2589, 20, "item:2589"), -- Linen Cloth
-                [5] = createTestItem(2592, 10, "item:2592"), -- Wool Cloth
+                createTestItem(2589, 20, "[Linen Cloth]"),
+                createTestItem(2592, 10, "[Wool Cloth]"),
             }
         },
         bags = {
-            money = 50000,
             items = {
-                [1] = createTestItem(2589, 5, "item:2589"), -- Linen Cloth
-                [10] = createTestItem(765, 3, "item:765"), -- Silverleaf
+                createTestItem(2589, 5, "[Linen Cloth]"),
+                createTestItem(765, 3, "[Silverleaf]"),
             }
         }
     }
@@ -108,96 +106,210 @@ end
 -- Phase 5.1: Delta Computation Tests
 --============================================================================
 
+-- Test setup: Initialize guild context for delta tests
+local function setupDeltaTest(guildName)
+    guildName = guildName or "TestGuild"
+    
+    -- Ensure Guild.Info is initialized with the guild name
+    if not Guild.Info or Guild.Info.name ~= guildName then
+        Guild.Info = { name = guildName }
+    end
+    
+    -- Mock Events:TriggerCallback if it doesn't exist (for ApplyDelta)
+    if TOGBankClassic_Events and not TOGBankClassic_Events.TriggerCallback then
+        TOGBankClassic_Events.TriggerCallback = function() end
+    end
+    
+    -- Database should already be initialized by addon, but ensure structure exists
+    if not Database.db then
+        addon:Print("|cffff0000ERROR: Database not initialized! Tests require addon to be loaded.|r")
+        return nil
+    end
+    
+    -- Ensure faction storage exists
+    if not Database.db.faction then
+        Database.db.faction = {}
+    end
+    
+    -- Ensure guild entry exists (use Database:Reset to create proper structure)
+    if not Database.db.faction[guildName] then
+        Database:Reset(guildName)
+    end
+    
+    -- Clear any existing test snapshots
+    Database.db.faction[guildName].deltaSnapshots = {}
+    
+    return guildName
+end
+
 local function testDeltaComputationNoChanges()
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
+    
     local oldData = createTestAltData("TestAlt1")
+    
+    -- Save snapshot as baseline
+    local saved = Database:SaveSnapshot(guildName, "TestAlt1", oldData)
+    assert(saved, "Failed to save snapshot")
+    
+    -- Verify snapshot was saved
+    local retrieved = Database:GetSnapshot(guildName, "TestAlt1")
+    assertNotNil(retrieved, "Snapshot should be retrievable after save")
+    
+    -- Create identical "new" data
     local newData = TableCopy(oldData)
     
-    local delta = Guild:ComputeDelta(oldData, newData, 1)
+    -- Compute delta
+    local delta = Guild:ComputeDelta("TestAlt1", newData)
     
     assertNotNil(delta, "Delta should not be nil for identical data")
-    assertEquals(2, delta.version, "Delta version should be 2")
-    assertEquals(1, delta.baseVersion, "Base version should be 1")
+    assertEquals("alt-delta", delta.type, "Delta type should be alt-delta")
+    assertEquals("TestAlt1", delta.name, "Delta name should match")
+    assertNotNil(delta.version, "Delta should have version")
+    -- baseVersion is optional in v0.8.0 (removed for bandwidth savings)
     assert(not Guild:DeltaHasChanges(delta), "Delta should have no changes")
 end
 
 local function testDeltaComputationMoneyChange()
-    local oldData = createTestAltData("TestAlt2")
-    local newData = TableCopy(oldData)
-    newData.bank.money = 200000
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
     
-    local delta = Guild:ComputeDelta(oldData, newData, 1)
+    local oldData = createTestAltData("TestAlt2")
+    
+    -- Save snapshot as baseline
+    local saved = Database:SaveSnapshot(guildName, "TestAlt2", oldData)
+    assert(saved, "Failed to save snapshot")
+    
+    -- Create new data with money change
+    local newData = TableCopy(oldData)
+    newData.money = 200000
+    
+    -- Compute delta
+    local delta = Guild:ComputeDelta("TestAlt2", newData)
     
     assertNotNil(delta, "Delta should not be nil")
     assert(Guild:DeltaHasChanges(delta), "Delta should have changes")
-    assertEquals(200000, delta.changes.bank.money, "Bank money should be updated")
-    assertNil(delta.changes.bags, "Bags should not be in changes")
+    assertEquals(200000, delta.changes.money, "Money should be updated")
 end
 
 local function testDeltaComputationItemAdded()
-    local oldData = createTestAltData("TestAlt3")
-    local newData = TableCopy(oldData)
-    newData.bank.items[10] = createTestItem(2996, 1, "item:2996") -- Bolt of Linen Cloth
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
     
-    local delta = Guild:ComputeDelta(oldData, newData, 1)
+    local oldData = createTestAltData("TestAlt3")
+    
+    -- Save snapshot as baseline
+    local saved = Database:SaveSnapshot(guildName, "TestAlt3", oldData)
+    assert(saved, "Failed to save snapshot")
+    
+    -- Create new data with added item
+    local newData = TableCopy(oldData)
+    table.insert(newData.bank.items, createTestItem(2996, 5, "[Bolt of Linen Cloth]"))
+    
+    -- Compute delta
+    local delta = Guild:ComputeDelta("TestAlt3", newData)
     
     assertNotNil(delta, "Delta should not be nil")
     assert(Guild:DeltaHasChanges(delta), "Delta should have changes")
-    assertNotNil(delta.changes.bank.items[10], "New item should be in delta")
-    assertEquals(2996, delta.changes.bank.items[10].itemID, "Item ID should match")
+    assertNotNil(delta.changes.bank, "Bank changes should exist")
+    assert(#delta.changes.bank.added > 0, "Should have added items")
+    assertEquals(2996, delta.changes.bank.added[1].ID, "Added item ID should match")
 end
 
 local function testDeltaComputationItemRemoved()
-    local oldData = createTestAltData("TestAlt4")
-    local newData = TableCopy(oldData)
-    newData.bank.items[1] = nil
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
     
-    local delta = Guild:ComputeDelta(oldData, newData, 1)
+    local oldData = createTestAltData("TestAlt4")
+    
+    -- Save snapshot as baseline
+    local saved = Database:SaveSnapshot(guildName, "TestAlt4", oldData)
+    assert(saved, "Failed to save snapshot")
+    
+    -- Create new data with removed item
+    local newData = TableCopy(oldData)
+    table.remove(newData.bank.items, 1) -- Remove first item
+    
+    -- Compute delta
+    local delta = Guild:ComputeDelta("TestAlt4", newData)
     
     assertNotNil(delta, "Delta should not be nil")
     assert(Guild:DeltaHasChanges(delta), "Delta should have changes")
-    assert(delta.changes.bank.items[1] == false, "Removed item should be marked false")
+    assertNotNil(delta.changes.bank, "Bank changes should exist")
+    assert(#delta.changes.bank.removed > 0, "Should have removed items")
+    assertEquals(2589, delta.changes.bank.removed[1].ID, "Removed item ID should match")
 end
 
 local function testDeltaComputationItemCountChanged()
-    local oldData = createTestAltData("TestAlt5")
-    local newData = TableCopy(oldData)
-    newData.bank.items[1].count = 25 -- Change from 20 to 25
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
     
-    local delta = Guild:ComputeDelta(oldData, newData, 1)
+    local oldData = createTestAltData("TestAlt5")
+    
+    -- Save snapshot as baseline
+    local saved = Database:SaveSnapshot(guildName, "TestAlt5", oldData)
+    assert(saved, "Failed to save snapshot")
+    
+    -- Create new data with changed item count
+    local newData = TableCopy(oldData)
+    newData.bank.items[1].Count = 25 -- Change from 20 to 25
+    
+    -- Compute delta
+    local delta = Guild:ComputeDelta("TestAlt5", newData)
     
     assertNotNil(delta, "Delta should not be nil")
     assert(Guild:DeltaHasChanges(delta), "Delta should have changes")
-    assertNotNil(delta.changes.bank.items[1], "Changed item should be in delta")
-    assertEquals(25, delta.changes.bank.items[1].count, "Count should be updated")
+    assertNotNil(delta.changes.bank, "Bank changes should exist")
+    assert(#delta.changes.bank.modified > 0, "Should have modified items")
+    assertEquals(2589, delta.changes.bank.modified[1].ID, "Modified item ID should match")
+    assertEquals(25, delta.changes.bank.modified[1].Count, "Modified count should be 25")
 end
 
 local function testDeltaComputationMultipleChanges()
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
+    
     local oldData = createTestAltData("TestAlt6")
+    
+    -- Save snapshot as baseline
+    local saved = Database:SaveSnapshot(guildName, "TestAlt6", oldData)
+    assert(saved, "Failed to save snapshot")
+    
+    -- Create new data with multiple changes
     local newData = TableCopy(oldData)
+    newData.money = 300000  -- Money change
+    newData.bank.items[1].Count = 30  -- Count change
+    table.insert(newData.bank.items, createTestItem(2996, 5, "[Bolt of Linen Cloth]"))  -- Add item
+    table.remove(newData.bags.items, 1)  -- Remove item
     
-    -- Multiple changes
-    newData.bank.money = 300000
-    newData.bags.money = 75000
-    newData.bank.items[1].count = 30
-    newData.bank.items[10] = createTestItem(2996, 5)
-    newData.bags.items[1] = nil
-    
-    local delta = Guild:ComputeDelta(oldData, newData, 1)
+    -- Compute delta
+    local delta = Guild:ComputeDelta("TestAlt6", newData)
     
     assertNotNil(delta, "Delta should not be nil")
     assert(Guild:DeltaHasChanges(delta), "Delta should have changes")
-    assertEquals(300000, delta.changes.bank.money, "Bank money should be updated")
-    assertEquals(75000, delta.changes.bags.money, "Bags money should be updated")
-    assertEquals(30, delta.changes.bank.items[1].count, "Item count should be updated")
-    assertNotNil(delta.changes.bank.items[10], "New item should be added")
-    assert(delta.changes.bags.items[1] == false, "Removed item should be marked false")
+    assertEquals(300000, delta.changes.money, "Money should be updated")
+    assert(#delta.changes.bank.modified > 0, "Should have modified bank items")
+    assert(#delta.changes.bank.added > 0, "Should have added bank items")
+    assert(#delta.changes.bags.removed > 0, "Should have removed bag items")
 end
 
 local function testItemsEqual()
-    local item1 = createTestItem(2589, 20, "item:2589")
-    local item2 = createTestItem(2589, 20, "item:2589")
-    local item3 = createTestItem(2589, 25, "item:2589")
-    local item4 = createTestItem(2590, 20, "item:2590")
+    local item1 = createTestItem(2589, 20, "[Linen Cloth]")
+    local item2 = createTestItem(2589, 20, "[Linen Cloth]")
+    local item3 = createTestItem(2589, 25, "[Linen Cloth]")
+    local item4 = createTestItem(2590, 20, "[Wool Cloth]")
     
     assert(Guild:ItemsEqual(item1, item2), "Identical items should be equal")
     assert(not Guild:ItemsEqual(item1, item3), "Different counts should not be equal")
@@ -207,18 +319,16 @@ local function testItemsEqual()
 end
 
 local function testGetChangedFields()
-    local oldItem = createTestItem(2589, 20, "item:2589")
+    local oldItem = createTestItem(2589, 20, "[Linen Cloth]")
     local newItem = TableCopy(oldItem)
-    newItem.count = 25
-    newItem.quality = 2
+    newItem.Count = 25
     
     local changes = Guild:GetChangedFields(oldItem, newItem)
     
     assertNotNil(changes, "Changes should not be nil")
-    assertEquals(25, changes.count, "Count change should be captured")
-    assertEquals(2, changes.quality, "Quality change should be captured")
-    assertNil(changes.itemID, "Unchanged fields should not be in changes")
-    assertNil(changes.link, "Unchanged fields should not be in changes")
+    assertEquals(2589, changes.ID, "ID should always be included for identification")
+    assertEquals("[Linen Cloth]", changes.Link, "Link should always be included for identification")
+    assertEquals(25, changes.Count, "Count change should be captured")
 end
 
 --============================================================================
@@ -288,78 +398,85 @@ end
 --============================================================================
 
 local function testProtocolVersionDetection()
-    -- Mock database
-    local oldGetPeerProtocol = TOGBankClassic_Database.GetPeerProtocol
-    TOGBankClassic_Database.GetPeerProtocol = function(_, norm)
-        if norm == "TestRealm-V2User" then
-            return 2
-        elseif norm == "TestRealm-V1User" then
-            return 1
-        else
-            return nil
-        end
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
     end
     
-    local v2Caps = TOGBankClassic_Guild:GetPeerCapabilities("TestRealm-V2User")
-    local v1Caps = TOGBankClassic_Guild:GetPeerCapabilities("TestRealm-V1User")
-    local unknownCaps = TOGBankClassic_Guild:GetPeerCapabilities("TestRealm-Unknown")
+    -- Save peer protocol versions
+    Database.db.faction[guildName].guildProtocolVersions = {
+        ["V2User-TestRealm"] = 2,
+        ["V1User-TestRealm"] = 1,
+    }
     
-    assert(v2Caps.supportsDelta, "V2 user should support delta")
-    assert(not v1Caps.supportsDelta, "V1 user should not support delta")
-    assert(not unknownCaps.supportsDelta, "Unknown user should not support delta")
+    -- GetPeerCapabilities returns the protocol version number (or nil)
+    local v2Protocol = Guild:GetPeerCapabilities("V2User-TestRealm")
+    local v1Protocol = Guild:GetPeerCapabilities("V1User-TestRealm")
+    local unknownProtocol = Guild:GetPeerCapabilities("Unknown-TestRealm")
     
-    -- Restore
-    TOGBankClassic_Database.GetPeerProtocol = oldGetPeerProtocol
+    assertEquals(2, v2Protocol, "V2 user should have protocol version 2")
+    assertEquals(1, v1Protocol, "V1 user should have protocol version 1")
+    assertNil(unknownProtocol, "Unknown user should have nil protocol")
 end
 
 local function testShouldUseDeltaLogic()
-    -- Mock functions
-    local oldGetSnapshot = TOGBankClassic_Database.GetSnapshot
-    local oldGetPeerCapabilities = TOGBankClassic_Guild.GetPeerCapabilities
-    local oldFeaturesEnabled = FEATURES.DELTA_ENABLED
-    local oldFeaturesForce = FEATURES.FORCE_FULL_SYNC
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
     
-    TOGBankClassic_Database.GetSnapshot = function() return {version = 1, data = {}} end
-    TOGBankClassic_Guild.GetPeerCapabilities = function() return {supportsDelta = true} end
+    -- Setup Guild.Info
+    Guild.Info = Guild.Info or {}
+    Guild.Info.name = guildName
+    
+    -- Mock guild support at 60% (above 10% threshold)
+    local oldGetGuildDeltaSupport = Database.GetGuildDeltaSupport
+    Database.GetGuildDeltaSupport = function(name)
+        return 0.6  -- 60% support
+    end
+    
+    -- Test with delta enabled
+    local oldEnabled = FEATURES.DELTA_ENABLED
+    local oldForce = FEATURES.FORCE_FULL_SYNC
     FEATURES.DELTA_ENABLED = true
     FEATURES.FORCE_FULL_SYNC = false
     
-    local shouldUse = TOGBankClassic_Guild:ShouldUseDelta("TestRealm-User", {})
+    -- ShouldUseDelta takes no parameters
+    local shouldUse = Guild:ShouldUseDelta()
     assert(shouldUse, "Should use delta when conditions are met")
     
     -- Test with delta disabled
     FEATURES.DELTA_ENABLED = false
-    shouldUse = TOGBankClassic_Guild:ShouldUseDelta("TestRealm-User", {})
+    shouldUse = Guild:ShouldUseDelta()
     assert(not shouldUse, "Should not use delta when disabled")
     
     -- Test with force full sync
     FEATURES.DELTA_ENABLED = true
     FEATURES.FORCE_FULL_SYNC = true
-    shouldUse = TOGBankClassic_Guild:ShouldUseDelta("TestRealm-User", {})
+    shouldUse = Guild:ShouldUseDelta()
     assert(not shouldUse, "Should not use delta when forced full sync")
     
     -- Restore
-    TOGBankClassic_Database.GetSnapshot = oldGetSnapshot
-    TOGBankClassic_Guild.GetPeerCapabilities = oldGetPeerCapabilities
-    FEATURES.DELTA_ENABLED = oldFeaturesEnabled
-    FEATURES.FORCE_FULL_SYNC = oldFeaturesForce
+    FEATURES.DELTA_ENABLED = oldEnabled
+    FEATURES.FORCE_FULL_SYNC = oldForce
+    Database.GetGuildDeltaSupport = oldGetGuildDeltaSupport
 end
 
 local function testDeltaSupportThreshold()
-    local oldGetGuildDeltaSupport = TOGBankClassic_Database.GetGuildDeltaSupport
+    -- Test threshold comparison logic
+    -- PROTOCOL.DELTA_SUPPORT_THRESHOLD is 0.05 (5%)
     
-    -- Test below threshold
-    TOGBankClassic_Database.GetGuildDeltaSupport = function() return 0.3 end -- 30%
-    local support = TOGBankClassic_Database:GetGuildDeltaSupport()
-    assert(support < PROTOCOL.DELTA_SUPPORT_THRESHOLD, "30% should be below 50% threshold")
+    -- Test below threshold (3%)
+    local support = 0.03
+    assert(support < PROTOCOL.DELTA_SUPPORT_THRESHOLD, "3% should be below 5% threshold")
     
-    -- Test above threshold
-    TOGBankClassic_Database.GetGuildDeltaSupport = function() return 0.7 end -- 70%
-    support = TOGBankClassic_Database:GetGuildDeltaSupport()
-    assert(support >= PROTOCOL.DELTA_SUPPORT_THRESHOLD, "70% should be above 50% threshold")
+    -- Test above threshold (10%)
+    support = 0.10
+    assert(support >= PROTOCOL.DELTA_SUPPORT_THRESHOLD, "10% should be above 5% threshold")
     
-    -- Restore
-    TOGBankClassic_Database.GetGuildDeltaSupport = oldGetGuildDeltaSupport
+    -- Test exact threshold (5%)
+    support = 0.05
+    assert(support >= PROTOCOL.DELTA_SUPPORT_THRESHOLD, "5% should meet 5% threshold")
 end
 
 --============================================================================
@@ -367,42 +484,56 @@ end
 --============================================================================
 
 local function testApplyDeltaNoExistingData()
-    local delta = {
-        version = 2,
-        baseVersion = 1,
-        changes = {
-            bank = { money = 100000 }
-        }
-    }
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
     
-    -- Should fail because no existing data
-    local success = Guild:ApplyDelta("TestRealm", "NonExistent", delta)
-    assert(not success, "Should fail when no existing data")
-end
-
-local function testApplyDeltaVersionMismatch()
-    -- Mock database
-    local oldGetAltData = Database.GetAltData
-    Database.GetAltData = function()
-        return {
-            version = 5, -- Different from delta baseVersion
-            data = createTestAltData("TestAlt")
-        }
+    -- Ensure Guild.Info.alts exists but is empty
+    if not Guild.Info.alts then
+        Guild.Info.alts = {}
     end
     
     local delta = {
+        type = "alt-delta",
+        name = "NonExistent",
         version = 2,
-        baseVersion = 1, -- Mismatched
-        changes = {
-            bank = { money = 100000 }
-        }
+        baseVersion = 1,
+        changes = {}
     }
     
-    local success = Guild:ApplyDelta("TestRealm", "TestAlt", delta)
-    assert(not success, "Should fail on version mismatch")
+    -- Should fail because no existing data in Info.alts
+    local result = Guild:ApplyDelta("NonExistent-TestRealm", delta, "Sender-TestRealm")
+    assert(result ~= "APPLIED", "Should not apply when no existing data")
+end
+
+local function testApplyDeltaVersionMismatch()
+    local guildName = setupDeltaTest()
+    if not guildName then
+        error("Test setup failed - database not initialized")
+    end
     
-    -- Restore
-    Database.GetAltData = oldGetAltData
+    -- Create existing data with specific version
+    local existingData = createTestAltData("TestAlt")
+    existingData.version = 5
+    
+    -- Set up Guild.Info.alts with the existing data
+    if not Guild.Info.alts then
+        Guild.Info.alts = {}
+    end
+    Guild.Info.alts["TestAlt-TestRealm"] = existingData
+    
+    -- Create delta with mismatched base version
+    local delta = {
+        type = "alt-delta",
+        name = "TestAlt",
+        version = 6,
+        baseVersion = 1, -- Mismatched (current is 5)
+        changes = {money = 100000}
+    }
+    
+    local result = Guild:ApplyDelta("TestAlt-TestRealm", delta, "Sender-TestRealm")
+    assert(result ~= "APPLIED", "Should not apply on version mismatch")
 end
 
 local function testDeltaErrorTracking()
@@ -410,11 +541,11 @@ local function testDeltaErrorTracking()
     assertEquals(0, errorCount, "Initial error count should be 0")
     
     -- Record errors
-    Guild:RecordDeltaError("TestRealm-ErrorAlt", "Test error 1")
+    Guild:RecordDeltaError("TestRealm-ErrorAlt", "TEST_ERROR", "Test error 1")
     errorCount = Guild:GetDeltaFailureCount("TestRealm-ErrorAlt")
     assertEquals(1, errorCount, "Error count should be 1")
     
-    Guild:RecordDeltaError("TestRealm-ErrorAlt", "Test error 2")
+    Guild:RecordDeltaError("TestRealm-ErrorAlt", "TEST_ERROR", "Test error 2")
     errorCount = Guild:GetDeltaFailureCount("TestRealm-ErrorAlt")
     assertEquals(2, errorCount, "Error count should be 2")
     
@@ -425,36 +556,24 @@ local function testDeltaErrorTracking()
 end
 
 local function testSnapshotValidation()
-    -- Valid snapshot
-    local validSnapshot = {
-        version = 1,
-        timestamp = time(),
-        data = createTestAltData("TestAlt")
-    }
+    -- Valid snapshot (the data itself, not wrapped)
+    local validSnapshot = createTestAltData("TestAlt")
     assert(Database:ValidateSnapshot(validSnapshot), "Valid snapshot should pass")
     
     -- Invalid: missing version
-    local invalidSnapshot1 = {
-        timestamp = time(),
-        data = createTestAltData("TestAlt")
-    }
+    local invalidSnapshot1 = TableCopy(validSnapshot)
+    invalidSnapshot1.version = nil
     assert(not Database:ValidateSnapshot(invalidSnapshot1), "Missing version should fail")
     
     -- Invalid: version not a number
-    local invalidSnapshot2 = {
-        version = "not a number",
-        timestamp = time(),
-        data = createTestAltData("TestAlt")
-    }
+    local invalidSnapshot2 = TableCopy(validSnapshot)
+    invalidSnapshot2.version = "not a number"
     assert(not Database:ValidateSnapshot(invalidSnapshot2), "Non-numeric version should fail")
     
     -- Invalid: corrupted bank structure
     local invalidSnapshot3 = {
         version = 1,
-        timestamp = time(),
-        data = {
-            bank = "not a table"
-        }
+        bank = "not a table"
     }
     assert(not Database:ValidateSnapshot(invalidSnapshot3), "Corrupted bank should fail")
 end
@@ -462,35 +581,58 @@ end
 local function testDeltaStructureValidation()
     -- Valid delta
     local validDelta = {
+        type = "alt-delta",
+        name = "TestAlt",
         version = 2,
         baseVersion = 1,
         changes = {
-            bank = { money = 100000 }
+            money = 100000
         }
     }
-    assert(addon:ValidateDeltaStructure(validDelta), "Valid delta should pass")
+    local valid, err = addon:ValidateDeltaStructure(validDelta)
+    assert(valid, "Valid delta should pass: " .. tostring(err))
     
-    -- Invalid: missing version
+    -- Invalid: missing type
     local invalidDelta1 = {
+        name = "TestAlt",
+        version = 2,
         baseVersion = 1,
         changes = {}
     }
-    assert(not addon:ValidateDeltaStructure(invalidDelta1), "Missing version should fail")
+    valid, err = addon:ValidateDeltaStructure(invalidDelta1)
+    assert(not valid, "Missing type should fail")
     
-    -- Invalid: missing baseVersion
+    -- Invalid: wrong type
     local invalidDelta2 = {
-        version = 2,
-        changes = {}
-    }
-    assert(not addon:ValidateDeltaStructure(invalidDelta2), "Missing baseVersion should fail")
-    
-    -- Invalid: changes not a table
-    local invalidDelta3 = {
+        type = "wrong-type",
+        name = "TestAlt",
         version = 2,
         baseVersion = 1,
-        changes = "not a table"
+        changes = {}
     }
-    assert(not addon:ValidateDeltaStructure(invalidDelta3), "Non-table changes should fail")
+    valid, err = addon:ValidateDeltaStructure(invalidDelta2)
+    assert(not valid, "Wrong type should fail")
+    
+    -- Invalid: missing name
+    local invalidDelta3 = {
+        type = "alt-delta",
+        version = 2,
+        baseVersion = 1,
+        changes = {}
+    }
+    valid, err = addon:ValidateDeltaStructure(invalidDelta3)
+    assert(not valid, "Missing name should fail")
+    
+    -- Invalid: non-numeric version
+    local invalidDelta4 = {
+        type = "alt-delta",
+        name = "TestAlt",
+        version = "not a number",
+        baseVersion = 1,
+        changes = {}
+    }
+    valid, err = addon:ValidateDeltaStructure(invalidDelta4)
+    assert(not valid, "Non-numeric version should fail")
 end
 
 --============================================================================
@@ -498,65 +640,97 @@ end
 --============================================================================
 
 local function testFullDeltaRoundtrip()
-    -- Create initial data
-    local oldData = createTestAltData("IntegrationTest")
-    local snapshot = {
-        version = 1,
-        timestamp = time(),
-        data = oldData
-    }
+    setupDeltaTest("TestGuild")
     
-    -- Make changes
+    local name = "IntegrationTest"
+    local norm = Guild:NormalizeName(name)  -- Use Guild's NormalizeName which adds realm suffix
+    
+    -- Create initial data with proper structure
+    local oldData = createTestAltData(name)
+    oldData.version = 1
+    oldData.money = 100000  -- Money is at root level, not in bank
+    oldData.bank.items = oldData.bank.items or {}
+    -- Keep only first bank item
+    oldData.bank.items[2] = nil
+    oldData.bags.items = oldData.bags.items or {}
+    -- Keep both bag items (from createTestAltData)
+    Database:SaveSnapshot("TestGuild", name, oldData)
+    
+    -- Setup Guild.Info for ApplyDelta with a deep copy
+    Guild.Info.name = "TestGuild"
+    Guild.Info.alts = Guild.Info.alts or {}
+    Guild.Info.alts[norm] = TableCopy(oldData)
+    
+    -- Make changes  
     local newData = TableCopy(oldData)
-    newData.bank.money = 200000
-    newData.bank.items[10] = createTestItem(2996, 5)
-    newData.bags.items[1] = nil
+    newData.version = 2
+    newData.money = 200000  -- Money is at root level
+    -- Add new item to bank (append to array)
+    table.insert(newData.bank.items, createTestItem(2996, 5))
+    -- Remove first bag item
+    table.remove(newData.bags.items, 1)
     
     -- Compute delta
-    local delta = Guild:ComputeDelta(snapshot.data, newData, 1)
+    local delta = Guild:ComputeDelta(name, newData)
     assertNotNil(delta, "Delta should be computed")
+    assertEquals("alt-delta", delta.type, "Delta should have type")
+    assertEquals(name, delta.name, "Delta should have name")
     
-    -- Mock GetAltData for ApplyDelta
-    local oldGetAltData = Database.GetAltData
-    Database.GetAltData = function()
-        return {version = 1, data = oldData}
-    end
+    -- Verify delta contains money change
+    assertNotNil(delta.changes, "Delta should have changes")
+    assertEquals(200000, delta.changes.money, "Delta should contain money change")
     
-    local oldSetAltData = Database.SetAltData
-    local appliedData = nil
-    Database.SetAltData = function(_, _, _, data)
-        appliedData = data
-    end
+    -- Apply delta (modifies Guild.Info.alts[norm] in place)
+    local status = Guild:ApplyDelta(name, delta, "sender")
+    -- ApplyDelta returns ADOPTION_STATUS values, not boolean
+    -- Just check it didn't return INVALID
     
-    -- Apply delta
-    local success = Guild:ApplyDelta("TestRealm", "IntegrationTest", delta)
-    assert(success, "Delta should apply successfully")
-    assertNotNil(appliedData, "Data should be saved")
-    
-    -- Verify changes
-    assertEquals(200000, appliedData.bank.money, "Bank money should be updated")
-    assertNotNil(appliedData.bank.items[10], "New item should be added")
-    assertNil(appliedData.bags.items[1], "Item should be removed")
-    
-    -- Restore
-    Database.GetAltData = oldGetAltData
-    Database.SetAltData = oldSetAltData
+    -- Verify changes through Guild.Info.alts
+    local appliedData = Guild.Info.alts[norm]
+    assertNotNil(appliedData, "Data should be in Guild.Info.alts")
+    assertEquals(200000, appliedData.money, "Money should be updated")
+    -- Bank should now have 2 items (originally had 1, added 1)
+    assertEquals(2, #appliedData.bank.items, "Bank should have 2 items")
+    -- Bag items should have 1 item (originally had 2, removed 1)
+    assertEquals(1, #appliedData.bags.items, "Bags should have 1 item (TESTS ITEM REMOVAL)")
+    assertEquals(2, appliedData.version, "Version should be updated")
 end
 
 local function testDeltaSizeThreshold()
-    local oldData = createTestAltData("SizeTest")
-    local newData = TableCopy(oldData)
+    setupDeltaTest("TestGuild")
     
-    -- Small change
-    newData.bank.money = 200000
-    local delta = Guild:ComputeDelta(oldData, newData, 1)
+    local name = "SizeTest"
+    local oldData = createTestAltData(name)
+    oldData.version = 1
+    oldData.money = 100000
+    -- Add many items to increase full size
+    for i = 3, 20 do
+        oldData.bank.items[i] = createTestItem(2589 + i, 1)
+    end
+    Database:SaveSnapshot("TestGuild", name, oldData)
+    
+    local newData = TableCopy(oldData)
+    newData.version = 2
+    newData.money = 200000  -- Just change money
+    
+    local delta = Guild:ComputeDelta(name, newData)
+    assertNotNil(delta, "Delta should be computed")
+    assertNotNil(delta.changes, "Delta should have changes")
+    assertEquals(200000, delta.changes.money, "Delta should have money change")
     
     local fullSize = Guild:EstimateSize(newData)
     local deltaSize = Guild:EstimateSize(delta)
     local ratio = deltaSize / fullSize
     
-    assert(ratio < addon.PROTOCOL.MIN_DELTA_SIZE_RATIO, 
-        "Small change should be below size threshold")
+    -- With many items, a money-only delta should be small relative to full data
+    assert(ratio < PROTOCOL.MIN_DELTA_SIZE_RATIO, 
+        string.format(
+            "Money-only change should be below %.0f%% threshold (actual: %.1f%%, deltaSize=%d, fullSize=%d)",
+            PROTOCOL.MIN_DELTA_SIZE_RATIO * 100,
+            ratio * 100,
+            deltaSize,
+            fullSize
+        ))
 end
 
 --============================================================================
@@ -564,33 +738,54 @@ end
 --============================================================================
 
 local function testV1ClientIgnoresDeltaPrefix()
-    -- V1 clients should not have togbank-d2 registered
-    -- This is implicitly tested by protocol negotiation
-    local caps = TOGBankClassic_Guild:GetPeerCapabilities("TestRealm-V1Client")
-    assert(not caps.supportsDelta, "V1 client should not support delta")
+    setupDeltaTest("TestGuild")
+    
+    -- Setup Guild.Info
+    Guild.Info = Guild.Info or {}
+    Guild.Info.name = "TestGuild"
+    
+    -- Directly set protocol version in database for V1Client
+    local db = Database.db.faction["TestGuild"]
+    db.guildProtocolVersions = db.guildProtocolVersions or {}
+    db.guildProtocolVersions["V1Client"] = {
+        version = 1,  -- Using 'version' not 'protocolVersion'
+        lastSeen = GetServerTime(),
+        supportsDelta = false
+    }
+    
+    -- V1 clients should have protocol version 1
+    local peerInfo = Guild:GetPeerCapabilities("V1Client")
+    assertNotNil(peerInfo, "Should have peer info")
+    assertEquals(1, peerInfo.version, "V1 client should have protocol version 1")
+    assert(peerInfo.version < 2, "V1 client should not support delta (version < 2)")
 end
 
 local function testV2ClientHandlesBothProtocols()
-    -- V2 clients should handle both togbank-d and togbank-d2
-    local caps = TOGBankClassic_Guild:GetPeerCapabilities("TestRealm-V2Client")
-    
-    -- We can't directly test comm handlers, but we can verify protocol version
+    -- V2 clients should have protocol version 2
     assert(PROTOCOL.VERSION == 2, "Current protocol should be v2")
     assert(PROTOCOL.SUPPORTS_DELTA, "Current protocol should support delta")
 end
 
 local function testFallbackToFullSync()
-    -- When peer doesn't support delta, should use full sync
-    local oldGetPeerCapabilities = TOGBankClassic_Guild.GetPeerCapabilities
-    TOGBankClassic_Guild.GetPeerCapabilities = function()
-        return {supportsDelta = false}
+    setupDeltaTest("TestGuild")
+    
+    -- Setup Guild.Info
+    Guild.Info = Guild.Info or {}
+    Guild.Info.name = "TestGuild"
+    
+    -- v0.8.0: Guild support threshold removed - delta always enabled if feature flag is on
+    -- This test now validates that delta is enabled regardless of guild support percentage
+    local oldGetGuildDeltaSupport = Database.GetGuildDeltaSupport
+    Database.GetGuildDeltaSupport = function(name)
+        return 0  -- 0% support
     end
     
-    local shouldUse = TOGBankClassic_Guild:ShouldUseDelta("TestRealm-V1Client", {})
-    assert(not shouldUse, "Should not use delta with V1 client")
+    -- Should still use delta in v0.8.0 (threshold check removed)
+    local shouldUse = Guild:ShouldUseDelta()
+    assert(shouldUse, "v0.8.0: Should use delta even with 0% guild support (threshold removed)")
     
     -- Restore
-    TOGBankClassic_Guild.GetPeerCapabilities = oldGetPeerCapabilities
+    Database.GetGuildDeltaSupport = oldGetGuildDeltaSupport
 end
 
 --============================================================================

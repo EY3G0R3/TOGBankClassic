@@ -3,6 +3,9 @@ TOGBankClassic_Output = {}
 -- Current log level (default to INFO)
 TOGBankClassic_Output.level = LOG_LEVEL.INFO
 
+-- Communication debug flag (default to false)
+TOGBankClassic_Output.commDebug = false
+
 -- Dedicated chat frame for debug output
 TOGBankClassic_Output.debugFrame = nil
 TOGBankClassic_Output.debugMessageBuffer = {}
@@ -18,6 +21,14 @@ end
 
 function TOGBankClassic_Output:GetLevel()
 	return self.level
+end
+
+function TOGBankClassic_Output:SetCommDebug(enabled)
+	self.commDebug = enabled
+end
+
+function TOGBankClassic_Output:GetCommDebug()
+	return self.commDebug
 end
 
 -- Store message in buffer
@@ -245,6 +256,15 @@ end
 -- Debug: development/troubleshooting details
 function TOGBankClassic_Output:Debug(fmt, ...)
 	return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG]|r", fmt, ...)
+end
+
+-- DebugComm: protocol communication details (only shown when commDebug is enabled)
+function TOGBankClassic_Output:DebugComm(fmt, ...)
+	-- Only show if debug level is active AND commDebug flag is enabled
+	if TOGBankClassic_Output.level < LOG_LEVEL.DEBUG or not TOGBankClassic_Output.commDebug then
+		return false
+	end
+	return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG] (comm)|r", fmt, ...)
 end
 
 -- Info: sync status, normal operations

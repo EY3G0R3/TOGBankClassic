@@ -33,9 +33,17 @@ REQUEST_LOG = {
 -- Communication prefix descriptions for debug logging
 COMM_PREFIX_DESCRIPTIONS = {
 	["togbank-v"] = "(Version)",
+	["togbank-dv"] = "(Delta Version)",
 	["togbank-d"] = "(Data)",
 	["togbank-d2"] = "(Delta Data)",
+	["togbank-d3"] = "(Data v2 - No Links)",
+	["togbank-d4"] = "(Delta Data v2 - No Links)",
+	["togbank-dr"] = "(Delta Range Request)",
+	["togbank-dc"] = "(Delta Chain)",
 	["togbank-r"] = "(Query)",
+	["togbank-rr"] = "(Query Reply)",
+	["togbank-state"] = "(State Summary)",
+	["togbank-nochange"] = "(No Change)",
 	["togbank-h"] = "(Hello)",
 	["togbank-hr"] = "(Hello Reply)",
 	["togbank-s"] = "(Share)",
@@ -50,11 +58,43 @@ PROTOCOL = {
 	SUPPORTS_DELTA = true,          -- This client supports delta updates
 	MIN_DELTA_SIZE_RATIO = 0.3,     -- Only use delta if <30% of full sync size
 	DELTA_SNAPSHOT_MAX_AGE = 3600,  -- 1 hour: snapshots older than this are invalid
-	DELTA_SUPPORT_THRESHOLD = 0.1,  -- Use delta if >10% of online guild supports it (lowered for testing)
+	DELTA_SUPPORT_THRESHOLD = 0.05, -- Use delta if >5% of online guild supports it (lowered for testing: 1 of 14 = 7.1%)
+	
+	-- Delta Chain Replay (DELTA-006)
+	DELTA_HISTORY_MAX_COUNT = 10,   -- Keep last N deltas per alt (memory limit)
+	DELTA_HISTORY_MAX_AGE = 3600,   -- 1 hour: purge deltas older than this
+	DELTA_CHAIN_MAX_HOPS = 30,      -- Max deltas in one chain request (increased for testing)
+	DELTA_CHAIN_MAX_SIZE = 5000,    -- If chain >5KB, fall back to full sync
 }
 
 -- Feature flags (for easy enable/disable during development/testing)
 FEATURES = {
 	DELTA_ENABLED = true,           -- Enable delta sync protocol
+	FORCE_DELTA_SYNC = false,       -- Force delta sync (bypass thresholds) for testing
 	FORCE_FULL_SYNC = false,        -- Force full sync (disable delta) for testing
+	
+	-- Protocol selection for v0.8.0+ (user-configurable)
+	PROTOCOL_MODE = "AUTO",         -- "AUTO", "LEGACY_ONLY", "NEW_ONLY"
+}
+
+-- Protocol mode descriptions
+PROTOCOL_MODES = {
+	AUTO = {
+		name = "Auto (Recommended)",
+		desc = "Sends both legacy (with Links) and new (without Links) formats. Compatible with all versions. Temporary bandwidth cost during migration.",
+		sendLegacy = true,
+		sendNew = true,
+	},
+	LEGACY_ONLY = {
+		name = "Legacy Only",
+		desc = "Only sends legacy format with Links. Maximum compatibility with v0.6.x/v0.7.0. Higher bandwidth always.",
+		sendLegacy = true,
+		sendNew = false,
+	},
+	NEW_ONLY = {
+		name = "New Protocol Only",
+		desc = "Only sends new format without Links. Requires all guild members on v0.8.0+. Maximum bandwidth savings (5-7KB per sync).",
+		sendLegacy = false,
+		sendNew = true,
+	},
 }
