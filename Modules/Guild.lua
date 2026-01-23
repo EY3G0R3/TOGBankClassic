@@ -1378,7 +1378,7 @@ function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
 
 	-- Show progress at start
 	if SendStats.chunksSent == 1 then
-		TOGBankClassic_Output:Info("Sharing guild bank data: %d bytes in ~%d chunks...", totalBytes, totalChunks)
+		TOGBankClassic_Output:Debug("Sharing guild bank data: %d bytes in ~%d chunks...", totalBytes, totalChunks)
 	end
 
 	-- Completion summary
