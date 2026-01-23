@@ -182,6 +182,54 @@ This was previously fixed in v2.3.0 of the original fork but was reintroduced du
 
 ---
 
+#### ⏳ [UI-003] Intermittent request list visibility - requests sometimes don't appear
+
+**Severity:** 🟠 HIGH  
+**Category:** UI / Data Synchronization  
+**Reporter:** Multiple users + Developer  
+**Date Reported:** 2026-01-23  
+**Status:** ⏳ INVESTIGATING  
+**Reproducibility:** Intermittent
+
+**Description:**
+Requests intermittently fail to appear in the requests window. Sometimes they show up, sometimes they don't, with no clear pattern.
+
+**Steps to Reproduce:**
+- Not consistently reproducible
+- Observed across multiple users
+- Confirmed by developer experiencing the issue directly
+
+**Expected Behavior:**
+All active requests should consistently appear in the requests window.
+
+**Actual Behavior:**
+Requests sometimes appear and sometimes don't appear in the UI, even though the data may be present in the database.
+
+**Environment:**
+- WoW Version: Classic Era
+- TOGBankClassic Version: 0.7.6+
+- Multiple users affected
+- Intermittent occurrence
+
+**Potential Causes to Investigate:**
+1. Race condition in UI refresh timing
+2. Request filtering logic incorrectly excluding valid requests
+3. Data synchronization delay between database and UI
+4. Event handler not triggering UI update
+5. Request pruning logic removing active requests
+6. Guild roster validation incorrectly filtering requests
+
+**Impact:**
+Users unable to see and fulfill requests, breaking core addon functionality.
+
+**Investigation Notes:**
+- Need to add debug logging to track request lifecycle
+- Check UI refresh triggers
+- Verify request filtering conditions
+- Review data sync between modules
+
+---
+
 *No other open bugs at this time.*
 
 ---
