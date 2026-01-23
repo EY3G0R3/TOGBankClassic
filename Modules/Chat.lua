@@ -585,6 +585,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end
 			end
 		end
+	end
 
 	-- v0.8.0: Pull-based request reply handler (togbank-rr)
 	if prefix == "togbank-rr" then
