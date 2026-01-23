@@ -102,8 +102,10 @@ function TOGBankClassic_Chat:PerformSync()
 	TOGBankClassic_Events:SyncDeltaVersion()
 	TOGBankClassic_Guild:FastFillMissingAlts()
 	-- Also explicitly query request data to ensure it's up to date
-	TOGBankClassic_Guild:QueryRequestLog(nil, nil)
-	TOGBankClassic_Guild:QueryRequestsSnapshot(nil)
+	-- Pass our own player name so others know who to send the response to
+	local player = TOGBankClassic_Guild:GetPlayer()
+	TOGBankClassic_Guild:QueryRequestLog(player, nil)
+	TOGBankClassic_Guild:QueryRequestsSnapshot(player)
 end
 
 local SHARES_COLOR = "|cff80bfffshares|r"
@@ -530,6 +532,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or ""
 		)
 
+		-- Request data is guild-wide, so anyone can respond (no player check needed)
+		if data.type == "requests" then
+			TOGBankClassic_Guild:SendRequestsSnapshot()
+		end
+		if data.type == "requests-log" then
+			TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
+		end
+
+		-- Alt and roster queries are per-player, only respond if query is for us
 		if data.player == player then
 			if data.type == "roster" then
 				local time = GetServerTime()
@@ -537,13 +548,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					self.last_roster_sync = time
 					TOGBankClassic_Guild:SendRosterData()
 				end
-			end
-
-			if data.type == "requests" then
-				TOGBankClassic_Guild:SendRequestsSnapshot()
-			end
-			if data.type == "requests-log" then
-				TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
 			end
 
 			if data.type == "alt" then

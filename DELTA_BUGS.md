@@ -359,6 +359,87 @@ Disrupts user workflow when reviewing multiple bankers. User must repeatedly res
 
 ---
 
+#### [SYNC-002] Request data not syncing with /togbank sync command
+
+**Severity:** 🟡 MEDIUM  
+**Category:** Communication / Synchronization  
+**Reporter:** User  
+**Date Reported:** 2026-01-23  
+**Status:** ✅ FIXED (v0.7.11)  
+**Reproducibility:** Always
+
+**Description:**
+Request data was not being queried when using `/togbank sync` command or when opening the inventory UI. Users would not receive updated request information even after explicitly syncing.
+
+**Root Cause:**
+Two distinct issues in request query handling:
+
+1. **Missing player parameter in PerformSync()**
+   - `PerformSync()` called `QueryRequestLog(nil, nil)` and `QueryRequestsSnapshot(nil)`
+   - Both functions check `if not player then return end` and exit early with nil
+   - Result: No query message was ever sent
+
+2. **Player check prevented responses**
+   - Request query handler had `if data.player == player then` check
+   - This meant only the person whose name matched `data.player` would respond
+   - Since querier sends their own name, other guild members would ignore the query
+   - Result: Even when query was sent, nobody would respond
+
+**Why This Matters:**
+Request data is **guild-wide** (not per-player like alt data), so everyone should have the same requests and be able to share them. The player-specific check was incorrect for request queries.
+
+**Fix Implementation (2026-01-23):**
+
+**Part 1: Pass player name to query functions** (Modules/Chat.lua)
+```lua
+function TOGBankClassic_Chat:PerformSync()
+    TOGBankClassic_Events:SyncDeltaVersion()
+    TOGBankClassic_Guild:FastFillMissingAlts()
+    -- Pass our own player name so others know who to respond to
+    local player = TOGBankClassic_Guild:GetPlayer()
+    TOGBankClassic_Guild:QueryRequestLog(player, nil)
+    TOGBankClassic_Guild:QueryRequestsSnapshot(player)
+end
+```
+
+**Part 2: Remove player check for request queries** (Modules/Chat.lua)
+```lua
+-- Request data is guild-wide, so anyone can respond (no player check needed)
+if data.type == "requests" then
+    TOGBankClassic_Guild:SendRequestsSnapshot()
+end
+if data.type == "requests-log" then
+    TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
+end
+
+-- Alt and roster queries are per-player, only respond if query is for us
+if data.player == player then
+    if data.type == "roster" then
+        -- ... roster handling
+    end
+    if data.type == "alt" then
+        -- ... alt handling
+    end
+end
+```
+
+**Backwards Compatibility:**
+- Old clients with `if data.player == player` check will still ignore queries from new clients
+- New clients respond to any request query, so old→new queries work
+- Request data still propagates via `/togbank share` and version broadcasts (cross-version)
+- Mixed version guilds will work, but full rollout recommended for optimal sync
+
+**Testing:**
+1. Run `/togbank sync` - should see request query broadcasts in debug log
+2. Open inventory UI - should trigger same sync including request queries
+3. Check if request data appears after sync
+4. Verify with `/togbank debuglog` that queries are being sent and responses received
+
+**Impact:**
+Users could not explicitly sync request data via commands or UI. Request data only updated through broadcasts from `/togbank share` or automatic version checks.
+
+---
+
 #### [COMM-001] "No player named <banker> is currently playing" error message
 
 **Severity:** 🟡 MEDIUM  
