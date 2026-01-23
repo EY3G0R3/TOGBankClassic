@@ -14,6 +14,7 @@
 - [ ] **Order fulfillment notification** - Make it more apparent to the user when their order has been filled (e.g., sound alert, chat message, visual indicator on UI)
 - [ ] **Communications buffer/queue on banker side** - Investigate if whispers are being dropped during high traffic; implement queue system to ensure all requests are processed
 - [ ] **Real-time inventory scanning** - Monitor BAG_UPDATE and PLAYERBANKSLOTS_CHANGED events instead of only scanning on window close; add debouncing (500ms) to prevent spam during rapid changes; current behavior requires closing bank/mail/trade windows to update cached data
+- [ ] **Banker ownership display** - Show which player/account owns each banker character to help identify who controls guild bank alts; useful for multi-person guild bank management and tracking
 
 ---
 
