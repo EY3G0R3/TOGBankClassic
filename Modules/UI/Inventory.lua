@@ -285,7 +285,16 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		end
 	end)
 
-	self.TabGroup:SelectTab(first_tab)
+	-- UI-004 fix: Preserve currently selected tab instead of always resetting to first_tab
+	-- Only select first_tab if no tab is currently selected
+	local currentTab = self.TabGroup.localstatus and self.TabGroup.localstatus.selected
+	if currentTab and info.alts[currentTab] then
+		-- Preserve current selection if it's still valid
+		self.TabGroup:SelectTab(currentTab)
+	else
+		-- No current selection or invalid tab, select first tab
+		self.TabGroup:SelectTab(first_tab)
+	end
 end
 
 function TOGBankClassic_UI_Inventory:GetPercentColor(percent)

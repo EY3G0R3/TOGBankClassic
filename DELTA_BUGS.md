@@ -5,6 +5,8 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Recent Fixes (2026-01-23):**
+- ✅ [UI-004] Banker tab snap-back - Fixed DrawContent() to preserve selected tab instead of always resetting to first
+- ✅ [SYNC-002] Request data not syncing - Fixed PerformSync() to pass player name and removed player check for guild-wide request queries
 - ✅ [COMM-001] **EXPANSION** Offline WHISPER errors - Added SendWhisper() wrapper with automatic online checking for all WHISPER sends
 - ✅ [DELTA-008] Repeated delta sync failures from offline whispers - Added online check in RequestDeltaChain
 - ✅ [UI-003] **CRITICAL** Request data loss on snapshot sync - Fixed ApplyRequestSnapshot to merge instead of replace
@@ -318,44 +320,65 @@ Critical bug affecting all request system users. Requests are being silently del
 **Category:** UI / User Experience  
 **Reporter:** User  
 **Date Reported:** 2026-01-23  
-**Status:** 🔴 OPEN  
-**Reproducibility:** Intermittent
+**Status:** ✅ FIXED (v0.7.11)  
+**Reproducibility:** Intermittent (now resolved)
 
 **Description:**
-When viewing banker tabs in the inventory UI, the selected tab intermittently snaps back to the first banker. This occurs while the UI is already open and the user has selected a specific banker's tab.
+When viewing banker tabs in the inventory UI, the selected tab intermittently snapped back to the first banker. This occurred while the UI was already open and the user had selected a specific banker's tab.
 
 **Steps to Reproduce:**
 1. Open TOGBankClassic inventory UI (`/togbank`)
 2. Navigate to a banker tab (not the first one)
 3. Keep the tab open
-4. UI intermittently switches back to the first banker tab without user action
+4. UI would intermittently switch back to the first banker tab without user action
 
 **Expected Behavior:**
 - Selected banker tab should remain active
 - Tab selection should only change with explicit user interaction
 
-**Actual Behavior:**
-- Tab selection resets to first banker automatically
-- Occurs intermittently (timing/trigger unclear)
+**Actual Behavior (Before Fix):**
+- Tab selection reset to first banker automatically
+- Occurred during data syncs, UI refreshes, or other redraw events
 
-**Potential Causes to Investigate:**
-- UI refresh/redraw during data sync resetting tab selection
-- Tab state not preserved during DrawContent() calls
-- Event handlers triggering unwanted tab switches
-- Automatic sync on UI open (PerformSync) may trigger redraws
+**Root Cause:**
+`DrawContent()` in Modules/UI/Inventory.lua always called `self.TabGroup:SelectTab(first_tab)` at the end, regardless of whether a tab was already selected. This meant any time the UI refreshed (during syncs, data updates, etc.), it would unconditionally reset to the first banker.
 
-**Affected Code:**
-- Modules/UI/Inventory.lua - Tab management and DrawContent()
-- Potential trigger: UI:Open() now calls PerformSync() which may cause redraws
+**Triggers:**
+- Opening inventory UI (initial DrawContent call)
+- Data syncs via PerformSync() (called on UI open)
+- Any event that triggered DrawContent() redraw
+
+**Fix Implementation (2026-01-23):**
+Modified DrawContent() in Modules/UI/Inventory.lua to preserve the currently selected tab:
+
+```lua
+-- UI-004 fix: Preserve currently selected tab instead of always resetting to first_tab
+-- Only select first_tab if no tab is currently selected
+local currentTab = self.TabGroup.localstatus and self.TabGroup.localstatus.selected
+if currentTab and info.alts[currentTab] then
+    -- Preserve current selection if it's still valid
+    self.TabGroup:SelectTab(currentTab)
+else
+    -- No current selection or invalid tab, select first tab
+    self.TabGroup:SelectTab(first_tab)
+end
+```
+
+**Logic:**
+1. Check if there's a currently selected tab (`self.TabGroup.localstatus.selected`)
+2. Verify the current tab is still valid (exists in `info.alts`)
+3. If valid, preserve the current selection
+4. Otherwise, select the first tab (initial open or if current tab disappeared)
+
+**Testing:**
+1. Open inventory UI and select a banker tab (not the first)
+2. Wait for background syncs to occur
+3. Verify tab selection remains on the selected banker
+4. Switch to different banker, verify it stays selected
+5. Test with multiple syncs and data updates
 
 **Impact:**
-Disrupts user workflow when reviewing multiple bankers. User must repeatedly reselect the desired banker tab.
-
-**Debugging Steps:**
-1. Add debug logging to tab selection changes
-2. Track when DrawContent() is called and from where
-3. Monitor sync/data update events during UI open state
-4. Check if tab state variable is being reset during redraws
+Previously disrupted user workflow when reviewing multiple bankers. Users had to repeatedly reselect the desired banker tab after every sync or refresh.
 
 ---
 
