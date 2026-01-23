@@ -408,7 +408,37 @@ function Guild:ApplyRequestSnapshot(payload)
 		end
 	end
 
-	self.Info.requests = sanitized
+	-- Merge with existing requests instead of replacing
+	-- Keep local requests that aren't in the incoming snapshot (unless tombstoned)
+	local incomingById = {}
+	for _, req in ipairs(sanitized) do
+		if req.id then
+			incomingById[req.id] = req
+		end
+	end
+
+	local tombstones = payload.tombstones or {}
+	local merged = {}
+	
+	-- Add all incoming requests
+	for _, req in ipairs(sanitized) do
+		table.insert(merged, req)
+	end
+	
+	-- Add local requests that aren't in incoming (and not tombstoned)
+	for _, localReq in ipairs(self.Info.requests or {}) do
+		if localReq.id and not incomingById[localReq.id] then
+			local tombstoneTs = tonumber(tombstones[localReq.id] or 0) or 0
+			local localUpdated = tonumber(localReq.updatedAt or localReq.date or 0) or 0
+			-- Only keep if not tombstoned or if local update is newer than tombstone
+			if tombstoneTs == 0 or localUpdated > tombstoneTs then
+				table.insert(merged, localReq)
+				TOGBankClassic_Output:Debug(string.format("[UI-003] Preserving local request not in snapshot: %s", localReq.id))
+			end
+		end
+	end
+
+	self.Info.requests = merged
 	self.Info.requestsVersion = latest
 
 	local logApplied = payload.requestLogApplied

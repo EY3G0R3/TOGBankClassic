@@ -5,6 +5,7 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Recent Fixes (2026-01-23):**
+- ✅ [UI-003] **CRITICAL** Request data loss on snapshot sync - Fixed ApplyRequestSnapshot to merge instead of replace
 - ✅ [COMPAT-002] SendRosterData nil Info crash - Added defensive nil check
 - ✅ [DATA-002] ReceiveAltData nil version comparison - Added nil check for existing alt version
 
@@ -182,51 +183,67 @@ This was previously fixed in v2.3.0 of the original fork but was reintroduced du
 
 ---
 
-#### ⏳ [UI-003] Intermittent request list visibility - requests sometimes don't appear
+#### ✅ [UI-003] Intermittent request list visibility - requests sometimes don't appear
 
-**Severity:** 🟠 HIGH  
-**Category:** UI / Data Synchronization  
+**Severity:** 🔴 CRITICAL  
+**Category:** Data Synchronization / Request System  
 **Reporter:** Multiple users + Developer  
 **Date Reported:** 2026-01-23  
-**Status:** ⏳ INVESTIGATING  
+**Date Resolved:** 2026-01-23  
+**Status:** ✅ RESOLVED  
 **Reproducibility:** Intermittent
 
 **Description:**
-Requests intermittently fail to appear in the requests window. Sometimes they show up, sometimes they don't, with no clear pattern.
+Requests intermittently disappeared from the requests window. Sometimes they showed up, sometimes they didn't. Investigation revealed they were being lost from the database itself, not just hidden in the UI.
 
-**Steps to Reproduce:**
-- Not consistently reproducible
-- Observed across multiple users
-- Confirmed by developer experiencing the issue directly
+**Root Cause:**
+Found in `ApplyRequestSnapshot()` at RequestLog.lua:410. When receiving a request snapshot from another player, the function **completely replaced** the local request list instead of merging:
 
-**Expected Behavior:**
-All active requests should consistently appear in the requests window.
+```lua
+self.Info.requests = sanitized  -- WRONG: Wipes out all local requests!
+```
 
-**Actual Behavior:**
-Requests sometimes appear and sometimes don't appear in the UI, even though the data may be present in the database.
+This caused data loss when:
+1. Player A creates a request (e.g., Shamanoodles requests bags)
+2. Player B (who hasn't seen that request yet) sends their request snapshot
+3. Player B's snapshot is considered "newer" based on requestLogApplied sequences
+4. Player A accepts the snapshot and **wipes out their entire request list**, including Shamanoodles' request
+5. On reload, the request is permanently lost
 
-**Environment:**
-- WoW Version: Classic Era
-- TOGBankClassic Version: 0.7.6+
-- Multiple users affected
-- Intermittent occurrence
+**Fix Applied:**
+Modified `ApplyRequestSnapshot()` to **merge** incoming requests with local ones:
+- Accept all requests from incoming snapshot
+- Preserve local requests that aren't in the incoming snapshot
+- Only exclude local requests if they're tombstoned with a newer timestamp
+- Added debug logging to track preserved requests
 
-**Potential Causes to Investigate:**
-1. Race condition in UI refresh timing
-2. Request filtering logic incorrectly excluding valid requests
-3. Data synchronization delay between database and UI
-4. Event handler not triggering UI update
-5. Request pruning logic removing active requests
-6. Guild roster validation incorrectly filtering requests
+```lua
+-- Merge with existing requests instead of replacing
+local merged = {}
+-- Add all incoming requests
+for _, req in ipairs(sanitized) do
+    table.insert(merged, req)
+end
+-- Add local requests not in incoming (unless tombstoned)
+for _, localReq in ipairs(self.Info.requests or {}) do
+    if localReq.id and not incomingById[localReq.id] then
+        if not tombstoned or localUpdate > tombstoneTs then
+            table.insert(merged, localReq)
+        end
+    end
+end
+self.Info.requests = merged
+```
 
 **Impact:**
-Users unable to see and fulfill requests, breaking core addon functionality.
+Critical bug affecting all request system users. Requests were being silently deleted when other players synced their data, leading to unfulfilled orders and user frustration.
 
-**Investigation Notes:**
-- Need to add debug logging to track request lifecycle
-- Check UI refresh triggers
-- Verify request filtering conditions
-- Review data sync between modules
+**Testing:**
+- Verify requests persist across reloads
+- Verify multiple players can create requests simultaneously without data loss
+- Verify request list merging works correctly with tombstones
+
+**Resolution Date:** 2026-01-23
 
 ---
 
