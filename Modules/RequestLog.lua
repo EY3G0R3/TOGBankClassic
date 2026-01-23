@@ -844,15 +844,29 @@ function Guild:SendRequestsData(target)
 end
 
 function Guild:QueryRequestsSnapshot(player)
-	-- Requests are guild-wide, use "*" to indicate anyone can respond
+	-- Send wildcard query for new clients (v0.7.14+)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests" })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
+	
+	-- Backwards compat: Also send targeted query to a known banker for old clients
+	local banker = self:GetAnyBanker()
+	if banker then
+		local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = banker, type = "requests" })
+		TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
+	end
 end
 
 function Guild:QueryRequestLog(player, logFrom)
-	-- Requests are guild-wide, use "*" to indicate anyone can respond
+	-- Send wildcard query for new clients (v0.7.14+)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests-log", logFrom = logFrom })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
+	
+	-- Backwards compat: Also send targeted query to a known banker for old clients
+	local banker = self:GetAnyBanker()
+	if banker then
+		local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = banker, type = "requests-log", logFrom = logFrom })
+		TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
+	end
 end
 
 function Guild:ReceiveRequestsData(payload)

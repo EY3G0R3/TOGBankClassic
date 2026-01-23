@@ -542,6 +542,15 @@ function TOGBankClassic_Guild:IsBank(player)
 	return isBank
 end
 
+function TOGBankClassic_Guild:GetAnyBanker()
+	local banks = self:GetBanks()
+	if not banks or #banks == 0 then
+		return nil
+	end
+	-- Return the first banker (normalized)
+	return self:NormalizeName(banks[1])
+end
+
 function TOGBankClassic_Guild:CheckVersion(version)
 	if self.Info then
 		return false
