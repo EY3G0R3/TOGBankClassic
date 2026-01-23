@@ -848,10 +848,22 @@ function Guild:QueryRequestsSnapshot(player)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests" })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 	
-	-- Backwards compat: Send query without player field for old clients (v0.7.11-v0.7.13)
-	-- Old clients will be blocked by the outer 'if data.player then' gate, so they won't respond anyway
-	-- This was broken in SYNC-002 when we added wildcard support
-	TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sent wildcard query only (old clients won't respond until updated)")
+	-- Backwards compat: Send targeted query to each online guild member for old clients
+	-- Old clients check 'if data.player == player' so we need to match their exact name
+	local onlineCount = 0
+	local numGuildMembers = GetNumGuildMembers()
+	for i = 1, numGuildMembers do
+		local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
+		if online and name then
+			local normalized = self:NormalizeName(name)
+			if normalized then
+				local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = normalized, type = "requests" })
+				TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
+				onlineCount = onlineCount + 1
+			end
+		end
+	end
+	TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sent wildcard + %d targeted queries for backwards compat", onlineCount)
 end
 
 function Guild:QueryRequestLog(player, logFrom)
@@ -859,10 +871,22 @@ function Guild:QueryRequestLog(player, logFrom)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests-log", logFrom = logFrom })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 	
-	-- Backwards compat: Send query without player field for old clients (v0.7.11-v0.7.13)
-	-- Old clients will be blocked by the outer 'if data.player then' gate, so they won't respond anyway
-	-- This was broken in SYNC-002 when we added wildcard support
-	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent wildcard query only (old clients won't respond until updated)")
+	-- Backwards compat: Send targeted query to each online guild member for old clients
+	-- Old clients check 'if data.player == player' so we need to match their exact name
+	local onlineCount = 0
+	local numGuildMembers = GetNumGuildMembers()
+	for i = 1, numGuildMembers do
+		local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
+		if online and name then
+			local normalized = self:NormalizeName(name)
+			if normalized then
+				local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = normalized, type = "requests-log", logFrom = logFrom })
+				TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
+				onlineCount = onlineCount + 1
+			end
+		end
+	end
+	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent wildcard + %d targeted queries for backwards compat", onlineCount)
 end
 
 function Guild:ReceiveRequestsData(payload)
