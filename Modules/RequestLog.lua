@@ -472,6 +472,7 @@ function Guild:PruneRequests()
 	local before = #self.Info.requests
 	local now = GetServerTime()
 	local keep = {}
+	local pruned = {}
 	local latest = tonumber(self.Info.requestsVersion or 0) or 0
 
 	for _, req in ipairs(self.Info.requests) do
@@ -488,7 +489,13 @@ function Guild:PruneRequests()
 			if updated > latest then
 				latest = updated
 			end
+		else
+			table.insert(pruned, req)
 		end
+	end
+
+	if #pruned > 0 then
+		TOGBankClassic_Output:Debug(string.format("[UI-003] PruneRequests: Pruned %d old completed requests", #pruned))
 	end
 
 	self.Info.requests = keep
@@ -690,6 +697,10 @@ function Guild:TouchRequestsVersion(ts)
 end
 
 function Guild:RefreshRequestsUI()
+	TOGBankClassic_Output:Debug(string.format("[UI-003] RefreshRequestsUI called: isOpen=%s, requests=%d", 
+		tostring(TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen),
+		self.Info and self.Info.requests and #self.Info.requests or 0))
+	
 	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
 		TOGBankClassic_UI_Requests:DrawContent()
 	end
