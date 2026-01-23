@@ -5,6 +5,7 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Recent Fixes (2026-01-22):**
+- ✅ [SYNC-001] Cross-guild data bleed - Added roster-based validation
 - ✅ [ADDON-001] Nil itemLink handling - Added defensive nil checks throughout
 - ✅ [DELTA-007] TriggerCallback method missing - Replaced with direct UI refresh
 - ✅ [PROTO-001] Delta validation now accepts link-less deltas without baseVersion
@@ -45,6 +46,94 @@
 ## Open Bugs
 
 *No open bugs at this time.*
+
+---
+
+## Resolved Bugs (2026-01-22)
+
+### 🟠 HIGH - All Resolved
+
+#### ✅ [SYNC-001] Cross-Guild Data Bleed After /wipe
+**Reported:** 2026-01-22  
+**Severity:** HIGH  
+**Category:** Database / Synchronization  
+**Status:** ✅ RESOLVED  
+**Fixed:** 2026-01-22
+
+**Description:**  
+When users execute `/wipe` and then start syncing, they initially receive information about bankers that aren't in their current guild. This appears to be related to players who have characters across multiple guilds on their account.
+
+**Steps to Reproduce:**
+1. Execute `/wipe` command to clear local data
+2. Begin synchronization process
+3. Observe banker data appearing for characters not in the current guild
+
+**Expected Behavior:**  
+After `/wipe`, synchronization should only populate data for bankers currently in the active guild.
+
+**Actual Behavior:**  
+Data from other guilds (possibly from other characters on the same account) is bleeding through and appearing in the bank data.
+
+**Root Cause Analysis:**
+
+Three contributing factors have been identified:
+
+1. **Account-Wide SavedVariables + Guild-Specific Data**
+   - TOC declares `SavedVariables` (not `SavedVariablesPerCharacter`)
+   - All characters on same account share `TOGBankClassicDB`
+   - Database stores data at `db.faction[guildName]`
+   - Characters in different guilds coexist in same SavedVariables file
+
+2. **Permissive Sync Validation**
+   - `IsAltDataAllowed()` currently uses permissive mode (returns `true` for all)
+   - No validation that sender/alt are in current guild roster
+   - Accepts data from anyone without checking guild membership
+
+3. **Wipe Only Clears Current Guild**
+   - `/wipe` calls `Reset(currentGuild)` which only clears one guild's data
+   - Other guilds' data remains in SavedVariables
+   - No validation prevents accepting stale cross-guild data
+
+**Proposed Solution:**
+
+Add roster-based validation to sync operations:
+- Guild roster from `GetGuildRosterInfo()` is authoritative and guild-specific
+- Only accept alt data if the alt is in the current guild's banker roster
+- Only accept data from senders who are in the current guild
+- Use `GetBanks()` (which parses current guild roster) as validation source
+
+**Implementation:**
+
+✅ **Added Guild Roster Validation (2026-01-22)**
+
+1. **New Helper Function** - `Guild.lua:IsInCurrentGuildRoster(playerName)`
+   - Checks if a player is in the current guild by scanning `GetGuildRosterInfo()`
+   - Returns `true` only if player found in current guild roster
+   - Guild-specific validation prevents cross-guild acceptance
+
+2. **New Validation Mode** - `Chat.lua:IsAltDataAllowed_RosterBased(sender, claimedNorm)`
+   - Validates sender is in current guild roster
+   - Validates claimed alt is a banker in current guild roster (via `IsBank()`)
+   - Logs debug messages when rejecting cross-guild data
+   - Replaces permissive mode as default
+
+3. **Updated Default** - `Chat.lua:IsAltDataAllowed()`
+   - Now calls `IsAltDataAllowed_RosterBased()` instead of `IsAltDataAllowed_Permissive()`
+   - All sync operations (full sync, delta, version broadcasts) now use roster validation
+
+**How This Fixes SYNC-001:**
+- After `/wipe`, even if stale data exists in SavedVariables, it won't be accepted
+- Senders from other guilds are rejected (not in current guild roster)
+- Alts from other guilds are rejected (not bankers in current guild roster)
+- Only current guild members can share data about current guild bankers
+
+**Backwards Compatibility:**
+- Permissive and Restrictive modes still available for future use
+- No changes to data structure or protocol
+- Works with existing v0.8.0 clients
+
+**Impact:**  
+Users see incorrect banker information after data reset, potentially causing confusion about who has banking privileges.
 
 ---
 

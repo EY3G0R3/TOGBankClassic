@@ -178,8 +178,33 @@ function TOGBankClassic_Chat:IsAltDataAllowed_Permissive(_, _)
 	return true
 end
 
+-- SYNC-001 fix: Roster-based validation to prevent cross-guild data bleed
+-- Only accept alt data if both sender and claimed alt are in current guild
+function TOGBankClassic_Chat:IsAltDataAllowed_RosterBased(sender, claimedNorm)
+	-- Check if sender is in the current guild
+	if not TOGBankClassic_Guild:IsInCurrentGuildRoster(sender) then
+		TOGBankClassic_Output:Debug(
+			"Rejecting alt data from %s: sender not in current guild roster",
+			sender
+		)
+		return false
+	end
+	
+	-- Check if claimed alt is in the current guild's banker roster
+	if not TOGBankClassic_Guild:IsBank(claimedNorm) then
+		TOGBankClassic_Output:Debug(
+			"Rejecting alt data for %s: not a banker in current guild roster",
+			claimedNorm
+		)
+		return false
+	end
+	
+	return true
+end
+
 function TOGBankClassic_Chat:IsAltDataAllowed(sender, claimedNorm)
-	return self:IsAltDataAllowed_Permissive(sender, claimedNorm)
+	-- SYNC-001 fix: Use roster-based validation by default
+	return self:IsAltDataAllowed_RosterBased(sender, claimedNorm)
 end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)

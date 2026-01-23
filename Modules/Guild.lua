@@ -277,6 +277,32 @@ function TOGBankClassic_Guild:GetGuild()
 	return IsInGuild("player") and GetGuildInfo("player") or nil
 end
 
+-- SYNC-001 fix: Check if a player is in the current guild roster
+-- Returns true if the player is a member of the current guild
+function TOGBankClassic_Guild:IsInCurrentGuildRoster(playerName)
+	if not playerName then
+		return false
+	end
+	
+	if not IsInGuild() then
+		return false
+	end
+	
+	local normPlayer = self:NormalizeName(playerName)
+	
+	for i = 1, GetNumGuildMembers() do
+		local rosterName = GetGuildRosterInfo(i)
+		if rosterName then
+			local normRoster = self:NormalizeName(rosterName)
+			if normRoster == normPlayer then
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
 function TOGBankClassic_Guild:GetPlayerInfo(name)
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, _, _, _, _, _, _, _, _, class = GetGuildRosterInfo(i)
