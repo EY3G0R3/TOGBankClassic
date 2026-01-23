@@ -823,6 +823,7 @@ end
 function Guild:SendRequestsSnapshot(target)
 	-- Always send snapshot, even if empty (so querying player knows we have nothing)
 	if not self.Info then
+		TOGBankClassic_Output:DebugComm("SendRequestsSnapshot: Skipping (self.Info is nil)")
 		return
 	end
 	self:EnsureRequestsInitialized()
@@ -1009,9 +1010,11 @@ end
 
 function Guild:SendRequestLogEntries(target, logFrom)
 	if not logFrom or type(logFrom) ~= "table" then
+		TOGBankClassic_Output:DebugComm("SendRequestLogEntries: Skipping (invalid logFrom parameter)")
 		return
 	end
 	if not self.Info then
+		TOGBankClassic_Output:DebugComm("SendRequestLogEntries: Skipping (self.Info is nil)")
 		return
 	end
 	self:EnsureRequestsInitialized()
