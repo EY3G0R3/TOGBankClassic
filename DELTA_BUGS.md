@@ -5,9 +5,12 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Recent Fixes (2026-01-23):**
+- ✅ [COMM-001] **EXPANSION** Offline WHISPER errors - Added SendWhisper() wrapper with automatic online checking for all WHISPER sends
+- ✅ [DELTA-008] Repeated delta sync failures from offline whispers - Added online check in RequestDeltaChain
 - ✅ [UI-003] **CRITICAL** Request data loss on snapshot sync - Fixed ApplyRequestSnapshot to merge instead of replace
 - ✅ [COMPAT-002] SendRosterData nil Info crash - Added defensive nil check
 - ✅ [DATA-002] ReceiveAltData nil version comparison - Added nil check for existing alt version
+- ✅ **FEATURE** Persistent debug logging (v0.7.11) - 50k entry buffer with filtering, 7-day retention, SavedVariables persistence
 
 **Previous Fixes (2026-01-22):**
 - ✅ [SYNC-001] Cross-guild data bleed - Added roster-based validation
@@ -315,7 +318,7 @@ Critical bug affecting all request system users. Requests are being silently del
 **Category:** Communication / Error Handling  
 **Reporter:** Multiple players  
 **Date Reported:** 2026-01-23  
-**Date Resolved:** 2026-01-23  
+**Date Resolved:** 2026-01-23 (Expanded with comprehensive fix)  
 **Status:** ✅ RESOLVED  
 **Reproducibility:** Frequent
 
@@ -336,18 +339,19 @@ No player named Shardsndust is currently playing
 6. WoW displays "No player named X is currently playing" error
 
 **Root Cause:**
-In `QueryAltData()` (Guild.lua:734), the code checked if a banker was **seen recently** (within 10 minutes) but didn't verify if they're **currently online** before attempting a WHISPER. This caused messages to be sent to offline players, triggering WoW's error message.
+Multiple locations in the codebase sent WHISPER messages without verifying the target player was currently online. When players logged out between request and response, WHISPER attempts would fail with WoW's "No player named X is currently playing" error.
 
-**Affected Code:**
-```lua
-if banker and (GetServerTime() - mostRecent) < 600 then
-    -- Banker known and seen recently - attempt WHISPER
-    SendCommMessage("togbank-r", data, "WHISPER", banker, "NORMAL")
-```
+**Affected Code Locations:**
+1. `QueryAltData()` - togbank-r pull-based queries
+2. `SendStateSummary()` - togbank-state state summaries
+3. `SendReplyData()` - togbank-nochange no-change replies (2 locations)
+4. `RequestDeltaChain()` - togbank-dr delta range requests
+5. Chat.lua handlers - togbank-rr ACKs, togbank-dc delta chains
 
 **Fix Applied (2026-01-23):**
 
-1. **Added IsPlayerOnline() helper** (Guild.lua):
+**Phase 1: Initial Fix**
+1. Added `IsPlayerOnline()` helper (Guild.lua):
 ```lua
 function TOGBankClassic_Guild:IsPlayerOnline(playerName)
     -- Scans GetGuildRosterInfo() to check isOnline flag
@@ -355,25 +359,45 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 end
 ```
 
-2. **Updated QueryAltData() logic** (Guild.lua:734):
+2. Added online checks in QueryAltData() and RequestDeltaChain()
+
+**Phase 2: Comprehensive Expansion**
+3. Added online checks to all remaining WHISPER send locations (7 total)
+
+**Phase 3: Centralized Refactor**
+4. Created `SendWhisper()` wrapper in Core.lua:
 ```lua
-if banker and (GetServerTime() - mostRecent) < 600 and self:IsPlayerOnline(banker) then
-    -- Now checks THREE conditions: known, recent, AND online
-    SendCommMessage("togbank-r", data, "WHISPER", banker, "NORMAL")
-else
-    -- Falls back to GUILD broadcast if banker offline
-    SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
+function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn, callbackArg)
+    -- Check if target is online
+    if not TOGBankClassic_Guild:IsPlayerOnline(target) then
+        TOGBankClassic_Output:Debug("Cannot send %s WHISPER to %s - player is offline", prefix, target)
+        return false
+    end
+    
+    -- Send the whisper
+    self:SendCommMessage(prefix, text, "WHISPER", target, prio, callbackFn, callbackArg)
+    return true
 end
 ```
 
-**How This Fixes COMM-001:**
-- WHISPER messages only sent to bankers who are currently online
-- If banker recently seen but now offline, falls back to GUILD broadcast
-- Eliminates "No player named" errors for offline whisper attempts
-- System continues working via GUILD fallback
+5. Replaced all direct WHISPER sends with `SendWhisper()` calls:
+   - Chat.lua: togbank-rr ACK replies
+   - Chat.lua: togbank-dc delta chain responses
+   - Guild.lua: togbank-state state summaries
+   - Guild.lua: togbank-nochange no-change replies (2 locations)
+   - Guild.lua: togbank-r pull-based queries
+   - Guild.lua: togbank-dr delta range requests
+
+**Benefits:**
+- ✅ Single point of maintenance for all WHISPER logic
+- ✅ Automatic online checking - impossible to forget
+- ✅ Consistent error handling and logging
+- ✅ Return value indicates send success/failure
+- ✅ Eliminates ALL "No player named" errors
+- ✅ Graceful fallback when players go offline
 
 **Impact:**
-Eliminates confusing error messages for players. System now gracefully handles banker logout scenarios by falling back to guild broadcasts.
+Completely eliminates confusing error messages for players. All WHISPER communications now automatically verify target is online before sending. System gracefully handles logout scenarios by either falling back to GUILD broadcasts or silently skipping the message with appropriate debug logging.
 
 ---
 
