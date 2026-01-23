@@ -844,15 +844,20 @@ function Guild:SendRequestsData(target)
 end
 
 function Guild:QueryRequestsSnapshot(player)
+	TOGBankClassic_Output:DebugComm("QUERY REQUESTS SNAPSHOT: Starting broadcast query...")
+	
 	-- Send wildcard query for new clients (v0.7.14+)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests" })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
+	TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sent wildcard query")
 	
 	-- Backwards compat: Send targeted query to each online guild member for old clients
 	-- Old clients check 'if data.player == player' so we need to match their exact name
 	GuildRoster()  -- Refresh roster to get current online status
-	local onlineCount = 0
 	local numGuildMembers = GetNumGuildMembers()
+	TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Guild has %d members, checking for online...", numGuildMembers)
+	
+	local onlineCount = 0
 	for i = 1, numGuildMembers do
 		local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
 		if online and name then
@@ -861,6 +866,9 @@ function Guild:QueryRequestsSnapshot(player)
 				local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = normalized, type = "requests" })
 				TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
 				onlineCount = onlineCount + 1
+				if onlineCount <= 5 then
+					TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sent targeted query #%d to %s", onlineCount, normalized)
+				end
 			end
 		end
 	end
@@ -868,15 +876,20 @@ function Guild:QueryRequestsSnapshot(player)
 end
 
 function Guild:QueryRequestLog(player, logFrom)
+	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Starting broadcast query (logFrom=%s)...", tostring(logFrom))
+	
 	-- Send wildcard query for new clients (v0.7.14+)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests-log", logFrom = logFrom })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
+	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent wildcard query")
 	
 	-- Backwards compat: Send targeted query to each online guild member for old clients
 	-- Old clients check 'if data.player == player' so we need to match their exact name
 	GuildRoster()  -- Refresh roster to get current online status
-	local onlineCount = 0
 	local numGuildMembers = GetNumGuildMembers()
+	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Guild has %d members, checking for online...", numGuildMembers)
+	
+	local onlineCount = 0
 	for i = 1, numGuildMembers do
 		local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
 		if online and name then
@@ -885,6 +898,9 @@ function Guild:QueryRequestLog(player, logFrom)
 				local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = normalized, type = "requests-log", logFrom = logFrom })
 				TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
 				onlineCount = onlineCount + 1
+				if onlineCount <= 5 then
+					TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent targeted query #%d to %s", onlineCount, normalized)
+				end
 			end
 		end
 	end
