@@ -2275,10 +2275,12 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(share)
 	if type ~= "reply" then
-		TOGBankClassic_Core:SendCommMessage("togbank-s", data, "Guild", nil, "BULK")
+		-- Use NORMAL priority for share announcement so users are notified quickly
+		-- Actual data transfers (deltas/snapshots) use BULK to avoid network spam
+		TOGBankClassic_Core:SendCommMessage("togbank-s", data, "Guild", nil, "NORMAL")
 	else
 		-- TODO: togbank-sr is only used for debug output; consider removing or repurposing.
-		TOGBankClassic_Core:SendCommMessage("togbank-sr", data, "Guild", nil, "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-sr", data, "Guild", nil, "NORMAL")
 	end
 end
 

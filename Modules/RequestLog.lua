@@ -902,7 +902,14 @@ function Guild:ReceiveRequestsData(payload)
 		end
 	end
 
-	if not isNewer and localVersion > 0 then
+	-- UI-003 FIX: Don't reject snapshots as STALE based on version comparison alone.
+	-- The version is calculated as max(updatedAt) across all requests, but different
+	-- players may have different subsets of requests. A snapshot with a lower version
+	-- might still contain requests we don't have. The merge logic in ApplyRequestSnapshot()
+	-- handles this correctly by preserving both incoming and local requests.
+	-- Only skip if version is identical (exact duplicate snapshot from same sender).
+	if not isNewer and localVersion > 0 and incomingVersion == localVersion then
+		-- Exact version match - likely a duplicate snapshot, skip it
 		return ADOPTION_STATUS.STALE
 	end
 

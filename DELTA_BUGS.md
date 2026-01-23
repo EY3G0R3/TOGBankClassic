@@ -190,60 +190,236 @@ This was previously fixed in v2.3.0 of the original fork but was reintroduced du
 **Reporter:** Multiple users + Developer  
 **Date Reported:** 2026-01-23  
 **Date Resolved:** NOT RESOLVED - Bug still occurring  
-**Status:** 🔴 OPEN - Fix attempt unsuccessful  
+**Status:** 🔴 OPEN - Investigating with extensive logging  
 **Reproducibility:** Intermittent
 
 **Description:**
 Requests intermittently disappeared from the requests window. Sometimes they showed up, sometimes they didn't. Investigation revealed they were being lost from the database itself, not just hidden in the UI.
 
-**Root Cause:**
-Found in `ApplyRequestSnapshot()` at RequestLog.lua:410. When receiving a request snapshot from another player, the function **completely replaced** the local request list instead of merging:
+**Root Cause (Suspected):**
+Found in `ApplyRequestSnapshot()` at RequestLog.lua:410. When receiving a request snapshot from another player, the function **completely replaced** the local request list instead of merging.
 
-```lua
-self.Info.requests = sanitized  -- WRONG: Wipes out all local requests!
-```
-
-This caused data loss when:
-1. Player A creates a request (e.g., Shamanoodles requests bags)
-2. Player B (who hasn't seen that request yet) sends their request snapshot
-3. Player B's snapshot is considered "newer" based on requestLogApplied sequences
-4. Player A accepts the snapshot and **wipes out their entire request list**, including Shamanoodles' request
-5. On reload, the request is permanently lost
-
-**Fix Applied:**
+**Fix Attempt #1 (v0.7.7):**
 Modified `ApplyRequestSnapshot()` to **merge** incoming requests with local ones:
 - Accept all requests from incoming snapshot
 - Preserve local requests that aren't in the incoming snapshot
 - Only exclude local requests if they're tombstoned with a newer timestamp
 - Added debug logging to track preserved requests
 
-```lua
--- Merge with existing requests instead of replacing
-local merged = {}
--- Add all incoming requests
-for _, req in ipairs(sanitized) do
-    table.insert(merged, req)
-end
--- Add local requests not in incoming (unless tombstoned)
-for _, localReq in ipairs(self.Info.requests or {}) do
-    if localReq.id and not incomingById[localReq.id] then
-        if not tombstoned or localUpdate > tombstoneTs then
-            table.insert(merged, localReq)
-        end
-    end
-end
-self.Info.requests = merged
-```
+**Result:** Bug still occurring - merge fix was insufficient. Additional causes suspected.
+
+**Fix Attempt #3 (2026-01-23):**
+Fixed snapshot rejection logic in `ReceiveRequestsData()`:
+- **Root cause identified**: Snapshots were being rejected as STALE when `incomingVersion <= localVersion`
+- Version calculated as `max(updatedAt)` across all requests in the snapshot
+- **Problem**: Different players have different subsets of requests
+  - Player A has requests 1, 2, 3, 4 (max timestamp 1769135122)
+  - Player B has requests 1, 2, 5 (max timestamp 1769100000)  
+  - Player B's snapshot rejected as STALE even though it contains request #5 which Player A doesn't have!
+- **Fix**: Only reject if versions are IDENTICAL (exact duplicate), otherwise always merge
+- Changed line 905 from `if not isNewer and localVersion > 0 then` to `if not isNewer and localVersion > 0 and incomingVersion == localVersion then`
+- Merge logic in `ApplyRequestSnapshot()` already handles combining both snapshots correctly
+
+**Result:** Testing required - this fix should allow snapshots to merge even when they have different request subsets.
+
+**Fix Attempt #2 (2026-01-23):**
+Upgraded request log entry broadcast priority from BULK → ALERT:
+- Request creation/modification broadcasts now use ALERT priority (highest available)
+- ALERT priority ensures immediate delivery with minimal throttling
+- BULK priority was causing messages to be delayed/dropped during network congestion
+- With only 10-20 requests per day, ALERT has negligible bandwidth impact
+- Changed in `SendRequestLogEntry()` at RequestLog.lua:945
+
+**Result:** Testing ongoing - user was offline during request creation, unable to confirm if ALERT priority prevents message loss. Issue still occurring but root cause unclear.
+
+**Fix Attempt #4 (2026-01-23):**
+Upgraded `/togbank share` announcement priority from BULK → NORMAL:
+- Share announcement (togbank-s) now uses NORMAL priority to ensure quick notification
+- This is the "new data available" message that triggers players to sync
+- Actual data transfers (inventory deltas, request snapshots) remain at BULK to avoid network spam
+- Small announcement message (~100-200 bytes) can use NORMAL without bandwidth concerns
+- Changed in `Guild:Share()` at Guild.lua:2279, 2282
+
+**Result:** Testing required - this ensures users are notified quickly when banker runs `/share`, while large data transfers remain throttled appropriately.
+
+**Investigation Steps (2026-01-23):**
+
+Added extensive print logging throughout request system to track request lifecycle:
+
+1. **AddRequest()** - Logs:
+   - When Info is nil or request is invalid
+   - Request details: ID, requester, item, quantity
+   - Log entry creation success/failure
+   - Final success/failure and total request count
+
+2. **RecordRequestLogEntry()** - Logs:
+   - Entry details: ID, type, requestId, broadcast flag
+   - Duplicate detection
+   - Request count before/after applying entry
+   - PruneIfNeeded execution
+   - Broadcasting status
+
+3. **ApplyRequestSnapshot()** - Logs:
+   - Incoming vs local request counts
+   - Sanitization results
+   - Each preserved local request (ID, requester, item)
+   - Each DROPPED request (tombstoned)
+   - Merge totals at each step
+   - All post-processing steps (normalize, rebuild, replay, prune)
+   - Final count after all operations
+
+4. **NormalizeRequestList()** - Logs:
+   - Starting/ending counts
+   - Tombstoned requests being skipped (with ID)
+   - Duplicate ID updates
+
+5. **PruneRequests()** - Logs:
+   - Starting/ending counts
+   - Each pruned request with ID, status, and age in seconds
+   - Helps identify if new requests are being accidentally pruned
+
+**All logging prints directly to chat (not debug channel) to avoid being lost in spam.**
+
+**⚠️ IMPORTANT: Before closing this ticket, revert all Print() calls back to Debug() calls to reduce chat spam in production.**
+
+**How to Debug:**
+1. Create a test request (e.g., Shamanoodles requests bags)
+2. Watch for `[UI-003]` messages in chat
+3. Track the request through creation → log entry → broadcast → merge/prune
+4. Identify at which step the request disappears
+
+**Potential Additional Causes:**
+1. ❓ Race conditions in log replay
+2. ❓ Tombstone logic too aggressive
+3. ❓ requestLogApplied tracking has bugs
+4. ❓ PruneRequests removing new requests incorrectly
+5. ❓ NormalizeRequestList dropping valid requests
+6. ⚠️ **BULK priority message throttling** - Request log entries were using BULK priority, causing messages to be delayed or dropped during network congestion (raids, world bosses). Fixed by upgrading to ALERT priority.
 
 **Impact:**
-Critical bug affecting all request system users. Requests were being silently deleted when other players synced their data, leading to unfulfilled orders and user frustration.
+Critical bug affecting all request system users. Requests are being silently deleted, leading to unfulfilled orders and user frustration.
 
-**Testing:**
-- Verify requests persist across reloads
-- Verify multiple players can create requests simultaneously without data loss
-- Verify request list merging works correctly with tombstones
+**Next Steps:**
+- Monitor print logs during request creation/sync
+- Identify exact step where requests are lost
+- Implement targeted fix based on findings
 
-**Resolution Date:** 2026-01-23
+**Questions to Investigate:**
+- ❓ **UI Refresh Behavior**: Are changes to the request list reflected dynamically in the open UI, or does the user need to close/reopen the requests window to see new requests? Need to verify if UI automatically updates when ApplyRequestSnapshot() completes.
+
+---
+
+#### [COMM-001] "No player named <banker> is currently playing" error message
+
+**Severity:** 🟡 MEDIUM  
+**Category:** Communication / Error Handling  
+**Reporter:** Multiple players  
+**Date Reported:** 2026-01-23  
+**Status:** 🔴 OPEN  
+**Reproducibility:** Frequent
+
+**Description:**
+Players report receiving error messages stating "No player named <banker> is currently playing" where `<banker>` is the name of a guild banker character (e.g., "Shardsndust"). This appears to be related to addon communication attempts when the target banker is offline or not in range.
+
+**Error Message:**
+```
+No player named Shardsndust is currently playing
+```
+
+**Steps to Reproduce:**
+Unknown - appears to occur during normal addon operation, possibly during:
+- Request creation/broadcast
+- Periodic sync attempts
+- Targeted message sending to offline bankers
+
+**Expected Behavior:**
+Addon should handle offline/unavailable players gracefully without generating user-visible error messages. Communication failures to offline players should be silently ignored or logged only in debug mode.
+
+**Actual Behavior:**
+Error message displayed to user, causing confusion and potential alarm.
+
+**Environment:**
+- WoW Version: Classic Era
+- TOGBankClassic Version: v0.7.8+
+- Multiple players affected
+
+**Potential Root Causes:**
+1. ❓ SendCommMessage with targeted player name instead of "GUILD" distribution
+2. ❓ Whisper attempts to offline bankers
+3. ❓ Player/banker lookup using SendAddonMessage with player name
+4. ❓ Missing online status check before targeted communication
+
+**Investigation Needed:**
+- Identify which function is generating the error
+- Determine if using SendCommMessage with player target vs "GUILD" target
+- Check if attempting whispers or targeted messages to specific bankers
+- Review all calls that might specify a player name as target
+
+**Impact:**
+Cosmetic issue - error messages confuse players but don't affect functionality. However, indicates potential inefficiency in communication patterns (attempting to message offline players).
+
+**Next Steps:**
+- Search codebase for SendCommMessage calls with player name targets
+- Add online status checks before targeted communication
+- Consider switching to guild-wide broadcasts vs targeted messages
+
+---
+
+#### [DELTA-008] Repeated delta sync failures causing fallback to full sync
+
+**Severity:** 🟡 MEDIUM  
+**Category:** Delta Application / Performance  
+**Reporter:** Developer (Console warning)  
+**Date Reported:** 2026-01-23  
+**Status:** 🔴 OPEN  
+**Reproducibility:** Intermittent
+
+**Description:**
+The addon is logging repeated delta sync failures for specific bankers (e.g., "Shardsndust-Azuresong"), causing the system to fall back to full synchronization. This indicates that delta application is failing multiple times for this banker.
+
+**Warning Message:**
+```
+TOGBankClassic: [WARN] Repeated delta sync failures for Shardsndust-Azuresong. Falling back to full sync.
+```
+
+**Steps to Reproduce:**
+Unknown - appears to occur during normal sync operations for specific banker characters.
+
+**Expected Behavior:**
+Delta sync should succeed on first attempt. Fallback to full sync should be rare, only occurring in exceptional circumstances (e.g., significant version mismatch, corrupted data).
+
+**Actual Behavior:**
+Delta sync is failing repeatedly for specific bankers, triggering the fallback mechanism to full sync.
+
+**Environment:**
+- WoW Version: Classic Era
+- TOGBankClassic Version: v0.8.0+
+- Affected Banker: Shardsndust-Azuresong
+
+**Potential Root Causes:**
+1. ❓ Delta validation failing for specific data patterns
+2. ❓ baseVersion mismatch between sender and receiver
+3. ❓ Hash mismatch due to data inconsistency
+4. ❓ Delta computation producing invalid operations
+5. ❓ Corrupted local data causing delta application to fail
+6. ❓ Protocol version incompatibility between clients
+7. ❓ Race conditions in concurrent delta application
+
+**Investigation Needed:**
+- Identify which validation step is failing (examine debug logs)
+- Check if this occurs only with specific bankers or is widespread
+- Verify delta structure is valid before rejection
+- Compare local and remote versions/hashes
+- Check if fallback full sync succeeds
+
+**Impact:**
+Performance issue - fallback to full sync increases bandwidth usage and sync time. However, system continues functioning correctly through fallback mechanism. May indicate underlying data consistency problems.
+
+**Next Steps:**
+- Enable debug logging to capture exact failure reason
+- Check if ValidateDeltaStructure() is rejecting valid deltas
+- Verify hash calculation consistency between sender/receiver
+- Monitor if full sync fallback resolves the issue or if it recurs
 
 ---
 
