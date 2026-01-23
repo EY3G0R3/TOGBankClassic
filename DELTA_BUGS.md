@@ -1,10 +1,13 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol  
-**Last Updated:** January 22, 2026  
+**Last Updated:** January 23, 2026  
 **Status:** Testing Phase - Core Protocol Operational
 
-**Recent Fixes (2026-01-22):**
+**Recent Fixes (2026-01-23):**
+- ✅ [COMPAT-002] SendRosterData nil Info crash - Added defensive nil check
+
+**Previous Fixes (2026-01-22):**
 - ✅ [SYNC-001] Cross-guild data bleed - Added roster-based validation
 - ✅ [ADDON-001] Nil itemLink handling - Added defensive nil checks throughout
 - ✅ [DELTA-007] TriggerCallback method missing - Replaced with direct UI refresh
@@ -45,7 +48,79 @@
 
 ## Open Bugs
 
-*No open bugs at this time.*
+### 🟠 HIGH
+
+#### ✅ [COMPAT-002] Guild.lua nil Info crash in SendRosterData
+
+**Severity:** 🟠 HIGH  
+**Category:** Backwards Compatibility / Error Handling  
+**Reporter:** Player (Screenshot)  
+**Date Reported:** 2026-01-23  
+**Date Resolved:** 2026-01-23  
+**Status:** ✅ RESOLVED  
+**Related:** COMPAT-001 (Similar nil Info crash pattern)
+
+**Description:**
+When `SendRosterData()` is called before guild data is fully loaded, the function crashes trying to access `self.Info.roster` when `self.Info` is nil.
+
+**Steps to Reproduce:**
+1. Login to character
+2. Before guild data loads, trigger roster sync (via chat command or roster update)
+3. Error: `attempt to index field 'Info' (a nil value)` at Guild.lua:746
+
+**Expected Behavior:**
+Should handle roster sync requests gracefully even if guild data hasn't loaded yet, or silently skip until ready.
+
+**Actual Behavior:**
+Lua error crashes the addon when attempting to send roster data.
+
+**Environment:**
+- WoW Version: Classic Era
+- TOGBankClassic Version: 0.7.6
+- Reported by player via screenshot
+
+**Lua Errors:**
+```
+Interface/AddOns/TOGBankClassic/Modules/Guild.lua:746: attempt to index field 'Info' (a nil value)
+```
+
+**Root Cause:**
+`SendRosterData()` (line 746) assumes `self.Info` exists and tries to access `self.Info.roster`, causing a crash when guild data hasn't loaded yet.
+
+This happens when:
+- Player logs in and guild data hasn't loaded yet
+- Another player requests roster data (Chat.lua:525)
+- Roster is updated via `/togbank roster` command (Guild.lua:2301)
+- `Guild.Info` is still nil because `Database:Load()` hasn't been called yet
+
+**Calling Locations:**
+1. Chat.lua:525 - Responding to roster request from another player
+2. Guild.lua:2301 - After updating roster via command
+
+**Fix Applied:**
+Added nil check at start of `SendRosterData()`:
+```lua
+function TOGBankClassic_Guild:SendRosterData()
+	-- Safety check: Info might be nil if guild data not loaded yet
+	if not self.Info then
+		return
+	end
+	
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "roster", roster = self.Info.roster })
+	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
+end
+```
+
+This matches the defensive pattern used in `ReceiveRosterData()` and gracefully handles the race condition.
+
+**Impact:**
+Pre-existing bug discovered through player report. Affects any scenario where roster data is requested before guild data loads.
+
+**Resolution Date:** 2026-01-23
+
+---
+
+*No other open bugs at this time.*
 
 ---
 

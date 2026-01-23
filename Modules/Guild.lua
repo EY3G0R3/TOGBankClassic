@@ -743,6 +743,11 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 end
 
 function TOGBankClassic_Guild:SendRosterData()
+	-- Safety check: Info might be nil if guild data not loaded yet
+	if not self.Info then
+		return
+	end
+	
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "roster", roster = self.Info.roster })
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
 end
