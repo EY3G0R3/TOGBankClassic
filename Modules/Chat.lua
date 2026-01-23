@@ -532,18 +532,18 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				data.type,
 				data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or ""
 			)
-		end
-
-		-- Request data is guild-wide, anyone can respond (player="*")
-		if data.type == "requests" and (data.player == "*" or data.player == player) then
-			TOGBankClassic_Guild:SendRequestsSnapshot()
-		end
-		if data.type == "requests-log" and (data.player == "*" or data.player == player) then
-			TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
+		
+			-- Request data is guild-wide, anyone can respond (player="*")
+			if data.type == "requests" and (data.player == "*" or data.player == player) then
+				TOGBankClassic_Guild:SendRequestsSnapshot()
+			end
+			if data.type == "requests-log" and (data.player == "*" or data.player == player) then
+				TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
+			end
 		end
 
 		-- Alt and roster queries are per-player, only respond if query is for us
-		if data.player == player then
+		if data.player and data.player == player then
 			if data.type == "roster" then
 				local time = GetServerTime()
 				if self.last_roster_sync == nil or time - self.last_roster_sync > 300 then
@@ -585,7 +585,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end
 			end
 		end
-	end
 
 	-- v0.8.0: Pull-based request reply handler (togbank-rr)
 	if prefix == "togbank-rr" then
