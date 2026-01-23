@@ -829,6 +829,7 @@ function Guild:SendRequestsSnapshot(target)
 	self:NormalizeRequestList()
 	local payload = {
 		type = "requests",
+		player = "*",  -- Backwards compat: v0.7.11-v0.7.13 need this field to process responses
 		version = self:GetRequestsVersion(),
 		requests = self.Info.requests or {},
 		requestLogApplied = self.Info.requestLogApplied or {},
@@ -995,7 +996,7 @@ function Guild:SendRequestLogEntries(target, logFrom)
 
 	-- If no entries to send, send empty log response (so querier knows we're caught up)
 	if #entriesToSend == 0 then
-		local payload = { type = "requests-log", logEntries = {} }
+		local payload = { type = "requests-log", player = "*", logEntries = {} }
 		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 		return
@@ -1008,7 +1009,7 @@ function Guild:SendRequestLogEntries(target, logFrom)
 		table.insert(chunk, entry)
 		count = count + 1
 		if count >= maxPerChunk then
-			local payload = { type = "requests-log", logEntries = chunk }
+			local payload = { type = "requests-log", player = "*", logEntries = chunk }
 			local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 			TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 			chunk = {}
@@ -1017,7 +1018,7 @@ function Guild:SendRequestLogEntries(target, logFrom)
 	end
 
 	if #chunk > 0 then
-		local payload = { type = "requests-log", logEntries = chunk }
+		local payload = { type = "requests-log", player = "*", logEntries = chunk }
 		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 	end
