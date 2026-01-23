@@ -312,6 +312,53 @@ Critical bug affecting all request system users. Requests are being silently del
 
 ---
 
+#### [UI-004] Banker tab selection resets to first banker intermittently
+
+**Severity:** 🟡 MEDIUM  
+**Category:** UI / User Experience  
+**Reporter:** User  
+**Date Reported:** 2026-01-23  
+**Status:** 🔴 OPEN  
+**Reproducibility:** Intermittent
+
+**Description:**
+When viewing banker tabs in the inventory UI, the selected tab intermittently snaps back to the first banker. This occurs while the UI is already open and the user has selected a specific banker's tab.
+
+**Steps to Reproduce:**
+1. Open TOGBankClassic inventory UI (`/togbank`)
+2. Navigate to a banker tab (not the first one)
+3. Keep the tab open
+4. UI intermittently switches back to the first banker tab without user action
+
+**Expected Behavior:**
+- Selected banker tab should remain active
+- Tab selection should only change with explicit user interaction
+
+**Actual Behavior:**
+- Tab selection resets to first banker automatically
+- Occurs intermittently (timing/trigger unclear)
+
+**Potential Causes to Investigate:**
+- UI refresh/redraw during data sync resetting tab selection
+- Tab state not preserved during DrawContent() calls
+- Event handlers triggering unwanted tab switches
+- Automatic sync on UI open (PerformSync) may trigger redraws
+
+**Affected Code:**
+- Modules/UI/Inventory.lua - Tab management and DrawContent()
+- Potential trigger: UI:Open() now calls PerformSync() which may cause redraws
+
+**Impact:**
+Disrupts user workflow when reviewing multiple bankers. User must repeatedly reselect the desired banker tab.
+
+**Debugging Steps:**
+1. Add debug logging to tab selection changes
+2. Track when DrawContent() is called and from where
+3. Monitor sync/data update events during UI open state
+4. Check if tab state variable is being reset during redraws
+
+---
+
 #### [COMM-001] "No player named <banker> is currently playing" error message
 
 **Severity:** 🟡 MEDIUM  

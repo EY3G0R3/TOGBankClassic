@@ -44,9 +44,9 @@ function TOGBankClassic_UI_Inventory:Open()
 
 	self:DrawContent()
 	
-	-- Fast-fill: Request missing banker alts (delta mode only)
-	if TOGBankClassic_Guild and TOGBankClassic_Guild.ShouldUseDelta and TOGBankClassic_Guild:ShouldUseDelta() then
-		TOGBankClassic_Guild:FastFillMissingAlts()
+	-- Perform full sync (same as /togbank sync command)
+	if TOGBankClassic_Chat and TOGBankClassic_Chat.PerformSync then
+		TOGBankClassic_Chat:PerformSync()
 	end
 
 	if _G["TOGBankClassic"] then

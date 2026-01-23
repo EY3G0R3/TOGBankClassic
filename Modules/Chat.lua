@@ -96,6 +96,16 @@ function TOGBankClassic_Chat:Debug(...)
 	return TOGBankClassic_Output:Debug(...)
 end
 
+-- Centralized sync function for both /sync command and UI opening
+function TOGBankClassic_Chat:PerformSync()
+	-- v0.8.0: Use delta version broadcast instead of legacy sync
+	TOGBankClassic_Events:SyncDeltaVersion()
+	TOGBankClassic_Guild:FastFillMissingAlts()
+	-- Also explicitly query request data to ensure it's up to date
+	TOGBankClassic_Guild:QueryRequestLog(nil, nil)
+	TOGBankClassic_Guild:QueryRequestsSnapshot(nil)
+end
+
 local SHARES_COLOR = "|cff80bfffshares|r"
 local QUERIES_COLOR = "|cffffff00queries|r"
 
@@ -1011,9 +1021,7 @@ local COMMAND_REGISTRY = {
 		name = "sync",
 		help = "manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically",
 		handler = function()
-			-- v0.8.0: Use delta version broadcast instead of legacy sync
-			TOGBankClassic_Events:SyncDeltaVersion()
-			TOGBankClassic_Guild:FastFillMissingAlts()
+			TOGBankClassic_Chat:PerformSync()
 		end,
 	},
 	{
