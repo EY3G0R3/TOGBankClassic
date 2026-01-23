@@ -522,21 +522,23 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		end
 		
 		-- Legacy request handling
-		self:Debug(
-			">",
-			ColorPlayerName(sender),
-			QUERIES_COLOR,
-			ColorPlayerName(data.player),
-			"about",
-			data.type,
-			data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or ""
-		)
+		if data.player then
+			self:Debug(
+				">",
+				ColorPlayerName(sender),
+				QUERIES_COLOR,
+				ColorPlayerName(data.player),
+				"about",
+				data.type,
+				data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or ""
+			)
+		end
 
-		-- Request data is guild-wide, so anyone can respond (no player check needed)
-		if data.type == "requests" then
+		-- Request data is guild-wide, anyone can respond (player="*")
+		if data.type == "requests" and (data.player == "*" or data.player == player) then
 			TOGBankClassic_Guild:SendRequestsSnapshot()
 		end
-		if data.type == "requests-log" then
+		if data.type == "requests-log" and (data.player == "*" or data.player == player) then
 			TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
 		end
 

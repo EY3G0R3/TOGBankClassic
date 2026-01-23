@@ -821,16 +821,18 @@ function Guild:GetRequestsVersion()
 end
 
 function Guild:SendRequestsSnapshot(target)
-	if not self.Info or not self.Info.requests then
+	-- Always send snapshot, even if empty (so querying player knows we have nothing)
+	if not self.Info then
 		return
 	end
+	self:EnsureRequestsInitialized()
 	self:NormalizeRequestList()
 	local payload = {
 		type = "requests",
 		version = self:GetRequestsVersion(),
-		requests = self.Info.requests,
-		requestLogApplied = self.Info.requestLogApplied,
-		tombstones = self.Info.requestsTombstones,
+		requests = self.Info.requests or {},
+		requestLogApplied = self.Info.requestLogApplied or {},
+		tombstones = self.Info.requestsTombstones or {},
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
@@ -841,18 +843,14 @@ function Guild:SendRequestsData(target)
 end
 
 function Guild:QueryRequestsSnapshot(player)
-	if not player then
-		return
-	end
-	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "requests" })
+	-- Requests are guild-wide, use "*" to indicate anyone can respond
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests" })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
 function Guild:QueryRequestLog(player, logFrom)
-	if not player then
-		return
-	end
-	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "requests-log", logFrom = logFrom })
+	-- Requests are guild-wide, use "*" to indicate anyone can respond
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests-log", logFrom = logFrom })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 end
 
@@ -960,22 +958,30 @@ function Guild:SendRequestLogEntries(target, logFrom)
 	if not logFrom or type(logFrom) ~= "table" then
 		return
 	end
-	if not self.Info or not self.Info.requestLog then
+	if not self.Info then
 		return
 	end
 	self:EnsureRequestsInitialized()
+
+	-- If we don't have a request log, send snapshot instead (player will get all data)
+	if not self.Info.requestLog then
+		self:SendRequestsSnapshot(target)
+		return
+	end
 
 	local entriesToSend = {}
 
 	for actor, fromSeq in pairs(logFrom) do
 		local list = self.requestLogByActor and self.requestLogByActor[actor] or nil
 		if not list or #list == 0 then
+			-- No log entries for this actor, send snapshot so querier gets current state
 			self:SendRequestsSnapshot(target)
 			return
 		end
 		local minSeq = tonumber(list[1].seq or 0) or 0
 		local startSeq = tonumber(fromSeq or 0) or 0
 		if startSeq <= 0 or startSeq < minSeq then
+			-- Requested sequence is too old or invalid, send full snapshot
 			self:SendRequestsSnapshot(target)
 			return
 		end
@@ -987,7 +993,11 @@ function Guild:SendRequestLogEntries(target, logFrom)
 		end
 	end
 
+	-- If no entries to send, send empty log response (so querier knows we're caught up)
 	if #entriesToSend == 0 then
+		local payload = { type = "requests-log", logEntries = {} }
+		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
 		return
 	end
 
