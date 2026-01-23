@@ -475,8 +475,7 @@ function Guild:ApplyRequestSnapshot(payload)
 	
 	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserved %d local requests, merged list has %d total", 
 		localPreservedCount, #merged))
-
-	self.Info.requests = merged
+	
 	self.Info.requestsVersion = latest
 
 	local logApplied = payload.requestLogApplied
@@ -945,7 +944,9 @@ function Guild:SendRequestLogEntry(entry, target)
 	end
 	local payload = { type = "requests-log", logEntries = { entry } }
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
+	-- Use ALERT priority for immediate request broadcasts (highest priority)
+	-- Request creations are very rare (10-20/day) and need guaranteed immediate delivery
+	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "ALERT")
 end
 
 function Guild:SendRequestLogEntries(target, logFrom)
@@ -1112,7 +1113,7 @@ end
 
 -- Access control for requests.
 function Guild:CanManageRequests(actor, actorIsGM)
-	if CanViewOfficerNote and CanViewOfficerNote() then
+	if CanViewOfficerNote() then
 		return true
 	end
 
@@ -1496,3 +1497,4 @@ function Guild:Compact()
 		end
 	end
 end
+
