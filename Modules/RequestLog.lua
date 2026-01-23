@@ -848,14 +848,14 @@ function Guild:QueryRequestsSnapshot(player)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests" })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 	
-	-- Backwards compat: Also send targeted query to a known banker for old clients
-	local banker = self:GetAnyBanker()
-	if banker then
-		TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sending targeted query to banker %s", banker)
-		local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = banker, type = "requests" })
+	-- Backwards compat: Send targeted query for old clients (v0.7.11-v0.7.13)
+	-- The player parameter indicates who wants the response
+	if player then
+		TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sending targeted query to %s", player)
+		local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "requests" })
 		TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
 	else
-		TOGBankClassic_Output:DebugComm("QUERY REQUESTS: No banker found for targeted query")
+		TOGBankClassic_Output:DebugComm("QUERY REQUESTS: No player specified for targeted query")
 	end
 end
 
@@ -864,14 +864,14 @@ function Guild:QueryRequestLog(player, logFrom)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests-log", logFrom = logFrom })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
 	
-	-TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sending targeted query to banker %s", banker)
-		local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = banker, type = "requests-log", logFrom = logFrom })
+	-- Backwards compat: Send targeted query for old clients (v0.7.11-v0.7.13)
+	-- The player parameter indicates who wants the response
+	if player then
+		TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sending targeted query to %s", player)
+		local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "requests-log", logFrom = logFrom })
 		TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
 	else
-		TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: No banker found for targeted query
-	if banker then
-		local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = banker, type = "requests-log", logFrom = logFrom })
-		TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
+		TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: No player specified for targeted query")
 	end
 end
 
