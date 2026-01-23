@@ -850,6 +850,7 @@ function Guild:QueryRequestsSnapshot(player)
 	
 	-- Backwards compat: Send targeted query to each online guild member for old clients
 	-- Old clients check 'if data.player == player' so we need to match their exact name
+	GuildRoster()  -- Refresh roster to get current online status
 	local onlineCount = 0
 	local numGuildMembers = GetNumGuildMembers()
 	for i = 1, numGuildMembers do
@@ -873,6 +874,7 @@ function Guild:QueryRequestLog(player, logFrom)
 	
 	-- Backwards compat: Send targeted query to each online guild member for old clients
 	-- Old clients check 'if data.player == player' so we need to match their exact name
+	GuildRoster()  -- Refresh roster to get current online status
 	local onlineCount = 0
 	local numGuildMembers = GetNumGuildMembers()
 	for i = 1, numGuildMembers do
