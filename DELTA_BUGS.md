@@ -6,6 +6,7 @@
 
 **Recent Fixes (2026-01-23):**
 - ✅ [COMPAT-002] SendRosterData nil Info crash - Added defensive nil check
+- ✅ [DATA-002] ReceiveAltData nil version comparison - Added nil check for existing alt version
 
 **Previous Fixes (2026-01-22):**
 - ✅ [SYNC-001] Cross-guild data bleed - Added roster-based validation
@@ -117,6 +118,67 @@ This matches the defensive pattern used in `ReceiveRosterData()` and gracefully 
 Pre-existing bug discovered through player report. Affects any scenario where roster data is requested before guild data loads.
 
 **Resolution Date:** 2026-01-23
+
+---
+
+#### ✅ [DATA-002] Guild.lua nil version comparison in ReceiveAltData
+
+**Severity:** 🟠 HIGH  
+**Category:** Data Handling / Error Handling  
+**Reporter:** Player (Error report)  
+**Date Reported:** 2026-01-23  
+**Date Resolved:** 2026-01-23  
+**Status:** ✅ RESOLVED  
+**Related:** Regression - was fixed in v2.3.0 but reintroduced
+
+**Description:**
+When comparing versions in `ReceiveAltData()`, the code assumes `self.Info.alts[name].version` exists, causing a crash when it's nil.
+
+**Steps to Reproduce:**
+1. Receive alt data from another player for "Pointfivbank-Azuresong"
+2. Local data exists but has no version field
+3. Error: `attempt to compare number with nil` at Guild.lua:1481
+
+**Expected Behavior:**
+Should handle missing version fields gracefully when comparing incoming data with existing data.
+
+**Actual Behavior:**
+Lua error crashes when trying to compare a number with nil.
+
+**Environment:**
+- WoW Version: Classic Era
+- TOGBankClassic Version: 0.7.6+
+- Realm: Azuresong
+
+**Lua Errors:**
+```
+11x TOGBankClassic/Modules/Guild.lua:1481: attempt to compare number with nil
+```
+
+**Root Cause:**
+Line 1481: `if self.Info.alts[name] and alt.version ~= nil and alt.version < self.Info.alts[name].version then`
+
+The code checks if `alt.version` is not nil, but doesn't check if `self.Info.alts[name].version` is not nil before comparison. This happens when:
+- Existing alt data was saved without a version field (old data format)
+- New data arrives with a version
+- Comparison fails: `1768945879 < nil`
+
+**Fix Applied:**
+Added nil check for existing version:
+```lua
+-- Check against existing alt data, but only if version exists
+if self.Info.alts[name] and alt.version ~= nil and self.Info.alts[name].version ~= nil and alt.version < self.Info.alts[name].version then
+	return ADOPTION_STATUS.STALE
+end
+```
+
+**Impact:**
+Handles legacy data without version fields gracefully. When existing data lacks a version, incoming data is accepted regardless of its version.
+
+**Resolution Date:** 2026-01-23
+
+**Notes:**
+This was previously fixed in v2.3.0 of the original fork but was reintroduced during refactoring.
 
 ---
 

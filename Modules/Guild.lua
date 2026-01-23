@@ -1483,7 +1483,8 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 		end
 	end
 
-	if self.Info.alts[name] and alt.version ~= nil and alt.version < self.Info.alts[name].version then
+	-- Check against existing alt data, but only if version exists
+	if self.Info.alts[name] and alt.version ~= nil and self.Info.alts[name].version ~= nil and alt.version < self.Info.alts[name].version then
 		return ADOPTION_STATUS.STALE
 	end
 	if self.hasRequested then
