@@ -5,6 +5,7 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Recent Fixes (2026-01-23):**
+- ✅ [COMM-002] Stale guild roster in online checks - Added GuildRoster() call to refresh cached data before checking player online status
 - ✅ [UI-004] Banker tab snap-back - Fixed DrawContent() to preserve selected tab instead of always resetting to first
 - ✅ [SYNC-002] Request data not syncing - Fixed PerformSync() to pass player name and removed player check for guild-wide request queries
 - ✅ [COMM-001] **EXPANSION** Offline WHISPER errors - Added SendWhisper() wrapper with automatic online checking for all WHISPER sends
@@ -311,6 +312,49 @@ Critical bug affecting all request system users. Requests are being silently del
 
 **Questions to Investigate:**
 - ❓ **UI Refresh Behavior**: Are changes to the request list reflected dynamically in the open UI, or does the user need to close/reopen the requests window to see new requests? Need to verify if UI automatically updates when ApplyRequestSnapshot() completes.
+
+---
+
+#### [COMM-002] Stale guild roster data in IsPlayerOnline checks
+
+**Severity:** 🔴 HIGH  
+**Category:** Communication / Error Prevention  
+**Reporter:** User (7.11 whisper issues)  
+**Date Reported:** 2026-01-23  
+**Status:** ✅ FIXED (v0.7.12)  
+**Reproducibility:** Frequent during delta syncs
+
+**Description:**
+`IsPlayerOnline()` was checking guild roster data without first calling `GuildRoster()` to refresh it. In Classic Era WoW, `GetGuildRosterInfo()` returns **cached** data that can be stale, causing the function to return `true` for players who had recently logged off but still appeared online in the cached roster.
+
+This caused `SendWhisper()` to believe players were online and attempt WHISPER sends, resulting in WoW's "No player named X is currently playing" errors during delta syncs.
+
+**Root Cause:**
+Classic Era WoW API requires `GuildRoster()` to be called to request fresh roster data from the server. Without this call, `GetGuildRosterInfo()` returns the last cached snapshot, which can be seconds to minutes out of date. The online status flag (`isOnline`) in the cached data does not reflect recent logouts.
+
+**Fix (Guild.lua:800-821):**
+```lua
+function TOGBankClassic_Guild:IsPlayerOnline(playerName)
+    -- Request fresh guild roster data (COMM-002)
+    -- Without this, GetGuildRosterInfo() returns stale data
+    GuildRoster()
+    
+    -- Check roster for player...
+end
+```
+
+**Impact:**
+- ✅ Eliminates WHISPER errors from stale roster data
+- ✅ Ensures online checks reflect current server state
+- ✅ Prevents failed delta sync operations
+- ✅ Complements COMM-001 SendWhisper wrapper
+
+**Related Bugs:**
+- [COMM-001] - SendWhisper wrapper
+- [DELTA-008] - RequestDeltaChain online check
+
+**Version:** v0.7.12  
+**Commit:** 6949617
 
 ---
 

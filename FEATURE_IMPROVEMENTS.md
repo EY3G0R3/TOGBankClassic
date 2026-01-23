@@ -189,6 +189,14 @@ end
 
 ---
 
+## 🔄 Request Data Sync (v0.7.11) - IMPLEMENTED
+**Fixed:** [SYNC-002] - Pass player name to queries, remove player check for guild-wide data
+
+## 🎨 Persistent Tab Selection (v0.7.11) - IMPLEMENTED  
+**Fixed:** [UI-004] - Preserve selected tab across syncs and redraws
+
+---
+
 ## �🔄 Pull-Based Delta Protocol (v0.8.0) - PLANNED
 
 ### Overview
