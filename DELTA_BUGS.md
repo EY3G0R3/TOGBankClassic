@@ -315,7 +315,8 @@ Critical bug affecting all request system users. Requests are being silently del
 **Category:** Communication / Error Handling  
 **Reporter:** Multiple players  
 **Date Reported:** 2026-01-23  
-**Status:** 🔴 OPEN  
+**Date Resolved:** 2026-01-23  
+**Status:** ✅ RESOLVED  
 **Reproducibility:** Frequent
 
 **Description:**
@@ -327,41 +328,52 @@ No player named Shardsndust is currently playing
 ```
 
 **Steps to Reproduce:**
-Unknown - appears to occur during normal addon operation, possibly during:
-- Request creation/broadcast
-- Periodic sync attempts
-- Targeted message sending to offline bankers
+1. Banker logs in and shares data
+2. Player's client tracks banker as "seen recently" in online_bankers
+3. Banker logs out
+4. Player requests alt data within 10 minutes
+5. Code attempts WHISPER to offline banker
+6. WoW displays "No player named X is currently playing" error
 
-**Expected Behavior:**
-Addon should handle offline/unavailable players gracefully without generating user-visible error messages. Communication failures to offline players should be silently ignored or logged only in debug mode.
+**Root Cause:**
+In `QueryAltData()` (Guild.lua:734), the code checked if a banker was **seen recently** (within 10 minutes) but didn't verify if they're **currently online** before attempting a WHISPER. This caused messages to be sent to offline players, triggering WoW's error message.
 
-**Actual Behavior:**
-Error message displayed to user, causing confusion and potential alarm.
+**Affected Code:**
+```lua
+if banker and (GetServerTime() - mostRecent) < 600 then
+    -- Banker known and seen recently - attempt WHISPER
+    SendCommMessage("togbank-r", data, "WHISPER", banker, "NORMAL")
+```
 
-**Environment:**
-- WoW Version: Classic Era
-- TOGBankClassic Version: v0.7.8+
-- Multiple players affected
+**Fix Applied (2026-01-23):**
 
-**Potential Root Causes:**
-1. ❓ SendCommMessage with targeted player name instead of "GUILD" distribution
-2. ❓ Whisper attempts to offline bankers
-3. ❓ Player/banker lookup using SendAddonMessage with player name
-4. ❓ Missing online status check before targeted communication
+1. **Added IsPlayerOnline() helper** (Guild.lua):
+```lua
+function TOGBankClassic_Guild:IsPlayerOnline(playerName)
+    -- Scans GetGuildRosterInfo() to check isOnline flag
+    -- Returns true only if player is currently connected
+end
+```
 
-**Investigation Needed:**
-- Identify which function is generating the error
-- Determine if using SendCommMessage with player target vs "GUILD" target
-- Check if attempting whispers or targeted messages to specific bankers
-- Review all calls that might specify a player name as target
+2. **Updated QueryAltData() logic** (Guild.lua:734):
+```lua
+if banker and (GetServerTime() - mostRecent) < 600 and self:IsPlayerOnline(banker) then
+    -- Now checks THREE conditions: known, recent, AND online
+    SendCommMessage("togbank-r", data, "WHISPER", banker, "NORMAL")
+else
+    -- Falls back to GUILD broadcast if banker offline
+    SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
+end
+```
+
+**How This Fixes COMM-001:**
+- WHISPER messages only sent to bankers who are currently online
+- If banker recently seen but now offline, falls back to GUILD broadcast
+- Eliminates "No player named" errors for offline whisper attempts
+- System continues working via GUILD fallback
 
 **Impact:**
-Cosmetic issue - error messages confuse players but don't affect functionality. However, indicates potential inefficiency in communication patterns (attempting to message offline players).
-
-**Next Steps:**
-- Search codebase for SendCommMessage calls with player name targets
-- Add online status checks before targeted communication
-- Consider switching to guild-wide broadcasts vs targeted messages
+Eliminates confusing error messages for players. System now gracefully handles banker logout scenarios by falling back to guild broadcasts.
 
 ---
 

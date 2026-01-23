@@ -727,16 +727,16 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 	
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
 	
-	if banker and (GetServerTime() - mostRecent) < 600 then
-		-- Banker known and seen recently (within 10 min) - WHISPER directly
+	if banker and (GetServerTime() - mostRecent) < 600 and self:IsPlayerOnline(banker) then
+		-- Banker known, seen recently (within 10 min), AND currently online - WHISPER directly
 		TOGBankClassic_Output:DebugComm("SENDING WHISPER: togbank-r to %s for alt %s", banker, norm)
 		TOGBankClassic_Output:Debug("Pull-based query for %s (WHISPER to banker %s)", norm, banker)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "WHISPER", banker, "NORMAL")
 		self:MarkPendingSync("alt", banker, norm)
 	else
-		-- No known banker or stale - broadcast on GUILD
-		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST: togbank-r for alt %s (no banker)", norm)
-		TOGBankClassic_Output:Debug("Pull-based query for %s (GUILD broadcast, no known banker)", norm)
+		-- No known banker, stale, or offline - broadcast on GUILD
+		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST: togbank-r for alt %s (no online banker)", norm)
+		TOGBankClassic_Output:Debug("Pull-based query for %s (GUILD broadcast, no online banker)", norm)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", nil, norm)
 	end
@@ -793,6 +793,27 @@ function TOGBankClassic_Guild:SenderHasGbankNote(sender)
 			end
 		end
 	end
+	return false
+end
+
+-- Check if a player is currently online in the guild
+function TOGBankClassic_Guild:IsPlayerOnline(playerName)
+	if not playerName then
+		return false
+	end
+	
+	local norm = self:NormalizeName(playerName)
+	
+	for i = 1, GetNumGuildMembers() do
+		local playerRealm, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
+		if playerRealm then
+			local memberNorm = self:NormalizeName(playerRealm)
+			if memberNorm == norm then
+				return isOnline == 1 or isOnline == true
+			end
+		end
+	end
+	
 	return false
 end
 
