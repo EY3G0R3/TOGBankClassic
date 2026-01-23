@@ -802,6 +802,10 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 		return false
 	end
 	
+	-- Request fresh guild roster data (COMM-002)
+	-- Without this, GetGuildRosterInfo() returns stale data
+	GuildRoster()
+	
 	local norm = self:NormalizeName(playerName)
 	
 	for i = 1, GetNumGuildMembers() do
