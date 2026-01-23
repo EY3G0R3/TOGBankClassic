@@ -485,12 +485,16 @@ end
 
 -- v0.8.0: Fast-fill - Request missing banker alts on UI open
 -- Compares roster bankers against local alt data and queries for missing alts
+-- SYNC-001 fix: Use current guild roster instead of cached roster to prevent
+-- requesting data for bankers from other guilds
 function TOGBankClassic_Guild:FastFillMissingAlts()
-	if not self.Info or not self.Info.roster or not self.Info.roster.alts then
+	if not self.Info then
 		return
 	end
 	
-	local rosterAlts = self.Info.roster.alts
+	-- SYNC-001 fix: Get live banker roster from current guild instead of using
+	-- cached roster.alts which may contain stale cross-guild data
+	local rosterAlts = self:GetBanks()
 	if not rosterAlts or #rosterAlts == 0 then
 		return
 	end
