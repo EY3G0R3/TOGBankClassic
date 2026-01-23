@@ -17,6 +17,20 @@ function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target,
     return AceComm_SendCommMessage(self, prefix, text, distribution, target, prio, callbackFn, callbackArg)
 end
 
+-- Centralized WHISPER send with automatic online check
+-- Returns true if sent, false if target offline or send failed
+function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn, callbackArg)
+    -- Check if target is online
+    if not TOGBankClassic_Guild:IsPlayerOnline(target) then
+        TOGBankClassic_Output:Debug("Cannot send %s WHISPER to %s - player is offline", prefix, target)
+        return false
+    end
+    
+    -- Send the whisper
+    self:SendCommMessage(prefix, text, "WHISPER", target, prio, callbackFn, callbackArg)
+    return true
+end
+
 function TOGBankClassic_Core:OnInitialize()
     -- Called when the addon is loaded
     TOGBankClassic_Output:Init()

@@ -490,14 +490,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				}
 				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
 				
-				-- Check if sender is online before sending WHISPER
-				if not TOGBankClassic_Guild:IsPlayerOnline(sender) then
-					TOGBankClassic_Output:Debug("Cannot send togbank-rr ACK to %s - player is offline", sender)
+				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s)", sender, tostring(isBanker), tostring(hasData))
+				if not TOGBankClassic_Core:SendWhisper("togbank-rr", ackData, sender, "NORMAL") then
 					return
 				end
-				
-				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s)", sender, tostring(isBanker), tostring(hasData))
-				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
 				
 				self:Debug(
 					"<",
@@ -913,19 +909,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				)
 				
 				if deltaChain then
-					-- Check if sender is online before sending WHISPER
-					if not TOGBankClassic_Guild:IsPlayerOnline(sender) then
-						TOGBankClassic_Output:Debug("Cannot send delta chain to %s - player is offline", sender)
-						return
-					end
-					
 					-- Send delta chain back via whisper
 					local chainData = {
 						altName = altName,
 						deltas = deltaChain
 					}
 					local serialized = TOGBankClassic_Core:SerializeWithChecksum(chainData)
-					TOGBankClassic_Core:SendCommMessage("togbank-dc", serialized, "WHISPER", sender, "ALERT")
+					if not TOGBankClassic_Core:SendWhisper("togbank-dc", serialized, sender, "ALERT") then
+						return
+					end
 					
 					self:Debug(
 						"<",

@@ -731,7 +731,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 		-- Banker known, seen recently (within 10 min), AND currently online - WHISPER directly
 		TOGBankClassic_Output:DebugComm("SENDING WHISPER: togbank-r to %s for alt %s", banker, norm)
 		TOGBankClassic_Output:Debug("Pull-based query for %s (WHISPER to banker %s)", norm, banker)
-		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "WHISPER", banker, "NORMAL")
+		TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL")
 		self:MarkPendingSync("alt", banker, norm)
 	else
 		-- No known banker, stale, or offline - broadcast on GUILD
@@ -888,15 +888,11 @@ function TOGBankClassic_Guild:SendStateSummary(name, target)
 		summary = summary,
 	}
 	
-	-- Check if target is online before sending WHISPER
-	if not self:IsPlayerOnline(target) then
-		TOGBankClassic_Output:Debug("Cannot send state summary to %s - player is offline", target)
-		return
-	end
-	
 	local data = TOGBankClassic_Core:SerializeWithChecksum(message)
 	TOGBankClassic_Output:DebugComm("SENDING STATE SUMMARY via WHISPER to %s for %s (%d bytes, hash=%s)", target, name, #data, tostring(summary.hash))
-	TOGBankClassic_Core:SendCommMessage("togbank-state", data, "WHISPER", target, "NORMAL")
+	if not TOGBankClassic_Core:SendWhisper("togbank-state", data, target, "NORMAL") then
+		return
+	end
 	
 	local itemCount = 0
 	for _ in pairs(summary.items) do itemCount = itemCount + 1 end
@@ -954,12 +950,6 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		end
 		
 		if requesterHash == currentHash then
-			-- Check if requester is online before sending WHISPER
-			if not self:IsPlayerOnline(requester) then
-				TOGBankClassic_Output:Debug("Cannot send no-change to %s - player is offline", requester)
-				return
-			end
-			
 			-- Hashes match - no changes needed
 			local noChangeMsg = {
 				type = "no-change",
@@ -969,7 +959,9 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			}
 			local data = TOGBankClassic_Core:SerializeWithChecksum(noChangeMsg)
 			TOGBankClassic_Output:DebugComm("DELTA MODE: SENDING NO-CHANGE to %s for %s (hash match: %d)", requester, norm, currentHash)
-			TOGBankClassic_Core:SendCommMessage("togbank-nochange", data, "WHISPER", requester, "NORMAL")
+			if not TOGBankClassic_Core:SendWhisper("togbank-nochange", data, requester, "NORMAL") then
+				return
+			end
 			TOGBankClassic_Output:Debug("Sent no-change reply to %s for %s (hash=%d)", requester, norm, currentHash)
 			return
 		else
@@ -990,12 +982,6 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	-- Legacy mode: Compare versions only
 	TOGBankClassic_Output:DebugComm("LEGACY MODE: Comparing versions")
 	if requesterVersion == currentVersion then
-		-- Check if requester is online before sending WHISPER
-		if not self:IsPlayerOnline(requester) then
-			TOGBankClassic_Output:Debug("Cannot send no-change to %s - player is offline", requester)
-			return
-		end
-		
 		-- No changes - send no-change message
 		local noChangeMsg = {
 			type = "no-change",
@@ -1004,7 +990,9 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		}
 		local data = TOGBankClassic_Core:SerializeWithChecksum(noChangeMsg)
 		TOGBankClassic_Output:DebugComm("SENDING NO-CHANGE to %s for %s (version match)", requester, norm)
-		TOGBankClassic_Core:SendCommMessage("togbank-nochange", data, "WHISPER", requester, "NORMAL")
+		if not TOGBankClassic_Core:SendWhisper("togbank-nochange", data, requester, "NORMAL") then
+			return
+		end
 		TOGBankClassic_Output:Debug("Sent no-change reply to %s for %s (v%d)", requester, norm, currentVersion)
 		return
 	end
@@ -2053,7 +2041,7 @@ function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion,
 	}
 	
 	local serialized = TOGBankClassic_Core:SerializeWithChecksum(requestData)
-	TOGBankClassic_Core:SendCommMessage("togbank-dr", serialized, "WHISPER", sender, "ALERT")
+	TOGBankClassic_Core:SendWhisper("togbank-dr", serialized, sender, "ALERT")
 	
 	TOGBankClassic_Output:Debug(
 		"Requesting delta chain for %s from v%d to v%d from %s",
