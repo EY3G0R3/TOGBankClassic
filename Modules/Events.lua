@@ -33,6 +33,7 @@ function TOGBankClassic_Events:RegisterEvents()
 	end
 
 	self:RegisterEvent("PLAYER_LOGIN")
+	self:RegisterEvent("PLAYER_LOGOUT")
 	self:RegisterEvent("GUILD_RANKS_UPDATE")
 	self:RegisterEvent("BANKFRAME_OPENED")
 	self:RegisterEvent("BANKFRAME_CLOSED")
@@ -194,6 +195,11 @@ end
 
 function TOGBankClassic_Events:PLAYER_LOGIN(_)
 	TOGBankClassic_Guild:GetPlayer()
+end
+
+function TOGBankClassic_Events:PLAYER_LOGOUT(_)
+	-- Save persistent debug log to SavedVariables
+	TOGBankClassic_Output:SavePersistentLog()
 end
 
 function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)

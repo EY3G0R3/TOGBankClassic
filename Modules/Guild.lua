@@ -888,6 +888,12 @@ function TOGBankClassic_Guild:SendStateSummary(name, target)
 		summary = summary,
 	}
 	
+	-- Check if target is online before sending WHISPER
+	if not self:IsPlayerOnline(target) then
+		TOGBankClassic_Output:Debug("Cannot send state summary to %s - player is offline", target)
+		return
+	end
+	
 	local data = TOGBankClassic_Core:SerializeWithChecksum(message)
 	TOGBankClassic_Output:DebugComm("SENDING STATE SUMMARY via WHISPER to %s for %s (%d bytes, hash=%s)", target, name, #data, tostring(summary.hash))
 	TOGBankClassic_Core:SendCommMessage("togbank-state", data, "WHISPER", target, "NORMAL")
@@ -948,6 +954,12 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		end
 		
 		if requesterHash == currentHash then
+			-- Check if requester is online before sending WHISPER
+			if not self:IsPlayerOnline(requester) then
+				TOGBankClassic_Output:Debug("Cannot send no-change to %s - player is offline", requester)
+				return
+			end
+			
 			-- Hashes match - no changes needed
 			local noChangeMsg = {
 				type = "no-change",
@@ -978,6 +990,12 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	-- Legacy mode: Compare versions only
 	TOGBankClassic_Output:DebugComm("LEGACY MODE: Comparing versions")
 	if requesterVersion == currentVersion then
+		-- Check if requester is online before sending WHISPER
+		if not self:IsPlayerOnline(requester) then
+			TOGBankClassic_Output:Debug("Cannot send no-change to %s - player is offline", requester)
+			return
+		end
+		
 		-- No changes - send no-change message
 		local noChangeMsg = {
 			type = "no-change",

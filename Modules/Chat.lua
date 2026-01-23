@@ -489,6 +489,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					hasData = hasData,
 				}
 				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
+				
+				-- Check if sender is online before sending WHISPER
+				if not TOGBankClassic_Guild:IsPlayerOnline(sender) then
+					TOGBankClassic_Output:Debug("Cannot send togbank-rr ACK to %s - player is offline", sender)
+					return
+				end
+				
 				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s)", sender, tostring(isBanker), tostring(hasData))
 				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
 				
@@ -906,6 +913,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				)
 				
 				if deltaChain then
+					-- Check if sender is online before sending WHISPER
+					if not TOGBankClassic_Guild:IsPlayerOnline(sender) then
+						TOGBankClassic_Output:Debug("Cannot send delta chain to %s - player is offline", sender)
+						return
+					end
+					
 					-- Send delta chain back via whisper
 					local chainData = {
 						altName = altName,
@@ -1270,6 +1283,83 @@ local COMMAND_REGISTRY = {
 		expert = true,
 		handler = function()
 			TOGBankClassic_Output:RemoveDebugTab()
+		end,
+	},
+	{
+		name = "debuglog",
+		usage = "[N] [filter]",
+		help = "export last N debug log entries (default 500), optionally filtered by keyword",
+		expert = true,
+		handler = function(arg1)
+			local args = arg1 and arg1:trim() or ""
+			local count, filter = 500, nil
+			
+			-- Parse arguments: first is count, rest is filter
+			if args ~= "" then
+				local firstSpace = args:find(" ")
+				if firstSpace then
+					count = tonumber(args:sub(1, firstSpace - 1)) or 500
+					filter = args:sub(firstSpace + 1):trim()
+					if filter == "" then filter = nil end
+				else
+					count = tonumber(args) or 500
+				end
+			end
+			
+			local log, matchCount = TOGBankClassic_Output:ExportPersistentLogCompact(count, filter)
+			if log == "" then
+				TOGBankClassic_Output:Response("No debug log entries found")
+			else
+				if filter then
+					TOGBankClassic_Output:Response("Last %d debug log entries (filtered: '%s', %d matches):", count, filter, matchCount)
+				else
+					TOGBankClassic_Output:Response("Last %d debug log entries:", count)
+				end
+				TOGBankClassic_Output:Response(log)
+			end
+		end,
+	},
+	{
+		name = "debuglogclear",
+		help = "clear all persistent debug log entries",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Output:ClearPersistentLog()
+		end,
+	},
+	{
+		name = "debuglogsave",
+		help = "manually save debug log to SavedVariables (normally done on logout)",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Output:SavePersistentLog()
+			TOGBankClassic_Output:Response("Persistent debug log saved")
+		end,
+	},
+	{
+		name = "debuglogstats",
+		help = "show statistics about the persistent debug log",
+		expert = true,
+		handler = function()
+			local count = #TOGBankClassic_Output.persistentLog
+			if count == 0 then
+				TOGBankClassic_Output:Response("No debug log entries")
+				return
+			end
+			
+			local oldest = TOGBankClassic_Output.persistentLog[1]
+			local newest = TOGBankClassic_Output.persistentLog[count]
+			local oldestTime = date("%Y-%m-%d %H:%M:%S", oldest.timestamp)
+			local newestTime = date("%Y-%m-%d %H:%M:%S", newest.timestamp)
+			local ageSeconds = newest.timestamp - oldest.timestamp
+			local ageDays = ageSeconds / 86400
+			
+			TOGBankClassic_Output:Response("Debug log: %d entries", count)
+			TOGBankClassic_Output:Response("Oldest: %s", oldestTime)
+			TOGBankClassic_Output:Response("Newest: %s", newestTime)
+			TOGBankClassic_Output:Response("Span: %.1f days", ageDays)
+			TOGBankClassic_Output:Response("Max entries: %d", TOGBankClassic_Output.persistentLogMaxEntries)
+			TOGBankClassic_Output:Response("Max age: %d days", TOGBankClassic_Output.persistentLogMaxAge / 86400)
 		end,
 	},
 	{

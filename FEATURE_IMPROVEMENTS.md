@@ -15,6 +15,96 @@
 - [ ] **Communications buffer/queue on banker side** - Investigate if whispers are being dropped during high traffic; implement queue system to ensure all requests are processed
 - [ ] **Real-time inventory scanning** - Monitor BAG_UPDATE and PLAYERBANKSLOTS_CHANGED events instead of only scanning on window close; add debouncing (500ms) to prevent spam during rapid changes; current behavior requires closing bank/mail/trade windows to update cached data
 - [ ] **Banker ownership display** - Show which player/account owns each banker character to help identify who controls guild bank alts; useful for multi-person guild bank management and tracking
+- [x] ~~**Persistent debug logging**~~ **v0.7.11: Implemented with 50k entry buffer, 7-day retention, filtering**
+
+---
+
+## 🐛 Persistent Debug Logging (v0.7.11) - IMPLEMENTED
+
+**Added:** January 23, 2026  
+**Purpose:** Capture complete debug history across sessions for troubleshooting intermittent issues
+
+### Problem
+- Chat frame debug logs are limited and lost on `/reload`
+- Can only see current session snapshot (~1000 messages)
+- Intermittent issues (like UI-003) require tracking 10,000s of messages over time
+- No way to review complete debug history when issues manifest
+
+### Solution
+All DEBUG-level messages are captured to memory with timestamps and persisted to SavedVariables on logout.
+
+### Configuration
+- **Max Entries:** 50,000 (circular buffer)
+- **Max Age:** 7 days (auto-cleanup)
+- **Storage:** `TOGBankClassicDB_DebugLog` SavedVariable
+- **Memory Impact:** ~5-10 MB in-game (negligible)
+- **Disk Size:** ~5-15 MB SavedVariables file
+- **Coverage:** Several hours to days of detailed debug logging
+
+### Slash Commands
+
+#### `/togbank debuglog [N] [filter]`
+Export last N entries (default 500), optionally filtered by keyword.
+
+**Examples:**
+```
+/togbank debuglog 50000                   # ALL entries (up to max)
+/togbank debuglog 10000 anumbnutz         # Last 10k mentioning player
+/togbank debuglog 5000 cancel             # Last 5k with "cancel"
+/togbank debuglog 20000 request           # Last 20k about requests
+```
+
+Output format (compact for large logs):
+```
+14:20:15 TOGBankClassic: [DEBUG] < togbank-d Share: delta from Anumbnutz
+14:21:42 TOGBankClassic: [DEBUG] > Anumbnutz shares delta (567 bytes)
+14:22:18 TOGBankClassic: [DEBUG] Delta applied: v1234 -> v1235
+```
+
+#### `/togbank debuglogstats`
+Show log statistics: entry count, oldest/newest timestamps, time span, configuration.
+
+```
+Debug log: 23,847 entries
+Oldest: 2026-01-23 08:15:32
+Newest: 2026-01-23 14:22:18
+Span: 0.3 days
+Max entries: 50,000
+Max age: 7 days
+```
+
+#### `/togbank debuglogsave`
+Manually save to SavedVariables (normally automatic on logout).
+
+#### `/togbank debuglogclear`
+Clear all persistent log entries.
+
+### Workflow
+
+1. Enable debug logging: `/togbank debug`
+2. Reproduce the issue during gameplay (logs 50k entries automatically)
+3. Logout or: `/togbank debuglogsave`
+4. Filter and view: `/togbank debuglog 10000 anumbnutz`
+5. Check stats: `/togbank debuglogstats`
+6. Access raw file: `WTF/Account/<Account>/SavedVariables/TOGBankClassic.lua`
+
+### Key Features
+
+- **Automatic capture:** All DEBUG messages logged with timestamps
+- **Circular buffer:** Maintains most recent 50,000 entries
+- **Age-based cleanup:** Removes entries older than 7 days
+- **Keyword filtering:** Quickly find relevant entries in large logs
+- **Compact format:** Reduces chat spam when viewing thousands of entries
+- **Zero gameplay impact:** Memory operations only, SavedVariables write on logout
+- **Persistent across /reload:** Complete history maintained
+
+### Use Cases
+
+- **Intermittent bugs:** Capture complete timeline leading to issue (UI-003, message delivery)
+- **Player-specific issues:** Filter by player name to track their interactions
+- **Message flow debugging:** Track request/cancel/fulfill message sequences
+- **Version mismatch tracking:** Review communication between different addon versions
+- **Performance analysis:** Review delta sync timing and bandwidth usage
 
 ---
 

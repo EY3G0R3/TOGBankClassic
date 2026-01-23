@@ -11,8 +11,22 @@ TOGBankClassic_Output.debugFrame = nil
 TOGBankClassic_Output.debugMessageBuffer = {}
 TOGBankClassic_Output.maxBufferSize = 1000
 
+-- Persistent debug log configuration
+TOGBankClassic_Output.persistentLog = {}
+TOGBankClassic_Output.persistentLogMaxEntries = 50000  -- Keep last 50,000 entries
+TOGBankClassic_Output.persistentLogMaxAge = 86400 * 7  -- Keep logs for 7 days (in seconds)
+
 function TOGBankClassic_Output:Init()
 	-- Level will be set from Options after DB is loaded
+	-- Load persistent log from SavedVariables if it exists
+	if TOGBankClassicDB_DebugLog then
+		self.persistentLog = TOGBankClassicDB_DebugLog
+		TOGBankClassic_Output:Debug("Loaded %d persistent debug log entries from SavedVariables", #self.persistentLog)
+		-- Clean up old entries on load
+		self:GarbageCollectPersistentLog()
+	else
+		self.persistentLog = {}
+	end
 end
 
 function TOGBankClassic_Output:SetLevel(level)
@@ -250,6 +264,18 @@ local function Log(level, prefix, fmt, ...)
 	else
 		TOGBankClassic_Core:Print(message)
 	end
+	
+	-- Always store debug-level messages in persistent log
+	if level == LOG_LEVEL.DEBUG then
+		local fullMessage = "TOGBankClassic: "
+		if prefix then
+			fullMessage = fullMessage .. prefix .. " " .. message
+		else
+			fullMessage = fullMessage .. message
+		end
+		TOGBankClassic_Output:AddToPersistentLog(fullMessage)
+	end
+	
 	return true
 end
 
@@ -285,4 +311,94 @@ end
 -- Response: response to user commands (always shown)
 function TOGBankClassic_Output:Response(fmt, ...)
 	return Log(LOG_LEVEL.RESPONSE, nil, fmt, ...)
+end
+
+-- Add entry to persistent debug log with timestamp
+function TOGBankClassic_Output:AddToPersistentLog(message)
+	local entry = {
+		timestamp = time(),
+		message = message
+	}
+	table.insert(self.persistentLog, entry)
+	
+	-- Simple circular buffer: remove oldest if we exceed max entries
+	while #self.persistentLog > self.persistentLogMaxEntries do
+		table.remove(self.persistentLog, 1)
+	end
+end
+
+-- Garbage collect old entries from persistent log
+function TOGBankClassic_Output:GarbageCollectPersistentLog()
+	local currentTime = time()
+	local cutoffTime = currentTime - self.persistentLogMaxAge
+	local removed = 0
+	
+	-- Remove entries older than max age
+	local i = 1
+	while i <= #self.persistentLog do
+		if self.persistentLog[i].timestamp < cutoffTime then
+			table.remove(self.persistentLog, i)
+			removed = removed + 1
+		else
+			i = i + 1
+		end
+	end
+	
+	if removed > 0 then
+		TOGBankClassic_Output:Debug("Garbage collected %d old debug log entries (older than %d days)", removed, self.persistentLogMaxAge / 86400)
+	end
+end
+
+-- Save persistent log to SavedVariables
+function TOGBankClassic_Output:SavePersistentLog()
+	-- Run garbage collection before saving
+	self:GarbageCollectPersistentLog()
+	
+	-- Write to global SavedVariable
+	TOGBankClassicDB_DebugLog = self.persistentLog
+	
+	TOGBankClassic_Output:Debug("Saved %d persistent debug log entries to SavedVariables", #self.persistentLog)
+end
+
+-- Export persistent log to formatted string for viewing
+function TOGBankClassic_Output:ExportPersistentLog(maxEntries)
+	maxEntries = maxEntries or 100
+	local output = {}
+	local startIdx = math.max(1, #self.persistentLog - maxEntries + 1)
+	
+	for i = startIdx, #self.persistentLog do
+		local entry = self.persistentLog[i]
+		local timeStr = date("%Y-%m-%d %H:%M:%S", entry.timestamp)
+		table.insert(output, string.format("[%s] %s", timeStr, entry.message))
+	end
+	
+	return table.concat(output, "\n")
+end
+
+-- Export persistent log in compact format (no formatting overhead)
+function TOGBankClassic_Output:ExportPersistentLogCompact(maxEntries, searchFilter)
+	maxEntries = maxEntries or 1000
+	local output = {}
+	local startIdx = math.max(1, #self.persistentLog - maxEntries + 1)
+	local count = 0
+	
+	for i = startIdx, #self.persistentLog do
+		local entry = self.persistentLog[i]
+		-- Apply search filter if provided
+		if not searchFilter or string.find(entry.message:lower(), searchFilter:lower(), 1, true) then
+			local timeStr = date("%H:%M:%S", entry.timestamp)  -- Compact time format
+			table.insert(output, timeStr .. " " .. entry.message)
+			count = count + 1
+		end
+	end
+	
+	return table.concat(output, "\n"), count
+end
+
+-- Clear persistent log
+function TOGBankClassic_Output:ClearPersistentLog()
+	local count = #self.persistentLog
+	self.persistentLog = {}
+	TOGBankClassicDB_DebugLog = {}
+	TOGBankClassic_Output:Response("Cleared %d persistent debug log entries", count)
 end
