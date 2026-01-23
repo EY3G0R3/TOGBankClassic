@@ -534,13 +534,21 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			)
 		
 			-- Request data is guild-wide, anyone can respond (player="*")
-			if data.type == "requests" and (data.player == "*" or data.player == player) then
-				TOGBankClassic_Output:DebugComm("REQUEST HANDLER: Responding to requests query (player=%s, myName=%s)", tostring(data.player), tostring(player))
-				TOGBankClassic_Guild:SendRequestsSnapshot()
+			if data.type == "requests" then
+				local matches = (data.player == "*" or data.player == player)
+				TOGBankClassic_Output:DebugComm("REQUEST HANDLER CHECK: type=requests, player=%s, myName=%s, matches=%s", tostring(data.player), tostring(player), tostring(matches))
+				if matches then
+					TOGBankClassic_Output:DebugComm("REQUEST HANDLER: Responding to requests query")
+					TOGBankClassic_Guild:SendRequestsSnapshot()
+				end
 			end
-			if data.type == "requests-log" and (data.player == "*" or data.player == player) then
-				TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER: Responding to requests-log query (player=%s, myName=%s)", tostring(data.player), tostring(player))
-				TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
+			if data.type == "requests-log" then
+				local matches = (data.player == "*" or data.player == player)
+				TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER CHECK: type=requests-log, player=%s, myName=%s, matches=%s", tostring(data.player), tostring(player), tostring(matches))
+				if matches then
+					TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER: Responding to requests-log query")
+					TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
+				end
 			end
 		end
 
