@@ -58,6 +58,63 @@
 
 ### 🟠 HIGH
 
+#### 🟠 [SYNC-008] Manual request sync (`/togbank sync`) not initiating request synchronization
+
+**Severity:** 🟠 HIGH  
+**Category:** Request Sync / Commands  
+**Reporter:** User (Testing)  
+**Date Reported:** 2026-01-23  
+**Status:** 🔍 INVESTIGATING  
+**Reproducibility:** Consistent
+
+**Description:**
+After a `/wipe` command, user expected to manually trigger request data sync using `/togbank sync` to repopulate request data from other guild members. However, the command does not appear to initiate request data synchronization as expected.
+
+**User Story:**
+1. User executed `/wipe` on Galdof, clearing all local data
+2. Galdof had only 2 of 72 requests after wipe
+3. Metals has 344 requests that should sync to Galdof
+4. User ran `/togbank sync` expecting to trigger request sync
+5. Request sync did not occur or complete as expected
+
+**Current Behavior:**
+- `/togbank sync` command executes without error
+- Request data may not be queried/broadcast as expected
+- Manual sync does not reliably populate request data after wipe
+
+**Expected Behavior:**
+- `/togbank sync` should query request snapshots from all online guild members
+- Should receive and merge request data from peers
+- Should result in full request dataset being restored (e.g., 344 requests from Metals)
+
+**Investigation Notes:**
+- SYNC-004/005/006/007 fixed query flooding, merge logic, and script timeout issues
+- Request sync appears to work when triggered automatically by login/guild events
+- Manual trigger via `/togbank sync` may not be calling the correct functions or may be filtered out
+- Code inspection shows PerformSync() does call QueryRequestsSnapshot(), but response may not be arriving
+
+**Files to Investigate:**
+- `Modules/Chat.lua` - PerformSync() slash command handler (around line 100)
+- `Modules/RequestLog.lua` - QueryRequestsSnapshot() (around line 847)
+- Verify that `/togbank sync` calls both inventory AND request sync functions
+- Check if request query is being sent when command is executed
+- Verify query is being broadcast to guild channel
+- Confirm other clients are responding to the query
+- Test if automatic sync (on login) works vs manual sync
+
+**Next Steps:**
+1. Verify what `/togbank sync` currently does (inventory only vs inventory + requests)
+2. Check debug logs for query transmission and responses
+3. Test with debug mode enabled to see if queries are sent and received
+4. Compare manual sync vs automatic sync behavior
+
+**Related:**
+- [SYNC-004] Query spam causing WoW chat throttling (fixed)
+- [SYNC-007] Script timeout with large request merges (fixed)
+- [SYNC-002] Request data not syncing (fixed query/response mechanism)
+
+---
+
 #### ✅ [COMPAT-002] Guild.lua nil Info crash in SendRosterData
 
 **Severity:** 🟠 HIGH  
