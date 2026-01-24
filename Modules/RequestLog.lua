@@ -412,16 +412,12 @@ function Guild:ApplyRequestSnapshot(payload)
 	end
 	self:EnsureRequestsInitialized()
 
-	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: Checking payload")
-
 	local incomingList = payload.requests
 	if not incomingList or type(incomingList) ~= "table" then
-		TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot FAILED: no requests in payload")
 		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: no requests in payload")
 		return false
 	end
 
-	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Sanitizing %d incoming requests", #incomingList))
 	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Received snapshot with %d requests, local has %d requests",
 		#incomingList, #(self.Info.requests or {})))
 
@@ -437,12 +433,10 @@ function Guild:ApplyRequestSnapshot(payload)
 		end
 	end
 
-	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 
 	-- Merge with existing requests instead of replacing
 	-- [SYNC-006] Build index of local requests by ID with timestamps
-	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: Building local index")
 	local localById = {}
 	for _, localReq in ipairs(self.Info.requests or {}) do
 		if localReq.id then
@@ -452,8 +446,6 @@ function Guild:ApplyRequestSnapshot(payload)
 
 	local tombstones = payload.tombstones or {}
 	local merged = {}
-
-	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Merging %d incoming requests", #sanitized))
 
 	-- [SYNC-006] Add incoming requests, but prefer newer local version if exists
 	local incomingProcessed = {}
@@ -508,11 +500,8 @@ function Guild:ApplyRequestSnapshot(payload)
 		localPreservedCount, #merged))
 
 	-- [SYNC-005] FIX: Actually use the merged list!
-	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Assigning merged list (%d requests)", #merged))
 	self.Info.requests = merged
 	self.Info.requestsVersion = latest
-
-	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: SUCCESS - returning true")
 
 	local logApplied = payload.requestLogApplied
 	if type(logApplied) == "table" then
@@ -914,7 +903,6 @@ function Guild:ReceiveRequestsData(payload)
 
 	local incomingCount = (payload.requests and type(payload.requests) == "table") and #payload.requests or 0
 	local localCountBefore = self.Info.requests and #self.Info.requests or 0
-	TOGBankClassic_Core:Print(string.format("[MERGE] START - local=%d, incoming=%d", localCountBefore, incomingCount))
 	TOGBankClassic_Output:Debug(string.format("[SYNC-003n] ReceiveRequestsData: START - local=%d requests, incoming=%d requests",
 		localCountBefore, incomingCount))
 
@@ -982,29 +970,29 @@ function Guild:ReceiveRequestsData(payload)
 
 	if self:ApplyRequestSnapshot(payload) then
 		local localCountAfter = self.Info.requests and #self.Info.requests or 0
-		TOGBankClassic_Core:Print(string.format("[MERGE] COMPLETE - before=%d, after=%d", localCountBefore, localCountAfter))
 		TOGBankClassic_Output:Debug(string.format("[SYNC-003n] ReceiveRequestsData: ADOPTED - final count=%d (was %d, incoming had %d)",
 			localCountAfter, localCountBefore, incomingCount))
 		return ADOPTION_STATUS.ADOPTED
 	end
 	TOGBankClassic_Output:Debug("[SYNC-003n] ReceiveRequestsData: INVALID - ApplyRequestSnapshot returned false")
-	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Guild has %d members, checking for online...", numGuildMembers)
+	-- Dead code: uses undefined variables (numGuildMembers, logFrom) and is unreachable after ApplyRequestSnapshot failure
+	-- TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Guild has %d members, checking for online...", numGuildMembers)
 
-	local onlineCount = 0
-	for i = 1, numGuildMembers do
-		local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
-		if online and name then
-			local normalized = self:NormalizeName(name)
-			if normalized then
-				local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = normalized, type = "requests-log", logFrom = logFrom })
-				TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
-				onlineCount = onlineCount + 1
-				if onlineCount <= 5 then
-					TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent targeted query #%d to %s", onlineCount, normalized)
-				end
-			end
-		end
-	end
+	-- local onlineCount = 0
+	-- for i = 1, numGuildMembers do
+	-- 	local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
+	-- 	if online and name then
+	-- 		local normalized = self:NormalizeName(name)
+	-- 		if normalized then
+	-- 			local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = normalized, type = "requests-log", logFrom = logFrom })
+	-- 			TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
+	-- 			onlineCount = onlineCount + 1
+	-- 			if onlineCount <= 5 then
+	-- 				TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent targeted query #%d to %s", onlineCount, normalized)
+	-- 			end
+	-- 		end
+	-- 	end
+	-- end
 	return ADOPTION_STATUS.INVALID
 end
 
