@@ -536,7 +536,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				TOGBankClassic_Output:DebugComm("REQUEST HANDLER CHECK: type=requests, player=%s, myName=%s, matches=%s", tostring(data.player), tostring(player), tostring(matches))
 				if matches then
 					TOGBankClassic_Output:DebugComm("REQUEST HANDLER: Responding to requests query")
-					TOGBankClassic_Guild:SendRequestsSnapshot()
+					TOGBankClassic_Guild:SendRequestsSnapshot(sender)
 				end
 			end
 			if data.type == "requests-log" then
