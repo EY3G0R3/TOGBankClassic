@@ -11,18 +11,33 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 		button2 = "Cancel",
 		OnAccept = function(self, data)
 			if not data then return end
-			-- Split the stack (puts it on cursor)
+			print("DEBUG: OnAccept called, splitting", data.amount, "from bag", data.bag, "slot", data.slot)
+			-- Approach: Pick up the stack, then use StackSplitFrame to split it
 			ClearCursor()
-			C_Container.SplitContainerItem(data.bag, data.slot, data.amount)
-			-- Complete attachment after a brief delay for cursor update
-			C_Timer.After(0.1, function()
-				ClickSendMailItemButton(data.attachmentSlot)
-				-- Update status
-				if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
-					local message = string.format("Split and attached %d %s for %s. Click Send to complete.",
-						data.amount, data.itemName, data.requester)
-					TOGBankClassic_UI_Requests.Window:SetStatusText(message)
+			-- Pick up the entire stack
+			C_Container.PickupContainerItem(data.bag, data.slot)
+			-- Wait briefly for pickup, then split
+			C_Timer.After(0.05, function()
+				print("DEBUG: After pickup, cursor has:", GetCursorInfo())
+				local cursorType, itemID, itemLink = GetCursorInfo()
+				if cursorType ~= "item" then
+					print("DEBUG: ERROR - No item on cursor after pickup!")
+					return
 				end
+				-- Now split the amount we need
+				C_Container.SplitContainerItem(data.bag, data.slot, data.amount)
+				-- Wait for split, then click mail slot
+				C_Timer.After(0.1, function()
+					print("DEBUG: After split, cursor has:", GetCursorInfo())
+					-- Click the mail attachment slot to attach from cursor
+					ClickSendMailItemButton(data.attachmentSlot, true)
+					-- Update status
+					if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
+						local message = string.format("Split and attached %d %s for %s. Click Send to complete.",
+							data.amount, data.itemName, data.requester)
+						TOGBankClassic_UI_Requests.Window:SetStatusText(message)
+					end
+				end)
 			end)
 		end,
 		OnCancel = function()
