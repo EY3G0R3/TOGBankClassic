@@ -880,21 +880,21 @@ function Guild:SendRequestsData(target)
 	self:SendRequestsSnapshot(target)
 end
 
-function Guild:QueryRequestsSnapshot(player)
+function Guild:QueryRequestsSnapshot(player, priority)
 	-- Send wildcard query (v0.7.14+)
 	-- Note: Old clients won't respond to wildcard, but targeted queries flood guild chat
 	-- and trigger WoW throttling which blocks responses. Wildcard-only is the fix.
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests" })
-	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, priority or "BULK")
 	TOGBankClassic_Output:DebugComm("[SYNC-004] QUERY REQUESTS: Sent wildcard query (removed targeted spam)")
 end
 
-function Guild:QueryRequestLog(player, logFrom)
+function Guild:QueryRequestLog(player, logFrom, priority)
 	-- Send wildcard query (v0.7.14+)
 	-- Note: Old clients won't respond to wildcard, but targeted queries flood guild chat
 	-- and trigger WoW throttling which blocks responses. Wildcard-only is the fix.
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests-log", logFrom = logFrom })
-	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, priority or "BULK")
 	TOGBankClassic_Output:DebugComm("[SYNC-004] QUERY REQUEST LOG: Sent wildcard query (removed targeted spam)")
 end
 

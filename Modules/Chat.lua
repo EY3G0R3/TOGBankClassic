@@ -99,13 +99,16 @@ end
 -- Centralized sync function for both /sync command and UI opening
 function TOGBankClassic_Chat:PerformSync()
 	-- v0.8.0: Use delta version broadcast instead of legacy sync
-	TOGBankClassic_Events:SyncDeltaVersion()
+	-- SYNC-008 fix: Use ALERT priority for manual sync so it happens immediately
+	TOGBankClassic_Events:SyncDeltaVersion("ALERT")
+	-- SYNC-008 fix: Also send legacy version broadcast like the automatic timer does
+	TOGBankClassic_Events:Sync("ALERT")
 	TOGBankClassic_Guild:FastFillMissingAlts()
-	-- Also explicitly query request data to ensure it's up to date
-	-- Pass our own player name so others know who to send the response to
+	-- SYNC-008 fix: Query request data with ALERT priority for immediate sync
+	-- Use wildcard queries to get fresh data from all guild members
 	local player = TOGBankClassic_Guild:GetPlayer()
-	TOGBankClassic_Guild:QueryRequestLog(player, nil)
-	TOGBankClassic_Guild:QueryRequestsSnapshot(player)
+	TOGBankClassic_Guild:QueryRequestLog(player, nil, "ALERT")
+	TOGBankClassic_Guild:QueryRequestsSnapshot(player, "ALERT")
 end
 
 local SHARES_COLOR = "|cff80bfffshares|r"

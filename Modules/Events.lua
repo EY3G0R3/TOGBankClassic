@@ -146,7 +146,7 @@ function TOGBankClassic_Events:OnShareTimer()
 end
 ---END CHANGES
 
-function TOGBankClassic_Events:Sync()
+function TOGBankClassic_Events:Sync(priority)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then
 		return
@@ -161,11 +161,12 @@ function TOGBankClassic_Events:Sync()
 	end
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
-	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
+	-- Use provided priority or default to BULK for automatic timer-based syncs
+	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, priority or "BULK")
 end
 
 -- Delta-specific version broadcast (SYNC-001 fix)
-function TOGBankClassic_Events:SyncDeltaVersion()
+function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then
 		return
@@ -190,7 +191,8 @@ function TOGBankClassic_Events:SyncDeltaVersion()
 	version.isBanker = isBanker
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
-	TOGBankClassic_Core:SendCommMessage("togbank-dv", data, "Guild", nil, "NORMAL")
+	-- Use provided priority or default to NORMAL for automatic timer-based syncs
+	TOGBankClassic_Core:SendCommMessage("togbank-dv", data, "Guild", nil, priority or "NORMAL")
 end
 
 function TOGBankClassic_Events:PLAYER_LOGIN(_)
