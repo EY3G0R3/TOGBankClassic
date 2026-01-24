@@ -684,7 +684,6 @@ end
 -- Called automatically when GUILD_ROSTER_UPDATE event fires
 function TOGBankClassic_Guild:RefreshOnlineCache()
 	wipe(self.onlineMembers)
-	
 	for i = 1, GetNumGuildMembers() do
 		local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
 		if name and isOnline then
@@ -692,7 +691,6 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 			self.onlineMembers[normalized] = true
 		end
 	end
-	
 	local count = 0
 	for _ in pairs(self.onlineMembers) do
 		count = count + 1
@@ -706,7 +704,6 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	if not playerName then
 		return false
 	end
-	
 	local norm = self:NormalizeName(playerName)
 	return self.onlineMembers[norm] == true
 end
