@@ -696,7 +696,7 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 		count = count + 1
 	end
 	TOGBankClassic_Output:Debug("CACHE", "Refreshed online cache: %d members online", count)
-	print("[GUILD ROSTER] Refreshed online cache: " .. count .. " members online")
+	TOGBankClassic_Output:Debug("ROSTER", "[GUILD ROSTER] Refreshed online cache: %d members online", count)
 end
 
 -- Check if a player is currently online in the guild
