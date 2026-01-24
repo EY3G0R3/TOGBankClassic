@@ -196,6 +196,27 @@ function Guild:EnsureRequestsInitialized()
 
 	if not self.requestLogIndex or not self.requestLogByActor then
 		self:RebuildRequestLogIndex()
+		-- [REPLAY-FIX] Initialize requestLogApplied from log entries ONLY during
+		-- first-time setup (when indices were just built). This handles the case
+		-- where we have log entries but no applied tracking (fresh install, migration).
+		-- This should NOT run during snapshot processing, where requestLogApplied
+		-- is intentionally set from the incoming snapshot to enable replay.
+		if next(self.Info.requestLogApplied) == nil and self.requestLogByActor then
+			for actor, list in pairs(self.requestLogByActor) do
+				local maxSeq = 0
+				for _, entry in ipairs(list) do
+					local seq = tonumber(entry.seq or 0) or 0
+					if seq > maxSeq then
+						maxSeq = seq
+					end
+				end
+				if maxSeq > 0 then
+					self.Info.requestLogApplied[actor] = maxSeq
+				end
+			end
+			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] EnsureRequestsInitialized: Built requestLogApplied from %d actors",
+				countKeys(self.Info.requestLogApplied)))
+		end
 	end
 
 	local localActor = self:GetNormalizedPlayer()
@@ -211,6 +232,13 @@ function Guild:EnsureRequestsInitialized()
 end
 
 -- Build fast lookups for log entries by id/actor.
+-- NOTE: This function should ONLY rebuild the indices, not modify requestLogApplied.
+-- The requestLogApplied map is managed by:
+--   - RecordRequestLogEntry (when applying local entries)
+--   - ApplyRequestSnapshot (when receiving snapshots)
+--   - ReplayRequestLogEntries (when replaying after snapshot)
+-- Modifying it here would break replay logic by marking entries as "already applied"
+-- when they actually need to be replayed.
 function Guild:RebuildRequestLogIndex()
 	if not self.Info or not self.Info.requestLog then
 		return
@@ -232,22 +260,12 @@ function Guild:RebuildRequestLogIndex()
 			return (tonumber(a.seq or 0) or 0) < (tonumber(b.seq or 0) or 0)
 		end)
 	end
-	if not self.Info.requestLogApplied or next(self.Info.requestLogApplied) == nil then
-		local applied = {}
-		for actor, list in pairs(self.requestLogByActor) do
-			local maxSeq = 0
-			for _, entry in ipairs(list) do
-				local seq = tonumber(entry.seq or 0) or 0
-				if seq > maxSeq then
-					maxSeq = seq
-				end
-			end
-			if maxSeq > 0 then
-				applied[actor] = maxSeq
-			end
-		end
-		self.Info.requestLogApplied = applied
-	end
+	-- [REPLAY-FIX] REMOVED: The old code here would rebuild requestLogApplied from max seq
+	-- when it was empty. This broke replay because it would mark local entries as
+	-- "already applied" before ReplayRequestLogEntries had a chance to run.
+	-- requestLogApplied should only be modified by the functions listed above.
+	TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] RebuildRequestLogIndex: %d entries, %d actors indexed",
+		#self.Info.requestLog, countKeys(self.requestLogByActor)))
 end
 
 -- Normalize stored requests and drop tombstoned entries.
@@ -387,6 +405,16 @@ end
 function Guild:AppendRequestLogEntry(entry)
 	if not self.Info or not entry or not entry.id then
 		return
+	end
+	-- [REPLAY-DEBUG] Verify log entries are stored with full data
+	if entry.type == "add" then
+		if not entry.request then
+			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] WARNING: Storing 'add' entry WITHOUT request snapshot! id=%s, requestId=%s",
+				entry.id or "nil", entry.requestId or "nil"))
+		else
+			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] Storing 'add' entry WITH request snapshot: id=%s, requestId=%s, item=%s",
+				entry.id or "nil", entry.requestId or "nil", entry.request.item or "nil"))
+		end
 	end
 	self.Info.requestLog = self.Info.requestLog or {}
 	table.insert(self.Info.requestLog, entry)
@@ -548,21 +576,42 @@ end
 
 function Guild:ReplayRequestLogEntries()
 	if not self.Info or not self.Info.requestLog or not self.requestLogByActor then
+		TOGBankClassic_Output:Debug("[REPLAY-DEBUG] ReplayRequestLogEntries: Early return (missing data)")
 		return
 	end
+
+	local actorCount = 0
+	for _ in pairs(self.requestLogByActor) do actorCount = actorCount + 1 end
+	TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ReplayRequestLogEntries: Starting with %d actors, %d log entries",
+		actorCount, #self.Info.requestLog))
+
 	local applied = self.Info.requestLogApplied or {}
 	for actor, entries in pairs(self.requestLogByActor) do
 		table.sort(entries, function(a, b)
 			return (tonumber(a.seq or 0) or 0) < (tonumber(b.seq or 0) or 0)
 		end)
 		local lastSeq = tonumber(applied[actor] or 0) or 0
+		local replayedCount = 0
+		local skippedCount = 0
 		for _, entry in ipairs(entries) do
 			local seq = tonumber(entry.seq or 0) or 0
 			if seq > lastSeq then
-				if self:ApplyRequestLogEntry(entry) then
+				local hasRequest = entry.request ~= nil
+				local success = self:ApplyRequestLogEntry(entry)
+				if success then
 					lastSeq = seq
+					replayedCount = replayedCount + 1
+				else
+					TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] REPLAY FAILED: actor=%s, seq=%d, type=%s, hasRequest=%s, requestId=%s",
+						actor, seq, entry.type or "nil", tostring(hasRequest), entry.requestId or "nil"))
 				end
+			else
+				skippedCount = skippedCount + 1
 			end
+		end
+		if replayedCount > 0 or skippedCount > 0 then
+			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] Actor %s: replayed=%d, skipped=%d (already applied)",
+				actor, replayedCount, skippedCount))
 		end
 		applied[actor] = lastSeq
 	end
@@ -620,26 +669,32 @@ end
 -- Apply a single log entry to the current request state.
 function Guild:ApplyRequestLogEntry(entry)
 	if not entry or type(entry) ~= "table" then
+		TOGBankClassic_Output:Debug("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - entry not a table")
 		return false
 	end
 	if not self.Info then
+		TOGBankClassic_Output:Debug("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - self.Info is nil")
 		return false
 	end
 	self:EnsureRequestsInitialized()
 
 	local entryType = entry.type
 	if not entryType then
+		TOGBankClassic_Output:Debug("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - no entry.type")
 		return false
 	end
 	local entryTs = tonumber(entry.ts or 0) or 0
 	local requestId = entry.requestId or (entry.request and entry.request.id)
 	if not requestId then
+		TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - no requestId (type=%s)", entryType))
 		return false
 	end
 
 	local tombstones = self.Info.requestsTombstones or {}
 	local tombstoneTs = tonumber(tombstones[requestId] or 0) or 0
 	if tombstoneTs > 0 and entryTs > 0 and entryTs <= tombstoneTs then
+		TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: BLOCKED by tombstone (requestId=%s, entryTs=%d, tombstoneTs=%d)",
+			requestId, entryTs, tombstoneTs))
 		return false
 	end
 
@@ -654,6 +709,11 @@ function Guild:ApplyRequestLogEntry(entry)
 			table.insert(self.Info.requests, clean)
 			idx = #self.Info.requests
 			req = self.Info.requests[idx]
+			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: CREATED request from snapshot (requestId=%s, type=%s)",
+				requestId, entryType))
+		else
+			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: sanitizeRequest returned nil for snapshot (requestId=%s)",
+				requestId))
 		end
 	end
 
@@ -672,6 +732,8 @@ function Guild:ApplyRequestLogEntry(entry)
 	end
 
 	if not req then
+		TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - req is nil, snapshot=%s (requestId=%s, type=%s)",
+			tostring(snapshot ~= nil), requestId, entryType))
 		return false
 	end
 
