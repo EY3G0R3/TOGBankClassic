@@ -600,11 +600,11 @@ function TOGBankClassic_Guild:GetVersion()
 					version = v.version,
 					hash = v.inventoryHash,
 				}
-				TOGBankClassic_Output:Debug("Broadcasting %s: version=%d, hash=%d", k, v.version, v.inventoryHash)
+				TOGBankClassic_Output:Debug("Broadcasting %s: version=%s, hash=%d", k, date("%Y-%m-%dT%H:%M:%S", v.version), v.inventoryHash)
 			else
 				-- Legacy format for old clients
 				data.alts[k] = v.version
-				TOGBankClassic_Output:Debug("Broadcasting %s: version=%d (no hash)", k, v.version)
+				TOGBankClassic_Output:Debug("Broadcasting %s: version=%s (no hash)", k, date("%Y-%m-%dT%H:%M:%S", v.version))
 			end
 		end
 		---END CHANGES
