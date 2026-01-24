@@ -341,6 +341,10 @@ function TOGBankClassic_Output:DebugComm(fmt, ...)
 	if TOGBankClassic_Output.level < LOG_LEVEL.DEBUG or not TOGBankClassic_Output.commDebug then
 		return false
 	end
+	-- Check if COMMS category is enabled
+	if not self:IsCategoryEnabled("COMMS") then
+		return false
+	end
 	return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG] (comm)|r", fmt, ...)
 end
 
