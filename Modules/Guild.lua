@@ -1423,7 +1423,7 @@ function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
 
 	-- Show progress at start
 	if SendStats.chunksSent == 1 then
-		TOGBankClassic_Output:Debug("Sharing guild bank data: %d bytes in ~%d chunks...", totalBytes, totalChunks)
+		TOGBankClassic_Output:Info("Sharing guild bank data: %d bytes in ~%d chunks...", totalBytes, totalChunks)
 	end
 
 	-- Completion summary
@@ -1437,7 +1437,7 @@ function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
 			summary = summary .. string.format(" | failures: %d, throttled: %d", SendStats.failures, SendStats.throttled)
 		end
 
-		TOGBankClassic_Output:Debug(summary)
+		TOGBankClassic_Output:Info(summary)
 
 		-- Warn on failures
 		if SendStats.failures > 0 then
