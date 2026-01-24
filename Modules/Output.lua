@@ -326,7 +326,12 @@ function TOGBankClassic_Output:Debug(fmt, ...)
 		local args = {select(2, ...)}
 		return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG]|r", actualFmt, unpack(args))
 	end
-	-- No category or unknown category - use old behavior (always show)
+	-- No category or unknown category - check if uncategorized debug is enabled
+	if TOGBankClassic_Database and TOGBankClassic_Database.db then
+		if not TOGBankClassic_Database.db.global.showUncategorizedDebug then
+			return false
+		end
+	end
 	return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG]|r", fmt, ...)
 end
 

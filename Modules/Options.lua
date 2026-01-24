@@ -186,6 +186,24 @@ function TOGBankClassic_Options:Init()
 						type = "description",
 						name = "Enable specific debug categories to filter output. Categories are only active when Log Level is set to 'Debug'.",
 					},
+					["showUncategorized"] = {
+						order = 2,
+						type = "toggle",
+						width = "full",
+						name = "Show Uncategorized Debug Messages (legacy)",
+						desc = "Show old debug messages that don't have a category assigned. Disable this to only see categorized messages.",
+						set = function(_, v)
+							TOGBankClassic_Database.db.global.showUncategorizedDebug = v
+						end,
+						get = function()
+							return TOGBankClassic_Database.db.global.showUncategorizedDebug
+						end,
+					},
+					["spacer1"] = {
+						order = 9,
+						type = "description",
+						name = " ",
+					},
 					["roster"] = {
 						order = 10,
 						type = "toggle",
