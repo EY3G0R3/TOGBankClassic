@@ -1069,7 +1069,7 @@ function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 		end
 	end
 
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)", 
+	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)",
 		#(requests or {}), #filtered, tostring(self.requesterFilter), tostring(self.bankFilter)))
 
 	return filtered
@@ -1105,9 +1105,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	local sorted = self:SortedRequests()
 	sorted = self:ApplyFilters(sorted)
 	local count = #sorted
-	
+
 	TOGBankClassic_Output:Debug(string.format("[UI-003] DrawContent: Displaying %d requests", count))
-	
+
 	if count == 0 then
 		local empty = self:EnsureEmptyLabel()
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[1]) or COLUMNS[1].width

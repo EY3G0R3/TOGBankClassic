@@ -43,7 +43,7 @@ function TOGBankClassic_UI_Inventory:Open()
 	self.Window:Show()
 
 	self:DrawContent()
-	
+
 	-- Perform full sync (same as /togbank sync command)
 	if TOGBankClassic_Chat and TOGBankClassic_Chat.PerformSync then
 		TOGBankClassic_Chat:PerformSync()

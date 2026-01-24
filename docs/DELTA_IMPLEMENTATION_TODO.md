@@ -1,17 +1,17 @@
 # Delta Updates Implementation TODO
 
-**Project:** TOGBankClassic Delta Sync Protocol  
-**Target Version:** v0.8.0  
-**Status:** In Progress - Pull-Based Protocol Implementation  
-**Last Updated:** January 21, 2026  
+**Project:** TOGBankClassic Delta Sync Protocol
+**Target Version:** v0.8.0
+**Status:** In Progress - Pull-Based Protocol Implementation
+**Last Updated:** January 21, 2026
 **Branch:** feature/pull-based-delta
 
 ---
 
 ## 🔄 Pull-Based Protocol with Inventory Hashing (v0.8.0)
 
-**Status:** ✅ Core Implementation Complete, Testing Phase  
-**Branch:** feature/pull-based-delta  
+**Status:** ✅ Core Implementation Complete, Testing Phase
+**Branch:** feature/pull-based-delta
 **Goal:** Hash-based inventory comparison with automatic pull sync
 
 ### Architecture Overview
@@ -787,7 +787,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
   - Estimated bandwidth saved with compression ratio
   - Operation counts (applied, failed, fallbacks)
   - Success rate with color-coded display (green ≥95%, yellow ≥80%, red <80%)
-  
+
 **Metrics Display:**
 ```
 Delta Sync Statistics
@@ -943,27 +943,27 @@ Sent delta update for Bankalt-Server via togbank-d2
      - Operation counts (applied, failed, fallbacks, success rate)
      - Performance metrics (avg compute/apply time)
      - Color-coded success rate (green ≥95%, yellow ≥80%, red <80%)
-  
+
   2. **`/togbank protocol`** - Displays:
      - Online member distribution (v1 vs v2, last 10 minutes)
      - All-time protocol distribution
      - Threshold status with visual indicator (✓/⚠)
      - List of recently seen members with protocol versions
-  
+
   3. **`/togbank clearsnapshots`** - Clears all delta snapshots with count confirmation
-  
+
   4. **`/togbank forcefull`** - Toggles FEATURES.FORCE_FULL_SYNC flag:
      - Enables: "|cffff0000Full sync forced|r - delta sync temporarily disabled"
      - Disables: "|cff00ff00Full sync force removed|r - delta sync re-enabled"
-  
+
   5. **`/togbank resetmetrics`** - Resets all delta metrics to zero
-  
+
   6. **`/togbank debugtab`** - Creates dedicated debug chat tab:
      - Creates "TOGBank Debug" chat frame for debug output
      - Buffers up to 1000 debug messages
      - Automatically redraws buffered messages when tab is shown
      - Keeps debug messages separate from main chat
-  
+
   7. **`/togbank debugtabremove`** - Removes debug chat tab:
      - Cleans up and hides the debug tab
      - Requires /reload to fully complete removal
@@ -1152,7 +1152,7 @@ v110 → v115 (delta saved)           (offline)
                                     Returns online
                                     Receives delta expecting v115
                                     ❌ Mismatch: have v100, need v115
-                                    
+
 Galdof → togbank-dr(v100, v115) → Metals
 Metals ← togbank-dc([Δ1, Δ2, Δ3]) ← Metals
 Galdof applies: v100→v105→v110→v115 ✅
@@ -1424,23 +1424,23 @@ Galdof-OldBlanchy: 3 delta(s)
 ## Success Criteria
 
 ### Functional Requirements
-✓ Delta sync works correctly for typical bank operations  
-✓ Backwards compatible with v0.6.8 clients  
-✓ Automatic fallback to full sync on delta failure  
-✓ No data loss or corruption  
-✓ UI updates correctly after delta application  
+✓ Delta sync works correctly for typical bank operations
+✓ Backwards compatible with v0.6.8 clients
+✓ Automatic fallback to full sync on delta failure
+✓ No data loss or corruption
+✓ UI updates correctly after delta application
 
 ### Performance Requirements
-✓ Delta computation completes in <50ms for typical bank (200 items)  
-✓ Delta application completes in <20ms  
-✓ Bandwidth reduction of >90% for typical updates (1-5 items changed)  
-✓ Delta size <30% of full sync size (or fallback to full)  
+✓ Delta computation completes in <50ms for typical bank (200 items)
+✓ Delta application completes in <20ms
+✓ Bandwidth reduction of >90% for typical updates (1-5 items changed)
+✓ Delta size <30% of full sync size (or fallback to full)
 
 ### Quality Requirements
-✓ Zero crashes or Lua errors in production  
-✓ Clean code with proper error handling  
-✓ Adequate logging for debugging  
-✓ User-friendly options and commands  
+✓ Zero crashes or Lua errors in production
+✓ Clean code with proper error handling
+✓ Adequate logging for debugging
+✓ User-friendly options and commands
 
 ---
 

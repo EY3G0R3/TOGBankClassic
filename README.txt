@@ -10,9 +10,9 @@ Website: https://www.curseforge.com/wow/addons/togbankclassic
 WHAT IS TOGBANKCLASSIC?
 ================================================================================
 
-TOGBankClassic is a powerful addon that allows you to view and manage the 
-combined inventory of multiple guild bank characters without logging into 
-each one. Perfect for guilds that use character banks instead of (or in 
+TOGBankClassic is a powerful addon that allows you to view and manage the
+combined inventory of multiple guild bank characters without logging into
+each one. Perfect for guilds that use character banks instead of (or in
 addition to) the guild vault system.
 
 KEY FEATURES:
@@ -47,7 +47,7 @@ The easiest and most reliable way to install and keep TOGBankClassic updated:
 7. Launch World of Warcraft Classic Era through the CurseForge App
    (or type /reload if already in-game)
 
-8. The addon is now installed and will automatically update when new 
+8. The addon is now installed and will automatically update when new
    versions are released!
 
 BENEFITS OF CURSEFORGE APP:
@@ -74,7 +74,7 @@ Only use this method if you cannot use the CurseForge App:
 
 5. The addon is now installed and ready to configure
 
-NOTE: Manual installation means you must manually download and install 
+NOTE: Manual installation means you must manually download and install
       updates. You will not receive automatic update notifications.
 
 ================================================================================
@@ -126,7 +126,7 @@ SHARING YOUR DATA:
   /togbank share
     Manually shares your bank character's inventory with other online
     guild members. This happens automatically every 3 minutes.
-    
+
     IMPORTANT: You must have your bank open and wait ~1 second for the
     scan to complete before using this command. The addon needs time to
     read all items from your bank bags. For best results, open the bank,
@@ -149,7 +149,7 @@ BASIC COMMANDS:
 
 /togbank sync
   Manually sync to receive latest data from o
-  
+
   NOTE: Bank must be open and scanned before sharing. Open your bank,
   wait ~1 second for items to load, then run this command.nline users
   (Automatic sync happens every 10 minutes)
@@ -231,8 +231,8 @@ DEBUG COMMANDS:
 DELTA SYNC FEATURE (v0.7.0)
 ================================================================================
 
-TOGBankClassic v0.7.0 introduces an intelligent delta sync protocol that 
-dramatically reduces bandwidth usage by only transmitting changed data instead 
+TOGBankClassic v0.7.0 introduces an intelligent delta sync protocol that
+dramatically reduces bandwidth usage by only transmitting changed data instead
 of complete inventories.
 
 HOW IT WORKS:
@@ -275,7 +275,7 @@ TROUBLESHOOTING
 ================================================================================
 
 PROBLEM: I don't see any guild bank data
-SOLUTION: 
+SOLUTION:
   - Make sure at least one guild member with bank data is online and has
     the addon installed
   - Try typing /togbank sync to manually request data

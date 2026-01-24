@@ -15,12 +15,12 @@ function TOGBankClassic_Guild:MigrateTempErrors()
 	if not self.Info or not self.Info.name then
 		return
 	end
-	
+
 	local db = TOGBankClassic_Database.db.faction[self.Info.name]
 	if not db or not db.deltaErrors then
 		return
 	end
-	
+
 	-- Migrate errors
 	if #self.tempDeltaErrors.lastErrors > 0 then
 		for i = #self.tempDeltaErrors.lastErrors, 1, -1 do
@@ -31,7 +31,7 @@ function TOGBankClassic_Guild:MigrateTempErrors()
 			table.remove(db.deltaErrors.lastErrors)
 		end
 	end
-	
+
 	-- Migrate failure counts
 	for altName, count in pairs(self.tempDeltaErrors.failureCounts) do
 		if not db.deltaErrors.failureCounts[altName] then
@@ -39,19 +39,19 @@ function TOGBankClassic_Guild:MigrateTempErrors()
 		end
 		db.deltaErrors.failureCounts[altName] = db.deltaErrors.failureCounts[altName] + count
 	end
-	
+
 	-- Migrate notification flags
 	for altName, flag in pairs(self.tempDeltaErrors.notifiedAlts) do
 		if flag then
 			db.deltaErrors.notifiedAlts[altName] = true
 		end
 	end
-	
+
 	-- Clear temp storage
 	self.tempDeltaErrors.lastErrors = {}
 	self.tempDeltaErrors.failureCounts = {}
 	self.tempDeltaErrors.notifiedAlts = {}
-	
+
 	TOGBankClassic_Output:Debug("Migrated temporary delta errors to database")
 end
 
@@ -63,25 +63,25 @@ function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 		message = errorMessage,
 		timestamp = GetServerTime(),
 	}
-	
+
 	-- Try to use database storage first
 	if self.Info and self.Info.name then
 		local db = TOGBankClassic_Database.db.faction[self.Info.name]
 		if db and db.deltaErrors then
 			-- Use database storage
 			table.insert(db.deltaErrors.lastErrors, 1, error)
-			
+
 			-- Keep only recent errors (max 10)
 			while #db.deltaErrors.lastErrors > 10 do
 				table.remove(db.deltaErrors.lastErrors)
 			end
-			
+
 			-- Track failure count per alt
 			if not db.deltaErrors.failureCounts[altName] then
 				db.deltaErrors.failureCounts[altName] = 0
 			end
 			db.deltaErrors.failureCounts[altName] = db.deltaErrors.failureCounts[altName] + 1
-			
+
 			-- Notify user if repeated failures (3+ failures for same alt)
 			if db.deltaErrors.failureCounts[altName] >= 3 and not db.deltaErrors.notifiedAlts[altName] then
 				TOGBankClassic_Output:Warn(
@@ -93,27 +93,27 @@ function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 			return
 		end
 	end
-	
+
 	-- Fallback: Use temporary in-memory storage
 	TOGBankClassic_Output:Debug(
 		"Using temporary error storage for %s (%s): Guild.Info not initialized",
 		altName or "unknown",
 		errorType or "unknown"
 	)
-	
+
 	table.insert(self.tempDeltaErrors.lastErrors, 1, error)
-	
+
 	-- Keep only recent errors (max 10)
 	while #self.tempDeltaErrors.lastErrors > 10 do
 		table.remove(self.tempDeltaErrors.lastErrors)
 	end
-	
+
 	-- Track failure count per alt
 	if not self.tempDeltaErrors.failureCounts[altName] then
 		self.tempDeltaErrors.failureCounts[altName] = 0
 	end
 	self.tempDeltaErrors.failureCounts[altName] = self.tempDeltaErrors.failureCounts[altName] + 1
-	
+
 	-- Notify user if repeated failures (3+ failures for same alt)
 	if self.tempDeltaErrors.failureCounts[altName] >= 3 and not self.tempDeltaErrors.notifiedAlts[altName] then
 		TOGBankClassic_Output:Warn(
@@ -138,7 +138,7 @@ function TOGBankClassic_Guild:ResetDeltaErrorCount(altName)
 			end
 		end
 	end
-	
+
 	-- Also reset in temporary storage
 	if self.tempDeltaErrors.failureCounts[altName] then
 		self.tempDeltaErrors.failureCounts[altName] = 0
@@ -157,7 +157,7 @@ function TOGBankClassic_Guild:GetRecentDeltaErrors()
 			return db.deltaErrors.lastErrors
 		end
 	end
-	
+
 	-- Fallback to temporary storage
 	return self.tempDeltaErrors.lastErrors
 end
@@ -171,7 +171,7 @@ function TOGBankClassic_Guild:GetDeltaFailureCount(altName)
 			return db.deltaErrors.failureCounts[altName] or 0
 		end
 	end
-	
+
 	-- Fallback to temporary storage
 	return self.tempDeltaErrors.failureCounts[altName] or 0
 end
@@ -283,13 +283,13 @@ function TOGBankClassic_Guild:IsInCurrentGuildRoster(playerName)
 	if not playerName then
 		return false
 	end
-	
+
 	if not IsInGuild() then
 		return false
 	end
-	
+
 	local normPlayer = self:NormalizeName(playerName)
-	
+
 	for i = 1, GetNumGuildMembers() do
 		local rosterName = GetGuildRosterInfo(i)
 		if rosterName then
@@ -299,7 +299,7 @@ function TOGBankClassic_Guild:IsInCurrentGuildRoster(playerName)
 			end
 		end
 	end
-	
+
 	return false
 end
 
@@ -326,7 +326,7 @@ function TOGBankClassic_Guild:Reset(name)
 	TOGBankClassic_Database:Reset(name)
 	self.Info = TOGBankClassic_Database:Load(name)
 	self:EnsureRequestsInitialized()
-	
+
 	-- Migrate any temporary errors to database
 	self:MigrateTempErrors()
 end
@@ -491,14 +491,14 @@ function TOGBankClassic_Guild:FastFillMissingAlts()
 	if not self.Info then
 		return
 	end
-	
+
 	-- SYNC-001 fix: Get live banker roster from current guild instead of using
 	-- cached roster.alts which may contain stale cross-guild data
 	local rosterAlts = self:GetBanks()
 	if not rosterAlts or #rosterAlts == 0 then
 		return
 	end
-	
+
 	local missing = {}
 	for _, altName in ipairs(rosterAlts) do
 		local norm = self:NormalizeName(altName)
@@ -507,14 +507,14 @@ function TOGBankClassic_Guild:FastFillMissingAlts()
 			table.insert(missing, norm)
 		end
 	end
-	
+
 	if #missing == 0 then
 		TOGBankClassic_Output:Debug("Fast-fill: All %d roster alts present locally", #rosterAlts)
 		return
 	end
-	
+
 	TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", #missing, #rosterAlts - #missing, #rosterAlts)
-	
+
 	-- Query each missing alt using pull-based protocol
 	for _, norm in ipairs(missing) do
 		self:QueryAltPullBased(norm)
@@ -706,7 +706,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 	if not name then
 		return
 	end
-	
+
 	local norm = self:NormalizeName(name)
 	self.hasRequested = true
 	if self.requestCount == nil then
@@ -714,28 +714,28 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 	else
 		self.requestCount = self.requestCount + 1
 	end
-	
+
 	-- Check if we have an online banker
 	local onlineBankers = TOGBankClassic_Chat.online_bankers or {}
 	local banker = nil
 	local mostRecent = 0
-	
+
 	for sender, info in pairs(onlineBankers) do
 		if info.seen > mostRecent then
 			mostRecent = info.seen
 			banker = sender
 		end
 	end
-	
+
 	-- Build request message
 	local request = {
 		type = "alt-request",  -- v0.8.0 pull-based request
 		name = norm,
 		requester = self:GetNormalizedPlayer(),
 	}
-	
+
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
-	
+
 	if banker and (GetServerTime() - mostRecent) < 600 and self:IsPlayerOnline(banker) then
 		-- Banker known, seen recently (within 10 min), AND currently online - WHISPER directly
 		TOGBankClassic_Output:DebugComm("SENDING WHISPER: togbank-r to %s for alt %s", banker, norm)
@@ -756,7 +756,7 @@ function TOGBankClassic_Guild:SendRosterData()
 	if not self.Info then
 		return
 	end
-	
+
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "roster", roster = self.Info.roster })
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
 end
@@ -810,13 +810,13 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	if not playerName then
 		return false
 	end
-	
+
 	-- Request fresh guild roster data (COMM-002)
 	-- Without this, GetGuildRosterInfo() returns stale data
 	GuildRoster()
-	
+
 	local norm = self:NormalizeName(playerName)
-	
+
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
 		if playerRealm then
@@ -826,7 +826,7 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 			end
 		end
 	end
-	
+
 	return false
 end
 
@@ -837,9 +837,9 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 	if not name then
 		return nil
 	end
-	
+
 	local norm = self:NormalizeName(name)
-	
+
 	-- If we don't have data for this alt, return a "no data" summary
 	if not self.Info or not self.Info.alts or not self.Info.alts[norm] then
 		return {
@@ -849,7 +849,7 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 			items = {}
 		}
 	end
-	
+
 	local alt = self.Info.alts[norm]
 	local summary = {
 		version = alt.version or 0,
@@ -857,7 +857,7 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 		money = alt.money or 0,
 		items = {}  -- {[itemID] = quantity}
 	}
-	
+
 	-- Aggregate items by ID (combine bank + bags)
 	local function addItems(items)
 		if not items then return end
@@ -869,14 +869,14 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 			end
 		end
 	end
-	
+
 	if alt.bank and alt.bank.items then
 		addItems(alt.bank.items)
 	end
 	if alt.bags and alt.bags.items then
 		addItems(alt.bags.items)
 	end
-	
+
 	return summary
 end
 
@@ -887,26 +887,26 @@ function TOGBankClassic_Guild:SendStateSummary(name, target)
 		TOGBankClassic_Output:DebugComm("SendStateSummary EARLY RETURN: missing params")
 		return
 	end
-	
+
 	local summary = self:ComputeStateSummary(name)
 	if not summary then
 		TOGBankClassic_Output:DebugComm("SendStateSummary: No summary for %s", tostring(name))
 		TOGBankClassic_Output:Debug("Cannot send state summary for %s (no data)", name)
 		return
 	end
-	
+
 	local message = {
 		type = "state-summary",
 		name = name,
 		summary = summary,
 	}
-	
+
 	local data = TOGBankClassic_Core:SerializeWithChecksum(message)
 	TOGBankClassic_Output:DebugComm("SENDING STATE SUMMARY via WHISPER to %s for %s (%d bytes, hash=%s)", target, name, #data, tostring(summary.hash))
 	if not TOGBankClassic_Core:SendWhisper("togbank-state", data, target, "NORMAL") then
 		return
 	end
-	
+
 	local itemCount = 0
 	for _ in pairs(summary.items) do itemCount = itemCount + 1 end
 	TOGBankClassic_Output:Debug(
@@ -926,24 +926,24 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		TOGBankClassic_Output:DebugComm("RespondToStateSummary EARLY RETURN: missing params")
 		return
 	end
-	
+
 	local norm = self:NormalizeName(name)
 	if not self.Info or not self.Info.alts or not self.Info.alts[norm] then
 		TOGBankClassic_Output:DebugComm("RespondToStateSummary: No data for %s", norm)
 		TOGBankClassic_Output:Debug("Cannot respond to state summary for %s (no data)", norm)
 		return
 	end
-	
+
 	local currentAlt = self.Info.alts[norm]
 	local requesterVersion = summary.version or 0
 	local currentVersion = currentAlt.version or 0
-	
+
 	-- v0.8.0: In delta mode, compare HASHES not versions
 	local requesterHash = summary.hash or nil
 	local currentHash = currentAlt.inventoryHash or nil
-	
+
 	TOGBankClassic_Output:DebugComm("RespondToStateSummary: %s requesterV=%d currentV=%d requesterHash=%s currentHash=%s", norm, requesterVersion, currentVersion, tostring(requesterHash), tostring(currentHash))
-	
+
 	-- v0.8.0: Delta mode - ONLY use hashes, no version fallback
 	if self:ShouldUseDelta() then
 		-- If current alt doesn't have a hash, send full data (might be from pre-hash version)
@@ -953,7 +953,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			self:SendAltData(norm)
 			return
 		end
-		
+
 		-- If requester has no hash (nil), they have no data - send everything
 		if not requesterHash then
 			TOGBankClassic_Output:DebugComm("DELTA MODE: REQUESTER HAS NO DATA (hash=nil) - sending full data for %s", norm)
@@ -961,7 +961,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			self:SendAltData(norm)
 			return
 		end
-		
+
 		if requesterHash == currentHash then
 			-- Hashes match - no changes needed
 			local noChangeMsg = {
@@ -991,7 +991,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			return
 		end
 	end
-	
+
 	-- Legacy mode: Compare versions only
 	TOGBankClassic_Output:DebugComm("LEGACY MODE: Comparing versions")
 	if requesterVersion == currentVersion then
@@ -1009,7 +1009,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		TOGBankClassic_Output:Debug("Sent no-change reply to %s for %s (v%d)", requester, norm, currentVersion)
 		return
 	end
-	
+
 	-- Requester has different version - send data via GUILD channel
 	-- Use existing SendAltData which handles protocol mode and dual-send
 	TOGBankClassic_Output:DebugComm("VERSION MISMATCH: calling SendAltData for %s", norm)
@@ -1029,7 +1029,7 @@ function TOGBankClassic_Guild:StripItemLinks(items)
 	if not items then
 		return nil
 	end
-	
+
 	local stripped = {}
 	for _, item in ipairs(items) do
 		table.insert(stripped, {
@@ -1047,9 +1047,9 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 	if not items then
 		return
 	end
-	
+
 	local needsAsyncLoad = false
-	
+
 	for _, item in ipairs(items) do
 		if item and item.ID and not item.Link then
 			-- Try to get link from item cache
@@ -1075,7 +1075,7 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 			end
 		end
 	end
-	
+
 	-- If some links loaded immediately from cache, refresh UI now
 	if not needsAsyncLoad and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 		TOGBankClassic_UI_Inventory:DrawContent()
@@ -1087,7 +1087,7 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 	if not alt then
 		return nil
 	end
-	
+
 	local stripped = {
 		version = alt.version,
 		money = alt.money,
@@ -1111,7 +1111,7 @@ function TOGBankClassic_Guild:StripDeltaLinks(delta)
 	if not delta or not delta.changes then
 		return nil
 	end
-	
+
 	local function stripItemArray(items)
 		if not items then return nil end
 		local stripped = {}
@@ -1129,7 +1129,7 @@ function TOGBankClassic_Guild:StripDeltaLinks(delta)
 		end
 		return stripped
 	end
-	
+
 	local strippedDelta = {
 		type = delta.type,
 		name = delta.name,
@@ -1137,12 +1137,12 @@ function TOGBankClassic_Guild:StripDeltaLinks(delta)
 		-- v0.8.0: baseVersion no longer included (8 bytes saved)
 		changes = {}
 	}
-	
+
 	-- Copy money change (no Link to strip)
 	if delta.changes.money then
 		strippedDelta.changes.money = delta.changes.money
 	end
-	
+
 	-- Strip Links from bank changes
 	if delta.changes.bank then
 		strippedDelta.changes.bank = {
@@ -1151,7 +1151,7 @@ function TOGBankClassic_Guild:StripDeltaLinks(delta)
 			removed = stripItemArray(delta.changes.bank.removed)
 		}
 	end
-	
+
 	-- Strip Links from bags changes
 	if delta.changes.bags then
 		strippedDelta.changes.bags = {
@@ -1160,7 +1160,7 @@ function TOGBankClassic_Guild:StripDeltaLinks(delta)
 			removed = stripItemArray(delta.changes.bags.removed)
 		}
 	end
-	
+
 	return strippedDelta
 end
 
@@ -1188,7 +1188,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 		if deltaData and self:DeltaHasChanges(deltaData) then
 			local deltaSize = self:EstimateSize(deltaData)
 			local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
-			
+
 			-- Use delta if significantly smaller OR if forced
 			local forceDelta = FEATURES and FEATURES.FORCE_DELTA_SYNC
 			if forceDelta or deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
@@ -1220,7 +1220,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 			end
 		end
 	end
-	
+
 	-- Record compute time if delta was computed
 	if deltaData and self.Info and self.Info.name then
 		local computeTime = debugprofilestop() - computeStart
@@ -1232,37 +1232,37 @@ function TOGBankClassic_Guild:SendAltData(name)
 		-- Send delta with dual-send for backwards compatibility (v0.8.0)
 		local mode = PROTOCOL_MODES[FEATURES.PROTOCOL_MODE] or PROTOCOL_MODES.AUTO
 		local deltaWithLinks, deltaNoLinks
-		
+
 		-- Prepare legacy format (with Links) if needed
 		if mode.sendLegacy then
 			deltaWithLinks = TOGBankClassic_Core:SerializeWithChecksum(deltaData)
 			TOGBankClassic_Core:SendCommMessage("togbank-d2", deltaWithLinks, "Guild", nil, "BULK", OnChunkSent)
 			TOGBankClassic_Output:Debug("Sent delta update for %s via togbank-d2 (with Links)", norm)
 		end
-		
+
 		-- Prepare new format (without Links) if needed - saves 60-80 bytes per item
 		if mode.sendNew then
 			local strippedDelta = self:StripDeltaLinks(deltaData)
 			deltaNoLinks = TOGBankClassic_Core:SerializeWithChecksum(strippedDelta)
 			TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, "Guild", nil, "BULK", OnChunkSent)
 			TOGBankClassic_Output:Debug("Sent delta update for %s via togbank-d4 (no Links)", norm)
-			
+
 			-- Log bandwidth savings if dual-sending
 			if mode.sendLegacy and deltaWithLinks then
 				local savings = string.len(deltaWithLinks) - string.len(deltaNoLinks)
 				TOGBankClassic_Output:Debug("Bandwidth saved: %d bytes (%.1f%%)", savings, (savings / string.len(deltaWithLinks)) * 100)
 			end
 		end
-		
+
 		-- Track metrics using the size of the format we're using (prefer new format)
 		local serialized = deltaNoLinks or deltaWithLinks
 		TOGBankClassic_Output:Debug("Final delta size: %d bytes", string.len(serialized or ""))
-		
+
 		-- Track metrics
 		if self.Info and self.Info.name then
 			TOGBankClassic_Database:RecordDeltaSent(self.Info.name, string.len(serialized or ""))
 		end
-		
+
 		-- Save delta to history for potential chain replay (DELTA-006)
 		-- v0.8.0: Use previous.version for baseVersion in history (delta no longer includes it)
 		if self.Info and self.Info.name and deltaData.version and deltaData.changes then
@@ -1276,7 +1276,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 				deltaData  -- Save full delta, not just changes
 			)
 		end
-		
+
 		-- Save snapshot for next delta
 		if self.Info and self.Info.name then
 			TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
@@ -1288,7 +1288,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 			if self.Info and self.Info.name then
 				TOGBankClassic_Database:RecordFullSyncFallback(self.Info.name)
 			end
-			
+
 			-- Save delta to history even when falling back to full sync (DELTA-006)
 			-- This allows chain replay to work for offline players even when deltas were too large
 			-- v0.8.0: Use previous.version for baseVersion in history (delta no longer includes it)
@@ -1304,18 +1304,18 @@ function TOGBankClassic_Guild:SendAltData(name)
 				)
 			end
 		end
-		
+
 		-- Send full sync based on protocol mode (user-configurable)
 		local mode = PROTOCOL_MODES[FEATURES.PROTOCOL_MODE] or PROTOCOL_MODES.AUTO
 		local dataWithLinks, dataNoLinks
-		
+
 		-- Prepare legacy format (with Links) if needed
 		if mode.sendLegacy then
 			dataWithLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
 			TOGBankClassic_Output:DebugComm("SENDING RESPONSE: togbank-d (legacy) for %s (%d bytes)", norm, #dataWithLinks)
 			TOGBankClassic_Core:SendCommMessage("togbank-d", dataWithLinks, "Guild", nil, "BULK", OnChunkSent)
 		end
-		
+
 		-- Prepare new format (without Links) if needed
 		if mode.sendNew then
 			local strippedAlt = self:StripAltLinks(currentAlt)
@@ -1323,7 +1323,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 			TOGBankClassic_Output:DebugComm("SENDING RESPONSE: togbank-d3 (new) for %s (%d bytes)", norm, #dataNoLinks)
 			TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, "Guild", nil, "BULK", OnChunkSent)
 		end
-		
+
 		-- Log what was sent
 		if mode.sendLegacy and mode.sendNew then
 			TOGBankClassic_Output:Debug(
@@ -1347,13 +1347,13 @@ function TOGBankClassic_Guild:SendAltData(name)
 				string.len(dataNoLinks or "")
 			)
 		end
-		
+
 		-- Track metrics
 		if self.Info and self.Info.name then
 			local totalSize = (dataWithLinks and string.len(dataWithLinks) or 0) + (dataNoLinks and string.len(dataNoLinks) or 0)
 			TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, totalSize)
 		end
-		
+
 		-- Save snapshot for next delta
 		if self.Info and self.Info.name then
 			TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
@@ -1544,7 +1544,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 	end
 
 	self.Info.alts[norm] = alt
-	
+
 	-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
 	if alt.bank and alt.bank.items then
 		self:ReconstructItemLinks(alt.bank.items)
@@ -1552,10 +1552,10 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 	if alt.bags and alt.bags.items then
 		self:ReconstructItemLinks(alt.bags.items)
 	end
-	
+
 	-- Reset error count on successful full sync
 	self:ResetDeltaErrorCount(norm)
-	
+
 	return ADOPTION_STATUS.ADOPTED
 end
 
@@ -1576,7 +1576,7 @@ function TOGBankClassic_Guild:ShouldUseDelta()
 	if FEATURES and FEATURES.FORCE_DELTA_SYNC then
 		return true
 	end
-	
+
 	-- Check feature flags
 	if not FEATURES or not FEATURES.DELTA_ENABLED then
 		return false
@@ -1749,11 +1749,11 @@ function TOGBankClassic_Guild:ComputeDelta(name, currentAlt)
 	-- Bank items delta
 	local previousBankItems = previous.bank and previous.bank.items or {}
 	local currentBankItems = currentAlt.bank and currentAlt.bank.items or {}
-	
+
 	-- Bag items delta
 	local previousBagItems = previous.bags and previous.bags.items or {}
 	local currentBagItems = currentAlt.bags and currentAlt.bags.items or {}
-	
+
 	-- Debug: Log item counts for both bank and bags
 	TOGBankClassic_Output:Debug(
 		"Comparing %s: previous bank has %d items, bags have %d items; current bank has %d items, bags have %d items",
@@ -1868,7 +1868,7 @@ function TOGBankClassic_Guild:ApplyItemDelta(items, delta)
 			if changes and changes.ID and changes.Link then
 				local key = tostring(changes.ID) .. changes.Link
 				local existingItem = itemsByKey[key]
-				
+
 				if existingItem then
 					-- Apply changed fields to existing item
 					for field, value in pairs(changes) do
@@ -1890,7 +1890,7 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 	if not self.Info then
 		return ADOPTION_STATUS.IGNORED
 	end
-	
+
 	local applyStart = debugprofilestop()
 	local norm = self:NormalizeName(name)
 	local current = self.Info.alts[norm]
@@ -1920,7 +1920,7 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 			currentVersion,
 			baseVersion
 		)
-		
+
 		-- Try delta chain if sender is known and we're behind
 		if sender and currentVersion < baseVersion then
 			TOGBankClassic_Output:Debug(
@@ -1929,7 +1929,7 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 				currentVersion,
 				baseVersion
 			)
-			
+
 			-- Request delta chain to catch up
 			self:RequestDeltaChain(norm, currentVersion, baseVersion, sender)
 		else
@@ -1942,7 +1942,7 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 			)
 			TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
 		end
-		
+
 		self:RecordDeltaError(norm, "VERSION_MISMATCH", errorMsg)
 		if self.Info and self.Info.name then
 			TOGBankClassic_Database:RecordDeltaFailed(self.Info.name)
@@ -2000,7 +2000,7 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 	if self.Info and self.Info.name then
 		TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, current)
 		TOGBankClassic_Database:RecordDeltaApplied(self.Info.name)
-		
+
 		-- Record apply time
 		local applyTime = debugprofilestop() - applyStart
 		TOGBankClassic_Database:RecordDeltaApplyTime(self.Info.name, applyTime)
@@ -2035,7 +2035,7 @@ function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion,
 		TOGBankClassic_Output:Debug("Invalid delta chain request: fromVersion >= toVersion")
 		return false
 	end
-	
+
 	-- Check if sender is online before attempting WHISPER (DELTA-008)
 	if not self:IsPlayerOnline(sender) then
 		TOGBankClassic_Output:Debug(
@@ -2056,10 +2056,10 @@ function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion,
 		fromVersion = fromVersion,
 		toVersion = toVersion
 	}
-	
+
 	local serialized = TOGBankClassic_Core:SerializeWithChecksum(requestData)
 	TOGBankClassic_Core:SendWhisper("togbank-dr", serialized, sender, "ALERT")
-	
+
 	TOGBankClassic_Output:Debug(
 		"Requesting delta chain for %s from v%d to v%d from %s",
 		altName,
@@ -2067,7 +2067,7 @@ function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion,
 		toVersion,
 		sender
 	)
-	
+
 	return true
 end
 

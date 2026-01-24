@@ -21,7 +21,7 @@
 
 ## 🐛 Persistent Debug Logging (v0.7.11) - IMPLEMENTED
 
-**Added:** January 23, 2026  
+**Added:** January 23, 2026
 **Purpose:** Capture complete debug history across sessions for troubleshooting intermittent issues
 
 ### Problem
@@ -110,7 +110,7 @@ Clear all persistent log entries.
 
 ## � Centralized WHISPER Management (v0.7.11) - IMPLEMENTED
 
-**Added:** January 23, 2026  
+**Added:** January 23, 2026
 **Purpose:** Consolidate all WHISPER communication with automatic online checking
 
 ### Problem
@@ -133,7 +133,7 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
         TOGBankClassic_Output:Debug("Cannot send %s WHISPER to %s - player is offline", prefix, target)
         return false
     end
-    
+
     -- Send the whisper
     self:SendCommMessage(prefix, text, "WHISPER", target, prio, callbackFn, callbackArg)
     return true
@@ -164,7 +164,7 @@ end
 
 **Locations Updated:**
 1. Chat.lua: togbank-rr ACK replies
-2. Chat.lua: togbank-dc delta chain responses  
+2. Chat.lua: togbank-dc delta chain responses
 3. Guild.lua: togbank-state state summaries
 4. Guild.lua: togbank-nochange no-change replies (2 locations)
 5. Guild.lua: togbank-r pull-based queries
@@ -192,7 +192,7 @@ end
 ## 🔄 Request Data Sync (v0.7.11) - IMPLEMENTED
 **Fixed:** [SYNC-002] - Pass player name to queries, remove player check for guild-wide data
 
-## 🎨 Persistent Tab Selection (v0.7.11) - IMPLEMENTED  
+## 🎨 Persistent Tab Selection (v0.7.11) - IMPLEMENTED
 **Fixed:** [UI-004] - Preserve selected tab across syncs and redraws
 
 ---
@@ -280,7 +280,7 @@ function ReconstructItemLinks(items)
 end
 ```
 
-**Trade-off:** One API call per item vs. 60-80 bytes per item transmission  
+**Trade-off:** One API call per item vs. 60-80 bytes per item transmission
 **Result:** 5-7KB bandwidth savings per sync (typical 100-item alt)
 
 #### 2. Remove baseVersion (8 bytes saved)
@@ -306,9 +306,9 @@ remove = { { ID = 12345 }, { ID = 67890 }, ... }
 ```
 
 #### 4. State Summary Format
-**Purpose:** Receiver tells sender what they have for delta computation  
-**Format:** `{[itemID] = quantity}` - ID to quantity mapping only  
-**Size:** ~8 bytes per item = ~800 bytes for 100 items  
+**Purpose:** Receiver tells sender what they have for delta computation
+**Format:** `{[itemID] = quantity}` - ID to quantity mapping only
+**Size:** ~8 bytes per item = ~800 bytes for 100 items
 **Excludes:** Links, bag numbers, slot numbers, metadata
 
 ### Channel Assignment
@@ -762,15 +762,15 @@ end
 function SendAltData(name, force)
     local norm = NormalizeName(name)
     local alt = Info.alts[norm]
-    
+
     -- Determine which protocol to use
     local useDelta = ShouldUseDelta() and HasPreviousSnapshot(norm)
-    
+
     if useDelta then
         local delta = ComputeDelta(norm, alt)
         local deltaSize = EstimateSize(delta)
         local fullSize = EstimateSize(alt)
-        
+
         -- Only use delta if significantly smaller
         if deltaSize < fullSize * MIN_DELTA_SIZE_RATIO then
             SendCommMessage("togbank-d2", Serialize(delta), "Guild")
@@ -778,7 +778,7 @@ function SendAltData(name, force)
             return
         end
     end
-    
+
     -- Fallback: Send full data via old protocol
     SendCommMessage("togbank-d", Serialize({type="alt", name=norm, alt=alt}), "Guild")
     SaveSnapshot(norm, alt)  -- Save as baseline for future deltas
@@ -790,7 +790,7 @@ end
 function ComputeDelta(name, currentAlt)
     local previous = GetSnapshot(name)
     if not previous then return nil end
-    
+
     local delta = {
         type = "alt-delta",
         name = name,
@@ -798,31 +798,31 @@ function ComputeDelta(name, currentAlt)
         baseVersion = previous.version,
         changes = {}
     }
-    
+
     -- Money comparison
     if currentAlt.money ~= previous.money then
         delta.changes.money = currentAlt.money
     end
-    
+
     -- Bank items delta
     delta.changes.bank = ComputeItemDelta(
         previous.bank.items,
         currentAlt.bank.items
     )
-    
+
     -- Bag items delta
     delta.changes.bags = ComputeItemDelta(
         previous.bags.items,
         currentAlt.bags.items
     )
-    
+
     return delta
 end
 
 function ComputeItemDelta(oldItems, newItems)
     local added, modified, removed = {}, {}, {}
     local oldBySlot = BuildSlotIndex(oldItems)
-    
+
     for _, newItem in pairs(newItems) do
         local oldItem = oldBySlot[newItem.slot]
         if not oldItem then
@@ -832,12 +832,12 @@ function ComputeItemDelta(oldItems, newItems)
         end
         oldBySlot[newItem.slot] = nil  -- Mark processed
     end
-    
+
     -- Remaining slots were removed
     for slot in pairs(oldBySlot) do
         table.insert(removed, slot)
     end
-    
+
     return {added=added, modified=modified, removed=removed}
 end
 ```
@@ -847,36 +847,36 @@ end
 function ApplyDelta(name, deltaData)
     local norm = NormalizeName(name)
     local current = Info.alts[norm]
-    
+
     -- Validate base version matches
     if not current or current.version ~= deltaData.baseVersion then
         -- Delta doesn't apply to our state, request full sync
         QueryAlt(nil, norm, nil)
         return ADOPTION_STATUS.INVALID
     end
-    
+
     -- Apply changes
     if deltaData.changes.money then
         current.money = deltaData.changes.money
     end
-    
+
     if deltaData.changes.bank then
         ApplyItemDelta(current.bank.items, deltaData.changes.bank)
     end
-    
+
     if deltaData.changes.bags then
         ApplyItemDelta(current.bags.items, deltaData.changes.bags)
     end
-    
+
     -- Update version
     current.version = deltaData.version
-    
+
     -- Save new snapshot for future deltas
     SaveSnapshot(norm, DeepCopy(current))
-    
+
     -- Trigger UI refresh
     TriggerCallback(DB_UPDATE)
-    
+
     return ADOPTION_STATUS.ADOPTED
 end
 
@@ -885,12 +885,12 @@ function ApplyItemDelta(items, delta)
     for _, slot in ipairs(delta.removed) do
         items[slot] = nil
     end
-    
+
     -- Add new items
     for _, item in ipairs(delta.added) do
         items[item.slot] = item
     end
-    
+
     -- Modify existing items
     for _, changes in ipairs(delta.modified) do
         local slot = changes.slot
@@ -1160,7 +1160,7 @@ for _, localReq in ipairs(self.Info.requests or {}) do
     if localReq.id and not incomingById[localReq.id] then
         local tombstoneTs = tombstones[localReq.id] or 0
         local localUpdated = localReq.updatedAt or 0
-        
+
         -- Keep if not tombstoned OR if local update is newer
         if tombstoneTs == 0 or localUpdated > tombstoneTs then
             table.insert(merged, localReq)
@@ -1185,7 +1185,7 @@ self.Info.requests = merged
 
 #### Fulfill
 - **Rule:** Additive, clamped to quantity
-- **Example:** 
+- **Example:**
   - Request for 10 items
   - Banker A fulfills 4
   - Banker B fulfills 6

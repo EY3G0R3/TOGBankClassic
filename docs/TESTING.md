@@ -1,7 +1,7 @@
 # TOGBankClassic Testing Guide
 
-**Current Version:** v0.7.0 (Snapshot-Based Delta Sync)  
-**Next Version:** v0.8.0 (Pull-Based Delta Protocol)  
+**Current Version:** v0.7.0 (Snapshot-Based Delta Sync)
+**Next Version:** v0.8.0 (Pull-Based Delta Protocol)
 **Last Updated:** January 21, 2026
 
 ---
@@ -24,31 +24,31 @@ v0.8.0 replaces snapshot-based delta sync with a pull-based handshake protocol. 
 1. **Step 1: Banker announces**
    - Verify togbank-dv sent on GUILD channel
    - Verify Character B receives and updates banker list
-   
+
 2. **Step 2: Non-banker requests**
    - Verify Character B sends togbank-r (WHISPER if banker known)
    - Verify togbank-r includes alt name
-   
+
 3. **Step 3: Banker acknowledges**
    - Verify Character A sends togbank-rr on WHISPER
    - Verify togbank-rr includes `isBanker = true`
-   
+
 4. **Step 4: Non-banker sends state**
    - Verify Character B sends togbank-state on WHISPER
    - Verify state format: `{[itemID] = quantity}`
    - Verify state excludes Links, bags, slots
-   
+
 5. **Step 5: Banker computes response**
    - Test A: Empty state → full sync chosen
    - Test B: Matching state → no-change chosen
    - Test C: Partial state → delta computed
-   
+
 6. **Step 6: Banker sends data**
    - Verify togbank-d/togbank-d2 sent on GUILD (data)
    - Verify togbank-nochange sent on WHISPER (no-change)
    - Verify messages exclude Link fields
    - Verify messages exclude baseVersion
-   
+
 7. **Step 7: Receiver applies data**
    - Verify Character B applies changes
    - Verify Character B reconstructs Links for all items
@@ -476,7 +476,7 @@ See manual testing procedures below for scenario-based testing.
 ### Overview
 The automated test suite validates all core delta sync functionality:
 - **Phase 5.1:** Delta Computation (8 tests) - Core algorithm
-- **Phase 5.2:** Size Estimation (4 tests) - Efficiency calculations  
+- **Phase 5.2:** Size Estimation (4 tests) - Efficiency calculations
 - **Phase 5.3:** Protocol Negotiation (3 tests) - Version detection
 - **Phase 5.4:** Error Handling (5 tests) - Graceful fallbacks
 - **Phase 5.5:** Integration (2 tests) - End-to-end workflows
@@ -504,7 +504,7 @@ Tests whether delta is smaller than full sync:
 - ✅ Large delta size estimation
 - ✅ Delta vs full sync size comparison
 
-**Functions Tested:** `EstimateSize()`  
+**Functions Tested:** `EstimateSize()`
 **Purpose:** Decides when delta is more efficient than full sync (< 30% threshold)
 
 #### Phase 5.3: Protocol Negotiation (Version Detection)
@@ -513,7 +513,7 @@ Tests how clients detect each other's protocol versions:
 - ✅ Delta usage decision logic
 - ✅ Guild support threshold (10% must support v2)
 
-**Functions Tested:** `GetPeerCapabilities()`, `ShouldUseDelta()`, `GetGuildDeltaSupport()`  
+**Functions Tested:** `GetPeerCapabilities()`, `ShouldUseDelta()`, `GetGuildDeltaSupport()`
 **Purpose:** Ensures v2 clients only use delta when talking to other v2 clients
 
 #### Phase 5.4: Error Handling (Graceful Fallbacks)
@@ -524,7 +524,7 @@ Tests what happens when things go wrong:
 - ✅ Snapshot validation (rejects malformed data)
 - ✅ Delta validation (rejects invalid deltas)
 
-**Functions Tested:** `ApplyDelta()`, `ValidateSnapshot()`, `ValidateDeltaStructure()`  
+**Functions Tested:** `ApplyDelta()`, `ValidateSnapshot()`, `ValidateDeltaStructure()`
 **Purpose:** Prevents data corruption and ensures system recovers from errors
 
 #### Phase 5.5: Integration (End-to-End)
@@ -544,8 +544,8 @@ Tests that v2 clients work with v1 clients:
 
 ### Bug Discovered by Tests
 
-**Critical Bug:** `ApplyItemDelta` item removal broken  
-**File:** `Modules/Guild.lua:1221-1236`  
+**Critical Bug:** `ApplyItemDelta` item removal broken
+**File:** `Modules/Guild.lua:1221-1236`
 **Discovered By:** Phase 5.5 Integration Test
 
 ```lua
@@ -1242,6 +1242,6 @@ Before release, ensure:
 
 ---
 
-**Last Updated:** 2025-01-17  
+**Last Updated:** 2025-01-17
 **Test Suite Version:** 1.0 (for TOGBankClassic v0.7.0)
 

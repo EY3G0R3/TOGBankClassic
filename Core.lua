@@ -25,9 +25,16 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
         TOGBankClassic_Output:Debug("Cannot send %s WHISPER to %s - player is offline", prefix, target)
         return false
     end
-    
+
+    -- Strip realm suffix for WHISPER (WoW requires name-only)
+    -- Target may be "Name-Realm" format, but WHISPER needs just "Name"
+    local nameOnly = target
+    if target and string.find(target, "-") then
+        nameOnly = string.match(target, "^(.-)%-")
+    end
+
     -- Send the whisper
-    self:SendCommMessage(prefix, text, "WHISPER", target, prio, callbackFn, callbackArg)
+    self:SendCommMessage(prefix, text, "WHISPER", nameOnly, prio, callbackFn, callbackArg)
     return true
 end
 
@@ -38,7 +45,7 @@ function TOGBankClassic_Core:OnInitialize()
     TOGBankClassic_Chat:Init()
     TOGBankClassic_Options:Init()
     TOGBankClassic_UI:Init()
-    
+
     -- Enable VersionCheck-1.0 addon integration
     do
         local VC = LibStub:GetLibrary("VersionCheck-1.0", true)
@@ -288,16 +295,16 @@ end
 -- Only updates version timestamps when this hash changes
 function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, money)
 	local parts = {}
-	
+
 	-- Include money
 	table.insert(parts, tostring(money or 0))
-	
+
 	-- Helper to hash an items array
 	local function hashItems(items)
 		if not items or type(items) ~= "table" then
 			return ""
 		end
-		
+
 		-- Sort items by ID+Count to get consistent order
 		local sorted = {}
 		for _, item in ipairs(items) do
@@ -308,20 +315,20 @@ function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, money)
 		table.sort(sorted)
 		return table.concat(sorted, ",")
 	end
-	
+
 	-- Include bank items
 	if bank and bank.items then
 		table.insert(parts, "B:" .. hashItems(bank.items))
 	end
-	
+
 	-- Include bag items
 	if bags and bags.items then
 		table.insert(parts, "G:" .. hashItems(bags.items))
 	end
-	
+
 	-- Concatenate all parts and compute simple hash
 	local combined = table.concat(parts, "|")
-	
+
 	-- Use same hash function as checksum for consistency
 	local sum = 0
 	local len = #combined
@@ -330,7 +337,7 @@ function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, money)
 		sum = (sum * 31 + byte) % 2147483647
 	end
 	sum = (sum * 31 + len) % 2147483647
-	
+
 	return sum
 end
 

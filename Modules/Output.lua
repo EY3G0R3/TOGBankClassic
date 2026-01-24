@@ -48,7 +48,7 @@ end
 -- Store message in buffer
 function TOGBankClassic_Output:BufferDebugMessage(message)
 	table.insert(self.debugMessageBuffer, message)
-	
+
 	-- Keep buffer size manageable
 	while #self.debugMessageBuffer > self.maxBufferSize do
 		table.remove(self.debugMessageBuffer, 1)
@@ -58,7 +58,7 @@ end
 -- Redraw all buffered messages to debug frame
 function TOGBankClassic_Output:RedrawDebugMessages()
 	if not self.debugFrame then return end
-	
+
 	self.debugFrame:Clear()
 	for _, msg in ipairs(self.debugMessageBuffer) do
 		self.debugFrame:AddMessage(msg)
@@ -71,13 +71,13 @@ function TOGBankClassic_Output:GetDebugFrame()
 	if self.debugFrame then
 		return self.debugFrame
 	end
-	
+
 	-- Try to find existing TOGBank Debug tab (even if hidden)
 	for i = 1, NUM_CHAT_WINDOWS do
 		local name = GetChatWindowInfo(i)
 		if name == "TOGBank Debug" then
 			self.debugFrame = _G["ChatFrame"..i]
-			
+
 			-- Ensure OnShow hook is set to redraw messages when tab becomes visible
 			if not self.debugFrame.togbankHooked then
 				self.debugFrame:HookScript("OnShow", function()
@@ -85,13 +85,13 @@ function TOGBankClassic_Output:GetDebugFrame()
 				end)
 				self.debugFrame.togbankHooked = true
 			end
-			
+
 			-- Restore buffered messages when frame is found
 			self:RedrawDebugMessages()
 			return self.debugFrame
 		end
 	end
-	
+
 	return nil
 end
 
@@ -109,7 +109,7 @@ function TOGBankClassic_Output:CreateDebugTab()
 			-- Remove all message filters
 			ChatFrame_RemoveAllMessageGroups(self.debugFrame)
 			ChatFrame_RemoveAllChannels(self.debugFrame)
-			
+
 			-- Hook OnShow to redraw messages when tab becomes visible
 			if not self.debugFrame.togbankHooked then
 				self.debugFrame:HookScript("OnShow", function()
@@ -117,18 +117,18 @@ function TOGBankClassic_Output:CreateDebugTab()
 				end)
 				self.debugFrame.togbankHooked = true
 			end
-			
+
 			self.debugFrame:Show()
 			FCF_DockFrame(self.debugFrame)
-			
+
 			-- Initial draw of buffered messages
 			self:RedrawDebugMessages()
-			
+
 			TOGBankClassic_Core:Print("TOGBank Debug tab found and shown (ChatFrame"..i..")")
 			return true
 		end
 	end
-	
+
 	-- Find first available chat frame slot (first one with no name)
 	local frameIndex = nil
 	for i = 1, NUM_CHAT_WINDOWS do
@@ -142,39 +142,39 @@ function TOGBankClassic_Output:CreateDebugTab()
 			end
 		end
 	end
-	
+
 	if not frameIndex then
 		TOGBankClassic_Core:Print("|cffff0000Failed to create debug tab: no available chat frames|r")
 		TOGBankClassic_Core:Print("Try using an existing chat frame instead")
 		return false
 	end
-	
+
 	-- Configure the frame
 	local frame = _G["ChatFrame"..frameIndex]
-	
+
 	-- Use WoW's proper API to create a new named window
 	FCF_SetWindowName(frame, "TOGBank Debug")
 	FCF_SetWindowColor(frame, 0.3, 0.3, 0.3)
 	FCF_SetLocked(frame, false)
-	
+
 	-- Set font size (required for WoW to save the frame)
 	local fontFile, _, fontFlags = GameFontNormal:GetFont()
 	frame:SetFont(fontFile, 12, fontFlags)
-	
+
 	-- Clear all message groups and channels
 	ChatFrame_RemoveAllMessageGroups(frame)
 	ChatFrame_RemoveAllChannels(frame)
-	
+
 	-- Configure message history
 	frame:SetMaxLines(1000)
 	frame:SetFading(false)
 	frame:SetTimeVisible(120)
 	frame:SetIndentedWordWrap(false)
-	
+
 	-- Make visible and dock it
 	frame:Show()
 	FCF_DockFrame(frame)
-	
+
 	-- Hook OnShow to redraw messages when tab becomes visible
 	if not frame.togbankHooked then
 		frame:HookScript("OnShow", function()
@@ -182,12 +182,12 @@ function TOGBankClassic_Output:CreateDebugTab()
 		end)
 		frame.togbankHooked = true
 	end
-	
+
 	self.debugFrame = frame
-	
+
 	-- Initial draw of buffered messages
 	self:RedrawDebugMessages()
-	
+
 	TOGBankClassic_Core:Print("Created TOGBank Debug chat tab (ChatFrame"..frameIndex..")")
 	TOGBankClassic_Core:Print("You can now right-click the tab to customize or close it")
 	return true
@@ -208,7 +208,7 @@ function TOGBankClassic_Output:RemoveDebugTab()
 			return true
 		end
 	end
-	
+
 	TOGBankClassic_Core:Print("TOGBank Debug tab not found")
 	return false
 end
@@ -248,23 +248,23 @@ local function Log(level, prefix, fmt, ...)
 			else
 				fullMessage = fullMessage .. message
 			end
-			
+
 			-- Store in buffer for persistence
 			TOGBankClassic_Output:BufferDebugMessage(fullMessage)
-			
+
 			-- Add to frame
 			debugFrame:AddMessage(fullMessage)
 			return true
 		end
 	end
-	
+
 	-- Otherwise use normal print
 	if prefix then
 		TOGBankClassic_Core:Print(prefix, message)
 	else
 		TOGBankClassic_Core:Print(message)
 	end
-	
+
 	-- Always store debug-level messages in persistent log
 	if level == LOG_LEVEL.DEBUG then
 		local fullMessage = "TOGBankClassic: "
@@ -275,7 +275,7 @@ local function Log(level, prefix, fmt, ...)
 		end
 		TOGBankClassic_Output:AddToPersistentLog(fullMessage)
 	end
-	
+
 	return true
 end
 
@@ -320,7 +320,7 @@ function TOGBankClassic_Output:AddToPersistentLog(message)
 		message = message
 	}
 	table.insert(self.persistentLog, entry)
-	
+
 	-- Simple circular buffer: remove oldest if we exceed max entries
 	while #self.persistentLog > self.persistentLogMaxEntries do
 		table.remove(self.persistentLog, 1)
@@ -332,7 +332,7 @@ function TOGBankClassic_Output:GarbageCollectPersistentLog()
 	local currentTime = time()
 	local cutoffTime = currentTime - self.persistentLogMaxAge
 	local removed = 0
-	
+
 	-- Remove entries older than max age
 	local i = 1
 	while i <= #self.persistentLog do
@@ -343,7 +343,7 @@ function TOGBankClassic_Output:GarbageCollectPersistentLog()
 			i = i + 1
 		end
 	end
-	
+
 	if removed > 0 then
 		TOGBankClassic_Output:Debug("Garbage collected %d old debug log entries (older than %d days)", removed, self.persistentLogMaxAge / 86400)
 	end
@@ -353,10 +353,10 @@ end
 function TOGBankClassic_Output:SavePersistentLog()
 	-- Run garbage collection before saving
 	self:GarbageCollectPersistentLog()
-	
+
 	-- Write to global SavedVariable
 	TOGBankClassicDB_DebugLog = self.persistentLog
-	
+
 	TOGBankClassic_Output:Debug("Saved %d persistent debug log entries to SavedVariables", #self.persistentLog)
 end
 
@@ -365,13 +365,13 @@ function TOGBankClassic_Output:ExportPersistentLog(maxEntries)
 	maxEntries = maxEntries or 100
 	local output = {}
 	local startIdx = math.max(1, #self.persistentLog - maxEntries + 1)
-	
+
 	for i = startIdx, #self.persistentLog do
 		local entry = self.persistentLog[i]
 		local timeStr = date("%Y-%m-%d %H:%M:%S", entry.timestamp)
 		table.insert(output, string.format("[%s] %s", timeStr, entry.message))
 	end
-	
+
 	return table.concat(output, "\n")
 end
 
@@ -381,7 +381,7 @@ function TOGBankClassic_Output:ExportPersistentLogCompact(maxEntries, searchFilt
 	local output = {}
 	local startIdx = math.max(1, #self.persistentLog - maxEntries + 1)
 	local count = 0
-	
+
 	for i = startIdx, #self.persistentLog do
 		local entry = self.persistentLog[i]
 		-- Apply search filter if provided
@@ -391,7 +391,7 @@ function TOGBankClassic_Output:ExportPersistentLogCompact(maxEntries, searchFilt
 			count = count + 1
 		end
 	end
-	
+
 	return table.concat(output, "\n"), count
 end
 
