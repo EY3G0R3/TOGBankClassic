@@ -325,6 +325,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						version = data.addon,
 					}
 					TOGBankClassic_Output:Debug("ROSTER", "Tracked online banker: %s", sender)
+				end
+				
 				-- Track protocol capabilities
 				local protocolVersion = data.protocol_version or 1
 				local supportsDelta = data.supports_delta or false
