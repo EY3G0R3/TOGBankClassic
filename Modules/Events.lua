@@ -226,7 +226,7 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 	if TOGBankClassic_Guild:Init(guild) then
 		TOGBankClassic_Options:InitGuild()
 		if IsInRaid() then
-			TOGBankClassic_Output:Debug("GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
+			TOGBankClassic_Output:Debug("EVENTS", "GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
 			return
 		end
 		local cleaned = TOGBankClassic_Guild:CleanupMalformedAlts()

@@ -304,7 +304,15 @@
 			"PanelTemplates_SelectTab",
 			"PanelTemplates_DeselectTab",
 			"UIDropDownMenu_GetText",
-			"MailFrameTab2"
+			"MailFrameTab2",
+			"Item",
+			"Minimap",
+			"UIParent",
+			"WOW_PROJECT_ID",
+			"WOW_PROJECT_MAINLINE",
+			"GetClassColor",
+			"GameFontNormal",
+			"GameTooltip"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

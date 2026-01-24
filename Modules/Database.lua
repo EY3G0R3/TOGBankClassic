@@ -126,18 +126,18 @@ function TOGBankClassic_Database:Load(name)
 			if type(alt) == "table" then
 				if alt.bank and not alt.bank.slots then
 					alt.bank.slots = { count = 0, total = 0 }
-					TOGBankClassic_Output:Debug("Migrated alt data: initialized bank.slots for %s", name)
+				TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: initialized bank.slots for %s", name)
 				end
 				if alt.bags and not alt.bags.slots then
 					alt.bags.slots = { count = 0, total = 0 }
-					TOGBankClassic_Output:Debug("Migrated alt data: initialized bags.slots for %s", name)
+				TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: initialized bags.slots for %s", name)
 				end
 				-- v0.8.0: Compute inventory hash for alts that don't have one
 				-- This enables pull-based protocol for existing alt data
 				if not alt.inventoryHash and alt.bank and alt.bags then
 					local money = alt.money or 0
 					alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
-					TOGBankClassic_Output:Debug("Migrated alt data: computed inventory hash for %s (hash=%d)", name, alt.inventoryHash)
+				TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: computed inventory hash for %s (hash=%d)", name, alt.inventoryHash)
 				end
 			end
 		end

@@ -1,7 +1,7 @@
 TOGBankClassic_Chat = {}
 
 function TOGBankClassic_Chat:Init()
-	TOGBankClassic_Output:Debug("[INIT] TOGBankClassic_Chat:Init() starting")
+	TOGBankClassic_Output:Debug("PROTOCOL", "[INIT] TOGBankClassic_Chat:Init() starting")
 	TOGBankClassic_Core:RegisterChatCommand("togbank", function(input)
 		return TOGBankClassic_Chat:ChatCommand(input)
 	end)
@@ -46,9 +46,9 @@ function TOGBankClassic_Chat:Init()
 	end)
 
 	-- Delta-specific version broadcast (SYNC-001 fix)
-	TOGBankClassic_Output:Debug("[INIT] Registering togbank-dv handler")
+	TOGBankClassic_Output:Debug("PROTOCOL", "[INIT] Registering togbank-dv handler")
 	TOGBankClassic_Core:RegisterComm("togbank-dv", function(prefix, message, distribution, sender)
-		TOGBankClassic_Output:Debug("[HANDLER] togbank-dv called: %s from %s (%d bytes)", prefix, sender, #message)
+		TOGBankClassic_Output:Debug("PROTOCOL", "[HANDLER] togbank-dv called: %s from %s (%d bytes)", prefix, sender, #message)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 

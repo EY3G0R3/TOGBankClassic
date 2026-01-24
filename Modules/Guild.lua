@@ -56,7 +56,7 @@ function TOGBankClassic_Guild:MigrateTempErrors()
 	self.tempDeltaErrors.failureCounts = {}
 	self.tempDeltaErrors.notifiedAlts = {}
 
-	TOGBankClassic_Output:Debug("Migrated temporary delta errors to database")
+	TOGBankClassic_Output:Debug("DATABASE", "Migrated temporary delta errors to database")
 end
 
 -- Record a delta error with details (persisted to database or temp storage)
@@ -311,7 +311,7 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
 		end
 
 		if remove then
-			TOGBankClassic_Output:Debug("Removing malformed bank entry for", name)
+			TOGBankClassic_Output:Debug("DATABASE", "Removing malformed bank entry for", name)
 			self.Info.alts[name] = nil
 			cleaned = cleaned + 1
 		end
@@ -475,11 +475,11 @@ function TOGBankClassic_Guild:GetVersion()
 					version = v.version,
 					hash = v.inventoryHash,
 				}
-				TOGBankClassic_Output:Debug("Broadcasting %s: version=%d, hash=%d", k, v.version, v.inventoryHash)
+				TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d, hash=%d", k, v.version, v.inventoryHash)
 			else
 				-- Legacy format for old clients
 				data.alts[k] = v.version
-				TOGBankClassic_Output:Debug("Broadcasting %s: version=%d (no hash)", k, v.version)
+				TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d (no hash)", k, v.version)
 			end
 		end
 		---END CHANGES
@@ -614,13 +614,13 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 	if banker and (GetServerTime() - mostRecent) < 600 and self:IsPlayerOnline(banker) then
 		-- Banker known, seen recently (within 10 min), AND currently online - WHISPER directly
 		TOGBankClassic_Output:DebugComm("SENDING WHISPER: togbank-r to %s for alt %s", banker, norm)
-		TOGBankClassic_Output:Debug("Pull-based query for %s (WHISPER to banker %s)", norm, banker)
+		TOGBankClassic_Output:Debug("SYNC", "Pull-based query for %s (WHISPER to banker %s)", norm, banker)
 		TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL")
 		self:MarkPendingSync("alt", banker, norm)
 	else
 		-- No known banker, stale, or offline - broadcast on GUILD
 		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST: togbank-r for alt %s (no online banker)", norm)
-		TOGBankClassic_Output:Debug("Pull-based query for %s (GUILD broadcast, no online banker)", norm)
+		TOGBankClassic_Output:Debug("SYNC", "Pull-based query for %s (GUILD broadcast, no online banker)", norm)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", nil, norm)
 	end
@@ -770,7 +770,7 @@ function TOGBankClassic_Guild:SendStateSummary(name, target)
 	local summary = self:ComputeStateSummary(name)
 	if not summary then
 		TOGBankClassic_Output:DebugComm("SendStateSummary: No summary for %s", tostring(name))
-		TOGBankClassic_Output:Debug("Cannot send state summary for %s (no data)", name)
+		TOGBankClassic_Output:Debug("SYNC", "Cannot send state summary for %s (no data)", name)
 		return
 	end
 
@@ -789,6 +789,7 @@ function TOGBankClassic_Guild:SendStateSummary(name, target)
 	local itemCount = 0
 	for _ in pairs(summary.items) do itemCount = itemCount + 1 end
 	TOGBankClassic_Output:Debug(
+		"SYNC",
 		"Sent state summary for %s to %s (%d unique items, %d bytes)",
 		name,
 		target,
@@ -809,7 +810,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	local norm = self:NormalizeName(name)
 	if not self.Info or not self.Info.alts or not self.Info.alts[norm] then
 		TOGBankClassic_Output:DebugComm("RespondToStateSummary: No data for %s", norm)
-		TOGBankClassic_Output:Debug("Cannot respond to state summary for %s (no data)", norm)
+		TOGBankClassic_Output:Debug("SYNC", "Cannot respond to state summary for %s (no data)", norm)
 		return
 	end
 
@@ -828,7 +829,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		-- If current alt doesn't have a hash, send full data (might be from pre-hash version)
 		if not currentHash then
 			TOGBankClassic_Output:DebugComm("DELTA MODE: Current alt missing hash - sending full data for %s", norm)
-			TOGBankClassic_Output:Debug("Sending full data to %s for %s (responder has no hash)", requester, norm)
+			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (responder has no hash)", requester, norm)
 			self:SendAltData(norm)
 			return
 		end
@@ -836,7 +837,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		-- If requester has no hash (nil), they have no data - send everything
 		if not requesterHash then
 			TOGBankClassic_Output:DebugComm("DELTA MODE: REQUESTER HAS NO DATA (hash=nil) - sending full data for %s", norm)
-			TOGBankClassic_Output:Debug("Sending full data to %s for %s (requester has no data)", requester, norm)
+			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (requester has no data)", requester, norm)
 			self:SendAltData(norm)
 			return
 		end
@@ -854,12 +855,13 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			if not TOGBankClassic_Core:SendWhisper("togbank-nochange", data, requester, "NORMAL") then
 				return
 			end
-			TOGBankClassic_Output:Debug("Sent no-change reply to %s for %s (hash=%d)", requester, norm, currentHash)
+			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%d)", requester, norm, currentHash)
 			return
 		else
 			-- Hashes differ - send data
 			TOGBankClassic_Output:DebugComm("DELTA MODE: HASH MISMATCH - calling SendAltData for %s (requester=%d, current=%d)", norm, requesterHash, currentHash)
 			TOGBankClassic_Output:Debug(
+				"SYNC",
 				"Sending data to %s for %s (hash mismatch: requester=%d, current=%d)",
 				requester,
 				norm,
@@ -885,20 +887,12 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		if not TOGBankClassic_Core:SendWhisper("togbank-nochange", data, requester, "NORMAL") then
 			return
 		end
-		TOGBankClassic_Output:Debug("Sent no-change reply to %s for %s (v%d)", requester, norm, currentVersion)
+		TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (v%d)", requester, norm, currentVersion)
 		return
 	end
 
-	-- Requester has different version - send data via GUILD channel
-	-- Use existing SendAltData which handles protocol mode and dual-send
-	TOGBankClassic_Output:DebugComm("VERSION MISMATCH: calling SendAltData for %s", norm)
-	TOGBankClassic_Output:Debug(
-		"Sending data to %s for %s (requester v%d, current v%d)",
-		requester,
-		norm,
-		requesterVersion,
-		currentVersion
-	)
+	-- Version mismatch - send full data
+	TOGBankClassic_Output:Debug("SYNC", "Sending data to %s for %s (version mismatch: requester=%d, current=%d)", requester, norm, requesterVersion, currentVersion)
 	self:SendAltData(norm)
 end
 
@@ -1019,6 +1013,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 			if forceDelta or deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
 				useDelta = true
 				TOGBankClassic_Output:Debug(
+					"DELTA",
 					"✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)%s",
 					norm,
 					deltaSize,
@@ -1029,6 +1024,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 				)
 			else
 				TOGBankClassic_Output:Debug(
+					"DELTA",
 					"✗ Delta too large for %s: %d bytes vs %d bytes full (%.1f%% > %.0f%% threshold)",
 					norm,
 					deltaSize,
@@ -1039,9 +1035,9 @@ function TOGBankClassic_Guild:SendAltData(name)
 			end
 		else
 			if deltaData then
-				TOGBankClassic_Output:Debug("No changes detected for %s (delta would be empty)", norm)
+				TOGBankClassic_Output:Debug("DELTA", "No changes detected for %s (delta would be empty)", norm)
 			else
-				TOGBankClassic_Output:Debug("No previous snapshot for %s (first sync)", norm)
+				TOGBankClassic_Output:Debug("DELTA", "No previous snapshot for %s (first sync)", norm)
 			end
 		end
 	end
@@ -1050,7 +1046,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 	if deltaData and self.Info and self.Info.name then
 		local computeTime = debugprofilestop() - computeStart
 		TOGBankClassic_Database:RecordDeltaComputeTime(self.Info.name, computeTime)
-		TOGBankClassic_Output:Debug("Delta computation took %.2fms", computeTime)
+		TOGBankClassic_Output:Debug("DELTA", "Delta computation took %.2fms", computeTime)
 	end
 
 	if useDelta then
@@ -1062,7 +1058,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 		if mode.sendLegacy then
 			deltaWithLinks = TOGBankClassic_Core:SerializeWithChecksum(deltaData)
 			TOGBankClassic_Core:SendCommMessage("togbank-d2", deltaWithLinks, "Guild", nil, "BULK", OnChunkSent)
-			TOGBankClassic_Output:Debug("Sent delta update for %s via togbank-d2 (with Links)", norm)
+			TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d2 (with Links)", norm)
 		end
 
 		-- Prepare new format (without Links) if needed - saves 60-80 bytes per item
@@ -1070,18 +1066,18 @@ function TOGBankClassic_Guild:SendAltData(name)
 			local strippedDelta = self:StripDeltaLinks(deltaData)
 			deltaNoLinks = TOGBankClassic_Core:SerializeWithChecksum(strippedDelta)
 			TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, "Guild", nil, "BULK", OnChunkSent)
-			TOGBankClassic_Output:Debug("Sent delta update for %s via togbank-d4 (no Links)", norm)
+			TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d4 (no Links)", norm)
 
 			-- Log bandwidth savings if dual-sending
 			if mode.sendLegacy and deltaWithLinks then
 				local savings = string.len(deltaWithLinks) - string.len(deltaNoLinks)
-				TOGBankClassic_Output:Debug("Bandwidth saved: %d bytes (%.1f%%)", savings, (savings / string.len(deltaWithLinks)) * 100)
+				TOGBankClassic_Output:Debug("DELTA", "Bandwidth saved: %d bytes (%.1f%%)", savings, (savings / string.len(deltaWithLinks)) * 100)
 			end
 		end
 
 		-- Track metrics using the size of the format we're using (prefer new format)
 		local serialized = deltaNoLinks or deltaWithLinks
-		TOGBankClassic_Output:Debug("Final delta size: %d bytes", string.len(serialized or ""))
+		TOGBankClassic_Output:Debug("DELTA", "Final delta size: %d bytes", string.len(serialized or ""))
 
 		-- Track metrics
 		if self.Info and self.Info.name then
@@ -1152,6 +1148,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 		-- Log what was sent
 		if mode.sendLegacy and mode.sendNew then
 			TOGBankClassic_Output:Debug(
+				"SYNC",
 				"Sent full sync for %s [%s]: togbank-d (%d bytes) + togbank-d3 (%d bytes, %.1f%% savings)",
 				norm,
 				FEATURES.PROTOCOL_MODE,
@@ -1161,12 +1158,14 @@ function TOGBankClassic_Guild:SendAltData(name)
 			)
 		elseif mode.sendLegacy then
 			TOGBankClassic_Output:Debug(
+				"SYNC",
 				"Sent full sync for %s [LEGACY_ONLY]: togbank-d (%d bytes with Links)",
 				norm,
 				string.len(dataWithLinks or "")
 			)
 		elseif mode.sendNew then
 			TOGBankClassic_Output:Debug(
+				"SYNC",
 				"Sent full sync for %s [NEW_ONLY]: togbank-d3 (%d bytes without Links)",
 				norm,
 				string.len(dataNoLinks or "")
