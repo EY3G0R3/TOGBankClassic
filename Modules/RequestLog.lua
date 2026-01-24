@@ -463,73 +463,15 @@ function Guild:ApplyRequestSnapshot(payload)
 
 	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 
-	-- Merge with existing requests instead of replacing
-	-- [SYNC-006] Build index of local requests by ID with timestamps
-	local localById = {}
-	for _, localReq in ipairs(self.Info.requests or {}) do
-		if localReq.id then
-			localById[localReq.id] = localReq
-		end
-	end
-
-	local tombstones = payload.tombstones or {}
-	local merged = {}
-
-	-- [SYNC-006] Add incoming requests, but prefer newer local version if exists
-	local incomingProcessed = {}
-	for _, incomingReq in ipairs(sanitized) do
-		incomingProcessed[incomingReq.id] = true
-		local localReq = localById[incomingReq.id]
-
-		if localReq then
-			-- Both exist - compare timestamps
-			local localUpdated = tonumber(localReq.updatedAt or localReq.date or 0) or 0
-			local incomingUpdated = tonumber(incomingReq.updatedAt or incomingReq.date or 0) or 0
-
-			if localUpdated > incomingUpdated then
-				table.insert(merged, localReq)
-				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Keeping newer local request id=%s (local=%d, incoming=%d)",
-					incomingReq.id, localUpdated, incomingUpdated))
-			else
-				table.insert(merged, incomingReq)
-				if incomingUpdated > localUpdated then
-					TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Replacing with newer incoming request id=%s (local=%d, incoming=%d)",
-						incomingReq.id, localUpdated, incomingUpdated))
-				end
-			end
-		else
-			-- Only incoming has it
-			table.insert(merged, incomingReq)
-		end
-	end
-
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Processed %d incoming requests", #sanitized))
-
-	-- [SYNC-006] Add local requests that weren't in incoming (and not tombstoned)
-	local localPreservedCount = 0
-	for _, localReq in ipairs(self.Info.requests or {}) do
-		if localReq.id and not incomingProcessed[localReq.id] then
-			local tombstoneTs = tonumber(tombstones[localReq.id] or 0) or 0
-			local localUpdated = tonumber(localReq.updatedAt or localReq.date or 0) or 0
-			-- Only keep if not tombstoned or if local update is newer than tombstone
-			if tombstoneTs == 0 or localUpdated > tombstoneTs then
-				table.insert(merged, localReq)
-				localPreservedCount = localPreservedCount + 1
-				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserving local-only request id=%s, requester=%s, item=%s",
-					localReq.id, localReq.requester or "nil", localReq.item or "nil"))
-			else
-				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: DROPPING local request id=%s (tombstoned at %d, updated at %d)",
-					localReq.id, tombstoneTs, localUpdated))
-			end
-		end
-	end
-
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserved %d local-only requests, merged list has %d total",
-		localPreservedCount, #merged))
-
-	-- [SYNC-005] FIX: Actually use the merged list!
-	self.Info.requests = merged
+	-- [REPLAY-FIX] Apply incoming snapshot directly (no merge).
+	-- Local requests will be restored by ReplayRequestLogEntries() which replays
+	-- any log entries that aren't reflected in the incoming requestLogApplied.
+	-- This is the correct event-sourcing approach: snapshot + replay = final state.
+	local localCountBefore = #(self.Info.requests or {})
+	self.Info.requests = sanitized
 	self.Info.requestsVersion = latest
+	TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestSnapshot: Replaced requests (was %d, now %d) - replay will restore local entries",
+		localCountBefore, #sanitized))
 
 	local logApplied = payload.requestLogApplied
 	if type(logApplied) == "table" then
