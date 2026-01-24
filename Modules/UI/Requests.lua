@@ -768,7 +768,7 @@ function TOGBankClassic_UI_Requests:SortedRequests()
 		table.insert(list, req)
 	end
 
-	TOGBankClassic_Output:Debug(string.format("[UI-003] SortedRequests: Found %d requests in Guild.Info", #list))
+	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] SortedRequests: Found %d requests in Guild.Info", #list))
 
 	local column = self.sortColumn or "date"
 	local direction = self.sortDirection or "desc"
@@ -1057,7 +1057,7 @@ end
 
 function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 	if not self.requesterFilter and not self.bankFilter then
-		TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyFilters: No filters, returning all %d requests", #(requests or {})))
+		TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] ApplyFilters: No filters, returning all %d requests", #(requests or {})))
 		return requests
 	end
 
@@ -1069,7 +1069,7 @@ function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 		end
 	end
 
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)", 
+	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)", 
 		#(requests or {}), #filtered, tostring(self.requesterFilter), tostring(self.bankFilter)))
 
 	return filtered
@@ -1106,7 +1106,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	sorted = self:ApplyFilters(sorted)
 	local count = #sorted
 	
-	TOGBankClassic_Output:Debug(string.format("[UI-003] DrawContent: Displaying %d requests", count))
+	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] DrawContent: Displaying %d requests", count))
 	
 	if count == 0 then
 		local empty = self:EnsureEmptyLabel()
