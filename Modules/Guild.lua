@@ -695,6 +695,7 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	for _ in pairs(self.onlineMembers) do
 		count = count + 1
 	end
+	TOGBankClassic_Output:Debug("Refreshed online cache: %d members online", count)
 	print("[GUILD ROSTER] Refreshed online cache: " .. count .. " members online")
 end
 
