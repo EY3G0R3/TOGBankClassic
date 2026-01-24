@@ -425,6 +425,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 										-- They have data, we don't - query
 										shouldQuery = true
 										self:Debug(
+											"SYNC",
 											">",
 											ColorPlayerName(sender),
 											"has bank data for",
@@ -434,6 +435,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 										-- Hashes differ - we need an update
 										shouldQuery = true
 										self:Debug(
+											"SYNC",
 											">",
 											ColorPlayerName(sender),
 											"has different inventory for",
@@ -457,6 +459,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							if not ourVersion or theirVersion > ourVersion then
 								shouldQuery = true
 								self:Debug(
+									"SYNC",
 									">",
 									ColorPlayerName(sender),
 									"has fresher bank data about",
@@ -487,6 +490,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			TOGBankClassic_Output:DebugComm("RECEIVED PULL-BASED REQUEST from %s for alt %s", sender, altName)
 			
 			self:Debug(
+				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -515,6 +519,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end
 				
 				self:Debug(
+					"SYNC",
 					"<",
 					"Sent togbank-rr to",
 					ColorPlayerName(sender),
@@ -522,7 +527,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				)
 			else
 				-- Don't respond if we don't have the data
-				self:Debug("Ignoring pull-based request (no data for %s)", altName)
+				self:Debug("SYNC", "Ignoring pull-based request (no data for %s)", altName)
 			end
 			
 			return
@@ -531,6 +536,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		-- Legacy request handling
 		if data.player then
 			self:Debug(
+				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -615,6 +621,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			TOGBankClassic_Output:DebugComm("RECEIVED ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s)", sender, altName, tostring(isBanker), tostring(hasData))
 			
 			self:Debug(
+				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -643,6 +650,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			TOGBankClassic_Output:DebugComm("RECEIVED STATE SUMMARY from %s for alt %s (hash=%s, version=%s)", sender, altName, tostring(summary and summary.hash), tostring(summary and summary.version))
 			
 			self:Debug(
+				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -664,6 +672,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			TOGBankClassic_Output:DebugComm("RECEIVED NO-CHANGE from %s for alt %s (version=%d)", sender, altName, version)
 			
 			self:Debug(
+				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -701,6 +710,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				allowed = true
 			end
 			self:Debug(
+				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -715,6 +725,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		if data.type == "requests" then
 			local status = TOGBankClassic_Guild:ReceiveRequestsData(data)
 			self:Debug(
+				"REQUESTS",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -723,7 +734,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			)
 		end
 		if data.type == "requests-log" then
-			self:Debug(">", ColorPlayerName(sender), SHARES_COLOR, "requests log. We accept it by default.")
+			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "requests log. We accept it by default.")
 			TOGBankClassic_Guild:ReceiveRequestLogEntries(data, sender)
 		end
 
@@ -738,6 +749,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
 				or ADOPTION_STATUS.UNAUTHORIZED
 			self:Debug(
+				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -774,6 +786,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
 				or ADOPTION_STATUS.UNAUTHORIZED
 			self:Debug(
+				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -812,6 +825,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if not valid then
 					local errorMsg = "Validation failed: " .. (err or "unknown error")
 					self:Debug(
+						"DELTA",
 						">",
 						ColorPlayerName(sender),
 						SHARES_COLOR,
@@ -845,6 +859,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
 				self:Debug(
+					"DELTA",
 					">",
 					ColorPlayerName(sender),
 					SHARES_COLOR,
@@ -854,6 +869,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				)
 			else
 				self:Debug(
+					"DELTA",
 					">",
 					ColorPlayerName(sender),
 					SHARES_COLOR,
@@ -881,6 +897,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if not valid then
 					local errorMsg = "Validation failed: " .. (err or "unknown error")
 					self:Debug(
+						"DELTA",
 						">",
 						ColorPlayerName(sender),
 						SHARES_COLOR,
@@ -900,6 +917,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
 				self:Debug(
+					"DELTA",
 					">",
 					ColorPlayerName(sender),
 					SHARES_COLOR,
@@ -909,6 +927,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				)
 			else
 				self:Debug(
+					"DELTA",
 					">",
 					ColorPlayerName(sender),
 					SHARES_COLOR,
@@ -928,6 +947,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local toVersion = data.toVersion
 			
 			self:Debug(
+				"REQUESTS",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -981,6 +1001,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local deltaChain = data.deltas
 			
 			self:Debug(
+				"REQUESTS",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -992,6 +1013,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			-- Apply delta chain
 			local status = TOGBankClassic_Guild:ApplyDeltaChain(altName, deltaChain)
 			self:Debug(
+				"REQUESTS",
 				"Delta chain application",
 				FormatSyncStatus(status)
 			)
@@ -1002,7 +1024,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		TOGBankClassic_Guild:Hello("reply")
 	end
 	if prefix == "togbank-hr" then
-		self:Debug(data)
+		self:Debug("PROTOCOL", data)
 	end
 	if prefix == "togbank-s" then
 		TOGBankClassic_Guild:Share("reply")
