@@ -412,16 +412,16 @@ function Guild:ApplyRequestSnapshot(payload)
 	end
 	self:EnsureRequestsInitialized()
 
-	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: Checking payload")
+	TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] ApplyRequestSnapshot: Checking payload")
 	
 	local incomingList = payload.requests
 	if not incomingList or type(incomingList) ~= "table" then
-		TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot FAILED: no requests in payload")
+		TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] ApplyRequestSnapshot FAILED: no requests in payload")
 		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: no requests in payload")
 		return false
 	end
 
-	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Sanitizing %d incoming requests", #incomingList))
+	TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] ApplyRequestSnapshot: Sanitizing %d incoming requests", #incomingList)
 	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Received snapshot with %d requests, local has %d requests", 
 		#incomingList, #(self.Info.requests or {})))
 
@@ -437,12 +437,12 @@ function Guild:ApplyRequestSnapshot(payload)
 		end
 	end
 
-	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
+	TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized)
 	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 
 	-- Merge with existing requests instead of replacing
 	-- [SYNC-006] Build index of local requests by ID with timestamps
-	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: Building local index")
+	TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] ApplyRequestSnapshot: Building local index")
 	local localById = {}
 	for _, localReq in ipairs(self.Info.requests or {}) do
 		if localReq.id then
@@ -453,7 +453,7 @@ function Guild:ApplyRequestSnapshot(payload)
 	local tombstones = payload.tombstones or {}
 	local merged = {}
 	
-	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Merging %d incoming requests", #sanitized))
+	TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] ApplyRequestSnapshot: Merging %d incoming requests", #sanitized)
 	
 	-- [SYNC-006] Add incoming requests, but prefer newer local version if exists
 	local incomingProcessed = {}
@@ -508,11 +508,11 @@ function Guild:ApplyRequestSnapshot(payload)
 		localPreservedCount, #merged))
 	
 	-- [SYNC-005] FIX: Actually use the merged list!
-	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Assigning merged list (%d requests)", #merged))
+	TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] ApplyRequestSnapshot: Assigning merged list (%d requests)", #merged)
 	self.Info.requests = merged
 	self.Info.requestsVersion = latest
 
-	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: SUCCESS - returning true")
+	TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] ApplyRequestSnapshot: SUCCESS - returning true")
 
 	local logApplied = payload.requestLogApplied
 	if type(logApplied) == "table" then
@@ -914,7 +914,7 @@ function Guild:ReceiveRequestsData(payload)
 
 	local incomingCount = (payload.requests and type(payload.requests) == "table") and #payload.requests or 0
 	local localCountBefore = self.Info.requests and #self.Info.requests or 0
-	TOGBankClassic_Core:Print(string.format("[MERGE] START - local=%d, incoming=%d", localCountBefore, incomingCount))
+	TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] START - local=%d, incoming=%d", localCountBefore, incomingCount)
 	TOGBankClassic_Output:Debug(string.format("[SYNC-003n] ReceiveRequestsData: START - local=%d requests, incoming=%d requests", 
 		localCountBefore, incomingCount))
 
@@ -929,11 +929,11 @@ function Guild:ReceiveRequestsData(payload)
 				end
 			else
 				nonTableCount = nonTableCount + 1
-				TOGBankClassic_Core:Print(string.format("[MERGE] WARNING: Request array has non-table entry at index %d (type=%s)", i, type(req)))
+				TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] WARNING: Request array has non-table entry at index %d (type=%s)", i, type(req))
 			end
 		end
 		if nonTableCount > 0 then
-			TOGBankClassic_Core:Print(string.format("[MERGE] Found %d non-table entries in requests array - possible SavedVariables corruption", nonTableCount))
+			TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] Found %d non-table entries in requests array - possible SavedVariables corruption", nonTableCount)
 		end
 		return latest
 	end
@@ -947,7 +947,7 @@ function Guild:ReceiveRequestsData(payload)
 	
 	if not payload.requestLogApplied then
 		-- Legacy client without requestLogApplied - use stored versions only
-		TOGBankClassic_Core:Print("[MERGE] Legacy client detected - using version comparison")
+		TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] Legacy client detected - using version comparison")
 		localVersion = tonumber(self.Info.requestsVersion or 0) or 0
 		incomingVersion = tonumber(payload.version or 0) or 0
 		isNewer = incomingVersion > localVersion
@@ -982,7 +982,7 @@ function Guild:ReceiveRequestsData(payload)
 	
 	if self:ApplyRequestSnapshot(payload) then
 		local localCountAfter = self.Info.requests and #self.Info.requests or 0
-		TOGBankClassic_Core:Print(string.format("[MERGE] COMPLETE - before=%d, after=%d", localCountBefore, localCountAfter))
+		TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] COMPLETE - before=%d, after=%d", localCountBefore, localCountAfter)
 		TOGBankClassic_Output:Debug(string.format("[SYNC-003n] ReceiveRequestsData: ADOPTED - final count=%d (was %d, incoming had %d)", 
 			localCountAfter, localCountBefore, incomingCount))
 		return ADOPTION_STATUS.ADOPTED
