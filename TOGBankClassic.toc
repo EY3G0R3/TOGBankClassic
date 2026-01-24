@@ -16,6 +16,7 @@ Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua
 # Modules
 Modules/Constants.lua
 Modules/Output.lua
+Modules/DeltaComms.lua
 Modules/Bank.lua
 Modules/Chat.lua
 Modules/Database.lua
