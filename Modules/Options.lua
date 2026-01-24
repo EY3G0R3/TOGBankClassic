@@ -28,6 +28,9 @@ function TOGBankClassic_Options:Init()
 	if self.db.global.bank["commDebug"] == nil then
 		self.db.global.bank["commDebug"] = false
 	end
+	if self.db.global.bank["muteSyncProgress"] == nil then
+		self.db.global.bank["muteSyncProgress"] = false
+	end
 	-- Initialize logger with saved level
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
 	-- Initialize comm debug with saved setting
@@ -104,6 +107,19 @@ function TOGBankClassic_Options:Init()
 				end,
 				get = function()
 					return self.db.global.bank["commDebug"]
+				end,
+			},
+			["muteSyncProgress"] = {
+				order = 2.6,
+				type = "toggle",
+				width = "full",
+				name = "Mute Sync Progress Messages",
+				desc = "Hides 'Sharing guild bank data...' and 'Send complete...' messages during data sync",
+				set = function(_, v)
+					self.db.global.bank["muteSyncProgress"] = v
+				end,
+				get = function()
+					return self.db.global.bank["muteSyncProgress"]
 				end,
 			},
 			["protocolMode"] = {
@@ -265,6 +281,10 @@ end
 
 function TOGBankClassic_Options:GetCombatHide()
 	return self.db.char.combat["hide"]
+end
+
+function TOGBankClassic_Options:IsSyncProgressMuted()
+	return self.db.global.bank["muteSyncProgress"] or false
 end
 
 function TOGBankClassic_Options:Open()
