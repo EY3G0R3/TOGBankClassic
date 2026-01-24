@@ -24,7 +24,14 @@
         "tostring",
         "math",
         "type",
-        "next"
+        "next",
+        "GuildRoster",
+        "debugprofilestop",
+        "pcall",
+        "GetAddOnMetadata",
+        "select",
+        "GetItemInfo",
+        "Item"
     ],
     "runtime.version": "Lua 5.1",
     "workspace.library": [
