@@ -1265,3 +1265,165 @@ self.Info.requests = merged
 
 **Note:** Request system could be refactored to use delta-style protocol in future for bandwidth optimization.
 
+---
+
+## 🔧 GUILD_ROSTER_UPDATE Cache System (COMM-001b) - PLANNED
+
+**Status:** 📋 Documented, awaiting implementation branch  
+**Purpose:** Fix stale roster data causing false "player online" detections  
+**Priority:** HIGH - Eliminates player-visible error spam
+
+### Problem
+
+Current `IsPlayerOnline()` implementation has a fundamental flaw:
+
+```lua
+function Guild:IsPlayerOnline(playerName)
+    GuildRoster()  -- ❌ Requests update, doesn't wait for it
+    -- GetGuildRosterInfo() returns STALE data immediately
+    for i = 1, GetNumGuildMembers() do
+        local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
+        -- isOnline flag is outdated!
+    end
+end
+```
+
+**The Race Condition:**
+1. Player logs out
+2. 5 minutes pass (roster data becomes very stale)
+3. Addon calls `IsPlayerOnline()` → `GuildRoster()` → `GetGuildRosterInfo()`
+4. `GetGuildRosterInfo()` returns data from 5 minutes ago (player still "online")
+5. Addon sends WHISPER to offline player
+6. Blizzard server returns: **"No player named X is currently playing"**
+7. Player sees error spam
+
+### Solution: Event-Driven Cache
+
+Maintain real-time cache that updates ONLY when Blizzard sends fresh data via `GUILD_ROSTER_UPDATE` event.
+
+### Implementation Plan
+
+**Step 1: Add Cache Table (Guild.lua)**
+```lua
+-- At module initialization
+TOGBankClassic_Guild.onlineMembers = {}  -- {normalizedName = true}
+```
+
+**Step 2: Cache Refresh Function (Guild.lua)**
+```lua
+function TOGBankClassic_Guild:RefreshOnlineCache()
+    wipe(self.onlineMembers)
+    
+    for i = 1, GetNumGuildMembers() do
+        local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
+        if name and isOnline then
+            local normalized = self:NormalizeName(name)
+            self.onlineMembers[normalized] = true
+        end
+    end
+    
+    TOGBankClassic_Output:Debug("Refreshed online cache: %d members online", 
+        self:CountKeys(self.onlineMembers))
+end
+```
+
+**Step 3: Event Registration (Events.lua)**
+```lua
+Events:RegisterEvent("GUILD_ROSTER_UPDATE", function()
+    TOGBankClassic_Guild:RefreshOnlineCache()
+end)
+
+-- Request initial roster on login
+Events:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+    GuildRoster()  -- Triggers GUILD_ROSTER_UPDATE when server responds
+end)
+```
+
+**Step 4: Update IsPlayerOnline() (Guild.lua)**
+```lua
+function TOGBankClassic_Guild:IsPlayerOnline(playerName)
+    if not playerName then
+        return false
+    end
+    
+    local norm = self:NormalizeName(playerName)
+    return self.onlineMembers[norm] == true
+end
+```
+
+### Benefits
+
+| Metric | Current (GuildRoster) | With Cache |
+|--------|----------------------|------------|
+| **Data Freshness** | Stale (minutes old) | Fresh (event-driven) |
+| **API Calls** | 1 per check + loop | 0 (table lookup) |
+| **Lookup Speed** | O(n) scan | O(1) hash lookup |
+| **False Positives** | High (stale data) | Minimal (ms race window) |
+| **Memory Overhead** | 0 | ~1KB for 100 members |
+| **CPU per check** | ~2ms (roster scan) | ~0.001ms (table lookup) |
+
+### When Cache Updates
+
+- ✅ Guild member logs in/out
+- ✅ Player joins/leaves guild  
+- ✅ After `GuildRoster()` call when server responds
+- ✅ Blizzard's automatic periodic updates (~every few minutes)
+- ✅ On PLAYER_ENTERING_WORLD (initial login)
+
+### Edge Cases
+
+**Q: What if someone logs out between cache update and whisper send?**  
+A: Race window reduced from minutes to milliseconds. Still possible, but 99%+ accurate.
+
+**Q: What if cache isn't initialized yet?**  
+A: Returns false (safe default - no whisper sent). `PLAYER_ENTERING_WORLD` ensures quick init.
+
+**Q: What about non-guild members?**  
+A: Not in cache, returns false. `SendWhisper()` skips send (correct behavior).
+
+**Q: Memory/performance cost?**  
+A: Negligible - ~10 bytes per member, rebuild takes <1ms for typical guild sizes.
+
+### Testing Checklist
+
+- [ ] Cache initializes on login
+- [ ] Cache updates on GUILD_ROSTER_UPDATE
+- [ ] IsPlayerOnline() returns accurate status
+- [ ] Online player: WHISPER sent
+- [ ] Offline player: WHISPER skipped, debug log
+- [ ] Rapid login/logout scenarios
+- [ ] Large guild (200+ members) performance
+- [ ] Memory usage (<2KB for 200 members)
+- [ ] Verify "No player named" errors eliminated
+
+### Files to Modify
+
+1. **Modules/Guild.lua**
+   - Add `onlineMembers = {}` table
+   - Implement `RefreshOnlineCache()`
+   - Replace `IsPlayerOnline()` logic
+
+2. **Modules/Events.lua**
+   - Register `GUILD_ROSTER_UPDATE` event
+   - Register `PLAYER_ENTERING_WORLD` event with `GuildRoster()` call
+
+3. **docs/DELTA_BUGS.md**
+   - Update [COMM-001] status to fully resolved
+   - Document stale data fix
+
+### Related Issues
+
+- [COMM-001] "No player named X is currently playing" errors
+- Complements SendWhisper() wrapper (already implemented)
+- Foundation for future friend list / battle.net online checks
+
+### Success Criteria
+
+- ✅ Zero "No player named" errors in normal operation
+- ✅ <1ms overhead per online check
+- ✅ Cache updates automatically without manual intervention
+- ✅ Works with guilds of 200+ members
+- ✅ Graceful handling of edge cases (cache not ready, non-guild members)
+
+---
+

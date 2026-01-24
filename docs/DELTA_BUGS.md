@@ -651,6 +651,20 @@ end
 **Impact:**
 Completely eliminates confusing error messages for players. All WHISPER communications now automatically verify target is online before sending. System gracefully handles logout scenarios by either falling back to GUILD broadcasts or silently skipping the message with appropriate debug logging.
 
+**Known Limitation (2026-01-24):**
+The `IsPlayerOnline()` check uses `GuildRoster()` which requests fresh data but `GetGuildRosterInfo()` returns stale data immediately. The fresh data only arrives after `GUILD_ROSTER_UPDATE` event fires. This creates a race condition where:
+1. Player appears online in stale data
+2. WHISPER is sent
+3. Player is actually offline
+4. Blizzard server returns "No player named X is currently playing" error
+
+**Planned Enhancement - COMM-001b:**
+Implement GUILD_ROSTER_UPDATE cache system to maintain accurate real-time online status:
+- Cache table updated only when Blizzard sends fresh data via GUILD_ROSTER_UPDATE event
+- Eliminates stale data issue
+- Instant lookups with no API calls
+- See FEATURE_IMPROVEMENTS.md for implementation details
+
 ---
 
 #### ✅ [DELTA-008] Repeated delta sync failures causing fallback to full sync
