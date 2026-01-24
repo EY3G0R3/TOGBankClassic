@@ -238,7 +238,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	end
 	
 	if IsInRaid() then
-		self:Debug("> (ignoring)", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
+		self:Debug("PROTOCOL", "> (ignoring)", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
 		return
 	end
 	local player = TOGBankClassic_Guild:GetPlayer()
@@ -246,13 +246,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
 	if player == sender then
-		self:Debug("> (ignoring)", prefix, prefixDesc, "(our own)")
+		self:Debug("PROTOCOL", "> (ignoring)", prefix, prefixDesc, "(our own)")
 		return
 	end
 
 	local success, data = TOGBankClassic_Core:DeserializeWithChecksum(message)
 	if not success then
-		self:Debug("> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender), "error:", tostring(data))
+		self:Debug("PROTOCOL", "> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender), "error:", tostring(data))
 		return
 	end
 	
@@ -275,7 +275,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 	if prefix ~= "togbank-r" and prefix ~= "togbank-d" then
 		-- togbank-r and togbank-d do their own output
-		self:Debug(">", ColorPlayerName(sender), ">", prefix, prefixDesc)
+		self:Debug("PROTOCOL", ">", ColorPlayerName(sender), ">", prefix, prefixDesc)
 	end
 
 	if prefix == "togbank-v" or prefix == "togbank-dv" then
@@ -349,7 +349,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			end
 			if data.roster then
 				if current_data.roster == nil or data.roster > current_data.roster then
-					self:Debug(">", ColorPlayerName(sender), "has fresher roster data, querying.")
+					self:Debug("SYNC", ">", ColorPlayerName(sender), "has fresher roster data, querying.")
 					TOGBankClassic_Guild:QueryRoster(sender, data.roster)
 				end
 			end
@@ -366,16 +366,16 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						end
 					end
 					if next(missing) then
-						self:Debug(">", ColorPlayerName(sender), "has fresher requests data, querying.")
+						self:Debug("REQUESTS", ">", ColorPlayerName(sender), "has fresher requests data, querying.")
 						TOGBankClassic_Guild:QueryRequestLog(sender, missing)
 					elseif data.requests and current_data.requests and data.requests > current_data.requests then
-						self:Debug(">", ColorPlayerName(sender), "has fresher requests snapshot, querying.")
+						self:Debug("REQUESTS", ">", ColorPlayerName(sender), "has fresher requests snapshot, querying.")
 						TOGBankClassic_Guild:QueryRequestsSnapshot(sender)
 					end
 				else
 					local currentRequests = current_data.requests
 					if currentRequests == nil or data.requests > currentRequests then
-						self:Debug(">", ColorPlayerName(sender), "has fresher requests data, querying.")
+						self:Debug("REQUESTS", ">", ColorPlayerName(sender), "has fresher requests data, querying.")
 						TOGBankClassic_Guild:QueryRequestsSnapshot(sender)
 					end
 				end
@@ -444,6 +444,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 									-- No hash available, fall back to version comparison
 									shouldQuery = true
 									self:Debug(
+										"SYNC",
 										">",
 										ColorPlayerName(sender),
 										"has fresher bank data about",

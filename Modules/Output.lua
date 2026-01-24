@@ -54,7 +54,7 @@ function TOGBankClassic_Output:Init()
 	-- Load persistent log from SavedVariables if it exists
 	if TOGBankClassicDB_DebugLog then
 		self.persistentLog = TOGBankClassicDB_DebugLog
-		TOGBankClassic_Output:Debug("Loaded %d persistent debug log entries from SavedVariables", #self.persistentLog)
+		TOGBankClassic_Output:Debug("SYSTEM", "Loaded %d persistent debug log entries from SavedVariables", #self.persistentLog)
 		-- Clean up old entries on load
 		self:GarbageCollectPersistentLog()
 	else
@@ -400,7 +400,7 @@ function TOGBankClassic_Output:GarbageCollectPersistentLog()
 	end
 	
 	if removed > 0 then
-		TOGBankClassic_Output:Debug("Garbage collected %d old debug log entries (older than %d days)", removed, self.persistentLogMaxAge / 86400)
+		TOGBankClassic_Output:Debug("SYSTEM", "Garbage collected %d old debug log entries (older than %d days)", removed, self.persistentLogMaxAge / 86400)
 	end
 end
 
@@ -412,7 +412,7 @@ function TOGBankClassic_Output:SavePersistentLog()
 	-- Write to global SavedVariable
 	TOGBankClassicDB_DebugLog = self.persistentLog
 	
-	TOGBankClassic_Output:Debug("Saved %d persistent debug log entries to SavedVariables", #self.persistentLog)
+	TOGBankClassic_Output:Debug("SYSTEM", "Saved %d persistent debug log entries to SavedVariables", #self.persistentLog)
 end
 
 -- Export persistent log to formatted string for viewing
