@@ -1,0 +1,42 @@
+{
+    "diagnostics.globals": [
+        "CanViewOfficerNote",
+        "GetGuildRosterInfo",
+        "GetNumGuildMembers",
+        "GetGuildInfo",
+        "IsInGuild",
+        "GetNormalizedRealmName",
+        "UnitName",
+        "GetServerTime",
+        "GetTime",
+        "C_Timer",
+        "GetSendMailItem",
+        "ATTACHMENTS_MAX_SEND",
+        "GetClassColor",
+        "LibStub",
+        "ChatFrame_AddMessageEventFilter",
+        "date",
+        "table",
+        "string",
+        "pairs",
+        "ipairs",
+        "tonumber",
+        "tostring",
+        "math",
+        "type",
+        "next",
+        "GuildRoster",
+        "debugprofilestop",
+        "pcall",
+        "GetAddOnMetadata",
+        "select",
+        "GetItemInfo",
+        "Item",
+        "wipe"
+    ],
+    "runtime.version": "Lua 5.1",
+    "workspace.library": [
+        "${3rd}/luassert/library",
+        "${3rd}/busted/library"
+    ]
+}

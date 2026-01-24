@@ -41,6 +41,8 @@ function TOGBankClassic_Events:RegisterEvents()
 	self:RegisterEvent("MAIL_INBOX_UPDATE")
 	self:RegisterEvent("MAIL_CLOSED")
 	self:RegisterEvent("MAIL_SEND_SUCCESS")
+	self:RegisterEvent("GUILD_ROSTER_UPDATE")
+	self:RegisterEvent("PLAYER_ENTERING_WORLD")
 	self:RegisterEvent("TRADE_SHOW")
 	self:RegisterEvent("TRADE_CLOSED")
 	self:RegisterEvent("AUCTION_HOUSE_SHOW")
@@ -202,6 +204,16 @@ end
 function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 	-- Save persistent debug log to SavedVariables
 	TOGBankClassic_Output:SavePersistentLog()
+end
+
+-- Request initial guild roster update on world enter
+function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_)
+	GuildRoster()
+end
+
+-- Refresh online members cache when roster updates
+function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
+	TOGBankClassic_Guild:RefreshOnlineCache()
 end
 
 function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)

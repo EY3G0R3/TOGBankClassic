@@ -3,6 +3,10 @@ TOGBankClassic_Guild = {}
 
 TOGBankClassic_Guild.Info = nil
 
+-- Cache of online guild members (updated via GUILD_ROSTER_UPDATE)
+-- Avoids stale data from GuildRoster() which only requests an update
+TOGBankClassic_Guild.onlineMembers = {}
+
 -- Temporary in-memory error storage for when Guild.Info is not initialized
 TOGBankClassic_Guild.tempDeltaErrors = {
 	lastErrors = {},
@@ -676,29 +680,35 @@ function TOGBankClassic_Guild:SenderHasGbankNote(sender)
 	return false
 end
 
+-- Refresh the online members cache from current guild roster
+-- Called automatically when GUILD_ROSTER_UPDATE event fires
+function TOGBankClassic_Guild:RefreshOnlineCache()
+	wipe(self.onlineMembers)
+	
+	for i = 1, GetNumGuildMembers() do
+		local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
+		if name and isOnline then
+			local normalized = self:NormalizeName(name)
+			self.onlineMembers[normalized] = true
+		end
+	end
+	
+	local count = 0
+	for _ in pairs(self.onlineMembers) do
+		count = count + 1
+	end
+	TOGBankClassic_Output:Debug("Refreshed online cache: %d members online", count)
+end
+
 -- Check if a player is currently online in the guild
+-- Uses cached roster data updated via GUILD_ROSTER_UPDATE event
 function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	if not playerName then
 		return false
 	end
-
-	-- Request fresh guild roster data (COMM-002)
-	-- Without this, GetGuildRosterInfo() returns stale data
-	GuildRoster()
-
+	
 	local norm = self:NormalizeName(playerName)
-
-	for i = 1, GetNumGuildMembers() do
-		local playerRealm, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
-		if playerRealm then
-			local memberNorm = self:NormalizeName(playerRealm)
-			if memberNorm == norm then
-				return isOnline == 1 or isOnline == true
-			end
-		end
-	end
-
-	return false
+	return self.onlineMembers[norm] == true
 end
 
 -- v0.8.0: Compute minimal state summary for pull-based protocol
