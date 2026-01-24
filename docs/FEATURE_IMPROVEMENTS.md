@@ -1440,9 +1440,9 @@ A: Negligible - ~10 bytes per member, rebuild takes <1ms for typical guild sizes
 - Wading through thousands of messages to find relevant ones is inefficient
 
 ### Solution
-Add category-based filtering to the debug output system. Each debug message gets tagged with a category, and users can enable/disable specific categories.
+Add category-based filtering to the debug output system. Each debug message gets tagged with a category, and users can enable/disable specific categories via the options UI.
 
-### Proposed Categories
+### Debug Categories
 
 - **ROSTER** - Guild roster updates, online/offline tracking
 - **COMMS** - All addon communication traffic (high volume)
@@ -1456,58 +1456,80 @@ Add category-based filtering to the debug output system. Each debug message gets
 - **DATABASE** - Database operations, SavedVariables
 - **EVENTS** - WoW event handling (GUILD_ROSTER_UPDATE, etc.)
 
-### Slash Commands
+### User Interface
 
-```
-/togbank debugcat list                    # Show all categories and their status
-/togbank debugcat enable <category>       # Enable specific category
-/togbank debugcat disable <category>      # Disable specific category
-/togbank debugcat only <category>         # Disable all except one
-/togbank debugcat all                     # Enable all categories
-/togbank debugcat none                    # Disable all categories
-```
+**Options Panel Redesign** - Split into two tabs:
 
-### Usage Examples
+**Tab 1: "General"**
+- Existing options (log level, sync messages mute, etc.)
+- Keeps main config clean and uncluttered
+
+**Tab 2: "Debug"**
+- Checkbox for each debug category (11 checkboxes total)
+- "Enable All" / "Disable All" buttons
+- Categories default to OFF (opt-in to reduce spam)
+- Only shown when debug mode is enabled via `/togbank debug`
+- Settings persist in SavedVariables across sessions
+
+**No slash commands needed** - all controls in UI
+
+### Code Examples
 
 ```lua
 -- Old style (no category, always shows if debug enabled)
 TOGBankClassic_Output:Debug("Some message")
 
--- New style (with category)
+-- New style (category as first parameter)
 TOGBankClassic_Output:Debug("ROSTER", "Refreshed online cache: %d members", count)
 TOGBankClassic_Output:Debug("COMMS", "Received message from %s", sender)
+
+-- Category is checked:
+-- 1. If not a valid category string -> always show (backward compatible)
+-- 2. If valid category but disabled -> skip message
+-- 3. If valid category and enabled -> show message
 ```
 
 ### Implementation Plan
 
-1. Add category storage table to Output module (persist in SavedVariables)
-2. Modify `TOGBankClassic_Output:Debug()` to accept optional category parameter
-3. Add category enable/disable functions
-4. Add slash command handlers in Chat.lua
-5. Update high-traffic Debug() calls with appropriate categories
-6. Support backward compatibility (calls without category always show)
+1. **Constants.lua** - Add `DEBUG_CATEGORY` table with all categories ✅
+2. **Output.lua** - Add `debugCategories = {}` storage, modify `Debug()` function
+3. **Database.lua** - Add SavedVariables field for category state persistence
+4. **Options.lua** - Add "Debug Categories" section with checkboxes for each category
+5. **Various modules** - Update high-traffic Debug() calls with categories (gradual)
+
+### Default Behavior
+
+- All categories **disabled by default** (opt-in to avoid spam)
+- User must explicitly enable categories they want to see
+- Uncategorized Debug() calls always show (backward compatibility)
+- Settings persist across `/reload` and sessions
 
 ### Files to Modify
 
-1. **Modules/Output.lua** - Add category tracking and filtering
-2. **Modules/Chat.lua** - Add `/togbank debugcat` commands
-3. **Various modules** - Update Debug() calls with categories
+1. **Modules/Constants.lua** - Define DEBUG_CATEGORY constants ✅
+2. **Modules/Output.lua** - Category tracking, modified Debug() function
+3. **Modules/Database.lua** - SavedVariables schema for category state
+4. **Modules/Options.lua** - UI controls for category toggles
+5. **Various modules** - Update Debug() calls (gradual rollout)
 
 ### Testing Checklist
 
-- [ ] Categories persist across sessions
-- [ ] Enabling/disabling categories works correctly
-- [ ] `only` command disables all others
+- [ ] Category checkboxes appear in Options panel
+- [ ] Categories default to disabled (unchecked)
+- [ ] Toggling categories on/off filters debug output correctly
+- [ ] Settings persist across `/reload`
+- [ ] Settings persist across logout/login
+- [ ] "Enable All" / "Disable All" buttons work
 - [ ] Backward compatibility (old Debug() calls still work)
-- [ ] High-traffic categories (COMMS, ROSTER) reduce spam when disabled
-- [ ] Category list command shows current state clearly
+- [ ] High-traffic categories (COMMS) reduce spam when disabled
 
 ### Success Criteria
 
 - ✅ Can enable only ROSTER category to debug guild cache without COMMS spam
-- ✅ Category settings persist across `/reload`
+- ✅ Category settings persist across sessions
 - ✅ Existing Debug() calls work without modification
-- ✅ Easy to temporarily focus on one subsystem for troubleshooting
+- ✅ Easy to toggle categories on/off in options UI
+- ✅ All categories default to OFF (opt-in)
 
 ---
 

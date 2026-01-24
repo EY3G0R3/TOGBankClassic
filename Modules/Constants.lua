@@ -22,6 +22,21 @@ LOG_LEVEL = {
 	RESPONSE = 5,    -- response to user commands (always shown)
 }
 
+-- Debug categories for filtering
+DEBUG_CATEGORY = {
+	ROSTER = "ROSTER",           -- Guild roster updates, online/offline tracking
+	COMMS = "COMMS",             -- All addon communication traffic
+	DELTA = "DELTA",             -- Delta sync operations and computations
+	SYNC = "SYNC",               -- Data synchronization operations
+	CACHE = "CACHE",             -- Cache operations (guild roster cache, etc.)
+	WHISPER = "WHISPER",         -- Whisper sends, skips, and online checks
+	REQUESTS = "REQUESTS",       -- Request system activity and updates
+	UI = "UI",                   -- UI operations, window opens/closes
+	PROTOCOL = "PROTOCOL",       -- Protocol version negotiation
+	DATABASE = "DATABASE",       -- Database operations, SavedVariables
+	EVENTS = "EVENTS",           -- WoW event handling
+}
+
 -- Request log compaction settings
 REQUEST_LOG = {
 	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests removed after this
