@@ -1,4 +1,39 @@
-TOGBankClassic_Mail = {}
+TOGBankClassic_Mail = {
+	-- State for split operation
+	splitState = nil  -- {bag, slot, amount, attachmentSlot, request}
+}
+
+-- Initialize split stack popup dialog
+if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
+	StaticPopupDialogs["TOGBANK_SPLIT_STACK"] = {
+		text = "%s",
+		button1 = "Split & Attach",
+		button2 = "Cancel",
+		OnAccept = function(self, data)
+			if not data then return end
+			-- Split the stack (puts it on cursor)
+			ClearCursor()
+			C_Container.SplitContainerItem(data.bag, data.slot, data.amount)
+			-- Complete attachment after a brief delay for cursor update
+			C_Timer.After(0.1, function()
+				ClickSendMailItemButton(data.attachmentSlot)
+				-- Update status
+				if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
+					local message = string.format("Split and attached %d %s for %s. Click Send to complete.",
+						data.amount, data.itemName, data.requester)
+					TOGBankClassic_UI_Requests.Window:SetStatusText(message)
+				end
+			end)
+		end,
+		OnCancel = function()
+			-- Nothing to clean up
+		end,
+		timeout = 0,
+		whileDead = true,
+		hideOnEscape = true,
+		preferredIndex = 3,
+	}
+end
 
 -- Check if mailbox is actually open (uses frame state as ground truth)
 function TOGBankClassic_Mail:IsMailboxOpen()
@@ -346,10 +381,10 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 		end
 	end
 
-	-- If no stacks are small enough, we can't auto-fulfill
+	-- If no stacks are small enough, we can split automatically
 	if usableItems == 0 and smallestStack and smallestStack > qtyNeeded then
-		local reason = string.format("Smallest stack is %d. Split to %d or less.", smallestStack, qtyNeeded)
-		return false, reason, totalInBags, smallestStack
+		local reason = string.format("Split from stack of %d.", smallestStack)
+		return true, reason, totalInBags, smallestStack
 	end
 
 	return true, nil, usableItems, smallestStack
@@ -414,8 +449,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 
 		local remaining = qtyNeeded - attached
 
-		-- Only attach if this stack won't exceed what we need
-		-- (Classic Era doesn't support programmatic splitting)
+		-- Attach full stacks that don't exceed what we need
 		if item.count <= remaining then
 			ClearCursor()
 			C_Container.PickupContainerItem(item.bag, item.slot)
@@ -423,9 +457,9 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 
 			attached = attached + item.count
 			attachmentSlot = attachmentSlot + 1
-		else
-			-- Remember we skipped a stack that was too large
-			skippedLargeStack = item.count
+		elseif item.count > remaining and not skippedLargeStack then
+			-- Found first oversized stack - offer to split it
+			skippedLargeStack = item
 		end
 	end
 
@@ -437,10 +471,37 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		message = string.format("Attached %d of %d %s (partial). Click Send, then fulfill again.",
 			attached, qtyNeeded, itemName)
 	elseif skippedLargeStack then
-		-- Couldn't attach anything because all stacks are too large
-		message = string.format("Your smallest stack has %d. Split to %d or less first.",
-			skippedLargeStack, qtyNeeded)
-		return false, message, 0
+		-- Offer to split the oversized stack
+		local remaining = qtyNeeded - attached
+		print("DEBUG: skippedLargeStack type:", type(skippedLargeStack))
+		if type(skippedLargeStack) == "table" then
+			print("DEBUG: About to show popup for", remaining, "of", skippedLargeStack.count, itemName)
+			-- Show confirmation popup
+			local popupText = string.format("Split %d from stack of %d %s?", remaining, skippedLargeStack.count, itemName)
+			print("DEBUG: Popup text:", popupText)
+			local dialog = StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText)
+			print("DEBUG: Dialog returned:", dialog)
+			if dialog then
+				dialog.data = {
+					bag = skippedLargeStack.bag,
+					slot = skippedLargeStack.slot,
+					amount = remaining,
+					attachmentSlot = attachmentSlot,
+					itemName = itemName,
+					requester = requester
+				}
+				print("DEBUG: Dialog data set")
+			else
+				print("DEBUG: Dialog is nil!")
+			end
+			message = string.format("Stack has %d, need %d. Confirm split?", skippedLargeStack.count, remaining)
+			return false, message, attached
+		else
+			-- Legacy path (shouldn't happen)
+			message = string.format("Your smallest stack has %d. Split to %d or less first.",
+				skippedLargeStack, qtyNeeded)
+			return false, message, 0
+		end
 	else
 		message = string.format("No %s found in bags.", itemName)
 		return false, message, 0

@@ -1208,12 +1208,19 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					-- Don't use SetDisabled - it blocks mouse events including tooltips
 					-- Instead, store disabled state and check in OnClick, use alpha for visual
 					if row.fulfillButton and row.fulfillButton.frame then
-						row.fulfillButton.frame.togDisabled = not fulfillEnabled
-						row.fulfillButton.frame:SetAlpha(fulfillEnabled and 1.0 or 0.4)
+						-- Special case: if split is needed, keep button enabled (PrepareFulfillMail will handle it)
+						local needsSplit = fulfillReason and fulfillReason:find("Split")
+						local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and needsSplit)
+						row.fulfillButton.frame.togDisabled = not buttonEnabled
+						row.fulfillButton.frame:SetAlpha(buttonEnabled and 1.0 or 0.4)
 
 						-- Determine icon and tooltip based on state
 						local icon, tooltipDetail
-						if fulfillEnabled then
+						if buttonEnabled and fulfillReason and fulfillReason:find("Split") then
+							-- Split needed - show special icon
+							icon = FULFILL_ICON_NEED_SPLIT
+							tooltipDetail = fulfillReason
+						elseif fulfillEnabled then
 							icon = FULFILL_ICON_READY
 							local attachCount = math.min(itemsInBags, qtyNeeded)
 							tooltipDetail = string.format("Attach %d %s to mail for %s.", attachCount, req.item or "items", req.requester or "requester")
