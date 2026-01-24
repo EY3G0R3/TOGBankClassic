@@ -412,12 +412,16 @@ function Guild:ApplyRequestSnapshot(payload)
 	end
 	self:EnsureRequestsInitialized()
 
+	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: Checking payload")
+	
 	local incomingList = payload.requests
 	if not incomingList or type(incomingList) ~= "table" then
+		TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot FAILED: no requests in payload")
 		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: no requests in payload")
 		return false
 	end
 
+	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Sanitizing %d incoming requests", #incomingList))
 	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Received snapshot with %d requests, local has %d requests", 
 		#incomingList, #(self.Info.requests or {})))
 
@@ -433,38 +437,65 @@ function Guild:ApplyRequestSnapshot(payload)
 		end
 	end
 
+	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 
 	-- Merge with existing requests instead of replacing
-	-- Keep local requests that aren't in the incoming snapshot (unless tombstoned)
-	local incomingById = {}
-	for _, req in ipairs(sanitized) do
-		if req.id then
-			incomingById[req.id] = req
+	-- [SYNC-006] Build index of local requests by ID with timestamps
+	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: Building local index")
+	local localById = {}
+	for _, localReq in ipairs(self.Info.requests or {}) do
+		if localReq.id then
+			localById[localReq.id] = localReq
 		end
 	end
 
 	local tombstones = payload.tombstones or {}
 	local merged = {}
 	
-	-- Add all incoming requests
-	for _, req in ipairs(sanitized) do
-		table.insert(merged, req)
+	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Merging %d incoming requests", #sanitized))
+	
+	-- [SYNC-006] Add incoming requests, but prefer newer local version if exists
+	local incomingProcessed = {}
+	for _, incomingReq in ipairs(sanitized) do
+		incomingProcessed[incomingReq.id] = true
+		local localReq = localById[incomingReq.id]
+		
+		if localReq then
+			-- Both exist - compare timestamps
+			local localUpdated = tonumber(localReq.updatedAt or localReq.date or 0) or 0
+			local incomingUpdated = tonumber(incomingReq.updatedAt or incomingReq.date or 0) or 0
+			
+			if localUpdated > incomingUpdated then
+				table.insert(merged, localReq)
+				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Keeping newer local request id=%s (local=%d, incoming=%d)", 
+					incomingReq.id, localUpdated, incomingUpdated))
+			else
+				table.insert(merged, incomingReq)
+				if incomingUpdated > localUpdated then
+					TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Replacing with newer incoming request id=%s (local=%d, incoming=%d)", 
+						incomingReq.id, localUpdated, incomingUpdated))
+				end
+			end
+		else
+			-- Only incoming has it
+			table.insert(merged, incomingReq)
+		end
 	end
 	
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Added %d incoming requests to merged list", #merged))
+	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Processed %d incoming requests", #sanitized))
 	
-	-- Add local requests that aren't in incoming (and not tombstoned)
+	-- [SYNC-006] Add local requests that weren't in incoming (and not tombstoned)
 	local localPreservedCount = 0
 	for _, localReq in ipairs(self.Info.requests or {}) do
-		if localReq.id and not incomingById[localReq.id] then
+		if localReq.id and not incomingProcessed[localReq.id] then
 			local tombstoneTs = tonumber(tombstones[localReq.id] or 0) or 0
 			local localUpdated = tonumber(localReq.updatedAt or localReq.date or 0) or 0
 			-- Only keep if not tombstoned or if local update is newer than tombstone
 			if tombstoneTs == 0 or localUpdated > tombstoneTs then
 				table.insert(merged, localReq)
 				localPreservedCount = localPreservedCount + 1
-				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserving local request id=%s, requester=%s, item=%s", 
+				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserving local-only request id=%s, requester=%s, item=%s", 
 					localReq.id, localReq.requester or "nil", localReq.item or "nil"))
 			else
 				TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: DROPPING local request id=%s (tombstoned at %d, updated at %d)", 
@@ -473,10 +504,15 @@ function Guild:ApplyRequestSnapshot(payload)
 		end
 	end
 	
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserved %d local requests, merged list has %d total", 
+	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Preserved %d local-only requests, merged list has %d total", 
 		localPreservedCount, #merged))
 	
+	-- [SYNC-005] FIX: Actually use the merged list!
+	TOGBankClassic_Core:Print(string.format("[MERGE] ApplyRequestSnapshot: Assigning merged list (%d requests)", #merged))
+	self.Info.requests = merged
 	self.Info.requestsVersion = latest
+
+	TOGBankClassic_Core:Print("[MERGE] ApplyRequestSnapshot: SUCCESS - returning true")
 
 	local logApplied = payload.requestLogApplied
 	if type(logApplied) == "table" then
@@ -845,49 +881,113 @@ function Guild:SendRequestsData(target)
 end
 
 function Guild:QueryRequestsSnapshot(player)
-	TOGBankClassic_Output:DebugComm("QUERY REQUESTS SNAPSHOT: Starting broadcast query...")
-	
-	-- Send wildcard query for new clients (v0.7.14+)
+	-- Send wildcard query (v0.7.14+)
+	-- Note: Old clients won't respond to wildcard, but targeted queries flood guild chat
+	-- and trigger WoW throttling which blocks responses. Wildcard-only is the fix.
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests" })
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
-	TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sent wildcard query")
+	TOGBankClassic_Output:DebugComm("[SYNC-004] QUERY REQUESTS: Sent wildcard query (removed targeted spam)")
+end
+
+function Guild:QueryRequestLog(player, logFrom)
+	-- Send wildcard query (v0.7.14+)
+	-- Note: Old clients won't respond to wildcard, but targeted queries flood guild chat
+	-- and trigger WoW throttling which blocks responses. Wildcard-only is the fix.
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests-log", logFrom = logFrom })
+	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
+	TOGBankClassic_Output:DebugComm("[SYNC-004] QUERY REQUEST LOG: Sent wildcard query (removed targeted spam)")
+end
+
+function Guild:ReceiveRequestsData(payload)
+	-- TOGBankClassic_Core:Print("[MERGE] ReceiveRequestsData called - RETURNING IMMEDIATELY FOR TESTING")
+	-- return ADOPTION_STATUS.IGNORED  -- Bypass everything for now
 	
-	-- Backwards compat: Send targeted query to each online guild member for old clients
-	-- Old clients check 'if data.player == player' so we need to match their exact name
-	GuildRoster()  -- Refresh roster to get current online status
-	local numGuildMembers = GetNumGuildMembers()
-	TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Guild has %d members, checking for online...", numGuildMembers)
+	if not payload or type(payload) ~= "table" then
+		TOGBankClassic_Output:Debug("[SYNC-003n] ReceiveRequestsData: INVALID - payload not a table")
+		return ADOPTION_STATUS.INVALID
+	end
+	if not self.Info then
+		TOGBankClassic_Output:Debug("[SYNC-003n] ReceiveRequestsData: IGNORED - self.Info is nil")
+		return ADOPTION_STATUS.IGNORED
+	end
+	self:EnsureRequestsInitialized()
+
+	local incomingCount = (payload.requests and type(payload.requests) == "table") and #payload.requests or 0
+	local localCountBefore = self.Info.requests and #self.Info.requests or 0
+	TOGBankClassic_Core:Print(string.format("[MERGE] START - local=%d, incoming=%d", localCountBefore, incomingCount))
+	TOGBankClassic_Output:Debug(string.format("[SYNC-003n] ReceiveRequestsData: START - local=%d requests, incoming=%d requests", 
+		localCountBefore, incomingCount))
+
+	local function maxUpdatedAt(list)
+		local latest = 0
+		local nonTableCount = 0
+		for i, req in ipairs(list or {}) do
+			if type(req) == "table" then
+				local updated = tonumber(req.updatedAt or req.date or 0) or 0
+				if updated > latest then
+					latest = updated
+				end
+			else
+				nonTableCount = nonTableCount + 1
+				TOGBankClassic_Core:Print(string.format("[MERGE] WARNING: Request array has non-table entry at index %d (type=%s)", i, type(req)))
+			end
+		end
+		if nonTableCount > 0 then
+			TOGBankClassic_Core:Print(string.format("[MERGE] Found %d non-table entries in requests array - possible SavedVariables corruption", nonTableCount))
+		end
+		return latest
+	end
+
+	-- Calculate versions
+	-- Modern clients (v7.10+) have requestLogApplied - skip version calc and always merge (SYNC-003o)
+	-- Legacy clients need version comparison
+	local localVersion = 0
+	local incomingVersion = 0
+	local isNewer = true
 	
-	local onlineCount = 0
-	for i = 1, numGuildMembers do
-		local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
-		if online and name then
-			local normalized = self:NormalizeName(name)
-			if normalized then
-				local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = normalized, type = "requests" })
-				TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
-				onlineCount = onlineCount + 1
-				if onlineCount <= 5 then
-					TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sent targeted query #%d to %s", onlineCount, normalized)
+	if not payload.requestLogApplied then
+		-- Legacy client without requestLogApplied - use stored versions only
+		TOGBankClassic_Core:Print("[MERGE] Legacy client detected - using version comparison")
+		localVersion = tonumber(self.Info.requestsVersion or 0) or 0
+		incomingVersion = tonumber(payload.version or 0) or 0
+		isNewer = incomingVersion > localVersion
+	else
+		-- Modern client with requestLogApplied - check sequence numbers (SYNC-003o)
+		-- Skip expensive maxUpdatedAt() iteration
+		local incomingLog = payload.requestLogApplied
+		if type(incomingLog) == "table" then
+			local localLog = self.Info.requestLogApplied or {}
+			for actor, seq in pairs(incomingLog) do
+				local incomingSeq = tonumber(seq or 0) or 0
+				local localSeq = tonumber(localLog[actor] or 0) or 0
+				if incomingSeq > localSeq then
+					TOGBankClassic_Output:Debug(string.format("[SYNC-003n] ReceiveRequestsData: isNewer=true (log check) - actor=%s, localSeq=%d, incomingSeq=%d", 
+						actor, localSeq, incomingSeq))
+					isNewer = true
+					break
 				end
 			end
 		end
 	end
-	TOGBankClassic_Output:DebugComm("QUERY REQUESTS: Sent wildcard + %d targeted queries for backwards compat", onlineCount)
-end
 
-function Guild:QueryRequestLog(player, logFrom)
-	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Starting broadcast query (logFrom=%s)...", tostring(logFrom))
+	TOGBankClassic_Output:Debug(string.format("[SYNC-003n] ReceiveRequestsData: Versions - local=%d, incoming=%d", 
+		localVersion, incomingVersion))
+
+	-- SYNC-003o: Always merge request snapshots, never reject as STALE
+	-- Different players have different subsets of requests. Even if versions match,
+	-- the incoming snapshot may contain requests we don't have. ApplyRequestSnapshot()
+	-- handles merging correctly by preserving both incoming and local requests.
+	TOGBankClassic_Output:Debug(string.format("[SYNC-003o] ReceiveRequestsData: Calling ApplyRequestSnapshot (isNewer=%s, localVer=%d, incomingVer=%d)", 
+		tostring(isNewer), localVersion, incomingVersion))
 	
-	-- Send wildcard query for new clients (v0.7.14+)
-	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests-log", logFrom = logFrom })
-	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "BULK")
-	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent wildcard query")
-	
-	-- Backwards compat: Send targeted query to each online guild member for old clients
-	-- Old clients check 'if data.player == player' so we need to match their exact name
-	GuildRoster()  -- Refresh roster to get current online status
-	local numGuildMembers = GetNumGuildMembers()
+	if self:ApplyRequestSnapshot(payload) then
+		local localCountAfter = self.Info.requests and #self.Info.requests or 0
+		TOGBankClassic_Core:Print(string.format("[MERGE] COMPLETE - before=%d, after=%d", localCountBefore, localCountAfter))
+		TOGBankClassic_Output:Debug(string.format("[SYNC-003n] ReceiveRequestsData: ADOPTED - final count=%d (was %d, incoming had %d)", 
+			localCountAfter, localCountBefore, incomingCount))
+		return ADOPTION_STATUS.ADOPTED
+	end
+	TOGBankClassic_Output:Debug("[SYNC-003n] ReceiveRequestsData: INVALID - ApplyRequestSnapshot returned false")
 	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Guild has %d members, checking for online...", numGuildMembers)
 	
 	local onlineCount = 0
@@ -904,69 +1004,6 @@ function Guild:QueryRequestLog(player, logFrom)
 				end
 			end
 		end
-	end
-	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent wildcard + %d targeted queries for backwards compat", onlineCount)
-end
-
-function Guild:ReceiveRequestsData(payload)
-	if not payload or type(payload) ~= "table" then
-		return ADOPTION_STATUS.INVALID
-	end
-	if not self.Info then
-		return ADOPTION_STATUS.IGNORED
-	end
-	self:EnsureRequestsInitialized()
-
-	local function maxUpdatedAt(list)
-		local latest = 0
-		for _, req in ipairs(list or {}) do
-			local updated = tonumber(req.updatedAt or req.date or 0) or 0
-			if updated > latest then
-				latest = updated
-			end
-		end
-		return latest
-	end
-
-	local localVersion = tonumber(self.Info.requestsVersion or 0) or 0
-	if localVersion == 0 and self.Info.requests and #self.Info.requests > 0 then
-		localVersion = maxUpdatedAt(self.Info.requests)
-	end
-
-	local incomingVersion = tonumber(payload.version or 0) or 0
-	if incomingVersion == 0 then
-		incomingVersion = maxUpdatedAt(payload.requests)
-	end
-
-	local isNewer = incomingVersion > localVersion
-	if not isNewer then
-		local incomingLog = payload.requestLogApplied
-		if type(incomingLog) == "table" then
-			local localLog = self.Info.requestLogApplied or {}
-			for actor, seq in pairs(incomingLog) do
-				local incomingSeq = tonumber(seq or 0) or 0
-				local localSeq = tonumber(localLog[actor] or 0) or 0
-				if incomingSeq > localSeq then
-					isNewer = true
-					break
-				end
-			end
-		end
-	end
-
-	-- UI-003 FIX: Don't reject snapshots as STALE based on version comparison alone.
-	-- The version is calculated as max(updatedAt) across all requests, but different
-	-- players may have different subsets of requests. A snapshot with a lower version
-	-- might still contain requests we don't have. The merge logic in ApplyRequestSnapshot()
-	-- handles this correctly by preserving both incoming and local requests.
-	-- Only skip if version is identical (exact duplicate snapshot from same sender).
-	if not isNewer and localVersion > 0 and incomingVersion == localVersion then
-		-- Exact version match - likely a duplicate snapshot, skip it
-		return ADOPTION_STATUS.STALE
-	end
-
-	if self:ApplyRequestSnapshot(payload) then
-		return ADOPTION_STATUS.ADOPTED
 	end
 	return ADOPTION_STATUS.INVALID
 end

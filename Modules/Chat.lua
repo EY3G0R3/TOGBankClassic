@@ -571,7 +571,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					local requestedVersion = data.version
 					
 					-- If requester has old version, try to send delta chain immediately
-					if requestedVersion < currentVersion then
+					if type(requestedVersion) == "number" and type(currentVersion) == "number" and requestedVersion < currentVersion then
 						local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.Info.name, nameNorm, requestedVersion, currentVersion)
 						if deltaChain and #deltaChain > 0 then
 							TOGBankClassic_Output:Debug(
@@ -679,6 +679,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	end
 
 	if prefix == "togbank-d" then
+		-- SYNC-003p: Debug all togbank-d messages to see what's arriving
+		TOGBankClassic_Output:DebugComm("[SYNC-003p] togbank-d received from %s: type=%s", sender, tostring(data.type))
+		
 		if data.type == "roster" then
 			-- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
 			local allowed = (
