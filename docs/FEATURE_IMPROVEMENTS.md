@@ -15,6 +15,7 @@
 - [ ] **Communications buffer/queue on banker side** - Investigate if whispers are being dropped during high traffic; implement queue system to ensure all requests are processed
 - [ ] **Real-time inventory scanning** - Monitor BAG_UPDATE and PLAYERBANKSLOTS_CHANGED events instead of only scanning on window close; add debouncing (500ms) to prevent spam during rapid changes; current behavior requires closing bank/mail/trade windows to update cached data
 - [ ] **Banker ownership display** - Show which player/account owns each banker character to help identify who controls guild bank alts; useful for multi-person guild bank management and tracking
+- [ ] **Debug category filtering** - Add category-based debug logging to filter spam; enable/disable specific categories (ROSTER, COMMS, DELTA, SYNC, CACHE, WHISPER, REQUESTS, UI, PROTOCOL) via slash commands; reduces debug noise when troubleshooting specific issues
 - [x] ~~**Persistent debug logging**~~ **v0.7.11: Implemented with 50k entry buffer, 7-day retention, filtering**
 
 ---
@@ -1424,6 +1425,89 @@ A: Negligible - ~10 bytes per member, rebuild takes <1ms for typical guild sizes
 - ✅ Cache updates automatically without manual intervention
 - ✅ Works with guilds of 200+ members
 - ✅ Graceful handling of edge cases (cache not ready, non-guild members)
+
+---
+
+## 🔧 Debug Category Filtering - PLANNED
+
+**Added:** January 24, 2026  
+**Purpose:** Reduce debug log spam by filtering messages into categories
+
+### Problem
+- Enabling `/togbank debug` creates miles of spam
+- Hard to focus on specific issues when all debug output is mixed together
+- Need to troubleshoot one subsystem at a time (e.g., just roster updates, just comms)
+- Wading through thousands of messages to find relevant ones is inefficient
+
+### Solution
+Add category-based filtering to the debug output system. Each debug message gets tagged with a category, and users can enable/disable specific categories.
+
+### Proposed Categories
+
+- **ROSTER** - Guild roster updates, online/offline tracking
+- **COMMS** - All addon communication traffic (high volume)
+- **DELTA** - Delta sync operations and computations
+- **SYNC** - Data synchronization operations
+- **CACHE** - Cache operations (guild roster cache, etc.)
+- **WHISPER** - Whisper sends, skips, and online checks
+- **REQUESTS** - Request system activity and updates
+- **UI** - UI operations, window opens/closes, rendering
+- **PROTOCOL** - Protocol version negotiation
+- **DATABASE** - Database operations, SavedVariables
+- **EVENTS** - WoW event handling (GUILD_ROSTER_UPDATE, etc.)
+
+### Slash Commands
+
+```
+/togbank debugcat list                    # Show all categories and their status
+/togbank debugcat enable <category>       # Enable specific category
+/togbank debugcat disable <category>      # Disable specific category
+/togbank debugcat only <category>         # Disable all except one
+/togbank debugcat all                     # Enable all categories
+/togbank debugcat none                    # Disable all categories
+```
+
+### Usage Examples
+
+```lua
+-- Old style (no category, always shows if debug enabled)
+TOGBankClassic_Output:Debug("Some message")
+
+-- New style (with category)
+TOGBankClassic_Output:Debug("ROSTER", "Refreshed online cache: %d members", count)
+TOGBankClassic_Output:Debug("COMMS", "Received message from %s", sender)
+```
+
+### Implementation Plan
+
+1. Add category storage table to Output module (persist in SavedVariables)
+2. Modify `TOGBankClassic_Output:Debug()` to accept optional category parameter
+3. Add category enable/disable functions
+4. Add slash command handlers in Chat.lua
+5. Update high-traffic Debug() calls with appropriate categories
+6. Support backward compatibility (calls without category always show)
+
+### Files to Modify
+
+1. **Modules/Output.lua** - Add category tracking and filtering
+2. **Modules/Chat.lua** - Add `/togbank debugcat` commands
+3. **Various modules** - Update Debug() calls with categories
+
+### Testing Checklist
+
+- [ ] Categories persist across sessions
+- [ ] Enabling/disabling categories works correctly
+- [ ] `only` command disables all others
+- [ ] Backward compatibility (old Debug() calls still work)
+- [ ] High-traffic categories (COMMS, ROSTER) reduce spam when disabled
+- [ ] Category list command shows current state clearly
+
+### Success Criteria
+
+- ✅ Can enable only ROSTER category to debug guild cache without COMMS spam
+- ✅ Category settings persist across `/reload`
+- ✅ Existing Debug() calls work without modification
+- ✅ Easy to temporarily focus on one subsystem for troubleshooting
 
 ---
 
