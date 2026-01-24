@@ -759,7 +759,7 @@ end
 function TOGBankClassic_UI_Requests:SortedRequests()
 	local info = TOGBankClassic_Guild.Info
 	if not info or not info.requests then
-		TOGBankClassic_Output:Debug("[UI-003] SortedRequests: No guild info or requests")
+		TOGBankClassic_Output:Debug("REQUESTS", "[UI-003] SortedRequests: No guild info or requests")
 		return {}
 	end
 
@@ -1077,11 +1077,11 @@ end
 
 function TOGBankClassic_UI_Requests:DrawContent()
 	if not self.Content or not self.Window then
-		TOGBankClassic_Output:Debug("[UI-003] DrawContent: No content or window")
+		TOGBankClassic_Output:Debug("REQUESTS", "[UI-003] DrawContent: No content or window")
 		return
 	end
 
-	TOGBankClassic_Output:Debug("[UI-003] DrawContent: Starting UI refresh")
+	TOGBankClassic_Output:Debug("REQUESTS", "[UI-003] DrawContent: Starting UI refresh")
 
 	local content = self.Content
 	content:PauseLayout()

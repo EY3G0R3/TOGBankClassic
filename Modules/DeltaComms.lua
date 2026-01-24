@@ -500,6 +500,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt)
 
 	-- Debug: Log item counts for both bank and bags
 	TOGBankClassic_Output:Debug(
+		"DELTA",
 		"Comparing %s: previous bank has %d items, bags have %d items; current bank has %d items, bags have %d items",
 		altName,
 		#previousBankItems,
@@ -645,7 +646,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 	if not current then
 		-- No existing data, request full sync
 		local errorMsg = string.format("No existing data for %s", norm)
-		TOGBankClassic_Output:Debug(errorMsg .. ", requesting full sync")
+		TOGBankClassic_Output:Debug("DELTA", errorMsg .. ", requesting full sync")
 		self:RecordDeltaError(guildInfo.name, norm, "NO_DATA", errorMsg)
 		TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
 		if guildInfo and guildInfo.name then
@@ -670,6 +671,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 		-- Try delta chain if sender is known and we're behind
 		if sender and currentVersion < baseVersion then
 			TOGBankClassic_Output:Debug(
+				"DELTA",
 				"Version mismatch for %s (have %d, delta expects %d), requesting delta chain",
 				norm,
 				currentVersion,
@@ -681,6 +683,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 		else
 			-- Can't use delta chain, request full sync
 			TOGBankClassic_Output:Debug(
+				"DELTA",
 				"Version mismatch for %s (have %d, delta expects %d), requesting full sync",
 				norm,
 				currentVersion,
@@ -751,6 +754,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 		local applyTime = debugprofilestop() - applyStart
 		TOGBankClassic_Database:RecordDeltaApplyTime(guildInfo.name, applyTime)
 		TOGBankClassic_Output:Debug(
+			"DELTA",
 			"✓ Applied delta for %s (v%d→v%d) in %.2fms",
 			norm,
 			baseVersion,
@@ -780,13 +784,14 @@ function TOGBankClassic_DeltaComms:ApplyDeltaChain(guildInfo, altName, deltaChai
 	local current = guildInfo and guildInfo.alts and guildInfo.alts[norm]
 
 	if not current then
-		TOGBankClassic_Output:Debug("No existing data for %s, cannot apply delta chain", norm)
+		TOGBankClassic_Output:Debug("DELTA", "No existing data for %s, cannot apply delta chain", norm)
 		return ADOPTION_STATUS.INVALID
 	end
 
 	-- Validate chain
 	if #deltaChain > (PROTOCOL.DELTA_CHAIN_MAX_HOPS or 10) then
 		TOGBankClassic_Output:Debug(
+			"DELTA",
 			"Delta chain too long for %s (%d hops > %d max)",
 			norm,
 			#deltaChain,
@@ -799,6 +804,7 @@ function TOGBankClassic_DeltaComms:ApplyDeltaChain(guildInfo, altName, deltaChai
 	local totalSize = self:EstimateSize(deltaChain)
 	if totalSize > (PROTOCOL.DELTA_CHAIN_MAX_SIZE or 5000) then
 		TOGBankClassic_Output:Debug(
+			"DELTA",
 			"Delta chain too large for %s (%d bytes > %d max), requesting full sync",
 			norm,
 			totalSize,
@@ -816,6 +822,7 @@ function TOGBankClassic_DeltaComms:ApplyDeltaChain(guildInfo, altName, deltaChai
 		-- Validate this delta applies to our current version
 		if deltaEntry.baseVersion ~= currentVersion then
 			TOGBankClassic_Output:Debug(
+				"DELTA",
 				"Delta chain broken for %s at hop %d: have v%d, delta expects v%d",
 				norm,
 				i,
@@ -838,6 +845,7 @@ function TOGBankClassic_DeltaComms:ApplyDeltaChain(guildInfo, altName, deltaChai
 		local status = self:ApplyDelta(guildInfo, altName, deltaData)
 		if status ~= ADOPTION_STATUS.ADOPTED then
 			TOGBankClassic_Output:Debug(
+				"DELTA",
 				"Failed to apply delta chain for %s at hop %d (v%d→v%d)",
 				norm,
 				i,
@@ -852,6 +860,7 @@ function TOGBankClassic_DeltaComms:ApplyDeltaChain(guildInfo, altName, deltaChai
 
 	local chainTime = debugprofilestop() - chainStart
 	TOGBankClassic_Output:Debug(
+		"DELTA",
 		"✓ Applied delta chain for %s (%d hops, v%d→v%d) in %.2fms",
 		norm,
 		#deltaChain,
@@ -905,6 +914,7 @@ function TOGBankClassic_DeltaComms:RecordDeltaError(guildName, altName, errorTyp
 
 	-- Fallback: Use temporary in-memory storage
 	TOGBankClassic_Output:Debug(
+		"DELTA",
 		"Using temporary error storage for %s (%s): Guild.Info not initialized",
 		altName or "unknown",
 		errorType or "unknown"
@@ -1013,13 +1023,14 @@ function TOGBankClassic_DeltaComms:RequestDeltaChain(guildName, altName, fromVer
 
 	-- Validate request parameters
 	if fromVersion >= toVersion then
-		TOGBankClassic_Output:Debug("Invalid delta chain request: fromVersion >= toVersion")
+		TOGBankClassic_Output:Debug("DELTA", "Invalid delta chain request: fromVersion >= toVersion")
 		return false
 	end
 
 	-- Check if sender is online before attempting WHISPER (DELTA-008)
 	if not TOGBankClassic_Guild:IsPlayerOnline(sender) then
 		TOGBankClassic_Output:Debug(
+			"DELTA",
 			"Cannot request delta chain for %s from %s - sender is offline",
 			altName,
 			sender
@@ -1042,6 +1053,7 @@ function TOGBankClassic_DeltaComms:RequestDeltaChain(guildName, altName, fromVer
 	TOGBankClassic_Core:SendWhisper("togbank-dr", serialized, sender, "ALERT")
 
 	TOGBankClassic_Output:Debug(
+		"DELTA",
 		"Requesting delta chain for %s from v%d to v%d from %s",
 		altName,
 		fromVersion,
@@ -1075,7 +1087,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	end
 
 	if #missing == 0 then
-		TOGBankClassic_Output:Debug("Fast-fill: All %d roster alts present locally", #rosterAlts)
+		TOGBankClassic_Output:Debug("DELTA", "Fast-fill: All %d roster alts present locally", #rosterAlts)
 		return
 	end
 
