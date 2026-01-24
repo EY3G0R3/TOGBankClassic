@@ -199,6 +199,7 @@ function TOGBankClassic_Chat:IsAltDataAllowed_RosterBased(sender, claimedNorm)
 	-- Check if sender is in the current guild
 	if not TOGBankClassic_Guild:IsInCurrentGuildRoster(sender) then
 		TOGBankClassic_Output:Debug(
+			"PROTOCOL",
 			"Rejecting alt data from %s: sender not in current guild roster",
 			sender
 		)
@@ -208,6 +209,7 @@ function TOGBankClassic_Chat:IsAltDataAllowed_RosterBased(sender, claimedNorm)
 	-- Check if claimed alt is in the current guild's banker roster
 	if not TOGBankClassic_Guild:IsBank(claimedNorm) then
 		TOGBankClassic_Output:Debug(
+			"PROTOCOL",
 			"Rejecting alt data for %s: not a banker in current guild roster",
 			claimedNorm
 		)
@@ -227,7 +229,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	
 	-- Debug: Log ALL incoming messages before any filtering
 	if prefix == "togbank-dv" then
-		TOGBankClassic_Output:Debug("RAW RECEIVED: %s from %s (%d bytes)", prefix, sender, #message)
+		TOGBankClassic_Output:Debug("COMMS", "RAW RECEIVED: %s from %s (%d bytes)", prefix, sender, #message)
 	end
 	
 	-- WHISPER DEBUG
@@ -262,7 +264,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				altCount = altCount + 1
 			end
 		end
-		TOGBankClassic_Output:Debug("[DESERIALIZE] togbank-dv from %s: success=%s, has data=%s, has data.alts=%s, altCount=%d",
+		TOGBankClassic_Output:Debug("PROTOCOL", "[DESERIALIZE] togbank-dv from %s: success=%s, has data=%s, has data.alts=%s, altCount=%d",
 			sender,
 			tostring(success),
 			tostring(data ~= nil),
@@ -294,7 +296,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					altCount = altCount + 1
 				end
 			end
-			TOGBankClassic_Output:Debug("togbank-dv from %s: has data.alts=%s, alts count=%d", 
+			TOGBankClassic_Output:Debug("PROTOCOL", "togbank-dv from %s: has data.alts=%s, alts count=%d", 
 				sender, 
 				tostring(data.alts ~= nil),
 				altCount
@@ -322,9 +324,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						seen = time(),
 						version = data.addon,
 					}
-					TOGBankClassic_Output:Debug("Tracked online banker: %s", sender)
-				end
-
+					TOGBankClassic_Output:Debug("ROSTER", "Tracked online banker: %s", sender)
 				-- Track protocol capabilities
 				local protocolVersion = data.protocol_version or 1
 				local supportsDelta = data.supports_delta or false
@@ -383,7 +383,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				for _ in pairs(data.alts) do
 					altCount = altCount + 1
 				end
-				TOGBankClassic_Output:Debug("[PROCESS] Processing %d alts from %s (isDeltaVersion=%s)", 
+				TOGBankClassic_Output:Debug("PROTOCOL", "[PROCESS] Processing %d alts from %s (isDeltaVersion=%s)", 
 					altCount, sender, tostring(isDeltaVersion))
 				for k, v in pairs(data.alts) do
 					local kNorm = TOGBankClassic_Guild:NormalizeName(k)
@@ -398,6 +398,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					-- Debug: show what we received
 					if theirHash then
 						TOGBankClassic_Output:Debug(
+							"SYNC",
 							"Received %s from %s: version=%d, hash=%d (our hash=%s)",
 							kNorm,
 							sender,
@@ -578,6 +579,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.Info.name, nameNorm, requestedVersion, currentVersion)
 						if deltaChain and #deltaChain > 0 then
 							TOGBankClassic_Output:Debug(
+								"DELTA",
 								"Query from %s for %s v%d (have v%d), sending %d-delta chain",
 								sender,
 								nameNorm,

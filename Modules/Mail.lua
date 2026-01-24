@@ -127,12 +127,10 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	end
 
 	TOGBankClassic_Output:Debug(
-		"OnSendMail:",
-		"sender",
+		"UI",
+		"OnSendMail: sender=%s, recipient=%s, items=%d",
 		tostring(sender),
-		"recipient",
 		tostring(recipient),
-		"items",
 		#items
 	)
 

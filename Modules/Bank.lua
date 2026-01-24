@@ -184,10 +184,10 @@ function TOGBankClassic_Bank:Scan()
 		-- Inventory changed, update version timestamp
 		alt.version = GetServerTime()
 		alt.inventoryHash = currentHash
-		TOGBankClassic_Output:Debug("Inventory changed for %s, version updated to %d", player, alt.version)
+		TOGBankClassic_Output:Debug("SYNC", "Inventory changed for %s, version updated to %d", player, alt.version)
 	else
 		-- No changes detected, preserve existing version
-		TOGBankClassic_Output:Debug("No inventory changes for %s, version unchanged", player)
+		TOGBankClassic_Output:Debug("SYNC", "No inventory changes for %s, version unchanged", player)
 	end
 
 	info.alts[player] = alt

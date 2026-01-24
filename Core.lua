@@ -4,7 +4,7 @@ local AceComm_SendCommMessage = TOGBankClassic_Core.SendCommMessage
 function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target, prio, callbackFn, callbackArg)
     local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
     if IsInRaid() then
-        TOGBankClassic_Output:Debug("< (suppressing) %s %s (in raid)", prefix, prefixDesc)
+        TOGBankClassic_Output:Debug("COMMS", "< (suppressing) %s %s (in raid)", prefix, prefixDesc)
         return
     end
     if not AceComm_SendCommMessage then
@@ -12,7 +12,7 @@ function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target,
     end
 
     local bytes = text and #text or 0
-    TOGBankClassic_Output:Debug("< %s %s to %s (%d bytes)", prefix, prefixDesc, distribution, bytes)
+    TOGBankClassic_Output:Debug("COMMS", "< %s %s to %s (%d bytes)", prefix, prefixDesc, distribution, bytes)
 
     return AceComm_SendCommMessage(self, prefix, text, distribution, target, prio, callbackFn, callbackArg)
 end
@@ -22,7 +22,7 @@ end
 function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn, callbackArg)
     -- Check if target is online
     if not TOGBankClassic_Guild:IsPlayerOnline(target) then
-        TOGBankClassic_Output:Debug("Cannot send %s WHISPER to %s - player is offline", prefix, target)
+        TOGBankClassic_Output:Debug("WHISPER", "Cannot send %s WHISPER to %s - player is offline", prefix, target)
         return false
     end
 
@@ -49,7 +49,7 @@ function TOGBankClassic_Core:OnInitialize()
                 Version = (C_AddOns and C_AddOns.GetAddOnMetadata("TOGBankClassic", "Version")) or GetAddOnMetadata("TOGBankClassic", "Version") or "@project-version@"
             }
             VC:Enable(hostAddon)
-            TOGBankClassic_Output:Debug("VersionCheck-1.0 integration enabled (v%s)", hostAddon.Version)
+            TOGBankClassic_Output:Debug("PROTOCOL", "VersionCheck-1.0 integration enabled (v%s)", hostAddon.Version)
         end
     end
 end
