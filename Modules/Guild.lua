@@ -706,10 +706,7 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 		return false
 	end
 	local norm = self:NormalizeName(playerName)
-	local result = self.onlineMembers[norm] == true
-	print("[GUILD ROSTER] IsPlayerOnline check: " .. tostring(playerName) .. " -> " .. tostring(result) .. " (cache lookup)")
-	TOGBankClassic_Output:Debug("IsPlayerOnline: %s -> %s (from cache)", playerName, tostring(result))
-	return result
+	return self.onlineMembers[norm] == true
 end
 
 -- v0.8.0: Compute minimal state summary for pull-based protocol
