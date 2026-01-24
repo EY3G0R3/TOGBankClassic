@@ -16,6 +16,39 @@ TOGBankClassic_Output.persistentLog = {}
 TOGBankClassic_Output.persistentLogMaxEntries = 50000  -- Keep last 50,000 entries
 TOGBankClassic_Output.persistentLogMaxAge = 86400 * 7  -- Keep logs for 7 days (in seconds)
 
+-- Category filtering helpers
+function TOGBankClassic_Output:IsCategoryEnabled(category)
+	if not TOGBankClassic_Database or not TOGBankClassic_Database.db then
+		return false
+	end
+	return TOGBankClassic_Database.db.global.debugCategories[category] == true
+end
+
+function TOGBankClassic_Output:SetCategoryEnabled(category, enabled)
+	if not TOGBankClassic_Database or not TOGBankClassic_Database.db then
+		return
+	end
+	TOGBankClassic_Database.db.global.debugCategories[category] = enabled
+end
+
+function TOGBankClassic_Output:EnableAllCategories()
+	if not TOGBankClassic_Database or not TOGBankClassic_Database.db then
+		return
+	end
+	for category, _ in pairs(DEBUG_CATEGORY) do
+		TOGBankClassic_Database.db.global.debugCategories[category] = true
+	end
+end
+
+function TOGBankClassic_Output:DisableAllCategories()
+	if not TOGBankClassic_Database or not TOGBankClassic_Database.db then
+		return
+	end
+	for category, _ in pairs(DEBUG_CATEGORY) do
+		TOGBankClassic_Database.db.global.debugCategories[category] = false
+	end
+end
+
 function TOGBankClassic_Output:Init()
 	-- Level will be set from Options after DB is loaded
 	-- Load persistent log from SavedVariables if it exists
@@ -281,6 +314,19 @@ end
 
 -- Debug: development/troubleshooting details
 function TOGBankClassic_Output:Debug(fmt, ...)
+	-- Check if first parameter is a category
+	if type(fmt) == "string" and DEBUG_CATEGORY[fmt] then
+		local category = fmt
+		-- Check if category is enabled
+		if not self:IsCategoryEnabled(category) then
+			return false
+		end
+		-- Shift parameters: first arg after category becomes the format string
+		local actualFmt = select(1, ...)
+		local args = {select(2, ...)}
+		return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG]|r", actualFmt, unpack(args))
+	end
+	-- No category or unknown category - use old behavior (always show)
 	return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG]|r", fmt, ...)
 end
 

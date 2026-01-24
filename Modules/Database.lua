@@ -1,7 +1,23 @@
 TOGBankClassic_Database = {}
 
 function TOGBankClassic_Database:Init()
-	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicDB")
+	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicDB", {
+		global = {
+			debugCategories = {
+				ROSTER = false,
+				COMMS = false,
+				DELTA = false,
+				SYNC = false,
+				CACHE = false,
+				WHISPER = false,
+				REQUESTS = false,
+				UI = false,
+				PROTOCOL = false,
+				DATABASE = false,
+				EVENTS = false,
+			},
+		},
+	})
 end
 
 function TOGBankClassic_Database:Reset(name)
