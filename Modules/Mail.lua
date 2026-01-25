@@ -11,7 +11,6 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 		button2 = "Cancel",
 		OnAccept = function(self, data)
 			if not data then return end
-			print("DEBUG: OnAccept - Splitting", data.amount, "from bag", data.bag, "slot", data.slot)
 			ClearCursor()
 			-- Find an empty bag slot to place the split items
 			local emptyBag, emptySlot
@@ -26,18 +25,14 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 				if emptyBag then break end
 			end
 			if not emptyBag then
-				print("DEBUG: ERROR - No empty bag slot!")
 				return
 			end
-			print("DEBUG: Found empty slot at bag", emptyBag, "slot", emptySlot)
 			-- Step 1: Split - puts amount on cursor
 			C_Container.SplitContainerItem(data.bag, data.slot, data.amount)
 			C_Timer.After(0.1, function()
-				print("DEBUG: After split - cursor:", GetCursorInfo())
 				-- Step 2: Place split items into empty slot to "commit" the split
 				C_Container.PickupContainerItem(emptyBag, emptySlot)
 				C_Timer.After(0.05, function()
-					print("DEBUG: After placing in empty - cursor:", GetCursorInfo())
 					-- Done! The split stack is now in inventory
 					if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
 						local message = string.format("Split %d %s into inventory. Ready to attach all items.",
@@ -406,16 +401,11 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 		-- Only count this stack if adding it doesn't exceed what we need
 		if usableItems + item.count <= qtyNeeded then
 			usableItems = usableItems + item.count
-			print("DEBUG CanFulfillRequest: Added stack of", item.count, "usableItems now:", usableItems, "qtyNeeded:", qtyNeeded)
-		else
-			print("DEBUG CanFulfillRequest: Skipped stack of", item.count, "would exceed (usableItems:", usableItems, "+ count would be >", qtyNeeded, ")")
 		end
 	end
-	print("DEBUG CanFulfillRequest: First pass - usableItems:", usableItems, "qtyNeeded:", qtyNeeded)
 
 	-- If greedy smallest-first didn't get exact match, try skipping individual small stacks
 	if usableItems < qtyNeeded and totalInBags >= qtyNeeded then
-		print("DEBUG CanFulfillRequest: Trying alternative combinations by skipping individual stacks...")
 		for skipIndex = 1, math.min(5, #items) do
 			local testUsable = 0
 			for i = 1, #items do
@@ -423,9 +413,7 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 					testUsable = testUsable + items[i].count
 				end
 			end
-			print("DEBUG CanFulfillRequest: Skipping stack", skipIndex, "(count:", items[skipIndex].count, ") gives:", testUsable)
 			if testUsable == qtyNeeded then
-				print("DEBUG CanFulfillRequest: Found exact match by skipping stack", skipIndex, "!")
 				usableItems = testUsable
 				break
 			elseif testUsable > usableItems and testUsable <= qtyNeeded then
@@ -434,7 +422,6 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 			end
 		end
 	end
-	print("DEBUG CanFulfillRequest: Final - usableItems:", usableItems, "qtyNeeded:", qtyNeeded, "totalInBags:", totalInBags)
 
 	-- Check if we need to split
 	if usableItems < qtyNeeded and totalInBags >= qtyNeeded then
@@ -523,7 +510,6 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 
 	-- If greedy didn't get exact match, try skipping individual stacks to find better fit
 	if simulatedAttached < qtyNeeded and totalInBags >= qtyNeeded then
-		print("DEBUG PrepareFulfillMail: First pass got", simulatedAttached, "trying alternatives...")
 		for skipIndex = 1, math.min(5, #items) do
 			local testAttached = 0
 			for i = 1, #items do
@@ -532,7 +518,6 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 				end
 			end
 			if testAttached == qtyNeeded then
-				print("DEBUG PrepareFulfillMail: Found exact match by skipping stack", skipIndex, "(count:", items[skipIndex].count, ")!")
 				simulatedAttached = testAttached
 				skipStackIndex = skipIndex  -- Remember to skip this stack during attachment
 				skippedLargeStack = nil  -- No split needed!
@@ -548,7 +533,6 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- If we need to split, show popup FIRST without attaching anything
 	if skippedLargeStack then
 		local remaining = qtyNeeded - simulatedAttached
-		print("DEBUG: Need to split before attaching. Simulated:", simulatedAttached, "Need:", qtyNeeded, "Remaining:", remaining)
 		
 		-- Show confirmation popup
 		local popupText = string.format("Split %d from stack of %d %s?", remaining, skippedLargeStack.count, itemName)
@@ -590,8 +574,6 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 				attached = attached + item.count
 				attachmentSlot = attachmentSlot + 1
 			end
-		else
-			print("DEBUG PrepareFulfillMail: Skipping stack", i, "count:", item.count, "for optimal fit")
 		end
 	end
 
