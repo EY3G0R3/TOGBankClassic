@@ -2,18 +2,6 @@
 	"folders": [
 		{
 			"path": "."
-		},
-		{
-			"path": "../Bagnon"
-		},
-		{
-			"path": "../Bagnon_Config"
-		},
-		{
-			"path": "../Bagnon_ItemLevel"
-		},
-		{
-			"path": "../BagBrother"
 		}
 	],
 	"settings": {

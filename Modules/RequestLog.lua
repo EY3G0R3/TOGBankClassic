@@ -988,23 +988,6 @@ function Guild:ReceiveRequestsData(payload)
 		return ADOPTION_STATUS.ADOPTED
 	end
 	TOGBankClassic_Output:Debug("REQUESTS", "[SYNC-003n] ReceiveRequestsData: INVALID - ApplyRequestSnapshot returned false")
-	TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Guild has %d members, checking for online...", numGuildMembers)
-	
-	local onlineCount = 0
-	for i = 1, numGuildMembers do
-		local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
-		if online and name then
-			local normalized = self:NormalizeName(name)
-			if normalized then
-				local targetedData = TOGBankClassic_Core:SerializeWithChecksum({ player = normalized, type = "requests-log", logFrom = logFrom })
-				TOGBankClassic_Core:SendCommMessage("togbank-r", targetedData, "Guild", nil, "BULK")
-				onlineCount = onlineCount + 1
-				if onlineCount <= 5 then
-					TOGBankClassic_Output:DebugComm("QUERY REQUEST LOG: Sent targeted query #%d to %s", onlineCount, normalized)
-				end
-			end
-		end
-	end
 	return ADOPTION_STATUS.INVALID
 end
 

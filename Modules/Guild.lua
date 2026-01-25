@@ -163,7 +163,8 @@ function TOGBankClassic_Guild:GetPlayer()
 	if try() then
 		return TOGBankClassic_Bank.player
 	end
-	local count, max, delay, timer = 0, 10, 15
+	local count, max, delay = 0, 10, 15
+	local timer
 	timer = C_Timer.NewTicker(delay, function()
 		count = count + 1
 		if try() or count >= max then
@@ -499,14 +500,25 @@ function TOGBankClassic_Guild:MarkPendingSync(syncType, sender, name)
 	if not self.pending_sync then
 		self.pending_sync = { roster = {}, alts = {} }
 	end
+	if not self.pending_sync.roster then
+		self.pending_sync.roster = {}
+	end
+	if not self.pending_sync.alts then
+		self.pending_sync.alts = {}
+	end
+	
 	if syncType == "roster" then
-		self.pending_sync.roster[normSender] = now
+		if self.pending_sync.roster then
+			self.pending_sync.roster[normSender] = now
+		end
 	elseif syncType == "alt" and name then
 		local normName = self:NormalizeName(name)
-		if not self.pending_sync.alts[normName] then
+		if self.pending_sync.alts and not self.pending_sync.alts[normName] then
 			self.pending_sync.alts[normName] = {}
 		end
-		self.pending_sync.alts[normName][normSender] = now
+		if self.pending_sync.alts and self.pending_sync.alts[normName] then
+			self.pending_sync.alts[normName][normSender] = now
+		end
 	end
 end
 
@@ -683,12 +695,15 @@ end
 -- Refresh the online members cache from current guild roster
 -- Called automatically when GUILD_ROSTER_UPDATE event fires
 function TOGBankClassic_Guild:RefreshOnlineCache()
+	self.onlineMembers = self.onlineMembers or {}
 	wipe(self.onlineMembers)
 	for i = 1, GetNumGuildMembers() do
 		local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
 		if name and isOnline then
 			local normalized = self:NormalizeName(name)
-			self.onlineMembers[normalized] = true
+			if self.onlineMembers and normalized then
+				self.onlineMembers[normalized] = true
+			end
 		end
 	end
 	local count = 0
@@ -1367,6 +1382,9 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 		end
 	end
 
+	if not self.Info.alts then
+		self.Info.alts = {}
+	end
 	self.Info.alts[norm] = alt
 
 	-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
@@ -1653,9 +1671,12 @@ function TOGBankClassic_Guild:AuthorRosterData()
 		end
 	end
 	if isBank or CanViewOfficerNote() then
+		if not info.roster then
+			info.roster = {}
+		end
 		info.roster.alts = banks
 		info.roster.version = GetServerTime()
-		if not banks then
+		if not banks and info.roster then
 			info.roster.version = nil
 		end
 		TOGBankClassic_Guild:SendRosterData()

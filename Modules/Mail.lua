@@ -92,10 +92,12 @@ function TOGBankClassic_Mail:Scan()
 	if banks == nil then
 		return
 	end
-	self.Roster = {}
+	self.Roster = self.Roster or {}
 	for _, v in pairs(banks) do
 		local norm = TOGBankClassic_Guild:NormalizeName(v)
-		self.Roster[norm] = true
+		if self.Roster and norm then
+			self.Roster[norm] = true
+		end
 		if norm == player then
 			isBank = true
 		end
@@ -265,7 +267,11 @@ function TOGBankClassic_Mail:Open(mailId)
 	local player = TOGBankClassic_Guild:GetPlayer()
 	local norm = TOGBankClassic_Guild:GetNormalizedPlayer(player)
 
-	if not info.alts[norm] then
+	if not info.alts then
+		info.alts = {}
+	end
+	
+	if info.alts and not info.alts[norm] then
 		info.alts[norm] = {}
 	end
 
