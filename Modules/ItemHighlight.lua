@@ -49,6 +49,13 @@ function ItemHighlight:SetEnabled(enabled)
 		self:RefreshHighlighting()
 	else
 		self:ClearAllOverlays()
+		-- Clear Bagnon search when disabling
+		if Bagnon then
+			local addon = Bagnon
+			addon.search = nil
+			addon.canSearch = false
+			addon:SendSignal('SEARCH_CHANGED')
+		end
 	end
 end
 

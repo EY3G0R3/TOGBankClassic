@@ -214,6 +214,8 @@ end
 -- Refresh online members cache when roster updates
 function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 	TOGBankClassic_Guild:RefreshOnlineCache()
+	-- Invalidate banks cache when roster updates
+	TOGBankClassic_Guild:InvalidateBanksCache()
 end
 
 function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)

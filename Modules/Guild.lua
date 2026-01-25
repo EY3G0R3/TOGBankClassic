@@ -7,6 +7,10 @@ TOGBankClassic_Guild.Info = nil
 -- Avoids stale data from GuildRoster() which only requests an update
 TOGBankClassic_Guild.onlineMembers = {}
 
+-- Cache of guild bankers (updated via GUILD_ROSTER_UPDATE)
+-- Prevents iterating through entire guild roster on every IsBank() call
+TOGBankClassic_Guild.banksCache = nil
+
 -- Temporary in-memory error storage for when Guild.Info is not initialized
 TOGBankClassic_Guild.tempDeltaErrors = {
 	lastErrors = {},
@@ -333,8 +337,12 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
 end
 
 function TOGBankClassic_Guild:GetBanks()
+	-- Return cached banks list if available
+	if self.banksCache ~= nil then
+		return self.banksCache
+	end
+	-- Build banks list
 	local banks = {}
-
 	for i = 1, GetNumGuildMembers() do
 		---START CHANGES
 		-- Allow use of either public or officer note, and allow the note to contain "gbank" instead of requiring it to be equal to "gbank" only (and no other characters)
@@ -349,10 +357,18 @@ function TOGBankClassic_Guild:GetBanks()
 			end
 		end
 	end
+	-- Cache the result (nil if no banks found)
 	if #banks == 0 then
+		self.banksCache = nil
 		return nil
 	end
+	self.banksCache = banks
 	return banks
+end
+
+-- Invalidate the banks cache (call when guild roster changes)
+function TOGBankClassic_Guild:InvalidateBanksCache()
+	self.banksCache = nil
 end
 
 function TOGBankClassic_Guild:GetRosterAlts()
