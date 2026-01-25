@@ -1,5 +1,33 @@
 # TOGBankClassic Changelog
 
+## [Unreleased] - Automatic Stack Splitting
+
+**Added:** 2026-01-24  
+**Branch:** refactor/code-reorganization
+
+### ✨ New Features
+
+#### Automatic Stack Splitting for Order Fulfillment
+- **Confirmation Popup**: Shows dialog when split needed (e.g., "Split 2 from stack of 5 Felcloth?")
+- **Visual Icons**: Shovel icon (🛠️) when split needed, envelope (✉️) when ready to mail
+- **Smart Bin-Packing**: Optimizes stack selection to minimize splits
+  - Tries greedy smallest-first approach
+  - Tests skipping individual stacks to find exact match
+  - Handles complex scenarios (e.g., 175 items from 2+7+13+8×20 → skip 7 → use 2+13+8×20=175)
+- **Two-Step Workflow**: 
+  1. Click shovel → popup → split to inventory
+  2. Icon auto-changes to envelope → click → attach all items
+- **Button Enhancement**: Stays enabled when split needed (no more grayed-out confusion)
+
+### 🔧 Technical Details
+- Uses `C_Container.SplitContainerItem()` with empty bag slot commitment
+- Sorts stacks smallest-first for optimal greedy baseline
+- Tests up to 5 skip combinations for better fit
+- BAG_UPDATE event triggers automatic UI refresh after split
+- Works for both simple splits (2 from 5) and complex partial fulfillment (175 from mixed stacks)
+
+---
+
 ## [v0.8.0] (2026-01-21) - Pull-Based Delta Protocol
 
 **Branch:** feature/pull-based-delta  

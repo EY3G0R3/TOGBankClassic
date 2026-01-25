@@ -17,8 +17,69 @@
 - [ ] **Banker ownership display** - Show which player/account owns each banker character to help identify who controls guild bank alts; useful for multi-person guild bank management and tracking
 - [ ] **Debug category filtering** - Add category-based debug logging to filter spam; enable/disable specific categories (ROSTER, COMMS, DELTA, SYNC, CACHE, WHISPER, REQUESTS, UI, PROTOCOL) via slash commands; reduces debug noise when troubleshooting specific issues
 - [x] ~~**Persistent debug logging**~~ **v0.7.11: Implemented with 50k entry buffer, 7-day retention, filtering**
-- [ ] **SplitContainerItem popup for order fulfillment** - When fulfilling a request with oversized stacks, show a popup that allows the banker to split the stack to the exact quantity needed; eliminates manual stack splitting requirement
+- [x] ~~**SplitContainerItem popup for order fulfillment**~~ **IMPLEMENTED: Shows confirmation popup with shovel icon when split needed; smart bin-packing algorithm for optimal stack selection; supports complex partial fulfillment scenarios**
 - [ ] **Bagnon-style item highlighting** - Implement visual highlighting system that greys out all items except those needed to fulfill active orders; works across player bags and bank; helps bankers quickly locate and gather items for order fulfillment
+
+---
+
+## ✂️ Automatic Stack Splitting for Order Fulfillment - IMPLEMENTED
+
+**Added:** January 24, 2026  
+**Purpose:** Eliminate manual stack splitting when fulfilling guild bank orders with oversized stacks
+
+### Problem
+- Bankers must manually split stacks when order quantity doesn't match stack sizes
+- Example: Request for 2 Felcloth, but only have 5-stack requires manual right-click split
+- Complex scenarios (175 Runecloth from mixed stacks) require multiple manual splits
+- Time-consuming and error-prone process
+
+### Solution
+Automatic stack splitting with confirmation popup:
+- **Split Detection:** Detects when stacks are too large for requested quantity
+- **Confirmation Dialog:** Shows popup with exact split amount (e.g., "Split 2 from stack of 5 Felcloth?")
+- **Icon Indication:** Fulfill button shows shovel icon (🛠️) when split needed, envelope (✉️) when ready to mail
+- **Smart Bin-Packing:** Optimizes which stacks to use/skip for best fit (e.g., skip 7-stack to use 2+13+160=175)
+- **Two-Step Workflow:** (1) Click shovel → split to inventory, (2) Click envelope → attach all items
+
+### Implementation Details
+
+**Visual Indicators:**
+- 🛠️ Shovel icon = Split needed before mailing
+- ✉️ Envelope icon = Ready to attach items
+- Button stays enabled during split workflow
+
+**Algorithm:**
+1. **First Pass (Greedy):** Try smallest-first stack selection
+2. **Optimization Pass:** If not exact match, try skipping individual stacks to find optimal fit
+3. **Split Decision:** Show popup if no exact combination found
+4. **Attachment:** Use optimized stack selection, skip identified stacks for best fit
+
+**Example Scenarios:**
+
+*Simple Split:*
+- Request: 2 Felcloth
+- Inventory: 1×5 stack
+- Action: Split 2 from 5-stack → Attach 2
+
+*Complex Partial Fulfillment:*
+- Request: 175 Runecloth
+- Inventory: 1×2, 1×7, 1×13, 8×20 (total 262)
+- Greedy would give: 2+7+13+7×20 = 162 (needs another split)
+- Optimized: Skip 7-stack → 2+13+8×20 = 175 exactly!
+
+### User Experience
+1. Click fulfill button (shovel icon appears if split needed)
+2. Popup asks: "Split 13 from stack of 20 Runecloth?"
+3. Click "Split" → items split to empty bag slot
+4. Icon changes to envelope automatically
+5. Click envelope → all 175 items attach to mail
+6. Click Send → order complete
+
+### Technical Notes
+- Uses `C_Container.SplitContainerItem()` with empty bag slot commitment
+- Bin-packing tries up to 5 skip combinations for optimal fit
+- Sorts stacks smallest-first for greedy baseline
+- BAG_UPDATE event triggers UI refresh after split
 
 ---
 
