@@ -13,26 +13,45 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 			if not data then return end
 			print("DEBUG: OnAccept - Splitting", data.amount, "from bag", data.bag, "slot", data.slot)
 			ClearCursor()
-			-- Call SplitContainerItem directly
-			C_Container.SplitContainerItem(data.bag, data.slot, data.amount)
-			print("DEBUG: Called SplitContainerItem")
-			-- Wait and check cursor
-			C_Timer.After(0.1, function()
-				local cursorType, itemID, itemLink = GetCursorInfo()
-				print("DEBUG: After split - cursor:", cursorType, itemID, itemLink)
-				if cursorType == "item" then
-					-- Attach to mail
-					ClickSendMailItemButton(data.attachmentSlot, true)
-					print("DEBUG: Clicked mail slot")
-					if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
-						local message = string.format("Attached %d %s for %s. Click Send to complete.",
-							data.amount, data.itemName, data.requester)
-						TOGBankClassic_UI_Requests.Window:SetStatusText(message)
+			-- Find an empty bag slot to place the split items
+			local emptyBag, emptySlot
+			for bag = 0, 4 do
+				local numSlots = C_Container.GetContainerNumSlots(bag)
+				for slot = 1, numSlots do
+					if not C_Container.GetContainerItemInfo(bag, slot) then
+						emptyBag, emptySlot = bag, slot
+						break
 					end
-				else
-					print("DEBUG: ERROR - SplitContainerItem didn't put item on cursor!")
-					print("DEBUG: Maybe SplitContainerItem doesn't work this way in Classic?")
 				end
+				if emptyBag then break end
+			end
+			if not emptyBag then
+				print("DEBUG: ERROR - No empty bag slot!")
+				return
+			end
+			print("DEBUG: Found empty slot at bag", emptyBag, "slot", emptySlot)
+			-- Step 1: Split - puts amount on cursor
+			C_Container.SplitContainerItem(data.bag, data.slot, data.amount)
+			C_Timer.After(0.1, function()
+				print("DEBUG: After split - cursor:", GetCursorInfo())
+				-- Step 2: Place split items into empty slot to "commit" the split
+				C_Container.PickupContainerItem(emptyBag, emptySlot)
+				C_Timer.After(0.05, function()
+					print("DEBUG: After placing in empty - cursor:", GetCursorInfo())
+					-- Step 3: Pick up the split stack from the empty slot
+					C_Container.PickupContainerItem(emptyBag, emptySlot)
+					C_Timer.After(0.05, function()
+						print("DEBUG: After picking up split stack - cursor:", GetCursorInfo())
+						-- Step 4: Attach to mail
+						ClickSendMailItemButton(data.attachmentSlot, true)
+						print("DEBUG: Clicked mail slot")
+						if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
+							local message = string.format("Attached %d %s for %s. Click Send to complete.",
+								data.amount, data.itemName, data.requester)
+							TOGBankClassic_UI_Requests.Window:SetStatusText(message)
+						end
+					end)
+				end)
 			end)
 		end,
 		OnCancel = function()
