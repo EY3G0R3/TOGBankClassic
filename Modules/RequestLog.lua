@@ -303,7 +303,13 @@ function Guild:NormalizeRequestList()
 					byId[clean.id] = #normalized
 				end
 				if clean.updatedAt and clean.updatedAt > latest then
-					latest = clean.updatedAt
+					-- Validate timestamp to prevent corruption (DATA-003)
+					local MAX_TIMESTAMP = 4102444800  -- Jan 1, 2100
+					if clean.updatedAt < MAX_TIMESTAMP then
+						latest = clean.updatedAt
+					else
+						TOGBankClassic_Output:Warn("Skipping corrupted updatedAt timestamp %s for request id=%s", tostring(clean.updatedAt), tostring(clean.id))
+					end
 				end
 			end
 		end
@@ -846,7 +852,16 @@ function Guild:GetRequestsVersion()
 	if not self.Info then
 		return 0
 	end
-	return tonumber(self.Info.requestsVersion or 0) or 0
+	local version = tonumber(self.Info.requestsVersion or 0) or 0
+	-- Validate version is within reasonable Unix timestamp range (2000-2038)
+	-- Prevents integer overflow from corrupted data (DATA-003)
+	local MIN_TIMESTAMP = 946684800  -- Jan 1, 2000
+	local MAX_TIMESTAMP = 2147483647  -- Max 32-bit signed integer (Jan 19, 2038)
+	if version < MIN_TIMESTAMP or version > MAX_TIMESTAMP then
+		TOGBankClassic_Output:Warn("Invalid request version %s detected, resetting to 0", tostring(version))
+		return 0
+	end
+	return version
 end
 
 function Guild:SendRequestsSnapshot(target)
@@ -939,9 +954,17 @@ function Guild:ReceiveRequestsData(payload)
 
 	if not payload.requestLogApplied then
 		-- Legacy client without requestLogApplied - use stored versions only
-		TOGBankClassic_Core:Print("[MERGE] Legacy client detected - using version comparison")
+		TOGBankClassic_Output:Debug("REQUESTS", "[MERGE] Legacy client detected - using version comparison")
 		localVersion = tonumber(self.Info.requestsVersion or 0) or 0
 		incomingVersion = tonumber(payload.version or 0) or 0
+
+		-- Validate incoming version to prevent integer overflow (DATA-003)
+		local MAX_TIMESTAMP = 2147483647  -- Max 32-bit signed integer (Jan 19, 2038)
+		if incomingVersion > MAX_TIMESTAMP then
+			TOGBankClassic_Output:Warn("Rejecting corrupted request snapshot with invalid version: %s (max timestamp exceeded)", tostring(incomingVersion))
+			return
+		end
+
 		isNewer = incomingVersion > localVersion
 	else
 		-- Modern client with requestLogApplied - check sequence numbers (SYNC-003o)

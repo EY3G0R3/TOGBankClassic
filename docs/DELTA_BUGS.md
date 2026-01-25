@@ -56,7 +56,74 @@
 
 ## Open Bugs
 
-### 🟠 HIGH
+### � CRITICAL
+
+#### 🔴 [DATA-003] Integer overflow on request version timestamp causing crash
+
+**Severity:** 🔴 CRITICAL
+**Category:** Request Sync / Data Corruption
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-25
+**Status:** 🔍 OPEN
+**Reproducibility:** Intermittent
+
+**Description:**
+Request snapshot version timestamp is being corrupted to an astronomically large value (~176 trillion instead of ~1.7 billion), causing integer overflow when attempting to store in database. This crashes the addon when receiving request data.
+
+**Error Details:**
+```
+85x integer overflow attempting to store 1.7673980749821e+14
+[TOGBankClassic/Modules/RequestLog.lua]:948: in function 'ReceiveRequestsData'
+```
+
+**Observed Data:**
+- `incomingVersion = 176739807498212` (corrupted - 176 trillion)
+- `localVersion = 1769213100` (normal - valid 2026 Unix timestamp)
+- `payload.version = 176739807498212` (same corruption in payload)
+
+**Root Cause Analysis:**
+The incoming version is approximately 100,000x larger than expected. Possible causes:
+1. Timestamp multiplication error (e.g., converting seconds to microseconds incorrectly)
+2. Concatenation instead of arithmetic operation
+3. Data corruption during serialization/deserialization
+4. Bit shifting or overflow in version calculation
+
+**Impact:**
+- 🔴 **CRITICAL** - Causes addon crash when receiving corrupted request data
+- Prevents request synchronization from affected client
+- Can occur during normal request sync operations
+
+**Current Behavior:**
+- Request snapshot with corrupted version is transmitted
+- Receiving client attempts to store the version
+- Integer overflow error crashes the addon
+
+**Expected Behavior:**
+- Version should be valid Unix timestamp (1.7 billion range for 2026)
+- Should handle overflow gracefully even if corruption occurs
+- Should validate version before attempting to store
+
+**Investigation Needed:**
+1. Identify where `payload.version` is set in request snapshot creation
+2. Check for timestamp arithmetic errors (multiplication, concatenation)
+3. Review serialization/deserialization for data corruption
+4. Add validation to reject versions outside valid Unix timestamp range
+
+**Files to Investigate:**
+- `Modules/RequestLog.lua` line 948 - ReceiveRequestsData() where crash occurs
+- Request snapshot creation code - where `payload.version` is set
+- Serialization/deserialization in AceComm transmission
+
+**Workaround:**
+- Add validation in ReceiveRequestsData() to reject versions > 2^31 (max valid timestamp until 2038)
+- Log corrupted data for debugging
+- Gracefully reject snapshot instead of crashing
+
+**Priority:** CRITICAL - Causes immediate crash, blocks request sync
+
+---
+
+### �🟠 HIGH
 
 #### 🟠 [FULFILL-001] Greedy split algorithm causes repeated unnecessary splits
 
