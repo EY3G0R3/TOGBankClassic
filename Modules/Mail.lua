@@ -512,20 +512,29 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	if simulatedAttached < qtyNeeded and totalInBags >= qtyNeeded then
 		for skipIndex = 1, math.min(5, #items) do
 			local testAttached = 0
+			local testSkippedLargeStack = nil
 			for i = 1, #items do
-				if i ~= skipIndex and testAttached + items[i].count <= qtyNeeded then
-					testAttached = testAttached + items[i].count
+				if i ~= skipIndex then
+					local remaining = qtyNeeded - testAttached
+					if items[i].count <= remaining then
+						testAttached = testAttached + items[i].count
+					elseif items[i].count > remaining and not testSkippedLargeStack then
+						-- This stack would need to be split
+						testSkippedLargeStack = items[i]
+						break
+					end
 				end
 			end
 			if testAttached == qtyNeeded then
 				simulatedAttached = testAttached
 				skipStackIndex = skipIndex  -- Remember to skip this stack during attachment
-				skippedLargeStack = nil  -- No split needed!
+				skippedLargeStack = nil  -- No split needed - found exact match!
 				break
-			elseif testAttached > simulatedAttached and testAttached <= qtyNeeded then
+			elseif testAttached > simulatedAttached then
+				-- Better fit found
 				simulatedAttached = testAttached
 				skipStackIndex = skipIndex
-				skippedLargeStack = nil
+				skippedLargeStack = testSkippedLargeStack
 			end
 		end
 	end
