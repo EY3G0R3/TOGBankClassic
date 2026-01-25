@@ -437,7 +437,13 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 		return true, reason, totalInBags, smallestStack
 	end
 
-	return true, nil, usableItems, smallestStack
+	-- Check if we have enough usable items to fulfill the request
+	if usableItems >= qtyNeeded then
+		return true, nil, usableItems, smallestStack
+	end
+
+	-- Not enough items even with splitting
+	return false, string.format("Need %d more items.", qtyNeeded - usableItems), totalInBags, smallestStack
 end
 
 -- Prepare mail to fulfill a request: sets recipient and attaches items
