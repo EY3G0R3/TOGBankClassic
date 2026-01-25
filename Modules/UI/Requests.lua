@@ -1129,7 +1129,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	if count == 0 then
 		local empty = self:EnsureEmptyLabel()
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[1]) or COLUMNS[1].width
-		empty:SetWidth(columnWidth)
+		if empty then
+			empty:SetWidth(columnWidth)
+		end
 		setWidgetShown(empty, true)
 		if self.RowPool then
 			for _, row in ipairs(self.RowPool) do
@@ -1212,7 +1214,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					local showComplete = canComplete and true or false
 					local showCancel = canCancel and true or false
 					local showDelete = canDelete and true or false
-					row.actionGroup:SetWidth(columnWidth)
+					if row.actionGroup then
+						row.actionGroup:SetWidth(columnWidth)
+					end
 					-- Layout: [Fulfill] [spacer] [Complete] [spacer] [Cancel] [spacer] [Delete]
 					setWidgetShown(row.fulfillButton, showFulfill)
 					setWidgetShown(row.fulfillSpacer, showFulfill and (showComplete or showCancel))

@@ -1,3 +1,4 @@
+---@class TOGBankClassic_Bank
 TOGBankClassic_Bank = { ... }
 
 local function IsBankAvailable()
@@ -190,6 +191,9 @@ function TOGBankClassic_Bank:Scan()
 		TOGBankClassic_Output:Debug("SYNC", "No inventory changes for %s, version unchanged", player)
 	end
 
+	if not info.alts then
+		info.alts = {}
+	end
 	info.alts[player] = alt
 end
 

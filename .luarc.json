@@ -66,7 +66,14 @@
         "WOW_PROJECT_ID",
         "WOW_PROJECT_MAINLINE",
         "error",
-        "setmetatable"
+        "setmetatable",
+        "time",
+        "NUM_BANKGENERIC_SLOTS",
+        "GetMoney",
+        "BANK_CONTAINER",
+        "YES",
+        "CANCEL",
+        "GameTooltip"
     ],
     "runtime.version": "Lua 5.1",
     "workspace.library": [

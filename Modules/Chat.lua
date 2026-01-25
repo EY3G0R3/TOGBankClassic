@@ -313,6 +313,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			end
 			if data.addon then
 				-- Track this user's addon version
+				if not self.guild_versions then
+					self.guild_versions = {}
+				end
 				self.guild_versions[sender] = {
 					version = data.addon,
 					seen = time(),
@@ -320,6 +323,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 				-- v0.8.0: Track online bankers for pull-based protocol
 				if data.isBanker then
+					if not self.online_bankers then
+						self.online_bankers = {}
+					end
 					self.online_bankers[sender] = {
 						seen = time(),
 						version = data.addon,

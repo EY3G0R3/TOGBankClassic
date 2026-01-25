@@ -1385,7 +1385,9 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 	if not self.Info.alts then
 		self.Info.alts = {}
 	end
-	self.Info.alts[norm] = alt
+	if self.Info.alts then
+		self.Info.alts[norm] = alt
+	end
 
 	-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
 	if alt.bank and alt.bank.items then
@@ -1674,10 +1676,12 @@ function TOGBankClassic_Guild:AuthorRosterData()
 		if not info.roster then
 			info.roster = {}
 		end
-		info.roster.alts = banks
-		info.roster.version = GetServerTime()
-		if not banks and info.roster then
-			info.roster.version = nil
+		if info.roster then
+			info.roster.alts = banks
+			info.roster.version = GetServerTime()
+			if not banks then
+				info.roster.version = nil
+			end
 		end
 		TOGBankClassic_Guild:SendRosterData()
 		if banks then
