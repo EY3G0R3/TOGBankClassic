@@ -170,7 +170,17 @@ function ItemHighlight:UpdateBagnonHighlighting()
 	-- Use | as OR operator to match any of the item names
 	local searchTerms = {}
 	for itemName, _ in pairs(self.neededItems) do
-		table.insert(searchTerms, itemName)
+		-- Strip common prefixes that don't match the actual item name
+		-- Formula: Enchant Bracer -> Enchant Bracer
+		-- Pattern: Robe of Power -> Robe of Power
+		local cleanName = itemName:gsub("^Formula: ", "")
+		cleanName = cleanName:gsub("^Pattern: ", "")
+		cleanName = cleanName:gsub("^Recipe: ", "")
+		cleanName = cleanName:gsub("^Plans: ", "")
+		cleanName = cleanName:gsub("^Schematic: ", "")
+		cleanName = cleanName:gsub("^Design: ", "")
+		cleanName = cleanName:gsub("^Manual: ", "")
+		table.insert(searchTerms, cleanName)
 	end
 
 	if #searchTerms == 0 then
