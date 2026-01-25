@@ -209,6 +209,8 @@ end
 -- Request initial guild roster update on world enter
 function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_)
 	GuildRoster()
+	-- Initialize cache immediately in case GUILD_ROSTER_UPDATE is delayed
+	TOGBankClassic_Guild:RefreshOnlineCache()
 end
 
 -- Refresh online members cache when roster updates

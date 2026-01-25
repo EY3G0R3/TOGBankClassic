@@ -58,6 +58,70 @@
 
 ### 🟠 HIGH
 
+#### 🟠 [FULFILL-001] Greedy split algorithm causes repeated unnecessary splits
+
+**Severity:** 🟠 HIGH
+**Category:** Order Fulfillment / Stack Splitting
+**Reporter:** User (Testing)
+**Date Reported:** 2026-01-25
+**Status:** 🔍 OPEN
+**Reproducibility:** Consistent
+
+**Description:**
+The greedy stack splitting algorithm in `Mail.lua` splits stacks from the beginning (first full stack), which invalidates its own calculations after each split. This causes repeated splits when a single split from the last full stack would be sufficient.
+
+**Root Cause:**
+1. Bags are typically organized: full stacks first → partial stacks → empty slots
+2. Greedy algorithm calculates from first-to-last stack
+3. When split is needed, it splits the FIRST full stack
+4. After split, the first stack is now smaller
+5. Greedy recalculation now sees different first stack
+6. Process repeats, causing multiple splits instead of one
+
+**Example Scenario:**
+```
+Need: 50 items
+Bags: [60, 60, 60, 20] (sorted as player keeps them)
+
+Current behavior:
+- Greedy: Try 60 (too big), skip → Try 60 (too big), skip → Try 60 (too big), skip → Try 20 → Need to split 30 from first 60
+- After split: [30, 30, 60, 60, 20]
+- Next fulfill recalculates and may split again from new first stack
+
+Better behavior:
+- Greedy: Same calculation (need 30 more after 20)
+- Split from LAST full stack (the 60 at end)
+- After split: [60, 60, 60, 20, 30]
+- First stacks unchanged → greedy calculation remains valid
+```
+
+**Current Behavior:**
+- Splits happen from the first full stack in the sorted list
+- Each split changes the beginning of the list
+- Repeated fulfillments cause cascading splits
+
+**Expected Behavior:**
+- Split should happen from the LAST full stack
+- First stacks remain unchanged after split
+- Greedy calculation remains stable across multiple fulfillments
+- Fewer total splits needed
+
+**Proposed Fix:**
+In `Mail.lua` around lines 557-574, when identifying `skippedLargeStack` for splitting:
+- Instead of using the first oversized stack encountered
+- Identify and split from the LAST full stack that's larger than needed
+- This preserves the beginning of the sorted list that greedy relies on
+
+**Files to Investigate:**
+- `Modules/Mail.lua` - PrepareFulfillMail() lines 504-574 (greedy simulation and split decision)
+- Lines 557-574 specifically where `skippedLargeStack` is chosen
+
+**Priority:** HIGH - Causes user frustration with repeated unnecessary split dialogs
+
+---
+
+### 🟠 HIGH
+
 #### 🟠 [SYNC-008] Manual request sync (`/togbank sync`) not initiating request synchronization
 
 **Severity:** 🟠 HIGH
