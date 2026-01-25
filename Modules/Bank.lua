@@ -180,7 +180,7 @@ function TOGBankClassic_Bank:Scan()
 	-- Compute a hash of the current inventory state
 	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
 	local previousHash = alt.inventoryHash
-	
+
 	if currentHash ~= previousHash then
 		-- Inventory changed, update version timestamp
 		alt.version = GetServerTime()

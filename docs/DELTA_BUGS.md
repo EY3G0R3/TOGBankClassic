@@ -1,7 +1,7 @@
 # Delta Implementation Bug Tracker
 
-**Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol  
-**Last Updated:** January 23, 2026  
+**Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
+**Last Updated:** January 23, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Recent Fixes (2026-01-23):**
@@ -60,11 +60,11 @@
 
 #### 🟠 [SYNC-008] Manual request sync (`/togbank sync`) not initiating request synchronization
 
-**Severity:** 🟠 HIGH  
-**Category:** Request Sync / Commands  
-**Reporter:** User (Testing)  
-**Date Reported:** 2026-01-23  
-**Status:** 🔍 INVESTIGATING  
+**Severity:** 🟠 HIGH
+**Category:** Request Sync / Commands
+**Reporter:** User (Testing)
+**Date Reported:** 2026-01-23
+**Status:** 🔍 INVESTIGATING
 **Reproducibility:** Consistent
 
 **Description:**
@@ -117,12 +117,12 @@ After a `/wipe` command, user expected to manually trigger request data sync usi
 
 #### ✅ [COMPAT-002] Guild.lua nil Info crash in SendRosterData
 
-**Severity:** 🟠 HIGH  
-**Category:** Backwards Compatibility / Error Handling  
-**Reporter:** Player (Screenshot)  
-**Date Reported:** 2026-01-23  
-**Date Resolved:** 2026-01-23  
-**Status:** ✅ RESOLVED  
+**Severity:** 🟠 HIGH
+**Category:** Backwards Compatibility / Error Handling
+**Reporter:** Player (Screenshot)
+**Date Reported:** 2026-01-23
+**Date Resolved:** 2026-01-23
+**Status:** ✅ RESOLVED
 **Related:** COMPAT-001 (Similar nil Info crash pattern)
 
 **Description:**
@@ -170,7 +170,7 @@ function TOGBankClassic_Guild:SendRosterData()
 	if not self.Info then
 		return
 	end
-	
+
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "roster", roster = self.Info.roster })
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
 end
@@ -187,12 +187,12 @@ Pre-existing bug discovered through player report. Affects any scenario where ro
 
 #### ✅ [DATA-002] Guild.lua nil version comparison in ReceiveAltData
 
-**Severity:** 🟠 HIGH  
-**Category:** Data Handling / Error Handling  
-**Reporter:** Player (Error report)  
-**Date Reported:** 2026-01-23  
-**Date Resolved:** 2026-01-23  
-**Status:** ✅ RESOLVED  
+**Severity:** 🟠 HIGH
+**Category:** Data Handling / Error Handling
+**Reporter:** Player (Error report)
+**Date Reported:** 2026-01-23
+**Date Resolved:** 2026-01-23
+**Status:** ✅ RESOLVED
 **Related:** Regression - was fixed in v2.3.0 but reintroduced
 
 **Description:**
@@ -248,12 +248,12 @@ This was previously fixed in v2.3.0 of the original fork but was reintroduced du
 
 #### [UI-003] Intermittent request list visibility - requests sometimes don't appear
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Data Synchronization / Request System  
-**Reporter:** Multiple users + Developer  
-**Date Reported:** 2026-01-23  
-**Date Resolved:** NOT RESOLVED - Bug still occurring  
-**Status:** 🔴 OPEN - Investigating with extensive logging  
+**Severity:** 🔴 CRITICAL
+**Category:** Data Synchronization / Request System
+**Reporter:** Multiple users + Developer
+**Date Reported:** 2026-01-23
+**Date Resolved:** NOT RESOLVED - Bug still occurring
+**Status:** 🔴 OPEN - Investigating with extensive logging
 **Reproducibility:** Intermittent
 
 **Description:**
@@ -277,7 +277,7 @@ Fixed snapshot rejection logic in `ReceiveRequestsData()`:
 - Version calculated as `max(updatedAt)` across all requests in the snapshot
 - **Problem**: Different players have different subsets of requests
   - Player A has requests 1, 2, 3, 4 (max timestamp 1769135122)
-  - Player B has requests 1, 2, 5 (max timestamp 1769100000)  
+  - Player B has requests 1, 2, 5 (max timestamp 1769100000)
   - Player B's snapshot rejected as STALE even though it contains request #5 which Player A doesn't have!
 - **Fix**: Only reject if versions are IDENTICAL (exact duplicate), otherwise always merge
 - Changed line 905 from `if not isNewer and localVersion > 0 then` to `if not isNewer and localVersion > 0 and incomingVersion == localVersion then`
@@ -374,11 +374,11 @@ Critical bug affecting all request system users. Requests are being silently del
 
 #### [COMM-002] Stale guild roster data in IsPlayerOnline checks
 
-**Severity:** 🔴 HIGH  
-**Category:** Communication / Error Prevention  
-**Reporter:** User (7.11 whisper issues)  
-**Date Reported:** 2026-01-23  
-**Status:** ✅ FIXED (v0.7.12)  
+**Severity:** 🔴 HIGH
+**Category:** Communication / Error Prevention
+**Reporter:** User (7.11 whisper issues)
+**Date Reported:** 2026-01-23
+**Status:** ✅ FIXED (v0.7.12)
 **Reproducibility:** Frequent during delta syncs
 
 **Description:**
@@ -395,7 +395,7 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
     -- Request fresh guild roster data (COMM-002)
     -- Without this, GetGuildRosterInfo() returns stale data
     GuildRoster()
-    
+
     -- Check roster for player...
 end
 ```
@@ -410,18 +410,18 @@ end
 - [COMM-001] - SendWhisper wrapper
 - [DELTA-008] - RequestDeltaChain online check
 
-**Version:** v0.7.12  
+**Version:** v0.7.12
 **Commit:** 6949617
 
 ---
 
 #### [UI-004] Banker tab selection resets to first banker intermittently
 
-**Severity:** 🟡 MEDIUM  
-**Category:** UI / User Experience  
-**Reporter:** User  
-**Date Reported:** 2026-01-23  
-**Status:** ✅ FIXED (v0.7.11)  
+**Severity:** 🟡 MEDIUM
+**Category:** UI / User Experience
+**Reporter:** User
+**Date Reported:** 2026-01-23
+**Status:** ✅ FIXED (v0.7.11)
 **Reproducibility:** Intermittent (now resolved)
 
 **Description:**
@@ -485,11 +485,11 @@ Previously disrupted user workflow when reviewing multiple bankers. Users had to
 
 #### [SYNC-002] Request data not syncing with /togbank sync command
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Communication / Synchronization  
-**Reporter:** User  
-**Date Reported:** 2026-01-23  
-**Status:** ✅ FIXED (v0.7.11)  
+**Severity:** 🟡 MEDIUM
+**Category:** Communication / Synchronization
+**Reporter:** User
+**Date Reported:** 2026-01-23
+**Status:** ✅ FIXED (v0.7.11)
 **Reproducibility:** Always
 
 **Description:**
@@ -566,12 +566,12 @@ Users could not explicitly sync request data via commands or UI. Request data on
 
 #### [COMM-001] "No player named <banker> is currently playing" error message
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Communication / Error Handling  
-**Reporter:** Multiple players  
-**Date Reported:** 2026-01-23  
-**Date Resolved:** 2026-01-23 (Expanded with comprehensive fix)  
-**Status:** ✅ RESOLVED  
+**Severity:** 🟡 MEDIUM
+**Category:** Communication / Error Handling
+**Reporter:** Multiple players
+**Date Reported:** 2026-01-23
+**Date Resolved:** 2026-01-23 (Expanded with comprehensive fix)
+**Status:** ✅ RESOLVED
 **Reproducibility:** Frequent
 
 **Description:**
@@ -625,7 +625,7 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
         TOGBankClassic_Output:Debug("Cannot send %s WHISPER to %s - player is offline", prefix, target)
         return false
     end
-    
+
     -- Send the whisper
     self:SendCommMessage(prefix, text, "WHISPER", target, prio, callbackFn, callbackArg)
     return true
@@ -669,12 +669,12 @@ Implement GUILD_ROSTER_UPDATE cache system to maintain accurate real-time online
 
 #### ✅ [DELTA-008] Repeated delta sync failures causing fallback to full sync
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Delta Application / Performance  
-**Reporter:** Developer (Console warning)  
-**Date Reported:** 2026-01-23  
-**Date Resolved:** 2026-01-23  
-**Status:** ✅ RESOLVED  
+**Severity:** 🟡 MEDIUM
+**Category:** Delta Application / Performance
+**Reporter:** Developer (Console warning)
+**Date Reported:** 2026-01-23
+**Date Resolved:** 2026-01-23
+**Status:** ✅ RESOLVED
 **Reproducibility:** Intermittent
 
 **Description:**
@@ -709,7 +709,7 @@ function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion,
         )
         return false
     end
-    
+
     -- Only send WHISPER if sender is currently online
     SendCommMessage("togbank-dr", serialized, "WHISPER", sender, "ALERT")
 end
@@ -739,13 +739,13 @@ Eliminates unnecessary delta sync failures when senders are offline. System now 
 ### 🟠 HIGH - All Resolved
 
 #### ✅ [SYNC-001] Cross-Guild Data Bleed After /wipe
-**Reported:** 2026-01-22  
-**Severity:** HIGH  
-**Category:** Database / Synchronization  
-**Status:** ✅ RESOLVED  
+**Reported:** 2026-01-22
+**Severity:** HIGH
+**Category:** Database / Synchronization
+**Status:** ✅ RESOLVED
 **Fixed:** 2026-01-22
 
-**Description:**  
+**Description:**
 When users execute `/wipe` and then start syncing, they initially receive information about bankers that aren't in their current guild. This appears to be related to players who have characters across multiple guilds on their account.
 
 **Steps to Reproduce:**
@@ -753,10 +753,10 @@ When users execute `/wipe` and then start syncing, they initially receive inform
 2. Begin synchronization process
 3. Observe banker data appearing for characters not in the current guild
 
-**Expected Behavior:**  
+**Expected Behavior:**
 After `/wipe`, synchronization should only populate data for bankers currently in the active guild.
 
-**Actual Behavior:**  
+**Actual Behavior:**
 Data from other guilds (possibly from other characters on the same account) is bleeding through and appearing in the bank data.
 
 **Root Cause Analysis:**
@@ -817,7 +817,7 @@ Add roster-based validation to sync operations:
 - No changes to data structure or protocol
 - Works with existing v0.8.0 clients
 
-**Impact:**  
+**Impact:**
 Users see incorrect banker information after data reset, potentially causing confusion about who has banking privileges.
 
 ---
@@ -828,12 +828,12 @@ Users see incorrect banker information after data reset, potentially causing con
 
 #### ✅ [ADDON-001] Nil itemLink passed to Pawn/BagBrother causes errors
 
-**Severity:** 🟠 HIGH  
-**Category:** Error Handling / Addon Compatibility  
-**Reporter:** User (BugSack error)  
-**Date Reported:** 2026-01-22  
-**Status:** ✅ CLOSED  
-**Fixed In:** v0.8.0  
+**Severity:** 🟠 HIGH
+**Category:** Error Handling / Addon Compatibility
+**Reporter:** User (BugSack error)
+**Date Reported:** 2026-01-22
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
 **Description:**
@@ -902,12 +902,12 @@ function TOGBankClassic_Item:GetInfo(id, link)
 	if not link then
 		return nil
 	end
-	
+
 	local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(link)
 	if not name then
 		return nil
 	end
-	
+
 	local equip = C_Item.GetItemInventoryTypeByID(id)
 	-- ... rest of function
 end
@@ -925,19 +925,19 @@ Prevents TOGBankClassic from contributing to error spam when other addons (like 
 **Resolution:**
 Applied defensive programming throughout the codebase to check for nil item links and names before passing to WoW API functions or other processing. This ensures graceful degradation when item data is unavailable.
 
-**Verified By:** Code review and error path analysis  
+**Verified By:** Code review and error path analysis
 **Closed:** 2026-01-22
 
 ---
 
 #### ✅ [DELTA-007] TriggerCallback method does not exist
 
-**Severity:** 🟠 HIGH  
-**Category:** Delta Application / UI Refresh  
-**Reporter:** User (BugSack error)  
-**Date Reported:** 2026-01-22  
-**Status:** ✅ CLOSED  
-**Fixed In:** v0.8.0  
+**Severity:** 🟠 HIGH
+**Category:** Delta Application / UI Refresh
+**Reporter:** User (BugSack error)
+**Date Reported:** 2026-01-22
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
 **Description:**
@@ -1009,19 +1009,19 @@ This approach:
 **Resolution:**
 Replaced conceptual `TriggerCallback()` with pragmatic direct UI refresh. This fixes the error and provides better UX by immediately showing delta updates to users who have the inventory window open.
 
-**Verified By:** In-game testing during delta synchronization  
+**Verified By:** In-game testing during delta synchronization
 **Closed:** 2026-01-22
 
 ---
 
 #### ✅ [ITEM-001] Item.Aggregate crashes when item.Count is nil
 
-**Severity:** 🟠 HIGH  
-**Category:** Database / Error Handling  
-**Reporter:** User (BugSack error)  
-**Date Reported:** 2026-01-22  
-**Status:** ✅ CLOSED  
-**Fixed In:** v0.8.0  
+**Severity:** 🟠 HIGH
+**Category:** Database / Error Handling
+**Reporter:** User (BugSack error)
+**Date Reported:** 2026-01-22
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
 **Description:**
@@ -1070,7 +1070,7 @@ end
 **Resolution:**
 Applied defensive programming approach using default value of 1 for any nil Count fields during aggregation. This handles both new items with missing Count and previously stored items from old data structures.
 
-**Verified By:** User in-game testing  
+**Verified By:** User in-game testing
 **Closed:** 2026-01-22
 
 ---
@@ -1081,12 +1081,12 @@ Applied defensive programming approach using default value of 1 for any nil Coun
 
 #### ✅ [PROTO-001] Delta validation rejects link-less deltas without baseVersion
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Protocol / Backwards Compatibility  
-**Reporter:** Testing (Galdof logs)  
-**Date Reported:** 2026-01-21  
-**Status:** ✅ CLOSED  
-**Fixed In:** v0.8.0  
+**Severity:** 🔴 CRITICAL
+**Category:** Protocol / Backwards Compatibility
+**Reporter:** Testing (Galdof logs)
+**Date Reported:** 2026-01-21
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
 **Description:**
@@ -1166,19 +1166,19 @@ Made `baseVersion` field optional in delta validation. Changed Core.lua line 118
 - Guild.lua: `ApplyDelta()` treats baseVersion as optional (line 1770)
 - Core.lua: Validation now treats baseVersion as optional (line 118)
 
-**Verified By:** In-game testing on 2026-01-21  
+**Verified By:** In-game testing on 2026-01-21
 **Closed:** 2026-01-21
 
 ---
 
 #### ✅ [UI-001] Inventory UI crashes when alt.bank.slots is nil
 
-**Severity:** 🔴 CRITICAL  
-**Category:** UI / Database  
-**Reporter:** User  
-**Date Reported:** 2026-01-21  
-**Status:** ✅ CLOSED  
-**Fixed In:** v0.8.0  
+**Severity:** 🔴 CRITICAL
+**Category:** UI / Database
+**Reporter:** User
+**Date Reported:** 2026-01-21
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
 **Description:**
@@ -1320,19 +1320,19 @@ end
 **Resolution:**
 Implemented dual-layer fix: defensive nil checks in UI code prevent crashes, and database migration ensures all alt data has proper structure. Migration runs once on addon load and initializes missing `slots` fields with zero values.
 
-**Verified By:** In-game testing on 2026-01-21  
+**Verified By:** In-game testing on 2026-01-21
 **Closed:** 2026-01-21
 
 ---
 
 #### ✅ [UI-002] Items don't appear in UI after data integration
 
-**Severity:** 🔴 CRITICAL  
-**Category:** UI / Protocol  
-**Reporter:** User (Galdof testing)  
-**Date Reported:** 2026-01-21 (Evening)  
-**Status:** ✅ CLOSED  
-**Fixed In:** v0.8.0  
+**Severity:** 🔴 CRITICAL
+**Category:** UI / Protocol
+**Reporter:** User (Galdof testing)
+**Date Reported:** 2026-01-21 (Evening)
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
 **Description:**
@@ -1412,9 +1412,9 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
     if not items then
         return
     end
-    
+
     local needsAsyncLoad = false
-    
+
     for _, item in ipairs(items) do
         if item.ID and not item.Link then
             local itemLink = select(2, GetItemInfo(item.ID))
@@ -1438,7 +1438,7 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
             end
         end
     end
-    
+
     -- NEW: If all links loaded from cache, refresh UI now
     if not needsAsyncLoad and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
         TOGBankClassic_UI_Inventory:DrawContent()
@@ -1474,7 +1474,7 @@ end
 **Resolution:**
 Added UI refresh mechanism to `ReconstructItemLinks()` that triggers `DrawContent()` after successful link reconstruction. Handles both immediate (cached) and async (server query) cases. Items now appear as soon as their links become available from WoW API.
 
-**Verified By:** In-game testing on 2026-01-21 (Evening)  
+**Verified By:** In-game testing on 2026-01-21 (Evening)
 **Closed:** 2026-01-21
 
 ---
@@ -1483,12 +1483,12 @@ Added UI refresh mechanism to `ReconstructItemLinks()` that triggers `DrawConten
 
 #### ✅ [DATA-001] Inventory hash missing for existing alt data
 
-**Severity:** 🟠 HIGH  
-**Category:** Database / Protocol  
-**Reporter:** Testing (hash broadcasting logs)  
-**Date Reported:** 2026-01-21  
-**Status:** ✅ CLOSED  
-**Fixed In:** v0.8.0  
+**Severity:** 🟠 HIGH
+**Category:** Database / Protocol
+**Reporter:** Testing (hash broadcasting logs)
+**Date Reported:** 2026-01-21
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
 **Description:**
@@ -1536,7 +1536,7 @@ end
 
 **Migration Results (from logs):**
 - ✅ Successfully migrated 61 alts with inventory data
-- ✅ Computed hashes from existing bank/bags/money data  
+- ✅ Computed hashes from existing bank/bags/money data
 - ✅ One alt skipped (Engnschematc-Azuresong) - missing bank or bags data
 
 **Testing Results:**
@@ -1550,7 +1550,7 @@ end
 **Resolution:**
 Added one-time migration in Database.lua that computes inventory hashes for all existing alt data on addon load. Uses same `ComputeInventoryHash()` function as Bank:Scan() to ensure consistency. Migration only runs for alts with complete bank+bags data and missing hash.
 
-**Verified By:** In-game testing on 2026-01-21  
+**Verified By:** In-game testing on 2026-01-21
 **Closed:** 2026-01-21
 
 ---
@@ -1581,11 +1581,11 @@ Added one-time migration in Database.lua that computes inventory hashes for all 
 
 #### ✅ [SYNC-001] Version timestamp desync causes unnecessary queries on login
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Communication / Protocol  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-20  
-**Status:** FIXED - Separate broadcast systems implemented  
+**Severity:** 🟡 MEDIUM
+**Category:** Communication / Protocol
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-20
+**Status:** FIXED - Separate broadcast systems implemented
 **Assigned To:** Development Team
 
 **Description:**
@@ -1692,7 +1692,7 @@ TOGBankClassic: [DEBUG] Sent delta update for Metals-Azuresong via togbank-d2
 TOGBankClassic: [DEBUG] Send complete: 2 chunks, 348 bytes in 3.1s
 ```
 
-**Results:** 
+**Results:**
 - ✅ WORKING - Delta clients successfully ignore legacy broadcasts
 - ✅ WORKING - Delta sync transmission functional (348 bytes vs 2368 bytes = 85% savings)
 - ✅ FIXED - Self-query bug (clients no longer query sender about themselves)
@@ -1702,7 +1702,7 @@ TOGBankClassic: [DEBUG] Send complete: 2 chunks, 348 bytes in 3.1s
 
 1. **Self-Query Prevention**: Added check to prevent clients from querying sender about the sender's own alt
    - Line 257-262 in Chat.lua: Skip if `kNorm == senderNorm`
-   
+
 2. **Broken Age Check Removed**: Removed premature rejection in delta chain replay
    - Guild.lua line ~1465: Removed `versionGap > MAX_HOPS * 60` check
    - Was rejecting deltas older than 30 minutes (broken calculation)
@@ -1711,7 +1711,7 @@ TOGBankClassic: [DEBUG] Send complete: 2 chunks, 348 bytes in 3.1s
 
 **Current Status - End of Day 2026-01-20:**
 - Delta sync successfully transmitting with major bandwidth savings
-- Self-queries eliminated  
+- Self-queries eliminated
 - Legacy/delta broadcast separation working
 - Age check removed - needs testing with actual offline scenarios
 - Ready for continued testing of delta chain replay tomorrow
@@ -1726,12 +1726,12 @@ TOGBankClassic: [DEBUG] Send complete: 2 chunks, 348 bytes in 3.1s
 
 #### ✅ [SCAN-001] Inventory scan only triggers on window close events (not BAG_UPDATE)
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Database / Inventory Scanning  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-20  
-**Status:** ✅ CLOSED - Moved to Feature Improvements  
-**Resolution:** Not a bug - current design works as intended. Real-time scanning is a feature enhancement.  
+**Severity:** 🟡 MEDIUM
+**Category:** Database / Inventory Scanning
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-20
+**Status:** ✅ CLOSED - Moved to Feature Improvements
+**Resolution:** Not a bug - current design works as intended. Real-time scanning is a feature enhancement.
 **Resolution Date:** 2026-01-21
 
 **Description:**
@@ -1867,12 +1867,12 @@ Critical - blocks delta sync testing, affects all users changing character bag i
 
 #### ✅ [DELTA-006] Delta rejection without recovery for offline players (version mismatch gap)
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Protocol / Delta Application  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-20  
-**Status:** ✅ CLOSED - Abandoned with v0.7.0  
-**Resolution:** Superseded by v0.8.0 pull-based protocol with inventory hashing - version matching no longer relies on strict delta chains.  
+**Severity:** 🔴 CRITICAL
+**Category:** Protocol / Delta Application
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-20
+**Status:** ✅ CLOSED - Abandoned with v0.7.0
+**Resolution:** Superseded by v0.8.0 pull-based protocol with inventory hashing - version matching no longer relies on strict delta chains.
 **Resolution Date:** 2026-01-21
 
 **Description:**
@@ -2021,12 +2021,12 @@ Manual `/togbank share` from banker after player returns online forces full sync
 
 #### 🔴 [DELTA-006-IMPL-001] Function name mismatch: BuildDeltaChain vs GetDeltaHistory
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Implementation / Function Call Error  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-20  
-**Status:** ✅ FIXED - Awaiting Test Verification  
-**Assigned To:** Development Team  
+**Severity:** 🔴 CRITICAL
+**Category:** Implementation / Function Call Error
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-20
+**Status:** ✅ FIXED - Awaiting Test Verification
+**Assigned To:** Development Team
 **Related To:** [DELTA-006] Delta Chain Replay Implementation
 
 **Description:**
@@ -2125,7 +2125,7 @@ local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.
 - Document all public API functions with exact signatures
 - Consider runtime validation to catch undefined function calls earlier
 
-**Resolution Date:** 2026-01-20  
+**Resolution Date:** 2026-01-20
 **Files Modified:**
 - `Modules/Chat.lua` (line 307)
 
@@ -2141,11 +2141,11 @@ local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.
 
 #### ⏳ [TEST-001] Unit tests need adjustment for actual implementation
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Database / Module Initialization  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-17  
-**Status:** Resolved  
+**Severity:** 🔴 CRITICAL
+**Category:** Database / Module Initialization
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-17
+**Status:** Resolved
 **Assigned To:** Development Team
 
 **Description:**
@@ -2186,11 +2186,11 @@ Tests.lua was using AceAddon's `NewModule()` pattern, but other modules in the a
 
 #### ✅ [DELTA-002] Tests.lua addon:Print() at load time fails
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Module Initialization  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-17  
-**Status:** Resolved  
+**Severity:** 🔴 CRITICAL
+**Category:** Module Initialization
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-17
+**Status:** Resolved
 **Assigned To:** Development Team
 
 **Description:**
@@ -2231,11 +2231,11 @@ The line `addon:Print("Tests module loaded. Use /togbank test to run delta sync 
 
 #### ✅ [DELTA-003] Tests.lua addon reference nil in RunAllTests
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Module Initialization  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-17  
-**Status:** Resolved  
+**Severity:** 🔴 CRITICAL
+**Category:** Module Initialization
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-17
+**Status:** Resolved
 **Assigned To:** Development Team
 
 **Description:**
@@ -2284,11 +2284,11 @@ This creates a proxy table that dynamically looks up `TOGBankClassic_Core` whene
 
 #### ✅ [COMPAT-001] RequestLog.lua nil Info crash on early request log sync
 
-**Severity:** 🟠 HIGH  
-**Category:** Backwards Compatibility / Error Handling  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-17  
-**Status:** Resolved  
+**Severity:** 🟠 HIGH
+**Category:** Backwards Compatibility / Error Handling
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-17
+**Status:** Resolved
 **Assigned To:** Development Team
 
 **Description:**
@@ -2358,13 +2358,13 @@ This is a pre-existing bug not related to delta sync implementation, but discove
 
 #### ✅ [TEST-002] Remaining test phases need adjustment for actual implementation
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Testing  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-20  
-**Date Resolved:** 2026-01-20  
-**Status:** ✅ RESOLVED  
-**Related:** TEST-001 (Phase 5.1 completed)  
+**Severity:** 🟡 MEDIUM
+**Category:** Testing
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-20
+**Date Resolved:** 2026-01-20
+**Status:** ✅ RESOLVED
+**Related:** TEST-001 (Phase 5.1 completed)
 **Resolution:** Fixed all test failures + discovered and fixed ApplyItemDelta bug
 
 **Description:**
@@ -2440,12 +2440,12 @@ All 25 tests now pass successfully, validating:
 
 ### 🟡 MEDIUM
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Testing  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-20  
-**Status:** Open - Needs Investigation  
-**Related:** TEST-001 (Phase 5.1 completed)  
+**Severity:** 🟡 MEDIUM
+**Category:** Testing
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-20
+**Status:** Open - Needs Investigation
+**Related:** TEST-001 (Phase 5.1 completed)
 **Assigned To:** Development Team
 
 **Description:**
@@ -2514,10 +2514,10 @@ After fixing Phase 5.1 Delta Computation tests in TEST-001, there are still 11 f
    - Tests checking old behavior that no longer matches implementation
    - May need to update assertions or test data
 
-**Priority:** MEDIUM  
+**Priority:** MEDIUM
 These are test infrastructure issues that don't block actual functionality, but should be fixed to ensure automated validation works properly.
 
-**Workaround:**  
+**Workaround:**
 Manual testing per TESTING.md continues to validate functionality. Core delta computation is verified working via Phase 5.1 tests.
 
 **Next Steps:**
@@ -2542,12 +2542,12 @@ Manual testing per TESTING.md continues to validate functionality. Core delta co
 
 #### ✅ [TEST-001] Unit tests need adjustment for actual implementation
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Testing  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-17  
-**Status:** ✅ Resolved & Verified  
-**Resolution Date:** 2026-01-20  
+**Severity:** 🟡 MEDIUM
+**Category:** Testing
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-17
+**Status:** ✅ Resolved & Verified
+**Resolution Date:** 2026-01-20
 **Assigned To:** Development Team
 
 **Description:**
@@ -2576,7 +2576,7 @@ This ticket focused on fixing Phase 5.1 (Delta Computation) and Phase 5.2 (Size 
 
 **Root Cause:**
 Tests were written expecting:
-- `ComputeDelta(oldData, newData, version)` 
+- `ComputeDelta(oldData, newData, version)`
 
 But actual implementation is:
 - `ComputeDelta(name, currentAlt)` - retrieves snapshot from database internally
@@ -2650,7 +2650,7 @@ The following 11 test failures are now tracked in **TEST-002**:
 
 **Resolution Complete:**
 ✅ Core delta computation tests fixed and verified working (Phase 5.1: 8/8)
-✅ Test infrastructure properly initializes database context  
+✅ Test infrastructure properly initializes database context
 ✅ Test data structures match actual implementation
 ✅ All Phase 5.1 tests passing (100%)
 ✅ Remaining phases split to TEST-002 for separate tracking
@@ -2671,12 +2671,12 @@ The following 11 test failures are now tracked in **TEST-002**:
 
 #### ✅ [DELTA-005] Item merging removes slot field, breaking delta comparison
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Delta Computation / Database  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-20  
-**Status:** ✅ Resolved & Tested  
-**Resolution Date:** 2026-01-20  
+**Severity:** 🔴 CRITICAL
+**Category:** Delta Computation / Database
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-20
+**Status:** ✅ Resolved & Tested
+**Resolution Date:** 2026-01-20
 **Assigned To:** Development Team
 
 **Description:**
@@ -2805,12 +2805,12 @@ Converted entire delta pipeline from slot-based to itemKey-based comparison:
 
 #### ✅ [DELTA-004] Delta computation not detecting inventory changes
 
-**Severity:** 🟠 HIGH  
-**Category:** Delta Computation  
-**Reporter:** Testing Team  
-**Date Reported:** 2026-01-20  
-**Status:** ✅ Resolved (Fixed via DELTA-005)  
-**Resolution Date:** 2026-01-20  
+**Severity:** 🟠 HIGH
+**Category:** Delta Computation
+**Reporter:** Testing Team
+**Date Reported:** 2026-01-20
+**Status:** ✅ Resolved (Fixed via DELTA-005)
+**Resolution Date:** 2026-01-20
 **Assigned To:** Development Team
 
 **Description:**
@@ -2858,7 +2858,7 @@ After removing 1 stack of mithril from the banker's inventory, `/togbank share` 
 **Possible Root Causes:**
 1. ~~Bank scan not updating currentAlt.bank.items before SendAltData is called~~ **CONFIRMED - timing issue**
 2. ~~Snapshot comparison logic incorrect in ComputeItemDelta()~~ Not the issue
-3. ~~Snapshot not being saved/retrieved properly from database~~ Not the issue  
+3. ~~Snapshot not being saved/retrieved properly from database~~ Not the issue
 4. ~~Item data structure mismatch (table vs array indexing)~~ Not the issue
 
 **Workaround:**
@@ -2878,12 +2878,12 @@ With itemKey-based comparison, delta computation now correctly detects all inven
 
 #### ✅ [UI-001] Debug tab doesn't persist when closed/hidden
 
-**Severity:** 🟡 MEDIUM  
-**Category:** UI/Commands  
-**Reporter:** Development Team  
-**Date Reported:** 2026-01-20  
-**Status:** ✅ Resolved & Tested  
-**Resolution Date:** 2026-01-20  
+**Severity:** 🟡 MEDIUM
+**Category:** UI/Commands
+**Reporter:** Development Team
+**Date Reported:** 2026-01-20
+**Status:** ✅ Resolved & Tested
+**Resolution Date:** 2026-01-20
 **Assigned To:** Development Team
 
 **Description:**
@@ -2929,7 +2929,7 @@ function TOGBankClassic_Output:GetDebugFrame()
 	if self.debugFrame and self.debugFrame:IsShown() then
 		return self.debugFrame
 	end
-	
+
 	-- Try to find existing TOGBank Debug tab
 	for i = 1, NUM_CHAT_WINDOWS do
 		local name = GetChatWindowInfo(i)
@@ -2938,7 +2938,7 @@ function TOGBankClassic_Output:GetDebugFrame()
 			return self.debugFrame
 		end
 	end
-	
+
 	return nil
 end
 ```
@@ -2950,7 +2950,7 @@ function TOGBankClassic_Output:GetDebugFrame()
 	if self.debugFrame then
 		return self.debugFrame
 	end
-	
+
 	-- Try to find existing TOGBank Debug tab (even if hidden)
 	for i = 1, NUM_CHAT_WINDOWS do
 		local name = GetChatWindowInfo(i)
@@ -2959,7 +2959,7 @@ function TOGBankClassic_Output:GetDebugFrame()
 			return self.debugFrame
 		end
 	end
-	
+
 	return nil
 end
 ```
@@ -3000,7 +3000,7 @@ end
 **Additional Issue Found (2026-01-20):**
 Debug tab not persisting across `/reload` on some characters (worked on Galdof but not on Metals).
 
-**Root Cause #1:** 
+**Root Cause #1:**
 `CreateDebugTab()` in Output.lua line 129 called `FCF_ResetChatWindows()` which resets **ALL** chat windows to defaults, preventing WoW from properly saving the new tab configuration to `chat-cache.txt`.
 
 **Root Cause #2:**
@@ -3043,13 +3043,13 @@ Remove-Item "C:\Program Files (x86)\World of Warcraft\_classic_era_\WTF\Account\
 
 #### ✅ [ERROR-001] Error tracking silent failures and test parameter mismatch
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Error Handling / Testing  
-**Reporter:** Development Team  
-**Date Reported:** 2026-01-20  
-**Status:** ✅ Resolved & Verified  
-**Resolution Date:** 2026-01-20  
-**Verified:** 2026-01-20 - Error tracking confirmed working after metrics reset  
+**Severity:** 🟡 MEDIUM
+**Category:** Error Handling / Testing
+**Reporter:** Development Team
+**Date Reported:** 2026-01-20
+**Status:** ✅ Resolved & Verified
+**Resolution Date:** 2026-01-20
+**Verified:** 2026-01-20 - Error tracking confirmed working after metrics reset
 **Assigned To:** Development Team
 
 **Description:**
@@ -3095,7 +3095,7 @@ function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 		message = errorMessage,
 		timestamp = GetServerTime(),
 	}
-	
+
 	-- Try to use database storage first
 	if self.Info and self.Info.name then
 		local db = TOGBankClassic_Database.db.faction[self.Info.name]
@@ -3105,7 +3105,7 @@ function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 			return
 		end
 	end
-	
+
 	-- Fallback: Use temporary in-memory storage
 	table.insert(self.tempDeltaErrors.lastErrors, 1, error)
 	-- ... track counts in temp storage
@@ -3116,15 +3116,15 @@ function TOGBankClassic_Guild:MigrateTempErrors()
 	if not self.Info or not self.Info.name then
 		return
 	end
-	
+
 	local db = TOGBankClassic_Database.db.faction[self.Info.name]
 	if not db or not db.deltaErrors then
 		return
 	end
-	
+
 	-- Migrate errors, failure counts, and notification flags
 	-- ... migration logic
-	
+
 	-- Clear temp storage
 	self.tempDeltaErrors.lastErrors = {}
 	self.tempDeltaErrors.failureCounts = {}
@@ -3157,7 +3157,7 @@ function TOGBankClassic_Guild:GetDeltaFailureCount(altName)
 			return db.deltaErrors.failureCounts[altName] or 0
 		end
 	end
-	
+
 	-- Fallback to temporary storage
 	return self.tempDeltaErrors.failureCounts[altName] or 0
 end
@@ -3214,11 +3214,11 @@ When reporting a new bug, copy this template and fill it out:
 ```markdown
 ### [BUG-XXX] Short Bug Title
 
-**Severity:** 🔴/🟠/🟡/🟢  
-**Category:** [Category Name]  
-**Reporter:** [Your Name]  
-**Date Reported:** YYYY-MM-DD  
-**Status:** Open / In Progress / Testing / Resolved  
+**Severity:** 🔴/🟠/🟡/🟢
+**Category:** [Category Name]
+**Reporter:** [Your Name]
+**Date Reported:** YYYY-MM-DD
+**Status:** Open / In Progress / Testing / Resolved
 **Assigned To:** [Name or Unassigned]
 
 **Description:**
@@ -3319,7 +3319,7 @@ Track which test suites have been executed and results:
 **Current Issue:**
 Delta computation completes (0.03-0.04ms) but full sync is sent via `togbank-d` instead of delta via `togbank-d2`. Missing log messages:
 - "Snapshot saved for X"
-- "✓ Delta selected" or "✗ Delta too large" 
+- "✓ Delta selected" or "✗ Delta too large"
 - "No changes detected"
 
 Investigating why `useDelta` flag is false despite delta being computed.
@@ -3330,18 +3330,18 @@ Investigating why `useDelta` flag is false despite delta being computed.
 - ✅ Passed - All tests passed
 - ⚠️ Issues Found - Some tests failed, bugs reported
 - ❌ Blocked - Cannot test due to dependency
-1 (open), 1 (fixed)  
-**Low:** 0  
-**Fixed:** 5  
+1 (open), 1 (fixed)
+**Low:** 0
+**Fixed:** 5
 **Open:** 1istics
 
-**Total Bugs:** 6  
-**Critical:** 0 (3 fixed)  
-**High:** 0 (1 fixed)  
-**Medium:** 2 (open)  
-**Low:** 0  
-**Fixed:** 4  
-**Open:** 2  
+**Total Bugs:** 6
+**Critical:** 0 (3 fixed)
+**High:** 0 (1 fixed)
+**Medium:** 2 (open)
+**Low:** 0
+**Fixed:** 4
+**Open:** 2
 
 **By Category:**fixed
 - Delta Computation: 0

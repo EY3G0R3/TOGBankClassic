@@ -42,12 +42,12 @@ function TOGBankClassic_Item:GetInfo(id, link)
 	if not link then
 		return nil
 	end
-	
+
 	local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(link)
 	if not name then
 		return nil
 	end
-	
+
 	local equip = C_Item.GetItemInventoryTypeByID(id)
 
 	return {
@@ -149,7 +149,7 @@ function TOGBankClassic_Item:IsUnique(link)
 	if not link then
 		return false
 	end
-	
+
 	local tip = CreateFrame("GameTooltip", "scanTip", UIParent, "GameTooltipTemplate")
 	tip:ClearLines()
 	tip:SetOwner(UIParent, "ANCHOR_NONE")

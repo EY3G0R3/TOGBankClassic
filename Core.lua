@@ -26,8 +26,15 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
         return false
     end
 
+    -- Strip realm suffix for WHISPER (WoW requires name-only)
+    -- Target may be "Name-Realm" format, but WHISPER needs just "Name"
+    local nameOnly = target
+    if target and string.find(target, "-") then
+        nameOnly = string.match(target, "^(.-)%-")
+    end
+
     -- Send the whisper
-    self:SendCommMessage(prefix, text, "WHISPER", target, prio, callbackFn, callbackArg)
+    self:SendCommMessage(prefix, text, "WHISPER", nameOnly, prio, callbackFn, callbackArg)
     return true
 end
 

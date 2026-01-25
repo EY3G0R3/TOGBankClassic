@@ -74,7 +74,7 @@ PROTOCOL = {
 	MIN_DELTA_SIZE_RATIO = 0.3,     -- Only use delta if <30% of full sync size
 	DELTA_SNAPSHOT_MAX_AGE = 3600,  -- 1 hour: snapshots older than this are invalid
 	DELTA_SUPPORT_THRESHOLD = 0.05, -- Use delta if >5% of online guild supports it (lowered for testing: 1 of 14 = 7.1%)
-	
+
 	-- Delta Chain Replay (DELTA-006)
 	DELTA_HISTORY_MAX_COUNT = 10,   -- Keep last N deltas per alt (memory limit)
 	DELTA_HISTORY_MAX_AGE = 3600,   -- 1 hour: purge deltas older than this
@@ -87,7 +87,7 @@ FEATURES = {
 	DELTA_ENABLED = true,           -- Enable delta sync protocol
 	FORCE_DELTA_SYNC = false,       -- Force delta sync (bypass thresholds) for testing
 	FORCE_FULL_SYNC = false,        -- Force full sync (disable delta) for testing
-	
+
 	-- Protocol selection for v0.8.0+ (user-configurable)
 	PROTOCOL_MODE = "AUTO",         -- "AUTO", "LEGACY_ONLY", "NEW_ONLY"
 }
