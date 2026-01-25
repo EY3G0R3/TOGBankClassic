@@ -597,18 +597,32 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		filterGroup:AddChild(bankFilter)
 		self.FilterBank = bankFilter
 
-		-- Add highlighting checkbox
-		local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
-		highlightCheckbox:SetLabel("Highlight needed items")
-		highlightCheckbox:SetFullWidth(true)
-		highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
-		highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
-			if TOGBankClassic_ItemHighlight then
-				TOGBankClassic_ItemHighlight:SetEnabled(value)
+		-- Add highlighting checkbox (only for bankers)
+		local banks = TOGBankClassic_Guild:GetBanks()
+		if banks then
+			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+			local isBank = false
+			for _, bankName in ipairs(banks) do
+				local normBank = TOGBankClassic_Guild:NormalizeName(bankName)
+				if normBank == currentPlayer then
+					isBank = true
+					break
+				end
 			end
-		end)
-		filterGroup:AddChild(highlightCheckbox)
-		self.HighlightCheckbox = highlightCheckbox
+			if isBank then
+				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
+				highlightCheckbox:SetLabel("Highlight needed items")
+				highlightCheckbox:SetFullWidth(true)
+				highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
+				highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
+					if TOGBankClassic_ItemHighlight then
+						TOGBankClassic_ItemHighlight:SetEnabled(value)
+					end
+				end)
+				filterGroup:AddChild(highlightCheckbox)
+				self.HighlightCheckbox = highlightCheckbox
+			end
+		end
 	end
 
 	local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")

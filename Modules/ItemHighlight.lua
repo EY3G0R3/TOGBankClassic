@@ -15,10 +15,8 @@ local OVERLAY_COLOR = {0.2, 0.2, 0.2} -- RGB grey color
 
 -- Initialize the module
 function ItemHighlight:Initialize()
-	-- Load saved settings
-	if TOGBankClassicDB and TOGBankClassicDB.settings then
-		self.enabled = TOGBankClassicDB.settings.highlightEnabled or false
-	end
+	-- Don't auto-enable from saved settings - let the checkbox control it
+	self.enabled = false
 
 	-- Register events
 	local frame = CreateFrame("Frame")
@@ -37,6 +35,28 @@ end
 
 -- Enable/disable highlighting
 function ItemHighlight:SetEnabled(enabled)
+	-- Only allow bankers to use highlighting
+	local banks = TOGBankClassic_Guild:GetBanks()
+	if not banks then
+		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting disabled: no banks found")
+		return
+	end
+	
+	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local isBank = false
+	for _, bankName in ipairs(banks) do
+		local normBank = TOGBankClassic_Guild:NormalizeName(bankName)
+		if normBank == currentPlayer then
+			isBank = true
+			break
+		end
+	end
+	
+	if not isBank then
+		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting disabled: not a banker")
+		return
+	end
+
 	self.enabled = enabled
 
 	-- Save to settings
@@ -195,9 +215,20 @@ function ItemHighlight:UpdateBagnonHighlighting()
 		return false
 	end
 
+	-- Limit to 20 items max to prevent Bagnon timeout with complex search strings
+	local MAX_SEARCH_ITEMS = 20
+	if #searchTerms > MAX_SEARCH_ITEMS then
+		TOGBankClassic_Output:Debug("REQUESTS", "Too many items (%d), limiting to %d", #searchTerms, MAX_SEARCH_ITEMS)
+		local limited = {}
+		for i = 1, MAX_SEARCH_ITEMS do
+			limited[i] = searchTerms[i]
+		end
+		searchTerms = limited
+	end
+
 	-- Join with | (OR operator) so Bagnon matches items containing ANY of these names
 	local searchString = table.concat(searchTerms, "|")
-	TOGBankClassic_Output:Debug("REQUESTS", "Setting Bagnon search: " .. searchString)
+	TOGBankClassic_Output:Debug("REQUESTS", "Setting Bagnon search (%d items): %s", #searchTerms, searchString)
 
 	-- Set Bagnon's search string (use whichever global is available)
 	local addon = Bagnon or BagBrother
