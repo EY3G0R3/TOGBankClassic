@@ -403,6 +403,11 @@ function TOGBankClassic_UI_Requests:Open()
 		RegisterBagEvents()
 	end
 
+	-- Trigger item highlighting refresh
+	if TOGBankClassic_ItemHighlight then
+		TOGBankClassic_ItemHighlight:RefreshHighlighting()
+	end
+
 	if _G["TOGBankClassic"] then
 		_G["TOGBankClassic"]:Show()
 	else
@@ -420,6 +425,11 @@ function TOGBankClassic_UI_Requests:Close()
 
 	-- Stop listening for bag changes
 	UnregisterBagEvents()
+
+	-- Clear item highlighting
+	if TOGBankClassic_ItemHighlight then
+		TOGBankClassic_ItemHighlight:ClearAllOverlays()
+	end
 
 	OnClose(self.Window)
 
@@ -591,6 +601,19 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		end)
 		filterGroup:AddChild(bankFilter)
 		self.FilterBank = bankFilter
+
+		-- Add highlighting checkbox
+		local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
+		highlightCheckbox:SetLabel("Highlight needed items")
+		highlightCheckbox:SetFullWidth(true)
+		highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
+		highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
+			if TOGBankClassic_ItemHighlight then
+				TOGBankClassic_ItemHighlight:SetEnabled(value)
+			end
+		end)
+		filterGroup:AddChild(highlightCheckbox)
+		self.HighlightCheckbox = highlightCheckbox
 	end
 
 	local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")
@@ -1307,4 +1330,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 	content:ResumeLayout()
 	content:DoLayout()
+
+	-- Refresh item highlighting after content changes
+	if TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled then
+		TOGBankClassic_ItemHighlight:RefreshHighlighting()
+	end
 end
