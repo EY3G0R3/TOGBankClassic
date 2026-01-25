@@ -270,7 +270,7 @@ function TOGBankClassic_Mail:Open(mailId)
 	if not info.alts then
 		info.alts = {}
 	end
-	
+
 	if info.alts and not info.alts[norm] then
 		info.alts[norm] = {}
 	end
@@ -504,13 +504,13 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- FIRST PASS: Check if we need to split anything
 	local simulatedAttached = 0
 	local skipStackIndex = nil  -- Track which stack to skip for optimal fit
-	
+
 	for _, item in ipairs(items) do
 		if simulatedAttached >= qtyNeeded then
 			break
 		end
 		local remaining = qtyNeeded - simulatedAttached
-		
+
 		if item.count <= remaining then
 			simulatedAttached = simulatedAttached + item.count
 		elseif item.count > remaining and not skippedLargeStack then
@@ -554,7 +554,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- If we need to split, show popup FIRST without attaching anything
 	if skippedLargeStack then
 		local remaining = qtyNeeded - simulatedAttached
-		
+
 		-- Show confirmation popup
 		local popupText = string.format("Split %d from stack of %d %s?", remaining, skippedLargeStack.count, itemName)
 		local dialog = StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText)
@@ -568,7 +568,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 				requester = requester
 			}
 		end
-		
+
 		local message = string.format("Click Split to prepare %d %s for mailing.", remaining, itemName)
 		return false, message, 0
 	end
@@ -581,7 +581,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		if attachmentSlot > maxSlots then
 			break
 		end
-		
+
 		-- Skip this stack if it was identified as needing to be skipped for optimal fit
 		if not (skipStackIndex and i == skipStackIndex) then
 			local remaining = qtyNeeded - attached

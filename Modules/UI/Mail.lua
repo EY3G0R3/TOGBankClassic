@@ -218,4 +218,3 @@ end
 function TOGBankClassic_UI_Mail:OnTimer()
 	TOGBankClassic_UI_Mail:DrawContent()
 end
-

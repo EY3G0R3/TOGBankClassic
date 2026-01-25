@@ -41,7 +41,7 @@ function ItemHighlight:SetEnabled(enabled)
 		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting disabled: no banks found")
 		return
 	end
-	
+
 	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local isBank = false
 	for _, bankName in ipairs(banks) do
@@ -51,7 +51,7 @@ function ItemHighlight:SetEnabled(enabled)
 			break
 		end
 	end
-	
+
 	if not isBank then
 		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting disabled: not a banker")
 		return

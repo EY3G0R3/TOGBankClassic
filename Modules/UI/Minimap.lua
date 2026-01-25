@@ -45,4 +45,3 @@ function TOGBankClassic_UI_Minimap:ShowTooltip()
 	GameTooltip:AddDoubleLine("Shift-Click", "Options", 1, 1, 1)
 	GameTooltip:Show()
 end
-

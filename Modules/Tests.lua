@@ -906,4 +906,3 @@ function Tests:RunTest(testName)
 end
 
 -- Note: Test command is now /togbank test (handled in Chat.lua)
-

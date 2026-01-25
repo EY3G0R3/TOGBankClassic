@@ -184,4 +184,3 @@ function TOGBankClassic_UI_Donations:DrawContent()
 
 	self.Window:SetStatusText(count .. " Total")
 end
-

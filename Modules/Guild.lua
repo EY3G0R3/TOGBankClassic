@@ -522,7 +522,7 @@ function TOGBankClassic_Guild:MarkPendingSync(syncType, sender, name)
 	if not self.pending_sync.alts then
 		self.pending_sync.alts = {}
 	end
-	
+
 	if syncType == "roster" then
 		if self.pending_sync.roster then
 			---@diagnostic disable-next-line: need-check-nil

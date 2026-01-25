@@ -1599,4 +1599,3 @@ function Guild:Compact()
 		end
 	end
 end
-

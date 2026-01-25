@@ -475,4 +475,3 @@ function TOGBankClassic_Options:Open()
 	Settings.OpenToCategory("TOGBankClassic")
 	---END CHANGES
 end
-
