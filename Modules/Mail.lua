@@ -412,7 +412,7 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 		end
 	end
 	print("DEBUG CanFulfillRequest: First pass - usableItems:", usableItems, "qtyNeeded:", qtyNeeded)
-	
+
 	-- If greedy smallest-first didn't get exact match, try skipping individual small stacks
 	if usableItems < qtyNeeded and totalInBags >= qtyNeeded then
 		print("DEBUG CanFulfillRequest: Trying alternative combinations by skipping individual stacks...")
@@ -520,7 +520,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			break
 		end
 	end
-	
+
 	-- If greedy didn't get exact match, try skipping individual stacks to find better fit
 	if simulatedAttached < qtyNeeded and totalInBags >= qtyNeeded then
 		print("DEBUG PrepareFulfillMail: First pass got", simulatedAttached, "trying alternatives...")

@@ -403,11 +403,6 @@ function TOGBankClassic_UI_Requests:Open()
 		RegisterBagEvents()
 	end
 
-	-- Trigger item highlighting refresh
-	if TOGBankClassic_ItemHighlight then
-		TOGBankClassic_ItemHighlight:RefreshHighlighting()
-	end
-
 	if _G["TOGBankClassic"] then
 		_G["TOGBankClassic"]:Show()
 	else
@@ -1330,9 +1325,4 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 	content:ResumeLayout()
 	content:DoLayout()
-
-	-- Refresh item highlighting after content changes
-	if TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled then
-		TOGBankClassic_ItemHighlight:RefreshHighlighting()
-	end
 end

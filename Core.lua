@@ -39,6 +39,11 @@ function TOGBankClassic_Core:OnInitialize()
     TOGBankClassic_Options:Init()
     TOGBankClassic_UI:Init()
 
+    -- Initialize ItemHighlight module
+    if TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.Initialize then
+        TOGBankClassic_ItemHighlight:Initialize()
+    end
+
     -- Enable VersionCheck-1.0 addon integration
     do
         local VC = LibStub:GetLibrary("VersionCheck-1.0", true)

@@ -6,6 +6,7 @@
 
 ## SavedVariables: TOGBankClassicDB, TOGBankClassicIcon, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog
 ## Dependencies: Ace3, VersionCheck-1.0
+## OptionalDeps: Bagnon
 ## X-Curse-Project-ID: 1400244
 
 # Libraries (use external Ace3 - only load non-Ace3 libraries)
