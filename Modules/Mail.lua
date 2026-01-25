@@ -7,7 +7,7 @@ TOGBankClassic_Mail = {
 if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 	StaticPopupDialogs["TOGBANK_SPLIT_STACK"] = {
 		text = "%s",
-		button1 = "Split & Attach",
+		button1 = "Split",
 		button2 = "Cancel",
 		OnAccept = function(self, data)
 			if not data then return end
@@ -38,19 +38,14 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 				C_Container.PickupContainerItem(emptyBag, emptySlot)
 				C_Timer.After(0.05, function()
 					print("DEBUG: After placing in empty - cursor:", GetCursorInfo())
-					-- Step 3: Pick up the split stack from the empty slot
-					C_Container.PickupContainerItem(emptyBag, emptySlot)
-					C_Timer.After(0.05, function()
-						print("DEBUG: After picking up split stack - cursor:", GetCursorInfo())
-						-- Step 4: Attach to mail
-						ClickSendMailItemButton(data.attachmentSlot, true)
-						print("DEBUG: Clicked mail slot")
-						if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
-							local message = string.format("Attached %d %s for %s. Click Send to complete.",
-								data.amount, data.itemName, data.requester)
-							TOGBankClassic_UI_Requests.Window:SetStatusText(message)
-						end
-					end)
+					-- Done! The split stack is now in inventory
+					if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
+						local message = string.format("Split %d %s into inventory. Ready to attach all items.",
+							data.amount, data.itemName)
+						TOGBankClassic_UI_Requests.Window:SetStatusText(message)
+						-- Refresh the request list to update the fulfill button icon
+						TOGBankClassic_UI_Requests:DrawContent()
+					end
 				end)
 			end)
 		end,
@@ -398,16 +393,55 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 		return false, "Items not in bags. Pick up from bank first.", 0, 0
 	end
 
-	-- Find smallest stack and count usable items (stacks <= qtyNeeded)
+	-- Sort items by stack size (smallest first) to get accurate usable count
+	table.sort(items, function(a, b) return a.count < b.count end)
+
+	-- Find smallest stack and count usable items (stacks that fit without exceeding qtyNeeded)
 	local smallestStack = nil
 	local usableItems = 0
 	for _, item in ipairs(items) do
 		if not smallestStack or item.count < smallestStack then
 			smallestStack = item.count
 		end
-		if item.count <= qtyNeeded then
+		-- Only count this stack if adding it doesn't exceed what we need
+		if usableItems + item.count <= qtyNeeded then
 			usableItems = usableItems + item.count
+			print("DEBUG CanFulfillRequest: Added stack of", item.count, "usableItems now:", usableItems, "qtyNeeded:", qtyNeeded)
+		else
+			print("DEBUG CanFulfillRequest: Skipped stack of", item.count, "would exceed (usableItems:", usableItems, "+ count would be >", qtyNeeded, ")")
 		end
+	end
+	print("DEBUG CanFulfillRequest: First pass - usableItems:", usableItems, "qtyNeeded:", qtyNeeded)
+	
+	-- If greedy smallest-first didn't get exact match, try skipping individual small stacks
+	if usableItems < qtyNeeded and totalInBags >= qtyNeeded then
+		print("DEBUG CanFulfillRequest: Trying alternative combinations by skipping individual stacks...")
+		for skipIndex = 1, math.min(5, #items) do
+			local testUsable = 0
+			for i = 1, #items do
+				if i ~= skipIndex and testUsable + items[i].count <= qtyNeeded then
+					testUsable = testUsable + items[i].count
+				end
+			end
+			print("DEBUG CanFulfillRequest: Skipping stack", skipIndex, "(count:", items[skipIndex].count, ") gives:", testUsable)
+			if testUsable == qtyNeeded then
+				print("DEBUG CanFulfillRequest: Found exact match by skipping stack", skipIndex, "!")
+				usableItems = testUsable
+				break
+			elseif testUsable > usableItems and testUsable <= qtyNeeded then
+				-- Better fit, use it
+				usableItems = testUsable
+			end
+		end
+	end
+	print("DEBUG CanFulfillRequest: Final - usableItems:", usableItems, "qtyNeeded:", qtyNeeded, "totalInBags:", totalInBags)
+
+	-- Check if we need to split
+	if usableItems < qtyNeeded and totalInBags >= qtyNeeded then
+		-- We have enough total, but need to split to fulfill
+		local remaining = qtyNeeded - usableItems
+		local reason = string.format("Split %d after attaching %d.", remaining, usableItems)
+		return true, reason, totalInBags, smallestStack
 	end
 
 	-- If no stacks are small enough, we can split automatically
@@ -468,27 +502,96 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- Sort items by stack size (smallest first) to maximize chance of exact fulfillment
 	table.sort(items, function(a, b) return a.count < b.count end)
 
+	-- FIRST PASS: Check if we need to split anything
+	local simulatedAttached = 0
+	local skipStackIndex = nil  -- Track which stack to skip for optimal fit
+	
 	for _, item in ipairs(items) do
+		if simulatedAttached >= qtyNeeded then
+			break
+		end
+		local remaining = qtyNeeded - simulatedAttached
+		
+		if item.count <= remaining then
+			simulatedAttached = simulatedAttached + item.count
+		elseif item.count > remaining and not skippedLargeStack then
+			-- Found first oversized stack - will need to split it
+			skippedLargeStack = item
+			break
+		end
+	end
+	
+	-- If greedy didn't get exact match, try skipping individual stacks to find better fit
+	if simulatedAttached < qtyNeeded and totalInBags >= qtyNeeded then
+		print("DEBUG PrepareFulfillMail: First pass got", simulatedAttached, "trying alternatives...")
+		for skipIndex = 1, math.min(5, #items) do
+			local testAttached = 0
+			for i = 1, #items do
+				if i ~= skipIndex and testAttached + items[i].count <= qtyNeeded then
+					testAttached = testAttached + items[i].count
+				end
+			end
+			if testAttached == qtyNeeded then
+				print("DEBUG PrepareFulfillMail: Found exact match by skipping stack", skipIndex, "(count:", items[skipIndex].count, ")!")
+				simulatedAttached = testAttached
+				skipStackIndex = skipIndex  -- Remember to skip this stack during attachment
+				skippedLargeStack = nil  -- No split needed!
+				break
+			elseif testAttached > simulatedAttached and testAttached <= qtyNeeded then
+				simulatedAttached = testAttached
+				skipStackIndex = skipIndex
+				skippedLargeStack = nil
+			end
+		end
+	end
+
+	-- If we need to split, show popup FIRST without attaching anything
+	if skippedLargeStack then
+		local remaining = qtyNeeded - simulatedAttached
+		print("DEBUG: Need to split before attaching. Simulated:", simulatedAttached, "Need:", qtyNeeded, "Remaining:", remaining)
+		
+		-- Show confirmation popup
+		local popupText = string.format("Split %d from stack of %d %s?", remaining, skippedLargeStack.count, itemName)
+		local dialog = StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText)
+		if dialog then
+			dialog.data = {
+				bag = skippedLargeStack.bag,
+				slot = skippedLargeStack.slot,
+				amount = remaining,
+				attachmentSlot = attachmentSlot,
+				itemName = itemName,
+				requester = requester
+			}
+		end
+		
+		local message = string.format("Click Split to prepare %d %s for mailing.", remaining, itemName)
+		return false, message, 0
+	end
+
+	-- No split needed, proceed with normal attachment
+	for i, item in ipairs(items) do
 		if attached >= qtyNeeded then
 			break
 		end
 		if attachmentSlot > maxSlots then
 			break
 		end
+		
+		-- Skip this stack if it was identified as needing to be skipped for optimal fit
+		if not (skipStackIndex and i == skipStackIndex) then
+			local remaining = qtyNeeded - attached
 
-		local remaining = qtyNeeded - attached
+			-- Attach full stacks that don't exceed what we need
+			if item.count <= remaining then
+				ClearCursor()
+				C_Container.PickupContainerItem(item.bag, item.slot)
+				ClickSendMailItemButton(attachmentSlot)
 
-		-- Attach full stacks that don't exceed what we need
-		if item.count <= remaining then
-			ClearCursor()
-			C_Container.PickupContainerItem(item.bag, item.slot)
-			ClickSendMailItemButton(attachmentSlot)
-
-			attached = attached + item.count
-			attachmentSlot = attachmentSlot + 1
-		elseif item.count > remaining and not skippedLargeStack then
-			-- Found first oversized stack - offer to split it
-			skippedLargeStack = item
+				attached = attached + item.count
+				attachmentSlot = attachmentSlot + 1
+			end
+		else
+			print("DEBUG PrepareFulfillMail: Skipping stack", i, "count:", item.count, "for optimal fit")
 		end
 	end
 
@@ -496,45 +599,13 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	if attached >= qtyNeeded then
 		message = string.format("Attached %d %s for %s. Click Send to complete.",
 			attached, itemName, requester)
+		return true, message, attached
 	elseif attached > 0 then
 		message = string.format("Attached %d of %d %s (partial). Click Send, then fulfill again.",
 			attached, qtyNeeded, itemName)
-	elseif skippedLargeStack then
-		-- Offer to split the oversized stack
-		local remaining = qtyNeeded - attached
-		print("DEBUG: skippedLargeStack type:", type(skippedLargeStack))
-		if type(skippedLargeStack) == "table" then
-			print("DEBUG: About to show popup for", remaining, "of", skippedLargeStack.count, itemName)
-			-- Show confirmation popup
-			local popupText = string.format("Split %d from stack of %d %s?", remaining, skippedLargeStack.count, itemName)
-			print("DEBUG: Popup text:", popupText)
-			local dialog = StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText)
-			print("DEBUG: Dialog returned:", dialog)
-			if dialog then
-				dialog.data = {
-					bag = skippedLargeStack.bag,
-					slot = skippedLargeStack.slot,
-					amount = remaining,
-					attachmentSlot = attachmentSlot,
-					itemName = itemName,
-					requester = requester
-				}
-				print("DEBUG: Dialog data set")
-			else
-				print("DEBUG: Dialog is nil!")
-			end
-			message = string.format("Stack has %d, need %d. Confirm split?", skippedLargeStack.count, remaining)
-			return false, message, attached
-		else
-			-- Legacy path (shouldn't happen)
-			message = string.format("Your smallest stack has %d. Split to %d or less first.",
-				skippedLargeStack, qtyNeeded)
-			return false, message, 0
-		end
+		return true, message, attached
 	else
 		message = string.format("No %s found in bags.", itemName)
 		return false, message, 0
 	end
-
-	return true, message, attached
 end

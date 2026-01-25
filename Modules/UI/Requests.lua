@@ -1216,8 +1216,8 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 						-- Determine icon and tooltip based on state
 						local icon, tooltipDetail
-						if buttonEnabled and fulfillReason and fulfillReason:find("Split") then
-							-- Split needed - show special icon
+						if fulfillReason and fulfillReason:find("Split") then
+							-- Split needed - show special icon (shovel)
 							icon = FULFILL_ICON_NEED_SPLIT
 							tooltipDetail = fulfillReason
 						elseif fulfillEnabled then
