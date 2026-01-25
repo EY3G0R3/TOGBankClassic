@@ -599,16 +599,20 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 		-- Add highlighting checkbox (only for bankers)
 		local banks = TOGBankClassic_Guild:GetBanks()
+		TOGBankClassic_Output:Debug("REQUESTS", "Checking if player is banker - banks=%s", tostring(banks ~= nil))
 		if banks then
 			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+			TOGBankClassic_Output:Debug("REQUESTS", "Current player: %s", tostring(currentPlayer))
 			local isBank = false
 			for _, bankName in ipairs(banks) do
 				local normBank = TOGBankClassic_Guild:NormalizeName(bankName)
+				TOGBankClassic_Output:Debug("REQUESTS", "Comparing %s == %s", normBank, currentPlayer)
 				if normBank == currentPlayer then
 					isBank = true
 					break
 				end
 			end
+			TOGBankClassic_Output:Debug("REQUESTS", "Is banker: %s", tostring(isBank))
 			if isBank then
 				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
 				highlightCheckbox:SetLabel("Highlight needed items")
@@ -621,6 +625,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 				end)
 				filterGroup:AddChild(highlightCheckbox)
 				self.HighlightCheckbox = highlightCheckbox
+				TOGBankClassic_Output:Debug("REQUESTS", "Highlight checkbox created")
 			end
 		end
 	end
@@ -1008,6 +1013,35 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 			tagColumnWidget(widget, i, false)
 			self.FilterWidgets[i] = widget
 			self.HeaderGroup:AddChild(widget)
+		end
+	end
+
+	-- Add highlighting checkbox for two-header layout (only for bankers)
+	if not self.HighlightCheckbox then
+		local banks = TOGBankClassic_Guild:GetBanks()
+		if banks then
+			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+			local isBank = false
+			for _, bankName in ipairs(banks) do
+				local normBank = TOGBankClassic_Guild:NormalizeName(bankName)
+				if normBank == currentPlayer then
+					isBank = true
+					break
+				end
+			end
+			if isBank then
+				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
+				highlightCheckbox:SetLabel("Highlight needed items")
+				highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
+				highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
+					if TOGBankClassic_ItemHighlight then
+						TOGBankClassic_ItemHighlight:SetEnabled(value)
+					end
+				end)
+				tagColumnWidget(highlightCheckbox, #COLUMNS + 1, false)
+				self.HighlightCheckbox = highlightCheckbox
+				self.HeaderGroup:AddChild(highlightCheckbox)
+			end
 		end
 	end
 end

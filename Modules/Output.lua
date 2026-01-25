@@ -335,10 +335,10 @@ function TOGBankClassic_Output:Debug(fmt, ...)
 	return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG]|r", fmt, ...)
 end
 
--- DebugComm: protocol communication details (only shown when commDebug is enabled)
+-- DebugComm: protocol communication details (controlled by COMMS category)
 function TOGBankClassic_Output:DebugComm(fmt, ...)
-	-- Only show if debug level is active AND commDebug flag is enabled
-	if TOGBankClassic_Output.level < LOG_LEVEL.DEBUG or not TOGBankClassic_Output.commDebug then
+	-- Only show if debug level is active AND COMMS category is enabled
+	if TOGBankClassic_Output.level < LOG_LEVEL.DEBUG then
 		return false
 	end
 	-- Check if COMMS category is enabled

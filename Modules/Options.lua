@@ -99,20 +99,6 @@ function TOGBankClassic_Options:Init()
 							return self.db.global.bank["logLevel"]
 						end,
 					},
-					["commDebug"] = {
-						order = 2.5,
-						type = "toggle",
-						width = "full",
-						name = "Show Communication Debug",
-						desc = "Shows detailed protocol communication messages (only when Debug level is active)",
-						set = function(_, v)
-							self.db.global.bank["commDebug"] = v
-							TOGBankClassic_Output:SetCommDebug(v)
-						end,
-						get = function()
-							return self.db.global.bank["commDebug"]
-						end,
-					},
 					["muteSyncProgress"] = {
 						order = 2.6,
 						type = "toggle",
