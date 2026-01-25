@@ -509,14 +509,17 @@ function TOGBankClassic_Guild:MarkPendingSync(syncType, sender, name)
 	
 	if syncType == "roster" then
 		if self.pending_sync.roster then
+			---@diagnostic disable-next-line: need-check-nil
 			self.pending_sync.roster[normSender] = now
 		end
 	elseif syncType == "alt" and name then
 		local normName = self:NormalizeName(name)
 		if self.pending_sync.alts and not self.pending_sync.alts[normName] then
+			---@diagnostic disable-next-line: need-check-nil
 			self.pending_sync.alts[normName] = {}
 		end
 		if self.pending_sync.alts and self.pending_sync.alts[normName] then
+			---@diagnostic disable-next-line: need-check-nil
 			self.pending_sync.alts[normName][normSender] = now
 		end
 	end
@@ -535,10 +538,12 @@ function TOGBankClassic_Guild:ConsumePendingSync(syncType, sender, name)
 		local roster = self.pending_sync.roster
 		local ts = roster and roster[normSender]
 		if ts and now - ts <= PENDING_SYNC_TTL_SECONDS then
+			---@diagnostic disable-next-line: need-check-nil
 			roster[normSender] = nil
 			return true
 		end
 		if ts then
+			---@diagnostic disable-next-line: need-check-nil
 			roster[normSender] = nil
 		end
 		return false
@@ -548,15 +553,19 @@ function TOGBankClassic_Guild:ConsumePendingSync(syncType, sender, name)
 		local alts = self.pending_sync.alts and self.pending_sync.alts[normName]
 		local ts = alts and alts[normSender]
 		if ts and now - ts <= PENDING_SYNC_TTL_SECONDS then
+			---@diagnostic disable-next-line: need-check-nil
 			alts[normSender] = nil
 			if next(alts) == nil then
+				---@diagnostic disable-next-line: need-check-nil
 				self.pending_sync.alts[normName] = nil
 			end
 			return true
 		end
 		if ts then
+			---@diagnostic disable-next-line: need-check-nil
 			alts[normSender] = nil
 			if next(alts) == nil then
+				---@diagnostic disable-next-line: need-check-nil
 				self.pending_sync.alts[normName] = nil
 			end
 		end
@@ -1101,13 +1110,17 @@ function TOGBankClassic_Guild:SendAltData(name)
 
 		-- Save delta to history for potential chain replay (DELTA-006)
 		-- v0.8.0: Use previous.version for baseVersion in history (delta no longer includes it)
+		---@diagnostic disable-next-line: need-check-nil
 		if self.Info and self.Info.name and deltaData.version and deltaData.changes then
+			---@diagnostic disable-next-line: need-check-nil
 			local previous = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
 			local baseVer = previous and previous.version or 0
 			TOGBankClassic_Database:SaveDeltaHistory(
+				---@diagnostic disable-next-line: need-check-nil
 				self.Info.name,
 				norm,
 				baseVer,
+				---@diagnostic disable-next-line: need-check-nil
 				deltaData.version,
 				deltaData  -- Save full delta, not just changes
 			)
@@ -1385,9 +1398,8 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 	if not self.Info.alts then
 		self.Info.alts = {}
 	end
-	if self.Info.alts then
-		self.Info.alts[norm] = alt
-	end
+	---@diagnostic disable-next-line: need-check-nil
+	self.Info.alts[norm] = alt
 
 	-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
 	if alt.bank and alt.bank.items then
@@ -1674,12 +1686,16 @@ function TOGBankClassic_Guild:AuthorRosterData()
 	end
 	if isBank or CanViewOfficerNote() then
 		if not info.roster then
+			---@diagnostic disable-next-line: need-check-nil
 			info.roster = {}
 		end
 		if info.roster then
+			---@diagnostic disable-next-line: need-check-nil
 			info.roster.alts = banks
+			---@diagnostic disable-next-line: need-check-nil
 			info.roster.version = GetServerTime()
 			if not banks then
+				---@diagnostic disable-next-line: need-check-nil
 				info.roster.version = nil
 			end
 		end
