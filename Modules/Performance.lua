@@ -4,10 +4,43 @@
 TOGBankClassic_Performance = {}
 local Performance = TOGBankClassic_Performance
 
+-- Configuration
+local perfMetricsMaxSessions = 10  -- Maximum number of sessions to keep
+local perfMetricsMaxAge = 86400 * 30  -- 30 days in seconds
+
+-- Garbage collect old performance metrics sessions
+function Performance:GarbageCollectSessions()
+	if not TOGBankClassic_PerfMetrics then return end
+	
+	local currentTime = time()
+	local cutoffTime = currentTime - perfMetricsMaxAge
+	
+	local removed = 0
+	for i = #TOGBankClassic_PerfMetrics, 1, -1 do
+		local session = TOGBankClassic_PerfMetrics[i]
+		if session.sessionStart and session.sessionStart < cutoffTime then
+			table.remove(TOGBankClassic_PerfMetrics, i)
+			removed = removed + 1
+		end
+	end
+	
+	if removed > 0 and TOGBankClassic_Output then
+		TOGBankClassic_Output:Debug(string.format("[PERF] Garbage collected %d old session(s)", removed))
+	end
+end
+
 -- Initialize performance metrics on addon load
 function Performance:Initialize()
 	if not TOGBankClassic_PerfMetrics then
 		TOGBankClassic_PerfMetrics = {}
+	end
+	
+	-- Run garbage collection on initialization
+	self:GarbageCollectSessions()
+	
+	-- Initialize enabled state (default to true)
+	if TOGBankClassic_PerfEnabled == nil then
+		TOGBankClassic_PerfEnabled = true
 	end
 	
 	-- Create new session
@@ -63,8 +96,8 @@ function Performance:Initialize()
 	-- Store in global saved variables
 	table.insert(TOGBankClassic_PerfMetrics, session)
 	
-	-- Keep only last 10 sessions
-	while #TOGBankClassic_PerfMetrics > 10 do
+	-- Keep only last N sessions (circular buffer)
+	while #TOGBankClassic_PerfMetrics > perfMetricsMaxSessions do
 		table.remove(TOGBankClassic_PerfMetrics, 1)
 	end
 	
@@ -75,6 +108,7 @@ end
 
 -- Track an event firing
 function Performance:RecordEvent(eventName)
+	if not TOGBankClassic_PerfEnabled then return end
 	if not self.currentSession then return end
 	if self.currentSession.events[eventName] then
 		self.currentSession.events[eventName] = self.currentSession.events[eventName] + 1
@@ -83,6 +117,7 @@ end
 
 -- Track an operation execution with timing
 function Performance:RecordOperation(operationName, durationMs)
+	if not TOGBankClassic_PerfEnabled then return end
 	if not self.currentSession then return end
 	
 	if self.currentSession.operations[operationName] then
@@ -104,6 +139,7 @@ end
 
 -- Take a memory snapshot
 function Performance:RecordMemory(label)
+	if not TOGBankClassic_PerfEnabled then return end
 	if not self.currentSession then return end
 	
 	UpdateAddOnMemoryUsage()

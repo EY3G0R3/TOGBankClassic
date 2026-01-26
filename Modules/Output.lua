@@ -51,6 +51,11 @@ end
 
 function TOGBankClassic_Output:Init()
 	-- Level will be set from Options after DB is loaded
+	-- Initialize debug log enabled state (default to true)
+	if TOGBankClassic_DebugLogEnabled == nil then
+		TOGBankClassic_DebugLogEnabled = true
+	end
+	
 	-- Load persistent log from SavedVariables if it exists
 	if TOGBankClassicDB_DebugLog then
 		self.persistentLog = TOGBankClassicDB_DebugLog
@@ -298,8 +303,8 @@ local function Log(level, prefix, fmt, ...)
 		TOGBankClassic_Core:Print(message)
 	end
 
-	-- Always store debug-level messages in persistent log
-	if level == LOG_LEVEL.DEBUG then
+	-- Always store debug-level messages in persistent log (if debug logging enabled)
+	if level == LOG_LEVEL.DEBUG and TOGBankClassic_DebugLogEnabled then
 		local fullMessage = "TOGBankClassic: "
 		if prefix then
 			fullMessage = fullMessage .. prefix .. " " .. message

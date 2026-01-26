@@ -1330,108 +1330,110 @@ end
 ---END CHANGES
 
 function TOGBankClassic_Guild:ReceiveAltData(name, alt)
-	if not self.Info then
-		return ADOPTION_STATUS.IGNORED
-	end
-
-	-- Sanitize incoming alt data
-	local function sanitizeAlt(a)
-		if not a or type(a) ~= "table" then
-			return nil
+	return TOGBankClassic_Performance:Track("ReceiveAltData", function()
+		if not self.Info then
+			return ADOPTION_STATUS.IGNORED
 		end
-		if a.bank and type(a.bank) == "table" and a.bank.items then
-			for k, v in pairs(a.bank.items) do
-				if not v or type(v) ~= "table" or not v.ID then
-					a.bank.items[k] = nil
+
+		-- Sanitize incoming alt data
+		local function sanitizeAlt(a)
+			if not a or type(a) ~= "table" then
+				return nil
+			end
+			if a.bank and type(a.bank) == "table" and a.bank.items then
+				for k, v in pairs(a.bank.items) do
+					if not v or type(v) ~= "table" or not v.ID then
+						a.bank.items[k] = nil
+					end
 				end
 			end
-		end
-		if a.bags and type(a.bags) == "table" and a.bags.items then
-			for k, v in pairs(a.bags.items) do
-				if not v or type(v) ~= "table" or not v.ID then
-					a.bags.items[k] = nil
+			if a.bags and type(a.bags) == "table" and a.bags.items then
+				for k, v in pairs(a.bags.items) do
+					if not v or type(v) ~= "table" or not v.ID then
+						a.bags.items[k] = nil
+					end
 				end
 			end
+			return a
 		end
-		return a
-	end
 
-	alt = sanitizeAlt(alt)
-	if not alt then
-		return ADOPTION_STATUS.INVALID
-	end
-
-	local norm = self:NormalizeName(name)
-	local existing = self.Info.alts[norm]
-	if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
-		return ADOPTION_STATUS.STALE
-	end
-
-	-- Accept incoming if newer version
-	-- If same version, accept the alt with more items
-	local function itemCount(a)
-		local c = 0
-		if a and a.bank and a.bank.items then
-			for _, v in pairs(a.bank.items) do
-				if v and v.ID then
-					c = c + 1
-				end
-			end
+		alt = sanitizeAlt(alt)
+		if not alt then
+			return ADOPTION_STATUS.INVALID
 		end
-		if a and a.bags and a.bags.items then
-			for _, v in pairs(a.bags.items) do
-				if v and v.ID then
-					c = c + 1
-				end
-			end
-		end
-		return c
-	end
 
-	if existing and existing.version and alt.version and alt.version < existing.version then
-		-- Incoming is older; ignore
-		return ADOPTION_STATUS.STALE
-	elseif existing and existing.version and alt.version and alt.version == existing.version then
-		-- Tie-breaker: choose the one with more items
-		if itemCount(alt) <= itemCount(existing) then
+		local norm = self:NormalizeName(name)
+		local existing = self.Info.alts[norm]
+		if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
 			return ADOPTION_STATUS.STALE
 		end
-	end
 
-	-- Check against existing alt data, but only if version exists
-	if self.Info.alts[name] and alt.version ~= nil and self.Info.alts[name].version ~= nil and alt.version < self.Info.alts[name].version then
-		return ADOPTION_STATUS.STALE
-	end
-	if self.hasRequested then
-		if self.requestCount == nil then
-			self.requestCount = 0
-		else
-			self.requestCount = self.requestCount - 1
+		-- Accept incoming if newer version
+		-- If same version, accept the alt with more items
+		local function itemCount(a)
+			local c = 0
+			if a and a.bank and a.bank.items then
+				for _, v in pairs(a.bank.items) do
+					if v and v.ID then
+						c = c + 1
+					end
+				end
+			end
+			if a and a.bags and a.bags.items then
+				for _, v in pairs(a.bags.items) do
+					if v and v.ID then
+						c = c + 1
+					end
+				end
+			end
+			return c
 		end
-		if self.requestCount == 0 then
-			self.hasRequested = false
-			TOGBankClassic_Output:Info("Sync completed.")
+
+		if existing and existing.version and alt.version and alt.version < existing.version then
+			-- Incoming is older; ignore
+			return ADOPTION_STATUS.STALE
+		elseif existing and existing.version and alt.version and alt.version == existing.version then
+			-- Tie-breaker: choose the one with more items
+			if itemCount(alt) <= itemCount(existing) then
+				return ADOPTION_STATUS.STALE
+			end
 		end
-	end
 
-	if not self.Info.alts then
-		self.Info.alts = {}
-	end
-	---@diagnostic disable-next-line: need-check-nil
-	self.Info.alts[norm] = alt
+		-- Check against existing alt data, but only if version exists
+		if self.Info.alts[name] and alt.version ~= nil and self.Info.alts[name].version ~= nil and alt.version < self.Info.alts[name].version then
+			return ADOPTION_STATUS.STALE
+		end
+		if self.hasRequested then
+			if self.requestCount == nil then
+				self.requestCount = 0
+			else
+				self.requestCount = self.requestCount - 1
+			end
+			if self.requestCount == 0 then
+				self.hasRequested = false
+				TOGBankClassic_Output:Info("Sync completed.")
+			end
+		end
 
-	-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
-	if alt.bank and alt.bank.items then
-		self:ReconstructItemLinks(alt.bank.items)
-	end
-	if alt.bags and alt.bags.items then
-		self:ReconstructItemLinks(alt.bags.items)
-	end
+		if not self.Info.alts then
+			self.Info.alts = {}
+		end
+		---@diagnostic disable-next-line: need-check-nil
+		self.Info.alts[norm] = alt
 
-	-- Reset error count on successful full sync
-	self:ResetDeltaErrorCount(norm)
+		-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
+		if alt.bank and alt.bank.items then
+			self:ReconstructItemLinks(alt.bank.items)
+		end
+		if alt.bags and alt.bags.items then
+			self:ReconstructItemLinks(alt.bags.items)
+		end
 
-	return ADOPTION_STATUS.ADOPTED
+		-- Reset error count on successful full sync
+		self:ResetDeltaErrorCount(norm)
+
+		return ADOPTION_STATUS.ADOPTED
+	end)
 end
 
 ---START CHANGES

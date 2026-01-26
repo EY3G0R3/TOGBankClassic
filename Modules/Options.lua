@@ -355,14 +355,56 @@ function TOGBankClassic_Options:Init()
 						type = "header",
 						name = "Performance Monitoring",
 					},
-					["perfStatsButton"] = {
+					["perfEnabled"] = {
 						order = 42,
+						type = "toggle",
+						width = "full",
+						name = "Enable Performance Monitoring",
+						desc = "Track event frequency, operation timing, and memory usage. Disable to reduce overhead if experiencing performance issues.",
+						get = function() return TOGBankClassic_PerfEnabled end,
+						set = function(info, value)
+							TOGBankClassic_PerfEnabled = value
+							if value then
+								TOGBankClassic_Output:Info("Performance monitoring enabled")
+							else
+								TOGBankClassic_Output:Info("Performance monitoring disabled")
+							end
+						end,
+					},
+					["perfStatsButton"] = {
+						order = 43,
 						type = "execute",
 						width = "full",
 						name = "Show Performance Statistics",
 						desc = "Display event frequency, operation timing, and memory usage for current session",
 						func = function()
 							TOGBankClassic_Performance:PrintReport()
+						end,
+					},
+					["spacer3"] = {
+						order = 44,
+						type = "description",
+						name = " ",
+					},
+					["debugLogHeader"] = {
+						order = 45,
+						type = "header",
+						name = "Debug Logging",
+					},
+					["debugLogEnabled"] = {
+						order = 46,
+						type = "toggle",
+						width = "full",
+						name = "Enable Debug Log to SavedVariables",
+						desc = "Save debug messages to SavedVariables (TOGBankClassicDB_DebugLog). Auto-cleans old entries (max 50,000 entries or 7 days). Disable to reduce SavedVariables file size.",
+						get = function() return TOGBankClassic_DebugLogEnabled end,
+						set = function(info, value)
+							TOGBankClassic_DebugLogEnabled = value
+							if value then
+								TOGBankClassic_Output:Info("Debug logging to SavedVariables enabled")
+							else
+								TOGBankClassic_Output:Info("Debug logging to SavedVariables disabled")
+							end
 						end,
 					},
 				},
