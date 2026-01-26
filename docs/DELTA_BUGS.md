@@ -299,6 +299,7 @@ function GUILD_ROSTER_UPDATE()
     RefreshOnlineCache()  -- Expensive operation runs max once per second
 end
 ```
+Example: Multiple guild members log in during raid start time, or officers make batch rank/note updates. Without throttling, RefreshOnlineCache() could run 10+ times in rapid succession.
 
 **Debouncing** - Execute only after events stop firing:
 ```lua
