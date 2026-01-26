@@ -41,6 +41,7 @@ end
 function TOGBankClassic_Core:OnInitialize()
     -- Called when the addon is loaded
     TOGBankClassic_Output:Init()
+    TOGBankClassic_Performance:Initialize()
     TOGBankClassic_Database:Init()
     TOGBankClassic_Chat:Init()
     TOGBankClassic_Options:Init()
@@ -50,6 +51,16 @@ function TOGBankClassic_Core:OnInitialize()
     if TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.Initialize then
         TOGBankClassic_ItemHighlight:Initialize()
     end
+
+    -- Setup periodic memory snapshots (every 5 minutes)
+    local memoryFrame = CreateFrame("Frame")
+    memoryFrame:SetScript("OnUpdate", function(self, elapsed)
+        self.elapsed = (self.elapsed or 0) + elapsed
+        if self.elapsed >= 300 then  -- 5 minutes
+            self.elapsed = 0
+            TOGBankClassic_Performance:RecordMemory("periodic")
+        end
+    end)
 
     -- Enable VersionCheck-1.0 addon integration
     do

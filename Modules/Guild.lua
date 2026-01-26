@@ -720,6 +720,7 @@ end
 -- Refresh the online members cache from current guild roster
 -- Called automatically when GUILD_ROSTER_UPDATE event fires
 function TOGBankClassic_Guild:RefreshOnlineCache()
+	local startTime = debugprofilestop()
 	self.onlineMembers = self.onlineMembers or {}
 	wipe(self.onlineMembers)
 	for i = 1, GetNumGuildMembers() do
@@ -735,6 +736,8 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	for _ in pairs(self.onlineMembers) do
 		count = count + 1
 	end
+	local duration = debugprofilestop() - startTime
+	TOGBankClassic_Performance:RecordOperation("RefreshOnlineCache", duration)
 	TOGBankClassic_Output:Debug("CACHE", "Refreshed online cache: %d members online", count)
 	TOGBankClassic_Output:Debug("ROSTER", "[GUILD ROSTER] Refreshed online cache: %d members online", count)
 end

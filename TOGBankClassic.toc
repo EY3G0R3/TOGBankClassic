@@ -4,7 +4,7 @@
 ## Author: Dominion-Myzrael, GrumpyPlayers (also known as <SG>Soul), Lothsahn, Huntmehuntme-Myzrael, Pimptasty
 ## Version: @project-version@
 
-## SavedVariables: TOGBankClassicDB, TOGBankClassicIcon, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog
+## SavedVariables: TOGBankClassicDB, TOGBankClassicIcon, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog, TOGBankClassic_PerfMetrics
 ## Dependencies: Ace3, VersionCheck-1.0
 ## OptionalDeps: Bagnon
 ## X-Curse-Project-ID: 1400244
@@ -17,6 +17,7 @@ Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua
 # Modules
 Modules/Constants.lua
 Modules/Output.lua
+Modules/Performance.lua
 Modules/DeltaComms.lua
 Modules/Bank.lua
 Modules/Chat.lua

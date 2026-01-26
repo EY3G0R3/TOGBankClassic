@@ -208,6 +208,7 @@ end
 
 -- Request initial guild roster update on world enter
 function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_)
+	TOGBankClassic_Performance:RecordEvent("PLAYER_ENTERING_WORLD")
 	GuildRoster()
 	-- Initialize cache immediately in case GUILD_ROSTER_UPDATE is delayed
 	TOGBankClassic_Guild:RefreshOnlineCache()
@@ -215,6 +216,7 @@ end
 
 -- Refresh online members cache when roster updates
 function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
+	TOGBankClassic_Performance:RecordEvent("GUILD_ROSTER_UPDATE")
 	TOGBankClassic_Guild:RefreshOnlineCache()
 	-- Invalidate banks cache when roster updates
 	TOGBankClassic_Guild:InvalidateBanksCache()

@@ -1149,6 +1149,14 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		name = "perfstats",
+		help = "show performance metrics for current session",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Performance:PrintReport()
+		end,
+	},
+	{
 		name = "protocol",
 		help = "show protocol version distribution across guild members",
 		expert = true,
