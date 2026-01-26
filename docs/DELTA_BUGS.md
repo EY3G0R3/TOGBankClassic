@@ -221,7 +221,78 @@ In `Mail.lua` around lines 557-574, when identifying `skippedLargeStack` for spl
 
 ---
 
-#### 🟠 [PERF-001] Serious performance degradation during normal gameplay
+#### � [PERF-002] NormalizeRequestList spam causes performance degradation
+
+**Severity:** 🔴 CRITICAL
+**Category:** Performance / Request Sync
+**Reporter:** User (Production) - 100+ member guild
+**Date Reported:** 2026-01-25
+**Status:** 🔍 INVESTIGATING
+**Reproducibility:** Consistent in large guilds
+
+**Description:**
+`NormalizeRequestList()` and `PruneRequests()` are being called 12+ times per second when multiple guild members send request version queries simultaneously. Each call processes all 404 requests, causing severe performance degradation.
+
+**Evidence from Debug Log:**
+
+Timestamp 1769290015-1769290016 (2 seconds):
+```
+[UI-003] NormalizeRequestList: Starting with 404 requests
+[UI-003] NormalizeRequestList: Finished with 404 requests (calling PruneRequests)
+[UI-003] PruneRequests: Starting with 404 requests
+[UI-003] PruneRequests: Finished with 404 requests (0 pruned)
+```
+**Pattern repeats 24+ times in 2 seconds = ~12 calls/second**
+
+**Triggering Events:**
+```
+> |cffffffffIris-Atiesh|r has fresher requests data, querying.
+> |cffc79c6eSkoobydoo-Azuresong|r has fresher requests data, querying.
+> |cff40c7ebSolomage-Atiesh|r has fresher requests data, querying.
+```
+
+**Root Cause:**
+Every incoming request version comparison triggers full list normalization. In 100+ member guilds during peak hours:
+- Multiple members log in/out rapidly
+- Each sends "has fresher requests data" query
+- Each query triggers `NormalizeRequestList()`
+- Cascading effect: 3 queries × 8 calls each = 24 normalizations in 2 seconds
+- Each normalization iterates ALL 404 requests
+
+**Performance Impact:**
+- ~12 full list iterations per second
+- 404 requests × 12 = 4,848 request reads per second
+- Each PruneRequests scan adds another 4,848 reads
+- Total: ~9,696 request table accesses per second
+
+**Potential Solutions:**
+
+1. **Throttle NormalizeRequestList** - Execute max once per 5 seconds
+2. **Cache normalized state** - Only re-normalize if requests changed
+3. **Lazy normalization** - Defer until actually needed for UI/comparison
+4. **Debounce version queries** - Batch multiple queries together
+5. **Skip normalization on query** - Only normalize on actual data receipt
+
+**Files to Investigate:**
+- `Modules/RequestLog.lua` line 272: NormalizeRequestList()
+- `Modules/RequestLog.lua` line 875: Caller in ReceiveRequestsData()
+- `Modules/RequestLog.lua` line 507: Caller in ApplyRequestSnapshot()
+- Request version comparison logic triggering these calls
+
+**Priority:** 🔴 CRITICAL - Causes unplayable performance with 100+ member guilds
+
+**Initial Data:**
+```lua
+-- Performance metrics from affected user:
+TOGBankClassic_PerfMetrics[1]:
+  GUILD_ROSTER_UPDATE: 34 events (8.5/min) - NORMAL for 100+ members
+  RefreshOnlineCache: 35 calls, 17.15ms total (0.49ms avg) - NOT the problem
+  NormalizeRequestList: NOT INSTRUMENTED (shows 0 but debug log proves 24+ calls)
+```
+
+---
+
+#### �🟠 [PERF-001] Serious performance degradation during normal gameplay
 
 **Severity:** 🟠 HIGH
 **Category:** Performance / Optimization
