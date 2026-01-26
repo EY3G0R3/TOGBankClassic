@@ -1,4 +1,4 @@
-# Delta Implementation Bug Tracker
+﻿# Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
 **Last Updated:** January 23, 2026
@@ -64,7 +64,7 @@
 **Category:** Request Sync / Data Corruption
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-25
-**Status:** 🔍 OPEN
+**Status:** ✅ FIXED
 **Reproducibility:** Intermittent
 
 **Description:**
@@ -114,12 +114,46 @@ The incoming version is approximately 100,000x larger than expected. Possible ca
 - Request snapshot creation code - where `payload.version` is set
 - Serialization/deserialization in AceComm transmission
 
-**Workaround:**
-- Add validation in ReceiveRequestsData() to reject versions > 2^31 (max valid timestamp until 2038)
-- Log corrupted data for debugging
-- Gracefully reject snapshot instead of crashing
+**Solution Implemented:**
+1. Changed MAX_TIMESTAMP from 4102444800 to 2147483647 (max 32-bit signed integer)
+2. Added validation in `GetRequestsVersion()` to reset corrupted stored versions
+3. Added validation in `ReceiveRequestsData()` to reject corrupted incoming snapshots  
+4. Added validation in `NormalizeRequestList()` to skip corrupted timestamps
+5. Fixed warning message to avoid triggering overflow when logging MAX_TIMESTAMP
+
+**Files Modified:**
+- `Modules/RequestLog.lua`:
+  - GetRequestsVersion() (lines 851-865): Validates and resets corrupted stored versions
+  - ReceiveRequestsData() (lines 955-966): Rejects corrupted incoming snapshots
+  - NormalizeRequestList() (lines 306-314): Skips corrupted timestamps in calculations
+
+**Root Cause:**
+Classic Era uses 32-bit integers. Original MAX_TIMESTAMP (4102444800 for Jan 1, 2100) exceeded this limit, causing overflow even in validation code.
+
+**Fix Date:** 2026-01-25
 
 **Priority:** CRITICAL - Causes immediate crash, blocks request sync
+
+---
+
+####  [DELTA-009] Delta sync failure warnings spam for offline players
+
+**Severity:**  CRITICAL (User Experience)
+**Category:** Error Handling / Communication
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-25
+**Status:**  FIXED
+**Reproducibility:** Consistent
+
+**Description:**
+Delta sync failure warnings persist and spam chat for players who are no longer online.
+
+**Solution Implemented:**
+1. Added ClearOfflineErrorCounters() - Called on GUILD_ROSTER_UPDATE
+2. Added online check before showing warnings
+3. Added ResetDeltaErrorCount() - Clears error counter after successful full sync
+
+**Fix Date:** 2026-01-25
 
 ---
 

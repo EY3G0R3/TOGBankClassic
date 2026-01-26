@@ -900,13 +900,15 @@ function TOGBankClassic_DeltaComms:RecordDeltaError(guildName, altName, errorTyp
 			end
 			db.deltaErrors.failureCounts[altName] = db.deltaErrors.failureCounts[altName] + 1
 
-			-- Notify user if repeated failures (3+ failures for same alt)
+			-- Notify user if repeated failures (3+ failures for same alt) and player is online
 			if db.deltaErrors.failureCounts[altName] >= 3 and not db.deltaErrors.notifiedAlts[altName] then
-				TOGBankClassic_Output:Warn(
-					"Repeated delta sync failures for %s. Falling back to full sync.",
-					altName
-				)
-				db.deltaErrors.notifiedAlts[altName] = true
+				if TOGBankClassic_Guild:IsPlayerOnline(altName) then
+					TOGBankClassic_Output:Warn(
+						"Repeated delta sync failures for %s. Falling back to full sync.",
+						altName
+					)
+					db.deltaErrors.notifiedAlts[altName] = true
+				end
 			end
 			return
 		end
@@ -941,13 +943,15 @@ function TOGBankClassic_DeltaComms:RecordDeltaError(guildName, altName, errorTyp
 	end
 	TOGBankClassic_Guild.tempDeltaErrors.failureCounts[altName] = TOGBankClassic_Guild.tempDeltaErrors.failureCounts[altName] + 1
 
-	-- Notify user if repeated failures (3+ failures for same alt)
+	-- Notify user if repeated failures (3+ failures for same alt) and player is online
 	if TOGBankClassic_Guild.tempDeltaErrors.failureCounts[altName] >= 3 and not TOGBankClassic_Guild.tempDeltaErrors.notifiedAlts[altName] then
-		TOGBankClassic_Output:Warn(
-			"Repeated delta sync failures for %s. Falling back to full sync.",
-			altName
-		)
-		TOGBankClassic_Guild.tempDeltaErrors.notifiedAlts[altName] = true
+		if TOGBankClassic_Guild:IsPlayerOnline(altName) then
+			TOGBankClassic_Output:Warn(
+				"Repeated delta sync failures for %s. Falling back to full sync.",
+				altName
+			)
+			TOGBankClassic_Guild.tempDeltaErrors.notifiedAlts[altName] = true
+		end
 	end
 end
 
@@ -1011,6 +1015,48 @@ function TOGBankClassic_DeltaComms:GetDeltaFailureCount(guildName, altName)
 	end
 
 	return 0
+end
+
+-- Reset error counters for an alt after successful full sync
+function TOGBankClassic_DeltaComms:ResetDeltaErrorCount(guildName, altName)
+	if not altName then
+		return
+	end
+
+	-- Clear from database if available
+	if guildName then
+		local db = TOGBankClassic_Database.db.faction[guildName]
+		if db and db.deltaErrors then
+			db.deltaErrors.failureCounts[altName] = nil
+			db.deltaErrors.notifiedAlts[altName] = nil
+		end
+	end
+
+	-- Clear from temporary storage
+	if TOGBankClassic_Guild.tempDeltaErrors then
+		TOGBankClassic_Guild.tempDeltaErrors.failureCounts[altName] = nil
+		TOGBankClassic_Guild.tempDeltaErrors.notifiedAlts[altName] = nil
+	end
+end
+
+-- Clear error counters for all offline players (called on roster update)
+function TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(guildName)
+	if not guildName then
+		return
+	end
+
+	local db = TOGBankClassic_Database.db.faction[guildName]
+	if not db or not db.deltaErrors then
+		return
+	end
+
+	-- Check each alt with error counters
+	for altName, _ in pairs(db.deltaErrors.failureCounts) do
+		if not TOGBankClassic_Guild:IsPlayerOnline(altName) then
+			db.deltaErrors.failureCounts[altName] = nil
+			db.deltaErrors.notifiedAlts[altName] = nil
+		end
+	end
 end
 
 -- PULL-BASED PROTOCOL FUNCTIONS --

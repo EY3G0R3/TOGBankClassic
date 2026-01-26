@@ -859,6 +859,7 @@ function Guild:GetRequestsVersion()
 	local MAX_TIMESTAMP = 2147483647  -- Max 32-bit signed integer (Jan 19, 2038)
 	if version < MIN_TIMESTAMP or version > MAX_TIMESTAMP then
 		TOGBankClassic_Output:Warn("Invalid request version %s detected, resetting to 0", tostring(version))
+		self.Info.requestsVersion = 0  -- Actually fix the stored value to prevent spam
 		return 0
 	end
 	return version
