@@ -345,6 +345,26 @@ function TOGBankClassic_Options:Init()
 							TOGBankClassic_Output:Info("All debug categories disabled")
 						end,
 					},
+					["spacer2"] = {
+						order = 40,
+						type = "description",
+						name = " ",
+					},
+					["perfHeader"] = {
+						order = 41,
+						type = "header",
+						name = "Performance Monitoring",
+					},
+					["perfStatsButton"] = {
+						order = 42,
+						type = "execute",
+						width = "full",
+						name = "Show Performance Statistics",
+						desc = "Display event frequency, operation timing, and memory usage for current session",
+						func = function()
+							TOGBankClassic_Performance:PrintReport()
+						end,
+					},
 				},
 			},
 		},
