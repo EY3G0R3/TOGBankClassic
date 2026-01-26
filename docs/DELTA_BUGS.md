@@ -221,6 +221,74 @@ In `Mail.lua` around lines 557-574, when identifying `skippedLargeStack` for spl
 
 ---
 
+#### 🟠 [PERF-001] Serious performance degradation during normal gameplay
+
+**Severity:** 🟠 HIGH
+**Category:** Performance / Optimization
+**Reporter:** Multiple Users (Production)
+**Date Reported:** 2026-01-25
+**Status:** 🔍 INVESTIGATING
+**Reproducibility:** Intermittent
+
+**Description:**
+Multiple guild members are reporting serious performance issues while using the addon. Symptoms include lag, frame rate drops, or general game slowdown during normal gameplay.
+
+**Investigation Tools Available:**
+
+1. **`/togbank deltastats`** - Shows comprehensive performance metrics:
+   - Delta computation time (ms)
+   - Delta application time (ms)
+   - Delta chain replay time (ms)
+   - Average bandwidth usage
+   - Success/failure rates
+
+2. **`debugprofilestop()` Timing** - Already instrumented in:
+   - `Guild.lua` line 1041: Delta computation timing
+   - `DeltaComms.lua` line 641: Delta application timing
+   - `DeltaComms.lua` line 818: Delta chain replay timing
+
+3. **Debug Logging** - Enable categories to trace expensive operations:
+   - `/togbank debug DELTA` - Delta sync operations
+   - `/togbank debug CACHE` - Cache operations
+   - `/togbank debug ROSTER` - Roster updates
+
+4. **Known Performance Hotspots:**
+   - GetBanks() now cached to prevent 982-member guild timeout (already fixed)
+   - NormalizeRequestList() iterates all requests
+   - RefreshOnlineCache() iterates all guild members on GUILD_ROSTER_UPDATE
+   - Item link reconstruction after delta application
+
+**Diagnostic Steps:**
+
+1. Ask users to run `/togbank deltastats` and report results
+2. Check if specific operations show unusually high timing values
+3. Enable DELTA debug category to see operation frequency
+4. Check for repeated operations that should be cached
+5. Look for O(n²) loops in hot paths
+6. Profile memory usage (may need to add UpdateAddOnMemoryUsage() calls)
+
+**Potential Causes:**
+
+- Frequent GUILD_ROSTER_UPDATE events triggering expensive operations
+- Delta sync operations running too frequently
+- Item highlight scanning (20-item limit already implemented)
+- Request data processing on every update
+- Excessive table iterations in large guilds
+- Missing caching for expensive lookups
+- Serialization/deserialization overhead
+
+**Next Steps:**
+
+1. Gather `/togbank deltastats` output from affected users
+2. Add memory profiling if timing looks reasonable
+3. Review event handlers for unnecessary work
+4. Consider throttling expensive operations
+5. Add performance budgets for critical paths
+
+**Priority:** HIGH - Affects gameplay experience for multiple users
+
+---
+
 ### 🟠 HIGH
 
 #### 🟠 [SYNC-008] Manual request sync (`/togbank sync`) not initiating request synchronization
