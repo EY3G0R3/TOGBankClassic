@@ -359,33 +359,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					TOGBankClassic_Guild:QueryRoster(sender, data.roster)
 				end
 			end
-			if data.requests then
-				local logSummary = data.requestLog
-				if type(logSummary) == "table" then
-					local missing = {}
-					local currentLog = current_data.requestLog or {}
-					for actor, seq in pairs(logSummary) do
-						local have = tonumber(currentLog[actor] or 0) or 0
-						local remoteSeq = tonumber(seq or 0) or 0
-						if remoteSeq > have then
-							missing[actor] = have + 1
-						end
-					end
-					if next(missing) then
-						self:Debug("REQUESTS", ">", ColorPlayerName(sender), "has fresher requests data, querying.")
-						TOGBankClassic_Guild:QueryRequestLog(sender, missing)
-					elseif data.requests and current_data.requests and data.requests > current_data.requests then
-						self:Debug("REQUESTS", ">", ColorPlayerName(sender), "has fresher requests snapshot, querying.")
-						TOGBankClassic_Guild:QueryRequestsSnapshot(sender)
-					end
-				else
-					local currentRequests = current_data.requests
-					if currentRequests == nil or data.requests > currentRequests then
-						self:Debug("REQUESTS", ">", ColorPlayerName(sender), "has fresher requests data, querying.")
-						TOGBankClassic_Guild:QueryRequestsSnapshot(sender)
-					end
-				end
-			end
+			-- PERF-002 fix: Request sync decoupled from inventory sync (togbank-dv)
+			-- Request syncs now handled independently via SendRequestsVersionPing()
 			if data.alts then
 				local altCount = 0
 				for _ in pairs(data.alts) do

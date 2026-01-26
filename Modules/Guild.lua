@@ -468,8 +468,6 @@ function TOGBankClassic_Guild:GetVersion()
 		supports_delta = PROTOCOL.SUPPORTS_DELTA,
 		roster = nil,
 		alts = {},
-		requests = self:GetRequestsVersion(),
-		requestLog = self:GetRequestLogSummary(),
 	}
 
 	if self.Info.name then

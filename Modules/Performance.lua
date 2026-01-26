@@ -38,9 +38,9 @@ function Performance:Initialize()
 	-- Run garbage collection on initialization
 	self:GarbageCollectSessions()
 	
-	-- Initialize enabled state (default to true)
+	-- Initialize enabled state (default to false - users can enable in options)
 	if TOGBankClassic_PerfEnabled == nil then
-		TOGBankClassic_PerfEnabled = true
+		TOGBankClassic_PerfEnabled = false
 	end
 	
 	-- Create new session

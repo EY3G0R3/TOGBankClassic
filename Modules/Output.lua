@@ -51,9 +51,9 @@ end
 
 function TOGBankClassic_Output:Init()
 	-- Level will be set from Options after DB is loaded
-	-- Initialize debug log enabled state (default to true)
+	-- Initialize debug log enabled state (default to false - users can enable in options)
 	if TOGBankClassic_DebugLogEnabled == nil then
-		TOGBankClassic_DebugLogEnabled = true
+		TOGBankClassic_DebugLogEnabled = false
 	end
 	
 	-- Load persistent log from SavedVariables if it exists
