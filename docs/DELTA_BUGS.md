@@ -285,6 +285,40 @@ Multiple guild members are reporting serious performance issues while using the 
 4. Consider throttling expensive operations
 5. Add performance budgets for critical paths
 
+**Optimization Techniques:**
+
+**Throttling** - Execute at most once per time period:
+```lua
+local lastRosterUpdate = 0
+function GUILD_ROSTER_UPDATE()
+    local now = GetTime()
+    if now - lastRosterUpdate < 1.0 then  -- Min 1 second between updates
+        return  -- Skip this event
+    end
+    lastRosterUpdate = now
+    RefreshOnlineCache()  -- Expensive operation runs max once per second
+end
+```
+
+**Debouncing** - Execute only after events stop firing:
+```lua
+local searchTimer = nil
+function OnSearchTextChanged(text)
+    if searchTimer then
+        searchTimer:Cancel()  -- Cancel pending search
+    end
+    searchTimer = C_Timer.After(0.3, function()  -- Wait 0.3s after last keystroke
+        PerformSearch(text)  -- Expensive operation
+    end)
+end
+```
+
+**Candidates for Throttling/Debouncing:**
+- GUILD_ROSTER_UPDATE → Throttle RefreshOnlineCache() (currently runs on every event)
+- Item searches → Debounce search execution
+- Request list updates → Debounce UI refreshes
+- Delta sync operations → Throttle broadcast rate
+
 **Priority:** HIGH - Affects gameplay experience for multiple users
 
 ---
