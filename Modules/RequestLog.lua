@@ -1,6 +1,12 @@
 TOGBankClassic_Guild = TOGBankClassic_Guild or {}
 local Guild = TOGBankClassic_Guild
 
+-- Throttle warnings to prevent spam (only warn once per session per type)
+local warnedAbout = {
+	invalidRequestVersion = false,
+	corruptedTimestamps = {},  -- Track by request ID
+}
+
 --[[
 Request log sync and storage
 ============================
@@ -304,11 +310,15 @@ function Guild:NormalizeRequestList()
 				end
 				if clean.updatedAt and clean.updatedAt > latest then
 					-- Validate timestamp to prevent corruption (DATA-003)
-					local MAX_TIMESTAMP = 4102444800  -- Jan 1, 2100
+					local MAX_TIMESTAMP = 2147483647  -- Max 32-bit signed integer (Jan 19, 2038)
 					if clean.updatedAt < MAX_TIMESTAMP then
 						latest = clean.updatedAt
 					else
-						TOGBankClassic_Output:Warn("Skipping corrupted updatedAt timestamp %s for request id=%s", tostring(clean.updatedAt), tostring(clean.id))
+						-- Only warn once per corrupted request ID to prevent spam
+						if not warnedAbout.corruptedTimestamps[clean.id] then
+							TOGBankClassic_Output:Warn("Skipping corrupted updatedAt timestamp %s for request id=%s", tostring(clean.updatedAt), tostring(clean.id))
+							warnedAbout.corruptedTimestamps[clean.id] = true
+						end
 					end
 				end
 			end
@@ -858,8 +868,12 @@ function Guild:GetRequestsVersion()
 	local MIN_TIMESTAMP = 946684800  -- Jan 1, 2000
 	local MAX_TIMESTAMP = 2147483647  -- Max 32-bit signed integer (Jan 19, 2038)
 	if version < MIN_TIMESTAMP or version > MAX_TIMESTAMP then
-		TOGBankClassic_Output:Warn("Invalid request version %s detected, resetting to 0", tostring(version))
-		self.Info.requestsVersion = 0  -- Actually fix the stored value to prevent spam
+		-- Only warn once per session to prevent spam
+		if not warnedAbout.invalidRequestVersion then
+			TOGBankClassic_Output:Warn("Invalid request version %s detected, resetting to 0", tostring(version))
+			warnedAbout.invalidRequestVersion = true
+		end
+		self.Info.requestsVersion = 0  -- Actually fix the stored value
 		return 0
 	end
 	return version

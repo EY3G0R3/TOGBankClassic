@@ -168,6 +168,19 @@ function Performance:WrapFunction(operationName, func)
 	end
 end
 
+-- Track a function execution with timing (returns the function's return values)
+function Performance:Track(operationName, func)
+	if not TOGBankClassic_PerfEnabled then
+		return func()
+	end
+	
+	local startTime = debugprofilestop()
+	local results = {func()}
+	local duration = debugprofilestop() - startTime
+	self:RecordOperation(operationName, duration)
+	return unpack(results)
+end
+
 -- Get current session stats
 function Performance:GetCurrentStats()
 	if not self.currentSession then return nil end
