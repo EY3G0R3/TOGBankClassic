@@ -69,20 +69,29 @@
 
 ### �🟠 HIGH
 
-#### 🟠 [FULFILL-001] Greedy split algorithm causes repeated unnecessary splits
+#### ✅ [FULFILL-001] Greedy split algorithm causes repeated unnecessary splits
 
 **Severity:**  HIGH
 **Category:** Order Fulfillment / Stack Splitting
 **Reporter:** User (Testing)
 **Date Reported:** 2026-01-25
-**Status:** 🔍 OPEN
-**Reproducibility:** Consistent
+**Status:** ✅ RESOLVED (2026-01-27)
+**Reproducibility:** Was Consistent
 
 **Description:**
-The greedy stack splitting algorithm in `Mail.lua` splits stacks from the beginning (first full stack), which invalidates its own calculations after each split. This causes repeated splits when a single split from the last full stack would be sufficient.
+The greedy stack splitting algorithm was using tiny stacks in calculations, causing inefficient splits like "Split 9 after using stack of 1" instead of "Split 10 and ignore the stack of 1."
 
-**Root Cause:**
-1. Bags are typically organized: full stacks first → partial stacks → empty slots
+**Solution:**
+Added smart filtering that excludes stacks smaller than the required split amount. Now only uses stacks worth the effort.
+- Example: Need 90 with [20,20,20,20,1] → Excludes 1, splits 10 ✅
+- Example: Need 95 with [20,20,20,20,14] → Excludes 14, splits 15 ✅
+
+**Files Modified:** Modules/Mail.lua (lines 568-593, 486), docs/ORDER_FULFILLMENT_LOGIC.md
+
+---
+
+#### 🟠 [PERF-001] Serious performance degradation during normal gameplay
+
 2. Greedy algorithm calculates from first-to-last stack
 3. When split is needed, it splits the FIRST full stack
 4. After split, the first stack is now smaller
