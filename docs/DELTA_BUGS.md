@@ -63,112 +63,11 @@
 
 ## Open Bugs
 
-### � CRITICAL
-
-#### 🔴 [DATA-003] Integer overflow on request version timestamp causing crash
-
-**Severity:** 🔴 CRITICAL
-**Category:** Request Sync / Data Corruption
-**Reporter:** User (Production)
-**Date Reported:** 2026-01-25
-**Status:** ✅ FIXED
-**Reproducibility:** Intermittent
-
-**Description:**
-Request snapshot version timestamp is being corrupted to an astronomically large value (~176 trillion instead of ~1.7 billion), causing integer overflow when attempting to store in database. This crashes the addon when receiving request data.
-
-**Error Details:**
-```
-85x integer overflow attempting to store 1.7673980749821e+14
-[TOGBankClassic/Modules/RequestLog.lua]:948: in function 'ReceiveRequestsData'
-```
-
-**Observed Data:**
-- `incomingVersion = 176739807498212` (corrupted - 176 trillion)
-- `localVersion = 1769213100` (normal - valid 2026 Unix timestamp)
-- `payload.version = 176739807498212` (same corruption in payload)
-
-**Root Cause Analysis:**
-The incoming version is approximately 100,000x larger than expected. Possible causes:
-1. Timestamp multiplication error (e.g., converting seconds to microseconds incorrectly)
-2. Concatenation instead of arithmetic operation
-3. Data corruption during serialization/deserialization
-4. Bit shifting or overflow in version calculation
-
-**Impact:**
-- 🔴 **CRITICAL** - Causes addon crash when receiving corrupted request data
-- Prevents request synchronization from affected client
-- Can occur during normal request sync operations
-
-**Current Behavior:**
-- Request snapshot with corrupted version is transmitted
-- Receiving client attempts to store the version
-- Integer overflow error crashes the addon
-
-**Expected Behavior:**
-- Version should be valid Unix timestamp (1.7 billion range for 2026)
-- Should handle overflow gracefully even if corruption occurs
-- Should validate version before attempting to store
-
-**Investigation Needed:**
-1. Identify where `payload.version` is set in request snapshot creation
-2. Check for timestamp arithmetic errors (multiplication, concatenation)
-3. Review serialization/deserialization for data corruption
-4. Add validation to reject versions outside valid Unix timestamp range
-
-**Files to Investigate:**
-- `Modules/RequestLog.lua` line 948 - ReceiveRequestsData() where crash occurs
-- Request snapshot creation code - where `payload.version` is set
-- Serialization/deserialization in AceComm transmission
-
-**Solution Implemented:**
-1. Changed MAX_TIMESTAMP from 4102444800 to 2147483647 (max 32-bit signed integer)
-2. Added validation in `GetRequestsVersion()` to reset corrupted stored versions
-3. Added validation in `ReceiveRequestsData()` to reject corrupted incoming snapshots  
-4. Added validation in `NormalizeRequestList()` to skip corrupted timestamps
-5. Fixed warning message to avoid triggering overflow when logging MAX_TIMESTAMP
-
-**Files Modified:**
-- `Modules/RequestLog.lua`:
-  - GetRequestsVersion() (lines 851-865): Validates and resets corrupted stored versions
-  - ReceiveRequestsData() (lines 955-966): Rejects corrupted incoming snapshots
-  - NormalizeRequestList() (lines 306-314): Skips corrupted timestamps in calculations
-
-**Root Cause:**
-Classic Era uses 32-bit integers. Original MAX_TIMESTAMP (4102444800 for Jan 1, 2100) exceeded this limit, causing overflow even in validation code.
-
-**Fix Date:** 2026-01-25
-
-**Priority:** CRITICAL - Causes immediate crash, blocks request sync
-
----
-
-####  [DELTA-009] Delta sync failure warnings spam for offline players
-
-**Severity:**  CRITICAL (User Experience)
-**Category:** Error Handling / Communication
-**Reporter:** User (Production)
-**Date Reported:** 2026-01-25
-**Status:**  FIXED
-**Reproducibility:** Consistent
-
-**Description:**
-Delta sync failure warnings persist and spam chat for players who are no longer online.
-
-**Solution Implemented:**
-1. Added ClearOfflineErrorCounters() - Called on GUILD_ROSTER_UPDATE
-2. Added online check before showing warnings
-3. Added ResetDeltaErrorCount() - Clears error counter after successful full sync
-
-**Fix Date:** 2026-01-25
-
----
-
 ### �🟠 HIGH
 
 #### 🟠 [FULFILL-001] Greedy split algorithm causes repeated unnecessary splits
 
-**Severity:** 🟠 HIGH
+**Severity:**  HIGH
 **Category:** Order Fulfillment / Stack Splitting
 **Reporter:** User (Testing)
 **Date Reported:** 2026-01-25
@@ -318,20 +217,11 @@ function OnSearchTextChanged(text)
     searchTimer = C_Timer.After(0.3, function()  -- Wait 0.3s after last keystroke
         PerformSearch(text)  -- Expensive operation
     end)
-end
-```
-
-**Candidates for Throttling/Debouncing:**
-- GUILD_ROSTER_UPDATE → Throttle RefreshOnlineCache() (currently runs on every event)
-- Item searches → Debounce search execution
-- Request list updates → Debounce UI refreshes
-- Delta sync operations → Throttle broadcast rate
-
-**Priority:** HIGH - Affects gameplay experience for multiple users
+**Priority:** HIGH - Causes user frustration with repeated unnecessary split dialogs
 
 ---
 
-### 🟠 HIGH
+## Resolved Bugs (2026-01-22)
 
 #### 🟠 [SYNC-008] Manual request sync (`/togbank sync`) not initiating request synchronization
 
@@ -1253,6 +1143,99 @@ Applied defensive programming throughout the codebase to check for nil item link
 
 **Verified By:** Code review and error path analysis
 **Closed:** 2026-01-22
+
+---
+
+#### ✅ [PERF-001] Serious performance degradation during normal gameplay
+
+**Severity:** 🟠 HIGH
+**Category:** Performance / Optimization
+**Reporter:** Multiple Users (Production)
+**Date Reported:** 2026-01-25
+**Status:** ✅ CLOSED (Same root cause as PERF-002)
+**Fixed In:** v0.7.18 (commit 77b16a1)
+**Fixed Date:** 2026-01-26
+**Reproducibility:** Was consistent in large guilds
+
+**Description:**
+Multiple guild members reported serious performance issues including lag, frame rate drops, and general game slowdown during normal gameplay with the addon.
+
+**Root Cause:**
+After investigation, determined this was caused by the same issue as PERF-002: the NormalizeRequestList() broadcast storm from request sync being piggybacked on inventory delta broadcasts. Every 3 minutes, 100+ guild members triggered cascading request queries causing ~9,696 request table accesses per second.
+
+**Solution:**
+Fixed by decoupling request sync from inventory sync (same fix as PERF-002). See PERF-002 for full details.
+
+**Performance Impact (After Fix):**
+- NormalizeRequestList() calls reduced from 12+/second to near-zero
+- Eliminated 3-minute performance spikes
+- Normal gameplay no longer affected by sync operations
+
+**Closed:** 2026-01-26 (Resolved by PERF-002 fix)
+
+---
+
+#### ✅ [DATA-003] Integer overflow on request version timestamp causing crash
+
+**Severity:** 🔴 CRITICAL
+**Category:** Request Sync / Data Corruption
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-25
+**Status:** ✅ CLOSED
+**Fixed In:** v0.7.17
+**Fixed Date:** 2026-01-25
+**Reproducibility:** Was intermittent
+
+**Description:**
+Request snapshot version timestamp was corrupted to ~176 trillion (instead of ~1.7 billion), causing integer overflow crashes when attempting to store in database.
+
+**Error Details:**
+```
+85x integer overflow attempting to store 1.7673980749821e+14
+[TOGBankClassic/Modules/RequestLog.lua]:948: in function 'ReceiveRequestsData'
+```
+
+**Root Cause:**
+Classic Era uses 32-bit integers. Original MAX_TIMESTAMP (4102444800 for Jan 1, 2100) exceeded this limit, causing overflow even in validation code.
+
+**Solution Implemented:**
+1. Changed MAX_TIMESTAMP from 4102444800 to 2147483647 (max 32-bit signed integer)
+2. Added validation in `GetRequestsVersion()` to reset corrupted stored versions
+3. Added validation in `ReceiveRequestsData()` to reject corrupted incoming snapshots
+4. Added validation in `NormalizeRequestList()` to skip corrupted timestamps
+5. Fixed warning message to avoid triggering overflow when logging
+
+**Files Modified:**
+- `Modules/RequestLog.lua`: GetRequestsVersion(), ReceiveRequestsData(), NormalizeRequestList()
+
+**Closed:** 2026-01-25
+
+---
+
+#### ✅ [DELTA-009] Delta sync failure warnings spam for offline players
+
+**Severity:** 🔴 CRITICAL (User Experience)
+**Category:** Error Handling / Communication
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-25
+**Status:** ✅ CLOSED
+**Fixed In:** v0.7.17
+**Fixed Date:** 2026-01-25
+**Reproducibility:** Was consistent
+
+**Description:**
+Delta sync failure warnings persisted and spammed chat for players who were no longer online, creating unnecessary error noise.
+
+**Solution Implemented:**
+1. Added `ClearOfflineErrorCounters()` - Called on GUILD_ROSTER_UPDATE to reset error counters for offline players
+2. Added online check before showing warnings - Only warn about players who are actually online
+3. Added `ResetDeltaErrorCount()` - Clears error counter after successful full sync
+
+**Files Modified:**
+- `Modules/DeltaComms.lua`: Added cleanup functions
+- `Modules/Events.lua`: Hooked GUILD_ROSTER_UPDATE to clear offline counters
+
+**Closed:** 2026-01-25
 
 ---
 
