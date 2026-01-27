@@ -1,5 +1,8 @@
 TOGBankClassic_Chat = {}
 
+-- Store pre-debug log level for restoration
+local preDebugLogLevel = nil
+
 function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Output:Debug("PROTOCOL", "[INIT] TOGBankClassic_Chat:Init() starting")
 	TOGBankClassic_Core:RegisterChatCommand("togbank", function(input)
@@ -1294,10 +1297,22 @@ local COMMAND_REGISTRY = {
 		handler = function()
 			local currentLevel = TOGBankClassic_Output:GetLevel()
 			if currentLevel == LOG_LEVEL.DEBUG then
-				TOGBankClassic_Output:SetLevel(LOG_LEVEL.INFO)
-				TOGBankClassic_Options.db.global.bank["logLevel"] = LOG_LEVEL.INFO
-				TOGBankClassic_Output:Response("Debug: off (log level: Info)")
+				-- Restore to pre-debug level
+				local restoreLevel = preDebugLogLevel or LOG_LEVEL.INFO
+				preDebugLogLevel = nil
+				TOGBankClassic_Output:SetLevel(restoreLevel)
+				TOGBankClassic_Options.db.global.bank["logLevel"] = restoreLevel
+
+				-- Get level name for response message
+				local levelName = "Info"
+				if restoreLevel == LOG_LEVEL.RESPONSE then levelName = "Quiet"
+				elseif restoreLevel == LOG_LEVEL.ERROR then levelName = "Error"
+				elseif restoreLevel == LOG_LEVEL.WARN then levelName = "Warn"
+				end
+				TOGBankClassic_Output:Response("Debug: off (log level: " .. levelName .. ")")
 			else
+				-- Save current level before entering debug mode
+				preDebugLogLevel = TOGBankClassic_Options.db.global.bank["logLevel"]
 				TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
 				TOGBankClassic_Options.db.global.bank["logLevel"] = LOG_LEVEL.DEBUG
 				TOGBankClassic_Output:Response("Debug: on (log level: Debug)")
