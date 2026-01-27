@@ -256,6 +256,8 @@ function TOGBankClassic_Guild:Init(name)
 		self:EnsureRequestsInitialized()
 		-- Migrate any temporary errors to database
 		self:MigrateTempErrors()
+		-- Rebuild banker roster from guild notes on init
+		self:RebuildBankerRoster()
 		return true
 	end
 
@@ -369,6 +371,34 @@ end
 -- Invalidate the banks cache (call when guild roster changes)
 function TOGBankClassic_Guild:InvalidateBanksCache()
 	self.banksCache = nil
+end
+
+-- Rebuild banker roster from local guild notes (no network communication needed)
+-- Called automatically on GUILD_ROSTER_UPDATE event
+function TOGBankClassic_Guild:RebuildBankerRoster()
+	if not self.Info then
+		return
+	end
+
+	local banks = {}
+	for i = 1, GetNumGuildMembers() do
+		local name, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
+		if name and (publicNote or officer_note) then
+			if (publicNote and string.match(publicNote, "(.*)gbank(.*)")) or
+			   (officer_note and string.match(officer_note, "(.*)gbank(.*)")) then
+				table.insert(banks, name)
+			end
+		end
+	end
+
+	-- Update roster.alts list (no version tracking needed - purely local)
+	local oldRoster = table.concat(self.Info.roster.alts or {}, ",")
+	local newRoster = table.concat(banks, ",")
+	
+	if oldRoster ~= newRoster then
+		self.Info.roster.alts = banks
+		TOGBankClassic_Output:Debug("ROSTER", "Rebuilt banker roster from guild notes: %d bankers", #banks)
+	end
 end
 
 function TOGBankClassic_Guild:GetRosterAlts()
@@ -587,16 +617,11 @@ function TOGBankClassic_Guild:ConsumePendingSync(syncType, sender, name)
 	return false
 end
 
+-- DEPRECATED: Roster sync no longer uses network communication
+-- Each player rebuilds roster locally from guild notes on GUILD_ROSTER_UPDATE
 function TOGBankClassic_Guild:QueryRoster(player, version)
-	self.hasRequested = true
-	if self.requestCount == nil then
-		self.requestCount = 1
-	else
-		self.requestCount = self.requestCount + 1
-	end
-	self:MarkPendingSync("roster", player)
-	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "roster", version = version })
-	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "NORMAL")
+	-- No-op: Roster is now local-only
+	TOGBankClassic_Output:Debug("ROSTER", "QueryRoster called but roster sync is now local-only")
 end
 
 function TOGBankClassic_Guild:QueryAlt(player, name, version)
@@ -661,36 +686,18 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 	end
 end
 
+-- DEPRECATED: Roster sync no longer uses network communication
+-- Each player rebuilds roster locally from guild notes on GUILD_ROSTER_UPDATE
 function TOGBankClassic_Guild:SendRosterData()
-	-- Safety check: Info might be nil if guild data not loaded yet
-	if not self.Info then
-		return
-	end
-
-	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "roster", roster = self.Info.roster })
-	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
+	-- No-op: Roster is now local-only
+	TOGBankClassic_Output:Debug("ROSTER", "SendRosterData called but roster sync is now local-only")
 end
 
+-- DEPRECATED: Roster sync no longer uses network communication
+-- Each player rebuilds roster locally from guild notes on GUILD_ROSTER_UPDATE
 function TOGBankClassic_Guild:ReceiveRosterData(roster)
-	if not self.Info then
-		return
-	end
-	if self.Info.roster.version and roster.version and roster.version < self.Info.roster.version then
-		return
-	end
-	if self.hasRequested then
-		if self.requestCount == nil then
-			self.requestCount = 0
-		else
-			self.requestCount = self.requestCount - 1
-		end
-		if self.requestCount == 0 then
-			self.hasRequested = false
-			TOGBankClassic_Output:Info("Sync completed.")
-		end
-	end
-
-	self.Info.roster = roster
+	-- No-op: Roster is now local-only
+	TOGBankClassic_Output:Debug("ROSTER", "ReceiveRosterData called but roster sync is now local-only")
 end
 
 -- returns true if the given normalized sender has a public or officer note containing 'gbank'

@@ -131,19 +131,7 @@ function TOGBankClassic_Bank:Scan()
 		return
 	end
 
-	local updateRoster = false
-	if info.roster["version"] ~= nil then
-		if table.concat(banks) ~= table.concat(info.roster.alts) then
-			updateRoster = true
-		end
-	else
-		updateRoster = true
-	end
-
-	if updateRoster then
-		info.roster.alts = banks
-		info.roster.version = GetServerTime()
-	end
+	-- Roster sync removed: Roster is now rebuilt locally from guild notes on GUILD_ROSTER_UPDATE
 
 	local alt = {}
 	if info.alts[player] then

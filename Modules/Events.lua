@@ -220,6 +220,8 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 	TOGBankClassic_Guild:RefreshOnlineCache()
 	-- Invalidate banks cache when roster updates
 	TOGBankClassic_Guild:InvalidateBanksCache()
+	-- Rebuild banker roster from guild notes (local only, no network communication)
+	TOGBankClassic_Guild:RebuildBankerRoster()
 	-- Clear delta error counters for offline players
 	TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
 end

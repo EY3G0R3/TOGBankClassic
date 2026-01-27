@@ -549,15 +549,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			end
 		end
 
-		-- Alt and roster queries are per-player, only respond if query is for us
+		-- Alt queries are per-player, only respond if query is for us
 		if data.player and data.player == player then
-			if data.type == "roster" then
-				local time = GetServerTime()
-				if self.last_roster_sync == nil or time - self.last_roster_sync > 300 then
-					self.last_roster_sync = time
-					TOGBankClassic_Guild:SendRosterData()
-				end
-			end
+			-- Roster query removed: Roster is now rebuilt locally from guild notes
 
 			if data.type == "alt" then
 				local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
@@ -701,9 +695,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				"roster data. We",
 				allowed and "accept it." or "do not accept it."
 			)
-			if allowed then
-				TOGBankClassic_Guild:ReceiveRosterData(data.roster)
-			end
+			-- Roster sync removed: Roster is now rebuilt locally from guild notes
 		end
 
 		if data.type == "requests" then
