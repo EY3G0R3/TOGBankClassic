@@ -1,8 +1,12 @@
 ﻿# Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** January 26, 2026
+**Last Updated:** January 27, 2026
 **Status:** Testing Phase - Core Protocol Operational
+
+**Recent Fixes (2026-01-27):**
+- ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
+- ✅ [UI-005] Inventory UI crash on missing slots field - Added nil checks for alt.bank.slots and alt.bags.slots
 
 **Recent Fixes (2026-01-26):**
 - ✅ [PERF-002] NormalizeRequestList broadcast storm - Decoupled request sync from inventory delta sync to eliminate 12+ calls/second
@@ -3818,6 +3822,137 @@ For detailed logging during manual tests:
 - Copy debug messages (from `/togbank debug`)
 - Note guild size and protocol distribution
 - Specify which test case failed (from TESTING.md)
+
+---
+
+## ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format
+
+**Severity:** High
+**Status:** ✅ RESOLVED (2026-01-27)
+**Impact:** Delta sync failures when items removed from bags/bank
+
+### Problem
+Delta validation was rejecting removed items that didn't have a `Link` property, causing repeated VALIDATION_FAILED errors like:
+```
+TOGBankClassic: [WARN] Repeated delta sync failures for Togherbs-Azuresong. Falling back to full sync.
+TOGBankClassic: Validation failed: invalid bags delta: removed item missing or invalid Link
+```
+
+### Root Cause
+**Mismatch between delta creation and validation:**
+
+1. **Delta creation** (DeltaComms.lua:459) - Creates minimal removed items:
+   ```lua
+   -- v0.8.0: Minimal removes format (just ID, no Link or Count)
+   -- Saves 4 bytes per removed item
+   table.insert(delta.removed, { ID = item.ID })
+   ```
+
+2. **Delta validation** (DeltaComms.lua:122) - Required Link property:
+   ```lua
+   if not item.Link or type(item.Link) ~= "string" then
+       return false, "removed item missing or invalid Link"
+   end
+   ```
+
+3. **Delta application** (DeltaComms.lua:592-599) - Handles ID-only removal correctly:
+   ```lua
+   -- New format (v0.8.0): Only has ID, match by ID only
+   for i = #items, 1, -1 do
+       local item = items[i]
+       if item and item.ID == removedItem.ID then
+           table.remove(items, i)
+           break
+       end
+   end
+   ```
+
+**Why this happened:** The v0.8.0 bandwidth optimization removed Link from transmitted removed items (saves ~60 bytes per item), but validation wasn't updated to accept this minimal format.
+
+### Solution
+**File:** `Modules/DeltaComms.lua:110-125`
+
+Updated validation to accept removed items without Link:
+```lua
+-- Check removed array
+if itemDelta.removed then
+    if type(itemDelta.removed) ~= "table" then
+        return false, "removed is not a table"
+    end
+    for _, item in pairs(itemDelta.removed) do
+        if type(item) ~= "table" then
+            return false, "removed item is not a table"
+        end
+        if not item.ID or type(item.ID) ~= "number" then
+            return false, "removed item missing or invalid ID"
+        end
+        -- v0.8.0: Link is optional in removed items (bandwidth optimization)
+        -- Only ID is required; Link is backfilled during application if needed
+    end
+end
+```
+
+**Rationale:**
+- Removed items only need ID for matching (line 596 in ApplyItemDelta)
+- Link would be redundant - we're removing the item, not reading its properties
+- Keeps the 4-byte bandwidth savings per removed item
+
+### Testing
+1. Have two clients online (e.g., Togherbs and Galdof)
+2. Remove items from bags/bank on Togherbs
+3. Verify Galdof receives delta without VALIDATION_FAILED errors
+4. Check `/togbank deltaerrors` shows no new errors
+
+### Related Issues
+- Works with delta application logic that matches by ID only (line 592)
+- Maintains backwards compatibility (still handles old format with Link if present)
+- Preserves v0.8.0 bandwidth optimization
+
+---
+
+## ✅ [UI-005] Inventory UI crash on missing slots field
+
+**Severity:** Medium
+**Status:** ✅ RESOLVED (2026-01-27)
+**Impact:** Lua error when hovering over status bar in Inventory window
+
+### Problem
+Lua error when hovering over the Inventory window status bar:
+```
+attempt to index field 'slots' (a nil value)
+[TOGBankClassic/Modules/UI/Inventory.lua]:220
+```
+
+### Root Cause
+Code assumed `alt.bank.slots` and `alt.bags.slots` always exist, but older alt data or incomplete sync data may not have these fields:
+
+```lua
+if alt.bank then
+    slot_count = slot_count + alt.bank.slots.count  -- crashes if slots is nil
+    slot_total = slot_total + alt.bank.slots.total
+end
+```
+
+### Solution
+**File:** `Modules/UI/Inventory.lua:217-226`
+
+Added nil checks before accessing slots:
+```lua
+if alt.bank and alt.bank.slots then
+    slot_count = slot_count + alt.bank.slots.count
+    slot_total = slot_total + alt.bank.slots.total
+end
+if alt.bags and alt.bags.slots then
+    slot_count = slot_count + alt.bags.slots.count
+    slot_total = slot_total + alt.bags.slots.total
+end
+```
+
+### Testing
+1. Open Inventory window (`/togbank`)
+2. Hover over status bar at bottom
+3. Verify no Lua errors appear
+4. Slot counts display as "0/0" if data incomplete, or actual counts if available
 
 ---
 

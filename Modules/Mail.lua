@@ -482,12 +482,7 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 			end
 		end
 		
-		local reason
-		if usableItems == 0 then
-			reason = string.format("Split %d from available stacks.", remaining)
-		else
-			reason = string.format("Split %d after attaching %d.", remaining, usableItems)
-		end
+		local reason = string.format("Splitting %d to fill the order.", remaining)
 		return true, reason, totalInBags, smallestStack
 	end
 
@@ -565,32 +560,44 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		return a.count > b.count
 	end)
 
-	-- FIRST PASS: Determine what we need and filter out stacks that are too small to be useful
-	local usefulStacks = {}
-	local accumulatedForFilter = 0
-	for i, item in ipairs(items) do
-		if accumulatedForFilter >= qtyNeeded then
-			-- We have enough - check if this stack could be used for splitting
-			local remaining = qtyNeeded - accumulatedForFilter
-			if remaining > 0 and item.count >= remaining then
-				table.insert(usefulStacks, item)
-			end
-			-- Otherwise ignore this stack (too small to split)
-		elseif item.count <= qtyNeeded - accumulatedForFilter then
-			-- This stack can be fully attached
-			table.insert(usefulStacks, item)
-			accumulatedForFilter = accumulatedForFilter + item.count
-		else
-			-- This stack is larger than what we need - check if it can provide the full remaining amount
-			local remaining = qtyNeeded - accumulatedForFilter
-			if item.count >= remaining then
-				table.insert(usefulStacks, item)
-			end
-			-- Otherwise ignore (too small to split the remaining amount)
+	-- FIRST PASS: Calculate minimum useful stack size based on split requirement
+	-- Strategy: Don't use stacks smaller than what we'll need to split
+	-- Example: Need 95, have [20,20,20,20,14] → need to split 15, so exclude 14
+	
+	-- Accumulate largest stacks to see what we'd need to split
+	local accumulated = 0
+	local largestStack = items[1] and items[1].count or 0
+	
+	for _, item in ipairs(items) do
+		if accumulated >= qtyNeeded then
+			break
+		end
+		-- Only accumulate stacks that are at least half the largest stack size
+		-- This gets us the "main" stacks and ignores tiny partials
+		if item.count >= (largestStack * 0.5) then
+			accumulated = accumulated + item.count
 		end
 	end
 	
-	print(string.format("[SPLIT DEBUG] Filtered %d useful stacks from %d total", #usefulStacks, #items))
+	-- Calculate what we'd need to split
+	local wouldNeedToSplit = math.max(0, qtyNeeded - accumulated)
+	
+	-- Minimum stack size = the split amount (must be able to split that much from a stack)
+	-- If no split needed, use 5 as baseline to ignore tiny junk stacks
+	local minStackSize = wouldNeedToSplit > 0 and wouldNeedToSplit or 5
+	
+	-- Build useful stacks list
+	local usefulStacks = {}
+	for i, item in ipairs(items) do
+		if item.count >= minStackSize then
+			table.insert(usefulStacks, item)
+		end
+	end
+	
+	print(string.format("[SPLIT DEBUG] Need %d, accumulated %d from large stacks, would split %d", 
+		qtyNeeded, accumulated, wouldNeedToSplit))
+	print(string.format("[SPLIT DEBUG] Filtered %d useful stacks from %d total (min size: %d)", 
+		#usefulStacks, #items, minStackSize))
 
 	-- SECOND PASS: Run greedy algorithm on useful stacks only
 	local simulatedAttached = 0

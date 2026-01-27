@@ -216,11 +216,11 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		local datetime = date("%Y-%m-%d %H:%M:%S", alt.version)
 		local slot_count = 0
 		local slot_total = 0
-		if alt.bank then
+		if alt.bank and alt.bank.slots then
 			slot_count = slot_count + alt.bank.slots.count
 			slot_total = slot_total + alt.bank.slots.total
 		end
-		if alt.bags then
+		if alt.bags and alt.bags.slots then
 			slot_count = slot_count + alt.bags.slots.count
 			slot_total = slot_total + alt.bags.slots.total
 		end

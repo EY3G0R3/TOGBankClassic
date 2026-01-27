@@ -118,9 +118,8 @@ function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
 			if not item.ID or type(item.ID) ~= "number" then
 				return false, "removed item missing or invalid ID"
 			end
-			if not item.Link or type(item.Link) ~= "string" then
-				return false, "removed item missing or invalid Link"
-			end
+			-- v0.8.0: Link is optional in removed items (bandwidth optimization)
+			-- Only ID is required; Link is backfilled during application if needed
 		end
 	end
 
