@@ -90,147 +90,27 @@ Added smart filtering that excludes stacks smaller than the required split amoun
 
 ---
 
-#### 🟠 [PERF-001] Serious performance degradation during normal gameplay
-
-2. Greedy algorithm calculates from first-to-last stack
-3. When split is needed, it splits the FIRST full stack
-4. After split, the first stack is now smaller
-5. Greedy recalculation now sees different first stack
-6. Process repeats, causing multiple splits instead of one
-
-**Example Scenario:**
-```
-Need: 50 items
-Bags: [60, 60, 60, 20] (sorted as player keeps them)
-
-Current behavior:
-- Greedy: Try 60 (too big), skip → Try 60 (too big), skip → Try 60 (too big), skip → Try 20 → Need to split 30 from first 60
-- After split: [30, 30, 60, 60, 20]
-- Next fulfill recalculates and may split again from new first stack
-
-Better behavior:
-- Greedy: Same calculation (need 30 more after 20)
-- Split from LAST full stack (the 60 at end)
-- After split: [60, 60, 60, 20, 30]
-- First stacks unchanged → greedy calculation remains valid
-```
-
-**Current Behavior:**
-- Splits happen from the first full stack in the sorted list
-- Each split changes the beginning of the list
-- Repeated fulfillments cause cascading splits
-
-**Expected Behavior:**
-- Split should happen from the LAST full stack
-- First stacks remain unchanged after split
-- Greedy calculation remains stable across multiple fulfillments
-- Fewer total splits needed
-
-**Proposed Fix:**
-In `Mail.lua` around lines 557-574, when identifying `skippedLargeStack` for splitting:
-- Instead of using the first oversized stack encountered
-- Identify and split from the LAST full stack that's larger than needed
-- This preserves the beginning of the sorted list that greedy relies on
-
-**Files to Investigate:**
-- `Modules/Mail.lua` - PrepareFulfillMail() lines 504-574 (greedy simulation and split decision)
-- Lines 557-574 specifically where `skippedLargeStack` is chosen
-
-**Priority:** HIGH - Causes user frustration with repeated unnecessary split dialogs
-
----
-
-#### �🟠 [PERF-001] Serious performance degradation during normal gameplay
+#### ✅ [PERF-001] Serious performance degradation during normal gameplay
 
 **Severity:** 🟠 HIGH
 **Category:** Performance / Optimization
 **Reporter:** Multiple Users (Production)
 **Date Reported:** 2026-01-25
-**Status:** 🔍 INVESTIGATING
-**Reproducibility:** Intermittent
+**Status:** ✅ CLOSED (Duplicate of PERF-002)
+**Fixed In:** v0.7.18 (commit 77b16a1)
+**Fixed Date:** 2026-01-26
+**Reproducibility:** Was consistent in large guilds
 
 **Description:**
-Multiple guild members are reporting serious performance issues while using the addon. Symptoms include lag, frame rate drops, or general game slowdown during normal gameplay.
+Multiple guild members reported serious performance issues including lag, frame rate drops, and general game slowdown during normal gameplay with the addon.
 
-**Investigation Tools Available:**
+**Root Cause:**
+After investigation, determined this was caused by the same issue as PERF-002: the NormalizeRequestList() broadcast storm from request sync being piggybacked on inventory delta broadcasts. Every 3 minutes, 100+ guild members triggered cascading request queries causing ~9,696 request table accesses per second.
 
-1. **`/togbank deltastats`** - Shows comprehensive performance metrics:
-   - Delta computation time (ms)
-   - Delta application time (ms)
-   - Delta chain replay time (ms)
-   - Average bandwidth usage
-   - Success/failure rates
+**Solution:**
+Fixed by decoupling request sync from inventory sync (same fix as PERF-002). See PERF-002 for full details.
 
-2. **`debugprofilestop()` Timing** - Already instrumented in:
-   - `Guild.lua` line 1041: Delta computation timing
-   - `DeltaComms.lua` line 641: Delta application timing
-   - `DeltaComms.lua` line 818: Delta chain replay timing
-
-3. **Debug Logging** - Enable categories to trace expensive operations:
-   - `/togbank debug DELTA` - Delta sync operations
-   - `/togbank debug CACHE` - Cache operations
-   - `/togbank debug ROSTER` - Roster updates
-
-4. **Known Performance Hotspots:**
-   - GetBanks() now cached to prevent 982-member guild timeout (already fixed)
-   - NormalizeRequestList() iterates all requests
-   - RefreshOnlineCache() iterates all guild members on GUILD_ROSTER_UPDATE
-   - Item link reconstruction after delta application
-
-**Diagnostic Steps:**
-
-1. Ask users to run `/togbank deltastats` and report results
-2. Check if specific operations show unusually high timing values
-3. Enable DELTA debug category to see operation frequency
-4. Check for repeated operations that should be cached
-5. Look for O(n²) loops in hot paths
-6. Profile memory usage (may need to add UpdateAddOnMemoryUsage() calls)
-
-**Potential Causes:**
-
-- Frequent GUILD_ROSTER_UPDATE events triggering expensive operations
-- Delta sync operations running too frequently
-- Item highlight scanning (20-item limit already implemented)
-- Request data processing on every update
-- Excessive table iterations in large guilds
-- Missing caching for expensive lookups
-- Serialization/deserialization overhead
-
-**Next Steps:**
-
-1. Gather `/togbank deltastats` output from affected users
-2. Add memory profiling if timing looks reasonable
-3. Review event handlers for unnecessary work
-4. Consider throttling expensive operations
-5. Add performance budgets for critical paths
-
-**Optimization Techniques:**
-
-**Throttling** - Execute at most once per time period:
-```lua
-local lastRosterUpdate = 0
-function GUILD_ROSTER_UPDATE()
-    local now = GetTime()
-    if now - lastRosterUpdate < 1.0 then  -- Min 1 second between updates
-        return  -- Skip this event
-    end
-    lastRosterUpdate = now
-    RefreshOnlineCache()  -- Expensive operation runs max once per second
-end
-```
-Example: Multiple guild members log in during raid start time, or officers make batch rank/note updates. Without throttling, RefreshOnlineCache() could run 10+ times in rapid succession.
-
-**Debouncing** - Execute only after events stop firing:
-```lua
-local searchTimer = nil
-function OnSearchTextChanged(text)
-    if searchTimer then
-        searchTimer:Cancel()  -- Cancel pending search
-    end
-    searchTimer = C_Timer.After(0.3, function()  -- Wait 0.3s after last keystroke
-        PerformSearch(text)  -- Expensive operation
-    end)
-**Priority:** HIGH - Causes user frustration with repeated unnecessary split dialogs
+**Closed:** 2026-01-26
 
 ---
 
@@ -2341,17 +2221,21 @@ Manual `/togbank share` from banker after player returns online forces full sync
 
 ---
 
-#### 🔴 [DELTA-006-IMPL-001] Function name mismatch: BuildDeltaChain vs GetDeltaHistory
+#### ✅ [DELTA-006-IMPL-001] Function name mismatch: BuildDeltaChain vs GetDeltaHistory
 
 **Severity:** 🔴 CRITICAL
 **Category:** Implementation / Function Call Error
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
-**Status:** ✅ FIXED - Awaiting Test Verification
+**Status:** ✅ CLOSED (Feature Abandoned)
+**Closed Date:** 2026-01-26
 **Assigned To:** Development Team
 **Related To:** [DELTA-006] Delta Chain Replay Implementation
 
-**Description:**
+**Closure Note:**
+Delta chain replay feature was abandoned in favor of alternative sync approaches. This implementation was never completed or deployed to production.
+
+**Original Description:**
 Proactive delta chain sending was failing silently due to calling non-existent function `BuildDeltaChain()` instead of the correct function name `GetDeltaHistory()`. This completely blocked the delta chain replay feature from working.
 
 **Impact:**
