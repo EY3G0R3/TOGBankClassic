@@ -225,6 +225,14 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			slot_total = slot_total + alt.bags.slots.total
 		end
 
+		-- Add mail item count if available
+		local mailCount = 0
+		if alt.mail and alt.mail.items then
+			for _ in pairs(alt.mail.items) do
+				mailCount = mailCount + 1
+			end
+		end
+
 		local money = 0
 		if alt.money then
 			money = alt.money
@@ -232,13 +240,20 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 		local percent = slot_total > 0 and (slot_count / slot_total) or 0
 		local color = TOGBankClassic_UI_Inventory:GetPercentColor(percent)
+		local mailText = ""
+		if mailCount > 0 then
+			local age = TOGBankClassic_MailInventory:GetMailDataAge(alt)
+			local ageText = age and (" (" .. SecondsToTime(age) .. " ago)") or ""
+			mailText = string.format("    |cff87ceeb✉ %d item%s%s|r", mailCount, mailCount > 1 and "s" or "", ageText)
+		end
 		local status = string.format(
-			"As of %s    %s    |c%s%d/%d|r",
+			"As of %s    %s    |c%s%d/%d|r%s",
 			datetime,
 			GetCoinTextureString(money),
 			color,
 			slot_count,
-			slot_total
+			slot_total,
+			mailText
 		)
 		self.Window:SetStatusText(status)
 	end)

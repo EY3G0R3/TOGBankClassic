@@ -164,9 +164,19 @@ function TOGBankClassic_Bank:Scan()
 	local money = GetMoney()
 	alt.money = money
 
+	-- Scan mail inventory if mail was accessed
+	if TOGBankClassic_MailInventory.hasUpdated then
+		local mailData = TOGBankClassic_MailInventory:ScanMailInventory()
+		if mailData then
+			alt.mail = mailData
+			TOGBankClassic_Output:Debug("SYNC", "Mail inventory scanned for %s: %d unique items", player, mailData.itemCount or 0)
+		end
+		TOGBankClassic_MailInventory.hasUpdated = false
+	end
+
 	-- v0.8.0: Only update version if inventory actually changed
 	-- Compute a hash of the current inventory state
-	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
+	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, alt.mail, money)
 	local previousHash = alt.inventoryHash
 
 	if currentHash ~= previousHash then

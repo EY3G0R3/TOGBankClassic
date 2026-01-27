@@ -2082,3 +2082,58 @@ function Guild:Compact()
 		end
 	end
 end
+
+--[[
+	CheckMailFulfillment(request)
+	Checks if requested items are available in mail across all alts
+]]
+function Guild:CheckMailFulfillment(request)
+	if not request or not request.item then
+		return { inMail = 0, canFulfillFromMail = false, alts = {} }
+	end
+
+	-- Get item ID from item name
+	local itemID = nil
+	if not self.Info or not self.Info.alts then
+		return { inMail = 0, canFulfillFromMail = false, alts = {} }
+	end
+
+	-- Find item ID by searching through all alts
+	for _, alt in pairs(self.Info.alts) do
+		if alt.mail and alt.mail.items then
+			for id, mailItem in pairs(alt.mail.items) do
+				if mailItem.name == request.item then
+					itemID = id
+					break
+				end
+			end
+		end
+		if itemID then break end
+	end
+
+	if not itemID then
+		return { inMail = 0, canFulfillFromMail = false, alts = {} }
+	end
+
+	local inMail = 0
+	local alts = {}
+
+	for name, alt in pairs(self.Info.alts) do
+		if alt.mail and alt.mail.items and alt.mail.items[itemID] then
+			local count = alt.mail.items[itemID].count
+			inMail = inMail + count
+			table.insert(alts, {
+				name = name,
+				count = count,
+				lastScan = alt.mail.lastScan or 0
+			})
+		end
+	end
+
+	local needed = request.quantity - (request.fulfilled or 0)
+	return {
+		inMail = inMail,
+		canFulfillFromMail = inMail >= needed,
+		alts = alts
+	}
+end
