@@ -515,12 +515,11 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		if item.count <= remaining then
 			simulatedAttached = simulatedAttached + item.count
 		else
-			-- This stack is too big, we'll need to split from it
-			-- Record it - if multiple full stacks are too big, we'll use the FIRST one (earliest in iteration)
-			if not skippedLargeStack then
-				skippedLargeStack = item
-				skipStackIndex = i
-			end
+			-- This stack is too big, we need to split from a full stack
+			-- Keep iterating to find the LAST full stack (don't break)
+			-- This preserves stacks at the beginning of the sorted array
+			skippedLargeStack = item
+			skipStackIndex = i
 		end
 	end
 
