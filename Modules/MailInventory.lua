@@ -37,13 +37,14 @@ TOGBankClassic_MailInventory.hasUpdated = false
 function TOGBankClassic_MailInventory:ScanMailInventory()
 	-- Only scan if mail was accessed this session
 	if not self.hasUpdated then
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] ScanMailInventory called but hasUpdated=false, returning nil")
 		return nil
 	end
 	
 	local mailItems = {}
 	local numItems, totalItems = GetInboxNumItems()
 	
-	TOGBankClassic_Output:Debug("MAIL", "Scanning mailbox: %d items", numItems)
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Starting mailbox scan: %d mail messages", numItems)
 	
 	for i = 1, numItems do
 		local packageIcon, stationeryIcon, sender, subject, money, CODAmount, 
@@ -67,10 +68,17 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 							count = 0,
 							sources = {}
 						}
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] New item in mailbox: %s (ID: %d)", name, itemID)
 					end
+					
+					-- Track previous count before adding
+					local previousCount = mailItems[itemID].count
 					
 					-- Add to total count
 					mailItems[itemID].count = mailItems[itemID].count + count
+					
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Item %s: added %d, total now %d (was %d)", 
+						name, count, mailItems[itemID].count, previousCount)
 					
 					-- Track source details
 					table.insert(mailItems[itemID].sources, {
@@ -80,13 +88,10 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 						daysLeft = daysLeft or 0,
 						subject = subject or ""
 					})
-					
-					TOGBankClassic_Output:Debug("MAIL", "Found %dx %s from %s (%d days left)", 
-						count, name, sender or "Unknown", daysLeft or 0)
 				end
 			end
 		elseif hasItem and CODAmount > 0 then
-			TOGBankClassic_Output:Debug("MAIL", "Skipping COD mail from %s (COD: %d copper)", 
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Skipping COD mail from %s (COD: %d copper)", 
 				sender or "Unknown", CODAmount)
 		end
 	end
@@ -105,8 +110,14 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		itemCount = itemCount + 1
 	end
 	
-	TOGBankClassic_Output:Debug("MAIL", "Mail scan complete: %d unique items across %d mail", 
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Mail scan complete: %d unique items across %d mail messages", 
 		itemCount, numItems)
+	
+	-- Log final counts for each item
+	for itemID, itemData in pairs(mailItems) do
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Final: %s (ID: %d) = %d total from %d sources", 
+			itemData.name, itemID, itemData.count, #itemData.sources)
+	end
 	
 	return result
 end

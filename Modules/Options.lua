@@ -323,6 +323,18 @@ function TOGBankClassic_Options:Init()
 							return TOGBankClassic_Output:IsCategoryEnabled("EVENTS")
 						end,
 					},
+					["mail"] = {
+						order = 21,
+						type = "toggle",
+						width = "full",
+						name = "MAIL - Mail inventory scanning and tracking",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("MAIL", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("MAIL")
+						end,
+					},
 					["spacer"] = {
 						order = 30,
 						type = "description",

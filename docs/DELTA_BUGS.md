@@ -9,7 +9,8 @@
 
 **Recent Fixes (2026-01-27):**
 - ✅ [FULFILL-002] Fulfill button callback not updating after split - Fixed greedy algorithm to prefer exact-fit stacks over splitting
-- 🔴 [MAIL-001] ComputeInventoryHash parameter mismatch - Function signature changed but old callers still use 3-parameter version
+- 🔴 [MAIL-002] Mail inventory incorrectly aggregating across all account characters or duplicating items
+- ✅ [MAIL-001] ComputeInventoryHash parameter mismatch - Fixed function to handle both 3-param and 4-param calling conventions
 - ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
 - ✅ [UI-005] Inventory UI crash on missing slots field - Added nil checks for alt.bank.slots and alt.bags.slots
 
@@ -300,6 +301,7 @@ Added smart filtering that excludes stacks smaller than the required split amoun
 ---
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 #### ✅ [FULFILL-002] Fulfill button callback not updating after split completion
 
 **Severity:** 🟠 HIGH
@@ -354,14 +356,18 @@ This ensures exact-fit stacks are always preferred over splitting.
 **Bonus:** Migrated all fulfillment debug output from `print()` to `TOGBankClassic_Output:Debug("FULFILL", ...)` for integration with persistent debug log system.
 =======
 #### 🔴 [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
+=======
+#### ✅ [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
+>>>>>>> d78c951 (Add MAIL debug category and comprehensive logging for MAIL-002 investigation)
 
 **Severity:** 🔴 CRITICAL
 **Category:** Mail Inventory / Function Signature  
 **Reporter:** BugSack Error Log
 **Date Reported:** 2026-01-27
-**Status:** 🔴 OPEN
+**Status:** ✅ RESOLVED
+**Fixed In:** commit 9dfc013
 **Branch:** feature/mail-inventory-status
-**Reproducibility:** Consistent on addon load
+**Reproducibility:** Was consistent on addon load with existing saved data
 
 **Description:**
 When loading saved data with existing inventory, `ComputeInventoryHash()` crashes with "attempt to index local 'mail' (a number value)". The function signature was changed to add mail parameter, but old calling code still uses the 3-parameter version.
@@ -425,7 +431,84 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney,
 end
 ```
 
+**Resolution:**
+Applied backward compatibility fix to DeltaComms.lua. Function now detects parameter type and handles both calling conventions correctly. Requires `/reload` to apply fix to running game session.
+
 **Priority:** CRITICAL - Blocks addon from loading with existing saved data
+
+---
+
+#### 🔴 [MAIL-002] Mail inventory incorrectly aggregating or duplicating items
+
+**Severity:** 🔴 CRITICAL
+**Category:** Mail Inventory / Data Aggregation
+**Reporter:** User (Testing)
+**Date Reported:** 2026-01-27
+**Status:** 🔴 OPEN
+**Branch:** feature/mail-inventory-status
+**Reproducibility:** Consistent during gameplay
+
+**Description:**
+Mail inventory numbers are incrementing while in-game instead of showing static counts. Items appear to be adding up incorrectly - either aggregating mail from all account characters instead of per-character, or duplicating/re-scanning mail multiple times.
+
+**Expected Behavior:**
+- Each character's `alt.mail` should contain ONLY their own mailbox items
+- Mail scan happens once on MAIL_CLOSED, counts should be static until next mail session
+- Search results should show: "Character has 50 Iron Ore in mail" (not increasing)
+
+**Actual Behavior:**
+- Numbers are incrementing while playing
+- Mail items might be aggregating across all characters on the account
+- Possible duplicate scanning or incorrect aggregation in search/UI
+
+**Potential Causes:**
+
+1. **Cross-Character Aggregation:**
+   - Mail scanning might be storing to wrong character's `alt.mail`
+   - `GetNormalizedPlayer()` might be returning wrong character name
+   - Search aggregation adding mail from all characters to each character's count
+
+2. **Repeated Scanning:**
+   - `hasUpdated` flag not being cleared properly
+   - Multiple MAIL_CLOSED events triggering multiple scans
+   - Bank:Scan() being called repeatedly without clearing mail data first
+
+3. **Additive Instead of Replace:**
+   - Mail scan might be adding to existing `alt.mail` instead of replacing
+   - Search aggregation might be counting items twice (once from mail, once from bank/bags if mail items were taken)
+
+**Investigation Steps:**
+
+1. Check which character name is being used in Bank:Scan()
+   - Add debug: `TOGBankClassic_Output:Debug("MAIL", "Scanning mail for: %s", player)`
+   - Verify player name matches current character
+
+2. Check if hasUpdated flag is being cleared:
+   - Add debug in Bank:Scan() before and after mail scan
+   - Verify flag is false after scan completes
+
+3. Check if mail data is replaced or added:
+   - `alt.mail = mailData` should REPLACE, not merge
+   - Check if old mail data persists after scan
+
+4. Check search aggregation logic:
+   - Verify mail items are only counted once per character
+   - Check if `Item:Aggregate()` is being called multiple times on same data
+
+**Files to Investigate:**
+- Modules/Bank.lua (lines 167-174) - Mail scan caller
+- Modules/MailInventory.lua - ScanMailInventory() logic
+- Modules/UI/Search.lua (lines 368-377) - Mail aggregation in search
+- Modules/Events.lua (lines 257, 269) - MAIL_SHOW/MAIL_CLOSED handlers
+
+**Test Scenario:**
+1. Character A has 50 Iron Ore in mail
+2. Open/close mailbox → Should show 50
+3. Wait a few minutes → Should still show 50 (not 100, 150, etc.)
+4. Switch to Character B with 30 Iron Ore in mail
+5. Character A should still show 50, not 80
+
+**Priority:** CRITICAL - Core mail inventory feature not working correctly
 
 ---
 

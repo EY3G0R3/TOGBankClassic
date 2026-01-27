@@ -35,6 +35,7 @@ DEBUG_CATEGORY = {
 	PROTOCOL = "PROTOCOL",       -- Protocol version negotiation
 	DATABASE = "DATABASE",       -- Database operations, SavedVariables
 	EVENTS = "EVENTS",           -- WoW event handling
+	MAIL = "MAIL",               -- Mail inventory scanning and tracking
 }
 
 -- Request log compaction settings

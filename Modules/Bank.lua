@@ -165,12 +165,35 @@ function TOGBankClassic_Bank:Scan()
 	alt.money = money
 
 	-- Scan mail inventory if mail was accessed
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Bank:Scan() for player '%s', hasUpdated=%s", 
+		player, tostring(TOGBankClassic_MailInventory.hasUpdated))
+	
 	if TOGBankClassic_MailInventory.hasUpdated then
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Starting mail scan for player '%s'", player)
+		
 		local mailData = TOGBankClassic_MailInventory:ScanMailInventory()
 		if mailData then
+			local itemCount = 0
+			for _ in pairs(mailData.items or {}) do
+				itemCount = itemCount + 1
+			end
+			
+			-- Check if alt.mail already exists
+			local hadPreviousMail = alt.mail ~= nil
+			local previousItemCount = 0
+			if hadPreviousMail and alt.mail.items then
+				for _ in pairs(alt.mail.items) do
+					previousItemCount = previousItemCount + 1
+				end
+			end
+			
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Replacing mail data for '%s': old=%d items, new=%d items", 
+				player, previousItemCount, itemCount)
+			
 			alt.mail = mailData
-			TOGBankClassic_Output:Debug("SYNC", "Mail inventory scanned for %s: %d unique items", player, mailData.itemCount or 0)
 		end
+		
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Clearing hasUpdated flag after scan")
 		TOGBankClassic_MailInventory.hasUpdated = false
 	end
 
