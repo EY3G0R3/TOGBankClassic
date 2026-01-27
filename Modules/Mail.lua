@@ -505,7 +505,8 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	local simulatedAttached = 0
 	local skipStackIndex = nil  -- Track which stack to skip for optimal fit
 
-	for _, item in ipairs(items) do
+	-- Greedy pass: accumulate smallest-to-largest
+	for i, item in ipairs(items) do
 		if simulatedAttached >= qtyNeeded then
 			break
 		end
@@ -513,10 +514,11 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 
 		if item.count <= remaining then
 			simulatedAttached = simulatedAttached + item.count
-		elseif item.count > remaining then
-			-- Track this oversized stack - keep iterating to find the LAST (largest) one
-			-- This preserves smaller stacks for future greedy calculations
+		else
+			-- This stack is too big, we'll need to split
+			-- Keep looking for the LAST full stack (don't break yet)
 			skippedLargeStack = item
+			skipStackIndex = i
 		end
 	end
 
