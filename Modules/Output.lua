@@ -55,7 +55,7 @@ function TOGBankClassic_Output:Init()
 	if TOGBankClassic_DebugLogEnabled == nil then
 		TOGBankClassic_DebugLogEnabled = false
 	end
-	
+
 	-- Load persistent log from SavedVariables if it exists
 	if TOGBankClassicDB_DebugLog then
 		self.persistentLog = TOGBankClassicDB_DebugLog
