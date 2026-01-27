@@ -513,10 +513,10 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 
 		if item.count <= remaining then
 			simulatedAttached = simulatedAttached + item.count
-		elseif item.count > remaining and not skippedLargeStack then
-			-- Found first oversized stack - will need to split it
+		elseif item.count > remaining then
+			-- Track this oversized stack - keep iterating to find the LAST (largest) one
+			-- This preserves smaller stacks for future greedy calculations
 			skippedLargeStack = item
-			break
 		end
 	end
 
@@ -530,10 +530,9 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 					local remaining = qtyNeeded - testAttached
 					if items[i].count <= remaining then
 						testAttached = testAttached + items[i].count
-					elseif items[i].count > remaining and not testSkippedLargeStack then
-						-- This stack would need to be split
+					elseif items[i].count > remaining then
+						-- Track this oversized stack - keep iterating to find the LAST one
 						testSkippedLargeStack = items[i]
-						break
 					end
 				end
 			end
