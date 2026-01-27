@@ -35,7 +35,7 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 				C_Timer.After(0.05, function()
 					-- Done! The split stack is now in inventory
 					if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
-						local message = string.format("Split %d %s into inventory. Ready to attach all items.",
+						local message = string.format("Split %d %s complete. Click Fulfill again to attach items.",
 							data.amount, data.itemName)
 						TOGBankClassic_UI_Requests.Window:SetStatusText(message)
 						-- Refresh the request list to update the fulfill button icon
