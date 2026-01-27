@@ -256,6 +256,7 @@ end
 
 function TOGBankClassic_Events:MAIL_SHOW(_)
 	TOGBankClassic_Bank:OnUpdateStart()
+	TOGBankClassic_MailInventory.hasUpdated = true  -- Flag that mail was accessed
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()

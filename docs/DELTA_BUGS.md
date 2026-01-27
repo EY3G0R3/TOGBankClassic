@@ -9,6 +9,7 @@
 
 **Recent Fixes (2026-01-27):**
 - ✅ [FULFILL-002] Fulfill button callback not updating after split - Fixed greedy algorithm to prefer exact-fit stacks over splitting
+- 🔴 [MAIL-001] ComputeInventoryHash parameter mismatch - Function signature changed but old callers still use 3-parameter version
 - ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
 - ✅ [UI-005] Inventory UI crash on missing slots field - Added nil checks for alt.bank.slots and alt.bags.slots
 
@@ -298,6 +299,7 @@ Added smart filtering that excludes stacks smaller than the required split amoun
 
 ---
 
+<<<<<<< HEAD
 #### ✅ [FULFILL-002] Fulfill button callback not updating after split completion
 
 **Severity:** 🟠 HIGH
@@ -350,6 +352,80 @@ This ensures exact-fit stacks are always preferred over splitting.
 - `Modules/Mail.lua` (multiple) - Migrated debug output to proper system
 
 **Bonus:** Migrated all fulfillment debug output from `print()` to `TOGBankClassic_Output:Debug("FULFILL", ...)` for integration with persistent debug log system.
+=======
+#### 🔴 [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
+
+**Severity:** 🔴 CRITICAL
+**Category:** Mail Inventory / Function Signature  
+**Reporter:** BugSack Error Log
+**Date Reported:** 2026-01-27
+**Status:** 🔴 OPEN
+**Branch:** feature/mail-inventory-status
+**Reproducibility:** Consistent on addon load
+
+**Description:**
+When loading saved data with existing inventory, `ComputeInventoryHash()` crashes with "attempt to index local 'mail' (a number value)". The function signature was changed to add mail parameter, but old calling code still uses the 3-parameter version.
+
+**Error Stack:**
+```
+6x TOGBankClassic/Modules/DeltaComms.lua:259: attempt to index local 'mail' (a number value)
+[TOGBankClassic/Modules/DeltaComms.lua]:259: in function <TOGBankClassic/Modules/DeltaComms.lua:208>
+[TOGBankClassic/Modules/Database.lua]:139: in function 'Load'
+[TOGBankClassic/Modules/Guild.lua]:254: in function 'Init'
+```
+
+**Root Cause:**
+Function signature changed from `ComputeInventoryHash(bank, bags, money)` to `ComputeInventoryHash(bank, bags, mail, money)` but there are callers still using the old 3-parameter version.
+
+When old code calls with 3 parameters:
+- `bank` = bank table ✅
+- `bags` = bags table ✅  
+- `mail` = money (number!) ❌
+- `money` = nil ❌
+
+**Example:**
+```lua
+-- Old caller (Database.lua or other location)
+local hash = ComputeInventoryHash(alt.bank, alt.bags, alt.money)
+
+-- Function receives:
+-- bank=table, bags=table, mail=298335 (money!), money=nil
+-- Line 259 tries: if mail and mail.items then → CRASH
+```
+
+**Fix Required:**
+1. Make function handle both old (3-param) and new (4-param) calling conventions
+2. Detect if 3rd parameter is a number (money) vs table (mail)
+3. Find and update all old callers to use new signature
+
+**Files to Check:**
+- Modules/DeltaComms.lua:208 (function definition)
+- Modules/Core.lua:166 (wrapper function)
+- Modules/Database.lua:139 (caller during Load)
+- Any other callers using old 3-parameter signature
+
+**Proposed Fix:**
+```lua
+function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney, money)
+	-- Handle both old (3-param) and new (4-param) calling conventions
+	local mail, actualMoney
+	if type(mailOrMoney) == "number" then
+		-- Old calling convention: (bank, bags, money)
+		mail = nil
+		actualMoney = mailOrMoney
+	else
+		-- New calling convention: (bank, bags, mail, money)
+		mail = mailOrMoney
+		actualMoney = money
+	end
+	
+	local parts = {}
+	table.insert(parts, tostring(actualMoney or 0))
+	-- ... rest of function
+end
+```
+
+**Priority:** CRITICAL - Blocks addon from loading with existing saved data
 
 ---
 

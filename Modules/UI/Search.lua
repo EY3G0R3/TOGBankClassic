@@ -368,6 +368,13 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			if alt.bags then
 				items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
 			end
+			-- Include mail items
+			if alt.mail and alt.mail.items then
+				for itemID, mailItem in pairs(alt.mail.items) do
+					local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+					items = TOGBankClassic_Item:Aggregate(items, {fakeItem})
+				end
+			end
 		end
 	end
 
@@ -394,6 +401,13 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 				end
 				if alt.bags then
 					altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)
+				end
+				-- Include mail items
+				if alt.mail and alt.mail.items then
+					for itemID, mailItem in pairs(alt.mail.items) do
+						local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+						altItems = TOGBankClassic_Item:Aggregate(altItems, {fakeItem})
+					end
 				end
 			end
 
@@ -507,7 +521,12 @@ function TOGBankClassic_UI_Search:DrawContent()
 						end
 
 						local label = TOGBankClassic_UI:Create("Label")
-						label:SetText(bankAlt)
+						-- Check if item is in mail
+						local norm = TOGBankClassic_Guild:NormalizeName(bankAlt)
+						local alt = info.alts[norm]
+						local inMail = alt and alt.mail and alt.mail.items and alt.mail.items[resultItem.ID]
+						local mailIcon = inMail and " |cff87ceeb✉|r" or ""
+						label:SetText(bankAlt .. mailIcon)
 						label.label:SetSize(100, 30)
 						label.label:SetJustifyV("MIDDLE")
 						self.Results:AddChild(label)
