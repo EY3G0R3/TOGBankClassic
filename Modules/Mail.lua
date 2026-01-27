@@ -498,14 +498,14 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	local maxSlots = ATTACHMENTS_MAX_SEND or 12
 	local skippedLargeStack = nil
 
-	-- Sort items by stack size (smallest first) to maximize chance of exact fulfillment
-	table.sort(items, function(a, b) return a.count < b.count end)
+	-- Sort items by stack size (largest first) - full stacks before partial stacks
+	table.sort(items, function(a, b) return a.count > b.count end)
 
 	-- FIRST PASS: Check if we need to split anything
 	local simulatedAttached = 0
 	local skipStackIndex = nil  -- Track which stack to skip for optimal fit
 
-	-- Greedy pass: accumulate smallest-to-largest
+	-- Greedy pass: accumulate items until we need more than a stack can provide
 	for i, item in ipairs(items) do
 		if simulatedAttached >= qtyNeeded then
 			break
@@ -515,10 +515,12 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		if item.count <= remaining then
 			simulatedAttached = simulatedAttached + item.count
 		else
-			-- This stack is too big, we'll need to split
-			-- Keep looking for the LAST full stack (don't break yet)
-			skippedLargeStack = item
-			skipStackIndex = i
+			-- This stack is too big, we'll need to split from it
+			-- Record it - if multiple full stacks are too big, we'll use the FIRST one (earliest in iteration)
+			if not skippedLargeStack then
+				skippedLargeStack = item
+				skipStackIndex = i
+			end
 		end
 	end
 
