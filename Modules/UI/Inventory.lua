@@ -74,6 +74,10 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	window:SetTitle("TOGBankClassic")
 	window:SetLayout("Flow")
 	window:SetWidth(550)
+	-- Persist window position/size across reloads
+	if TOGBankClassic_Options and TOGBankClassic_Options.db then
+		window:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
+	end
 	--handle keyboard events
 	---START CHANGES
 	window.frame:SetResizeBounds(500, 500)

@@ -276,6 +276,10 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	searchWindow:SetLayout("Flow")
 	searchWindow:SetWidth(250)
 	searchWindow:EnableResize(false)
+	-- Persist window position/size across reloads
+	if TOGBankClassic_Options and TOGBankClassic_Options.db then
+		searchWindow:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
+	end
 
 	self.Window = searchWindow
 

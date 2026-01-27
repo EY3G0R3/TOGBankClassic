@@ -6,6 +6,7 @@ function TOGBankClassic_Options:Init()
 			minimap = { enabled = true },
 			combat = { hide = true },
 			bank = { donations = true },
+			framePositions = {},  -- Stores window positions/sizes
 		},
 		global = {
 			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false },
