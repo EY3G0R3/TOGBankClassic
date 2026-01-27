@@ -1,8 +1,15 @@
 ﻿# Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** January 23, 2026
+**Last Updated:** January 26, 2026
 **Status:** Testing Phase - Core Protocol Operational
+
+**Recent Fixes (2026-01-26):**
+- ✅ [PERF-002] NormalizeRequestList broadcast storm - Decoupled request sync from inventory delta sync to eliminate 12+ calls/second
+
+**Recent Fixes (2026-01-25):**
+- ✅ [DATA-003] Integer overflow on request version timestamp - Fixed MAX_TIMESTAMP to 2147483647 (32-bit limit)
+- ✅ [DELTA-009] Delta sync failure warnings spam for offline players - Added ClearOfflineErrorCounters() on GUILD_ROSTER_UPDATE
 
 **Recent Fixes (2026-01-23):**
 - ✅ [COMM-002] Stale guild roster in online checks - Added GuildRoster() call to refresh cached data before checking player online status
@@ -218,77 +225,6 @@ In `Mail.lua` around lines 557-574, when identifying `skippedLargeStack` for spl
 - Lines 557-574 specifically where `skippedLargeStack` is chosen
 
 **Priority:** HIGH - Causes user frustration with repeated unnecessary split dialogs
-
----
-
-#### � [PERF-002] NormalizeRequestList spam causes performance degradation
-
-**Severity:** 🔴 CRITICAL
-**Category:** Performance / Request Sync
-**Reporter:** User (Production) - 100+ member guild
-**Date Reported:** 2026-01-25
-**Status:** 🔍 INVESTIGATING
-**Reproducibility:** Consistent in large guilds
-
-**Description:**
-`NormalizeRequestList()` and `PruneRequests()` are being called 12+ times per second when multiple guild members send request version queries simultaneously. Each call processes all 404 requests, causing severe performance degradation.
-
-**Evidence from Debug Log:**
-
-Timestamp 1769290015-1769290016 (2 seconds):
-```
-[UI-003] NormalizeRequestList: Starting with 404 requests
-[UI-003] NormalizeRequestList: Finished with 404 requests (calling PruneRequests)
-[UI-003] PruneRequests: Starting with 404 requests
-[UI-003] PruneRequests: Finished with 404 requests (0 pruned)
-```
-**Pattern repeats 24+ times in 2 seconds = ~12 calls/second**
-
-**Triggering Events:**
-```
-> |cffffffffIris-Atiesh|r has fresher requests data, querying.
-> |cffc79c6eSkoobydoo-Azuresong|r has fresher requests data, querying.
-> |cff40c7ebSolomage-Atiesh|r has fresher requests data, querying.
-```
-
-**Root Cause:**
-Every incoming request version comparison triggers full list normalization. In 100+ member guilds during peak hours:
-- Multiple members log in/out rapidly
-- Each sends "has fresher requests data" query
-- Each query triggers `NormalizeRequestList()`
-- Cascading effect: 3 queries × 8 calls each = 24 normalizations in 2 seconds
-- Each normalization iterates ALL 404 requests
-
-**Performance Impact:**
-- ~12 full list iterations per second
-- 404 requests × 12 = 4,848 request reads per second
-- Each PruneRequests scan adds another 4,848 reads
-- Total: ~9,696 request table accesses per second
-
-**Potential Solutions:**
-
-1. **Throttle NormalizeRequestList** - Execute max once per 5 seconds
-2. **Cache normalized state** - Only re-normalize if requests changed
-3. **Lazy normalization** - Defer until actually needed for UI/comparison
-4. **Debounce version queries** - Batch multiple queries together
-5. **Skip normalization on query** - Only normalize on actual data receipt
-
-**Files to Investigate:**
-- `Modules/RequestLog.lua` line 272: NormalizeRequestList()
-- `Modules/RequestLog.lua` line 875: Caller in ReceiveRequestsData()
-- `Modules/RequestLog.lua` line 507: Caller in ApplyRequestSnapshot()
-- Request version comparison logic triggering these calls
-
-**Priority:** 🔴 CRITICAL - Causes unplayable performance with 100+ member guilds
-
-**Initial Data:**
-```lua
--- Performance metrics from affected user:
-TOGBankClassic_PerfMetrics[1]:
-  GUILD_ROSTER_UPDATE: 34 events (8.5/min) - NORMAL for 100+ members
-  RefreshOnlineCache: 35 calls, 17.15ms total (0.49ms avg) - NOT the problem
-  NormalizeRequestList: NOT INSTRUMENTED (shows 0 but debug log proves 24+ calls)
-```
 
 ---
 
@@ -1163,7 +1099,58 @@ Users see incorrect banker information after data reset, potentially causing con
 
 ## Resolved Bugs (2026-01-22)
 
-### 🟠 HIGH - All Resolved
+### � CRITICAL - All Resolved
+
+#### ✅ [PERF-002] NormalizeRequestList spam causes performance degradation
+
+**Severity:** 🔴 CRITICAL
+**Category:** Performance / Request Sync
+**Reporter:** User (Production) - 100+ member guild
+**Date Reported:** 2026-01-25
+**Status:** ✅ CLOSED
+**Fixed In:** v0.7.18 (commit 77b16a1)
+**Fixed Date:** 2026-01-26
+**Reproducibility:** Was consistent in large guilds
+
+**Description:**
+`NormalizeRequestList()` was being called 12+ times per second when multiple guild members sent request version queries simultaneously. Each call processed all 404 requests, causing severe performance degradation in 100+ member guilds.
+
+**Evidence from Debug Log:**
+Timestamp 1769290015-1769290016 (2 seconds): Pattern repeated 24+ times = ~12 calls/second
+
+**Triggering Events (Before Fix):**
+```
+> |cffffffffIris-Atiesh|r has fresher requests data, querying.
+> |cffc79c6eSkoobydoo-Azuresong|r has fresher requests data, querying.
+> |cff40c7ebSolomage-Atiesh|r has fresher requests data, querying.
+```
+
+**Root Cause:**
+The inventory delta sync protocol (`togbank-dv`) was piggybacking request version metadata. Every 3-minute inventory broadcast triggered request version comparisons across all 100+ guild members, causing cascading request queries and repeated NormalizeRequestList() calls.
+
+**Performance Impact (Before Fix):**
+- ~12 full list iterations per second
+- 404 requests × 12 = 4,848 request reads per second  
+- With PruneRequests: ~9,696 request table accesses per second
+
+**Solution Implemented:**
+1. **Decoupled request sync from inventory sync**
+2. Removed `requests` and `requestLog` fields from `GetVersion()` in Guild.lua
+3. Removed request version checking from `togbank-dv` handler in Chat.lua
+4. Request syncs now independent of 3-minute inventory broadcasts
+
+**Files Modified:**
+- `Modules/Guild.lua`: Removed request metadata from GetVersion()
+- `Modules/Chat.lua`: Removed request checking from togbank-dv handler
+
+**Verification:**
+After fix, no "has fresher requests data, querying" messages observed during wipe/sync operations. Request syncs only occur when explicitly needed.
+
+**Closed:** 2026-01-26
+
+---
+
+### �🟠 HIGH - All Resolved
 
 #### ✅ [ADDON-001] Nil itemLink passed to Pawn/BagBrother causes errors
 
