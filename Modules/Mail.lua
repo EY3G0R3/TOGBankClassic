@@ -394,15 +394,19 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 		return false, "Items not in bags. Pick up from bank first.", 0, 0
 	end
 
-	-- Sort items by stack size (smallest first) to get accurate usable count
-	table.sort(items, function(a, b) return a.count < b.count end)
+	-- Sort items by stack size (largest first) to match attachment behavior
+	table.sort(items, function(a, b) return a.count > b.count end)
 
-	-- Find smallest stack and count usable items (stacks that fit without exceeding qtyNeeded)
+	-- Find smallest and largest stacks, and count usable items (stacks that fit without exceeding qtyNeeded)
 	local smallestStack = nil
+	local largestStack = nil
 	local usableItems = 0
 	for _, item in ipairs(items) do
 		if not smallestStack or item.count < smallestStack then
 			smallestStack = item.count
+		end
+		if not largestStack or item.count > largestStack then
+			largestStack = item.count
 		end
 		-- Only count this stack if adding it doesn't exceed what we need
 		if usableItems + item.count <= qtyNeeded then
@@ -432,8 +436,58 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 	-- Check if we need to split
 	if usableItems < qtyNeeded and totalInBags >= qtyNeeded then
 		-- We have enough total, but need to split to fulfill
+		-- Efficiency check: if we have any stack large enough to provide what we need,
+		-- prefer splitting from it rather than using multiple small stacks
+		if largestStack and largestStack >= qtyNeeded then
+			-- Can split exactly what we need from a single stack - more efficient
+			local reason = string.format("Split %d from available stacks.", qtyNeeded)
+			return true, reason, totalInBags, smallestStack
+		end
+		
 		local remaining = qtyNeeded - usableItems
-		local reason = string.format("Split %d after attaching %d.", remaining, usableItems)
+		
+		-- Additional efficiency check: if using small partials requires a split,
+		-- check if using only the largest stacks would require similar or smaller effort
+		-- Example: [1,20,20,20,20,20] need 90 -> better to use 4×20+split(10) than 1+4×20+split(9)
+		-- The trade-off: splitting 10 from one stack vs using a 1-stack + splitting 9
+		if largestStack and largestStack > 1 and remaining > 0 then
+			-- Count how many complete largest stacks we can use
+			local largeStacksUsable = 0
+			for _, item in ipairs(items) do
+				if item.count == largestStack and largeStacksUsable + item.count <= qtyNeeded then
+					largeStacksUsable = largeStacksUsable + item.count
+				end
+			end
+			
+			-- If we have at least one more largest stack available to split from
+			local hasExtraLargeStack = false
+			for _, item in ipairs(items) do
+				if item.count == largestStack then
+					local testTotal = largeStacksUsable + item.count
+					if testTotal > largeStacksUsable and testTotal >= qtyNeeded then
+						hasExtraLargeStack = true
+						break
+					end
+				end
+			end
+			
+			if hasExtraLargeStack and largeStacksUsable < qtyNeeded then
+				local largeSplitAmount = qtyNeeded - largeStacksUsable
+				-- Prefer this if it means not attaching tiny partial stacks
+				-- (using fewer mail attachment slots is more efficient)
+				if largeSplitAmount <= largestStack then
+					usableItems = largeStacksUsable
+					remaining = largeSplitAmount
+				end
+			end
+		end
+		
+		local reason
+		if usableItems == 0 then
+			reason = string.format("Split %d from available stacks.", remaining)
+		else
+			reason = string.format("Split %d after attaching %d.", remaining, usableItems)
+		end
 		return true, reason, totalInBags, smallestStack
 	end
 
@@ -499,43 +553,104 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	local skippedLargeStack = nil
 
 	-- Sort items by stack size (largest first) - full stacks before partial stacks
-	table.sort(items, function(a, b) return a.count > b.count end)
+	-- When counts are equal, maintain the original scan order (bottom-right to top-left in bags)
+	-- by adding an index to each item before sorting
+	for i, item in ipairs(items) do
+		item.originalIndex = i
+	end
+	table.sort(items, function(a, b)
+		if a.count == b.count then
+			return a.originalIndex < b.originalIndex  -- Maintain physical order for equal counts
+		end
+		return a.count > b.count
+	end)
 
-	-- FIRST PASS: Check if we need to split anything
+	-- FIRST PASS: Determine what we need and filter out stacks that are too small to be useful
+	local usefulStacks = {}
+	local accumulatedForFilter = 0
+	for i, item in ipairs(items) do
+		if accumulatedForFilter >= qtyNeeded then
+			-- We have enough - check if this stack could be used for splitting
+			local remaining = qtyNeeded - accumulatedForFilter
+			if remaining > 0 and item.count >= remaining then
+				table.insert(usefulStacks, item)
+			end
+			-- Otherwise ignore this stack (too small to split)
+		elseif item.count <= qtyNeeded - accumulatedForFilter then
+			-- This stack can be fully attached
+			table.insert(usefulStacks, item)
+			accumulatedForFilter = accumulatedForFilter + item.count
+		else
+			-- This stack is larger than what we need - check if it can provide the full remaining amount
+			local remaining = qtyNeeded - accumulatedForFilter
+			if item.count >= remaining then
+				table.insert(usefulStacks, item)
+			end
+			-- Otherwise ignore (too small to split the remaining amount)
+		end
+	end
+	
+	print(string.format("[SPLIT DEBUG] Filtered %d useful stacks from %d total", #usefulStacks, #items))
+
+	-- SECOND PASS: Run greedy algorithm on useful stacks only
 	local simulatedAttached = 0
-	local skipStackIndex = nil  -- Track which stack to skip for optimal fit
+	local skipStackIndex = nil  -- Track which stack to skip during attachment for optimal fit
+	local splitStackIndex = nil  -- Track which stack we'll split from
 
 	-- Greedy pass: accumulate items until we need more than a stack can provide
-	for i, item in ipairs(items) do
+	for i, item in ipairs(usefulStacks) do
 		if simulatedAttached >= qtyNeeded then
 			break
 		end
 		local remaining = qtyNeeded - simulatedAttached
 
 		if item.count <= remaining then
+			-- This stack fits completely - accumulate it
 			simulatedAttached = simulatedAttached + item.count
+			print(string.format("[SPLIT DEBUG] Stack %d: count=%d, accumulate, total=%d", i, item.count, simulatedAttached))
+			
+			-- If we've accumulated enough, clear any split candidate we marked earlier
+			if simulatedAttached >= qtyNeeded then
+				skippedLargeStack = nil
+				splitStackIndex = nil
+				print("[SPLIT DEBUG] Accumulated enough - clearing split candidate")
+			end
+		elseif item.count > remaining and remaining > 0 then
+			-- This stack is larger than remaining, but we still need more items
+			-- Only mark for splitting if we haven't accumulated enough yet
+			if simulatedAttached < qtyNeeded then
+				skippedLargeStack = item
+				splitStackIndex = i
+				print(string.format("[SPLIT DEBUG] Stack %d: count=%d, can split (need %d), mark as candidate", i, item.count, remaining))
+			end
 		else
-			-- This stack is too big, we need to split from a full stack
-			-- Keep iterating to find the LAST full stack (don't break)
-			-- This preserves stacks at the beginning of the sorted array
-			skippedLargeStack = item
-			skipStackIndex = i
+			-- This stack is too small to provide the full remaining amount - ignore it
+			print(string.format("[SPLIT DEBUG] Stack %d: count=%d, too small to split (need %d), IGNORE", i, item.count, remaining))
 		end
 	end
+	print(string.format("[SPLIT DEBUG] Greedy result: attached=%d, splitStackIndex=%s", simulatedAttached, tostring(splitStackIndex)))
 
-	-- If greedy didn't get exact match, try skipping individual stacks to find better fit
-	if simulatedAttached < qtyNeeded and totalInBags >= qtyNeeded then
+	-- If greedy didn't get exact match AND didn't find a split candidate, try skipping individual stacks to find better fit
+	if simulatedAttached < qtyNeeded and totalInBags >= qtyNeeded and not skippedLargeStack then
 		for skipIndex = 1, math.min(5, #items) do
 			local testAttached = 0
 			local testSkippedLargeStack = nil
+			local testSplitStackIndex = nil
 			for i = 1, #items do
 				if i ~= skipIndex then
 					local remaining = qtyNeeded - testAttached
-					if items[i].count <= remaining then
+					if testAttached >= qtyNeeded then
+						break
+					elseif items[i].count <= remaining then
 						testAttached = testAttached + items[i].count
-					elseif items[i].count > remaining then
-						-- Track this oversized stack - keep iterating to find the LAST one
+					elseif items[i].count >= remaining then
+						-- This stack can provide the remaining amount - keep track of it
+						-- Continue iterating to find the LAST stack that can be split
 						testSkippedLargeStack = items[i]
+						testSplitStackIndex = i
+					else
+						-- This stack is too small to split - stop here
+						break
 					end
 				end
 			end
@@ -543,12 +658,16 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 				simulatedAttached = testAttached
 				skipStackIndex = skipIndex  -- Remember to skip this stack during attachment
 				skippedLargeStack = nil  -- No split needed - found exact match!
+				splitStackIndex = nil
 				break
-			elseif testAttached > simulatedAttached then
-				-- Better fit found
+			elseif testAttached > simulatedAttached or 
+			       (testAttached == simulatedAttached and testSplitStackIndex and splitStackIndex and 
+			        testSplitStackIndex > splitStackIndex) then
+				-- Better fit found, or same fit but with split from a later stack (preferred)
 				simulatedAttached = testAttached
 				skipStackIndex = skipIndex
 				skippedLargeStack = testSkippedLargeStack
+				splitStackIndex = testSplitStackIndex
 			end
 		end
 	end
@@ -576,7 +695,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	end
 
 	-- No split needed, proceed with normal attachment
-	for i, item in ipairs(items) do
+	for i, item in ipairs(usefulStacks) do
 		if attached >= qtyNeeded then
 			break
 		end
