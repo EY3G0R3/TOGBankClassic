@@ -5,6 +5,7 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
+- 🔴 [UI-008] C stack overflow in item loading callbacks - Recursive UI refresh loop after receiving alt data
 - ⚠️ [UI-007] Item tooltips not showing stats on gear (rings, wands, etc.) - Shows armor value but missing stat details
 
 **Recent Fixes (2026-01-28):**
@@ -84,7 +85,96 @@
 
 ### 🔴 CRITICAL
 
-None currently open.
+#### [UI-008] C stack overflow in item loading callbacks
+
+**Severity:** 🔴 CRITICAL
+**Category:** UI / Item Loading / Infinite Recursion
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-28
+**Status:** 🔴 ACTIVE
+**Reproducibility:** Consistent after /wipe and /sync
+**Related:** [SYNC-006] Backward compatibility changes
+
+**Problem:**
+After implementing SYNC-006 backward compatibility (reconstructing alt.items from old data), opening the Inventory window causes a C stack overflow crash. The error indicates an infinite recursive loop in the item loading callback system.
+
+**Error Message:**
+```
+20x Blizzard_ObjectAPI/Classic/Item.lua:296: C stack overflow
+[Blizzard_ObjectAPI/Classic/Item.lua]:296: in function 'FireCallbacks'
+[Blizzard_ObjectAPI/Classic/Item.lua]:260: in function <Blizzard_ObjectAPI/Classic/Item.lua:256>
+[C]: ?
+[C]: in function 'RequestLoadItemDataByID'
+[Blizzard_ObjectAPI/Classic/Item.lua]:274: in function 'AddCallback'
+[Blizzard_ObjectAPI/Classic/Item.lua]:238: in function 'ContinueOnItemLoad'
+[TOGBankClassic/Modules/Item.lua]:24: in function 'GetItems'
+[TOGBankClassic/Modules/UI/Search.lua]:397: in function 'BuildSearchData'
+[TOGBankClassic/Modules/UI/Inventory.lua]:154: in function 'DrawContent'
+[TOGBankClassic/Modules/Guild.lua]:978: in function <TOGBankClassic/Modules/Guild.lua:972>
+[C]: in function 'xpcall'
+[Blizzard_ObjectAPI/Classic/Item.lua]:298: in function 'FireCallbacks'
+... [loop continues]
+```
+
+**Call Stack Analysis:**
+1. ReceiveAltData (Guild.lua) reconstructs alt.items → triggers UI refresh
+2. DrawContent (Inventory.lua:154) opens inventory window → calls BuildSearchData
+3. BuildSearchData (Search.lua:397) → calls GetItems
+4. GetItems (Item.lua:24) → ContinueOnItemLoad for each item without cached data
+5. ContinueOnItemLoad → RequestLoadItemDataByID
+6. Item loads → FireCallbacks
+7. Callback refreshes UI → DrawContent called again (Guild.lua:978 in xpcall)
+8. **LOOP BACK TO STEP 2** → infinite recursion → C stack overflow
+
+**Root Cause:**
+The UI refresh triggered after receiving alt data creates a callback loop:
+- After reconstructing alt.items, we refresh the UI (Guild.lua:978)
+- UI refresh calls DrawContent which triggers item loading
+- Item load callbacks trigger another UI refresh
+- This creates infinite recursion until C stack overflows
+
+**Trigger Conditions:**
+- Occurs after `/wipe` and `/sync` when receiving data from other players
+- Reconstruction of alt.items from old format triggers the issue
+- Opening Inventory window while items are still loading metadata
+
+**Impact:**
+- **Severity:** CRITICAL - Crashes addon, makes inventory unusable
+- **Frequency:** Consistent after sync operations
+- **Workaround:** None currently available
+
+**Proposed Solutions:**
+
+**Option 1: Debounce UI Refresh**
+Add guard flag to prevent recursive refreshes:
+```lua
+if self.isRefreshing then return end
+self.isRefreshing = true
+-- refresh UI
+self.isRefreshing = false
+```
+
+**Option 2: Defer Item Loading**
+Don't trigger item loading during initial UI draw:
+```lua
+if not itemCached then
+    -- Queue for async load, don't block UI
+    C_Timer.After(0.1, function() LoadItemData(itemID) end)
+end
+```
+
+**Option 3: Remove Automatic UI Refresh**
+Don't automatically refresh UI after ReceiveAltData:
+- Let UI refresh on next open (user-initiated)
+- Remove Guild.lua:978 automatic refresh call
+
+**Affected Code:**
+- **Guild.lua:978** - Triggers UI refresh after receiving alt data
+- **Inventory.lua:154** - DrawContent calls BuildSearchData
+- **Search.lua:397** - BuildSearchData calls GetItems
+- **Item.lua:24** - GetItems triggers item loading callbacks
+
+**Priority:** CRITICAL - Must fix before release
 
 ### 🟠 HIGH
 
