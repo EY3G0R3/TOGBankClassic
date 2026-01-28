@@ -1034,6 +1034,46 @@ function TOGBankClassic_Guild:StripDeltaLinks(delta)
 	return TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
 end
 
+-- Ensure legacy fields (bank.items, bags.items) exist for backward compatibility with old clients
+-- New clients (v0.8.0+) use alt.items, but old clients need bank.items and bags.items
+function TOGBankClassic_Guild:EnsureLegacyFields(alt)
+	if not alt or not alt.items then
+		return alt
+	end
+
+	-- If legacy fields already exist, keep them (from Bank.lua scan)
+	if alt.bank and alt.bank.items and alt.bags and alt.bags.items then
+		return alt
+	end
+
+	-- Otherwise, reconstruct from alt.items for backward compatibility
+	-- Note: We can't perfectly separate bank from bags without location metadata,
+	-- so we put all items in bank.items for old clients (they'll still see everything)
+	TOGBankClassic_Output:Debug("SYNC", "Reconstructing legacy fields from alt.items for %s", alt.name or "unknown")
+	
+	if not alt.bank then
+		alt.bank = {}
+	end
+	if not alt.bank.items then
+		alt.bank.items = {}
+		-- Copy all items from alt.items to bank.items for old client compatibility
+		for _, item in ipairs(alt.items) do
+			table.insert(alt.bank.items, item)
+		end
+	end
+	
+	if not alt.bags then
+		alt.bags = {}
+	end
+	if not alt.bags.items then
+		-- Keep bags.items empty if we don't have the original data
+		-- Old clients will see all items in bank.items
+		alt.bags.items = {}
+	end
+	
+	return alt
+end
+
 function TOGBankClassic_Guild:SendAltData(name)
 	if not name then
 		return
@@ -1047,6 +1087,11 @@ function TOGBankClassic_Guild:SendAltData(name)
 	-- No longer bump version here - that caused version drift from communication
 
 	local currentAlt = self.Info.alts[norm]
+	
+	-- Ensure legacy fields exist for backward compatibility with old clients
+	-- This ensures old clients that only read bank.items/bags.items still get data
+	currentAlt = self:EnsureLegacyFields(currentAlt)
+	
 	local useDelta = false
 	local deltaData = nil
 	local computeStart = debugprofilestop()
