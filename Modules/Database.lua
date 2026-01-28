@@ -36,9 +36,6 @@ function TOGBankClassic_Database:Reset(name)
 		alts = {},
 		requests = {},
 		requestsVersion = 0,
-		requestLog = {},
-		requestLogSeq = {},
-		requestLogApplied = {},
 		requestsTombstones = {},
 		-- Delta sync fields
 		deltaSnapshots = {},
@@ -109,15 +106,6 @@ function TOGBankClassic_Database:Load(name)
 
 	if not db.requestsVersion then
 		db.requestsVersion = 0
-	end
-	if not db.requestLog then
-		db.requestLog = {}
-	end
-	if not db.requestLogSeq then
-		db.requestLogSeq = {}
-	end
-	if not db.requestLogApplied then
-		db.requestLogApplied = {}
 	end
 
 	-- v0.8.0: Migrate old alt data to ensure slots fields exist
