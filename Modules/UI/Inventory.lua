@@ -281,6 +281,14 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
 		
+		-- Debug: Log what data exists
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: alt.items=%s, alt.bank=%s, alt.bags=%s, alt.mail=%s", 
+			tab,
+			alt.items and ("array with " .. #alt.items .. " items") or "nil",
+			alt.bank and alt.bank.items and ("array with " .. #alt.bank.items .. " items") or "nil",
+			alt.bags and alt.bags.items and ("array with " .. #alt.bags.items .. " items") or "nil",
+			alt.mail and alt.mail.items and "table" or "nil")
+		
 		-- Get items - use alt.items if available, otherwise compute on-the-fly for backward compatibility
 		local items = alt.items
 		if not items or #items == 0 then
@@ -307,6 +315,25 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		end
 		
 		if items and #items > 0 then
+			-- Debug: Check for duplicate item IDs with different links
+			local itemsByID = {}
+			for _, item in pairs(items) do
+				if item and item.ID then
+					if not itemsByID[item.ID] then
+						itemsByID[item.ID] = {}
+					end
+					table.insert(itemsByID[item.ID], { Count = item.Count, Link = item.Link })
+				end
+			end
+			for itemID, entries in pairs(itemsByID) do
+				if #entries > 1 then
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] DUPLICATE ITEM ID %d found with %d different entries:", itemID, #entries)
+					for i, entry in ipairs(entries) do
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002]   Entry %d: Count=%d, Link=%s", i, entry.Count, entry.Link or "nil")
+					end
+				end
+			end
+			
 			TOGBankClassic_Item:GetItems(items, function(list)
 				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items", 
 					tab, list and #list or 0)
