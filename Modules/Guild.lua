@@ -1359,26 +1359,25 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 
 		-- Backward compatibility: Compute alt.items from sources if missing (SYNC-006)
 		-- This handles data from players who haven't rescanned after the aggregation update
+		-- OLD STRUCTURE: Only bank and bags were synced (mail was local-only)
 		if not alt.items or #alt.items == 0 then
 			local bankItems = (alt.bank and alt.bank.items) or {}
 			local bagItems = (alt.bags and alt.bags.items) or {}
-			local mailItems = {}
-			if alt.mail and alt.mail.items then
-				for itemID, mailItem in pairs(alt.mail.items) do
-					table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
-				end
-			end
 			
-			-- Aggregate all sources into alt.items
-			if #bankItems > 0 or #bagItems > 0 or #mailItems > 0 then
+			TOGBankClassic_Output:Debug("SYNC", "Reconstructing alt.items for %s: bank=%d, bags=%d", 
+				name, #bankItems, #bagItems)
+			
+			-- Aggregate bank + bags ONLY (mail was never synced in old system)
+			if #bankItems > 0 or #bagItems > 0 then
 				local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
-				aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
 				alt.items = {}
 				for _, item in pairs(aggregated) do
 					table.insert(alt.items, item)
 				end
-				TOGBankClassic_Output:Debug("SYNC", "Reconstructed alt.items for %s: %d items from sources", 
+				TOGBankClassic_Output:Debug("SYNC", "Reconstructed alt.items for %s: %d items from bank+bags", 
 					name, #alt.items)
+			else
+				TOGBankClassic_Output:Debug("SYNC", "No items to reconstruct for %s (bank and bags both empty)", name)
 			end
 		end
 
