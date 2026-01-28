@@ -973,10 +973,8 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 						local link = itemObj:GetItemLink()
 						if link then
 							item.Link = link
-							-- Refresh UI when link becomes available
-							if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-								TOGBankClassic_UI_Inventory:DrawContent()
-							end
+							-- Don't auto-refresh UI to prevent callback recursion (UI-008)
+							-- UI will refresh naturally when user opens/interacts with window
 						end
 					end)
 				end
@@ -984,10 +982,8 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 		end
 	end
 
-	-- If some links loaded immediately from cache, refresh UI now
-	if not needsAsyncLoad and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-		TOGBankClassic_UI_Inventory:DrawContent()
-	end
+	-- Don't auto-refresh UI to prevent callback recursion (UI-008)
+	-- UI will refresh naturally when user opens/interacts with window
 end
 
 -- Strip Links from entire alt structure before transmission

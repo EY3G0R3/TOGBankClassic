@@ -142,9 +142,16 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 end
 
 function TOGBankClassic_UI_Inventory:DrawContent()
+	-- Guard against recursive calls (UI-008 protection)
+	if self.isRefreshing then
+		return
+	end
+	self.isRefreshing = true
+	
 	local info = TOGBankClassic_Guild.Info
 	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
 	if not info or not roster_alts then
+		self.isRefreshing = false
 		QueryEmpty()
 		OnClose()
 		TOGBankClassic_Output:Response("Database is empty; wait for sync.")
@@ -371,6 +378,9 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		-- No current selection or invalid tab, select first tab
 		self.TabGroup:SelectTab(first_tab)
 	end
+	
+	-- Clear refresh guard (UI-008 protection)
+	self.isRefreshing = false
 end
 
 function TOGBankClassic_UI_Inventory:GetPercentColor(percent)
