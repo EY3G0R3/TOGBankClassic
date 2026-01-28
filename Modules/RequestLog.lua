@@ -516,34 +516,35 @@ function Guild:PruneRequests()
 	return prunedCount, before, after
 end
 
--- Apply a single log entry to the current request state.
-function Guild:ApplyRequestLogEntry(entry)
+-- Apply a mutation entry to the current request state.
+-- Used for receiving mutations from other players.
+function Guild:ApplyRequestMutation(entry)
 	if not entry or type(entry) ~= "table" then
-		TOGBankClassic_Output:Debug("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - entry not a table")
+		TOGBankClassic_Output:Debug("ApplyRequestMutation: FAIL - entry not a table")
 		return false
 	end
 	if not self.Info then
-		TOGBankClassic_Output:Debug("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - self.Info is nil")
+		TOGBankClassic_Output:Debug("ApplyRequestMutation: FAIL - self.Info is nil")
 		return false
 	end
 	self:EnsureRequestsInitialized()
 
 	local entryType = entry.type
 	if not entryType then
-		TOGBankClassic_Output:Debug("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - no entry.type")
+		TOGBankClassic_Output:Debug("ApplyRequestMutation: FAIL - no entry.type")
 		return false
 	end
 	local entryTs = tonumber(entry.ts or 0) or 0
 	local requestId = entry.requestId or (entry.request and entry.request.id)
 	if not requestId then
-		TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - no requestId (type=%s)", entryType))
+		TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: FAIL - no requestId (type=%s)", entryType))
 		return false
 	end
 
 	local tombstones = self.Info.requestsTombstones or {}
 	local tombstoneTs = tonumber(tombstones[requestId] or 0) or 0
 	if tombstoneTs > 0 and entryTs > 0 and entryTs <= tombstoneTs then
-		TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: BLOCKED by tombstone (requestId=%s, entryTs=%d, tombstoneTs=%d)",
+		TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: BLOCKED by tombstone (requestId=%s, entryTs=%d, tombstoneTs=%d)",
 			requestId, entryTs, tombstoneTs))
 		return false
 	end
@@ -556,10 +557,10 @@ function Guild:ApplyRequestLogEntry(entry)
 		if clean then
 			self.Info.requests[requestId] = clean
 			req = clean
-			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: CREATED request from snapshot (requestId=%s, type=%s)",
+			TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: CREATED request from snapshot (requestId=%s, type=%s)",
 				requestId, entryType))
 		else
-			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: sanitizeRequest returned nil for snapshot (requestId=%s)",
+			TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: sanitizeRequest returned nil for snapshot (requestId=%s)",
 				requestId))
 		end
 	end
@@ -577,7 +578,7 @@ function Guild:ApplyRequestLogEntry(entry)
 	end
 
 	if not req then
-		TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestLogEntry: FAIL - req is nil, snapshot=%s (requestId=%s, type=%s)",
+		TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: FAIL - req is nil, snapshot=%s (requestId=%s, type=%s)",
 			tostring(snapshot ~= nil), requestId, entryType))
 		return false
 	end
@@ -648,72 +649,36 @@ function Guild:ApplyRequestLogEntry(entry)
 	return false
 end
 
--- Construct a mutation entry for broadcasting changes.
--- Note: This is transitional - will be simplified further in Phase 2.
-function Guild:BuildRequestLogEntry(entryType, request, extra)
-	if not self.Info then
-		return nil
+-- Broadcast a request mutation to guild members.
+-- mutation: { type, requestId, request (for add), delta/targetFulfilled (for fulfill) }
+function Guild:BroadcastRequestMutation(mutation)
+	if not mutation or type(mutation) ~= "table" then
+		return
 	end
-	local actor = self:GetNormalizedPlayer() or "unknown"
 	local now = GetServerTime()
-	local clean = request and sanitizeRequest(request) or nil
-	local entry = {
-		type = entryType,
-		actor = actor,
-		ts = now,
-		id = string.format("%s:%d", actor, now),
-		requestId = clean and clean.id or (extra and extra.requestId),
-		request = clean,
+	local actor = self:GetNormalizedPlayer() or "unknown"
+	local payload = {
+		type = "requests-log",  -- Keep wire format for backwards compat
+		logEntries = {{
+			type = mutation.type,
+			actor = actor,
+			ts = now,
+			id = string.format("%s:%d", actor, now),
+			requestId = mutation.requestId,
+			request = mutation.request,
+			delta = mutation.delta,
+			targetFulfilled = mutation.targetFulfilled,
+		}}
 	}
-	if extra then
-		for k, v in pairs(extra) do
-			if entry[k] == nil then
-				entry[k] = v
-			end
-		end
-	end
-	return entry
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "ALERT")
 end
 
--- Apply a mutation entry locally and optionally broadcast it.
--- Note: This is transitional - will be simplified further in Phase 2.
-function Guild:RecordRequestLogEntry(entry, broadcast)
-	if not entry or not entry.id then
-		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry FAILED: entry missing or no id")
-		return false
-	end
-	if not self.Info then
-		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry FAILED: self.Info is nil")
-		return false
-	end
-	self:EnsureRequestsInitialized()
-
-	TOGBankClassic_Output:Debug(string.format("[UI-003] RecordRequestLogEntry: entry.id=%s, type=%s, requestId=%s, broadcast=%s",
-		entry.id or "nil", entry.type or "nil", entry.requestId or "nil", tostring(broadcast)))
-
-	TOGBankClassic_Output:Debug(string.format("[UI-003] RecordRequestLogEntry: Applying entry (requests before = %d)", countRequests(self.Info.requests)))
-
-	if not self:ApplyRequestLogEntry(entry) then
-		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry FAILED: ApplyRequestLogEntry returned false")
-		return false
-	end
-
-	TOGBankClassic_Output:Debug(string.format("[UI-003] RecordRequestLogEntry: Applied successfully (requests after = %d)", countRequests(self.Info.requests)))
-
-	if entry.ts and entry.ts > 0 then
-		self:TouchRequestsVersion(entry.ts)
-	end
-
-	TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry: Calling PruneIfNeeded")
+-- After a local mutation, update version and refresh UI.
+function Guild:FinalizeMutation(ts)
+	self:TouchRequestsVersion(ts or GetServerTime())
 	self:PruneIfNeeded()
-	TOGBankClassic_Output:Debug(string.format("[UI-003] RecordRequestLogEntry: After PruneIfNeeded (requests = %d)", countRequests(self.Info.requests)))
-
-	if broadcast then
-		TOGBankClassic_Output:Debug("[UI-003] RecordRequestLogEntry: Broadcasting entry to guild")
-		self:SendRequestLogEntry(entry)
-	end
 	self:RefreshRequestsUI()
-	return true
 end
 
 -- Version and UI helpers.
@@ -833,31 +798,8 @@ function Guild:SendRequestsVersionPing()
 	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
 end
 
-function Guild:SendRequestLogEntry(entry, target)
-	if not entry or type(entry) ~= "table" then
-		TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry FAILED: Invalid entry")
-		return
-	end
-	TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry: Broadcasting entry.id=%s, type=%s, target=%s", 
-		tostring(entry.id), tostring(entry.type), tostring(target or "GUILD"))
-	local payload = { type = "requests-log", logEntries = { entry } }
-	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	-- Use ALERT priority for immediate request broadcasts (highest priority)
-	-- Request creations are very rare (10-20/day) and need guaranteed immediate delivery
-	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "ALERT")
-	TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry: Broadcast complete")
-end
-
-function Guild:ReceiveRequestLogEntry(entry, sender)
-	if not entry or type(entry) ~= "table" then
-		return false
-	end
-	return self:ReceiveRequestLogEntries({ logEntries = { entry } }, sender)
-end
-
 -- Receive mutation entries from another player and apply them.
--- Each entry is applied directly - ApplyRequestLogEntry handles idempotency.
-function Guild:ReceiveRequestLogEntries(payload, sender)
+function Guild:ReceiveRequestMutations(payload, sender)
 	if not payload or type(payload) ~= "table" then
 		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Invalid payload")
 		return
@@ -872,22 +814,26 @@ function Guild:ReceiveRequestLogEntries(payload, sender)
 	end
 	self:EnsureRequestsInitialized()
 
-	-- Apply each entry directly - ApplyRequestLogEntry handles conflicts
+	local applied = 0
 	for _, entry in ipairs(entries) do
 		if entry and type(entry) == "table" then
-			self:RecordRequestLogEntry(entry, false)
+			if self:ApplyRequestMutation(entry) then
+				applied = applied + 1
+			end
 		end
+	end
+
+	if applied > 0 then
+		self:FinalizeMutation()
 	end
 end
 
 -- Request mutation helpers.
 function Guild:AddRequest(request)
 	if not self.Info then
-		TOGBankClassic_Output:Debug("[UI-003] AddRequest FAILED: self.Info is nil")
 		return false
 	end
 	if not request or type(request) ~= "table" then
-		TOGBankClassic_Output:Debug("[UI-003] AddRequest FAILED: invalid request parameter")
 		return false
 	end
 
@@ -907,30 +853,19 @@ function Guild:AddRequest(request)
 
 	local clean = sanitizeRequest(request)
 	if not clean then
-		TOGBankClassic_Output:Debug("[UI-003] AddRequest FAILED: sanitizeRequest returned nil")
 		return false
 	end
 
-	TOGBankClassic_Output:Debug(string.format("[UI-003] AddRequest: Creating request id=%s, requester=%s, item=%s, quantity=%d",
-		clean.id or "nil", clean.requester or "nil", clean.item or "nil", clean.quantity or 0))
+	-- Store directly
+	self.Info.requests[clean.id] = clean
 
-	local entry = self:BuildRequestLogEntry("add", clean)
-	if not entry then
-		TOGBankClassic_Output:Debug("[UI-003] AddRequest FAILED: BuildRequestLogEntry returned nil")
-		return false
-	end
+	-- Broadcast and finalize
+	self:BroadcastRequestMutation({ type = "add", requestId = clean.id, request = clean })
+	self:FinalizeMutation(now)
 
-	TOGBankClassic_Output:Debug(string.format("[UI-003] AddRequest: Built log entry id=%s, seq=%d, actor=%s",
-		entry.id or "nil", entry.seq or 0, entry.actor or "nil"))
-
-	local result = self:RecordRequestLogEntry(entry, true)
-	TOGBankClassic_Output:Debug(string.format("[UI-003] AddRequest: RecordRequestLogEntry returned %s", tostring(result)))
-
-	if result then
-		TOGBankClassic_Output:Debug(string.format("[UI-003] AddRequest SUCCESS: Total requests now = %d", countRequests(self.Info.requests)))
-	end
-
-	return result
+	TOGBankClassic_Output:Debug(string.format("AddRequest: id=%s, item=%s, qty=%d",
+		clean.id, clean.item or "", clean.quantity or 0))
+	return true
 end
 
 -- Access control for requests.
@@ -1024,18 +959,9 @@ function Guild:CanDeleteRequest(req, actor, actorIsGM)
 end
 
 function Guild:CancelRequest(requestId, actor)
-	TOGBankClassic_Output:Debug("SYNC", "CancelRequest called: requestId=%s, actor=%s", tostring(requestId), tostring(actor))
-	
-	if not self.Info or not self.Info.requests then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: No Info or requests")
+	if not self.Info or not self.Info.requests or not requestId then
 		return false
 	end
-	if not requestId then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: No requestId")
-		return false
-	end
-
-	self:EnsureRequestsInitialized()
 
 	local req = self.Info.requests[requestId]
 	if not req then
@@ -1043,150 +969,149 @@ function Guild:CancelRequest(requestId, actor)
 		return false
 	end
 
+	-- Can't cancel if already in terminal state
 	local quantity = tonumber(req.quantity or 0) or 0
 	local fulfilled = tonumber(req.fulfilled or 0) or 0
-	if req.status == "cancelled" then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Already cancelled")
-		return false
-	end
-	if req.status == "fulfilled" or req.status == "complete" or (quantity > 0 and fulfilled >= quantity) then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Request already complete or fulfilled")
-		return false
-	end
-
-	local actorName = actor or self:GetPlayer()
-	TOGBankClassic_Output:Debug("SYNC", "CancelRequest: actorName=%s, requester=%s", tostring(actorName), tostring(req.requester))
-	
-	if not self:CanCancelRequest(req, actorName) then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: CanCancelRequest returned false")
-		return false
-	end
-
-	TOGBankClassic_Output:Debug("SYNC", "CancelRequest: Building log entry...")
-	local entry = self:BuildRequestLogEntry("cancel", req)
-	if not entry then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: BuildRequestLogEntry returned nil")
-		return false
-	end
-	return self:RecordRequestLogEntry(entry, true)
-end
-
-function Guild:CompleteRequest(requestId, actor)
-	if not self.Info or not self.Info.requests then
-		return false
-	end
-	if not requestId then
-		return false
-	end
-
-	self:EnsureRequestsInitialized()
-
-	local req = self.Info.requests[requestId]
-	if not req then
-		return false
-	end
-
-	local quantity = tonumber(req.quantity or 0) or 0
-	local fulfilled = tonumber(req.fulfilled or 0) or 0
-	if req.status == "cancelled" then
-		return false
-	end
-	if req.status == "complete" then
+	if req.status == "cancelled" or req.status == "complete" then
 		return false
 	end
 	if req.status == "fulfilled" or (quantity > 0 and fulfilled >= quantity) then
 		return false
 	end
 
-	local actorName = actor or self:GetPlayer()
-	if not self:CanCompleteRequest(req, actorName) then
+	if not self:CanCancelRequest(req, actor or self:GetPlayer()) then
 		return false
 	end
 
-	local entry = self:BuildRequestLogEntry("complete", req)
-	if not entry then
-		return false
-	end
-	return self:RecordRequestLogEntry(entry, true)
+	-- Apply mutation directly
+	local now = GetServerTime()
+	req.status = "cancelled"
+	req.statusUpdatedAt = now
+	req.updatedAt = now
+
+	-- Broadcast and finalize
+	self:BroadcastRequestMutation({ type = "cancel", requestId = requestId, request = req })
+	self:FinalizeMutation(now)
+	return true
 end
 
-function Guild:DeleteRequest(requestId, actor)
-	if not self.Info or not self.Info.requests then
+function Guild:CompleteRequest(requestId, actor)
+	if not self.Info or not self.Info.requests or not requestId then
 		return false
 	end
-	if not requestId then
-		return false
-	end
-
-	self:EnsureRequestsInitialized()
 
 	local req = self.Info.requests[requestId]
 	if not req then
 		return false
 	end
 
-	local actorName = actor or self:GetPlayer()
-	if not self:CanDeleteRequest(req, actorName) then
+	-- Can't complete if already in terminal state
+	local quantity = tonumber(req.quantity or 0) or 0
+	local fulfilled = tonumber(req.fulfilled or 0) or 0
+	if req.status == "cancelled" or req.status == "complete" then
+		return false
+	end
+	if req.status == "fulfilled" or (quantity > 0 and fulfilled >= quantity) then
 		return false
 	end
 
-	local entry = self:BuildRequestLogEntry("delete", req, { requestId = requestId })
-	if not entry then
+	if not self:CanCompleteRequest(req, actor or self:GetPlayer()) then
 		return false
 	end
-	return self:RecordRequestLogEntry(entry, true)
+
+	-- Apply mutation directly
+	local now = GetServerTime()
+	req.status = "complete"
+	req.statusUpdatedAt = now
+	req.updatedAt = now
+
+	-- Broadcast and finalize
+	self:BroadcastRequestMutation({ type = "complete", requestId = requestId, request = req })
+	self:FinalizeMutation(now)
+	return true
+end
+
+function Guild:DeleteRequest(requestId, actor)
+	if not self.Info or not self.Info.requests or not requestId then
+		return false
+	end
+
+	local req = self.Info.requests[requestId]
+	if not req then
+		return false
+	end
+
+	if not self:CanDeleteRequest(req, actor or self:GetPlayer()) then
+		return false
+	end
+
+	-- Apply mutation directly
+	local now = GetServerTime()
+	self.Info.requests[requestId] = nil
+
+	-- Record tombstone
+	self.Info.requestsTombstones = self.Info.requestsTombstones or {}
+	self.Info.requestsTombstones[requestId] = now
+
+	-- Broadcast and finalize
+	self:BroadcastRequestMutation({ type = "delete", requestId = requestId })
+	self:FinalizeMutation(now)
+	return true
 end
 
 -- Increment fulfillment for matching requests; returns amount applied.
 function Guild:FulfillRequest(bank, requester, itemName, count)
-	if
-		not self.Info
-		or not self.Info.requests
-		or not bank
-		or not requester
-		or not itemName
-		or not count
-		or count <= 0
-	then
+	if not self.Info or not self.Info.requests or not bank or not requester or not itemName or not count or count <= 0 then
 		return 0
 	end
 
 	local normBank = self:NormalizeName(bank) or bank
 	local normRequester = self:NormalizeName(requester) or requester
 	local targetItem = string.lower(itemName)
+	local now = GetServerTime()
 
 	local applied = 0
-	local entries = {}
+	local mutations = {}
+
 	for _, req in pairs(self.Info.requests) do
-		local reqBank = req.bank
-		local reqRequester = req.requester
+		if count <= 0 then break end
+
 		local reqItem = req.item and string.lower(req.item) or ""
 		local qty = tonumber(req.quantity or 0) or 0
 		local fulfilled = tonumber(req.fulfilled or 0) or 0
 
-		if reqBank == normBank and reqRequester == normRequester and reqItem == targetItem and fulfilled < qty then
+		if req.bank == normBank and req.requester == normRequester and reqItem == targetItem and fulfilled < qty then
 			local remaining = qty - fulfilled
 			local delta = math.min(remaining, count)
 			count = count - delta
 			applied = applied + delta
-			-- [SYNC-FIX] Include targetFulfilled for idempotent replay - if this entry is
-			-- re-applied, we use max() to ensure we don't double-apply the delta
-			local targetFulfilled = fulfilled + delta
-			local entry = self:BuildRequestLogEntry("fulfill", req, { delta = delta, targetFulfilled = targetFulfilled })
-			if entry then
-				table.insert(entries, entry)
-			end
-		end
 
-		if count <= 0 then
-			break
+			-- Apply mutation directly
+			local targetFulfilled = fulfilled + delta
+			req.fulfilled = targetFulfilled
+			req.updatedAt = now
+			if qty > 0 and targetFulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
+				req.status = "fulfilled"
+				req.statusUpdatedAt = now
+			end
+
+			-- Queue broadcast (targetFulfilled for idempotency on receiver)
+			table.insert(mutations, {
+				type = "fulfill",
+				requestId = req.id,
+				delta = delta,
+				targetFulfilled = targetFulfilled,
+			})
 		end
 	end
 
-	if #entries > 0 then
-		for _, entry in ipairs(entries) do
-			self:RecordRequestLogEntry(entry, true)
-		end
+	-- Broadcast all mutations
+	for _, mutation in ipairs(mutations) do
+		self:BroadcastRequestMutation(mutation)
+	end
+
+	if applied > 0 then
+		self:FinalizeMutation(now)
 	end
 
 	return applied

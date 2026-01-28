@@ -708,8 +708,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			)
 		end
 		if data.type == "requests-log" then
-			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "requests log. We accept it by default.")
-			TOGBankClassic_Guild:ReceiveRequestLogEntries(data, sender)
+			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "request mutations. We accept by default.")
+			TOGBankClassic_Guild:ReceiveRequestMutations(data, sender)
 		end
 
 		if data.type == "alt" then
