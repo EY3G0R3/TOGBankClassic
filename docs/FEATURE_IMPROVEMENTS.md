@@ -19,6 +19,7 @@
 - [x] ~~**Persistent debug logging**~~ **v0.7.11: Implemented with 50k entry buffer, 7-day retention, filtering**
 - [x] ~~**SplitContainerItem popup for order fulfillment**~~ **IMPLEMENTED: Shows confirmation popup with shovel icon when split needed; smart bin-packing algorithm for optimal stack selection; supports complex partial fulfillment scenarios**
 - [ ] **Bagnon-style item highlighting** - Implement visual highlighting system that greys out all items except those needed to fulfill active orders; works across player bags and bank; helps bankers quickly locate and gather items for order fulfillment
+- [ ] **Deprecate legacy inventory structure** - Phase out `alt.bank.items` and `alt.bags.items` in favor of unified `alt.items` aggregate (SYNC-006/SYNC-007); currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
 
 ---
 
