@@ -17,7 +17,6 @@ Data model (Guild.Info):
 - requests: map of request ID -> request record (canonical state for UI/logic).
 - requestsVersion: max updatedAt timestamp for quick freshness checks.
 - requestsTombstones: map requestId -> delete timestamp.
-- requestIdSeq: counter for generating unique request IDs.
 
 Request record schema:
 {
@@ -64,12 +63,9 @@ local function legacyRequestId(req)
 	return string.format("%s-%s-%s-%d", bank, requester, item, ts)
 end
 
-local function generateRequestId()
-	-- Fallback ID generator for requests not created through AddRequest.
-	-- Uses timestamp:random format (shorter than before, still unique).
-	local now = GetServerTime()
-	local rand = math.random(1000, 9999)
-	return string.format("%d:%d", now, rand)
+local function generateRequestId(actor)
+	local rand = string.format("%06x", math.random(0, 0xFFFFFF))
+	return string.format("%s:%s", actor or "unknown", rand)
 end
 
 -- Normalize incoming request data and ensure required fields exist.
@@ -164,14 +160,6 @@ local function calculateRequestsVersion(requests)
 	return maxVersion
 end
 
--- Generate next request ID using simple counter
-local function nextRequestId(info, actor)
-	if not info then
-		return string.format("%s:%d", actor or "unknown", GetServerTime())
-	end
-	info.requestIdSeq = (info.requestIdSeq or 0) + 1
-	return string.format("%s:%d", actor or "unknown", info.requestIdSeq)
-end
 
 -- Merge a single request using last-writer-wins.
 -- Returns: "added", "updated", "kept", "tombstoned", or nil on error
@@ -247,18 +235,9 @@ function Guild:EnsureRequestsInitialized()
 	self.requestLogIndex = nil
 	self.requestLogByActor = nil
 
-	-- Initialize request ID counter if not set (migrate from old max ID)
-	if not self.Info.requestIdSeq then
-		local maxSeq = 0
-		for id, _ in pairs(self.Info.requests) do
-			-- Parse actor:seq format
-			local seq = tonumber(string.match(id or "", ":(%d+)$") or "0") or 0
-			if seq > maxSeq then
-				maxSeq = seq
-			end
-		end
-		self.Info.requestIdSeq = maxSeq
-		TOGBankClassic_Output:Debug("[MIGRATE] Initialized requestIdSeq to %d", maxSeq)
+	-- Remove deprecated requestIdSeq (now using random IDs)
+	if self.Info.requestIdSeq then
+		self.Info.requestIdSeq = nil
 	end
 
 	-- Calculate version from requests if not set
@@ -726,10 +705,10 @@ function Guild:AddRequest(request)
 	request.status = request.status or "open"
 	request.fulfilled = tonumber(request.fulfilled or 0) or 0
 
-	-- Generate request ID in actor:seq format
+	-- Generate request ID in actor:random format
 	if not request.id then
 		local actor = self:GetNormalizedPlayer() or "unknown"
-		request.id = nextRequestId(self.Info, actor)
+		request.id = generateRequestId(actor)
 	end
 
 	local clean = sanitizeRequest(request)
