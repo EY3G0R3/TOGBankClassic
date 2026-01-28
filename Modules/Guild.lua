@@ -996,13 +996,34 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 		return nil
 	end
 
+	-- Strip links from aggregate items (v0.8.0 new format)
+	local strippedItems = self:StripItemLinks(alt.items)
+	
+	-- Also strip links from legacy bank/bags fields for backward compatibility
+	-- Old clients can reconstruct links, new clients use alt.items
+	local strippedBank = nil
+	if alt.bank then
+		strippedBank = {
+			slots = alt.bank.slots,
+			items = self:StripItemLinks(alt.bank.items)
+		}
+	end
+	
+	local strippedBags = nil
+	if alt.bags then
+		strippedBags = {
+			slots = alt.bags.slots,
+			items = self:StripItemLinks(alt.bags.items)
+		}
+	end
+
 	local stripped = {
 		version = alt.version,
 		money = alt.money,
 		inventoryHash = alt.inventoryHash,
-		items = self:StripItemLinks(alt.items),
-		bank = alt.bank,
-		bags = alt.bags,
+		items = strippedItems,
+		bank = strippedBank,
+		bags = strippedBags,
 		mail = alt.mail
 	}
 	return stripped
