@@ -583,8 +583,9 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	local wouldNeedToSplit = math.max(0, qtyNeeded - accumulated)
 	
 	-- Minimum stack size = the split amount (must be able to split that much from a stack)
-	-- If no split needed, use 5 as baseline to ignore tiny junk stacks
-	local minStackSize = wouldNeedToSplit > 0 and wouldNeedToSplit or 5
+	-- If no split needed, use min(5, qtyNeeded) to avoid filtering out perfectly sized stacks
+	-- Example: Need 1 item → minStackSize should be 1, not 5
+	local minStackSize = wouldNeedToSplit > 0 and wouldNeedToSplit or math.min(5, qtyNeeded)
 	
 	-- Build useful stacks list
 	local usefulStacks = {}
@@ -594,10 +595,10 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		end
 	end
 	
-	print(string.format("[SPLIT DEBUG] Need %d, accumulated %d from large stacks, would split %d", 
-		qtyNeeded, accumulated, wouldNeedToSplit))
-	print(string.format("[SPLIT DEBUG] Filtered %d useful stacks from %d total (min size: %d)", 
-		#usefulStacks, #items, minStackSize))
+	TOGBankClassic_Output:Debug("FULFILL", "Need %d, accumulated %d from large stacks, would split %d", 
+		qtyNeeded, accumulated, wouldNeedToSplit)
+	TOGBankClassic_Output:Debug("FULFILL", "Filtered %d useful stacks from %d total (min size: %d)", 
+		#usefulStacks, #items, minStackSize)
 
 	-- SECOND PASS: Run greedy algorithm on useful stacks only
 	local simulatedAttached = 0
@@ -605,6 +606,8 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	local splitStackIndex = nil  -- Track which stack we'll split from
 
 	-- Greedy pass: accumulate items until we need more than a stack can provide
+	-- CRITICAL FIX: Process in TWO stages to prefer exact-fit stacks before splits
+	-- Stage 1: Accumulate all stacks that fit exactly without exceeding qtyNeeded
 	for i, item in ipairs(usefulStacks) do
 		if simulatedAttached >= qtyNeeded then
 			break
@@ -614,28 +617,28 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		if item.count <= remaining then
 			-- This stack fits completely - accumulate it
 			simulatedAttached = simulatedAttached + item.count
-			print(string.format("[SPLIT DEBUG] Stack %d: count=%d, accumulate, total=%d", i, item.count, simulatedAttached))
-			
-			-- If we've accumulated enough, clear any split candidate we marked earlier
-			if simulatedAttached >= qtyNeeded then
-				skippedLargeStack = nil
-				splitStackIndex = nil
-				print("[SPLIT DEBUG] Accumulated enough - clearing split candidate")
-			end
-		elseif item.count > remaining and remaining > 0 then
-			-- This stack is larger than remaining, but we still need more items
-			-- Only mark for splitting if we haven't accumulated enough yet
-			if simulatedAttached < qtyNeeded then
-				skippedLargeStack = item
-				splitStackIndex = i
-				print(string.format("[SPLIT DEBUG] Stack %d: count=%d, can split (need %d), mark as candidate", i, item.count, remaining))
-			end
-		else
-			-- This stack is too small to provide the full remaining amount - ignore it
-			print(string.format("[SPLIT DEBUG] Stack %d: count=%d, too small to split (need %d), IGNORE", i, item.count, remaining))
+			TOGBankClassic_Output:Debug("FULFILL", "Stack %d: count=%d, accumulate, total=%d", i, item.count, simulatedAttached)
 		end
 	end
-	print(string.format("[SPLIT DEBUG] Greedy result: attached=%d, splitStackIndex=%s", simulatedAttached, tostring(splitStackIndex)))
+	
+	-- Stage 2: If we didn't get enough, look for a stack to split
+	if simulatedAttached < qtyNeeded then
+		local remaining = qtyNeeded - simulatedAttached
+		for i, item in ipairs(usefulStacks) do
+			if item.count > remaining and item.count >= remaining then
+				-- This stack can provide the remaining amount
+				skippedLargeStack = item
+				splitStackIndex = i
+				TOGBankClassic_Output:Debug("FULFILL", "Stack %d: count=%d, can split (need %d), mark as candidate", i, item.count, remaining)
+				break  -- Found a split candidate, stop looking
+			end
+		end
+	else
+		-- We accumulated enough - no split needed
+		TOGBankClassic_Output:Debug("FULFILL", "Accumulated enough - no split needed")
+	end
+	
+	TOGBankClassic_Output:Debug("FULFILL", "Greedy result: attached=%d, splitStackIndex=%s", simulatedAttached, tostring(splitStackIndex))
 
 	-- If greedy didn't get exact match AND didn't find a split candidate, try skipping individual stacks to find better fit
 	if simulatedAttached < qtyNeeded and totalInBags >= qtyNeeded and not skippedLargeStack then
