@@ -11,7 +11,7 @@
 **Recent Fixes (2026-01-27):**
 - ✅ [FULFILL-002] Fulfill button callback not updating after split - Fixed greedy algorithm to prefer exact-fit stacks over splitting
 - ✅ [MAIL-003] Search UI crash on undefined 'info' variable - Fixed to use TOGBankClassic_Guild.Info
-- 🔴 [MAIL-002] Mail inventory incorrectly aggregating across all account characters or duplicating items
+- ✅ [MAIL-002] Mail inventory displaying incorrect/duplicate counts - Fixed Search corpus, duplicate detection, and Inventory mail aggregation
 - ✅ [MAIL-001] ComputeInventoryHash parameter mismatch - Fixed function to handle both 3-param and 4-param calling conventions
 - ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
 - ✅ [UI-005] Inventory UI crash on missing slots field - Added nil checks for alt.bank.slots and alt.bags.slots
@@ -789,77 +789,93 @@ Applied backward compatibility fix to DeltaComms.lua. Function now detects param
 
 ---
 
-#### 🔴 [MAIL-002] Mail inventory incorrectly aggregating or duplicating items
+#### ✅ [MAIL-002] Mail inventory displaying incorrect/duplicate counts
 
 **Severity:** 🔴 CRITICAL
 **Category:** Mail Inventory / Data Aggregation
 **Reporter:** User (Testing)
 **Date Reported:** 2026-01-27
-**Status:** 🔴 OPEN
+**Status:** ✅ RESOLVED
+**Fixed In:** commit 990bba4 (partial), current session (complete)
 **Branch:** feature/mail-inventory-status
-**Reproducibility:** Consistent during gameplay
+**Reproducibility:** Was Consistent during gameplay
 
 **Description:**
-Mail inventory numbers are incrementing while in-game instead of showing static counts. Items appear to be adding up incorrectly - either aggregating mail from all account characters instead of per-character, or duplicating/re-scanning mail multiple times.
+Mail inventory items were showing incorrect counts in both Search results and Inventory tab. Items like Golden Sansam showed 3701 (223 x 7 duplicates) and Gromsblood showed 1199 (109 + 770 duplicates). The numbers appeared to be multiplying instead of showing accurate counts.
 
-**Expected Behavior:**
-- Each character's `alt.mail` should contain ONLY their own mailbox items
-- Mail scan happens once on MAIL_CLOSED, counts should be static until next mail session
-- Search results should show: "Character has 50 Iron Ore in mail" (not increasing)
+**Root Causes Identified:**
 
-**Actual Behavior:**
-- Numbers are incrementing while playing
-- Mail items might be aggregating across all characters on the account
-- Possible duplicate scanning or incorrect aggregation in search/UI
+1. **Search Corpus Building (Search.lua:346-407):**
+   - Bug: Added item name to Corpus once for EACH unique item ID variant
+   - Example: Golden Sansam had 7 different item IDs → added to Corpus 7 times
+   - Result: Search loop processed "Golden Sansam" 7 times → displayed 7 rows with 223 each = 3701 total
 
-**Potential Causes:**
+2. **Duplicate Detection (Search.lua:438-452):**
+   - Bug: Only checked if alt name existed in lookup, not item ID
+   - Result: Same item added multiple times per character if it had multiple IDs
+   - Example: Gromsblood with 2 different IDs → both added to lookup
 
-1. **Cross-Character Aggregation:**
-   - Mail scanning might be storing to wrong character's `alt.mail`
-   - `GetNormalizedPlayer()` might be returning wrong character name
-   - Search aggregation adding mail from all characters to each character's count
+3. **Missing Mail Aggregation (Inventory.lua:287-298):**
+   - Bug: Inventory tab only aggregated bank + bags, completely omitted mail items
+   - Result: Mail items weren't displayed in Inventory tab at all initially
+   - After adding mail aggregation, duplicates appeared from causes #1 and #2
 
-2. **Repeated Scanning:**
-   - `hasUpdated` flag not being cleared properly
-   - Multiple MAIL_CLOSED events triggering multiple scans
-   - Bank:Scan() being called repeatedly without clearing mail data first
+**Fixes Applied:**
 
-3. **Additive Instead of Replace:**
-   - Mail scan might be adding to existing `alt.mail` instead of replacing
-   - Search aggregation might be counting items twice (once from mail, once from bank/bags if mail items were taken)
+1. **Fixed Search Corpus (Search.lua:346-407):**
+   ```lua
+   local corpusNamesSeen = {}
+   -- ... loop through items ...
+   if not corpusNamesSeen[v.Info.name] then
+       corpusNamesSeen[v.Info.name] = true
+       table.insert(self.SearchData.Corpus, v.Info.name)
+   end
+   -- Still map ALL item IDs to names for lookup
+   itemNames[v.ID] = v.Info.name
+   ```
 
-**Investigation Steps:**
+2. **Fixed Duplicate Detection (Search.lua:438-452):**
+   ```lua
+   -- Check BOTH alt name AND item ID
+   for _, existingEntry in pairs(self.SearchData.Lookup[name]) do
+       if existingEntry.alt == player and existingEntry.item.ID == itemEntry.ID then
+           found = true
+           break
+       end
+   end
+   ```
 
-1. Check which character name is being used in Bank:Scan()
-   - Add debug: `TOGBankClassic_Output:Debug("MAIL", "Scanning mail for: %s", player)`
-   - Verify player name matches current character
+3. **Added Mail Aggregation to Inventory Tab (Inventory.lua:287-298):**
+   ```lua
+   if alt.mail and alt.mail.items then
+       for itemID, mailItem in pairs(alt.mail.items) do
+           local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+           items = TOGBankClassic_Item:Aggregate(items, {fakeItem})
+       end
+   end
+   ```
 
-2. Check if hasUpdated flag is being cleared:
-   - Add debug in Bank:Scan() before and after mail scan
-   - Verify flag is false after scan completes
+**Verification:**
+- Golden Sansam: Now shows 223 (correct) instead of 3701
+- Gromsblood: Now shows 109 (correct) instead of 1199
+- Inventory tab: Now includes mail items in aggregated counts
+- Search results: Each item appears once with correct total count
 
-3. Check if mail data is replaced or added:
-   - `alt.mail = mailData` should REPLACE, not merge
-   - Check if old mail data persists after scan
+**Debug Logging:**
+Added comprehensive MAIL category debug logging throughout Search and Inventory modules to track:
+- Corpus building (unique names vs item IDs)
+- Lookup table construction (duplicate detection)
+- Mail aggregation (items being added)
+- Display events (what counts are shown)
 
-4. Check search aggregation logic:
-   - Verify mail items are only counted once per character
-   - Check if `Item:Aggregate()` is being called multiple times on same data
+Debug logging intentionally left in place for future diagnostics.
 
-**Files to Investigate:**
-- Modules/Bank.lua (lines 167-174) - Mail scan caller
-- Modules/MailInventory.lua - ScanMailInventory() logic
-- Modules/UI/Search.lua (lines 368-377) - Mail aggregation in search
-- Modules/Events.lua (lines 257, 269) - MAIL_SHOW/MAIL_CLOSED handlers
+**Files Modified:**
+- Modules/UI/Search.lua (lines 346-407, 438-452, 525-545, 569)
+- Modules/UI/Inventory.lua (lines 281-308)
+- docs/DELTA_BUGS.md (this file)
 
-**Test Scenario:**
-1. Character A has 50 Iron Ore in mail
-2. Open/close mailbox → Should show 50
-3. Wait a few minutes → Should still show 50 (not 100, 150, etc.)
-4. Switch to Character B with 30 Iron Ore in mail
-5. Character A should still show 50, not 80
-
-**Priority:** CRITICAL - Core mail inventory feature not working correctly
+**Priority:** CRITICAL - Core mail inventory feature not working correctly → ✅ RESOLVED
 
 ---
 
