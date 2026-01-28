@@ -1036,38 +1036,68 @@ end
 
 -- Ensure legacy fields (bank.items, bags.items) exist for backward compatibility with old clients
 -- New clients (v0.8.0+) use alt.items, but old clients need bank.items and bags.items
+-- IMPORTANT: This also ensures mail items are included in legacy fields for old clients
 function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	if not alt or not alt.items then
 		return alt
 	end
 
-	-- If legacy fields already exist, keep them (from Bank.lua scan)
-	if alt.bank and alt.bank.items and alt.bags and alt.bags.items then
-		return alt
-	end
-
-	-- Otherwise, reconstruct from alt.items for backward compatibility
-	-- Note: We can't perfectly separate bank from bags without location metadata,
-	-- so we put all items in bank.items for old clients (they'll still see everything)
-	TOGBankClassic_Output:Debug("SYNC", "Reconstructing legacy fields from alt.items for %s", alt.name or "unknown")
+	-- Check if we have mail items that need to be added to legacy fields
+	local hasMailItems = alt.mail and alt.mail.items and next(alt.mail.items)
 	
-	if not alt.bank then
-		alt.bank = {}
-	end
-	if not alt.bank.items then
+	-- If no legacy fields exist, reconstruct from alt.items
+	if not alt.bank or not alt.bank.items then
+		TOGBankClassic_Output:Debug("SYNC", "Reconstructing legacy fields from alt.items for %s", alt.name or "unknown")
+		
+		if not alt.bank then
+			alt.bank = {}
+		end
 		alt.bank.items = {}
-		-- Copy all items from alt.items to bank.items for old client compatibility
+		-- Copy all items from alt.items to bank.items (includes mail)
 		for _, item in ipairs(alt.items) do
 			table.insert(alt.bank.items, item)
 		end
+		
+		if not alt.bags then
+			alt.bags = {}
+		end
+		if not alt.bags.items then
+			alt.bags.items = {}
+		end
+		
+		return alt
 	end
 	
+	-- Legacy fields exist (from Bank.lua scan), but they don't include mail
+	-- Add mail items to bank.items so old clients can see them
+	if hasMailItems then
+		-- Create a lookup of existing items in bank.items by ID
+		local existingBank = {}
+		for _, item in ipairs(alt.bank.items) do
+			if item.ID then
+				existingBank[item.ID] = item
+			end
+		end
+		
+		-- Add or aggregate mail items into bank.items
+		for itemID, mailItem in pairs(alt.mail.items) do
+			if existingBank[itemID] then
+				-- Item exists in bank, add mail count to it
+				existingBank[itemID].Count = (existingBank[itemID].Count or 0) + (mailItem.count or 0)
+				TOGBankClassic_Output:Debug("SYNC", "Added mail quantity to existing bank item %d: +%d", itemID, mailItem.count or 0)
+			else
+				-- Item not in bank, add it as a new entry
+				table.insert(alt.bank.items, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
+				TOGBankClassic_Output:Debug("SYNC", "Added mail-only item %d to bank.items: count=%d", itemID, mailItem.count or 0)
+			end
+		end
+	end
+	
+	-- Ensure bags.items exists (even if empty)
 	if not alt.bags then
 		alt.bags = {}
 	end
 	if not alt.bags.items then
-		-- Keep bags.items empty if we don't have the original data
-		-- Old clients will see all items in bank.items
 		alt.bags.items = {}
 	end
 	
