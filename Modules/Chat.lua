@@ -360,6 +360,40 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					TOGBankClassic_Guild:QueryRoster(sender, data.roster)
 				end
 			end
+			if data.requests then
+				local theirVersion = 0
+				local theirHash = nil
+				if type(data.requests) == "table" then
+					theirVersion = tonumber(data.requests.version or 0) or 0
+					theirHash = data.requests.hash
+				else
+					theirVersion = tonumber(data.requests or 0) or 0
+				end
+
+				local ourVersion = TOGBankClassic_Guild:GetRequestsVersion()
+				local ourHash = TOGBankClassic_Guild:GetRequestsHash()
+				local shouldQuery = false
+
+				if theirHash then
+					if not ourHash then
+						-- We have no hash/data but they do.
+						shouldQuery = true
+					elseif theirHash ~= ourHash then
+						-- Hash mismatch: always query index (version may not capture deletes/holes).
+						shouldQuery = true
+					end
+				elseif theirVersion > ourVersion then
+					-- Legacy fallback: version-only comparison.
+					shouldQuery = true
+				end
+
+				if shouldQuery then
+					TOGBankClassic_Output:Debug("REQUESTS",
+						"Hash/version mismatch from %s (theirVersion=%d, ourVersion=%d), querying index.",
+						tostring(sender), theirVersion, ourVersion)
+					TOGBankClassic_Guild:QueryRequestsIndex(sender, "NORMAL")
+				end
+			end
 			-- PERF-002 fix: Request sync decoupled from inventory sync (togbank-dv)
 			-- Request syncs now handled independently via SendRequestsVersionPing()
 			if data.alts then
@@ -537,6 +571,20 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					TOGBankClassic_Guild:SendRequestsSnapshot(sender)
 				end
 			end
+			if data.type == "requests-index" then
+				local matches = (data.player == "*" or data.player == player)
+				if matches then
+					TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query")
+					TOGBankClassic_Guild:SendRequestsIndex(sender)
+				end
+			end
+			if data.type == "requests-by-id" then
+				local matches = (data.player == "*" or data.player == player)
+				if matches then
+					TOGBankClassic_Output:DebugComm("REQUEST BY-ID HANDLER: Responding to requests-by-id query")
+					TOGBankClassic_Guild:SendRequestsById(sender, data.ids)
+				end
+			end
 			if data.type == "requests-log" then
 				-- Legacy query type - respond with full snapshot
 				local matches = (data.player == "*" or data.player == player)
@@ -704,6 +752,21 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				ColorPlayerName(sender),
 				SHARES_COLOR,
 				"requests snapshot. We accept it by default.",
+				FormatSyncStatus(status)
+			)
+		end
+		if data.type == "requests-index" then
+			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "requests index. We accept it by default.")
+			TOGBankClassic_Guild:ReceiveRequestsIndex(data, sender)
+		end
+		if data.type == "requests-by-id" then
+			local status = TOGBankClassic_Guild:ReceiveRequestsById(data)
+			self:Debug(
+				"REQUESTS",
+				">",
+				ColorPlayerName(sender),
+				SHARES_COLOR,
+				"requests by-id data. We accept it by default.",
 				FormatSyncStatus(status)
 			)
 		end

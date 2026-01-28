@@ -32,8 +32,8 @@ Conflict resolution (merge-based sync):
 - Fulfillment uses max() to ensure idempotency.
 
 Sync flow:
-- Version broadcast includes requestsVersion.
-- Full snapshots are exchanged and merged per-request.
+- Version broadcast includes requestsVersion + requests hash.
+- Full snapshots and by-id fetches are merged per-request.
 - Mutations are broadcast as entries and applied directly.
 ]]
 
@@ -130,6 +130,34 @@ local function countRequests(map)
 		n = n + 1
 	end
 	return n
+end
+
+-- Compute a stable hash of requests + tombstones for sync comparison.
+local function computeRequestsHash(requests, tombstones)
+	local parts = {}
+
+	for id, req in pairs(requests or {}) do
+		local updatedAt = tonumber(req.updatedAt or req.date or 0) or 0
+		table.insert(parts, string.format("r:%s:%d", tostring(id), updatedAt))
+	end
+
+	for id, ts in pairs(tombstones or {}) do
+		local deletedAt = tonumber(ts or 0) or 0
+		if deletedAt > 0 then
+			table.insert(parts, string.format("t:%s:%d", tostring(id), deletedAt))
+		end
+	end
+
+	table.sort(parts)
+	local combined = table.concat(parts, "|")
+	local sum = 0
+	local len = #combined
+	for i = 1, len do
+		local byte = string.byte(combined, i)
+		sum = (sum * 31 + byte) % 2147483647
+	end
+	sum = (sum * 31 + len) % 2147483647
+	return sum
 end
 
 -- Calculate requestsVersion as max updatedAt across all requests
@@ -547,6 +575,14 @@ function Guild:RefreshRequestsUI()
 	end
 end
 
+function Guild:GetRequestsHash()
+	if not self.Info then
+		return 0
+	end
+	self:EnsureRequestsInitialized()
+	return computeRequestsHash(self.Info.requests, self.Info.requestsTombstones)
+end
+
 -- Snapshot sync messaging.
 function Guild:GetRequestsVersion()
 	if not self.Info then
@@ -601,6 +637,211 @@ function Guild:QueryRequestsSnapshot(player, priority)
 	TOGBankClassic_Output:DebugComm("[SYNC-004] QUERY REQUESTS: Sent wildcard query (removed targeted spam)")
 end
 
+-- Request index query/response for hash-based sync.
+function Guild:QueryRequestsIndex(target, priority)
+	local payload = {
+		player = "*",
+		type = "requests-index",
+		version = self:GetRequestsVersion(),
+		hash = self:GetRequestsHash(),
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	if target and target ~= "" then
+		if not TOGBankClassic_Core:SendWhisper("togbank-r", data, target, priority or "NORMAL") then
+			return false
+		end
+	else
+		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, priority or "BULK")
+	end
+	return true
+end
+
+function Guild:SendRequestsIndex(target)
+	if not self.Info then
+		return
+	end
+	self:EnsureRequestsInitialized()
+	self:NormalizeRequestList()
+
+	local requestsIndex = {}
+	for id, req in pairs(self.Info.requests or {}) do
+		local updatedAt = tonumber(req.updatedAt or req.date or 0) or 0
+		table.insert(requestsIndex, { id = id, updatedAt = updatedAt })
+	end
+	table.sort(requestsIndex, function(a, b)
+		return tostring(a.id) < tostring(b.id)
+	end)
+
+	local tombstonesIndex = {}
+	for id, ts in pairs(self.Info.requestsTombstones or {}) do
+		local deletedAt = tonumber(ts or 0) or 0
+		if deletedAt > 0 then
+			table.insert(tombstonesIndex, { id = id, deletedAt = deletedAt })
+		end
+	end
+	table.sort(tombstonesIndex, function(a, b)
+		return tostring(a.id) < tostring(b.id)
+	end)
+
+	local payload = {
+		type = "requests-index",
+		version = self:GetRequestsVersion(),
+		hash = self:GetRequestsHash(),
+		requests = requestsIndex,
+		tombstones = tombstonesIndex,
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	if target and target ~= "" then
+		TOGBankClassic_Core:SendWhisper("togbank-d", data, target, "BULK")
+	else
+		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
+	end
+end
+
+function Guild:ReceiveRequestsIndex(payload, sender)
+	if not payload or type(payload) ~= "table" then
+		return
+	end
+	if not self.Info then
+		return
+	end
+	self:EnsureRequestsInitialized()
+
+	local incomingRequests = payload.requests
+	local incomingTombstones = payload.tombstones
+	if type(incomingRequests) ~= "table" then
+		return
+	end
+
+	-- Apply tombstones from index and track for skip logic.
+	local tombstonesMap = {}
+	for _, entry in pairs(incomingTombstones or {}) do
+		if entry and entry.id then
+			local ts = tonumber(entry.deletedAt or entry.ts or 0) or 0
+			if ts > 0 then
+				tombstonesMap[entry.id] = ts
+				local currentTs = tonumber((self.Info.requestsTombstones or {})[entry.id] or 0) or 0
+				if ts > currentTs then
+					self.Info.requestsTombstones = self.Info.requestsTombstones or {}
+					self.Info.requestsTombstones[entry.id] = ts
+				end
+				local localReq = self.Info.requests[entry.id]
+				if localReq then
+					local localUpdated = tonumber(localReq.updatedAt or localReq.date or 0) or 0
+					if localUpdated <= ts then
+						self.Info.requests[entry.id] = nil
+					end
+				end
+			end
+		end
+	end
+
+	local missingIds = {}
+	for _, entry in pairs(incomingRequests) do
+		if entry and entry.id then
+			local incomingUpdated = tonumber(entry.updatedAt or entry.date or 0) or 0
+			local tombstoneTs = tombstonesMap[entry.id] or tonumber((self.Info.requestsTombstones or {})[entry.id] or 0) or 0
+			if tombstoneTs > 0 and incomingUpdated <= tombstoneTs then
+				-- Deleted entry, skip fetching
+			else
+				local localReq = self.Info.requests[entry.id]
+				local localUpdated = localReq and (tonumber(localReq.updatedAt or localReq.date or 0) or 0) or 0
+				if not localReq or localUpdated < incomingUpdated then
+					table.insert(missingIds, entry.id)
+				end
+			end
+		end
+	end
+
+	if #missingIds > 0 then
+		self:QueryRequestsById(sender, missingIds)
+	else
+		self:RefreshRequestsUI()
+	end
+end
+
+function Guild:QueryRequestsById(target, ids, priority)
+	if not ids or type(ids) ~= "table" or #ids == 0 then
+		return false
+	end
+	local payload = {
+		player = "*",
+		type = "requests-by-id",
+		ids = ids,
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	if target and target ~= "" then
+		if not TOGBankClassic_Core:SendWhisper("togbank-r", data, target, priority or "NORMAL") then
+			return false
+		end
+	else
+		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, priority or "BULK")
+	end
+	return true
+end
+
+function Guild:SendRequestsById(target, ids)
+	if not ids or type(ids) ~= "table" or #ids == 0 then
+		return
+	end
+	if not self.Info then
+		return
+	end
+	self:EnsureRequestsInitialized()
+
+	local requests = {}
+	local tombstones = {}
+	for _, id in ipairs(ids) do
+		if id then
+			local req = self.Info.requests[id]
+			if req then
+				table.insert(requests, req)
+			else
+				local ts = tonumber((self.Info.requestsTombstones or {})[id] or 0) or 0
+				if ts > 0 then
+					tombstones[id] = ts
+				end
+			end
+		end
+	end
+
+	local payload = {
+		type = "requests-by-id",
+		requests = requests,
+		tombstones = tombstones,
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	if target and target ~= "" then
+		TOGBankClassic_Core:SendWhisper("togbank-d", data, target, "BULK")
+	else
+		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
+	end
+end
+
+function Guild:ReceiveRequestsById(payload)
+	if not payload or type(payload) ~= "table" then
+		return ADOPTION_STATUS.INVALID
+	end
+	if not self.Info then
+		return ADOPTION_STATUS.IGNORED
+	end
+	self:EnsureRequestsInitialized()
+
+	local requests = payload.requests
+	if not requests or type(requests) ~= "table" then
+		return ADOPTION_STATUS.INVALID
+	end
+
+	if self:ApplyRequestSnapshot({
+		requests = requests,
+		tombstones = payload.tombstones or {},
+	}) then
+		return ADOPTION_STATUS.ADOPTED
+	end
+
+	return ADOPTION_STATUS.INVALID
+end
+
 -- Receive and merge a requests snapshot from another player.
 -- Uses merge-based sync - always merges, ApplyRequestSnapshot handles conflict resolution.
 function Guild:ReceiveRequestsData(payload)
@@ -636,7 +877,10 @@ function Guild:SendRequestsVersionPing()
 		return
 	end
 	local payload = {
-		requests = self:GetRequestsVersion(),
+		requests = {
+			version = self:GetRequestsVersion(),
+			hash = self:GetRequestsHash(),
+		},
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
