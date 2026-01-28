@@ -292,9 +292,34 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			end
 		end
 		
-		-- Debug: Log source data counts
+		-- Debug: Log source data counts and check for duplicates
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: bank=%d, bags=%d, mail=%d items", 
 			tab, #bankItems, #bagItems, #mailItems)
+		
+		-- Check for duplicate IDs in source arrays
+		local function countByID(arr, name)
+			local counts = {}
+			local total = 0
+			local uniqueCount = 0
+			for _, item in pairs(arr) do
+				if item and item.ID then
+					local id = tostring(item.ID)
+					if not counts[id] then
+						counts[id] = 0
+						uniqueCount = uniqueCount + 1
+					end
+					counts[id] = counts[id] + (item.Count or 1)
+					total = total + (item.Count or 1)
+				end
+			end
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002]   %s: %d unique IDs, %d total count", name, uniqueCount, total)
+			return counts, total
+		end
+		
+		local bankCounts, bankTotal = countByID(bankItems, "bank")
+		local bagCounts, bagTotal = countByID(bagItems, "bags")
+		local mailCounts, mailTotal = countByID(mailItems, "mail")
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002]   Combined should be: %d", bankTotal + bagTotal + mailTotal)
 		
 		local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
 		aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
