@@ -193,6 +193,41 @@ local function nextRequestId(info, actor)
 	return string.format("%s:%d", actor or "unknown", info.requestIdSeq)
 end
 
+-- Merge a single request using last-writer-wins.
+-- Returns: "added", "updated", "kept", "tombstoned", or nil on error
+local function mergeRequest(requests, tombstones, id, incoming)
+	if not incoming or not id then
+		return nil
+	end
+
+	local clean = sanitizeRequest(incoming)
+	if not clean then
+		return nil
+	end
+
+	local incomingTs = tonumber(clean.updatedAt or clean.date or 0) or 0
+	local tombstoneTs = tonumber((tombstones or {})[id] or 0) or 0
+
+	-- Check tombstone
+	if tombstoneTs > 0 and incomingTs <= tombstoneTs then
+		return "tombstoned"
+	end
+
+	local existing = requests[id]
+	if existing then
+		local existingTs = tonumber(existing.updatedAt or existing.date or 0) or 0
+		if incomingTs > existingTs then
+			requests[id] = clean
+			return "updated"
+		else
+			return "kept"
+		end
+	else
+		requests[id] = clean
+		return "added"
+	end
+end
+
 -- Initialization and normalization.
 function Guild:EnsureRequestsInitialized()
 	if not self.Info then
@@ -261,7 +296,7 @@ function Guild:NormalizeRequestList()
 	end
 
 	local before = countRequests(self.Info.requests)
-	TOGBankClassic_Output:Debug(string.format("[UI-003] NormalizeRequestList: Starting with %d requests", before))
+	TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Starting with %d requests", before))
 
 	local normalized = {}
 	local tombstones = self.Info.requestsTombstones or {}
@@ -273,7 +308,7 @@ function Guild:NormalizeRequestList()
 			local tombstoneTs = tonumber(tombstones[clean.id] or 0) or 0
 			if tombstoneTs > 0 and (tonumber(clean.updatedAt or 0) or 0) <= tombstoneTs then
 				-- Skip entries that were deleted after their last update.
-				TOGBankClassic_Output:Debug(string.format("[UI-003] NormalizeRequestList: Skipping tombstoned request id=%s", clean.id))
+				TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Skipping tombstoned request id=%s", clean.id))
 			else
 				local existing = normalized[clean.id]
 				if existing then
@@ -281,7 +316,7 @@ function Guild:NormalizeRequestList()
 					local incomingUpdated = tonumber(clean.updatedAt or clean.date or 0) or 0
 					if incomingUpdated > existingUpdated then
 						normalized[clean.id] = clean
-						TOGBankClassic_Output:Debug(string.format("[UI-003] NormalizeRequestList: Updated duplicate id=%s", clean.id))
+						TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Updated duplicate id=%s", clean.id))
 					end
 				else
 					normalized[clean.id] = clean
@@ -307,7 +342,7 @@ function Guild:NormalizeRequestList()
 	self.Info.requestsVersion = latest
 
 	local after = countRequests(normalized)
-	TOGBankClassic_Output:Debug(string.format("[UI-003] NormalizeRequestList: Finished with %d requests (calling PruneRequests)", after))
+	TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Finished with %d requests (calling PruneRequests)", after))
 
 	self:PruneRequests()
 end
@@ -356,117 +391,49 @@ end
 -- Each request is merged using last-writer-wins based on updatedAt.
 function Guild:ApplyRequestSnapshot(payload)
 	if not payload or type(payload) ~= "table" then
-		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: invalid payload")
 		return false
 	end
 	if not self.Info then
-		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: self.Info is nil")
 		return false
 	end
 	self:EnsureRequestsInitialized()
 
 	local incomingList = payload.requests
 	if not incomingList or type(incomingList) ~= "table" then
-		TOGBankClassic_Output:Debug("[UI-003] ApplyRequestSnapshot FAILED: no requests in payload")
 		return false
 	end
 
-	-- Incoming payload may be array (wire format) or map (if from newer client)
-	local incomingCount = incomingList[1] ~= nil and #incomingList or countRequests(incomingList)
-	local localCountBefore = countRequests(self.Info.requests)
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Received snapshot with %d requests, local has %d requests",
-		incomingCount, localCountBefore))
+	-- Merge incoming tombstones (keep most recent per ID)
+	local tombstones = self.Info.requestsTombstones or {}
+	for id, ts in pairs(payload.tombstones or {}) do
+		local incomingTs = tonumber(ts or 0) or 0
+		if incomingTs > (tonumber(tombstones[id] or 0) or 0) then
+			tombstones[id] = incomingTs
+		end
+	end
+	self.Info.requestsTombstones = tombstones
 
-	-- Convert incoming to map format, sanitizing each request
-	local incomingMap = {}
+	-- Merge each incoming request using LWW
+	local stats = { added = 0, updated = 0, kept = 0, tombstoned = 0 }
 	local iterFunc = incomingList[1] ~= nil and ipairs or pairs
 	for _, req in iterFunc(incomingList) do
-		local clean = sanitizeRequest(req)
-		if clean and clean.id then
-			incomingMap[clean.id] = clean
-		end
-	end
-
-	-- Merge incoming tombstones with local tombstones (keep most recent)
-	local incomingTombstones = payload.tombstones or {}
-	local localTombstones = self.Info.requestsTombstones or {}
-	for id, ts in pairs(incomingTombstones) do
-		local incomingTs = tonumber(ts or 0) or 0
-		local localTs = tonumber(localTombstones[id] or 0) or 0
-		if incomingTs > localTs then
-			localTombstones[id] = incomingTs
-		end
-	end
-	self.Info.requestsTombstones = localTombstones
-
-	-- Merge requests using last-writer-wins per request
-	local merged = {}
-	local latest = 0
-	local stats = { kept = 0, updated = 0, added = 0, tombstoned = 0 }
-
-	-- Start with local requests
-	for id, localReq in pairs(self.Info.requests) do
-		local tombstoneTs = tonumber(localTombstones[id] or 0) or 0
-		local localUpdated = tonumber(localReq.updatedAt or localReq.date or 0) or 0
-
-		if tombstoneTs > 0 and localUpdated <= tombstoneTs then
-			-- Request was deleted
-			stats.tombstoned = stats.tombstoned + 1
-		else
-			local incomingReq = incomingMap[id]
-			if incomingReq then
-				-- Both have it - last writer wins
-				local incomingUpdated = tonumber(incomingReq.updatedAt or incomingReq.date or 0) or 0
-				if incomingUpdated > localUpdated then
-					merged[id] = incomingReq
-					stats.updated = stats.updated + 1
-					if incomingUpdated > latest then latest = incomingUpdated end
-				else
-					merged[id] = localReq
-					stats.kept = stats.kept + 1
-					if localUpdated > latest then latest = localUpdated end
-				end
-			else
-				-- Only local has it - keep it
-				merged[id] = localReq
-				stats.kept = stats.kept + 1
-				if localUpdated > latest then latest = localUpdated end
+		if req and req.id then
+			local result = mergeRequest(self.Info.requests, tombstones, req.id, req)
+			if result then
+				stats[result] = (stats[result] or 0) + 1
 			end
 		end
 	end
 
-	-- Add requests only in incoming (not in local)
-	for id, incomingReq in pairs(incomingMap) do
-		if not self.Info.requests[id] then
-			local tombstoneTs = tonumber(localTombstones[id] or 0) or 0
-			local incomingUpdated = tonumber(incomingReq.updatedAt or incomingReq.date or 0) or 0
-			if tombstoneTs > 0 and incomingUpdated <= tombstoneTs then
-				-- Request was deleted
-				stats.tombstoned = stats.tombstoned + 1
-			else
-				merged[id] = incomingReq
-				stats.added = stats.added + 1
-				if incomingUpdated > latest then latest = incomingUpdated end
-			end
-		end
-	end
-
-	self.Info.requests = merged
-	if latest > 0 then
-		self.Info.requestsVersion = latest
-	end
-
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Merged - kept=%d, updated=%d, added=%d, tombstoned=%d",
-		stats.kept, stats.updated, stats.added, stats.tombstoned))
-
+	-- Update version and clean up
+	self.Info.requestsVersion = calculateRequestsVersion(self.Info.requests)
 	self:NormalizeRequestList()
 	self:PruneRequests()
 	self:PruneRequestTombstones()
-
-	local finalCount = countRequests(self.Info.requests)
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: FINAL count = %d requests", finalCount))
-
 	self:RefreshRequestsUI()
+
+	TOGBankClassic_Output:Debug(string.format("ApplyRequestSnapshot: added=%d, updated=%d, kept=%d, tombstoned=%d",
+		stats.added, stats.updated, stats.kept, stats.tombstoned))
 	return true
 end
 
@@ -481,7 +448,7 @@ function Guild:PruneRequests()
 	local prunedCount = 0
 	local latest = tonumber(self.Info.requestsVersion or 0) or 0
 
-	TOGBankClassic_Output:Debug(string.format("[UI-003] PruneRequests: Starting with %d requests", before))
+	TOGBankClassic_Output:Debug(string.format("PruneRequests: Starting with %d requests", before))
 
 	for id, req in pairs(self.Info.requests) do
 		local updated = tonumber(req.updatedAt or req.date or 0) or 0
@@ -495,7 +462,7 @@ function Guild:PruneRequests()
 		if tooOld then
 			self.Info.requests[id] = nil
 			prunedCount = prunedCount + 1
-			TOGBankClassic_Output:Debug(string.format("[UI-003] PruneRequests: Pruning request id=%s, status=%s, age=%d seconds",
+			TOGBankClassic_Output:Debug(string.format("PruneRequests: Pruning request id=%s, status=%s, age=%d seconds",
 				req.id or "nil", req.status or "nil", now - updated))
 		else
 			if updated > latest then
@@ -505,129 +472,69 @@ function Guild:PruneRequests()
 	end
 
 	if prunedCount > 0 then
-		TOGBankClassic_Output:Debug(string.format("[UI-003] PruneRequests: Pruned %d old completed requests", prunedCount))
+		TOGBankClassic_Output:Debug(string.format("PruneRequests: Pruned %d old completed requests", prunedCount))
 	end
 
 	self.Info.requestsVersion = latest
 	local after = countRequests(self.Info.requests)
 
-	TOGBankClassic_Output:Debug(string.format("[UI-003] PruneRequests: Finished with %d requests (%d pruned)", after, prunedCount))
+	TOGBankClassic_Output:Debug(string.format("PruneRequests: Finished with %d requests (%d pruned)", after, prunedCount))
 
 	return prunedCount, before, after
 end
 
--- Apply a mutation entry to the current request state.
--- Used for receiving mutations from other players.
+-- Apply a mutation entry received from another player.
 function Guild:ApplyRequestMutation(entry)
-	if not entry or type(entry) ~= "table" then
-		TOGBankClassic_Output:Debug("ApplyRequestMutation: FAIL - entry not a table")
-		return false
-	end
-	if not self.Info then
-		TOGBankClassic_Output:Debug("ApplyRequestMutation: FAIL - self.Info is nil")
+	if not entry or type(entry) ~= "table" or not self.Info then
 		return false
 	end
 	self:EnsureRequestsInitialized()
 
 	local entryType = entry.type
-	if not entryType then
-		TOGBankClassic_Output:Debug("ApplyRequestMutation: FAIL - no entry.type")
-		return false
-	end
 	local entryTs = tonumber(entry.ts or 0) or 0
 	local requestId = entry.requestId or (entry.request and entry.request.id)
-	if not requestId then
-		TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: FAIL - no requestId (type=%s)", entryType))
+	if not entryType or not requestId then
 		return false
 	end
 
 	local tombstones = self.Info.requestsTombstones or {}
-	local tombstoneTs = tonumber(tombstones[requestId] or 0) or 0
-	if tombstoneTs > 0 and entryTs > 0 and entryTs <= tombstoneTs then
-		TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: BLOCKED by tombstone (requestId=%s, entryTs=%d, tombstoneTs=%d)",
-			requestId, entryTs, tombstoneTs))
-		return false
-	end
 
-	local req = self.Info.requests[requestId]
-	local snapshot = entry.request
-
-	if not req and snapshot then
-		local clean = sanitizeRequest(snapshot)
-		if clean then
-			self.Info.requests[requestId] = clean
-			req = clean
-			TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: CREATED request from snapshot (requestId=%s, type=%s)",
-				requestId, entryType))
-		else
-			TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: sanitizeRequest returned nil for snapshot (requestId=%s)",
-				requestId))
-		end
-	end
-
+	-- Handle delete: remove request and record tombstone
 	if entryType == "delete" then
 		self.Info.requests[requestId] = nil
+		local tombstoneTs = tonumber(tombstones[requestId] or 0) or 0
 		if entryTs > tombstoneTs then
 			tombstones[requestId] = entryTs
 			self.Info.requestsTombstones = tombstones
 		end
-		if entryTs > 0 then
-			self:TouchRequestsVersion(entryTs)
-		end
 		return true
 	end
 
-	if not req then
-		TOGBankClassic_Output:Debug(string.format("ApplyRequestMutation: FAIL - req is nil, snapshot=%s (requestId=%s, type=%s)",
-			tostring(snapshot ~= nil), requestId, entryType))
-		return false
-	end
-
-	if entryType == "add" then
-		local existingUpdated = tonumber(req.updatedAt or 0) or 0
-		if entryTs >= existingUpdated then
-			local clean = sanitizeRequest(snapshot or req)
-			if clean then
-				clean.updatedAt = math.max(clean.updatedAt or entryTs, entryTs)
-				if clean.statusUpdatedAt == nil or clean.statusUpdatedAt < (clean.updatedAt or 0) then
-					clean.statusUpdatedAt = clean.updatedAt
-				end
-				self.Info.requests[requestId] = clean
-			end
-		end
-		return true
-	end
-
+	-- Handle fulfill: idempotent delta application
 	if entryType == "fulfill" then
-		if req.status == "cancelled" or req.status == "complete" then
+		local req = self.Info.requests[requestId]
+		if not req or req.status == "cancelled" or req.status == "complete" then
 			return false
 		end
-		local delta = tonumber(entry.delta or 0) or 0
-		if delta <= 0 then
-			return false
-		end
-		local qty = tonumber(req.quantity or 0) or 0
-		local fulfilled = tonumber(req.fulfilled or 0) or 0
-		local newFulfilled
-		-- [SYNC-FIX] Idempotent fulfill: if targetFulfilled is present (new format),
-		-- use max() to prevent double-application. Old entries without targetFulfilled
-		-- still use additive logic for backwards compatibility.
 		local targetFulfilled = entry.targetFulfilled
 		if targetFulfilled ~= nil then
-			-- New format: use max of current and target to ensure idempotency
-			local target = tonumber(targetFulfilled or 0) or 0
-			newFulfilled = math.max(fulfilled, target)
+			-- Idempotent: use max of current and target
+			req.fulfilled = math.max(tonumber(req.fulfilled or 0) or 0, tonumber(targetFulfilled) or 0)
 		else
-			-- Old format: additive delta (not idempotent, but backwards compatible)
-			newFulfilled = fulfilled + delta
+			-- Legacy additive delta (backwards compat)
+			local delta = tonumber(entry.delta or 0) or 0
+			if delta > 0 then
+				req.fulfilled = (tonumber(req.fulfilled or 0) or 0) + delta
+			end
 		end
-		if qty > 0 and newFulfilled > qty then
-			newFulfilled = qty
-		end
-		req.fulfilled = newFulfilled
-		if qty > 0 and newFulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
-			req.status = "fulfilled"
-			req.statusUpdatedAt = entryTs
+		-- Clamp to quantity and update status if fully fulfilled
+		local qty = tonumber(req.quantity or 0) or 0
+		if qty > 0 then
+			req.fulfilled = math.min(req.fulfilled, qty)
+			if req.fulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
+				req.status = "fulfilled"
+				req.statusUpdatedAt = entryTs
+			end
 		end
 		if entryTs > 0 then
 			req.updatedAt = math.max(tonumber(req.updatedAt or 0) or 0, entryTs)
@@ -635,15 +542,10 @@ function Guild:ApplyRequestMutation(entry)
 		return true
 	end
 
-	if entryType == "cancel" or entryType == "complete" then
-		local newStatus = (entryType == "cancel") and "cancelled" or "complete"
-		local statusUpdatedAt = tonumber(req.statusUpdatedAt or req.updatedAt or 0) or 0
-		if entryTs >= statusUpdatedAt then
-			req.status = newStatus
-			req.statusUpdatedAt = entryTs
-			req.updatedAt = math.max(tonumber(req.updatedAt or 0) or 0, entryTs)
-		end
-		return true
+	-- Handle add/cancel/complete: merge request snapshot using LWW
+	if entry.request then
+		local result = mergeRequest(self.Info.requests, tombstones, requestId, entry.request)
+		return result == "added" or result == "updated"
 	end
 
 	return false
@@ -694,7 +596,7 @@ function Guild:TouchRequestsVersion(ts)
 end
 
 function Guild:RefreshRequestsUI()
-	TOGBankClassic_Output:Debug(string.format("[UI-003] RefreshRequestsUI called: isOpen=%s, requests=%d",
+	TOGBankClassic_Output:Debug(string.format("RefreshRequestsUI called: isOpen=%s, requests=%d",
 		tostring(TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen),
 		self.Info and self.Info.requests and countRequests(self.Info.requests) or 0))
 
