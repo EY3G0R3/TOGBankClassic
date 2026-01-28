@@ -144,7 +144,6 @@ function TOGBankClassic_Item:Aggregate(a, b)
 
 	return items
 end
-end
 
 function TOGBankClassic_Item:IsUnique(link)
 	if not link then
