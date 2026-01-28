@@ -285,6 +285,16 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		end
 		if alt.bags then
 			local items = TOGBankClassic_Item:Aggregate(bank, alt.bags.items)
+			-- Include mail items
+			if alt.mail and alt.mail.items then
+				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab: aggregating mail for %s", tab)
+				for itemID, mailItem in pairs(alt.mail.items) do
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab: %s has %d x %s (ID: %d) in mail", 
+						tab, mailItem.count, mailItem.name or "Unknown", itemID)
+					local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+					items = TOGBankClassic_Item:Aggregate(items, {fakeItem})
+				end
+			end
 			TOGBankClassic_Item:GetItems(items, function(list)
 				TOGBankClassic_Item:Sort(list)
 

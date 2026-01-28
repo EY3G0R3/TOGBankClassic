@@ -10,6 +10,7 @@
 
 **Recent Fixes (2026-01-27):**
 - ✅ [FULFILL-002] Fulfill button callback not updating after split - Fixed greedy algorithm to prefer exact-fit stacks over splitting
+- ✅ [MAIL-003] Search UI crash on undefined 'info' variable - Fixed to use TOGBankClassic_Guild.Info
 - 🔴 [MAIL-002] Mail inventory incorrectly aggregating across all account characters or duplicating items
 - ✅ [MAIL-001] ComputeInventoryHash parameter mismatch - Fixed function to handle both 3-param and 4-param calling conventions
 - ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
@@ -4709,4 +4710,46 @@ end
 ---
 
 **Happy testing! Report all bugs, no matter how small. Every bug found makes the addon better. 🐛➡️✅**
+
+---
+
+### ✅ [MAIL-003] Search UI crash on undefined 'info' variable
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Mail Inventory / UI  
+**Date Reported:** 2026-01-27  
+**Status:** ✅ RESOLVED  
+**Resolution Date:** 2026-01-27
+
+**Description:**
+When typing in the search box, the UI crashes with "attempt to index global 'info' (a nil value)" at line 569 of Search.lua. This happens when trying to check if items are in mail to display the ✉ icon.
+
+**Error Message:**
+```
+3x TOGBankClassic/Modules/UI/Search.lua:569: attempt to index global 'info' (a nil value)
+[TOGBankClassic/Modules/UI/Search.lua]:569: in function 'DrawContent'
+```
+
+**Root Cause:**
+In `DrawContent()` function (line 569), code attempted to access `info.alts[norm]` but `info` was not defined in the function scope. The variable should have been `TOGBankClassic_Guild.Info`.
+
+**Affected Code:**
+```lua
+-- BEFORE (line 569)
+local alt = info.alts[norm]
+
+-- AFTER
+local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
+```
+
+**Fix:**
+Changed to use the fully qualified global `TOGBankClassic_Guild.Info` with proper nil checks.
+
+**Testing:**
+1. Open search window
+2. Type 3+ characters to trigger search
+3. Verify no Lua errors
+4. Verify mail icon (✉) appears next to banker names with items in mail
+
+---
 
