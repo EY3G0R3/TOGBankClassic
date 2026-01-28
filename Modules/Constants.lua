@@ -38,11 +38,9 @@ DEBUG_CATEGORY = {
 	MAIL = "MAIL",               -- Mail inventory scanning and tracking
 }
 
--- Request log compaction settings
+-- Request storage settings
 REQUEST_LOG = {
-	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests removed after this
-	RETENTION_SECONDS = 30 * 24 * 60 * 60,   -- 30 days: log entries older than this may be pruned
-	MAX_ENTRIES = 2000,                       -- max log entries to keep after time-based pruning
+	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests and tombstones removed after this
 	PRUNE_INTERVAL = 300,                     -- 5 minutes: minimum interval between automatic prunes
 }
 

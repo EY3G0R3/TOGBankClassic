@@ -45,7 +45,7 @@ local VALID_REQUEST_STATUS = {
 	complete = true,
 }
 
--- Compaction settings are defined in Constants.lua
+-- Expiry/prune settings are defined in Constants.lua (REQUEST_LOG table)
 
 local function generateRequestId(actor)
 	local rand = string.format("%06x", math.random(0, 0xFFFFFF))
