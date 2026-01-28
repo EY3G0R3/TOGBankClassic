@@ -280,12 +280,33 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
-		local items = alt.items or {}
 		
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: using alt.items with %d items", 
-			tab, #items)
+		-- Get items - use alt.items if available, otherwise compute on-the-fly for backward compatibility
+		local items = alt.items
+		if not items or #items == 0 then
+			-- Fallback: aggregate bank + bags + mail for existing data without alt.items
+			local bankItems = (alt.bank and alt.bank.items) or {}
+			local bagItems = (alt.bags and alt.bags.items) or {}
+			local mailItems = {}
+			if alt.mail and alt.mail.items then
+				for itemID, mailItem in pairs(alt.mail.items) do
+					table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
+				end
+			end
+			local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+			aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
+			items = {}
+			for _, item in pairs(aggregated) do
+				table.insert(items, item)
+			end
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computed items on-the-fly (backward compat), %d items", 
+				tab, #items)
+		else
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: using alt.items with %d items", 
+				tab, #items)
+		end
 		
-		if items then
+		if items and #items > 0 then
 			TOGBankClassic_Item:GetItems(items, function(list)
 				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items", 
 					tab, list and #list or 0)
