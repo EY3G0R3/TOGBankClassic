@@ -1122,6 +1122,13 @@ function TOGBankClassic_Guild:SendAltData(name)
 	-- This ensures old clients that only read bank.items/bags.items still get data
 	currentAlt = self:EnsureLegacyFields(currentAlt)
 	
+	-- Log what we're about to send (all 3 arrays for backward compatibility)
+	local itemsCount = currentAlt.items and #currentAlt.items or 0
+	local bankCount = (currentAlt.bank and currentAlt.bank.items) and #currentAlt.bank.items or 0
+	local bagsCount = (currentAlt.bags and currentAlt.bags.items) and #currentAlt.bags.items or 0
+	TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d", 
+		norm, itemsCount, bankCount, bagsCount)
+	
 	local useDelta = false
 	local deltaData = nil
 	local computeStart = debugprofilestop()
