@@ -958,7 +958,6 @@ function Guild:ApplyRequestLogEntry(entry)
 			newFulfilled = qty
 		end
 		req.fulfilled = newFulfilled
-		local currentStatusOp = req.lastStatusOp or "add"
 		if qty > 0 and newFulfilled >= qty and currentPriority <= fulfillPriority then
 			req.status = "fulfilled"
 			req.statusUpdatedAt = entryTs
@@ -1018,6 +1017,124 @@ function Guild:ApplyRequestLogEntry(entry)
 end
 
 -- Construct a new log entry for local changes.
+-- Check if a failed entry is permanently blocked and should update requestLogApplied to prevent infinite retries.
+-- Returns: true if entry will never succeed (should mark as processed), false if transient (should retry later)
+function Guild:IsEntryPermanentlyBlocked(entry)
+	if not entry or type(entry) ~= "table" then
+		return true -- Invalid entry structure is permanent
+	end
+	
+	if not self.Info then
+		return true -- System error is permanent
+	end
+	
+	if not entry.type or not entry.requestId then
+		return true -- Missing required fields is permanent
+	end
+	
+	-- Check tombstone blocking
+	local tombstone = self.requestTombstones and self.requestTombstones[entry.requestId]
+	if tombstone and entry.ts and entry.ts <= tombstone then
+		return true -- Tombstone blocking is permanent
+	end
+	
+	-- Check priority-based blocking for fulfill operations
+	if entry.type == "fulfill" then
+		local request = self:FindRequestByID(entry.requestId)
+		if request then
+			local currentStatusOp = request.lastStatusOp or "add"
+			local currentPriority = getOperationPriority(currentStatusOp)
+			local fulfillPriority = getOperationPriority("fulfill")
+			
+			if currentPriority > fulfillPriority then
+				return true -- Priority blocking is permanent (fulfill can't override cancel/complete)
+			end
+			
+			-- Check for invalid delta
+			if not entry.delta or tonumber(entry.delta or 0) <= 0 then
+				return true -- Invalid delta is permanent
+			end
+		end
+		-- If request not found, it's transient (might arrive later)
+		return false
+	end
+	
+	-- For cancel/complete, if request doesn't exist, it's transient
+	if entry.type == "cancel" or entry.type == "complete" then
+		local request = self:FindRequestByID(entry.requestId)
+		if not request then
+			return false -- Request might arrive later
+		end
+	end
+	
+	-- Unknown operation type is permanent
+	if entry.type ~= "add" and entry.type ~= "fulfill" and entry.type ~= "cancel" and entry.type ~= "complete" and entry.type ~= "delete" then
+		return true
+	end
+	
+	-- Default: not permanently blocked
+	return false
+end
+
+-- Check if a failed entry is permanently blocked and should update requestLogApplied to prevent infinite retries.
+-- Returns: true if entry will never succeed (should mark as processed), false if transient (should retry later)
+function Guild:IsEntryPermanentlyBlocked(entry)
+	if not entry or type(entry) ~= "table" then
+		return true -- Invalid entry structure is permanent
+	end
+	
+	if not self.Info then
+		return true -- System error is permanent
+	end
+	
+	if not entry.type or not entry.requestId then
+		return true -- Missing required fields is permanent
+	end
+	
+	-- Check tombstone blocking
+	local tombstone = self.requestTombstones and self.requestTombstones[entry.requestId]
+	if tombstone and entry.ts and entry.ts <= tombstone then
+		return true -- Tombstone blocking is permanent
+	end
+	
+	-- Check priority-based blocking for fulfill operations
+	if entry.type == "fulfill" then
+		local request = self:FindRequestByID(entry.requestId)
+		if request then
+			local currentStatusOp = request.lastStatusOp or "add"
+			local currentPriority = getOperationPriority(currentStatusOp)
+			local fulfillPriority = getOperationPriority("fulfill")
+			
+			if currentPriority > fulfillPriority then
+				return true -- Priority blocking is permanent (fulfill can't override cancel/complete)
+			end
+			
+			-- Check for invalid delta
+			if not entry.delta or tonumber(entry.delta or 0) <= 0 then
+				return true -- Invalid delta is permanent
+			end
+		end
+		-- If request not found, it's transient (might arrive later)
+		return false
+	end
+	
+	-- For cancel/complete, if request doesn't exist, it's transient
+	if entry.type == "cancel" or entry.type == "complete" then
+		local request = self:FindRequestByID(entry.requestId)
+		if not request then
+			return false -- Request might arrive later
+		end
+	end
+	
+	-- Unknown operation type is permanent
+	if entry.type ~= "add" and entry.type ~= "fulfill" and entry.type ~= "cancel" and entry.type ~= "complete" and entry.type ~= "delete" then
+		return true
+	end
+	
+	-- Default: not permanently blocked
+	return false
+end
+
 function Guild:BuildRequestLogEntry(entryType, request, extra)
 	if not self.Info then
 		return nil
@@ -1497,7 +1614,16 @@ function Guild:ReceiveRequestLogEntries(payload, sender)
 					TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Recorded seq=%d successfully, updated lastSeq", seq)
 				end
 			else
-				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Failed to record seq=%d (might be duplicate)", seq)
+				-- [SYNC-005] Check if failure is permanent - if so, mark as processed to prevent infinite retries
+				local isPermanent = self:IsEntryPermanentlyBlocked(entry)
+				if isPermanent then
+					TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Entry seq=%d permanently blocked, marking as processed", seq)
+					if seq > lastSeq then
+						lastSeq = seq
+					end
+				else
+					TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Failed to record seq=%d (transient failure, will retry)", seq)
+				end
 			end
 		end
 	end

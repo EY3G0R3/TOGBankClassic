@@ -80,6 +80,181 @@ None currently open.
 
 None currently open.
 
+### 🟡 MEDIUM
+
+#### [SYNC-005] Failed log entries may retry infinitely without progress tracking
+
+**Severity:** 🟡 MEDIUM
+**Category:** Request Sync / Error Handling
+**Reporter:** Code Review
+**Date Reported:** 2026-01-28
+**Date Resolved:** 2026-01-28
+**Status:** ✅ RESOLVED
+**Reproducibility:** Theoretical - not observed in production
+**Related:** [SYNC-004] Event log processing
+
+**Problem:**
+When `ReceiveRequestLogEntries()` receives a log entry that fails to apply (e.g., blocked by tombstone, invalid delta, higher priority status), the entry is not marked as "processed" in `requestLogApplied`. This means the system will keep trying to process the same failing entry on every subsequent sync attempt.
+
+**Technical Details:**
+
+The flow when processing received log entries:
+
+```lua
+-- ReceiveRequestLogEntries (lines 1473-1503)
+for _, entry in ipairs(list) do
+    if self:RecordRequestLogEntry(entry, false) then
+        -- Success: Update lastSeq
+        if seq > lastSeq then
+            lastSeq = seq
+        end
+    else
+        -- Failure: lastSeq NOT updated
+        -- requestLogApplied stays at old value
+    end
+end
+```
+
+**When RecordRequestLogEntry fails:**
+1. Calls `ApplyRequestLogEntry(entry)`
+2. `ApplyRequestLogEntry` returns `false` for various reasons (see below)
+3. `RecordRequestLogEntry` returns `false` without updating `requestLogApplied`
+4. Next sync: Same entry received again, fails again, infinite loop
+
+**Cases when ApplyRequestLogEntry returns FALSE:**
+
+1. **Invalid Entry Structure:**
+   - Entry is not a table (line 839-840)
+   - Entry has no `type` field (line 850-851)
+   - Entry has no `requestId` (line 856-857)
+
+2. **Tombstone Blocking:**
+   - Entry timestamp ≤ existing tombstone timestamp (line 862-865)
+   - Example: Entry at t=100 blocked by deletion tombstone at t=105
+   - **Impact:** Legitimate - entry should never apply (request was deleted)
+
+3. **Request Not Found:**
+   - fulfill/cancel/complete entry but request doesn't exist (line 903-904)
+   - Entry has no snapshot to create request from
+   - **Impact:** Could be transient (request arrives later) or permanent (missing data)
+
+4. **Fulfill Blocked by Higher Priority:**
+   - Fulfill entry but status set by cancel/complete (line 932-936)
+   - **Impact:** Legitimate - fulfill should never apply after cancel
+   - **But:** Priority system now handles this, so entry will always fail
+
+5. **Invalid Fulfill Delta:**
+   - Fulfill entry with delta ≤ 0 (line 939-941)
+   - **Impact:** Bad data - entry should never succeed
+
+6. **Unknown Operation Type:**
+   - Entry type not recognized (line 1019 fallthrough)
+   - **Impact:** Bad data or future version incompatibility
+
+**Current Behavior - Deduplication Safety:**
+
+The system has a safety mechanism via `requestLogIndex`:
+
+```lua
+-- RecordRequestLogEntry (lines 1064-1071)
+if self.requestLogIndex and self.requestLogIndex[entry.id] then
+    -- Entry already recorded previously
+    self.Info.requestLogApplied[actor] = math.max(current, seq)
+    return true  -- Pretend it succeeded
+end
+```
+
+**Key insight:** If the entry was previously processed successfully (even in an earlier session), it's in `requestLogIndex` and won't retry. The infinite retry only happens for entries that consistently fail validation/application.
+
+**Analysis - Is This Actually a Problem?**
+
+**Legitimate Permanent Failures** (should NOT update requestLogApplied):
+- Tombstone blocking (entry is obsolete)
+- Invalid data (bad entry structure, zero delta)
+- Unknown operation type (version incompatibility)
+
+**Transient Failures** (should NOT update requestLogApplied):
+- Request not found yet (might arrive in next sync)
+- Could resolve themselves
+
+**Priority-Based Blocking** (SHOULD update requestLogApplied):
+- Fulfill blocked by cancel/complete will NEVER succeed
+- Keeps retrying forever even though state is final
+- **This is the actual bug**
+
+**Example Problematic Scenario:**
+
+```
+Time=100: User cancels request (seq=5)
+Time=105: Banker fulfills request (seq=20)
+Sync: Receives cancel seq=5 → applies, lastStatusOp="cancel"
+Sync: Receives fulfill seq=20 → BLOCKED by cancel priority
+      → RecordRequestLogEntry returns false
+      → requestLogApplied stays at seq=5
+Next sync: Receives fulfill seq=20 again → BLOCKED again
+Forever: Keeps receiving and rejecting fulfill seq=20
+```
+
+**Proposed Solution:**
+
+Update `ReceiveRequestLogEntries()` to distinguish between:
+1. **Hard failures** (should mark as processed): Tombstone block, priority block
+2. **Soft failures** (should retry): Request not found, transient errors
+
+```lua
+if self:RecordRequestLogEntry(entry, false) then
+    if seq > lastSeq then
+        lastSeq = seq
+    end
+else
+    -- Check if failure was permanent/expected
+    local isPermanentFailure = self:IsEntryPermanentlyBlocked(entry)
+    if isPermanentFailure then
+        -- Mark as processed to prevent infinite retries
+        if seq > lastSeq then
+            lastSeq = seq
+        end
+    end
+end
+```
+
+**Workaround:**
+The system self-heals when `requestLogIndex` gets rebuilt (on reload), as previously failed entries will be detected as duplicates and skipped. So the retry loop is limited to one session and doesn't persist across reloads.
+
+**Priority:** Medium - Issue is self-limiting (resets on reload) and only affects permanently-blocked entries during one session.
+
+**Resolution:**
+
+Added `IsEntryPermanentlyBlocked()` method to distinguish between:
+1. **Permanent failures** (should mark as processed): Tombstone block, priority block, invalid data, unknown operations
+2. **Transient failures** (should retry): Request not found (might arrive later)
+
+Updated `ReceiveRequestLogEntries()` to check if a failed entry is permanently blocked:
+- If **permanent**: Update `requestLogApplied` to mark as processed (prevents infinite retries)
+- If **transient**: Don't update `requestLogApplied` (will retry on next sync)
+
+**Key Changes:**
+- **Lines 1020-1075** (RequestLog.lua): Added `IsEntryPermanentlyBlocked()` method
+  - Returns `true` for: Invalid structure, tombstone blocking, priority blocking, invalid delta, unknown operation
+  - Returns `false` for: Request not found (transient, might arrive later)
+- **Lines 1550-1567** (RequestLog.lua): Updated `ReceiveRequestLogEntries()` failure handling
+  - Calls `IsEntryPermanentlyBlocked()` on failure
+  - Updates `lastSeq` for permanent failures (marks as processed)
+  - Logs different messages for permanent vs transient failures
+
+**Example Fixed Scenario:**
+```
+Time=100: User cancels request (seq=5)
+Time=105: Banker fulfills request (seq=20)
+Sync: Receives cancel seq=5 → applies, lastStatusOp="cancel"
+Sync: Receives fulfill seq=20 → BLOCKED by cancel priority
+      → IsEntryPermanentlyBlocked() returns true
+      → requestLogApplied updated to seq=20
+Next sync: Won't retry fulfill seq=20 (already processed)
+```
+
+This prevents infinite retry loops for entries that will never succeed while still retrying transient failures.
+
 ---
 
 ## Resolved Bugs (2026-01-28)

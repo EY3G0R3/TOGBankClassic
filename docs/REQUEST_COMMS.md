@@ -322,6 +322,34 @@ Without priority-based resolution, the original timestamp-only approach caused i
 
 This ensures that user intent (cancellations) is respected even when there's network lag or concurrent modifications.
 
+#### Failed Entry Handling (SYNC-005)
+
+When processing log entries, some entries may fail to apply (e.g., blocked by tombstone, invalid data, priority conflicts). The system distinguishes between:
+
+**Permanent Failures** (mark as processed):
+- Tombstone blocking: Entry timestamp ≤ deletion tombstone
+- Priority blocking: Fulfill blocked by higher-priority cancel/complete
+- Invalid data: Missing fields, invalid delta, bad structure
+- Unknown operation: Future version incompatibility
+
+**Transient Failures** (retry later):
+- Request not found: fulfill/cancel/complete entry arrives before corresponding add
+
+```lua
+-- In ReceiveRequestLogEntries()
+if not self:RecordRequestLogEntry(entry, false) then
+    local isPermanent = self:IsEntryPermanentlyBlocked(entry)
+    if isPermanent then
+        -- Mark as processed to prevent infinite retries
+        requestLogApplied[actor] = seq
+    else
+        -- Don't update - will retry on next sync
+    end
+end
+```
+
+This prevents infinite retry loops for entries that will never succeed while still allowing transient failures to resolve naturally.
+
 ---
 
 ### Version Broadcast (togbank-v)
