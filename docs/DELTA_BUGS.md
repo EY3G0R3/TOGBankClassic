@@ -9,6 +9,7 @@
 
 **Recent Fixes (2026-01-28):**
 - ✅ [UI-008] C stack overflow in item loading callbacks - Fixed by preventing BuildSearchData from running multiple times per data update
+- ✅ [SYNC-007] Backward compatibility for SYNC-006 aggregate structure - Implemented bidirectional sync between pre-SYNC-006 and post-SYNC-006 clients
 - ✅ [SYNC-006] Mail quantities appearing additive during syncs - Consolidated inventory into single alt.items aggregate
 - ✅ [MAIL-004] Non-stackable items filtered out by greedy algorithm - Fixed minStackSize to never exceed largestStack
 - ✅ [UI-006] Highlight checkbox not appearing for bankers - Fixed by refreshing UI on GUILD_ROSTER_UPDATE
@@ -5031,7 +5032,239 @@ Players can shift-click items to link them in chat and inspect manually.
 
 ---
 
+### ✅ [SYNC-007] Backward compatibility for SYNC-006 aggregate structure
+
+**Severity:** 🟠 HIGH  
+**Category:** Delta Sync / Backward Compatibility / Data Structure Migration  
+**Reporter:** Internal (discovered during SYNC-006 implementation)  
+**Date Reported:** 2026-01-28  
+**Date Resolved:** 2026-01-28  
+**Status:** ✅ RESOLVED  
+**Related:** [SYNC-006] Mail quantities consolidation
+
+**Problem:**
+SYNC-006 introduced `alt.items` as a consolidated aggregate of bank + bags + mail, replacing the previous structure where only `alt.bank.items` and `alt.bags.items` existed. This created a breaking change:
+- **Yesterday's clients** (pre-SYNC-006): Only send/read `alt.bank.items` and `alt.bags.items`
+- **Today's clients** (post-SYNC-006): Send/read `alt.items` aggregate, plus maintain legacy fields
+- **Mail data**: Previously never synced, now included in `alt.items` but not in legacy fields
+
+**Compatibility Issues:**
+1. **Old client → New client**: Old data lacks `alt.items`, causing new client to display empty inventory
+2. **New client → Old client**: Old client doesn't understand `alt.items`, would only see bank/bags (missing mail)
+3. **Mail visibility**: Old clients never had mail sync, need backward-compatible way to see mail items
+
+**Complete Solution - Bidirectional Compatibility:**
+
+**1. Receiver Side (Guild.lua `ReceiveAltData`, lines 1415-1530):**
+Handles receiving data from old clients that only have `alt.bank.items` and `alt.bags.items`:
+
+```lua
+-- Backward compatibility: Compute alt.items from sources if missing
+local needsReconstruction = not hasAnyItems(alt.items)
+
+if needsReconstruction then
+    local bankItems = (alt.bank and alt.bank.items) or {}
+    local bagItems = (alt.bags and alt.bags.items) or {}
+    
+    -- Aggregate bank + bags ONLY (mail was never synced in old system)
+    if #bankItems > 0 or #bagItems > 0 then
+        local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+        alt.items = {}
+        for _, item in pairs(aggregated) do
+            table.insert(alt.items, item)
+        end
+    end
+end
+```
+
+**Key points:**
+- Detects when incoming data has old structure (no `alt.items`)
+- Reconstructs `alt.items` by aggregating `alt.bank.items` + `alt.bags.items`
+- Does NOT include mail (old system never synced mail)
+- Preserves legacy fields for potential re-sync to other old clients
+
+**2. Sender Side (Guild.lua `EnsureLegacyFields`, lines 1036-1106):**
+Ensures all clients receive usable data by sending all 3 arrays:
+
+```lua
+function TOGBankClassic_Guild:EnsureLegacyFields(alt)
+    -- Always send 3 arrays for complete backward compatibility:
+    -- 1. alt.items (for new clients)
+    -- 2. alt.bank.items with mail aggregated (for old clients)
+    -- 3. alt.bags.items as-is (for old clients)
+    
+    -- Check if we have mail items to aggregate
+    local hasMailItems = alt.mail and alt.mail.items and next(alt.mail.items)
+    
+    -- If legacy fields don't exist, reconstruct from alt.items
+    if not alt.bank or not alt.bank.items then
+        alt.bank = { items = {} }
+        -- Put ALL items in bank.items (includes mail)
+        for _, item in ipairs(alt.items) do
+            table.insert(alt.bank.items, item)
+        end
+        alt.bags = { items = {} }
+        return alt
+    end
+    
+    -- Legacy fields exist from Bank.lua scan, but don't include mail
+    -- Aggregate mail items into bank.items for old client visibility
+    if hasMailItems then
+        local existingBank = {}
+        for _, item in ipairs(alt.bank.items) do
+            if item.ID then
+                existingBank[item.ID] = item
+            end
+        end
+        
+        for itemID, mailItem in pairs(alt.mail.items) do
+            if existingBank[itemID] then
+                -- Item exists in bank, add mail count
+                existingBank[itemID].Count = (existingBank[itemID].Count or 0) + (mailItem.count or 0)
+            else
+                -- Item only in mail, add as new entry to bank.items
+                table.insert(alt.bank.items, { 
+                    ID = itemID, 
+                    Count = mailItem.count, 
+                    Link = mailItem.link 
+                })
+            end
+        end
+    end
+end
+```
+
+**Key points:**
+- Runs before every send in `SendAltData()`
+- Ensures all 3 arrays exist: `alt.items`, `alt.bank.items`, `alt.bags.items`
+- Mail items are aggregated into `alt.bank.items` for old client visibility
+- Old clients see mail quantities they never could before (new capability!)
+
+**3. Data Structure Sent:**
+
+**New client sending to anyone:**
+```lua
+alt = {
+    version = 1738108800,
+    money = 123456,
+    items = {  -- NEW: aggregate (bank + bags + mail)
+        { ID = 14046, Count = 104, Link = "[Runecloth Bag]" },
+        { ID = 6948, Count = 1, Link = "[Hearthstone]" },
+        ...
+    },
+    bank = {
+        items = {  -- LEGACY: bank items + mail items (for old clients)
+            { ID = 14046, Count = 71, Link = "[Runecloth Bag]" },  -- 70 in bank + 1 in mail
+            ...
+        },
+        slots = { count = 15, total = 28 }
+    },
+    bags = {
+        items = {  -- LEGACY: bag items only (for old clients)
+            { ID = 14046, Count = 33, Link = "[Runecloth Bag]" },
+            { ID = 6948, Count = 1, Link = "[Hearthstone]" },
+            ...
+        },
+        slots = { count = 16, total = 16 }
+    },
+    mail = {  -- Mail metadata (not read by old clients)
+        items = {
+            [14046] = { count = 1, link = "[Runecloth Bag]" }
+        }
+    }
+}
+```
+
+**What each client type reads:**
+- **New client (post-SYNC-006)**: Uses `alt.items` (104 runecloth bags total)
+- **Old client (pre-SYNC-006)**: Uses `alt.bank.items` + `alt.bags.items` (71 + 33 = 104, includes mail)
+- **Old client mail visibility**: Now sees mail quantities in `alt.bank.items` (previously impossible)
+
+**4. Bandwidth Optimization:**
+When sending via new protocol (`togbank-d3`, link-less), also strip links from legacy fields:
+
+```lua
+-- In StripAltLinks() (lines 994-1029):
+local strippedBank = nil
+if alt.bank then
+    strippedBank = {
+        slots = alt.bank.slots,
+        items = self:StripItemLinks(alt.bank.items)  -- Strip links from legacy field too
+    }
+end
+```
+
+**5. Debug Logging:**
+Added comprehensive logging in `SendAltData()`:
+
+```lua
+local itemsCount = currentAlt.items and #currentAlt.items or 0
+local bankCount = (currentAlt.bank and currentAlt.bank.items) and #currentAlt.bank.items or 0
+local bagsCount = (currentAlt.bags and currentAlt.bags.items) and #currentAlt.bags.items or 0
+TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d", 
+    norm, itemsCount, bankCount, bagsCount)
+```
+
+**Verification Steps:**
+1. **Old → New sync test:**
+   - Old client does `/wipe`, `/sync`
+   - New client receives data with only `alt.bank.items` and `alt.bags.items`
+   - New client reconstructs `alt.items` automatically
+   - New client displays inventory correctly in all tabs
+
+2. **New → Old sync test:**
+   - New client scans bank/mailbox (creates `alt.items` with mail)
+   - New client sends with all 3 arrays
+   - Old client receives `alt.bank.items` (with mail aggregated) and `alt.bags.items`
+   - Old client displays all inventory including mail (previously impossible)
+
+3. **Mail visibility test:**
+   - Banker has items in mail
+   - Old client receives sync from new client
+   - Old client sees mail quantities in bank tab (aggregated into `alt.bank.items`)
+   - Mail count included in total displayed to old client
+
+**Impact:**
+- ✅ **Zero data loss:** All data visible to all client versions
+- ✅ **Seamless migration:** No user intervention required
+- ✅ **Enhanced old clients:** Old clients now see mail quantities (new capability)
+- ✅ **Bandwidth optimized:** Link stripping works on all 3 arrays
+- ✅ **Debug visibility:** Clear logging of what's being sent
+
+**Edge Cases Handled:**
+1. **Mixed guild:** Some players on old version, some on new → all sync correctly
+2. **Bank-only account:** Only maintains `alt.items` → legacy fields reconstructed on send
+3. **No mail:** Works correctly, no mail aggregation needed
+4. **Mail-only items:** Items only in mail, not in bank/bags → added to `alt.bank.items` for old clients
+
+**Migration Path:**
+- **Phase 1 (Now):** Both structures maintained, automatic backward compatibility
+- **Phase 2 (3-6 months):** After full guild adoption of SYNC-006, consider deprecating legacy fields
+- **Phase 3 (Future):** Remove `alt.bank.items` and `alt.bags.items`, keep only `alt.items`
+
+**Performance Notes:**
+- Minimal overhead: Legacy field reconstruction only when needed
+- Mail aggregation: O(n) where n = number of unique mail items (typically < 10)
+- No additional bandwidth: Fields already sent, just ensuring they're populated
+
+**Files Modified:**
+- **Modules/Guild.lua:**
+  - Lines 1036-1106: `EnsureLegacyFields()` - Sender-side backward compatibility
+  - Lines 1107-1125: Updated `SendAltData()` to call `EnsureLegacyFields()` and add debug logging
+  - Lines 994-1029: Updated `StripAltLinks()` to strip links from legacy fields
+  - Lines 1415-1530: `ReceiveAltData()` - Receiver-side backward compatibility (already implemented for SYNC-006)
+
+**Testing Results:**
+- ✅ Empty tabs after `/wipe` and `/sync` - RESOLVED
+- ✅ Old clients see mail quantities - WORKING
+- ✅ New clients reconstruct from old data - WORKING
+- ✅ All 3 arrays sent correctly - VERIFIED via debug logs
+- ✅ No data loss in any direction - VERIFIED
+
+---
+
 ### ✅ [SYNC-006] Mail quantities appearing additive during syncs
+
 
 **Severity:** 🔴 CRITICAL  
 **Category:** Delta Sync / Data Integrity / Inventory Aggregation
