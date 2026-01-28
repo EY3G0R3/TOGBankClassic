@@ -5,10 +5,10 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
-- 🔴 [UI-008] C stack overflow in item loading callbacks - Recursive UI refresh loop after receiving alt data
 - ⚠️ [UI-007] Item tooltips not showing stats on gear (rings, wands, etc.) - Shows armor value but missing stat details
 
 **Recent Fixes (2026-01-28):**
+- ✅ [UI-008] C stack overflow in item loading callbacks - Fixed by preventing BuildSearchData from running multiple times per data update
 - ✅ [SYNC-006] Mail quantities appearing additive during syncs - Consolidated inventory into single alt.items aggregate
 - ✅ [MAIL-004] Non-stackable items filtered out by greedy algorithm - Fixed minStackSize to never exceed largestStack
 - ✅ [UI-006] Highlight checkbox not appearing for bankers - Fixed by refreshing UI on GUILD_ROSTER_UPDATE
@@ -91,7 +91,8 @@
 **Category:** UI / Item Loading / Infinite Recursion
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-28
-**Status:** 🔴 ACTIVE
+**Date Resolved:** 2026-01-28
+**Status:** ✅ RESOLVED
 **Reproducibility:** Consistent after /wipe and /sync
 **Related:** [SYNC-006] Backward compatibility changes
 
@@ -127,11 +128,70 @@ After implementing SYNC-006 backward compatibility (reconstructing alt.items fro
 8. **LOOP BACK TO STEP 2** → infinite recursion → C stack overflow
 
 **Root Cause:**
-The UI refresh triggered after receiving alt data creates a callback loop:
-- After reconstructing alt.items, we refresh the UI (Guild.lua:978)
-- UI refresh calls DrawContent which triggers item loading
-- Item load callbacks trigger another UI refresh
-- This creates infinite recursion until C stack overflows
+The recursion was NOT in ReconstructItemLinks callbacks, but in DrawContent itself:
+1. DrawContent calls BuildSearchData on EVERY refresh
+2. BuildSearchData calls GetItems which creates async Item:CreateFromItemID callbacks
+3. When items load, both ReconstructItemLinks AND BuildSearchData callbacks trigger
+4. Each callback calls DrawContent again
+5. Each DrawContent calls BuildSearchData again, creating NEW async callbacks
+6. **Exponential callback explosion** → C stack overflow
+
+The issue was that BuildSearchData was being called on every single DrawContent invocation, creating a new set of item loading callbacks each time, even when the data hadn't changed.
+
+**Solution Implemented:**
+Added a `searchDataBuilt` flag to prevent BuildSearchData from running multiple times:
+
+**Inventory.lua (lines 144-159):**
+```lua
+function TOGBankClassic_UI_Inventory:DrawContent()
+    -- ... roster checks ...
+    
+    -- Build search data only once per data update, not on every refresh (UI-008 fix)
+    -- This prevents recursive async item loading that causes C stack overflow
+    if not self.searchDataBuilt then
+        TOGBankClassic_UI_Search:BuildSearchData()
+        self.searchDataBuilt = true
+    end
+    
+    -- ... rest of DrawContent ...
+end
+```
+
+**Guild.lua (lines 1488-1494):**
+```lua
+self.Info.alts[norm] = alt
+
+-- Reset search data flag so inventory UI rebuilds search index (UI-008 fix)
+if TOGBankClassic_UI_Inventory then
+    TOGBankClassic_UI_Inventory.searchDataBuilt = false
+end
+
+-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
+if alt.items then
+    self:ReconstructItemLinks(alt.items)
+end
+```
+
+**How It Works:**
+1. When new alt data arrives, `searchDataBuilt` flag is reset to `false`
+2. Next DrawContent call builds search data and sets flag to `true`
+3. Subsequent DrawContent calls (from item loading callbacks) skip BuildSearchData
+4. No new async callbacks created → no recursion
+5. UI still refreshes properly from ReconstructItemLinks callbacks
+
+**Why This Works:**
+- Preserves UI auto-refresh functionality (user requirement: "items need to change when window is open")
+- BuildSearchData only runs once per data update (when actually needed)
+- ReconstructItemLinks callbacks can still call DrawContent safely
+- No exponential callback explosion
+- Search data is properly rebuilt when new sync data arrives
+
+**Testing:**
+- `/reload` → `/wipe` → `/sync` → open Inventory window
+- No C stack overflow
+- Items display correctly
+- Search functionality works
+- UI updates when items finish loading
 
 **Trigger Conditions:**
 - Occurs after `/wipe` and `/sync` when receiving data from other players
@@ -141,40 +201,14 @@ The UI refresh triggered after receiving alt data creates a callback loop:
 **Impact:**
 - **Severity:** CRITICAL - Crashes addon, makes inventory unusable
 - **Frequency:** Consistent after sync operations
-- **Workaround:** None currently available
+- **Workaround:** Close inventory window before syncing
+- **Resolution:** Fixed by preventing BuildSearchData from running multiple times per data update
 
-**Proposed Solutions:**
+**Files Changed:**
+- [Modules/UI/Inventory.lua](Modules/UI/Inventory.lua#L144-L159) - Added searchDataBuilt flag
+- [Modules/Guild.lua](Modules/Guild.lua#L1488-L1494) - Reset flag on new data
 
-**Option 1: Debounce UI Refresh**
-Add guard flag to prevent recursive refreshes:
-```lua
-if self.isRefreshing then return end
-self.isRefreshing = true
--- refresh UI
-self.isRefreshing = false
-```
-
-**Option 2: Defer Item Loading**
-Don't trigger item loading during initial UI draw:
-```lua
-if not itemCached then
-    -- Queue for async load, don't block UI
-    C_Timer.After(0.1, function() LoadItemData(itemID) end)
-end
-```
-
-**Option 3: Remove Automatic UI Refresh**
-Don't automatically refresh UI after ReceiveAltData:
-- Let UI refresh on next open (user-initiated)
-- Remove Guild.lua:978 automatic refresh call
-
-**Affected Code:**
-- **Guild.lua:978** - Triggers UI refresh after receiving alt data
-- **Inventory.lua:154** - DrawContent calls BuildSearchData
-- **Search.lua:397** - BuildSearchData calls GetItems
-- **Item.lua:24** - GetItems triggers item loading callbacks
-
-**Priority:** CRITICAL - Must fix before release
+**Priority:** CRITICAL - Fixed in v0.8.0
 
 ### 🟠 HIGH
 
