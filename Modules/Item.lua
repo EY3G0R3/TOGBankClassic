@@ -107,7 +107,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 			if not v or not v.ID or not v.Link then
 				-- Skip malformed entries (missing required fields)
 			else
-				local key = v.ID .. v.Link
+				local key = tostring(v.ID)  -- Use ID only as key
 				if items[key] then
 					local item = items[key]
 					-- Defensive: use default value if Count is missing
@@ -127,7 +127,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 			if not v or not v.ID or not v.Link then
 				-- Skip malformed entries (missing required fields)
 			else
-				local key = v.ID .. v.Link
+				local key = tostring(v.ID)  -- Use ID only as key
 				if items[key] then
 					local item = items[key]
 					-- Defensive: use default value if Count is missing
@@ -143,6 +143,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 	end
 
 	return items
+end
 end
 
 function TOGBankClassic_Item:IsUnique(link)
