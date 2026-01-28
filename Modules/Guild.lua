@@ -1327,28 +1327,40 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 			if not a or type(a) ~= "table" then
 				return nil
 			end
+			
+			-- Sanitize alt.items (array)
 			if a.items then
+				local cleaned = {}
 				for k, v in pairs(a.items) do
-					if not v or type(v) ~= "table" or not v.ID then
-						a.items[k] = nil
+					if v and type(v) == "table" and v.ID then
+						table.insert(cleaned, v)
 					end
 				end
+				a.items = cleaned
 			end
-			-- Keep bank, bags, mail for tracking, but they're not used for sync
+			
+			-- Sanitize bank items (array) - compact after removing invalids
 			if a.bank and type(a.bank) == "table" and a.bank.items then
+				local cleaned = {}
 				for k, v in pairs(a.bank.items) do
-					if not v or type(v) ~= "table" or not v.ID then
-						a.bank.items[k] = nil
+					if v and type(v) == "table" and v.ID then
+						table.insert(cleaned, v)
 					end
 				end
+				a.bank.items = cleaned
 			end
+			
+			-- Sanitize bag items (array) - compact after removing invalids
 			if a.bags and type(a.bags) == "table" and a.bags.items then
+				local cleaned = {}
 				for k, v in pairs(a.bags.items) do
-					if not v or type(v) ~= "table" or not v.ID then
-						a.bags.items[k] = nil
+					if v and type(v) == "table" and v.ID then
+						table.insert(cleaned, v)
 					end
 				end
+				a.bags.items = cleaned
 			end
+			
 			return a
 		end
 
