@@ -198,7 +198,6 @@ function TOGBankClassic_Bank:Scan()
 	end
 
 	-- Aggregate bank + bags + mail into alt.items for sync and display
-	alt.items = {}
 	local bankItems = (alt.bank and alt.bank.items) or {}
 	local bagItems = (alt.bags and alt.bags.items) or {}
 	local mailItems = {}
@@ -207,9 +206,15 @@ function TOGBankClassic_Bank:Scan()
 			table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
 		end
 	end
-	-- Aggregate all three sources
-	alt.items = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
-	alt.items = TOGBankClassic_Item:Aggregate(alt.items, mailItems)
+	-- Aggregate all three sources (returns table with composite keys)
+	local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+	aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
+	
+	-- Convert back to array format for storage/sync/display
+	alt.items = {}
+	for _, item in pairs(aggregated) do
+		table.insert(alt.items, item)
+	end
 
 	-- v0.8.0: Only update version if inventory actually changed
 	-- Compute a hash of the current inventory state
