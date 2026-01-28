@@ -5051,6 +5051,9 @@ displaying Runecloth Bag with count 104 (ID: 14046)
 - ID-only aggregation prevents new duplicates from forming
 - Debug logging helps identify corruption patterns quickly
 
+**Future Work:**
+- **Phase out legacy structure:** The old `alt.bank.items` and `alt.bags.items` fields are kept for backward compatibility but should eventually be removed once all clients have upgraded to v0.8.0+. This will simplify the codebase and reduce data redundancy. Consider deprecation timeline after 3-6 months of v0.8.0 adoption.
+
 ---
 
 ### ✅ [MAIL-003] Search UI crash on undefined 'info' variable
