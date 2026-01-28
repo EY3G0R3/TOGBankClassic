@@ -47,22 +47,6 @@ local VALID_REQUEST_STATUS = {
 
 -- Compaction settings are defined in Constants.lua
 
--- Legacy requests without IDs are deterministically derived from older fields.
-local function legacyRequestId(req)
-	if not req or type(req) ~= "table" then
-		return nil
-	end
-	local ts = tonumber(req.date or req.updatedAt or 0) or 0
-	local requester = tostring(req.requester or "")
-	local bank = tostring(req.bank or "")
-	local item = tostring(req.item or "")
-	-- Return nil if ALL identifying fields are empty (no data to generate ID from)
-	if requester == "" and bank == "" and item == "" and ts == 0 then
-		return nil
-	end
-	return string.format("%s-%s-%s-%d", bank, requester, item, ts)
-end
-
 local function generateRequestId(actor)
 	local rand = string.format("%06x", math.random(0, 0xFFFFFF))
 	return string.format("%s:%s", actor or "unknown", rand)
@@ -96,7 +80,7 @@ local function sanitizeRequest(req)
 		status = "fulfilled"
 	end
 
-	local id = req.id or legacyRequestId(req) or generateRequestId()
+	local id = req.id or generateRequestId()
 
 	return {
 		id = id,
