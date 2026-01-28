@@ -205,11 +205,25 @@ end
 
 -- Compute a hash of inventory state to detect actual changes (v0.8.0)
 -- Only updates version timestamps when this hash changes
-function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, money)
+function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney, money)
+	-- Handle both old (3-param) and new (4-param) calling conventions
+	-- Old: ComputeInventoryHash(bank, bags, money)
+	-- New: ComputeInventoryHash(bank, bags, mail, money)
+	local mail, actualMoney
+	if type(mailOrMoney) == "number" then
+		-- Old calling convention detected
+		mail = nil
+		actualMoney = mailOrMoney
+	else
+		-- New calling convention with mail table
+		mail = mailOrMoney
+		actualMoney = money
+	end
+	
 	local parts = {}
 
 	-- Include money
-	table.insert(parts, tostring(money or 0))
+	table.insert(parts, tostring(actualMoney or 0))
 
 	-- Helper to hash an items array
 	local function hashItems(items)
@@ -228,6 +242,23 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, money)
 		return table.concat(sorted, ",")
 	end
 
+	-- Helper to hash mail items (different structure: keyed by itemID)
+	local function hashMailItems(mailItems)
+		if not mailItems or type(mailItems) ~= "table" then
+			return ""
+		end
+
+		-- Sort items by ID+Count
+		local sorted = {}
+		for itemID, item in pairs(mailItems) do
+			if item and item.count then
+				table.insert(sorted, string.format("%d:%d", itemID, item.count))
+			end
+		end
+		table.sort(sorted)
+		return table.concat(sorted, ",")
+	end
+
 	-- Include bank items
 	if bank and bank.items then
 		table.insert(parts, "B:" .. hashItems(bank.items))
@@ -236,6 +267,11 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, money)
 	-- Include bag items
 	if bags and bags.items then
 		table.insert(parts, "G:" .. hashItems(bags.items))
+	end
+
+	-- Include mail items
+	if mail and mail.items then
+		table.insert(parts, "M:" .. hashMailItems(mail.items))
 	end
 
 	-- Concatenate all parts and compute simple hash

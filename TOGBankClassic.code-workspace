@@ -557,7 +557,8 @@
 			"SetClampedTextureRotation",
 			"tIndexOf",
 			"CallErrorHandler",
-			"EventTrace"
+			"EventTrace",
+			"SecondsToTime"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

@@ -10,6 +10,9 @@
 
 **Recent Fixes (2026-01-27):**
 - ✅ [FULFILL-002] Fulfill button callback not updating after split - Fixed greedy algorithm to prefer exact-fit stacks over splitting
+- ✅ [MAIL-003] Search UI crash on undefined 'info' variable - Fixed to use TOGBankClassic_Guild.Info
+- ✅ [MAIL-002] Mail inventory displaying incorrect/duplicate counts - Fixed Search corpus, duplicate detection, and Inventory mail aggregation
+- ✅ [MAIL-001] ComputeInventoryHash parameter mismatch - Fixed function to handle both 3-param and 4-param calling conventions
 - ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
 - ✅ [UI-005] Inventory UI crash on missing slots field - Added nil checks for alt.bank.slots and alt.bags.slots
 
@@ -648,6 +651,8 @@ Added smart filtering that excludes stacks smaller than the required split amoun
 
 ---
 
+<<<<<<< HEAD
+<<<<<<< HEAD
 #### ✅ [FULFILL-002] Fulfill button callback not updating after split completion
 
 **Severity:** 🟠 HIGH
@@ -700,6 +705,177 @@ This ensures exact-fit stacks are always preferred over splitting.
 - `Modules/Mail.lua` (multiple) - Migrated debug output to proper system
 
 **Bonus:** Migrated all fulfillment debug output from `print()` to `TOGBankClassic_Output:Debug("FULFILL", ...)` for integration with persistent debug log system.
+=======
+#### 🔴 [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
+=======
+#### ✅ [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
+>>>>>>> d78c951 (Add MAIL debug category and comprehensive logging for MAIL-002 investigation)
+
+**Severity:** 🔴 CRITICAL
+**Category:** Mail Inventory / Function Signature  
+**Reporter:** BugSack Error Log
+**Date Reported:** 2026-01-27
+**Status:** ✅ RESOLVED
+**Fixed In:** commit 9dfc013
+**Branch:** feature/mail-inventory-status
+**Reproducibility:** Was consistent on addon load with existing saved data
+
+**Description:**
+When loading saved data with existing inventory, `ComputeInventoryHash()` crashes with "attempt to index local 'mail' (a number value)". The function signature was changed to add mail parameter, but old calling code still uses the 3-parameter version.
+
+**Error Stack:**
+```
+6x TOGBankClassic/Modules/DeltaComms.lua:259: attempt to index local 'mail' (a number value)
+[TOGBankClassic/Modules/DeltaComms.lua]:259: in function <TOGBankClassic/Modules/DeltaComms.lua:208>
+[TOGBankClassic/Modules/Database.lua]:139: in function 'Load'
+[TOGBankClassic/Modules/Guild.lua]:254: in function 'Init'
+```
+
+**Root Cause:**
+Function signature changed from `ComputeInventoryHash(bank, bags, money)` to `ComputeInventoryHash(bank, bags, mail, money)` but there are callers still using the old 3-parameter version.
+
+When old code calls with 3 parameters:
+- `bank` = bank table ✅
+- `bags` = bags table ✅  
+- `mail` = money (number!) ❌
+- `money` = nil ❌
+
+**Example:**
+```lua
+-- Old caller (Database.lua or other location)
+local hash = ComputeInventoryHash(alt.bank, alt.bags, alt.money)
+
+-- Function receives:
+-- bank=table, bags=table, mail=298335 (money!), money=nil
+-- Line 259 tries: if mail and mail.items then → CRASH
+```
+
+**Fix Required:**
+1. Make function handle both old (3-param) and new (4-param) calling conventions
+2. Detect if 3rd parameter is a number (money) vs table (mail)
+3. Find and update all old callers to use new signature
+
+**Files to Check:**
+- Modules/DeltaComms.lua:208 (function definition)
+- Modules/Core.lua:166 (wrapper function)
+- Modules/Database.lua:139 (caller during Load)
+- Any other callers using old 3-parameter signature
+
+**Proposed Fix:**
+```lua
+function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney, money)
+	-- Handle both old (3-param) and new (4-param) calling conventions
+	local mail, actualMoney
+	if type(mailOrMoney) == "number" then
+		-- Old calling convention: (bank, bags, money)
+		mail = nil
+		actualMoney = mailOrMoney
+	else
+		-- New calling convention: (bank, bags, mail, money)
+		mail = mailOrMoney
+		actualMoney = money
+	end
+	
+	local parts = {}
+	table.insert(parts, tostring(actualMoney or 0))
+	-- ... rest of function
+end
+```
+
+**Resolution:**
+Applied backward compatibility fix to DeltaComms.lua. Function now detects parameter type and handles both calling conventions correctly. Requires `/reload` to apply fix to running game session.
+
+**Priority:** CRITICAL - Blocks addon from loading with existing saved data
+
+---
+
+#### ✅ [MAIL-002] Mail inventory displaying incorrect/duplicate counts
+
+**Severity:** 🔴 CRITICAL
+**Category:** Mail Inventory / Data Aggregation
+**Reporter:** User (Testing)
+**Date Reported:** 2026-01-27
+**Status:** ✅ RESOLVED
+**Fixed In:** commit 990bba4 (partial), current session (complete)
+**Branch:** feature/mail-inventory-status
+**Reproducibility:** Was Consistent during gameplay
+
+**Description:**
+Mail inventory items were showing incorrect counts in both Search results and Inventory tab. Items like Golden Sansam showed 3701 (223 x 7 duplicates) and Gromsblood showed 1199 (109 + 770 duplicates). The numbers appeared to be multiplying instead of showing accurate counts.
+
+**Root Causes Identified:**
+
+1. **Search Corpus Building (Search.lua:346-407):**
+   - Bug: Added item name to Corpus once for EACH unique item ID variant
+   - Example: Golden Sansam had 7 different item IDs → added to Corpus 7 times
+   - Result: Search loop processed "Golden Sansam" 7 times → displayed 7 rows with 223 each = 3701 total
+
+2. **Duplicate Detection (Search.lua:438-452):**
+   - Bug: Only checked if alt name existed in lookup, not item ID
+   - Result: Same item added multiple times per character if it had multiple IDs
+   - Example: Gromsblood with 2 different IDs → both added to lookup
+
+3. **Missing Mail Aggregation (Inventory.lua:287-298):**
+   - Bug: Inventory tab only aggregated bank + bags, completely omitted mail items
+   - Result: Mail items weren't displayed in Inventory tab at all initially
+   - After adding mail aggregation, duplicates appeared from causes #1 and #2
+
+**Fixes Applied:**
+
+1. **Fixed Search Corpus (Search.lua:346-407):**
+   ```lua
+   local corpusNamesSeen = {}
+   -- ... loop through items ...
+   if not corpusNamesSeen[v.Info.name] then
+       corpusNamesSeen[v.Info.name] = true
+       table.insert(self.SearchData.Corpus, v.Info.name)
+   end
+   -- Still map ALL item IDs to names for lookup
+   itemNames[v.ID] = v.Info.name
+   ```
+
+2. **Fixed Duplicate Detection (Search.lua:438-452):**
+   ```lua
+   -- Check BOTH alt name AND item ID
+   for _, existingEntry in pairs(self.SearchData.Lookup[name]) do
+       if existingEntry.alt == player and existingEntry.item.ID == itemEntry.ID then
+           found = true
+           break
+       end
+   end
+   ```
+
+3. **Added Mail Aggregation to Inventory Tab (Inventory.lua:287-298):**
+   ```lua
+   if alt.mail and alt.mail.items then
+       for itemID, mailItem in pairs(alt.mail.items) do
+           local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+           items = TOGBankClassic_Item:Aggregate(items, {fakeItem})
+       end
+   end
+   ```
+
+**Verification:**
+- Golden Sansam: Now shows 223 (correct) instead of 3701
+- Gromsblood: Now shows 109 (correct) instead of 1199
+- Inventory tab: Now includes mail items in aggregated counts
+- Search results: Each item appears once with correct total count
+
+**Debug Logging:**
+Added comprehensive MAIL category debug logging throughout Search and Inventory modules to track:
+- Corpus building (unique names vs item IDs)
+- Lookup table construction (duplicate detection)
+- Mail aggregation (items being added)
+- Display events (what counts are shown)
+
+Debug logging intentionally left in place for future diagnostics.
+
+**Files Modified:**
+- Modules/UI/Search.lua (lines 346-407, 438-452, 525-545, 569)
+- Modules/UI/Inventory.lua (lines 281-308)
+- docs/DELTA_BUGS.md (this file)
+
+**Priority:** CRITICAL - Core mail inventory feature not working correctly → ✅ RESOLVED
 
 ---
 
@@ -4550,4 +4726,46 @@ end
 ---
 
 **Happy testing! Report all bugs, no matter how small. Every bug found makes the addon better. 🐛➡️✅**
+
+---
+
+### ✅ [MAIL-003] Search UI crash on undefined 'info' variable
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Mail Inventory / UI  
+**Date Reported:** 2026-01-27  
+**Status:** ✅ RESOLVED  
+**Resolution Date:** 2026-01-27
+
+**Description:**
+When typing in the search box, the UI crashes with "attempt to index global 'info' (a nil value)" at line 569 of Search.lua. This happens when trying to check if items are in mail to display the ✉ icon.
+
+**Error Message:**
+```
+3x TOGBankClassic/Modules/UI/Search.lua:569: attempt to index global 'info' (a nil value)
+[TOGBankClassic/Modules/UI/Search.lua]:569: in function 'DrawContent'
+```
+
+**Root Cause:**
+In `DrawContent()` function (line 569), code attempted to access `info.alts[norm]` but `info` was not defined in the function scope. The variable should have been `TOGBankClassic_Guild.Info`.
+
+**Affected Code:**
+```lua
+-- BEFORE (line 569)
+local alt = info.alts[norm]
+
+-- AFTER
+local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
+```
+
+**Fix:**
+Changed to use the fully qualified global `TOGBankClassic_Guild.Info` with proper nil checks.
+
+**Testing:**
+1. Open search window
+2. Type 3+ characters to trigger search
+3. Verify no Lua errors
+4. Verify mail icon (✉) appears next to banker names with items in mail
+
+---
 

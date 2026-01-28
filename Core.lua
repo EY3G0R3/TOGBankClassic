@@ -163,6 +163,6 @@ function TOGBankClassic_Core:SanitizeItemDelta(itemDelta)
 	return TOGBankClassic_DeltaComms:SanitizeItemDelta(itemDelta)
 end
 
-function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, money)
-	return TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, money)
+function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, mail, money)
+	return TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mail, money)
 end

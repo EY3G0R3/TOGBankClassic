@@ -343,6 +343,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 end
 
 function TOGBankClassic_UI_Search:BuildSearchData()
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] BuildSearchData called - clearing and rebuilding search data")
 	self.SearchData = {
 		Corpus = {},
 		Lookup = {},
@@ -351,13 +352,20 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 	local info = TOGBankClassic_Guild.Info
 	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
 	if not info or not roster_alts then
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] BuildSearchData: no info or roster_alts, returning early")
 		return
 	end
+	
+	local rosterCount = 0
+	for _ in pairs(roster_alts) do rosterCount = rosterCount + 1 end
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] BuildSearchData: processing %d roster alts", rosterCount)
 
 	local items = {}
 	for _, player in pairs(roster_alts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(player)
 		local alt = info.alts[norm]
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus loop: processing player=%s, norm=%s, has alt=%s", 
+			player, norm, tostring(alt ~= nil))
 		---START CHANGES
 		--if alt then
 		if alt and type(alt) == "table" then
@@ -368,16 +376,40 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			if alt.bags then
 				items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
 			end
+			-- Include mail items
+			if alt.mail and alt.mail.items then
+				local mailItemCount = 0
+				for _ in pairs(alt.mail.items) do mailItemCount = mailItemCount + 1 end
+				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: aggregating mail for %s (%d unique items)", 
+					player, mailItemCount)
+				for itemID, mailItem in pairs(alt.mail.items) do
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: %s has %d x %s (ID: %d) in mail", 
+						player, mailItem.count, mailItem.name or "Unknown", itemID)
+					local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+					items = TOGBankClassic_Item:Aggregate(items, {fakeItem})
+				end
+			end
 		end
 	end
 
 	local itemNames = {}
+	local corpusNamesSeen = {}
 	TOGBankClassic_Item:GetItems(items, function(list)
 		for _, v in pairs(list) do
 			-- Skip malformed list entries
-			if v and v.ID and v.Info and v.Info.name and not itemNames[v.ID] then
-				table.insert(self.SearchData.Corpus, v.Info.name)
-				itemNames[v.ID] = v.Info.name
+			if v and v.ID and v.Info and v.Info.name then
+				-- Map item ID to name (for lookup table building later)
+				if not itemNames[v.ID] then
+					itemNames[v.ID] = v.Info.name
+				end
+				-- Only add each unique name to Corpus once
+				if not corpusNamesSeen[v.Info.name] then
+					corpusNamesSeen[v.Info.name] = true
+					table.insert(self.SearchData.Corpus, v.Info.name)
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Corpus: added unique name '%s' (ID: %d)", v.Info.name, v.ID)
+				else
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Corpus: skipping duplicate name '%s' (ID: %d already in corpus)", v.Info.name, v.ID)
+				end
 			end
 		end
 
@@ -385,6 +417,8 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			local altItems = {}
 			local norm = TOGBankClassic_Guild:NormalizeName(player)
 			local alt = info.alts[norm]
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results loop: processing player=%s, norm=%s, has alt=%s", 
+				player, norm, tostring(alt ~= nil))
 			---START CHANGES
 			--if alt then
 			if alt and type(alt) == "table" then
@@ -395,18 +429,35 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 				if alt.bags then
 					altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)
 				end
+				-- Include mail items
+				if alt.mail and alt.mail.items then
+					local mailItemCount = 0
+					for _ in pairs(alt.mail.items) do mailItemCount = mailItemCount + 1 end
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: aggregating mail for %s (%d unique items)", 
+						player, mailItemCount)
+					for itemID, mailItem in pairs(alt.mail.items) do
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: %s has %d x %s (ID: %d) in mail", 
+							player, mailItem.count, mailItem.name or "Unknown", itemID)
+						local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+						altItems = TOGBankClassic_Item:Aggregate(altItems, {fakeItem})
+					end
+				end
 			end
 
 			for _, itemEntry in pairs(altItems) do
 				local name = itemNames[itemEntry.ID]
 				if name then
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: adding %s with count %d for player %s to lookup", 
+						name, itemEntry.Count or 0, player)
 					if not self.SearchData.Lookup[name] then
 						self.SearchData.Lookup[name] = {}
 					end
 					local found = false
 					for _, existingEntry in pairs(self.SearchData.Lookup[name]) do
-						if existingEntry.alt == player then
+						if existingEntry.alt == player and existingEntry.item.ID == itemEntry.ID then
 							found = true
+							TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: DUPLICATE FOUND - skipping %s (ID: %d) for %s", 
+								name, itemEntry.ID, player)
 							break
 						end
 					end
@@ -490,11 +541,17 @@ function TOGBankClassic_UI_Search:DrawContent()
 				local lookupList = searchData.Lookup[v]
 				if not lookupList then
 					-- No lookup for this name; skip
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search display: '%s' matched search but has NO lookup entries", v)
 				else
+					local lookupCount = 0
+					for _ in pairs(lookupList) do lookupCount = lookupCount + 1 end
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search display: '%s' matched search, has %d lookup entries", v, lookupCount)
 					for _, vv in pairs(lookupList) do
 						--draw item larger to add pading - icon and label smaller by the same to get dimensions
 						local resultItem = vv.item
 						local bankAlt = vv.alt
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search display: showing %s with %d items for %s", 
+							resultItem.Info and resultItem.Info.name or "Unknown", resultItem.Count or 0, bankAlt)
 						local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
 						if itemWidget then
 							itemWidget:SetCallback("OnClick", function(widget, event)
@@ -507,7 +564,12 @@ function TOGBankClassic_UI_Search:DrawContent()
 						end
 
 						local label = TOGBankClassic_UI:Create("Label")
-						label:SetText(bankAlt)
+						-- Check if item is in mail
+						local norm = TOGBankClassic_Guild:NormalizeName(bankAlt)
+						local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
+						local inMail = alt and alt.mail and alt.mail.items and alt.mail.items[resultItem.ID]
+						local mailIcon = inMail and " |cff87ceeb✉|r" or ""
+						label:SetText(bankAlt .. mailIcon)
 						label.label:SetSize(100, 30)
 						label.label:SetJustifyV("MIDDLE")
 						self.Results:AddChild(label)
