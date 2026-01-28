@@ -491,9 +491,25 @@ function Guild:ApplyRequestSnapshot(payload)
 
 	local logApplied = payload.requestLogApplied
 	if type(logApplied) == "table" then
-		self.Info.requestLogApplied = copyMap(logApplied)
-		TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Updated requestLogApplied with %d actors",
-			countKeys(logApplied)))
+		-- [SYNC-FIX] Max-merge: take the higher seq for each actor to prevent stale
+		-- snapshots from downgrading our tracking and causing log entries to be re-applied.
+		-- This fixes the bug where a stale snapshot could lower requestLogApplied values,
+		-- causing fulfill deltas to be double-applied or requests to disappear.
+		local localApplied = self.Info.requestLogApplied or {}
+		local upgraded, kept = 0, 0
+		for actor, seq in pairs(logApplied) do
+			local incomingSeq = tonumber(seq or 0) or 0
+			local localSeq = tonumber(localApplied[actor] or 0) or 0
+			if incomingSeq > localSeq then
+				localApplied[actor] = incomingSeq
+				upgraded = upgraded + 1
+			else
+				kept = kept + 1
+			end
+		end
+		self.Info.requestLogApplied = localApplied
+		TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Max-merged requestLogApplied - %d upgraded, %d kept local (higher)",
+			upgraded, kept))
 	end
 
 	local localActor = self:GetNormalizedPlayer()
