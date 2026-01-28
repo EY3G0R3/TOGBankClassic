@@ -281,51 +281,36 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
 		
-		-- Always compute items fresh from source data to avoid issues with stale alt.items
-		-- This ensures correct aggregation even if alt.items was created with old logic
-		local bankItems = (alt.bank and alt.bank.items) or {}
-		local bagItems = (alt.bags and alt.bags.items) or {}
-		local mailItems = {}
-		if alt.mail and alt.mail.items then
-			for itemID, mailItem in pairs(alt.mail.items) do
-				table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
+		-- Use alt.items if available (post-SYNC-006 aggregate)
+		-- Otherwise compute from sources for backward compatibility
+		local items = {}
+		
+		if alt.items and next(alt.items) ~= nil then
+			-- alt.items exists - use it directly (may be array or key-value)
+			for _, item in pairs(alt.items) do
+				table.insert(items, item)
 			end
-		end
-		
-		-- Debug: Log source data counts and check for duplicates
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: bank=%d, bags=%d, mail=%d items", 
-			tab, #bankItems, #bagItems, #mailItems)
-		
-		-- Check for duplicate IDs in source arrays
-		local function countByID(arr, name)
-			local counts = {}
-			local total = 0
-			local uniqueCount = 0
-			for _, item in pairs(arr) do
-				if item and item.ID then
-					local id = tostring(item.ID)
-					if not counts[id] then
-						counts[id] = 0
-						uniqueCount = uniqueCount + 1
-					end
-					counts[id] = counts[id] + (item.Count or 1)
-					total = total + (item.Count or 1)
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: using alt.items (%d items)", 
+				tab, #items)
+		else
+			-- Fallback: compute from sources (backward compatibility for very old data)
+			local bankItems = (alt.bank and alt.bank.items) or {}
+			local bagItems = (alt.bags and alt.bags.items) or {}
+			local mailItems = {}
+			if alt.mail and alt.mail.items then
+				for itemID, mailItem in pairs(alt.mail.items) do
+					table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
 				end
 			end
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002]   %s: %d unique IDs, %d total count", name, uniqueCount, total)
-			return counts, total
-		end
-		
-		local bankCounts, bankTotal = countByID(bankItems, "bank")
-		local bagCounts, bagTotal = countByID(bagItems, "bags")
-		local mailCounts, mailTotal = countByID(mailItems, "mail")
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002]   Combined should be: %d", bankTotal + bagTotal + mailTotal)
-		
-		local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
-		aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
-		local items = {}
-		for _, item in pairs(aggregated) do
-			table.insert(items, item)
+			
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d", 
+				tab, #bankItems, #bagItems, #mailItems)
+			
+			local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+			aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
+			for _, item in pairs(aggregated) do
+				table.insert(items, item)
+			end
 		end
 		
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: aggregated to %d unique items", 
