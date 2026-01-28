@@ -1370,6 +1370,64 @@ local COMMAND_REGISTRY = {
 		expert = true,
 		handler = function()
 			TOGBankClassic_Output:ClearPersistentLog()
+			TOGBankClassic_Output:Response("Debug log cleared")
+		end,
+	},
+	{
+		name = "persistcheck",
+		help = "check current request persistence state (for debugging SYNC-001)",
+		expert = true,
+		handler = function()
+			local G = TOGBankClassic_Guild
+			if not G or not G.Info then
+				TOGBankClassic_Output:Response("Guild info not loaded")
+				return
+			end
+			
+			local logCount = #(G.Info.requestLog or {})
+			local appliedCount = 0
+			local appliedActors = {}
+			if G.Info.requestLogApplied then
+				for actor, seq in pairs(G.Info.requestLogApplied) do
+					appliedCount = appliedCount + 1
+					table.insert(appliedActors, string.format("%s=%d", actor, seq))
+				end
+			end
+			local requestCount = #(G.Info.requests or {})
+			local seqCount = 0
+			if G.Info.requestLogSeq then
+				for _ in pairs(G.Info.requestLogSeq) do
+					seqCount = seqCount + 1
+				end
+			end
+			
+			TOGBankClassic_Output:Response("=== Request Persistence State ===")
+			TOGBankClassic_Output:Response("requests: %d items", requestCount)
+			TOGBankClassic_Output:Response("requestLog: %d entries", logCount)
+			TOGBankClassic_Output:Response("requestLogApplied: %d actors", appliedCount)
+			if appliedCount > 0 then
+				TOGBankClassic_Output:Response("  %s", table.concat(appliedActors, ", "))
+			end
+			TOGBankClassic_Output:Response("requestLogSeq: %d actors", seqCount)
+			
+			-- Check if data is referencing SavedVariables
+			local db = TOGBankClassic_Database and TOGBankClassic_Database.db
+			if db and db.faction then
+				local guildName = G:GetGuild()
+				if guildName and db.faction[guildName] then
+					local isSameRef = (G.Info == db.faction[guildName])
+					TOGBankClassic_Output:Response("Guild.Info %s SavedVariables reference",
+						isSameRef and "IS" or "IS NOT")
+				end
+			end
+		end,
+	},
+	{
+		name = "debuglogclear",
+		help = "clear all persistent debug log entries",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Output:ClearPersistentLog()
 		end,
 	},
 	{

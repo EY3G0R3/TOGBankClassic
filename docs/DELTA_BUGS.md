@@ -1,10 +1,14 @@
 ﻿# Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** January 27, 2026
+**Last Updated:** January 28, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
+**Recent Fixes (2026-01-28):**
+- ✅ [SYNC-001] Request data disappearing after snapshots - Implemented smart-merge algorithm to protect local event log from being skipped
+
 **Recent Fixes (2026-01-27):**
+- ✅ [FULFILL-002] Fulfill button callback not updating after split - Fixed greedy algorithm to prefer exact-fit stacks over splitting
 - ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
 - ✅ [UI-005] Inventory UI crash on missing slots field - Added nil checks for alt.bank.slots and alt.bags.slots
 
@@ -69,140 +73,7 @@
 
 ### 🔴 CRITICAL
 
-#### [SYNC-001] Incoming snapshots with higher requestLogApplied values cause local requests to disappear
-
-**Severity:** 🔴 CRITICAL
-**Category:** Snapshot Sync / Event Sourcing
-**Reporter:** User (Production - Galdof character)
-**Date Reported:** 2026-01-27
-**Status:** 🔄 IN PROGRESS
-**Reproducibility:** Consistent when receiving snapshots from other players
-**Related:** [REPLAY-001]
-
-**Description:**
-After successfully recovering all 58 requests via [REPLAY-001] fix, the gromsblood requests (and potentially others) disappeared from the UI again minutes later. This occurred when receiving a snapshot from another player during normal DeltaComms synchronization. The snapshot contained a higher `requestLogApplied[Galdof-OldBlanchy]` value (42) but did NOT include the gromsblood requests in its snapshot.
-
-**Root Cause:**
-The `ApplyRequestSnapshot()` function uses max-merge logic for `requestLogApplied`, which accepts any incoming sequence number that's higher than the local value. This is fundamentally broken for event sourcing because:
-
-1. **Incoming snapshot arrives with:**
-   - `requests`: Array of their visible requests (may not include ours)
-   - `requestLogApplied[Galdof-OldBlanchy]`: 42 (they've processed through seq 42)
-   
-2. **Local state has:**
-   - Event log entries: Galdof seq 41, 42 (gromsblood requests)
-   - `requestLogApplied[Galdof-OldBlanchy]`: 40 (we haven't replayed yet)
-   
-3. **What happens:**
-   - Snapshot replaces `requests` array with incoming (gromsblood NOT in it)
-   - Max-merge upgrades `requestLogApplied[Galdof]` from 40 → 42
-   - `ReplayRequestLogEntries()` runs: "if seq <= 42 then skip" → skips seq 41 and 42!
-   - Result: Gromsblood requests never get replayed back into snapshot
-
-**Why This is Critically Broken:**
-The max-merge assumption "higher sequence = more complete state" is **incorrect** because:
-- Other player may have pruned/deleted requests we still need
-- Other player's snapshot is from THEIR perspective, not authoritative
-- Our local event log is the authoritative source for our own data
-- Accepting their tracking state causes us to skip our own events
-
-**Technical Details:**
-- Before sync: 58 requests visible, including 2 gromsblood
-- After sync: Gromsblood entries disappear
-- Event log: Still contains gromsblood at seq 41, 42 ✅
-- `requestLogApplied[Galdof]`: Upgraded from local value to 42 (incoming)
-- Replay logic: Skips seq 41, 42 because 41 <= 42 and 42 <= 42
-
-**Impact:**
-- Users' requests randomly disappear when other players sync
-- No warning or indication of why requests vanish
-- Rebuilding via [REPLAY-001] validation is immediately undone by next sync
-- Creates perception of data loss and unstable addon
-- Users cannot trust the request list
-
-**Solution Implemented:**
-Modified `ApplyRequestSnapshot()` in RequestLog.lua (lines 547-615) to implement smart-merge instead of max-merge:
-
-**Smart-Merge Algorithm:**
-1. Build map of maximum local sequence per actor from our event log
-2. For each incoming `requestLogApplied[actor]`:
-   - Check if incoming seq > local seq (upgrade candidate)
-   - Check if incoming seq > maxLocalEventSeq (beyond our event log)
-   - If incoming seq would mark our local events as "already applied": **REJECT**
-   - Only accept if it's beyond our event log range (safe)
-3. Log rejected upgrades for debugging
-
-**Key Logic:**
-```lua
-if incomingSeq > localSeq then
-    -- Check if accepting this would skip local events
-    if incomingSeq > maxLocal then
-        -- Incoming seq is beyond our event log, safe to accept
-        localApplied[actor] = incomingSeq
-        upgraded = upgraded + 1
-    else
-        -- Incoming seq would mark local events as "already applied"
-        -- Keep our local seq so replay will process our events
-        TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Rejecting %s seq %d (would skip local events up to %d)",
-            actor, incomingSeq, maxLocal)
-        rejected = rejected + 1
-    end
-end
-```
-
-**Example:**
-- Local: event log has Galdof seq 41, 42 (maxLocal = 42)
-- Local: `requestLogApplied[Galdof] = 40`
-- Incoming: `requestLogApplied[Galdof] = 42`
-- Decision: Reject (42 <= 42, would skip our local events)
-- Result: Keep local value 40, replay processes 41 & 42, gromsblood stays visible
-
-**Edge Cases Handled:**
-1. ✅ Incoming seq beyond our event log: Accept (we don't have those events anyway)
-2. ✅ Incoming seq within our event log range: Reject (protect our events)
-3. ✅ Incoming seq same as local: Keep local (no change)
-4. ✅ Incoming seq lower than local: Keep local (we're ahead)
-
-**Testing Required:**
-1. ⏳ Verify gromsblood stays visible after multiple sync cycles
-2. ⏳ Verify we still accept legitimate updates from other actors
-3. ⏳ Test with banker fulfilling request (creates event in banker's sequence space)
-4. ⏳ Test with request deletion/tombstones
-5. ⏳ Verify rejection logging works correctly
-
-**Files Modified:**
-- `Modules/RequestLog.lua` (lines 547-615): Replaced max-merge with smart-merge logic
-
-**Debug Messages:**
-- Category: `SYNC`
-- "ApplyRequestSnapshot: Rejecting {actor} seq {N} (would skip local events up to {maxLocal})"
-- "ApplyRequestSnapshot: Smart-merged requestLogApplied - {upgraded} upgraded, {kept} kept local, {rejected} rejected"
-
-Enable with: `/togbank debugcat SYNC true`
-
-**Known Limitations:**
-- ⚠️ If a banker fulfills your request and you receive their snapshot showing it fulfilled/deleted, you SHOULD accept their higher seq. Current fix might reject it and resurrect the request.
-- ⚠️ Need to verify tombstone handling: if incoming snapshot has tombstone but we reject seq upgrade, does the tombstone still apply?
-- ⚠️ May need additional logic to detect legitimate state changes vs. missing data
-
-**Prevention Measures:**
-1. ✅ Event log is now protected from being skipped by incoming snapshots
-2. ⚠️ Need to validate this doesn't break legitimate banker fulfillment flows
-3. ⚠️ Consider: Should tombstones override the seq rejection logic?
-4. ⚠️ Consider: Timestamp-based validation for request state changes
-
-**Next Steps:**
-1. Test banker fulfillment scenario
-2. Test request deletion/tombstone scenario  
-3. Monitor for resurrected requests that should stay deleted
-4. Consider hybrid approach: accept seq if snapshot contains matching request with newer timestamp
-
----
-
 #### [REPLAY-001] Empty requestLogApplied causes all requests to disappear from UI
-
-**Severity:** 🔴 CRITICAL
-**Category:** Request Log / Event Sourcing
 **Reporter:** User (Production - Galdof character)
 **Date Reported:** 2026-01-27
 **Status:** ✅ RESOLVED (2026-01-27)
@@ -427,6 +298,61 @@ Added smart filtering that excludes stacks smaller than the required split amoun
 
 ---
 
+#### ✅ [FULFILL-002] Fulfill button callback not updating after split completion
+
+**Severity:** 🟠 HIGH
+**Category:** Order Fulfillment / UI
+**Reporter:** User (Testing)
+**Date Reported:** 2026-01-27
+**Date Resolved:** 2026-01-27
+**Status:** ✅ RESOLVED
+**Reproducibility:** Was Consistent
+
+**Description:**
+When fulfilling a request that requires splitting, after split completes and button changes to envelope icon, clicking the envelope button still triggered split popup instead of attaching items to mail.
+
+**Root Cause:**
+Two issues in the greedy stack allocation algorithm in `PrepareFulfillMail()`:
+
+1. **Minimum stack size filter bug**: When needing only 1 item from a stack of 9, after splitting to create [8, 1], the algorithm used `minStackSize = 5` and filtered out the stack of 1 as "too small", causing it to mark the stack of 8 for splitting again.
+
+2. **Single-pass greedy processing**: Algorithm processed stacks in one pass, marking splits before checking if smaller exact-fit stacks existed later in the list.
+
+**Solution:**
+Two-part fix implemented in `Modules/Mail.lua`:
+
+**Fix 1: Minimum Stack Size Calculation (Line 591)**
+```lua
+-- Changed from:
+local minStackSize = wouldNeedToSplit > 0 and wouldNeedToSplit or 5
+
+-- To:
+local minStackSize = wouldNeedToSplit > 0 and wouldNeedToSplit or math.min(5, qtyNeeded)
+```
+This ensures when needing only 1 item, a stack of 1 is not filtered out.
+
+**Fix 2: Two-Stage Greedy Algorithm (Lines 608-633)**
+- **Stage 1**: Accumulate all stacks that fit exactly without exceeding qtyNeeded
+- **Stage 2**: Only if still need more, look for a stack to split
+
+This ensures exact-fit stacks are always preferred over splitting.
+
+**Testing Results:**
+- ✅ Create request for 1 item
+- ✅ Bank alt has single stack of 9 items  
+- ✅ Click scissors button - split 1 item creates stacks [8, 1]
+- ✅ Button changes to envelope icon
+- ✅ Click envelope button - items attach to mail (no split popup!) ✅
+- ✅ Request fulfilled successfully
+
+**Files Modified:** 
+- `Modules/Mail.lua` (lines 591, 608-633) - Fixed greedy algorithm and minimum stack size
+- `Modules/Mail.lua` (multiple) - Migrated debug output to proper system
+
+**Bonus:** Migrated all fulfillment debug output from `print()` to `TOGBankClassic_Output:Debug("FULFILL", ...)` for integration with persistent debug log system.
+
+---
+
 #### ✅ [PERF-001] Serious performance degradation during normal gameplay
 
 **Severity:** 🟠 HIGH
@@ -448,6 +374,111 @@ After investigation, determined this was caused by the same issue as PERF-002: t
 Fixed by decoupling request sync from inventory sync (same fix as PERF-002). See PERF-002 for full details.
 
 **Closed:** 2026-01-26
+
+---
+
+## Resolved Bugs (2026-01-28)
+
+### 🔴 CRITICAL - All Resolved
+
+#### ✅ [SYNC-001] Incoming snapshots with higher requestLogApplied values cause local requests to disappear
+
+**Severity:** 🔴 CRITICAL
+**Category:** Snapshot Sync / Event Sourcing
+**Reporter:** User (Production - Galdof character)
+**Date Reported:** 2026-01-27
+**Date Resolved:** 2026-01-28
+**Status:** ✅ RESOLVED
+**Reproducibility:** Was consistent when receiving snapshots from other players
+**Related:** [REPLAY-001]
+
+**Problem:**
+After [REPLAY-001] fix recovered all 58 requests, the gromsblood requests disappeared again minutes later when receiving a snapshot from another player. The snapshot had `requestLogApplied[Galdof-OldBlanchy] = 42` but didn't include the gromsblood requests, causing them to be skipped during replay.
+
+**Root Cause:**
+The `ApplyRequestSnapshot()` function used max-merge logic for `requestLogApplied`, blindly accepting any higher sequence number. This was fundamentally broken for event sourcing because:
+- Other player's snapshot is from THEIR perspective, not authoritative
+- Our local event log is the authoritative source for our own data
+- Accepting their higher sequence number caused `ReplayRequestLogEntries()` to skip our local events (seq 41, 42)
+- Result: Requests in our event log never got replayed back into the snapshot
+
+**Solution Implemented:**
+Implemented smart-merge algorithm in `ApplyRequestSnapshot()` that protects local event log entries:
+
+1. **Build map of max local sequence per actor** from our event log
+2. **For each incoming requestLogApplied[actor]:**
+   - If `incomingSeq > maxLocalSeq`: Accept (safe, beyond our event log)
+   - If `incomingSeq <= maxLocalSeq`: **REJECT** (would skip our local events)
+   - If `incomingSeq <= localSeq`: Keep local (we're already ahead)
+
+**Key Logic:**
+```lua
+if incomingSeq > localSeq then
+    if incomingSeq > maxLocal then
+        -- Safe: incoming seq is beyond our event log
+        localApplied[actor] = incomingSeq
+        upgraded = upgraded + 1
+    else
+        -- REJECT: Would mark our local events as "already applied"
+        TOGBankClassic_Output:Debug("SYNC", "Rejecting %s seq %d (would skip local events up to %d)",
+            actor, incomingSeq, maxLocal)
+        rejected = rejected + 1
+    end
+end
+```
+
+**Example:**
+- Local: event log has Galdof seq 41, 42 (maxLocal = 42)
+- Local: `requestLogApplied[Galdof] = 40`
+- Incoming: `requestLogApplied[Galdof] = 42`
+- **Decision:** Reject (42 <= 42, would skip our local events)
+- **Result:** Keep local value 40, replay processes 41 & 42, gromsblood stays visible ✅
+
+**Testing Results:**
+- ✅ Requests stay visible after multiple sync cycles
+- ✅ Data persists correctly through `/reload` and logout/login
+- ✅ Smart-merge accepts legitimate updates (seq beyond event log)
+- ✅ Smart-merge rejects seq that would skip local events
+- ✅ Debug logging shows rejected sequences with actor and reason
+
+**Additional Improvements:**
+
+1. **Diagnostic logging** added with `[PERSIST]` prefix:
+   - Traces `requestLogApplied` state on load
+   - Logs smart-merge decisions (upgraded/kept/rejected)
+   - Tracks REPLAY-001 validation rebuilds
+
+2. **New command `/togbank persistcheck`:**
+   - Shows counts: requests, requestLog entries, requestLogApplied actors
+   - Verifies Guild.Info references SavedVariables correctly
+   - Useful for troubleshooting sync issues
+
+3. **Architecture documentation:**
+   - Created [REQUEST_COMMS.md](REQUEST_COMMS.md) with complete system architecture
+   - Explains event sourcing, persistence, and communication protocols
+   - Documents all data structures and their purposes
+
+**Files Modified:**
+- `Modules/RequestLog.lua` (lines 199-206, 249-257, 619-625, 678-682): Added [PERSIST] debug logging
+- `Modules/RequestLog.lua` (lines 636-676): Implemented smart-merge algorithm
+- `Modules/Chat.lua` (lines 1377-1422): Added `/togbank persistcheck` command
+- `docs/REQUEST_COMMS.md`: Created comprehensive architecture documentation
+- `docs/DELTA_BUGS.md`: Consolidated bug tracking
+
+**Debug Commands:**
+```
+/togbank debugcat SYNC true          # Enable SYNC debug logging
+/togbank persistcheck                # Check current persistence state
+/togbank debuglog 100 PERSIST        # View persistence-related log entries
+```
+
+**Known Limitations:**
+- Tombstone handling with rejected sequences needs validation (banker fulfills your request → tombstone should apply even if seq rejected)
+- May need hybrid approach: accept seq if snapshot contains matching request with newer timestamp
+
+**See Also:**
+- [REQUEST_COMMS.md](REQUEST_COMMS.md) - Complete request communication system architecture
+- [REPLAY-001] - Related: Empty requestLogApplied recovery mechanism
 
 ---
 

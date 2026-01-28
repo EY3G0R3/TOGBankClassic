@@ -201,6 +201,12 @@ function Guild:EnsureRequestsInitialized()
 		self.Info.requestsTombstones = {}
 	end
 
+	-- [PERSISTENCE-DEBUG] Log initial state on load
+	TOGBankClassic_Output:Debug("SYNC", "[PERSIST] EnsureRequestsInitialized: requestLog has %d entries", #(self.Info.requestLog or {}))
+	TOGBankClassic_Output:Debug("SYNC", "[PERSIST] EnsureRequestsInitialized: requestLogApplied has %d actors: %s",
+		countKeys(self.Info.requestLogApplied or {}),
+		table.concat((function() local t = {}; for k,v in pairs(self.Info.requestLogApplied or {}) do table.insert(t, k.."="..v) end; return t end)(), ", "))
+
 	if not self.requestLogIndex or not self.requestLogByActor then
 		self:RebuildRequestLogIndex()
 	end
@@ -246,7 +252,9 @@ function Guild:EnsureRequestsInitialized()
 		end
 		
 		if needsRebuild then
-			TOGBankClassic_Output:Debug("SYNC", "Detected %d stale entries - rebuilding from event log", appliedButMissingCount)
+			TOGBankClassic_Output:Debug("SYNC", "[PERSIST] REPLAY-001 validation triggered rebuild - detected %d stale entries", appliedButMissingCount)
+			TOGBankClassic_Output:Debug("SYNC", "[PERSIST] Before clear: requestLogApplied has %d actors, requests has %d items",
+				countKeys(self.Info.requestLogApplied or {}), #(self.Info.requests or {}))
 			-- Clear requestLogApplied so replay processes ALL entries from event log
 			self.Info.requestLogApplied = {}
 			-- Clear requests so we rebuild from scratch
@@ -255,7 +263,8 @@ function Guild:EnsureRequestsInitialized()
 			self._validationComplete = true
 			-- Replay all events from the log
 			self:ReplayRequestLogEntries()
-			TOGBankClassic_Output:Debug("SYNC", "Rebuild complete - now have %d requests", #self.Info.requests)
+			TOGBankClassic_Output:Debug("SYNC", "[PERSIST] After rebuild: requestLogApplied has %d actors, requests has %d items",
+				countKeys(self.Info.requestLogApplied or {}), #(self.Info.requests or {}))
 			return
 		end
 		
@@ -532,7 +541,7 @@ function Guild:ApplyRequestSnapshot(payload)
 		end
 	end
 
-	TOGBankClassic_Output:Debug(string.format("SYNC", "ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
+	TOGBankClassic_Output:Debug("SYNC", string.format("ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 
 	-- [SYNC-FIX] MERGE snapshots instead of replacing. Event-sourcing principle: never accept
 	-- data loss without proof (tombstones). If incoming snapshot is missing requests we have,
@@ -672,6 +681,9 @@ function Guild:ApplyRequestSnapshot(payload)
 		self.Info.requestLogApplied = localApplied
 		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Smart-merged requestLogApplied - %d upgraded, %d kept local, %d rejected",
 			upgraded, kept, rejected)
+		TOGBankClassic_Output:Debug("SYNC", "[PERSIST] After smart-merge: requestLogApplied has %d actors: %s",
+			countKeys(self.Info.requestLogApplied or {}),
+			table.concat((function() local t = {}; for k,v in pairs(self.Info.requestLogApplied or {}) do table.insert(t, k.."="..v) end; return t end)(), ", "))
 	end
 
 	local localActor = self:GetNormalizedPlayer()
