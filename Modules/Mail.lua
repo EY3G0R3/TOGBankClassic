@@ -585,7 +585,8 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- Minimum stack size = the split amount (must be able to split that much from a stack)
 	-- If no split needed, use min(5, qtyNeeded) to avoid filtering out perfectly sized stacks
 	-- Example: Need 1 item → minStackSize should be 1, not 5
-	local minStackSize = wouldNeedToSplit > 0 and wouldNeedToSplit or math.min(5, qtyNeeded)
+	-- CRITICAL: Never set minStackSize higher than largestStack (fixes non-stackable items like bags)
+	local minStackSize = math.min(largestStack, wouldNeedToSplit > 0 and wouldNeedToSplit or math.min(5, qtyNeeded))
 	
 	-- Build useful stacks list
 	local usefulStacks = {}

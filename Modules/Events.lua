@@ -224,6 +224,8 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 	TOGBankClassic_Guild:RebuildBankerRoster()
 	-- Clear delta error counters for offline players
 	TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
+	-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
+	TOGBankClassic_Guild:RefreshRequestsUI()
 end
 
 function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
