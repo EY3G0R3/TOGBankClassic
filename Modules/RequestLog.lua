@@ -82,9 +82,11 @@ local function legacyRequestId(req)
 end
 
 local function generateRequestId()
+	-- Fallback ID generator for requests not created through AddRequest.
+	-- Uses timestamp:random format (shorter than before, still unique).
 	local now = GetServerTime()
-	local rand = math.random(100000, 999999)
-	return string.format("%d-%d", now, rand)
+	local rand = math.random(1000, 9999)
+	return string.format("%d:%d", now, rand)
 end
 
 -- Normalize incoming request data and ensure required fields exist.
@@ -495,6 +497,15 @@ function Guild:PruneIfNeeded()
 end
 
 -- Sequence allocation for local actors.
+function Guild:PeekNextRequestLogSeq(actor)
+	if not self.Info then
+		return 1, "unknown"
+	end
+	local normActor = self:NormalizeName(actor or self:GetPlayer()) or actor or "unknown"
+	local current = tonumber(self.Info.requestLogSeq[normActor] or 0) or 0
+	return current + 1, normActor
+end
+
 function Guild:NextRequestLogSeq(actor)
 	if not self.Info then
 		return 0
@@ -1597,6 +1608,12 @@ function Guild:AddRequest(request)
 	request.updatedAt = now
 	request.status = request.status or "open"
 	request.fulfilled = tonumber(request.fulfilled or 0) or 0
+
+	-- Generate request ID in actor:seq format (matches the log entry that will be created)
+	if not request.id then
+		local nextSeq, actor = self:PeekNextRequestLogSeq()
+		request.id = string.format("%s:%d", actor, nextSeq)
+	end
 
 	local clean = sanitizeRequest(request)
 	if not clean then
