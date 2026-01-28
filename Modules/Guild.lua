@@ -1353,11 +1353,22 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 			-- Sanitize bag items (array) - compact after removing invalids
 			if a.bags and type(a.bags) == "table" and a.bags.items then
 				local cleaned = {}
+				local beforeCount = 0
+				local validCount = 0
+				local invalidCount = 0
 				for k, v in pairs(a.bags.items) do
+					beforeCount = beforeCount + 1
 					if v and type(v) == "table" and v.ID then
 						table.insert(cleaned, v)
+						validCount = validCount + 1
+					else
+						invalidCount = invalidCount + 1
+						TOGBankClassic_Output:Debug("SYNC", "  Sanitize: invalid bag item at [%s]: v=%s, type=%s, ID=%s", 
+							tostring(k), tostring(v), type(v), v and tostring(v.ID) or "nil")
 					end
 				end
+				TOGBankClassic_Output:Debug("SYNC", "Sanitized bags: before=%d, valid=%d, invalid=%d", 
+					beforeCount, validCount, invalidCount)
 				a.bags.items = cleaned
 			end
 			
