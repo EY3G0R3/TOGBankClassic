@@ -4,7 +4,14 @@
 **Last Updated:** January 28, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
+**Active Issues:**
+- ⚠️ [UI-007] Item tooltips not showing stats on gear (rings, wands, etc.) - Shows armor value but missing stat details
+
 **Recent Fixes (2026-01-28):**
+- ✅ [SYNC-006] Mail quantities appearing additive during syncs - Consolidated inventory into single alt.items aggregate
+- ✅ [MAIL-004] Non-stackable items filtered out by greedy algorithm - Fixed minStackSize to never exceed largestStack
+- ✅ [UI-006] Highlight checkbox not appearing for bankers - Fixed by refreshing UI on GUILD_ROSTER_UPDATE
+- ✅ [SYNC-005] Failed log entries retrying infinitely - Implemented permanent vs transient failure detection
 - ✅ [SYNC-004] User request cancellations not propagating to other players - Fixed sequential entry requirement and implemented priority-based conflict resolution
 - ✅ [SYNC-001] Request data disappearing after snapshots - Implemented smart-merge algorithm to protect local event log from being skipped
 
@@ -4726,6 +4733,226 @@ end
 ---
 
 **Happy testing! Report all bugs, no matter how small. Every bug found makes the addon better. 🐛➡️✅**
+
+---
+
+### ✅ [MAIL-004] Non-stackable items filtered out by greedy algorithm for multi-quantity fulfills
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Mail / Fulfill  
+**Date Reported:** 2026-01-28  
+**Status:** ✅ RESOLVED  
+**Resolution Date:** 2026-01-28
+
+**Description:**
+When attempting to fulfill a request for multiple non-stackable items (like 4 Runecloth Bags), the fulfill button showed "(no runecloth bag found in bags)" even though the character had many of them in inventory. This worked fine for single items (need 1) but broke for quantities > 1.
+
+**Test Case:**
+- Character: Bag vendor with 100+ Runecloth Bags in inventory (each count=1, non-stackable)
+- Request: 4 Runecloth Bags
+- Expected: Fulfill button works and attaches 4 bags
+- Actual: Button shows "(no runecloth bag found in bags)"
+- Note: Worked yesterday, broke after greedy algorithm changes
+
+**Root Cause:**
+The greedy algorithm's `minStackSize` calculation didn't account for non-stackable items when quantity needed > 1.
+
+For **4 Runecloth Bags** (each count=1):
+```lua
+largestStack = 1
+accumulated = 100  -- all bags included
+wouldNeedToSplit = max(0, 4 - 100) = 0
+minStackSize = math.min(5, qtyNeeded) = math.min(5, 4) = 4  ❌
+
+-- Filtering at line 593:
+if item.count >= minStackSize then  -- 1 >= 4 is FALSE
+    -- All bags filtered out!
+end
+```
+
+Result: `usefulStacks` is empty, nothing gets attached, error returned.
+
+**Why it worked for quantity=1:**
+```lua
+minStackSize = math.min(5, 1) = 1  ✅
+if 1 >= 1 then  -- TRUE, bags included
+```
+
+**Solution:**
+Capped `minStackSize` to never exceed `largestStack`.
+
+**File:** `Modules/Mail.lua:585-591`
+
+**Changes:**
+```lua
+-- BEFORE:
+local minStackSize = wouldNeedToSplit > 0 and wouldNeedToSplit or math.min(5, qtyNeeded)
+
+-- AFTER:
+local minStackSize = math.min(largestStack, wouldNeedToSplit > 0 and wouldNeedToSplit or math.min(5, qtyNeeded))
+```
+
+Now for **4 Runecloth Bags**:
+```lua
+minStackSize = min(1, min(5, 4)) = min(1, 4) = 1  ✅
+if 1 >= 1 then  -- TRUE, bags included
+```
+
+**Testing:**
+1. Create request for 4 Runecloth Bags
+2. On bag vendor with 100+ bags
+3. Click Fulfill button
+4. Verify 4 bags attach to mail
+5. Test with other non-stackable items (gear, other bags)
+6. Test with various quantities (1, 2, 5, 10)
+
+**Why the bug was introduced:**
+The `math.min(5, qtyNeeded)` logic was added to handle small quantity requests (need 1-4 items) to prevent filtering out perfectly-sized stacks. However, it didn't account for non-stackable items where `largestStack = 1`, creating an impossible filter condition when needing multiple items.
+
+---
+
+### ✅ [UI-006] Highlight checkbox intermittently not appearing for bankers
+
+**Severity:** 🟡 MEDIUM  
+**Category:** UI / Requests Window  
+**Date Reported:** 2026-01-28  
+**Status:** ✅ RESOLVED  
+**Resolution Date:** 2026-01-28
+
+**Description:**
+The "Highlight needed items" checkbox in the Requests window (banker-only feature) was appearing intermittently. Sometimes it would show up, sometimes it wouldn't, even for characters marked as bankers with "gbank" in their guild notes.
+
+**Root Cause:**
+The checkbox visibility is determined during `ShowRequestsUI()` by checking if the current player is in the banks list via `GetBanks()`. However, `GetBanks()` relies on guild roster data from `GetNumGuildMembers()` and `GetGuildRosterInfo()`, which may not be loaded immediately after login, reload, or character switches.
+
+The flow:
+1. Player opens Requests window
+2. `ShowRequestsUI()` → `DrawContent()` calls `GetBanks()`
+3. If guild roster not loaded yet → `GetBanks()` returns empty/incomplete list
+4. Checkbox not created because player not detected as banker
+5. Later, `GUILD_ROSTER_UPDATE` fires and invalidates banks cache
+6. But UI is not refreshed, so checkbox never appears
+
+**Solution:**
+Added `TOGBankClassic_Guild:RefreshRequestsUI()` call to `GUILD_ROSTER_UPDATE` event handler.
+
+**File:** `Modules/Events.lua:217-227`
+
+**Changes:**
+```lua
+function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
+	TOGBankClassic_Performance:RecordEvent("GUILD_ROSTER_UPDATE")
+	TOGBankClassic_Guild:RefreshOnlineCache()
+	TOGBankClassic_Guild:InvalidateBanksCache()
+	TOGBankClassic_Guild:RebuildBankerRoster()
+	TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
+	-- NEW: Refresh Requests UI to update banker-only controls
+	TOGBankClassic_Guild:RefreshRequestsUI()
+end
+```
+
+Now when the guild roster updates and the banks cache is rebuilt, the Requests UI automatically refreshes to show/hide the checkbox based on current banker status.
+
+**Testing:**
+1. Log in as a banker character
+2. Open Requests window immediately (before guild roster fully loads)
+3. Verify checkbox appears after a few seconds (when GUILD_ROSTER_UPDATE fires)
+4. Log in as non-banker character
+5. Verify checkbox never appears
+
+---
+
+### ⚠️ [UI-007] Item tooltips not showing stats on gear
+
+**Severity:** 🟡 MEDIUM  
+**Category:** UI / Item Display  
+**Date Reported:** 2026-01-28  
+**Status:** ⚠️ ACTIVE - Needs Investigation  
+
+**Description:**
+Item tooltips in the addon interface show armor values but are missing stat information (e.g., +Intellect, +Stamina, +Spell Power) for equipment like rings, wands, and other gear.
+
+**Expected Behavior:**
+Item tooltips should display all stats that appear on the item, including:
+- Primary stats (Strength, Agility, Intellect, etc.)
+- Secondary stats (Spell Power, Attack Power, Critical Strike, etc.)
+- Special effects and bonuses
+
+**Actual Behavior:**
+- Armor value displays correctly
+- Stat lines are missing or not rendered
+
+**Affected Items:**
+- Rings
+- Wands
+- Other equipment with stats
+
+**Impact:**
+Users cannot see full item details when browsing banker inventories, making it difficult to evaluate items without manually inspecting them in-game.
+
+**Possible Causes:**
+1. Tooltip generation using item links might not be fully parsing all stat lines
+2. GetItemInfo() may not be returning all tooltip data
+3. Custom tooltip rendering might be filtering out certain tooltip lines
+4. Item cache might not be fully loaded when tooltips are generated
+
+**Investigation Needed:**
+- Check UI.lua DrawItem() or tooltip generation logic
+- Verify if GameTooltip is being properly scanned for all lines
+- Test with freshly cached vs already-cached items
+- Check if issue is specific to certain item types or categories
+
+**Workaround:**
+Players can shift-click items to link them in chat and inspect manually.
+
+---
+
+### ✅ [SYNC-006] Mail quantities appearing additive during syncs
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Delta Sync / Data Integrity  
+**Date Reported:** 2026-01-28  
+**Status:** ✅ RESOLVED  
+**Resolution Date:** 2026-01-28
+
+**Description:**
+When syncing with other players, bag item quantities kept increasing by the mail item amounts. For example, if a banker had 10 items in bags and 5 in mail, after syncing the bag count would show as 15, then 20 after another sync, etc.
+
+**Root Cause:**
+The system was storing mail items separately in `alt.mail.items` (key-value by itemID) while storing bank and bags as arrays in `alt.bank.items` and `alt.bags.items`. The UI aggregated all three for display, but the delta sync was only syncing bank and bags separately. This created a mismatch where:
+1. Banker scans: bags=10, mail=5 (stored separately)
+2. UI displays: 15 (aggregated for display)
+3. Delta sync sends: bank changes + bags changes (no mail)
+4. But somehow the aggregated value was leaking back into the stored data
+
+**Architectural Issue:**
+The separation of mail from bags/bank, combined with on-the-fly aggregation for display only, created opportunities for the aggregated values to persist or be written back to the source data during sync operations.
+
+**Solution:**
+Consolidated all inventory (bank + bags + mail) into a single `alt.items` aggregate that is computed fresh after each scan and used for both sync and display:
+
+1. **Source Data (tracking only):**
+   - `alt.bank.items` - what was scanned from bank
+   - `alt.bags.items` - what was scanned from bags  
+   - `alt.mail.items` - what was scanned from mail
+
+2. **Aggregate (sync + display):**
+   - `alt.items` - fresh aggregate of all three sources
+   - Computed in Bank.lua after each scan
+   - Used by delta sync (DeltaComms.lua)
+   - Used by UI display (Inventory.lua)
+
+**Changes Made:**
+- Bank.lua: Added aggregation logic after scan to create `alt.items`
+- DeltaComms.lua: Changed delta computation/application to use `alt.items` instead of separate bank/bags
+- Guild.lua: Updated all sync helpers to use `alt.items`
+- UI/Inventory.lua: Simplified to read from `alt.items` directly
+
+**Testing:**
+1. Banker with items in bank, bags, and mail
+2. Scan inventory
+3. Sync with other players multiple times
+4. Verify item counts remain stable and don't increase additively
 
 ---
 
