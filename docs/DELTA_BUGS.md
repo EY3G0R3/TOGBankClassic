@@ -4910,49 +4910,146 @@ Players can shift-click items to link them in chat and inspect manually.
 ### ✅ [SYNC-006] Mail quantities appearing additive during syncs
 
 **Severity:** 🔴 CRITICAL  
-**Category:** Delta Sync / Data Integrity  
+**Category:** Delta Sync / Data Integrity / Inventory Aggregation
+**Reporter:** User (Production)
 **Date Reported:** 2026-01-28  
+**Date Resolved:** 2026-01-28  
 **Status:** ✅ RESOLVED  
-**Resolution Date:** 2026-01-28
+**Reproducibility:** Consistent - occurred on every sync
+**Impacted Users:** All bankers with mail inventory
 
-**Description:**
-When syncing with other players, bag item quantities kept increasing by the mail item amounts. For example, if a banker had 10 items in bags and 5 in mail, after syncing the bag count would show as 15, then 20 after another sync, etc.
+**Initial Symptoms:**
+User reported: "there is an issue where it's becoming additive, and my bags are increasing by the mail amount as i keep syncing with other players"
+- Banker had 70 runecloth bags in bank, 33 in bags, 1 in mail (total: 104)
+- Inventory UI displayed **368 runecloth bags** instead of 104
+- Count increased with each sync operation
+- Pattern identified: 368 = 104 + 264, where 264 = 33 × 8 (8x duplication of bag count)
 
-**Root Cause:**
-The system was storing mail items separately in `alt.mail.items` (key-value by itemID) while storing bank and bags as arrays in `alt.bank.items` and `alt.bags.items`. The UI aggregated all three for display, but the delta sync was only syncing bank and bags separately. This created a mismatch where:
-1. Banker scans: bags=10, mail=5 (stored separately)
-2. UI displays: 15 (aggregated for display)
-3. Delta sync sends: bank changes + bags changes (no mail)
-4. But somehow the aggregated value was leaking back into the stored data
+**Investigation Timeline:**
 
-**Architectural Issue:**
-The separation of mail from bags/bank, combined with on-the-fly aggregation for display only, created opportunities for the aggregated values to persist or be written back to the source data during sync operations.
+**Phase 1: Initial Architecture Fix**
+Implemented consolidated inventory system to prevent aggregation mismatch:
+- Created `alt.items` aggregate combining bank + bags + mail
+- Updated delta sync to use `alt.items` instead of separate bank/bags
+- UI updated to compute from aggregate
 
-**Solution:**
-Consolidated all inventory (bank + bags + mail) into a single `alt.items` aggregate that is computed fresh after each scan and used for both sync and display:
+**Phase 2: Display Issues**
+After architecture changes, inventory tabs showed empty. Fixes:
+- Fixed aggregation to return array format (not composite-keyed table)
+- Changed aggregate key from `ID .. Link` to `ID` only (to properly combine same items)
+- Fixed syntax error (extra 'end' statement) in Item.lua
 
-1. **Source Data (tracking only):**
-   - `alt.bank.items` - what was scanned from bank
-   - `alt.bags.items` - what was scanned from bags  
-   - `alt.mail.items` - what was scanned from mail
+**Phase 3: Persistent Count Errors**
+Even after architecture fixes, count remained wrong (368 instead of 104):
+- Added detailed debug logging: `/togbank debug MAIL`
+- Debug revealed corrupted source data in `alt.bags.items`:
+  - **Expected:** ~10 entries for 10 item types, total count 33
+  - **Actual:** 18 entries with only 10 unique IDs, total count **325** (should be 33)
+  - 325 instead of 33 = 9x multiplication (bags counted 9 times instead of once)
 
-2. **Aggregate (sync + display):**
-   - `alt.items` - fresh aggregate of all three sources
-   - Computed in Bank.lua after each scan
-   - Used by delta sync (DeltaComms.lua)
-   - Used by UI display (Inventory.lua)
+**Root Cause - Data Corruption:**
 
-**Changes Made:**
-- Bank.lua: Added aggregation logic after scan to create `alt.items`
-- DeltaComms.lua: Changed delta computation/application to use `alt.items` instead of separate bank/bags
-- Guild.lua: Updated all sync helpers to use `alt.items`
-- UI/Inventory.lua: Simplified to read from `alt.items` directly
+The source arrays (`alt.bags.items`, `alt.bank.items`) contained **duplicate entries** for the same item ID, accumulated through:
+1. Old aggregation logic using `ID + Link` as key created multiple entries for same item
+2. Syncing with other players who had corrupted data
+3. No deduplication mechanism to clean corrupted data once it entered the system
 
-**Testing:**
-1. Banker with items in bank, bags, and mail
-2. Scan inventory
-3. Sync with other players multiple times
-4. Verify item counts remain stable and don't increase additively
+**Example of corrupted data structure:**
+```lua
+alt.bags.items = {
+    {ID = 14046, Link = "[Runecloth Bag]", Count = 4},   -- Entry 1
+    {ID = 14046, Link = "[Runecloth Bag]", Count = 5},   -- Entry 2 (duplicate ID)
+    {ID = 14046, Link = "[Runecloth Bag]", Count = 8},   -- Entry 3 (duplicate ID)
+    {ID = 14046, Link = "[Runecloth Bag]", Count = 16},  -- Entry 4 (duplicate ID)
+    -- ... 10 unique item IDs but 18 total entries ...
+}
+```
+
+When aggregated: 4 + 5 + 8 + 16 + ... = 325 total bags instead of 33.
+
+**Complete Solution:**
+
+**1. Architecture Changes (prevent future corruption):**
+- **Modules/Bank.lua (lines 200-217):** Create `alt.items` aggregate from bank + bags + mail after each scan
+- **Modules/Item.lua (lines 103-146):** Fixed `Aggregate()` to use ID-only as key (not ID+Link)
+- **Modules/DeltaComms.lua:** 
+  - Lines 526-543: `ComputeDelta()` uses `alt.items`
+  - Lines 575-587: `DeltaHasChanges()` checks `alt.items`
+  - Lines 743-753: `ApplyDelta()` applies to `alt.items`
+- **Modules/Guild.lua:** Updated all helpers (sanitizeAlt, hasData, ComputeStateSummary, StripAltLinks, itemCount, ReconstructItemLinks) to use `alt.items`
+
+**2. Auto-Healing Deduplication (fix existing corruption):**
+- **Modules/Bank.lua (lines 218-232):** After creating `alt.items` aggregate, also deduplicate source arrays:
+  ```lua
+  -- Deduplicate source arrays to fix any corrupted data
+  if alt.items and #alt.items > 0 then
+      -- Extract only bank items and deduplicate
+      local bankOnly = {}
+      for _, v in ipairs(alt.bank.items or {}) do
+          if v.ID then
+              table.insert(bankOnly, v)
+          end
+      end
+      alt.bank.items = TOGBankClassic_Item:Aggregate(bankOnly)
+      
+      -- Extract only bag items and deduplicate  
+      local bagsOnly = {}
+      for _, v in ipairs(alt.bags.items or {}) do
+          if v.ID then
+              table.insert(bagsOnly, v)
+          end
+      end
+      alt.bags.items = TOGBankClassic_Item:Aggregate(bagsOnly)
+  end
+  ```
+- This runs **automatically on every bank/mailbox open**
+- Aggregates source arrays by ID, removing duplicates
+- Replaces corrupted arrays with cleaned versions
+- Self-heals without user intervention
+
+**3. Display Layer Safeguard:**
+- **Modules/UI/Inventory.lua (lines 280-340):** Always computes fresh aggregate from source data
+- Added debug logging showing unique IDs and total counts per source
+- Never trusts stored `alt.items`, always validates against sources
+
+**Debug Output Before Fix:**
+```
+bags: 10 unique IDs, 325 total count
+Combined should be: 368
+aggregated to 11 unique items
+displaying Runecloth Bag with count 368 (ID: 14046)
+```
+
+**Debug Output After Fix:**
+```
+bags: 10 unique IDs, 61 total count
+Combined should be: 104
+aggregated to 11 unique items
+displaying Runecloth Bag with count 104 (ID: 14046)
+```
+
+**Verification:**
+1. User opened bank and mailbox to trigger automatic scan with deduplication
+2. Debug output confirmed: bags array reduced from 325 to 61 total count
+3. Runecloth bag count displayed correctly: **104** (not 368)
+4. User broadcasted cleaned data with `/togbank share` to propagate fix to guild
+
+**Impact Analysis:**
+- **Before:** Bankers with mail inventory saw wildly incorrect counts (8-9x multiplied)
+- **After:** All counts accurate, auto-healing prevents recurrence
+- **Data Safety:** Source arrays (bank, bags, mail) preserved for tracking, cleaned automatically
+- **Sync Stability:** Single aggregate prevents sync mismatches
+
+**Lessons Learned:**
+1. Using `ID + Link` as composite key creates duplicates (links can vary for same item)
+2. Always aggregate by item ID only
+3. Source data corruption requires auto-healing mechanism (can't rely on users to fix manually)
+4. Separation of "source" (bank/bags/mail) vs "aggregate" (alt.items) allows both tracking and clean sync
+
+**Prevention:**
+- Auto-healing runs on every scan (bank open, mailbox open)
+- ID-only aggregation prevents new duplicates from forming
+- Debug logging helps identify corruption patterns quickly
 
 ---
 
