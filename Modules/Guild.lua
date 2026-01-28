@@ -1357,6 +1357,20 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 			return ADOPTION_STATUS.INVALID
 		end
 
+		-- Debug: Log what we received
+		local function countItems(items)
+			if not items or type(items) ~= "table" then return 0 end
+			local count = 0
+			for _ in pairs(items) do count = count + 1 end
+			return count
+		end
+		
+		TOGBankClassic_Output:Debug("SYNC", "ReceiveAltData for %s: alt.items=%d, alt.bank.items=%d, alt.bags.items=%d", 
+			name,
+			countItems(alt.items),
+			(alt.bank and alt.bank.items) and countItems(alt.bank.items) or 0,
+			(alt.bags and alt.bags.items) and countItems(alt.bags.items) or 0)
+
 		-- Backward compatibility: Compute alt.items from sources if missing (SYNC-006)
 		-- This handles data from players who haven't rescanned after the aggregation update
 		-- OLD STRUCTURE: Only bank and bags were synced (mail was local-only)
