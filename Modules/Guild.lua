@@ -498,6 +498,12 @@ function TOGBankClassic_Guild:GetVersion()
 		data.roster = self.Info.roster.version
 	end
 
+	-- Include request sync summary (version + hash) in version broadcasts.
+	data.requests = {
+		version = self:GetRequestsVersion(),
+		hash = self:GetRequestsHash(),
+	}
+
 	for k, v in pairs(self.Info.alts) do
 		---START CHANGES
 		-- Only store bank alt data if the sender is a bank alt

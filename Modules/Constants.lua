@@ -39,12 +39,17 @@ DEBUG_CATEGORY = {
 	ITEM = "ITEM",               -- Item loading, validation, and processing
 }
 
--- Request log compaction settings
+-- Request storage settings
 REQUEST_LOG = {
-	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests removed after this
-	RETENTION_SECONDS = 30 * 24 * 60 * 60,   -- 30 days: log entries older than this may be pruned
-	MAX_ENTRIES = 2000,                       -- max log entries to keep after time-based pruning
+	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests and tombstones removed after this
 	PRUNE_INTERVAL = 300,                     -- 5 minutes: minimum interval between automatic prunes
+}
+
+-- Request sync throttling settings
+REQUESTS_SYNC = {
+	-- NOTE: Short values for quick testing; production values should be higher.
+	INDEX_QUERY_COOLDOWN = 60,         -- seconds between index queries (global and per-sender)
+	INDEX_INFLIGHT_TIMEOUT = 30,       -- seconds before in-flight index sync is considered stale
 }
 
 -- Communication prefix descriptions for debug logging
@@ -59,6 +64,8 @@ COMM_PREFIX_DESCRIPTIONS = {
 	["togbank-dc"] = "(Delta Chain)",
 	["togbank-r"] = "(Query)",
 	["togbank-rr"] = "(Query Reply)",
+	["togbank-rq"] = "(Request Query)",
+	["togbank-rd"] = "(Request Data)",
 	["togbank-state"] = "(State Summary)",
 	["togbank-nochange"] = "(No Change)",
 	["togbank-h"] = "(Hello)",

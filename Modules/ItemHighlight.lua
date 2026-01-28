@@ -103,7 +103,8 @@ function ItemHighlight:BuildNeededItemsList()
 	end
 
 	-- Aggregate quantities from all pending requests for this banker
-	for _, request in ipairs(info.requests) do
+	-- Use pairs() since requests is now a map keyed by ID, not an array
+	for _, request in pairs(info.requests or {}) do
 		if request.bank == currentBanker
 			and request.status ~= "complete"
 			and request.status ~= "fulfilled"

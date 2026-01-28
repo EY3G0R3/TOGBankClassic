@@ -36,9 +36,6 @@ function TOGBankClassic_Database:Reset(name)
 		alts = {},
 		requests = {},
 		requestsVersion = 0,
-		requestLog = {},
-		requestLogSeq = {},
-		requestLogApplied = {},
 		requestsTombstones = {},
 		-- Delta sync fields
 		deltaSnapshots = {},
@@ -93,14 +90,25 @@ function TOGBankClassic_Database:Load(name)
 	local db = self.db.faction[name]
 	---END CHANGES
 
-	if db == nil or db.roster == nil then
+	-- Only reset if there's truly no data (nil). Otherwise initialize missing fields.
+	-- This prevents data loss when some fields are missing but others (like requests) exist.
+	if db == nil then
 		TOGBankClassic_Database:Reset(name)
 		---START CHANGES
 		--db = self.db.factionrealm[name]
 		db = self.db.faction[name]
 		---END CHANGES
-	elseif db.name == nil then
-		db.name = name
+	else
+		-- Initialize missing fields without wiping existing data
+		if db.name == nil then
+			db.name = name
+		end
+		if db.roster == nil then
+			db.roster = {}
+		end
+		if db.alts == nil then
+			db.alts = {}
+		end
 	end
 
 	if not db.requests then
@@ -110,14 +118,36 @@ function TOGBankClassic_Database:Load(name)
 	if not db.requestsVersion then
 		db.requestsVersion = 0
 	end
-	if not db.requestLog then
-		db.requestLog = {}
+
+	if not db.requestsTombstones then
+		db.requestsTombstones = {}
 	end
-	if not db.requestLogSeq then
-		db.requestLogSeq = {}
+
+	-- Initialize delta sync fields if missing
+	if not db.deltaSnapshots then
+		db.deltaSnapshots = {}
 	end
-	if not db.requestLogApplied then
-		db.requestLogApplied = {}
+	if not db.deltaHistory then
+		db.deltaHistory = {}
+	end
+	if not db.guildProtocolVersions then
+		db.guildProtocolVersions = {}
+	end
+	if not db.deltaMetrics then
+		db.deltaMetrics = {
+			bytesSentDelta = 0,
+			bytesSentFull = 0,
+			deltasApplied = 0,
+			deltasFailed = 0,
+			fullSyncFallbacks = 0,
+		}
+	end
+	if not db.deltaErrors then
+		db.deltaErrors = {
+			lastErrors = {},
+			failureCounts = {},
+			notifiedAlts = {},
+		}
 	end
 
 	-- v0.8.0: Migrate old alt data to ensure slots fields exist

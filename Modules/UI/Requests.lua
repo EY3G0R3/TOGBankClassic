@@ -703,7 +703,8 @@ end
 local function pendingCounts(requests)
 	local requesterCounts = {}
 	local bankCounts = {}
-	for _, req in ipairs(requests or {}) do
+	-- Use pairs() since requests is now a map keyed by ID, not an array
+	for _, req in pairs(requests or {}) do
 		if isPending(req) then
 			local requester = req.requester
 			if requester and requester ~= "" then
@@ -802,7 +803,8 @@ function TOGBankClassic_UI_Requests:SortedRequests()
 	end
 
 	local list = {}
-	for _, req in ipairs(info.requests) do
+	-- Use pairs() since requests is now a map keyed by ID, not an array
+	for _, req in pairs(info.requests) do
 		table.insert(list, req)
 	end
 
@@ -1100,7 +1102,8 @@ function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 	end
 
 	local filtered = {}
-	for _, req in ipairs(requests or {}) do
+	-- Use pairs() since requests is now a map keyed by ID, not an array
+	for _, req in pairs(requests or {}) do
 		if (not self.requesterFilter or req.requester == self.requesterFilter)
 			and (not self.bankFilter or req.bank == self.bankFilter) then
 			table.insert(filtered, req)

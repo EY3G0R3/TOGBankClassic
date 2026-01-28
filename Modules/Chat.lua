@@ -103,6 +103,14 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Core:RegisterComm("togbank-wr", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
+
+	-- Request-specific message handlers (v0.9.1+)
+	TOGBankClassic_Core:RegisterComm("togbank-rq", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+	TOGBankClassic_Core:RegisterComm("togbank-rd", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
 end
 
 -- Wrapper for debug logging (delegates to centralized logger)
@@ -118,10 +126,8 @@ function TOGBankClassic_Chat:PerformSync()
 	-- SYNC-008 fix: Also send legacy version broadcast like the automatic timer does
 	TOGBankClassic_Events:Sync("ALERT")
 	TOGBankClassic_Guild:FastFillMissingAlts()
-	-- SYNC-008 fix: Query request data with ALERT priority for immediate sync
-	-- Use wildcard queries to get fresh data from all guild members
+	-- Query request snapshot with ALERT priority for immediate sync
 	local player = TOGBankClassic_Guild:GetPlayer()
-	TOGBankClassic_Guild:QueryRequestLog(player, nil, "ALERT")
 	TOGBankClassic_Guild:QueryRequestsSnapshot(player, "ALERT")
 end
 
@@ -617,13 +623,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 		-- Legacy request handling
 		if data.player then
+			-- Use REQUESTS category for request-related queries, SYNC for alt queries
+			local isRequestQuery = data.type and string.find(data.type, "^requests") ~= nil
+			local category = isRequestQuery and "REQUESTS" or "SYNC"
 			self:Debug(
-				"SYNC",
+				category,
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
-				ColorPlayerName(data.player),
-				"about",
+				isRequestQuery and "[REQ]" or "",
 				data.type,
 				data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or ""
 			)
@@ -637,12 +645,26 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					TOGBankClassic_Guild:SendRequestsSnapshot(sender)
 				end
 			end
-			if data.type == "requests-log" then
+			if data.type == "requests-index" then
 				local matches = (data.player == "*" or data.player == player)
-				TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER CHECK: type=requests-log, player=%s, myName=%s, matches=%s", tostring(data.player), tostring(player), tostring(matches))
 				if matches then
-					TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER: Responding to requests-log query")
-					TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
+					TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query")
+					TOGBankClassic_Guild:SendRequestsIndex(sender)
+				end
+			end
+			if data.type == "requests-by-id" then
+				local matches = (data.player == "*" or data.player == player)
+				if matches then
+					TOGBankClassic_Output:DebugComm("REQUEST BY-ID HANDLER: Responding to requests-by-id query")
+					TOGBankClassic_Guild:SendRequestsById(sender, data.ids)
+				end
+			end
+			if data.type == "requests-log" then
+				-- Legacy query type - respond with full snapshot
+				local matches = (data.player == "*" or data.player == player)
+				if matches then
+					TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER: Responding with snapshot (log queries deprecated)")
+					TOGBankClassic_Guild:SendRequestsSnapshot(sender)
 				end
 			end
 		end
@@ -807,9 +829,24 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				FormatSyncStatus(status)
 			)
 		end
+		if data.type == "requests-index" then
+			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "requests index. We accept it by default.")
+			TOGBankClassic_Guild:ReceiveRequestsIndex(data, sender)
+		end
+		if data.type == "requests-by-id" then
+			local status = TOGBankClassic_Guild:ReceiveRequestsById(data)
+			self:Debug(
+				"REQUESTS",
+				">",
+				ColorPlayerName(sender),
+				SHARES_COLOR,
+				"requests by-id data. We accept it by default.",
+				FormatSyncStatus(status)
+			)
+		end
 		if data.type == "requests-log" then
-			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "requests log. We accept it by default.")
-			TOGBankClassic_Guild:ReceiveRequestLogEntries(data, sender)
+			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "request mutations. We accept by default.")
+			TOGBankClassic_Guild:ReceiveRequestMutations(data, sender)
 		end
 
 		if data.type == "alt" then
@@ -1096,6 +1133,82 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		end
 	end
 
+	-- v0.9.1+: Request-specific query handler (togbank-rq)
+	-- This is the dedicated prefix for request queries, replacing togbank-r with type="requests*"
+	if prefix == "togbank-rq" then
+		TOGBankClassic_Output:DebugComm("togbank-rq DATA.TYPE = %s from %s", tostring(data.type), sender)
+
+		self:Debug(
+			"REQUESTS",
+			">",
+			ColorPlayerName(sender),
+			QUERIES_COLOR,
+			"request query:",
+			data.type or "unknown"
+		)
+
+		-- Request data is guild-wide, anyone can respond (player="*")
+		if data.type == "requests" then
+			local matches = (data.player == "*" or data.player == player)
+			TOGBankClassic_Output:DebugComm("REQUEST HANDLER CHECK: type=requests, player=%s, myName=%s, matches=%s", tostring(data.player), tostring(player), tostring(matches))
+			if matches then
+				TOGBankClassic_Output:DebugComm("REQUEST HANDLER: Responding to requests query")
+				TOGBankClassic_Guild:SendRequestsSnapshot(sender)
+			end
+		end
+		if data.type == "requests-index" then
+			local matches = (data.player == "*" or data.player == player)
+			if matches then
+				TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query")
+				TOGBankClassic_Guild:SendRequestsIndex(sender)
+			end
+		end
+		if data.type == "requests-by-id" then
+			local matches = (data.player == "*" or data.player == player)
+			if matches then
+				TOGBankClassic_Output:DebugComm("REQUEST BY-ID HANDLER: Responding to requests-by-id query")
+				TOGBankClassic_Guild:SendRequestsById(sender, data.ids)
+			end
+		end
+	end
+
+	-- v0.9.1+: Request-specific data handler (togbank-rd)
+	-- This is the dedicated prefix for request data, replacing togbank-d with type="requests*"
+	if prefix == "togbank-rd" then
+		TOGBankClassic_Output:DebugComm("[SYNC-003p] togbank-rd received from %s: type=%s", sender, tostring(data.type))
+
+		if data.type == "requests" then
+			local status = TOGBankClassic_Guild:ReceiveRequestsData(data)
+			self:Debug(
+				"REQUESTS",
+				">",
+				ColorPlayerName(sender),
+				SHARES_COLOR,
+				"requests snapshot.",
+				FormatSyncStatus(status)
+			)
+		end
+		if data.type == "requests-index" then
+			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "requests index.")
+			TOGBankClassic_Guild:ReceiveRequestsIndex(data, sender)
+		end
+		if data.type == "requests-by-id" then
+			local status = TOGBankClassic_Guild:ReceiveRequestsById(data)
+			self:Debug(
+				"REQUESTS",
+				">",
+				ColorPlayerName(sender),
+				SHARES_COLOR,
+				"requests by-id data.",
+				FormatSyncStatus(status)
+			)
+		end
+		if data.type == "requests-log" then
+			self:Debug("REQUESTS", ">", ColorPlayerName(sender), SHARES_COLOR, "request mutations.")
+			TOGBankClassic_Guild:ReceiveRequestMutations(data, sender)
+		end
+	end
+
 	if prefix == "togbank-h" then
 		TOGBankClassic_Guild:Hello("reply")
 	end
@@ -1220,7 +1333,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "compact",
-		help = "manually run compaction to prune old requests and log entries",
+		help = "manually run compaction to prune old requests and tombstones",
 		expert = true,
 		handler = function()
 			TOGBankClassic_Guild:Compact()
