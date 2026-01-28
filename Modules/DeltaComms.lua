@@ -526,26 +526,19 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt)
 			delta.changes.money = currentAlt.money
 		end
 
-		-- Bank items delta
-		local previousBankItems = previous.bank and previous.bank.items or {}
-		local currentBankItems = currentAlt.bank and currentAlt.bank.items or {}
+		-- Items delta (aggregated bank + bags + mail)
+		local previousItems = previous.items or {}
+		local currentItems = currentAlt.items or {}
 
-		-- Bag items delta
-		local previousBagItems = previous.bags and previous.bags.items or {}
-		local currentBagItems = currentAlt.bags and currentAlt.bags.items or {}
-
-		-- Debug: Log item counts for both bank and bags
+		-- Debug: Log item counts
 		TOGBankClassic_Output:Debug(
 			"DELTA",
-			"Comparing %s: previous bank has %d items, bags have %d items; current bank has %d items, bags have %d items",
+			"Comparing %s: previous has %d items, current has %d items",
 			altName,
-			#previousBankItems,
-			#previousBagItems,
-			#currentBankItems,
-			#currentBagItems
+			#previousItems,
+			#currentItems
 		)
-		delta.changes.bank = self:ComputeItemDelta(previousBankItems, currentBankItems)
-		delta.changes.bags = self:ComputeItemDelta(previousBagItems, currentBagItems)
+		delta.changes.items = self:ComputeItemDelta(previousItems, currentItems)
 
 		return delta
 	end)
@@ -575,16 +568,9 @@ function TOGBankClassic_DeltaComms:DeltaHasChanges(delta)
 		return true
 	end
 
-	-- Check bank changes
-	if changes.bank then
-		if next(changes.bank.added) or next(changes.bank.modified) or next(changes.bank.removed) then
-			return true
-		end
-	end
-
-	-- Check bag changes
-	if changes.bags then
-		if next(changes.bags.added) or next(changes.bags.modified) or next(changes.bags.removed) then
+	-- Check items changes
+	if changes.items then
+		if next(changes.items.added) or next(changes.items.modified) or next(changes.items.removed) then
 			return true
 		end
 	end
@@ -745,26 +731,12 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 				current.money = changes.money
 			end
 
-			-- Apply bank item changes
-			if changes.bank then
-				if not current.bank then
-					current.bank = { items = {} }
+			-- Apply item changes (aggregated bank + bags + mail)
+			if changes.items then
+				if not current.items then
+					current.items = {}
 				end
-				if not current.bank.items then
-					current.bank.items = {}
-				end
-				self:ApplyItemDelta(current.bank.items, changes.bank)
-			end
-
-			-- Apply bag item changes
-			if changes.bags then
-				if not current.bags then
-					current.bags = { items = {} }
-				end
-				if not current.bags.items then
-					current.bags.items = {}
-				end
-				self:ApplyItemDelta(current.bags.items, changes.bags)
+				self:ApplyItemDelta(current.items, changes.items)
 			end
 
 			-- Update version

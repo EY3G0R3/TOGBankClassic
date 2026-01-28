@@ -197,6 +197,20 @@ function TOGBankClassic_Bank:Scan()
 		TOGBankClassic_MailInventory.hasUpdated = false
 	end
 
+	-- Aggregate bank + bags + mail into alt.items for sync and display
+	alt.items = {}
+	local bankItems = (alt.bank and alt.bank.items) or {}
+	local bagItems = (alt.bags and alt.bags.items) or {}
+	local mailItems = {}
+	if alt.mail and alt.mail.items then
+		for itemID, mailItem in pairs(alt.mail.items) do
+			table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
+		end
+	end
+	-- Aggregate all three sources
+	alt.items = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+	alt.items = TOGBankClassic_Item:Aggregate(alt.items, mailItems)
+
 	-- v0.8.0: Only update version if inventory actually changed
 	-- Compute a hash of the current inventory state
 	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, alt.mail, money)

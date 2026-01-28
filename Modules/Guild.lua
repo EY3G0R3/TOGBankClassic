@@ -283,18 +283,11 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
 			remove = true
 		else
 			-- Ensure version is present, but malformed nested fields are problematic
-			if alt.bank and type(alt.bank) == "table" and alt.bank.items then
-				-- alt.bank.items should be an array or a map of items with ID fields; remove any empty entries
-				for k, v in pairs(alt.bank.items) do
+			if alt.items then
+				-- alt.items should be an array or a map of items with ID fields; remove any empty entries
+				for k, v in pairs(alt.items) do
 					if not v or type(v) ~= "table" or not v.ID then
-						alt.bank.items[k] = nil
-					end
-				end
-			end
-			if alt.bags and type(alt.bags) == "table" and alt.bags.items then
-				for k, v in pairs(alt.bags.items) do
-					if not v or type(v) ~= "table" or not v.ID then
-						alt.bags.items[k] = nil
+						alt.items[k] = nil
 					end
 				end
 			end
@@ -306,10 +299,7 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
 			if alt.money then
 				hasData = true
 			end
-			if alt.bank and next(alt.bank.items or {}) then
-				hasData = true
-			end
-			if alt.bags and next(alt.bags.items or {}) then
+			if alt.items and next(alt.items) then
 				hasData = true
 			end
 			if not hasData then
@@ -785,7 +775,7 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 		items = {}  -- {[itemID] = quantity}
 	}
 
-	-- Aggregate items by ID (combine bank + bags)
+	-- Aggregate items by ID
 	local function addItems(items)
 		if not items then return end
 		for _, item in ipairs(items) do
@@ -797,11 +787,8 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 		end
 	end
 
-	if alt.bank and alt.bank.items then
-		addItems(alt.bank.items)
-	end
-	if alt.bags and alt.bags.items then
-		addItems(alt.bags.items)
+	if alt.items then
+		addItems(alt.items)
 	end
 
 	return summary
@@ -1012,16 +999,11 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 	local stripped = {
 		version = alt.version,
 		money = alt.money,
-		bank = {
-			items = self:StripItemLinks(alt.bank and alt.bank.items),
-			numSlots = alt.bank and alt.bank.numSlots,
-			slotsFilled = alt.bank and alt.bank.slotsFilled
-		},
-		bags = {
-			items = self:StripItemLinks(alt.bags and alt.bags.items),
-			numSlots = alt.bags and alt.bags.numSlots,
-			slotsFilled = alt.bags and alt.bags.slotsFilled
-		}
+		inventoryHash = alt.inventoryHash,
+		items = self:StripItemLinks(alt.items),
+		bank = alt.bank,
+		bags = alt.bags,
+		mail = alt.mail
 	}
 	return stripped
 end
@@ -1345,6 +1327,14 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 			if not a or type(a) ~= "table" then
 				return nil
 			end
+			if a.items then
+				for k, v in pairs(a.items) do
+					if not v or type(v) ~= "table" or not v.ID then
+						a.items[k] = nil
+					end
+				end
+			end
+			-- Keep bank, bags, mail for tracking, but they're not used for sync
 			if a.bank and type(a.bank) == "table" and a.bank.items then
 				for k, v in pairs(a.bank.items) do
 					if not v or type(v) ~= "table" or not v.ID then
@@ -1377,15 +1367,8 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 		-- If same version, accept the alt with more items
 		local function itemCount(a)
 			local c = 0
-			if a and a.bank and a.bank.items then
-				for _, v in pairs(a.bank.items) do
-					if v and v.ID then
-						c = c + 1
-					end
-				end
-			end
-			if a and a.bags and a.bags.items then
-				for _, v in pairs(a.bags.items) do
+			if a and a.items then
+				for _, v in pairs(a.items) do
 					if v and v.ID then
 						c = c + 1
 					end
@@ -1427,11 +1410,8 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 		self.Info.alts[norm] = alt
 
 		-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
-		if alt.bank and alt.bank.items then
-			self:ReconstructItemLinks(alt.bank.items)
-		end
-		if alt.bags and alt.bags.items then
-			self:ReconstructItemLinks(alt.bags.items)
+		if alt.items then
+			self:ReconstructItemLinks(alt.items)
 		end
 
 		-- Reset error count on successful full sync
