@@ -391,7 +391,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					TOGBankClassic_Output:Debug("REQUESTS",
 						"Hash/version mismatch from %s (theirVersion=%d, ourVersion=%d), querying index.",
 						tostring(sender), theirVersion, ourVersion)
-					TOGBankClassic_Guild:QueryRequestsIndex(sender, "NORMAL")
+					if not TOGBankClassic_Guild:QueryRequestsIndex(sender, "NORMAL") then
+						TOGBankClassic_Output:Debug("REQUESTS", "Index query throttled for %s", tostring(sender))
+					end
 				end
 			end
 			-- PERF-002 fix: Request sync decoupled from inventory sync (togbank-dv)

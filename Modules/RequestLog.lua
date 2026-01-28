@@ -575,6 +575,74 @@ function Guild:RefreshRequestsUI()
 	end
 end
 
+function Guild:EnsureRequestsIndexSyncState()
+	if not self.requestsIndexSync then
+		self.requestsIndexSync = {
+			lastQueryAt = 0,
+			perSender = {},
+			inFlight = nil,
+			inFlightSince = 0,
+			awaitingById = false,
+		}
+	end
+end
+
+function Guild:CanQueryRequestsIndex(sender)
+	self:EnsureRequestsIndexSyncState()
+	local now = GetServerTime()
+	local state = self.requestsIndexSync
+
+	if state.inFlight then
+		if (now - (state.inFlightSince or 0)) < REQUESTS_SYNC.INDEX_INFLIGHT_TIMEOUT then
+			return false
+		end
+		state.inFlight = nil
+		state.inFlightSince = 0
+		state.awaitingById = false
+	end
+
+	if (now - (state.lastQueryAt or 0)) < REQUESTS_SYNC.INDEX_QUERY_COOLDOWN then
+		return false
+	end
+
+	if sender and sender ~= "" then
+		local last = state.perSender[sender]
+		if last and (now - last) < REQUESTS_SYNC.INDEX_QUERY_COOLDOWN then
+			return false
+		end
+	end
+
+	return true
+end
+
+function Guild:BeginRequestsIndexSync(sender)
+	if not self:CanQueryRequestsIndex(sender) then
+		return false
+	end
+	self:EnsureRequestsIndexSyncState()
+	local now = GetServerTime()
+	self.requestsIndexSync.lastQueryAt = now
+	if sender and sender ~= "" then
+		self.requestsIndexSync.perSender[sender] = now
+	end
+	self.requestsIndexSync.inFlight = sender or "*"
+	self.requestsIndexSync.inFlightSince = now
+	self.requestsIndexSync.awaitingById = false
+	return true
+end
+
+function Guild:MarkRequestsIndexAwaitingById()
+	self:EnsureRequestsIndexSyncState()
+	self.requestsIndexSync.awaitingById = true
+end
+
+function Guild:EndRequestsIndexSync()
+	self:EnsureRequestsIndexSyncState()
+	self.requestsIndexSync.inFlight = nil
+	self.requestsIndexSync.inFlightSince = 0
+	self.requestsIndexSync.awaitingById = false
+end
+
 function Guild:GetRequestsHash()
 	if not self.Info then
 		return 0
@@ -639,6 +707,9 @@ end
 
 -- Request index query/response for hash-based sync.
 function Guild:QueryRequestsIndex(target, priority)
+	if not self:BeginRequestsIndexSync(target) then
+		return false
+	end
 	local payload = {
 		player = "*",
 		type = "requests-index",
@@ -648,6 +719,7 @@ function Guild:QueryRequestsIndex(target, priority)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	if target and target ~= "" then
 		if not TOGBankClassic_Core:SendWhisper("togbank-r", data, target, priority or "NORMAL") then
+			self:EndRequestsIndexSync()
 			return false
 		end
 	else
@@ -754,8 +826,10 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 	end
 
 	if #missingIds > 0 then
+		self:MarkRequestsIndexAwaitingById()
 		self:QueryRequestsById(sender, missingIds)
 	else
+		self:EndRequestsIndexSync()
 		self:RefreshRequestsUI()
 	end
 end
@@ -836,6 +910,7 @@ function Guild:ReceiveRequestsById(payload)
 		requests = requests,
 		tombstones = payload.tombstones or {},
 	}) then
+		self:EndRequestsIndexSync()
 		return ADOPTION_STATUS.ADOPTED
 	end
 
