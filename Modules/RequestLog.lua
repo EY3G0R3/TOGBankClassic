@@ -193,6 +193,7 @@ function Guild:EnsureRequestsInitialized()
 	if not self.Info.requestLogSeq then
 		self.Info.requestLogSeq = {}
 	end
+	
 	if not self.Info.requestLogApplied then
 		self.Info.requestLogApplied = {}
 	end
@@ -202,27 +203,81 @@ function Guild:EnsureRequestsInitialized()
 
 	if not self.requestLogIndex or not self.requestLogByActor then
 		self:RebuildRequestLogIndex()
-		-- [REPLAY-FIX] Initialize requestLogApplied from log entries ONLY during
-		-- first-time setup (when indices were just built). This handles the case
-		-- where we have log entries but no applied tracking (fresh install, migration).
-		-- This should NOT run during snapshot processing, where requestLogApplied
-		-- is intentionally set from the incoming snapshot to enable replay.
-		if next(self.Info.requestLogApplied) == nil and self.requestLogByActor then
-			for actor, list in pairs(self.requestLogByActor) do
-				local maxSeq = 0
-				for _, entry in ipairs(list) do
-					local seq = tonumber(entry.seq or 0) or 0
-					if seq > maxSeq then
-						maxSeq = seq
+	end
+	
+	-- [BUG-FIX REPLAY-001] Validate that requestLogApplied is consistent with event log
+	-- Check if there are entries marked as applied but don't exist in requests snapshot
+	-- Skip validation if we've already validated (prevents recursive calls)
+	if not self._validationComplete then
+		local needsRebuild = false
+		local appliedButMissingCount = 0
+		if self.requestLogByActor then
+			for actor, entries in pairs(self.requestLogByActor) do
+				local appliedSeq = self.Info.requestLogApplied[actor] or 0
+				for _, entry in ipairs(entries) do
+					-- Check entries that are marked as applied (seq <= appliedSeq)
+					if entry.seq <= appliedSeq and entry.type == "add" then
+						-- This "add" entry is marked as applied, so the request should exist
+						local requestExists = false
+						for _, req in ipairs(self.Info.requests or {}) do
+							if req.id == entry.requestId then
+								requestExists = true
+								break
+							end
+						end
+						if not requestExists then
+							-- Check if it was deleted (tombstone)
+							local tombstoneTs = self.Info.requestsTombstones and self.Info.requestsTombstones[entry.requestId]
+							if not tombstoneTs or tombstoneTs < entry.ts then
+								-- Not deleted or deletion is older than the add - request should exist!
+								TOGBankClassic_Output:Debug("[REPLAY-001] Stale data: %s seq %d marked applied but request %s missing",
+									actor, entry.seq, entry.requestId)
+								appliedButMissingCount = appliedButMissingCount + 1
+								needsRebuild = true
+								if appliedButMissingCount >= 3 then
+									break  -- Found enough evidence
+								end
+							end
+						end
 					end
 				end
-				if maxSeq > 0 then
-					self.Info.requestLogApplied[actor] = maxSeq
-				end
+				if appliedButMissingCount >= 3 then break end
 			end
-			TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] EnsureRequestsInitialized: Built requestLogApplied from %d actors",
-				countKeys(self.Info.requestLogApplied)))
 		end
+		
+		if needsRebuild then
+			TOGBankClassic_Output:Debug("SYNC", "Detected %d stale entries - rebuilding from event log", appliedButMissingCount)
+			-- Clear requestLogApplied so replay processes ALL entries from event log
+			self.Info.requestLogApplied = {}
+			-- Clear requests so we rebuild from scratch
+			self.Info.requests = {}
+			-- Mark validation as complete to prevent recursion
+			self._validationComplete = true
+			-- Replay all events from the log
+			self:ReplayRequestLogEntries()
+			TOGBankClassic_Output:Debug("SYNC", "Rebuild complete - now have %d requests", #self.Info.requests)
+			return
+		end
+		
+		-- Mark validation as complete
+		self._validationComplete = true
+	end
+	
+	-- Fallback: Always rebuild requestLogApplied when it's empty and we have log data
+	local isEmpty = next(self.Info.requestLogApplied) == nil
+	local hasIndex = self.requestLogByActor ~= nil
+	if isEmpty and hasIndex then
+		TOGBankClassic_Output:Debug("SYNC", "requestLogApplied is empty, rebuilding from event log")
+		-- Initialize to 0 so ReplayRequestLogEntries will process all events
+		for actor, list in pairs(self.requestLogByActor) do
+			if #list > 0 then
+				self.Info.requestLogApplied[actor] = 0
+			end
+		end
+		TOGBankClassic_Output:Debug("SYNC", "Initialized requestLogApplied for %d actors, calling ReplayRequestLogEntries", countKeys(self.Info.requestLogApplied))
+		-- Replay all entries to rebuild the requests snapshot
+		self:ReplayRequestLogEntries()
+		TOGBankClassic_Output:Debug("SYNC", "After replay, requests count = %d", #(self.Info.requests or {}))
 	end
 
 	local localActor = self:GetNormalizedPlayer()
@@ -477,39 +532,146 @@ function Guild:ApplyRequestSnapshot(payload)
 		end
 	end
 
-	TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
+	TOGBankClassic_Output:Debug(string.format("SYNC", "ApplyRequestSnapshot: Sanitized to %d requests", #sanitized))
 
-	-- [REPLAY-FIX] Apply incoming snapshot directly (no merge).
-	-- Local requests will be restored by ReplayRequestLogEntries() which replays
-	-- any log entries that aren't reflected in the incoming requestLogApplied.
-	-- This is the correct event-sourcing approach: snapshot + replay = final state.
-	local localCountBefore = #(self.Info.requests or {})
-	self.Info.requests = sanitized
-	self.Info.requestsVersion = latest
-	TOGBankClassic_Output:Debug(string.format("[REPLAY-DEBUG] ApplyRequestSnapshot: Replaced requests (was %d, now %d) - replay will restore local entries",
-		localCountBefore, #sanitized))
-
-	local logApplied = payload.requestLogApplied
-	if type(logApplied) == "table" then
-		-- [SYNC-FIX] Max-merge: take the higher seq for each actor to prevent stale
-		-- snapshots from downgrading our tracking and causing log entries to be re-applied.
-		-- This fixes the bug where a stale snapshot could lower requestLogApplied values,
-		-- causing fulfill deltas to be double-applied or requests to disappear.
-		local localApplied = self.Info.requestLogApplied or {}
-		local upgraded, kept = 0, 0
-		for actor, seq in pairs(logApplied) do
-			local incomingSeq = tonumber(seq or 0) or 0
-			local localSeq = tonumber(localApplied[actor] or 0) or 0
-			if incomingSeq > localSeq then
-				localApplied[actor] = incomingSeq
-				upgraded = upgraded + 1
+	-- [SYNC-FIX] MERGE snapshots instead of replacing. Event-sourcing principle: never accept
+	-- data loss without proof (tombstones). If incoming snapshot is missing requests we have,
+	-- we should keep ours unless there's a tombstone proving deletion.
+	local localRequests = self.Info.requests or {}
+	local incomingMap = {}
+	local mergedRequests = {}
+	
+	-- Index incoming requests by ID
+	for _, req in ipairs(sanitized) do
+		if req.id then
+			incomingMap[req.id] = req
+		end
+	end
+	
+	-- Index local requests by ID
+	local localMap = {}
+	for _, req in ipairs(localRequests) do
+		if req.id then
+			localMap[req.id] = req
+		end
+	end
+	
+	-- Get tombstones (both incoming and local)
+	local tombstones = payload.tombstones or {}
+	local localTombstones = self.Info.requestsTombstones or {}
+	
+	-- Merge: Take all incoming requests
+	for id, incomingReq in pairs(incomingMap) do
+		local localReq = localMap[id]
+		if localReq then
+			-- Both have it - take newer timestamp
+			local incomingTime = tonumber(incomingReq.updatedAt or 0) or 0
+			local localTime = tonumber(localReq.updatedAt or 0) or 0
+			if incomingTime >= localTime then
+				table.insert(mergedRequests, incomingReq)
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Accepting incoming %s (time %d >= %d)", id, incomingTime, localTime)
 			else
+				table.insert(mergedRequests, localReq)
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Keeping local %s (time %d > %d)", id, localTime, incomingTime)
+			end
+		else
+			-- Only incoming has it - accept it
+			table.insert(mergedRequests, incomingReq)
+		end
+	end
+	
+	-- Keep local requests that incoming doesn't have (unless tombstoned)
+	local kept, tombstoned = 0, 0
+	for id, localReq in pairs(localMap) do
+		if not incomingMap[id] then
+			-- Check if tombstoned
+			local tombstoneTs = tombstones[id] or localTombstones[id]
+			if tombstoneTs then
+				-- Request was legitimately deleted, don't keep it
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Removing tombstoned %s", id)
+				tombstoned = tombstoned + 1
+			else
+				-- No tombstone - keep our local request (don't accept data loss)
+				table.insert(mergedRequests, localReq)
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Protecting local %s (not in incoming, no tombstone)", id)
 				kept = kept + 1
 			end
 		end
+	end
+	
+	local localCountBefore = #localRequests
+	self.Info.requests = mergedRequests
+	self.Info.requestsVersion = latest
+	TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Merged requests (was %d, incoming %d, merged %d) - kept %d protected, removed %d tombstoned",
+		localCountBefore, #sanitized, #mergedRequests, kept, tombstoned)
+
+	local logApplied = payload.requestLogApplied
+	if type(logApplied) == "table" then
+		-- [BUG-FIX] If incoming snapshot has empty requestLogApplied but we have event log
+		-- data, reject it to prevent wiping our tracking. An empty requestLogApplied means
+		-- the sender hasn't properly initialized, so their snapshot is incomplete.
+		if next(logApplied) == nil and self.Info.requestLog and #self.Info.requestLog > 0 then
+			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Rejecting snapshot with empty requestLogApplied (we have event log data)")
+			logApplied = self.Info.requestLogApplied or {}
+		end
+		
+		-- [SYNC-FIX] Smart-merge requestLogApplied: only accept incoming sequence numbers if they
+		-- won't cause us to skip our own local event log entries. This fixes the critical bug where
+		-- an incoming snapshot could upgrade requestLogApplied[actor] to a higher value, causing
+		-- ReplayRequestLogEntries() to skip local events that should still be applied.
+		--
+		-- Example bug scenario:
+		-- - Local has event log entry: Galdof seq 41 (gromsblood request)
+		-- - Local requestLogApplied[Galdof] = 40 (would normally replay seq 41)
+		-- - Incoming snapshot has requestLogApplied[Galdof] = 42 but no gromsblood in snapshot
+		-- - Old code: upgrade to 42 → replay skips seq 41 → gromsblood disappears!
+		-- - New code: detect we have seq 41 locally, reject the upgrade to 42
+		local localApplied = self.Info.requestLogApplied or {}
+		local upgraded, kept, rejected = 0, 0, 0
+		
+		-- Build map of max local sequence per actor from our event log
+		local maxLocalSeq = {}
+		if self.requestLogByActor then
+			for actor, entries in pairs(self.requestLogByActor) do
+				local maxSeq = 0
+				for _, entry in ipairs(entries) do
+					local seq = tonumber(entry.seq or 0) or 0
+					if seq > maxSeq then
+						maxSeq = seq
+					end
+				end
+				maxLocalSeq[actor] = maxSeq
+			end
+		end
+		
+		for actor, seq in pairs(logApplied) do
+			local incomingSeq = tonumber(seq or 0) or 0
+			local localSeq = tonumber(localApplied[actor] or 0) or 0
+			local maxLocal = maxLocalSeq[actor] or 0
+			
+			-- Only accept incoming seq if it's higher than local AND won't skip our event log
+			if incomingSeq > localSeq then
+				-- Check if accepting this would skip local events
+				if incomingSeq > maxLocal then
+					-- Incoming seq is beyond our event log, safe to accept
+					localApplied[actor] = incomingSeq
+					upgraded = upgraded + 1
+				else
+					-- Incoming seq would mark local events as "already applied"
+					-- Keep our local seq so replay will process our events
+					TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Rejecting %s seq %d (would skip local events up to %d)",
+						actor, incomingSeq, maxLocal)
+					rejected = rejected + 1
+				end
+			else
+				-- Local seq is same or higher, keep it
+				kept = kept + 1
+			end
+		end
+		
 		self.Info.requestLogApplied = localApplied
-		TOGBankClassic_Output:Debug(string.format("[UI-003] ApplyRequestSnapshot: Max-merged requestLogApplied - %d upgraded, %d kept local (higher)",
-			upgraded, kept))
+		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Smart-merged requestLogApplied - %d upgraded, %d kept local, %d rejected",
+			upgraded, kept, rejected)
 	end
 
 	local localActor = self:GetNormalizedPlayer()
