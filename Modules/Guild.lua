@@ -1360,7 +1360,16 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 		-- Backward compatibility: Compute alt.items from sources if missing (SYNC-006)
 		-- This handles data from players who haven't rescanned after the aggregation update
 		-- OLD STRUCTURE: Only bank and bags were synced (mail was local-only)
-		if not alt.items or #alt.items == 0 then
+		
+		-- Check if alt.items has any content (handles both array and key-value formats)
+		local function hasAnyItems(items)
+			if not items or type(items) ~= "table" then return false end
+			return next(items) ~= nil
+		end
+		
+		local needsReconstruction = not hasAnyItems(alt.items)
+		
+		if needsReconstruction then
 			local bankItems = (alt.bank and alt.bank.items) or {}
 			local bagItems = (alt.bags and alt.bags.items) or {}
 			
@@ -1379,6 +1388,15 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 			else
 				TOGBankClassic_Output:Debug("SYNC", "No items to reconstruct for %s (bank and bags both empty)", name)
 			end
+		else
+			-- alt.items exists, ensure it's in array format (not key-value)
+			local arrayItems = {}
+			for _, item in pairs(alt.items) do
+				table.insert(arrayItems, item)
+			end
+			alt.items = arrayItems
+			TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, converted to array format: %d items", 
+				name, #alt.items)
 		end
 
 		local norm = self:NormalizeName(name)
