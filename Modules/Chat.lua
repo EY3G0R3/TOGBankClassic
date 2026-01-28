@@ -994,7 +994,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "deltahistory",
-		help = "show stored delta chain history for offline recovery",
+		help = "show stored delta history (diagnostic tool)",
 		expert = true,
 		handler = function()
 			TOGBankClassic_Chat:PrintDeltaHistory()
@@ -1693,7 +1693,7 @@ function TOGBankClassic_Chat:PrintDeltaHistory()
 		return
 	end
 
-	TOGBankClassic_Output:Response("|cff00ff00=== Delta Chain History ===|r")
+	TOGBankClassic_Output:Response("|cff00ff00=== Delta History ===|r")
 
 	local totalDeltas = 0
 	local altCount = 0
