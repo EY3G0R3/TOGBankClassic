@@ -736,7 +736,19 @@ function Guild:ApplyRequestLogEntry(entry)
 		end
 		local qty = tonumber(req.quantity or 0) or 0
 		local fulfilled = tonumber(req.fulfilled or 0) or 0
-		local newFulfilled = fulfilled + delta
+		local newFulfilled
+		-- [SYNC-FIX] Idempotent fulfill: if targetFulfilled is present (new format),
+		-- use max() to prevent double-application. Old entries without targetFulfilled
+		-- still use additive logic for backwards compatibility.
+		local targetFulfilled = entry.targetFulfilled
+		if targetFulfilled ~= nil then
+			-- New format: use max of current and target to ensure idempotency
+			local target = tonumber(targetFulfilled or 0) or 0
+			newFulfilled = math.max(fulfilled, target)
+		else
+			-- Old format: additive delta (not idempotent, but backwards compatible)
+			newFulfilled = fulfilled + delta
+		end
 		if qty > 0 and newFulfilled > qty then
 			newFulfilled = qty
 		end
@@ -1509,7 +1521,10 @@ function Guild:FulfillRequest(bank, requester, itemName, count)
 			local delta = math.min(remaining, count)
 			count = count - delta
 			applied = applied + delta
-			local entry = self:BuildRequestLogEntry("fulfill", req, { delta = delta })
+			-- [SYNC-FIX] Include targetFulfilled for idempotent replay - if this entry is
+			-- re-applied, we use max() to ensure we don't double-apply the delta
+			local targetFulfilled = fulfilled + delta
+			local entry = self:BuildRequestLogEntry("fulfill", req, { delta = delta, targetFulfilled = targetFulfilled })
 			if entry then
 				table.insert(entries, entry)
 			end
