@@ -31,10 +31,15 @@ Log entry schema:
 }
 
 Conflict resolution:
-- add: last-writer-wins by updatedAt.
-- fulfill: additive delta, clamped by quantity.
-- cancel/complete: last-writer-wins by statusUpdatedAt.
-- delete: tombstone wins over older updates.
+- Priority order (highest to lowest):
+  1. delete: Removes request completely (tombstone)
+  2. cancel: Requester withdraws their request
+  3. complete: Banker marks as finished
+  4. fulfill: Updates fulfillment progress (additive, partial fills allowed)
+  5. add: Creates/updates request data
+- Higher priority operations override lower priority operations
+- Same priority operations use last-writer-wins by timestamp
+- Special case: Cancel from requester always wins over banker operations
 
 Sync flow:
 - Version broadcast includes requestsVersion + requestLog summary.
@@ -42,6 +47,20 @@ Sync flow:
 - Too-old gaps fall back to full snapshot ("requests").
 - Snapshot includes requestLogApplied + tombstones to reconcile state.
 ]]
+
+-- Operation priority table (higher number = higher priority)
+local OPERATION_PRIORITY = {
+	add = 1,
+	fulfill = 2,
+	complete = 3,
+	cancel = 4,
+	delete = 5,
+}
+
+-- Helper to get operation priority
+local function getOperationPriority(opType)
+	return OPERATION_PRIORITY[opType] or 0
+end
 
 -- Helper function to count keys in a table
 local function countKeys(t)
@@ -901,9 +920,21 @@ function Guild:ApplyRequestLogEntry(entry)
 	end
 
 	if entryType == "fulfill" then
-		if req.status == "cancelled" or req.status == "complete" then
+		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: fulfill entry for requestId=%s, currentStatus=%s, lastStatusOp=%s, entryTs=%d",
+			requestId, tostring(req.status), tostring(req.lastStatusOp), entryTs)
+		
+		-- Check if current status operation has higher priority than fulfill
+		local currentStatusOp = req.lastStatusOp or "add"
+		local currentPriority = getOperationPriority(currentStatusOp)
+		local fulfillPriority = getOperationPriority("fulfill")
+		
+		if currentPriority > fulfillPriority then
+			-- Higher priority status operation (cancel/complete) blocks fulfill
+			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: fulfill REJECTED (status=%s set by higher priority op=%s)", 
+				req.status, currentStatusOp)
 			return false
 		end
+		
 		local delta = tonumber(entry.delta or 0) or 0
 		if delta <= 0 then
 			return false
@@ -927,9 +958,11 @@ function Guild:ApplyRequestLogEntry(entry)
 			newFulfilled = qty
 		end
 		req.fulfilled = newFulfilled
-		if qty > 0 and newFulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
+		local currentStatusOp = req.lastStatusOp or "add"
+		if qty > 0 and newFulfilled >= qty and currentPriority <= fulfillPriority then
 			req.status = "fulfilled"
 			req.statusUpdatedAt = entryTs
+			req.lastStatusOp = "fulfill"  -- Track fulfill operation
 		end
 		if entryTs > 0 then
 			req.updatedAt = math.max(tonumber(req.updatedAt or 0) or 0, entryTs)
@@ -940,10 +973,43 @@ function Guild:ApplyRequestLogEntry(entry)
 	if entryType == "cancel" or entryType == "complete" then
 		local newStatus = (entryType == "cancel") and "cancelled" or "complete"
 		local statusUpdatedAt = tonumber(req.statusUpdatedAt or req.updatedAt or 0) or 0
-		if entryTs >= statusUpdatedAt then
+		local currentStatusOp = req.lastStatusOp or "add"  -- Default to 'add' if not set
+		
+		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: %s entry for requestId=%s, entryTs=%d, statusUpdatedAt=%d, currentStatus=%s, currentStatusOp=%s",
+			entryType, requestId, entryTs, statusUpdatedAt, tostring(req.status), currentStatusOp)
+		
+		-- Priority-based conflict resolution
+		local incomingPriority = getOperationPriority(entryType)
+		local currentPriority = getOperationPriority(currentStatusOp)
+		
+		local shouldApply = false
+		if incomingPriority > currentPriority then
+			-- Higher priority operation always wins
+			shouldApply = true
+			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Applying due to higher priority (%d > %d)", 
+				incomingPriority, currentPriority)
+		elseif incomingPriority == currentPriority then
+			-- Same priority: use timestamp (last-writer-wins)
+			if entryTs >= statusUpdatedAt then
+				shouldApply = true
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Applying due to newer timestamp (%d >= %d)", 
+					entryTs, statusUpdatedAt)
+			else
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Status change REJECTED (same priority, older timestamp: %d < %d)", 
+					entryTs, statusUpdatedAt)
+			end
+		else
+			-- Lower priority operation rejected
+			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Status change REJECTED (lower priority: %d < %d)", 
+				incomingPriority, currentPriority)
+		end
+		
+		if shouldApply then
 			req.status = newStatus
 			req.statusUpdatedAt = entryTs
 			req.updatedAt = math.max(tonumber(req.updatedAt or 0) or 0, entryTs)
+			req.lastStatusOp = entryType  -- Track which operation set the status
+			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Status changed to %s (op=%s)", newStatus, entryType)
 		end
 		return true
 	end
@@ -1268,13 +1334,17 @@ end
 
 function Guild:SendRequestLogEntry(entry, target)
 	if not entry or type(entry) ~= "table" then
+		TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry FAILED: Invalid entry")
 		return
 	end
+	TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry: Broadcasting entry.id=%s, type=%s, target=%s", 
+		tostring(entry.id), tostring(entry.type), tostring(target or "GUILD"))
 	local payload = { type = "requests-log", logEntries = { entry } }
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	-- Use ALERT priority for immediate request broadcasts (highest priority)
 	-- Request creations are very rare (10-20/day) and need guaranteed immediate delivery
 	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "ALERT")
+	TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry: Broadcast complete")
 end
 
 function Guild:SendRequestLogEntries(target, logFrom)
@@ -1357,12 +1427,17 @@ end
 
 function Guild:ReceiveRequestLogEntries(payload, sender)
 	if not payload or type(payload) ~= "table" then
+		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Invalid payload")
 		return
 	end
 	local entries = payload.logEntries
 	if not entries or type(entries) ~= "table" then
+		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: No logEntries in payload")
 		return
 	end
+	
+	TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Processing %d entries from %s", #entries, tostring(sender))
+	
 	self:EnsureRequestsInitialized()
 
 	local entriesByActor = {}
@@ -1373,6 +1448,8 @@ function Guild:ReceiveRequestLogEntries(payload, sender)
 				entriesByActor[actor] = {}
 			end
 			table.insert(entriesByActor[actor], entry)
+			TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Entry from actor=%s, seq=%d, type=%s, requestId=%s", 
+				tostring(actor), tonumber(entry.seq or 0), tostring(entry.type), tostring(entry.requestId))
 		end
 	end
 
@@ -1383,24 +1460,44 @@ function Guild:ReceiveRequestLogEntries(payload, sender)
 
 		-- Safety check: Info might be nil if guild data not loaded yet
 		if not self.Info then
+			TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Info is nil, aborting")
 			return
 		end
 
 		local applied = self.Info.requestLogApplied or {}
 		local lastSeq = tonumber(applied[actor] or 0) or 0
+		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Processing actor=%s, lastSeq=%d, entries=%d", 
+			tostring(actor), lastSeq, #list)
+		
+		local gapDetected = false
 		for _, entry in ipairs(list) do
 			local seq = tonumber(entry.seq or 0) or 0
-			if seq <= lastSeq then
-				-- skip duplicates
-			elseif seq == lastSeq + 1 then
-				if self:RecordRequestLogEntry(entry, false) then
-					lastSeq = seq
-				end
-			else
+			
+			-- Detect gaps for querying missing data
+			if not gapDetected and seq > lastSeq + 1 then
+				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Gap detected - seq=%d, lastSeq=%d, querying missing entries", seq, lastSeq)
 				if sender then
 					self:QueryRequestLog(sender, { [actor] = lastSeq + 1 })
 				end
-				break
+				gapDetected = true
+			end
+			
+			-- Always try to record entries - RecordRequestLogEntry will handle deduplication via entry.id
+			if seq <= lastSeq then
+				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Processing seq=%d (might be duplicate, checking entry.id)", seq)
+			else
+				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Processing seq=%d", seq)
+			end
+			
+			-- Let RecordRequestLogEntry handle deduplication - it checks entry.id in requestLogIndex
+			if self:RecordRequestLogEntry(entry, false) then
+				-- Update lastSeq to highest successfully recorded
+				if seq > lastSeq then
+					lastSeq = seq
+					TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Recorded seq=%d successfully, updated lastSeq", seq)
+				end
+			else
+				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Failed to record seq=%d (might be duplicate)", seq)
 			end
 		end
 	end
@@ -1544,10 +1641,14 @@ function Guild:CanDeleteRequest(req, actor, actorIsGM)
 end
 
 function Guild:CancelRequest(requestId, actor)
+	TOGBankClassic_Output:Debug("SYNC", "CancelRequest called: requestId=%s, actor=%s", tostring(requestId), tostring(actor))
+	
 	if not self.Info or not self.Info.requests then
+		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: No Info or requests")
 		return false
 	end
 	if not requestId then
+		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: No requestId")
 		return false
 	end
 
@@ -1556,33 +1657,46 @@ function Guild:CancelRequest(requestId, actor)
 	local byId = buildRequestIndex(self.Info.requests)
 	local idx = byId[requestId]
 	if not idx then
+		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Request not found in index")
 		return false
 	end
 
 	local req = self.Info.requests[idx]
 	if not req then
+		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Request not found")
 		return false
 	end
 
 	local quantity = tonumber(req.quantity or 0) or 0
 	local fulfilled = tonumber(req.fulfilled or 0) or 0
 	if req.status == "cancelled" then
+		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Already cancelled")
 		return false
 	end
 	if req.status == "fulfilled" or req.status == "complete" or (quantity > 0 and fulfilled >= quantity) then
+		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Request already complete or fulfilled")
 		return false
 	end
 
 	local actorName = actor or self:GetPlayer()
+	TOGBankClassic_Output:Debug("SYNC", "CancelRequest: actorName=%s, requester=%s", tostring(actorName), tostring(req.requester))
+	
 	if not self:CanCancelRequest(req, actorName) then
+		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: CanCancelRequest returned false")
 		return false
 	end
 
+	TOGBankClassic_Output:Debug("SYNC", "CancelRequest: Building log entry...")
 	local entry = self:BuildRequestLogEntry("cancel", req)
 	if not entry then
+		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: BuildRequestLogEntry returned nil")
 		return false
 	end
-	return self:RecordRequestLogEntry(entry, true)
+	
+	TOGBankClassic_Output:Debug("SYNC", "CancelRequest: Recording log entry with broadcast=true, entry.id=%s", tostring(entry.id))
+	local result = self:RecordRequestLogEntry(entry, true)
+	TOGBankClassic_Output:Debug("SYNC", "CancelRequest: RecordRequestLogEntry returned %s", tostring(result))
+	return result
 end
 
 function Guild:CompleteRequest(requestId, actor)

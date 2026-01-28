@@ -196,6 +196,134 @@ When receiving data from other players:
 
 ## Communication Protocols
 
+### Priority-Based Conflict Resolution
+
+**Added:** 2026-01-28 (SYNC-004 fix)
+
+When multiple players modify the same request concurrently (e.g., user cancels while banker fulfills), the system uses a **priority-based conflict resolution** mechanism to determine which operation wins.
+
+#### Operation Priority Table
+
+Operations are assigned priority levels (higher number = higher priority):
+
+```lua
+OPERATION_PRIORITY = {
+    add = 1,      -- Creates/updates request data
+    fulfill = 2,  -- Updates fulfillment progress (additive, supports partial fills)
+    complete = 3, -- Banker marks as finished
+    cancel = 4,   -- Requester or banker withdraws request
+    delete = 5,   -- Removes request completely (tombstone)
+}
+```
+
+#### Conflict Resolution Rules
+
+1. **Higher priority always wins** - Regardless of timestamp
+   - Example: Cancel (4) overrides Fulfill (2), even if fulfill happened later
+
+2. **Same priority uses timestamp** - Last-writer-wins
+   - Example: Two cancels from different actors → newer timestamp wins
+
+3. **Fulfill is additive** - Multiple fulfills accumulate (supports partial fills)
+   - Example: Fulfill 10 items, then fulfill 5 more → total 15 fulfilled
+
+4. **Status operations track their type** - Requests store `lastStatusOp` field
+   - Tracks which operation type (fulfill, cancel, complete) last changed the status
+   - Used to determine current operation priority for future conflict checks
+
+#### Example Scenarios
+
+**Scenario 1: User Cancel vs Banker Fulfill (Race Condition)**
+```
+Time=100: User cancels request (priority=4)
+Time=105: Banker fulfills 10 items (priority=2)
+Result: Cancel wins (4 > 2), fulfill is blocked
+```
+
+**Scenario 2: Banker Fulfill then User Cancel**
+```
+Time=100: Banker fulfills 5 items (priority=2, partial fill)
+Time=105: User cancels request (priority=4)
+Result: Cancel wins (4 > 2), status changes to "cancelled"
+Note: fulfilled=5 remains, but status prevents further fulfills
+```
+
+**Scenario 3: Multiple Partial Fulfills**
+```
+Time=100: Banker fulfills 10 items (fulfilled=10)
+Time=110: Banker fulfills 8 more items (fulfilled=18, additive)
+Time=120: Request quantity=20, fulfilled=18
+Result: All fulfills accumulate, status="open" until fulfilled>=quantity
+```
+
+**Scenario 4: Competing Cancels (Same Priority)**
+```
+Time=100: User cancels (statusUpdatedAt=100)
+Time=105: Banker also cancels (statusUpdatedAt=105)
+Result: Banker cancel wins (same priority, newer timestamp)
+```
+
+**Scenario 5: Delete Overrides Everything**
+```
+Time=100: Request cancelled (priority=4)
+Time=105: Banker deletes request (priority=5)
+Result: Delete wins (5 > 4), request removed with tombstone
+```
+
+#### Implementation Details
+
+The priority system is implemented in `ApplyRequestLogEntry()` (Modules/RequestLog.lua):
+
+**For cancel/complete operations:**
+```lua
+local incomingPriority = getOperationPriority(entryType)
+local currentPriority = getOperationPriority(req.lastStatusOp)
+
+if incomingPriority > currentPriority then
+    -- Higher priority operation wins
+    req.status = newStatus
+    req.lastStatusOp = entryType
+elseif incomingPriority == currentPriority then
+    -- Same priority: check timestamp
+    if entryTs >= statusUpdatedAt then
+        req.status = newStatus
+        req.lastStatusOp = entryType
+    end
+end
+```
+
+**For fulfill operations:**
+```lua
+local currentPriority = getOperationPriority(req.lastStatusOp)
+local fulfillPriority = getOperationPriority("fulfill")
+
+if currentPriority > fulfillPriority then
+    -- Higher priority status (cancel/complete/delete) blocks fulfill
+    return false
+end
+
+-- Otherwise apply fulfill (additive)
+req.fulfilled = req.fulfilled + delta
+```
+
+#### Why This Matters
+
+Without priority-based resolution, the original timestamp-only approach caused issues:
+
+**Problem (Old Behavior):**
+- User cancels at time=100
+- Banker fulfills at time=105
+- **Fulfill wins** (newer timestamp) → Cancel ignored! ❌
+
+**Solution (New Behavior):**
+- User cancels at time=100 (priority=4)
+- Banker fulfills at time=105 (priority=2)
+- **Cancel wins** (higher priority) → Fulfill blocked! ✅
+
+This ensures that user intent (cancellations) is respected even when there's network lag or concurrent modifications.
+
+---
+
 ### Version Broadcast (togbank-v)
 
 **Frequency:** Every 3 minutes (automatic)  

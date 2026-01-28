@@ -5,6 +5,7 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Recent Fixes (2026-01-28):**
+- ✅ [SYNC-004] User request cancellations not propagating to other players - Fixed sequential entry requirement and implemented priority-based conflict resolution
 - ✅ [SYNC-001] Request data disappearing after snapshots - Implemented smart-merge algorithm to protect local event log from being skipped
 
 **Recent Fixes (2026-01-27):**
@@ -72,6 +73,180 @@
 ## Open Bugs
 
 ### 🔴 CRITICAL
+
+None currently open.
+
+### 🟠 HIGH
+
+None currently open.
+
+---
+
+## Resolved Bugs (2026-01-28)
+
+### 🔴 CRITICAL - All Resolved
+
+#### ✅ [SYNC-004] User request cancellations not propagating to other players
+
+**Severity:** 🔴 CRITICAL
+**Category:** Request Sync / Event Sourcing
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-28
+**Date Resolved:** 2026-01-28
+**Status:** ✅ RESOLVED
+**Reproducibility:** Was consistent
+**Related:** Event sourcing conflict resolution
+
+**Problem:**
+When a user cancelled their own request, the cancellation appeared in their UI but did not propagate to other players (especially bankers). Banker cancellations propagated correctly. This caused confusion as bankers continued trying to fulfill requests that users had already cancelled.
+
+**Root Cause Analysis:**
+
+Two fundamental bugs in the event log processing:
+
+**Bug #1: Sequential Entry Requirement with Break**
+`ReceiveRequestLogEntries()` had strict sequential processing that discarded valid entries:
+
+```lua
+for _, entry in ipairs(list) do
+    local seq = tonumber(entry.seq or 0) or 0
+    if seq <= lastSeq then
+        -- skip duplicates
+    elseif seq == lastSeq + 1 then
+        -- Only process if exactly next sequence
+        if self:RecordRequestLogEntry(entry, false) then
+            lastSeq = seq
+        end
+    else
+        -- Gap detected - query for missing AND BREAK!
+        if sender then
+            self:QueryRequestLog(sender, { [actor] = lastSeq + 1 })
+        end
+        break  -- ❌ DISCARDS ALL REMAINING ENTRIES
+    end
+end
+```
+
+**Impact:** If user had lastSeq=5 and received cancel at seq=10:
+- Queried for seq 6-9
+- **Discarded seq 10 cancel forever**
+- Cancel never applied even though it had a unique `entry.id`
+
+**Bug #2: Timestamp-Only Conflict Resolution**
+Cancel/complete operations used only timestamp comparison:
+
+```lua
+if entryTs >= statusUpdatedAt then
+    req.status = newStatus
+end
+```
+
+**Impact:** If banker fulfilled at time=105, user cancel at time=100 was rejected:
+- User cancels at t=100 (sets statusUpdatedAt=100)
+- Banker fulfills at t=105 (sets statusUpdatedAt=105)
+- User's cancel broadcast arrives with ts=100
+- **Cancel rejected** because 100 < 105
+- Banker never sees the cancellation
+
+**Solution Implemented:**
+
+**Fix #1: Remove Sequential Requirement**
+Changed `ReceiveRequestLogEntries()` to process ALL entries:
+
+```lua
+local gapDetected = false
+for _, entry in ipairs(list) do
+    local seq = tonumber(entry.seq or 0) or 0
+    
+    -- Detect gaps for querying (but don't stop processing)
+    if not gapDetected and seq > lastSeq + 1 then
+        if sender then
+            self:QueryRequestLog(sender, { [actor] = lastSeq + 1 })
+        end
+        gapDetected = true
+    end
+    
+    -- Always try to record - RecordRequestLogEntry handles deduplication via entry.id
+    if self:RecordRequestLogEntry(entry, false) then
+        if seq > lastSeq then
+            lastSeq = seq
+        end
+    end
+end
+```
+
+**Key improvement:** 
+- Removed `break` statement
+- Still queries for missing entries when gaps detected
+- But processes ALL received entries
+- Relies on `entry.id` deduplication in `RecordRequestLogEntry`
+
+**Fix #2: Priority-Based Conflict Resolution**
+Implemented operation priority system:
+
+```lua
+OPERATION_PRIORITY = {
+    add = 1,      -- Creates/updates request data
+    fulfill = 2,  -- Updates fulfillment progress (additive)
+    complete = 3, -- Banker marks as finished
+    cancel = 4,   -- Requester/banker withdraws request
+    delete = 5,   -- Removes request completely
+}
+```
+
+Updated cancel/complete logic:
+
+```lua
+local incomingPriority = getOperationPriority(entryType)
+local currentPriority = getOperationPriority(req.lastStatusOp)
+
+if incomingPriority > currentPriority then
+    -- Higher priority always wins
+    req.status = newStatus
+    req.lastStatusOp = entryType
+elseif incomingPriority == currentPriority then
+    -- Same priority: use timestamp (last-writer-wins)
+    if entryTs >= statusUpdatedAt then
+        req.status = newStatus
+        req.lastStatusOp = entryType
+    end
+end
+```
+
+**Key improvement:**
+- Cancel (priority 4) overrides Fulfill (priority 2) regardless of timestamp
+- Fulfill checks priority before changing status
+- Tracks `lastStatusOp` to know which operation set current status
+- Supports partial fulfills (additive delta)
+
+**Testing Results:**
+- ✅ User cancels propagate correctly to all players
+- ✅ Banker cancels continue to work correctly
+- ✅ Cancel overrides fulfill even if fulfill timestamp is newer
+- ✅ Partial fulfills accumulate correctly (additive)
+- ✅ Sequence gaps no longer discard valid entries
+- ✅ Entry deduplication works via unique `entry.id`
+
+**Files Modified:**
+- `Modules/RequestLog.lua` (lines ~33-57): Added OPERATION_PRIORITY table and getOperationPriority()
+- `Modules/RequestLog.lua` (lines ~976-1016): Implemented priority-based cancel/complete logic
+- `Modules/RequestLog.lua` (lines ~929-975): Updated fulfill to check priority and track lastStatusOp
+- `Modules/RequestLog.lua` (lines ~1378-1435): Fixed ReceiveRequestLogEntries to process all entries
+- `Modules/RequestLog.lua` (lines ~1580-1612): Added comprehensive SYNC debug logging to CancelRequest
+- `Modules/RequestLog.lua` (lines ~1293-1306): Added SYNC debug logging to SendRequestLogEntry
+- `docs/REQUEST_COMMS.md`: Added Priority-Based Conflict Resolution section with examples
+- `docs/DELTA_BUGS.md`: Documented SYNC-004 fix
+
+**Debug Commands:**
+```
+/togbank debugcat SYNC true              # Enable SYNC debug logging
+/togbank debuglog 100 SYNC               # View SYNC-related log entries
+```
+
+**Design Documentation:**
+See [REQUEST_COMMS.md](REQUEST_COMMS.md) section "Priority-Based Conflict Resolution" for complete architecture details and example scenarios.
+
+---
 
 #### [REPLAY-001] Empty requestLogApplied causes all requests to disappear from UI
 **Reporter:** User (Production - Galdof character)
