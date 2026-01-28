@@ -1,4 +1,4 @@
-TOGBankClassic_Chat = {}
+﻿TOGBankClassic_Chat = {}
 
 -- Store pre-debug log level for restoration
 local preDebugLogLevel = nil
@@ -548,11 +548,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
 
 			-- Normal query response
+			table.insert(self.sync_queue, nameNorm)
+			if not self.is_syncing then
+				TOGBankClassic_Chat:ProcessQueue()
+			end
 		end
 	end
-
-	-- v0.8.0: Pull-based request reply handler (togbank-rr)
-	if prefix == "togbank-rr" then
 		if data.type == "alt-request-reply" then
 			local altName = data.name
 			local isBanker = data.isBanker or false
