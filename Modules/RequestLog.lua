@@ -38,18 +38,6 @@ Sync flow:
 - Mutations are broadcast as entries and applied directly.
 ]]
 
--- Helper function to count keys in a table
-local function countKeys(t)
-	if not t or type(t) ~= "table" then
-		return 0
-	end
-	local count = 0
-	for _ in pairs(t) do
-		count = count + 1
-	end
-	return count
-end
-
 -- Request status constants.
 local VALID_REQUEST_STATUS = {
 	open = true,
@@ -58,7 +46,7 @@ local VALID_REQUEST_STATUS = {
 	complete = true,
 }
 
--- Compaction settings are defined in Constants.lua (REQUEST_LOG table)
+-- Compaction settings are defined in Constants.lua
 
 -- Legacy requests without IDs are deterministically derived from older fields.
 local function legacyRequestId(req)
@@ -69,7 +57,7 @@ local function legacyRequestId(req)
 	local requester = tostring(req.requester or "")
 	local bank = tostring(req.bank or "")
 	local item = tostring(req.item or "")
-	-- TODO: why _and_ here?
+	-- Return nil if ALL identifying fields are empty (no data to generate ID from)
 	if requester == "" and bank == "" and item == "" and ts == 0 then
 		return nil
 	end
@@ -132,14 +120,6 @@ end
 -- Expose normalization for other modules that need a safe view of request data.
 function Guild:SanitizeRequest(req)
 	return sanitizeRequest(req)
-end
-
-local function copyMap(src)
-	local dest = {}
-	for k, v in pairs(src or {}) do
-		dest[k] = v
-	end
-	return dest
 end
 
 -- Request map helpers: internal storage is now a map keyed by request ID.
@@ -347,7 +327,6 @@ function Guild:NormalizeRequestList()
 	self:PruneRequests()
 end
 
--- Log retention and pruning. Returns (pruned, before, after).
 -- Tombstone pruning. Returns (pruned, before, after).
 function Guild:PruneRequestTombstones()
 	if not self.Info or not self.Info.requestsTombstones then
@@ -605,7 +584,7 @@ function Guild:RefreshRequestsUI()
 	end
 end
 
--- Snapshot and log sync messaging.
+-- Snapshot sync messaging.
 function Guild:GetRequestsVersion()
 	if not self.Info then
 		return 0
@@ -842,11 +821,6 @@ function Guild:CanDeleteRequest(req, actor, actorIsGM)
 	local normActor = self:NormalizeName(actor or self:GetPlayer())
 	if not normActor then
 		return false
-	end
-
-	-- TODO: remove this testing code after functional validation
-	if normActor == "Huntmehuntme-Myzrael" then
-		return true
 	end
 
 	if actorIsGM ~= nil then
