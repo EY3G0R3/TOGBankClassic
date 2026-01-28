@@ -206,7 +206,7 @@ function TOGBankClassic_Bank:Scan()
 			table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
 		end
 	end
-	-- Aggregate all three sources (returns table with composite keys)
+	-- Aggregate all three sources (returns table with composite keys, deduplicates by ID)
 	local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
 	aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
 	
@@ -214,6 +214,25 @@ function TOGBankClassic_Bank:Scan()
 	alt.items = {}
 	for _, item in pairs(aggregated) do
 		table.insert(alt.items, item)
+	end
+	
+	-- Also clean up source arrays to remove any duplicates (in case of corrupted data)
+	-- This ensures future scans start fresh
+	if alt.bank and alt.bank.items then
+		local cleanBank = {}
+		local bankAgg = TOGBankClassic_Item:Aggregate(alt.bank.items, nil)
+		for _, item in pairs(bankAgg) do
+			table.insert(cleanBank, item)
+		end
+		alt.bank.items = cleanBank
+	end
+	if alt.bags and alt.bags.items then
+		local cleanBags = {}
+		local bagsAgg = TOGBankClassic_Item:Aggregate(alt.bags.items, nil)
+		for _, item in pairs(bagsAgg) do
+			table.insert(cleanBags, item)
+		end
+		alt.bags.items = cleanBags
 	end
 
 	-- v0.8.0: Only update version if inventory actually changed
