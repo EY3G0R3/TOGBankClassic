@@ -107,10 +107,8 @@ function TOGBankClassic_Chat:PerformSync()
 	-- SYNC-008 fix: Also send legacy version broadcast like the automatic timer does
 	TOGBankClassic_Events:Sync("ALERT")
 	TOGBankClassic_Guild:FastFillMissingAlts()
-	-- SYNC-008 fix: Query request data with ALERT priority for immediate sync
-	-- Use wildcard queries to get fresh data from all guild members
+	-- Query request snapshot with ALERT priority for immediate sync
 	local player = TOGBankClassic_Guild:GetPlayer()
-	TOGBankClassic_Guild:QueryRequestLog(player, nil, "ALERT")
 	TOGBankClassic_Guild:QueryRequestsSnapshot(player, "ALERT")
 end
 
@@ -540,11 +538,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end
 			end
 			if data.type == "requests-log" then
+				-- Legacy query type - respond with full snapshot
 				local matches = (data.player == "*" or data.player == player)
-				TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER CHECK: type=requests-log, player=%s, myName=%s, matches=%s", tostring(data.player), tostring(player), tostring(matches))
 				if matches then
-					TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER: Responding to requests-log query")
-					TOGBankClassic_Guild:SendRequestLogEntries(sender, data.logFrom)
+					TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER: Responding with snapshot (log queries deprecated)")
+					TOGBankClassic_Guild:SendRequestsSnapshot(sender)
 				end
 			end
 		end
@@ -1251,17 +1249,8 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
-		name = "requestlog",
-		usage = "[N|all]",
-		help = "print the request log, optionally limited to N entries",
-		expert = true,
-		handler = function(arg1)
-			TOGBankClassic_Guild:PrintRequestLog(arg1)
-		end,
-	},
-	{
 		name = "compact",
-		help = "manually run compaction to prune old requests and log entries",
+		help = "manually run compaction to prune old requests and tombstones",
 		expert = true,
 		handler = function()
 			TOGBankClassic_Guild:Compact()
