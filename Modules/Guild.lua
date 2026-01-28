@@ -940,17 +940,28 @@ function TOGBankClassic_Guild:StripItemLinks(items)
 
 	local stripped = {}
 	for _, item in ipairs(items) do
-		table.insert(stripped, {
+		local strippedItem = {
 			ID = item.ID,
 			Count = item.Count
 			-- Link removed - receiver will reconstruct
-		})
+		}
+		
+		-- Preserve itemString for items with unique stats (suffixes, enchants, etc.)
+		-- Extract from Link if available: |Hitem:itemString|h[Name]|h
+		if item.Link then
+			local itemString = string.match(item.Link, "item:([^|]+)")
+			if itemString then
+				strippedItem.ItemString = itemString
+			end
+		end
+		
+		table.insert(stripped, strippedItem)
 	end
 	return stripped
 end
 
 -- Reconstruct Link fields after receiving data (v0.8.0)
--- Calls GetItemInfo() to recreate links from ItemID
+-- Calls GetItemInfo() to recreate links from ItemID or ItemString
 function TOGBankClassic_Guild:ReconstructItemLinks(items)
 	if not items then
 		return
@@ -960,25 +971,50 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 
 	for _, item in ipairs(items) do
 		if item and item.ID and not item.Link then
-			-- Try to get link from item cache
-			local itemLink = select(2, GetItemInfo(item.ID))
-			if itemLink then
-				item.Link = itemLink
-			else
-				-- Item not in cache, use async loading
-				needsAsyncLoad = true
-				local itemObj = Item:CreateFromItemID(item.ID)
-				if itemObj then
-					itemObj:ContinueOnItemLoad(function()
-						local link = itemObj:GetItemLink()
-						if link then
-							item.Link = link
-							-- Refresh UI when link becomes available
-							if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-								TOGBankClassic_UI_Inventory:DrawContent()
+			-- If we have an ItemString (with suffix/unique data), use it to reconstruct full link
+			if item.ItemString then
+				-- Reconstruct link with full item parameters: |Hitem:itemString|h[Name]|h
+				local itemName = GetItemInfo(item.ID)
+				if itemName then
+					item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, itemName)
+				else
+					-- Item not in cache, use async loading with itemString
+					needsAsyncLoad = true
+					local itemObj = Item:CreateFromItemID(item.ID)
+					if itemObj then
+						itemObj:ContinueOnItemLoad(function()
+							local name = itemObj:GetItemName()
+							if name then
+								item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, name)
+								-- Refresh UI when link becomes available
+								if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+									TOGBankClassic_UI_Inventory:DrawContent()
+								end
 							end
-						end
-					end)
+						end)
+					end
+				end
+			else
+				-- No ItemString, fall back to basic ID-only link (for non-unique items)
+				local itemLink = select(2, GetItemInfo(item.ID))
+				if itemLink then
+					item.Link = itemLink
+				else
+					-- Item not in cache, use async loading
+					needsAsyncLoad = true
+					local itemObj = Item:CreateFromItemID(item.ID)
+					if itemObj then
+						itemObj:ContinueOnItemLoad(function()
+							local link = itemObj:GetItemLink()
+							if link then
+								item.Link = link
+								-- Refresh UI when link becomes available
+								if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+									TOGBankClassic_UI_Inventory:DrawContent()
+								end
+							end
+						end)
+					end
 				end
 			end
 		end
