@@ -281,38 +281,30 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
 		
-		-- Debug: Log what data exists
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: alt.items=%s, alt.bank=%s, alt.bags=%s, alt.mail=%s", 
-			tab,
-			alt.items and ("array with " .. #alt.items .. " items") or "nil",
-			alt.bank and alt.bank.items and ("array with " .. #alt.bank.items .. " items") or "nil",
-			alt.bags and alt.bags.items and ("array with " .. #alt.bags.items .. " items") or "nil",
-			alt.mail and alt.mail.items and "table" or "nil")
-		
-		-- Get items - use alt.items if available, otherwise compute on-the-fly for backward compatibility
-		local items = alt.items
-		if not items or #items == 0 then
-			-- Fallback: aggregate bank + bags + mail for existing data without alt.items
-			local bankItems = (alt.bank and alt.bank.items) or {}
-			local bagItems = (alt.bags and alt.bags.items) or {}
-			local mailItems = {}
-			if alt.mail and alt.mail.items then
-				for itemID, mailItem in pairs(alt.mail.items) do
-					table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
-				end
+		-- Always compute items fresh from source data to avoid issues with stale alt.items
+		-- This ensures correct aggregation even if alt.items was created with old logic
+		local bankItems = (alt.bank and alt.bank.items) or {}
+		local bagItems = (alt.bags and alt.bags.items) or {}
+		local mailItems = {}
+		if alt.mail and alt.mail.items then
+			for itemID, mailItem in pairs(alt.mail.items) do
+				table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
 			end
-			local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
-			aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
-			items = {}
-			for _, item in pairs(aggregated) do
-				table.insert(items, item)
-			end
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computed items on-the-fly (backward compat), %d items", 
-				tab, #items)
-		else
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: using alt.items with %d items", 
-				tab, #items)
 		end
+		
+		-- Debug: Log source data counts
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: bank=%d, bags=%d, mail=%d items", 
+			tab, #bankItems, #bagItems, #mailItems)
+		
+		local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+		aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
+		local items = {}
+		for _, item in pairs(aggregated) do
+			table.insert(items, item)
+		end
+		
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: aggregated to %d unique items", 
+			tab, #items)
 		
 		if items and #items > 0 then
 			-- Debug: Check for duplicate item IDs with different links
