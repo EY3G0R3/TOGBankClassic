@@ -986,9 +986,12 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 							local name = itemObj:GetItemName()
 							if name then
 								item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, name)
-								-- Refresh UI when link becomes available
+								-- Refresh UI windows when link becomes available
 								if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 									TOGBankClassic_UI_Inventory:DrawContent()
+								end
+								if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
+									TOGBankClassic_UI_Search:DrawContent()
 								end
 							end
 						end)
@@ -1008,9 +1011,12 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 							local link = itemObj:GetItemLink()
 							if link then
 								item.Link = link
-								-- Refresh UI when link becomes available
+								-- Refresh UI windows when link becomes available
 								if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 									TOGBankClassic_UI_Inventory:DrawContent()
+								end
+								if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
+									TOGBankClassic_UI_Search:DrawContent()
 								end
 							end
 						end)
@@ -1018,8 +1024,13 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 				end
 			end
 		end
-	end
-
+	endthen
+		if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+			TOGBankClassic_UI_Inventory:DrawContent()
+		end
+		if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
+			TOGBankClassic_UI_Search:DrawContent()
+		end
 	-- If some links loaded immediately from cache, refresh UI now
 	if not needsAsyncLoad and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 		TOGBankClassic_UI_Inventory:DrawContent()
