@@ -85,7 +85,12 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 	else
 		slot:SetLabel(" ")
 	end
-	slot:SetImage(item.Info.icon)
+	
+	-- Get icon from Info if available, otherwise try to fetch from item ID
+	local icon = (item.Info and item.Info.icon) or select(10, GetItemInfo(item.ID or 0))
+	if icon then
+		slot:SetImage(icon)
+	end
 	slot:SetImageSize(imageSize, imageHeight)
 	slot:SetWidth(size)
 	slot:SetHeight(height)
