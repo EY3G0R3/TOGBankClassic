@@ -86,6 +86,11 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 		slot:SetLabel(" ")
 	end
 	
+	-- Lazy reconstruct item link if needed (only when actually displaying)
+	if item.ID and not item.Link then
+		TOGBankClassic_Guild:ReconstructItemLink(item)
+	end
+
 	-- Get icon from Info if available, otherwise try to fetch from item ID
 	local icon = (item.Info and item.Info.icon) or select(10, GetItemInfo(item.ID or 0))
 	if icon then

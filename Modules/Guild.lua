@@ -979,6 +979,30 @@ local function ThrottledUIRefresh()
 	end
 end
 
+-- Reconstruct single item link (lazy loading for UI display)
+function TOGBankClassic_Guild:ReconstructItemLink(item)
+	if not item or not item.ID or item.Link then
+		return
+	end
+
+	-- If we have an ItemString (with suffix/unique data), use it to reconstruct full link
+	if item.ItemString then
+		local itemName = GetItemInfo(item.ID)
+		if itemName then
+			item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, itemName)
+		end
+		-- Note: If not in cache, link will be nil and tooltips won't work until next refresh
+		-- This is acceptable for lazy loading - avoids background stuttering
+	else
+		-- No ItemString, fall back to basic ID-only link
+		local itemLink = select(2, GetItemInfo(item.ID))
+		if itemLink then
+			item.Link = itemLink
+		end
+	end
+end
+
+-- Reconstruct item links from ItemStrings after receiving delta (batch version)
 function TOGBankClassic_Guild:ReconstructItemLinks(items)
 	if not items then
 		return

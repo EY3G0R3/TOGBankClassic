@@ -819,19 +819,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					return
 				end
 
-				-- Reconstruct Links from ItemIDs before applying delta
-				if data.changes then
-					if data.changes.bank then
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.added)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.modified)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.removed)
-					end
-					if data.changes.bags then
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.added)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.modified)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.removed)
-					end
-				end
+				-- Note: Item links now reconstructed lazily when UI displays items
+				-- This prevents background stuttering from 100+ async Item loads
 
 				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
 				self:Debug(
