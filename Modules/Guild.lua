@@ -962,6 +962,23 @@ end
 
 -- Reconstruct Link fields after receiving data (v0.8.0)
 -- Calls GetItemInfo() to recreate links from ItemID or ItemString
+-- Throttle UI refreshes to prevent stuttering when many items load async
+local lastUIRefresh = 0
+local function ThrottledUIRefresh()
+	local now = GetTime()
+	if now - lastUIRefresh < 0.5 then -- Throttle to max once per 0.5 seconds
+		return
+	end
+	lastUIRefresh = now
+	
+	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+		TOGBankClassic_UI_Inventory:DrawContent()
+	end
+	if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
+		TOGBankClassic_UI_Search:DrawContent()
+	end
+end
+
 function TOGBankClassic_Guild:ReconstructItemLinks(items)
 	if not items then
 		return
@@ -986,13 +1003,8 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 							local name = itemObj:GetItemName()
 							if name then
 								item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, name)
-								-- Refresh UI windows when link becomes available
-								if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-									TOGBankClassic_UI_Inventory:DrawContent()
-								end
-								if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
-									TOGBankClassic_UI_Search:DrawContent()
-								end
+								-- Throttled refresh to prevent stuttering from many async loads
+								ThrottledUIRefresh()
 							end
 						end)
 					end
@@ -1011,13 +1023,8 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 							local link = itemObj:GetItemLink()
 							if link then
 								item.Link = link
-								-- Refresh UI windows when link becomes available
-								if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-									TOGBankClassic_UI_Inventory:DrawContent()
-								end
-								if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
-									TOGBankClassic_UI_Search:DrawContent()
-								end
+								-- Throttled refresh to prevent stuttering from many async loads
+								ThrottledUIRefresh()
 							end
 						end)
 					end
@@ -1028,12 +1035,7 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 
 	-- If some links loaded immediately from cache, refresh UI now
 	if not needsAsyncLoad then
-		if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-			TOGBankClassic_UI_Inventory:DrawContent()
-		end
-		if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
-			TOGBankClassic_UI_Search:DrawContent()
-		end
+		ThrottledUIRefresh()
 	end
 end
 
