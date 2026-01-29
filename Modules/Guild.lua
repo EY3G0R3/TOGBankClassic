@@ -1024,16 +1024,16 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 				end
 			end
 		end
-	endthen
+	end
+
+	-- If some links loaded immediately from cache, refresh UI now
+	if not needsAsyncLoad then
 		if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 			TOGBankClassic_UI_Inventory:DrawContent()
 		end
 		if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
 			TOGBankClassic_UI_Search:DrawContent()
 		end
-	-- If some links loaded immediately from cache, refresh UI now
-	if not needsAsyncLoad and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-		TOGBankClassic_UI_Inventory:DrawContent()
 	end
 end
 
