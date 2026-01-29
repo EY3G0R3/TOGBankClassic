@@ -1,5 +1,29 @@
 TOGBankClassic_Item = {}
 
+-- Extract ItemString from item link for use as unique key
+-- Example: "[Revenant Helmet of the Bear]" -> "item:10132:0:0:0:0:0:0:0:863"
+-- If link is nil/empty, returns empty string
+function TOGBankClassic_Item:GetItemString(link)
+	if not link or link == "" then
+		return ""
+	end
+	
+	-- Extract ItemString from link format: |cFFFFFFFF|Hitem:...|h[Name]|h|r
+	local itemString = link:match("|Hitem:([^|]+)|h")
+	if itemString then
+		return "item:" .. itemString
+	end
+	
+	-- Fallback: try to extract just the numeric part
+	local numericPart = link:match("item:([%d:]+)")
+	if numericPart then
+		return "item:" .. numericPart
+	end
+	
+	-- Last resort: return the whole link
+	return link
+end
+
 function TOGBankClassic_Item:GetItems(items, callback)
 	-- Only consider items that have a valid ID
 	local total = 0
@@ -108,7 +132,10 @@ function TOGBankClassic_Item:Aggregate(a, b)
 			if not v or not v.ID then
 				-- Skip malformed entries (missing required ID field)
 			else
-				local key = tostring(v.ID)  -- Use ID only as key
+				-- Use composite key (ID + ItemString) to distinguish items with different suffixes/enchants
+				-- ItemString includes suffix/uniqueID, so items like "Helmet of the Bear" vs "Helmet of Power" differ
+				local itemString = self:GetItemString(v.Link)
+				local key = tostring(v.ID) .. itemString
 				if items[key] then
 					local item = items[key]
 					-- Defensive: use default value if Count is missing
@@ -129,7 +156,9 @@ function TOGBankClassic_Item:Aggregate(a, b)
 			if not v or not v.ID then
 				-- Skip malformed entries (missing required ID field)
 			else
-				local key = tostring(v.ID)  -- Use ID only as key
+				-- Use composite key (ID + ItemString) to distinguish items with different suffixes/enchants
+				local itemString = self:GetItemString(v.Link)
+				local key = tostring(v.ID) .. itemString
 				if items[key] then
 					local item = items[key]
 					-- Defensive: use default value if Count is missing

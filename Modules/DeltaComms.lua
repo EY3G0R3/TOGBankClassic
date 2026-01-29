@@ -206,24 +206,47 @@ end
 -- Compute a hash of inventory state to detect actual changes (v0.8.0)
 -- Only updates version timestamps when this hash changes
 function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney, money)
-	-- Handle both old (3-param) and new (4-param) calling conventions
-	-- Old: ComputeInventoryHash(bank, bags, money)
-	-- New: ComputeInventoryHash(bank, bags, mail, money)
-	local mail, actualMoney
-	if type(mailOrMoney) == "number" then
-		-- Old calling convention detected
-		mail = nil
-		actualMoney = mailOrMoney
-	else
-		-- New calling convention with mail table
-		mail = mailOrMoney
-		actualMoney = money
+	-- Handle multiple calling conventions:
+	-- SYNC-006 (aggregated): ComputeInventoryHash(items, nil, nil, money) - items is direct array
+	-- Pre-SYNC-006: ComputeInventoryHash(bank, bags, money) - bank/bags have .items, no mail
+	
+	-- Detect SYNC-006 aggregated call: first param is array, second is nil
+	if bank and type(bank) == "table" and bags == nil and mailOrMoney == nil then
+		-- SYNC-006: bank is actually the aggregated items array, money is the 4th param
+		local items = bank
+		local actualMoney = money or 0
+		
+		local parts = {}
+		table.insert(parts, tostring(actualMoney))
+		
+		-- Hash aggregated items directly
+		local function hashItems(itemsArray)
+			if not itemsArray or type(itemsArray) ~= "table" then
+				return ""
+			end
+			local sorted = {}
+			for _, item in ipairs(itemsArray) do
+				if item and item.ID then
+					table.insert(sorted, string.format("%d:%d", item.ID, item.Count or 0))
+				end
+			end
+			table.sort(sorted)
+			return table.concat(sorted, ",")
+		end
+		
+		table.insert(parts, "I:" .. hashItems(items))
+		local combined = table.concat(parts, "|")
+		return TOGBankClassic_Core:Checksum(combined)
 	end
+	
+	-- Pre-SYNC-006 calling convention: ComputeInventoryHash(bank, bags, money)
+	-- mailOrMoney is actually money (number), no mail parameter exists
+	local actualMoney = mailOrMoney or 0
 	
 	local parts = {}
 
 	-- Include money
-	table.insert(parts, tostring(actualMoney or 0))
+	table.insert(parts, tostring(actualMoney))
 
 	-- Helper to hash an items array
 	local function hashItems(items)
@@ -242,37 +265,17 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney,
 		return table.concat(sorted, ",")
 	end
 
-	-- Helper to hash mail items (different structure: keyed by itemID)
-	local function hashMailItems(mailItems)
-		if not mailItems or type(mailItems) ~= "table" then
-			return ""
-		end
-
-		-- Sort items by ID+Count
-		local sorted = {}
-		for itemID, item in pairs(mailItems) do
-			if item and item.count then
-				table.insert(sorted, string.format("%d:%d", itemID, item.count))
-			end
-		end
-		table.sort(sorted)
-		return table.concat(sorted, ",")
-	end
-
-	-- Include bank items
+	-- Include bank items (pre-SYNC-006 structure: bank.items)
 	if bank and bank.items then
 		table.insert(parts, "B:" .. hashItems(bank.items))
 	end
 
-	-- Include bag items
+	-- Include bag items (pre-SYNC-006 structure: bags.items)
 	if bags and bags.items then
 		table.insert(parts, "G:" .. hashItems(bags.items))
 	end
 
-	-- Include mail items
-	if mail and mail.items then
-		table.insert(parts, "M:" .. hashMailItems(mail.items))
-	end
+	-- Note: Pre-SYNC-006 clients never had mail, so no mail hashing
 
 	-- Concatenate all parts and compute simple hash
 	local combined = table.concat(parts, "|")

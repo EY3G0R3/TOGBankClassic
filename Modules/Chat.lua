@@ -18,6 +18,10 @@ function TOGBankClassic_Chat:Init()
 	self.sync_queue = {}
 	self.is_syncing = false
 	self.last_share_sync = nil
+	
+	-- Protocol prioritization: delay dv processing to allow dv2 to arrive first
+	self.pending_dv_messages = {}  -- {sender = {altName = {timer, data, ...}}}
+	self.DV_DELAY = 5  -- seconds to wait before processing dv messages
 
 	TOGBankClassic_Core:RegisterComm("togbank-d", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
@@ -52,6 +56,13 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Output:Debug("PROTOCOL", "[INIT] Registering togbank-dv handler")
 	TOGBankClassic_Core:RegisterComm("togbank-dv", function(prefix, message, distribution, sender)
 		TOGBankClassic_Output:Debug("PROTOCOL", "[HANDLER] togbank-dv called: %s from %s (%d bytes)", prefix, sender, #message)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
+	-- SYNC-006: New protocol for aggregated items structure
+	TOGBankClassic_Output:Debug("PROTOCOL", "[INIT] Registering togbank-dv2 handler")
+	TOGBankClassic_Core:RegisterComm("togbank-dv2", function(prefix, message, distribution, sender)
+		TOGBankClassic_Output:Debug("PROTOCOL", "[HANDLER] togbank-dv2 called: %s from %s (%d bytes)", prefix, sender, #message)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
@@ -227,6 +238,210 @@ function TOGBankClassic_Chat:IsAltDataAllowed(sender, claimedNorm)
 	return self:IsAltDataAllowed_RosterBased(sender, claimedNorm)
 end
 
+-- Cancel pending dv messages for specific alts (called when dv2 arrives)
+function TOGBankClassic_Chat:CancelPendingDvMessages(sender, altNames)
+	if not self.pending_dv_messages[sender] then
+		return
+	end
+	
+	for _, altName in ipairs(altNames) do
+		local pending = self.pending_dv_messages[sender][altName]
+		if pending and pending.timer then
+			TOGBankClassic_Output:Debug("PROTOCOL", "Canceling pending dv message for %s (dv2 arrived)", altName)
+			pending.timer:Cancel()
+			self.pending_dv_messages[sender][altName] = nil
+		end
+	end
+end
+
+-- Process delayed dv message after timer expires
+function TOGBankClassic_Chat:ProcessDelayedDvMessage(sender, data, prefix, message, distribution)
+	TOGBankClassic_Output:Debug("PROTOCOL", "Processing delayed dv message from %s (no dv2 received)", sender)
+	-- Remove from pending queue
+	if self.pending_dv_messages[sender] then
+		self.pending_dv_messages[sender] = nil
+	end
+	-- Process the message normally
+	self:ProcessVersionBroadcast(prefix, data, sender, message, distribution)
+end
+
+-- Process version broadcast message (togbank-v, togbank-dv, togbank-dv2)
+function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, message, distribution)
+	local isDeltaVersion = (prefix == "togbank-dv" or prefix == "togbank-dv2")
+	local isSYNC006 = (prefix == "togbank-dv2")
+
+	-- Debug: Show what data we received
+	if isDeltaVersion then
+		local altCount = 0
+		if data.alts then
+			for _ in pairs(data.alts) do
+				altCount = altCount + 1
+			end
+		end
+		TOGBankClassic_Output:Debug("PROTOCOL", "togbank-dv/dv2 from %s: has data.alts=%s, alts count=%d, isSYNC006=%s",
+			sender,
+			tostring(data.alts ~= nil),
+			altCount,
+			tostring(isSYNC006)
+		)
+	end
+
+	local current_data = TOGBankClassic_Guild:GetVersion()
+	if current_data then
+		if data.name then
+			if current_data.name ~= data.name then
+				TOGBankClassic_Output:Warn("A non-guild version!")
+				return
+			end
+		end
+		if data.addon then
+			-- Track this user's addon version
+			if not self.guild_versions then
+				self.guild_versions = {}
+			end
+			self.guild_versions[sender] = {
+				version = data.addon,
+				seen = time(),
+			}
+
+			-- v0.8.0: Track online bankers for pull-based protocol
+			if data.isBanker then
+				if not self.online_bankers then
+					self.online_bankers = {}
+				end
+				self.online_bankers[sender] = {
+					seen = time(),
+					version = data.addon,
+				}
+				TOGBankClassic_Output:Debug("ROSTER", "Tracked online banker: %s", sender)
+			end
+
+			-- Track protocol capabilities
+			local protocolVersion = data.protocol_version or 1
+			local supportsDelta = data.supports_delta or false
+			TOGBankClassic_Database:UpdatePeerProtocol(
+				current_data.name,
+				sender,
+				protocolVersion,
+				supportsDelta
+			)
+
+			if current_data.addon and data.addon > current_data.addon then
+				if not self.addon_outdated then
+					-- only make the callout once
+					self.addon_outdated = true
+					TOGBankClassic_Output:Info(
+						"A newer version is available! Download it from https://www.curseforge.com/wow/addons/togbankclassic/"
+					)
+				end
+			end
+		end
+		if data.roster then
+			if current_data.roster == nil or data.roster > current_data.roster then
+				self:Debug("SYNC", ">", ColorPlayerName(sender), "has fresher roster data, querying.")
+				TOGBankClassic_Guild:QueryRoster(sender, data.roster)
+			end
+		end
+		-- PERF-002 fix: Request sync decoupled from inventory sync (togbank-dv)
+		-- Request syncs now handled independently via SendRequestsVersionPing()
+		if data.alts then
+			local altCount = 0
+			for _ in pairs(data.alts) do
+				altCount = altCount + 1
+			end
+			TOGBankClassic_Output:Debug("PROTOCOL", "[PROCESS] Processing %d alts from %s (isDeltaVersion=%s)",
+				altCount, sender, tostring(isDeltaVersion))
+			for k, v in pairs(data.alts) do
+				local kNorm = TOGBankClassic_Guild:NormalizeName(k)
+				local ourAlt = current_data.alts[kNorm]
+
+				-- v0.8.0: Handle both old format (number) and new format (table with version+hash)
+				local theirVersion = type(v) == "table" and v.version or v
+				local theirHash = type(v) == "table" and v.hash or nil
+				local ourVersion = type(ourAlt) == "table" and ourAlt.version or nil
+				local ourHash = type(ourAlt) == "table" and ourAlt.inventoryHash or nil
+
+				-- Debug: show what we received
+				if theirHash then
+					TOGBankClassic_Output:Debug(
+						"SYNC",
+						"Received %s from %s: version=%d, hash=%d (our hash=%s)",
+						kNorm,
+						sender,
+						theirVersion,
+						theirHash,
+						ourHash and tostring(ourHash) or "nil"
+					)
+				end
+
+				-- Don't query sender about themselves (SYNC-001 fix)
+				local senderNorm = TOGBankClassic_Guild:NormalizeName(sender)
+				if kNorm ~= senderNorm then
+					-- For delta version broadcasts, only query if we support delta
+					-- For legacy version broadcasts, query as normal
+					local shouldQuery = false
+					if isDeltaVersion then
+						-- Delta version: check hash first (most accurate), then version
+						if TOGBankClassic_Guild:ShouldUseDelta() then
+							-- Hash-based comparison (most accurate)
+							if theirHash then
+								if not ourHash then
+									-- They have data, we don't - query
+									shouldQuery = true
+									self:Debug(
+										"SYNC",
+										">",
+										ColorPlayerName(sender),
+										"has bank data for",
+										ColorPlayerName(kNorm) .. " (we have none), querying."
+									)
+								elseif theirHash ~= ourHash then
+									-- Hashes differ - we need an update
+									shouldQuery = true
+									self:Debug(
+										"SYNC",
+										">",
+										ColorPlayerName(sender),
+										"has different inventory for",
+										ColorPlayerName(kNorm) .. " (hash mismatch), querying."
+									)
+								end
+							elseif not ourVersion or theirVersion > ourVersion then
+								-- No hash available, fall back to version comparison
+								shouldQuery = true
+								self:Debug(
+									"SYNC",
+									">",
+									ColorPlayerName(sender),
+									"has fresher bank data about",
+									ColorPlayerName(kNorm) .. ", querying (delta)."
+								)
+							end
+						end
+					else
+						-- Legacy version: query as usual
+						if not ourVersion or theirVersion > ourVersion then
+							shouldQuery = true
+							self:Debug(
+								"SYNC",
+								">",
+								ColorPlayerName(sender),
+								"has fresher bank data about",
+								ColorPlayerName(kNorm) .. ", querying."
+							)
+						end
+					end
+
+					if shouldQuery then
+						-- v0.8.0: Use pull-based query for delta version broadcasts
+						TOGBankClassic_Guild:QueryAltPullBased(kNorm)
+					end
+				end
+			end
+		end
+	end
+end
+
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
 
@@ -281,185 +496,67 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		self:Debug("PROTOCOL", ">", ColorPlayerName(sender), ">", prefix, prefixDesc)
 	end
 
-	if prefix == "togbank-v" or prefix == "togbank-dv" then
-		local isDeltaVersion = (prefix == "togbank-dv")
+	if prefix == "togbank-v" or prefix == "togbank-dv" or prefix == "togbank-dv2" then
+		local isDeltaVersion = (prefix == "togbank-dv" or prefix == "togbank-dv2")
+		local isSYNC006 = (prefix == "togbank-dv2")  -- SYNC-006 aggregated items
 
 		-- Delta clients ignore legacy version broadcasts (SYNC-001 fix)
 		local weUseDelta = TOGBankClassic_Guild:ShouldUseDelta()
 		if weUseDelta and prefix == "togbank-v" then
-			-- Silently ignore - delta clients only listen to togbank-dv
+			-- Legacy clients ignore togbank-v
 			return
 		end
-
-		-- Debug: Show what data we received
-		if isDeltaVersion then
-			local altCount = 0
+		
+		-- SYNC-006 clients only listen to togbank-dv2, ignore togbank-dv
+		-- Pre-SYNC-006 clients only listen to togbank-dv, ignore togbank-dv2
+		local weUseSYNC006 = TOGBankClassic_Guild:UsesSYNC006()
+		if weUseSYNC006 and prefix == "togbank-dv" then
+			-- Delay dv processing to allow dv2 to arrive first (prioritize newer protocol)
+			TOGBankClassic_Output:Debug("PROTOCOL", "Delaying dv message from %s for %d seconds (waiting for dv2)", sender, self.DV_DELAY)
+			
+			-- Store the message with a timer
+			if not self.pending_dv_messages[sender] then
+				self.pending_dv_messages[sender] = {}
+			end
+			
+			-- Extract alt names from data to track what needs canceling
+			local altNames = {}
 			if data.alts then
-				for _ in pairs(data.alts) do
-					altCount = altCount + 1
-				end
-			end
-			TOGBankClassic_Output:Debug("PROTOCOL", "togbank-dv from %s: has data.alts=%s, alts count=%d",
-				sender,
-				tostring(data.alts ~= nil),
-				altCount
-			)
-		end
-
-		local current_data = TOGBankClassic_Guild:GetVersion()
-		if current_data then
-			if data.name then
-				if current_data.name ~= data.name then
-					TOGBankClassic_Output:Warn("A non-guild version!")
-					return
-				end
-			end
-			if data.addon then
-				-- Track this user's addon version
-				if not self.guild_versions then
-					self.guild_versions = {}
-				end
-				self.guild_versions[sender] = {
-					version = data.addon,
-					seen = time(),
-				}
-
-				-- v0.8.0: Track online bankers for pull-based protocol
-				if data.isBanker then
-					if not self.online_bankers then
-						self.online_bankers = {}
-					end
-					self.online_bankers[sender] = {
-						seen = time(),
-						version = data.addon,
+				for altName in pairs(data.alts) do
+					table.insert(altNames, altName)
+					-- Store pending message keyed by alt name for easy cancellation
+					self.pending_dv_messages[sender][altName] = {
+						data = data,
+						prefix = prefix,
+						message = message,
+						distribution = distribution,
 					}
-					TOGBankClassic_Output:Debug("ROSTER", "Tracked online banker: %s", sender)
-				end
-
-				-- Track protocol capabilities
-				local protocolVersion = data.protocol_version or 1
-				local supportsDelta = data.supports_delta or false
-				TOGBankClassic_Database:UpdatePeerProtocol(
-					current_data.name,
-					sender,
-					protocolVersion,
-					supportsDelta
-				)
-
-				if current_data.addon and data.addon > current_data.addon then
-					if not self.addon_outdated then
-						-- only make the callout once
-						self.addon_outdated = true
-						TOGBankClassic_Output:Info(
-							"A newer version is available! Download it from https://www.curseforge.com/wow/addons/togbankclassic/"
-						)
-					end
 				end
 			end
-			if data.roster then
-				if current_data.roster == nil or data.roster > current_data.roster then
-					self:Debug("SYNC", ">", ColorPlayerName(sender), "has fresher roster data, querying.")
-					TOGBankClassic_Guild:QueryRoster(sender, data.roster)
-				end
-			end
-			-- PERF-002 fix: Request sync decoupled from inventory sync (togbank-dv)
-			-- Request syncs now handled independently via SendRequestsVersionPing()
-			if data.alts then
-				local altCount = 0
-				for _ in pairs(data.alts) do
-					altCount = altCount + 1
-				end
-				TOGBankClassic_Output:Debug("PROTOCOL", "[PROCESS] Processing %d alts from %s (isDeltaVersion=%s)",
-					altCount, sender, tostring(isDeltaVersion))
-				for k, v in pairs(data.alts) do
-					local kNorm = TOGBankClassic_Guild:NormalizeName(k)
-					local ourAlt = current_data.alts[kNorm]
-
-					-- v0.8.0: Handle both old format (number) and new format (table with version+hash)
-					local theirVersion = type(v) == "table" and v.version or v
-					local theirHash = type(v) == "table" and v.hash or nil
-					local ourVersion = type(ourAlt) == "table" and ourAlt.version or nil
-					local ourHash = type(ourAlt) == "table" and ourAlt.inventoryHash or nil
-
-					-- Debug: show what we received
-					if theirHash then
-						TOGBankClassic_Output:Debug(
-							"SYNC",
-							"Received %s from %s: version=%d, hash=%d (our hash=%s)",
-							kNorm,
-							sender,
-							theirVersion,
-							theirHash,
-							ourHash and tostring(ourHash) or "nil"
-						)
-					end
-
-					-- Don't query sender about themselves (SYNC-001 fix)
-					local senderNorm = TOGBankClassic_Guild:NormalizeName(sender)
-					if kNorm ~= senderNorm then
-						-- For delta version broadcasts, only query if we support delta
-						-- For legacy version broadcasts, query as normal
-						local shouldQuery = false
-						if isDeltaVersion then
-							-- Delta version: check hash first (most accurate), then version
-							if TOGBankClassic_Guild:ShouldUseDelta() then
-								-- Hash-based comparison (most accurate)
-								if theirHash then
-									if not ourHash then
-										-- They have data, we don't - query
-										shouldQuery = true
-										self:Debug(
-											"SYNC",
-											">",
-											ColorPlayerName(sender),
-											"has bank data for",
-											ColorPlayerName(kNorm) .. " (we have none), querying."
-										)
-									elseif theirHash ~= ourHash then
-										-- Hashes differ - we need an update
-										shouldQuery = true
-										self:Debug(
-											"SYNC",
-											">",
-											ColorPlayerName(sender),
-											"has different inventory for",
-											ColorPlayerName(kNorm) .. " (hash mismatch), querying."
-										)
-									end
-								elseif not ourVersion or theirVersion > ourVersion then
-									-- No hash available, fall back to version comparison
-									shouldQuery = true
-									self:Debug(
-										"SYNC",
-										">",
-										ColorPlayerName(sender),
-										"has fresher bank data about",
-										ColorPlayerName(kNorm) .. ", querying (delta)."
-									)
-								end
-							end
-						else
-							-- Legacy version: query as usual
-							if not ourVersion or theirVersion > ourVersion then
-								shouldQuery = true
-								self:Debug(
-									"SYNC",
-									">",
-									ColorPlayerName(sender),
-									"has fresher bank data about",
-									ColorPlayerName(kNorm) .. ", querying."
-								)
-							end
-						end
-
-						if shouldQuery then
-							-- v0.8.0: Use pull-based query for delta version broadcasts
-							TOGBankClassic_Guild:QueryAltPullBased(kNorm)
-						end
-					end
-				end
-			end
+			
+			-- Create timer to process after delay
+			C_Timer.After(self.DV_DELAY, function()
+				self:ProcessDelayedDvMessage(sender, data, prefix, message, distribution)
+			end)
+			
+			return
+		elseif not weUseSYNC006 and prefix == "togbank-dv2" then
+			-- Pre-SYNC-006 clients ignore SYNC-006 protocol
+			return
 		end
+		
+		-- If we're processing dv2, cancel any pending dv messages for these alts
+		if prefix == "togbank-dv2" and data.alts then
+			local altNames = {}
+			for altName in pairs(data.alts) do
+				table.insert(altNames, altName)
+			end
+			self:CancelPendingDvMessages(sender, altNames)
+		end
+
+		-- Process the message immediately
+		self:ProcessVersionBroadcast(prefix, data, sender, message, distribution)
+		return
 	end
 
 	if prefix == "togbank-r" then
@@ -487,7 +584,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
 			local hasData = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[altName] ~= nil
 
-			if hasData or isBanker then
+			-- Only bankers respond to pull-based requests
+			if isBanker and hasData then
 				-- Send acknowledgment with banker flag
 				local ack = {
 					type = "alt-request-reply",
@@ -819,8 +917,20 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					return
 				end
 
-				-- Note: Item links now reconstructed lazily when UI displays items
-				-- This prevents background stuttering from 100+ async Item loads
+				-- Reconstruct item links in background using batched queue system
+				-- Processes 5 items every 0.1s to prevent stuttering
+				if data.changes then
+					if data.changes.bank then
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.added)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.modified)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.removed)
+					end
+					if data.changes.bags then
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.added)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.modified)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.removed)
+					end
+				end
 
 				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
 				self:Debug(

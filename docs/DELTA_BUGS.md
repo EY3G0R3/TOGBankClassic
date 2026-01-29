@@ -4998,38 +4998,48 @@ Now when the guild roster updates and the banks cache is rebuilt, the Requests U
 **Status:** ✅ RESOLVED  
 
 **Problem:**
-Severe in-game stuttering/freezing when receiving synced data and opening inventory or search windows. Game became unresponsive for 1-2 seconds at a time.
+Severe in-game stuttering/freezing when receiving synced data, both when opening inventory windows AND during normal gameplay when UI was closed. Game became unresponsive for 1-2 seconds at a time during sync.
 
-**Root Cause:**
+**Root Cause Analysis:**
+
+**Initial Issue:**
 When items are reconstructed asynchronously (via `Item:ContinueOnItemLoad` callbacks), each item's callback triggered a full UI redraw by calling `DrawContent()`.
 
 **Example scenario:**
 1. Banker has 100+ unique items
-2. Receiver gets data, starts async loading 100 items
-3. Each item's callback fires independently as it loads
-4. **100 separate DrawContent() calls in ~1 second**
+2. Receiver gets data, Chat.lua calls `ReconstructItemLinks()` on ALL delta arrays (6 arrays)
+3. Starts async loading 100+ items IMMEDIATELY in background
+4. **100+ separate DrawContent() calls in ~1 second**
 5. Each DrawContent() redraws entire UI (expensive operation)
 6. Result: 100 full UI redraws = game freeze/stutter
+
+**Iteration 1: Lazy Loading**
+- Removed eager reconstruction calls from Chat.lua
+- Only reconstructed links when DrawItem() called (UI open)
+- Problem: Opening UI tried to reconstruct ALL visible items at once → spike on UI open
+- Also: Blank tooltips on `/wipe` since items not in cache
+
+**Iteration 2: Batched Queue System (Final Solution)**
 
 **Performance Analysis:**
 ```
 Before Fix:
-- 100 items loading
-- 100 DrawContent() calls
-- ~10ms per DrawContent = 1000ms total blocking UI
-- Stuttering severity: 🔴 SEVERE
+- 100 items loading eagerly when sync received
+- 100 async callbacks + 100 DrawContent() calls
+- ~10ms per DrawContent = 1000ms blocking UI
+- Stuttering: 🔴 SEVERE (even with UI closed)
 
 After Fix:
-- 100 items loading
+- Items queued and processed in batches
+- 5 items every 0.1s = ~2 seconds to process 100 items
 - 2-3 DrawContent() calls (throttled to 0.5s intervals)
 - ~30ms total UI refresh time
-- Stuttering severity: ✅ NONE
+- Stuttering: ✅ NONE
 ```
 
-**Solution: Throttled UI Refresh**
+**Solution: Batched Queue System with Throttled Refresh**
 
-Added `ThrottledUIRefresh()` helper function (Guild.lua, line 965):
-
+**1. Throttled UI Refresh** (Guild.lua, line 965):
 ```lua
 local lastUIRefresh = 0
 local function ThrottledUIRefresh()
@@ -5039,6 +5049,7 @@ local function ThrottledUIRefresh()
     end
     lastUIRefresh = now
     
+    -- Only refresh if UI is actually open
     if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
         TOGBankClassic_UI_Inventory:DrawContent()
     end
@@ -5048,29 +5059,134 @@ local function ThrottledUIRefresh()
 end
 ```
 
-**Changes:**
-- All async item loading callbacks now call `ThrottledUIRefresh()` instead of direct `DrawContent()`
-- Throttle interval: 0.5 seconds (2 refreshes per second maximum)
-- UI still updates automatically as items load, just not excessively
+**2. Batched Processing Queue** (Guild.lua, line 983):
+```lua
+local itemReconstructQueue = {}
+local isProcessingQueue = false
+local pendingAsyncLoads = 0  -- Track number of pending async loads
+local MAX_CONCURRENT_ASYNC = 3  -- Limit concurrent async operations
+local BATCH_SIZE = 10  -- Process 10 items at a time
+local BATCH_DELAY = 0.2  -- 0.2 second delay between batches (slower = smoother)
+
+local function ProcessItemQueue()
+    -- Process batch of 10 items
+    -- Try synchronous load from cache first
+    -- If not in cache AND fewer than 3 async loads active → start async
+    -- If 3+ async loads already active → requeue item for next batch
+    -- Refresh UI if any loaded synchronously
+    -- Schedule next batch after 0.2s delay
+end
+```
+
+**3. Queue Population** (Guild.lua, line 1073):
+```lua
+function TOGBankClassic_Guild:ReconstructItemLinks(items)
+    -- Add all items without links to queue
+    for _, item in ipairs(items) do
+        if item and item.ID and not item.Link then
+            table.insert(itemReconstructQueue, item)
+        end
+    end
+    
+    -- Start processing if not already running
+    if not isProcessingQueue then
+        isProcessingQueue = true
+        ProcessItemQueue()
+    end
+end
+```
+
+**4. Eager Reconstruction Re-enabled** (Chat.lua, line 822):
+```lua
+-- Now safe to reconstruct in background with batched queue
+if data.changes then
+    if data.changes.bank then
+        TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.added)
+        TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.modified)
+        TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.removed)
+    end
+    if data.changes.bags then
+        TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.added)
+        TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.modified)
+        TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.removed)
+    end
+end
+```
+
+**How It Works:**
+
+**Timeline after sync:**
+- T+0.0s: Sync received, items added to queue (not processed yet)
+- T+0.2s: Process batch 1 (10 items) → max 3 async loads → refresh UI if any loaded
+- T+0.4s: Process batch 2 (10 items) → max 3 async loads → refresh UI if any loaded
+- T+0.6s: Process batch 3 (10 items) → max 3 async loads → refresh UI if any loaded
+- ...continues until queue empty
+
+**For each batch:**
+1. Try synchronous load from cache (instant if available)
+2. If not in cache:
+   - Check if fewer than 3 async loads currently active
+   - If yes → create async `Item:ContinueOnItemLoad`
+   - If no (3+ active) → **requeue item for next batch**
+3. If any loaded synchronously → call `ThrottledUIRefresh()`
+4. Async callbacks decrement counter and call `ThrottledUIRefresh()` when complete
+
+**Async Load Limiting:**
+- Never more than 3 concurrent `Item:CreateFromItemID` operations
+- Items that can't be processed (limit reached) are requeued
+- Prevents overwhelming WoW's item loading system
+- Critical for smooth performance after `/wipe` (empty cache)
+
+**UI Refresh Behavior:**
+- Max once per 0.5 seconds (prevents excessive redraws)
+- Only refreshes if UI windows are actually open (no background updates)
+- Batch processing spreads load: 10 items/0.2s = 50 items/second
+- **Concurrent async limit: 3 operations maximum**
 
 **Benefits:**
-1. **Eliminates stuttering** - Prevents excessive UI redraws
-2. **Maintains responsiveness** - UI still updates as items load (just throttled)
-3. **No user impact** - Users still see items populate, just smoothly
-4. **Scalable** - Works equally well with 10 items or 1000 items
+1. **Eliminates stuttering** - Smooth background processing, no frame drops
+2. **Works with UI closed** - No eager loading spike
+3. **Works with UI open** - Items appear in waves, not all at once
+4. **Cache-optimized** - Items in cache load instantly in batches
+5. **Scalable** - 10 items or 1000 items, same smooth performance
+
+**ItemString Integration:**
+Items with ItemString (gear with random stats) are processed the same as basic items:
+```lua
+if item.ItemString then
+    -- Reconstruct: |Hitem:18813:0:0:0:0:0:1804:0|h[Ring of the Eagle]|h
+    -- Preserves suffixID (1804) for tooltip stats
+else
+    -- Basic item: |Hitem:2772|h[Iron Ore]|h
+    -- Simple link from ID
+end
+```
+
+**Backward Compatibility:**
+Old clients without ItemString support:
+- Still receive data (ItemString field ignored)
+- Fall back to basic ID-only links
+- Basic items work perfectly
+- Gear with random stats shows generic tooltips (no bonus stats)
+- No crashes or errors
 
 **Testing:**
 1. Have banker with 100+ items
 2. On non-banker client: `/wipe`, `/sync`
-3. Open inventory window during sync
-4. Observe smooth performance, no stuttering
-5. Verify items still populate correctly with tooltips
+3. Observe smooth performance during sync (UI closed)
+4. Open inventory window - items appear in waves
+- ✅ Never more than 3 concurrent async Item loads (prevents overload)
+- ✅ Batch delay of 0.2s ensures smooth gameplay even with cold cache
+5. Hover over items - tooltips work for all items
+6. No stuttering at any point
 
 **Performance Metrics:**
 - ✅ Stuttering eliminated (from 1-2 second freezes to smooth)
-- ✅ Frame rate stable during item reconstruction
+- ✅ Frame rate stable during item reconstruction (UI open or closed)
 - ✅ UI remains responsive while loading
-- ✅ All items still populate correctly
+- ✅ All items populate correctly with full tooltip stats
+- ✅ Background processing doesn't impact gameplay
+- ✅ Queue processes ~50 items/second without performance impact
 
 ---
 

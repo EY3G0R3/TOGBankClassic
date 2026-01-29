@@ -19,7 +19,7 @@
 - [x] ~~**Persistent debug logging**~~ **v0.7.11: Implemented with 50k entry buffer, 7-day retention, filtering**
 - [x] ~~**SplitContainerItem popup for order fulfillment**~~ **IMPLEMENTED: Shows confirmation popup with shovel icon when split needed; smart bin-packing algorithm for optimal stack selection; supports complex partial fulfillment scenarios**
 - [ ] **Bagnon-style item highlighting** - Implement visual highlighting system that greys out all items except those needed to fulfill active orders; works across player bags and bank; helps bankers quickly locate and gather items for order fulfillment
-- [ ] **Deprecate legacy inventory structure** - Phase out `alt.bank.items` and `alt.bags.items` in favor of unified `alt.items` aggregate (SYNC-006/SYNC-007); currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
+- [ ] **Deprecate legacy protocols** - Phase out togbank-v (non-delta), togbank-dv (pre-SYNC-006), and separate bank/bags structures in favor of unified togbank-dv2 (SYNC-006+) with `alt.items` aggregate; includes removing 5-second dv/dv2 prioritization delay once all clients upgraded; currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
 
 ---
 
@@ -1597,3 +1597,93 @@ TOGBankClassic_Output:Debug("COMMS", "Received message from %s", sender)
 
 ---
 
+## 🔄 Protocol Prioritization (SYNC-006 Migration) - IMPLEMENTED
+
+**Added:** January 28, 2026  
+**Purpose:** Ensure smooth migration from pre-SYNC-006 to SYNC-006+ protocol during dual-broadcast period
+
+### Problem
+- Bankers broadcast on both `togbank-dv` (pre-SYNC-006) and `togbank-dv2` (SYNC-006+) for backward compatibility
+- SYNC-006+ clients received both messages, potentially causing:
+  - Duplicate processing of same alt data
+  - Hash format confusion (legacy "B:+G:" vs new "I:" format)
+  - Wasted bandwidth processing obsolete protocol data
+
+### Solution
+Implemented message prioritization with delayed processing:
+
+**Protocol Filtering:**
+- SYNC-006+ clients: Only listen to `togbank-dv2`, delay `togbank-dv` by 5 seconds
+- Pre-SYNC-006 clients: Only listen to `togbank-dv`, ignore `togbank-dv2`
+- Bankers: Broadcast on BOTH channels during migration period
+
+**Delay/Cancel Mechanism:**
+1. When `togbank-dv` arrives on SYNC-006+ client:
+   - Store message in pending queue with 5-second timer
+   - Log: "Delaying dv message from {sender} for 5 seconds (waiting for dv2)"
+2. When `togbank-dv2` arrives:
+   - Process immediately
+   - Cancel any pending `togbank-dv` timers for same alts
+   - Log: "Canceling pending dv message for {alt} (dv2 arrived)"
+3. After 5 seconds (if no dv2):
+   - Process delayed `togbank-dv` message as fallback
+   - Log: "Processing delayed dv message from {sender} (no dv2 received)"
+
+### Implementation Details
+
+**Chat.lua Changes:**
+- `pending_dv_messages[sender][altName]` - Tracks delayed messages by sender and alt name
+- `DV_DELAY = 5` - Configurable delay in seconds
+- `CancelPendingDvMessages()` - Cancels timers when dv2 arrives
+- `ProcessDelayedDvMessage()` - Handles fallback after timeout
+- `ProcessVersionBroadcast()` - Extracted common processing logic
+
+**Guild.lua Changes:**
+- `UsesSYNC006()` - Returns `true` for current clients, enables protocol filtering
+
+**Flow Diagram:**
+```
+Banker broadcasts:
+  ├─ togbank-dv2 → SYNC-006+ clients (immediate)
+  └─ togbank-dv → Pre-SYNC-006 clients (immediate)
+                └─ SYNC-006+ clients (5s delay, canceled if dv2 arrives)
+```
+
+### Migration Strategy
+
+**Phase 1: Dual Broadcasting (Current)**
+- All bankers send both dv and dv2
+- New clients prioritize dv2, fallback to dv after 5s
+- Old clients ignore dv2, process dv normally
+
+**Phase 2: Monitor Adoption (3-6 months)**
+- Track client versions in guild
+- Wait until 95%+ on SYNC-006+
+
+**Phase 3: Remove Legacy (Future)**
+- Stop broadcasting `togbank-dv`
+- Remove 5-second delay logic
+- Remove `togbank-v` legacy support
+- Clean up `alt.bank.items` and `alt.bags.items` structures
+
+### Technical Notes
+- Uses `C_Timer.After()` for 5-second delay
+- Timer references stored in pending queue for cancellation
+- Pending messages keyed by `sender` → `altName` for granular control
+- No performance impact: delay only applies when receiving obsolete protocol data
+- Graceful fallback: if banker only sends dv (old version), still processes after 5s
+
+### User Experience
+- **New clients with new bankers:** Instant sync (dv2 only), no delay
+- **New clients with old bankers:** 5s delay for dv fallback (rare case)
+- **Old clients:** No change, immediate sync on dv
+- **Migration period:** Both client types work simultaneously
+
+### Success Criteria
+- ✅ SYNC-006+ clients never process togbank-dv when dv2 available
+- ✅ SYNC-006+ clients fall back to dv if banker only sends dv
+- ✅ Pre-SYNC-006 clients continue working during migration
+- ✅ No duplicate processing or hash confusion
+- ✅ Clear debug logs show delay/cancel/fallback behavior
+
+---

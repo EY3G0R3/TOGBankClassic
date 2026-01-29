@@ -168,6 +168,7 @@ function TOGBankClassic_Events:Sync(priority)
 end
 
 -- Delta-specific version broadcast (SYNC-001 fix)
+-- v0.8.0 SYNC-006: Bankers send BOTH togbank-dv (old) and togbank-dv2 (new) during migration
 function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then
@@ -192,8 +193,14 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
 	version.isBanker = isBanker
 
+	-- SYNC-006 Migration: Send on BOTH channels
+	-- togbank-dv2 for new clients (with aggregated items hash)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
-	-- Use provided priority or default to NORMAL for automatic timer-based syncs
+	TOGBankClassic_Core:SendCommMessage("togbank-dv2", data, "Guild", nil, priority or "NORMAL")
+	
+	-- Also send on togbank-dv for old pre-SYNC-006 clients
+	-- Note: Old clients will compute hash from their legacy alt.bank/alt.bags structure
+	-- New clients ignore togbank-dv, so no conflict
 	TOGBankClassic_Core:SendCommMessage("togbank-dv", data, "Guild", nil, priority or "NORMAL")
 end
 

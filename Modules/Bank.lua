@@ -206,6 +206,39 @@ function TOGBankClassic_Bank:Scan()
 			table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
 		end
 	end
+	
+	-- DEBUG: Log sample counts from SOURCE arrays before aggregation
+	if #bankItems > 0 then
+		local bankSample = {}
+		for i = 1, math.min(3, #bankItems) do
+			local item = bankItems[i]
+			if item then
+				table.insert(bankSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
+			end
+		end
+		TOGBankClassic_Output:Debug("SCAN-DETAIL", "SOURCES - bank.items (first 3): %s", table.concat(bankSample, ", "))
+	end
+	if #bagItems > 0 then
+		local bagSample = {}
+		for i = 1, math.min(3, #bagItems) do
+			local item = bagItems[i]
+			if item then
+				table.insert(bagSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
+			end
+		end
+		TOGBankClassic_Output:Debug("SCAN-DETAIL", "SOURCES - bags.items (first 3): %s", table.concat(bagSample, ", "))
+	end
+	if #mailItems > 0 then
+		local mailSample = {}
+		for i = 1, math.min(3, #mailItems) do
+			local item = mailItems[i]
+			if item then
+				table.insert(mailSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
+			end
+		end
+		TOGBankClassic_Output:Debug("SCAN-DETAIL", "SOURCES - mail.items (first 3): %s", table.concat(mailSample, ", "))
+	end
+	
 	-- Aggregate all three sources (returns table with composite keys, deduplicates by ID)
 	local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
 	aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
@@ -214,6 +247,18 @@ function TOGBankClassic_Bank:Scan()
 	alt.items = {}
 	for _, item in pairs(aggregated) do
 		table.insert(alt.items, item)
+	end
+	
+	-- DEBUG: Log sample counts after aggregation
+	if alt.items and #alt.items > 0 then
+		local scanSample = {}
+		for i = 1, math.min(5, #alt.items) do
+			local item = alt.items[i]
+			if item then
+				table.insert(scanSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
+			end
+		end
+		TOGBankClassic_Output:Debug("SCAN-DETAIL", "After Bank:Scan aggregation - First 5 items: %s", table.concat(scanSample, ", "))
 	end
 	
 	-- Also clean up source arrays to remove any duplicates (in case of corrupted data)
@@ -236,18 +281,18 @@ function TOGBankClassic_Bank:Scan()
 	end
 
 	-- v0.8.0: Only update version if inventory actually changed
-	-- Compute a hash of the current inventory state
-	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, alt.mail, money)
+	-- Compute a hash of the current inventory state (SYNC-006: use aggregated alt.items)
+	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, money)
 	local previousHash = alt.inventoryHash
 
 	if currentHash ~= previousHash then
 		-- Inventory changed, update version timestamp
 		alt.version = GetServerTime()
 		alt.inventoryHash = currentHash
-		TOGBankClassic_Output:Debug("SYNC", "Inventory changed for %s, version updated to %d", player, alt.version)
+		TOGBankClassic_Output:Debug("SYNC", "Inventory changed for %s, version updated to %d (hash: %s)", player, alt.version, tostring(currentHash))
 	else
 		-- No changes detected, preserve existing version
-		TOGBankClassic_Output:Debug("SYNC", "No inventory changes for %s, version unchanged", player)
+		TOGBankClassic_Output:Debug("SYNC", "No inventory changes for %s, version unchanged (hash: %s)", player, tostring(currentHash))
 	end
 
 	if not info.alts then
@@ -318,4 +363,49 @@ function TOGBankClassic_Bank:OnUpdateStop()
 		self:Scan()
 	end
 	self.hasUpdated = false
+end
+
+-- Recalculate alt.items from existing bank/bags/mail data
+-- Used to fix aggregation without requiring a full scan
+function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
+	if not alt then
+		return
+	end
+
+	-- First deduplicate source data (bank/bags) in case they have duplicates
+	local bankItems = {}
+	if alt.bank and alt.bank.items then
+		local deduped = TOGBankClassic_Item:Aggregate(alt.bank.items, nil)
+		for _, item in pairs(deduped) do
+			table.insert(bankItems, item)
+		end
+	end
+	
+	local bagItems = {}
+	if alt.bags and alt.bags.items then
+		local deduped = TOGBankClassic_Item:Aggregate(alt.bags.items, nil)
+		for _, item in pairs(deduped) do
+			table.insert(bagItems, item)
+		end
+	end
+	
+	local mailItems = {}
+	if alt.mail and alt.mail.items then
+		for itemID, mailItem in pairs(alt.mail.items) do
+			table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
+		end
+	end
+	
+	-- Aggregate all three sources
+	local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+	aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
+	
+	-- Convert back to array format
+	alt.items = {}
+	for _, item in pairs(aggregated) do
+		table.insert(alt.items, item)
+	end
+	
+	TOGBankClassic_Output:Debug("BANK", "Recalculated aggregated items: bank=%d, bags=%d, mail=%d, total=%d", 
+		#bankItems, #bagItems, #mailItems, #alt.items)
 end

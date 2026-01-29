@@ -86,7 +86,7 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 		slot:SetLabel(" ")
 	end
 	
-	-- Lazy reconstruct item link if needed (only when actually displaying)
+	-- Generate link on-demand if needed (synchronous from cache if available)
 	if item.ID and not item.Link then
 		TOGBankClassic_Guild:ReconstructItemLink(item)
 	end

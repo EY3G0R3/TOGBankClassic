@@ -971,6 +971,7 @@ local function ThrottledUIRefresh()
 	end
 	lastUIRefresh = now
 	
+	-- Only refresh if UI is actually open
 	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 		TOGBankClassic_UI_Inventory:DrawContent()
 	end
@@ -979,87 +980,139 @@ local function ThrottledUIRefresh()
 	end
 end
 
--- Reconstruct single item link (lazy loading for UI display)
-function TOGBankClassic_Guild:ReconstructItemLink(item)
-	if not item or not item.ID or item.Link then
+-- Queue system for batched item reconstruction
+local itemReconstructQueue = {}
+local isProcessingQueue = false
+local pendingAsyncLoads = 0  -- Track number of pending async loads
+local MAX_CONCURRENT_ASYNC = 3  -- Limit concurrent async operations
+local BATCH_SIZE = 10  -- Process 10 items at a time
+local BATCH_DELAY = 0.2  -- 0.2 second delay between batches (slower = smoother)
+
+local function ProcessItemQueue()
+	if #itemReconstructQueue == 0 then
+		isProcessingQueue = false
 		return
 	end
-
-	-- If we have an ItemString (with suffix/unique data), use it to reconstruct full link
-	if item.ItemString then
-		local itemName = GetItemInfo(item.ID)
-		if itemName then
-			item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, itemName)
-		end
-		-- Note: If not in cache, link will be nil and tooltips won't work until next refresh
-		-- This is acceptable for lazy loading - avoids background stuttering
-	else
-		-- No ItemString, fall back to basic ID-only link
-		local itemLink = select(2, GetItemInfo(item.ID))
-		if itemLink then
-			item.Link = itemLink
-		end
-	end
-end
-
--- Reconstruct item links from ItemStrings after receiving delta (batch version)
-function TOGBankClassic_Guild:ReconstructItemLinks(items)
-	if not items then
-		return
-	end
-
-	local needsAsyncLoad = false
-
-	for _, item in ipairs(items) do
+	
+	-- Process a batch of items
+	local processCount = math.min(BATCH_SIZE, #itemReconstructQueue)
+	local loadedAnyInBatch = false
+	
+	for i = 1, processCount do
+		local item = table.remove(itemReconstructQueue, 1)
 		if item and item.ID and not item.Link then
-			-- If we have an ItemString (with suffix/unique data), use it to reconstruct full link
+			-- If we have an ItemString, use it to reconstruct full link
 			if item.ItemString then
-				-- Reconstruct link with full item parameters: |Hitem:itemString|h[Name]|h
 				local itemName = GetItemInfo(item.ID)
 				if itemName then
 					item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, itemName)
+					loadedAnyInBatch = true
 				else
-					-- Item not in cache, use async loading with itemString
-					needsAsyncLoad = true
-					local itemObj = Item:CreateFromItemID(item.ID)
-					if itemObj then
-						itemObj:ContinueOnItemLoad(function()
-							local name = itemObj:GetItemName()
-							if name then
-								item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, name)
-								-- Throttled refresh to prevent stuttering from many async loads
-								ThrottledUIRefresh()
-							end
-						end)
+					-- Item not in cache - only start async if under limit
+					if pendingAsyncLoads < MAX_CONCURRENT_ASYNC then
+						pendingAsyncLoads = pendingAsyncLoads + 1
+						local itemObj = Item:CreateFromItemID(item.ID)
+						if itemObj then
+							itemObj:ContinueOnItemLoad(function()
+								pendingAsyncLoads = pendingAsyncLoads - 1
+								local name = itemObj:GetItemName()
+								if name then
+									item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, name)
+									ThrottledUIRefresh()
+								end
+							end)
+						else
+							pendingAsyncLoads = pendingAsyncLoads - 1
+						end
+					else
+						-- Too many pending, requeue for later
+						table.insert(itemReconstructQueue, item)
 					end
 				end
 			else
-				-- No ItemString, fall back to basic ID-only link (for non-unique items)
+				-- No ItemString, fall back to basic ID-only link
 				local itemLink = select(2, GetItemInfo(item.ID))
 				if itemLink then
 					item.Link = itemLink
+					loadedAnyInBatch = true
 				else
-					-- Item not in cache, use async loading
-					needsAsyncLoad = true
-					local itemObj = Item:CreateFromItemID(item.ID)
-					if itemObj then
-						itemObj:ContinueOnItemLoad(function()
-							local link = itemObj:GetItemLink()
-							if link then
-								item.Link = link
-								-- Throttled refresh to prevent stuttering from many async loads
-								ThrottledUIRefresh()
-							end
-						end)
+					-- Item not in cache - only start async if under limit
+					if pendingAsyncLoads < MAX_CONCURRENT_ASYNC then
+						pendingAsyncLoads = pendingAsyncLoads + 1
+						local itemObj = Item:CreateFromItemID(item.ID)
+						if itemObj then
+							itemObj:ContinueOnItemLoad(function()
+								pendingAsyncLoads = pendingAsyncLoads - 1
+								local link = itemObj:GetItemLink()
+								if link then
+									item.Link = link
+									ThrottledUIRefresh()
+								end
+							end)
+						else
+							pendingAsyncLoads = pendingAsyncLoads - 1
+						end
+					else
+						-- Too many pending, requeue for later
+						table.insert(itemReconstructQueue, item)
 					end
 				end
 			end
 		end
 	end
-
-	-- If some links loaded immediately from cache, refresh UI now
-	if not needsAsyncLoad then
+	
+	-- Refresh UI if any items loaded synchronously in this batch
+	if loadedAnyInBatch then
 		ThrottledUIRefresh()
+	end
+	
+	-- Schedule next batch
+	if #itemReconstructQueue > 0 then
+		C_Timer.After(BATCH_DELAY, ProcessItemQueue)
+	else
+		isProcessingQueue = false
+	end
+end
+
+-- Reconstruct single item link (immediate, synchronous only)
+function TOGBankClassic_Guild:ReconstructItemLink(item)
+	if not item or not item.ID or item.Link then
+		return
+	end
+
+	-- Try synchronous reconstruction from cache only
+	if item.ItemString then
+		local itemName = GetItemInfo(item.ID)
+		if itemName then
+			item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, itemName)
+		end
+	else
+		local itemLink = select(2, GetItemInfo(item.ID))
+		if itemLink then
+			item.Link = itemLink
+		end
+	end
+	-- Note: If not in cache, link stays nil - will be reconstructed by queue
+end
+
+-- Reconstruct item links from ItemStrings - queued/batched to prevent stuttering
+function TOGBankClassic_Guild:ReconstructItemLinks(items)
+	if not items then
+		return
+	end
+
+	-- Add all items without links to queue for async loading
+	-- Items already in cache will load synchronously and won't need async
+	for _, item in ipairs(items) do
+		if item and item.ID and not item.Link then
+			table.insert(itemReconstructQueue, item)
+		end
+	end
+	
+	-- Start processing queue if not already running
+	if not isProcessingQueue and #itemReconstructQueue > 0 then
+		isProcessingQueue = true
+		ProcessItemQueue()
 	end
 end
 
@@ -1201,6 +1254,18 @@ function TOGBankClassic_Guild:SendAltData(name)
 	local bagsCount = (currentAlt.bags and currentAlt.bags.items) and #currentAlt.bags.items or 0
 	TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d", 
 		norm, itemsCount, bankCount, bagsCount)
+	
+	-- DEBUG: Log sample counts from what we're about to send
+	if currentAlt.items and #currentAlt.items > 0 then
+		local sampleItems = {}
+		for i = 1, math.min(5, #currentAlt.items) do
+			local item = currentAlt.items[i]
+			if item then
+				table.insert(sampleItems, string.format("%s:%d", item.ID or "?", item.Count or 0))
+			end
+		end
+		TOGBankClassic_Output:Debug("SEND-DETAIL", "First 5 items in alt.items being sent: %s", table.concat(sampleItems, ", "))
+	end
 	
 	local useDelta = false
 	local deltaData = nil
@@ -1602,14 +1667,40 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 				TOGBankClassic_Output:Debug("SYNC", "No items to reconstruct for %s (bank and bags both empty)", name)
 			end
 		else
-			-- alt.items exists, ensure it's in array format (not key-value)
+			-- alt.items exists, deduplicate and ensure array format
+			-- Items may have duplicates from corrupted syncs, so aggregate to dedupe
+			-- DEBUG: Log sample counts BEFORE deduplication
+			if alt.items and #alt.items > 0 then
+				local beforeSample = {}
+				for i = 1, math.min(5, #alt.items) do
+					local item = alt.items[i]
+					if item then
+						table.insert(beforeSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
+					end
+				end
+				TOGBankClassic_Output:Debug("RECV-DETAIL", "BEFORE dedupe - First 5 items received: %s", table.concat(beforeSample, ", "))
+			end
+			
+			local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
 			local arrayItems = {}
-			for _, item in pairs(alt.items) do
+			for _, item in pairs(aggregated) do
 				table.insert(arrayItems, item)
 			end
 			alt.items = arrayItems
-			TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, converted to array format: %d items", 
+			TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, deduplicated and converted to array: %d items", 
 				name, #alt.items)
+			
+			-- DEBUG: Log sample counts AFTER deduplication
+			if alt.items and #alt.items > 0 then
+				local afterSample = {}
+				for i = 1, math.min(5, #alt.items) do
+					local item = alt.items[i]
+					if item then
+						table.insert(afterSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
+					end
+				end
+				TOGBankClassic_Output:Debug("RECV-DETAIL", "AFTER dedupe - First 5 items stored: %s", table.concat(afterSample, ", "))
+			end
 		end
 
 		local norm = self:NormalizeName(name)
@@ -1696,6 +1787,13 @@ end
 -- Delta protocol delegated to DeltaComms module (v0.7.0+)
 function TOGBankClassic_Guild:ShouldUseDelta()
 	return TOGBankClassic_DeltaComms:ShouldUseDelta()
+end
+
+-- Check if this client uses SYNC-006 aggregated items format
+function TOGBankClassic_Guild:UsesSYNC006()
+	-- SYNC-006 introduced aggregated items structure (alt.items)
+	-- All current clients use SYNC-006
+	return true
 end
 
 -- Get peer protocol capabilities

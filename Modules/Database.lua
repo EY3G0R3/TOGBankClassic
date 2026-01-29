@@ -140,6 +140,48 @@ function TOGBankClassic_Database:Load(name)
 					alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
 				TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: computed inventory hash for %s (hash=%d)", name, alt.inventoryHash)
 				end
+				-- Recalculate aggregated items from bank/bags/mail with corrected Aggregate function
+				-- This fixes item count duplication without requiring a full scan
+				-- AGGRESSIVE FIX: Clear and rebuild alt.items on every load to prevent accumulation
+				if (alt.bank and alt.bank.items) or (alt.bags and alt.bags.items) or (alt.mail and alt.mail.items) then
+					-- Banker alt with bank/bags - FORCE reconstruct from sources
+					-- DEBUG: Log sample counts BEFORE clearing
+					if alt.items and #alt.items > 0 then
+						local beforeSample = {}
+						for i = 1, math.min(5, #alt.items) do
+							local item = alt.items[i]
+							if item then
+								table.insert(beforeSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
+							end
+						end
+						TOGBankClassic_Output:Debug("DB-LOAD", "BEFORE clear - Banker %s alt.items: %s", name, table.concat(beforeSample, ", "))
+					end
+					
+					alt.items = nil  -- Clear corrupted data
+					TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
+					
+					-- DEBUG: Log sample counts AFTER recalculation
+					if alt.items and #alt.items > 0 then
+						local afterSample = {}
+						for i = 1, math.min(5, #alt.items) do
+							local item = alt.items[i]
+							if item then
+								table.insert(afterSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
+							end
+						end
+						TOGBankClassic_Output:Debug("DB-LOAD", "AFTER recalc - Banker %s alt.items: %s", name, table.concat(afterSample, ", "))
+					end
+					
+					TOGBankClassic_Output:Debug("DATABASE", "FORCED recalculation for banker %s from bank/bags/mail", name)
+				elseif alt.items then
+					-- Synced alt - FORCE deduplicate
+					local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
+					alt.items = {}
+					for _, item in pairs(aggregated) do
+						table.insert(alt.items, item)
+					end
+					TOGBankClassic_Output:Debug("DATABASE", "FORCED deduplication for synced alt %s: %d items", name, #alt.items)
+				end
 			end
 		end
 	end
