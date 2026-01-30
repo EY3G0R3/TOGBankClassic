@@ -1016,9 +1016,9 @@ local function ProcessItemQueue()
 						local itemObj = Item:CreateFromItemID(item.ID)
 						
 						-- Debug: Check itemObj state
-						TOGBankClassic_Output:Debug("ITEM", "[GUILD] ItemString Item %d: itemObj=%s, itemObj.itemID=%s", 
-							item.ID or -1, 
-							tostring(itemObj), 
+						TOGBankClassic_Output:Debug("ITEM", "[GUILD] ItemString Item %d: itemObj=%s, itemObj.itemID=%s",
+							item.ID or -1,
+							tostring(itemObj),
 							itemObj and tostring(itemObj.itemID) or "nil")
 						
 						if itemObj and itemObj.itemID and itemObj.itemID == item.ID then
@@ -1061,9 +1061,9 @@ local function ProcessItemQueue()
 						local itemObj = Item:CreateFromItemID(item.ID)
 						
 						-- Debug: Check itemObj state
-						TOGBankClassic_Output:Debug("ITEM", "[GUILD] Item %d: itemObj=%s, itemObj.itemID=%s", 
-							item.ID or -1, 
-							tostring(itemObj), 
+						TOGBankClassic_Output:Debug("ITEM", "[GUILD] Item %d: itemObj=%s, itemObj.itemID=%s",
+							item.ID or -1,
+							tostring(itemObj),
 							itemObj and tostring(itemObj.itemID) or "nil")
 						
 						if itemObj and itemObj.itemID and itemObj.itemID == item.ID then
@@ -1242,16 +1242,16 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 			end
 		end
 		
-		-- Add or aggregate mail items into bank.items
-		for itemID, mailItem in pairs(alt.mail.items) do
-			if existingBank[itemID] then
+		-- Add or aggregate mail items into bank.items (mail.items is an array)
+		for _, mailItem in ipairs(alt.mail.items) do
+			if existingBank[mailItem.ID] then
 				-- Item exists in bank, add mail count to it
-				existingBank[itemID].Count = (existingBank[itemID].Count or 0) + (mailItem.count or 0)
-				TOGBankClassic_Output:Debug("SYNC", "Added mail quantity to existing bank item %d: +%d", itemID, mailItem.count or 0)
+				existingBank[mailItem.ID].Count = (existingBank[mailItem.ID].Count or 0) + (mailItem.Count or 0)
+				TOGBankClassic_Output:Debug("SYNC", "Added mail quantity to existing bank item %d: +%d", mailItem.ID, mailItem.Count or 0)
 			else
 				-- Item not in bank, add it as a new entry
-				table.insert(alt.bank.items, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
-				TOGBankClassic_Output:Debug("SYNC", "Added mail-only item %d to bank.items: count=%d", itemID, mailItem.count or 0)
+				table.insert(alt.bank.items, { ID = mailItem.ID, Count = mailItem.Count, Link = mailItem.Link })
+				TOGBankClassic_Output:Debug("SYNC", "Added mail-only item %d to bank.items: count=%d", mailItem.ID, mailItem.Count or 0)
 			end
 		end
 	end
@@ -1289,7 +1289,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 	local itemsCount = currentAlt.items and #currentAlt.items or 0
 	local bankCount = (currentAlt.bank and currentAlt.bank.items) and #currentAlt.bank.items or 0
 	local bagsCount = (currentAlt.bags and currentAlt.bags.items) and #currentAlt.bags.items or 0
-	TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d", 
+	TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d",
 		norm, itemsCount, bankCount, bagsCount)
 	
 	-- DEBUG: Log sample counts from what we're about to send
@@ -1316,29 +1316,27 @@ function TOGBankClassic_Guild:SendAltData(name)
 			local deltaSize = self:EstimateSize(deltaData)
 			local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
 
-			-- Use delta if significantly smaller OR if forced
-			local forceDelta = FEATURES and FEATURES.FORCE_DELTA_SYNC
-			if forceDelta or deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
+			-- v0.8.1: Always use delta if smaller than full (removed 30% threshold)
+			-- Bandwidth savings are bandwidth savings, regardless of percentage
+			if deltaSize < fullSize then
 				useDelta = true
 				TOGBankClassic_Output:Debug(
 					"DELTA",
-					"✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)%s",
+					"✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
 					norm,
 					deltaSize,
 					fullSize,
 					(deltaSize / fullSize) * 100,
-					fullSize - deltaSize,
-					forceDelta and " [FORCED]" or ""
+					fullSize - deltaSize
 				)
 			else
 				TOGBankClassic_Output:Debug(
 					"DELTA",
-					"✗ Delta too large for %s: %d bytes vs %d bytes full (%.1f%% > %.0f%% threshold)",
+					"✗ Delta larger than full for %s: %d bytes vs %d bytes full (%.1f%%), using full sync",
 					norm,
 					deltaSize,
 					fullSize,
-					(deltaSize / fullSize) * 100,
-					PROTOCOL.MIN_DELTA_SIZE_RATIO * 100
+					(deltaSize / fullSize) * 100
 				)
 			end
 		else
@@ -1641,11 +1639,11 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 						validCount = validCount + 1
 					else
 						invalidCount = invalidCount + 1
-						TOGBankClassic_Output:Debug("SYNC", "  Sanitize: invalid bag item at [%s]: v=%s, type=%s, ID=%s", 
+						TOGBankClassic_Output:Debug("SYNC", "  Sanitize: invalid bag item at [%s]: v=%s, type=%s, ID=%s",
 							tostring(k), tostring(v), type(v), v and tostring(v.ID) or "nil")
 					end
 				end
-				TOGBankClassic_Output:Debug("SYNC", "Sanitized bags: before=%d, valid=%d, invalid=%d", 
+				TOGBankClassic_Output:Debug("SYNC", "Sanitized bags: before=%d, valid=%d, invalid=%d",
 					beforeCount, validCount, invalidCount)
 				a.bags.items = cleaned
 			end
@@ -1666,7 +1664,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			return count
 		end
 		
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveAltData for %s: alt.items=%d, alt.bank.items=%d, alt.bags.items=%d", 
+		TOGBankClassic_Output:Debug("SYNC", "ReceiveAltData for %s: alt.items=%d, alt.bank.items=%d, alt.bags.items=%d",
 			name,
 			countItems(alt.items),
 			(alt.bank and alt.bank.items) and countItems(alt.bank.items) or 0,
@@ -1688,7 +1686,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			local bankItems = (alt.bank and alt.bank.items) or {}
 			local bagItems = (alt.bags and alt.bags.items) or {}
 			
-			TOGBankClassic_Output:Debug("SYNC", "Reconstructing alt.items for %s: bank=%d, bags=%d", 
+			TOGBankClassic_Output:Debug("SYNC", "Reconstructing alt.items for %s: bank=%d, bags=%d",
 				name, #bankItems, #bagItems)
 			
 			-- Aggregate bank + bags ONLY (mail was never synced in old system)
@@ -1698,7 +1696,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				for _, item in pairs(aggregated) do
 					table.insert(alt.items, item)
 				end
-				TOGBankClassic_Output:Debug("SYNC", "Reconstructed alt.items for %s: %d items from bank+bags", 
+				TOGBankClassic_Output:Debug("SYNC", "Reconstructed alt.items for %s: %d items from bank+bags",
 					name, #alt.items)
 			else
 				TOGBankClassic_Output:Debug("SYNC", "No items to reconstruct for %s (bank and bags both empty)", name)
@@ -1724,7 +1722,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				table.insert(arrayItems, item)
 			end
 			alt.items = arrayItems
-			TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, deduplicated and converted to array: %d items", 
+			TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, deduplicated and converted to array: %d items",
 				name, #alt.items)
 			
 			-- DEBUG: Log sample counts AFTER deduplication
@@ -1833,27 +1831,27 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		-- When receiving external updates (even from same account), preserve locally-scanned mail
 		local existingMail = existing and existing.mail or nil
 		
-		print(string.format(">>> AdoptAltData for %s: existingMail=%s, targetIsBanker=%s <<<",
-			norm, existingMail and "YES" or "NO", tostring(targetIsBanker)))
+		TOGBankClassic_Output:Debug("MAIL", "AdoptAltData for %s: existingMail=%s, targetIsBanker=%s",
+			norm, existingMail and "YES" or "NO", tostring(targetIsBanker))
 		if existingMail then
-			print(string.format("    existingMail has %d items", existingMail.items and #existingMail.items or 0))
+			TOGBankClassic_Output:Debug("MAIL", "  existingMail has %d items", existingMail.items and #existingMail.items or 0)
 		end
 		
 		---@diagnostic disable-next-line: need-check-nil
 		self.Info.alts[norm] = alt
-		print(string.format(">>> OVERWROTE self.Info.alts[%s], mail field now: %s <<<",
-			norm, alt.mail and "EXISTS" or "GONE"))
+		TOGBankClassic_Output:Debug("MAIL", "Overwrote self.Info.alts[%s], mail field now: %s",
+			norm, alt.mail and "EXISTS" or "GONE")
 		
 		-- Restore preserved mail if it existed
 		if existingMail and targetIsBanker then
 			self.Info.alts[norm].mail = existingMail
 			local mailItemCount = existingMail.items and #existingMail.items or 0
-			print(string.format("✓ RESTORED mail for banker %s (%d items)", norm, mailItemCount))
+			TOGBankClassic_Output:Debug("MAIL", "Restored mail for banker %s (%d items)", norm, mailItemCount)
 			TOGBankClassic_Output:Debug("MAIL",
 				"[DATA-006] Preserved mail data for banker %s (%d items, lastScan=%s)",
 				norm, mailItemCount, tostring(existingMail.lastScan))
 		elseif existingMail and not targetIsBanker then
-			print(string.format("❌ NOT RESTORING mail for %s (not a banker)", norm))
+			TOGBankClassic_Output:Debug("MAIL", "Not restoring mail for %s (not a banker)", norm)
 		end
 
 		-- Reset search data flag so inventory UI rebuilds search index (UI-008 fix)

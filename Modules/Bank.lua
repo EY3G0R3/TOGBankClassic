@@ -166,7 +166,7 @@ function TOGBankClassic_Bank:Scan()
 	alt.money = money
 
 	-- Scan mail inventory if mail was accessed
-	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Bank:Scan() for player '%s', hasUpdated=%s", 
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Bank:Scan() for player '%s', hasUpdated=%s",
 		player, tostring(TOGBankClassic_MailInventory.hasUpdated))
 	
 	if TOGBankClassic_MailInventory.hasUpdated then
@@ -188,18 +188,18 @@ function TOGBankClassic_Bank:Scan()
 				end
 			end
 			
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Replacing mail data for '%s': old=%d items, new=%d items", 
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Replacing mail data for '%s': old=%d items, new=%d items",
 				player, previousItemCount, itemCount)
 			
 			alt.mail = mailData
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] ASSIGNED alt.mail with %d items, version=%s, lastScan=%s", 
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] ASSIGNED alt.mail with %d items, version=%s, lastScan=%s",
 				#mailData.items, tostring(mailData.version), tostring(mailData.lastScan))
 			
-			-- DEBUG: Verify assignment worked
+			-- Verify assignment worked
 			if alt.mail then
-				print(string.format("✓ CONFIRMED: alt.mail exists with %d items", #alt.mail.items))
+				TOGBankClassic_Output:Debug("MAIL", "Confirmed: alt.mail exists with %d items", #alt.mail.items)
 			else
-				print("✗ ERROR: alt.mail is nil after assignment!")
+				TOGBankClassic_Output:Debug("MAIL", "ERROR: alt.mail is nil after assignment!")
 			end
 		end
 		
@@ -305,19 +305,19 @@ function TOGBankClassic_Bank:Scan()
 		info.alts = {}
 	end
 
-	-- DEBUG: Log what we're about to save
+	-- Log what we're about to save
 	if alt.mail then
-		print(string.format(">>> alt.mail exists with %d items, type=%s <<<", #alt.mail.items, type(alt.mail)))
-		print(string.format(">>> alt.mail.slots = %s <<<", alt.mail.slots and ("table with count="..tostring(alt.mail.slots.count)) or "nil"))
+		TOGBankClassic_Output:Debug("MAIL", "alt.mail exists with %d items, type=%s", #alt.mail.items, type(alt.mail))
+		TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = %s", alt.mail.slots and ("table with count="..tostring(alt.mail.slots.count)) or "nil")
 	end
 	
 	-- Write to aggregate view (info.alts) for normal use
 	info.alts[player] = alt
 	
 	if alt.mail then
-		print(string.format("✓ Saved mail to info.alts[%s] (%d items)", player, #alt.mail.items))
+		TOGBankClassic_Output:Debug("MAIL", "Saved mail to info.alts[%s] (%d items)", player, #alt.mail.items)
 	else
-		print(string.format("✗ No mail data to save for %s", player))
+		TOGBankClassic_Output:Debug("MAIL", "No mail data to save for %s", player)
 	end
 end
 
@@ -379,13 +379,13 @@ function TOGBankClassic_Bank:OnUpdateStart()
 end
 
 function TOGBankClassic_Bank:OnUpdateStop()
-	print(string.format(">>> OnUpdateStop called, hasUpdated=%s <<<", tostring(self.hasUpdated)))
+	TOGBankClassic_Output:Debug("MAIL", "OnUpdateStop called, hasUpdated=%s", tostring(self.hasUpdated))
 	if self.hasUpdated then
-		print(">>> Calling Scan() <<<")
+		TOGBankClassic_Output:Debug("MAIL", "Calling Scan()")
 		self:Scan()
-		print(">>> Scan() completed <<<")
+		TOGBankClassic_Output:Debug("MAIL", "Scan() completed")
 	else
-		print(">>> Skipping Scan() because hasUpdated is false <<<")
+		TOGBankClassic_Output:Debug("MAIL", "Skipping Scan() because hasUpdated is false")
 	end
 	self.hasUpdated = false
 end
@@ -474,6 +474,6 @@ function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
 		TOGBankClassic_Output:Debug("BANK", "Removed %d corrupted items from aggregated data", filteredCount)
 	end
 	
-	TOGBankClassic_Output:Debug("BANK", "Recalculated aggregated items: bank=%d, bags=%d, mail=%d, total=%d (filtered %d)", 
+	TOGBankClassic_Output:Debug("BANK", "Recalculated aggregated items: bank=%d, bags=%d, mail=%d, total=%d (filtered %d)",
 		#bankItems, #bagItems, #mailItems, #alt.items, filteredCount)
 end

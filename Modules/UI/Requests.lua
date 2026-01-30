@@ -1105,7 +1105,7 @@ function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 		end
 	end
 
-	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)", 
+	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)",
 		#(requests or {}), #filtered, tostring(self.requesterFilter), tostring(self.bankFilter)))
 
 	return filtered

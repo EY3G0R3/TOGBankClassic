@@ -1,11 +1,14 @@
 ﻿# Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** January 29, 2026
+**Last Updated:** January 30, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+
+**Recent Fixes (2026-01-30):**
+- ✅ [DELTA-011] UNAUTHORIZED rejections recorded as errors + 30% threshold blocking delta syncs - Fixed to not record UNAUTHORIZED as errors (expected banker protection); removed 30% MIN_DELTA_SIZE_RATIO threshold (now uses delta whenever deltaSize < fullSize)
 
 **Recent Fixes (2026-01-29):**
 - ✅ [DATA-006] Mail data being deleted by external sync for multi-banker accounts - Fixed ReceiveAltData() to reject ALL external updates to banker data (was only rejecting non-banker updates)
@@ -6638,5 +6641,388 @@ Without sender info, all banker data looked the same and stale SV data could ove
 - External sync checks: banker targets must have sender==target
 - Mail preservation as defense-in-depth (even if rejection fails)
 - Test with multiple bankers on same account sharing SavedVariables
+
+---
+
+## [MAIL-006] Mail Items Array Format Regression
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Mail Display / Data Structure Mismatch  
+**Reporter:** User  
+**Date Reported:** 2026-01-30  
+**Date Fixed:** 2026-01-30  
+**Status:** ✅ RESOLVED  
+**Related Tickets:** [MAIL-002], [MAIL-005], [DATA-004]  
+
+**Description:**
+
+Mail items are multiplying/duplicating again in the UI (Search results and Inventory tab). This is a **regression** of previously resolved bugs [MAIL-002] and [MAIL-005]. The root cause is that several code locations were still treating `alt.mail.items` as a **key-value hash table** when it was changed to an **array format** during the MAIL-002/MAIL-005 fixes.
+
+**Examples of Duplication:**
+- Items appearing multiple times in Search results with incorrect counts
+- Inventory tab showing duplicate mail item stacks
+- Mail envelope icon (✉) not appearing correctly for items in mail
+
+**Root Cause:**
+
+During the [MAIL-002] fix, `mail.items` was converted from **key-value structure** to **array structure** (matching bank/bags format):
+
+**OLD (key-value):**
+```lua
+alt.mail.items = {
+    [12345] = { count = 10, link = "...", name = "Golden Sansam" }
+}
+```
+
+**NEW (array):**
+```lua
+alt.mail.items = {
+    { ID = 12345, Count = 10, Link = "..." }
+}
+```
+
+However, **6 code locations were not updated** and continued using the old key-value access patterns:
+
+**Wrong Pattern (key-value iteration):**
+```lua
+for itemID, mailItem in pairs(alt.mail.items) do
+    -- itemID = 1 (array index, not the item ID!)
+    -- mailItem = {ID=12345, Count=10, Link="..."}
+    local fakeItem = { ID = itemID, Count = mailItem.count }  -- WRONG!
+end
+```
+
+**Correct Pattern (array iteration):**
+```lua
+for _, item in ipairs(alt.mail.items) do
+    -- item.ID, item.Count, item.Link (capitalized)
+    items = Aggregate(items, alt.mail.items)
+end
+```
+
+**Impact:**
+
+When iterating with `pairs()` over an array, the "key" is the array index (1, 2, 3...) not the item ID, causing:
+1. **Search corpus** added wrong items (array indices as IDs)
+2. **Fake items** created with index as ID instead of real ID
+3. **Multiple aggregation passes** adding same items repeatedly
+4. **Mail icon detection** failed (looking up by real ID in array)
+
+**Files Fixed:**
+
+1. **Modules/UI/Search.lua (lines 472-482):**
+   - Was creating fake items with array indices as IDs
+   - Fixed: Use Aggregate directly on mail.items array
+
+2. **Modules/Guild.lua EnsureLegacyFields (line 1246):**
+   - Legacy field conversion adding array indices instead of real item IDs
+   - Fixed: Use ipairs() with mailItem.ID, mailItem.Count, mailItem.Link
+
+3. **Modules/MailInventory.lua GetItemsInMail (line 146):**
+   - Trying to index array with item ID
+   - Fixed: Search array with ipairs() for matching item.ID
+
+4. **Modules/RequestLog.lua GetItemInMail (line 2134):**
+   - Request fulfillment couldn't find mail items
+   - Fixed: Search array with ipairs() for matching item.ID
+
+5. **Modules/RequestLog.lua (line 2116):**
+   - Item name lookup getting array indices instead of item IDs
+   - Fixed: Use ipairs() and GetItemInfo(item.Link) for name
+
+6. **Modules/UI/Search.lua (line 605):**
+   - Mail envelope icon not showing
+   - Fixed: Search array with ipairs() to check if item exists
+
+**Key Takeaways:**
+
+**Array vs Hash Table Access:**
+- **Key-Value Hash:** `pairs(tbl)` → key, value | `tbl[key]`
+- **Array:** `ipairs(tbl)` → index, value | `tbl[index]`
+
+**Field Name Capitalization (array format):**
+- `item.ID` (not `itemID` or `item.id`)
+- `item.Count` (not `item.count`)
+- `item.Link` (not `item.link`)
+
+**When to Use Each:**
+- **Use `ipairs()`:** bank.items, bags.items, mail.items, alt.items (SYNC-006)
+- **Use `pairs()`:** info.alts, Aggregate() results
+
+**Prevention:**
+- Never use `pairs()` to iterate `alt.mail.items`
+- Never use `alt.mail.items[itemID]` for direct access (unless itemID is array index)
+- Always use `ipairs()` and search for matching `item.ID`
+- Use capitalized field names: `ID`, `Count`, `Link`
+- Global codebase search when changing data structures
+
+**Resolution:** All 6 code locations updated to use array iteration and capitalized field names. Mail items now display correctly without duplication.
+
+---
+## [DELTA-011] UNAUTHORIZED rejections recorded as errors + 30% threshold blocking delta syncs
+
+**Date:** 2026-01-30
+**Status:** ✅ FIXED
+**Severity:** High - Prevents delta sync adoption and pollutes error tracking
+
+**Problem:**
+
+Two unrelated issues preventing effective delta sync usage:
+
+1. **UNAUTHORIZED rejections recorded as errors:** Banker protection system was recording UNAUTHORIZED rejections (when non-bankers try to update banker data) as errors using `RecordDeltaError()` and displaying them with `Warn()` messages. These are NOT errors - they're the security system working correctly. This polluted `/togbank deltaerrors` output with false positives.
+
+2. **30% size threshold blocking delta syncs:** Delta selection logic had a hardcoded `MIN_DELTA_SIZE_RATIO = 0.3` (30%) threshold. Deltas were only used if they were <30% of full sync size. This meant a 3349 byte delta vs 10872 byte full sync (30.8% ratio, saving 7523 bytes / 69% bandwidth) was rejected as "too large." This resulted in ~90%+ of syncs being full syncs despite having deltas available.
+
+**Symptoms:**
+
+```
+TOGBankClassic: [DEBUG] ✗ Delta too large for Booknlibram-Azuresong: 3349 bytes vs 10872 bytes full (30.8% > 30% threshold)
+TOGBankClassic: Delta Sync Statistics
+  Delta syncs: 294 B (0.0%)
+  Full syncs:  814.4 KB (100.0%)
+```
+
+```
+TOGBankClassic: === Delta Sync Errors ===
+TOGBankClassic: Recent Errors: (10)
+TOGBankClassic:   1. [UNAUTHORIZED] 09:22:46
+TOGBankClassic:      Cardsngames-Azuresong: Rejected delta from non-banker Sigung-Myzrael for banker Cardsngames-Azuresong (bankers are source of truth)
+TOGBankClassic:   2. [UNAUTHORIZED] 09:22:46
+TOGBankClassic:      Cardsngames-Azuresong: Rejected delta from non-banker Sigung-Myzrael for banker Cardsngames-Azuresong (bankers are source of truth)
+[...8 more UNAUTHORIZED entries...]
+```
+
+**Root Cause:**
+
+**Issue 1 - UNAUTHORIZED as Errors:**
+In `DeltaComms.lua` lines 702 and 719, banker protection code was calling:
+```lua
+TOGBankClassic_Output:Warn("[DATA-004] %s", errorMsg)
+self:RecordDeltaError(guildInfo.name, norm, "UNAUTHORIZED", errorMsg)
+return ADOPTION_STATUS.UNAUTHORIZED
+```
+
+This treated expected security rejections as errors.
+
+**Issue 2 - 30% Threshold:**
+In `Guild.lua` line 1321, delta selection logic checked:
+```lua
+if forceDelta or deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
+    useDelta = true
+```
+
+With `PROTOCOL.MIN_DELTA_SIZE_RATIO = 0.3` from `Constants.lua` line 76, any delta >30% of full size was rejected even when it would save significant bandwidth.
+
+**Technical Analysis:**
+
+**UNAUTHORIZED rejections are NOT errors:**
+- They represent the banker protection system working correctly
+- Non-bankers attempting to update banker data should be silently rejected
+- Bankers are the authoritative source of truth for their own data
+- These rejections are expected in normal operation when multiple clients sync
+
+**30% threshold is arbitrary and harmful:**
+- Any delta smaller than full sync saves bandwidth
+- A 31% delta still saves 69% bandwidth
+- Threshold was designed to avoid "minimal savings" but was too aggressive
+- With link-less optimization (v0.8.0), deltas are already very efficient
+- No technical reason to prefer full sync when delta is smaller
+
+**Files Modified:**
+
+**1. Modules/DeltaComms.lua (lines 695-721):**
+
+**Before:**
+```lua
+if norm == playerNorm then
+    local errorMsg = string.format(
+        "Rejected delta from %s about ourselves (banker is source of truth for own data)",
+        sender or "unknown"
+    )
+    TOGBankClassic_Output:Warn("[DATA-004] %s", errorMsg)
+    self:RecordDeltaError(guildInfo.name, norm, "UNAUTHORIZED", errorMsg)
+    return ADOPTION_STATUS.UNAUTHORIZED
+end
+
+-- Also protect OTHER banker data from non-banker updates
+local currentIsBanker = TOGBankClassic_Guild:IsBank(norm)
+local senderNorm = sender and TOGBankClassic_Guild:NormalizeName(sender) or nil
+local senderIsBanker = senderNorm and TOGBankClassic_Guild:IsBank(senderNorm) or false
+
+if currentIsBanker and not senderIsBanker then
+    local errorMsg = string.format(
+        "Rejected delta from non-banker %s for banker %s (bankers are source of truth)",
+        sender or "unknown",
+        norm
+    )
+    TOGBankClassic_Output:Warn("[DATA-004] %s", errorMsg)
+    self:RecordDeltaError(guildInfo.name, norm, "UNAUTHORIZED", errorMsg)
+    return ADOPTION_STATUS.UNAUTHORIZED
+end
+```
+
+**After:**
+```lua
+if norm == playerNorm then
+    local errorMsg = string.format(
+        "Rejected delta from %s about ourselves (banker is source of truth for own data)",
+        sender or "unknown"
+    )
+    TOGBankClassic_Output:Debug("DELTA", "[DATA-004] %s", errorMsg)
+    -- Not an error - this is expected banker protection, don't record as error
+    return ADOPTION_STATUS.UNAUTHORIZED
+end
+
+-- Also protect OTHER banker data from non-banker updates
+local currentIsBanker = TOGBankClassic_Guild:IsBank(norm)
+local senderNorm = sender and TOGBankClassic_Guild:NormalizeName(sender) or nil
+local senderIsBanker = senderNorm and TOGBankClassic_Guild:IsBank(senderNorm) or false
+
+if currentIsBanker and not senderIsBanker then
+    local errorMsg = string.format(
+        "Rejected delta from non-banker %s for banker %s (bankers are source of truth)",
+        sender or "unknown",
+        norm
+    )
+    TOGBankClassic_Output:Debug("DELTA", "[DATA-004] %s", errorMsg)
+    -- Not an error - this is expected banker protection, don't record as error
+    return ADOPTION_STATUS.UNAUTHORIZED
+end
+```
+
+**Changes:**
+- Changed `Warn()` → `Debug("DELTA", ...)` - Only visible with debug mode on
+- Removed `RecordDeltaError()` calls - No longer tracked as errors
+- Added clarifying comments - "Not an error - this is expected banker protection"
+
+**2. Modules/Guild.lua (lines 1318-1343):**
+
+**Before:**
+```lua
+local deltaSize = self:EstimateSize(deltaData)
+local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
+
+-- Use delta if significantly smaller OR if forced
+local forceDelta = FEATURES and FEATURES.FORCE_DELTA_SYNC
+if forceDelta or deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
+    useDelta = true
+    TOGBankClassic_Output:Debug(
+        "DELTA",
+        "✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)%s",
+        norm,
+        deltaSize,
+        fullSize,
+        (deltaSize / fullSize) * 100,
+        fullSize - deltaSize,
+        forceDelta and " [FORCED]" or ""
+    )
+else
+    TOGBankClassic_Output:Debug(
+        "DELTA",
+        "✗ Delta too large for %s: %d bytes vs %d bytes full (%.1f%% > %.0f%% threshold)",
+        norm,
+        deltaSize,
+        fullSize,
+        (deltaSize / fullSize) * 100,
+        PROTOCOL.MIN_DELTA_SIZE_RATIO * 100
+    )
+end
+```
+
+**After:**
+```lua
+local deltaSize = self:EstimateSize(deltaData)
+local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
+
+-- v0.8.1: Always use delta if smaller than full (removed 30% threshold)
+-- Bandwidth savings are bandwidth savings, regardless of percentage
+if deltaSize < fullSize then
+    useDelta = true
+    TOGBankClassic_Output:Debug(
+        "DELTA",
+        "✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
+        norm,
+        deltaSize,
+        fullSize,
+        (deltaSize / fullSize) * 100,
+        fullSize - deltaSize
+    )
+else
+    TOGBankClassic_Output:Debug(
+        "DELTA",
+        "✗ Delta larger than full for %s: %d bytes vs %d bytes full (%.1f%%), using full sync",
+        norm,
+        deltaSize,
+        fullSize,
+        (deltaSize / fullSize) * 100
+    )
+end
+```
+
+**Changes:**
+- Removed `forceDelta` check - No longer needed since threshold removed
+- Removed `PROTOCOL.MIN_DELTA_SIZE_RATIO` check - Now uses delta whenever `deltaSize < fullSize`
+- Updated debug messages - Removed "[FORCED]" marker and threshold percentage
+- Updated version comment - Noted as v0.8.1 change
+- Simplified logic - Single comparison instead of compound conditional
+
+**3. Additional Fix: Duplicate function removal**
+
+During the UNAUTHORIZED fix, accidentally created duplicate `ResetDeltaErrorCount()` function in `DeltaComms.lua`. Removed duplicate at lines 1075-1095.
+
+**4. Additional Fix: GetRealmName() → GetNormalizedRealmName()**
+
+Fixed incorrect API call in banker protection code:
+```lua
+-- Before:
+local player = UnitName("player") .. "-" .. GetRealmName()
+
+-- After:
+local player = UnitName("player")
+local realm = GetNormalizedRealmName()
+local playerFull = player .. "-" .. realm
+```
+
+**Impact:**
+
+**Before Fix:**
+- `/togbank deltaerrors` showed 10+ UNAUTHORIZED "errors" (false positives)
+- ~90%+ of syncs were full syncs despite deltas being available
+- Delta sync bandwidth savings: 294 B (0.0%)
+- Full sync bandwidth: 814.4 KB (100.0%)
+
+**After Fix:**
+- `/togbank deltaerrors` only shows actual errors (VALIDATION_FAILED, NO_DATA, VERSION_MISMATCH, APPLICATION_ERROR)
+- Deltas used whenever they're smaller than full sync (any percentage)
+- Expected dramatic increase in delta sync adoption
+- Example previously rejected: 3349 byte delta vs 10872 full (saves 7523 bytes / 69% bandwidth) now ACCEPTED
+
+**Key Takeaways:**
+
+**UNAUTHORIZED Handling:**
+- UNAUTHORIZED rejections are expected security feature, NOT errors
+- Banker protection should not pollute error tracking
+- Use `Debug()` for expected rejections, `Warn()` for unexpected failures
+- Only call `RecordDeltaError()` for actual protocol failures
+
+**Delta Selection Logic:**
+- Any bandwidth savings is good bandwidth savings
+- Arbitrary percentage thresholds are harmful
+- Simple rule: Use delta if `deltaSize < fullSize`
+- Let protocol efficiency speak for itself
+- Trust the math: smaller = better
+
+**Testing:**
+- Always check `/togbank deltastats` after protocol changes
+- Monitor ratio of delta vs full syncs
+- Verify error tracking doesn't include expected rejections
+- Test with debug mode on to see selection reasoning
+
+**Related Issues:**
+- Builds on [DATA-004] banker protection system
+- Complements [DELTA-010] link-less delta optimization
+- Improves on v0.7.0 initial delta implementation
+
+**Resolution:** UNAUTHORIZED rejections no longer recorded as errors (only shown in debug mode). Delta selection now uses simple `deltaSize < fullSize` check without arbitrary 30% threshold. Expected to see 80-90%+ delta sync adoption in normal operation.
 
 ---

@@ -48,8 +48,8 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Starting mailbox scan: %d mail messages", numItems)
 	
 	for i = 1, numItems do
-		local packageIcon, stationeryIcon, sender, subject, money, CODAmount, 
-		      daysLeft, hasItem, wasRead, wasReturned, textCreated, canReply, 
+		local packageIcon, stationeryIcon, sender, subject, money, CODAmount,
+		      daysLeft, hasItem, wasRead, wasReturned, textCreated, canReply,
 		      isGM = GetInboxHeaderInfo(i)
 		
 		-- Skip COD mail (can't take items without payment)
@@ -77,18 +77,18 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 						-- Item already exists, add to count
 						local item = mailItemsTable[key]
 						mailItemsTable[key] = { ID = item.ID, Count = item.Count + count, Link = item.Link or storageLink }
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] Item %s: MERGED (key=%s) added %d, total now %d", 
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] Item %s: MERGED (key=%s) added %d, total now %d",
 							name, key, count, mailItemsTable[key].Count)
 					else
 						-- New item
 						mailItemsTable[key] = { ID = itemID, Count = count, Link = storageLink }
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] New item in mailbox: %s (ID: %d, Count: %d, Link: %s, Key: %s)", 
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] New item in mailbox: %s (ID: %d, Count: %d, Link: %s, Key: %s)",
 							name, itemID, count, storageLink and "preserved" or "stripped", key)
 					end
 				end
 			end
 		elseif hasItem and CODAmount > 0 then
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Skipping COD mail from %s (COD: %d copper)", 
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Skipping COD mail from %s (COD: %d copper)",
 				sender or "Unknown", CODAmount)
 		end
 	end
@@ -99,11 +99,11 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		table.insert(mailItems, item)
 	end
 	
-	-- DEBUG: Verify mailItems is a proper sequential array
-	print(string.format(">>> MailInventory: Created array with %d items <<<", #mailItems))
+	-- Verify mailItems is a proper sequential array
+	TOGBankClassic_Output:Debug("MAIL", "Created mail items array with %d items", #mailItems)
 	for i = 1, math.min(3, #mailItems) do
 		if mailItems[i] then
-			print(string.format("    [%d] ID=%s, Count=%s", i, tostring(mailItems[i].ID), tostring(mailItems[i].Count)))
+			TOGBankClassic_Output:Debug("MAIL", "  [%d] ID=%s, Count=%s", i, tostring(mailItems[i].ID), tostring(mailItems[i].Count))
 		end
 	end
 	
@@ -115,11 +115,11 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		lastScan = GetServerTime()
 	}
 	
-	-- DEBUG: Verify result structure
-	print(string.format(">>> MailInventory: result.items type=%s, length=%d <<<", type(result.items), #result.items))
-	print(string.format(">>> MailInventory: result.slots.count=%d <<<", result.slots.count))
+	-- Verify result structure
+	TOGBankClassic_Output:Debug("MAIL", "Mail result structure: items type=%s, length=%d", type(result.items), #result.items)
+	TOGBankClassic_Output:Debug("MAIL", "Mail result slots.count=%d", result.slots.count)
 	
-	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Mail scan complete: %d unique items across %d mail messages", 
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Mail scan complete: %d unique items across %d mail messages",
 		#mailItems, numItems)
 	
 	return result
@@ -143,12 +143,18 @@ function TOGBankClassic_MailInventory:GetItemsInMail(itemID)
 	end
 	
 	for name, alt in pairs(TOGBankClassic_Guild.Info.alts) do
-		if alt.mail and alt.mail.items and alt.mail.items[itemID] then
-			table.insert(alts, {
-				name = name,
-				count = alt.mail.items[itemID].count,
-				lastScan = alt.mail.lastScan or 0
-			})
+		if alt.mail and alt.mail.items then
+			-- mail.items is an array, search for matching ID
+			for _, item in ipairs(alt.mail.items) do
+				if item.ID == itemID then
+					table.insert(alts, {
+						name = name,
+						count = item.Count,
+						lastScan = alt.mail.lastScan or 0
+					})
+					break  -- Found the item, no need to continue
+				end
+			end
 		end
 	end
 	

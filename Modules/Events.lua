@@ -224,8 +224,8 @@ function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 		mailItemCount = 0,
 	}
 	
-	print("========================================")
-	print("[MAIL-DEBUG] CHECKING MAIL AT LOGOUT FOR: " .. player)
+	TOGBankClassic_Output:Debug("MAIL", "========================================")
+	TOGBankClassic_Output:Debug("MAIL", "Checking mail at logout for: %s", player)
 	if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[player] then
 		local alt = TOGBankClassic_Guild.Info.alts[player]
 		if alt.mail then
@@ -251,28 +251,28 @@ function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 				debugInfo.hasSequentialKeys = hasSequentialKeys
 			end
 			
-			print(string.format("[MAIL-DEBUG] ✓ MAIL FIELD EXISTS with %d items", mailCount))
-			print(string.format("[MAIL-DEBUG]   version: %s (type: %s)", tostring(alt.mail.version), type(alt.mail.version)))
-			print(string.format("[MAIL-DEBUG]   lastScan: %s (type: %s)", tostring(alt.mail.lastScan), type(alt.mail.lastScan)))
-			print(string.format("[MAIL-DEBUG]   slots type: %s", type(alt.mail.slots)))
+			TOGBankClassic_Output:Debug("MAIL", "Mail field exists with %d items", mailCount)
+			TOGBankClassic_Output:Debug("MAIL", "  version: %s (type: %s)", tostring(alt.mail.version), type(alt.mail.version))
+			TOGBankClassic_Output:Debug("MAIL", "  lastScan: %s (type: %s)", tostring(alt.mail.lastScan), type(alt.mail.lastScan))
+			TOGBankClassic_Output:Debug("MAIL", "  slots type: %s", type(alt.mail.slots))
 			if alt.mail.slots then
 				debugInfo.slotsCount = alt.mail.slots.count
-				print(string.format("[MAIL-DEBUG]   slots.count: %s", tostring(alt.mail.slots.count)))
+				TOGBankClassic_Output:Debug("MAIL", "  slots.count: %s", tostring(alt.mail.slots.count))
 			end
 			-- Check for metatables or functions that would prevent serialization
 			if getmetatable(alt.mail) then
-				print("[MAIL-DEBUG] ⚠️ WARNING: alt.mail has a metatable!")
+				TOGBankClassic_Output:Debug("MAIL", "WARNING: alt.mail has a metatable!")
 			end
 		else
-			print("[MAIL-DEBUG] ✗ MAIL FIELD MISSING!")
+			TOGBankClassic_Output:Debug("MAIL", "Mail field missing!")
 		end
 	else
 		debugInfo.noAltData = true
-		print("[MAIL-DEBUG] ✗ Alt data not found")
+		TOGBankClassic_Output:Debug("MAIL", "Alt data not found")
 	end
 	
 	TOGBankClassic_MailDebugLog[player] = debugInfo
-	print("========================================")
+	TOGBankClassic_Output:Debug("MAIL", "========================================")
 	-- Save persistent debug log to SavedVariables
 	TOGBankClassic_Output:SavePersistentLog()
 end
@@ -328,10 +328,10 @@ function TOGBankClassic_Events:BANKFRAME_CLOSED(_)
 end
 
 function TOGBankClassic_Events:MAIL_SHOW(_)
-	print(">>> MAIL_SHOW EVENT FIRED <<<")
+	TOGBankClassic_Output:Debug("MAIL", "MAIL_SHOW event fired")
 	TOGBankClassic_Bank:OnUpdateStart()
 	TOGBankClassic_MailInventory.hasUpdated = true  -- Flag that mail was accessed
-	print(string.format(">>> Set MailInventory.hasUpdated = %s <<<", tostring(TOGBankClassic_MailInventory.hasUpdated)))
+	TOGBankClassic_Output:Debug("MAIL", "Set MailInventory.hasUpdated = %s", tostring(TOGBankClassic_MailInventory.hasUpdated))
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()
@@ -339,11 +339,11 @@ function TOGBankClassic_Events:MAIL_SHOW(_)
 	-- Hook MailFrame OnHide to detect when mail closes (MAIL_CLOSED event may not fire reliably)
 	if not MailFrame.TOGBankHooked then
 		MailFrame:HookScript("OnHide", function()
-			print(">>> MailFrame OnHide FIRED (mailbox closed) <<<")
+			TOGBankClassic_Output:Debug("MAIL", "MailFrame OnHide fired (mailbox closed)")
 			TOGBankClassic_Events:MAIL_CLOSED()
 		end)
 		MailFrame.TOGBankHooked = true
-		print(">>> Hooked MailFrame OnHide <<<")
+		TOGBankClassic_Output:Debug("MAIL", "Hooked MailFrame OnHide")
 	end
 end
 
@@ -352,12 +352,12 @@ function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
 end
 
 function TOGBankClassic_Events:MAIL_CLOSED(_)
-	print(">>> MAIL_CLOSED EVENT FIRED <<<")
+	TOGBankClassic_Output:Debug("MAIL", "MAIL_CLOSED event fired")
 	TOGBankClassic_Mail.isOpen = false
 	TOGBankClassic_Mail.isScanning = false
-	print(">>> Calling Bank:OnUpdateStop() <<<")
+	TOGBankClassic_Output:Debug("MAIL", "Calling Bank:OnUpdateStop()")
 	TOGBankClassic_Bank:OnUpdateStop()
-	print(">>> Bank:OnUpdateStop() completed <<<")
+	TOGBankClassic_Output:Debug("MAIL", "Bank:OnUpdateStop() completed")
 	TOGBankClassic_UI_Mail:Close()
 	-- Refresh requests UI to update fulfill button states
 	-- Delay slightly to ensure MailFrame state is updated

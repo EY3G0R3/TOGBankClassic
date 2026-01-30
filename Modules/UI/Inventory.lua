@@ -295,7 +295,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			for _, item in pairs(alt.items) do
 				table.insert(items, item)
 			end
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: using alt.items (%d items)", 
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: using alt.items (%d items)",
 				tab, #items)
 		else
 			-- Fallback: compute from sources (backward compatibility for very old data)
@@ -303,7 +303,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			local bagItems = (alt.bags and alt.bags.items) or {}
 			local mailItems = (alt.mail and alt.mail.items) or {}
 			
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d", 
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d",
 				tab, #bankItems, #bagItems, #mailItems)
 			
 			-- Aggregate all sources (all are now in array format), then convert the key-value result to array
@@ -314,7 +314,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			end
 		end
 		
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: aggregated to %d unique items", 
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: aggregated to %d unique items",
 			tab, #items)
 		
 		if items and #items > 0 then
@@ -343,19 +343,19 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 				if item and item.ID and item.ID > 0 then
 					table.insert(validItems, item)
 				else
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] WARNING: Tab %s skipping invalid item at index %d (ID: %s, Link: %s)", 
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] WARNING: Tab %s skipping invalid item at index %d (ID: %s, Link: %s)",
 						tab, i, tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
 				end
 			end
 			
 			TOGBankClassic_Item:GetItems(validItems, function(list)
-				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items", 
+				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items",
 					tab, list and #list or 0)
 				TOGBankClassic_Item:Sort(list)
 
 				for _, item in pairs(list) do
 					if item and item.Info and item.Info.name then
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: displaying %s with count %d (ID: %d)", 
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: displaying %s with count %d (ID: %d)",
 							tab, item.Info.name, item.Count or 0, item.ID)
 					end
 					local itemWidget = TOGBankClassic_UI:DrawItem(item, scroll)

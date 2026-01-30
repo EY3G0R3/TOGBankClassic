@@ -942,7 +942,7 @@ function Guild:ApplyRequestLogEntry(entry)
 		
 		if currentPriority > fulfillPriority then
 			-- Higher priority status operation (cancel/complete) blocks fulfill
-			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: fulfill REJECTED (status=%s set by higher priority op=%s)", 
+			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: fulfill REJECTED (status=%s set by higher priority op=%s)",
 				req.status, currentStatusOp)
 			return false
 		end
@@ -997,21 +997,21 @@ function Guild:ApplyRequestLogEntry(entry)
 		if incomingPriority > currentPriority then
 			-- Higher priority operation always wins
 			shouldApply = true
-			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Applying due to higher priority (%d > %d)", 
+			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Applying due to higher priority (%d > %d)",
 				incomingPriority, currentPriority)
 		elseif incomingPriority == currentPriority then
 			-- Same priority: use timestamp (last-writer-wins)
 			if entryTs >= statusUpdatedAt then
 				shouldApply = true
-				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Applying due to newer timestamp (%d >= %d)", 
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Applying due to newer timestamp (%d >= %d)",
 					entryTs, statusUpdatedAt)
 			else
-				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Status change REJECTED (same priority, older timestamp: %d < %d)", 
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Status change REJECTED (same priority, older timestamp: %d < %d)",
 					entryTs, statusUpdatedAt)
 			end
 		else
 			-- Lower priority operation rejected
-			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Status change REJECTED (lower priority: %d < %d)", 
+			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestLogEntry: Status change REJECTED (lower priority: %d < %d)",
 				incomingPriority, currentPriority)
 		end
 		
@@ -1466,7 +1466,7 @@ function Guild:SendRequestLogEntry(entry, target)
 		TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry FAILED: Invalid entry")
 		return
 	end
-	TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry: Broadcasting entry.id=%s, type=%s, target=%s", 
+	TOGBankClassic_Output:Debug("SYNC", "SendRequestLogEntry: Broadcasting entry.id=%s, type=%s, target=%s",
 		tostring(entry.id), tostring(entry.type), tostring(target or "GUILD"))
 	local payload = { type = "requests-log", logEntries = { entry } }
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
@@ -1577,7 +1577,7 @@ function Guild:ReceiveRequestLogEntries(payload, sender)
 				entriesByActor[actor] = {}
 			end
 			table.insert(entriesByActor[actor], entry)
-			TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Entry from actor=%s, seq=%d, type=%s, requestId=%s", 
+			TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Entry from actor=%s, seq=%d, type=%s, requestId=%s",
 				tostring(actor), tonumber(entry.seq or 0), tostring(entry.type), tostring(entry.requestId))
 		end
 	end
@@ -1595,7 +1595,7 @@ function Guild:ReceiveRequestLogEntries(payload, sender)
 
 		local applied = self.Info.requestLogApplied or {}
 		local lastSeq = tonumber(applied[actor] or 0) or 0
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Processing actor=%s, lastSeq=%d, entries=%d", 
+		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestLogEntries: Processing actor=%s, lastSeq=%d, entries=%d",
 			tostring(actor), lastSeq, #list)
 		
 		local gapDetected = false
@@ -2110,12 +2110,14 @@ function Guild:CheckMailFulfillment(request)
 		return { inMail = 0, canFulfillFromMail = false, alts = {} }
 	end
 
-	-- Find item ID by searching through all alts
+	-- Find item ID by searching through all alts (mail.items is an array)
 	for _, alt in pairs(self.Info.alts) do
 		if alt.mail and alt.mail.items then
-			for id, mailItem in pairs(alt.mail.items) do
-				if mailItem.name == request.item then
-					itemID = id
+			for _, item in ipairs(alt.mail.items) do
+				-- Use item name from item Link if available, otherwise can't match by name
+				local itemName = item.Link and (GetItemInfo(item.Link))
+				if itemName == request.item or item.ID == tonumber(request.item) then
+					itemID = item.ID
 					break
 				end
 			end
@@ -2131,14 +2133,20 @@ function Guild:CheckMailFulfillment(request)
 	local alts = {}
 
 	for name, alt in pairs(self.Info.alts) do
-		if alt.mail and alt.mail.items and alt.mail.items[itemID] then
-			local count = alt.mail.items[itemID].count
-			inMail = inMail + count
-			table.insert(alts, {
-				name = name,
-				count = count,
-				lastScan = alt.mail.lastScan or 0
-			})
+		if alt.mail and alt.mail.items then
+			-- mail.items is an array, search for matching ID
+			for _, item in ipairs(alt.mail.items) do
+				if item.ID == itemID then
+					local count = item.Count
+					inMail = inMail + count
+					table.insert(alts, {
+						name = name,
+						count = count,
+						lastScan = alt.mail.lastScan or 0
+					})
+					break  -- Found the item, no need to continue
+				end
+			end
 		end
 	end
 

@@ -911,6 +911,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					-- Record error and request full sync
 					TOGBankClassic_Guild:RecordDeltaError(claimedNorm, "VALIDATION_FAILED", errorMsg)
 					TOGBankClassic_Guild:QueryAlt(sender, claimedNorm, nil)
+					-- Only count as failure if validation actually failed (not just missing optional fields)
 					if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
 						TOGBankClassic_Database:RecordDeltaFailed(TOGBankClassic_Guild.Info.name)
 					end
@@ -1168,94 +1169,7 @@ local COMMAND_REGISTRY = {
 			TOGBankClassic_Guild:Reset(guild)
 		end,
 	},
-	-- Expert commands
-	{
-		name = "roster",
-		help = "guild banks and members that can read the officer note can use this command to share updated roster data with online guild members",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Guild:AuthorRosterData()
-		end,
-	},
-	{
-		name = "hello",
-		help = "understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserialized addon communication",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Guild:Hello()
-		end,
-	},
-	{
-		name = "versions",
-		help = "show addon versions of online guild members",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Chat:PrintVersions()
-		end,
-	},
-	{
-		name = "deltastats",
-		help = "show delta sync statistics and bandwidth savings",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Chat:PrintDeltaStats()
-		end,
-	},
-	{
-		name = "deltaerrors",
-		help = "show recent delta sync errors and failure counts",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Chat:PrintDeltaErrors()
-		end,
-	},
-	{
-		name = "deltahistory",
-		help = "show stored delta chain history for offline recovery",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Chat:PrintDeltaHistory()
-		end,
-	},
-	{
-		name = "perfstats",
-		help = "show performance metrics for current session",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Performance:PrintReport()
-		end,
-	},
-	{
-		name = "protocol",
-		help = "show protocol version distribution across guild members",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Chat:PrintProtocolInfo()
-		end,
-	},
-	{
-		name = "clearsnapshots",
-		help = "clear all delta snapshots (forces full syncs next time)",
-		expert = true,
-		handler = function()
-			local guild = TOGBankClassic_Guild:GetGuild()
-			if not guild then
-				TOGBankClassic_Output:Response("Not in a guild")
-				return
-			end
-			local db = TOGBankClassic_Database.db.faction[guild]
-			if db and db.deltaSnapshots then
-				local count = 0
-				for _ in pairs(db.deltaSnapshots) do
-					count = count + 1
-				end
-				db.deltaSnapshots = {}
-				TOGBankClassic_Output:Response("Cleared %d delta snapshot(s)", count)
-			else
-				TOGBankClassic_Output:Response("No snapshots to clear")
-			end
-		end,
-	},
+	-- Expert commands (alphabetically sorted)
 	{
 		name = "clearhistory",
 		help = "clear delta chain history (removes saved deltas)",
@@ -1282,59 +1196,8 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
-		name = "forcedelta",
-		help = "force delta sync mode (on|off) - bypass thresholds for testing",
-		expert = true,
-		handler = function(arg)
-			if arg == "on" then
-				FEATURES.FORCE_DELTA_SYNC = true
-				FEATURES.FORCE_FULL_SYNC = false
-				TOGBankClassic_Output:Response("Force delta sync: ENABLED (will always use delta)")
-			elseif arg == "off" then
-				FEATURES.FORCE_DELTA_SYNC = false
-				TOGBankClassic_Output:Response("Force delta sync: DISABLED (normal behavior)")
-			else
-				local status = FEATURES.FORCE_DELTA_SYNC and "ON" or "OFF"
-				TOGBankClassic_Output:Response("Force delta sync: %s", status)
-				TOGBankClassic_Output:Response("Usage: /togbank forcedelta [on|off]")
-			end
-		end,
-	},
-	{
-		name = "forcefull",
-		help = "force full sync mode (on|off) - disable delta for testing",
-		expert = true,
-		handler = function(arg)
-			if arg == "on" then
-				FEATURES.FORCE_FULL_SYNC = true
-				FEATURES.FORCE_DELTA_SYNC = false
-				TOGBankClassic_Output:Response("Force full sync: ENABLED (will never use delta)")
-			elseif arg == "off" then
-				FEATURES.FORCE_FULL_SYNC = false
-				TOGBankClassic_Output:Response("Force full sync: DISABLED (normal behavior)")
-			else
-				local status = FEATURES.FORCE_FULL_SYNC and "ON" or "OFF"
-				TOGBankClassic_Output:Response("Force full sync: %s", status)
-				TOGBankClassic_Output:Response("Usage: /togbank forcefull [on|off]")
-			end
-		end,
-	},
-	{
-		name = "forcefull",
-		help = "toggle forcing full sync (disables delta temporarily)",
-		expert = true,
-		handler = function()
-			FEATURES.FORCE_FULL_SYNC = not FEATURES.FORCE_FULL_SYNC
-			if FEATURES.FORCE_FULL_SYNC then
-				TOGBankClassic_Output:Response("|cffff0000Full sync forced|r - delta sync temporarily disabled")
-			else
-				TOGBankClassic_Output:Response("|cff00ff00Full sync force removed|r - delta sync re-enabled")
-			end
-		end,
-	},
-	{
-		name = "resetmetrics",
-		help = "reset delta sync statistics and metrics",
+		name = "clearsnapshots",
+		help = "clear all delta snapshots (forces full syncs next time)",
 		expert = true,
 		handler = function()
 			local guild = TOGBankClassic_Guild:GetGuild()
@@ -1342,20 +1205,17 @@ local COMMAND_REGISTRY = {
 				TOGBankClassic_Output:Response("Not in a guild")
 				return
 			end
-			if TOGBankClassic_Database:ResetDeltaMetrics(guild) then
-				TOGBankClassic_Output:Response("Delta metrics reset")
+			local db = TOGBankClassic_Database.db.faction[guild]
+			if db and db.deltaSnapshots then
+				local count = 0
+				for _ in pairs(db.deltaSnapshots) do
+					count = count + 1
+				end
+				db.deltaSnapshots = {}
+				TOGBankClassic_Output:Response("Cleared %d delta snapshot(s)", count)
 			else
-				TOGBankClassic_Output:Response("Failed to reset metrics")
+				TOGBankClassic_Output:Response("No snapshots to clear")
 			end
-		end,
-	},
-	{
-		name = "requestlog",
-		usage = "[N|all]",
-		help = "print the request log, optionally limited to N entries",
-		expert = true,
-		handler = function(arg1)
-			TOGBankClassic_Guild:PrintRequestLog(arg1)
 		end,
 	},
 	{
@@ -1367,66 +1227,27 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
-		name = "wipe",
-		help = "reset your own TOGBankClassic database",
+		name = "deltaerrors",
+		help = "show recent delta sync errors and failure counts",
 		expert = true,
 		handler = function()
-			TOGBankClassic_Guild:WipeMine()
+			TOGBankClassic_Chat:PrintDeltaErrors()
 		end,
 	},
 	{
-		name = "wipeall",
-		help = "officer only: reset your own TOGBankClassic database and that of all online guild members",
+		name = "deltahistory",
+		help = "show stored delta chain history for offline recovery",
 		expert = true,
 		handler = function()
-			TOGBankClassic_Guild:Wipe()
-		end,
-	},
-	-- Hidden commands (no help text)
-	{
-		name = "debug",
-		handler = function()
-			local currentLevel = TOGBankClassic_Output:GetLevel()
-			if currentLevel == LOG_LEVEL.DEBUG then
-				-- Restore to pre-debug level
-				local restoreLevel = preDebugLogLevel or LOG_LEVEL.INFO
-				preDebugLogLevel = nil
-				TOGBankClassic_Output:SetLevel(restoreLevel)
-				TOGBankClassic_Options.db.global.bank["logLevel"] = restoreLevel
-
-				-- Get level name for response message
-				local levelName = "Info"
-				if restoreLevel == LOG_LEVEL.RESPONSE then levelName = "Quiet"
-				elseif restoreLevel == LOG_LEVEL.ERROR then levelName = "Error"
-				elseif restoreLevel == LOG_LEVEL.WARN then levelName = "Warn"
-				end
-				TOGBankClassic_Output:Response("Debug: off (log level: " .. levelName .. ")")
-			else
-				-- Save current level before entering debug mode
-				preDebugLogLevel = TOGBankClassic_Options.db.global.bank["logLevel"]
-				TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
-				TOGBankClassic_Options.db.global.bank["logLevel"] = LOG_LEVEL.DEBUG
-				TOGBankClassic_Output:Response("Debug: on (log level: Debug)")
-			end
+			TOGBankClassic_Chat:PrintDeltaHistory()
 		end,
 	},
 	{
-		name = "debugtab",
-		help = "create a dedicated chat tab for debug output",
+		name = "deltastats",
+		help = "show delta sync statistics and bandwidth savings",
 		expert = true,
 		handler = function()
-			if TOGBankClassic_Output:CreateDebugTab() then
-				TOGBankClassic_Output:Response("Debug output will now appear in 'TOGBank Debug' tab")
-				TOGBankClassic_Output:Response("Use /togbank debug to enable debug logging")
-			end
-		end,
-	},
-	{
-		name = "debugtabremove",
-		help = "remove the TOGBank Debug chat tab",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Output:RemoveDebugTab()
+			TOGBankClassic_Chat:PrintDeltaStats()
 		end,
 	},
 	{
@@ -1473,63 +1294,6 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
-		name = "persistcheck",
-		help = "check current request persistence state (for debugging SYNC-001)",
-		expert = true,
-		handler = function()
-			local G = TOGBankClassic_Guild
-			if not G or not G.Info then
-				TOGBankClassic_Output:Response("Guild info not loaded")
-				return
-			end
-			
-			local logCount = #(G.Info.requestLog or {})
-			local appliedCount = 0
-			local appliedActors = {}
-			if G.Info.requestLogApplied then
-				for actor, seq in pairs(G.Info.requestLogApplied) do
-					appliedCount = appliedCount + 1
-					table.insert(appliedActors, string.format("%s=%d", actor, seq))
-				end
-			end
-			local requestCount = #(G.Info.requests or {})
-			local seqCount = 0
-			if G.Info.requestLogSeq then
-				for _ in pairs(G.Info.requestLogSeq) do
-					seqCount = seqCount + 1
-				end
-			end
-			
-			TOGBankClassic_Output:Response("=== Request Persistence State ===")
-			TOGBankClassic_Output:Response("requests: %d items", requestCount)
-			TOGBankClassic_Output:Response("requestLog: %d entries", logCount)
-			TOGBankClassic_Output:Response("requestLogApplied: %d actors", appliedCount)
-			if appliedCount > 0 then
-				TOGBankClassic_Output:Response("  %s", table.concat(appliedActors, ", "))
-			end
-			TOGBankClassic_Output:Response("requestLogSeq: %d actors", seqCount)
-			
-			-- Check if data is referencing SavedVariables
-			local db = TOGBankClassic_Database and TOGBankClassic_Database.db
-			if db and db.faction then
-				local guildName = G:GetGuild()
-				if guildName and db.faction[guildName] then
-					local isSameRef = (G.Info == db.faction[guildName])
-					TOGBankClassic_Output:Response("Guild.Info %s SavedVariables reference",
-						isSameRef and "IS" or "IS NOT")
-				end
-			end
-		end,
-	},
-	{
-		name = "debuglogclear",
-		help = "clear all persistent debug log entries",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Output:ClearPersistentLog()
-		end,
-	},
-	{
 		name = "debuglogsave",
 		help = "manually save debug log to SavedVariables (normally done on logout)",
 		expert = true,
@@ -1565,6 +1329,170 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		name = "debugtab",
+		help = "create a dedicated chat tab for debug output",
+		expert = true,
+		handler = function()
+			if TOGBankClassic_Output:CreateDebugTab() then
+				TOGBankClassic_Output:Response("Debug output will now appear in 'TOGBank Debug' tab")
+				TOGBankClassic_Output:Response("Use /togbank debug to enable debug logging")
+			end
+		end,
+	},
+	{
+		name = "debugtabremove",
+		help = "remove the TOGBank Debug chat tab",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Output:RemoveDebugTab()
+		end,
+	},
+	{
+		name = "forcedelta",
+		help = "force delta sync mode (on|off) - bypass thresholds for testing",
+		expert = true,
+		handler = function(arg)
+			if arg == "on" then
+				FEATURES.FORCE_DELTA_SYNC = true
+				FEATURES.FORCE_FULL_SYNC = false
+				TOGBankClassic_Output:Response("Force delta sync: ENABLED (will always use delta)")
+			elseif arg == "off" then
+				FEATURES.FORCE_DELTA_SYNC = false
+				TOGBankClassic_Output:Response("Force delta sync: DISABLED (normal behavior)")
+			else
+				local status = FEATURES.FORCE_DELTA_SYNC and "ON" or "OFF"
+				TOGBankClassic_Output:Response("Force delta sync: %s", status)
+				TOGBankClassic_Output:Response("Usage: /togbank forcedelta [on|off]")
+			end
+		end,
+	},
+	{
+		name = "forcefull",
+		help = "force full sync mode (on|off) - disable delta for testing",
+		expert = true,
+		handler = function(arg)
+			if arg == "on" then
+				FEATURES.FORCE_FULL_SYNC = true
+				FEATURES.FORCE_DELTA_SYNC = false
+				TOGBankClassic_Output:Response("Force full sync: ENABLED (will never use delta)")
+			elseif arg == "off" then
+				FEATURES.FORCE_FULL_SYNC = false
+				TOGBankClassic_Output:Response("Force full sync: DISABLED (normal behavior)")
+			else
+				local status = FEATURES.FORCE_FULL_SYNC and "ON" or "OFF"
+				TOGBankClassic_Output:Response("Force full sync: %s", status)
+				TOGBankClassic_Output:Response("Usage: /togbank forcefull [on|off]")
+			end
+		end,
+	},
+	{
+		name = "hello",
+		help = "understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserialized addon communication",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:Hello()
+		end,
+	},
+	{
+		name = "perfstats",
+		help = "show performance metrics for current session",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Performance:PrintReport()
+		end,
+	},
+	{
+		name = "persistcheck",
+		help = "check current request persistence state (for debugging SYNC-001)",
+		expert = true,
+		handler = function()
+			local G = TOGBankClassic_Guild
+			if not G or not G.Info then
+				TOGBankClassic_Output:Response("Guild info not loaded")
+				return
+			end
+
+			local logCount = #(G.Info.requestLog or {})
+			local appliedCount = 0
+			local appliedActors = {}
+			if G.Info.requestLogApplied then
+				for actor, seq in pairs(G.Info.requestLogApplied) do
+					appliedCount = appliedCount + 1
+					table.insert(appliedActors, string.format("%s=%d", actor, seq))
+				end
+			end
+			local requestCount = #(G.Info.requests or {})
+			local seqCount = 0
+			if G.Info.requestLogSeq then
+				for _ in pairs(G.Info.requestLogSeq) do
+					seqCount = seqCount + 1
+				end
+			end
+
+			TOGBankClassic_Output:Response("=== Request Persistence State ===")
+			TOGBankClassic_Output:Response("requests: %d items", requestCount)
+			TOGBankClassic_Output:Response("requestLog: %d entries", logCount)
+			TOGBankClassic_Output:Response("requestLogApplied: %d actors", appliedCount)
+			if appliedCount > 0 then
+				TOGBankClassic_Output:Response("  %s", table.concat(appliedActors, ", "))
+			end
+			TOGBankClassic_Output:Response("requestLogSeq: %d actors", seqCount)
+
+			-- Check if data is referencing SavedVariables
+			local db = TOGBankClassic_Database and TOGBankClassic_Database.db
+			if db and db.faction then
+				local guildName = G:GetGuild()
+				if guildName and db.faction[guildName] then
+					local isSameRef = (G.Info == db.faction[guildName])
+					TOGBankClassic_Output:Response("Guild.Info %s SavedVariables reference",
+						isSameRef and "IS" or "IS NOT")
+				end
+			end
+		end,
+	},
+	{
+		name = "protocol",
+		help = "show protocol version distribution across guild members",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Chat:PrintProtocolInfo()
+		end,
+	},
+	{
+		name = "requestlog",
+		usage = "[N|all]",
+		help = "print the request log, optionally limited to N entries",
+		expert = true,
+		handler = function(arg1)
+			TOGBankClassic_Guild:PrintRequestLog(arg1)
+		end,
+	},
+	{
+		name = "resetmetrics",
+		help = "reset delta sync statistics and metrics",
+		expert = true,
+		handler = function()
+			local guild = TOGBankClassic_Guild:GetGuild()
+			if not guild then
+				TOGBankClassic_Output:Response("Not in a guild")
+				return
+			end
+			if TOGBankClassic_Database:ResetDeltaMetrics(guild) then
+				TOGBankClassic_Output:Response("Delta metrics reset")
+			else
+				TOGBankClassic_Output:Response("Failed to reset metrics")
+			end
+		end,
+	},
+	{
+		name = "roster",
+		help = "guild banks and members that can read the officer note can use this command to share updated roster data with online guild members",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:AuthorRosterData()
+		end,
+	},
+	{
 		name = "test",
 		help = "run automated delta sync tests (use 'test help' for options)",
 		expert = true,
@@ -1586,6 +1514,58 @@ local COMMAND_REGISTRY = {
 				TOGBankClassic_Output:Response("  /togbank test help - Show this help")
 			else
 				TOGBankClassic_Tests:RunTest(arg)
+			end
+		end,
+	},
+	{
+		name = "versions",
+		help = "show addon versions of online guild members",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Chat:PrintVersions()
+		end,
+	},
+	{
+		name = "wipe",
+		help = "reset your own TOGBankClassic database",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:WipeMine()
+		end,
+	},
+	{
+		name = "wipeall",
+		help = "officer only: reset your own TOGBankClassic database and that of all online guild members",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:Wipe()
+		end,
+	},
+	-- Hidden commands (no help text)
+	{
+		name = "debug",
+		handler = function()
+			local currentLevel = TOGBankClassic_Output:GetLevel()
+			if currentLevel == LOG_LEVEL.DEBUG then
+				-- Restore to pre-debug level
+				local restoreLevel = preDebugLogLevel or LOG_LEVEL.INFO
+				preDebugLogLevel = nil
+				TOGBankClassic_Output:SetLevel(restoreLevel)
+				TOGBankClassic_Options.db.global.bank["logLevel"] = restoreLevel
+
+				-- Get level name for response message
+				local levelName = "Info"
+				if restoreLevel == LOG_LEVEL.RESPONSE then levelName = "Quiet"
+				elseif restoreLevel == LOG_LEVEL.ERROR then levelName = "Error"
+				elseif restoreLevel == LOG_LEVEL.WARN then levelName = "Warn"
+				end
+				TOGBankClassic_Output:Response("Debug: off (log level: " .. levelName .. ")")
+			else
+				-- Save current level before entering debug mode
+				preDebugLogLevel = TOGBankClassic_Options.db.global.bank["logLevel"]
+				TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
+				TOGBankClassic_Options.db.global.bank["logLevel"] = LOG_LEVEL.DEBUG
+				TOGBankClassic_Output:Response("Debug: on (log level: Debug)")
 			end
 		end,
 	},

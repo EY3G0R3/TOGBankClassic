@@ -2,7 +2,7 @@
 TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era
 ================================================================================
 
-Version: 0.7.0
+Version: 0.8.0
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme
 Website: https://www.curseforge.com/wow/addons/togbankclassic
 
@@ -20,7 +20,9 @@ KEY FEATURES:
 - Search across all bank characters simultaneously
 - Request items from guild banks via in-game mail
 - Automatic synchronization with other guild members using the addon
-- Delta sync protocol for 90-99% bandwidth reduction (NEW in v0.7.0!)
+- Delta sync protocol for 90-99% bandwidth reduction
+- Link-less delta optimization for additional bandwidth savings (NEW in v0.8.0!)
+- Persistent debug logging system for troubleshooting
 - Works seamlessly with multiple bank alts
 
 ================================================================================
@@ -148,15 +150,15 @@ BASIC COMMANDS:
   Shows your current TOGBankClassic version
 
 /togbank sync
-  Manually sync to receive latest data from o
-
-  NOTE: Bank must be open and scanned before sharing. Open your bank,
-  wait ~1 second for items to load, then run this command.nline users
+  Manually sync to receive latest data from online users
   (Automatic sync happens every 10 minutes)
 
 /togbank share
   Manually share your guild bank contents with online users
   (Automatic sharing happens every 3 minutes)
+
+  NOTE: Bank must be open and scanned before sharing. Open your bank,
+  wait ~1 second for items to load, then run this command.
 
 /togbank reset
   Resets your TOGBankClassic database (clears all stored data)
@@ -164,25 +166,47 @@ BASIC COMMANDS:
 
 EXPERT COMMANDS:
 ----------------
-These commands are for advanced users and guild officers:
+These commands are for advanced users and guild officers. Commands are
+listed alphabetically for easy reference.
 
-/togbank roster
-  Guild officers can use this to share updated roster data with the guild
-  (Requires officer note viewing permissions)
+/togbank clearhistory
+  Clears delta chain history (removes saved deltas)
 
-/togbank hello
-  Shows which guild members are online with the addon and what data they have
-  (Requires compatible WeakAura to display deserialized data)
-
-/togbank versions
-  Displays addon versions of all online guild members
-
-/togbank requestlog [N|all]
-  Shows the item request log (optionally limited to N entries)
-  Example: /togbank requestlog 10
+/togbank clearsnapshots
+  Clears all delta snapshots (forces next sync to be full)
 
 /togbank compact
   Manually runs database compaction to prune old requests and log entries
+
+/togbank debuglog [N] [filter]
+  Exports last N debug log entries (default 500), optionally filtered by keyword
+  Example: /togbank debuglog 100 MAIL
+  Example: /togbank debuglog 1000
+
+/togbank debuglogclear
+  Clears all persistent debug log entries
+
+/togbank debuglogsave
+  Manually saves debug log to SavedVariables (normally done on logout)
+
+/togbank debuglogstats
+  Shows statistics about the persistent debug log including entry count,
+  date range, and retention settings
+
+/togbank debugtab
+  Creates a dedicated chat tab called "TOGBank Debug" for debug output
+  This keeps debug messages separate from your main chat tabs
+  After creating the tab once, use /togbank debug to enable debug logging
+  All debug output will automatically go to the debug tab
+
+/togbank debugtabremove
+  Removes the TOGBank Debug chat tab
+
+/togbank deltaerrors
+  Shows recent delta sync errors and failure counts
+
+/togbank deltahistory
+  Shows stored delta chain history for offline recovery
 
 /togbank deltastats
   Shows delta sync statistics including:
@@ -191,26 +215,47 @@ These commands are for advanced users and guild officers:
   - Success rates and operation counts
   - Average performance metrics
 
+/togbank forcedelta [on|off]
+  Forces delta sync mode (bypasses thresholds) for testing
+  Use 'on' to always use delta, 'off' to restore normal behavior
+
+/togbank forcefull [on|off]
+  Forces full sync mode (disables delta) for testing
+  Use 'on' to disable delta, 'off' to restore normal behavior
+
+/togbank hello
+  Shows which guild members are online with the addon and what data they have
+  (Requires compatible WeakAura to display deserialized data)
+
+/togbank perfstats
+  Shows performance metrics for current session
+
+/togbank persistcheck
+  Checks current request persistence state (for debugging SYNC-001)
+
 /togbank protocol
   Displays protocol version distribution across guild members:
   - Shows online member protocol versions (v1 vs v2)
   - Displays delta sync adoption percentage
   - Lists recently seen members with their protocol versions
 
-/togbank clearsnapshots
-  Clears all delta snapshots (forces next sync to be full)
-
-/togbank forcefull
-  Toggles forcing full sync mode (temporarily disables delta sync)
+/togbank requestlog [N|all]
+  Shows the item request log (optionally limited to N entries)
+  Example: /togbank requestlog 10
 
 /togbank resetmetrics
   Resets all delta sync statistics to zero
 
-/togbank debugtab
-  Creates a dedicated chat tab called "TOGBank Debug" for debug output
-  This keeps debug messages separate from your main chat tabs
-  After creating the tab once, use /togbank debug to enable debug logging
-  All debug output will automatically go to the debug tab
+/togbank roster
+  Guild officers can use this to share updated roster data with the guild
+  (Requires officer note viewing permissions)
+
+/togbank test [test-name|all|help]
+  Runs automated delta sync tests
+  Use 'help' to see available test options
+
+/togbank versions
+  Displays addon versions of all online guild members
 
 /togbank wipe
   Resets your own TOGBankClassic database
@@ -226,31 +271,36 @@ DEBUG COMMANDS:
   Toggles debug mode on/off for troubleshooting
   Shows detailed information about addon operations
   Setting persists across reloads and is saved to your addon settings
+  TIP: Use /togbank debugtab first to create a dedicated debug chat tab
 
 ================================================================================
-DELTA SYNC FEATURE (v0.7.0)
+DELTA SYNC FEATURE (v0.7.0+)
 ================================================================================
 
-TOGBankClassic v0.7.0 introduces an intelligent delta sync protocol that
+TOGBankClassic v0.7.0+ includes an intelligent delta sync protocol that
 dramatically reduces bandwidth usage by only transmitting changed data instead
-of complete inventories.
+of complete inventories. Version 0.8.0 adds link-less optimization for even
+greater bandwidth savings.
 
 HOW IT WORKS:
 -------------
 When guild bank characters update their inventory, the addon automatically:
 1. Detects what items have changed since the last sync
-2. Calculates if sending just the changes is more efficient
-3. Uses delta sync if it saves more than 70% bandwidth
-4. Falls back to full sync if changes are too large
-5. Automatically handles errors and version mismatches
+2. Strips item links from delta packets (links rebuilt on receive-side)
+3. Calculates if sending just the changes is more efficient
+4. Uses delta sync if it saves more than 70% bandwidth
+5. Falls back to full sync if changes are too large
+6. Automatically handles errors and version mismatches
 
 BENEFITS:
 ---------
 - 90-99% reduction in bandwidth for typical updates
+- Link-less optimization further reduces delta packet size
 - Faster sync times and less network traffic
 - Fully automatic - no configuration required
-- Backwards compatible with v0.6.8 clients
+- Backwards compatible with older clients
 - Robust error handling with automatic fallback
+- Persistent debug logging for troubleshooting
 
 MONITORING DELTA SYNC:
 ----------------------
@@ -263,12 +313,31 @@ Use /togbank protocol to check:
 - How many guild members support delta sync
 - Whether delta sync is enabled (requires 50% guild adoption)
 
+Use /togbank deltaerrors to see:
+- Recent delta sync failures
+- Error types (UNAUTHORIZED, VALIDATION_FAILED, etc.)
+- Failure counts for troubleshooting
+
+Use /togbank deltahistory to see:
+- Stored delta chain for offline recovery
+- Delta sequence numbers and timestamps
+
 COMPATIBILITY:
 --------------
 - v0.7.0+ clients can send and receive delta updates
 - v0.6.8 and older clients receive full syncs (no delta support)
 - Mixed guild scenarios work seamlessly
 - Delta sync automatically enables when 50%+ of online guild uses v0.7.0+
+
+DEBUG LOGGING:
+--------------
+v0.8.0 introduces persistent debug logging:
+- Debug messages saved to SavedVariables
+- Survives reloads and logout
+- Use /togbank debuglog to export recent logs
+- Use /togbank debuglogstats to see log statistics
+- Use /togbank debuglogclear to clear old logs
+- Use /togbank debugtab to create dedicated chat tab for debug output
 
 ================================================================================
 TROUBLESHOOTING
@@ -291,23 +360,26 @@ PROBLEM: Delta sync not working
 SOLUTION:
   - Check /togbank protocol to see guild adoption percentage
   - Delta sync requires 50%+ of online guild to use v0.7.0+
-  - Use /togbank forcefull to toggle full sync mode if needed
+  - Use /togbank forcefull on to toggle full sync mode if needed
   - Check /togbank deltastats to see if delta operations are failing
 
 PROBLEM: Getting error messages about delta failures
 SOLUTION:
   - The addon automatically falls back to full sync on errors
+  - Use /togbank deltaerrors to see recent failure details
   - If errors persist, try /togbank clearsnapshots to clear cached data
   - Use /togbank resetmetrics to reset statistics
   - Enable debug mode with /togbank debug to see detailed error information
   - For easier debugging, use /togbank debugtab to create a separate chat tab
     for debug output (keeps your General tab clean)
+  - Use /togbank debuglog 500 DELTA to export recent delta-related logs
 
 PROBLEM: Debug output cluttering my chat
 SOLUTION:
   - Use /togbank debugtab to create a dedicated "TOGBank Debug" chat tab
   - All debug messages will go there instead of your main chat
   - This is a one-time setup - the tab persists across sessions
+  - Use /togbank debugtabremove to remove the debug tab if needed
 
 PROBLEM: Addon seems to be using too much memory
 SOLUTION:
@@ -368,6 +440,44 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 0.8.0:
+--------------
+NEW FEATURES:
+- Link-less delta optimization for additional bandwidth savings
+- Persistent debug logging system with export capability
+- Dedicated debug chat tab support
+- Enhanced delta error tracking and reporting
+
+NEW COMMANDS:
+- /togbank clearhistory - Clear delta chain history
+- /togbank debuglog [N] [filter] - Export debug logs
+- /togbank debuglogclear - Clear persistent logs
+- /togbank debuglogsave - Save logs to disk
+- /togbank debuglogstats - View log statistics
+- /togbank debugtabremove - Remove debug chat tab
+- /togbank deltaerrors - View recent delta failures
+- /togbank deltahistory - View delta chain history
+- /togbank forcedelta [on|off] - Force delta mode
+- /togbank perfstats - Performance metrics
+- /togbank persistcheck - Check persistence state
+- /togbank test - Run automated tests
+
+IMPROVEMENTS:
+- Delta packets no longer include item links (rebuilt on receive)
+- Better validation for link-less delta items
+- Fixed mail items array format handling
+- Converted debug print statements to proper logging system
+- Reorganized command help alphabetically
+- Enhanced debug output with category filtering
+
+BUG FIXES:
+- Fixed delta validation rejecting valid link-less items
+- Fixed mail item multiplication in UI
+- Fixed 6 locations treating mail.items as hash instead of array
+- Fixed command help missing several commands
+- Removed duplicate forcefull command
+- Cleaned up trailing whitespace in all code files
 
 Version 0.7.0:
 --------------

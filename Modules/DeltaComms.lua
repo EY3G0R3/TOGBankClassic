@@ -80,8 +80,9 @@ function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
 			if not item.ID or type(item.ID) ~= "number" then
 				return false, "added item missing or invalid ID"
 			end
-			if not item.Link or type(item.Link) ~= "string" then
-				return false, "added item missing or invalid Link"
+			-- v0.8.0: Link is optional (bandwidth optimization - receiver reconstructs)
+			if item.Link and type(item.Link) ~= "string" then
+				return false, "added item has invalid Link"
 			end
 			-- slot is optional (merged items don't have slots)
 		end
@@ -99,8 +100,9 @@ function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
 			if not item.ID or type(item.ID) ~= "number" then
 				return false, "modified item missing or invalid ID"
 			end
-			if not item.Link or type(item.Link) ~= "string" then
-				return false, "modified item missing or invalid Link"
+			-- v0.8.0: Link is optional (bandwidth optimization - receiver reconstructs)
+			if item.Link and type(item.Link) ~= "string" then
+				return false, "modified item has invalid Link"
 			end
 			-- slot is optional (merged items don't have slots)
 		end
@@ -683,8 +685,10 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 		end
 		
 		-- DATA-004: Protect banker data - bankers are the source of truth
-		local player = UnitName("player") .. "-" .. GetRealmName()
-		local playerNorm = TOGBankClassic_Guild:NormalizeName(player)
+		local player = UnitName("player")
+		local realm = GetNormalizedRealmName()
+		local playerFull = player .. "-" .. realm
+		local playerNorm = TOGBankClassic_Guild:NormalizeName(playerFull)
 		local playerIsBanker = TOGBankClassic_Guild:IsBank(playerNorm)
 		
 		if playerIsBanker then
@@ -696,8 +700,8 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					"Rejected delta from %s about ourselves (banker is source of truth for own data)",
 					sender or "unknown"
 				)
-				TOGBankClassic_Output:Warn("[DATA-004] %s", errorMsg)
-				self:RecordDeltaError(guildInfo.name, norm, "UNAUTHORIZED", errorMsg)
+				TOGBankClassic_Output:Debug("DELTA", "[DATA-004] %s", errorMsg)
+				-- Not an error - this is expected banker protection, don't record as error
 				return ADOPTION_STATUS.UNAUTHORIZED
 			end
 			
@@ -713,8 +717,8 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					sender or "unknown",
 					norm
 				)
-				TOGBankClassic_Output:Warn("[DATA-004] %s", errorMsg)
-				self:RecordDeltaError(guildInfo.name, norm, "UNAUTHORIZED", errorMsg)
+				TOGBankClassic_Output:Debug("DELTA", "[DATA-004] %s", errorMsg)
+				-- Not an error - this is expected banker protection, don't record as error
 				return ADOPTION_STATUS.UNAUTHORIZED
 			end
 		end
@@ -1067,28 +1071,6 @@ function TOGBankClassic_DeltaComms:GetDeltaFailureCount(guildName, altName)
 	end
 
 	return 0
-end
-
--- Reset error counters for an alt after successful full sync
-function TOGBankClassic_DeltaComms:ResetDeltaErrorCount(guildName, altName)
-	if not altName then
-		return
-	end
-
-	-- Clear from database if available
-	if guildName then
-		local db = TOGBankClassic_Database.db.faction[guildName]
-		if db and db.deltaErrors then
-			db.deltaErrors.failureCounts[altName] = nil
-			db.deltaErrors.notifiedAlts[altName] = nil
-		end
-	end
-
-	-- Clear from temporary storage
-	if TOGBankClassic_Guild.tempDeltaErrors then
-		TOGBankClassic_Guild.tempDeltaErrors.failureCounts[altName] = nil
-		TOGBankClassic_Guild.tempDeltaErrors.notifiedAlts[altName] = nil
-	end
 end
 
 -- Clear error counters for all offline players (called on roster update)

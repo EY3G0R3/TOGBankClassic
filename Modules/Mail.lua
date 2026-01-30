@@ -596,9 +596,9 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		end
 	end
 	
-	TOGBankClassic_Output:Debug("FULFILL", "Need %d, accumulated %d from large stacks, would split %d", 
+	TOGBankClassic_Output:Debug("FULFILL", "Need %d, accumulated %d from large stacks, would split %d",
 		qtyNeeded, accumulated, wouldNeedToSplit)
-	TOGBankClassic_Output:Debug("FULFILL", "Filtered %d useful stacks from %d total (min size: %d)", 
+	TOGBankClassic_Output:Debug("FULFILL", "Filtered %d useful stacks from %d total (min size: %d)",
 		#usefulStacks, #items, minStackSize)
 
 	-- SECOND PASS: Run greedy algorithm on useful stacks only
@@ -671,8 +671,8 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 				skippedLargeStack = nil  -- No split needed - found exact match!
 				splitStackIndex = nil
 				break
-			elseif testAttached > simulatedAttached or 
-			       (testAttached == simulatedAttached and testSplitStackIndex and splitStackIndex and 
+			elseif testAttached > simulatedAttached or
+			       (testAttached == simulatedAttached and testSplitStackIndex and splitStackIndex and
 			        testSplitStackIndex > splitStackIndex) then
 				-- Better fit found, or same fit but with split from a later stack (preferred)
 				simulatedAttached = testAttached
