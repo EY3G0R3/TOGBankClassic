@@ -134,7 +134,8 @@ function TOGBankClassic_Bank:Scan()
 	-- Roster sync removed: Roster is now rebuilt locally from guild notes on GUILD_ROSTER_UPDATE
 
 	local alt = {}
-	if info.alts[player] then
+	-- Load from aggregate view (info.alts)
+	if info.alts and info.alts[player] then
 		alt = info.alts[player]
 	end
 
@@ -191,6 +192,15 @@ function TOGBankClassic_Bank:Scan()
 				player, previousItemCount, itemCount)
 			
 			alt.mail = mailData
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] ASSIGNED alt.mail with %d items, version=%s, lastScan=%s", 
+				#mailData.items, tostring(mailData.version), tostring(mailData.lastScan))
+			
+			-- DEBUG: Verify assignment worked
+			if alt.mail then
+				print(string.format("✓ CONFIRMED: alt.mail exists with %d items", #alt.mail.items))
+			else
+				print("✗ ERROR: alt.mail is nil after assignment!")
+			end
 		end
 		
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Clearing hasUpdated flag after scan")
@@ -290,10 +300,25 @@ function TOGBankClassic_Bank:Scan()
 		TOGBankClassic_Output:Debug("SYNC", "No inventory changes for %s, version unchanged (hash: %s)", player, tostring(currentHash))
 	end
 
+	-- Initialize tables if needed
 	if not info.alts then
 		info.alts = {}
 	end
+
+	-- DEBUG: Log what we're about to save
+	if alt.mail then
+		print(string.format(">>> alt.mail exists with %d items, type=%s <<<", #alt.mail.items, type(alt.mail)))
+		print(string.format(">>> alt.mail.slots = %s <<<", alt.mail.slots and ("table with count="..tostring(alt.mail.slots.count)) or "nil"))
+	end
+	
+	-- Write to aggregate view (info.alts) for normal use
 	info.alts[player] = alt
+	
+	if alt.mail then
+		print(string.format("✓ Saved mail to info.alts[%s] (%d items)", player, #alt.mail.items))
+	else
+		print(string.format("✗ No mail data to save for %s", player))
+	end
 end
 
 function TOGBankClassic_Bank:HasInventorySpace()
@@ -354,8 +379,13 @@ function TOGBankClassic_Bank:OnUpdateStart()
 end
 
 function TOGBankClassic_Bank:OnUpdateStop()
+	print(string.format(">>> OnUpdateStop called, hasUpdated=%s <<<", tostring(self.hasUpdated)))
 	if self.hasUpdated then
+		print(">>> Calling Scan() <<<")
 		self:Scan()
+		print(">>> Scan() completed <<<")
+	else
+		print(">>> Skipping Scan() because hasUpdated is false <<<")
 	end
 	self.hasUpdated = false
 end

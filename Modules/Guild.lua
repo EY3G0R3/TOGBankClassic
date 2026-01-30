@@ -1283,7 +1283,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 	
 	-- Ensure legacy fields exist for backward compatibility with old clients
 	-- This ensures old clients that only read bank.items/bags.items still get data
-	currentAlt = self:EnsureLegacyFields(currentAlt)
+	self:EnsureLegacyFields(currentAlt)  -- Modifies in place, no need to reassign
 	
 	-- Log what we're about to send (all 3 arrays for backward compatibility)
 	local itemsCount = currentAlt.items and #currentAlt.items or 0
@@ -1594,7 +1594,7 @@ function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
 end
 ---END CHANGES
 
-function TOGBankClassic_Guild:ReceiveAltData(name, alt)
+function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 	return TOGBankClassic_Performance:Track("ReceiveAltData", function()
 		if not self.Info then
 			return ADOPTION_STATUS.IGNORED
@@ -1742,89 +1742,119 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 
 		local norm = self:NormalizeName(name)
 		local existing = self.Info.alts[norm]
+		local senderNorm = sender and self:NormalizeName(sender) or nil
 		
-		-- DATA-004: Protect banker data from being overwritten
+		-- DATA-004/DATA-006: Banker protection logic
+		-- Rule 1: Never accept data about yourself (you are source of truth)
+		-- Rule 2: Bankers only accept data about OTHER bankers FROM that banker
+		-- Rule 3: Non-bankers accept data from anyone
 		local player = UnitName("player") .. "-" .. GetRealmName()
 		local playerNorm = self:NormalizeName(player)
-		local playerIsBanker = self:IsBank(playerNorm)
 		local isOwnData = playerNorm == norm
+		local targetIsBanker = self:IsBank(norm)
+		local senderIsBanker = senderNorm and self:IsBank(senderNorm) or false
 		
-		if playerIsBanker then
-			-- We are a banker - protect our data
-			
-			-- CRITICAL: If this is data about US, reject it (we are the source of truth)
-			if isOwnData then
-				TOGBankClassic_Output:Warn(
-					"[DATA-004] Rejected alt data about ourselves from %s (banker is source of truth for own data)",
-					name
-				)
-				return ADOPTION_STATUS.UNAUTHORIZED
-			end
-			
-			-- Also protect OTHER banker data from non-banker updates
-			local existingIsBanker = existing and self:IsBank(norm)
-			local incomingIsBanker = self:IsBank(name)
-			
-			if existingIsBanker and not incomingIsBanker then
-				-- Reject: non-banker trying to overwrite banker data
-				TOGBankClassic_Output:Warn(
-					"[DATA-004] Rejected alt data for %s: existing is banker, incoming is non-banker (sender=%s)",
-					norm,
-					name
-				)
-				return ADOPTION_STATUS.UNAUTHORIZED
-			end
+		-- Rule 1: Reject data about ourselves (we already have our own current data)
+		if isOwnData then
+			TOGBankClassic_Output:Warn(
+				"[DATA-004] Rejected alt data about ourselves (we are the source of truth)"
+			)
+			return ADOPTION_STATUS.UNAUTHORIZED
 		end
 		
-		if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
-			return ADOPTION_STATUS.STALE
+		-- Rule 2: For banker targets, only accept if sender IS that banker
+		if targetIsBanker then
+			-- Data is about a banker, only accept if sender is that exact banker
+			if senderNorm ~= norm then
+				TOGBankClassic_Output:Debug("SYNC",
+					"[DATA-006] Rejected data about banker %s from %s (bankers only update themselves)",
+					norm, senderNorm or "unknown")
+				return ADOPTION_STATUS.UNAUTHORIZED
+			end
+			-- If we get here: senderNorm == norm (banker updating themselves) - ACCEPT
+			TOGBankClassic_Output:Debug("SYNC",
+				"[DATA-006] Accepting data about banker %s from themselves",
+				norm)
 		end
+		
+		-- Rule 3: Non-banker data accepted from anyone (no additional checks)
+		
+		-- Version checking for all alts
+	if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
+		return ADOPTION_STATUS.STALE
+	end
 
-		-- Accept incoming if newer version
-		-- If same version, accept the alt with more items
-		local function itemCount(a)
-			local c = 0
-			if a and a.items then
-				for _, v in pairs(a.items) do
-					if v and v.ID then
-						c = c + 1
-					end
+	-- Accept incoming if newer version
+	-- If same version, accept the alt with more items
+	local function itemCount(a)
+		local c = 0
+		if a and a.items then
+			for _, v in pairs(a.items) do
+				if v and v.ID then
+					c = c + 1
 				end
 			end
-			return c
 		end
+		return c
+	end
 
-		if existing and existing.version and alt.version and alt.version < existing.version then
-			-- Incoming is older; ignore
-			return ADOPTION_STATUS.STALE
-		elseif existing and existing.version and alt.version and alt.version == existing.version then
-			-- Tie-breaker: choose the one with more items (unless banker priority applies)
-			if itemCount(alt) <= itemCount(existing) then
-				return ADOPTION_STATUS.STALE
-			end
-		end
-
-		-- Check against existing alt data, but only if version exists
-		if self.Info.alts[name] and alt.version ~= nil and self.Info.alts[name].version ~= nil and alt.version < self.Info.alts[name].version then
+	if existing and existing.version and alt.version and alt.version < existing.version then
+		-- Incoming is older; ignore
+		return ADOPTION_STATUS.STALE
+	elseif existing and existing.version and alt.version and alt.version == existing.version then
+		-- Tie-breaker: choose the one with more items (unless banker priority applies)
+		if itemCount(alt) <= itemCount(existing) then
 			return ADOPTION_STATUS.STALE
 		end
-		if self.hasRequested then
-			if self.requestCount == nil then
-				self.requestCount = 0
-			else
-				self.requestCount = self.requestCount - 1
-			end
-			if self.requestCount == 0 then
-				self.hasRequested = false
-				TOGBankClassic_Output:Info("Sync completed.")
+	end
+
+	-- Check against existing alt data, but only if version exists
+	if self.Info.alts[name] and alt.version ~= nil and self.Info.alts[name].version ~= nil and alt.version < self.Info.alts[name].version then
+		return ADOPTION_STATUS.STALE
+	end
+	
+	if self.hasRequested then
+		if self.requestCount == nil then
+			self.requestCount = 0
+		else
+			self.requestCount = self.requestCount - 1
+		end
+		if self.requestCount == 0 then
+			self.hasRequested = false
+			TOGBankClassic_Output:Info("Sync completed.")
 			end
 		end
 
 		if not self.Info.alts then
 			self.Info.alts = {}
 		end
+		
+		-- DATA-006: Preserve mail field from existing data (mail is local-only, never synced)
+		-- When receiving external updates (even from same account), preserve locally-scanned mail
+		local existingMail = existing and existing.mail or nil
+		
+		print(string.format(">>> AdoptAltData for %s: existingMail=%s, targetIsBanker=%s <<<",
+			norm, existingMail and "YES" or "NO", tostring(targetIsBanker)))
+		if existingMail then
+			print(string.format("    existingMail has %d items", existingMail.items and #existingMail.items or 0))
+		end
+		
 		---@diagnostic disable-next-line: need-check-nil
 		self.Info.alts[norm] = alt
+		print(string.format(">>> OVERWROTE self.Info.alts[%s], mail field now: %s <<<",
+			norm, alt.mail and "EXISTS" or "GONE"))
+		
+		-- Restore preserved mail if it existed
+		if existingMail and targetIsBanker then
+			self.Info.alts[norm].mail = existingMail
+			local mailItemCount = existingMail.items and #existingMail.items or 0
+			print(string.format("✓ RESTORED mail for banker %s (%d items)", norm, mailItemCount))
+			TOGBankClassic_Output:Debug("MAIL",
+				"[DATA-006] Preserved mail data for banker %s (%d items, lastScan=%s)",
+				norm, mailItemCount, tostring(existingMail.lastScan))
+		elseif existingMail and not targetIsBanker then
+			print(string.format("❌ NOT RESTORING mail for %s (not a banker)", norm))
+		end
 
 		-- Reset search data flag so inventory UI rebuilds search index (UI-008 fix)
 		if TOGBankClassic_UI_Inventory then

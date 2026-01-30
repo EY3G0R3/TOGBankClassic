@@ -209,6 +209,70 @@ function TOGBankClassic_Events:PLAYER_LOGIN(_)
 end
 
 function TOGBankClassic_Events:PLAYER_LOGOUT(_)
+	-- DEBUG: Check if mail field exists before logout
+	local player = UnitName("player") .. "-" .. GetRealmName()
+	
+	-- Store debug info in a SavedVariable so we can check after logout
+	if not TOGBankClassic_MailDebugLog then
+		TOGBankClassic_MailDebugLog = {}
+	end
+	
+	local debugInfo = {
+		player = player,
+		timestamp = GetServerTime(),
+		mailExists = false,
+		mailItemCount = 0,
+	}
+	
+	print("========================================")
+	print("[MAIL-DEBUG] CHECKING MAIL AT LOGOUT FOR: " .. player)
+	if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[player] then
+		local alt = TOGBankClassic_Guild.Info.alts[player]
+		if alt.mail then
+			local mailCount = alt.mail.items and #alt.mail.items or 0
+			debugInfo.mailExists = true
+			debugInfo.mailItemCount = mailCount
+			debugInfo.versionType = type(alt.mail.version)
+			debugInfo.versionValue = tostring(alt.mail.version)
+			debugInfo.lastScanType = type(alt.mail.lastScan)
+			debugInfo.slotsType = type(alt.mail.slots)
+			debugInfo.hasMetatable = getmetatable(alt.mail) ~= nil
+			
+			-- Check if items is a proper array
+			debugInfo.itemsIsTable = type(alt.mail.items) == "table"
+			if alt.mail.items then
+				local hasSequentialKeys = true
+				for i = 1, mailCount do
+					if alt.mail.items[i] == nil then
+						hasSequentialKeys = false
+						break
+					end
+				end
+				debugInfo.hasSequentialKeys = hasSequentialKeys
+			end
+			
+			print(string.format("[MAIL-DEBUG] ✓ MAIL FIELD EXISTS with %d items", mailCount))
+			print(string.format("[MAIL-DEBUG]   version: %s (type: %s)", tostring(alt.mail.version), type(alt.mail.version)))
+			print(string.format("[MAIL-DEBUG]   lastScan: %s (type: %s)", tostring(alt.mail.lastScan), type(alt.mail.lastScan)))
+			print(string.format("[MAIL-DEBUG]   slots type: %s", type(alt.mail.slots)))
+			if alt.mail.slots then
+				debugInfo.slotsCount = alt.mail.slots.count
+				print(string.format("[MAIL-DEBUG]   slots.count: %s", tostring(alt.mail.slots.count)))
+			end
+			-- Check for metatables or functions that would prevent serialization
+			if getmetatable(alt.mail) then
+				print("[MAIL-DEBUG] ⚠️ WARNING: alt.mail has a metatable!")
+			end
+		else
+			print("[MAIL-DEBUG] ✗ MAIL FIELD MISSING!")
+		end
+	else
+		debugInfo.noAltData = true
+		print("[MAIL-DEBUG] ✗ Alt data not found")
+	end
+	
+	TOGBankClassic_MailDebugLog[player] = debugInfo
+	print("========================================")
 	-- Save persistent debug log to SavedVariables
 	TOGBankClassic_Output:SavePersistentLog()
 end
@@ -264,11 +328,23 @@ function TOGBankClassic_Events:BANKFRAME_CLOSED(_)
 end
 
 function TOGBankClassic_Events:MAIL_SHOW(_)
+	print(">>> MAIL_SHOW EVENT FIRED <<<")
 	TOGBankClassic_Bank:OnUpdateStart()
 	TOGBankClassic_MailInventory.hasUpdated = true  -- Flag that mail was accessed
+	print(string.format(">>> Set MailInventory.hasUpdated = %s <<<", tostring(TOGBankClassic_MailInventory.hasUpdated)))
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()
+	
+	-- Hook MailFrame OnHide to detect when mail closes (MAIL_CLOSED event may not fire reliably)
+	if not MailFrame.TOGBankHooked then
+		MailFrame:HookScript("OnHide", function()
+			print(">>> MailFrame OnHide FIRED (mailbox closed) <<<")
+			TOGBankClassic_Events:MAIL_CLOSED()
+		end)
+		MailFrame.TOGBankHooked = true
+		print(">>> Hooked MailFrame OnHide <<<")
+	end
 end
 
 function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
@@ -276,9 +352,12 @@ function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
 end
 
 function TOGBankClassic_Events:MAIL_CLOSED(_)
+	print(">>> MAIL_CLOSED EVENT FIRED <<<")
 	TOGBankClassic_Mail.isOpen = false
 	TOGBankClassic_Mail.isScanning = false
+	print(">>> Calling Bank:OnUpdateStop() <<<")
 	TOGBankClassic_Bank:OnUpdateStop()
+	print(">>> Bank:OnUpdateStop() completed <<<")
 	TOGBankClassic_UI_Mail:Close()
 	-- Refresh requests UI to update fulfill button states
 	-- Delay slightly to ensure MailFrame state is updated

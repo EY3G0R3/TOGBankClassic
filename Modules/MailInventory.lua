@@ -99,13 +99,25 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		table.insert(mailItems, item)
 	end
 	
-	-- Build result structure
+	-- DEBUG: Verify mailItems is a proper sequential array
+	print(string.format(">>> MailInventory: Created array with %d items <<<", #mailItems))
+	for i = 1, math.min(3, #mailItems) do
+		if mailItems[i] then
+			print(string.format("    [%d] ID=%s, Count=%s", i, tostring(mailItems[i].ID), tostring(mailItems[i].Count)))
+		end
+	end
+	
+	-- Build result structure (match bank/bags format for consistency)
 	local result = {
-		slots = 50,  -- Mail slots are always 50 in Classic
+		slots = { count = #mailItems, total = 50 },  -- Match bank/bags structure
 		items = mailItems,  -- Now an array like bank/bags
-		version = time(),
-		lastScan = time()
+		version = GetServerTime(),
+		lastScan = GetServerTime()
 	}
+	
+	-- DEBUG: Verify result structure
+	print(string.format(">>> MailInventory: result.items type=%s, length=%d <<<", type(result.items), #result.items))
+	print(string.format(">>> MailInventory: result.slots.count=%d <<<", result.slots.count))
 	
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Mail scan complete: %d unique items across %d mail messages", 
 		#mailItems, numItems)

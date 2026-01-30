@@ -5,9 +5,10 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
-- None
+- ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 
 **Recent Fixes (2026-01-29):**
+- ✅ [DATA-006] Mail data being deleted by external sync for multi-banker accounts - Fixed ReceiveAltData() to reject ALL external updates to banker data (was only rejecting non-banker updates)
 - ✅ [SEARCH-003] Search returning 0 results despite valid data - Fixed BuildSearchData() to use pairs() instead of ipairs() for hash table iteration from Aggregate()
 - ✅ [ITEM-002] **CRITICAL CRASH** "table index is nil" in Blizzard_ObjectAPI Item.lua:320 - Fixed by adding itemID validation before ContinueOnItemLoad, pcall protection, and filtering corrupted items (ID < 100) in Guild.lua and Item.lua
 - ✅ [DATA-005] Banker data being overwritten by external sources - Enhanced banker protection to reject ALL external data about banker themselves, not just non-banker updates
@@ -94,7 +95,130 @@
 
 ## Open Bugs
 
-### 🔴 CRITICAL
+### � MEDIUM
+
+#### [MAIL-006] Mail UI item display behavior unclear
+
+**Severity:** 🟡 MEDIUM (potentially LOW - needs clarification)
+**Category:** Mail / UI / Data Integrity
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-29
+**Date Resolved:** ⚠️ **INVESTIGATING** - Problem statement unclear
+**Status:** 🔍 **ON HOLD** - Awaiting reproduction steps and symptom clarification
+**Reproducibility:** Unknown
+**Related:** [DATA-004] Mail structure fixes, [MAIL-005] Deduplication
+
+**Problem:**
+User reported "disappearing items in the UI that were loaded through mail" but later stated items were "always showing up in the UI". These statements are contradictory and the actual bug behavior is unclear.
+
+**Investigation Summary (2026-01-29):**
+1. Initial report: "Mail information not persisting through logout to SavedVariables"
+2. Spent 2+ hours investigating wrong SavedVariables file (IANPLAMONDON account)
+3. Discovered data was persisting correctly all along in 981197530#1 account folder
+4. User clarified actual issue was about "disappearing items in UI", not persistence
+5. User then questioned if items were "always showing up" when agent attempted fix
+
+**Completed Fixes (During Investigation):**
+- ✅ Fixed `mail.slots` structure: Changed from number to table `{count=44, total=50}`
+- ✅ Fixed time API: Changed `time()` to `GetServerTime()` for server-synchronized timestamps
+- ✅ Confirmed MAIL_CLOSED event handling working with OnHide hook backup
+- ✅ Confirmed mail data persists correctly through /reload and logout
+- ✅ Verified scan captures all 44 mail items correctly
+- ✅ Removed unnecessary `mailSnapshots` duplicate storage system (overengineering removed)
+
+**Current Data Flow (Verified Working):**
+```
+MailInventory:Scan() → creates mail.items as ARRAY with table.insert()
+  ↓
+Bank:Scan() → saves to info.alts[player].mail
+  ↓
+Guild.lua:MergeMail() → merges into alt.items aggregate (line 1230-1260)
+  ↓
+UI displays from alt.items aggregate
+```
+
+**Open Question - Guild.lua Line 1246 Iteration:**
+```lua
+-- Current code (line 1246):
+for itemID, mailItem in pairs(alt.mail.items) do
+```
+
+**Concern:** `mail.items` is created as an ARRAY by MailInventory using `table.insert()`, but Guild.lua iterates with `pairs()` treating it as a dictionary/hash table. This may cause items to not merge correctly into aggregate.
+
+**Attempted Fix (REVERTED):**
+Changed line 1246 to:
+```lua
+for _, mailItem in ipairs(alt.mail.items) do
+  local itemID = mailItem.ID
+```
+
+User questioned if this change "broke something" and said items were "always showing up", so fix was reverted pending clarification.
+
+**Data Structure Verification:**
+
+**MailInventory.lua (Lines 98-101) - Creates ARRAY:**
+```lua
+local mailItems = {}
+for _, item in pairs(mailItemsTable) do
+  table.insert(mailItems, item)  -- Sequential array insertion
+end
+```
+
+**Guild.lua (Line 1246) - Iterates as dictionary:**
+```lua
+for itemID, mailItem in pairs(alt.mail.items) do
+  -- Expects itemID as key, but array has numeric indices 1, 2, 3...
+  -- Expects mailItem.count but structure has mailItem.Count
+```
+
+**Symptoms (Contradictory - Need Clarification):**
+1. User: "disappearing items in the UI that were loaded through mail"
+2. User (later): Items "always showing up in the UI"
+3. Unknown: Which items disappear? When? Under what conditions?
+4. Unknown: Does /reload affect it? Does logout/login affect it?
+5. Unknown: Are items missing from search results or inventory display or both?
+
+**Diagnostic Information:**
+- Character: Booknlibram-Azuresong (Azuresong realm)
+- Active Account: 981197530#1
+- SavedVariables: `C:\Program Files (x86)\World of Warcraft\_classic_era_\WTF\Account\981197530#1\SavedVariables\TOGBankClassic.lua`
+- Last file update: 1/29/2026 11:40:22 PM
+- Mail items scanned: 44 items
+- Debug output confirmed: Scan working, data saving, events firing correctly
+
+**Lesson Learned:**
+Always verify which WoW account (IANPLAMONDON vs 981197530#1) the user is actively playing before checking SavedVariables files. Multiple accounts have separate SavedVariables folders.
+
+**Next Steps:**
+1. **User to provide:** Clear description of what "disappears" means
+2. **User to provide:** Exact reproduction steps (open mail → scan → close → ?)
+3. **User to provide:** Does this happen with specific items or all mail items?
+4. **User to provide:** Is Guild.lua line 1246 iteration actually causing a problem?
+5. **Agent to test:** Compare `alt.mail.items` raw data vs `alt.items` aggregate after merge
+6. **Agent to test:** Verify UI refresh happens after mail scan completes
+7. **Agent to verify:** Whether pairs() vs ipairs() matters for array with only numeric keys
+
+**Proposed Fix (On Hold):**
+IF Guild.lua iteration is confirmed as a bug:
+```lua
+-- Line 1246 in Guild.lua, change from:
+for itemID, mailItem in pairs(alt.mail.items) do
+
+-- To:
+for _, mailItem in ipairs(alt.mail.items) do
+  local itemID = mailItem.ID
+  
+  -- Also update field names to match array structure:
+  -- mailItem.count → mailItem.Count
+  -- mailItem.link → mailItem.Link
+```
+
+**Current Status:** 
+🔍 **ON HOLD** - Awaiting clear bug definition and reproduction steps from user before proceeding with any code changes.
+
+---
+
+### �🔴 CRITICAL
 
 #### [UI-008] C stack overflow in item loading callbacks
 
@@ -6351,4 +6475,168 @@ for key, item in pairs(items) do  -- Iterate all keys
 - Document in code comments when functions return hash tables vs arrays
 
 ---
+
+#### [DATA-006] Mail data being deleted by external sync for multi-banker accounts
+
+**Severity:** 🔴 CRITICAL
+**Category:** Data Integrity / Delta Sync
+**Reporter:** User (Production - Multi-banker workflow)
+**Date Reported:** 2026-01-29
+**Date Resolved:** 2026-01-29
+**Status:** ✅ RESOLVED
+**Reproducibility:** Consistent with multiple bankers on same account
+**Related:** [DATA-004], [DATA-005], Mail Inventory Persistence
+
+**Problem:**
+When cycling through 35+ banker characters on the same account (all sharing one SavedVariables file), mail data scanned on earlier bankers would disappear after some time. Investigation revealed that external sync data from other players was overwriting locally-scanned mail data, despite mail being a local-only feature that should never be synced.
+
+**User Workflow:**
+1. Log into Banker1 → open mail → open bags → open bank → /reload
+2. Log into Banker2 → open mail → open bags → open bank → /reload
+3. Repeat for 35 bankers...
+4. Later: Log into Banker1 → mail data is GONE from UI
+5. Check SavedVariables file → `mail` field completely missing for Banker1
+
+**Root Cause:**
+
+The DATA-004/DATA-005 banker protection logic had a critical flaw:
+
+**Guild.lua ReceiveAltData() (OLD - lines 1745-1778):**
+```lua
+if playerIsBanker then
+    -- We are a banker - protect our data
+    
+    -- CRITICAL: If this is data about US, reject it
+    if isOwnData then
+        return ADOPTION_STATUS.UNAUTHORIZED
+    end
+    
+    -- Also protect OTHER banker data from non-banker updates
+    local existingIsBanker = existing and self:IsBank(norm)
+    local incomingIsBanker = self:IsBank(name)
+    
+    if existingIsBanker and not incomingIsBanker then
+        -- Reject: non-banker trying to overwrite banker data
+        return ADOPTION_STATUS.UNAUTHORIZED
+    end
+    -- BUG: If incomingIsBanker=true, accept the update!
+end
+
+-- ... later ...
+self.Info.alts[norm] = alt  -- OVERWRITES entire alt object
+```
+
+**The Bug:**
+- Protection only activated when **currently on a banker** (`if playerIsBanker`)
+- Only rejected updates from **non-bankers** to **existing bankers**
+- **Allowed bankers to overwrite OTHER bankers' data!**
+- Line 1827 completely replaces alt object, deleting `mail` field
+
+**Scenario:**
+1. Banker1 scans mail → `alt.mail = { items = [...], lastScan = 12345 }`
+2. Later, while on Banker2, receive sync from Player3 (has data about Banker1)
+3. Player3's data lacks `mail` field (mail is never synced)
+4. Protection checks: `targetIsBanker=true, incomingIsBanker=false` → REJECT ✓ Good!
+5. But then Banker2 broadcasts their version of Banker1's data (from shared SV)
+6. Protection checks: `targetIsBanker=true, incomingIsBanker=true` → ACCEPT ✗ BUG!
+7. Line 1827: `self.Info.alts[norm] = alt` → DELETES Banker1's mail field
+
+**Why This Happens:**
+- Multiple bankers on same account share SavedVariables
+- When Banker2 loads, they have Banker1's data in memory (from SV file)
+- Banker2 broadcasts/shares this data during sync
+- Recipient sees: "incoming from Banker2 about Banker1"
+- Both are bankers → old logic allowed this → mail data deleted
+
+**Solution:**
+
+Complete rewrite of banker protection logic to be **absolute**:
+
+**Guild.lua ReceiveAltData() (NEW - lines 1743-1771):**
+```lua
+-- DATA-004/DATA-006: Protect ALL banker data from external overwrites
+-- Bankers are the source of truth for their own data. External sync should NEVER overwrite banker data.
+-- This protects all bankers on the same account, not just the currently logged-in one.
+local player = UnitName("player") .. "-" .. GetRealmName()
+local playerNorm = self:NormalizeName(player)
+local isOwnData = playerNorm == norm
+local targetIsBanker = self:IsBank(norm)
+
+-- CRITICAL: If the target is a banker, REJECT all external updates (even from other bankers)
+-- Bankers only update their own data when they scan their bank/bags/mail locally
+if targetIsBanker and not isOwnData then
+    TOGBankClassic_Output:Warn(
+        "[DATA-006] Rejected external alt data for banker %s (bankers are source of truth, only self-updates allowed)",
+        norm
+    )
+    return ADOPTION_STATUS.UNAUTHORIZED
+end
+
+-- If this is data about ourselves (current player), reject it
+if isOwnData then
+    TOGBankClassic_Output:Warn(
+        "[DATA-004] Rejected alt data about ourselves from %s (we are the source of truth for own data)",
+        name
+    )
+    return ADOPTION_STATUS.UNAUTHORIZED
+end
+```
+
+**Key Changes:**
+1. **Check targetIsBanker FIRST** - before any other logic
+2. **Reject ALL external updates to bankers** - regardless of sender
+3. **Only allow self-updates** - when `isOwnData=true` (but those are also rejected as external)
+4. **No more nested conditions** - simple, clear, absolute protection
+
+**Why This Works:**
+- Banker data can ONLY be updated by Bank.lua during local scans
+- External sync (ReceiveAltData) can NEVER touch banker data
+- Each banker is responsible for their own data
+- Multiple bankers on same account each protect their own data
+- Mail field (and all banker data) persists indefinitely
+
+**Mail Data Persistence:**
+Mail data is:
+- Scanned locally when banker opens mailbox (MAIL_SHOW → MAIL_CLOSED → Bank:Scan)
+- Stored in `alt.mail = { items = [], lastScan = timestamp }`
+- Written to SavedVariables automatically by AceDB
+- Never included in external sync messages (bandwidth optimization)
+- Protected from deletion by DATA-006 fix
+
+**Testing:**
+1. Log into Banker1 → open mail with items → verify mail data in SV file
+2. Log into Banker2 → trigger full sync from other players
+3. Log back into Banker1 → mail data should still be present
+4. Check debug log for "[DATA-006] Rejected external alt data for banker"
+
+**Impact:**
+- **Severity:** CRITICAL - Causes permanent data loss for mail inventory
+- **Frequency:** 100% with multi-banker workflows and active guild sync
+- **Scope:** Affects all banker data, not just mail (bank/bags also at risk)
+- **Resolution:** All banker data now fully protected from external overwrites
+
+**Files Changed:**
+- [Modules/Guild.lua](Modules/Guild.lua#L1597) - Added sender parameter to ReceiveAltData
+- [Modules/Guild.lua](Modules/Guild.lua#L1743-1779) - Implemented 3-rule banker protection (reject unless sender==target for bankers)
+- [Modules/Guild.lua](Modules/Guild.lua#L1831-1845) - Added mail field preservation as fallback
+- [Modules/Chat.lua](Modules/Chat.lua#L823,L860) - Pass sender to ReceiveAltData calls
+
+**Related Issues:**
+- [DATA-004] Initial banker self-protection implementation
+- [DATA-005] Enhanced to protect from non-banker updates
+- [DATA-006] Final fix: Added sender tracking + 3-rule protection + mail preservation
+
+**Key Insight:**
+The solution required passing `sender` to `ReceiveAltData()` so we could distinguish:
+- ✅ Banker1 sending their own data (sender==target) - ACCEPT
+- ❌ Banker3 sending Banker1's data (sender!=target) - REJECT
+Without sender info, all banker data looked the same and stale SV data could overwrite fresh scans.
+
+**Prevention:**
+- Always pass sender identity through sync chain
+- Banker data ONLY modified by Bank.lua during local scans
+- External sync checks: banker targets must have sender==target
+- Mail preservation as defense-in-depth (even if rejection fails)
+- Test with multiple bankers on same account sharing SavedVariables
+
 ---

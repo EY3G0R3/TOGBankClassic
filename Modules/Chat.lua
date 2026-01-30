@@ -820,7 +820,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
 				allowed = true
 			end
-			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
+			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt, sender)
 				or ADOPTION_STATUS.UNAUTHORIZED
 			self:Debug(
 				"SYNC",
@@ -857,7 +857,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
 				allowed = true
 			end
-			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt)
+			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt, sender)
 				or ADOPTION_STATUS.UNAUTHORIZED
 			self:Debug(
 				"SYNC",
