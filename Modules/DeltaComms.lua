@@ -673,11 +673,20 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 
 		-- Validate base version matches
 		if not current then
-			-- No existing data, request full sync
-			local errorMsg = string.format("No existing data for %s", norm)
-			TOGBankClassic_Output:Debug("DELTA", errorMsg .. ", requesting full sync")
-			self:RecordDeltaError(guildInfo.name, norm, "NO_DATA", errorMsg)
-			TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
+			-- No existing data, request full sync (but only if not already pending)
+			local hasPending = TOGBankClassic_Guild.pending_sync 
+				and TOGBankClassic_Guild.pending_sync.alts 
+				and TOGBankClassic_Guild.pending_sync.alts[norm]
+			
+			if not hasPending then
+				local errorMsg = string.format("No existing data for %s", norm)
+				TOGBankClassic_Output:Debug("DELTA", errorMsg .. ", requesting full sync")
+				self:RecordDeltaError(guildInfo.name, norm, "NO_DATA", errorMsg)
+				TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
+			else
+				TOGBankClassic_Output:Debug("DELTA", "No data for %s but full sync already pending, skipping duplicate request", norm)
+			end
+			
 			if guildInfo and guildInfo.name then
 				TOGBankClassic_Database:RecordDeltaFailed(guildInfo.name)
 			end

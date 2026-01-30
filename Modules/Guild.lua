@@ -1731,6 +1731,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		local isOwnData = playerNorm == norm
 		local targetIsBanker = self:IsBank(norm)
 		local senderIsBanker = senderNorm and self:IsBank(senderNorm) or false
+		local receiverIsBanker = self:IsBank(playerNorm)
 		
 		-- Rule 1: Reject data about ourselves (we already have our own current data)
 		if isOwnData then
@@ -1740,9 +1741,10 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			return ADOPTION_STATUS.UNAUTHORIZED
 		end
 		
-		-- Rule 2: For banker targets, only accept if sender IS that banker
-		if targetIsBanker then
-			-- Data is about a banker, only accept if sender is that exact banker
+		-- Rule 2: Banker protection - only apply if WE are a banker protecting our data
+		-- Regular users should accept banker data from anyone
+		if receiverIsBanker and targetIsBanker then
+			-- We are a banker, and data is about a banker - only accept if sender is that banker
 			if senderNorm ~= norm then
 				TOGBankClassic_Output:Debug("SYNC",
 					"[DATA-006] Rejected data about banker %s from %s (bankers only update themselves)",
@@ -1755,7 +1757,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				norm)
 		end
 		
-		-- Rule 3: Non-banker data accepted from anyone (no additional checks)
+		-- Rule 3: Non-bankers accept all data, non-banker data accepted from anyone
 		
 		-- Version checking for all alts
 	if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then

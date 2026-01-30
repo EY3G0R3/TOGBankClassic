@@ -560,10 +560,12 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 			TOGBankClassic_UI_Requests:HandleResize()
 		end)
 	end
+	
+	-- Register frame for ESC key handling
+	-- AceGUI frames handle ESC automatically, no manual registration needed
+	
 	self.Window = window
-
-	self.HeaderGroup = nil
-	self.FilterGroup = nil
+	
 	self.HeaderWidgets = nil
 	self.FilterWidgets = nil
 	self.FilterRequester = nil

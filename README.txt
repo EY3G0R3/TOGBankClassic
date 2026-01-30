@@ -456,6 +456,7 @@ NEW COMMANDS:
 - /togbank debuglogsave - Save logs to disk
 - /togbank debuglogstats - View log statistics
 - /togbank debugtabremove - Remove debug chat tab
+- /togbank clear-delta-errors - Clear all recorded delta errors
 - /togbank deltaerrors - View recent delta failures
 - /togbank deltahistory - View delta chain history
 - /togbank forcedelta [on|off] - Force delta mode

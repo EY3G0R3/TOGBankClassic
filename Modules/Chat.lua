@@ -1235,6 +1235,28 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		name = "clear-delta-errors",
+		help = "clear all recorded delta sync errors (DELTA-011 cleanup)",
+		expert = true,
+		handler = function()
+			local guild = TOGBankClassic_Guild:GetGuild()
+			if not guild then
+				TOGBankClassic_Output:Response("Not in a guild")
+				return
+			end
+			
+			local db = TOGBankClassic_Database.db.faction[guild]
+			if db and db.deltaErrors then
+				db.deltaErrors.lastErrors = {}
+				db.deltaErrors.failureCounts = {}
+				db.deltaErrors.notifiedAlts = {}
+				TOGBankClassic_Output:Response("Cleared all delta sync errors")
+			else
+				TOGBankClassic_Output:Response("No delta errors to clear")
+			end
+		end,
+	},
+	{
 		name = "deltahistory",
 		help = "show stored delta chain history for offline recovery",
 		expert = true,
