@@ -55,6 +55,12 @@
 - **Impact**: Search functionality now works correctly for all item queries
 - Location: Search.lua lines 405-410
 
+#### Mail Data Persistence
+- **Removed**: Unused `IsMailDataStale()` function and 1-hour staleness threshold
+- **Change**: Mail data now persists indefinitely like bank/bags data
+- **Impact**: Mail inventory remains visible regardless of age, with timestamp displayed for information
+- Location: MailInventory.lua
+
 #### [UI-002] Item Links Not Appearing After Integration
 - **Fixed**: Items now display immediately after async item link reconstruction
 - **Root Cause**: `ReconstructItemLinks()` was using async `Item:ContinueOnItemLoad()` callbacks without triggering UI refresh

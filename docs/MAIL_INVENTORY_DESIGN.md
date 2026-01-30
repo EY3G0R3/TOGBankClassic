@@ -412,8 +412,8 @@ Mail inventory uses the existing delta sync system - no special handling needed.
 
 2. **Mail Data Age:**
    - Show age of last mail scan (e.g., "Last scanned: 2 hours ago")
-   - Gray out stale data (>24 hours old)
-   - Don't auto-fulfill from mail data older than 1 hour
+   - Mail data persists indefinitely like bank/bags data
+   - Age is informational only, does not affect functionality
 
 3. **Memory Impact:**
    - Mail has max 50 slots, typically 1-12 items
@@ -427,7 +427,7 @@ Mail inventory uses the existing delta sync system - no special handling needed.
 
 ### Edge Case 2: Stale Mail Data
 **Problem:** Mail data from yesterday, items already taken  
-**Solution:** Show age of scan, don't count toward fulfillment if >1 hour old
+**Solution:** Show age of scan. Mail data persists indefinitely like bank/bags data. User must rescan mailbox to update if items are taken.
 
 ### Edge Case 3: Multiple Bankers
 **Problem:** Two bankers both have requested items in mail  
@@ -510,11 +510,11 @@ Mail inventory uses the existing delta sync system - no special handling needed.
 3. Verify mail results have ✉ icon
 4. Click mail result, verify tooltip shows mail details
 
-### Test 5: Stale Data
+### Test 5: Mail Data Persistence
 1. Scan mail at time T
 2. Wait 25 hours
-3. Verify UI shows age warning
-4. Verify fulfillment logic ignores stale data
+3. Verify UI shows age ("25 hours ago")
+4. Verify mail data still displays (persists indefinitely)
 
 ## Open Questions
 

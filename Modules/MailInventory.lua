@@ -165,27 +165,6 @@ function TOGBankClassic_MailInventory:GetTotalInMail(itemID)
 end
 
 --[[
-	IsMailDataStale(alt)
-	Checks if mail scan data is too old to be reliable
-	
-	Parameters:
-		alt - alt data structure
-	
-	Returns:
-		boolean - true if data is stale (>1 hour old)
-]]
-function TOGBankClassic_MailInventory:IsMailDataStale(alt)
-	if not alt or not alt.mail or not alt.mail.lastScan then
-		return true
-	end
-	
-	local age = time() - alt.mail.lastScan
-	local STALE_THRESHOLD = 3600  -- 1 hour
-	
-	return age > STALE_THRESHOLD
-end
-
---[[
 	GetMailDataAge(alt)
 	Returns age of mail scan data in seconds
 	
