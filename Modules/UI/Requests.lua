@@ -545,6 +545,10 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	window:SetLayout("Flow")
 	window:SetWidth(MIN_WIDTH)
 	window:EnableResize(true)
+	-- Persist window position/size across reloads
+	if TOGBankClassic_Options and TOGBankClassic_Options.db then
+		window:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
+	end
 	if window.frame.SetResizeBounds then
 		window.frame:SetResizeBounds(MIN_WIDTH, 200)
 	else
@@ -599,20 +603,16 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 		-- Add highlighting checkbox (only for bankers)
 		local banks = TOGBankClassic_Guild:GetBanks()
-		TOGBankClassic_Output:Debug("REQUESTS", "Checking if player is banker - banks=%s", tostring(banks ~= nil))
 		if banks then
 			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
-			TOGBankClassic_Output:Debug("REQUESTS", "Current player: %s", tostring(currentPlayer))
 			local isBank = false
 			for _, bankName in ipairs(banks) do
 				local normBank = TOGBankClassic_Guild:NormalizeName(bankName)
-				TOGBankClassic_Output:Debug("REQUESTS", "Comparing %s == %s", normBank, currentPlayer)
 				if normBank == currentPlayer then
 					isBank = true
 					break
 				end
 			end
-			TOGBankClassic_Output:Debug("REQUESTS", "Is banker: %s", tostring(isBank))
 			if isBank then
 				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
 				highlightCheckbox:SetLabel("Highlight needed items")
@@ -625,7 +625,6 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 				end)
 				filterGroup:AddChild(highlightCheckbox)
 				self.HighlightCheckbox = highlightCheckbox
-				TOGBankClassic_Output:Debug("REQUESTS", "Highlight checkbox created")
 			end
 		end
 	end
@@ -1015,35 +1014,6 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 			self.HeaderGroup:AddChild(widget)
 		end
 	end
-
-	-- Add highlighting checkbox for two-header layout (only for bankers)
-	if not self.HighlightCheckbox then
-		local banks = TOGBankClassic_Guild:GetBanks()
-		if banks then
-			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
-			local isBank = false
-			for _, bankName in ipairs(banks) do
-				local normBank = TOGBankClassic_Guild:NormalizeName(bankName)
-				if normBank == currentPlayer then
-					isBank = true
-					break
-				end
-			end
-			if isBank then
-				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
-				highlightCheckbox:SetLabel("Highlight needed items")
-				highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
-				highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
-					if TOGBankClassic_ItemHighlight then
-						TOGBankClassic_ItemHighlight:SetEnabled(value)
-					end
-				end)
-				tagColumnWidget(highlightCheckbox, #COLUMNS + 1, false)
-				self.HighlightCheckbox = highlightCheckbox
-				self.HeaderGroup:AddChild(highlightCheckbox)
-			end
-		end
-	end
 end
 
 function TOGBankClassic_UI_Requests:DrawHeader()
@@ -1135,7 +1105,7 @@ function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 		end
 	end
 
-	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)",
+	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)", 
 		#(requests or {}), #filtered, tostring(self.requesterFilter), tostring(self.bankFilter)))
 
 	return filtered
@@ -1171,9 +1141,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	local sorted = self:SortedRequests()
 	sorted = self:ApplyFilters(sorted)
 	local count = #sorted
-
+	
 	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] DrawContent: Displaying %d requests", count))
-
+	
 	if count == 0 then
 		local empty = self:EnsureEmptyLabel()
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[1]) or COLUMNS[1].width

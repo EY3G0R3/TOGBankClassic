@@ -681,6 +681,44 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			end
 			return ADOPTION_STATUS.INVALID
 		end
+		
+		-- DATA-004: Protect banker data - bankers are the source of truth
+		local player = UnitName("player") .. "-" .. GetRealmName()
+		local playerNorm = TOGBankClassic_Guild:NormalizeName(player)
+		local playerIsBanker = TOGBankClassic_Guild:IsBank(playerNorm)
+		
+		if playerIsBanker then
+			-- We are a banker - protect our own data and other banker data
+			
+			-- CRITICAL: If this delta is about US, reject it (we are the source of truth for our own data)
+			if norm == playerNorm then
+				local errorMsg = string.format(
+					"Rejected delta from %s about ourselves (banker is source of truth for own data)",
+					sender or "unknown"
+				)
+				TOGBankClassic_Output:Warn("[DATA-004] %s", errorMsg)
+				self:RecordDeltaError(guildInfo.name, norm, "UNAUTHORIZED", errorMsg)
+				return ADOPTION_STATUS.UNAUTHORIZED
+			end
+			
+			-- Also protect OTHER banker data from non-banker updates
+			local currentIsBanker = TOGBankClassic_Guild:IsBank(norm)
+			local senderNorm = sender and TOGBankClassic_Guild:NormalizeName(sender) or nil
+			local senderIsBanker = senderNorm and TOGBankClassic_Guild:IsBank(senderNorm) or false
+			
+			if currentIsBanker and not senderIsBanker then
+				-- Reject: non-banker trying to update banker data
+				local errorMsg = string.format(
+					"Rejected delta from non-banker %s for banker %s (bankers are source of truth)",
+					sender or "unknown",
+					norm
+				)
+				TOGBankClassic_Output:Warn("[DATA-004] %s", errorMsg)
+				self:RecordDeltaError(guildInfo.name, norm, "UNAUTHORIZED", errorMsg)
+				return ADOPTION_STATUS.UNAUTHORIZED
+			end
+		end
+		-- Non-bankers accept all deltas (they're not the authority)
 
 		local currentVersion = current.version or 0
 		-- v0.8.0: baseVersion no longer sent, but accept it for backwards compatibility

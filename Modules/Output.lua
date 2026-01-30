@@ -360,6 +360,9 @@ end
 
 -- Warn: something unexpected but recoverable
 function TOGBankClassic_Output:Warn(fmt, ...)
+	if TOGBankClassic_Options and TOGBankClassic_Options:IsWarningsMuted() then
+		return false
+	end
 	return Log(LOG_LEVEL.WARN, "|cffffcc00[WARN]|r", fmt, ...)
 end
 

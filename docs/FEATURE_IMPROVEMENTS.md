@@ -18,6 +18,7 @@
 - [ ] **Debug category filtering** - Add category-based debug logging to filter spam; enable/disable specific categories (ROSTER, COMMS, DELTA, SYNC, CACHE, WHISPER, REQUESTS, UI, PROTOCOL) via slash commands; reduces debug noise when troubleshooting specific issues
 - [x] ~~**Persistent debug logging**~~ **v0.7.11: Implemented with 50k entry buffer, 7-day retention, filtering**
 - [x] ~~**SplitContainerItem popup for order fulfillment**~~ **IMPLEMENTED: Shows confirmation popup with shovel icon when split needed; smart bin-packing algorithm for optimal stack selection; supports complex partial fulfillment scenarios**
+- [x] ~~**Mute warning messages**~~ **IMPLEMENTED: Checkbox in options to hide [WARN] messages like DATA-004/DATA-005 rejections; reduces day-to-day chat spam for non-debugging users**
 - [ ] **Bagnon-style item highlighting** - Implement visual highlighting system that greys out all items except those needed to fulfill active orders; works across player bags and bank; helps bankers quickly locate and gather items for order fulfillment
 - [ ] **Deprecate legacy protocols** - Phase out togbank-v (non-delta), togbank-dv (pre-SYNC-006), and separate bank/bags structures in favor of unified togbank-dv2 (SYNC-006+) with `alt.items` aggregate; includes removing 5-second dv/dv2 prioritization delay once all clients upgraded; currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
 

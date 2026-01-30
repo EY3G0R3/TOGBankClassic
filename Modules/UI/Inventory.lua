@@ -301,16 +301,12 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			-- Fallback: compute from sources (backward compatibility for very old data)
 			local bankItems = (alt.bank and alt.bank.items) or {}
 			local bagItems = (alt.bags and alt.bags.items) or {}
-			local mailItems = {}
-			if alt.mail and alt.mail.items then
-				for itemID, mailItem in pairs(alt.mail.items) do
-					table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
-				end
-			end
+			local mailItems = (alt.mail and alt.mail.items) or {}
 			
 			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d", 
 				tab, #bankItems, #bagItems, #mailItems)
 			
+			-- Aggregate all sources (all are now in array format), then convert the key-value result to array
 			local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
 			aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
 			for _, item in pairs(aggregated) do
@@ -341,7 +337,18 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 				end
 			end
 			
-			TOGBankClassic_Item:GetItems(items, function(list)
+			-- Validate and filter items before passing to GetItems
+			local validItems = {}
+			for i, item in ipairs(items) do
+				if item and item.ID and item.ID > 0 then
+					table.insert(validItems, item)
+				else
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] WARNING: Tab %s skipping invalid item at index %d (ID: %s, Link: %s)", 
+						tab, i, tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
+				end
+			end
+			
+			TOGBankClassic_Item:GetItems(validItems, function(list)
 				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items", 
 					tab, list and #list or 0)
 				TOGBankClassic_Item:Sort(list)

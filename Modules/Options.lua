@@ -32,6 +32,9 @@ function TOGBankClassic_Options:Init()
 	if self.db.global.bank["muteSyncProgress"] == nil then
 		self.db.global.bank["muteSyncProgress"] = false
 	end
+	if self.db.global.bank["muteWarnings"] == nil then
+		self.db.global.bank["muteWarnings"] = false
+	end
 	-- Initialize logger with saved level
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
 	-- Initialize comm debug with saved setting
@@ -111,6 +114,19 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return self.db.global.bank["muteSyncProgress"]
+						end,
+					},
+					["muteWarnings"] = {
+						order = 2.7,
+						type = "toggle",
+						width = "full",
+						name = "Mute Warning Messages",
+						desc = "Hides [WARN] messages like data protection rejections and protocol warnings",
+						set = function(_, v)
+							self.db.global.bank["muteWarnings"] = v
+						end,
+						get = function()
+							return self.db.global.bank["muteWarnings"]
 						end,
 					},
 					["protocolMode"] = {
@@ -335,6 +351,18 @@ function TOGBankClassic_Options:Init()
 							return TOGBankClassic_Output:IsCategoryEnabled("MAIL")
 						end,
 					},
+					["item"] = {
+						order = 22,
+						type = "toggle",
+						width = "full",
+						name = "ITEM - Item loading, validation, and processing",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("ITEM", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("ITEM")
+						end,
+					},
 					["spacer"] = {
 						order = 30,
 						type = "description",
@@ -542,6 +570,10 @@ end
 
 function TOGBankClassic_Options:IsSyncProgressMuted()
 	return self.db.global.bank["muteSyncProgress"] or false
+end
+
+function TOGBankClassic_Options:IsWarningsMuted()
+	return self.db.global.bank["muteWarnings"] or false
 end
 
 function TOGBankClassic_Options:Open()

@@ -36,6 +36,7 @@ DEBUG_CATEGORY = {
 	DATABASE = "DATABASE",       -- Database operations, SavedVariables
 	EVENTS = "EVENTS",           -- WoW event handling
 	MAIL = "MAIL",               -- Mail inventory scanning and tracking
+	ITEM = "ITEM",               -- Item loading, validation, and processing
 }
 
 -- Request log compaction settings

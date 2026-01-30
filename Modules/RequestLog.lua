@@ -123,9 +123,21 @@ local function sanitizeRequest(req)
 	local bank = Guild:NormalizeName(req.bank)
 	local requester = Guild:NormalizeName(req.requester)
 
-	local updatedAt = tonumber(req.updatedAt or req.date or now) or now
-	local dateVal = tonumber(req.date or updatedAt) or updatedAt
-	local statusUpdatedAt = tonumber(req.statusUpdatedAt or updatedAt) or updatedAt
+	-- Validate timestamps to prevent corruption (DATA-003)
+	-- Max 32-bit signed integer (Jan 19, 2038) - any larger value is corrupted
+	local MAX_TIMESTAMP = 2147483647
+	local function validateTimestamp(ts, fallback)
+		local num = tonumber(ts) or fallback
+		-- If timestamp is too large (corrupted), use fallback instead
+		if num > MAX_TIMESTAMP then
+			return fallback
+		end
+		return num
+	end
+
+	local updatedAt = validateTimestamp(req.updatedAt or req.date or now, now)
+	local dateVal = validateTimestamp(req.date or updatedAt, updatedAt)
+	local statusUpdatedAt = validateTimestamp(req.statusUpdatedAt or updatedAt, updatedAt)
 	local status = req.status
 	if not VALID_REQUEST_STATUS[status] then
 		status = "open"

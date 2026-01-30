@@ -107,6 +107,11 @@ local function ComputeChecksum(str)
     return sum
 end
 
+-- Expose Checksum as public method for DeltaComms
+function TOGBankClassic_Core:Checksum(str)
+    return ComputeChecksum(str)
+end
+
 -- Serialize data with appended checksum for integrity verification
 function TOGBankClassic_Core:SerializeWithChecksum(data)
     local serialized = self:Serialize(data)

@@ -200,12 +200,7 @@ function TOGBankClassic_Bank:Scan()
 	-- Aggregate bank + bags + mail into alt.items for sync and display
 	local bankItems = (alt.bank and alt.bank.items) or {}
 	local bagItems = (alt.bags and alt.bags.items) or {}
-	local mailItems = {}
-	if alt.mail and alt.mail.items then
-		for itemID, mailItem in pairs(alt.mail.items) do
-			table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
-		end
-	end
+	local mailItems = (alt.mail and alt.mail.items) or {}  -- Now an array like bank/bags
 	
 	-- DEBUG: Log sample counts from SOURCE arrays before aggregation
 	if #bankItems > 0 then
@@ -216,7 +211,7 @@ function TOGBankClassic_Bank:Scan()
 				table.insert(bankSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("SCAN-DETAIL", "SOURCES - bank.items (first 3): %s", table.concat(bankSample, ", "))
+		TOGBankClassic_Output:Debug("DATABASE", "SOURCES - bank.items (first 3): %s", table.concat(bankSample, ", "))
 	end
 	if #bagItems > 0 then
 		local bagSample = {}
@@ -226,7 +221,7 @@ function TOGBankClassic_Bank:Scan()
 				table.insert(bagSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("SCAN-DETAIL", "SOURCES - bags.items (first 3): %s", table.concat(bagSample, ", "))
+		TOGBankClassic_Output:Debug("DATABASE", "SOURCES - bags.items (first 3): %s", table.concat(bagSample, ", "))
 	end
 	if #mailItems > 0 then
 		local mailSample = {}
@@ -236,7 +231,7 @@ function TOGBankClassic_Bank:Scan()
 				table.insert(mailSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("SCAN-DETAIL", "SOURCES - mail.items (first 3): %s", table.concat(mailSample, ", "))
+		TOGBankClassic_Output:Debug("DATABASE", "SOURCES - mail.items (first 3): %s", table.concat(mailSample, ", "))
 	end
 	
 	-- Aggregate all three sources (returns table with composite keys, deduplicates by ID)
@@ -258,7 +253,7 @@ function TOGBankClassic_Bank:Scan()
 				table.insert(scanSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("SCAN-DETAIL", "After Bank:Scan aggregation - First 5 items: %s", table.concat(scanSample, ", "))
+		TOGBankClassic_Output:Debug("DATABASE", "After Bank:Scan aggregation - First 5 items: %s", table.concat(scanSample, ", "))
 	end
 	
 	-- Also clean up source arrays to remove any duplicates (in case of corrupted data)
@@ -379,6 +374,8 @@ function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
 		for _, item in pairs(deduped) do
 			table.insert(bankItems, item)
 		end
+		-- Write deduplicated bank items back to source to fix SV file
+		alt.bank.items = bankItems
 	end
 	
 	local bagItems = {}
@@ -387,25 +384,66 @@ function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
 		for _, item in pairs(deduped) do
 			table.insert(bagItems, item)
 		end
+		-- Write deduplicated bag items back to source to fix SV file
+		alt.bags.items = bagItems
 	end
 	
 	local mailItems = {}
 	if alt.mail and alt.mail.items then
-		for itemID, mailItem in pairs(alt.mail.items) do
-			table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] BEFORE dedup: mail has %d entries", #alt.mail.items)
+		-- Debug: Check for duplicates BEFORE deduplication
+		local mailByID = {}
+		for i, item in ipairs(alt.mail.items) do
+			if item and item.ID then
+				if not mailByID[item.ID] then
+					mailByID[item.ID] = {}
+				end
+				table.insert(mailByID[item.ID], { index = i, Count = item.Count, Link = item.Link })
+			end
 		end
+		for itemID, entries in pairs(mailByID) do
+			if #entries > 1 then
+				TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] BEFORE dedup: mail item ID %d has %d entries", itemID, #entries)
+				for _, entry in ipairs(entries) do
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-003]   index=%d Count=%d Link=%s", entry.index, entry.Count, entry.Link or "nil")
+				end
+			end
+		end
+		
+		-- Mail items are now stored as array (same as bank/bags)
+		local deduped = TOGBankClassic_Item:Aggregate(alt.mail.items, nil)
+		for _, item in pairs(deduped) do
+			table.insert(mailItems, item)
+		end
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] AFTER dedup: mail has %d entries", #mailItems)
+		-- Write deduplicated mail items back to source to fix SV file
+		alt.mail.items = mailItems
 	end
 	
 	-- Aggregate all three sources
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] Aggregating: bank=%d, bags=%d, mail=%d", #bankItems, #bagItems, #mailItems)
 	local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] After bank+bags aggregate: %d unique items", TOGBankClassic_Item:CountItems(aggregated))
 	aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
+	TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] After adding mail: %d unique items", TOGBankClassic_Item:CountItems(aggregated))
 	
-	-- Convert back to array format
+	-- Convert back to array format and filter out corrupted low-ID items
+	-- Valid Classic WoW item IDs start around 2000+, items with ID < 100 are from old bugs
 	alt.items = {}
+	local filteredCount = 0
 	for _, item in pairs(aggregated) do
-		table.insert(alt.items, item)
+		if item.ID and item.ID >= 100 then
+			table.insert(alt.items, item)
+		else
+			filteredCount = filteredCount + 1
+			TOGBankClassic_Output:Debug("BANK", "Filtered out corrupted item with invalid ID: %s", tostring(item.ID))
+		end
 	end
 	
-	TOGBankClassic_Output:Debug("BANK", "Recalculated aggregated items: bank=%d, bags=%d, mail=%d, total=%d", 
-		#bankItems, #bagItems, #mailItems, #alt.items)
+	if filteredCount > 0 then
+		TOGBankClassic_Output:Debug("BANK", "Removed %d corrupted items from aggregated data", filteredCount)
+	end
+	
+	TOGBankClassic_Output:Debug("BANK", "Recalculated aggregated items: bank=%d, bags=%d, mail=%d, total=%d (filtered %d)", 
+		#bankItems, #bagItems, #mailItems, #alt.items, filteredCount)
 end

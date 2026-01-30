@@ -154,7 +154,7 @@ function TOGBankClassic_Database:Load(name)
 								table.insert(beforeSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 							end
 						end
-						TOGBankClassic_Output:Debug("DB-LOAD", "BEFORE clear - Banker %s alt.items: %s", name, table.concat(beforeSample, ", "))
+						TOGBankClassic_Output:Debug("DATABASE", "BEFORE clear - Banker %s alt.items: %s", name, table.concat(beforeSample, ", "))
 					end
 					
 					alt.items = nil  -- Clear corrupted data
@@ -169,7 +169,7 @@ function TOGBankClassic_Database:Load(name)
 								table.insert(afterSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 							end
 						end
-						TOGBankClassic_Output:Debug("DB-LOAD", "AFTER recalc - Banker %s alt.items: %s", name, table.concat(afterSample, ", "))
+						TOGBankClassic_Output:Debug("DATABASE", "AFTER recalc - Banker %s alt.items: %s", name, table.concat(afterSample, ", "))
 					end
 					
 					TOGBankClassic_Output:Debug("DATABASE", "FORCED recalculation for banker %s from bank/bags/mail", name)

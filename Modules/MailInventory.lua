@@ -41,7 +41,8 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		return nil
 	end
 	
-	local mailItems = {}
+	-- Use same structure as bank/bags: aggregate by composite key, store as array
+	local mailItemsTable = {}
 	local numItems, totalItems = GetInboxNumItems()
 	
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Starting mailbox scan: %d mail messages", numItems)
@@ -59,35 +60,31 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 				if itemID and name then
 					local link = GetInboxItemLink(i, j)
 					
-					-- Initialize item entry if first occurrence
-					if not mailItems[itemID] then
-						mailItems[itemID] = {
-							id = itemID,
-							name = name,
-							link = link,
-							count = 0,
-							sources = {}
-						}
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] New item in mailbox: %s (ID: %d)", name, itemID)
+					-- Conditionally include Link based on item class
+					-- Gear (weapons/armor) needs FULL Link for suffix differentiation
+					-- Consumables/trade goods don't need Link (saves bandwidth in d3 sync)
+					local storageLink = nil
+					if link and TOGBankClassic_Item:NeedsLink(link) then
+						storageLink = link  -- Store FULL link for gear
 					end
 					
-					-- Track previous count before adding
-					local previousCount = mailItems[itemID].count
+					-- Use NORMALIZED key for deduplication (strips unique instance ID)
+					-- This allows identical items to merge even if they have different instance IDs
+					local itemKey = TOGBankClassic_Item:GetItemKey(link)
+					local key = tostring(itemID) .. itemKey
 					
-					-- Add to total count
-					mailItems[itemID].count = mailItems[itemID].count + count
-					
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Item %s: added %d, total now %d (was %d)", 
-						name, count, mailItems[itemID].count, previousCount)
-					
-					-- Track source details
-					table.insert(mailItems[itemID].sources, {
-						index = i,
-						count = count,
-						sender = sender or "Unknown",
-						daysLeft = daysLeft or 0,
-						subject = subject or ""
-					})
+					if mailItemsTable[key] then
+						-- Item already exists, add to count
+						local item = mailItemsTable[key]
+						mailItemsTable[key] = { ID = item.ID, Count = item.Count + count, Link = item.Link or storageLink }
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] Item %s: MERGED (key=%s) added %d, total now %d", 
+							name, key, count, mailItemsTable[key].Count)
+					else
+						-- New item
+						mailItemsTable[key] = { ID = itemID, Count = count, Link = storageLink }
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] New item in mailbox: %s (ID: %d, Count: %d, Link: %s, Key: %s)", 
+							name, itemID, count, storageLink and "preserved" or "stripped", key)
+					end
 				end
 			end
 		elseif hasItem and CODAmount > 0 then
@@ -96,28 +93,22 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		end
 	end
 	
+	-- Convert to array format (same as bank/bags)
+	local mailItems = {}
+	for _, item in pairs(mailItemsTable) do
+		table.insert(mailItems, item)
+	end
+	
 	-- Build result structure
 	local result = {
 		slots = 50,  -- Mail slots are always 50 in Classic
-		items = mailItems,
+		items = mailItems,  -- Now an array like bank/bags
 		version = time(),
 		lastScan = time()
 	}
 	
-	-- Count unique items
-	local itemCount = 0
-	for _ in pairs(mailItems) do
-		itemCount = itemCount + 1
-	end
-	
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Mail scan complete: %d unique items across %d mail messages", 
-		itemCount, numItems)
-	
-	-- Log final counts for each item
-	for itemID, itemData in pairs(mailItems) do
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Final: %s (ID: %d) = %d total from %d sources", 
-			itemData.name, itemID, itemData.count, #itemData.sources)
-	end
+		#mailItems, numItems)
 	
 	return result
 end

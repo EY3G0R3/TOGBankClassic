@@ -274,12 +274,13 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	searchWindow:SetCallback("OnClose", OnClose)
 	searchWindow:SetTitle("Search")
 	searchWindow:SetLayout("Flow")
-	searchWindow:SetWidth(250)
 	searchWindow:EnableResize(false)
 	-- Persist window position/size across reloads
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
 		searchWindow:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
 	end
+	-- Set width AFTER SetStatusTable to override any saved width
+	searchWindow:SetWidth(175)
 
 	self.Window = searchWindow
 
@@ -370,23 +371,27 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 		--if alt then
 		if alt and type(alt) == "table" then
 			---END CHANGES
-			if alt.bank then
-				items = TOGBankClassic_Item:Aggregate(items, alt.bank.items)
-			end
-			if alt.bags then
-				items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
-			end
-			-- Include mail items
+			-- Use alt.items if available (SYNC-006 aggregated format)
+			if alt.items and next(alt.items) ~= nil then
+				-- alt.items already includes bank+bags+mail, use it directly
+				items = TOGBankClassic_Item:Aggregate(items, alt.items)
+				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: using alt.items for %s", player)
+			else
+				-- Fallback: aggregate from sources for backward compatibility
+				if alt.bank then
+					items = TOGBankClassic_Item:Aggregate(items, alt.bank.items)
+				end
+				if alt.bags then
+					items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
+				end
+			-- Include mail items (now in array format like bank/bags)
 			if alt.mail and alt.mail.items then
 				local mailItemCount = 0
-				for _ in pairs(alt.mail.items) do mailItemCount = mailItemCount + 1 end
+				for _ in ipairs(alt.mail.items) do mailItemCount = mailItemCount + 1 end
 				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: aggregating mail for %s (%d unique items)", 
 					player, mailItemCount)
-				for itemID, mailItem in pairs(alt.mail.items) do
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: %s has %d x %s (ID: %d) in mail", 
-						player, mailItem.count, mailItem.name or "Unknown", itemID)
-					local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
-					items = TOGBankClassic_Item:Aggregate(items, {fakeItem})
+				-- Mail items are now in array format {ID, Count, Link}, not key-value
+				items = TOGBankClassic_Item:Aggregate(items, alt.mail.items)
 				end
 			end
 		end
@@ -394,7 +399,26 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 
 	local itemNames = {}
 	local corpusNamesSeen = {}
-	TOGBankClassic_Item:GetItems(items, function(list)
+	
+	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] About to validate %d items before GetItems", #items)
+	
+	-- Validate and filter items before passing to GetItems
+	local validItems = {}
+	local invalidCount = 0
+	for i, item in ipairs(items) do
+		if item and item.ID and item.ID > 0 then
+			table.insert(validItems, item)
+		else
+			invalidCount = invalidCount + 1
+			TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] WARNING: Skipping invalid item at index %d (ID: %s, Link: %s)", 
+				i, tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
+		end
+	end
+	
+	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] Passing %d valid items to GetItems (%d invalid skipped)", 
+		#validItems, invalidCount)
+	
+	TOGBankClassic_Item:GetItems(validItems, function(list)
 		for _, v in pairs(list) do
 			-- Skip malformed list entries
 			if v and v.ID and v.Info and v.Info.name then
@@ -423,23 +447,33 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			--if alt then
 			if alt and type(alt) == "table" then
 				---END CHANGES
-				if alt.bank then
-					altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bank.items)
-				end
-				if alt.bags then
-					altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)
-				end
-				-- Include mail items
-				if alt.mail and alt.mail.items then
-					local mailItemCount = 0
-					for _ in pairs(alt.mail.items) do mailItemCount = mailItemCount + 1 end
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: aggregating mail for %s (%d unique items)", 
-						player, mailItemCount)
-					for itemID, mailItem in pairs(alt.mail.items) do
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: %s has %d x %s (ID: %d) in mail", 
-							player, mailItem.count, mailItem.name or "Unknown", itemID)
-						local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
-						altItems = TOGBankClassic_Item:Aggregate(altItems, {fakeItem})
+				-- Use alt.items if available (SYNC-006 aggregated format)
+				if alt.items and next(alt.items) ~= nil then
+					-- alt.items already includes bank+bags+mail, use it directly
+					for _, item in pairs(alt.items) do
+						table.insert(altItems, item)
+					end
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: using alt.items for %s", player)
+				else
+					-- Fallback: aggregate from sources for backward compatibility
+					if alt.bank then
+						altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bank.items)
+					end
+					if alt.bags then
+						altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)
+					end
+					-- Include mail items
+					if alt.mail and alt.mail.items then
+						local mailItemCount = 0
+						for _ in pairs(alt.mail.items) do mailItemCount = mailItemCount + 1 end
+						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: aggregating mail for %s (%d unique items)", 
+							player, mailItemCount)
+						for itemID, mailItem in pairs(alt.mail.items) do
+							TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: %s has %d x %s (ID: %d) in mail", 
+								player, mailItem.count, mailItem.name or "Unknown", itemID)
+							local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+							altItems = TOGBankClassic_Item:Aggregate(altItems, {fakeItem})
+						end
 					end
 				end
 			end
@@ -506,7 +540,8 @@ function TOGBankClassic_UI_Search:DrawContent()
 	if search and string.sub(search, 0, 2) == "|c" then
 		self.searchField:SetText("")
 		local item = Item:CreateFromItemLink(search)
-		if item then
+		if item and item.itemID then
+			-- Item object is valid, safe to use ContinueOnItemLoad
 			item:ContinueOnItemLoad(function()
 				local name = item:GetItemName()
 				if name then

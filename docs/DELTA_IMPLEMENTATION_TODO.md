@@ -2,9 +2,9 @@
 
 **Project:** TOGBankClassic Delta Sync Protocol
 **Target Version:** v0.8.0
-**Status:** In Progress - Pull-Based Protocol Implementation
-**Last Updated:** January 21, 2026
-**Branch:** feature/pull-based-delta
+**Status:** Production - Core Features Complete, Maintenance Mode
+**Last Updated:** January 29, 2026
+**Branch:** main
 
 ---
 
@@ -148,6 +148,177 @@ return PROTOCOL.SUPPORTS_DELTA
 - **Async Link Loading**: Items display as links become available from WoW API
 - **UI Auto-Refresh**: UI updates when data arrives and links reconstruct
 - **State Summary**: ~800 bytes for 100 items, minimal data for delta computation
+- **Banker Data Protection (DATA-004, DATA-005)**: Bankers reject external updates about themselves
+- **Dual Protocol Support**: togbank-dv (legacy) and togbank-dv2 (SYNC-006+) for backward compatibility
+- **Item Validation**: Three-layer defense against corrupted item data and Blizzard API crashes
+
+---
+
+## 🛡️ Data Protection System (DATA-004, DATA-005)
+
+**Status:** ✅ COMPLETE (January 29, 2026)  
+**Purpose:** Ensure bankers remain the authoritative source of truth for their data
+
+### Architecture
+
+**Banker Protection Rules:**
+1. **Self-Protection (DATA-005)**: Bankers reject ALL external data about themselves
+   - Applies to both delta (DeltaComms) and full sync (Guild.ReceiveAltData)
+   - Only banker's own scans can update their data
+   - Prevents stale data from overwriting fresh scans
+
+2. **Cross-Banker Protection (DATA-004)**: Bankers protect other banker data
+   - Bankers reject non-banker updates to other banker data
+   - Banker-to-banker updates are allowed (multi-banker scenarios)
+
+3. **Non-Banker Behavior**: Non-bankers accept all data
+   - They are not the authority, so they receive everything
+   - Can sync with other non-bankers and bankers freely
+
+### Implementation
+
+**DeltaComms.lua (ApplyDelta):**
+```lua
+local player = UnitName("player") .. "-" .. GetRealmName()
+local playerNorm = TOGBankClassic_Guild:NormalizeName(player)
+local playerIsBanker = TOGBankClassic_Guild:IsBank(playerNorm)
+
+if playerIsBanker then
+    -- Self-protection: reject external data about ourselves
+    if norm == playerNorm then
+        return ADOPTION_STATUS.UNAUTHORIZED
+    end
+    
+    -- Cross-protection: reject non-banker updates to banker data
+    local currentIsBanker = TOGBankClassic_Guild:IsBank(norm)
+    local senderIsBanker = TOGBankClassic_Guild:IsBank(senderNorm)
+    if currentIsBanker and not senderIsBanker then
+        return ADOPTION_STATUS.UNAUTHORIZED
+    end
+end
+```
+
+**Guild.lua (ReceiveAltData):**
+```lua
+if playerIsBanker then
+    -- Self-protection: reject external data about ourselves
+    if isOwnData then
+        return ADOPTION_STATUS.UNAUTHORIZED
+    end
+    
+    -- Cross-protection: reject non-banker updates to banker data
+    if existingIsBanker and not incomingIsBanker then
+        return ADOPTION_STATUS.UNAUTHORIZED
+    end
+end
+```
+
+### Sync Flow Matrix
+
+| Sender | Receiver | Target Data | Result |
+|--------|----------|-------------|--------|
+| Banker | Banker | Self | ✅ Allowed (own scan) |
+| Banker | Banker | Other Banker | ✅ Allowed |
+| Banker | Banker | Non-Banker | ✅ Allowed |
+| Banker | Non-Banker | Any | ✅ Allowed |
+| Non-Banker | Banker | Banker (self) | ❌ BLOCKED |
+| Non-Banker | Banker | Banker (other) | ❌ BLOCKED |
+| Non-Banker | Banker | Non-Banker | ✅ Allowed |
+| Non-Banker | Non-Banker | Any | ✅ Allowed |
+
+### Warning Messages
+- `[DATA-004] Rejected delta from X about ourselves (banker is source of truth)`
+- `[DATA-004] Rejected alt data about ourselves from X (banker is source of truth)`
+- `[DATA-004] Rejected delta from non-banker X for banker Y`
+
+---
+
+## 🔧 Dual Protocol System (togbank-dv vs togbank-dv2)
+
+**Status:** ✅ OPERATIONAL (Backward Compatibility Layer)  
+**Purpose:** Support both pre-SYNC-006 and post-SYNC-006 clients
+
+### Protocol Differences
+
+**togbank-dv (Legacy - Pre-SYNC-006):**
+- Separate `bank` and `bags` structures
+- Individual inventory categories
+- Mail items stored separately
+
+**togbank-dv2 (Modern - SYNC-006+):**
+- Unified `alt.items` aggregate array
+- Mail, bank, and bags combined into single inventory
+- Bandwidth optimized (Link removal for consumables)
+- Better deduplication (normalized item keys)
+
+### Broadcast Strategy
+
+**Banker Behavior:**
+- Broadcasts on BOTH channels for compatibility
+- `togbank-dv`: Converts aggregate back to separate structures
+- `togbank-dv2`: Sends modern aggregate format
+
+**Client Behavior (SYNC-006+):**
+- Prioritizes `togbank-dv2` (immediate processing)
+- Delays `togbank-dv` by 5 seconds (fallback only)
+- Converts incoming legacy format to aggregate if needed
+
+**Migration Path:**
+- Phase 1: Dual broadcast (current) - all clients supported
+- Phase 2: Remove 5-second delay after adoption > 90%
+- Phase 3: Deprecate togbank-dv after 3-6 months
+
+---
+
+## 🐛 Item Validation & Crash Prevention (ITEM-002)
+
+**Status:** ✅ COMPLETE (January 29, 2026)  
+**Purpose:** Prevent crashes from corrupted item data and Blizzard API bugs
+
+### Three-Layer Defense
+
+**Layer 1: Input Validation**
+- Filter items with ID < 100 (invalid WoW item IDs)
+- Validate item table structure before processing
+- Skip nil, non-table, or malformed items
+
+**Layer 2: Object Validation**
+- Check `itemObj.itemID` exists and matches expected ID
+- Validate Item object returned by `Item:CreateFromItemID()`
+- Detect race condition where itemID becomes nil
+
+**Layer 3: Error Protection**
+- Wrap `ContinueOnItemLoad()` in pcall
+- Catch and log crashes without breaking addon
+- Properly manage async callback counters on failure
+
+### Implementation Locations
+
+**Guild.lua (ReconstructItemLinks):**
+- Two ContinueOnItemLoad call sites (ItemString path and fallback path)
+- Both protected with validation + pcall
+- Debug logging: `[GUILD] Item X PASSED/FAILED validation`
+
+**Item.lua (GetItems):**
+- Filters corrupted items at data ingestion
+- Added ID < 100 check to existing validation
+- Prevents corrupted data from reaching UI
+
+**Search.lua (DrawContent):**
+- Validates Item objects from CreateFromItemLink
+- Checks itemID before ContinueOnItemLoad
+
+### Debug Category
+- All validation messages use `TOGBankClassic_Output:Debug("ITEM", ...)`
+- Enable in options to troubleshoot item loading issues
+- Includes TRACE logs for detailed debugging
+
+### Corrupted Data Handling
+- Items with ID 1, 2, and other low IDs are filtered
+- Logged but not processed: prevents cascade failures
+- Source: External sync from players with corrupted databases
+
+---
 
 ### Response Prioritization
 1. THE BANKER response (authoritative)

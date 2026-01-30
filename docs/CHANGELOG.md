@@ -1,5 +1,56 @@
 # TOGBankClassic Changelog
 
+## [Unreleased] - Critical Bug Fixes
+
+**Added:** 2026-01-29
+
+### 🐛 Critical Bug Fixes
+
+#### [ITEM-002] Crash: "table index is nil" in Blizzard_ObjectAPI
+- **Fixed:** Persistent crash (90+ occurrences) when calling `Item:ContinueOnItemLoad()`
+- **Root Cause:** Blizzard API returning Item objects with nil internal itemID field
+- **Solution:** Three-layer defense:
+  1. Validate `itemObj.itemID` before calling ContinueOnItemLoad
+  2. Wrap ContinueOnItemLoad in pcall to catch race conditions
+  3. Filter corrupted items with ID < 100 (invalid WoW item IDs)
+- **Files Modified:** Guild.lua, Item.lua, Search.lua
+- **Impact:** No more crashes; corrupted items logged but skipped
+
+#### [DATA-005] Banker Data Being Overwritten by External Sources
+- **Fixed:** Banker characters accepting external data about themselves
+- **Symptoms:** Bank/mail/bags items disappearing 2-3 minutes after opening
+- **Root Cause:** Incomplete DATA-004 protection - didn't block updates about banker themselves
+- **Solution:** Enhanced banker protection:
+  - Bankers now reject ALL external data about themselves (source of truth)
+  - Bankers still accept banker-to-banker updates for other bankers
+  - Non-bankers accept all data (not the authority)
+- **Files Modified:** DeltaComms.lua, Guild.lua
+- **Impact:** Banker data integrity preserved; no more data loss
+
+### ✨ New Features
+
+#### Mute Warning Messages Option
+- **Added:** Checkbox to mute [WARN] messages in options panel
+- **Description:** Hides data protection rejections (DATA-004/DATA-005) and protocol warnings
+- **Use Case:** Reduces chat spam for users who don't need day-to-day debugging information
+- **Location:** Options > General > "Mute Warning Messages" (next to "Mute Sync Progress Messages")
+- **Default:** Unchecked (warnings visible for initial deployment debugging)
+
+### 🎨 UI Improvements
+
+#### Search Window Size Optimization
+- **Changed:** Default search window width reduced from 250px to 175px
+- **Benefit:** More compact interface, less screen clutter
+- **Note:** Width set after loading saved position to override any cached size
+
+### 🔧 Technical Improvements
+- All debug print() statements converted to TOGBankClassic_Output:Debug("ITEM", ...)
+- Enhanced error logging for item validation failures
+- Improved code structure for banker data protection
+- Added `IsWarningsMuted()` option and warning suppression in Output.lua
+
+---
+
 ## [Unreleased] - Automatic Stack Splitting
 
 **Added:** 2026-01-24  

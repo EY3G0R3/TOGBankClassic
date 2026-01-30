@@ -1001,8 +1001,10 @@ local function ProcessItemQueue()
 	for i = 1, processCount do
 		local item = table.remove(itemReconstructQueue, 1)
 		if item and item.ID and not item.Link then
-			-- If we have an ItemString, use it to reconstruct full link
-			if item.ItemString then
+			-- Skip obviously corrupted items (IDs < 100 are not valid WoW items)
+			if item.ID >= 100 then
+				-- If we have an ItemString, use it to reconstruct full link
+				if item.ItemString then
 				local itemName = GetItemInfo(item.ID)
 				if itemName then
 					item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, itemName)
@@ -1012,16 +1014,33 @@ local function ProcessItemQueue()
 					if pendingAsyncLoads < MAX_CONCURRENT_ASYNC then
 						pendingAsyncLoads = pendingAsyncLoads + 1
 						local itemObj = Item:CreateFromItemID(item.ID)
-						if itemObj then
-							itemObj:ContinueOnItemLoad(function()
-								pendingAsyncLoads = pendingAsyncLoads - 1
-								local name = itemObj:GetItemName()
-								if name then
-									item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, name)
-									ThrottledUIRefresh()
-								end
+						
+						-- Debug: Check itemObj state
+						TOGBankClassic_Output:Debug("ITEM", "[GUILD] ItemString Item %d: itemObj=%s, itemObj.itemID=%s", 
+							item.ID or -1, 
+							tostring(itemObj), 
+							itemObj and tostring(itemObj.itemID) or "nil")
+						
+						if itemObj and itemObj.itemID and itemObj.itemID == item.ID then
+							-- Item object is valid, try ContinueOnItemLoad with error protection
+							TOGBankClassic_Output:Debug("ITEM", "[GUILD] ItemString Item %d PASSED validation, calling ContinueOnItemLoad", item.ID)
+							local success, err = pcall(function()
+								itemObj:ContinueOnItemLoad(function()
+									pendingAsyncLoads = pendingAsyncLoads - 1
+									local name = itemObj:GetItemName()
+									if name then
+										item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, name)
+										ThrottledUIRefresh()
+									end
+								end)
 							end)
+							if not success then
+								TOGBankClassic_Output:Debug("ITEM", "[GUILD] ContinueOnItemLoad crashed for ItemString item %d: %s", item.ID, tostring(err))
+								pendingAsyncLoads = pendingAsyncLoads - 1
+							end
 						else
+							-- Item object is nil or corrupted, skip
+							TOGBankClassic_Output:Debug("ITEM", "[GUILD] ItemString Item %d FAILED validation, skipping", item.ID or -1)
 							pendingAsyncLoads = pendingAsyncLoads - 1
 						end
 					else
@@ -1040,16 +1059,33 @@ local function ProcessItemQueue()
 					if pendingAsyncLoads < MAX_CONCURRENT_ASYNC then
 						pendingAsyncLoads = pendingAsyncLoads + 1
 						local itemObj = Item:CreateFromItemID(item.ID)
-						if itemObj then
-							itemObj:ContinueOnItemLoad(function()
-								pendingAsyncLoads = pendingAsyncLoads - 1
-								local link = itemObj:GetItemLink()
-								if link then
-									item.Link = link
-									ThrottledUIRefresh()
-								end
+						
+						-- Debug: Check itemObj state
+						TOGBankClassic_Output:Debug("ITEM", "[GUILD] Item %d: itemObj=%s, itemObj.itemID=%s", 
+							item.ID or -1, 
+							tostring(itemObj), 
+							itemObj and tostring(itemObj.itemID) or "nil")
+						
+						if itemObj and itemObj.itemID and itemObj.itemID == item.ID then
+							-- Item object is valid, try ContinueOnItemLoad with error protection
+							TOGBankClassic_Output:Debug("ITEM", "[GUILD] Item %d PASSED validation, calling ContinueOnItemLoad", item.ID)
+							local success, err = pcall(function()
+								itemObj:ContinueOnItemLoad(function()
+									pendingAsyncLoads = pendingAsyncLoads - 1
+									local link = itemObj:GetItemLink()
+									if link then
+										item.Link = link
+										ThrottledUIRefresh()
+									end
+								end)
 							end)
+							if not success then
+								TOGBankClassic_Output:Debug("ITEM", "[GUILD] ContinueOnItemLoad crashed for item %d: %s", item.ID, tostring(err))
+								pendingAsyncLoads = pendingAsyncLoads - 1
+							end
 						else
+							-- Item object is nil or corrupted, skip
+							TOGBankClassic_Output:Debug("ITEM", "[GUILD] Item %d FAILED validation, skipping", item.ID or -1)
 							pendingAsyncLoads = pendingAsyncLoads - 1
 						end
 					else
@@ -1058,6 +1094,7 @@ local function ProcessItemQueue()
 					end
 				end
 			end
+			end  -- End of if item.ID >= 100
 		end
 	end
 	
@@ -1264,7 +1301,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 				table.insert(sampleItems, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("SEND-DETAIL", "First 5 items in alt.items being sent: %s", table.concat(sampleItems, ", "))
+		TOGBankClassic_Output:Debug("SYNC", "First 5 items in alt.items being sent: %s", table.concat(sampleItems, ", "))
 	end
 	
 	local useDelta = false
@@ -1678,7 +1715,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 						table.insert(beforeSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 					end
 				end
-				TOGBankClassic_Output:Debug("RECV-DETAIL", "BEFORE dedupe - First 5 items received: %s", table.concat(beforeSample, ", "))
+				TOGBankClassic_Output:Debug("SYNC", "BEFORE dedupe - First 5 items received: %s", table.concat(beforeSample, ", "))
 			end
 			
 			local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
@@ -1699,12 +1736,46 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 						table.insert(afterSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 					end
 				end
-				TOGBankClassic_Output:Debug("RECV-DETAIL", "AFTER dedupe - First 5 items stored: %s", table.concat(afterSample, ", "))
+				TOGBankClassic_Output:Debug("SYNC", "AFTER dedupe - First 5 items stored: %s", table.concat(afterSample, ", "))
 			end
 		end
 
 		local norm = self:NormalizeName(name)
 		local existing = self.Info.alts[norm]
+		
+		-- DATA-004: Protect banker data from being overwritten
+		local player = UnitName("player") .. "-" .. GetRealmName()
+		local playerNorm = self:NormalizeName(player)
+		local playerIsBanker = self:IsBank(playerNorm)
+		local isOwnData = playerNorm == norm
+		
+		if playerIsBanker then
+			-- We are a banker - protect our data
+			
+			-- CRITICAL: If this is data about US, reject it (we are the source of truth)
+			if isOwnData then
+				TOGBankClassic_Output:Warn(
+					"[DATA-004] Rejected alt data about ourselves from %s (banker is source of truth for own data)",
+					name
+				)
+				return ADOPTION_STATUS.UNAUTHORIZED
+			end
+			
+			-- Also protect OTHER banker data from non-banker updates
+			local existingIsBanker = existing and self:IsBank(norm)
+			local incomingIsBanker = self:IsBank(name)
+			
+			if existingIsBanker and not incomingIsBanker then
+				-- Reject: non-banker trying to overwrite banker data
+				TOGBankClassic_Output:Warn(
+					"[DATA-004] Rejected alt data for %s: existing is banker, incoming is non-banker (sender=%s)",
+					norm,
+					name
+				)
+				return ADOPTION_STATUS.UNAUTHORIZED
+			end
+		end
+		
 		if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
 			return ADOPTION_STATUS.STALE
 		end
@@ -1727,7 +1798,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt)
 			-- Incoming is older; ignore
 			return ADOPTION_STATUS.STALE
 		elseif existing and existing.version and alt.version and alt.version == existing.version then
-			-- Tie-breaker: choose the one with more items
+			-- Tie-breaker: choose the one with more items (unless banker priority applies)
 			if itemCount(alt) <= itemCount(existing) then
 				return ADOPTION_STATUS.STALE
 			end

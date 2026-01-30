@@ -1,13 +1,20 @@
 ﻿# Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** January 28, 2026
+**Last Updated:** January 29, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - None
 
+**Recent Fixes (2026-01-29):**
+- ✅ [ITEM-002] **CRITICAL CRASH** "table index is nil" in Blizzard_ObjectAPI Item.lua:320 - Fixed by adding itemID validation before ContinueOnItemLoad, pcall protection, and filtering corrupted items (ID < 100) in Guild.lua and Item.lua
+- ✅ [DATA-005] Banker data being overwritten by external sources - Enhanced banker protection to reject ALL external data about banker themselves, not just non-banker updates
+- ✅ [MAIL-005] Duplicate item stacks for identical gear with different instance IDs - Implemented selective Link preservation (gear only) and normalized deduplication keys
+- ✅ [ITEM-001] Item deduplication failing for linkless synced data - Fixed Aggregate pattern matching and added GetItemKey() normalization
+
 **Recent Fixes (2026-01-28):**
+- ✅ [DATA-004] Item count duplication in UI display - Fixed inconsistent mail.items structure (was key-value, now array like bank/bags); added missing Checksum method; made GetInfo defensive to never drop items
 - ✅ [PERF-003] In-game stuttering during async item reconstruction - Throttled UI refreshes to prevent excessive redraws
 - ✅ [UI-007] Item tooltips not showing stats on gear - Preserved ItemString to maintain unique item data (suffixes, enchants)
 - ✅ [UI-008] C stack overflow in item loading callbacks - Fixed by preventing BuildSearchData from running multiple times per data update
@@ -5687,3 +5694,576 @@ Changed to use the fully qualified global `TOGBankClassic_Guild.Info` with prope
 
 ---
 
+## [DATA-004] Item Count Duplication in UI Display
+
+**Date:** January 28, 2026
+**Severity:** Critical
+**Status:** ✅ Fixed
+
+**Symptom:**
+Item counts in Inventory and Search UI displayed as multiples (20x, 40x, 60x) of actual values. Some tabs showed grey/empty screens. Fresh scans caused counts to increment on each reload.
+
+**Root Cause:**
+Mail items were stored using a different structure than bank/bag items:
+- **Mail:** Key-value table with lowercase fields (`[itemID] = {id, count, link, sources}`)
+- **Bank/Bags:** Array with uppercase fields (`[{ID, Count, Link}]`)
+
+This inconsistency caused:
+1. Aggregation failures - couldn't properly deduplicate across sources
+2. Field name mismatches - `count` vs `Count`, `link` vs `Link`
+3. Missing Links in source arrays - items without Link field couldn't be distinguished by suffix/enchant
+4. Duplicate entries accumulating in SV file - same item stored multiple times
+
+**Affected Files:**
+- `Modules/MailInventory.lua` - Mail scanning with inconsistent structure
+- `Modules/Bank.lua` - Conversion between mail and bank/bag formats
+- `Modules/Item.lua` - GetInfo dropped items without Links
+- `Core.lua` - Missing public Checksum method
+
+**Investigation:**
+1. SV file showed 7 entries for Earthborn Kilt (ID 15271) when only 4 should exist
+2. 6 duplicates in mail.items, 1 in bank.items
+3. Items stored without Link fields couldn't be deduplicated by composite key
+4. GetInfo returned nil for items without Links, causing silent drops in UI
+
+**Fix:**
+
+**1. Standardized mail.items structure (MailInventory.lua:37-105):**
+```lua
+-- BEFORE: Key-value with lowercase fields
+mailItems[itemID] = {
+    id = itemID,
+    name = name,
+    link = link,
+    count = 0,
+    sources = {}
+}
+
+-- AFTER: Array with uppercase fields (same as bank/bags)
+local itemString = TOGBankClassic_Item:GetItemString(link)
+local key = tostring(itemID) .. itemString
+mailItemsTable[key] = { ID = itemID, Count = count, Link = link }
+
+-- Convert to array
+local mailItems = {}
+for _, item in pairs(mailItemsTable) do
+    table.insert(mailItems, item)
+end
+```
+
+**2. Removed mail conversion in Bank.lua (line 203):**
+```lua
+-- BEFORE: Convert from key-value to array
+local mailItems = {}
+if alt.mail and alt.mail.items then
+    for itemID, mailItem in pairs(alt.mail.items) do
+        table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
+    end
+end
+
+-- AFTER: Direct assignment (already an array)
+local mailItems = (alt.mail and alt.mail.items) or {}
+```
+
+**3. Updated RecalculateAggregatedItems (Bank.lua:395-403):**
+```lua
+-- Now deduplicates mail.items same as bank/bags
+local mailItems = {}
+if alt.mail and alt.mail.items then
+    local deduped = TOGBankClassic_Item:Aggregate(alt.mail.items, nil)
+    for _, item in pairs(deduped) do
+        table.insert(mailItems, item)
+    end
+    alt.mail.items = mailItems  -- Write back to fix SV file
+end
+```
+
+**4. Made GetInfo defensive (Item.lua:65-89):**
+```lua
+-- Always returns item info, even if placeholder
+if not name then
+    return {
+        class = 0,
+        subClass = 0,
+        equipId = 0,
+        rarity = 1,
+        name = "Item " .. tostring(id or "?"),
+        level = 1,
+        price = 0,
+        icon = 134400,  -- Default grey icon
+    }
+end
+```
+
+**5. Added missing Checksum method (Core.lua:110-113):**
+```lua
+function TOGBankClassic_Core:Checksum(str)
+    return ComputeChecksum(str)
+end
+```
+
+**6. Made GetItems filter properly (Item.lua:26-56):**
+```lua
+-- Only process items with valid IDs (ID > 0)
+local validItems = {}
+for _, item in pairs(items) do
+    if item and item.ID and item.ID > 0 then
+        table.insert(validItems, item)
+    end
+end
+```
+
+**Result:**
+- All three sources (bank, bags, mail) now use identical structure
+- Consistent uppercase field names (ID/Count/Link)
+- Composite keys (ID + ItemString) work across all sources
+- Deduplication on load cleans up corrupted SV data
+- Items never silently dropped from UI
+- Counts remain stable across scans/reloads
+
+**Testing:**
+1. Log into character with duplicated counts
+2. `/reload` to trigger RecalculateAggregatedItems deduplication
+3. Open bags/bank/mail to trigger fresh scan
+4. `/reload` to save clean data
+5. Multiple `/reload` cycles - counts stay stable
+6. Check SV file - no duplicate entries
+
+**Files Changed:**
+- `Core.lua`
+- `Modules/Item.lua`
+- `Modules/Bank.lua`
+- `Modules/MailInventory.lua`
+
+**Additional Fixes (2026-01-28) - Nil itemID Crash:**
+
+After implementing the mail structure standardization, a secondary issue emerged: nil itemID values reaching the Blizzard Item API and causing UI crashes with "table index is nil" errors.
+
+**Secondary Issue:**
+Error when clicking tabs with items that have suffixes/strings:
+```
+Blizzard_ObjectAPI/Classic/Item.lua:320: table index is nil
+itemID = nil
+[Item.lua]:49: in function 'GetItems'
+[Search.lua]:405: in function 'BuildSearchData'
+[Inventory.lua]:157: in function 'DrawContent'
+```
+
+**Root Cause:**
+Multiple code paths still treated mail.items as key-value tables after standardization:
+1. **Inventory.lua:307-309** - Fallback code used `pairs()` on mail array, treating indices as itemIDs
+2. **Search.lua:389-396** - Same issue in BuildSearchData fallback aggregation
+3. No validation filtering items with nil IDs before passing to GetItems
+
+**Additional Fixes Applied:**
+
+**7. Fixed Inventory.lua fallback path (lines 301-314):**
+```lua
+-- BEFORE: Created fake items from array indices
+local mailItems = {}
+if alt.mail and alt.mail.items then
+    for itemID, mailItem in pairs(alt.mail.items) do
+        table.insert(mailItems, { ID = itemID, Count = mailItem.count, Link = mailItem.link })
+    end
+end
+
+// AFTER: Direct assignment (already array format)
+local mailItems = (alt.mail and alt.mail.items) or {}
+```
+
+**8. Fixed Search.lua fallback path (lines 386-395):**
+```lua
+-- BEFORE: Created fake items from array indices
+for itemID, mailItem in pairs(alt.mail.items) do
+    local fakeItem = { ID = itemID, Count = mailItem.count, Link = mailItem.link }
+    items = TOGBankClassic_Item:Aggregate(items, {fakeItem})
+end
+
+-- AFTER: Direct array aggregation
+items = TOGBankClassic_Item:Aggregate(items, alt.mail.items)
+```
+
+**9. Added validation in Search.lua (lines 403-420):**
+```lua
+-- Validate and filter items before passing to GetItems
+local validItems = {}
+local invalidCount = 0
+for i, item in ipairs(items) do
+    if item and item.ID and item.ID > 0 then
+        table.insert(validItems, item)
+    else
+        invalidCount = invalidCount + 1
+        TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] WARNING: Skipping invalid item at index %d", i)
+    end
+end
+```
+
+**10. Added validation in Inventory.lua tab rendering (lines 340-349):**
+```lua
+-- Validate and filter items before passing to GetItems
+local validItems = {}
+for i, item in ipairs(items) do
+    if item and item.ID and item.ID > 0 then
+        table.insert(validItems, item)
+    else
+        TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] WARNING: Tab %s skipping invalid item at index %d", tab, i)
+    end
+end
+```
+
+**11. Added defensive pcall wrapper in Item.lua (lines 82-91):**
+```lua
+-- Wrap CreateFromItemID in pcall to catch crashes
+local success, itemData = pcall(Item.CreateFromItemID, Item, itemID)
+if not success then
+    TOGBankClassic_Output:Debug("MAIL", "[ITEM-DEBUG] CreateFromItemID FAILED for ID %s: %s", 
+        tostring(itemID), tostring(itemData))
+    total = total - 1
+    if total == 0 and count == 0 then
+        callback(list)
+    end
+else
+    itemData:ContinueOnItemLoad(function()
+        -- Process item...
+    end)
+end
+```
+
+**Result:**
+- All fallback code paths now treat mail.items as arrays
+- Invalid items filtered before reaching Blizzard API
+- UI displays remaining valid items even if some are corrupted
+- No crashes even with partially corrupt data
+- Debug logging identifies problematic items
+
+**Additional Files Changed:**
+- `Modules/UI/Search.lua`
+- `Modules/UI/Inventory.lua`
+- `Modules/Item.lua` (additional validation)
+
+---
+
+## [MAIL-005] Duplicate item stacks for identical gear with different instance IDs
+
+**Severity:** 🟠 HIGH
+**Category:** Item Deduplication / Mail Sync
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-29
+**Date Resolved:** 2026-01-29
+**Status:** ✅ RESOLVED
+**Reproducibility:** Consistent for gear items in mail
+
+**Description:**
+When viewing banker's inventory tab, identical gear items (e.g., Earthborn Kilt) appeared as multiple separate stacks instead of merging into one. This occurred when the same item existed in both local storage (bags/bank) and synced mail data.
+
+**Example:**
+- Earthborn Kilt x2 in bags (with Links from local scan)
+- Earthborn Kilt x2 in mail (with Links from d3 sync)
+- **Expected:** Single stack with count 4
+- **Actual:** Two separate stacks with count 2 each
+
+**Root Causes:**
+
+1. **Unique Instance IDs in Item Links:**
+   - Each physical item in WoW has a unique instance ID in its link
+   - Example: `item:9402:0:0:0:0:0:1542:0:863` vs `item:9402:0:0:0:0:0:1542:0:1205`
+   - Last number (863 vs 1205) is the instance ID
+   - Using full link as deduplication key created separate entries for identical items
+
+2. **Linkless Merge Pattern Mismatch:**
+   - Old synced mail data had nil Links (from pre-NeedsLink implementation)
+   - Aggregate function tried to merge linkless items with linked items
+   - Pattern `"^9402[:%[]"` failed to match key format `"9402item:9402:..."`
+   - Linkless mail items couldn't merge with linked bag items
+
+3. **Bandwidth vs Functionality Tradeoff:**
+   - Original d3 protocol stripped all Links to save bandwidth
+   - But gear items NEED Links to distinguish suffixes ("of the Bear" vs "of the Monkey")
+   - Consumables don't need Links (no variations)
+
+**Solutions Implemented:**
+
+### 1. Selective Link Preservation Based on Item Class
+
+**Item.lua (lines 4-17):**
+```lua
+-- Item classes that require Link to be preserved (for suffix differentiation)
+-- Class 2 = Weapons, Class 4 = Armor (includes all equippable gear)
+local ITEM_CLASSES_NEEDING_LINK = {
+	[2] = true,  -- Weapon
+	[4] = true,  -- Armor (chest, legs, trinkets, rings, necks, etc)
+}
+
+-- Check if an item needs its Link preserved based on item class
+-- Gear (weapons/armor) can have random suffixes, so Link is required
+-- Consumables and trade goods don't vary, so Link can be stripped
+function TOGBankClassic_Item:NeedsLink(itemLink)
+	if not itemLink then return false end
+	local _, _, _, _, _, itemClass = GetItemInfo(itemLink)
+	return ITEM_CLASSES_NEEDING_LINK[itemClass] == true
+end
+```
+
+**MailInventory.lua (lines 67-75):**
+```lua
+local link = GetInboxItemLink(i, j)
+
+-- Conditionally include Link based on item class
+-- Gear (weapons/armor) needs FULL Link for suffix differentiation
+-- Consumables/trade goods don't need Link (saves bandwidth in d3 sync)
+local storageLink = nil
+if link and TOGBankClassic_Item:NeedsLink(link) then
+	storageLink = link  -- Store FULL link for gear
+end
+```
+
+**Benefits:**
+- Gear keeps full Link → proper suffix differentiation ✓
+- Consumables strip Link → ~90 bytes saved per item ✓
+- Bandwidth optimized where safe, preserved where needed ✓
+
+### 2. Normalized Deduplication Keys (GetItemKey)
+
+**Item.lua (lines 38-60):**
+```lua
+-- Get normalized item key for deduplication (strips unique instance ID)
+-- Items with same ID+suffix but different instance IDs will have same key
+-- Format: itemID:enchant:gem1:gem2:gem3:gem4:suffixID (7 parts)
+function TOGBankClassic_Item:GetItemKey(link)
+	if not link or link == "" then
+		return ""
+	end
+	
+	local itemString = link:match("|Hitem:([^|]+)|h")
+	if not itemString then
+		itemString = link:match("item:([%d:]+)")
+	end
+	
+	if itemString then
+		-- Split into parts
+		local parts = {}
+		for part in string.gmatch(itemString, "([^:]+)") do
+			table.insert(parts, part)
+		end
+		
+		-- Keep first 7 parts only (strip uniqueID and specializationID)
+		if #parts >= 7 then
+			return "item:" .. table.concat({parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]}, ":")
+		else
+			return "item:" .. itemString
+		end
+	end
+	
+	return link
+end
+```
+
+**Usage in Aggregate (Item.lua lines 273-275):**
+```lua
+-- Use NORMALIZED key (strips unique instance ID) for deduplication
+local itemKey = self:GetItemKey(v.Link)
+local key = tostring(v.ID) .. itemKey
+```
+
+**How It Works:**
+- **Storage:** Keep FULL link with instance ID
+- **Deduplication:** Use normalized key WITHOUT instance ID
+- Two Earthborn Kilts with different instances → same key → merge ✓
+
+### 3. Fixed Linkless Item Merge Pattern
+
+**Item.lua (lines 279-291):**
+```lua
+-- If no Link, also check if there's an existing entry with same ID but with link
+-- This handles deduplication between linked (bank/bags) and linkless (mail) items
+if not v.Link and itemKey == "" then
+	-- Look for any existing key starting with this ID followed by "item:"
+	local searchPattern = "^" .. tostring(v.ID) .. "item:"
+	for existingKey, existingItem in pairs(items) do
+		if existingKey:match(searchPattern) or existingKey == tostring(v.ID) then
+			-- Found item with same ID - merge into that entry
+			local itemCount = existingItem.Count or 1
+			local vCount = v.Count or 1
+			existingItem.Count = itemCount + vCount
+			existingItem.Link = existingItem.Link or v.Link
+			key = nil  -- Signal that we already merged
+			break
+		end
+	end
+end
+```
+
+**What Changed:**
+- Old pattern: `"^9402[:%[]"` → failed to match `"9402item:..."`
+- New pattern: `"^9402item:"` → correctly matches composite keys ✓
+- Also checks exact ID match for consumables (`"9402"` == `"9402"`) ✓
+
+### 4. Added Aggregation Debug Logging
+
+**Bank.lua (lines 403-407):**
+```lua
+TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] Aggregating: bank=%d, bags=%d, mail=%d", #bankItems, #bagItems, #mailItems)
+local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] After bank+bags aggregate: %d unique items", TOGBankClassic_Item:CountItems(aggregated))
+aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
+TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] After adding mail: %d unique items", TOGBankClassic_Item:CountItems(aggregated))
+```
+
+**Result:**
+- ✅ Earthborn Kilt: 2 in bags + 2 in mail → 1 stack with count 4
+- ✅ All gear items properly deduplicate regardless of instance ID
+- ✅ Consumables continue to stack correctly
+- ✅ Bandwidth optimized (Links only sent for gear)
+- ✅ Works with old linkless data (backward compatible)
+
+**Files Changed:**
+- `Modules/Item.lua` (NeedsLink, GetItemKey, GetItemString separation, Aggregate pattern fix)
+- `Modules/MailInventory.lua` (selective Link storage)
+- `Modules/Bank.lua` (aggregation debug logging)
+
+---
+
+## [ITEM-001] Item deduplication failing for linkless synced data
+
+**Severity:** 🟠 HIGH
+**Category:** Item Deduplication / Data Migration
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-29
+**Date Resolved:** 2026-01-29
+**Status:** ✅ RESOLVED (subsumed by MAIL-005)
+**Reproducibility:** Consistent for old synced data
+
+**Description:**
+This was the underlying technical issue that manifested as [MAIL-005]. Old mail data synced before the NeedsLink implementation had nil Links, causing deduplication failures when aggregating with locally scanned data.
+
+**Root Cause:**
+- Pre-MAIL-005 implementation: All mail items had nil Links (bandwidth optimization)
+- Local bank/bags items: Full Links from GetBankItemLink/GetContainerItemLink
+- Aggregate function: Created different keys for nil vs non-nil Links
+- Result: Same items appeared in separate stacks
+
+**Solution:**
+Covered comprehensively by [MAIL-005] fixes. Key aspects:
+1. Normalize keys during aggregation (GetItemKey)
+2. Special handling for linkless items to merge with linked variants
+3. Forward compatibility: New scans use selective Link preservation
+
+**Note:** This is an internal technical issue that was fixed as part of the broader MAIL-005 solution. Included here for completeness.
+
+---
+
+## [ITEM-002] CRITICAL CRASH: "table index is nil" in Blizzard_ObjectAPI
+
+**Status:** ✅ FIXED (2026-01-29)  
+**Severity:** CRITICAL - Game crash  
+**Category:** Item Loading, Blizzard API  
+**Error Count:** 90+ occurrences before fix
+
+**Problem:**
+Persistent crash in Blizzard's Item.lua causing "table index is nil" error at line 320. The crash occurred when calling `Item:ContinueOnItemLoad()` on Item objects that had nil internal itemID field, despite our validation showing the item appeared valid.
+
+**Error Traceback:**
+```
+Blizzard_ObjectAPI/Classic/Item.lua:320: table index is nil
+[Blizzard_ObjectAPI/Classic/Item.lua]:320: in function 'GetOrCreateCallbacks'
+[Blizzard_ObjectAPI/Classic/Item.lua]:272: in function 'AddCallback'
+[Blizzard_ObjectAPI/Classic/Item.lua]:238: in function 'ContinueOnItemLoad'
+[TOGBankClassic/Modules/Guild.lua]:1044: in function ReconstructItemLinks
+```
+
+**Root Cause:**
+1. Blizzard's `Item:CreateFromItemID()` can return Item objects with nil internal `itemID` field
+2. Race condition: itemID can become nil between our validation check and ContinueOnItemLoad execution
+3. Corrupted data: Items with ID 1 and 2 (invalid WoW item IDs) were in sync data
+4. Multiple call sites: Guild.lua, Search.lua, and Item.lua all called ContinueOnItemLoad without validation
+
+**Solution - Three-Layer Defense:**
+
+1. **Item ID Validation** (Guild.lua, Item.lua):
+   - Added `if itemObj and itemObj.itemID and itemObj.itemID == item.ID` check before ContinueOnItemLoad
+   - Filters out corrupted items with ID < 100 (not valid WoW items)
+   
+2. **Error Protection** (Guild.lua lines 1025-1040, 1070-1085):
+   - Wrapped ContinueOnItemLoad calls in `pcall` to catch race condition errors
+   - Properly decrements pendingAsyncLoads counter on failure
+   - Logs errors without crashing
+
+3. **Corrupted Data Filtering** (Item.lua line 107, Guild.lua line 1003):
+   - Added filter: `item.ID < 100` to skip invalid item IDs
+   - Prevents items 1, 2, and other low IDs from being processed
+
+**Files Modified:**
+- `Modules/Guild.lua`: Added validation and pcall protection for ReconstructItemLinks
+- `Modules/Item.lua`: Added ID < 100 filter in GetItems validation
+- `Modules/UI/Search.lua`: Added itemID validation for item link conversion
+
+**Testing:**
+- Crash no longer occurs (previously 90+ crashes)
+- Invalid items logged but skipped: `[GUILD-ERROR] ContinueOnItemLoad crashed for item 1`
+- No impact on valid item processing
+
+**Prevention:**
+- All future ContinueOnItemLoad calls must validate itemObj.itemID first
+- Always use pcall wrapper for Blizzard async APIs with known race conditions
+- Filter out items with ID < 100 at data ingestion points
+
+---
+
+## [DATA-005] Banker Data Being Overwritten by External Sources
+
+**Status:** ✅ FIXED (2026-01-29)  
+**Severity:** HIGH - Data Integrity  
+**Category:** Data Protection, Sync Protocol
+
+**Problem:**
+Banker characters were accepting external data about themselves from other players, causing their bank/mail/bags data to be overwritten with stale data after 2-3 minutes. This violated the "banker is source of truth" principle.
+
+**Symptoms:**
+- Banker opens mail/bank/bags, all items display correctly
+- After 2-3 minutes, UI "blinks" (sync update)
+- Items from mail disappear from bank tab display
+- Banker's own data being overwritten by external sync
+
+**Root Cause:**
+DATA-004 protection was incomplete:
+- DeltaComms.lua: Only blocked non-bankers updating banker data, but didn't block updates about the banker themselves
+- Guild.lua ReceiveAltData: Had `isOwnData` check but didn't reject external data about the banker
+
+**Solution:**
+
+1. **DeltaComms.lua (lines 684-716):**
+   - Added check: If player is banker AND delta is about themselves, reject it
+   - Bankers now reject ALL external deltas about themselves
+   - Non-bankers still accept all deltas (not the authority)
+
+2. **Guild.lua ReceiveAltData (lines 1743-1777):**
+   - Added check: If player is banker AND data is about themselves, reject it
+   - Enhanced protection for other banker data from non-banker updates
+
+**Protection Rules (Finalized):**
+
+**For Bankers:**
+1. ✅ Reject ANY external data about themselves (source of truth)
+2. ✅ Reject non-banker updates to other banker data
+3. ✅ Accept banker-to-banker updates for other bankers
+
+**For Non-Bankers:**
+1. ✅ Accept all data (not the authority)
+2. ✅ Can sync with other non-bankers
+3. ✅ Can receive updates from bankers
+
+**Warning Messages:**
+- `[DATA-004] Rejected delta from X about ourselves (banker is source of truth for own data)`
+- `[DATA-004] Rejected alt data about ourselves from X (banker is source of truth for own data)`
+
+**Files Modified:**
+- `Modules/DeltaComms.lua`: Enhanced ApplyDelta with self-protection
+- `Modules/Guild.lua`: Enhanced ReceiveAltData with self-protection
+
+**Testing:**
+- Bankers no longer accept external updates about themselves
+- Non-bankers still sync normally with all players
+- Mail/bank/bags data no longer disappears after sync updates
+
+---
+---
