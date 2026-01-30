@@ -8,6 +8,8 @@
 - None
 
 **Recent Fixes (2026-01-30):**
+- ✅ [SEARCH-005] Search only returning 1 item when multiple item types match - Added debug logging to track corpus matching; fixed search result counting with matchedNames variable
+- ✅ [SEARCH-004] Search UI crash "attempt to concatenate global 'mailIcon' (a nil value)" - Fixed missing mailIcon variable definition in Search.lua line 614 (was checking inMail flag but never setting the icon string)
 - ✅ [UI-010] Request window opening with half-width border and buttons floating outside - Fixed SetStatusTable restoring incorrect width by calling SetWidth(MIN_WIDTH) after SetStatusTable to enforce minimum size
 - ✅ [DATA-007] Non-bankers unable to receive data after wipe - Fixed banker protection to only apply when RECEIVER is a banker, not when TARGET is a banker (non-bankers can now receive banker data from any source)
 - ✅ [DELTA-013] Duplicate query spam when receiving deltas without baseline - Added pending sync check to prevent multiple queries for same alt while first request in flight

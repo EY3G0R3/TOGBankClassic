@@ -566,13 +566,18 @@ function TOGBankClassic_UI_Search:DrawContent()
 		return
 	end
 
+	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-004] Search for '%s': Corpus has %d entries", searchText, #searchData.Corpus)
+
 	local count = 0
+	local matchedNames = 0
 	for _, v in pairs(searchData.Corpus) do
 		if not v then
 			-- Skip malformed corpus entries
 		else
 			local result = string.find(v:lower(), searchText)
 			if result ~= nil then
+				matchedNames = matchedNames + 1
+				TOGBankClassic_Output:Debug("MAIL", "[SEARCH-004] Match #%d: '%s' contains '%s'", matchedNames, v, searchText)
 				local lookupList = searchData.Lookup[v]
 				if not lookupList then
 					-- No lookup for this name; skip
@@ -610,8 +615,7 @@ function TOGBankClassic_UI_Search:DrawContent()
 								break
 							end
 						end
-					end
-						label:SetText(bankAlt .. mailIcon)
+					end					local mailIcon = inMail and " \124TInterface\\MailFrame\\UI-MailIcon-Up:16:16\124t" or ""						label:SetText(bankAlt .. mailIcon)
 						label.label:SetSize(100, 30)
 						label.label:SetJustifyV("MIDDLE")
 						self.Results:AddChild(label)
@@ -622,6 +626,8 @@ function TOGBankClassic_UI_Search:DrawContent()
 			end
 		end
 	end
+
+	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-004] Search complete: matched %d names, displayed %d result widgets", matchedNames, count)
 
 	local status = count .. " Result"
 	if count > 1 then
