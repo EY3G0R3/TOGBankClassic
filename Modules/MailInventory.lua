@@ -215,10 +215,6 @@ function TOGBankClassic_MailInventory:HasMailInventory(alt)
 		return false
 	end
 	
-	-- Check if there are any items
-	for _ in pairs(alt.mail.items) do
-		return true
-	end
-	
-	return false
+	-- Check if there are any items (mail.items is array format)
+	return #alt.mail.items > 0
 end

@@ -183,9 +183,8 @@ function TOGBankClassic_Bank:Scan()
 			local hadPreviousMail = alt.mail ~= nil
 			local previousItemCount = 0
 			if hadPreviousMail and alt.mail.items then
-				for _ in pairs(alt.mail.items) do
-					previousItemCount = previousItemCount + 1
-				end
+				-- mail.items is array format, use # operator
+				previousItemCount = #alt.mail.items
 			end
 			
 			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Replacing mail data for '%s': old=%d items, new=%d items",

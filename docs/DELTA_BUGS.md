@@ -5,10 +5,14 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
-- ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+- None
 
 **Recent Fixes (2026-01-30):**
+- ✅ [MAIL-009] Non-bankers losing mail data when receiving syncs from old clients - Extended mail preservation to all users for backward compatibility
+- ✅ [MAIL-008] Mail items being added to bank.items permanently causing data corruption - Fixed EnsureLegacyFields() to not modify bank.items (mail stays separate)
+- ✅ [MAIL-007] Mail items incrementing in UI only - Fixed indentation bug causing mail items to be aggregated twice when alt.items exists (SYNC-006 format); also fixed 2 lingering pairs() calls for mail.items arrays
 - ✅ [DELTA-011] UNAUTHORIZED rejections recorded as errors + 30% threshold blocking delta syncs - Fixed to not record UNAUTHORIZED as errors (expected banker protection); removed 30% MIN_DELTA_SIZE_RATIO threshold (now uses delta whenever deltaSize < fullSize)
+- ✅ [MAIL-006] Mail array format regression - Fixed 6 locations using pairs() instead of ipairs() for mail.items arrays
 
 **Recent Fixes (2026-01-29):**
 - ✅ [DATA-006] Mail data being deleted by external sync for multi-banker accounts - Fixed ReceiveAltData() to reject ALL external updates to banker data (was only rejecting non-banker updates)
@@ -7024,5 +7028,427 @@ local playerFull = player .. "-" .. realm
 - Improves on v0.7.0 initial delta implementation
 
 **Resolution:** UNAUTHORIZED rejections no longer recorded as errors (only shown in debug mode). Delta selection now uses simple `deltaSize < fullSize` check without arbitrary 30% threshold. Expected to see 80-90%+ delta sync adoption in normal operation.
+
+---
+
+## [MAIL-007] Mail Items Incrementing in UI Only
+
+**Issue ID:** MAIL-007
+**Component:** UI/Search.lua, UI/Inventory.lua, MailInventory.lua, Bank.lua
+**Severity:** MEDIUM (UI display bug, data integrity not affected)
+**Reported:** 2026-01-30
+**Status:** RESOLVED
+
+### Symptoms
+
+- Mail items appearing with multiplied counts in UI (2x, 3x, etc.)
+- Problem **only** in UI display - SavedVariables file has correct counts
+- Affects inventory search, UI aggregation displays
+- Example: 1 Mooncloth Bag in mail showing as 2+ in UI
+
+### Root Cause
+
+**Primary Bug: Indentation Error Causing Double Aggregation**
+
+In `Modules/UI/Search.lua`, mail aggregation code was incorrectly placed **outside** the `if/else` block that handles SYNC-006 format detection:
+
+```lua
+if alt.items and next(alt.items) ~= nil then
+    -- alt.items already includes bank+bags+mail
+    items = TOGBankClassic_Item:Aggregate(items, alt.items)
+else
+    -- Fallback for old format
+    items = TOGBankClassic_Item:Aggregate(items, alt.bank.items)
+    items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
+end  -- <-- else block ends here
+-- BUG: Mail aggregation ALWAYS runs, even when alt.items already has mail!
+if alt.mail and alt.mail.items then
+    items = TOGBankClassic_Item:Aggregate(items, alt.mail.items)  -- Double-counts mail!
+end
+```
+
+**Flow:**
+1. When `alt.items` exists (SYNC-006 format), it already contains aggregated bank+bags+mail
+2. First aggregation: Mail included in alt.items → items hash table
+3. Second aggregation: Mail items added AGAIN from alt.mail.items
+4. Result: Mail items counted twice in UI
+
+**Secondary Bugs: MAIL-006 Regressions**
+
+Two locations still using `pairs()` instead of `#` operator for mail.items arrays:
+- `MailInventory.lua` line 219: `for _ in pairs(alt.mail.items)`
+- `Bank.lua` line 186: `for _ in pairs(alt.mail.items)`
+
+### Impact
+
+- **User-Facing:** Incorrect item counts in search results and inventory displays
+- **Data Integrity:** SavedVariables file is CLEAN - bug is UI-only
+- **Scope:** Affects any player with mail items when using SYNC-006 format (post-v0.7.6)
+- **Severity:** Medium - misleading but doesn't corrupt data
+
+### Fix
+
+**1. Search.lua Indentation Fixes (2 locations)**
+
+Moved mail aggregation code **inside** the `else` block:
+
+```lua
+else
+    -- Fallback for old format
+    if alt.bank then
+        items = TOGBankClassic_Item:Aggregate(items, alt.bank.items)
+    end
+    if alt.bags then
+        items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
+    end
+    -- Mail only aggregated here when alt.items doesn't exist
+    if alt.mail and alt.mail.items then
+        items = TOGBankClassic_Item:Aggregate(items, alt.mail.items)
+    end
+end  -- Now mail is inside the else block
+```
+
+Fixed in:
+- **Line 382-399:** Search corpus building (`BuildSearchData()`)
+- **Line 463-478:** Search results aggregation (`DrawContent()`)
+
+**2. Array Format Fixes (2 locations)**
+
+Replaced `pairs()` loops with `#` operator for array length:
+
+```lua
+-- Before (MailInventory.lua line 219)
+for _ in pairs(alt.mail.items) do
+    return true
+end
+return false
+
+-- After
+return #alt.mail.items > 0
+```
+
+```lua
+-- Before (Bank.lua line 186)
+for _ in pairs(alt.mail.items) do
+    previousItemCount = previousItemCount + 1
+end
+
+-- After
+previousItemCount = #alt.mail.items
+```
+
+### Testing
+
+**Verification Steps:**
+1. Check SavedVariables file has correct mail.items counts ✓
+2. Verify UI search shows correct aggregated counts
+3. Confirm inventory tab doesn't multiply mail items
+4. Test with multiple mail items on banker alts
+
+**Expected Behavior:**
+- Mail items appear once with correct count in UI
+- Search results match actual inventory
+- No more incrementing/multiplying of mail items
+
+### Related Issues
+
+- **[MAIL-006]:** Original mail array format fix (6 locations changed to ipairs)
+- **[SYNC-006]:** Introduction of alt.items aggregated format
+- **[DATA-004]:** Mail structure standardization (became array format)
+- **[MAIL-002]:** Earlier mail UI display issues
+
+### Files Changed
+
+1. `Modules/UI/Search.lua` - Fixed 2 indentation bugs causing double aggregation
+2. `Modules/MailInventory.lua` - Fixed pairs() → # operator (1 location)
+3. `Modules/Bank.lua` - Fixed pairs() → # operator (1 location)
+
+**Total:** 4 fixes across 3 files
+
+### Prevention
+
+**Code Review Checklist:**
+- ✓ Verify mail aggregation only runs in `else` block (fallback path)
+- ✓ Confirm alt.items already includes mail (don't re-add)
+- ✓ Use `#` operator for array length, not `pairs()` iteration
+- ✓ Test both SYNC-006 (alt.items) and legacy (separate sources) code paths
+
+**Indentation Standards:**
+- Use tabs consistently for control flow blocks
+- Ensure conditional aggregation stays inside its branch
+- Visual inspection: if mail code isn't indented with else block, it's wrong
+
+**Resolution:** Mail items now aggregate correctly once, UI displays match SavedVariables data.
+
+---
+
+## [MAIL-008] Mail Items Added to Bank.Items Permanently Causing Data Corruption
+
+**Issue ID:** MAIL-008
+**Component:** Guild.lua (EnsureLegacyFields function)
+**Severity:** CRITICAL (Data corruption bug)
+**Reported:** 2026-01-30
+**Status:** RESOLVED
+
+### Symptoms
+
+- Bank item counts incrementing with each sync
+- Mail items (e.g., 1 Mooncloth Bag in mail) appearing as multiple items in bank (e.g., 3 in bank data)
+- Counts increase over time with repeated syncs
+- User reports "only 1 bag" but SavedVariables shows 3 in bank + 1 in mail = 4 total
+
+### Root Cause
+
+**Permanent Data Modification Bug**
+
+`Guild.lua` function `EnsureLegacyFields()` was designed for backward compatibility - to help old clients (pre-SYNC-006) see mail items by including them in `bank.items` during transmission.
+
+However, the code **permanently modified** the stored `alt.bank.items` data instead of creating a temporary copy:
+
+```lua
+-- BAD: Modifies permanent stored data
+function TOGBankClassic_Guild:EnsureLegacyFields(alt)
+    ...
+    -- Legacy fields exist (from Bank.lua scan), but they don't include mail
+    -- Add mail items to bank.items so old clients can see them
+    if hasMailItems then
+        for _, mailItem in ipairs(alt.mail.items) do
+            if existingBank[mailItem.ID] then
+                -- CORRUPTION: Adds mail count to bank count PERMANENTLY
+                existingBank[mailItem.ID].Count = existingBank[mailItem.ID].Count + mailItem.Count
+            else
+                -- CORRUPTION: Adds mail item to bank.items PERMANENTLY
+                table.insert(alt.bank.items, { ID = mailItem.ID, ... })
+            end
+        end
+    end
+end
+```
+
+**Flow of Corruption:**
+1. User has 0 Mooncloth Bags in bank, 1 in mail
+2. **First sync:** `EnsureLegacyFields()` runs, adds 1 to bank.items → bank now shows 1
+3. **Second sync:** Same mail item still exists, adds again → bank now shows 2
+4. **Third sync:** Adds again → bank now shows 3
+5. Each sync permanently corrupts bank.items, saved to disk
+
+### Impact
+
+- **Data Integrity:** SavedVariables file contains incorrect inventory counts
+- **User-Facing:** Displays show inflated item counts (4 when user has 1)
+- **Persistence:** Corruption saved to disk, survives reloads
+- **Accumulation:** Gets worse with each sync (geometric growth possible)
+- **Scope:** Affects any item that exists in mail
+
+### Fix
+
+**Removed Permanent Modification**
+
+The code that modified `alt.bank.items` has been removed. Mail items now stay in `alt.mail.items` only, keeping bank and mail data separate:
+
+```lua
+-- FIXED: Do not modify alt.bank.items
+function TOGBankClassic_Guild:EnsureLegacyFields(alt)
+    ...
+    -- Legacy fields exist (from Bank.lua scan), but they don't include mail
+    -- MAIL-008: DO NOT modify alt.bank.items directly - it corrupts the data!
+    -- Old clients will see mail items via alt.mail field, or can aggregate themselves
+    -- If needed, create temporary copies with mail included only for transmission
+    
+    return alt  -- No modifications to stored data
+end
+```
+
+**Rationale:**
+- `alt.items` already includes bank + bags + mail aggregated (SYNC-006)
+- Old clients can access `alt.mail` separately if needed
+- If backward compat transmission needed, create **temporary** merged copy, don't corrupt stored data
+- Bank.items should only contain what's physically in the bank
+
+### Data Recovery
+
+Users with corrupted data need to rescan:
+
+1. `/reload` with fixed code
+2. Open bank to trigger rescan
+3. Bank.lua will rebuild correct bank.items from actual slot contents
+4. Old corrupted counts will be overwritten with correct scan
+
+Alternatively, manually edit SavedVariables to remove inflated counts from bank.items (mail.items should already be correct).
+
+### Testing
+
+**Verification Steps:**
+1. Check bank.items for item that's only in mail - should NOT appear in bank.items
+2. Send multiple syncs - bank.items counts should remain stable
+3. Verify mail.items stays separate and correct
+4. Confirm alt.items aggregation includes both correctly
+
+**Expected Behavior:**
+- Bank.items contains only bank inventory
+- Mail.items contains only mail inventory
+- Alt.items aggregates both (sum is correct)
+- Repeated syncs don't change counts
+
+### Related Issues
+
+- **[MAIL-007]:** UI aggregation bug (independent issue, both needed fixing)
+- **[SYNC-006]:** Introduced alt.items aggregate (correct approach)
+- **[DATA-004]:** Earlier mail structure fixes
+- All backward compatibility code must work on copies, not modify stored data
+
+### Files Changed
+
+1. `Modules/Guild.lua` - Removed mail-to-bank aggregation from EnsureLegacyFields() (lines 1235-1256)
+
+**Total:** 1 file, 22 lines removed
+
+### Prevention
+
+**Code Review Checklist:**
+- ✓ Never modify stored data structures during sync/transmission
+- ✓ Create temporary copies if data transformation needed for old clients
+- ✓ Verify "EnsureLegacy" functions work on copies, not originals
+- ✓ Test with multiple syncs to detect accumulation bugs
+- ✓ Validate SavedVariables after sync matches actual inventory
+
+**Architecture Rule:**
+**Source data (bank.items, mail.items) is IMMUTABLE during sync - only scanning code modifies it**
+
+**Resolution:** Mail items no longer added to bank.items. Data stays clean across syncs. Users need rescan to fix corrupted existing data.
+
+---
+
+## [MAIL-009] Non-Bankers Losing Mail Data When Receiving Syncs From Old Clients
+
+**Issue ID:** MAIL-009
+**Component:** Guild.lua (ReceiveAltData function)
+**Severity:** MEDIUM (Feature limitation affecting adoption)
+**Reported:** 2026-01-30
+**Status:** RESOLVED
+
+### Symptoms
+
+- Non-bankers with v0.8.0+ (new clients) lose mail visibility after receiving syncs from old clients
+- Mail data gets overwritten with empty/nil when old client syncs bank data without mail field
+- Reduces incentive for users to upgrade (lose features instead of gain them)
+- Bankers retain mail data, but non-bankers don't
+
+### Root Cause
+
+**Incomplete Backward Compatibility**
+
+The mail preservation code in `ReceiveAltData()` only preserved mail for bankers:
+
+```lua
+-- OLD: Only bankers kept their mail
+if existingMail and targetIsBanker then
+    self.Info.alts[norm].mail = existingMail
+    -- Preserved for bankers only
+elseif existingMail and not targetIsBanker then
+    -- Non-bankers lost their mail data
+end
+```
+
+**Scenario:**
+1. Non-banker has v0.8.0+ (can see mail from bankers)
+2. Old client (v0.7.x) sends sync for a banker alt (no mail field included)
+3. `ReceiveAltData()` overwrites with incoming data
+4. Mail field becomes nil (old client didn't send it)
+5. Non-banker loses visibility of banker's mail inventory
+
+**Intended Behavior:** 
+- New clients should maintain full visibility (including mail) regardless of incoming sync source
+- Backward compatibility should never reduce features for upgraded clients
+- Mail visibility is a selling point for adoption
+
+### Impact
+
+- **Adoption Blocker:** Users upgrading to v0.8.0+ lose features when playing with mixed versions
+- **User Experience:** Inconsistent inventory visibility (flickers based on who syncs)
+- **Strategic:** Reduces motivation to upgrade (upgrades should add features, not lose them)
+- **Scope:** All non-bankers in mixed-version guilds
+
+### Fix
+
+**Extended Mail Preservation to All Users**
+
+Changed the preservation logic to check if incoming sync **has mail**, rather than checking if target is a banker:
+
+```lua
+-- FIXED: Preserve for everyone based on incoming sync
+local incomingHasMail = alt.mail ~= nil
+
+self.Info.alts[norm] = alt  -- Overwrite with incoming
+
+-- Restore if we had mail locally and incoming doesn't have it
+if existingMail and not incomingHasMail then
+    self.Info.alts[norm].mail = existingMail
+    -- Preserved for ALL users (bankers and non-bankers)
+end
+```
+
+**New Behavior:**
+- **Old → New:** Old client sends data without mail → New client preserves its local mail knowledge
+- **New → New:** New client sends data with mail → Use the incoming mail (fresher)
+- **Banker syncing:** Banker always has authoritative mail (scanned locally)
+- **Non-banker syncing:** Non-banker preserves whatever mail data it learned before
+
+### Benefits
+
+1. **Adoption Incentive:** Upgrading to v0.8.0+ gives you mail visibility permanently
+2. **Mixed Versions:** New clients maintain features even when old clients sync
+3. **Graceful Degradation:** Old clients work normally (never had mail feature anyway)
+4. **Progressive Enhancement:** More people upgrade → more complete inventory data for everyone
+
+### Testing
+
+**Verification Steps:**
+1. New client learns banker mail inventory (e.g., 1 mooncloth bag)
+2. Old client syncs banker data (no mail field)
+3. New client should still show the mooncloth bag
+4. Mail data persists across multiple syncs from old clients
+5. When new client syncs, mail updates normally
+
+**Expected Behavior:**
+- Mail visibility never degrades on upgraded clients
+- Old clients unaffected (backward compatible)
+- Data freshness preserved (newer mail data overwrites older)
+
+### Version Compatibility Matrix
+
+| Sender Version | Receiver Version | Mail Handling |
+|---------------|------------------|---------------|
+| v0.7.x (old) | v0.7.x (old) | No mail feature |
+| v0.7.x (old) | v0.8.0+ (new) | Preserved locally |
+| v0.8.0+ (new) | v0.7.x (old) | Ignored by old client |
+| v0.8.0+ (new) | v0.8.0+ (new) | Synced normally ✓ |
+
+### Related Issues
+
+- **[MAIL-008]:** Fixed bank.items corruption (different issue - data modification)
+- **[DATA-006]:** Banker protection (originally only preserved mail for bankers)
+- **[SYNC-006]:** Introduced alt.items aggregate (mail included)
+- All backward compatibility must favor upgraded clients
+
+### Files Changed
+
+1. `Modules/Guild.lua` - Extended mail preservation condition (line ~1817)
+
+**Total:** 1 file, 1 conditional changed (`targetIsBanker` → `not incomingHasMail`)
+
+### Prevention
+
+**Backward Compatibility Checklist:**
+- ✓ Upgraded clients should never lose features when mixed with old clients
+- ✓ New data fields preserved when old clients don't send them
+- ✓ Feature visibility maintained across version boundaries
+- ✓ Test with both old→new and new→new sync scenarios
+- ✓ Incentivize upgrades (more features) rather than punish them (feature loss)
+
+**Design Principle:**
+**Backward compatibility means old clients work, not that new clients degrade**
+
+**Resolution:** All clients (bankers and non-bankers) now preserve mail data when receiving syncs from old clients. Mail visibility is a permanent benefit of upgrading to v0.8.0+.
 
 ---

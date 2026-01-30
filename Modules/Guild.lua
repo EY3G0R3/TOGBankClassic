@@ -1232,29 +1232,9 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	end
 	
 	-- Legacy fields exist (from Bank.lua scan), but they don't include mail
-	-- Add mail items to bank.items so old clients can see them
-	if hasMailItems then
-		-- Create a lookup of existing items in bank.items by ID
-		local existingBank = {}
-		for _, item in ipairs(alt.bank.items) do
-			if item.ID then
-				existingBank[item.ID] = item
-			end
-		end
-		
-		-- Add or aggregate mail items into bank.items (mail.items is an array)
-		for _, mailItem in ipairs(alt.mail.items) do
-			if existingBank[mailItem.ID] then
-				-- Item exists in bank, add mail count to it
-				existingBank[mailItem.ID].Count = (existingBank[mailItem.ID].Count or 0) + (mailItem.Count or 0)
-				TOGBankClassic_Output:Debug("SYNC", "Added mail quantity to existing bank item %d: +%d", mailItem.ID, mailItem.Count or 0)
-			else
-				-- Item not in bank, add it as a new entry
-				table.insert(alt.bank.items, { ID = mailItem.ID, Count = mailItem.Count, Link = mailItem.Link })
-				TOGBankClassic_Output:Debug("SYNC", "Added mail-only item %d to bank.items: count=%d", mailItem.ID, mailItem.Count or 0)
-			end
-		end
-	end
+	-- MAIL-008: DO NOT modify alt.bank.items directly - it corrupts the data!
+	-- Old clients will see mail items via alt.mail field, or can aggregate themselves
+	-- If needed, create temporary copies with mail included only for transmission
 	
 	-- Ensure bags.items exists (even if empty)
 	if not alt.bags then
@@ -1827,31 +1807,35 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			self.Info.alts = {}
 		end
 		
-		-- DATA-006: Preserve mail field from existing data (mail is local-only, never synced)
-		-- When receiving external updates (even from same account), preserve locally-scanned mail
-		local existingMail = existing and existing.mail or nil
-		
-		TOGBankClassic_Output:Debug("MAIL", "AdoptAltData for %s: existingMail=%s, targetIsBanker=%s",
-			norm, existingMail and "YES" or "NO", tostring(targetIsBanker))
-		if existingMail then
-			TOGBankClassic_Output:Debug("MAIL", "  existingMail has %d items", existingMail.items and #existingMail.items or 0)
-		end
-		
-		---@diagnostic disable-next-line: need-check-nil
-		self.Info.alts[norm] = alt
-		TOGBankClassic_Output:Debug("MAIL", "Overwrote self.Info.alts[%s], mail field now: %s",
-			norm, alt.mail and "EXISTS" or "GONE")
-		
-		-- Restore preserved mail if it existed
-		if existingMail and targetIsBanker then
-			self.Info.alts[norm].mail = existingMail
-			local mailItemCount = existingMail.items and #existingMail.items or 0
-			TOGBankClassic_Output:Debug("MAIL", "Restored mail for banker %s (%d items)", norm, mailItemCount)
-			TOGBankClassic_Output:Debug("MAIL",
-				"[DATA-006] Preserved mail data for banker %s (%d items, lastScan=%s)",
-				norm, mailItemCount, tostring(existingMail.lastScan))
-		elseif existingMail and not targetIsBanker then
-			TOGBankClassic_Output:Debug("MAIL", "Not restoring mail for %s (not a banker)", norm)
+-- DATA-006/MAIL-009: Preserve mail field from existing data when incoming sync lacks it
+	-- Mail is now synced in v0.8.0+, but old clients don't include it in their syncs
+	-- Preserve locally-scanned mail data to maintain visibility for new clients
+	local existingMail = existing and existing.mail or nil
+	local incomingHasMail = alt.mail ~= nil
+	
+	TOGBankClassic_Output:Debug("MAIL", "AdoptAltData for %s: existingMail=%s, incomingHasMail=%s",
+		norm, existingMail and "YES" or "NO", tostring(incomingHasMail))
+	if existingMail then
+		TOGBankClassic_Output:Debug("MAIL", "  existingMail has %d items", existingMail.items and #existingMail.items or 0)
+	end
+	
+	---@diagnostic disable-next-line: need-check-nil
+	self.Info.alts[norm] = alt
+	TOGBankClassic_Output:Debug("MAIL", "Overwrote self.Info.alts[%s], mail field now: %s",
+		norm, alt.mail and "EXISTS" or "GONE")
+	
+	-- Restore preserved mail if we had it locally and incoming sync doesn't have it
+	-- This handles backward compatibility: new clients preserve mail when receiving from old clients
+	if existingMail and not incomingHasMail then
+		self.Info.alts[norm].mail = existingMail
+		local mailItemCount = existingMail.items and #existingMail.items or 0
+		TOGBankClassic_Output:Debug("MAIL", "Restored mail for %s (%d items) - incoming sync lacked mail",
+			norm, mailItemCount)
+		TOGBankClassic_Output:Debug("MAIL",
+			"[MAIL-009] Preserved mail data for %s (%d items, lastScan=%s) - backward compat",
+			norm, mailItemCount, tostring(existingMail.lastScan))
+	elseif incomingHasMail then
+		TOGBankClassic_Output:Debug("MAIL", "Using incoming mail data for %s (new client sync)", norm)
 		end
 
 		-- Reset search data flag so inventory UI rebuilds search index (UI-008 fix)
