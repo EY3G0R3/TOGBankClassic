@@ -1361,13 +1361,13 @@ function TOGBankClassic_Guild:SendAltData(name)
 			end
 		end
 
-		-- Track metrics using the size of the format we're using (prefer new format)
-		local serialized = deltaNoLinks or deltaWithLinks
-		TOGBankClassic_Output:Debug("DELTA", "Final delta size: %d bytes", string.len(serialized or ""))
+		-- Track metrics - count both transmissions if dual-sending (DELTA-010)
+		local totalSize = (deltaWithLinks and string.len(deltaWithLinks) or 0) + (deltaNoLinks and string.len(deltaNoLinks) or 0)
+		TOGBankClassic_Output:Debug("DELTA", "Final delta size: %d bytes total", totalSize)
 
 		-- Track metrics
 		if self.Info and self.Info.name then
-			TOGBankClassic_Database:RecordDeltaSent(self.Info.name, string.len(serialized or ""))
+			TOGBankClassic_Database:RecordDeltaSent(self.Info.name, totalSize)
 		end
 
 		-- Save delta to history for potential chain replay (DELTA-006)
