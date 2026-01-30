@@ -280,7 +280,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		searchWindow:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
 	end
 	-- Set width AFTER SetStatusTable to override any saved width
-	searchWindow:SetWidth(175)
+	searchWindow:SetWidth(250)
 
 	self.Window = searchWindow
 
@@ -374,8 +374,11 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			-- Use alt.items if available (SYNC-006 aggregated format)
 			if alt.items and next(alt.items) ~= nil then
 				-- alt.items already includes bank+bags+mail, use it directly
+				local beforeCount = #items
 				items = TOGBankClassic_Item:Aggregate(items, alt.items)
-				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: using alt.items for %s", player)
+				local afterCount = #items
+				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: using alt.items for %s (%d items before, %d after aggregation)", 
+					player, beforeCount, afterCount)
 			else
 				-- Fallback: aggregate from sources for backward compatibility
 				if alt.bank then
@@ -400,18 +403,21 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 	local itemNames = {}
 	local corpusNamesSeen = {}
 	
-	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] About to validate %d items before GetItems", #items)
+	-- Count items in hash table (can't use # operator on hash tables)
+	local itemCount = 0
+	for _ in pairs(items) do itemCount = itemCount + 1 end
+	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] About to validate %d items before GetItems", itemCount)
 	
 	-- Validate and filter items before passing to GetItems
 	local validItems = {}
 	local invalidCount = 0
-	for i, item in ipairs(items) do
+	for key, item in pairs(items) do  -- Use pairs() not ipairs() - items is a hash table
 		if item and item.ID and item.ID > 0 then
 			table.insert(validItems, item)
 		else
 			invalidCount = invalidCount + 1
-			TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] WARNING: Skipping invalid item at index %d (ID: %s, Link: %s)", 
-				i, tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
+			TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] WARNING: Skipping invalid item at key %s (ID: %s, Link: %s)", 
+				tostring(key), tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
 		end
 	end
 	

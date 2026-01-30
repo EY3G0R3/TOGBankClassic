@@ -8,6 +8,7 @@
 - None
 
 **Recent Fixes (2026-01-29):**
+- ✅ [SEARCH-003] Search returning 0 results despite valid data - Fixed BuildSearchData() to use pairs() instead of ipairs() for hash table iteration from Aggregate()
 - ✅ [ITEM-002] **CRITICAL CRASH** "table index is nil" in Blizzard_ObjectAPI Item.lua:320 - Fixed by adding itemID validation before ContinueOnItemLoad, pcall protection, and filtering corrupted items (ID < 100) in Guild.lua and Item.lua
 - ✅ [DATA-005] Banker data being overwritten by external sources - Enhanced banker protection to reject ALL external data about banker themselves, not just non-banker updates
 - ✅ [MAIL-005] Duplicate item stacks for identical gear with different instance IDs - Implemented selective Link preservation (gear only) and normalized deduplication keys
@@ -6264,6 +6265,90 @@ DATA-004 protection was incomplete:
 - Bankers no longer accept external updates about themselves
 - Non-bankers still sync normally with all players
 - Mail/bank/bags data no longer disappears after sync updates
+
+---
+
+## [SEARCH-003] Search Returning 0 Results Despite Valid Data
+
+**Status:** ✅ FIXED (2026-01-29)  
+**Severity:** HIGH - Feature Broken  
+**Category:** Search, Lua Table Iteration
+
+**Problem:**
+Search window consistently returned "0 Results" for all searches despite valid item data existing. Debug showed "0 items before aggregation" and "0 items after aggregation" for all alts. However, the Inventory UI tab correctly displayed 15 items for the same character, and `/dump TOGBankClassic_Guild.Info["Alchemyrcp-Azuresong"].items` confirmed 15 items existed in the data structure.
+
+**Symptoms:**
+- Search UI shows "0 Results" for all queries
+- Debug log: "0 items before, 0 after aggregation"
+- Inventory tab works correctly showing all items
+- Data exists in TOGBankClassic_Guild.Info structure
+- No errors thrown, silent failure
+
+**Root Cause - Lua Table Type Mismatch:**
+
+**Background on Lua Tables:**
+Lua has a single "table" type used for both arrays and hash tables:
+- **Arrays:** Numeric indices [1], [2], [3] - iterated with `ipairs()`, counted with `#`
+- **Hash Tables:** String/mixed keys ["key1"], ["key2"] - iterated with `pairs()`, counted manually
+
+**The Bug:**
+1. `Item.lua Aggregate()` returns a **hash table** with deduplication keys:
+   ```lua
+   items["9304item:9304:0:0:0:0:0:0:0"] = {ID=9304, Count=1, Link="..."}
+   items["2589item:2589:0:0:0:0:0:0:0"] = {ID=2589, Count=2, Link="..."}
+   ```
+
+2. `Search.lua BuildSearchData()` used **array iteration** on this hash table:
+   ```lua
+   local count = #items  -- Returns 0 for hash tables!
+   for i, item in ipairs(items) do  -- Only iterates [1], [2], [3]...
+   ```
+
+3. **Result:** `ipairs()` found nothing because there are no numeric indices, only string keys
+
+**Why Inventory Worked:**
+`UI/Inventory.lua` correctly used `pairs()` to iterate the hash table:
+```lua
+for key, item in pairs(items) do  -- Iterates ALL keys (strings or numbers)
+```
+
+**Solution:**
+
+**Search.lua (lines 405-410):**
+```lua
+-- BEFORE (incorrect):
+local count = #items  -- Returns 0 for hash tables
+for i, item in ipairs(items) do  -- Only iterates numeric indices
+
+-- AFTER (correct):
+local count = 0
+for _ in pairs(items) do count = count + 1 end  -- Count all keys
+for key, item in pairs(items) do  -- Iterate all keys
+```
+
+**Key Changes:**
+1. Changed `ipairs(items)` → `pairs(items)` for hash table iteration
+2. Changed `#items` → manual counting loop for hash tables
+3. No logic changes needed - just proper iteration
+
+**Technical Notes:**
+- `ipairs()` documentation: "Iterates the array part of a table" (numeric indices only)
+- `pairs()` documentation: "Iterates all key-value pairs" (any keys)
+- `#` operator: "Returns the length of the array part" (0 for pure hash tables)
+- Aggregate() has always returned hash tables - this bug was pre-existing but exposed by recent testing
+
+**Files Modified:**
+- `Modules/UI/Search.lua` (lines 405-410): Changed table iteration from ipairs to pairs
+
+**Testing:**
+- Search now correctly finds and displays items
+- Aggregation counts match Inventory tab counts
+- All search queries work as expected
+
+**Prevention:**
+- Always use `pairs()` when iterating tables from `Aggregate()`
+- Only use `ipairs()` for guaranteed numeric-indexed arrays
+- Document in code comments when functions return hash tables vs arrays
 
 ---
 ---

@@ -48,6 +48,13 @@
 
 ### 🐛 Bug Fixes
 
+#### [SEARCH-003] Search Returning 0 Results
+- **Fixed**: Search now correctly processes all aggregated items
+- **Root Cause**: BuildSearchData was using `ipairs()` on hash table returned by `Aggregate()`
+- **Solution**: Changed to `pairs()` for proper hash table iteration, fixed item counting
+- **Impact**: Search functionality now works correctly for all item queries
+- Location: Search.lua lines 405-410
+
 #### [UI-002] Item Links Not Appearing After Integration
 - **Fixed**: Items now display immediately after async item link reconstruction
 - **Root Cause**: `ReconstructItemLinks()` was using async `Item:ContinueOnItemLoad()` callbacks without triggering UI refresh
