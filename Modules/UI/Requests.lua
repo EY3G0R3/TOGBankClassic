@@ -388,14 +388,18 @@ function TOGBankClassic_UI_Requests:Open()
 		self:DrawWindow()
 	end
 
-	self.Window:Show()
-
 	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
 		self.Window:ClearAllPoints()
 		self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
 	end
 
 	self:DrawContent()
+	
+	-- Force layout update before showing to ensure proper sizing
+	self.Window:DoLayout()
+	
+	-- Show window AFTER content is drawn and laid out to prevent initial sizing issue
+	self.Window:Show()
 
 	-- Start listening for bag changes to update fulfill button states (bank alts only)
 	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
@@ -543,12 +547,13 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	window:SetCallback("OnClose", OnClose)
 	window:SetTitle("Requests")
 	window:SetLayout("Flow")
-	window:SetWidth(MIN_WIDTH)
 	window:EnableResize(true)
 	-- Persist window position/size across reloads
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
 		window:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
 	end
+	-- Set width AFTER SetStatusTable to ensure minimum size is enforced
+	window:SetWidth(MIN_WIDTH)
 	if window.frame.SetResizeBounds then
 		window.frame:SetResizeBounds(MIN_WIDTH, 200)
 	else

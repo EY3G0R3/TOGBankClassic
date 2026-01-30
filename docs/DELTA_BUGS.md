@@ -8,6 +8,7 @@
 - None
 
 **Recent Fixes (2026-01-30):**
+- ✅ [UI-010] Request window opening with half-width border and buttons floating outside - Fixed SetStatusTable restoring incorrect width by calling SetWidth(MIN_WIDTH) after SetStatusTable to enforce minimum size
 - ✅ [DATA-007] Non-bankers unable to receive data after wipe - Fixed banker protection to only apply when RECEIVER is a banker, not when TARGET is a banker (non-bankers can now receive banker data from any source)
 - ✅ [DELTA-013] Duplicate query spam when receiving deltas without baseline - Added pending sync check to prevent multiple queries for same alt while first request in flight
 - ✅ [UI-009] ESC key not closing Requests window - Registered frame with UISpecialFrames for proper escape handler
