@@ -186,10 +186,10 @@ function TOGBankClassic_Database:Load(name)
 						end
 						TOGBankClassic_Output:Debug("DATABASE", "BEFORE clear - Banker %s alt.items: %s", name, table.concat(beforeSample, ", "))
 					end
-					
+
 					alt.items = nil  -- Clear corrupted data
 					TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
-					
+
 					-- DEBUG: Log sample counts AFTER recalculation
 					if alt.items and #alt.items > 0 then
 						local afterSample = {}
@@ -201,10 +201,11 @@ function TOGBankClassic_Database:Load(name)
 						end
 						TOGBankClassic_Output:Debug("DATABASE", "AFTER recalc - Banker %s alt.items: %s", name, table.concat(afterSample, ", "))
 					end
-					
+
 					TOGBankClassic_Output:Debug("DATABASE", "FORCED recalculation for banker %s from bank/bags/mail", name)
 				elseif alt.items then
 					-- Synced alt - FORCE deduplicate
+					-- NOTE: Do NOT merge mail here - alt.items from sync already includes mail from sender's scan
 					local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
 					alt.items = {}
 					for _, item in pairs(aggregated) do

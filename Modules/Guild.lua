@@ -384,7 +384,7 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 	-- Update roster.alts list (no version tracking needed - purely local)
 	local oldRoster = table.concat(self.Info.roster.alts or {}, ",")
 	local newRoster = table.concat(banks, ",")
-	
+
 	if oldRoster ~= newRoster then
 		self.Info.roster.alts = banks
 		TOGBankClassic_Output:Debug("ROSTER", "Rebuilt banker roster from guild notes: %d bankers", #banks)
@@ -951,7 +951,7 @@ function TOGBankClassic_Guild:StripItemLinks(items)
 			Count = item.Count
 			-- Link removed - receiver will reconstruct
 		}
-		
+
 		-- Preserve itemString for items with unique stats (suffixes, enchants, etc.)
 		-- Extract from Link if available: |Hitem:itemString|h[Name]|h
 		if item.Link then
@@ -960,7 +960,7 @@ function TOGBankClassic_Guild:StripItemLinks(items)
 				strippedItem.ItemString = itemString
 			end
 		end
-		
+
 		table.insert(stripped, strippedItem)
 	end
 	return stripped
@@ -976,7 +976,7 @@ local function ThrottledUIRefresh()
 		return
 	end
 	lastUIRefresh = now
-	
+
 	-- Only refresh if UI is actually open
 	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 		TOGBankClassic_UI_Inventory:DrawContent()
@@ -999,11 +999,11 @@ local function ProcessItemQueue()
 		isProcessingQueue = false
 		return
 	end
-	
+
 	-- Process a batch of items
 	local processCount = math.min(BATCH_SIZE, #itemReconstructQueue)
 	local loadedAnyInBatch = false
-	
+
 	for i = 1, processCount do
 		local item = table.remove(itemReconstructQueue, 1)
 		if item and item.ID and not item.Link then
@@ -1020,13 +1020,13 @@ local function ProcessItemQueue()
 					if pendingAsyncLoads < MAX_CONCURRENT_ASYNC then
 						pendingAsyncLoads = pendingAsyncLoads + 1
 						local itemObj = Item:CreateFromItemID(item.ID)
-						
+
 						-- Debug: Check itemObj state
 						TOGBankClassic_Output:Debug("ITEM", "[GUILD] ItemString Item %d: itemObj=%s, itemObj.itemID=%s",
 							item.ID or -1,
 							tostring(itemObj),
 							itemObj and tostring(itemObj.itemID) or "nil")
-						
+
 						if itemObj and itemObj.itemID and itemObj.itemID == item.ID then
 							-- Item object is valid, try ContinueOnItemLoad with error protection
 							TOGBankClassic_Output:Debug("ITEM", "[GUILD] ItemString Item %d PASSED validation, calling ContinueOnItemLoad", item.ID)
@@ -1065,13 +1065,13 @@ local function ProcessItemQueue()
 					if pendingAsyncLoads < MAX_CONCURRENT_ASYNC then
 						pendingAsyncLoads = pendingAsyncLoads + 1
 						local itemObj = Item:CreateFromItemID(item.ID)
-						
+
 						-- Debug: Check itemObj state
 						TOGBankClassic_Output:Debug("ITEM", "[GUILD] Item %d: itemObj=%s, itemObj.itemID=%s",
 							item.ID or -1,
 							tostring(itemObj),
 							itemObj and tostring(itemObj.itemID) or "nil")
-						
+
 						if itemObj and itemObj.itemID and itemObj.itemID == item.ID then
 							-- Item object is valid, try ContinueOnItemLoad with error protection
 							TOGBankClassic_Output:Debug("ITEM", "[GUILD] Item %d PASSED validation, calling ContinueOnItemLoad", item.ID)
@@ -1103,12 +1103,12 @@ local function ProcessItemQueue()
 			end  -- End of if item.ID >= 100
 		end
 	end
-	
+
 	-- Refresh UI if any items loaded synchronously in this batch
 	if loadedAnyInBatch then
 		ThrottledUIRefresh()
 	end
-	
+
 	-- Schedule next batch
 	if #itemReconstructQueue > 0 then
 		C_Timer.After(BATCH_DELAY, ProcessItemQueue)
@@ -1151,7 +1151,7 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
 			table.insert(itemReconstructQueue, item)
 		end
 	end
-	
+
 	-- Start processing queue if not already running
 	if not isProcessingQueue and #itemReconstructQueue > 0 then
 		isProcessingQueue = true
@@ -1167,7 +1167,7 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 
 	-- Strip links from aggregate items (v0.8.0 new format)
 	local strippedItems = self:StripItemLinks(alt.items)
-	
+
 	-- Also strip links from legacy bank/bags fields for backward compatibility
 	-- Old clients can reconstruct links, new clients use alt.items
 	local strippedBank = nil
@@ -1177,7 +1177,7 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 			items = self:StripItemLinks(alt.bank.items)
 		}
 	end
-	
+
 	local strippedBags = nil
 	if alt.bags then
 		strippedBags = {
@@ -1213,11 +1213,11 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 
 	-- Check if we have mail items that need to be added to legacy fields
 	local hasMailItems = alt.mail and alt.mail.items and next(alt.mail.items)
-	
+
 	-- If no legacy fields exist, reconstruct from alt.items
 	if not alt.bank or not alt.bank.items then
 		TOGBankClassic_Output:Debug("SYNC", "Reconstructing legacy fields from alt.items for %s", alt.name or "unknown")
-		
+
 		if not alt.bank then
 			alt.bank = {}
 		end
@@ -1226,22 +1226,22 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 		for _, item in ipairs(alt.items) do
 			table.insert(alt.bank.items, item)
 		end
-		
+
 		if not alt.bags then
 			alt.bags = {}
 		end
 		if not alt.bags.items then
 			alt.bags.items = {}
 		end
-		
+
 		return alt
 	end
-	
+
 	-- Legacy fields exist (from Bank.lua scan), but they don't include mail
 	-- MAIL-008: DO NOT modify alt.bank.items directly - it corrupts the data!
 	-- Old clients will see mail items via alt.mail field, or can aggregate themselves
 	-- If needed, create temporary copies with mail included only for transmission
-	
+
 	-- Ensure bags.items exists (even if empty)
 	if not alt.bags then
 		alt.bags = {}
@@ -1249,7 +1249,7 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	if not alt.bags.items then
 		alt.bags.items = {}
 	end
-	
+
 	return alt
 end
 
@@ -1266,18 +1266,18 @@ function TOGBankClassic_Guild:SendAltData(name)
 	-- No longer bump version here - that caused version drift from communication
 
 	local currentAlt = self.Info.alts[norm]
-	
+
 	-- Ensure legacy fields exist for backward compatibility with old clients
 	-- This ensures old clients that only read bank.items/bags.items still get data
 	self:EnsureLegacyFields(currentAlt)  -- Modifies in place, no need to reassign
-	
+
 	-- Log what we're about to send (all 3 arrays for backward compatibility)
 	local itemsCount = currentAlt.items and #currentAlt.items or 0
 	local bankCount = (currentAlt.bank and currentAlt.bank.items) and #currentAlt.bank.items or 0
 	local bagsCount = (currentAlt.bags and currentAlt.bags.items) and #currentAlt.bags.items or 0
 	TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d",
 		norm, itemsCount, bankCount, bagsCount)
-	
+
 	-- DEBUG: Log sample counts from what we're about to send
 	if currentAlt.items and #currentAlt.items > 0 then
 		local sampleItems = {}
@@ -1289,7 +1289,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 		end
 		TOGBankClassic_Output:Debug("SYNC", "First 5 items in alt.items being sent: %s", table.concat(sampleItems, ", "))
 	end
-	
+
 	local useDelta = false
 	local deltaData = nil
 	local computeStart = debugprofilestop()
@@ -1589,7 +1589,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			if not a or type(a) ~= "table" then
 				return nil
 			end
-			
+
 			-- Sanitize alt.items (array)
 			if a.items then
 				local cleaned = {}
@@ -1600,7 +1600,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				end
 				a.items = cleaned
 			end
-			
+
 			-- Sanitize bank items (array) - compact after removing invalids
 			if a.bank and type(a.bank) == "table" and a.bank.items then
 				local cleaned = {}
@@ -1611,7 +1611,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				end
 				a.bank.items = cleaned
 			end
-			
+
 			-- Sanitize bag items (array) - compact after removing invalids
 			if a.bags and type(a.bags) == "table" and a.bags.items then
 				local cleaned = {}
@@ -1633,7 +1633,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 					beforeCount, validCount, invalidCount)
 				a.bags.items = cleaned
 			end
-			
+
 			return a
 		end
 
@@ -1649,7 +1649,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			for _ in pairs(items) do count = count + 1 end
 			return count
 		end
-		
+
 		TOGBankClassic_Output:Debug("SYNC", "ReceiveAltData for %s: alt.items=%d, alt.bank.items=%d, alt.bags.items=%d",
 			name,
 			countItems(alt.items),
@@ -1659,22 +1659,22 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		-- Backward compatibility: Compute alt.items from sources if missing (SYNC-006)
 		-- This handles data from players who haven't rescanned after the aggregation update
 		-- OLD STRUCTURE: Only bank and bags were synced (mail was local-only)
-		
+
 		-- Check if alt.items has any content (handles both array and key-value formats)
 		local function hasAnyItems(items)
 			if not items or type(items) ~= "table" then return false end
 			return next(items) ~= nil
 		end
-		
+
 		local needsReconstruction = not hasAnyItems(alt.items)
-		
+
 		if needsReconstruction then
 			local bankItems = (alt.bank and alt.bank.items) or {}
 			local bagItems = (alt.bags and alt.bags.items) or {}
-			
+
 			TOGBankClassic_Output:Debug("SYNC", "Reconstructing alt.items for %s: bank=%d, bags=%d",
 				name, #bankItems, #bagItems)
-			
+
 			-- Aggregate bank + bags ONLY (mail was never synced in old system)
 			if #bankItems > 0 or #bagItems > 0 then
 				local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
@@ -1701,14 +1701,17 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				end
 				TOGBankClassic_Output:Debug("SYNC", "BEFORE dedupe - First 5 items received: %s", table.concat(beforeSample, ", "))
 			end
-			
-			-- Check if we need to merge mail items into alt.items
-			-- This handles the case where alt.items was created before mail sync was implemented
+
+			-- MAIL-010: Check if we need to merge mail items into alt.items
+			-- Only merge if this is OLD data (no mailHash = created before mail sync existed)
+			-- If mailHash exists, alt.items already includes mail from sender's Bank:Scan()
+			local hasMailHash = alt.mailHash ~= nil
 			local mailItems = (alt.mail and alt.mail.items) or {}
 			local hasMailItems = mailItems and #mailItems > 0
-			
-			if hasMailItems then
-				TOGBankClassic_Output:Debug("SYNC", "Merging %d mail items into alt.items for %s", #mailItems, name)
+			local needsMailMerge = hasMailItems and not hasMailHash
+
+			if needsMailMerge then
+				TOGBankClassic_Output:Debug("SYNC", "OLD DATA: Merging %d mail items into alt.items for %s (no mailHash)", #mailItems, name)
 				-- Aggregate alt.items with mail to ensure mail is included
 				local aggregated = TOGBankClassic_Item:Aggregate(alt.items, mailItems)
 				local arrayItems = {}
@@ -1719,7 +1722,10 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				TOGBankClassic_Output:Debug("SYNC", "Merged alt.items for %s: %d items (including mail)",
 					name, #alt.items)
 			else
-				-- No mail to merge, just deduplicate existing alt.items
+				if hasMailHash then
+					TOGBankClassic_Output:Debug("SYNC", "NEW DATA: alt.items already includes mail (mailHash present) for %s", name)
+				end
+				-- No mail merge needed, just deduplicate
 				local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
 				local arrayItems = {}
 				for _, item in pairs(aggregated) do
@@ -1729,7 +1735,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, deduplicated and converted to array: %d items",
 					name, #alt.items)
 			end
-			
+
 			-- DEBUG: Log sample counts AFTER deduplication
 			if alt.items and #alt.items > 0 then
 				local afterSample = {}
@@ -1746,18 +1752,18 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		local norm = self:NormalizeName(name)
 		local existing = self.Info.alts[norm]
 		local senderNorm = sender and self:NormalizeName(sender) or nil
-		
+
 		-- DATA-004/DATA-006: Banker protection logic
 		-- Rule 1: Never accept data about yourself (you are source of truth)
 		-- Rule 2: Bankers only accept data about OTHER bankers FROM that banker
 		-- Rule 3: Non-bankers accept data from anyone
-		local player = UnitName("player") .. "-" .. GetRealmName()
+		local player = UnitName("player") .. "-" .. GetNormalizedRealmName()
 		local playerNorm = self:NormalizeName(player)
 		local isOwnData = playerNorm == norm
 		local targetIsBanker = self:IsBank(norm)
 		local senderIsBanker = senderNorm and self:IsBank(senderNorm) or false
 		local receiverIsBanker = self:IsBank(playerNorm)
-		
+
 		-- Rule 1: Reject data about ourselves (we already have our own current data)
 		if isOwnData then
 			TOGBankClassic_Output:Warn(
@@ -1765,7 +1771,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			)
 			return ADOPTION_STATUS.UNAUTHORIZED
 		end
-		
+
 		-- Rule 2: Banker protection - only apply if WE are a banker protecting our data
 		-- Regular users should accept banker data from anyone
 		if receiverIsBanker and targetIsBanker then
@@ -1781,9 +1787,9 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				"[DATA-006] Accepting data about banker %s from themselves",
 				norm)
 		end
-		
+
 		-- Rule 3: Non-bankers accept all data, non-banker data accepted from anyone
-		
+
 		-- Version checking for all alts
 	if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
 		return ADOPTION_STATUS.STALE
@@ -1817,7 +1823,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 	if self.Info.alts[name] and alt.version ~= nil and self.Info.alts[name].version ~= nil and alt.version < self.Info.alts[name].version then
 		return ADOPTION_STATUS.STALE
 	end
-	
+
 	if self.hasRequested then
 		if self.requestCount == nil then
 			self.requestCount = 0
@@ -1833,24 +1839,24 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		if not self.Info.alts then
 			self.Info.alts = {}
 		end
-		
+
 -- DATA-006/MAIL-009: Preserve mail field from existing data when incoming sync lacks it
 	-- Mail is now synced in v0.8.0+, but old clients don't include it in their syncs
 	-- Preserve locally-scanned mail data to maintain visibility for new clients
 	local existingMail = existing and existing.mail or nil
 	local incomingHasMail = alt.mail ~= nil
-	
+
 	TOGBankClassic_Output:Debug("MAIL", "AdoptAltData for %s: existingMail=%s, incomingHasMail=%s",
 		norm, existingMail and "YES" or "NO", tostring(incomingHasMail))
 	if existingMail then
 		TOGBankClassic_Output:Debug("MAIL", "  existingMail has %d items", existingMail.items and #existingMail.items or 0)
 	end
-	
+
 	---@diagnostic disable-next-line: need-check-nil
 	self.Info.alts[norm] = alt
 	TOGBankClassic_Output:Debug("MAIL", "Overwrote self.Info.alts[%s], mail field now: %s",
 		norm, alt.mail and "EXISTS" or "GONE")
-	
+
 	-- Restore preserved mail if we had it locally and incoming sync doesn't have it
 	-- This handles backward compatibility: new clients preserve mail when receiving from old clients
 	if existingMail and not incomingHasMail then
@@ -1861,9 +1867,23 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		TOGBankClassic_Output:Debug("MAIL",
 			"[MAIL-009] Preserved mail data for %s (%d items, lastScan=%s) - backward compat",
 			norm, mailItemCount, tostring(existingMail.lastScan))
+
+		-- MAIL-010: Re-aggregate alt.items to include the restored mail
+		-- The incoming alt.items doesn't have mail, so we need to merge it back in
+		if existingMail.items and #existingMail.items > 0 then
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Merging %d restored mail items into alt.items for %s",
+				#existingMail.items, norm)
+			local aggregated = TOGBankClassic_Item:Aggregate(self.Info.alts[norm].items, existingMail.items)
+			self.Info.alts[norm].items = {}
+			for _, item in pairs(aggregated) do
+				table.insert(self.Info.alts[norm].items, item)
+			end
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Re-aggregated alt.items for %s: %d items (including restored mail)",
+				norm, #self.Info.alts[norm].items)
+		end
 	elseif incomingHasMail then
 		TOGBankClassic_Output:Debug("MAIL", "Using incoming mail data for %s (new client sync)", norm)
-		end
+	end
 
 		-- Reset search data flag so inventory UI rebuilds search index (UI-008 fix)
 		if TOGBankClassic_UI_Inventory then
@@ -2159,17 +2179,13 @@ function TOGBankClassic_Guild:AuthorRosterData()
 		end
 	end
 	if isBank or CanViewOfficerNote() then
-		if not info.roster then
-			---@diagnostic disable-next-line: need-check-nil
+		if info and not info.roster then
 			info.roster = {}
 		end
-		if info.roster then
-			---@diagnostic disable-next-line: need-check-nil
+		if info and info.roster then
 			info.roster.alts = banks
-			---@diagnostic disable-next-line: need-check-nil
 			info.roster.version = GetServerTime()
 			if not banks then
-				---@diagnostic disable-next-line: need-check-nil
 				info.roster.version = nil
 			end
 		end

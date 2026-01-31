@@ -9,7 +9,7 @@
 
 **Recent Fixes (2026-01-30):**
 - ✅ [UI-011] Banker highlight checkbox not appearing after banker status changes - Fixed Open() to detect banker status changes and recreate window to show/hide highlight checkbox
-- ✅ [MAIL-010] Mail items not appearing in Inventory UI after sync - Fixed ReceiveAltData() to merge alt.mail.items into alt.items when receiving synced data (alt.items was created before mail sync, missing mail items)
+- ✅ [MAIL-010] Mail items disappearing from UI after receiving syncs from old clients - Fixed ReceiveAltData() to check mailHash to distinguish old vs new data, only merge mail for old data; added re-aggregation of alt.items after restoring preserved mail to include mail in UI display
 - ✅ [SEARCH-005] Search only returning 1 item when multiple item types match - Added debug logging to track corpus matching; fixed search result counting with matchedNames variable
 - ✅ [SEARCH-004] Search UI crash "attempt to concatenate global 'mailIcon' (a nil value)" - Fixed missing mailIcon variable definition in Search.lua line 614 (was checking inMail flag but never setting the icon string)
 - ✅ [UI-010] Request window opening with half-width border and buttons floating outside - Fixed SetStatusTable restoring incorrect width by calling SetWidth(MIN_WIDTH) after SetStatusTable to enforce minimum size
@@ -7459,6 +7459,207 @@ end
 **Backward compatibility means old clients work, not that new clients degrade**
 
 **Resolution:** All clients (bankers and non-bankers) now preserve mail data when receiving syncs from old clients. Mail visibility is a permanent benefit of upgrading to v0.8.0+.
+
+---
+
+## [MAIL-010] Mail Items Disappearing From UI After Receiving Syncs From Old Clients
+
+**Issue ID:** MAIL-010
+**Component:** Guild.lua (ReceiveAltData function)
+**Severity:** HIGH (Data visibility loss, intermittent)
+**Reported:** 2026-01-30
+**Status:** RESOLVED
+
+### Symptoms
+
+**User Report:**
+- Items appear in UI initially after /reload
+- After ~10 minutes, items disappear from UI (e.g., 98 runecloth bags → 97, mooncloth bag missing)
+- Items "go away" then come back sporadically
+- Mail data PERSISTS in SavedVariables correctly (verified)
+- Problem only affects UI display (`alt.items`), not underlying data (`alt.mail`)
+
+**Verified Behavior:**
+```
+Initial: 98 runecloth bags + 1 mooncloth bag (correct)
+After 10min: 97 runecloth bags, no mooncloth (incorrect)
+After reload: Back to 98 + 1 (correct again)
+```
+
+### Root Cause
+
+**Two-Part Issue:**
+
+**Part 1: Old Data Incorrectly Merged**
+When receiving syncs from OLD clients (pre-mail-sync), `ReceiveAltData()` attempted to merge mail items into `alt.items` without checking if the data already included mail. This caused duplicate items when receiving NEW client data.
+
+```lua
+// BROKEN: Always merged mail, even for new data
+if hasMailItems then
+    // Merged mail even when alt.items already had it (new client)
+    local aggregated = TOGBankClassic_Item:Aggregate(alt.items, mailItems)
+}
+```
+
+**Part 2: Mail Preservation Without UI Update**
+MAIL-009 preserved `alt.mail` when receiving syncs from old clients, but never updated `alt.items` to include the restored mail. This caused the UI to show incomplete data:
+
+1. New client has full inventory (bank + bags + mail in `alt.items`)
+2. Old client sends sync (only bank + bags, no mail)
+3. MAIL-009 preserves `alt.mail` field ✓
+4. But `alt.items` uses incoming data (no mail) ✗
+5. UI displays incomplete inventory (missing mail items)
+
+**Timeline:**
+- 0:00 - /reload: `alt.items` includes all items (bank + bags + mail) from Bank:Scan()
+- 0:10 - Old client sync arrives: `alt.items` overwritten with incoming data (no mail)
+- 0:10 - `alt.mail` preserved (MAIL-009 working) but `alt.items` not updated
+- Result: SavedVariables has correct data, but UI shows incomplete data
+
+### Impact
+
+- **Visibility:** Users see intermittent item count fluctuations
+- **Trust:** Users question data integrity ("items went away")
+- **Usability:** Can't rely on UI for accurate inventory
+- **Scope:** All users in mixed-version guilds (~10 min after reload)
+
+### Fix
+
+**Two-Part Solution:**
+
+**Part 1: Conditional Mail Merging (Guild.lua lines 1705-1736)**
+Only merge mail into `alt.items` if the data is from an OLD client:
+
+```lua
+// Check if this is OLD data (no mailHash = pre-mail-sync)
+local hasMailHash = alt.mailHash ~= nil
+local mailItems = (alt.mail and alt.mail.items) or {}
+local hasMailItems = mailItems and #mailItems > 0
+local needsMailMerge = hasMailItems and not hasMailHash
+
+if needsMailMerge then
+    // OLD DATA: Merge mail (sender never included it in alt.items)
+    TOGBankClassic_Output:Debug("SYNC", "OLD DATA: Merging %d mail items...", #mailItems)
+    local aggregated = TOGBankClassic_Item:Aggregate(alt.items, mailItems)
+    // ... rebuild alt.items
+else
+    // NEW DATA: Just deduplicate (sender already included mail)
+    local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
+    // ... rebuild alt.items
+end
+```
+
+**Part 2: Re-aggregate After Mail Restoration (Guild.lua lines 1884-1893)**
+When MAIL-009 restores preserved mail, update `alt.items` to include it:
+
+```lua
+if existingMail and not incomingHasMail then
+    self.Info.alts[norm].mail = existingMail  // MAIL-009: Preserve
+    
+    // MAIL-010: Re-aggregate alt.items with restored mail
+    if existingMail.items and #existingMail.items > 0 then
+        TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Merging %d restored mail items...", 
+            #existingMail.items)
+        local aggregated = TOGBankClassic_Item:Aggregate(self.Info.alts[norm].items, existingMail.items)
+        self.Info.alts[norm].items = {}
+        for _, item in pairs(aggregated) do
+            table.insert(self.Info.alts[norm].items, item)
+        end
+    end
+end
+```
+
+**Database.lua (line 207): Clarifying Comment**
+Added comment explaining why migration deduplication doesn't merge mail:
+
+```lua
+// NOTE: Do NOT merge mail here - alt.items from sync already includes mail from sender's scan
+local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
+```
+
+### Data Flow Diagram
+
+**Before Fix (Broken):**
+```
+Old Client Sync → ReceiveAltData
+    ├─ alt.items = incoming (no mail) ✗
+    ├─ alt.mail = preserved ✓ (MAIL-009)
+    └─ UI shows alt.items (incomplete) ✗
+
+Result: Mail exists in SavedVariables but not in UI
+```
+
+**After Fix (Working):**
+```
+Old Client Sync → ReceiveAltData
+    ├─ alt.items = incoming (no mail)
+    ├─ alt.mail = preserved ✓ (MAIL-009)
+    ├─ Re-aggregate: alt.items + alt.mail.items ✓ (MAIL-010)
+    └─ UI shows alt.items (complete) ✓
+
+Result: Mail visible in both SavedVariables and UI
+```
+
+### Testing
+
+**Verification Steps:**
+1. New client scans banker with mail (e.g., 98 bags + 1 mooncloth)
+2. `/reload` - Verify UI shows 98 + 1 ✓
+3. Wait ~10 minutes for old client sync to arrive
+4. Check UI - Should still show 98 + 1 ✓ (not 97 + 0)
+5. `/reload` - Should remain 98 + 1 ✓
+6. Verify SavedVariables has mail data ✓
+
+**Test Matrix:**
+
+| Sender | Receiver | Expected UI Behavior |
+|--------|----------|---------------------|
+| Old (no mail) | New | Shows mail (restored + re-aggregated) ✓ |
+| New (has mail) | New | Shows mail (from sync, deduplicated) ✓ |
+| Old (no mail) | Old | No mail feature (unaffected) ✓ |
+
+### Version Compatibility
+
+| mailHash Present | Data Source | Merge Behavior |
+|-----------------|-------------|---------------|
+| ❌ No | Old Client | Merge mail into alt.items |
+| ✅ Yes | New Client | Deduplicate only (mail already in alt.items) |
+
+**mailHash** acts as a version indicator:
+- Present = v0.8.0+ (mail included in scan)
+- Absent = Pre-v0.8.0 (mail not included)
+
+### Related Issues
+
+- **[MAIL-009]:** Mail preservation (fixed preserving `alt.mail`, but not updating `alt.items`)
+- **[MAIL-008]:** Bank.items corruption (different issue - permanent modification)
+- **[SYNC-006]:** Introduced `alt.items` aggregate (should include mail from Bank:Scan)
+- **[DATA-004]:** Item duplication (similar symptom, different cause)
+
+### Files Changed
+
+1. **`Modules/Guild.lua`** (lines 1705-1736) - Added mailHash check for conditional mail merging
+2. **`Modules/Guild.lua`** (lines 1884-1893) - Re-aggregate alt.items after mail restoration
+3. **`Modules/Database.lua`** (line 207) - Added clarifying comment
+
+**Total:** 2 files, ~30 lines added
+
+### Prevention
+
+**Backward Compatibility Checklist:**
+- ✓ Distinguish between old data (needs enrichment) and new data (already complete)
+- ✓ Use version indicators (mailHash) to detect data format
+- ✓ When preserving fields, ensure dependent aggregates are updated
+- ✓ Test with mixed-version scenarios (old→new, new→new)
+- ✓ Verify both SavedVariables AND UI display after syncs
+- ✓ Wait for timed syncs (~10 min) to catch delayed issues
+
+**Design Principle:**
+**When preserving data fields, update all dependent aggregates that consume them**
+
+If you preserve `alt.mail` but `alt.items` depends on it, you must re-aggregate.
+
+**Resolution:** Mail items now persist in UI correctly when receiving syncs from old clients. The fix ensures backward compatibility without data loss or UI inconsistency.
 
 ---
 
