@@ -1093,10 +1093,48 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 	end
 
 	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
-	self.FilterRequester:SetList(requesterList, requesterOrder)
+	
+	-- Only update the requester dropdown if the list has changed
+	local requesterListChanged = false
+	if not self.cachedRequesterList or #requesterOrder ~= #(self.cachedRequesterOrder or {}) then
+		requesterListChanged = true
+	else
+		for i, key in ipairs(requesterOrder) do
+			if key ~= self.cachedRequesterOrder[i] or requesterList[key] ~= self.cachedRequesterList[key] then
+				requesterListChanged = true
+				break
+			end
+		end
+	end
+	
+	if requesterListChanged then
+		self.FilterRequester:SetList(requesterList, requesterOrder)
+		self.cachedRequesterList = requesterList
+		self.cachedRequesterOrder = requesterOrder
+		TOGBankClassic_Output:Debug("UI", "UpdateFilters: Requester dropdown list updated")
+	end
 
 	local bankList, bankOrder = buildBankOptions(currentPlayer, bankCounts)
-	self.FilterBank:SetList(bankList, bankOrder)
+	
+	-- Only update the bank dropdown if the list has changed
+	local bankListChanged = false
+	if not self.cachedBankList or #bankOrder ~= #(self.cachedBankOrder or {}) then
+		bankListChanged = true
+	else
+		for i, key in ipairs(bankOrder) do
+			if key ~= self.cachedBankOrder[i] or bankList[key] ~= self.cachedBankList[key] then
+				bankListChanged = true
+				break
+			end
+		end
+	end
+	
+	if bankListChanged then
+		self.FilterBank:SetList(bankList, bankOrder)
+		self.cachedBankList = bankList
+		self.cachedBankOrder = bankOrder
+		TOGBankClassic_Output:Debug("UI", "UpdateFilters: Bank dropdown list updated")
+	end
 
 	local requesterValue = self.requesterFilter or FILTER_ANY
 	if requesterValue ~= FILTER_ANY and not requesterList[requesterValue] then

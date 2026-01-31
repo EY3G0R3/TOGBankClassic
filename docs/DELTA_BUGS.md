@@ -10,6 +10,7 @@
 - �🟠 [MAIL-011-B] Manual mail sends not applying fulfillment (partial orders) - Investigation ongoing
 
 **Recent Fixes (2026-01-31):**
+- ✅ [UI-012] Dropdown contents blinking and disappearing - Fixed by caching dropdown lists to prevent unnecessary SetList() calls on every DrawContent refresh
 - ✅ [UI-011-B] Banker highlight checkbox appearing intermittently - Fixed guild roster loading timing issue by adding GetNumGuildMembers() guard before IsBank() check in UpdateFilters
 - ✅ [MAIL-011-B] Manual mail sends not applying fulfillment - Resolved by MAIL-011 fix; OnSendMail hook now correctly captures items from mail attachments for both fulfill button and manual sends
 - ✅ [MAIL-011] Order fulfillment not applying when sending mail - Fixed race condition where OnSendMail hook was clearing pendingSend before ApplyPendingSend could read it; moved pendingSend capture to PrepareFulfillMail (when items attached) instead of SendMail hook (after mail sent); added 10-second staleness check to prevent clearing recent pendingSend
@@ -554,7 +555,222 @@ This prevents infinite retry loops for entries that will never succeed while sti
 
 ## Resolved Bugs (2026-01-31)
 
-### 🟠 HIGH - All Resolved
+### � MEDIUM - All Resolved
+
+#### ✅ [UI-012] Dropdown contents blinking and disappearing
+
+**Severity:** 🟡 MEDIUM
+**Category:** UI / AceGUI / Performance
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-31
+**Date Resolved:** 2026-01-31
+**Status:** ✅ RESOLVED
+**Reproducibility:** Consistent
+**Related:** None
+
+**Problem:**
+The Requester and Bank filter dropdowns in the Requests window would visually "blink" and their contents would disappear when opened. The dropdown menu would flash briefly and then close/disappear, requiring the user to reopen the dropdown to see and select options. This made the dropdowns nearly unusable.
+
+**Symptoms:**
+1. User clicks on Requester or Bank dropdown to open it
+2. Dropdown menu opens and displays list of options
+3. Menu contents flash/blink
+4. Menu disappears immediately or closes
+5. User has to click dropdown again to see options
+6. Behavior was consistent and reproducible
+
+**Root Cause:**
+Performance issue caused by unnecessary UI rebuilding:
+
+1. **DrawContent() Called Frequently:**
+   - DrawContent() is called whenever request data changes
+   - Also called on GUILD_ROSTER_UPDATE events
+   - Can be triggered multiple times per second during active periods
+
+2. **UpdateFilters() Called Every Time:**
+   - DrawContent() calls UpdateFilters() on every refresh
+   - UpdateFilters() rebuilds dropdown lists unconditionally
+   - Calls SetList() on both requester and bank dropdowns
+
+3. **SetList() Destroys Open Dropdowns:**
+   - AceGUI Dropdown's SetList() method clears and rebuilds the dropdown menu
+   - If dropdown is currently open when SetList() called, it destroys the open menu
+   - This causes the visual "blink" and immediate disappearance
+   - User sees the menu flash and disappear
+
+4. **Unnecessary Updates:**
+   - Most DrawContent() calls don't actually change the dropdown options
+   - Same requesters/banks with same counts, but SetList() called anyway
+   - Dropdown being rebuilt even though data hasn't changed
+
+**Investigation Steps:**
+1. User reported dropdown contents blinking and disappearing
+2. Documented as UI-012 in Active Issues
+3. Agent identified dropdowns are in Requests window (requester and bank filters)
+4. Found UpdateFilters() being called on every DrawContent()
+5. Discovered SetList() being called unconditionally on both dropdowns
+6. Root cause: No caching mechanism to detect if list data actually changed
+
+**Code Analysis:**
+
+**Before Fix - Modules/UI/Requests.lua UpdateFilters() (lines 1073-1116):**
+```lua
+function TOGBankClassic_UI_Requests:UpdateFilters()
+    if not self.FilterRequester or not self.FilterBank then
+        return
+    end
+
+    local info = TOGBankClassic_Guild.Info
+    local requests = info and info.requests or {}
+    local requesterCounts, bankCounts = pendingCounts(requests)
+    local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+    -- ... default filter logic ...
+
+    local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
+    self.FilterRequester:SetList(requesterList, requesterOrder)  -- ALWAYS called
+
+    local bankList, bankOrder = buildBankOptions(currentPlayer, bankCounts)
+    self.FilterBank:SetList(bankList, bankOrder)  -- ALWAYS called
+
+    -- ... set selected values ...
+end
+```
+
+**Problem:** `SetList()` called unconditionally on every `UpdateFilters()` call, even when dropdown contents haven't changed.
+
+**Fix Implemented:**
+
+**File:** `Modules/UI/Requests.lua`
+**Lines:** 1073-1154
+**Function:** `UpdateFilters()`
+
+Added caching mechanism to track previous dropdown lists and only call `SetList()` when content actually changes:
+
+```lua
+function TOGBankClassic_UI_Requests:UpdateFilters()
+    -- ... existing setup code ...
+
+    local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
+    
+    -- Only update the requester dropdown if the list has changed
+    local requesterListChanged = false
+    if not self.cachedRequesterList or #requesterOrder ~= #(self.cachedRequesterOrder or {}) then
+        requesterListChanged = true
+    else
+        for i, key in ipairs(requesterOrder) do
+            if key ~= self.cachedRequesterOrder[i] or requesterList[key] ~= self.cachedRequesterList[key] then
+                requesterListChanged = true
+                break
+            end
+        end
+    end
+    
+    if requesterListChanged then
+        self.FilterRequester:SetList(requesterList, requesterOrder)
+        self.cachedRequesterList = requesterList
+        self.cachedRequesterOrder = requesterOrder
+        TOGBankClassic_Output:Debug("UI", "UpdateFilters: Requester dropdown list updated")
+    end
+
+    local bankList, bankOrder = buildBankOptions(currentPlayer, bankCounts)
+    
+    -- Only update the bank dropdown if the list has changed
+    local bankListChanged = false
+    if not self.cachedBankList or #bankOrder ~= #(self.cachedBankOrder or {}) then
+        bankListChanged = true
+    else
+        for i, key in ipairs(bankOrder) do
+            if key ~= self.cachedBankOrder[i] or bankList[key] ~= self.cachedBankList[key] then
+                bankListChanged = true
+                break
+            end
+        end
+    end
+    
+    if bankListChanged then
+        self.FilterBank:SetList(bankList, bankOrder)
+        self.cachedBankList = bankList
+        self.cachedBankOrder = bankOrder
+        TOGBankClassic_Output:Debug("UI", "UpdateFilters: Bank dropdown list updated")
+    end
+
+    -- ... existing value setting code ...
+end
+```
+
+**How the Fix Works:**
+
+1. **Cache Previous Lists:**
+   - Store `cachedRequesterList` and `cachedRequesterOrder` on window object
+   - Store `cachedBankList` and `cachedBankOrder` on window object
+
+2. **Compare Before Update:**
+   - First check: Compare list lengths (fast rejection)
+   - Second check: Compare each key and display text in order
+   - Only set `listChanged = true` if actual difference found
+
+3. **Conditional SetList():**
+   - Only call `SetList()` if `listChanged == true`
+   - Update cache with new list data
+   - Add debug output to track when updates occur
+
+4. **When Lists Actually Change:**
+   - New request created (new requester/bank appears in list)
+   - Request completed/cancelled (counts change in display text)
+   - Request's requester or bank field modified
+   - Player's default filter changes (Me vs others)
+
+**Why This Fix Works:**
+
+1. **Prevents Unnecessary Updates:** SetList() only called when dropdown content genuinely changes, not on every refresh
+
+2. **Preserves Open Dropdowns:** When user has dropdown open and DrawContent() called, dropdown stays open because SetList() not called
+
+3. **Minimal Performance Impact:** List comparison is fast (simple iteration, early exit on first difference)
+
+4. **Data Correctness:** Dropdowns still update immediately when actual changes occur (new requests, status changes)
+
+5. **No Visual Artifacts:** Eliminates the blink/disappear behavior completely
+
+**Data Flow:**
+```
+DrawContent() called (frequent)
+    ↓
+UpdateFilters() called
+    ↓
+Build new dropdown lists from current request data
+    ↓
+Compare with cached lists
+    ↓
+IF different: SetList() + update cache
+IF same: Skip SetList() (dropdown unchanged)
+    ↓
+Set selected values (always done, safe operation)
+```
+
+**Testing Results:**
+- ✅ User confirmed dropdowns no longer blink or disappear
+- ✅ Dropdowns remain stable and usable when opened
+- ✅ Content still updates when new requests created or statuses change
+- ✅ No performance degradation from comparison logic
+
+**Related Code Locations:**
+- **Modules/UI/Requests.lua:1073-1154** - UpdateFilters() with caching logic
+- **Modules/UI/Requests.lua:721-738** - pendingCounts() counts open requests by requester/bank
+- **Modules/UI/Requests.lua:740-776** - buildRequesterOptions() creates dropdown list
+- **Modules/UI/Requests.lua:778-814** - buildBankOptions() creates dropdown list
+- **Modules/UI/Requests.lua:1183** - DrawContent() calls UpdateFilters()
+
+**Lessons Learned:**
+1. AceGUI dropdown SetList() destroys open menus, must be called sparingly
+2. Cache comparison is cheaper than rebuilding UI widgets
+3. High-frequency refresh functions need defensive optimization
+4. Visual glitches often indicate unnecessary UI rebuilding
+5. Always check if data changed before calling destructive UI operations
+
+---
+
+### �🟠 HIGH - All Resolved
 
 #### ✅ [UI-011-B] Banker highlight checkbox appearing intermittently
 
