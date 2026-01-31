@@ -621,18 +621,14 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		self.FilterBank = bankFilter
 
 		-- Add highlighting checkbox (only for bankers)
-		local banks = TOGBankClassic_Guild:GetBanks()
-		if banks then
+		-- Check if guild roster is loaded before checking banker status
+		if GetNumGuildMembers() > 0 then
 			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
-			local isBank = false
-			for _, bankName in ipairs(banks) do
-				local normBank = TOGBankClassic_Guild:NormalizeName(bankName)
-				if normBank == currentPlayer then
-					isBank = true
-					break
-				end
-			end
+			local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
+			TOGBankClassic_Output:Debug("UI", "UpdateFilters: currentPlayer=%s, isBank=%s", tostring(currentPlayer), tostring(isBank))
+			
 			if isBank then
+				TOGBankClassic_Output:Debug("UI", "UpdateFilters: Creating highlight checkbox")
 				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
 				highlightCheckbox:SetLabel("Highlight needed items")
 				highlightCheckbox:SetFullWidth(true)
@@ -644,7 +640,12 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 				end)
 				filterGroup:AddChild(highlightCheckbox)
 				self.HighlightCheckbox = highlightCheckbox
+				TOGBankClassic_Output:Debug("UI", "UpdateFilters: Highlight checkbox created and added to filterGroup")
+			else
+				TOGBankClassic_Output:Debug("UI", "UpdateFilters: Not a banker, skipping checkbox")
 			end
+		else
+			TOGBankClassic_Output:Debug("UI", "UpdateFilters: Guild roster not loaded yet, skipping banker check")
 		end
 	end
 
