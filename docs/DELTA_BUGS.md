@@ -1,11 +1,15 @@
 ﻿# Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** January 30, 2026
+**Last Updated:** January 31, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - None
+
+**Recent Fixes (2026-01-31):**
+- ✅ [DATA-009] "Zombie requests" with mismatched ID/item fields - Added validation to detect and reject requests where ID contains different item name than actual item field (caused by editing requests after creation, IDs embed original item name)
+- ✅ [DATA-008] Request data corruption from empty/invalid required fields - Added strict validation in sanitizeRequest() to reject requests with empty item/requester/bank fields, zero quantity, or "Unknown" requester (previously accepted with defaults, causing corrupted requests to spread)
 
 **Recent Fixes (2026-01-30):**
 - ✅ [UI-011] Banker highlight checkbox not appearing after banker status changes - Fixed Open() to detect banker status changes and recreate window to show/hide highlight checkbox
@@ -8214,5 +8218,347 @@ This bug was introduced when banker protection was added without distinguishing 
 
 **Resolution:** Non-bankers can now receive banker data from any source after database wipe. Banker protection only applies when the receiver themselves is a banker protecting their own data. `/togbank wipe` + `/togbank sync` now fully restores database for non-bankers.
 
+---
+
+## [DATA-008] Request Data Corruption from Empty/Invalid Required Fields
+
+**Severity:** 🟠 HIGH
+**Category:** Request Validation / Data Quality
+**Reporter:** Development Team
+**Date Reported:** 2026-01-31
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
+**Fixed Date:** 2026-01-31
+**Reproducibility:** Consistent when receiving corrupted data
+
+**Description:**
+`sanitizeRequest()` was accepting requests with empty or missing required fields (`item`, `requester`, `bank`, `quantity`) and using default fallback values. This allowed corrupted or maliciously crafted requests to enter the system, spread through guild broadcasts, and persist in the database.
+
+**Impact:**
+- Requests with `item = ""` were accepted and displayed as blank entries
+- Requests with `requester = "Unknown"` were accepted (old default fallback)
+- Requests with `bank = ""` were accepted
+- Requests with `quantity = 0` were accepted (meaningless requests)
+- Corrupted data would spread to all guild members via snapshots
+- No visibility into what bad data was being rejected
+
+**Examples of Bad Data Previously Accepted:**
+```lua
+{
+    id = "someId",
+    item = "",                    -- Empty item (now rejected)
+    requester = "Unknown",        -- Generic default (now rejected)
+    bank = "",                    -- No banker specified (now rejected)
+    quantity = 0,                 -- Zero items requested (now rejected)
+}
+```
+
+**Solution Implemented:**
+Added strict validation in `sanitizeRequest()` to **reject** (return `nil`) instead of **correct** invalid data:
+
+1. **Empty Item Field**
+   - Rejects `item = ""`, `item = nil`
+   - Logs: `"Rejected request: empty item field"`
+
+2. **Invalid Requester**
+   - Rejects `requester = ""`, `requester = nil`, `requester = "Unknown"`
+   - Logs: `"Rejected request: invalid requester '<value>'"`
+
+3. **Empty Bank Field**
+   - Rejects `bank = ""`, `bank = nil`
+   - Logs: `"Rejected request: empty bank field"`
+
+4. **Zero Quantity**
+   - Rejects `quantity = 0` or missing
+   - Logs: `"Rejected request: quantity is zero"`
+
+**Validation Flow:**
+```lua
+-- Phase 1: Validate required fields BEFORE any processing
+local item = req.item and tostring(req.item) or ""
+if item == "" then
+    TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: empty item field")
+    return nil
+end
+
+local requesterRaw = req.requester and tostring(req.requester) or ""
+if requesterRaw == "" or requesterRaw == "Unknown" then
+    TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: invalid requester '%s'", requesterRaw)
+    return nil
+end
+
+local bankRaw = req.bank and tostring(req.bank) or ""
+if bankRaw == "" then
+    TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: empty bank field")
+    return nil
+end
+
+local quantity = math.max(tonumber(req.quantity or 0) or 0, 0)
+if quantity == 0 then
+    TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: quantity is zero")
+    return nil
+end
+
+-- Continue with normalization only if validation passes...
+```
+
+**Files Modified:**
+- `Modules/RequestLog.lua` (lines 55-85): Added Phase 1 validation to `sanitizeRequest()`
+
+**Benefits:**
+- ✅ Prevents corrupted requests from entering the system
+- ✅ Stops bad data from spreading via guild broadcasts
+- ✅ Provides debug visibility into rejection reasons
+- ✅ Eliminates meaningless requests cluttering the UI
+- ✅ Makes data corruption immediately visible (fails fast)
+
+**Testing:**
+Validated that requests are properly rejected when:
+- Item name is empty or missing
+- Requester is empty, missing, or "Unknown"
+- Bank is empty or missing  
+- Quantity is zero or missing
+- All rejections are logged with clear debug messages
+
+**Next Steps (Planned - See FEATURE_IMPROVEMENTS.md):**
+- Phase 2: Add duplicate ID detection
+- Phase 3: Add timestamp logic validation (future dates, negative dates)
+- Phase 4: Add broadcast filtering (validate before sending)
+- Phase 5: Add periodic cleanup with auto-healing
+- Phase 6: Add `/togbank cleanrequests` user command
+
+**Related Issues:**
+- DATA-003: Timestamp overflow validation (32-bit limit)
+- Phase 1 of Request Data Validation & Sanitization initiative
+
+**Closed:** 2026-01-31
+
+---
+
+## [DATA-009] "Zombie Requests" - Corrupted Requests with Mismatched ID/Item Fields
+
+**Severity:** 🟠 HIGH
+**Category:** Request Validation / Data Integrity / Sync
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-31
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.0
+**Fixed Date:** 2026-01-31
+**Reproducibility:** Consistent for edited requests
+
+**Description:**
+Requests that were edited after creation had mismatched data between their ID field and actual item field. The request IDs embed the item name at creation time, but if the item field is later changed, the ID remains unchanged. This creates "zombie requests" that persist despite multiple cancellation attempts and resurrect during snapshot syncs.
+
+**Symptoms:**
+- Users report cancelling the same request "MANY times" but it keeps coming back
+- Multiple "duplicate" requests appear for the same user but with slightly different IDs
+- Request UI shows item name A, but ID contains item name B
+- Debug logs show requests being "Preserved as local-only" repeatedly
+- Tombstones don't work because ID doesn't match on other clients
+
+**Real-World Example from Production Data:**
+
+```lua
+-- Request 1: Zombie edited request
+["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921"] = {
+    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921",
+    ["item"] = "Pattern: Frostweave Tunic",    -- ❌ ID says "Greater Nether Essence"
+    ["requester"] = "Purplë-Myzrael",
+    ["quantity"] = 1,
+    ["status"] = "cancelled",
+}
+
+-- Request 2: Legitimate request (no edit)
+["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"] = {
+    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313",
+    ["item"] = "Greater Nether Essence",        -- ✅ ID matches item
+    ["requester"] = "Purplë-Myzrael",
+    ["quantity"] = 12,
+    ["status"] = "cancelled",
+}
+
+-- Request 3: Another zombie edited request
+["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-st-1766641515"] = {
+    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-st-1766641515",
+    ["item"] = "Formula: Enchant Gloves - Greater Agility",  -- ❌ ID says "Greater Nether Essence"
+    ["requester"] = "Purplë-Myzrael",
+    ["quantity"] = 1,
+    ["status"] = "cancelled",
+}
+```
+
+**Root Cause Analysis:**
+
+1. **ID Generation Embeds Item Name:**
+   ```lua
+   -- ID format: "bank-requester-itemName-timestamp"
+   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+                                         ^^^^^^^^^^^^^^^^^^^^^^
+                                         Item name embedded
+   ```
+
+2. **Request Editing Doesn't Update ID:**
+   - User creates request for "Greater Nether Essence"
+   - ID generated: `"...-Greater Nether Essence-..."`
+   - User later edits request to change item to "Pattern: Frostweave Tunic"
+   - ID remains: `"...-Greater Nether Essence-..."` (stale)
+
+3. **Sync Issues from Mismatch:**
+   - Other clients don't recognize the edited request (different ID hash)
+   - Cancellation creates tombstone for current ID
+   - Snapshots from other clients resurrect the "original" version
+   - UI-003 logic preserves as "local-only" change
+   - Request becomes unkillable zombie
+
+**Why Cancellation Fails:**
+
+```
+Client A (editor):
+  - Has: ID="...Greater Nether Essence-123", item="Pattern: Frostweave Tunic"
+  - Cancels → Creates tombstone for "...Greater Nether Essence-123"
+
+Client B (original snapshot):
+  - Has: ID="...Greater Nether Essence-123", item="Greater Nether Essence"
+  - Sends snapshot during sync
+  - Client A receives: "local-only" preservation logic kicks in
+  - Resurrects zombie request (tombstone doesn't match properly)
+
+Result: Request keeps coming back despite multiple cancellations
+```
+
+**Debug Log Evidence:**
+
+```
+TOGBankClassic: [DEBUG] [UI-003] ApplyRequestSnapshot: Preserving local-only request 
+  id=Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921, 
+  requester=Purplë-Myzrael, 
+  item=Pattern: Frostweave Tunic
+```
+
+The ID says "Greater Nether Essence" but the item is "Pattern: Frostweave Tunic" - clear evidence of editing after creation.
+
+**Impact:**
+
+- **User Experience:** Frustration from unkillable requests that won't stay cancelled
+- **Data Integrity:** Request database contains internally inconsistent records
+- **Search Accuracy:** Searching for "Greater Nether Essence" returns "Pattern: Frostweave Tunic"
+- **Sync Confusion:** Clients can't agree on what the request actually is
+- **UI Clutter:** Multiple "duplicates" of same request with different IDs
+- **Tombstone Ineffectiveness:** Cancellations don't work correctly
+
+**Solution Implemented:**
+
+Added ID/item consistency validation to `sanitizeRequest()`:
+
+```lua
+-- REJECT requests where ID contains different item name (corrupted edited requests)
+if req.id and type(req.id) == "string" then
+    -- ID format: "bank-requester-itemName-timestamp" or variations
+    -- Extract item name from ID by finding the pattern between requester and timestamp
+    local idParts = {}
+    for part in string.gmatch(req.id, "[^-]+") do
+        table.insert(idParts, part)
+    end
+    
+    -- ID typically has 6+ parts: bank, realm, requester, realm, itemname(s), timestamp(s)
+    -- Try to extract item name from middle portion (skip first 4 parts for bank/requester)
+    if #idParts >= 5 then
+        -- Find where the item name ends (before timestamp-like numbers)
+        local itemNameParts = {}
+        for i = 5, #idParts do
+            local part = idParts[i]
+            -- Stop if we hit a pure numeric timestamp (8+ digits) or very short suffix
+            if string.match(part, "^%d%d%d%d%d%d%d%d+") or #part <= 3 then
+                break
+            end
+            table.insert(itemNameParts, part)
+        end
+        
+        if #itemNameParts > 0 then
+            local itemInId = table.concat(itemNameParts, "-")
+            -- Compare (case-insensitive, handle spaces vs dashes)
+            local normalizedItem = string.lower(string.gsub(item, "%s+", ""))
+            local normalizedIdItem = string.lower(string.gsub(itemInId, "%s+", ""))
+            
+            if normalizedItem ~= normalizedIdItem then
+                TOGBankClassic_Output:Debug("REQUESTS", 
+                    "Rejected request: ID contains '%s' but item is '%s' (corrupted/edited request)", 
+                    itemInId, item)
+                return nil
+            end
+        end
+    end
+end
+```
+
+**Validation Logic:**
+
+1. **Parse ID:** Split by `-` delimiter into parts
+2. **Extract Item Name:** Skip bank/requester (first 4 parts), collect item name parts before timestamp
+3. **Normalize Both:** Convert to lowercase, remove spaces for comparison
+4. **Compare:** Reject if ID item name ≠ actual item name
+5. **Log Rejection:** Debug output shows both values for troubleshooting
+
+**What Gets Rejected:**
+
+```lua
+-- ❌ REJECTED: ID contains "Greater Nether Essence", item is "Pattern: Frostweave Tunic"
+ID:   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921"
+Item: "Pattern: Frostweave Tunic"
+→ Log: "Rejected request: ID contains 'Greater Nether Essence' but item is 'Pattern: Frostweave Tunic' (corrupted/edited request)"
+
+-- ✅ ACCEPTED: ID contains "Greater Nether Essence", item is "Greater Nether Essence"
+ID:   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+Item: "Greater Nether Essence"
+→ Passes validation
+```
+
+**Files Modified:**
+- `Modules/RequestLog.lua` (lines 87-124): Added ID/item consistency validation
+
+**Multi-Layer Defense:**
+
+Validation applies at all entry points:
+1. **Receiving Snapshots** - Zombie requests rejected before merging
+2. **Loading SavedVariables** - Zombies cleaned out on addon initialization
+3. **Creating Requests** - Can't create requests with mismatched ID (shouldn't happen)
+4. **UI Display** - Zombies filtered out of display
+
+**Testing:**
+
+Validated with production data:
+- 3 zombie requests identified in SavedVariables file
+- All had mismatched ID/item fields
+- All would be rejected by new validation
+- Will be cleaned on next addon load
+
+**Benefits:**
+
+- ✅ **Stops resurrection:** Zombie requests can't re-enter system via snapshots
+- ✅ **Auto-cleanup:** Existing zombies removed on next load
+- ✅ **Clear logging:** Debug output shows exactly why rejected
+- ✅ **Tombstone effectiveness:** Cancellations work correctly when IDs are consistent
+- ✅ **Data integrity:** Database can't contain internally inconsistent records
+- ✅ **Search accuracy:** Search results match actual item names
+- ✅ **User relief:** "MANY times" cancellation problem solved
+
+**Prevention:**
+
+This validation prevents the symptom (corrupted requests persisting) but doesn't prevent the root cause (editing requests after creation). Future work:
+
+- Option 1: Regenerate ID when item field is edited (risky - breaks references)
+- Option 2: Disable item editing after creation (safest)
+- Option 3: Create new request instead of editing (most user-friendly)
+
+For now, validation ensures corrupted requests can't spread or persist.
+
+**Related Issues:**
+- DATA-008: Empty field validation (Phase 1)
+- UI-003: Request snapshot preservation logic
+- Request editing workflow needs review
+
+**Closed:** 2026-01-31
+
+---
 
 ---

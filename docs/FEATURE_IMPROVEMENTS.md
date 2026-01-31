@@ -1688,3 +1688,364 @@ Banker broadcasts:
 - ✅ Clear debug logs show delay/cancel/fallback behavior
 
 ---
+
+## 🛡️ Request Data Validation & Sanitization
+
+**Current State:** January 31, 2026  
+**Purpose:** Document existing and planned validation to prevent corrupted request data from spreading
+
+### Current Validation (in `sanitizeRequest()`)
+
+**What We Validate:**
+1. ✅ **Type Checking** - Rejects non-table data
+2. ✅ **Numeric Fields** - Forces non-negative values, clamps fulfilled ≤ quantity
+3. ✅ **Timestamp Validation** - Rejects timestamps > 2147483647 (32-bit limit, DATA-003 fix)
+4. ✅ **Status Validation** - Resets invalid status to "open"
+5. ✅ **Player Name Normalization** - Ensures consistent name-realm format
+6. ✅ **String Safety** - Forces toString on item/notes fields
+7. ✅ **Auto-Status Correction** - Sets status="fulfilled" when fulfilled ≥ quantity
+
+**Where Applied:**
+- `mergeRequest()` - On receiving snapshots
+- `NormalizeRequestList()` - On load
+- `AddRequest()` - On creation
+- UI display - Before rendering
+
+### Weaknesses Identified
+
+❌ **Not Validated:**
+- **ID length** - No max length check (could be exploited)
+- **Empty strings** - `item = ""` or `requester = "Unknown"` are allowed
+- **Future timestamps** - Only checks for overflow, not logical validity (e.g., year 2050)
+- **Negative timestamps** - No minimum timestamp check
+- **Request age** - No check for ancient requests (years old)
+- **Duplicate IDs** - Not checked during sanitization
+- **Malicious field injection** - Extra fields are silently kept
+
+**Current Behavior:**
+- Bad data is **corrected** rather than **rejected**
+- No rejection tracking or logging
+- No broadcast filtering (bad data could spread before being sanitized)
+- Permissive defaults (empty/missing → "Unknown" or "")
+
+### Planned Improvements
+
+#### Phase 1: Strict Validation (Empty Strings & Duplicate IDs)
+
+**Status:** ✅ IMPLEMENTED (2026-01-31)
+
+**Goal:** Reject obviously invalid requests instead of accepting with defaults
+
+**Implementation:**
+```lua
+local function sanitizeRequest(req)
+    if not req or type(req) ~= "table" then
+        return nil
+    end
+
+    -- REJECT empty required fields (Phase 1 validation)
+    local item = req.item and tostring(req.item) or ""
+    if item == "" then
+        TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: empty item field")
+        return nil
+    end
+
+    local requesterRaw = req.requester and tostring(req.requester) or ""
+    if requesterRaw == "" or requesterRaw == "Unknown" then
+        TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: invalid requester '%s'", requesterRaw)
+        return nil
+    end
+
+    local bankRaw = req.bank and tostring(req.bank) or ""
+    if bankRaw == "" then
+        TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: empty bank field")
+        return nil
+    end
+
+    local quantity = math.max(tonumber(req.quantity or 0) or 0, 0)
+    if quantity == 0 then
+        TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: quantity is zero")
+        return nil
+    end
+
+    -- ... rest of sanitization ...
+end
+```
+
+**Where Applied (Multi-Layer Defense):**
+
+1. **Layer 1: Receiving Snapshots** - `RequestLog.lua:219`
+   ```lua
+   local function mergeRequest(requests, tombstones, id, incoming)
+       local clean = sanitizeRequest(incoming)
+       if not clean then
+           return nil  -- Silently drops invalid requests from snapshots
+       end
+       -- ... merge logic
+   end
+   ```
+   - **Effect:** Invalid requests from other players are rejected before merging into local database
+   - **Protection:** Prevents corrupted data from spreading through guild
+
+2. **Layer 2: Loading from SavedVariables** - `RequestLog.lua:313`
+   ```lua
+   function Guild:NormalizeRequestList()
+       for id, req in pairs(self.Info.requests) do
+           local clean = sanitizeRequest(req)
+           if clean and clean.id then
+               normalized[clean.id] = clean
+           end
+           -- Invalid requests are silently dropped
+       end
+   end
+   ```
+   - **Effect:** Corrupted requests in saved data are stripped out on addon load
+   - **Protection:** Auto-healing of existing database corruption
+
+3. **Layer 3: Creating New Requests** - `RequestLog.lua:1064`
+   ```lua
+   function Guild:AddRequest(request)
+       local clean = sanitizeRequest(request)
+       if not clean then
+           return false  -- Request creation fails
+       end
+       -- ... store and broadcast
+   end
+   ```
+   - **Effect:** Prevents creation of invalid requests via UI or commands
+   - **Protection:** Stops bad data at the source
+
+4. **Layer 4: UI Display** - `Guild.lua:2041`
+   ```lua
+   for _, req in pairs(current_data.requests or {}) do
+       local clean = TOGBankClassic_Guild:SanitizeRequest(req)
+       if clean and clean.item and clean.item ~= "" then
+           -- Count for status display
+       end
+   end
+   ```
+   - **Effect:** Corrupted requests filtered out of UI
+   - **Protection:** Prevents crashes or display issues from bad data
+
+**What Happens to Rejected Requests:**
+- **Snapshots:** Request not merged, silently dropped
+- **Load:** Request removed from database during normalization
+- **Creation:** `AddRequest()` returns `false`, user sees failure
+- **Display:** Request skipped, doesn't appear in UI
+- **Debug Log:** All rejections logged with reason
+
+**Validation Rules Enforced:**
+- ✅ `item` - Must not be empty or missing
+- ✅ `requester` - Must not be empty, missing, or "Unknown"
+- ✅ `bank` - Must not be empty or missing
+- ✅ `quantity` - Must be > 0
+
+**Files Modified:**
+- `Modules/RequestLog.lua` (lines 55-85): Added Phase 1 validation
+
+**See Also:**
+- Bug ticket: [DATA-008] in DELTA_BUGS.md
+
+**Duplicate ID Handling (Not Yet Implemented):**
+```lua
+-- In mergeRequest() or ApplyRequestSnapshot()
+local seenIds = {}
+for _, req in ipairs(incomingList) do
+    if req.id and seenIds[req.id] then
+        TOGBankClassic_Output:Warn("Duplicate request ID detected: %s", req.id)
+        -- Skip duplicate, keep first occurrence only
+    else
+        seenIds[req.id] = true
+        -- ... merge logic ...
+    end
+end
+```
+
+#### Phase 2: Timestamp Logic Validation
+
+```lua
+-- Add to sanitizeRequest()
+local MIN_TIMESTAMP = 946684800  -- Jan 1, 2000
+local MAX_TIMESTAMP = 2147483647  -- Jan 19, 2038
+local now = GetServerTime()
+local MAX_FUTURE = now + 86400  -- Allow 1 day tolerance for clock skew
+
+local function validateTimestamp(ts, fallback)
+    local num = tonumber(ts) or fallback
+    
+    -- Check range
+    if num < MIN_TIMESTAMP then
+        TOGBankClassic_Output:Debug("REQUESTS", "Rejected: timestamp too old (%d)", num)
+        return nil  -- Reject instead of using fallback
+    end
+    
+    if num > MAX_TIMESTAMP then
+        TOGBankClassic_Output:Debug("REQUESTS", "Rejected: timestamp overflow (%d)", num)
+        return nil
+    end
+    
+    -- Check for future timestamps (possible corruption or malicious data)
+    if num > MAX_FUTURE then
+        TOGBankClassic_Output:Debug("REQUESTS", "Rejected: future timestamp (%d > %d)", num, MAX_FUTURE)
+        return nil
+    end
+    
+    return num
+end
+
+-- Then use stricter validation
+local updatedAt = validateTimestamp(req.updatedAt or req.date, now)
+if not updatedAt then
+    return nil  -- Reject request with invalid timestamp
+end
+```
+
+#### Phase 3: Broadcast Filtering
+
+**Prevent spreading bad data:**
+```lua
+function Guild:BroadcastRequestMutation(mutation)
+    if not mutation or type(mutation) ~= "table" then
+        return
+    end
+    
+    -- VALIDATE before broadcasting
+    if mutation.request then
+        local clean = sanitizeRequest(mutation.request)
+        if not clean then
+            TOGBankClassic_Output:Warn("Blocked broadcast of invalid request: %s", 
+                tostring(mutation.requestId))
+            return  -- Don't spread bad data
+        end
+        mutation.request = clean  -- Use sanitized version
+    end
+    
+    -- ... existing broadcast logic ...
+end
+```
+
+#### Phase 4: Periodic Cleanup
+
+**Auto-heal corrupted data on load:**
+```lua
+function Guild:ValidateAndCleanRequests()
+    if not self.Info or not self.Info.requests then
+        return 0
+    end
+    
+    local removed = 0
+    local now = GetServerTime()
+    
+    for id, req in pairs(self.Info.requests) do
+        local shouldRemove = false
+        local reason = ""
+        
+        -- Check for corrupted data
+        if not req.id or req.id ~= id then
+            shouldRemove = true
+            reason = "ID mismatch"
+        elseif not req.item or req.item == "" then
+            shouldRemove = true
+            reason = "Empty item"
+        elseif req.quantity and req.quantity < 0 then
+            shouldRemove = true
+            reason = "Negative quantity"
+        elseif req.updatedAt and req.updatedAt > now + 86400 then
+            shouldRemove = true
+            reason = "Future timestamp"
+        end
+        
+        if shouldRemove then
+            TOGBankClassic_Output:Debug("REQUESTS", 
+                "Cleaning corrupted request %s: %s", id, reason)
+            self.Info.requests[id] = nil
+            -- Create tombstone to prevent resurrection
+            self.Info.requestsTombstones = self.Info.requestsTombstones or {}
+            self.Info.requestsTombstones[id] = now
+            removed = removed + 1
+        end
+    end
+    
+    if removed > 0 then
+        TOGBankClassic_Output:Info("Cleaned %d corrupted requests", removed)
+        self:RefreshRequestsUI()
+    end
+    
+    return removed
+end
+
+-- Call during initialization
+function Guild:EnsureRequestsInitialized()
+    -- ... existing initialization ...
+    
+    -- Run cleanup on load
+    self:ValidateAndCleanRequests()
+end
+```
+
+#### Phase 5: User Command
+
+```lua
+-- Add slash command for manual cleanup
+-- Usage: /togbank cleanrequests
+function TOGBankClassic_Commands:CleanRequests()
+    local guild = TOGBankClassic_Guild
+    if not guild or not guild.Info then
+        TOGBankClassic_Output:Response("No guild data loaded")
+        return
+    end
+    
+    local removed = guild:ValidateAndCleanRequests()
+    if removed > 0 then
+        TOGBankClassic_Output:Response("Cleaned %d corrupted requests", removed)
+        -- Broadcast updated snapshot to overwrite bad data on other clients
+        guild:SendRequestsSnapshot()
+    else
+        TOGBankClassic_Output:Response("No corrupted requests found")
+    end
+end
+```
+
+### Implementation Priority
+
+1. **Phase 1** (Immediate) - Empty strings & duplicate IDs
+   - Low risk, high value
+   - Prevents most common data issues
+   - Easy to implement and test
+
+2. **Phase 2** (Short-term) - Timestamp logic validation
+   - Catches corruption and malicious data
+   - Prevents future-dated requests
+
+3. **Phase 3** (Medium-term) - Broadcast filtering
+   - Prevents spreading bad data
+   - Most impactful for guild-wide data integrity
+
+4. **Phase 4** (Long-term) - Periodic cleanup
+   - Auto-healing for existing corruption
+   - Reduces support burden
+
+5. **Phase 5** (Nice-to-have) - User command
+   - Manual recovery tool
+   - Useful for debugging
+
+### Testing Strategy
+
+**Test Cases:**
+- Empty item name
+- Empty requester name
+- Duplicate request IDs in snapshot
+- Future timestamps (year 2050)
+- Negative timestamps (1970)
+- Oversized IDs (500+ characters)
+- Malformed ID format (missing colon, invalid hex)
+- Negative quantities
+- Requests without required fields
+
+**Success Metrics:**
+- Zero corrupted requests after cleanup
+- No rejected valid requests (false positives)
+- Debug logs show rejection reasons
+- No crashes or errors during validation
+
+---

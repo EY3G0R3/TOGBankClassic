@@ -58,16 +58,80 @@ local function sanitizeRequest(req)
 		return nil
 	end
 
+	-- REJECT empty required fields (Phase 1 validation)
+	local item = req.item and tostring(req.item) or ""
+	if item == "" then
+		TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: empty item field")
+		return nil
+	end
+
+	local requesterRaw = req.requester and tostring(req.requester) or ""
+	if requesterRaw == "" or requesterRaw == "Unknown" then
+		TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: invalid requester '%s'", requesterRaw)
+		return nil
+	end
+
+	local bankRaw = req.bank and tostring(req.bank) or ""
+	if bankRaw == "" then
+		TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: empty bank field")
+		return nil
+	end
+
 	local now = GetServerTime()
 
 	local quantity = math.max(tonumber(req.quantity or 0) or 0, 0)
+	if quantity == 0 then
+		TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: quantity is zero")
+		return nil
+	end
+
+	-- REJECT requests where ID contains different item name (corrupted edited requests)
+	if req.id and type(req.id) == "string" then
+		-- ID format: "bank-requester-itemName-timestamp" or variations
+		-- Extract item name from ID by finding the pattern between requester and timestamp
+		-- Pattern: everything after the second "-realm-" and before the last timestamp portion
+		local idParts = {}
+		for part in string.gmatch(req.id, "[^-]+") do
+			table.insert(idParts, part)
+		end
+		
+		-- ID typically has 6+ parts: bank, realm, requester, realm, itemname(s), timestamp(s)
+		-- Try to extract item name from middle portion (skip first 4 parts for bank/requester)
+		if #idParts >= 5 then
+			-- Find where the item name ends (before timestamp-like numbers)
+			local itemNameParts = {}
+			for i = 5, #idParts do
+				local part = idParts[i]
+				-- Stop if we hit a pure numeric timestamp (8+ digits) or very short suffix
+				if string.match(part, "^%d%d%d%d%d%d%d%d+") or #part <= 3 then
+					break
+				end
+				table.insert(itemNameParts, part)
+			end
+			
+			if #itemNameParts > 0 then
+				local itemInId = table.concat(itemNameParts, "-")
+				-- Compare (case-insensitive, handle spaces vs dashes)
+				local normalizedItem = string.lower(string.gsub(item, "%s+", ""))
+				local normalizedIdItem = string.lower(string.gsub(itemInId, "%s+", ""))
+				
+				if normalizedItem ~= normalizedIdItem then
+					TOGBankClassic_Output:Debug("REQUESTS", 
+						"Rejected request: ID contains '%s' but item is '%s' (corrupted/edited request)", 
+						itemInId, item)
+					return nil
+				end
+			end
+		end
+	end
+
 	local fulfilled = math.max(tonumber(req.fulfilled or 0) or 0, 0)
 	if quantity > 0 then
 		fulfilled = math.min(fulfilled, quantity)
 	end
 
-	local bank = Guild:NormalizeName(req.bank)
-	local requester = Guild:NormalizeName(req.requester)
+	local bank = Guild:NormalizeName(bankRaw)
+	local requester = Guild:NormalizeName(requesterRaw)
 
 	-- Validate timestamps to prevent corruption (DATA-003)
 	-- Max 32-bit signed integer (Jan 19, 2038) - any larger value is corrupted
@@ -99,9 +163,9 @@ local function sanitizeRequest(req)
 		date = dateVal,
 		updatedAt = updatedAt,
 		statusUpdatedAt = statusUpdatedAt,
-		requester = requester or "Unknown",
-		bank = bank or "",
-		item = tostring(req.item or ""),
+		requester = requester,
+		bank = bank,
+		item = item,
 		quantity = quantity,
 		fulfilled = fulfilled,
 		status = status,
