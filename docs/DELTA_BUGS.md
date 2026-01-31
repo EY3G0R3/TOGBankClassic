@@ -8,6 +8,7 @@
 - None
 
 **Recent Fixes (2026-01-31):**
+- ✅ [SYNC-008] Cancelled requests resurrecting from snapshots with newer timestamps - Fixed mergeRequest() to protect terminal states (cancelled/complete) from being overwritten by "open" status unless incoming has explicitly newer statusUpdatedAt timestamp; prevents zombie requests from reappearing after cancellation
 - ✅ [DATA-009] "Zombie requests" with mismatched ID/item fields - Added validation to detect and reject requests where ID contains different item name than actual item field (caused by editing requests after creation, IDs embed original item name)
 - ✅ [DATA-008] Request data corruption from empty/invalid required fields - Added strict validation in sanitizeRequest() to reject requests with empty item/requester/bank fields, zero quantity, or "Unknown" requester (previously accepted with defaults, causing corrupted requests to spread)
 
@@ -8556,6 +8557,167 @@ For now, validation ensures corrupted requests can't spread or persist.
 - DATA-008: Empty field validation (Phase 1)
 - UI-003: Request snapshot preservation logic
 - Request editing workflow needs review
+
+**Closed:** 2026-01-31
+
+---
+
+#### ✅ [SYNC-008] Cancelled requests resurrecting from snapshots with newer timestamps
+
+**Severity:** 🟡 MEDIUM
+**Category:** Snapshot Sync / Conflict Resolution
+**Reporter:** User (Production - Greater Nether Essence request)
+**Date Reported:** 2026-01-31
+**Date Resolved:** 2026-01-31
+**Status:** ✅ RESOLVED
+**Reproducibility:** Consistent when other clients broadcast stale snapshots with newer timestamps
+**Related:** [DATA-009], [SYNC-001], [SYNC-004]
+
+**Problem:**
+User cancelled a request (Greater Nether Essence) on Jan 17, but it keeps reappearing in the UI as a "new" request opened at 1:35am today (Jan 31). User reported "we've tried cancelling it MANY times" but it keeps coming back.
+
+**Root Cause:**
+The `mergeRequest()` function only compared timestamps, not operation priority or status semantics:
+
+```lua
+-- OLD CODE (BROKEN):
+if incomingTs > existingTs then
+    requests[id] = clean  -- ❌ Blindly overwrites with newer timestamp
+    return "updated"
+```
+
+This allowed any client to resurrect cancelled/completed requests by broadcasting a snapshot with:
+- Same request ID
+- Status: "open" (stale/old data)
+- UpdatedAt: Newer timestamp (e.g., current time from outdated client)
+
+**Why It Happens:**
+1. User cancels request on Jan 17 → `status="cancelled"`, `updatedAt=1768774810`
+2. Another client has stale snapshot where request is still `status="open"`
+3. That client updates their snapshot timestamp to current time (e.g., `updatedAt=1738306500`)
+4. They broadcast the snapshot
+5. `mergeRequest()` sees newer timestamp and overwrites cancelled status with "open" ❌
+
+**Priority System Context:**
+- Priority system defined in docs (add=1, fulfill=2, complete=3, cancel=4, delete=5)
+- Priority WAS implemented for log entry processing (SYNC-004)
+- Priority was NOT implemented for snapshot merging
+- Cancel/complete are "terminal states" that shouldn't be reopened casually
+
+**Solution Implemented:**
+
+Added **terminal state protection** to `mergeRequest()` with `statusUpdatedAt` tracking:
+
+```lua
+-- NEW CODE (FIXED):
+local existingIsTerminal = (existing.status == "cancelled" or existing.status == "complete")
+local incomingIsTerminal = (clean.status == "cancelled" or clean.status == "complete")
+
+if existingIsTerminal and not incomingIsTerminal then
+    -- Existing is cancelled/complete, incoming is open/fulfilled
+    -- Only accept incoming if it has NEWER statusUpdatedAt (explicit status change)
+    if incomingStatusTs <= existingStatusTs then
+        TOGBankClassic_Output:Debug("REQUESTS", 
+            "Rejected snapshot: trying to reopen %s status (existing %s@%d, incoming %s@%d)", 
+            existing.status, existing.status, existingStatusTs, clean.status, incomingStatusTs)
+        return "kept"
+    end
+    -- If incoming has newer status timestamp, it's an explicit reopening - allow it
+end
+```
+
+**Key Changes:**
+
+1. **Added `statusUpdatedAt` field** - Tracks when status explicitly changed (lines 1116, 1254, 1290, 601, 1360)
+2. **Terminal state check** - Identifies cancelled/complete as special states that resist reopening
+3. **Status timestamp comparison** - Requires explicit newer status change to override terminal state
+4. **Debug logging** - Shows exactly why status overwrites were rejected
+
+**Example Flow (Fixed):**
+
+```
+Your Client State:
+  ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+  status: "cancelled"
+  statusUpdatedAt: 1768774810 (Jan 17)
+  updatedAt: 1768774810 (Jan 17)
+
+Incoming Snapshot (Stale):
+  ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+  status: "open"
+  statusUpdatedAt: 1766821313 (Dec 26 - original creation, never cancelled on their client)
+  updatedAt: 1738306500 (Jan 31 1:35am - just refreshed)
+
+mergeRequest() Decision:
+  ✅ existingIsTerminal = true (status="cancelled")
+  ✅ incomingIsTerminal = false (status="open")
+  ✅ incomingStatusTs (1766821313) <= existingStatusTs (1768774810)
+  → REJECTED: "trying to reopen cancelled status"
+  → result: "kept" (your cancellation protected)
+```
+
+**What Gets Protected:**
+
+- ✅ **Cancelled requests** - Can't be reopened by stale "open" snapshots
+- ✅ **Completed requests** - Can't be reset to "open" by outdated clients
+- ✅ **Legitimate reopens** - If someone explicitly reopens with newer `statusUpdatedAt`, it's allowed
+- ✅ **Same-status updates** - Fulfilled → fulfilled still uses timestamp comparison
+- ✅ **Terminal transitions** - Cancelled → complete or complete → cancelled uses timestamp
+
+**What's NOT Affected:**
+
+- ✅ **Quantity updates** - Fulfill operations still accumulate correctly
+- ✅ **Normal merging** - Two "open" requests still use last-writer-wins timestamp
+- ✅ **Cancellation propagation** - Newer cancels still overwrite older "open" status
+- ✅ **Log entry processing** - Priority system for log entries unchanged (SYNC-004)
+
+**Files Modified:**
+- `Modules/RequestLog.lua` (lines 271-295): Added terminal state protection to mergeRequest()
+- `Modules/RequestLog.lua` (line 1116): Added statusUpdatedAt initialization in AddRequest()
+- `Modules/RequestLog.lua` (lines 1254, 1290, 601, 1360): statusUpdatedAt already set for cancel/complete/fulfill
+- `docs/DELTA_BUGS.md` (this file): Added SYNC-008 documentation
+
+**Testing:**
+
+Production validation with Greater Nether Essence request:
+- Request ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+- User cancelled Jan 17: `status="cancelled"`, `statusUpdatedAt=1768774810`
+- Incoming stale snapshot with `status="open"`, `statusUpdatedAt=1766821313` (original creation)
+- New logic: Compares 1766821313 <= 1768774810 → REJECTS reopen
+- Result: Cancellation protected, request stays cancelled ✅
+
+**Benefits:**
+
+- ✅ **Permanent cancellations:** Once cancelled, requests stay cancelled unless explicitly reopened
+- ✅ **Stale data resistance:** Old snapshots can't resurrect terminal states
+- ✅ **User control:** Users can cancel requests without them bouncing back
+- ✅ **Data consistency:** Terminal states respected across all clients
+- ✅ **Debug visibility:** Rejections logged with timestamps and reasons
+
+**Alternative Approaches Considered:**
+
+1. **Immediate tombstoning:** Create tombstone on cancel (like delete does)
+   - Rejected: Cancel is recoverable, delete is not - different semantics
+   - Cancel means "I don't want this" (reversible), delete means "this never existed" (permanent)
+
+2. **Priority-based merge:** Compare cancel(4) vs add(1) priorities
+   - Rejected: Doesn't help when both are "open" status (no priority info in snapshots)
+   - Would need operation field in snapshots
+
+3. **Vector clocks:** Track causality per client
+   - Rejected: Too complex, overkill for this problem
+   - Terminal state protection is simpler and sufficient
+
+**Known Limitations:**
+
+- If someone legitimately wants to reopen a cancelled request, they need to create a new operation that sets `statusUpdatedAt` to current time
+- Currently, no UI button exists for "reopen" - would need to be added if desired
+- Workaround: Delete and recreate the request (generates new ID and timestamps)
+
+**Related Issues:**
+- SYNC-004: Priority-based conflict resolution for log entries (cancel beats add)
+- SYNC-001: Smart-merge protection for local event log
+- DATA-009: Zombie requests with ID/item mismatches
 
 **Closed:** 2026-01-31
 

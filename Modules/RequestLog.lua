@@ -272,6 +272,26 @@ local function mergeRequest(requests, tombstones, id, incoming)
 	local existing = requests[id]
 	if existing then
 		local existingTs = tonumber(existing.updatedAt or existing.date or 0) or 0
+		local existingStatusTs = tonumber(existing.statusUpdatedAt or existingTs or 0) or 0
+		local incomingStatusTs = tonumber(clean.statusUpdatedAt or incomingTs or 0) or 0
+		
+		-- STATUS PRIORITY CHECK: Don't allow reopening cancelled/completed requests
+		-- Cancel/complete are terminal states that should not be overwritten by "open" status
+		local existingIsTerminal = (existing.status == "cancelled" or existing.status == "complete")
+		local incomingIsTerminal = (clean.status == "cancelled" or clean.status == "complete")
+		
+		if existingIsTerminal and not incomingIsTerminal then
+			-- Existing is cancelled/complete, incoming is open/fulfilled
+			-- Only accept incoming if it has NEWER statusUpdatedAt (explicit status change)
+			if incomingStatusTs <= existingStatusTs then
+				TOGBankClassic_Output:Debug("REQUESTS", 
+					"Rejected snapshot: trying to reopen %s status (existing %s@%d, incoming %s@%d)", 
+					existing.status, existing.status, existingStatusTs, clean.status, incomingStatusTs)
+				return "kept"
+			end
+			-- If incoming has newer status timestamp, it's an explicit reopening - allow it
+		end
+		
 		if incomingTs > existingTs then
 			requests[id] = clean
 			return "updated"
@@ -1093,6 +1113,7 @@ function Guild:AddRequest(request)
 	request.date = request.date or now
 	request.updatedAt = now
 	request.status = request.status or "open"
+	request.statusUpdatedAt = request.statusUpdatedAt or now  -- Track when status was set
 	request.fulfilled = tonumber(request.fulfilled or 0) or 0
 
 	-- Generate request ID in actor:random format
