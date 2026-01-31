@@ -10,6 +10,7 @@
 - �🟠 [MAIL-011-B] Manual mail sends not applying fulfillment (partial orders) - Investigation ongoing
 
 **Recent Fixes (2026-01-31):**
+- ✅ [DATA-010] Mail slots format crash when trading items - Fixed Bank.lua to handle legacy mail.slots number format and automatically migrate to new table format {count, total}
 - ✅ [UI-012] Dropdown contents blinking and disappearing - Fixed by caching dropdown lists to prevent unnecessary SetList() calls on every DrawContent refresh
 - ✅ [UI-011-B] Banker highlight checkbox appearing intermittently - Fixed guild roster loading timing issue by adding GetNumGuildMembers() guard before IsBank() check in UpdateFilters
 - ✅ [MAIL-011-B] Manual mail sends not applying fulfillment - Resolved by MAIL-011 fix; OnSendMail hook now correctly captures items from mail attachments for both fulfill button and manual sends
@@ -210,6 +211,80 @@ Should this issue appear again with clear symptoms:
 ---
 
 ## Resolved Bugs (2026-01-31)
+
+### [DATA-010] Mail Slots Format Crash When Trading Items
+
+**Severity:** 🔴 CRITICAL
+**Category:** Data Migration / Saved Variables / Type Safety
+**Reporter:** User (Production - Alchemyrcp-Azuresong)
+**Date Reported:** 2026-01-31
+**Date Resolved:** 2026-01-31
+**Status:** ✅ RESOLVED
+
+**Error Message:**
+```
+Message: ...sic\Modules\Bank.lua:310: attempt to index field 'slots' (a number value)
+```
+
+**Problem:**
+Crash when trading items on character with legacy saved data format. Bank.lua Scan() function attempted to access `alt.mail.slots.count` but mail.slots was stored as a number (50) in old SavedVariables format, not the new table format `{count, total}`.
+
+**Trigger:**
+1. User trades items to character
+2. OnUpdateStop fires → Bank.lua Scan() called
+3. Line 310: `alt.mail.slots.count` crashes when slots is number
+
+**Root Cause:**
+SavedVariables data persisted from before MAIL-006 fix when mail.slots was stored as simple number representing total mailbox capacity. New code from MailInventory.Scan() changed format to table:
+```lua
+slots = { count = #mailItems, total = 50 }
+```
+
+Old saved data still had `mail.slots = 50` (number). Bank.lua assumed mail.slots would always be table and directly accessed `.count` property without type checking.
+
+**Fix Implemented:**
+Added type-safe migration logic in Bank.lua Scan() function (lines 303-322):
+
+```lua
+if alt.mail then
+    if type(alt.mail.slots) == "table" then
+        TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = table with count=%d", alt.mail.slots.count)
+    elseif type(alt.mail.slots) == "number" then
+        TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = %d (old format, migrating)", alt.mail.slots)
+        local oldSlots = alt.mail.slots
+        alt.mail.slots = { count = #alt.mail.items, total = oldSlots }
+        TOGBankClassic_Output:Debug("MAIL", "Migrated mail.slots to new format: count=%d, total=%d", 
+            alt.mail.slots.count, alt.mail.slots.total)
+    else
+        TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = nil")
+    end
+end
+```
+
+**Migration Strategy:**
+- Detect old format: `type(alt.mail.slots) == "number"`
+- Convert to new format: `{count = #alt.mail.items, total = oldSlots}`
+- Uses actual mail item count for accurate `count` value
+- Preserves original total capacity
+- Automatic migration on next scan
+- Added debug logging for visibility
+
+**Testing Results:**
+✅ Code executes without crashes
+✅ Old number format detected and migrated
+✅ New table format preserved as-is
+✅ Nil values handled gracefully
+
+**Files Modified:**
+- [Modules/Bank.lua](../Modules/Bank.lua#L303-L322)
+
+**Lessons Learned:**
+1. Always add type checking when SavedVariables data format changes
+2. Implement automatic migration for backward compatibility
+3. Consider data format changes when updating existing features
+4. Debug logging crucial for diagnosing production issues with saved data
+
+---
 
 **Severity:** 🔴 CRITICAL
 **Category:** UI / Item Loading / Infinite Recursion

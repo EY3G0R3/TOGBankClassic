@@ -307,7 +307,17 @@ function TOGBankClassic_Bank:Scan()
 	-- Log what we're about to save
 	if alt.mail then
 		TOGBankClassic_Output:Debug("MAIL", "alt.mail exists with %d items, type=%s", #alt.mail.items, type(alt.mail))
-		TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = %s", alt.mail.slots and ("table with count="..tostring(alt.mail.slots.count)) or "nil")
+		-- Handle both old format (number) and new format (table)
+		if type(alt.mail.slots) == "table" then
+			TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = table with count=%d", alt.mail.slots.count)
+		elseif type(alt.mail.slots) == "number" then
+			TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = %d (old format, migrating)", alt.mail.slots)
+			-- Migrate old format to new format
+			local oldSlots = alt.mail.slots
+			alt.mail.slots = { count = #alt.mail.items, total = oldSlots }
+		else
+			TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = nil")
+		end
 	end
 	
 	-- Write to aggregate view (info.alts) for normal use
