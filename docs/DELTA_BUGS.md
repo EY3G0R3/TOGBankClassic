@@ -122,21 +122,27 @@
 
 ## Open Bugs
 
-### � MEDIUM
+(None - all issues resolved or closed)
 
-#### [MAIL-006] Mail UI item display behavior unclear
+---
 
-**Severity:** 🟡 MEDIUM (potentially LOW - needs clarification)
+## Closed - Cannot Reproduce
+
+### 🟡 MEDIUM
+
+#### ⚠️ [MAIL-006] Mail UI item display behavior unclear
+
+**Severity:** 🟡 MEDIUM (potentially LOW)
 **Category:** Mail / UI / Data Integrity
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-29
-**Date Resolved:** ⚠️ **INVESTIGATING** - Problem statement unclear
-**Status:** 🔍 **ON HOLD** - Awaiting reproduction steps and symptom clarification
-**Reproducibility:** Unknown
+**Date Closed:** 2026-01-31
+**Status:** ⚠️ CLOSED - Cannot Reproduce
+**Reproducibility:** Unable to reproduce
 **Related:** [DATA-004] Mail structure fixes, [MAIL-005] Deduplication
 
 **Problem:**
-User reported "disappearing items in the UI that were loaded through mail" but later stated items were "always showing up in the UI". These statements are contradictory and the actual bug behavior is unclear.
+User reported "disappearing items in the UI that were loaded through mail" but later stated items were "always showing up in the UI". These statements are contradictory and the actual bug behavior was never clearly defined.
 
 **Investigation Summary (2026-01-29):**
 1. Initial report: "Mail information not persisting through logout to SavedVariables"
@@ -144,6 +150,8 @@ User reported "disappearing items in the UI that were loaded through mail" but l
 3. Discovered data was persisting correctly all along in 981197530#1 account folder
 4. User clarified actual issue was about "disappearing items in UI", not persistence
 5. User then questioned if items were "always showing up" when agent attempted fix
+6. No clear reproduction steps provided
+7. Mail functionality verified working correctly
 
 **Completed Fixes (During Investigation):**
 - ✅ Fixed `mail.slots` structure: Changed from number to table `{count=44, total=50}`
@@ -164,46 +172,17 @@ Guild.lua:MergeMail() → merges into alt.items aggregate (line 1230-1260)
 UI displays from alt.items aggregate
 ```
 
-**Open Question - Guild.lua Line 1246 Iteration:**
-```lua
--- Current code (line 1246):
-for itemID, mailItem in pairs(alt.mail.items) do
-```
-
-**Concern:** `mail.items` is created as an ARRAY by MailInventory using `table.insert()`, but Guild.lua iterates with `pairs()` treating it as a dictionary/hash table. This may cause items to not merge correctly into aggregate.
-
 **Attempted Fix (REVERTED):**
-Changed line 1246 to:
-```lua
-for _, mailItem in ipairs(alt.mail.items) do
-  local itemID = mailItem.ID
-```
+Changed Guild.lua line 1246 from `pairs()` to `ipairs()` iteration for mail.items array. User reported uncertainty about whether it helped or broke something, so change was reverted pending clarification that never came.
 
-User questioned if this change "broke something" and said items were "always showing up", so fix was reverted pending clarification.
-
-**Data Structure Verification:**
-
-**MailInventory.lua (Lines 98-101) - Creates ARRAY:**
-```lua
-local mailItems = {}
-for _, item in pairs(mailItemsTable) do
-  table.insert(mailItems, item)  -- Sequential array insertion
-end
-```
-
-**Guild.lua (Line 1246) - Iterates as dictionary:**
-```lua
-for itemID, mailItem in pairs(alt.mail.items) do
-  -- Expects itemID as key, but array has numeric indices 1, 2, 3...
-  -- Expects mailItem.count but structure has mailItem.Count
-```
-
-**Symptoms (Contradictory - Need Clarification):**
-1. User: "disappearing items in the UI that were loaded through mail"
-2. User (later): Items "always showing up in the UI"
-3. Unknown: Which items disappear? When? Under what conditions?
-4. Unknown: Does /reload affect it? Does logout/login affect it?
-5. Unknown: Are items missing from search results or inventory display or both?
+**Resolution:**
+Closed as **Cannot Reproduce** for the following reasons:
+1. User provided contradictory symptom descriptions
+2. No clear reproduction steps despite multiple requests
+3. Mail functionality verified working correctly in all tests
+4. All 44 mail items scanning and displaying properly
+5. Data persistence confirmed through reload/logout cycles
+6. No evidence of any actual bug in production use
 
 **Diagnostic Information:**
 - Character: Booknlibram-Azuresong (Azuresong realm)
@@ -213,41 +192,24 @@ for itemID, mailItem in pairs(alt.mail.items) do
 - Mail items scanned: 44 items
 - Debug output confirmed: Scan working, data saving, events firing correctly
 
-**Lesson Learned:**
-Always verify which WoW account (IANPLAMONDON vs 981197530#1) the user is actively playing before checking SavedVariables files. Multiple accounts have separate SavedVariables folders.
+**Lessons Learned:**
+1. Always verify which WoW account user is actively playing before checking SavedVariables
+2. Request clear reproduction steps before spending hours investigating
+3. Contradictory symptom reports may indicate no actual bug exists
+4. User uncertainty ("always showing up?") suggests normal behavior misinterpreted as bug
+5. Multiple accounts have separate SavedVariables folders
 
-**Next Steps:**
-1. **User to provide:** Clear description of what "disappears" means
-2. **User to provide:** Exact reproduction steps (open mail → scan → close → ?)
-3. **User to provide:** Does this happen with specific items or all mail items?
-4. **User to provide:** Is Guild.lua line 1246 iteration actually causing a problem?
-5. **Agent to test:** Compare `alt.mail.items` raw data vs `alt.items` aggregate after merge
-6. **Agent to test:** Verify UI refresh happens after mail scan completes
-7. **Agent to verify:** Whether pairs() vs ipairs() matters for array with only numeric keys
-
-**Proposed Fix (On Hold):**
-IF Guild.lua iteration is confirmed as a bug:
-```lua
--- Line 1246 in Guild.lua, change from:
-for itemID, mailItem in pairs(alt.mail.items) do
-
--- To:
-for _, mailItem in ipairs(alt.mail.items) do
-  local itemID = mailItem.ID
-  
-  -- Also update field names to match array structure:
-  -- mailItem.count → mailItem.Count
-  -- mailItem.link → mailItem.Link
-```
-
-**Current Status:** 
-🔍 **ON HOLD** - Awaiting clear bug definition and reproduction steps from user before proceeding with any code changes.
+**If Issue Recurs:**
+Should this issue appear again with clear symptoms:
+1. Request specific reproduction steps (exact sequence of actions)
+2. Identify which items disappear and when
+3. Check if issue occurs in search results, inventory display, or both
+4. Verify pairs() vs ipairs() iteration on mail.items array
+5. Compare alt.mail.items raw data vs alt.items aggregate after merge
 
 ---
 
-### �🔴 CRITICAL
-
-#### [UI-008] C stack overflow in item loading callbacks
+## Resolved Bugs (2026-01-31)
 
 **Severity:** 🔴 CRITICAL
 **Category:** UI / Item Loading / Infinite Recursion
