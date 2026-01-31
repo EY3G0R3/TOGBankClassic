@@ -273,7 +273,7 @@ local function mergeRequest(requests, tombstones, id, incoming)
 	if existing then
 		local existingTs = tonumber(existing.updatedAt or existing.date or 0) or 0
 		local existingStatusTs = tonumber(existing.statusUpdatedAt or existingTs or 0) or 0
-		local incomingStatusTs = tonumber(clean.statusUpdatedAt or incomingTs or 0) or 0
+		local incomingStatusTs = tonumber(clean.statusUpdatedAt or 0) or 0  -- Don't fall back to incomingTs!
 		
 		-- STATUS PRIORITY CHECK: Don't allow reopening cancelled/completed requests
 		-- Cancel/complete are terminal states that should not be overwritten by "open" status
@@ -283,6 +283,7 @@ local function mergeRequest(requests, tombstones, id, incoming)
 		if existingIsTerminal and not incomingIsTerminal then
 			-- Existing is cancelled/complete, incoming is open/fulfilled
 			-- Only accept incoming if it has NEWER statusUpdatedAt (explicit status change)
+			-- If incoming has no statusUpdatedAt, treat it as old/unknown (don't reopen)
 			if incomingStatusTs <= existingStatusTs then
 				TOGBankClassic_Output:Debug("REQUESTS", 
 					"Rejected snapshot: trying to reopen %s status (existing %s@%d, incoming %s@%d)", 
@@ -290,6 +291,23 @@ local function mergeRequest(requests, tombstones, id, incoming)
 				return "kept"
 			end
 			-- If incoming has newer status timestamp, it's an explicit reopening - allow it
+		end
+		
+		-- TERMINAL STATE TIMESTAMP PROTECTION: Don't update timestamps on cancelled/complete requests
+		-- unless status actually changed (prevents "zombie" date refreshing)
+		if existingIsTerminal and incomingIsTerminal then
+			-- Both are terminal states - only update if status explicitly changed
+			if incomingStatusTs > existingStatusTs then
+				-- Status was explicitly re-set (e.g., cancelled again) - accept newer timestamp
+				requests[id] = clean
+				return "updated"
+			else
+				-- Same terminal state with stale/same timestamp - don't refresh date
+				TOGBankClassic_Output:Debug("REQUESTS",
+					"Rejected timestamp refresh: %s status unchanged (existing@%d, incoming@%d)",
+					existing.status, existingStatusTs, incomingStatusTs)
+				return "kept"
+			end
 		end
 		
 		if incomingTs > existingTs then
