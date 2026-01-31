@@ -1702,14 +1702,33 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				TOGBankClassic_Output:Debug("SYNC", "BEFORE dedupe - First 5 items received: %s", table.concat(beforeSample, ", "))
 			end
 			
-			local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
-			local arrayItems = {}
-			for _, item in pairs(aggregated) do
-				table.insert(arrayItems, item)
+			-- Check if we need to merge mail items into alt.items
+			-- This handles the case where alt.items was created before mail sync was implemented
+			local mailItems = (alt.mail and alt.mail.items) or {}
+			local hasMailItems = mailItems and #mailItems > 0
+			
+			if hasMailItems then
+				TOGBankClassic_Output:Debug("SYNC", "Merging %d mail items into alt.items for %s", #mailItems, name)
+				-- Aggregate alt.items with mail to ensure mail is included
+				local aggregated = TOGBankClassic_Item:Aggregate(alt.items, mailItems)
+				local arrayItems = {}
+				for _, item in pairs(aggregated) do
+					table.insert(arrayItems, item)
+				end
+				alt.items = arrayItems
+				TOGBankClassic_Output:Debug("SYNC", "Merged alt.items for %s: %d items (including mail)",
+					name, #alt.items)
+			else
+				-- No mail to merge, just deduplicate existing alt.items
+				local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
+				local arrayItems = {}
+				for _, item in pairs(aggregated) do
+					table.insert(arrayItems, item)
+				end
+				alt.items = arrayItems
+				TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, deduplicated and converted to array: %d items",
+					name, #alt.items)
 			end
-			alt.items = arrayItems
-			TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, deduplicated and converted to array: %d items",
-				name, #alt.items)
 			
 			-- DEBUG: Log sample counts AFTER deduplication
 			if alt.items and #alt.items > 0 then

@@ -8,6 +8,8 @@
 - None
 
 **Recent Fixes (2026-01-30):**
+- ✅ [UI-011] Banker highlight checkbox not appearing after banker status changes - Fixed Open() to detect banker status changes and recreate window to show/hide highlight checkbox
+- ✅ [MAIL-010] Mail items not appearing in Inventory UI after sync - Fixed ReceiveAltData() to merge alt.mail.items into alt.items when receiving synced data (alt.items was created before mail sync, missing mail items)
 - ✅ [SEARCH-005] Search only returning 1 item when multiple item types match - Added debug logging to track corpus matching; fixed search result counting with matchedNames variable
 - ✅ [SEARCH-004] Search UI crash "attempt to concatenate global 'mailIcon' (a nil value)" - Fixed missing mailIcon variable definition in Search.lua line 614 (was checking inMail flag but never setting the icon string)
 - ✅ [UI-010] Request window opening with half-width border and buttons floating outside - Fixed SetStatusTable restoring incorrect width by calling SetWidth(MIN_WIDTH) after SetStatusTable to enforce minimum size

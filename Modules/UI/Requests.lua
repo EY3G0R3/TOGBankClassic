@@ -384,8 +384,20 @@ function TOGBankClassic_UI_Requests:Open()
 	end
 	self.isOpen = true
 
+	-- Check if banker status has changed since window was created
+	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local isCurrentlyBanker = currentPlayer and TOGBankClassic_Guild:IsBank(currentPlayer) or false
+	local bankerStatusChanged = (self.wasBank ~= nil) and (self.wasBank ~= isCurrentlyBanker)
+	
+	-- Recreate window if banker status changed (to add/remove highlight checkbox)
+	if bankerStatusChanged and self.Window then
+		self.Window:Release()
+		self.Window = nil
+	end
+
 	if not self.Window then
 		self:DrawWindow()
+		self.wasBank = isCurrentlyBanker
 	end
 
 	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
