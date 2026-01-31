@@ -296,18 +296,15 @@ local function mergeRequest(requests, tombstones, id, incoming)
 		-- TERMINAL STATE TIMESTAMP PROTECTION: Don't update timestamps on cancelled/complete requests
 		-- unless status actually changed (prevents "zombie" date refreshing)
 		if existingIsTerminal and incomingIsTerminal then
-			-- Both are terminal states - only update if status explicitly changed
-			if incomingStatusTs > existingStatusTs then
-				-- Status was explicitly re-set (e.g., cancelled again) - accept newer timestamp
-				requests[id] = clean
-				return "updated"
-			else
-				-- Same terminal state with stale/same timestamp - don't refresh date
+			-- Both are terminal states - only reject if status AND general timestamp unchanged
+			if incomingStatusTs <= existingStatusTs and incomingTs <= existingTs then
+				-- Same terminal state, same timestamps - just a refresh, reject it
 				TOGBankClassic_Output:Debug("REQUESTS",
 					"Rejected timestamp refresh: %s status unchanged (existing@%d, incoming@%d)",
 					existing.status, existingStatusTs, incomingStatusTs)
 				return "kept"
 			end
+			-- Otherwise fall through to normal timestamp comparison (allows quantity updates, etc.)
 		end
 		
 		if incomingTs > existingTs then
@@ -690,6 +687,8 @@ function Guild:RefreshRequestsUI()
 		self.Info and self.Info.requests and countRequests(self.Info.requests) or 0))
 
 	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+		-- Recreate filters (including banker checkbox) when roster updates
+		TOGBankClassic_UI_Requests:UpdateFilters()
 		TOGBankClassic_UI_Requests:DrawContent()
 	end
 end
@@ -1374,9 +1373,17 @@ function Guild:FulfillRequest(bank, requester, itemName, count)
 			local targetFulfilled = fulfilled + delta
 			req.fulfilled = targetFulfilled
 			req.updatedAt = now
+			
+			TOGBankClassic_Output:Debug("FULFILL", "Request %s: fulfilled=%d->%d, qty=%d, status=%s", 
+				req.id or "unknown", fulfilled, targetFulfilled, qty, tostring(req.status))
+			
 			if qty > 0 and targetFulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
 				req.status = "fulfilled"
 				req.statusUpdatedAt = now
+				TOGBankClassic_Output:Debug("FULFILL", "Set status to FULFILLED (fulfilled %d >= qty %d)", targetFulfilled, qty)
+			else
+				TOGBankClassic_Output:Debug("FULFILL", "Status NOT changed: qty=%d, fulfilled=%d, status=%s", 
+					qty, targetFulfilled, tostring(req.status))
 			end
 
 			-- Queue broadcast (targetFulfilled for idempotency on receiver)

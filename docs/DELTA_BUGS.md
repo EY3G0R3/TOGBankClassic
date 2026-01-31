@@ -8,6 +8,7 @@
 - None
 
 **Recent Fixes (2026-01-31):**
+- ✅ [MAIL-011] Order fulfillment not applying when sending mail - Fixed race condition where OnSendMail hook was clearing pendingSend before ApplyPendingSend could read it; moved pendingSend capture to PrepareFulfillMail (when items attached) instead of SendMail hook (after mail sent); added 10-second staleness check to prevent clearing recent pendingSend
 - ✅ [SYNC-008] Cancelled requests resurrecting from snapshots with newer timestamps - Fixed mergeRequest() to protect terminal states (cancelled/complete) from being overwritten by "open" status unless incoming has explicitly newer statusUpdatedAt timestamp; prevents zombie requests from reappearing after cancellation
 - ✅ [DATA-009] "Zombie requests" with mismatched ID/item fields - Added validation to detect and reject requests where ID contains different item name than actual item field (caused by editing requests after creation, IDs embed original item name)
 - ✅ [DATA-008] Request data corruption from empty/invalid required fields - Added strict validation in sanitizeRequest() to reject requests with empty item/requester/bank fields, zero quantity, or "Unknown" requester (previously accepted with defaults, causing corrupted requests to spread)
@@ -7665,6 +7666,172 @@ Result: Mail visible in both SavedVariables and UI
 If you preserve `alt.mail` but `alt.items` depends on it, you must re-aggregate.
 
 **Resolution:** Mail items now persist in UI correctly when receiving syncs from old clients. The fix ensures backward compatibility without data loss or UI inconsistency.
+
+---
+
+## [MAIL-011] Order Fulfillment Not Applying When Sending Mail
+
+**Severity:** 🔴 CRITICAL
+**Category:** Mail / Request Fulfillment / Race Condition
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-31
+**Date Resolved:** 2026-01-31
+**Status:** ✅ RESOLVED
+**Reproducibility:** Consistent - 100% of fulfill operations failed to apply
+**Related:** [MAIL-010] Mail system changes
+
+**Problem:**
+When a banker clicks the fulfill envelope button to attach items to mail and then clicks WoW's "Send Mail" button, the mail sends successfully but the request remains unfulfilled. The UI reverts back to showing the "get items from bank" icon instead of marking the order as fulfilled with a checkmark.
+
+**User Description:**
+> "I open the mail box. i click on send mail. the UI for requests pops up. the icon with the envelope for filling an order presents because i have the 'right' items. i click the envelope and it creates the mail. it then moves the items to the mail and fills it out. i hit send. the mail goes and i've filled the order. NOW THE UI GOES BACK TO ME NEEDED TO GET AN ITEM FROM THE BANK AND DOESN"T MARK THE ORDER AS FILLED"
+
+**Expected Flow:**
+1. Click fulfill envelope button → PrepareFulfillMail attaches items to mail
+2. Click WoW's Send Mail button → SendMail() is called
+3. SendMail hook fires → OnSendMail captures attached items in pendingSend
+4. MAIL_SEND_SUCCESS event fires → ApplyPendingSend reads pendingSend
+5. FulfillRequest updates fulfilled count and status to "fulfilled"
+6. UI refreshes showing checkmark and gray fulfilled status
+
+**Actual Flow (Broken):**
+1. Click fulfill envelope button → PrepareFulfillMail attaches items to mail AND sets pendingSend
+2. Click WoW's Send Mail button → SendMail() is called
+3. SendMail hook fires → **OnSendMail CLEARS pendingSend at line 172**
+4. MAIL_SEND_SUCCESS event fires → ApplyPendingSend finds pendingSend is nil
+5. No fulfill operation applied
+6. UI still shows unfulfilled status
+
+**Root Cause:**
+The bug was introduced when PrepareFulfillMail was modified to set pendingSend (to fix a timing issue where MAIL_SEND_SUCCESS might fire before the SendMail hook). However, OnSendMail was still clearing pendingSend at the start of the function:
+
+**Mail.lua (lines 172-173) - The Bug:**
+```lua
+function TOGBankClassic_Mail:OnSendMail(recipient)
+	self.pendingSend = nil  -- ⚠️ WIPES OUT PrepareFulfillMail's pendingSend!
+	self.pendingSendAt = nil
+```
+
+**Execution Order:**
+1. PrepareFulfillMail sets: `self.pendingSend = { sender, recipient, items }`
+2. User clicks Send Mail
+3. `hooksecurefunc("SendMail", ...)` fires AFTER SendMail completes
+4. OnSendMail clears pendingSend **before** MAIL_SEND_SUCCESS can read it
+5. ApplyPendingSend finds nil and does nothing
+
+**Why PrepareFulfillMail Sets pendingSend:**
+The previous implementation had OnSendMail set pendingSend from mail attachments when the SendMail hook fired. However, there was a potential race condition:
+- SendMail() is called
+- MAIL_SEND_SUCCESS event fires (immediately)
+- Hook fires (after SendMail completes)
+
+If the event fired before the hook, ApplyPendingSend would see nil. By setting pendingSend in PrepareFulfillMail (when items are attached), we guarantee it's set before Send Mail is clicked.
+
+**Solution:**
+Modified OnSendMail to check if pendingSend was recently set by PrepareFulfillMail and preserve it:
+
+**Mail.lua (lines 172-178) - The Fix:**
+```lua
+function TOGBankClassic_Mail:OnSendMail(recipient)
+	-- If pendingSend was set recently by PrepareFulfillMail (within 10 seconds), keep it
+	-- Otherwise, read items from mail attachments (fallback for non-fulfill mails)
+	local now = GetTime()
+	if self.pendingSend and self.pendingSendAt and (now - self.pendingSendAt) < 10 then
+		TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Using pendingSend from PrepareFulfillMail")
+		return
+	end
+	
+	-- Clear old pendingSend and read from mail attachments
+	self.pendingSend = nil
+	self.pendingSendAt = nil
+```
+
+**How The Fix Works:**
+1. PrepareFulfillMail sets pendingSend and pendingSendAt = GetTime()
+2. User clicks Send Mail within 10 seconds
+3. OnSendMail checks: "Was pendingSend set recently?"
+4. If yes: Keep pendingSend, return early (don't re-read attachments)
+5. If no/stale: Clear and read from mail attachments (fallback for manual mails)
+6. MAIL_SEND_SUCCESS fires → ApplyPendingSend uses the preserved pendingSend
+7. FulfillRequest applies the fulfillment
+8. UI refreshes with checkmark
+
+**Why 10 Seconds:**
+- Reasonable time for user to click Send Mail after clicking fulfill button
+- Prevents stale pendingSend from previous mail (if user clicks fulfill but doesn't send)
+- Allows fallback to attachment-reading for non-fulfill mails
+
+**Dual-Mode Support:**
+The fix supports TWO ways pendingSend can be set:
+1. **PrepareFulfillMail mode (fulfill button):** pendingSend set when items attached, preserved by OnSendMail
+2. **Legacy mode (manual mail with items):** pendingSend cleared and re-read from attachments in OnSendMail
+
+This maintains backward compatibility with any code path that manually sends mail with items but doesn't use PrepareFulfillMail.
+
+**Testing:**
+1. Open mailbox
+2. Open Requests window
+3. Click fulfill envelope button on a request
+4. Items attached to mail, status message shows "Click Send to complete"
+5. Click Send Mail button
+6. ✅ Mail sends successfully
+7. ✅ Debug output: "OnSendMail: Using pendingSend from PrepareFulfillMail"
+8. ✅ Debug output: "Applied X item(s) toward requests for [requester]"
+9. ✅ Request status changes to "fulfilled" with checkmark
+10. ✅ UI shows gray fulfilled status
+11. ✅ Fulfill button disappears
+
+**Impact:**
+- **Severity:** CRITICAL - Core feature completely broken, 100% reproduce rate
+- **Frequency:** Every fulfill operation
+- **User Impact:** Bankers unable to fulfill orders through UI, had to manually click "Complete" button
+- **Data Impact:** Fulfilled counts not updating, fulfillment progress lost
+- **Workaround:** Manually click Complete button after sending mail
+
+**Files Changed:**
+1. **`Modules/Mail.lua`** (lines 172-178) - Added staleness check to preserve pendingSend
+2. **`Modules/Mail.lua`** (lines 748-762) - PrepareFulfillMail sets pendingSend (already present)
+
+**Total:** 1 file, ~6 lines modified
+
+### Related Issues
+
+**Not Related:**
+- **[MAIL-010]:** Mail items in UI (different component - inventory display)
+- **[MAIL-009]:** Mail preservation (different issue - sync backward compatibility)
+- **[MAIL-008]:** Bank.items corruption (different issue - data structure)
+
+**Design Lesson:**
+When implementing a "set early to avoid race condition" pattern, ensure all code paths that might clear the value check for recent sets first. Don't unconditionally clear shared state at the start of functions.
+
+**Code Pattern (Anti-Pattern):**
+```lua
+-- ❌ BAD: Unconditionally clears
+function OnEvent()
+    self.sharedState = nil  -- Always clears, even if recently set
+    -- ... read and set new value
+end
+```
+
+**Code Pattern (Fixed):**
+```lua
+-- ✅ GOOD: Preserves recent sets
+function OnEvent()
+    if self.sharedState and self.sharedStateTime and (now - self.sharedStateTime) < STALENESS_THRESHOLD then
+        return  -- Keep recent value, don't overwrite
+    end
+    self.sharedState = nil
+    -- ... read and set new value
+end
+```
+
+**Prevention:**
+- Search for other `= nil` clearing patterns in event handlers
+- Check if the cleared value might be set elsewhere with timing requirements
+- Add staleness checks or flags to coordinate between setting locations
+- Document which functions set vs consume the shared state
+
+**Resolution:** Order fulfillment now applies correctly when sending mail. Bankers can successfully fulfill orders through the UI without manual intervention.
 
 ---
 

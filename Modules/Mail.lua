@@ -169,6 +169,15 @@ function TOGBankClassic_Mail:InitSendHook()
 end
 
 function TOGBankClassic_Mail:OnSendMail(recipient)
+	-- If pendingSend was set recently by PrepareFulfillMail (within 10 seconds), keep it
+	-- Otherwise, read items from mail attachments (fallback for non-fulfill mails)
+	local now = GetTime()
+	if self.pendingSend and self.pendingSendAt and (now - self.pendingSendAt) < 10 then
+		TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Using pendingSend from PrepareFulfillMail")
+		return
+	end
+	
+	-- Clear old pendingSend and read from mail attachments
 	self.pendingSend = nil
 	self.pendingSendAt = nil
 
@@ -200,9 +209,11 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	end
 
 	if not sender or not TOGBankClassic_Guild:IsBank(sender) then
+		TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Sender %s is not a banker, skipping", tostring(sender))
 		return
 	end
 
+	TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Sender %s IS a banker, setting pendingSend", tostring(sender))
 	local normRecipient = TOGBankClassic_Guild:NormalizeName(recipient)
 
 	self.pendingSend = {
@@ -734,13 +745,28 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	if attached >= qtyNeeded then
 		message = string.format("Attached %d %s for %s. Click Send to complete.",
 			attached, itemName, requester)
-		return true, message, attached
 	elseif attached > 0 then
 		message = string.format("Attached %d of %d %s (partial). Click Send, then fulfill again.",
 			attached, qtyNeeded, itemName)
-		return true, message, attached
 	else
 		message = string.format("No %s found in bags.", itemName)
 		return false, message, 0
 	end
+	
+	-- Set pendingSend NOW (when items are attached), not in SendMail hook
+	-- This ensures pendingSend is set BEFORE MAIL_SEND_SUCCESS fires
+	if attached > 0 then
+		local sender = TOGBankClassic_Guild:GetNormalizedPlayer()
+		local normRecipient = TOGBankClassic_Guild:NormalizeName(requester)
+		self.pendingSend = {
+			sender = sender,
+			recipient = normRecipient,
+			items = {{ name = itemName, quantity = attached }}
+		}
+		self.pendingSendAt = GetTime()
+		TOGBankClassic_Output:Debug("MAIL", "PrepareFulfillMail: Set pendingSend for %s (%d %s)", 
+			tostring(normRecipient), attached, itemName)
+	end
+	
+	return true, message, attached
 end
