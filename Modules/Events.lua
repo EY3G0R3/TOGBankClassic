@@ -369,6 +369,7 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
 end
 
 function TOGBankClassic_Events:MAIL_SEND_SUCCESS(_)
+	TOGBankClassic_Output:Debug("MAIL", "MAIL_SEND_SUCCESS event fired")
 	-- safety: ensure hook is registered when mail UI is opened
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:ApplyPendingSend()

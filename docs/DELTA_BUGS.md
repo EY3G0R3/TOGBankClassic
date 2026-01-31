@@ -5,10 +5,11 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
-- None
+- 🟠 [MAIL-011-B] Manual mail sends not applying fulfillment (partial orders) - Investigation ongoing
 
 **Recent Fixes (2026-01-31):**
 - ✅ [MAIL-011] Order fulfillment not applying when sending mail - Fixed race condition where OnSendMail hook was clearing pendingSend before ApplyPendingSend could read it; moved pendingSend capture to PrepareFulfillMail (when items attached) instead of SendMail hook (after mail sent); added 10-second staleness check to prevent clearing recent pendingSend
+  - ⚠️ **NOTE**: Fulfill button now works, but manual mail sends (bypassing fulfill button) still don't apply fulfillment. User reported sending 1x of a 2x request manually without seeing any debug output or fulfilled count update.
 - ✅ [SYNC-008] Cancelled requests resurrecting from snapshots with newer timestamps - Fixed mergeRequest() to protect terminal states (cancelled/complete) from being overwritten by "open" status unless incoming has explicitly newer statusUpdatedAt timestamp; prevents zombie requests from reappearing after cancellation
 - ✅ [DATA-009] "Zombie requests" with mismatched ID/item fields - Added validation to detect and reject requests where ID contains different item name than actual item field (caused by editing requests after creation, IDs embed original item name)
 - ✅ [DATA-008] Request data corruption from empty/invalid required fields - Added strict validation in sanitizeRequest() to reject requests with empty item/requester/bank fields, zero quantity, or "Unknown" requester (previously accepted with defaults, causing corrupted requests to spread)
@@ -7831,7 +7832,160 @@ end
 - Add staleness checks or flags to coordinate between setting locations
 - Document which functions set vs consume the shared state
 
-**Resolution:** Order fulfillment now applies correctly when sending mail. Bankers can successfully fulfill orders through the UI without manual intervention.
+**Resolution:** Order fulfillment now applies correctly when using the fulfill button. Bankers can successfully fulfill orders through the UI without manual intervention.
+
+---
+
+### [MAIL-011-B] Investigation: Manual Mail Sends Not Applying Fulfillment
+
+**Status:** 🔍 **UNDER INVESTIGATION**
+**Date Started:** 2026-01-31 (late evening)
+**Related:** [MAIL-011] Order fulfillment fix
+
+**Issue Description:**
+While [MAIL-011] fixed fulfillment when clicking the fulfill envelope button, there's a secondary issue where manually sending mail (without using the fulfill button) doesn't apply fulfillment at all.
+
+**User Report:**
+> "when i filled an order for 2x of a thing, i had to go 'around' the system so i could send 1x, why didn't it update the sent list?"
+> 
+> "the fulfill button was a ? and wouldn't let me send just 1. so i sent the mail"
+> 
+> "i didn't see a message" (referring to debug output)
+
+**Scenario:**
+1. Request exists for 2x Item
+2. Fulfill button shows "?" icon (disabled/unknown state - why?)
+3. User manually types recipient name and attaches 1x Item to mail
+4. User clicks WoW's Send Mail button
+5. Mail sends successfully
+6. **NO debug output appears in chat**
+7. **Fulfilled count stays at 0 (doesn't update to 1)**
+8. **UI still shows unfulfilled state**
+
+**Expected Behavior:**
+Even when bypassing the fulfill button, the SendMail hook should detect:
+- Sender is a banker (IsBank check)
+- Items are attached to mail
+- Recipient matches a requester with open requests
+- Item name matches a requested item
+
+Then OnSendMail should set pendingSend → MAIL_SEND_SUCCESS fires → ApplyPendingSend → FulfillRequest updates fulfilled count from 0→1.
+
+**Current Investigation:**
+
+**Missing Debug Output Indicates:**
+The complete absence of ANY debug messages suggests the flow is breaking very early:
+
+1. **SendMail hook not firing?**
+   - Added: `"OnSendMail: HOOK FIRED for recipient=..."`
+   - Not seen → hook may not be registered or firing
+
+2. **MAIL_SEND_SUCCESS not firing?**
+   - Added: `"MAIL_SEND_SUCCESS event fired"`
+   - Not seen → event may not be firing in Classic Era
+
+3. **ApplyPendingSend not being called?**
+   - Added: `"ApplyPendingSend: Called, pendingSend=..."`
+   - Not seen → function not reached
+
+**Possible Root Causes:**
+
+**A. Hook Registration Issue:**
+```lua
+-- InitSendHook is called in:
+-- 1. MAIL_SHOW event (line 336 in Events.lua)
+-- 2. MAIL_SEND_SUCCESS event (line 373 in Events.lua)
+
+-- If MAIL_SHOW didn't fire when mailbox opened, hook won't be registered
+-- If hook uses different function signature in Classic Era, it won't fire
+```
+
+**B. Event Registration Issue:**
+```lua
+-- MAIL_SEND_SUCCESS is registered in Events.lua line 43
+-- Classic Era may use different event name or not fire it reliably
+```
+
+**C. IsBank Check Failing:**
+```lua
+-- OnSendMail line 215:
+if not sender or not TOGBankClassic_Guild:IsBank(sender) then
+    TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Sender %s is not a banker, skipping")
+    return
+end
+
+-- If IsBank returns false, pendingSend never gets set
+-- User should see "is not a banker" message if this is the issue
+-- Absence of this message suggests hook isn't firing at all
+```
+
+**D. Item Name Mismatch:**
+```lua
+-- FulfillRequest compares:
+-- reqItem = string.lower(req.item)
+-- targetItem = string.lower(itemName)
+
+-- If item name from GetSendMailItem doesn't exactly match request item:
+-- - Extra spaces, punctuation, realm names, etc.
+-- - No fulfillment will apply
+-- - But should still see debug messages up to FulfillRequest
+```
+
+**Next Steps for Debugging:**
+
+1. **Verify Hook Registration:**
+   - Check if MAIL_SHOW event fired when mailbox opened
+   - Add debug to InitSendHook to confirm `self.sendHooked = true`
+   - Verify `hooksecurefunc("SendMail", ...)` succeeds
+
+2. **Test Event Firing:**
+   - Manually trigger MAIL_SEND_SUCCESS to see if handler runs
+   - Check if Classic Era uses different event name
+   - Test with `/script TOGBankClassic_Mail:OnSendMail("TestPlayer")`
+
+3. **Banker Detection:**
+   - Verify user's character has "gbank" in guild notes
+   - Check GetBanks() returns user's name
+   - Test `IsBank(GetNormalizedPlayer())` manually
+
+4. **Item Name Matching:**
+   - Print exact item name from GetSendMailItem
+   - Print exact item name from request
+   - Compare case-insensitive with string.lower
+
+5. **Why Was Fulfill Button Disabled ("?")?**
+   - This is a separate issue that needs investigation
+   - Fulfill button should allow partial sends
+   - "?" icon typically means item not found in bags
+   - User had the item (manually attached it) so why was button disabled?
+
+**Added Debug Output (2026-01-31):**
+```lua
+-- Mail.lua line 172: OnSendMail entry point
+TOGBankClassic_Output:Debug("MAIL", "OnSendMail: HOOK FIRED for recipient=%s", tostring(recipient))
+
+-- Events.lua line 373: MAIL_SEND_SUCCESS handler
+TOGBankClassic_Output:Debug("MAIL", "MAIL_SEND_SUCCESS event fired")
+
+-- Mail.lua line 235: ApplyPendingSend entry point
+TOGBankClassic_Output:Debug("MAIL", "ApplyPendingSend: Called, pendingSend=%s", tostring(self.pendingSend ~= nil))
+```
+
+**Test Plan:**
+User to reload, manually send mail with item, report which debug messages appear (if any).
+
+**Impact:**
+- **Severity:** HIGH - Partial fulfillment workflow completely broken
+- **Frequency:** 100% when bypassing fulfill button
+- **Workaround:** Use fulfill button (but why was it disabled?)
+- **User Impact:** Cannot do partial fulfillments, must send full quantity or click Complete manually
+
+**Files Under Investigation:**
+- `Modules/Mail.lua` (lines 160-230) - Hook registration and OnSendMail
+- `Modules/Events.lua` (lines 330-378) - Event handlers for MAIL_SHOW and MAIL_SEND_SUCCESS
+- `Modules/RequestLog.lua` (lines 1346-1410) - FulfillRequest logic
+
+**Resolution:** Pending investigation results from user testing with new debug output.
 
 ---
 

@@ -169,6 +169,8 @@ function TOGBankClassic_Mail:InitSendHook()
 end
 
 function TOGBankClassic_Mail:OnSendMail(recipient)
+	TOGBankClassic_Output:Debug("MAIL", "OnSendMail: HOOK FIRED for recipient=%s", tostring(recipient))
+	
 	-- If pendingSend was set recently by PrepareFulfillMail (within 10 seconds), keep it
 	-- Otherwise, read items from mail attachments (fallback for non-fulfill mails)
 	local now = GetTime()
@@ -225,8 +227,10 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 end
 
 function TOGBankClassic_Mail:ApplyPendingSend()
+	TOGBankClassic_Output:Debug("MAIL", "ApplyPendingSend: Called, pendingSend=%s", tostring(self.pendingSend ~= nil))
 	local pending = self.pendingSend
 	if not pending then
+		TOGBankClassic_Output:Debug("MAIL", "ApplyPendingSend: No pendingSend, returning")
 		return
 	end
 	self.pendingSend = nil
