@@ -1293,22 +1293,36 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					local showComplete = canComplete and true or false
 					local showCancel = canCancel and true or false
 					local showDelete = canDelete and true or false
-					if row.actionGroup then
+					if row and row.actionGroup then
 						row.actionGroup:SetWidth(columnWidth)
 					end
 					-- Layout: [Fulfill] [spacer] [Complete] [spacer] [Cancel] [spacer] [Delete]
-					setWidgetShown(row.fulfillButton, showFulfill)
-					setWidgetShown(row.fulfillSpacer, showFulfill and (showComplete or showCancel))
-					setWidgetShown(row.completeButton, showComplete)
-					setWidgetShown(row.actionSpacer, showComplete and showCancel)
-					setWidgetShown(row.cancelButton, showCancel)
-					setWidgetShown(row.deleteSpacer, showDelete and (showComplete or showCancel or showFulfill))
-					setWidgetShown(row.deleteButton, showDelete)
+					if row and row.fulfillButton then
+						setWidgetShown(row.fulfillButton, showFulfill)
+					end
+					if row and row.fulfillSpacer then
+						setWidgetShown(row.fulfillSpacer, showFulfill and (showComplete or showCancel))
+					end
+					if row and row.completeButton then
+						setWidgetShown(row.completeButton, showComplete)
+					end
+					if row and row.actionSpacer then
+						setWidgetShown(row.actionSpacer, showComplete and showCancel)
+					end
+					if row and row.cancelButton then
+						setWidgetShown(row.cancelButton, showCancel)
+					end
+					if row and row.deleteSpacer then
+						setWidgetShown(row.deleteSpacer, showDelete and (showComplete or showCancel or showFulfill))
+					end
+					if row and row.deleteButton then
+						setWidgetShown(row.deleteButton, showDelete)
+					end
 
 					-- Update fulfill button state, icon, and tooltip
 					-- Don't use SetDisabled - it blocks mouse events including tooltips
 					-- Instead, store disabled state and check in OnClick, use alpha for visual
-					if row.fulfillButton and row.fulfillButton.frame then
+					if row and row.fulfillButton and row.fulfillButton.frame then
 						-- Special case: if split is needed, keep button enabled (PrepareFulfillMail will handle it)
 						local needsSplit = fulfillReason and fulfillReason:find("Split")
 						local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and needsSplit)
@@ -1349,49 +1363,61 @@ function TOGBankClassic_UI_Requests:DrawContent()
 						updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", tooltipDetail)
 					end
 
-					row.completeButton:SetCallback("OnClick", function()
+					if row and row.completeButton then
+						row.completeButton:SetCallback("OnClick", function()
+							if not requestId then
+								return
+							end
+							if not TOGBankClassic_Guild:CompleteRequest(requestId, actor) then
+								self.Window:SetStatusText("Unable to complete request.")
+							end
+						end)
+					end
+
+					if row and row.cancelButton then
+						row.cancelButton:SetCallback("OnClick", function()
+							if not requestId then
+								return
+							end
+							if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
+								self.Window:SetStatusText("Unable to cancel request.")
+							end
+						end)
+					end
+
+					if row and row.deleteButton then
+						row.deleteButton:SetCallback("OnClick", function()
 						if not requestId then
 							return
 						end
-						if not TOGBankClassic_Guild:CompleteRequest(requestId, actor) then
-							self.Window:SetStatusText("Unable to complete request.")
-						end
-					end)
+							confirmDeleteRequest(req, actor)
+						end)
+					end
 
-					row.cancelButton:SetCallback("OnClick", function()
-						if not requestId then
-							return
-						end
-						if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
-							self.Window:SetStatusText("Unable to cancel request.")
-						end
-					end)
+					if row and row.fulfillButton then
+						row.fulfillButton:SetCallback("OnClick", function()
+							if not requestId then
+								return
+							end
+							-- Check manual disabled state (we don't use SetDisabled to keep tooltips working)
+							if row.fulfillButton and row.fulfillButton.frame and row.fulfillButton.frame.togDisabled then
+								return
+							end
+							local success, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
+							self.Window:SetStatusText(message or "")
+						end)
+					end
 
-					row.deleteButton:SetCallback("OnClick", function()
-						if not requestId then
-							return
-						end
-						confirmDeleteRequest(req, actor)
-					end)
-
-					row.fulfillButton:SetCallback("OnClick", function()
-						if not requestId then
-							return
-						end
-						-- Check manual disabled state (we don't use SetDisabled to keep tooltips working)
-						if row.fulfillButton.frame and row.fulfillButton.frame.togDisabled then
-							return
-						end
-						local success, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
-						self.Window:SetStatusText(message or "")
-					end)
-
-					row.actionGroup:DoLayout()
+					if row and row.actionGroup then
+						row.actionGroup:DoLayout()
+					end
 				else
-					local label = row.cells[i]
-					label:SetText(colorize(cellText(col.key), completed))
-					label:SetWidth(columnWidth)
-					setWidgetShown(label, true)
+					if row and row.cells then
+						local label = row.cells[i]
+						label:SetText(colorize(cellText(col.key), completed))
+						label:SetWidth(columnWidth)
+						setWidgetShown(label, true)
+					end
 				end
 			end
 		end

@@ -277,6 +277,13 @@ function TOGBankClassic_UI_Search:Open()
 		self:DrawWindow()
 	end
 
+	-- Build search data only when search UI is opened (PERF-004)
+	-- Deferred from Inventory to avoid blocking initial window open
+	if not self.searchDataBuilt then
+		self:BuildSearchData()
+		self.searchDataBuilt = true
+	end
+
 	self.Window:Show()
 	if TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
 		self.Window:ClearAllPoints()

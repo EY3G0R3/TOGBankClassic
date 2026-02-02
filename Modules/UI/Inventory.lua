@@ -151,12 +151,8 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		return
 	end
 
-	-- Build search data only once per data update, not on every refresh (UI-008 fix)
-	-- This prevents recursive async item loading that causes C stack overflow
-	if not self.searchDataBuilt then
-		TOGBankClassic_UI_Search:BuildSearchData()
-		self.searchDataBuilt = true
-	end
+	-- Clear search data built flag so search rebuilds on next open (PERF-004)
+	TOGBankClassic_UI_Search.searchDataBuilt = false
 
 	local players = {}
 	local n = 0
@@ -285,11 +281,11 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
-		
+
 		-- Use alt.items if available (post-SYNC-006 aggregate)
 		-- Otherwise compute from sources for backward compatibility
 		local items = {}
-		
+
 		if alt.items and next(alt.items) ~= nil then
 			-- alt.items exists - use it directly (may be array or key-value)
 			for _, item in pairs(alt.items) do
@@ -302,7 +298,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			local bankItems = (alt.bank and alt.bank.items) or {}
 			local bagItems = (alt.bags and alt.bags.items) or {}
 			local mailItems = (alt.mail and alt.mail.items) or {}
-			
+
 			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d",
 				tab, #bankItems, #bagItems, #mailItems)
 			
@@ -313,10 +309,10 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 				table.insert(items, item)
 			end
 		end
-		
+
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: aggregated to %d unique items",
 			tab, #items)
-		
+
 		if items and #items > 0 then
 			-- Debug: Check for duplicate item IDs with different links
 			local itemsByID = {}
@@ -336,7 +332,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 					end
 				end
 			end
-			
+
 			-- Validate and filter items before passing to GetItems
 			local validItems = {}
 			for i, item in ipairs(items) do
@@ -347,7 +343,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 						tab, i, tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
 				end
 			end
-			
+
 			TOGBankClassic_Item:GetItems(validItems, function(list)
 				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items",
 					tab, list and #list or 0)
