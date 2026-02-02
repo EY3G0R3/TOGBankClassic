@@ -224,6 +224,13 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 		items = items,
 	}
 	self.pendingSendAt = GetTime()
+	
+	-- Log at INFO level so user can see manual sends are tracked
+	local itemList = {}
+	for _, item in ipairs(items) do
+		table.insert(itemList, string.format("%dx %s", item.quantity, item.name))
+	end
+	TOGBankClassic_Output:Info("Tracking manual mail to %s: %s", recipient, table.concat(itemList, ", "))
 end
 
 function TOGBankClassic_Mail:ApplyPendingSend()
@@ -236,6 +243,8 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 	self.pendingSend = nil
 	self.pendingSendAt = nil
 
+	TOGBankClassic_Output:Info("Applying fulfillment for mail sent to %s...", pending.recipient)
+	
 	local totalApplied = 0
 	for _, item in ipairs(pending.items) do
 		local applied = TOGBankClassic_Guild:FulfillRequest(
@@ -244,12 +253,17 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 			item.name,
 			item.quantity
 		)
+		if applied > 0 then
+			TOGBankClassic_Output:Info("  Applied %dx %s toward %s's request", applied, item.name, pending.recipient)
+		end
 		totalApplied = totalApplied + applied
 	end
 
 	if totalApplied > 0 then
-		TOGBankClassic_Output:Info("Applied %d item(s) toward requests for %s.", totalApplied, pending.recipient)
+		TOGBankClassic_Output:Info("Total fulfilled: %d item(s) for %s", totalApplied, pending.recipient)
 		TOGBankClassic_Guild:RefreshRequestsUI()
+	else
+		TOGBankClassic_Output:Info("No matching requests found for items sent to %s", pending.recipient)
 	end
 end
 

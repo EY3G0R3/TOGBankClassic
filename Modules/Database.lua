@@ -37,6 +37,9 @@ function TOGBankClassic_Database:Reset(name)
 		requests = {},
 		requestsVersion = 0,
 		requestsTombstones = {},
+		settings = {
+			maxRequestPercent = 100,  -- Default to no limit
+		},
 		-- Delta sync fields
 		deltaSnapshots = {},
 		deltaHistory = {},  -- DELTA-006: Store delta chain for offline players

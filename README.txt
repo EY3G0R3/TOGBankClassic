@@ -19,6 +19,7 @@ KEY FEATURES:
 - View all guild bank inventories in one convenient interface
 - Search across all bank characters simultaneously
 - Request items from guild banks via in-game mail
+- Guild-wide request limits for fair resource distribution (officers only)
 - Automatic synchronization with other guild members using the addon
 - Delta sync protocol for 90-99% bandwidth reduction
 - Link-less delta optimization for additional bandwidth savings (NEW in v0.8.0!)
@@ -118,6 +119,11 @@ SEARCHING FOR ITEMS:
 REQUESTING ITEMS:
   Click "Request" next to an item to automatically send a mail request
   to the bank character. They'll see your request the next time they log in.
+  
+  NOTE: Guild officers can configure maximum request limits to ensure fair
+  distribution of resources. If a percentage limit is set, you may not be
+  able to request the full available quantity. The interface will show the
+  maximum allowed amount (e.g., "Available: 100 (Max: 50% = 50)").
 
 MANUAL SYNC:
   /togbank sync
@@ -413,6 +419,41 @@ OPTIONS PANEL:
   - Enable/disable automatic bank scanning
   - Configure minimap button position
   - Adjust output verbosity
+  - (OFFICERS ONLY) Configure guild-wide request limits
+
+GUILD REQUEST LIMITS (OFFICERS ONLY):
+--------------------------------------
+Guild officers can configure maximum request amounts to ensure fair
+distribution of limited resources. This feature is only available to
+characters with officer note viewing permissions.
+
+To configure request limits:
+1. Press ESC -> Interface -> AddOns -> TOGBankClassic
+2. Click the "Requests" tab (only visible to officers)
+3. Adjust the "Maximum Request Amount" slider (1% - 100%)
+4. Changes automatically sync to all guild members
+
+How it works:
+- Setting determines the maximum percentage of available inventory that
+  can be requested at once
+- Example: If set to 50% and there are 100 items available, members can
+  request up to 50 items maximum
+- Single items (gear, weapons) are protected - members can always request
+  at least 1 if available, regardless of percentage
+- The setting syncs guild-wide, so all members use the same limits
+- Changes take effect immediately for all online guild members
+
+Common use cases:
+- Set to 50% during raid prep to share limited consumables fairly
+- Set to 33% when multiple members need the same rare materials
+- Set to 100% (default) for unrestricted requests
+- Adjust dynamically based on guild inventory levels
+
+Request interface behavior:
+- Slider maximum is automatically capped at the configured percentage
+- Status text shows: "Available: 100 (Max: 50% = 50)"
+- Validation message if over limit: "Reduced to max allowed: 50 items
+  (50% of 100 available)"
 
 FEATURE FLAGS (for developers):
   Edit Modules/Constants.lua to adjust:

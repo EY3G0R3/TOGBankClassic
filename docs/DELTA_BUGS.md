@@ -10,6 +10,7 @@
 - �🟠 [MAIL-011-B] Manual mail sends not applying fulfillment (partial orders) - Investigation ongoing
 
 **Recent Fixes (2026-01-31):**
+- ✅ [UI-013] Manual mail fulfillment tracking and request quantity validation - Added visible feedback when manual mails are tracked/applied; improved request validation to prevent exceeding available quantity with clear warnings
 - ✅ [DATA-010] Mail slots format crash when trading items - Fixed Bank.lua to handle legacy mail.slots number format and automatically migrate to new table format {count, total}
 - ✅ [UI-012] Dropdown contents blinking and disappearing - Fixed by caching dropdown lists to prevent unnecessary SetList() calls on every DrawContent refresh
 - ✅ [UI-011-B] Banker highlight checkbox appearing intermittently - Fixed guild roster loading timing issue by adding GetNumGuildMembers() guard before IsBank() check in UpdateFilters
@@ -211,6 +212,121 @@ Should this issue appear again with clear symptoms:
 ---
 
 ## Resolved Bugs (2026-01-31)
+
+### [UI-013] Manual Mail Fulfillment Tracking and Request Quantity Validation
+
+**Severity:** 🟠 HIGH
+**Category:** UI / Mail / Request System / User Experience
+**Reporter:** User (Production)
+**Date Reported:** 2026-01-31
+**Date Resolved:** 2026-01-31
+**Status:** ✅ RESOLVED
+
+**Problem:**
+Two related issues with manual mail sending and request creation:
+
+1. **Silent Manual Mail Tracking**: When bankers manually create and send mail (not using fulfill button), the OnSendMail hook captures items correctly but provides no visible feedback. Users couldn't tell if the system was tracking their manual sends or applying fulfillment.
+
+2. **Silent Request Quantity Clamping**: When requesting items through search dialog, if user enters quantity exceeding available stock, the system silently clamped to available without warning. User wouldn't know their request was reduced.
+
+**User Report:**
+> "i have to create the mail manually, and when i do, the count isn't added to the outstanding order"
+> "i'm getting orders that are too large and i can't partially fill"
+
+**Root Cause:**
+The fulfillment tracking system was working correctly (OnSendMail hook → ApplyPendingSend → FulfillRequest), but all operations were logged at DEBUG level only. Users with default INFO log level couldn't see what was happening, leading to confusion about whether manual sends were being tracked.
+
+**Fix Implemented:**
+
+**1. Visible Manual Mail Tracking** ([Mail.lua:218-228](../Modules/Mail.lua#L218-L228))
+Added INFO-level output when mail is captured:
+```lua
+-- Log at INFO level so user can see manual sends are tracked
+local itemList = {}
+for _, item in ipairs(items) do
+    table.insert(itemList, string.format("%dx %s", item.quantity, item.name))
+end
+TOGBankClassic_Output:Info("Tracking manual mail to %s: %s", recipient, table.concat(itemList, ", "))
+```
+
+**Output Example:**
+```
+Tracking manual mail to PlayerName: 15x Copper Ore, 5x Tin Ore
+```
+
+**2. Detailed Fulfillment Feedback** ([Mail.lua:229-258](../Modules/Mail.lua#L229-L258))
+Enhanced ApplyPendingSend with per-item and summary output:
+```lua
+TOGBankClassic_Output:Info("Applying fulfillment for mail sent to %s...", pending.recipient)
+
+for _, item in ipairs(pending.items) do
+    local applied = TOGBankClassic_Guild:FulfillRequest(...)
+    if applied > 0 then
+        TOGBankClassic_Output:Info("  Applied %dx %s toward %s's request", applied, item.name, pending.recipient)
+    end
+    totalApplied = totalApplied + applied
+end
+
+if totalApplied > 0 then
+    TOGBankClassic_Output:Info("Total fulfilled: %d item(s) for %s", totalApplied, pending.recipient)
+else
+    TOGBankClassic_Output:Info("No matching requests found for items sent to %s", pending.recipient)
+end
+```
+
+**Output Examples:**
+```
+Applying fulfillment for mail sent to PlayerName...
+  Applied 15x Copper Ore toward PlayerName's request
+  Applied 5x Tin Ore toward PlayerName's request
+Total fulfilled: 20 item(s) for PlayerName
+```
+
+OR if no matches:
+```
+No matching requests found for items sent to PlayerName
+```
+
+**3. Strict Request Quantity Validation** ([Search.lua:179-191](../Modules/UI/Search.lua#L179-L191))
+Replaced silent clamping with explicit validation and warnings:
+```lua
+if quantity > available then
+    if available <= 0 then
+        self.RequestDialog:SetStatusText("Cannot request - none available right now.")
+        return  -- Block request
+    else
+        self.RequestDialog:SetStatusText(string.format("Reduced to available: %d", available))
+        quantity = available
+        -- Don't return - allow the clamped request to proceed
+    end
+end
+```
+
+**Behavior Changes:**
+- **Before**: Silently clamped quantity to available, user unaware of reduction
+- **After**: 
+  - Shows "Cannot request - none available right now" if 0 available (blocks request)
+  - Shows "Reduced to available: X" if clamping occurs (allows reduced request)
+
+**Testing Results:**
+✅ Manual mail sends now show tracking confirmation
+✅ Fulfillment application shows per-item and total feedback
+✅ Users can see when no matching requests exist
+✅ Request quantity validation provides clear warnings
+✅ System correctly handles partial fulfillment (always did, now visible)
+
+**Files Modified:**
+- [Modules/Mail.lua](../Modules/Mail.lua#L218-L258)
+- [Modules/UI/Search.lua](../Modules/UI/Search.lua#L179-L191)
+- docs/DELTA_BUGS.md
+
+**Diagnostic Benefits:**
+Users can now diagnose fulfillment issues by checking output:
+- No "Tracking manual mail..." → OnSendMail hook not firing
+- "Tracking..." but no "Applying fulfillment..." → MAIL_SEND_SUCCESS event not firing
+- "No matching requests found" → Item/player names don't match exactly
+
+---
 
 ### [DATA-010] Mail Slots Format Crash When Trading Items
 

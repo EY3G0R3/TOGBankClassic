@@ -120,8 +120,20 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 	local prompt = string.format("Request how many %s from %s?", itemLabel, bankAlt)
 	self.RequestDialog.Prompt:SetText(prompt)
 	local available = self.requestContext.available
-	local minQuantity = available > 0 and 1 or 0
-	local maxQuantity = available > 0 and available or 0
+	
+	-- Apply configured percentage limit to available quantity
+	local maxRequestPercent = 100
+	if TOGBankClassic_Options and TOGBankClassic_Options.GetMaxRequestPercent then
+		maxRequestPercent = TOGBankClassic_Options:GetMaxRequestPercent()
+	end
+	local maxAllowed = math.floor(available * maxRequestPercent / 100)
+	-- Always allow at least 1 item if any are available (handles single items like gear)
+	if maxAllowed == 0 and available > 0 then
+		maxAllowed = 1
+	end
+	
+	local minQuantity = maxAllowed > 0 and 1 or 0
+	local maxQuantity = maxAllowed > 0 and maxAllowed or 0
 	if maxQuantity < minQuantity then
 		maxQuantity = minQuantity
 	end
@@ -129,7 +141,9 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 	self.RequestDialog.QuantityInput:SetValue(minQuantity > 0 and 1 or 0)
 	self.RequestDialog.QuantityInput:SetDisabled(maxQuantity == 0)
 	if self.RequestDialog.AvailableLabel then
-		if available > 0 then
+		if maxRequestPercent < 100 then
+			self.RequestDialog.AvailableLabel:SetText(string.format("Available: %d (max %d%% = %d)", available, maxRequestPercent, maxAllowed))
+		elseif available > 0 then
 			self.RequestDialog.AvailableLabel:SetText(string.format("Available: %d", available))
 		else
 			self.RequestDialog.AvailableLabel:SetText("Available: none right now")
@@ -178,12 +192,39 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 
 	local quantity = tonumber(quantityInput and quantityInput:GetValue())
 	local available = tonumber(self.requestContext.available) or 0
+	
+	-- Apply configured percentage limit to available quantity
+	local maxRequestPercent = 100
+	if TOGBankClassic_Options and TOGBankClassic_Options.GetMaxRequestPercent then
+		maxRequestPercent = TOGBankClassic_Options:GetMaxRequestPercent()
+	end
+	local maxAllowed = math.floor(available * maxRequestPercent / 100)
+	-- Always allow at least 1 item if any are available (handles single items like gear)
+	if maxAllowed == 0 and available > 0 then
+		maxAllowed = 1
+	end
+	
 	if not quantity or quantity <= 0 then
 		self.RequestDialog:SetStatusText("Enter a quantity greater than 0.")
 		return
 	end
-	if available > 0 and quantity > available then
-		quantity = available
+	if quantity > maxAllowed then
+		if maxAllowed <= 0 then
+			if maxRequestPercent < 100 then
+				self.RequestDialog:SetStatusText(string.format("Cannot request - max allowed is %d%% of %d = 0 items.", maxRequestPercent, available))
+			else
+				self.RequestDialog:SetStatusText("Cannot request - none available right now.")
+			end
+			return
+		else
+			if maxRequestPercent < 100 then
+				self.RequestDialog:SetStatusText(string.format("Reduced to max allowed: %d items (%d%% of %d available)", maxAllowed, maxRequestPercent, available))
+			else
+				self.RequestDialog:SetStatusText(string.format("Reduced to available: %d", maxAllowed))
+			end
+			quantity = maxAllowed
+			-- Don't return - allow the clamped request to proceed
+		end
 	end
 
 	local requester = TOGBankClassic_Guild:GetNormalizedPlayer()

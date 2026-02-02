@@ -19,6 +19,7 @@
 - [x] ~~**Persistent debug logging**~~ **v0.7.11: Implemented with 50k entry buffer, 7-day retention, filtering**
 - [x] ~~**SplitContainerItem popup for order fulfillment**~~ **IMPLEMENTED: Shows confirmation popup with shovel icon when split needed; smart bin-packing algorithm for optimal stack selection; supports complex partial fulfillment scenarios**
 - [x] ~~**Mute warning messages**~~ **IMPLEMENTED: Checkbox in options to hide [WARN] messages like DATA-004/DATA-005 rejections; reduces day-to-day chat spam for non-debugging users**
+- [x] ~~**Guild-wide request percentage limits**~~ **IMPLEMENTED: Officers can configure max request amount as percentage of available inventory (1-100%); setting syncs guild-wide; protects single items (gear) by always allowing at least 1 if available**
 - [ ] **Bagnon-style item highlighting** - Implement visual highlighting system that greys out all items except those needed to fulfill active orders; works across player bags and bank; helps bankers quickly locate and gather items for order fulfillment
 - [ ] **Deprecate legacy protocols** - Phase out togbank-v (non-delta), togbank-dv (pre-SYNC-006), and separate bank/bags structures in favor of unified togbank-dv2 (SYNC-006+) with `alt.items` aggregate; includes removing 5-second dv/dv2 prioritization delay once all clients upgraded; currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
 
@@ -146,6 +147,82 @@ Manually save to SavedVariables (normally automatic on logout).
 Clear all persistent log entries.
 
 ### Workflow
+
+---
+
+## 🎯 Guild-Wide Request Percentage Limits - IMPLEMENTED
+
+**Added:** February 2, 2026  
+**Purpose:** Allow officers to centrally configure request limits that automatically sync to all guild members
+
+### Problem
+- Requests exceeding available inventory create unfillable orders
+- No way to distribute limited resources fairly among multiple requesters
+- Bankers forced to manually adjust requests or explain limitations via whisper
+- Officers need centralized control over request behavior guild-wide
+
+### Solution
+Officers can configure maximum request amount as percentage of available inventory (1-100%):
+- **Guild-Wide Sync:** Setting stored in guild data structure, automatically propagates to all clients
+- **Officer-Only Configuration:** "Requests" tab in options visible only to officers (CanViewOfficerNote)
+- **Percentage-Based Clamping:** `maxAllowed = floor(available × percentage ÷ 100)`
+- **Single Item Protection:** Always allows requesting at least 1 item if available (protects gear/weapons)
+- **Clear User Feedback:** Shows "Available: 100 (Max: 50% = 50)" when percentage < 100%
+
+### Implementation Details
+
+**Storage & Sync:**
+- Settings stored in `Guild.Info.settings.maxRequestPercent` (default: 100%)
+- Syncs via existing request protocol (`togbank-d` / `SendRequestsData()`)
+- Falls back to local setting if guild data not yet loaded
+- Persists across `/reload`, logout, and client sessions
+
+**User Experience:**
+- **For Officers:** 
+  - Open Options → Requests tab
+  - Slider: 1% to 100% (default: 100%)
+  - Change broadcasts immediately to all online guild members
+  - Info message: "Maximum request amount set to 50% (syncing to guild...)"
+
+- **For Members:**
+  - Request slider max automatically capped at configured percentage
+  - Status text shows: "Available: 200 (Max: 50% = 100)"
+  - Validation message if exceeding: "Reduced to max allowed: 50 items (50% of 100 available)"
+  - No access to Requests tab or configuration
+
+**Example Scenarios:**
+
+*Fair Resource Distribution:*
+- Guild has 100 Mooncloth, 3 members want some
+- Officer sets 50% limit
+- Each member can request max 50 (or less if stock depletes)
+- Prevents one person claiming entire stock
+
+*Single Item Protection:*
+- Guild has 1 Thunderfury (yes, really)
+- Officer has 25% limit configured
+- Calculation: floor(1 × 25 ÷ 100) = 0
+- Protection: `math.max(1, 0)` → 1 item requestable
+- Member can still request the legendary weapon
+
+*Dynamic Updates:*
+- Officer changes 100% → 50% during raid prep
+- All online members' request dialogs update immediately
+- Existing requests unaffected, new requests use new limit
+- Setting persists for offline members when they log in
+
+### Technical Notes
+- Reads from `Guild.Info.settings.maxRequestPercent` first, local DB as fallback
+- Slider set function writes to both guild structure and local DB (backup)
+- Calls `SendRequestsData()` to broadcast via existing request sync protocol
+- Applied in Search.lua slider setup (line 119-139) and validation (line 182-207)
+- Access control via `hidden = function() return not CanViewOfficerNote() end`
+
+### Configuration
+**Options → Requests (Officers Only)**
+- Maximum Request Amount: 1% - 100% slider
+- Example Calculations group shows gear vs stackable examples
+- Real-time preview of how percentage affects different item quantities
 
 1. Enable debug logging: `/togbank debug`
 2. Reproduce the issue during gameplay (logs 50k entries automatically)

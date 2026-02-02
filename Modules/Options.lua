@@ -10,6 +10,9 @@ function TOGBankClassic_Options:Init()
 		},
 		global = {
 			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false },
+			requests = {
+				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
+			},
 		},
 	}
 	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicOptionDB", defaults)
@@ -450,6 +453,83 @@ function TOGBankClassic_Options:Init()
 					},
 				},
 			},
+			requests = {
+				order = 3,
+				type = "group",
+				name = "Requests",
+				hidden = function()
+					-- Only show to officers
+					return not CanViewOfficerNote()
+				end,
+				args = {
+					["requestsHeader"] = {
+						order = 0,
+						type = "header",
+						name = "Request Settings",
+					},
+					["requestsDesc"] = {
+						order = 1,
+						type = "description",
+						name = "Configure how item requests work to help manage bank inventory fairly.",
+					},
+					["maxRequestPercent"] = {
+						order = 2,
+						type = "range",
+						width = "full",
+						name = "Maximum Request Amount",
+						desc = "Limit how much of available inventory can be requested at once. Set to 100% to allow requesting everything. Lower values help share inventory among multiple guild members.\n\nExample: At 50%, if bank has 100 Copper Ore, members can request up to 50.\n\nNote: Single items (like gear) can always be requested even at low percentages.",
+						min = 1,
+						max = 100,
+						step = 1,
+						get = function()
+							return TOGBankClassic_Options:GetMaxRequestPercent()
+						end,
+						set = function(_, v)
+							-- Write to guild-synced settings (propagates to all clients)
+							if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
+								TOGBankClassic_Guild.Info.settings.maxRequestPercent = v
+								-- Broadcast settings change to guild
+								if TOGBankClassic_Guild.SendRequestsData then
+									TOGBankClassic_Guild:SendRequestsData()
+								end
+							end
+							-- Also write to local settings as backup
+							self.db.global.requests.maxRequestPercent = v
+							TOGBankClassic_Output:Info("Maximum request amount set to %d%% (syncing to guild...)", v)
+						end,
+					},
+					["exampleGroup"] = {
+						order = 3,
+						type = "group",
+						inline = true,
+						name = "Example Calculations",
+						args = {
+							["example1"] = {
+								order = 1,
+								type = "description",
+								fontSize = "medium",
+								name = function()
+									local pct = self.db.global.requests.maxRequestPercent or 100
+									local available = 100
+									local maxRequest = math.max(1, math.floor(available * pct / 100))
+									return string.format("|cff00ff00Current Setting: %d%%|r\n\nIf bank has %d items available:\n  Max: |cffffd700%d items|r", pct, available, maxRequest)
+								end,
+							},
+							["example2"] = {
+								order = 2,
+								type = "description",
+								fontSize = "medium",
+								name = function()
+									local pct = self.db.global.requests.maxRequestPercent or 100
+									local available = 1
+									local maxRequest = math.max(1, math.floor(available * pct / 100))
+									return string.format("If bank has %d item available (gear/single):\n  Max: |cffffd700%d item|r", available, maxRequest)
+								end,
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 
@@ -574,6 +654,18 @@ end
 
 function TOGBankClassic_Options:IsWarningsMuted()
 	return self.db.global.bank["muteWarnings"] or false
+end
+
+function TOGBankClassic_Options:GetMaxRequestPercent()
+	-- Read from guild-synced settings first (officer-configured, syncs to all clients)
+	if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
+		return TOGBankClassic_Guild.Info.settings.maxRequestPercent or 100
+	end
+	-- Fall back to local setting if guild data not loaded yet
+	if not self.db or not self.db.global or not self.db.global.requests then
+		return 100
+	end
+	return self.db.global.requests.maxRequestPercent or 100
 end
 
 function TOGBankClassic_Options:Open()
