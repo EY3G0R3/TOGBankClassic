@@ -39,6 +39,12 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	-- SYNC-010: Dedicated prefix for request mutations (add/cancel/complete)
+	-- Uses separate throttle bucket from togbank-d to prevent BULK messages from blocking ALERT mutations
+	TOGBankClassic_Core:RegisterComm("togbank-rm", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
 	-- DELTA-006: Delta chain replay handlers
 	TOGBankClassic_Core:RegisterComm("togbank-dr", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
@@ -793,9 +799,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		end
 	end
 
-	if prefix == "togbank-d" then
+	if prefix == "togbank-d" or prefix == "togbank-rm" then
 		-- SYNC-003p: Debug all togbank-d messages to see what's arriving
-		TOGBankClassic_Output:DebugComm("[SYNC-003p] togbank-d received from %s: type=%s", sender, tostring(data.type))
+		TOGBankClassic_Output:DebugComm("[SYNC-003p] %s received from %s: type=%s", prefix, sender, tostring(data.type))
+		
+		-- SYNC-010: Critical debug for request mutations
+		if data.type == "requests-log" then
+			TOGBankClassic_Output:Debug("SYNC", "[SYNC-010] %s requests-log received from %s, about to call ReceiveRequestMutations", prefix, sender)
+		end
 
 		if data.type == "roster" then
 			-- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
