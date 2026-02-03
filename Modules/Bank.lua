@@ -299,6 +299,31 @@ function TOGBankClassic_Bank:Scan()
 		TOGBankClassic_Output:Debug("SYNC", "No inventory changes for %s, version unchanged (hash: %s)", player, tostring(currentHash))
 	end
 
+	-- MAIL-012: Compute mailHash for mail-specific change detection
+	-- This allows receivers to detect when mail data exists and has changed
+	-- mailHash is computed whenever mail is scanned (even if empty) to track all mail state changes
+	-- nil mailHash = "never scanned mail" vs hash value = "mail scanned" (could be empty or full)
+	if alt.mail and alt.mail.items then
+		-- Compute hash even for empty mail - this allows detecting empty→full and full→empty transitions
+		local currentMailHash = TOGBankClassic_Core:ComputeInventoryHash(alt.mail.items, nil, nil, nil)
+		local previousMailHash = alt.mailHash
+		
+		if currentMailHash ~= previousMailHash then
+			alt.mailHash = currentMailHash
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail hash changed for %s: %s (was: %s, %d items)",
+				player, tostring(currentMailHash), tostring(previousMailHash), #alt.mail.items)
+		else
+			-- Ensure mailHash is set even if unchanged (in case it was missing before)
+			alt.mailHash = currentMailHash
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail hash unchanged for %s: %s (%d items)", 
+				player, tostring(currentMailHash), #alt.mail.items)
+		end
+	else
+		-- No mail data structure (mail was never scanned this session)
+		-- Keep previous mailHash if it exists to preserve data across sessions
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail not scanned this session for %s, preserving existing mailHash", player)
+	end
+
 	-- Initialize tables if needed
 	if not info.alts then
 		info.alts = {}

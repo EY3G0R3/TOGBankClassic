@@ -531,6 +531,19 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt)
 			delta.changes.money = currentAlt.money
 		end
 
+		-- MAIL-012: Track mailHash changes so receivers can detect mail updates
+		-- mailHash allows clients to identify when mail data has changed without comparing full item arrays
+		if currentAlt.mailHash ~= previous.mailHash then
+			delta.changes.mailHash = currentAlt.mailHash
+			TOGBankClassic_Output:Debug(
+				"DELTA",
+				"[MAIL-012] Mail hash changed for %s: %s → %s",
+				altName,
+				tostring(previous.mailHash),
+				tostring(currentAlt.mailHash)
+			)
+		end
+
 		-- Items delta (aggregated bank + bags + mail)
 		local previousItems = previous.items or {}
 		local currentItems = currentAlt.items or {}
@@ -570,6 +583,11 @@ function TOGBankClassic_DeltaComms:DeltaHasChanges(delta)
 
 	-- Check money change
 	if changes.money then
+		return true
+	end
+
+	-- MAIL-012: Check mailHash change
+	if changes.mailHash ~= nil then
 		return true
 	end
 
@@ -783,6 +801,13 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 
 			if changes.money then
 				current.money = changes.money
+			end
+
+			-- MAIL-012: Apply mailHash changes
+			-- This allows receivers to detect when mail data has been updated
+			if changes.mailHash ~= nil then
+				current.mailHash = changes.mailHash
+				TOGBankClassic_Output:Debug("DELTA", "[MAIL-012] Updated mailHash for %s to %s", norm, tostring(changes.mailHash))
 			end
 
 			-- Apply item changes (aggregated bank + bags + mail)

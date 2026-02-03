@@ -1137,6 +1137,7 @@ function Guild:ReceiveRequestsData(payload)
 	return ADOPTION_STATUS.INVALID
 end
 
+--[[ COMMENTED OUT - togbank-v legacy protocol (request version already in togbank-dv2)
 function Guild:SendRequestsVersionPing()
 	if not self.Info then
 		return
@@ -1150,6 +1151,7 @@ function Guild:SendRequestsVersionPing()
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, "BULK")
 end
+--]]
 
 -- Receive mutation entries from another player and apply them.
 function Guild:ReceiveRequestMutations(payload, sender)

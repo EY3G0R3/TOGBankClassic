@@ -381,7 +381,7 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 		end
 	end
 
-	-- Update roster.alts list (no version tracking needed - purely local)
+	-- Update roster.alts list (roster sync is local-only, no version tracking needed)
 	local oldRoster = table.concat(self.Info.roster.alts or {}, ",")
 	local newRoster = table.concat(banks, ",")
 
@@ -506,22 +506,27 @@ function TOGBankClassic_Guild:GetVersion()
 
 	for k, v in pairs(self.Info.alts) do
 		---START CHANGES
-		-- Only store bank alt data if the sender is a bank alt
-		--data.alts[k] = v.version
-		-- v0.8.0: Include inventory hash for pull-based protocol
-		if type(v) == "table" and v.version then
-			-- Send hash only in delta-enabled mode (backwards compatibility)
-			if PROTOCOL.SUPPORTS_DELTA and v.inventoryHash then
-				data.alts[k] = {
-					version = v.version,
-					hash = v.inventoryHash,
-				}
-				TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d, hash=%d", k, v.version, v.inventoryHash)
-			else
-				-- Legacy format for old clients
-				data.alts[k] = v.version
-				TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d (no hash)", k, v.version)
+		-- Only broadcast bankers from the CURRENT guild (cross-guild data leak fix)
+		if self:IsBank(k) then
+			-- Only store bank alt data if the sender is a bank alt
+			--data.alts[k] = v.version
+			-- v0.8.0: Include inventory hash for pull-based protocol
+			if type(v) == "table" and v.version then
+				-- Send hash only in delta-enabled mode (backwards compatibility)
+				if PROTOCOL.SUPPORTS_DELTA and v.inventoryHash then
+					data.alts[k] = {
+						version = v.version,
+						hash = v.inventoryHash,
+					}
+					TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d, hash=%d", k, v.version, v.inventoryHash)
+				else
+					-- Legacy format for old clients
+					data.alts[k] = v.version
+					TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d (no hash)", k, v.version)
+				end
 			end
+		else
+			TOGBankClassic_Output:Debug("SYNC", "Skipping %s from version broadcast: not a banker in current guild", k)
 		end
 		---END CHANGES
 	end
@@ -646,17 +651,23 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 		self.requestCount = self.requestCount + 1
 	end
 
-	-- Check if we have an online banker
-	local onlineBankers = TOGBankClassic_Chat.online_bankers or {}
+	-- Check if we have an online banker (from guild roster, not broadcasts)
 	local banker = nil
-	local mostRecent = 0
+	local bankerCount = 0
 
-	for sender, info in pairs(onlineBankers) do
-		if info.seen > mostRecent then
-			mostRecent = info.seen
-			banker = sender
+	-- MAIL-012 DEBUG: Log all online bankers from guild roster
+	for member, _ in pairs(self.onlineMembers or {}) do
+		if self:IsBank(member) then
+			bankerCount = bankerCount + 1
+			TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Online banker from roster: %s, isOnline=%s",
+				member, tostring(self:IsPlayerOnline(member)))
+			-- Use first found banker (could randomize or prefer by name)
+			if not banker then
+				banker = member
+			end
 		end
 	end
+	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: %d online bankers found from guild roster", norm, bankerCount)
 
 	-- Build request message
 	local request = {
@@ -667,16 +678,27 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
 
-	if banker and (GetServerTime() - mostRecent) < 600 and self:IsPlayerOnline(banker) then
-		-- Banker known, seen recently (within 10 min), AND currently online - WHISPER directly
+	if banker and self:IsPlayerOnline(banker) then
+		-- Banker found in guild roster AND currently online - WHISPER directly
 		TOGBankClassic_Output:DebugComm("SENDING WHISPER: togbank-r to %s for alt %s", banker, norm)
-		TOGBankClassic_Output:Debug("SYNC", "Pull-based query for %s (WHISPER to banker %s)", norm, banker)
-		TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL")
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query for %s to banker %s (from guild roster, online=%s)", 
+			norm, banker, tostring(self:IsPlayerOnline(banker)))
+		-- Try WHISPER first, fallback to GUILD if it fails
+		if not TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL") then
+			TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query failed for %s to %s, falling back to GUILD", norm, banker)
+			TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
+		end
 		self:MarkPendingSync("alt", banker, norm)
 	else
-		-- No known banker, stale, or offline - broadcast on GUILD
+		-- No known banker or offline - broadcast on GUILD
+		local reason = "unknown"
+		if not banker then
+			reason = "no banker found in guild roster"
+		elseif not self:IsPlayerOnline(banker) then
+			reason = "banker offline"
+		end
 		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST: togbank-r for alt %s (no online banker)", norm)
-		TOGBankClassic_Output:Debug("SYNC", "Pull-based query for %s (GUILD broadcast, no online banker)", norm)
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] GUILD query for %s, reason: %s", norm, reason)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", nil, norm)
 	end
@@ -1193,7 +1215,8 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 		items = strippedItems,
 		bank = strippedBank,
 		bags = strippedBags,
-		mail = alt.mail
+		mail = alt.mail,
+		mailHash = alt.mailHash  -- MAIL-012: Include mailHash in stripped data
 	}
 	return stripped
 end
@@ -1271,6 +1294,9 @@ function TOGBankClassic_Guild:SendAltData(name)
 	-- This ensures old clients that only read bank.items/bags.items still get data
 	self:EnsureLegacyFields(currentAlt)  -- Modifies in place, no need to reassign
 
+	-- [MAIL-012] Log mailHash before sending to verify it's in the alt object
+	TOGBankClassic_Output:Debug("SYNC", "[MAIL-012] SendAltData for %s: mailHash=%s", norm, tostring(currentAlt.mailHash))
+
 	-- Log what we're about to send (all 3 arrays for backward compatibility)
 	local itemsCount = currentAlt.items and #currentAlt.items or 0
 	local bankCount = (currentAlt.bank and currentAlt.bank.items) and #currentAlt.bank.items or 0
@@ -1347,11 +1373,13 @@ function TOGBankClassic_Guild:SendAltData(name)
 		local deltaWithLinks, deltaNoLinks
 
 		-- Prepare legacy format (with Links) if needed
+		--[[ COMMENTED OUT FOR MAIL-012 TESTING
 		if mode.sendLegacy then
 			deltaWithLinks = TOGBankClassic_Core:SerializeWithChecksum(deltaData)
 			TOGBankClassic_Core:SendCommMessage("togbank-d2", deltaWithLinks, "Guild", nil, "BULK", OnChunkSent)
 			TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d2 (with Links)", norm)
 		end
+		--]]
 
 		-- Prepare new format (without Links) if needed - saves 60-80 bytes per item
 		if mode.sendNew then
@@ -1427,11 +1455,13 @@ function TOGBankClassic_Guild:SendAltData(name)
 		local dataWithLinks, dataNoLinks
 
 		-- Prepare legacy format (with Links) if needed
+		--[[ COMMENTED OUT FOR MAIL-012 TESTING
 		if mode.sendLegacy then
 			dataWithLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
 			TOGBankClassic_Output:DebugComm("SENDING RESPONSE: togbank-d (legacy) for %s (%d bytes)", norm, #dataWithLinks)
 			TOGBankClassic_Core:SendCommMessage("togbank-d", dataWithLinks, "Guild", nil, "BULK", OnChunkSent)
 		end
+		--]]
 
 		-- Prepare new format (without Links) if needed
 		if mode.sendNew then
@@ -1590,7 +1620,8 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				return nil
 			end
 
-			-- Sanitize alt.items (array)
+			-- [MAIL-012] Log mailHash IMMEDIATELY upon receiving alt data
+			TOGBankClassic_Output:Debug("SYNC", "[MAIL-012] ReceiveAltData for %s: received mailHash=%s", name, tostring(a.mailHash))
 			if a.items then
 				local cleaned = {}
 				for k, v in pairs(a.items) do
@@ -1856,6 +1887,9 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 	self.Info.alts[norm] = alt
 	TOGBankClassic_Output:Debug("MAIL", "Overwrote self.Info.alts[%s], mail field now: %s",
 		norm, alt.mail and "EXISTS" or "GONE")
+
+	-- [MAIL-012] Log mailHash after storing to verify it persisted
+	TOGBankClassic_Output:Debug("SYNC", "[MAIL-012] Stored alt data for %s: mailHash=%s", norm, tostring(self.Info.alts[norm].mailHash))
 
 	-- Restore preserved mail if we had it locally and incoming sync doesn't have it
 	-- This handles backward compatibility: new clients preserve mail when receiving from old clients
@@ -2139,14 +2173,17 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		self:SendRequestsData()
 	elseif mode == "version" then
 		-- Lightweight ping; snapshots are sent only when queried.
-		self:SendRequestsVersionPing()
+		--self:SendRequestsVersionPing()  -- COMMENTED OUT: togbank-v ignored by delta clients (BANDWIDTH-001)
 	end
 
 	-- v0.8.0: Broadcast delta version with hashes for pull-based protocol
 	-- Send BOTH legacy and delta version broadcasts (SYNC-001 fix)
+	--[[ COMMENTED OUT: togbank-v ignored by delta clients
 	if TOGBankClassic_Events and TOGBankClassic_Events.Sync then
 		TOGBankClassic_Events:Sync()
 	end
+	--]]
+	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] About to call SyncDeltaVersion (exists=%s)", tostring(TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion ~= nil))
 	if TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion then
 		TOGBankClassic_Events:SyncDeltaVersion()
 	end

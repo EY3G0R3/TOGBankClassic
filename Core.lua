@@ -21,8 +21,12 @@ end
 -- Returns true if sent, false if target offline or send failed
 function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn, callbackArg)
     -- Check if target is online
-    if not TOGBankClassic_Guild:IsPlayerOnline(target) then
-        TOGBankClassic_Output:Debug("WHISPER", "Cannot send %s WHISPER to %s - player is offline", prefix, target)
+    local isOnline = TOGBankClassic_Guild:IsPlayerOnline(target)
+    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendWhisper called: prefix=%s, target=%s, isOnline=%s", 
+        prefix, target, tostring(isOnline))
+    
+    if not isOnline then
+        TOGBankClassic_Output:Debug("WHISPER", "[WHISPER-DEBUG] Cannot send %s WHISPER to %s - player is offline", prefix, target)
         return false
     end
 
@@ -33,9 +37,14 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
         nameOnly = string.match(target, "^(.-)%-")
     end
 
-    -- Send the whisper
-    self:SendCommMessage(prefix, text, "WHISPER", nameOnly, prio, callbackFn, callbackArg)
-    return true
+    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] Attempting SendCommMessage: prefix=%s, target=%s, nameOnly=%s", prefix, target, nameOnly)
+    
+    -- Send the whisper and capture result
+    local success = self:SendCommMessage(prefix, text, "WHISPER", nameOnly, prio, callbackFn, callbackArg)
+    
+    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendCommMessage result: success=%s", tostring(success))
+    
+    return success ~= false  -- SendCommMessage doesn't return false on failure, but be defensive
 end
 
 function TOGBankClassic_Core:OnInitialize()

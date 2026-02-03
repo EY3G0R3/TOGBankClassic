@@ -130,7 +130,7 @@ function TOGBankClassic_Chat:PerformSync()
 	-- SYNC-008 fix: Use ALERT priority for manual sync so it happens immediately
 	TOGBankClassic_Events:SyncDeltaVersion("ALERT")
 	-- SYNC-008 fix: Also send legacy version broadcast like the automatic timer does
-	TOGBankClassic_Events:Sync("ALERT")
+	--TOGBankClassic_Events:Sync("ALERT")  -- COMMENTED OUT: togbank-v ignored by delta clients
 	TOGBankClassic_Guild:FastFillMissingAlts()
 	-- Query request snapshot with ALERT priority for immediate sync
 	local player = TOGBankClassic_Guild:GetPlayer()
@@ -373,25 +373,52 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 				local ourVersion = type(ourAlt) == "table" and ourAlt.version or nil
 				local ourHash = type(ourAlt) == "table" and ourAlt.inventoryHash or nil
 
-				-- Debug: show what we received
+				-- MAIL-012 DEBUG: Always log hash comparisons to PROTOCOL (not just SYNC)
 				if theirHash then
 					TOGBankClassic_Output:Debug(
-						"SYNC",
-						"Received %s from %s: version=%d, hash=%d (our hash=%s)",
+						"PROTOCOL",
+						"[MAIL-012] Received %s from %s: theirVer=%d, theirHash=%d, ourVer=%s, ourHash=%s",
 						kNorm,
 						sender,
 						theirVersion,
 						theirHash,
+						ourVersion and tostring(ourVersion) or "nil",
 						ourHash and tostring(ourHash) or "nil"
 					)
 				end
 
-				-- Don't query sender about themselves (SYNC-001 fix)
+				-- MAIL-012 fix: Don't query if WE are the sender (prevents self-queries)
+				-- Previous logic (kNorm ~= senderNorm) incorrectly prevented OTHER players 
+				-- from querying the sender's own data (e.g., Pickyminer couldn't query Togammo-Azuresong)
+				local ourPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 				local senderNorm = TOGBankClassic_Guild:NormalizeName(sender)
-				if kNorm ~= senderNorm then
+				local weAreSender = (ourPlayer == senderNorm)
+				
+				-- MAIL-012 DEBUG: Log the sender check
+				TOGBankClassic_Output:Debug(
+					"PROTOCOL",
+					"[MAIL-012] Sender check for %s: ourPlayer=%s, senderNorm=%s, weAreSender=%s",
+					kNorm,
+					ourPlayer,
+					senderNorm,
+					tostring(weAreSender)
+				)
+				
+				if not weAreSender then
+					-- We're not the sender, so we can query about any alt including the sender
 					-- For delta version broadcasts, only query if we support delta
 					-- For legacy version broadcasts, query as normal
 					local shouldQuery = false
+					
+					-- MAIL-012 DEBUG: Log query decision path
+					TOGBankClassic_Output:Debug(
+						"PROTOCOL",
+						"[MAIL-012] Query evaluation for %s: isDeltaVersion=%s, ShouldUseDelta=%s",
+						kNorm,
+						tostring(isDeltaVersion),
+						tostring(TOGBankClassic_Guild:ShouldUseDelta())
+					)
+					
 					if isDeltaVersion then
 						-- Delta version: check hash first (most accurate), then version
 						if TOGBankClassic_Guild:ShouldUseDelta() then
@@ -407,6 +434,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 										"has bank data for",
 										ColorPlayerName(kNorm) .. " (we have none), querying."
 									)
+									TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: NO_OUR_HASH", kNorm)
 								elseif theirHash ~= ourHash then
 									-- Hashes differ - we need an update
 									shouldQuery = true
@@ -417,6 +445,9 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 										"has different inventory for",
 										ColorPlayerName(kNorm) .. " (hash mismatch), querying."
 									)
+									TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: HASH_MISMATCH (our=%d, their=%d)", kNorm, ourHash, theirHash)
+								else
+									TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: HASH_MATCH (no query)", kNorm)
 								end
 							elseif not ourVersion or theirVersion > ourVersion then
 								-- No hash available, fall back to version comparison
@@ -428,7 +459,12 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 									"has fresher bank data about",
 									ColorPlayerName(kNorm) .. ", querying (delta)."
 								)
+								TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: VERSION_NEWER", kNorm)
+							else
+								TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: VERSION_SAME_OR_OLDER (no query)", kNorm)
 							end
+						else
+							TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: DELTA_DISABLED (no query)", kNorm)
 						end
 					else
 						-- Legacy version: query as usual
@@ -441,13 +477,26 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 								"has fresher bank data about",
 								ColorPlayerName(kNorm) .. ", querying."
 							)
+							TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: LEGACY_VERSION_NEWER", kNorm)
+						else
+							TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: LEGACY_VERSION_SAME_OR_OLDER (no query)", kNorm)
 						end
 					end
 
 					if shouldQuery then
 						-- v0.8.0: Use pull-based query for delta version broadcasts
+						TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QUERYING %s from %s", kNorm, sender)
 						TOGBankClassic_Guild:QueryAltPullBased(kNorm)
 					end
+				else
+					-- MAIL-012 DEBUG: Log when we skip because we are the sender
+					TOGBankClassic_Output:Debug(
+						"PROTOCOL",
+						"[MAIL-012] Skipping %s: weAreSender=true (ourPlayer=%s, senderNorm=%s)",
+						kNorm,
+						ourPlayer,
+						senderNorm
+					)
 				end
 			end
 		end
@@ -458,8 +507,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
 
 	-- Debug: Log ALL incoming messages before any filtering
-	if prefix == "togbank-dv" then
-		TOGBankClassic_Output:Debug("COMMS", "RAW RECEIVED: %s from %s (%d bytes)", prefix, sender, #message)
+	if prefix == "togbank-dv" or prefix == "togbank-dv2" then
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] RAW RECEIVED: %s from %s (%d bytes)", prefix, sender, #message)
 	end
 
 	-- WHISPER DEBUG
@@ -474,6 +523,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	local player = TOGBankClassic_Guild:GetPlayer()
 	-- Normalize the sender so spacing/hyphen formats match
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
+
+	-- MAIL-012 DEBUG: Log the player check for delta version messages
+	if prefix == "togbank-dv2" or prefix == "togbank-dv" then
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Player check: player=%s, sender=%s, match=%s", 
+			player, sender, tostring(player == sender))
+	end
 
 	if player == sender then
 		self:Debug("PROTOCOL", "> (ignoring)", prefix, prefixDesc, "(our own)")
@@ -607,10 +662,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				}
 				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
 
-				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s)", sender, tostring(isBanker), tostring(hasData))
-				if not TOGBankClassic_Core:SendWhisper("togbank-rr", ackData, sender, "NORMAL") then
-					return
-				end
+				-- MAIL-012 FIX: Use GUILD broadcast instead of WHISPER for togbank-rr
+				-- WHISPER doesn't work for cross-account multiboxing (same PC, different Battle.net accounts)
+				-- WoW blocks addon whispers between accounts as anti-automation measure
+				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via GUILD to %s (isBanker=%s, hasData=%s)", sender, tostring(isBanker), tostring(hasData))
+				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "GUILD", nil, "NORMAL")
 
 				self:Debug(
 					"SYNC",
@@ -1231,7 +1287,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		local now = GetServerTime()
 		if not self.last_share_sync or now - self.last_share_sync > 30 then
 			self.last_share_sync = now
-			TOGBankClassic_Events:Sync()
+			--TOGBankClassic_Events:Sync()  -- COMMENTED OUT: togbank-v ignored by delta clients
 		end
 	end
 	if prefix == "togbank-w" then

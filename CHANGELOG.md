@@ -1,5 +1,42 @@
 # TOGBankClassic Changelog
 
+## [v0.8.4] (2026-02-02) - Mail Hash Synchronization Fix
+
+**Status:** Critical Bug Fix  
+**Priority:** HIGH
+
+### 🐛 Critical Bug Fix
+
+#### [MAIL-012] Mail Hash Never Set - Fixed Mail Synchronization
+- **FIXED**: `mailHash` field was referenced but never assigned, breaking mail synchronization
+- **ROOT CAUSE**: Mail scan created mail data but never computed hash for change detection
+- **IMPACT**: Mail items never synchronized between clients via `/togbank share` or `/togbank sync`
+- **FIX**: 
+  - `Bank.lua` now computes `mailHash` after mail scan using `ComputeInventoryHash()`
+  - `DeltaComms.lua` tracks `mailHash` changes in delta computation
+  - `DeltaComms.lua` applies `mailHash` changes when receiving deltas
+  - `DeltaComms.lua` recognizes `mailHash` as a valid change type
+- **RESULT**: Mail data now properly syncs between guild members
+- **LOGGING**: Added `[MAIL-012]` debug markers for mail hash operations
+
+### 📝 Technical Details
+
+**Files Changed:**
+- `Modules/Bank.lua` - Added mailHash computation after mail scan (lines 289-310)
+- `Modules/DeltaComms.lua` - Track mailHash in ComputeDelta() (lines 533-545)
+- `Modules/DeltaComms.lua` - Apply mailHash in ApplyDelta() (lines 806-810)
+- `Modules/DeltaComms.lua` - Recognize mailHash in DeltaHasChanges() (lines 590-593)
+- `docs/DELTA_BUGS.md` - Comprehensive bug documentation with root cause analysis
+
+**How It Works:**
+1. When mail is scanned, `mailHash` is computed from `alt.mail.items`
+2. `mailHash` changes trigger version updates in deltas
+3. Receivers see `mailHash` and know mail data is "new format" (not legacy)
+4. Clients can detect mail changes and request updates
+5. Backward compatible: clients without `mailHash` still treated as "old format"
+
+---
+
 ## [v0.8.0] (2026-01-21) - Pull-Based Delta Protocol
 
 **Branch:** feature/pull-based-delta  
