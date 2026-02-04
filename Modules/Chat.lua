@@ -634,15 +634,16 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			-- Pull-based request flow - respond with togbank-rr acknowledgment
 			local altName = data.name
 			local requester = data.requester or sender
+			local hashOnly = data.hashOnly or false
 
-			TOGBankClassic_Output:DebugComm("RECEIVED PULL-BASED REQUEST from %s for alt %s", sender, altName)
+			TOGBankClassic_Output:DebugComm("RECEIVED PULL-BASED REQUEST from %s for alt %s (hashOnly=%s)", sender, altName, tostring(hashOnly))
 
 			self:Debug(
 				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
-				"pull-based request for",
+				hashOnly and "hash query for" or "pull-based request for",
 				ColorPlayerName(altName)
 			)
 
@@ -651,29 +652,75 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
 			local hasData = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[altName] ~= nil
 
-			-- Only bankers respond to pull-based requests
-			if isBanker and hasData then
-				-- Send acknowledgment with banker flag
+			-- PERF-005: Compute hash on-demand if missing (for alts that haven't rescanned since hash was added)
+			if hasData and isBanker then
+				local alt = TOGBankClassic_Guild.Info.alts[altName]
+				if not alt.inventoryHash and alt.items then
+					-- Compute hash from existing items data
+					alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, alt.money or 0)
+					TOGBankClassic_Output:Debug("SYNC", "PERF-005: Computed missing inventoryHash for %s: %d", altName, alt.inventoryHash or 0)
+				end
+				-- Compute missing mailHash if we have mail data
+				if not alt.mailHash and alt.mail and alt.mail.items and #alt.mail.items > 0 then
+					alt.mailHash = TOGBankClassic_Core:ComputeInventoryHash(alt.mail.items, nil, nil, nil)
+					TOGBankClassic_Output:Debug("SYNC", "PERF-005: Computed missing mailHash for %s: %d", altName, alt.mailHash or 0)
+				end
+			end
+
+			-- PERF-005: For hashOnly queries, only bankers respond (authoritative hash source)
+			-- For regular queries, anyone with matching hash can respond (if P2P enabled)
+			local shouldRespond = false
+			local expectedHash = nil
+			
+			if hashOnly then
+				-- Hash query: only banker responds with authoritative hash
+				shouldRespond = isBanker and hasData
+				if shouldRespond then
+					local alt = TOGBankClassic_Guild.Info.alts[altName]
+					expectedHash = alt.inventoryHash or 0
+				end
+			else
+				-- Regular query: bankers always respond, peers respond if hash matches (P2P)
+				if isBanker and hasData then
+					shouldRespond = true
+					-- PERF-005: Banker includes hash for P2P validation
+					local alt = TOGBankClassic_Guild.Info.alts[altName]
+					expectedHash = alt.inventoryHash or 0
+				elseif PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
+					-- PERF-005: Non-bankers can respond if they have matching hash
+					local alt = TOGBankClassic_Guild.Info.alts[altName]
+					local myHash = alt.inventoryHash or 0
+					if myHash == data.expectedHash then
+						shouldRespond = true
+						expectedHash = myHash
+						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Peer responding for %s (hash match: %d)", altName, myHash)
+					end
+				end
+			end
+
+			if shouldRespond then
+				-- Send acknowledgment with banker flag and hash
 				local ack = {
 					type = "alt-request-reply",
 					name = altName,
 					isBanker = isBanker,
 					hasData = hasData,
+					hashOnly = hashOnly,
+					expectedHash = expectedHash,  -- PERF-005: Include hash for P2P validation
 				}
 				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
 
-				-- MAIL-012 FIX: Use GUILD broadcast instead of WHISPER for togbank-rr
-				-- WHISPER doesn't work for cross-account multiboxing (same PC, different Battle.net accounts)
-				-- WoW blocks addon whispers between accounts as anti-automation measure
-				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via GUILD to %s (isBanker=%s, hasData=%s)", sender, tostring(isBanker), tostring(hasData))
-				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "GUILD", nil, "NORMAL")
+				-- Send acknowledgment via WHISPER to reduce guild channel spam
+				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s)", 
+					sender, tostring(isBanker), tostring(hasData), tostring(expectedHash))
+				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
 
 				self:Debug(
 					"SYNC",
 					"<",
 					"Sent togbank-rr to",
 					ColorPlayerName(sender),
-					string.format("(isBanker=%s, hasData=%s)", tostring(isBanker), tostring(hasData))
+					string.format("(isBanker=%s, hasData=%s, hash=%s)", tostring(isBanker), tostring(hasData), tostring(expectedHash))
 				)
 			else
 				-- Don't respond if we don't have the data
@@ -777,19 +824,49 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local altName = data.name
 			local isBanker = data.isBanker or false
 			local hasData = data.hasData or false
+			local hashOnly = data.hashOnly or false
+			local expectedHash = data.expectedHash
 
-			TOGBankClassic_Output:DebugComm("RECEIVED ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s)", sender, altName, tostring(isBanker), tostring(hasData))
+			TOGBankClassic_Output:DebugComm("RECEIVED ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s, hashOnly=%s, hash=%s)", 
+				sender, altName, tostring(isBanker), tostring(hasData), tostring(hashOnly), tostring(expectedHash))
 
 			self:Debug(
 				"SYNC",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
-				string.format("acknowledged request for %s (banker=%s, hasData=%s)",
+				string.format("acknowledged request for %s (banker=%s, hasData=%s, hash=%s)",
 					ColorPlayerName(altName),
 					tostring(isBanker),
-					tostring(hasData))
+					tostring(hasData),
+					tostring(expectedHash))
 			)
+
+			-- PERF-005: If we have a hash from banker, broadcast to GUILD to enable P2P
+			-- Any peer with matching hash can respond instead of just the banker
+			if isBanker and expectedHash and PEER_TO_PEER.ENABLED then
+				-- Store expected hash for validation when peers respond
+				if not TOGBankClassic_Guild.expectedHashes then
+					TOGBankClassic_Guild.expectedHashes = {}
+				end
+				TOGBankClassic_Guild.expectedHashes[altName] = expectedHash
+				
+				-- Now broadcast regular request to GUILD with expectedHash so peers can respond
+				local p2pRequest = {
+					type = "alt-request",
+					name = altName,
+					requester = TOGBankClassic_Guild:GetNormalizedPlayer(),
+					hashOnly = false,
+					expectedHash = expectedHash,  -- Peers will validate against this
+				}
+				local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
+				
+				TOGBankClassic_Output:DebugComm("PERF-005: Broadcasting P2P request to GUILD for %s with expectedHash=%s", altName, tostring(expectedHash))
+				TOGBankClassic_Core:SendCommMessage("togbank-r", p2pData, "GUILD", nil, "NORMAL")
+				
+				self:Debug("SYNC", "< Broadcasting P2P request for %s (hash=%s)", ColorPlayerName(altName), tostring(expectedHash))
+				return
+			end
 
 			-- If sender has the data, send our state summary to them
 			if hasData then
@@ -1893,7 +1970,9 @@ function TOGBankClassic_Chat:ProcessQueue()
 	local name = table.remove(self.sync_queue)
 	if not self.last_alt_sync[name] or time - self.last_alt_sync[name] > 180 then
 		self.last_alt_sync[name] = time
-		TOGBankClassic_Guild:SendAltData(name)
+		-- DELTA-014: Broadcast mode - no specific requester, use empty baseline (0,0)
+		-- This sends full delta to everyone
+		TOGBankClassic_Guild:SendAltData(name, 0, 0)
 	end
 
 	TOGBankClassic_Chat:ReprocessQueue()

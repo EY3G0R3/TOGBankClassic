@@ -6,6 +6,60 @@
 
 **Active Issues:**
 
+### 🔴 [DELTA-014] Pull-based delta computed against banker's old broadcast, not requester's state
+
+**Severity:** 🔴 HIGH  
+**Category:** Protocol / Performance  
+**Reporter:** User (Production testing)  
+**Date Reported:** 2026-02-03  
+**Status:** 🐛 CONFIRMED - Delta computation uses wrong baseline for pull-based queries  
+**Reproducibility:** 100% - Every pull-based query computes useless delta
+
+**Problem:**
+When banker responds to pull-based query (togbank-r), delta is computed by comparing:
+- **"previous"** = banker's last broadcast (e.g., 22 items)
+- **"current"** = banker's current data (e.g., 22 items)
+- **Result:** Delta empty → "No changes detected" → Falls back to full sync
+
+**But the requester has different data!**
+- Requester has 18 items
+- Banker has 22 items
+- **Should send:** +4 items delta
+- **Actually sends:** Full sync (22 items) because delta was empty
+
+**Root Cause:**
+`SendAltData()` always computes delta against banker's previous snapshot from `GetSnapshot()`, regardless of who's requesting or what they have. Pull-based queries don't include requester's version/hash, so banker has no baseline to delta against.
+
+**Debug Output:**
+```
+Comparing Lowerherbs-Azuresong: previous has 17 items, current has 17 items
+No changes detected for Lowerherbs-Azuresong (delta would be empty)
+Delta computation took 0.13ms
+```
+This shows banker-to-banker comparison (both 17 items), not banker-to-requester.
+
+**Impact:**
+- ⚠️ Wasted CPU computing useless deltas (0.1-0.4ms per alt)
+- 📊 Always falls back to full sync (no bandwidth savings for pull-based)
+- 🤔 Misleading debug output (shows wrong comparison)
+- ❌ Delta protocol not working for pull-based queries
+
+**Fix (REQUIRED - Delta is the system, no fallbacks):**
+1. Add `inventoryHash` and `mailHash` to togbank-r request message (requester tells banker what they have)
+2. Pass requester's hashes to `SendAltData(name, requesterInventoryHash, requesterMailHash)`
+3. Modify `ComputeDelta()` to accept requester's hashes and reconstruct requester's baseline snapshot
+4. Compare requester's state (reconstructed from hash) → banker's current state (proper delta)
+5. Update debug to show: `Comparing: requester hash=X, banker hash=Y`
+6. **ALWAYS send delta** - remove all full sync fallback logic
+
+**Fallback Logic to Remove (after fix):**
+- Guild.lua:1430-1505 - "Fallback to full sync via togbank-d/togbank-d3" - entire else block
+- Guild.lua:1433-1451 - RecordFullSyncFallback tracking
+- Any togbank-d3 full sync sends in response to pull-based queries
+- Delta size comparison logic (deltaSize < fullSize) - always use delta regardless of size
+
+---
+
 ### 🟡 [PERF-005] Banker Bottleneck - Peer-to-Peer Distribution
 
 **Severity:** 🟡 MEDIUM  
@@ -247,6 +301,7 @@ PERF_METRICS.peerToPeer = {
 
 
 **Recent Fixes (2026-02-03):**
+- ✅ [SEARCH-006] Search results empty when window opened before data sync completes - Search data built once at first open, never refreshed when new sync data arrived; Fixed by tracking roster.version and rebuilding search data whenever version changes (Search.lua:281-291)
 - ✅ [BANDWIDTH-001] Legacy protocol noise - Reduced redundant broadcasts by disabling togbank-v and togbank-dv protocols (superseded by togbank-dv2)
 - ✅ [MAIL-012] mailHash never set - Mail synchronization detection broken; Fixed by adding mailHash to StripAltLinks(), filtering cross-guild data from version broadcasts, and disabling legacy with-Links protocols (togbank-d, togbank-d2)
 

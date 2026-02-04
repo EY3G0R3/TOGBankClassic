@@ -503,14 +503,46 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 end
 
 -- Compute full delta for an alt
-function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt)
+function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, requesterInventoryHash, requesterMailHash)
 	return TOGBankClassic_Performance:Track("ComputeDelta", function()
 		if not guildName or not altName or not currentAlt then
 			return nil
 		end
 
-		-- Get previous snapshot
-		local previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
+		-- DELTA-014: Compute delta using requester's baseline
+		local previous = nil
+		local currentHash = currentAlt.inventoryHash or 0
+		
+		if requesterInventoryHash and requesterInventoryHash ~= 0 then
+			-- Requester has data - check if it matches current
+			if requesterInventoryHash == currentHash then
+				-- Hash match - no changes needed (empty delta)
+				TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash match: requester=%d, banker=%d (no changes)",
+					requesterInventoryHash, currentHash)
+				previous = currentAlt  -- Use current as previous (results in empty delta)
+			else
+				-- Hash mismatch - compute delta from banker's previous broadcast
+				-- This assumes requester likely has previous broadcast data if they were online
+				-- Only sends the CHANGES since last broadcast (proper delta optimization)
+				previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
+				if previous then
+					TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch: requester=%d, banker=%d, using GetSnapshot baseline (only sending diff)",
+						requesterInventoryHash, currentHash)
+				else
+					-- No previous snapshot - first sync or snapshot expired
+					-- Use empty baseline (send everything as delta additions)
+					previous = { items = {}, money = 0, mailHash = 0 }
+					TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch but no snapshot: requester=%d, banker=%d (sending all as additions)",
+						requesterInventoryHash, currentHash)
+				end
+			end
+		else
+			-- Requester has no data (hash 0 or nil) - send everything as delta additions
+			previous = { items = {}, money = 0, mailHash = 0 }
+			TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Requester has no data (hash=%s), sending all as additions",
+				tostring(requesterInventoryHash))
+		end
+
 		if not previous then
 			return nil
 		end

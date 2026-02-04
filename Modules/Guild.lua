@@ -638,7 +638,7 @@ function TOGBankClassic_Guild:QueryAlt(player, name, version)
 end
 
 -- v0.8.0: Pull-based query - WHISPER to banker if known, GUILD if unknown
-function TOGBankClassic_Guild:QueryAltPullBased(name)
+function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly)
 	if not name then
 		return
 	end
@@ -674,7 +674,22 @@ function TOGBankClassic_Guild:QueryAltPullBased(name)
 		type = "alt-request",  -- v0.8.0 pull-based request
 		name = norm,
 		requester = self:GetNormalizedPlayer(),
+		hashOnly = hashOnly or false,  -- PERF-005: Request only hash for P2P distribution
 	}
+
+	-- DELTA-014: Include requester's current hashes so banker can compute proper delta
+	local requesterAlt = self.Info and self.Info.alts and self.Info.alts[norm]
+	if requesterAlt then
+		request.requesterInventoryHash = requesterAlt.inventoryHash or 0
+		request.requesterMailHash = requesterAlt.mailHash or 0
+		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%d, mailHash=%d",
+			norm, request.requesterInventoryHash, request.requesterMailHash)
+	else
+		-- No local data - requester is starting from empty
+		request.requesterInventoryHash = 0
+		request.requesterMailHash = 0
+		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: no local data (empty baseline)", norm)
+	end
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
 
@@ -893,7 +908,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		if not currentHash then
 			TOGBankClassic_Output:DebugComm("DELTA MODE: Current alt missing hash - sending full data for %s", norm)
 			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (responder has no hash)", requester, norm)
-			self:SendAltData(norm)
+			-- DELTA-014: Pass zero hashes (requester baseline unknown, send everything)
+			self:SendAltData(norm, 0, 0)
 			return
 		end
 
@@ -901,7 +917,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		if not requesterHash then
 			TOGBankClassic_Output:DebugComm("DELTA MODE: REQUESTER HAS NO DATA (hash=nil) - sending full data for %s", norm)
 			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (requester has no data)", requester, norm)
-			self:SendAltData(norm)
+			-- DELTA-014: Pass zero hashes (requester has no data, everything is new)
+			self:SendAltData(norm, 0, 0)
 			return
 		end
 
@@ -921,7 +938,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%d)", requester, norm, currentHash)
 			return
 		else
-			-- Hashes differ - send data
+			-- Hashes differ - send delta (DELTA-014: pass requester hashes for proper baseline)
 			TOGBankClassic_Output:DebugComm("DELTA MODE: HASH MISMATCH - calling SendAltData for %s (requester=%d, current=%d)", norm, requesterHash, currentHash)
 			TOGBankClassic_Output:Debug(
 				"SYNC",
@@ -931,7 +948,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 				requesterHash,
 				currentHash
 			)
-			self:SendAltData(norm)
+			-- DELTA-014: Pass requester hashes to compute proper delta
+			self:SendAltData(norm, requesterHash, summary.mailHash or 0)
 			return
 		end
 	end
@@ -956,7 +974,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 
 	-- Version mismatch - send full data
 	TOGBankClassic_Output:Debug("SYNC", "Sending data to %s for %s (version mismatch: requester=%d, current=%d)", requester, norm, requesterVersion, currentVersion)
-	self:SendAltData(norm)
+	-- DELTA-014: Legacy mode doesn't use hashes, pass zeros
+	self:SendAltData(norm, 0, 0)
 end
 
 -- Strip Link fields from items for transmission (v0.8.0 bandwidth optimization)
@@ -1276,7 +1295,7 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	return alt
 end
 
-function TOGBankClassic_Guild:SendAltData(name)
+function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requesterMailHash)
 	if not name then
 		return
 	end
@@ -1322,35 +1341,24 @@ function TOGBankClassic_Guild:SendAltData(name)
 
 	-- Check if delta sync should be used
 	-- v0.8.0: No longer skip delta based on force flag (removed)
+	-- DELTA-014: Pass requester's hashes for proper baseline comparison
 	if self:ShouldUseDelta() then
-		deltaData = self:ComputeDelta(norm, currentAlt)
+		deltaData = self:ComputeDelta(norm, currentAlt, requesterInventoryHash, requesterMailHash)
 		if deltaData and self:DeltaHasChanges(deltaData) then
 			local deltaSize = self:EstimateSize(deltaData)
 			local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
 
-			-- v0.8.1: Always use delta if smaller than full (removed 30% threshold)
-			-- Bandwidth savings are bandwidth savings, regardless of percentage
-			if deltaSize < fullSize then
-				useDelta = true
-				TOGBankClassic_Output:Debug(
-					"DELTA",
-					"✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
-					norm,
-					deltaSize,
-					fullSize,
-					(deltaSize / fullSize) * 100,
-					fullSize - deltaSize
-				)
-			else
-				TOGBankClassic_Output:Debug(
-					"DELTA",
-					"✗ Delta larger than full for %s: %d bytes vs %d bytes full (%.1f%%), using full sync",
-					norm,
-					deltaSize,
-					fullSize,
-					(deltaSize / fullSize) * 100
-				)
-			end
+			-- DELTA-014: Delta IS the system - always use delta, no size comparison fallback
+			useDelta = true
+			TOGBankClassic_Output:Debug(
+				"DELTA",
+				"✓ Delta for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
+				norm,
+				deltaSize,
+				fullSize,
+				(deltaSize / fullSize) * 100,
+				fullSize - deltaSize
+			)
 		else
 			if deltaData then
 				TOGBankClassic_Output:Debug("DELTA", "No changes detected for %s (delta would be empty)", norm)
@@ -1612,6 +1620,24 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 	return TOGBankClassic_Performance:Track("ReceiveAltData", function()
 		if not self.Info then
 			return ADOPTION_STATUS.IGNORED
+		end
+
+		-- PERF-005: Validate hash if we have an expected hash for this alt
+		if PEER_TO_PEER.ENABLED and self.expectedHashes and self.expectedHashes[name] then
+			local expectedHash = self.expectedHashes[name]
+			local receivedHash = alt.inventoryHash or 0
+			
+			if receivedHash ~= expectedHash then
+				TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash mismatch for %s from %s! Expected=%d, Got=%d - rejecting", 
+					name, sender, expectedHash, receivedHash)
+				-- Don't clear expected hash - let timeout handle fallback to banker
+				return ADOPTION_STATUS.INVALID
+			else
+				TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash validated for %s from %s (hash=%d)", 
+					name, sender, receivedHash)
+				-- Clear expected hash after successful validation
+				self.expectedHashes[name] = nil
+			end
 		end
 
 		-- Sanitize incoming alt data
@@ -1988,8 +2014,8 @@ function TOGBankClassic_Guild:ComputeItemDelta(oldItems, newItems)
 end
 
 -- Compute full delta for an alt
-function TOGBankClassic_Guild:ComputeDelta(name, currentAlt)
-	return TOGBankClassic_DeltaComms:ComputeDelta(self.Info and self.Info.name, name, currentAlt)
+function TOGBankClassic_Guild:ComputeDelta(name, currentAlt, requesterInventoryHash, requesterMailHash)
+	return TOGBankClassic_DeltaComms:ComputeDelta(self.Info and self.Info.name, name, currentAlt, requesterInventoryHash, requesterMailHash)
 end
 
 -- Estimate serialized size of a data structure
@@ -2165,7 +2191,8 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		end
 	end
 	if self.Info.alts[normPlayer] and TOGBankClassic_Guild:IsBank(normPlayer) then
-		TOGBankClassic_Guild:SendAltData(normPlayer)
+		-- DELTA-014: Broadcast mode - no specific requester, use empty baseline (0,0)
+		TOGBankClassic_Guild:SendAltData(normPlayer, 0, 0)
 	end
 
 	if mode == "snapshot" then
