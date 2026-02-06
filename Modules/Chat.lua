@@ -686,7 +686,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					-- PERF-005: Banker includes hash for P2P validation
 					local alt = TOGBankClassic_Guild.Info.alts[altName]
 					expectedHash = alt.inventoryHash or 0
-				elseif PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
+				elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
 					-- PERF-005: Non-bankers can respond if they have matching hash
 					local alt = TOGBankClassic_Guild.Info.alts[altName]
 					local myHash = alt.inventoryHash or 0
@@ -844,7 +844,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 			-- PERF-005: If we have a hash from banker, broadcast to GUILD to enable P2P
 			-- Any peer with matching hash can respond instead of just the banker
-			if isBanker and expectedHash and PEER_TO_PEER.ENABLED then
+			if isBanker and expectedHash and PEER_TO_PEER and PEER_TO_PEER.ENABLED then
 				-- Store expected hash for validation when peers respond
 				if not TOGBankClassic_Guild.expectedHashes then
 					TOGBankClassic_Guild.expectedHashes = {}
