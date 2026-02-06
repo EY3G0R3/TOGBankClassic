@@ -277,11 +277,17 @@ function TOGBankClassic_UI_Search:Open()
 		self:DrawWindow()
 	end
 
-	-- Build search data only when search UI is opened (PERF-004)
-	-- Deferred from Inventory to avoid blocking initial window open
-	if not self.searchDataBuilt then
+	-- SEARCH-006 FIX: Rebuild search data when guild roster version changes
+	-- Track roster version to detect when new data arrives (after /wipe, sync, etc.)
+	local currentVersion = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.roster and TOGBankClassic_Guild.Info.roster.version or 0
+	local needsRebuild = not self.searchDataBuilt or (self.lastRosterVersion ~= currentVersion)
+	
+	if needsRebuild then
+		TOGBankClassic_Output:Debug("SEARCH", "Rebuilding search data (version changed: %s -> %s)", 
+			tostring(self.lastRosterVersion or "nil"), tostring(currentVersion))
 		self:BuildSearchData()
 		self.searchDataBuilt = true
+		self.lastRosterVersion = currentVersion
 	end
 
 	self.Window:Show()
@@ -473,6 +479,9 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 		#validItems, invalidCount)
 	
 	TOGBankClassic_Item:GetItems(validItems, function(list)
+		local listCount = 0
+		for _ in pairs(list) do listCount = listCount + 1 end
+		TOGBankClassic_Output:Debug("MAIL", "[SEARCH-006] GetItems callback fired with %d items", listCount)
 		for _, v in pairs(list) do
 			-- Skip malformed list entries
 			if v and v.ID and v.Info and v.Info.name then

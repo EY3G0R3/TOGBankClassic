@@ -92,6 +92,15 @@ PROTOCOL = {
 	DELTA_CHAIN_MAX_SIZE = 5000,    -- If chain >5KB, fall back to full sync
 }
 
+-- Peer-to-Peer distribution settings (PERF-005)
+PEER_TO_PEER = {
+	ENABLED = true,                  -- Enable P2P distribution (allows any peer with matching hash to respond)
+	MIN_GUILD_SIZE = 50,             -- Only enable for guilds with >50 members
+	HASH_QUERY_TIMEOUT = 5,          -- Seconds to wait for hash from banker
+	PEER_RESPONSE_TIMEOUT = 5,       -- Seconds to wait for peer data
+	FALLBACK_TO_BANKER = true,       -- Always fall back to banker on hash mismatch or timeout
+}
+
 -- Feature flags (for easy enable/disable during development/testing)
 FEATURES = {
 	DELTA_ENABLED = true,           -- Enable delta sync protocol

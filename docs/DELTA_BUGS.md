@@ -15,14 +15,18 @@
 **Status:** 🐛 CONFIRMED - Global constant not accessible in Guild.lua  
 **Reproducibility:** 100% - Every ReceiveAltData call crashes when PERF-005 code path is hit
 
-**Error Message:**
+**Error Messages:**
 ```
 3x TOGBankClassic/Modules/Guild.lua:1626: attempt to index global 'PEER_TO_PEER' (a nil value)
 [TOGBankClassic/Modules/Guild.lua]:1626: in function <TOGBankClassic/Modules/Guild.lua:1620>
+
+3x TOGBankClassic/Modules/Chat.lua:689: attempt to index global 'PEER_TO_PEER' (a nil value)
+
+3x TOGBankClassic/Modules/Chat.lua:847: attempt to index global 'PEER_TO_PEER' (a nil value)
 ```
 
 **Problem:**
-`PEER_TO_PEER` constant is defined in Constants.lua but not accessible in Guild.lua at line 1626. When ReceiveAltData() tries to check `PEER_TO_PEER.ENABLED`, it crashes because the global is nil.
+`PEER_TO_PEER` constant is defined in Constants.lua but not accessible in Guild.lua and Chat.lua. When ReceiveAltData() or the pull-based protocol handlers try to check `PEER_TO_PEER.ENABLED`, they crash because the global is nil.
 
 **Affected Code (Guild.lua:1626):**
 ```lua
@@ -34,6 +38,19 @@ if PEER_TO_PEER.ENABLED and self.expectedHashes and self.expectedHashes[name] th
 end
 ```
 
+**Affected Code (Chat.lua:689, 847):**
+```lua
+-- PERF-005: If we have a hash from banker, broadcast to GUILD to enable P2P
+if isBanker and expectedHash and PEER_TO_PEER.ENABLED then
+    -- ...
+end
+
+-- PERF-005: If peer-to-peer is enabled, allow P2P requests to be broadcast
+if PEER_TO_PEER.ENABLED and PEER_TO_PEER.MIN_GUILD_SIZE and GetNumGuildMembers() >= PEER_TO_PEER.MIN_GUILD_SIZE then
+    -- ...
+end
+```
+
 **Root Cause:**
 One of the following:
 1. Constants.lua not loaded before Guild.lua (TOC load order issue)
@@ -41,7 +58,8 @@ One of the following:
 3. Scope issue where Guild.lua can't access global constants
 
 **Impact:**
-- 💥 Crash on every data receipt when PERF-005 hash validation is attempted
+- 💥 Crash in ReceiveAltData when PERF-005 hash validation is attempted
+- 💥 Crash in Chat.lua pull-based protocol handlers when P2P checks run
 - ❌ Blocks all P2P data synchronization
 - 🚨 Production stability issue - users unable to receive alt data
 
@@ -50,6 +68,7 @@ One of the following:
 - Alt: Alchemyrcp-Azuresong (hash=859441985)
 - Operation: ReceiveAltData during OnCommReceived handler
 - PERF-005 feature: Peer-to-peer hash validation (designed but apparently incomplete)
+- Additional crashes in Chat.lua during pull-based request flow (P2P enablement checks)
 
 **Fix Options:**
 
@@ -77,6 +96,7 @@ Combine Option 1 (defensive check) with Option 2 (verify TOC order). Add nil che
 - TOGBankClassic.toc: Verify load order
 - Modules/Constants.lua:96: Verify PEER_TO_PEER is global (not local)
 - Modules/Guild.lua:1626: Add nil check for defensive programming
+- Modules/Chat.lua:689, 847: Add nil check for defensive programming
 
 ---
 
