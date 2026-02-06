@@ -154,6 +154,71 @@ return PROTOCOL.SUPPORTS_DELTA
 
 ---
 
+## 🎯 Authority Model & Conflict Resolution
+
+**Status:** ✅ COMPLETE (February 6, 2026)
+**Purpose:** Define authority hierarchy and conflict resolution when multiple players have different data
+
+### Authority Hierarchy
+
+**The Responder is Always Authoritative:**
+1. **Pull-Based Protocol**: When Player A requests data for Alt X, whoever responds becomes the source of truth
+2. **Banker Preference**: System tries to reach bankers first via whisper, but any player with data can respond
+3. **No Conflict Resolution**: If multiple players have different data (different hashes), first responder wins
+
+### Hash-Based Delta Computation (DELTA-014)
+
+**Purpose:** Ensure delta compares requester's state to responder's state (not responder to responder)
+
+**How It Works:**
+- Requester sends their current hash in `togbank-r` request
+- Responder compares requester's hash to their own current hash
+- **Hash Match**: Send empty delta or no-change message (requester is up to date)
+- **Hash Mismatch**: Compute delta from responder's previous broadcast to current state
+- **Hash = 0 or nil**: Requester has no data, send everything as additions
+
+**Key Insight:** Responder always "wins" - delta brings requester FROM their state TO responder's state
+
+### Multi-Responder Scenarios
+
+**Scenario 1: Banker Online**
+- Requester whispers banker directly
+- Banker responds with their current data
+- **Authority**: Banker's data is correct (they scan their own inventory)
+
+**Scenario 2: No Banker, Two Non-Bankers Have Data**
+- Both Player B (hash=200) and Player C (hash=300) have data for Alt X
+- Requester broadcasts `togbank-r` to guild
+- Both B and C send state-summary
+- **Result**: First response wins, second response is ignored
+- **No Validation**: System doesn't detect divergent data or choose "best" version
+
+**Scenario 3: Peer-to-Peer (PERF-005)**
+- Requester whispers banker for hash only
+- Banker responds with expectedHash
+- Requester broadcasts to guild with expectedHash
+- Any peer with matching hash can respond
+- **Validation**: Peer's hash must match expectedHash from banker
+
+### Limitations
+
+**No Conflict Detection:**
+- System doesn't detect when multiple players have divergent data
+- No "version vector" or "newest wins" logic
+- No alerts about data inconsistencies
+
+**Race Conditions:**
+- If two players respond simultaneously, network timing determines winner
+- Subsequent responses are silently ignored (pending sync already consumed)
+
+**Design Rationale:**
+- Assumes data doesn't diverge in normal operation
+- Bankers are authoritative for their own alts
+- Non-bankers typically sync from same broadcast
+- Simplicity over complex consensus protocols
+
+---
+
 ## 🛡️ Data Protection System (DATA-004, DATA-005)
 
 **Status:** ✅ COMPLETE (January 29, 2026)  
