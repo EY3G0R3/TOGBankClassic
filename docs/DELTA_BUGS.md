@@ -6,6 +6,80 @@
 
 **Active Issues:**
 
+### 🔴 [PROTO-002] PEER_TO_PEER constant undefined in Guild.lua
+
+**Severity:** 🔴 CRITICAL  
+**Category:** Module Loading / Global Scope  
+**Reporter:** User (Production error)  
+**Date Reported:** 2026-02-06  
+**Status:** 🐛 CONFIRMED - Global constant not accessible in Guild.lua  
+**Reproducibility:** 100% - Every ReceiveAltData call crashes when PERF-005 code path is hit
+
+**Error Message:**
+```
+3x TOGBankClassic/Modules/Guild.lua:1626: attempt to index global 'PEER_TO_PEER' (a nil value)
+[TOGBankClassic/Modules/Guild.lua]:1626: in function <TOGBankClassic/Modules/Guild.lua:1620>
+```
+
+**Problem:**
+`PEER_TO_PEER` constant is defined in Constants.lua but not accessible in Guild.lua at line 1626. When ReceiveAltData() tries to check `PEER_TO_PEER.ENABLED`, it crashes because the global is nil.
+
+**Affected Code (Guild.lua:1626):**
+```lua
+-- PERF-005: Validate hash if we have an expected hash for this alt
+if PEER_TO_PEER.ENABLED and self.expectedHashes and self.expectedHashes[name] then
+    local expectedHash = self.expectedHashes[name]
+    local receivedHash = alt.inventoryHash or 0
+    -- ... validation logic ...
+end
+```
+
+**Root Cause:**
+One of the following:
+1. Constants.lua not loaded before Guild.lua (TOC load order issue)
+2. `PEER_TO_PEER` defined as local instead of global in Constants.lua
+3. Scope issue where Guild.lua can't access global constants
+
+**Impact:**
+- 💥 Crash on every data receipt when PERF-005 hash validation is attempted
+- ❌ Blocks all P2P data synchronization
+- 🚨 Production stability issue - users unable to receive alt data
+
+**Context:**
+- Sender: Booknlibram-Azuresong
+- Alt: Alchemyrcp-Azuresong (hash=859441985)
+- Operation: ReceiveAltData during OnCommReceived handler
+- PERF-005 feature: Peer-to-peer hash validation (designed but apparently incomplete)
+
+**Fix Options:**
+
+**Option 1: Defensive Nil Check**
+```lua
+if PEER_TO_PEER and PEER_TO_PEER.ENABLED and self.expectedHashes and self.expectedHashes[name] then
+```
+Pros: Quick fix, prevents crash
+Cons: Silently disables P2P validation if constant not loaded
+
+**Option 2: Verify TOC Load Order**
+Check TOGBankClassic.toc ensures Constants.lua loads before Guild.lua.
+
+**Option 3: Default Value**
+```lua
+local PEER_TO_PEER = PEER_TO_PEER or { ENABLED = false }
+```
+Pros: Safe fallback behavior
+Cons: Masks underlying loading issue
+
+**Recommended Fix:**
+Combine Option 1 (defensive check) with Option 2 (verify TOC order). Add nil check for safety while ensuring Constants.lua properly loads first.
+
+**Files to Check:**
+- TOGBankClassic.toc: Verify load order
+- Modules/Constants.lua:96: Verify PEER_TO_PEER is global (not local)
+- Modules/Guild.lua:1626: Add nil check for defensive programming
+
+---
+
 ### ✅ [DELTA-014] Pull-based delta computed against banker's old broadcast, not requester's state
 
 **Severity:** 🔴 HIGH  

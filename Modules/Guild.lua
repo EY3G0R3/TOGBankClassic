@@ -1623,7 +1623,8 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		end
 
 		-- PERF-005: Validate hash if we have an expected hash for this alt
-		if PEER_TO_PEER.ENABLED and self.expectedHashes and self.expectedHashes[name] then
+		-- PROTO-002: Defensive nil check for PEER_TO_PEER constant
+		if PEER_TO_PEER and PEER_TO_PEER.ENABLED and self.expectedHashes and self.expectedHashes[name] then
 			local expectedHash = self.expectedHashes[name]
 			local receivedHash = alt.inventoryHash or 0
 			
