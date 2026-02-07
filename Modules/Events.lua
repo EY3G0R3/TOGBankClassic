@@ -41,6 +41,7 @@ function TOGBankClassic_Events:RegisterEvents()
 	self:RegisterEvent("MAIL_INBOX_UPDATE")
 	self:RegisterEvent("MAIL_CLOSED")
 	self:RegisterEvent("MAIL_SEND_SUCCESS")
+	self:RegisterEvent("UI_ERROR_MESSAGE")
 	self:RegisterEvent("GUILD_ROSTER_UPDATE")
 	self:RegisterEvent("PLAYER_ENTERING_WORLD")
 	self:RegisterEvent("TRADE_SHOW")
@@ -113,6 +114,7 @@ function TOGBankClassic_Events:UnregisterEvents()
 	self:UnregisterEvent("MAIL_INBOX_UPDATE")
 	self:UnregisterEvent("MAIL_CLOSED")
 	self:UnregisterEvent("MAIL_SEND_SUCCESS")
+	self:UnregisterEvent("UI_ERROR_MESSAGE")
 	self:UnregisterEvent("TRADE_SHOW")
 	self:UnregisterEvent("TRADE_CLOSED")
 	self:UnregisterEvent("AUCTION_HOUSE_SHOW")
@@ -136,13 +138,30 @@ end
 
 ---START CHANGES
 function TOGBankClassic_Events:SetShareTimer()
-	TOGBankClassic_Core:ScheduleTimer(function(...)
+	if self.shareTimer then
+		TOGBankClassic_Core:CancelTimer(self.shareTimer)
+		self.shareTimer = nil
+	end
+	self.shareTimer = TOGBankClassic_Core:ScheduleTimer(function(...)
 		TOGBankClassic_Events:OnShareTimer()
 	end, TIMER_INTERVALS.VERSION_BROADCAST)
 end
 
 function TOGBankClassic_Events:OnShareTimer()
+	local now = GetTime()
+	if self.lastShareTimerAt then
+		local delta = now - self.lastShareTimerAt
+		if delta < (TIMER_INTERVALS.VERSION_BROADCAST - 10) then
+			TOGBankClassic_Output:Debug("EVENTS", "OnShareTimer fired early (%.1fs since last)", delta)
+		end
+	end
+	self.lastShareTimerAt = now
+	local startTime = debugprofilestop()
 	TOGBankClassic_Guild:Share("reply", "version")
+	local duration = debugprofilestop() - startTime
+	if duration > 20 then
+		TOGBankClassic_Output:Debug("EVENTS", "OnShareTimer took %.2fms", duration)
+	end
 
 	self:SetShareTimer()
 end
@@ -172,6 +191,7 @@ end
 -- Delta-specific version broadcast (SYNC-001 fix)
 -- v0.8.0 SYNC-006: Bankers send BOTH togbank-dv (old) and togbank-dv2 (new) during migration
 function TOGBankClassic_Events:SyncDeltaVersion(priority)
+	local startTime = debugprofilestop()
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then
 		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SyncDeltaVersion SKIP: no guild")
@@ -210,6 +230,10 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
 	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] togbank-dv2 message size: %d bytes", #data)
 	TOGBankClassic_Core:SendCommMessage("togbank-dv2", data, "Guild", nil, priority or "NORMAL")
+	local duration = debugprofilestop() - startTime
+	if duration > 20 then
+		TOGBankClassic_Output:Debug("EVENTS", "SyncDeltaVersion took %.2fms (alts=%d, size=%d)", duration, altCount, #data)
+	end
 	
 	-- Also send on togbank-dv for old pre-SYNC-006 clients
 	-- Note: Old clients will compute hash from their legacy alt.bank/alt.bags structure
@@ -388,6 +412,23 @@ function TOGBankClassic_Events:MAIL_SEND_SUCCESS(_)
 	-- safety: ensure hook is registered when mail UI is opened
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:ApplyPendingSend()
+end
+
+function TOGBankClassic_Events:UI_ERROR_MESSAGE(_, message)
+	if not message then
+		return
+	end
+
+	-- Capture mail send failures (includes "Internal mail database error")
+	if tostring(message):lower():find("mail") then
+		TOGBankClassic_Output:Debug("MAIL", "UI_ERROR_MESSAGE: %s", tostring(message))
+		if TOGBankClassic_Mail and TOGBankClassic_Mail.DebugSendMailState then
+			TOGBankClassic_Mail:DebugSendMailState(message)
+		end
+		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
+			TOGBankClassic_UI_Requests.Window:SetStatusText(string.format("Mail error: %s", tostring(message)))
+		end
+	end
 end
 
 function TOGBankClassic_Events:TRADE_SHOW(_)

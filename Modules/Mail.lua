@@ -233,6 +233,51 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	TOGBankClassic_Output:Info("Tracking manual mail to %s: %s", recipient, table.concat(itemList, ", "))
 end
 
+function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
+	local recipient = SendMailNameEditBox and SendMailNameEditBox:GetText() or nil
+	local subject = SendMailSubjectEditBox and SendMailSubjectEditBox:GetText() or nil
+	local items = {}
+	local totalCount = 0
+	for attachmentIndex = 1, (ATTACHMENTS_MAX_SEND or 12) do
+		local itemName, itemID, texture, quantity = GetSendMailItem(attachmentIndex)
+		if itemName and quantity and quantity > 0 then
+			table.insert(items, { name = itemName, id = itemID, quantity = quantity })
+			totalCount = totalCount + quantity
+		end
+	end
+
+	TOGBankClassic_Output:Debug(
+		"MAIL",
+		"SendMail error: %s | recipient=%s subject=%s items=%d total=%d",
+		tostring(contextMessage),
+		tostring(recipient),
+		tostring(subject),
+		#items,
+		totalCount
+	)
+
+	for i, item in ipairs(items) do
+		TOGBankClassic_Output:Debug(
+			"MAIL",
+			"  Attachment %d: %s (id=%s) x%d",
+			i,
+			tostring(item.name),
+			tostring(item.id),
+			item.quantity
+		)
+	end
+
+	if self.pendingSend then
+		TOGBankClassic_Output:Debug(
+			"MAIL",
+			"  pendingSend: sender=%s recipient=%s items=%d",
+			tostring(self.pendingSend.sender),
+			tostring(self.pendingSend.recipient),
+			self.pendingSend.items and #self.pendingSend.items or 0
+		)
+	end
+end
+
 function TOGBankClassic_Mail:ApplyPendingSend()
 	TOGBankClassic_Output:Debug("MAIL", "ApplyPendingSend: Called, pendingSend=%s", tostring(self.pendingSend ~= nil))
 	local pending = self.pendingSend

@@ -582,7 +582,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			TOGBankClassic_Output:Debug("PROTOCOL", "Delaying dv message from %s for %d seconds (waiting for dv2)", sender, self.DV_DELAY)
 			
 			-- Store the message with a timer
-			if not self.pending_dv_messages[sender] then
+			if not self.pending_dv_messages then
+				self.pending_dv_messages = {}
+			end
+			if sender and not self.pending_dv_messages[sender] then
 				self.pending_dv_messages[sender] = {}
 			end
 			
@@ -635,6 +638,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local altName = data.name
 			local requester = data.requester or sender
 			local hashOnly = data.hashOnly or false
+			local normAltName = TOGBankClassic_Guild:NormalizeName(altName)
 
 			TOGBankClassic_Output:DebugComm("RECEIVED PULL-BASED REQUEST from %s for alt %s (hashOnly=%s)", sender, altName, tostring(hashOnly))
 
@@ -650,11 +654,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			-- Check if we have this alt
 			local player = TOGBankClassic_Guild:GetNormalizedPlayer()
 			local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
-			local hasData = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[altName] ~= nil
+			local hasData = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and normAltName and TOGBankClassic_Guild.Info.alts[normAltName] ~= nil
 
 			-- PERF-005: Compute hash on-demand if missing (for alts that haven't rescanned since hash was added)
 			if hasData and isBanker then
-				local alt = TOGBankClassic_Guild.Info.alts[altName]
+				local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 				if not alt.inventoryHash and alt.items then
 					-- Compute hash from existing items data
 					alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, alt.money or 0)
@@ -676,7 +680,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				-- Hash query: only banker responds with authoritative hash
 				shouldRespond = isBanker and hasData
 				if shouldRespond then
-					local alt = TOGBankClassic_Guild.Info.alts[altName]
+					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					expectedHash = alt.inventoryHash or 0
 				end
 			else
@@ -684,11 +688,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if isBanker and hasData then
 					shouldRespond = true
 					-- PERF-005: Banker includes hash for P2P validation
-					local alt = TOGBankClassic_Guild.Info.alts[altName]
+					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					expectedHash = alt.inventoryHash or 0
 				elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
 					-- PERF-005: Non-bankers can respond if they have matching hash
-					local alt = TOGBankClassic_Guild.Info.alts[altName]
+					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					local myHash = alt.inventoryHash or 0
 					if myHash == data.expectedHash then
 						shouldRespond = true
@@ -702,7 +706,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				-- Send acknowledgment with banker flag and hash
 				local ack = {
 					type = "alt-request-reply",
-					name = altName,
+					name = normAltName or altName,
 					isBanker = isBanker,
 					hasData = hasData,
 					hashOnly = hashOnly,
@@ -724,7 +728,18 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				)
 			else
 				-- Don't respond if we don't have the data
-				self:Debug("SYNC", "Ignoring pull-based request (no data for %s)", altName)
+				if not hasData then
+					local altKey = normAltName or altName
+					TOGBankClassic_Output:Debug(
+						"SYNC",
+						"Ignoring pull-based request (no data): alt=%s norm=%s hasInfo=%s",
+						tostring(altName),
+						tostring(normAltName),
+						tostring(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[altKey] ~= nil)
+					)
+				else
+					self:Debug("SYNC", "Ignoring pull-based request (no response for %s)", altName)
+				end
 			end
 
 			return
@@ -1535,7 +1550,7 @@ local COMMAND_REGISTRY = {
 		help = "export last N debug log entries (default 500), optionally filtered by keyword",
 		expert = true,
 		handler = function(arg1)
-			local args = arg1 and arg1:trim() or ""
+			local args = tostring(arg1 or ""):trim()
 			local count, filter = 500, nil
 
 			-- Parse arguments: first is count, rest is filter
@@ -2035,9 +2050,9 @@ function TOGBankClassic_Chat:PrintVersions()
 			if seconds < 60 then
 				age = " (just now)"
 			elseif seconds < 3600 then
-				age = (" (%dm ago)"):format(math.floor(seconds / 60))
+				age = string.format(" (%dm ago)", math.floor(seconds / 60))
 			else
-				age = (" (%dh ago)"):format(math.floor(seconds / 3600))
+				age = string.format(" (%dh ago)", math.floor(seconds / 3600))
 			end
 		end
 		local marker = entry.isSelf and " (you)" or ""

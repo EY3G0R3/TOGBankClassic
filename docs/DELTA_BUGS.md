@@ -6,13 +6,113 @@
 
 **Active Issues:**
 
-### 🔴 [PROTO-002] PEER_TO_PEER constant undefined in Guild.lua
+### 🛑 [MAIL-013] "Internal mail database error" when sending fulfillment
+
+**Severity:** 🔴 HIGH  
+**Category:** Mail / Fulfillment  
+**Reporter:** User (Production)  
+**Date Reported:** 2026-02-06  
+**Status:** 🛑 BLOCKED - Blizzard UI/server error, likely addon-related  
+**Reproducibility:** Unknown (user reported once)
+
+**Error Message:**
+"Internal mail database error"
+
+**Problem:**
+When attempting to fulfill an order, clicking Send produces an "internal mail database error" and the mail does not send.
+
+**Impact:**
+- ❌ Fulfillment cannot be completed
+- 📬 Mail send workflow blocked
+
+**Notes / Suspected Areas:**
+- Mail send pipeline and pending send state (Modules/Mail.lua)
+- Fulfill button flow (Modules/UI/Mail.lua, Modules/UI/Requests.lua)
+- DB consistency checks for pending mail inventory (Modules/MailInventory.lua)
+
+**External References:**
+- Blizzard Support: "Received Internal Mail Database Error When Sending Mail" (Article 306071) - notes this is common with UI addons and recommends UI reset.
+- Blizzard Support: "Internal Mail Error When Looting Mail" (Article 000104260) - also cites addon/UI interaction and server-side mailbox update timing.
+
+**Next Steps:**
+1. Reproduce with MAIL debug enabled using instrumentation build (optional)
+2. If persists with all addons disabled, escalate to Blizzard support
+
+---
+
+### 🟡 [PERF-006] UI stuttering without errors
+
+**Severity:** 🟡 MEDIUM  
+**Category:** Performance / UI  
+**Reporter:** User (Production)  
+**Date Reported:** 2026-02-06  
+**Status:** 🐛 NEW - Needs profiling  
+**Reproducibility:** Intermittent (no errors/warnings)
+
+**Problem:**
+User reports noticeable UI "stuttering" during normal usage without any Lua errors or warnings.
+
+**Impact:**
+- 🐢 Degraded UX (frame drops or input hitching)
+
+**Notes / Suspected Areas:**
+- Inventory/UI redraw frequency (Inventory/Requests/Mail UI)
+- Async item link reconstruction refresh loops
+- Search data rebuilds or mail aggregation spikes
+- High-frequency events (BAG_UPDATE, GUILD_ROSTER_UPDATE, timers)
+
+**Next Steps:**
+1. Enable PERF debug and capture timestamps around stutter
+2. Capture addon CPU usage from in-game Performance panel
+3. Narrow reproduction steps (which UI open, which actions)
+
+---
+
+### 🔴 [SYNC-011] Pull-based request ignored despite local data
+
+**Severity:** 🔴 HIGH  
+**Category:** Sync / Pull-Based Protocol  
+**Reporter:** User (Production)  
+**Date Reported:** 2026-02-06  
+**Status:** 🐛 NEW - Needs investigation  
+**Reproducibility:** Unknown (reported once)
+
+**Symptom / Logs:**
+```
+TOGBankClassic: [DEBUG] > Phoqer-Myzrael queries pull-based request for Metals-Azuresong
+TOGBankClassic: [DEBUG] Ignoring pull-based request (no data for Metals-Azuresong)
+```
+
+**Problem:**
+Client reports that data for Metals-Azuresong exists locally, yet the pull-based request handler reports no data and ignores the request.
+
+**Impact:**
+- ❌ Requester does not receive data (pull-based sync stalls)
+- 🧠 Misleading debug output (indicates missing data when it should exist)
+
+**Notes / Suspected Areas:**
+- Data presence check in pull-based request handler (Chat.lua)
+- Name normalization mismatch (realm suffix, casing)
+- Alt data under different key (normalized vs raw)
+- Roster cache mismatch or stale data
+
+**Next Steps:**
+1. Log normalized name and keys during request handling
+2. Dump available alt keys when request is ignored
+3. Validate NormalizeName() output for requester vs stored key
+
+---
+
+**Resolved Issues (Detailed):**
+
+### ✅ [PROTO-002] PEER_TO_PEER constant undefined in Guild.lua
 
 **Severity:** 🔴 CRITICAL  
 **Category:** Module Loading / Global Scope  
 **Reporter:** User (Production error)  
 **Date Reported:** 2026-02-06  
-**Status:** 🐛 CONFIRMED - Global constant not accessible in Guild.lua  
+**Date Fixed:** 2026-02-06  
+**Status:** ✅ FIXED - Defensive nil checks added (Commits 31b947c, b929f89)  
 **Reproducibility:** 100% - Every ReceiveAltData call crashes when PERF-005 code path is hit
 
 **Error Messages:**
@@ -414,6 +514,7 @@ PERF_METRICS.peerToPeer = {
 
 
 **Recent Fixes (2026-02-06):**
+- ✅ [PROTO-002] PEER_TO_PEER constant undefined in Guild.lua/Chat.lua - Added defensive nil checks in Guild.lua and Chat.lua to prevent crashes when PEER_TO_PEER is unavailable; documented root cause investigation (Commits 31b947c, b929f89)
 - ✅ [DELTA-014] Pull-based delta computed against banker's old broadcast, not requester's state - Extended protocol with requesterInventoryHash/requesterMailHash in togbank-r; updated SendAltData signature to accept requester hashes; modified ComputeDelta to use requester hash for proper baseline selection; removed deltaSize < fullSize fallback (delta IS the system); achieved proper banker-to-requester delta computation with CPU optimization
 
 **Recent Fixes (2026-02-03):**
