@@ -42,12 +42,13 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
 
     TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] Attempting SendCommMessage: prefix=%s, target=%s, nameOnly=%s", prefix, target, nameOnly)
 
-    -- Send the whisper and capture result
-    local success = self:SendCommMessage(prefix, text, "WHISPER", nameOnly, prio, callbackFn, callbackArg)
+    -- Send the whisper (AceComm returns nil on success, which is truthy behavior we want)
+    self:SendCommMessage(prefix, text, "WHISPER", nameOnly, prio, callbackFn, callbackArg)
 
-    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendCommMessage result: success=%s", tostring(success))
+    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendCommMessage completed for %s to %s", prefix, nameOnly)
 
-    return success ~= false  -- SendCommMessage doesn't return false on failure, but be defensive
+    -- If we got this far, player is online and whisper was sent
+    return true
 end
 
 function TOGBankClassic_Core:OnInitialize()

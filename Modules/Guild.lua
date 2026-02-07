@@ -11,6 +11,12 @@ TOGBankClassic_Guild.onlineMembers = {}
 -- Prevents iterating through entire guild roster on every IsBank() call
 TOGBankClassic_Guild.banksCache = nil
 
+-- Pending request tracking tables
+TOGBankClassic_Guild.pendingAltRequests = {}
+TOGBankClassic_Guild.pendingP2PRequests = {}
+TOGBankClassic_Guild.lastAltQueryTime = {}
+TOGBankClassic_Guild.bankerProgressKnown = {}
+
 -- Temporary in-memory error storage for when Guild.Info is not initialized
 TOGBankClassic_Guild.tempDeltaErrors = {
 	lastErrors = {},
@@ -631,15 +637,17 @@ function TOGBankClassic_Guild:BuildBankerHashList()
 	local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
 	for _, altName in ipairs(rosterAlts) do
 		local norm = self:NormalizeName(altName)
-		local alt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
-		local hash = (alt and alt.inventoryHash) or 0
-		local updatedAt = (alt and (alt.inventoryUpdatedAt or alt.version)) or 0
-		local version = (alt and alt.version) or 0
-		list[norm] = {
-			hash = hash,
-			updatedAt = updatedAt,
-			version = version,
-		}
+		if norm then
+			local alt = self.Info and self.Info.alts and self.Info.alts[norm]
+			local hash = (alt and alt.inventoryHash) or 0
+			local updatedAt = (alt and (alt.inventoryUpdatedAt or alt.version)) or 0
+			local version = (alt and alt.version) or 0
+			list[norm] = {
+				hash = hash,
+				updatedAt = updatedAt,
+				version = version,
+			}
+		end
 	end
 	return list
 end
@@ -2280,12 +2288,8 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		end
 
 		local norm = self:NormalizeName(name)
-		if self.pendingP2PRequests then
-			self.pendingP2PRequests[norm] = nil
-		end
-		if self.pendingAltRequests then
-			self.pendingAltRequests[norm] = nil
-		end
+		self.pendingP2PRequests[norm] = nil
+		self.pendingAltRequests[norm] = nil
 		local existing = self.Info.alts[norm]
 		local hadBankerData = self:HasAltData(existing)
 		local senderNorm = sender and self:NormalizeName(sender) or nil

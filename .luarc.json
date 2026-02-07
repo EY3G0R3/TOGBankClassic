@@ -100,11 +100,20 @@
         "GetCursorInfo",
         "CLOSE",
         "ITEM_UNIQUE",
-        "Settings"
+        "Settings",
+        "UpdateAddOnMemoryUsage",
+        "GetAddOnMemoryUsage",
+        "GetRealmName",
+        "getmetatable",
+        "SendMailSubjectEditBox",
+        "SecondsToTime"
     ],
     "runtime.version": "Lua 5.1",
     "workspace.library": [
         "${3rd}/luassert/library",
         "${3rd}/busted/library"
+    ],
+    "diagnostics.disable": [
+        "need-check-nil"
     ]
 }
