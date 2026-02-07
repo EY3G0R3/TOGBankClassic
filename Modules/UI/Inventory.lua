@@ -313,6 +313,12 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: aggregated to %d unique items",
 			tab, #items)
 
+		-- Show loading indicator immediately
+		local loadingLabel = TOGBankClassic_UI:Create("Label")
+		loadingLabel:SetText("|cff808080Loading items...|r")
+		loadingLabel:SetFullWidth(true)
+		scroll:AddChild(loadingLabel)
+
 		if items and #items > 0 then
 			-- Debug: Check for duplicate item IDs with different links
 			local itemsByID = {}
@@ -347,6 +353,10 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			TOGBankClassic_Item:GetItems(validItems, function(list)
 				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items",
 					tab, list and #list or 0)
+				
+				-- Clear previous items before adding new ones
+				scroll:ReleaseChildren()
+				
 				TOGBankClassic_Item:Sort(list)
 
 				for _, item in pairs(list) do

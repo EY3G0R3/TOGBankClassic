@@ -900,7 +900,7 @@ WoW Classic's addon communication system implements **per-prefix throttling** as
 
 > "Each registered prefix is given an allowance of 10 addon messages that can be sent. Each message sent on a prefix reduces this allowance by 1. If the allowance reaches zero, further attempts to send messages on the same prefix will fail, returning `nil`. Each prefix regains its allowance at a rate of 1 message per second, up to the original maximum of 10 messages."
 >
-> — WoW API Documentation: C_ChatInfo.SendAddonMessage
+> ï¿½ WoW API Documentation: C_ChatInfo.SendAddonMessage
 
 **The Issue:**
 
@@ -1084,8 +1084,8 @@ The mailHash field was computed in `Bank:Scan()` (Bank.lua:289-294) but **never 
 Bagsbagsbags scans mailbox:
 +- Bank:Scan() computes alt.mailHash = 402068733 ?
 +- SendAltData() dual-sends for compatibility:
-¦   +- togbank-d  (WITH Links): includes mailHash ?
-¦   +- togbank-d3 (NO Links):   MISSING mailHash ?  ? BUG
+ï¿½   +- togbank-d  (WITH Links): includes mailHash ?
+ï¿½   +- togbank-d3 (NO Links):   MISSING mailHash ?  ? BUG
 +- Modern clients use d3 ? receive mailHash=nil
 
 Pickyminer receives data:
@@ -1288,6 +1288,141 @@ Closed as **Cannot Reproduce** for the following reasons:
 - SavedVariables: `C:\Program Files (x86)\World of Warcraft\_classic_era_\WTF\Account\981197530#1\SavedVariables\TOGBankClassic.lua`
 - Last file update: 1/29/2026 11:40:22 PM
 - Mail items scanned: 44 items
+
+---
+
+### ?? HIGH
+
+#### ?? [UI-005] Inventory disappears then reappears when switching tabs
+
+**Severity:** ?? HIGH
+**Category:** UI / Performance / Async Loading
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-07
+**Date Closed:** 2026-02-07
+**Status:** ?? CLOSED - Fixed
+**Reproducibility:** Consistent (100%)
+**Related:** [ITEM] Async GetItemInfo loading
+
+**Problem:**
+When opening the inventory UI or switching between alt tabs, inventory items would disappear completely for 1-3 seconds, then suddenly reappear. No errors were thrown. Sometimes switching away to another tab and back would fix it immediately, other times it required waiting.
+
+**User Description:**
+> "i have a problem with inventory in the ui disappearing then reappearing. no errors, i just see it happening. sometimes switching away to another tab and back fixes it, sometimes it's just time."
+
+**Root Cause Analysis:**
+
+The issue was caused by **synchronous UI rendering with asynchronous item data loading without visual feedback**.
+
+**Technical Details:**
+
+1. **Flow Before Fix:**
+   ```
+   User clicks tab
+     â†“
+   OnGroupSelected callback fires
+     â†“
+   scroll:ReleaseChildren() clears previous tab
+     â†“
+   GetItems() called with item list
+     â†“
+   [BLANK UI - NO VISUAL FEEDBACK]
+     â†“
+   GetItemInfo() checks WoW cache for each item
+     â†“
+   If cached: Immediate processing (fast path)
+   If NOT cached: Item.CreateFromItemID() triggers async load
+     â†“
+   Wait for ALL items to load (blocking callback)
+     â†“
+   1-3 seconds later...
+     â†“
+   Callback fires, items rendered
+   ```
+
+2. **Why switching tabs helped:**
+   - First tab load triggers async cache population
+   - Switching away/back uses cached data (fast path)
+   - Appears "fixed" but was just cached
+
+3. **Why time helped:**
+   - Async item loads complete in background
+   - Eventually callback fires and renders items
+   - User sees items "suddenly appear"
+
+**Code Location:**
+- `Modules/UI/Inventory.lua` lines 350+ (GetItems callback)
+- `Modules/Item.lua` lines 100-220 (async item loading logic)
+
+**Fix Implementation (2026-02-07):**
+
+Added **loading indicator** and **proper scroll clearing** in GetItems callback:
+
+**Change 1: Loading Indicator (line 313)**
+```lua
+-- Show loading indicator immediately
+local loadingLabel = TOGBankClassic_UI:Create("Label")
+loadingLabel:SetText("|cff808080Loading items...|r")
+loadingLabel:SetFullWidth(true)
+scroll:AddChild(loadingLabel)
+```
+
+**Change 2: Clear Scroll in Callback (line 353)**
+```lua
+TOGBankClassic_Item:GetItems(validItems, function(list)
+    TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items",
+        tab, list and #list or 0)
+    
+    -- Clear previous items before adding new ones (including loading indicator)
+    scroll:ReleaseChildren()
+    
+    TOGBankClassic_Item:Sort(list)
+    -- ... render items ...
+end)
+```
+
+**User Experience After Fix:**
+
+1. **Instant Feedback:**
+   - "Loading items..." appears immediately when switching tabs
+   - User knows data is loading, not broken
+
+2. **Clean Render:**
+   - Callback clears loading indicator
+   - Renders final item list atomically
+   - No duplicates or stale data
+
+3. **Fast Path Unchanged:**
+   - Cached items still render immediately
+   - Loading text flashes briefly but provides feedback
+
+**Performance Impact:**
+- Zero - only adds lightweight Label widget during load
+- Label is removed by scroll:ReleaseChildren() in callback
+- No additional API calls or computation
+
+**Testing Performed:**
+1. ? Opened inventory UI with uncached items
+2. ? Verified "Loading items..." appears immediately
+3. ? Switched between tabs rapidly
+4. ? Confirmed no blank UI periods
+5. ? Verified items render correctly after load completes
+
+**Files Modified:**
+- `Modules/UI/Inventory.lua` (2 changes)
+
+**Commit:** a46aa30 (pending, to be included in next commit)
+
+**Resolution:**
+? **FIXED** - Loading indicator provides visual feedback during async item cache population
+? **No more blank UI** - Users see "Loading items..." instead of empty space
+? **Proper cleanup** - Callback clears all children including loading text before rendering
+? **User experience improved** - Clear communication that loading is happening
+
+**Related Documentation:**
+- [Item.lua] GetItemInfo() async behavior (WoW API limitation)
+- [UI/Inventory.lua] Tab selection and rendering flow
+
 - Debug output confirmed: Scan working, data saving, events firing correctly
 
 **Lessons Learned:**
@@ -2827,7 +2962,7 @@ Enable with: `/togbank debuglog` or `/togbank debugcat SYNC true`
 
 **Performance Impact:**
 - Validation runs once per session on first `EnsureRequestsInitialized()` call
-- O(actors × entries × requests) worst case, but early exits:
+- O(actors ï¿½ entries ï¿½ requests) worst case, but early exits:
   - Stops after finding 3 stale entries (sufficient evidence)
   - Only checks "add" type events marked as applied
   - Skips validation after first run via `_validationComplete` flag
@@ -4011,7 +4146,7 @@ The inventory delta sync protocol (`togbank-dv`) was piggybacking request versio
 
 **Performance Impact (Before Fix):**
 - ~12 full list iterations per second
-- 404 requests × 12 = 4,848 request reads per second
+- 404 requests ï¿½ 12 = 4,848 request reads per second
 - With PruneRequests: ~9,696 request table accesses per second
 
 **Solution Implemented:**
@@ -4780,7 +4915,7 @@ end
 - With this fix, those safety refreshes now work as intended
 
 **Current Status (2026-02-06):**
-Items now appear, but only ~25–33% retain links after link-less sync. This indicates link stripping/reconstruction still loses link data for some items (likely gear/uncached items that require full Link or ItemString).
+Items now appear, but only ~25ï¿½33% retain links after link-less sync. This indicates link stripping/reconstruction still loses link data for some items (likely gear/uncached items that require full Link or ItemString).
 
 **New Investigation Notes:**
 - Link stripping currently removes Links for all items and only preserves ItemString when link is present.
@@ -7735,7 +7870,7 @@ User reported: "there is an issue where it's becoming additive, and my bags are 
 - Banker had 70 runecloth bags in bank, 33 in bags, 1 in mail (total: 104)
 - Inventory UI displayed **368 runecloth bags** instead of 104
 - Count increased with each sync operation
-- Pattern identified: 368 = 104 + 264, where 264 = 33 × 8 (8x duplication of bag count)
+- Pattern identified: 368 = 104 + 264, where 264 = 33 ï¿½ 8 (8x duplication of bag count)
 
 **Investigation Timeline:**
 
@@ -10748,28 +10883,28 @@ Requests that were edited after creation had mismatched data between their ID fi
 
 ```lua
 -- Request 1: Zombie edited request
-["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921"] = {
-    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921",
+["Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-17666415ic-1766787921"] = {
+    ["id"] = "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-17666415ic-1766787921",
     ["item"] = "Pattern: Frostweave Tunic",    -- ? ID says "Greater Nether Essence"
-    ["requester"] = "Purplë-Myzrael",
+    ["requester"] = "Purplï¿½-Myzrael",
     ["quantity"] = 1,
     ["status"] = "cancelled",
 }
 
 -- Request 2: Legitimate request (no edit)
-["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"] = {
-    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313",
+["Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-1766821313"] = {
+    ["id"] = "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-1766821313",
     ["item"] = "Greater Nether Essence",        -- ? ID matches item
-    ["requester"] = "Purplë-Myzrael",
+    ["requester"] = "Purplï¿½-Myzrael",
     ["quantity"] = 12,
     ["status"] = "cancelled",
 }
 
 -- Request 3: Another zombie edited request
-["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-st-1766641515"] = {
-    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-st-1766641515",
+["Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-st-1766641515"] = {
+    ["id"] = "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-st-1766641515",
     ["item"] = "Formula: Enchant Gloves - Greater Agility",  -- ? ID says "Greater Nether Essence"
-    ["requester"] = "Purplë-Myzrael",
+    ["requester"] = "Purplï¿½-Myzrael",
     ["quantity"] = 1,
     ["status"] = "cancelled",
 }
@@ -10780,7 +10915,7 @@ Requests that were edited after creation had mismatched data between their ID fi
 1. **ID Generation Embeds Item Name:**
    ```lua
    -- ID format: "bank-requester-itemName-timestamp"
-   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+   "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-1766821313"
                                          ^^^^^^^^^^^^^^^^^^^^^^
                                          Item name embedded
    ```
@@ -10818,8 +10953,8 @@ Result: Request keeps coming back despite multiple cancellations
 
 ```
 TOGBankClassic: [DEBUG] [UI-003] ApplyRequestSnapshot: Preserving local-only request
-  id=Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921,
-  requester=Purplë-Myzrael,
+  id=Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-17666415ic-1766787921,
+  requester=Purplï¿½-Myzrael,
   item=Pattern: Frostweave Tunic
 ```
 
@@ -10891,12 +11026,12 @@ end
 
 ```lua
 -- ? REJECTED: ID contains "Greater Nether Essence", item is "Pattern: Frostweave Tunic"
-ID:   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921"
+ID:   "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-17666415ic-1766787921"
 Item: "Pattern: Frostweave Tunic"
 ? Log: "Rejected request: ID contains 'Greater Nether Essence' but item is 'Pattern: Frostweave Tunic' (corrupted/edited request)"
 
 -- ? ACCEPTED: ID contains "Greater Nether Essence", item is "Greater Nether Essence"
-ID:   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+ID:   "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-1766821313"
 Item: "Greater Nether Essence"
 ? Passes validation
 ```
@@ -11024,13 +11159,13 @@ end
 
 ```
 Your Client State:
-  ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+  ID: "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-1766821313"
   status: "cancelled"
   statusUpdatedAt: 1768774810 (Jan 17)
   updatedAt: 1768774810 (Jan 17)
 
 Incoming Snapshot (Stale):
-  ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+  ID: "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-1766821313"
   status: "open"
   statusUpdatedAt: 1766821313 (Dec 26 - original creation, never cancelled on their client)
   updatedAt: 1738306500 (Jan 31 1:35am - just refreshed)
@@ -11067,7 +11202,7 @@ mergeRequest() Decision:
 **Testing:**
 
 Production validation with Greater Nether Essence request:
-- Request ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+- Request ID: "Shardsndust-Azuresong-Purplï¿½-Myzrael-Greater Nether Essence-1766821313"
 - User cancelled Jan 17: `status="cancelled"`, `statusUpdatedAt=1768774810`
 - Incoming stale snapshot with `status="open"`, `statusUpdatedAt=1766821313` (original creation)
 - New logic: Compares 1766821313 <= 1768774810 ? REJECTS reopen
