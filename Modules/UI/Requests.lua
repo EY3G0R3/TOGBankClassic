@@ -388,7 +388,7 @@ function TOGBankClassic_UI_Requests:Open()
 	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local isCurrentlyBanker = currentPlayer and TOGBankClassic_Guild:IsBank(currentPlayer) or false
 	local bankerStatusChanged = (self.wasBank ~= nil) and (self.wasBank ~= isCurrentlyBanker)
-	
+
 	-- Recreate window if banker status changed (to add/remove highlight checkbox)
 	if bankerStatusChanged and self.Window then
 		self.Window:Release()
@@ -406,10 +406,10 @@ function TOGBankClassic_UI_Requests:Open()
 	end
 
 	self:DrawContent()
-	
+
 	-- Force layout update before showing to ensure proper sizing
 	self.Window:DoLayout()
-	
+
 	-- Show window AFTER content is drawn and laid out to prevent initial sizing issue
 	self.Window:Show()
 
@@ -577,12 +577,12 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 			TOGBankClassic_UI_Requests:HandleResize()
 		end)
 	end
-	
+
 	-- Register frame for ESC key handling
 	-- AceGUI frames handle ESC automatically, no manual registration needed
-	
+
 	self.Window = window
-	
+
 	self.HeaderWidgets = nil
 	self.FilterWidgets = nil
 	self.FilterRequester = nil
@@ -626,7 +626,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 			local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
 			TOGBankClassic_Output:Debug("UI", "UpdateFilters: currentPlayer=%s, isBank=%s", tostring(currentPlayer), tostring(isBank))
-			
+
 			if isBank then
 				TOGBankClassic_Output:Debug("UI", "UpdateFilters: Creating highlight checkbox")
 				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
@@ -1093,7 +1093,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 	end
 
 	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
-	
+
 	-- Only update the requester dropdown if the list has changed
 	local requesterListChanged = false
 	if not self.cachedRequesterList or #requesterOrder ~= #(self.cachedRequesterOrder or {}) then
@@ -1106,7 +1106,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 			end
 		end
 	end
-	
+
 	if requesterListChanged then
 		self.FilterRequester:SetList(requesterList, requesterOrder)
 		self.cachedRequesterList = requesterList
@@ -1115,7 +1115,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 	end
 
 	local bankList, bankOrder = buildBankOptions(currentPlayer, bankCounts)
-	
+
 	-- Only update the bank dropdown if the list has changed
 	local bankListChanged = false
 	if not self.cachedBankList or #bankOrder ~= #(self.cachedBankOrder or {}) then
@@ -1128,7 +1128,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 			end
 		end
 	end
-	
+
 	if bankListChanged then
 		self.FilterBank:SetList(bankList, bankOrder)
 		self.cachedBankList = bankList
@@ -1202,9 +1202,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	local sorted = self:SortedRequests()
 	sorted = self:ApplyFilters(sorted)
 	local count = #sorted
-	
+
 	TOGBankClassic_Output:Debug("REQUESTS", string.format("[UI-003] DrawContent: Displaying %d requests", count))
-	
+
 	if count == 0 then
 		local empty = self:EnsureEmptyLabel()
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[1]) or COLUMNS[1].width

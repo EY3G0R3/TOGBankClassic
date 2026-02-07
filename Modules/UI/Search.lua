@@ -120,7 +120,7 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 	local prompt = string.format("Request how many %s from %s?", itemLabel, bankAlt)
 	self.RequestDialog.Prompt:SetText(prompt)
 	local available = self.requestContext.available
-	
+
 	-- Apply configured percentage limit to available quantity
 	local maxRequestPercent = 100
 	if TOGBankClassic_Options and TOGBankClassic_Options.GetMaxRequestPercent then
@@ -131,7 +131,7 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 	if maxAllowed == 0 and available > 0 then
 		maxAllowed = 1
 	end
-	
+
 	local minQuantity = maxAllowed > 0 and 1 or 0
 	local maxQuantity = maxAllowed > 0 and maxAllowed or 0
 	if maxQuantity < minQuantity then
@@ -192,7 +192,7 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 
 	local quantity = tonumber(quantityInput and quantityInput:GetValue())
 	local available = tonumber(self.requestContext.available) or 0
-	
+
 	-- Apply configured percentage limit to available quantity
 	local maxRequestPercent = 100
 	if TOGBankClassic_Options and TOGBankClassic_Options.GetMaxRequestPercent then
@@ -203,7 +203,7 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 	if maxAllowed == 0 and available > 0 then
 		maxAllowed = 1
 	end
-	
+
 	if not quantity or quantity <= 0 then
 		self.RequestDialog:SetStatusText("Enter a quantity greater than 0.")
 		return
@@ -281,9 +281,9 @@ function TOGBankClassic_UI_Search:Open()
 	-- Track roster version to detect when new data arrives (after /wipe, sync, etc.)
 	local currentVersion = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.roster and TOGBankClassic_Guild.Info.roster.version or 0
 	local needsRebuild = not self.searchDataBuilt or (self.lastRosterVersion ~= currentVersion)
-	
+
 	if needsRebuild then
-		TOGBankClassic_Output:Debug("SEARCH", "Rebuilding search data (version changed: %s -> %s)", 
+		TOGBankClassic_Output:Debug("SEARCH", "Rebuilding search data (version changed: %s -> %s)",
 			tostring(self.lastRosterVersion or "nil"), tostring(currentVersion))
 		self:BuildSearchData()
 		self.searchDataBuilt = true
@@ -410,7 +410,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] BuildSearchData: no info or roster_alts, returning early")
 		return
 	end
-	
+
 	local rosterCount = 0
 	for _ in pairs(roster_alts) do rosterCount = rosterCount + 1 end
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] BuildSearchData: processing %d roster alts", rosterCount)
@@ -456,12 +456,12 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 
 	local itemNames = {}
 	local corpusNamesSeen = {}
-	
+
 	-- Count items in hash table (can't use # operator on hash tables)
 	local itemCount = 0
 	for _ in pairs(items) do itemCount = itemCount + 1 end
 	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] About to validate %d items before GetItems", itemCount)
-	
+
 	-- Validate and filter items before passing to GetItems
 	local validItems = {}
 	local invalidCount = 0
@@ -474,10 +474,10 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 				tostring(key), tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
 		end
 	end
-	
+
 	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] Passing %d valid items to GetItems (%d invalid skipped)",
 		#validItems, invalidCount)
-	
+
 	TOGBankClassic_Item:GetItems(validItems, function(list)
 		local listCount = 0
 		for _ in pairs(list) do listCount = listCount + 1 end

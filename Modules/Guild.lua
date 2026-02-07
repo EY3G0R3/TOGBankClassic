@@ -1117,7 +1117,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull)
 	if banker and self:IsPlayerOnline(banker) then
 		-- Banker found in guild roster AND currently online - WHISPER directly
 		TOGBankClassic_Output:DebugComm("SENDING WHISPER: togbank-r to %s for alt %s", banker, norm)
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query for %s to banker %s (from guild roster, online=%s)", 
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query for %s to banker %s (from guild roster, online=%s)",
 			norm, banker, tostring(self:IsPlayerOnline(banker)))
 		-- Try WHISPER first, fallback to GUILD if it fails
 		if not TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL") then
@@ -2099,14 +2099,14 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		if PEER_TO_PEER and PEER_TO_PEER.ENABLED and self.expectedHashes and self.expectedHashes[name] then
 			local expectedHash = self.expectedHashes[name]
 			local receivedHash = alt.inventoryHash or 0
-			
+
 			if receivedHash ~= expectedHash then
-				TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash mismatch for %s from %s! Expected=%d, Got=%d - rejecting", 
+				TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash mismatch for %s from %s! Expected=%d, Got=%d - rejecting",
 					name, sender, expectedHash, receivedHash)
 				-- Don't clear expected hash - let timeout handle fallback to banker
 				return ADOPTION_STATUS.INVALID
 			else
-				TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash validated for %s from %s (hash=%d)", 
+				TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash validated for %s from %s (hash=%d)",
 					name, sender, receivedHash)
 				-- Clear expected hash after successful validation
 				self.expectedHashes[name] = nil

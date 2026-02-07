@@ -2,7 +2,7 @@
 
 ## [v0.8.9] (2026-02-07) - P2P Hash Backfill Complete
 
-**Status:** Production Ready  
+**Status:** Production Ready
 **Priority:** HIGH
 
 ### 🎯 P2P Hash Backfill Implementation
@@ -66,7 +66,7 @@
 
 ## [v0.8.4] (2026-02-02) - Mail Hash Synchronization Fix
 
-**Status:** Critical Bug Fix  
+**Status:** Critical Bug Fix
 **Priority:** HIGH
 
 ### 🐛 Critical Bug Fix
@@ -75,7 +75,7 @@
 - **FIXED**: `mailHash` field was referenced but never assigned, breaking mail synchronization
 - **ROOT CAUSE**: Mail scan created mail data but never computed hash for change detection
 - **IMPACT**: Mail items never synchronized between clients via `/togbank share` or `/togbank sync`
-- **FIX**: 
+- **FIX**:
   - `Bank.lua` now computes `mailHash` after mail scan using `ComputeInventoryHash()`
   - `DeltaComms.lua` tracks `mailHash` changes in delta computation
   - `DeltaComms.lua` applies `mailHash` changes when receiving deltas
@@ -103,8 +103,8 @@
 
 ## [v0.8.0] (2026-01-21) - Pull-Based Delta Protocol
 
-**Branch:** feature/pull-based-delta  
-**Status:** Testing Phase  
+**Branch:** feature/pull-based-delta
+**Status:** Testing Phase
 **Latest Update:** 2026-01-21 (Evening)
 
 ### 🚀 Major Features
@@ -240,11 +240,11 @@ None - Full backwards compatibility maintained with v0.7.0 clients
   - Automatic migration to database when guild data loads
   - No error data loss during addon startup phase
   - Query functions check both temporary and database storage
-  
+
 - **Fixed**: `RecordDeltaError()` logs debug messages when using temporary storage
   - Shows: "Using temporary error storage for <alt> (<type>): Guild.Info not initialized"
   - Helps identify initialization timing issues
-  
+
 - **Fixed**: Test function `testDeltaErrorTracking()` parameter mismatch
   - Was calling `RecordDeltaError()` with 2 parameters instead of required 3
   - Now correctly passes: `altName`, `errorType`, `errorMessage`
@@ -424,20 +424,20 @@ FEATURES = {
 ## [v2.3.0](https://github.com/GrumpyPlayer/GBankClassic/tree/v2.3.0) (2025-10-27)
 [Full Changelog](https://github.com/GrumpyPlayer/GBankClassic/compare/v2.2.0...v2.3.0) [Previous Releases](https://github.com/GrumpyPlayer/GBankClassic/releases)
 
-- Merge pull request #3 from GrumpyPlayer/merge/fix-search-normalization-into-handle-malformed-data  
-    Merge/fix search normalization into handle malformed data  
-- fix issues related to clean-up and init, and also allow GM to author /bank roster updates  
-- Merge PR #1 (fix-search-normalization) into integration branch  
-- Perform cleanup of malformed data on addon initialization and handle malformed data better  
-- Fix nil version comparison in ReceiveAltData  
-    - Added nil check for existing alt data version before comparison  
-    - Prevents 'attempt to compare number with nil' error  
-    - Fixes crash when receiving data for alts without version field  
-- Fix Search.lua crash and implement name normalization with security improvements  
-    - Fixed nil table index crash in Search.lua duplicate detection  
-    - Added NormalizePlayerName helper for consistent 'Name-Realm' format  
-    - Implemented sender authentication to prevent communication spoofing  
-    - Added debug tools: /bank debug toggle and /bank debugdump command  
-    - Auto-enable bank reporting for detected bank characters  
-    - Relaxed delegation policy for multi-bank account support  
-    - Normalized player keys across all modules for data consistency  
+- Merge pull request #3 from GrumpyPlayer/merge/fix-search-normalization-into-handle-malformed-data
+    Merge/fix search normalization into handle malformed data
+- fix issues related to clean-up and init, and also allow GM to author /bank roster updates
+- Merge PR #1 (fix-search-normalization) into integration branch
+- Perform cleanup of malformed data on addon initialization and handle malformed data better
+- Fix nil version comparison in ReceiveAltData
+    - Added nil check for existing alt data version before comparison
+    - Prevents 'attempt to compare number with nil' error
+    - Fixes crash when receiving data for alts without version field
+- Fix Search.lua crash and implement name normalization with security improvements
+    - Fixed nil table index crash in Search.lua duplicate detection
+    - Added NormalizePlayerName helper for consistent 'Name-Realm' format
+    - Implemented sender authentication to prevent communication spoofing
+    - Added debug tools: /bank debug toggle and /bank debugdump command
+    - Auto-enable bank reporting for detected bank characters
+    - Relaxed delegation policy for multi-bank account support
+    - Normalized player keys across all modules for data consistency

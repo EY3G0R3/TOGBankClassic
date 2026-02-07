@@ -1,6 +1,6 @@
 # Order Fulfillment Logic - End to End
 
-**Last Updated:** January 27, 2026  
+**Last Updated:** January 27, 2026
 **Status:** In Development - Greedy algorithm needs refinement
 
 ---
@@ -264,15 +264,15 @@ end
    - Look for stacks >= 9 that we DIDN'T use yet
    - We used [20, 20, 20, 20, 1], have 1 stack of 20 left
 3. Compare strategies:
-   
+
    Strategy A: Use partials + small split
    - Use [20, 20, 20, 20, 1] + split 9 from remaining 20
    - Attachment slots: 5 stacks + 1 split = 6 operations
-   
-   Strategy B: Use fewer full stacks + larger split  
+
+   Strategy B: Use fewer full stacks + larger split
    - Use [20, 20, 20, 20] + split 10 from remaining 20
    - Attachment slots: 4 stacks + 1 split = 5 operations
-   
+
 4. Choose Strategy B (fewer operations)
 ```
 
@@ -285,10 +285,10 @@ If we're going to split anyway:
 - Why? Using them creates MORE work:
   - Extra attachment slot used
   - Larger split amount needed later
-  
+
 Example: Need to split 10
 - Stack of 1: IGNORE (creates split of 9)
-- Stack of 8: IGNORE (creates split of 2)  
+- Stack of 8: IGNORE (creates split of 2)
 - Stack of 9: MAYBE (creates split of 1)
 - Stack of 10+: USE (exact or overflow to split)
 ```
@@ -301,32 +301,32 @@ Example: Need to split 10
 function DetermineOptimalFulfillment(items, qtyNeeded)
     -- Sort largest first
     sort(items, descending by count)
-    
+
     -- Stage 1: Pure greedy (try for exact match)
     local accumulated = 0
     local usedStacks = {}
-    
+
     for stack in items do
         if accumulated >= qtyNeeded then
             break
         end
-        
+
         if accumulated + stack.count <= qtyNeeded then
             -- This stack fits exactly or leaves room
             table.insert(usedStacks, stack)
             accumulated = accumulated + stack.count
         end
     end
-    
+
     -- Check if exact match
     if accumulated == qtyNeeded then
         return { action = "ATTACH", stacks = usedStacks }
     end
-    
+
     -- Stage 2: Determine if split is beneficial
     local remaining = qtyNeeded - accumulated
     local unusedStacks = items - usedStacks
-    
+
     -- Find best split candidate from unused stacks
     local bestSplit = nil
     for stack in unusedStacks do
@@ -335,22 +335,22 @@ function DetermineOptimalFulfillment(items, qtyNeeded)
             break  -- First one is best (largest first)
         end
     end
-    
+
     if bestSplit then
         -- Stage 3: Check if we should ignore tiny stacks
         local tinyThreshold = remaining - 5
         local optimizedStacks = {}
         local optimizedTotal = 0
-        
+
         for stack in usedStacks do
             if stack.count >= tinyThreshold or optimizedTotal + stack.count <= qtyNeeded then
                 table.insert(optimizedStacks, stack)
                 optimizedTotal = optimizedTotal + stack.count
             end
         end
-        
+
         local optimizedRemaining = qtyNeeded - optimizedTotal
-        
+
         -- Use optimized version if it's actually better
         if optimizedRemaining <= remaining + 5 then
             return {
@@ -361,7 +361,7 @@ function DetermineOptimalFulfillment(items, qtyNeeded)
             }
         end
     end
-    
+
     -- Fallback: use greedy result + split
     return {
         action = "SPLIT",
@@ -400,7 +400,7 @@ for _, stack in ipairs(usefulStacks) do
     if accumulated >= qtyNeeded then
         break
     end
-    
+
     if accumulated + stack.count <= qtyNeeded then
         table.insert(usedStacks, stack)
         accumulated = accumulated + stack.count
@@ -414,7 +414,7 @@ Only consider splitting if greedy didn't get exact match:
 ```lua
 if accumulated < qtyNeeded then
     local remaining = qtyNeeded - accumulated
-    
+
     -- Find unused stacks that can provide remaining
     for _, stack in ipairs(usefulStacks) do
         if not isUsed(stack, usedStacks) and stack.count >= remaining then
@@ -430,8 +430,8 @@ Before final decision, check if removing tiny stacks improves result:
 
 ```lua
 local tinyThreshold = math.max(5, remaining - 5)
-local withoutTiny = filterStacks(usedStacks, function(s) 
-    return s.count >= tinyThreshold 
+local withoutTiny = filterStacks(usedStacks, function(s)
+    return s.count >= tinyThreshold
 end)
 
 if canSplitBetter(withoutTiny, qtyNeeded) then
@@ -460,7 +460,7 @@ end
 **Result:** ✅ Don't use 5+3+1 (too many small stacks)
 
 ### Scenario 4: Borderline Tiny Stack
-**Given:** `[20, 20, 20, 8]` need 70  
+**Given:** `[20, 20, 20, 8]` need 70
 **Expected:** Use `[20, 20, 20]`, split 10 from next 20
 **Alternative:** Use `[20, 20, 20, 8]`, split 2 from next 20
 **Decision:** First option (fewer operations)

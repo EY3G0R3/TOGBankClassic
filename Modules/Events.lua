@@ -203,7 +203,7 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 
 	-- Only broadcast delta version if we support delta
 	if not TOGBankClassic_Guild:ShouldUseDelta() then
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SyncDeltaVersion SKIP: ShouldUseDelta=false (DELTA_ENABLED=%s, SUPPORTS_DELTA=%s)", 
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SyncDeltaVersion SKIP: ShouldUseDelta=false (DELTA_ENABLED=%s, SUPPORTS_DELTA=%s)",
 			tostring(FEATURES.DELTA_ENABLED), tostring(PROTOCOL.SUPPORTS_DELTA))
 		return
 	end
@@ -228,14 +228,14 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 			altCount = altCount + 1
 		end
 	end
-	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SENDING togbank-dv2 from %s (isBanker=%s, altCount=%d)", 
+	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SENDING togbank-dv2 from %s (isBanker=%s, altCount=%d)",
 		player, tostring(isBanker), altCount)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
 	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] togbank-dv2 message size: %d bytes", #data)
 	TOGBankClassic_Core:SendCommMessage("togbank-dv2", data, "Guild", nil, priority or "NORMAL")
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Output:Debug("EVENTS", "SyncDeltaVersion took %.2fms (alts=%d, size=%d)", duration, altCount, #data)
-	
+
 	-- Also send on togbank-dv for old pre-SYNC-006 clients
 	-- Note: Old clients will compute hash from their legacy alt.bank/alt.bags structure
 	-- New clients ignore togbank-dv, so no conflict
@@ -251,19 +251,19 @@ end
 function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 	-- DEBUG: Check if mail field exists before logout
 	local player = UnitName("player") .. "-" .. GetRealmName()
-	
+
 	-- Store debug info in a SavedVariable so we can check after logout
 	if not TOGBankClassic_MailDebugLog then
 		TOGBankClassic_MailDebugLog = {}
 	end
-	
+
 	local debugInfo = {
 		player = player,
 		timestamp = GetServerTime(),
 		mailExists = false,
 		mailItemCount = 0,
 	}
-	
+
 	TOGBankClassic_Output:Debug("MAIL", "========================================")
 	TOGBankClassic_Output:Debug("MAIL", "Checking mail at logout for: %s", player)
 	if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[player] then
@@ -277,7 +277,7 @@ function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 			debugInfo.lastScanType = type(alt.mail.lastScan)
 			debugInfo.slotsType = type(alt.mail.slots)
 			debugInfo.hasMetatable = getmetatable(alt.mail) ~= nil
-			
+
 			-- Check if items is a proper array
 			debugInfo.itemsIsTable = type(alt.mail.items) == "table"
 			if alt.mail.items then
@@ -290,7 +290,7 @@ function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 				end
 				debugInfo.hasSequentialKeys = hasSequentialKeys
 			end
-			
+
 			TOGBankClassic_Output:Debug("MAIL", "Mail field exists with %d items", mailCount)
 			TOGBankClassic_Output:Debug("MAIL", "  version: %s (type: %s)", tostring(alt.mail.version), type(alt.mail.version))
 			TOGBankClassic_Output:Debug("MAIL", "  lastScan: %s (type: %s)", tostring(alt.mail.lastScan), type(alt.mail.lastScan))
@@ -310,7 +310,7 @@ function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 		debugInfo.noAltData = true
 		TOGBankClassic_Output:Debug("MAIL", "Alt data not found")
 	end
-	
+
 	TOGBankClassic_MailDebugLog[player] = debugInfo
 	TOGBankClassic_Output:Debug("MAIL", "========================================")
 	-- Save persistent debug log to SavedVariables
@@ -423,7 +423,7 @@ function TOGBankClassic_Events:MAIL_SHOW(_)
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()
-	
+
 	-- Hook MailFrame OnHide to detect when mail closes (MAIL_CLOSED event may not fire reliably)
 	if not MailFrame.TOGBankHooked then
 		MailFrame:HookScript("OnHide", function()

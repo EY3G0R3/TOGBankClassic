@@ -301,7 +301,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d",
 				tab, #bankItems, #bagItems, #mailItems)
-			
+
 			-- Aggregate all sources (all are now in array format), then convert the key-value result to array
 			local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
 			aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)

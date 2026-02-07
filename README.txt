@@ -119,7 +119,7 @@ SEARCHING FOR ITEMS:
 REQUESTING ITEMS:
   Click "Request" next to an item to automatically send a mail request
   to the bank character. They'll see your request the next time they log in.
-  
+
   NOTE: Guild officers can configure maximum request limits to ensure fair
   distribution of resources. If a percentage limit is set, you may not be
   able to request the full available quantity. The interface will show the
@@ -232,6 +232,9 @@ listed alphabetically for easy reference.
 /togbank hello
   Shows which guild members are online with the addon and what data they have
   (Requires compatible WeakAura to display deserialized data)
+
+/togbank hashdebug
+  Shows hash-list coverage and missing alts (expert debugging)
 
 /togbank perfstats
   Shows performance metrics for current session

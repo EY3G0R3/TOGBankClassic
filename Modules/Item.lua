@@ -26,7 +26,7 @@ end
 -- Consumables and trade goods don't vary, so Link can be stripped
 function TOGBankClassic_Item:NeedsLink(itemLink)
 	if not itemLink then return false end
-	
+
 	local _, _, _, _, _, _, _, _, itemEquipLoc, _, _, classID = GetItemInfo(itemLink)
 	if classID == nil then
 		-- If item isn't cached, preserve the link to avoid losing suffix data
@@ -49,19 +49,19 @@ function TOGBankClassic_Item:GetItemString(link)
 	if not link or link == "" then
 		return ""
 	end
-	
+
 	-- Extract ItemString from link format: |cFFFFFFFF|Hitem:...|h[Name]|h|r
 	local itemString = link:match("|Hitem:([^|]+)|h")
 	if itemString then
 		return "item:" .. itemString
 	end
-	
+
 	-- Fallback: try to extract just the numeric part
 	local numericPart = link:match("item:([%d:]+)")
 	if numericPart then
 		return "item:" .. numericPart
 	end
-	
+
 	-- Last resort: return the whole link
 	return link
 end
@@ -73,19 +73,19 @@ function TOGBankClassic_Item:GetItemKey(link)
 	if not link or link == "" then
 		return ""
 	end
-	
+
 	local itemString = link:match("|Hitem:([^|]+)|h")
 	if not itemString then
 		itemString = link:match("item:([%d:]+)")
 	end
-	
+
 	if itemString then
 		-- Split into parts
 		local parts = {}
 		for part in string.gmatch(itemString, "([^:]+)") do
 			table.insert(parts, part)
 		end
-		
+
 		-- Keep first 7 parts only (strip uniqueID and specializationID)
 		if #parts >= 7 then
 			return "item:" .. table.concat({parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]}, ":")
@@ -93,7 +93,7 @@ function TOGBankClassic_Item:GetItemKey(link)
 			return "item:" .. itemString
 		end
 	end
-	
+
 	return link
 end
 
@@ -140,7 +140,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 		callback(list)
 		return
 	end
-	
+
 	local function checkComplete()
 		if not callbackFired and processed >= total then
 			callbackFired = true
@@ -152,11 +152,11 @@ function TOGBankClassic_Item:GetItems(items, callback)
 		local itemID = wrapper.id
 		local itemLink = wrapper.link
 		local item = wrapper.original
-		
+
 		-- Debug: Log what we're about to process
 		TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Processing wrapper: id=%s, link=%s, original.ID=%s",
 			tostring(itemID), tostring(itemLink), tostring(item and item.ID or "nil item"))
-		
+
 		-- Final safety check before calling Blizzard API
 		if not itemID or type(itemID) ~= "number" or itemID <= 0 then
 			TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] SKIPPING INVALID: itemID=%s (type=%s)",
@@ -168,7 +168,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 			local capturedItemID = itemID
 			local capturedItemLink = itemLink
 			local capturedItem = item
-			
+
 			-- Double-check captured values
 			if not capturedItemID or type(capturedItemID) ~= "number" or capturedItemID <= 0 then
 				TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] CRITICAL: itemID validation failed after capture!")
@@ -188,12 +188,12 @@ function TOGBankClassic_Item:GetItems(items, callback)
 				else
 					-- Item not cached, need async load
 					TOGBankClassic_Output:Debug("ITEM", "[TRACE-1] Item %d not cached, calling CreateFromItemID", capturedItemID)
-					
+
 					local success, itemData = pcall(Item.CreateFromItemID, Item, capturedItemID)
-					
+
 					TOGBankClassic_Output:Debug("ITEM", "[TRACE-2] CreateFromItemID result: success=%s, itemData=%s, type=%s",
 						tostring(success), tostring(itemData), type(itemData))
-					
+
 					if not success then
 						TOGBankClassic_Output:Debug("ITEM", "[TRACE-3] CreateFromItemID pcall failed: %s", tostring(itemData))
 						processed = processed + 1
@@ -209,16 +209,16 @@ function TOGBankClassic_Item:GetItems(items, callback)
 					else
 						-- Got an Item object, now inspect its internal state
 						TOGBankClassic_Output:Debug("ITEM", "[TRACE-6] Inspecting Item object for ID %d", capturedItemID)
-						
+
 						-- Try to access internal fields safely
 						local objectItemID = nil
 						local accessSuccess = pcall(function()
 							objectItemID = itemData.itemID
 						end)
-						
+
 						TOGBankClassic_Output:Debug("ITEM", "[TRACE-7] Internal field access: accessSuccess=%s, itemData.itemID=%s, type=%s",
 							tostring(accessSuccess), tostring(objectItemID), type(objectItemID))
-						
+
 						-- Check if itemID matches what we expect
 						if not accessSuccess then
 							TOGBankClassic_Output:Debug("ITEM", "[TRACE-8] Cannot access itemData.itemID (protected?)")
@@ -239,7 +239,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 						else
 							-- Everything looks good, try ContinueOnItemLoad
 							TOGBankClassic_Output:Debug("ITEM", "[TRACE-12] Item object valid (itemID=%d), calling ContinueOnItemLoad", objectItemID)
-							
+
 							local callbackSuccess, callbackError = pcall(function()
 								itemData:ContinueOnItemLoad(function()
 									TOGBankClassic_Output:Debug("ITEM", "[TRACE-13] ContinueOnItemLoad callback fired for ID %d", capturedItemID)
@@ -249,12 +249,12 @@ function TOGBankClassic_Item:GetItems(items, callback)
 									checkComplete()
 								end)
 							end)
-							
+
 							TOGBankClassic_Output:Debug("ITEM", "[TRACE-14] ContinueOnItemLoad pcall result: success=%s, error=%s",
 								tostring(callbackSuccess), tostring(callbackError))
-							
+
 							processed = processed + 1
-							
+
 							if not callbackSuccess then
 								TOGBankClassic_Output:Debug("ITEM", "[TRACE-15] ContinueOnItemLoad pcall FAILED for ID %d: %s",
 									capturedItemID, tostring(callbackError))
@@ -270,17 +270,17 @@ end
 
 function TOGBankClassic_Item:GetInfo(id, link)
 	local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId
-	
+
 	-- Try link first if available
 	if link and link ~= "" then
 		name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(link)
 	end
-	
+
 	-- Fallback to ID if link didn't work
 	if not name and id and id > 0 then
 		name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(id)
 	end
-	
+
 	-- If still no data, return basic info with ID only
 	if not name then
 		return {
@@ -351,7 +351,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 	local items = {}
 	-- Build ID index to avoid O(n²) lookups for linkless deduplication
 	local itemsByID = {}
-	
+
 	if a then
 		for _, v in pairs(a) do
 			-- Only require ID field (Link is optional for v0.8.0 link-less data)
@@ -362,7 +362,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 				-- This allows identical items with different instance IDs to merge
 				local itemKey = self:GetItemKey(v.Link or v.ItemString)
 				local key = tostring(v.ID) .. itemKey
-				
+
 				-- If no Link, also check if there's an existing entry with same ID but with link
 				-- This handles deduplication between linked (bank/bags) and linkless (mail) items
 				if not v.Link and itemKey == "" then
@@ -382,7 +382,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 						key = nil  -- Signal that we already merged
 					end
 				end
-				
+
 				if key then
 					if items[key] then
 						local item = items[key]
@@ -415,7 +415,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 				-- This allows identical items with different instance IDs to merge
 				local itemKey = self:GetItemKey(v.Link or v.ItemString)
 				local key = tostring(v.ID) .. itemKey
-				
+
 				-- If no Link, also check if there's an existing entry with same ID but with link
 				-- This handles deduplication between linked (bank/bags) and linkless (mail) items
 				if not v.Link and itemKey == "" then
@@ -435,7 +435,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 						key = nil  -- Signal that we already merged
 					end
 				end
-				
+
 				if key then
 					if items[key] then
 						local item = items[key]

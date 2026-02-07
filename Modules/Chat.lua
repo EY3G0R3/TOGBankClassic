@@ -18,7 +18,7 @@ function TOGBankClassic_Chat:Init()
 	self.sync_queue = {}
 	self.is_syncing = false
 	self.last_share_sync = nil
-	
+
 	-- Protocol prioritization: delay dv processing to allow dv2 to arrive first
 	self.pending_dv_messages = {}  -- {sender = {altName = {timer, data, ...}}}
 	self.DV_DELAY = 5  -- seconds to wait before processing dv messages
@@ -268,7 +268,7 @@ function TOGBankClassic_Chat:CancelPendingDvMessages(sender, altNames)
 	if not self.pending_dv_messages[sender] then
 		return
 	end
-	
+
 	for _, altName in ipairs(altNames) do
 		local pending = self.pending_dv_messages[sender][altName]
 		if pending and pending.timer then
@@ -430,12 +430,12 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 				end
 
 				-- MAIL-012 fix: Don't query if WE are the sender (prevents self-queries)
-				-- Previous logic (kNorm ~= senderNorm) incorrectly prevented OTHER players 
+				-- Previous logic (kNorm ~= senderNorm) incorrectly prevented OTHER players
 				-- from querying the sender's own data (e.g., Pickyminer couldn't query Togammo-Azuresong)
 				local ourPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 				local senderNorm = TOGBankClassic_Guild:NormalizeName(sender)
 				local weAreSender = (ourPlayer == senderNorm)
-				
+
 				-- MAIL-012 DEBUG: Log the sender check
 				TOGBankClassic_Output:Debug(
 					"PROTOCOL",
@@ -445,13 +445,13 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 					senderNorm,
 					tostring(weAreSender)
 				)
-				
+
 				if not weAreSender then
 					-- We're not the sender, so we can query about any alt including the sender
 					-- For delta version broadcasts, only query if we support delta
 					-- For legacy version broadcasts, query as normal
 					local shouldQuery = false
-					
+
 					-- MAIL-012 DEBUG: Log query decision path
 					TOGBankClassic_Output:Debug(
 						"PROTOCOL",
@@ -460,7 +460,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 						tostring(isDeltaVersion),
 						tostring(TOGBankClassic_Guild:ShouldUseDelta())
 					)
-					
+
 					if isDeltaVersion then
 						-- Delta version: check hash first (most accurate), then version
 						if TOGBankClassic_Guild:ShouldUseDelta() then
@@ -577,7 +577,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 	-- MAIL-012 DEBUG: Log the player check for delta version messages
 	if prefix == "togbank-dv2" or prefix == "togbank-dv" then
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Player check: player=%s, sender=%s, match=%s", 
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Player check: player=%s, sender=%s, match=%s",
 			player, sender, tostring(player == sender))
 	end
 
@@ -627,14 +627,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			-- Legacy clients ignore togbank-v
 			return
 		end
-		
+
 		-- SYNC-006 clients only listen to togbank-dv2, ignore togbank-dv
 		-- Pre-SYNC-006 clients only listen to togbank-dv, ignore togbank-dv2
 		local weUseSYNC006 = TOGBankClassic_Guild:UsesSYNC006()
 		if weUseSYNC006 and prefix == "togbank-dv" then
 			-- Delay dv processing to allow dv2 to arrive first (prioritize newer protocol)
 			TOGBankClassic_Output:Debug("PROTOCOL", "Delaying dv message from %s for %d seconds (waiting for dv2)", sender, self.DV_DELAY)
-			
+
 			-- Store the message with a timer
 			if not self.pending_dv_messages then
 				self.pending_dv_messages = {}
@@ -642,7 +642,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			if sender and not self.pending_dv_messages[sender] then
 				self.pending_dv_messages[sender] = {}
 			end
-			
+
 			-- Extract alt names from data to track what needs canceling
 			local altNames = {}
 			if data.alts then
@@ -657,18 +657,18 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					}
 				end
 			end
-			
+
 			-- Create timer to process after delay
 			C_Timer.After(self.DV_DELAY, function()
 				self:ProcessDelayedDvMessage(sender, data, prefix, message, distribution)
 			end)
-			
+
 			return
 		elseif not weUseSYNC006 and prefix == "togbank-dv2" then
 			-- Pre-SYNC-006 clients ignore SYNC-006 protocol
 			return
 		end
-		
+
 		-- If we're processing dv2, cancel any pending dv messages for these alts
 		if prefix == "togbank-dv2" and data.alts then
 			local altNames = {}
@@ -730,7 +730,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local shouldRespond = false
 			local expectedHash = nil
 			local expectedUpdatedAt = nil
-			
+
 			if hashOnly then
 				-- Hash query: only banker responds with authoritative hash
 				shouldRespond = isBanker and hasData
@@ -773,7 +773,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
 
 				-- Send acknowledgment via WHISPER to reduce guild channel spam
-				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)", 
+				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)",
 					sender, tostring(isBanker), tostring(hasData), tostring(expectedHash), tostring(expectedUpdatedAt))
 				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
 
@@ -901,7 +901,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local expectedHash = data.expectedHash
 			local expectedUpdatedAt = data.expectedUpdatedAt
 
-			TOGBankClassic_Output:DebugComm("RECEIVED ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s, hashOnly=%s, hash=%s, updatedAt=%s)", 
+			TOGBankClassic_Output:DebugComm("RECEIVED ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s, hashOnly=%s, hash=%s, updatedAt=%s)",
 				sender, altName, tostring(isBanker), tostring(hasData), tostring(hashOnly), tostring(expectedHash), tostring(expectedUpdatedAt))
 
 			self:Debug(
@@ -932,7 +932,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				-- Track pending P2P request for fallback
 				TOGBankClassic_Guild.pendingP2PRequests = TOGBankClassic_Guild.pendingP2PRequests or {}
 				TOGBankClassic_Guild.pendingP2PRequests[altName] = { banker = sender, requestedAt = GetTime() }
-				
+
 				-- Now broadcast regular request to GUILD with expectedHash so peers can respond
 				local p2pRequest = {
 					type = "alt-request",
@@ -942,10 +942,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					expectedHash = expectedHash,  -- Peers will validate against this
 				}
 				local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
-				
+
 				TOGBankClassic_Output:DebugComm("PERF-005: Broadcasting P2P request to GUILD for %s with expectedHash=%s", altName, tostring(expectedHash))
 				TOGBankClassic_Core:SendCommMessage("togbank-r", p2pData, "GUILD", nil, "NORMAL")
-				
+
 				self:Debug("SYNC", "< Broadcasting P2P request for %s (hash=%s)", ColorPlayerName(altName), tostring(expectedHash))
 
 				-- Fallback: if no peer responds, request from banker directly
@@ -1039,7 +1039,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	if prefix == "togbank-d" or prefix == "togbank-rm" then
 		-- SYNC-003p: Debug all togbank-d messages to see what's arriving
 		TOGBankClassic_Output:DebugComm("[SYNC-003p] %s received from %s: type=%s", prefix, sender, tostring(data.type))
-		
+
 		-- SYNC-010: Critical debug for request mutations
 		if data.type == "requests-log" then
 			TOGBankClassic_Output:Debug("SYNC", "[SYNC-010] %s requests-log received from %s, about to call ReceiveRequestMutations", prefix, sender)
@@ -1758,7 +1758,7 @@ local COMMAND_REGISTRY = {
 				TOGBankClassic_Output:Response("Not in a guild")
 				return
 			end
-			
+
 			local db = TOGBankClassic_Database.db.faction[guild]
 			if db and db.deltaErrors then
 				db.deltaErrors.lastErrors = {}

@@ -1,7 +1,7 @@
 # Mail Inventory Design Document
 
-**Feature Branch:** `feature/mail-inventory-status`  
-**Created:** 2026-01-27  
+**Feature Branch:** `feature/mail-inventory-status`
+**Created:** 2026-01-27
 **Status:** Design Phase
 
 ## Overview
@@ -16,7 +16,7 @@ Add mail inventory tracking and visibility to TOGBankClassic, allowing users to 
 ## Use Cases
 
 ### Use Case 1: Banker Viewing Mail Inventory
-**Actor:** Guild Banker  
+**Actor:** Guild Banker
 **Goal:** See what items are currently in their mailbox without opening mail UI
 
 **Flow:**
@@ -31,12 +31,12 @@ Inventory Status for Metals-Azuresong:
   Bank: 45/112 slots
   Bags: 60/80 slots
   Mail: 15/50 items  ← NEW
-  
+
   Iron Ore: 200 (Bank: 120, Bags: 60, Mail: 20)  ← NEW: Shows mail breakdown
 ```
 
 ### Use Case 2: Requester Sees Items in Mail
-**Actor:** Guild Member requesting items  
+**Actor:** Guild Member requesting items
 **Goal:** Know that requested items are ready and waiting in banker's mail
 
 **Flow:**
@@ -47,7 +47,7 @@ Inventory Status for Metals-Azuresong:
 5. Member can contact Metals to retrieve and send
 
 ### Use Case 3: Banker Priority Queue
-**Actor:** Guild Banker  
+**Actor:** Guild Banker
 **Goal:** Prioritize fulfilling requests where items are already in mail
 
 **Flow:**
@@ -108,24 +108,24 @@ function TOGBankClassic_Mail:ScanMailInventory()
     if not self.hasUpdated then
         return nil
     end
-    
+
     local mailItems = {}
     local numItems, totalItems = GetInboxNumItems()
-    
+
     for i = 1, numItems do
-        local packageIcon, stationeryIcon, sender, subject, money, CODAmount, 
-              daysLeft, hasItem, wasRead, wasReturned, textCreated, canReply, 
+        local packageIcon, stationeryIcon, sender, subject, money, CODAmount,
+              daysLeft, hasItem, wasRead, wasReturned, textCreated, canReply,
               isGM = GetInboxHeaderInfo(i)
-        
+
         -- Skip COD mail (can't take without payment)
         if hasItem and CODAmount == 0 then
             for j = 1, ATTACHMENTS_MAX_RECEIVE do
-                local name, itemID, itemTexture, count, quality, canUse = 
+                local name, itemID, itemTexture, count, quality, canUse =
                     GetInboxItem(i, j)
-                
+
                 if itemID then
                     local link = GetInboxItemLink(i, j)
-                    
+
                     if not mailItems[itemID] then
                         mailItems[itemID] = {
                             id = itemID,
@@ -135,7 +135,7 @@ function TOGBankClassic_Mail:ScanMailInventory()
                             sources = {}
                         }
                     end
-                    
+
                     mailItems[itemID].count = mailItems[itemID].count + count
                     table.insert(mailItems[itemID].sources, {
                         index = i,
@@ -148,7 +148,7 @@ function TOGBankClassic_Mail:ScanMailInventory()
             end
         end
     end
-    
+
     return {
         slots = 50,
         items = mailItems,
@@ -165,7 +165,7 @@ Add mail scanning to the existing `Bank:Scan()` function (around line 160):
 ```lua
 function TOGBankClassic_Bank:Scan()
     -- ... existing bank and bags scanning code ...
-    
+
     -- NEW: Scan mail inventory (follows same pattern as bank)
     if TOGBankClassic_Mail.hasUpdated then
         local mailData = TOGBankClassic_Mail:ScanMailInventory()
@@ -174,7 +174,7 @@ function TOGBankClassic_Bank:Scan()
         end
         TOGBankClassic_Mail.hasUpdated = false
     end
-    
+
     -- v0.8.0: Only update version if inventory actually changed
     -- Update hash computation to include mail
     local currentHash = TOGBankClassic_Core:ComputeInventoryHash(
@@ -189,7 +189,7 @@ end
 function TOGBankClassic_Item:GetItemsWithMail(itemID)
     -- Returns list of alts that have this item in mail
     local alts = {}
-    
+
     for name, alt in pairs(TOGBankClassic_Guild.Info.alts) do
         if alt.mail and alt.mail.items and alt.mail.items[itemID] then
             table.insert(alts, {
@@ -199,7 +199,7 @@ function TOGBankClassic_Item:GetItemsWithMail(itemID)
             })
         end
     end
-    
+
     return alts
 end
 ```
@@ -210,14 +210,14 @@ function TOGBankClassic_RequestLog:CheckMailFulfillment(request)
     -- Check if requested items are available in mail
     local itemID = request.itemID
     local needed = request.quantity
-    
+
     local inMail = 0
     for name, alt in pairs(TOGBankClassic_Guild.Info.alts) do
         if alt.mail and alt.mail.items and alt.mail.items[itemID] then
             inMail = inMail + alt.mail.items[itemID].count
         end
     end
-    
+
     return {
         inMail = inMail,
         canFulfillFromMail = inMail >= needed
@@ -270,11 +270,11 @@ if alt.mail and alt.mail.items then
     for _, item in pairs(alt.mail.items) do
         mailCount = mailCount + 1
     end
-    
+
     if mailCount > 0 then
         tooltip:AddLine(" ")
         tooltip:AddLine("|cff00ff00Mail Inventory:|r", 1, 1, 1)
-        
+
         for itemID, mailItem in pairs(alt.mail.items) do
             tooltip:AddDoubleLine(
                 mailItem.link,
@@ -283,12 +283,12 @@ if alt.mail and alt.mail.items then
                 0.7, 0.7, 1
             )
         end
-        
+
         -- Show age of mail scan
         local age = time() - (alt.mail.lastScan or 0)
         if age > 3600 then
             tooltip:AddLine(
-                string.format("|cffff9900Last scanned: %s ago|r", 
+                string.format("|cffff9900Last scanned: %s ago|r",
                     SecondsToTime(age)),
                 0.7, 0.7, 0.7
             )
@@ -304,11 +304,11 @@ end
 -- When searching for items, include mail inventory
 local function SearchAllInventory(searchText)
     local results = {}
-    
+
     for name, alt in pairs(TOGBankClassic_Guild.Info.alts) do
         -- Existing: Search bags and bank
         SearchBagsAndBank(alt, results)
-        
+
         -- NEW: Search mail
         if alt.mail and alt.mail.items then
             for itemID, mailItem in pairs(alt.mail.items) do
@@ -323,7 +323,7 @@ local function SearchAllInventory(searchText)
             end
         end
     end
-    
+
     return results
 end
 ```
@@ -335,10 +335,10 @@ end
 -- Add mail icon to requests where items are in mail
 local function UpdateRequestRow(row, request)
     -- Existing row setup...
-    
+
     -- NEW: Check if items are in mail
     local mailFulfillment = TOGBankClassic_RequestLog:CheckMailFulfillment(request)
-    
+
     if mailFulfillment.inMail > 0 then
         -- Show mail icon
         if not row.mailIcon then
@@ -347,9 +347,9 @@ local function UpdateRequestRow(row, request)
             row.mailIcon:SetPoint("RIGHT", row.quantityText, "LEFT", -5, 0)
             row.mailIcon:SetTexture("Interface\\Icons\\INV_Letter_15")
         end
-        
+
         row.mailIcon:Show()
-        
+
         -- Tooltip
         row.mailIcon:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -418,23 +418,23 @@ Mail inventory uses the existing delta sync system - no special handling needed.
 ## Edge Cases
 
 ### Edge Case 1: Mail Expires
-**Problem:** Items in mail for 30 days, expire before retrieval  
+**Problem:** Items in mail for 30 days, expire before retrieval
 **Solution:** Show days remaining in tooltip, highlight urgent (<3 days) in red
 
 ### Edge Case 2: Stale Mail Data
-**Problem:** Mail data from yesterday, items already taken  
+**Problem:** Mail data from yesterday, items already taken
 **Solution:** Show age of scan. Mail data persists indefinitely like bank/bags data. User must rescan mailbox to update if items are taken.
 
 ### Edge Case 3: Multiple Bankers
-**Problem:** Two bankers both have requested items in mail  
+**Problem:** Two bankers both have requested items in mail
 **Solution:** Show all sources with mail counts, let requester choose
 
 ### Edge Case 4: Mail Inbox Changes
-**Problem:** Taking/deleting items while mailbox is open  
+**Problem:** Taking/deleting items while mailbox is open
 **Solution:** Scan on MAIL_CLOSED captures final state (same as bank)
 
 ### Edge Case 5: Offline Mail Scan
-**Problem:** Banker logs out, guild can't see their mail  
+**Problem:** Banker logs out, guild can't see their mail
 **Solution:** Broadcast last mail scan via delta sync, show age in UI
 
 ## Implementation Plan

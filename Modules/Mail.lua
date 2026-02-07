@@ -170,7 +170,7 @@ end
 
 function TOGBankClassic_Mail:OnSendMail(recipient)
 	TOGBankClassic_Output:Debug("MAIL", "OnSendMail: HOOK FIRED for recipient=%s", tostring(recipient))
-	
+
 	-- If pendingSend was set recently by PrepareFulfillMail (within 10 seconds), keep it
 	-- Otherwise, read items from mail attachments (fallback for non-fulfill mails)
 	local now = GetTime()
@@ -178,7 +178,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 		TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Using pendingSend from PrepareFulfillMail")
 		return
 	end
-	
+
 	-- Clear old pendingSend and read from mail attachments
 	self.pendingSend = nil
 	self.pendingSendAt = nil
@@ -224,7 +224,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 		items = items,
 	}
 	self.pendingSendAt = GetTime()
-	
+
 	-- Log at INFO level so user can see manual sends are tracked
 	local itemList = {}
 	for _, item in ipairs(items) do
@@ -289,7 +289,7 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 	self.pendingSendAt = nil
 
 	TOGBankClassic_Output:Info("Applying fulfillment for mail sent to %s...", pending.recipient)
-	
+
 	local totalApplied = 0
 	for _, item in ipairs(pending.items) do
 		local applied = TOGBankClassic_Guild:FulfillRequest(
@@ -517,9 +517,9 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 			local reason = string.format("Split %d from available stacks.", qtyNeeded)
 			return true, reason, totalInBags, smallestStack
 		end
-		
+
 		local remaining = qtyNeeded - usableItems
-		
+
 		-- Additional efficiency check: if using small partials requires a split,
 		-- check if using only the largest stacks would require similar or smaller effort
 		-- Example: [1,20,20,20,20,20] need 90 -> better to use 4×20+split(10) than 1+4×20+split(9)
@@ -532,7 +532,7 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 					largeStacksUsable = largeStacksUsable + item.count
 				end
 			end
-			
+
 			-- If we have at least one more largest stack available to split from
 			local hasExtraLargeStack = false
 			for _, item in ipairs(items) do
@@ -544,7 +544,7 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 					end
 				end
 			end
-			
+
 			if hasExtraLargeStack and largeStacksUsable < qtyNeeded then
 				local largeSplitAmount = qtyNeeded - largeStacksUsable
 				-- Prefer this if it means not attaching tiny partial stacks
@@ -555,7 +555,7 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 				end
 			end
 		end
-		
+
 		local reason = string.format("Splitting %d to fill the order.", remaining)
 		return true, reason, totalInBags, smallestStack
 	end
@@ -637,11 +637,11 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- FIRST PASS: Calculate minimum useful stack size based on split requirement
 	-- Strategy: Don't use stacks smaller than what we'll need to split
 	-- Example: Need 95, have [20,20,20,20,14] → need to split 15, so exclude 14
-	
+
 	-- Accumulate largest stacks to see what we'd need to split
 	local accumulated = 0
 	local largestStack = items[1] and items[1].count or 0
-	
+
 	for _, item in ipairs(items) do
 		if accumulated >= qtyNeeded then
 			break
@@ -652,16 +652,16 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			accumulated = accumulated + item.count
 		end
 	end
-	
+
 	-- Calculate what we'd need to split
 	local wouldNeedToSplit = math.max(0, qtyNeeded - accumulated)
-	
+
 	-- Minimum stack size = the split amount (must be able to split that much from a stack)
 	-- If no split needed, use min(5, qtyNeeded) to avoid filtering out perfectly sized stacks
 	-- Example: Need 1 item → minStackSize should be 1, not 5
 	-- CRITICAL: Never set minStackSize higher than largestStack (fixes non-stackable items like bags)
 	local minStackSize = math.min(largestStack, wouldNeedToSplit > 0 and wouldNeedToSplit or math.min(5, qtyNeeded))
-	
+
 	-- Build useful stacks list
 	local usefulStacks = {}
 	for i, item in ipairs(items) do
@@ -669,7 +669,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			table.insert(usefulStacks, item)
 		end
 	end
-	
+
 	TOGBankClassic_Output:Debug("FULFILL", "Need %d, accumulated %d from large stacks, would split %d",
 		qtyNeeded, accumulated, wouldNeedToSplit)
 	TOGBankClassic_Output:Debug("FULFILL", "Filtered %d useful stacks from %d total (min size: %d)",
@@ -695,7 +695,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			TOGBankClassic_Output:Debug("FULFILL", "Stack %d: count=%d, accumulate, total=%d", i, item.count, simulatedAttached)
 		end
 	end
-	
+
 	-- Stage 2: If we didn't get enough, look for a stack to split
 	if simulatedAttached < qtyNeeded then
 		local remaining = qtyNeeded - simulatedAttached
@@ -712,7 +712,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		-- We accumulated enough - no split needed
 		TOGBankClassic_Output:Debug("FULFILL", "Accumulated enough - no split needed")
 	end
-	
+
 	TOGBankClassic_Output:Debug("FULFILL", "Greedy result: attached=%d, splitStackIndex=%s", simulatedAttached, tostring(splitStackIndex))
 
 	-- If greedy didn't get exact match AND didn't find a split candidate, try skipping individual stacks to find better fit
@@ -815,7 +815,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		message = string.format("No %s found in bags.", itemName)
 		return false, message, 0
 	end
-	
+
 	-- Set pendingSend NOW (when items are attached), not in SendMail hook
 	-- This ensures pendingSend is set BEFORE MAIL_SEND_SUCCESS fires
 	if attached > 0 then
@@ -827,9 +827,9 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			items = {{ name = itemName, quantity = attached }}
 		}
 		self.pendingSendAt = GetTime()
-		TOGBankClassic_Output:Debug("MAIL", "PrepareFulfillMail: Set pendingSend for %s (%d %s)", 
+		TOGBankClassic_Output:Debug("MAIL", "PrepareFulfillMail: Set pendingSend for %s (%d %s)",
 			tostring(normRecipient), attached, itemName)
 	end
-	
+
 	return true, message, attached
 end

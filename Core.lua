@@ -22,28 +22,31 @@ end
 function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn, callbackArg)
     -- Check if target is online
     local isOnline = TOGBankClassic_Guild:IsPlayerOnline(target)
-    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendWhisper called: prefix=%s, target=%s, isOnline=%s", 
+    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendWhisper called: prefix=%s, target=%s, isOnline=%s",
         prefix, target, tostring(isOnline))
-    
+
     if not isOnline then
         TOGBankClassic_Output:Debug("WHISPER", "[WHISPER-DEBUG] Cannot send %s WHISPER to %s - player is offline", prefix, target)
         return false
     end
 
-    -- Strip realm suffix for WHISPER (WoW requires name-only)
-    -- Target may be "Name-Realm" format, but WHISPER needs just "Name"
+    -- Strip realm suffix only for same-realm targets; cross-realm requires full name
     local nameOnly = target
     if target and string.find(target, "-") then
-        nameOnly = string.match(target, "^(.-)%-")
+        local left, right = string.match(target, "^(.-)%-(.+)$")
+        local currentRealm = GetNormalizedRealmName("player")
+        if left and right and currentRealm and right == currentRealm then
+            nameOnly = left
+        end
     end
 
     TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] Attempting SendCommMessage: prefix=%s, target=%s, nameOnly=%s", prefix, target, nameOnly)
-    
+
     -- Send the whisper and capture result
     local success = self:SendCommMessage(prefix, text, "WHISPER", nameOnly, prio, callbackFn, callbackArg)
-    
+
     TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendCommMessage result: success=%s", tostring(success))
-    
+
     return success ~= false  -- SendCommMessage doesn't return false on failure, but be defensive
 end
 
@@ -137,8 +140,15 @@ function TOGBankClassic_Core:DeserializeWithChecksum(message)
         return false, "invalid message"
     end
 
-    -- Find the checksum separator from the end
-    local sepPos = string.find(message, CHECKSUM_SEPARATOR, 1, true)
+    -- Find the checksum separator from the end (payload may contain separator)
+    local sepPos = nil
+    local sepByte = string.byte(CHECKSUM_SEPARATOR)
+    for i = #message, 1, -1 do
+        if string.byte(message, i) == sepByte then
+            sepPos = i
+            break
+        end
+    end
     if not sepPos then
         -- No checksum found - fall back to regular deserialize for backwards compatibility
         return self:Deserialize(message)

@@ -226,16 +226,16 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney,
 	-- Handle multiple calling conventions:
 	-- SYNC-006 (aggregated): ComputeInventoryHash(items, nil, nil, money) - items is direct array
 	-- Pre-SYNC-006: ComputeInventoryHash(bank, bags, money) - bank/bags have .items, no mail
-	
+
 	-- Detect SYNC-006 aggregated call: first param is array, second is nil
 	if bank and type(bank) == "table" and bags == nil and mailOrMoney == nil then
 		-- SYNC-006: bank is actually the aggregated items array, money is the 4th param
 		local items = bank
 		local actualMoney = money or 0
-		
+
 		local parts = {}
 		table.insert(parts, tostring(actualMoney))
-		
+
 		-- Hash aggregated items directly
 		local function hashItems(itemsArray)
 			if not itemsArray or type(itemsArray) ~= "table" then
@@ -250,16 +250,16 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney,
 			table.sort(sorted)
 			return table.concat(sorted, ",")
 		end
-		
+
 		table.insert(parts, "I:" .. hashItems(items))
 		local combined = table.concat(parts, "|")
 		return TOGBankClassic_Core:Checksum(combined)
 	end
-	
+
 	-- Pre-SYNC-006 calling convention: ComputeInventoryHash(bank, bags, money)
 	-- mailOrMoney is actually money (number), no mail parameter exists
 	local actualMoney = mailOrMoney or 0
-	
+
 	local parts = {}
 
 	-- Include money
@@ -544,7 +544,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 		-- DELTA-014: Compute delta using requester's baseline
 		local previous = nil
 		local currentHash = currentAlt.inventoryHash or 0
-		
+
 		if requesterInventoryHash and requesterInventoryHash ~= 0 then
 			-- Requester has data - check if it matches current
 			if requesterInventoryHash == currentHash then
@@ -774,17 +774,17 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			guildInfo.alts[norm] = current
 			TOGBankClassic_Output:Debug("DELTA", "No existing data for %s; applying delta against empty baseline", norm)
 		end
-		
+
 		-- DATA-004: Protect banker data - bankers are the source of truth
 		local player = UnitName("player")
 		local realm = GetNormalizedRealmName()
 		local playerFull = player .. "-" .. realm
 		local playerNorm = TOGBankClassic_Guild:NormalizeName(playerFull)
 		local playerIsBanker = TOGBankClassic_Guild:IsBank(playerNorm)
-		
+
 		if playerIsBanker then
 			-- We are a banker - protect our own data and other banker data
-			
+
 			-- CRITICAL: If this delta is about US, reject it (we are the source of truth for our own data)
 			if norm == playerNorm then
 				local errorMsg = string.format(
@@ -795,11 +795,11 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 				-- Not an error - this is expected banker protection, don't record as error
 				return ADOPTION_STATUS.UNAUTHORIZED
 			end
-			
+
 			-- Also protect OTHER banker data from non-banker updates
 			local senderNorm = sender and TOGBankClassic_Guild:NormalizeName(sender) or nil
 			local senderIsBanker = senderNorm and TOGBankClassic_Guild:IsBank(senderNorm) or false
-			
+
 			if currentIsBanker and not senderIsBanker then
 				-- Reject: non-banker trying to update banker data
 				local errorMsg = string.format(

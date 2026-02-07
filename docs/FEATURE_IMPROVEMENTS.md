@@ -27,7 +27,7 @@
 
 ## ✂️ Automatic Stack Splitting for Order Fulfillment - IMPLEMENTED
 
-**Added:** January 24, 2026  
+**Added:** January 24, 2026
 **Purpose:** Eliminate manual stack splitting when fulfilling guild bank orders with oversized stacks
 
 ### Problem
@@ -88,7 +88,7 @@ Automatic stack splitting with confirmation popup:
 
 ## 🐛 Persistent Debug Logging (v0.7.11) - IMPLEMENTED
 
-**Added:** January 23, 2026  
+**Added:** January 23, 2026
 **Purpose:** Capture complete debug history across sessions for troubleshooting intermittent issues
 
 ### Problem
@@ -152,7 +152,7 @@ Clear all persistent log entries.
 
 ## 🎯 Guild-Wide Request Percentage Limits - IMPLEMENTED
 
-**Added:** February 2, 2026  
+**Added:** February 2, 2026
 **Purpose:** Allow officers to centrally configure request limits that automatically sync to all guild members
 
 ### Problem
@@ -178,7 +178,7 @@ Officers can configure maximum request amount as percentage of available invento
 - Persists across `/reload`, logout, and client sessions
 
 **User Experience:**
-- **For Officers:** 
+- **For Officers:**
   - Open Options → Requests tab
   - Slider: 1% to 100% (default: 100%)
   - Change broadcasts immediately to all online guild members
@@ -253,7 +253,7 @@ Officers can configure maximum request amount as percentage of available invento
 
 ## � Centralized WHISPER Management (v0.7.11) - IMPLEMENTED
 
-**Added:** January 23, 2026  
+**Added:** January 23, 2026
 **Purpose:** Consolidate all WHISPER communication with automatic online checking
 
 ### Problem
@@ -276,7 +276,7 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
         TOGBankClassic_Output:Debug("Cannot send %s WHISPER to %s - player is offline", prefix, target)
         return false
     end
-    
+
     -- Send the whisper
     self:SendCommMessage(prefix, text, "WHISPER", target, prio, callbackFn, callbackArg)
     return true
@@ -307,7 +307,7 @@ end
 
 **Locations Updated:**
 1. Chat.lua: togbank-rr ACK replies
-2. Chat.lua: togbank-dc delta chain responses  
+2. Chat.lua: togbank-dc delta chain responses
 3. Guild.lua: togbank-state state summaries
 4. Guild.lua: togbank-nochange no-change replies (2 locations)
 5. Guild.lua: togbank-r pull-based queries
@@ -335,7 +335,7 @@ end
 ## 🔄 Request Data Sync (v0.7.11) - IMPLEMENTED
 **Fixed:** [SYNC-002] - Pass player name to queries, remove player check for guild-wide data
 
-## 🎨 Persistent Tab Selection (v0.7.11) - IMPLEMENTED  
+## 🎨 Persistent Tab Selection (v0.7.11) - IMPLEMENTED
 **Fixed:** [UI-004] - Preserve selected tab across syncs and redraws
 
 ---
@@ -423,7 +423,7 @@ function ReconstructItemLinks(items)
 end
 ```
 
-**Trade-off:** One API call per item vs. 60-80 bytes per item transmission  
+**Trade-off:** One API call per item vs. 60-80 bytes per item transmission
 **Result:** 5-7KB bandwidth savings per sync (typical 100-item alt)
 
 #### 2. Remove baseVersion (8 bytes saved)
@@ -449,9 +449,9 @@ remove = { { ID = 12345 }, { ID = 67890 }, ... }
 ```
 
 #### 4. State Summary Format
-**Purpose:** Receiver tells sender what they have for delta computation  
-**Format:** `{[itemID] = quantity}` - ID to quantity mapping only  
-**Size:** ~8 bytes per item = ~800 bytes for 100 items  
+**Purpose:** Receiver tells sender what they have for delta computation
+**Format:** `{[itemID] = quantity}` - ID to quantity mapping only
+**Size:** ~8 bytes per item = ~800 bytes for 100 items
 **Excludes:** Links, bag numbers, slot numbers, metadata
 
 ### Channel Assignment
@@ -905,15 +905,15 @@ end
 function SendAltData(name, force)
     local norm = NormalizeName(name)
     local alt = Info.alts[norm]
-    
+
     -- Determine which protocol to use
     local useDelta = ShouldUseDelta() and HasPreviousSnapshot(norm)
-    
+
     if useDelta then
         local delta = ComputeDelta(norm, alt)
         local deltaSize = EstimateSize(delta)
         local fullSize = EstimateSize(alt)
-        
+
         -- Only use delta if significantly smaller
         if deltaSize < fullSize * MIN_DELTA_SIZE_RATIO then
             SendCommMessage("togbank-d2", Serialize(delta), "Guild")
@@ -921,7 +921,7 @@ function SendAltData(name, force)
             return
         end
     end
-    
+
     -- Fallback: Send full data via old protocol
     SendCommMessage("togbank-d", Serialize({type="alt", name=norm, alt=alt}), "Guild")
     SaveSnapshot(norm, alt)  -- Save as baseline for future deltas
@@ -933,7 +933,7 @@ end
 function ComputeDelta(name, currentAlt)
     local previous = GetSnapshot(name)
     if not previous then return nil end
-    
+
     local delta = {
         type = "alt-delta",
         name = name,
@@ -941,31 +941,31 @@ function ComputeDelta(name, currentAlt)
         baseVersion = previous.version,
         changes = {}
     }
-    
+
     -- Money comparison
     if currentAlt.money ~= previous.money then
         delta.changes.money = currentAlt.money
     end
-    
+
     -- Bank items delta
     delta.changes.bank = ComputeItemDelta(
         previous.bank.items,
         currentAlt.bank.items
     )
-    
+
     -- Bag items delta
     delta.changes.bags = ComputeItemDelta(
         previous.bags.items,
         currentAlt.bags.items
     )
-    
+
     return delta
 end
 
 function ComputeItemDelta(oldItems, newItems)
     local added, modified, removed = {}, {}, {}
     local oldBySlot = BuildSlotIndex(oldItems)
-    
+
     for _, newItem in pairs(newItems) do
         local oldItem = oldBySlot[newItem.slot]
         if not oldItem then
@@ -975,12 +975,12 @@ function ComputeItemDelta(oldItems, newItems)
         end
         oldBySlot[newItem.slot] = nil  -- Mark processed
     end
-    
+
     -- Remaining slots were removed
     for slot in pairs(oldBySlot) do
         table.insert(removed, slot)
     end
-    
+
     return {added=added, modified=modified, removed=removed}
 end
 ```
@@ -990,36 +990,36 @@ end
 function ApplyDelta(name, deltaData)
     local norm = NormalizeName(name)
     local current = Info.alts[norm]
-    
+
     -- Validate base version matches
     if not current or current.version ~= deltaData.baseVersion then
         -- Delta doesn't apply to our state, request full sync
         QueryAlt(nil, norm, nil)
         return ADOPTION_STATUS.INVALID
     end
-    
+
     -- Apply changes
     if deltaData.changes.money then
         current.money = deltaData.changes.money
     end
-    
+
     if deltaData.changes.bank then
         ApplyItemDelta(current.bank.items, deltaData.changes.bank)
     end
-    
+
     if deltaData.changes.bags then
         ApplyItemDelta(current.bags.items, deltaData.changes.bags)
     end
-    
+
     -- Update version
     current.version = deltaData.version
-    
+
     -- Save new snapshot for future deltas
     SaveSnapshot(norm, DeepCopy(current))
-    
+
     -- Trigger UI refresh
     TriggerCallback(DB_UPDATE)
-    
+
     return ADOPTION_STATUS.ADOPTED
 end
 
@@ -1028,12 +1028,12 @@ function ApplyItemDelta(items, delta)
     for _, slot in ipairs(delta.removed) do
         items[slot] = nil
     end
-    
+
     -- Add new items
     for _, item in ipairs(delta.added) do
         items[item.slot] = item
     end
-    
+
     -- Modify existing items
     for _, changes in ipairs(delta.modified) do
         local slot = changes.slot
@@ -1303,7 +1303,7 @@ for _, localReq in ipairs(self.Info.requests or {}) do
     if localReq.id and not incomingById[localReq.id] then
         local tombstoneTs = tombstones[localReq.id] or 0
         local localUpdated = localReq.updatedAt or 0
-        
+
         -- Keep if not tombstoned OR if local update is newer
         if tombstoneTs == 0 or localUpdated > tombstoneTs then
             table.insert(merged, localReq)
@@ -1328,7 +1328,7 @@ self.Info.requests = merged
 
 #### Fulfill
 - **Rule:** Additive, clamped to quantity
-- **Example:** 
+- **Example:**
   - Request for 10 items
   - Banker A fulfills 4
   - Banker B fulfills 6
@@ -1412,8 +1412,8 @@ self.Info.requests = merged
 
 ## 🔧 GUILD_ROSTER_UPDATE Cache System (COMM-001b) - PLANNED
 
-**Status:** 📋 Documented, awaiting implementation branch  
-**Purpose:** Fix stale roster data causing false "player online" detections  
+**Status:** 📋 Documented, awaiting implementation branch
+**Purpose:** Fix stale roster data causing false "player online" detections
 **Priority:** HIGH - Eliminates player-visible error spam
 
 ### Problem
@@ -1456,7 +1456,7 @@ TOGBankClassic_Guild.onlineMembers = {}  -- {normalizedName = true}
 ```lua
 function TOGBankClassic_Guild:RefreshOnlineCache()
     wipe(self.onlineMembers)
-    
+
     for i = 1, GetNumGuildMembers() do
         local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
         if name and isOnline then
@@ -1464,8 +1464,8 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
             self.onlineMembers[normalized] = true
         end
     end
-    
-    TOGBankClassic_Output:Debug("Refreshed online cache: %d members online", 
+
+    TOGBankClassic_Output:Debug("Refreshed online cache: %d members online",
         self:CountKeys(self.onlineMembers))
 end
 ```
@@ -1488,7 +1488,7 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
     if not playerName then
         return false
     end
-    
+
     local norm = self:NormalizeName(playerName)
     return self.onlineMembers[norm] == true
 end
@@ -1508,23 +1508,23 @@ end
 ### When Cache Updates
 
 - ✅ Guild member logs in/out
-- ✅ Player joins/leaves guild  
+- ✅ Player joins/leaves guild
 - ✅ After `GuildRoster()` call when server responds
 - ✅ Blizzard's automatic periodic updates (~every few minutes)
 - ✅ On PLAYER_ENTERING_WORLD (initial login)
 
 ### Edge Cases
 
-**Q: What if someone logs out between cache update and whisper send?**  
+**Q: What if someone logs out between cache update and whisper send?**
 A: Race window reduced from minutes to milliseconds. Still possible, but 99%+ accurate.
 
-**Q: What if cache isn't initialized yet?**  
+**Q: What if cache isn't initialized yet?**
 A: Returns false (safe default - no whisper sent). `PLAYER_ENTERING_WORLD` ensures quick init.
 
-**Q: What about non-guild members?**  
+**Q: What about non-guild members?**
 A: Not in cache, returns false. `SendWhisper()` skips send (correct behavior).
 
-**Q: Memory/performance cost?**  
+**Q: Memory/performance cost?**
 A: Negligible - ~10 bytes per member, rebuild takes <1ms for typical guild sizes.
 
 ### Testing Checklist
@@ -1572,7 +1572,7 @@ A: Negligible - ~10 bytes per member, rebuild takes <1ms for typical guild sizes
 
 ## 🔧 Debug Category Filtering - PLANNED
 
-**Added:** January 24, 2026  
+**Added:** January 24, 2026
 **Purpose:** Reduce debug log spam by filtering messages into categories
 
 ### Problem
@@ -1677,7 +1677,7 @@ TOGBankClassic_Output:Debug("COMMS", "Received message from %s", sender)
 
 ## 🔄 Protocol Prioritization (SYNC-006 Migration) - IMPLEMENTED
 
-**Added:** January 28, 2026  
+**Added:** January 28, 2026
 **Purpose:** Ensure smooth migration from pre-SYNC-006 to SYNC-006+ protocol during dual-broadcast period
 
 ### Problem
@@ -1768,7 +1768,7 @@ Banker broadcasts:
 
 ## 🛡️ Request Data Validation & Sanitization
 
-**Current State:** January 31, 2026  
+**Current State:** January 31, 2026
 **Purpose:** Document existing and planned validation to prevent corrupted request data from spreading
 
 ### Current Validation (in `sanitizeRequest()`)
@@ -1949,24 +1949,24 @@ local MAX_FUTURE = now + 86400  -- Allow 1 day tolerance for clock skew
 
 local function validateTimestamp(ts, fallback)
     local num = tonumber(ts) or fallback
-    
+
     -- Check range
     if num < MIN_TIMESTAMP then
         TOGBankClassic_Output:Debug("REQUESTS", "Rejected: timestamp too old (%d)", num)
         return nil  -- Reject instead of using fallback
     end
-    
+
     if num > MAX_TIMESTAMP then
         TOGBankClassic_Output:Debug("REQUESTS", "Rejected: timestamp overflow (%d)", num)
         return nil
     end
-    
+
     -- Check for future timestamps (possible corruption or malicious data)
     if num > MAX_FUTURE then
         TOGBankClassic_Output:Debug("REQUESTS", "Rejected: future timestamp (%d > %d)", num, MAX_FUTURE)
         return nil
     end
-    
+
     return num
 end
 
@@ -1985,18 +1985,18 @@ function Guild:BroadcastRequestMutation(mutation)
     if not mutation or type(mutation) ~= "table" then
         return
     end
-    
+
     -- VALIDATE before broadcasting
     if mutation.request then
         local clean = sanitizeRequest(mutation.request)
         if not clean then
-            TOGBankClassic_Output:Warn("Blocked broadcast of invalid request: %s", 
+            TOGBankClassic_Output:Warn("Blocked broadcast of invalid request: %s",
                 tostring(mutation.requestId))
             return  -- Don't spread bad data
         end
         mutation.request = clean  -- Use sanitized version
     end
-    
+
     -- ... existing broadcast logic ...
 end
 ```
@@ -2009,14 +2009,14 @@ function Guild:ValidateAndCleanRequests()
     if not self.Info or not self.Info.requests then
         return 0
     end
-    
+
     local removed = 0
     local now = GetServerTime()
-    
+
     for id, req in pairs(self.Info.requests) do
         local shouldRemove = false
         local reason = ""
-        
+
         -- Check for corrupted data
         if not req.id or req.id ~= id then
             shouldRemove = true
@@ -2031,9 +2031,9 @@ function Guild:ValidateAndCleanRequests()
             shouldRemove = true
             reason = "Future timestamp"
         end
-        
+
         if shouldRemove then
-            TOGBankClassic_Output:Debug("REQUESTS", 
+            TOGBankClassic_Output:Debug("REQUESTS",
                 "Cleaning corrupted request %s: %s", id, reason)
             self.Info.requests[id] = nil
             -- Create tombstone to prevent resurrection
@@ -2042,19 +2042,19 @@ function Guild:ValidateAndCleanRequests()
             removed = removed + 1
         end
     end
-    
+
     if removed > 0 then
         TOGBankClassic_Output:Info("Cleaned %d corrupted requests", removed)
         self:RefreshRequestsUI()
     end
-    
+
     return removed
 end
 
 -- Call during initialization
 function Guild:EnsureRequestsInitialized()
     -- ... existing initialization ...
-    
+
     -- Run cleanup on load
     self:ValidateAndCleanRequests()
 end
@@ -2071,7 +2071,7 @@ function TOGBankClassic_Commands:CleanRequests()
         TOGBankClassic_Output:Response("No guild data loaded")
         return
     end
-    
+
     local removed = guild:ValidateAndCleanRequests()
     if removed > 0 then
         TOGBankClassic_Output:Response("Cleaned %d corrupted requests", removed)

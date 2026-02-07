@@ -14,8 +14,8 @@ TOGBankClassic uses an **event-sourced, distributed synchronization system** for
 ## Core Data Structures
 
 ### 1. Request Snapshot (`self.Info.requests`)
-**Type:** Array of request objects  
-**Persistence:** SavedVariables via AceDB  
+**Type:** Array of request objects
+**Persistence:** SavedVariables via AceDB
 **Purpose:** Current materialized state of all active requests
 
 ```lua
@@ -35,8 +35,8 @@ self.Info.requests = {
 ```
 
 ### 2. Event Log (`self.Info.requestLog`)
-**Type:** Array of log entries  
-**Persistence:** SavedVariables via AceDB  
+**Type:** Array of log entries
+**Persistence:** SavedVariables via AceDB
 **Purpose:** Append-only history of all request mutations
 
 ```lua
@@ -64,8 +64,8 @@ self.Info.requestLog = {
 ```
 
 ### 3. Applied Sequence Tracker (`self.Info.requestLogApplied`)
-**Type:** Map of actor → last applied sequence number  
-**Persistence:** SavedVariables via AceDB  
+**Type:** Map of actor → last applied sequence number
+**Persistence:** SavedVariables via AceDB
 **Purpose:** Track which log entries have been applied to the snapshot
 
 ```lua
@@ -86,8 +86,8 @@ end
 ```
 
 ### 4. Sequence Generator (`self.Info.requestLogSeq`)
-**Type:** Map of actor → next sequence to emit  
-**Persistence:** SavedVariables via AceDB  
+**Type:** Map of actor → next sequence to emit
+**Persistence:** SavedVariables via AceDB
 **Purpose:** Generate monotonically increasing sequence numbers per actor
 
 ```lua
@@ -98,8 +98,8 @@ self.Info.requestLogSeq = {
 ```
 
 ### 5. Tombstones (`self.Info.requestsTombstones`)
-**Type:** Map of requestId → deletion timestamp  
-**Persistence:** SavedVariables via AceDB  
+**Type:** Map of requestId → deletion timestamp
+**Persistence:** SavedVariables via AceDB
 **Purpose:** Track deleted requests to prevent resurrection
 
 ```lua
@@ -109,8 +109,8 @@ self.Info.requestsTombstones = {
 ```
 
 ### 6. Runtime Indices (NOT Persisted)
-**Type:** Maps built on load  
-**Persistence:** Rebuilt from `requestLog` on every load  
+**Type:** Maps built on load
+**Persistence:** Rebuilt from `requestLog` on every load
 **Purpose:** Fast lookups during runtime
 
 ```lua
@@ -354,8 +354,8 @@ This prevents infinite retry loops for entries that will never succeed while sti
 
 ### Version Broadcast (togbank-v)
 
-**Frequency:** Every 3 minutes (automatic)  
-**Priority:** BULK  
+**Frequency:** Every 3 minutes (automatic)
+**Priority:** BULK
 **Purpose:** Let other players know your current request state version
 
 ```lua
@@ -376,8 +376,8 @@ This prevents infinite retry loops for entries that will never succeed while sti
 
 ### Snapshot Sync (togbank-d type="requests")
 
-**When:** Initial sync, catch-up, or gap detection  
-**Priority:** BULK  
+**When:** Initial sync, catch-up, or gap detection
+**Priority:** BULK
 **Direction:** Response to query
 
 ```lua
@@ -401,8 +401,8 @@ This prevents infinite retry loops for entries that will never succeed while sti
 
 ### Log Entry Sync (togbank-d type="requests-log")
 
-**When:** Real-time updates, gap filling  
-**Priority:** ALERT (for creates), BULK (for queries)  
+**When:** Real-time updates, gap filling
+**Priority:** ALERT (for creates), BULK (for queries)
 **Direction:** Broadcast or targeted
 
 ```lua
@@ -485,7 +485,7 @@ end
 for actor, incomingSeq in pairs(incomingSnapshot.requestLogApplied) do
     local localSeq = self.Info.requestLogApplied[actor] or 0
     local maxLocal = maxLocalSeq[actor] or 0
-    
+
     if incomingSeq > localSeq then
         if incomingSeq > maxLocal then
             -- Safe: incoming seq is beyond our event log
@@ -513,7 +513,7 @@ end
 function Guild:ReplayRequestLogEntries()
     for actor, entries in pairs(self.requestLogByActor) do
         local appliedSeq = self.Info.requestLogApplied[actor] or 0
-        
+
         for _, entry in ipairs(entries) do
             if entry.seq <= appliedSeq then
                 -- Skip: already applied
@@ -622,10 +622,10 @@ Check if the REPLAY-001 validation is wiping `requestLogApplied` on every load:
 
 ```lua
 -- In EnsureRequestsInitialized(), check debug output:
-TOGBankClassic_Output:Debug("SYNC", "Before validation: requestLogApplied has %d actors", 
+TOGBankClassic_Output:Debug("SYNC", "Before validation: requestLogApplied has %d actors",
     countKeys(self.Info.requestLogApplied))
 -- ... validation code ...
-TOGBankClassic_Output:Debug("SYNC", "After validation: requestLogApplied has %d actors", 
+TOGBankClassic_Output:Debug("SYNC", "After validation: requestLogApplied has %d actors",
     countKeys(self.Info.requestLogApplied))
 ```
 

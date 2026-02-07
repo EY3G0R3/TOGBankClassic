@@ -168,17 +168,17 @@ function TOGBankClassic_Bank:Scan()
 	-- Scan mail inventory if mail was accessed
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Bank:Scan() for player '%s', hasUpdated=%s",
 		player, tostring(TOGBankClassic_MailInventory.hasUpdated))
-	
+
 	if TOGBankClassic_MailInventory.hasUpdated then
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Starting mail scan for player '%s'", player)
-		
+
 		local mailData = TOGBankClassic_MailInventory:ScanMailInventory()
 		if mailData then
 			local itemCount = 0
 			for _ in pairs(mailData.items or {}) do
 				itemCount = itemCount + 1
 			end
-			
+
 			-- Check if alt.mail already exists
 			local hadPreviousMail = alt.mail ~= nil
 			local previousItemCount = 0
@@ -186,14 +186,14 @@ function TOGBankClassic_Bank:Scan()
 				-- mail.items is array format, use # operator
 				previousItemCount = #alt.mail.items
 			end
-			
+
 			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Replacing mail data for '%s': old=%d items, new=%d items",
 				player, previousItemCount, itemCount)
-			
+
 			alt.mail = mailData
 			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] ASSIGNED alt.mail with %d items, version=%s, lastScan=%s",
 				#mailData.items, tostring(mailData.version), tostring(mailData.lastScan))
-			
+
 			-- Verify assignment worked
 			if alt.mail then
 				TOGBankClassic_Output:Debug("MAIL", "Confirmed: alt.mail exists with %d items", #alt.mail.items)
@@ -201,7 +201,7 @@ function TOGBankClassic_Bank:Scan()
 				TOGBankClassic_Output:Debug("MAIL", "ERROR: alt.mail is nil after assignment!")
 			end
 		end
-		
+
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Clearing hasUpdated flag after scan")
 		TOGBankClassic_MailInventory.hasUpdated = false
 	end
@@ -210,7 +210,7 @@ function TOGBankClassic_Bank:Scan()
 	local bankItems = (alt.bank and alt.bank.items) or {}
 	local bagItems = (alt.bags and alt.bags.items) or {}
 	local mailItems = (alt.mail and alt.mail.items) or {}  -- Now an array like bank/bags
-	
+
 	-- DEBUG: Log sample counts from SOURCE arrays before aggregation
 	if #bankItems > 0 then
 		local bankSample = {}
@@ -242,17 +242,17 @@ function TOGBankClassic_Bank:Scan()
 		end
 		TOGBankClassic_Output:Debug("DATABASE", "SOURCES - mail.items (first 3): %s", table.concat(mailSample, ", "))
 	end
-	
+
 	-- Aggregate all three sources (returns table with composite keys, deduplicates by ID)
 	local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
 	aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
-	
+
 	-- Convert back to array format for storage/sync/display
 	alt.items = {}
 	for _, item in pairs(aggregated) do
 		table.insert(alt.items, item)
 	end
-	
+
 	-- DEBUG: Log sample counts after aggregation
 	if alt.items and #alt.items > 0 then
 		local scanSample = {}
@@ -264,7 +264,7 @@ function TOGBankClassic_Bank:Scan()
 		end
 		TOGBankClassic_Output:Debug("DATABASE", "After Bank:Scan aggregation - First 5 items: %s", table.concat(scanSample, ", "))
 	end
-	
+
 	-- Also clean up source arrays to remove any duplicates (in case of corrupted data)
 	-- This ensures future scans start fresh
 	if alt.bank and alt.bank.items then
@@ -313,7 +313,7 @@ function TOGBankClassic_Bank:Scan()
 		-- Compute hash even for empty mail - this allows detecting empty→full and full→empty transitions
 		local currentMailHash = TOGBankClassic_Core:ComputeInventoryHash(alt.mail.items, nil, nil, nil)
 		local previousMailHash = alt.mailHash
-		
+
 		if currentMailHash ~= previousMailHash then
 			alt.mailHash = currentMailHash
 			TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail hash changed for %s: %s (was: %s, %d items)",
@@ -321,7 +321,7 @@ function TOGBankClassic_Bank:Scan()
 		else
 			-- Ensure mailHash is set even if unchanged (in case it was missing before)
 			alt.mailHash = currentMailHash
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail hash unchanged for %s: %s (%d items)", 
+			TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail hash unchanged for %s: %s (%d items)",
 				player, tostring(currentMailHash), #alt.mail.items)
 		end
 	else
@@ -350,10 +350,10 @@ function TOGBankClassic_Bank:Scan()
 			TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = nil")
 		end
 	end
-	
+
 	-- Write to aggregate view (info.alts) for normal use
 	info.alts[player] = alt
-	
+
 	if alt.mail then
 		TOGBankClassic_Output:Debug("MAIL", "Saved mail to info.alts[%s] (%d items)", player, #alt.mail.items)
 	else
@@ -447,7 +447,7 @@ function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
 		-- Write deduplicated bank items back to source to fix SV file
 		alt.bank.items = bankItems
 	end
-	
+
 	local bagItems = {}
 	if alt.bags and alt.bags.items then
 		local deduped = TOGBankClassic_Item:Aggregate(alt.bags.items, nil)
@@ -457,7 +457,7 @@ function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
 		-- Write deduplicated bag items back to source to fix SV file
 		alt.bags.items = bagItems
 	end
-	
+
 	local mailItems = {}
 	if alt.mail and alt.mail.items then
 		TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] BEFORE dedup: mail has %d entries", #alt.mail.items)
@@ -479,7 +479,7 @@ function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
 				end
 			end
 		end
-		
+
 		-- Mail items are now stored as array (same as bank/bags)
 		local deduped = TOGBankClassic_Item:Aggregate(alt.mail.items, nil)
 		for _, item in pairs(deduped) do
@@ -489,14 +489,14 @@ function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
 		-- Write deduplicated mail items back to source to fix SV file
 		alt.mail.items = mailItems
 	end
-	
+
 	-- Aggregate all three sources
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] Aggregating: bank=%d, bags=%d, mail=%d", #bankItems, #bagItems, #mailItems)
 	local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] After bank+bags aggregate: %d unique items", TOGBankClassic_Item:CountItems(aggregated))
 	aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
 	TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] After adding mail: %d unique items", TOGBankClassic_Item:CountItems(aggregated))
-	
+
 	-- Convert back to array format and filter out corrupted low-ID items
 	-- Valid Classic WoW item IDs start around 2000+, items with ID < 100 are from old bugs
 	alt.items = {}
@@ -509,11 +509,11 @@ function TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
 			TOGBankClassic_Output:Debug("BANK", "Filtered out corrupted item with invalid ID: %s", tostring(item.ID))
 		end
 	end
-	
+
 	if filteredCount > 0 then
 		TOGBankClassic_Output:Debug("BANK", "Removed %d corrupted items from aggregated data", filteredCount)
 	end
-	
+
 	TOGBankClassic_Output:Debug("BANK", "Recalculated aggregated items: bank=%d, bags=%d, mail=%d, total=%d (filtered %d)",
 		#bankItems, #bagItems, #mailItems, #alt.items, filteredCount)
 end

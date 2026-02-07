@@ -53,7 +53,7 @@
 
 ## [Unreleased] - Automatic Stack Splitting
 
-**Added:** 2026-01-24  
+**Added:** 2026-01-24
 **Branch:** refactor/code-reorganization
 
 ### ✨ New Features
@@ -65,7 +65,7 @@
   - Tries greedy smallest-first approach
   - Tests skipping individual stacks to find exact match
   - Handles complex scenarios (e.g., 175 items from 2+7+13+8×20 → skip 7 → use 2+13+8×20=175)
-- **Two-Step Workflow**: 
+- **Two-Step Workflow**:
   1. Click shovel → popup → split to inventory
   2. Icon auto-changes to envelope → click → attach all items
 - **Button Enhancement**: Stays enabled when split needed (no more grayed-out confusion)

@@ -1,4 +1,4 @@
-﻿# Delta Implementation Bug Tracker
+# Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
 **Last Updated:** February 6, 2026
@@ -6,13 +6,13 @@
 
 **Active Issues:**
 
-### 🛑 [MAIL-013] "Internal mail database error" when sending fulfillment
+### ?? [MAIL-013] "Internal mail database error" when sending fulfillment
 
-**Severity:** 🔴 HIGH  
-**Category:** Mail / Fulfillment  
-**Reporter:** User (Production)  
-**Date Reported:** 2026-02-06  
-**Status:** 🛑 BLOCKED - Blizzard UI/server error, likely addon-related  
+**Severity:** ?? HIGH
+**Category:** Mail / Fulfillment
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-06
+**Status:** ?? BLOCKED - Blizzard UI/server error, likely addon-related
 **Reproducibility:** Unknown (user reported once)
 
 **Error Message:**
@@ -22,8 +22,8 @@
 When attempting to fulfill an order, clicking Send produces an "internal mail database error" and the mail does not send.
 
 **Impact:**
-- ❌ Fulfillment cannot be completed
-- 📬 Mail send workflow blocked
+- ? Fulfillment cannot be completed
+- ?? Mail send workflow blocked
 
 **Notes / Suspected Areas:**
 - Mail send pipeline and pending send state (Modules/Mail.lua)
@@ -40,20 +40,20 @@ When attempting to fulfill an order, clicking Send produces an "internal mail da
 
 ---
 
-### 🟡 [PERF-006] UI stuttering without errors
+### ?? [PERF-006] UI stuttering without errors
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Performance / UI  
-**Reporter:** User (Production)  
-**Date Reported:** 2026-02-06  
-**Status:** 🐛 NEW - Needs profiling  
+**Severity:** ?? MEDIUM
+**Category:** Performance / UI
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-06
+**Status:** ?? NEW - Needs profiling
 **Reproducibility:** Intermittent (no errors/warnings)
 
 **Problem:**
 User reports noticeable UI "stuttering" during normal usage without any Lua errors or warnings.
 
 **Impact:**
-- 🐢 Degraded UX (frame drops or input hitching)
+- ?? Degraded UX (frame drops or input hitching)
 
 **Notes / Suspected Areas:**
 - Inventory/UI redraw frequency (Inventory/Requests/Mail UI)
@@ -65,6 +65,10 @@ User reports noticeable UI "stuttering" during normal usage without any Lua erro
 - Likely source: repeated full guild roster scans on GUILD_ROSTER_UPDATE during login/logout bursts.
 - Plan/Action: switch to online/offline updates from CHAT_MSG_SYSTEM and restrict full scans to init/reload and join/leave.
 
+**Update (2026-02-07):**
+- Observed stutter bursts correlated with repeated pull-based query spam in logs (`[MAIL-012] QUERYING ...` per alt).
+- Mitigation: rate-limit `QueryAltPullBased` per alt (3s) to prevent rapid re-queries.
+
 **Next Steps:**
 1. Enable PERF debug and capture timestamps around stutter
 2. Capture addon CPU usage from in-game Performance panel
@@ -72,13 +76,13 @@ User reports noticeable UI "stuttering" during normal usage without any Lua erro
 
 ---
 
-### 🔴 [SYNC-011] Pull-based request ignored despite local data
+### ?? [SYNC-011] Pull-based request ignored despite local data
 
-**Severity:** 🔴 HIGH  
-**Category:** Sync / Pull-Based Protocol  
-**Reporter:** User (Production)  
-**Date Reported:** 2026-02-06  
-**Status:** 🐛 NEW - Needs investigation  
+**Severity:** ?? HIGH
+**Category:** Sync / Pull-Based Protocol
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-06
+**Status:** ?? NEW - Needs investigation
 **Reproducibility:** Unknown (reported once)
 
 **Symptom / Logs:**
@@ -91,8 +95,8 @@ TOGBankClassic: [DEBUG] Ignoring pull-based request (no data for Metals-Azureson
 Client reports that data for Metals-Azuresong exists locally, yet the pull-based request handler reports no data and ignores the request.
 
 **Impact:**
-- ❌ Requester does not receive data (pull-based sync stalls)
-- 🧠 Misleading debug output (indicates missing data when it should exist)
+- ? Requester does not receive data (pull-based sync stalls)
+- ?? Misleading debug output (indicates missing data when it should exist)
 
 **Notes / Suspected Areas:**
 - Data presence check in pull-based request handler (Chat.lua)
@@ -109,14 +113,14 @@ Client reports that data for Metals-Azuresong exists locally, yet the pull-based
 
 **Resolved Issues (Detailed):**
 
-### ✅ [PROTO-002] PEER_TO_PEER constant undefined in Guild.lua
+### ? [PROTO-002] PEER_TO_PEER constant undefined in Guild.lua
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Module Loading / Global Scope  
-**Reporter:** User (Production error)  
-**Date Reported:** 2026-02-06  
-**Date Fixed:** 2026-02-06  
-**Status:** ✅ FIXED - Defensive nil checks added (Commits 31b947c, b929f89)  
+**Severity:** ?? CRITICAL
+**Category:** Module Loading / Global Scope
+**Reporter:** User (Production error)
+**Date Reported:** 2026-02-06
+**Date Fixed:** 2026-02-06
+**Status:** ? FIXED - Defensive nil checks added (Commits 31b947c, b929f89)
 **Reproducibility:** 100% - Every ReceiveAltData call crashes when PERF-005 code path is hit
 
 **Error Messages:**
@@ -162,10 +166,10 @@ One of the following:
 3. Scope issue where Guild.lua can't access global constants
 
 **Impact:**
-- 💥 Crash in ReceiveAltData when PERF-005 hash validation is attempted
-- 💥 Crash in Chat.lua pull-based protocol handlers when P2P checks run
-- ❌ Blocks all P2P data synchronization
-- 🚨 Production stability issue - users unable to receive alt data
+- ?? Crash in ReceiveAltData when PERF-005 hash validation is attempted
+- ?? Crash in Chat.lua pull-based protocol handlers when P2P checks run
+- ? Blocks all P2P data synchronization
+- ?? Production stability issue - users unable to receive alt data
 
 **Context:**
 - Sender: Booknlibram-Azuresong
@@ -204,21 +208,21 @@ Combine Option 1 (defensive check) with Option 2 (verify TOC order). Add nil che
 
 ---
 
-### ✅ [DELTA-014] Pull-based delta computed against banker's old broadcast, not requester's state
+### ? [DELTA-014] Pull-based delta computed against banker's old broadcast, not requester's state
 
-**Severity:** 🔴 HIGH  
-**Category:** Protocol / Performance  
-**Reporter:** User (Production testing)  
-**Date Reported:** 2026-02-03  
-**Date Fixed:** 2026-02-06  
-**Status:** ✅ FIXED (Commit 22f75c1) - Hash-based baseline comparison implemented  
+**Severity:** ?? HIGH
+**Category:** Protocol / Performance
+**Reporter:** User (Production testing)
+**Date Reported:** 2026-02-03
+**Date Fixed:** 2026-02-06
+**Status:** ? FIXED (Commit 22f75c1) - Hash-based baseline comparison implemented
 **Reproducibility:** 100% - Every pull-based query computes useless delta (BEFORE FIX)
 
 **Problem (Before Fix):**
 When banker responds to pull-based query (togbank-r), delta is computed by comparing:
 - **"previous"** = banker's last broadcast (e.g., 22 items)
 - **"current"** = banker's current data (e.g., 22 items)
-- **Result:** Delta empty → "No changes detected" → Falls back to full sync
+- **Result:** Delta empty ? "No changes detected" ? Falls back to full sync
 
 **But the requester has different data!**
 - Requester has 18 items
@@ -238,23 +242,23 @@ Delta computation took 0.13ms
 This shows banker-to-banker comparison (both 17 items), not banker-to-requester.
 
 **Impact (Before Fix):**
-- ⚠️ Wasted CPU computing useless deltas (0.1-0.4ms per alt)
-- 📊 Always falls back to full sync (no bandwidth savings for pull-based)
-- 🤔 Misleading debug output (shows wrong comparison)
-- ❌ Delta protocol not working for pull-based queries
+- ?? Wasted CPU computing useless deltas (0.1-0.4ms per alt)
+- ?? Always falls back to full sync (no bandwidth savings for pull-based)
+- ?? Misleading debug output (shows wrong comparison)
+- ? Delta protocol not working for pull-based queries
 
 **Fix Implementation (Commit 22f75c1):**
-1. ✅ Added `requesterInventoryHash` and `requesterMailHash` to togbank-r protocol message (Guild.lua:671-692)
-2. ✅ Updated `SendAltData(name, requesterInventoryHash, requesterMailHash)` signature (Guild.lua:1298)
-3. ✅ Modified `ComputeDelta()` to use requester hashes for baseline selection (DeltaComms.lua:506-546):
-   - Hash match: Use currentAlt as baseline → empty delta (requester up to date)
-   - Hash mismatch: Use GetSnapshot() as baseline → compute actual diff
-   - Hash = 0/nil: Use empty baseline → send everything as additions
-4. ✅ Removed deltaSize < fullSize fallback - delta IS the system (Guild.lua:1343-1365)
-5. ✅ Updated all SendAltData call sites:
+1. ? Added `requesterInventoryHash` and `requesterMailHash` to togbank-r protocol message (Guild.lua:671-692)
+2. ? Updated `SendAltData(name, requesterInventoryHash, requesterMailHash)` signature (Guild.lua:1298)
+3. ? Modified `ComputeDelta()` to use requester hashes for baseline selection (DeltaComms.lua:506-546):
+   - Hash match: Use currentAlt as baseline ? empty delta (requester up to date)
+   - Hash mismatch: Use GetSnapshot() as baseline ? compute actual diff
+   - Hash = 0/nil: Use empty baseline ? send everything as additions
+4. ? Removed deltaSize < fullSize fallback - delta IS the system (Guild.lua:1343-1365)
+5. ? Updated all SendAltData call sites:
    - Broadcasts: Use (0,0) empty baseline
    - Pull-based: Use requester's actual hashes from request
-6. ✅ Updated debug output to show requester vs banker hash comparison
+6. ? Updated debug output to show requester vs banker hash comparison
 
 **Debug Output (After Fix):**
 ```
@@ -263,24 +267,24 @@ Delta for Moneyy: 136 bytes vs 3418 bytes full (4.0% size, 3282 bytes saved)
 ```
 
 **Outcomes:**
-- ✅ Proper baseline: Delta compares requester's state to banker's state
-- ✅ Efficient sync: Only sends actual differences requester needs
-- ✅ CPU optimization: Eliminates wasted delta computation
-- ✅ Protocol integrity: Pull-based delta fulfills design purpose
-- ✅ Authority model: Responder's data always "wins" - delta brings requester to responder's state
+- ? Proper baseline: Delta compares requester's state to banker's state
+- ? Efficient sync: Only sends actual differences requester needs
+- ? CPU optimization: Eliminates wasted delta computation
+- ? Protocol integrity: Pull-based delta fulfills design purpose
+- ? Authority model: Responder's data always "wins" - delta brings requester to responder's state
 
 **Note on Conflict Resolution:**
 When multiple players have different data for same alt (different hashes), first responder wins. No conflict detection or resolution - system assumes responder is authoritative. See "Authority Model & Conflict Resolution" section in DELTA_IMPLEMENTATION_TODO.md for details.
 
 ---
 
-### 🟡 [PERF-005] Banker Bottleneck - Peer-to-Peer Distribution
+### ?? [PERF-005] Banker Bottleneck - Peer-to-Peer Distribution
 
-**Severity:** 🟡 MEDIUM  
-**Category:** Performance / Protocol Optimization  
-**Reporter:** User (Production, 1000-member guild)  
-**Date Reported:** 2026-02-03  
-**Status:** 🔍 DESIGN - Simplified peer-to-peer approach using existing protocols  
+**Severity:** ?? MEDIUM
+**Category:** Performance / Protocol Optimization
+**Reporter:** User (Production, 1000-member guild)
+**Date Reported:** 2026-02-03
+**Status:** ?? DESIGN - Simplified peer-to-peer approach using existing protocols
 **Reproducibility:** Consistent in large guilds with many simultaneous queries
 
 **Problem:**
@@ -295,9 +299,9 @@ Current architecture routes all data through online bankers. With 1000 members (
 **Bottleneck:** All 200 clients query banker simultaneously = 10MB through one client = 14 minutes
 
 **Impact:**
-- ⏱️ 14+ minutes sync time (1000-member guild)
-- 📊 10MB bandwidth through banker
-- ❌ Banker offline = no sync for guild
+- ?? 14+ minutes sync time (1000-member guild)
+- ?? 10MB bandwidth through banker
+- ? Banker offline = no sync for guild
 
 **Proposed Solution: Hash-Based Peer Distribution**
 
@@ -372,7 +376,7 @@ if data.type == "hash-reply" then
     }
     -- Broadcast to GUILD instead of WHISPER to banker
     TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
-    
+
     -- Set timeout: if no response in 5s, query banker for data
     C_Timer.After(5, function()
         if not self.peerDiscovery.received[data.name] then
@@ -392,10 +396,10 @@ if data.type == "alt-request" and data.expectedHash then
     local alt = TOGBankClassic_Guild.Info.alts[data.name]
     local hasData = alt ~= nil
     local hashMatches = hasData and alt.inventoryHash == data.expectedHash
-    
+
     -- OLD: Only bankers respond
     -- if isBanker and hasData then
-    
+
     -- NEW: Anyone with matching hash can respond
     if hasData and hashMatches then
         -- Send data via togbank-d3 (existing protocol)
@@ -467,9 +471,9 @@ PEER_TO_PEER = {
 - Test hash validation logic
 
 **Phase 3:** Test fallback (1 hour)
-- No peers respond → banker query works
-- Hash mismatch → banker query works
-- Peer offline → banker query works
+- No peers respond ? banker query works
+- Hash mismatch ? banker query works
+- Peer offline ? banker query works
 
 **Phase 4:** Large guild test (200+ members)
 - Measure sync time improvement
@@ -518,106 +522,106 @@ PERF_METRICS.peerToPeer = {
 
 
 **Recent Fixes (2026-02-06):**
-- ✅ [PROTO-002] PEER_TO_PEER constant undefined in Guild.lua/Chat.lua - Added defensive nil checks in Guild.lua and Chat.lua to prevent crashes when PEER_TO_PEER is unavailable; documented root cause investigation (Commits 31b947c, b929f89)
-- ✅ [DELTA-014] Pull-based delta computed against banker's old broadcast, not requester's state - Extended protocol with requesterInventoryHash/requesterMailHash in togbank-r; updated SendAltData signature to accept requester hashes; modified ComputeDelta to use requester hash for proper baseline selection; removed deltaSize < fullSize fallback (delta IS the system); achieved proper banker-to-requester delta computation with CPU optimization
+- ? [PROTO-002] PEER_TO_PEER constant undefined in Guild.lua/Chat.lua - Added defensive nil checks in Guild.lua and Chat.lua to prevent crashes when PEER_TO_PEER is unavailable; documented root cause investigation (Commits 31b947c, b929f89)
+- ? [DELTA-014] Pull-based delta computed against banker's old broadcast, not requester's state - Extended protocol with requesterInventoryHash/requesterMailHash in togbank-r; updated SendAltData signature to accept requester hashes; modified ComputeDelta to use requester hash for proper baseline selection; removed deltaSize < fullSize fallback (delta IS the system); achieved proper banker-to-requester delta computation with CPU optimization
 
 **Recent Fixes (2026-02-03):**
-- ✅ [SEARCH-006] Search results empty when window opened before data sync completes - Search data built once at first open, never refreshed when new sync data arrived; Fixed by tracking roster.version and rebuilding search data whenever version changes (Search.lua:281-291)
-- ✅ [BANDWIDTH-001] Legacy protocol noise - Reduced redundant broadcasts by disabling togbank-v and togbank-dv protocols (superseded by togbank-dv2)
-- ✅ [MAIL-012] mailHash never set - Mail synchronization detection broken; Fixed by adding mailHash to StripAltLinks(), filtering cross-guild data from version broadcasts, and disabling legacy with-Links protocols (togbank-d, togbank-d2)
+- ? [SEARCH-006] Search results empty when window opened before data sync completes - Search data built once at first open, never refreshed when new sync data arrived; Fixed by tracking roster.version and rebuilding search data whenever version changes (Search.lua:281-291)
+- ? [BANDWIDTH-001] Legacy protocol noise - Reduced redundant broadcasts by disabling togbank-v and togbank-dv protocols (superseded by togbank-dv2)
+- ? [MAIL-012] mailHash never set - Mail synchronization detection broken; Fixed by adding mailHash to StripAltLinks(), filtering cross-guild data from version broadcasts, and disabling legacy with-Links protocols (togbank-d, togbank-d2)
 
 **Recent Fixes (2026-02-02):**
-- ✅ [BANDWIDTH-001] Legacy protocol noise - Reduced redundant broadcasts by disabling togbank-v and togbank-dv protocols (superseded by togbank-dv2)
-- ✅ [MAIL-012] mailHash never set - Mail synchronization detection broken; Fixed by adding mailHash to StripAltLinks(), filtering cross-guild data from version broadcasts, and disabling legacy with-links protocols (togbank-d, togbank-d2)
+- ? [BANDWIDTH-001] Legacy protocol noise - Reduced redundant broadcasts by disabling togbank-v and togbank-dv protocols (superseded by togbank-dv2)
+- ? [MAIL-012] mailHash never set - Mail synchronization detection broken; Fixed by adding mailHash to StripAltLinks(), filtering cross-guild data from version broadcasts, and disabling legacy with-links protocols (togbank-d, togbank-d2)
 
 **Recent Fixes (2026-02-02):**
-- ✅ [SYNC-010] User-cancelled orders not propagating to other clients - Root cause: ChatThrottleLib per-prefix throttling; togbank-d prefix exhausted by BULK snapshot syncs, blocking ALERT mutation messages; Fix: Created dedicated togbank-rm prefix for request mutations with independent 10-message throttle bucket, ensuring immediate delivery regardless of background sync load
-- ✅ [PERF-004] UI hangs 0.5-1s on first open - Deferred BuildSearchData() from Inventory:DrawContent() to Search:Open() to avoid blocking initial window open; achieved 50-70% faster inventory open performance
-- ✅ [UI-013] Manual mail fulfillment tracking and request quantity validation - Added visible feedback when manual mails are tracked/applied; improved request validation to prevent exceeding available quantity with clear warnings
+- ? [SYNC-010] User-cancelled orders not propagating to other clients - Root cause: ChatThrottleLib per-prefix throttling; togbank-d prefix exhausted by BULK snapshot syncs, blocking ALERT mutation messages; Fix: Created dedicated togbank-rm prefix for request mutations with independent 10-message throttle bucket, ensuring immediate delivery regardless of background sync load
+- ? [PERF-004] UI hangs 0.5-1s on first open - Deferred BuildSearchData() from Inventory:DrawContent() to Search:Open() to avoid blocking initial window open; achieved 50-70% faster inventory open performance
+- ? [UI-013] Manual mail fulfillment tracking and request quantity validation - Added visible feedback when manual mails are tracked/applied; improved request validation to prevent exceeding available quantity with clear warnings
 
 **Recent Fixes (2026-01-31):**
-- ✅ [DATA-010] Mail slots format crash when trading items - Fixed Bank.lua to handle legacy mail.slots number format and automatically migrate to new table format {count, total}
-- ✅ [UI-012] Dropdown contents blinking and disappearing - Fixed by caching dropdown lists to prevent unnecessary SetList() calls on every DrawContent refresh
-- ✅ [UI-011-B] Banker highlight checkbox appearing intermittently - Fixed guild roster loading timing issue by adding GetNumGuildMembers() guard before IsBank() check in UpdateFilters
-- ✅ [MAIL-011-B] Manual mail sends not applying fulfillment - Resolved by MAIL-011 fix; OnSendMail hook now correctly captures items from mail attachments for both fulfill button and manual sends
-- ✅ [MAIL-011] Order fulfillment not applying when sending mail - Fixed race condition where OnSendMail hook was clearing pendingSend before ApplyPendingSend could read it; moved pendingSend capture to PrepareFulfillMail (when items attached) instead of SendMail hook (after mail sent); added 10-second staleness check to prevent clearing recent pendingSend
-- ✅ [SYNC-008] Cancelled requests resurrecting from snapshots with newer timestamps - Fixed mergeRequest() to protect terminal states (cancelled/complete) from being overwritten by "open" status unless incoming has explicitly newer statusUpdatedAt timestamp; prevents zombie requests from reappearing after cancellation
-- ✅ [DATA-009] "Zombie requests" with mismatched ID/item fields - Added validation to detect and reject requests where ID contains different item name than actual item field (caused by editing requests after creation, IDs embed original item name)
-- ✅ [DATA-008] Request data corruption from empty/invalid required fields - Added strict validation in sanitizeRequest() to reject requests with empty item/requester/bank fields, zero quantity, or "Unknown" requester (previously accepted with defaults, causing corrupted requests to spread)
+- ? [DATA-010] Mail slots format crash when trading items - Fixed Bank.lua to handle legacy mail.slots number format and automatically migrate to new table format {count, total}
+- ? [UI-012] Dropdown contents blinking and disappearing - Fixed by caching dropdown lists to prevent unnecessary SetList() calls on every DrawContent refresh
+- ? [UI-011-B] Banker highlight checkbox appearing intermittently - Fixed guild roster loading timing issue by adding GetNumGuildMembers() guard before IsBank() check in UpdateFilters
+- ? [MAIL-011-B] Manual mail sends not applying fulfillment - Resolved by MAIL-011 fix; OnSendMail hook now correctly captures items from mail attachments for both fulfill button and manual sends
+- ? [MAIL-011] Order fulfillment not applying when sending mail - Fixed race condition where OnSendMail hook was clearing pendingSend before ApplyPendingSend could read it; moved pendingSend capture to PrepareFulfillMail (when items attached) instead of SendMail hook (after mail sent); added 10-second staleness check to prevent clearing recent pendingSend
+- ? [SYNC-008] Cancelled requests resurrecting from snapshots with newer timestamps - Fixed mergeRequest() to protect terminal states (cancelled/complete) from being overwritten by "open" status unless incoming has explicitly newer statusUpdatedAt timestamp; prevents zombie requests from reappearing after cancellation
+- ? [DATA-009] "Zombie requests" with mismatched ID/item fields - Added validation to detect and reject requests where ID contains different item name than actual item field (caused by editing requests after creation, IDs embed original item name)
+- ? [DATA-008] Request data corruption from empty/invalid required fields - Added strict validation in sanitizeRequest() to reject requests with empty item/requester/bank fields, zero quantity, or "Unknown" requester (previously accepted with defaults, causing corrupted requests to spread)
 
 **Recent Fixes (2026-01-30):**
-- ✅ [UI-011] Banker highlight checkbox not appearing after banker status changes - Fixed Open() to detect banker status changes and recreate window to show/hide highlight checkbox
-- ✅ [MAIL-010] Mail items disappearing from UI after receiving syncs from old clients - Fixed ReceiveAltData() to check mailHash to distinguish old vs new data, only merge mail for old data; added re-aggregation of alt.items after restoring preserved mail to include mail in UI display
-- ✅ [SEARCH-005] Search only returning 1 item when multiple item types match - Added debug logging to track corpus matching; fixed search result counting with matchedNames variable
-- ✅ [SEARCH-004] Search UI crash "attempt to concatenate global 'mailIcon' (a nil value)" - Fixed missing mailIcon variable definition in Search.lua line 614 (was checking inMail flag but never setting the icon string)
-- ✅ [UI-010] Request window opening with half-width border and buttons floating outside - Fixed SetStatusTable restoring incorrect width by calling SetWidth(MIN_WIDTH) after SetStatusTable to enforce minimum size
-- ✅ [DATA-007] Non-bankers unable to receive data after wipe - Fixed banker protection to only apply when RECEIVER is a banker, not when TARGET is a banker (non-bankers can now receive banker data from any source)
-- ✅ [DELTA-013] Duplicate query spam when receiving deltas without baseline - Added pending sync check to prevent multiple queries for same alt while first request in flight
-- ✅ [UI-009] ESC key not closing Requests window - Registered frame with UISpecialFrames for proper escape handler
-- ✅ [DELTA-012] Delta sync metrics only counting one transmission in AUTO mode - Fixed RecordDeltaSent() to count both deltaWithLinks and deltaNoLinks sizes when dual-sending (was only counting one, causing all syncs to appear as full syncs in stats)
-- ✅ [MAIL-009] Non-bankers losing mail data when receiving syncs from old clients - Extended mail preservation to all users for backward compatibility
-- ✅ [MAIL-008] Mail items being added to bank.items permanently causing data corruption - Fixed EnsureLegacyFields() to not modify bank.items (mail stays separate)
-- ✅ [MAIL-007] Mail items incrementing in UI only - Fixed indentation bug causing mail items to be aggregated twice when alt.items exists (SYNC-006 format); also fixed 2 lingering pairs() calls for mail.items arrays
-- ✅ [DELTA-011] UNAUTHORIZED rejections recorded as errors + 30% threshold blocking delta syncs - Fixed to not record UNAUTHORIZED as errors (expected banker protection); removed 30% MIN_DELTA_SIZE_RATIO threshold (now uses delta whenever deltaSize < fullSize)
-- ✅ [MAIL-006] Mail array format regression - Fixed 6 locations using pairs() instead of ipairs() for mail.items arrays
+- ? [UI-011] Banker highlight checkbox not appearing after banker status changes - Fixed Open() to detect banker status changes and recreate window to show/hide highlight checkbox
+- ? [MAIL-010] Mail items disappearing from UI after receiving syncs from old clients - Fixed ReceiveAltData() to check mailHash to distinguish old vs new data, only merge mail for old data; added re-aggregation of alt.items after restoring preserved mail to include mail in UI display
+- ? [SEARCH-005] Search only returning 1 item when multiple item types match - Added debug logging to track corpus matching; fixed search result counting with matchedNames variable
+- ? [SEARCH-004] Search UI crash "attempt to concatenate global 'mailIcon' (a nil value)" - Fixed missing mailIcon variable definition in Search.lua line 614 (was checking inMail flag but never setting the icon string)
+- ? [UI-010] Request window opening with half-width border and buttons floating outside - Fixed SetStatusTable restoring incorrect width by calling SetWidth(MIN_WIDTH) after SetStatusTable to enforce minimum size
+- ? [DATA-007] Non-bankers unable to receive data after wipe - Fixed banker protection to only apply when RECEIVER is a banker, not when TARGET is a banker (non-bankers can now receive banker data from any source)
+- ? [DELTA-013] Duplicate query spam when receiving deltas without baseline - Added pending sync check to prevent multiple queries for same alt while first request in flight
+- ? [UI-009] ESC key not closing Requests window - Registered frame with UISpecialFrames for proper escape handler
+- ? [DELTA-012] Delta sync metrics only counting one transmission in AUTO mode - Fixed RecordDeltaSent() to count both deltaWithLinks and deltaNoLinks sizes when dual-sending (was only counting one, causing all syncs to appear as full syncs in stats)
+- ? [MAIL-009] Non-bankers losing mail data when receiving syncs from old clients - Extended mail preservation to all users for backward compatibility
+- ? [MAIL-008] Mail items being added to bank.items permanently causing data corruption - Fixed EnsureLegacyFields() to not modify bank.items (mail stays separate)
+- ? [MAIL-007] Mail items incrementing in UI only - Fixed indentation bug causing mail items to be aggregated twice when alt.items exists (SYNC-006 format); also fixed 2 lingering pairs() calls for mail.items arrays
+- ? [DELTA-011] UNAUTHORIZED rejections recorded as errors + 30% threshold blocking delta syncs - Fixed to not record UNAUTHORIZED as errors (expected banker protection); removed 30% MIN_DELTA_SIZE_RATIO threshold (now uses delta whenever deltaSize < fullSize)
+- ? [MAIL-006] Mail array format regression - Fixed 6 locations using pairs() instead of ipairs() for mail.items arrays
 
 **Recent Fixes (2026-01-29):**
-- ✅ [DATA-006] Mail data being deleted by external sync for multi-banker accounts - Fixed ReceiveAltData() to reject ALL external updates to banker data (was only rejecting non-banker updates)
-- ✅ [SEARCH-003] Search returning 0 results despite valid data - Fixed BuildSearchData() to use pairs() instead of ipairs() for hash table iteration from Aggregate()
-- ✅ [ITEM-002] **CRITICAL CRASH** "table index is nil" in Blizzard_ObjectAPI Item.lua:320 - Fixed by adding itemID validation before ContinueOnItemLoad, pcall protection, and filtering corrupted items (ID < 100) in Guild.lua and Item.lua
-- ✅ [DATA-005] Banker data being overwritten by external sources - Enhanced banker protection to reject ALL external data about banker themselves, not just non-banker updates
-- ✅ [MAIL-005] Duplicate item stacks for identical gear with different instance IDs - Implemented selective Link preservation (gear only) and normalized deduplication keys
-- ✅ [ITEM-001] Item deduplication failing for linkless synced data - Fixed Aggregate pattern matching and added GetItemKey() normalization
+- ? [DATA-006] Mail data being deleted by external sync for multi-banker accounts - Fixed ReceiveAltData() to reject ALL external updates to banker data (was only rejecting non-banker updates)
+- ? [SEARCH-003] Search returning 0 results despite valid data - Fixed BuildSearchData() to use pairs() instead of ipairs() for hash table iteration from Aggregate()
+- ? [ITEM-002] **CRITICAL CRASH** "table index is nil" in Blizzard_ObjectAPI Item.lua:320 - Fixed by adding itemID validation before ContinueOnItemLoad, pcall protection, and filtering corrupted items (ID < 100) in Guild.lua and Item.lua
+- ? [DATA-005] Banker data being overwritten by external sources - Enhanced banker protection to reject ALL external data about banker themselves, not just non-banker updates
+- ? [MAIL-005] Duplicate item stacks for identical gear with different instance IDs - Implemented selective Link preservation (gear only) and normalized deduplication keys
+- ? [ITEM-001] Item deduplication failing for linkless synced data - Fixed Aggregate pattern matching and added GetItemKey() normalization
 
 **Recent Fixes (2026-01-28):**
-- ✅ [DATA-004] Item count duplication in UI display - Fixed inconsistent mail.items structure (was key-value, now array like bank/bags); added missing Checksum method; made GetInfo defensive to never drop items
-- ✅ [PERF-003] In-game stuttering during async item reconstruction - Throttled UI refreshes to prevent excessive redraws
-- ✅ [UI-007] Item tooltips not showing stats on gear - Preserved ItemString to maintain unique item data (suffixes, enchants)
-- ✅ [UI-008] C stack overflow in item loading callbacks - Fixed by preventing BuildSearchData from running multiple times per data update
-- ✅ [SYNC-007] Backward compatibility for SYNC-006 aggregate structure - Implemented bidirectional sync between pre-SYNC-006 and post-SYNC-006 clients
-- ✅ [SYNC-006] Mail quantities appearing additive during syncs - Consolidated inventory into single alt.items aggregate
-- ✅ [MAIL-004] Non-stackable items filtered out by greedy algorithm - Fixed minStackSize to never exceed largestStack
-- ✅ [UI-006] Highlight checkbox not appearing for bankers - Fixed by refreshing UI on GUILD_ROSTER_UPDATE
-- ✅ [SYNC-005] Failed log entries retrying infinitely - Implemented permanent vs transient failure detection
-- ✅ [SYNC-004] User request cancellations not propagating to other players - Fixed sequential entry requirement and implemented priority-based conflict resolution
-- ✅ [SYNC-001] Request data disappearing after snapshots - Implemented smart-merge algorithm to protect local event log from being skipped
+- ? [DATA-004] Item count duplication in UI display - Fixed inconsistent mail.items structure (was key-value, now array like bank/bags); added missing Checksum method; made GetInfo defensive to never drop items
+- ? [PERF-003] In-game stuttering during async item reconstruction - Throttled UI refreshes to prevent excessive redraws
+- ? [UI-007] Item tooltips not showing stats on gear - Preserved ItemString to maintain unique item data (suffixes, enchants)
+- ? [UI-008] C stack overflow in item loading callbacks - Fixed by preventing BuildSearchData from running multiple times per data update
+- ? [SYNC-007] Backward compatibility for SYNC-006 aggregate structure - Implemented bidirectional sync between pre-SYNC-006 and post-SYNC-006 clients
+- ? [SYNC-006] Mail quantities appearing additive during syncs - Consolidated inventory into single alt.items aggregate
+- ? [MAIL-004] Non-stackable items filtered out by greedy algorithm - Fixed minStackSize to never exceed largestStack
+- ? [UI-006] Highlight checkbox not appearing for bankers - Fixed by refreshing UI on GUILD_ROSTER_UPDATE
+- ? [SYNC-005] Failed log entries retrying infinitely - Implemented permanent vs transient failure detection
+- ? [SYNC-004] User request cancellations not propagating to other players - Fixed sequential entry requirement and implemented priority-based conflict resolution
+- ? [SYNC-001] Request data disappearing after snapshots - Implemented smart-merge algorithm to protect local event log from being skipped
 
 **Recent Fixes (2026-01-27):**
-- ✅ [FULFILL-002] Fulfill button callback not updating after split - Fixed greedy algorithm to prefer exact-fit stacks over splitting
-- ✅ [MAIL-003] Search UI crash on undefined 'info' variable - Fixed to use TOGBankClassic_Guild.Info
-- ✅ [MAIL-002] Mail inventory displaying incorrect/duplicate counts - Fixed Search corpus, duplicate detection, and Inventory mail aggregation
-- ✅ [MAIL-001] ComputeInventoryHash parameter mismatch - Fixed function to handle both 3-param and 4-param calling conventions
-- ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
-- ✅ [UI-005] Inventory UI crash on missing slots field - Added nil checks for alt.bank.slots and alt.bags.slots
+- ? [FULFILL-002] Fulfill button callback not updating after split - Fixed greedy algorithm to prefer exact-fit stacks over splitting
+- ? [MAIL-003] Search UI crash on undefined 'info' variable - Fixed to use TOGBankClassic_Guild.Info
+- ? [MAIL-002] Mail inventory displaying incorrect/duplicate counts - Fixed Search corpus, duplicate detection, and Inventory mail aggregation
+- ? [MAIL-001] ComputeInventoryHash parameter mismatch - Fixed function to handle both 3-param and 4-param calling conventions
+- ? [DELTA-010] Validation rejected v0.8.0 minimal removed items format - Fixed ValidateItemDelta() to accept removed items without Link
+- ? [UI-005] Inventory UI crash on missing slots field - Added nil checks for alt.bank.slots and alt.bags.slots
 
 **Recent Fixes (2026-01-26):**
-- ✅ [PERF-002] NormalizeRequestList broadcast storm - Decoupled request sync from inventory delta sync to eliminate 12+ calls/second
+- ? [PERF-002] NormalizeRequestList broadcast storm - Decoupled request sync from inventory delta sync to eliminate 12+ calls/second
 
 **Recent Fixes (2026-01-25):**
-- ✅ [DATA-003] Integer overflow on request version timestamp - Fixed MAX_TIMESTAMP to 2147483647 (32-bit limit)
-- ✅ [DELTA-009] Delta sync failure warnings spam for offline players - Added ClearOfflineErrorCounters() on GUILD_ROSTER_UPDATE
+- ? [DATA-003] Integer overflow on request version timestamp - Fixed MAX_TIMESTAMP to 2147483647 (32-bit limit)
+- ? [DELTA-009] Delta sync failure warnings spam for offline players - Added ClearOfflineErrorCounters() on GUILD_ROSTER_UPDATE
 
 **Recent Fixes (2026-01-23):**
-- ✅ [COMM-002] Stale guild roster in online checks - Added GuildRoster() call to refresh cached data before checking player online status
-- ✅ [UI-004] Banker tab snap-back - Fixed DrawContent() to preserve selected tab instead of always resetting to first
-- ✅ [SYNC-002] Request data not syncing - Fixed PerformSync() to pass player name and removed player check for guild-wide request queries
-- ✅ [COMM-001] **EXPANSION** Offline WHISPER errors - Added SendWhisper() wrapper with automatic online checking for all WHISPER sends
-- ✅ [DELTA-008] Repeated delta sync failures from offline whispers - Added online check in RequestDeltaChain
-- ✅ [UI-003] **CRITICAL** Request data loss on snapshot sync - Fixed ApplyRequestSnapshot to merge instead of replace
-- ✅ [COMPAT-002] SendRosterData nil Info crash - Added defensive nil check
-- ✅ [DATA-002] ReceiveAltData nil version comparison - Added nil check for existing alt version
-- ✅ **FEATURE** Persistent debug logging (v0.7.11) - 50k entry buffer with filtering, 7-day retention, SavedVariables persistence
+- ? [COMM-002] Stale guild roster in online checks - Added GuildRoster() call to refresh cached data before checking player online status
+- ? [UI-004] Banker tab snap-back - Fixed DrawContent() to preserve selected tab instead of always resetting to first
+- ? [SYNC-002] Request data not syncing - Fixed PerformSync() to pass player name and removed player check for guild-wide request queries
+- ? [COMM-001] **EXPANSION** Offline WHISPER errors - Added SendWhisper() wrapper with automatic online checking for all WHISPER sends
+- ? [DELTA-008] Repeated delta sync failures from offline whispers - Added online check in RequestDeltaChain
+- ? [UI-003] **CRITICAL** Request data loss on snapshot sync - Fixed ApplyRequestSnapshot to merge instead of replace
+- ? [COMPAT-002] SendRosterData nil Info crash - Added defensive nil check
+- ? [DATA-002] ReceiveAltData nil version comparison - Added nil check for existing alt version
+- ? **FEATURE** Persistent debug logging (v0.7.11) - 50k entry buffer with filtering, 7-day retention, SavedVariables persistence
 
 **Previous Fixes (2026-01-22):**
-- ✅ [SYNC-001] Cross-guild data bleed - Added roster-based validation
-- ✅ [ADDON-001] Nil itemLink handling - Added defensive nil checks throughout
-- ✅ [DELTA-007] TriggerCallback method missing - Replaced with direct UI refresh
-- ✅ [PROTO-001] Delta validation now accepts link-less deltas without baseVersion
-- ✅ [UI-001] Inventory UI handles missing slots data gracefully
-- ✅ [UI-002] Item links now display after async reconstruction (UI refresh fixed)
-- ✅ [DATA-001] Inventory hashes migrated for all existing alt data
-- ✅ [PERF-001] Message priority optimization (BULK → NORMAL for queries/broadcasts)
-- ✅ Pull-based protocol operational: hash broadcasting, comparison, and selective queries working
+- ? [SYNC-001] Cross-guild data bleed - Added roster-based validation
+- ? [ADDON-001] Nil itemLink handling - Added defensive nil checks throughout
+- ? [DELTA-007] TriggerCallback method missing - Replaced with direct UI refresh
+- ? [PROTO-001] Delta validation now accepts link-less deltas without baseVersion
+- ? [UI-001] Inventory UI handles missing slots data gracefully
+- ? [UI-002] Item links now display after async reconstruction (UI refresh fixed)
+- ? [DATA-001] Inventory hashes migrated for all existing alt data
+- ? [PERF-001] Message priority optimization (BULK ? NORMAL for queries/broadcasts)
+- ? Pull-based protocol operational: hash broadcasting, comparison, and selective queries working
 
 ---
 
@@ -625,10 +629,10 @@ PERF_METRICS.peerToPeer = {
 
 | Severity | Description | Response Time |
 |----------|-------------|---------------|
-| 🔴 **CRITICAL** | Crashes, data loss, or complete feature failure | Immediate fix required |
-| 🟠 **HIGH** | Major functionality broken, workaround exists | Fix within 24-48 hours |
-| 🟡 **MEDIUM** | Minor functionality issue, doesn't block usage | Fix within 1 week |
-| 🟢 **LOW** | Cosmetic issues, minor inconvenience | Fix when possible |
+| ?? **CRITICAL** | Crashes, data loss, or complete feature failure | Immediate fix required |
+| ?? **HIGH** | Major functionality broken, workaround exists | Fix within 24-48 hours |
+| ?? **MEDIUM** | Minor functionality issue, doesn't block usage | Fix within 1 week |
+| ?? **LOW** | Cosmetic issues, minor inconvenience | Fix when possible |
 
 ---
 
@@ -655,17 +659,17 @@ PERF_METRICS.peerToPeer = {
 
 ## Resolved Bugs (2026-02-03)
 
-### 🟢 LOW
+### ?? LOW
 
-#### 🟢 [BANDWIDTH-001] Legacy Protocol Noise - Redundant Broadcasts ✅ FIXED
+#### ?? [BANDWIDTH-001] Legacy Protocol Noise - Redundant Broadcasts ? FIXED
 
-**Severity:** 🟢 LOW  
-**Category:** Bandwidth Optimization / Protocol Cleanup  
-**Reporter:** User (Production)  
-**Date Reported:** 2026-02-03  
-**Date Resolved:** 2026-02-03  
-**Status:** ✅ FIXED - Legacy protocols disabled  
-**Reproducibility:** Consistent (100%)  
+**Severity:** ?? LOW
+**Category:** Bandwidth Optimization / Protocol Cleanup
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-03
+**Date Resolved:** 2026-02-03
+**Status:** ? FIXED - Legacy protocols disabled
+**Reproducibility:** Consistent (100%)
 
 **Problem:**
 The addon was dual-broadcasting version data on multiple legacy protocols that were ignored by modern delta-enabled clients, causing redundant network traffic every 3 minutes.
@@ -697,11 +701,11 @@ Additionally, clients with SYNC-006 support ignore togbank-dv in favor of togban
 **Analysis:**
 
 **togbank-dv2 already includes everything:**
-- ✅ Addon version (`addon = versionNumber`)
-- ✅ Protocol version (`protocol_version = PROTOCOL.VERSION`)
-- ✅ Alt versions + inventory hashes (`alts[name] = {version, hash}`)
-- ✅ Request log version + hash (`requests = {version, hash}`)
-- ✅ Roster version timestamp (`roster = self.Info.roster.version`)
+- ? Addon version (`addon = versionNumber`)
+- ? Protocol version (`protocol_version = PROTOCOL.VERSION`)
+- ? Alt versions + inventory hashes (`alts[name] = {version, hash}`)
+- ? Request log version + hash (`requests = {version, hash}`)
+- ? Roster version timestamp (`roster = self.Info.roster.version`)
 
 **togbank-v and togbank-dv are redundant** - they contain the same information but are ignored by modern clients.
 
@@ -846,28 +850,28 @@ If issues arise, uncomment the following to restore full legacy protocol support
 
 After reload, check debug logs for:
 ```
-✅ Should see: togbank-dv2 broadcasts every 3 minutes
-❌ Should NOT see: togbank-v or togbank-dv broadcasts
-✅ Pull-based protocol should still work (queries triggered by dv2 version mismatches)
+? Should see: togbank-dv2 broadcasts every 3 minutes
+? Should NOT see: togbank-v or togbank-dv broadcasts
+? Pull-based protocol should still work (queries triggered by dv2 version mismatches)
 ```
 
-✅ **Fix Confirmed - Bandwidth Optimization Complete**
+? **Fix Confirmed - Bandwidth Optimization Complete**
 
 ---
 
 ## Resolved Bugs (2026-02-02)
 
-### 🔴 CRITICAL
+### ?? CRITICAL
 
-#### 🔴 [SYNC-010] User-cancelled orders not propagating to other clients ✅ FIXED
+#### ?? [SYNC-010] User-cancelled orders not propagating to other clients ? FIXED
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Request Synchronization / Delta Comms / ChatThrottleLib  
-**Reporter:** User (Production)  
-**Date Reported:** 2026-02-02  
-**Date Resolved:** 2026-02-02  
-**Status:** ✅ FIXED - Implemented dedicated prefix for request mutations  
-**Reproducibility:** Consistent (100% reproduction achieved)  
+**Severity:** ?? CRITICAL
+**Category:** Request Synchronization / Delta Comms / ChatThrottleLib
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-02
+**Date Resolved:** 2026-02-02
+**Status:** ? FIXED - Implemented dedicated prefix for request mutations
+**Reproducibility:** Consistent (100% reproduction achieved)
 
 **Problem:**
 When users cancel their own requests using the Cancel button in the Requests UI, the cancellation is applied locally but does NOT propagate to other guild members immediately. Other players continue to see the request as "open" status even after the requester has cancelled it. Cancellations eventually arrive after 20-30 minutes via periodic snapshot sync.
@@ -895,8 +899,8 @@ After extensive debugging with instrumented logging, the root cause was discover
 WoW Classic's addon communication system implements **per-prefix throttling** as documented in the WoW API:
 
 > "Each registered prefix is given an allowance of 10 addon messages that can be sent. Each message sent on a prefix reduces this allowance by 1. If the allowance reaches zero, further attempts to send messages on the same prefix will fail, returning `nil`. Each prefix regains its allowance at a rate of 1 message per second, up to the original maximum of 10 messages."
-> 
-> — WoW API Documentation: C_ChatInfo.SendAddonMessage
+>
+> � WoW API Documentation: C_ChatInfo.SendAddonMessage
 
 **The Issue:**
 
@@ -908,9 +912,9 @@ TOGBankClassic was using the **same prefix (`togbank-d`)** for:
 
 During normal operation, BULK messages (snapshot syncs, deltas) continuously consumed the 10-message allowance for `togbank-d`. When a user attempted to cancel a request:
 
-1. **ADD message sent** (ALERT) → Consumed 1 allowance (9 remaining)
-2. **Multiple BULK messages sent** over next 1-4 seconds → Consumed remaining allowance
-3. **CANCEL message attempted** (ALERT) → `SendCommMessage()` returned `nil` (throttled)
+1. **ADD message sent** (ALERT) ? Consumed 1 allowance (9 remaining)
+2. **Multiple BULK messages sent** over next 1-4 seconds ? Consumed remaining allowance
+3. **CANCEL message attempted** (ALERT) ? `SendCommMessage()` returned `nil` (throttled)
 4. Client logs showed "SendCommMessage returned" but message was never actually sent
 
 **Evidence from Debug Logs:**
@@ -919,7 +923,7 @@ During normal operation, BULK messages (snapshot syncs, deltas) continuously con
 Pickyminer log (sender):
 TOGBankClassic: [DEBUG] BroadcastRequestMutation: Sending type=cancel, requestId=Pickyminer-OldBlanchy:40c736, actor=Pickyminer-OldBlanchy, ts=1770049924, hasRequest=true
 TOGBankClassic: [DEBUG] BroadcastRequestMutation: Serialized payload, size=475 bytes, calling SendCommMessage
-TOGBankClassic: [DEBUG] BroadcastRequestMutation: SendCommMessage returned nil for type=cancel  ← THROTTLED!
+TOGBankClassic: [DEBUG] BroadcastRequestMutation: SendCommMessage returned nil for type=cancel  ? THROTTLED!
 TOGBankClassic: [DEBUG] CancelRequest: Broadcast sent for id=Pickyminer-OldBlanchy:40c736
 
 Togweapons log (banker receiver):
@@ -965,10 +969,10 @@ This maintains full backward compatibility during the transition period.
 
 **Testing Plan:**
 
-1. Create request from non-banker → Cancel immediately → Verify banker receives CANCEL within 1-2 seconds
-2. Stress test: Create and cancel 10 requests rapidly → Verify all CANCELs arrive
-3. Mixed client test: New client cancels, old client receives → Verify compatibility
-4. Monitor `SendCommMessage()` return values → Should never return `nil` for mutations
+1. Create request from non-banker ? Cancel immediately ? Verify banker receives CANCEL within 1-2 seconds
+2. Stress test: Create and cancel 10 requests rapidly ? Verify all CANCELs arrive
+3. Mixed client test: New client cancels, old client receives ? Verify compatibility
+4. Monitor `SendCommMessage()` return values ? Should never return `nil` for mutations
 
 **Performance Impact:**
 
@@ -1014,7 +1018,7 @@ All SYNC-010 debug logging remains active for monitoring fix effectiveness:
 
 Tested with instrumented client showing:
 ```
-[DEBUG] BroadcastRequestMutation: SendCommMessage returned 1 for type=cancel  ← SUCCESS!
+[DEBUG] BroadcastRequestMutation: SendCommMessage returned 1 for type=cancel  ? SUCCESS!
 [DEBUG] [SYNC-010] togbank-rm requests-log received from Pickyminer-OldBlanchy
 [DEBUG] ReceiveRequestMutations: Processing 1 entries from Pickyminer-OldBlanchy
 [DEBUG] ReceiveRequestMutations: Entry 1/1: type=cancel, requestId=Pickyminer-OldBlanchy:40c736
@@ -1022,23 +1026,23 @@ Tested with instrumented client showing:
 [DEBUG] mergeRequest: UPDATED - id=Pickyminer-OldBlanchy:40c736, status=cancelled
 ```
 
-✅ **Fix Confirmed Working**
+? **Fix Confirmed Working**
 
 ---
 
 ## Resolved Bugs (2026-02-03)
 
-### 🔴 CRITICAL
+### ?? CRITICAL
 
-#### 🔴 [MAIL-012] mailHash Never Set - Mail Synchronization Detection Broken ✅ FIXED
+#### ?? [MAIL-012] mailHash Never Set - Mail Synchronization Detection Broken ? FIXED
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Mail Synchronization / Protocol / Data Transmission  
-**Reporter:** User (Production)  
-**Date Reported:** 2026-02-02  
-**Date Resolved:** 2026-02-03  
-**Status:** ✅ FIXED - mailHash now transmitted and persisted  
-**Reproducibility:** Consistent (100%)  
+**Severity:** ?? CRITICAL
+**Category:** Mail Synchronization / Protocol / Data Transmission
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-02
+**Date Resolved:** 2026-02-03
+**Status:** ? FIXED - mailHash now transmitted and persisted
+**Reproducibility:** Consistent (100%)
 
 **Problem:**
 The `mailHash` field was referenced throughout the codebase to detect mail data presence and changes, but **it was never actually set or transmitted**. This caused mail synchronization to completely fail between guild members.
@@ -1063,7 +1067,7 @@ The mailHash field was computed in `Bank:Scan()` (Bank.lua:289-294) but **never 
 2. **Protocol used wrong transmission path:**
    - `SendAltData()` dual-sends for backward compatibility:
      - **togbank-d** (full sync WITH Links) - legacy clients
-     - **togbank-d3** (full sync WITHOUT Links) - new clients  
+     - **togbank-d3** (full sync WITHOUT Links) - new clients
    - **togbank-d3** calls `StripAltLinks()` to remove Links
    - But StripAltLinks was missing mailHash, so d3 never transmitted it
 
@@ -1078,25 +1082,25 @@ The mailHash field was computed in `Bank:Scan()` (Bank.lua:289-294) but **never 
 
 ```
 Bagsbagsbags scans mailbox:
-├─ Bank:Scan() computes alt.mailHash = 402068733 ✅
-├─ SendAltData() dual-sends for compatibility:
-│   ├─ togbank-d  (WITH Links): includes mailHash ✅
-│   └─ togbank-d3 (NO Links):   MISSING mailHash ❌  ← BUG
-└─ Modern clients use d3 → receive mailHash=nil
++- Bank:Scan() computes alt.mailHash = 402068733 ?
++- SendAltData() dual-sends for compatibility:
+�   +- togbank-d  (WITH Links): includes mailHash ?
+�   +- togbank-d3 (NO Links):   MISSING mailHash ?  ? BUG
++- Modern clients use d3 ? receive mailHash=nil
 
 Pickyminer receives data:
-├─ Receives via togbank-d3 (no Links protocol)
-├─ Data has mail.items but no mailHash ❌
-├─ ReceiveAltData() checks hasMailHash = false
-├─ Treats as "old client data" (pre-mail-support)
-├─ Activates backward compatibility mail merge
-└─ No mail change detection possible
++- Receives via togbank-d3 (no Links protocol)
++- Data has mail.items but no mailHash ?
++- ReceiveAltData() checks hasMailHash = false
++- Treats as "old client data" (pre-mail-support)
++- Activates backward compatibility mail merge
++- No mail change detection possible
 
 Result:
-❌ Mail data never synchronized properly
-❌ No detection of mail content changes  
-❌ No query mechanism for mail updates
-❌ Clients couldn't tell if mail was stale or current
+? Mail data never synchronized properly
+? No detection of mail content changes
+? No query mechanism for mail updates
+? Clients couldn't tell if mail was stale or current
 ```
 
 **Fix Implementation:**
@@ -1114,7 +1118,7 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
         self:StripLinksFromContainer(alt.bank),
         self:StripLinksFromContainer(alt.bags),
         self:StripLinksFromContainer(alt.mail),
-        alt.mailHash,  -- ✅ ADDED: Include mailHash in bandwidth-optimized transmission
+        alt.mailHash,  -- ? ADDED: Include mailHash in bandwidth-optimized transmission
     }
     return stripped
 end
@@ -1173,7 +1177,7 @@ Tested with instrumented client showing complete transmission pipeline:
 ["Bagsbagsbags-Azuresong"] = {
     ["version"] = 1770147989,
     ["inventoryHash"] = 478787753,
-    ["mailHash"] = 402068733,  ✅ PERSISTED TO DISK
+    ["mailHash"] = 402068733,  ? PERSISTED TO DISK
     ["mail"] = {
         ["items"] = { ... },
         ["version"] = 1770147989,
@@ -1187,7 +1191,7 @@ Tested with instrumented client showing complete transmission pipeline:
 1. **Modules/Guild.lua**
    - Line 1209: Added `mailHash = alt.mailHash` to StripAltLinks() return structure
    - Line 1293: Added [MAIL-012] SEND debug message
-   - Line 1615: Added [MAIL-012] RECEIVE debug message  
+   - Line 1615: Added [MAIL-012] RECEIVE debug message
    - Line 1884: Added [MAIL-012] STORED debug message
    - Lines 508-532: Added guild filtering to GetVersion() to prevent cross-guild data leaks
    - Lines 1371-1378: Commented out togbank-d2 (delta with Links)
@@ -1195,23 +1199,23 @@ Tested with instrumented client showing complete transmission pipeline:
 
 **Testing Performed:**
 
-1. ✅ Bagsbagsbags (banker) scans mailbox with items
-2. ✅ mailHash=402068733 computed locally
-3. ✅ `/togbank share` broadcasts data
-4. ✅ [MAIL-012] SEND message confirms mailHash in outgoing data
-5. ✅ Pickyminer receives togbank-d3 transmission
-6. ✅ [MAIL-012] RECEIVE message confirms mailHash=402068733 received
-7. ✅ [MAIL-012] STORED message confirms mailHash stored in memory
-8. ✅ Exit WoW to flush SavedVariables
-9. ✅ Verified `["mailHash"] = 402068733` present in Pickyminer's SavedVariables file
-10. ✅ Cross-guild data filtering prevents leaking other guild's banker data
+1. ? Bagsbagsbags (banker) scans mailbox with items
+2. ? mailHash=402068733 computed locally
+3. ? `/togbank share` broadcasts data
+4. ? [MAIL-012] SEND message confirms mailHash in outgoing data
+5. ? Pickyminer receives togbank-d3 transmission
+6. ? [MAIL-012] RECEIVE message confirms mailHash=402068733 received
+7. ? [MAIL-012] STORED message confirms mailHash stored in memory
+8. ? Exit WoW to flush SavedVariables
+9. ? Verified `["mailHash"] = 402068733` present in Pickyminer's SavedVariables file
+10. ? Cross-guild data filtering prevents leaking other guild's banker data
 
 **Result:**
 
-✅ **Mail synchronization fully operational**
-✅ **mailHash transmitted and persisted correctly**
-✅ **Cross-guild data leak fixed**
-✅ **Mail change detection now possible**
+? **Mail synchronization fully operational**
+? **mailHash transmitted and persisted correctly**
+? **Cross-guild data leak fixed**
+? **Mail change detection now possible**
 
 **Related Issues:**
 - [MAIL-010] - Mail merge logic (was expecting mailHash to exist)
@@ -1222,16 +1226,16 @@ Tested with instrumented client showing complete transmission pipeline:
 
 ## Resolved Bugs (2026-02-02)
 
-### 🟡 MEDIUM
+### ?? MEDIUM
 
-#### ⚠️ [MAIL-006] Mail UI item display behavior unclear
+#### ?? [MAIL-006] Mail UI item display behavior unclear
 
-**Severity:** 🟡 MEDIUM (potentially LOW)
+**Severity:** ?? MEDIUM (potentially LOW)
 **Category:** Mail / UI / Data Integrity
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-29
 **Date Closed:** 2026-01-31
-**Status:** ⚠️ CLOSED - Cannot Reproduce
+**Status:** ?? CLOSED - Cannot Reproduce
 **Reproducibility:** Unable to reproduce
 **Related:** [DATA-004] Mail structure fixes, [MAIL-005] Deduplication
 
@@ -1248,21 +1252,21 @@ User reported "disappearing items in the UI that were loaded through mail" but l
 7. Mail functionality verified working correctly
 
 **Completed Fixes (During Investigation):**
-- ✅ Fixed `mail.slots` structure: Changed from number to table `{count=44, total=50}`
-- ✅ Fixed time API: Changed `time()` to `GetServerTime()` for server-synchronized timestamps
-- ✅ Confirmed MAIL_CLOSED event handling working with OnHide hook backup
-- ✅ Confirmed mail data persists correctly through /reload and logout
-- ✅ Verified scan captures all 44 mail items correctly
-- ✅ Removed unnecessary `mailSnapshots` duplicate storage system (overengineering removed)
+- ? Fixed `mail.slots` structure: Changed from number to table `{count=44, total=50}`
+- ? Fixed time API: Changed `time()` to `GetServerTime()` for server-synchronized timestamps
+- ? Confirmed MAIL_CLOSED event handling working with OnHide hook backup
+- ? Confirmed mail data persists correctly through /reload and logout
+- ? Verified scan captures all 44 mail items correctly
+- ? Removed unnecessary `mailSnapshots` duplicate storage system (overengineering removed)
 
 **Current Data Flow (Verified Working):**
 ```
-MailInventory:Scan() → creates mail.items as ARRAY with table.insert()
-  ↓
-Bank:Scan() → saves to info.alts[player].mail
-  ↓
-Guild.lua:MergeMail() → merges into alt.items aggregate (line 1230-1260)
-  ↓
+MailInventory:Scan() ? creates mail.items as ARRAY with table.insert()
+  ?
+Bank:Scan() ? saves to info.alts[player].mail
+  ?
+Guild.lua:MergeMail() ? merges into alt.items aggregate (line 1230-1260)
+  ?
 UI displays from alt.items aggregate
 ```
 
@@ -1307,12 +1311,12 @@ Should this issue appear again with clear symptoms:
 
 ### [UI-013] Manual Mail Fulfillment Tracking and Request Quantity Validation
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** UI / Mail / Request System / User Experience
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-31
 **Date Resolved:** 2026-01-31
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 
 **Problem:**
 Two related issues with manual mail sending and request creation:
@@ -1326,7 +1330,7 @@ Two related issues with manual mail sending and request creation:
 > "i'm getting orders that are too large and i can't partially fill"
 
 **Root Cause:**
-The fulfillment tracking system was working correctly (OnSendMail hook → ApplyPendingSend → FulfillRequest), but all operations were logged at DEBUG level only. Users with default INFO log level couldn't see what was happening, leading to confusion about whether manual sends were being tracked.
+The fulfillment tracking system was working correctly (OnSendMail hook ? ApplyPendingSend ? FulfillRequest), but all operations were logged at DEBUG level only. Users with default INFO log level couldn't see what was happening, leading to confusion about whether manual sends were being tracked.
 
 **Fix Implemented:**
 
@@ -1396,16 +1400,16 @@ end
 
 **Behavior Changes:**
 - **Before**: Silently clamped quantity to available, user unaware of reduction
-- **After**: 
+- **After**:
   - Shows "Cannot request - none available right now" if 0 available (blocks request)
   - Shows "Reduced to available: X" if clamping occurs (allows reduced request)
 
 **Testing Results:**
-✅ Manual mail sends now show tracking confirmation
-✅ Fulfillment application shows per-item and total feedback
-✅ Users can see when no matching requests exist
-✅ Request quantity validation provides clear warnings
-✅ System correctly handles partial fulfillment (always did, now visible)
+? Manual mail sends now show tracking confirmation
+? Fulfillment application shows per-item and total feedback
+? Users can see when no matching requests exist
+? Request quantity validation provides clear warnings
+? System correctly handles partial fulfillment (always did, now visible)
 
 **Files Modified:**
 - [Modules/Mail.lua](../Modules/Mail.lua#L218-L258)
@@ -1414,20 +1418,20 @@ end
 
 **Diagnostic Benefits:**
 Users can now diagnose fulfillment issues by checking output:
-- No "Tracking manual mail..." → OnSendMail hook not firing
-- "Tracking..." but no "Applying fulfillment..." → MAIL_SEND_SUCCESS event not firing
-- "No matching requests found" → Item/player names don't match exactly
+- No "Tracking manual mail..." ? OnSendMail hook not firing
+- "Tracking..." but no "Applying fulfillment..." ? MAIL_SEND_SUCCESS event not firing
+- "No matching requests found" ? Item/player names don't match exactly
 
 ---
 
 ### [DATA-010] Mail Slots Format Crash When Trading Items
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Data Migration / Saved Variables / Type Safety
 **Reporter:** User (Production - Alchemyrcp-Azuresong)
 **Date Reported:** 2026-01-31
 **Date Resolved:** 2026-01-31
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 
 **Error Message:**
 ```
@@ -1439,7 +1443,7 @@ Crash when trading items on character with legacy saved data format. Bank.lua Sc
 
 **Trigger:**
 1. User trades items to character
-2. OnUpdateStop fires → Bank.lua Scan() called
+2. OnUpdateStop fires ? Bank.lua Scan() called
 3. Line 310: `alt.mail.slots.count` crashes when slots is number
 
 **Root Cause:**
@@ -1461,7 +1465,7 @@ if alt.mail then
         TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = %d (old format, migrating)", alt.mail.slots)
         local oldSlots = alt.mail.slots
         alt.mail.slots = { count = #alt.mail.items, total = oldSlots }
-        TOGBankClassic_Output:Debug("MAIL", "Migrated mail.slots to new format: count=%d, total=%d", 
+        TOGBankClassic_Output:Debug("MAIL", "Migrated mail.slots to new format: count=%d, total=%d",
             alt.mail.slots.count, alt.mail.slots.total)
     else
         TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = nil")
@@ -1478,10 +1482,10 @@ end
 - Added debug logging for visibility
 
 **Testing Results:**
-✅ Code executes without crashes
-✅ Old number format detected and migrated
-✅ New table format preserved as-is
-✅ Nil values handled gracefully
+? Code executes without crashes
+? Old number format detected and migrated
+? New table format preserved as-is
+? Nil values handled gracefully
 
 **Files Modified:**
 - [Modules/Bank.lua](../Modules/Bank.lua#L303-L322)
@@ -1494,12 +1498,12 @@ end
 
 ---
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** UI / Item Loading / Infinite Recursion
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-28
 **Date Resolved:** 2026-01-28
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Consistent after /wipe and /sync
 **Related:** [SYNC-006] Backward compatibility changes
 
@@ -1525,14 +1529,14 @@ After implementing SYNC-006 backward compatibility (reconstructing alt.items fro
 ```
 
 **Call Stack Analysis:**
-1. ReceiveAltData (Guild.lua) reconstructs alt.items → triggers UI refresh
-2. DrawContent (Inventory.lua:154) opens inventory window → calls BuildSearchData
-3. BuildSearchData (Search.lua:397) → calls GetItems
-4. GetItems (Item.lua:24) → ContinueOnItemLoad for each item without cached data
-5. ContinueOnItemLoad → RequestLoadItemDataByID
-6. Item loads → FireCallbacks
-7. Callback refreshes UI → DrawContent called again (Guild.lua:978 in xpcall)
-8. **LOOP BACK TO STEP 2** → infinite recursion → C stack overflow
+1. ReceiveAltData (Guild.lua) reconstructs alt.items ? triggers UI refresh
+2. DrawContent (Inventory.lua:154) opens inventory window ? calls BuildSearchData
+3. BuildSearchData (Search.lua:397) ? calls GetItems
+4. GetItems (Item.lua:24) ? ContinueOnItemLoad for each item without cached data
+5. ContinueOnItemLoad ? RequestLoadItemDataByID
+6. Item loads ? FireCallbacks
+7. Callback refreshes UI ? DrawContent called again (Guild.lua:978 in xpcall)
+8. **LOOP BACK TO STEP 2** ? infinite recursion ? C stack overflow
 
 **Root Cause:**
 The recursion was NOT in ReconstructItemLinks callbacks, but in DrawContent itself:
@@ -1541,7 +1545,7 @@ The recursion was NOT in ReconstructItemLinks callbacks, but in DrawContent itse
 3. When items load, both ReconstructItemLinks AND BuildSearchData callbacks trigger
 4. Each callback calls DrawContent again
 5. Each DrawContent calls BuildSearchData again, creating NEW async callbacks
-6. **Exponential callback explosion** → C stack overflow
+6. **Exponential callback explosion** ? C stack overflow
 
 The issue was that BuildSearchData was being called on every single DrawContent invocation, creating a new set of item loading callbacks each time, even when the data hadn't changed.
 
@@ -1552,14 +1556,14 @@ Added a `searchDataBuilt` flag to prevent BuildSearchData from running multiple 
 ```lua
 function TOGBankClassic_UI_Inventory:DrawContent()
     -- ... roster checks ...
-    
+
     -- Build search data only once per data update, not on every refresh (UI-008 fix)
     -- This prevents recursive async item loading that causes C stack overflow
     if not self.searchDataBuilt then
         TOGBankClassic_UI_Search:BuildSearchData()
         self.searchDataBuilt = true
     end
-    
+
     -- ... rest of DrawContent ...
 end
 ```
@@ -1583,7 +1587,7 @@ end
 1. When new alt data arrives, `searchDataBuilt` flag is reset to `false`
 2. Next DrawContent call builds search data and sets flag to `true`
 3. Subsequent DrawContent calls (from item loading callbacks) skip BuildSearchData
-4. No new async callbacks created → no recursion
+4. No new async callbacks created ? no recursion
 5. UI still refreshes properly from ReconstructItemLinks callbacks
 
 **Why This Works:**
@@ -1594,7 +1598,7 @@ end
 - Search data is properly rebuilt when new sync data arrives
 
 **Testing:**
-- `/reload` → `/wipe` → `/sync` → open Inventory window
+- `/reload` ? `/wipe` ? `/sync` ? open Inventory window
 - No C stack overflow
 - Items display correctly
 - Search functionality works
@@ -1617,20 +1621,20 @@ end
 
 **Priority:** CRITICAL - Fixed in v0.8.0
 
-### 🟠 HIGH
+### ?? HIGH
 
 None currently open.
 
-### 🟡 MEDIUM
+### ?? MEDIUM
 
 #### [SYNC-005] Failed log entries may retry infinitely without progress tracking
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Request Sync / Error Handling
 **Reporter:** Code Review
 **Date Reported:** 2026-01-28
 **Date Resolved:** 2026-01-28
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Theoretical - not observed in production
 **Related:** [SYNC-004] Event log processing
 
@@ -1670,7 +1674,7 @@ end
    - Entry has no `requestId` (line 856-857)
 
 2. **Tombstone Blocking:**
-   - Entry timestamp ≤ existing tombstone timestamp (line 862-865)
+   - Entry timestamp = existing tombstone timestamp (line 862-865)
    - Example: Entry at t=100 blocked by deletion tombstone at t=105
    - **Impact:** Legitimate - entry should never apply (request was deleted)
 
@@ -1685,7 +1689,7 @@ end
    - **But:** Priority system now handles this, so entry will always fail
 
 5. **Invalid Fulfill Delta:**
-   - Fulfill entry with delta ≤ 0 (line 939-941)
+   - Fulfill entry with delta = 0 (line 939-941)
    - **Impact:** Bad data - entry should never succeed
 
 6. **Unknown Operation Type:**
@@ -1728,11 +1732,11 @@ end
 ```
 Time=100: User cancels request (seq=5)
 Time=105: Banker fulfills request (seq=20)
-Sync: Receives cancel seq=5 → applies, lastStatusOp="cancel"
-Sync: Receives fulfill seq=20 → BLOCKED by cancel priority
-      → RecordRequestLogEntry returns false
-      → requestLogApplied stays at seq=5
-Next sync: Receives fulfill seq=20 again → BLOCKED again
+Sync: Receives cancel seq=5 ? applies, lastStatusOp="cancel"
+Sync: Receives fulfill seq=20 ? BLOCKED by cancel priority
+      ? RecordRequestLogEntry returns false
+      ? requestLogApplied stays at seq=5
+Next sync: Receives fulfill seq=20 again ? BLOCKED again
 Forever: Keeps receiving and rejecting fulfill seq=20
 ```
 
@@ -1787,10 +1791,10 @@ Updated `ReceiveRequestLogEntries()` to check if a failed entry is permanently b
 ```
 Time=100: User cancels request (seq=5)
 Time=105: Banker fulfills request (seq=20)
-Sync: Receives cancel seq=5 → applies, lastStatusOp="cancel"
-Sync: Receives fulfill seq=20 → BLOCKED by cancel priority
-      → IsEntryPermanentlyBlocked() returns true
-      → requestLogApplied updated to seq=20
+Sync: Receives cancel seq=5 ? applies, lastStatusOp="cancel"
+Sync: Receives fulfill seq=20 ? BLOCKED by cancel priority
+      ? IsEntryPermanentlyBlocked() returns true
+      ? requestLogApplied updated to seq=20
 Next sync: Won't retry fulfill seq=20 (already processed)
 ```
 
@@ -1800,16 +1804,16 @@ This prevents infinite retry loops for entries that will never succeed while sti
 
 ## Resolved Bugs (2026-01-31)
 
-### � MEDIUM - All Resolved
+### ? MEDIUM - All Resolved
 
-#### ✅ [UI-012] Dropdown contents blinking and disappearing
+#### ? [UI-012] Dropdown contents blinking and disappearing
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** UI / AceGUI / Performance
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-31
 **Date Resolved:** 2026-01-31
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Consistent
 **Related:** None
 
@@ -1896,7 +1900,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
     -- ... existing setup code ...
 
     local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
-    
+
     -- Only update the requester dropdown if the list has changed
     local requesterListChanged = false
     if not self.cachedRequesterList or #requesterOrder ~= #(self.cachedRequesterOrder or {}) then
@@ -1909,7 +1913,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
             end
         end
     end
-    
+
     if requesterListChanged then
         self.FilterRequester:SetList(requesterList, requesterOrder)
         self.cachedRequesterList = requesterList
@@ -1918,7 +1922,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
     end
 
     local bankList, bankOrder = buildBankOptions(currentPlayer, bankCounts)
-    
+
     -- Only update the bank dropdown if the list has changed
     local bankListChanged = false
     if not self.cachedBankList or #bankOrder ~= #(self.cachedBankOrder or {}) then
@@ -1931,7 +1935,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
             end
         end
     end
-    
+
     if bankListChanged then
         self.FilterBank:SetList(bankList, bankOrder)
         self.cachedBankList = bankList
@@ -1980,24 +1984,24 @@ end
 **Data Flow:**
 ```
 DrawContent() called (frequent)
-    ↓
+    ?
 UpdateFilters() called
-    ↓
+    ?
 Build new dropdown lists from current request data
-    ↓
+    ?
 Compare with cached lists
-    ↓
+    ?
 IF different: SetList() + update cache
 IF same: Skip SetList() (dropdown unchanged)
-    ↓
+    ?
 Set selected values (always done, safe operation)
 ```
 
 **Testing Results:**
-- ✅ User confirmed dropdowns no longer blink or disappear
-- ✅ Dropdowns remain stable and usable when opened
-- ✅ Content still updates when new requests created or statuses change
-- ✅ No performance degradation from comparison logic
+- ? User confirmed dropdowns no longer blink or disappear
+- ? Dropdowns remain stable and usable when opened
+- ? Content still updates when new requests created or statuses change
+- ? No performance degradation from comparison logic
 
 **Related Code Locations:**
 - **Modules/UI/Requests.lua:1073-1154** - UpdateFilters() with caching logic
@@ -2015,16 +2019,16 @@ Set selected values (always done, safe operation)
 
 ---
 
-### �🟠 HIGH - All Resolved
+### ??? HIGH - All Resolved
 
-#### ✅ [UI-011-B] Banker highlight checkbox appearing intermittently
+#### ? [UI-011-B] Banker highlight checkbox appearing intermittently
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** UI / Guild Roster / Race Condition
 **Reporter:** User (Production - Elementals-Azuresong)
 **Date Reported:** 2026-01-31
 **Date Resolved:** 2026-01-31
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Intermittent (timing-dependent)
 **Related:** [UI-011] Banker highlight checkbox not appearing after banker status changes
 
@@ -2033,7 +2037,7 @@ The "Highlight needed items" checkbox in the Requests window was appearing incon
 
 **Symptoms:**
 1. Checkbox appeared for banker on some addon loads
-2. Checkbox missing for same banker on other addon loads  
+2. Checkbox missing for same banker on other addon loads
 3. Debug output during `/reload` showed UpdateFilters running before guild roster loaded
 4. IsBank() check sometimes returned false even for actual bankers
 5. Reopening window after roster loaded would sometimes create the checkbox
@@ -2056,8 +2060,8 @@ Race condition between addon initialization and guild roster loading:
    - IsBank() returns correct value
 
 3. **Timing Race:**
-   - If UpdateFilters called before GUILD_ROSTER_UPDATE → no checkbox
-   - If UpdateFilters called after GUILD_ROSTER_UPDATE → checkbox created
+   - If UpdateFilters called before GUILD_ROSTER_UPDATE ? no checkbox
+   - If UpdateFilters called after GUILD_ROSTER_UPDATE ? checkbox created
    - Intermittent behavior based on which happens first
 
 **Investigation Steps:**
@@ -2074,21 +2078,21 @@ Race condition between addon initialization and guild roster loading:
 ```lua
 function TOGBankClassic_Guild:GetBanks()
     if self.banksCache ~= nil then return self.banksCache end
-    
+
     local banks = {}
     for i = 1, GetNumGuildMembers() do  -- Returns 0 before GUILD_ROSTER_UPDATE
         local name, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
-        if string.match(publicNote, "(.*)gbank(.*)") or 
+        if string.match(publicNote, "(.*)gbank(.*)") or
            string.match(officer_note, "(.*)gbank(.*)") then
             table.insert(banks, name)
         end
     end
-    
+
     if #banks == 0 then
         self.banksCache = nil
         return nil  -- Returns nil when roster not loaded
     end
-    
+
     self.banksCache = banks
     return banks
 end
@@ -2101,7 +2105,7 @@ end
 function TOGBankClassic_Guild:IsBank(player)
     local banks = TOGBankClassic_Guild:GetBanks()
     if banks == nil then return false end  -- Returns false when roster not ready
-    
+
     local normPlayer = self:NormalizeName(player) or player
     for _, v in pairs(banks) do
         local norm = self:NormalizeName(v) or v
@@ -2125,7 +2129,7 @@ Added `GetNumGuildMembers() > 0` guard before calling IsBank() to prevent checki
 -- OLD CODE (Race Condition):
 local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
-TOGBankClassic_Output:DebugMail("UpdateFilters: Checking banker status - player=%s, isBank=%s", 
+TOGBankClassic_Output:DebugMail("UpdateFilters: Checking banker status - player=%s, isBank=%s",
     currentPlayer or "nil", tostring(isBank))
 
 if isBank then
@@ -2138,9 +2142,9 @@ end
 if GetNumGuildMembers() > 0 then
     local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
     local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
-    TOGBankClassic_Output:DebugUI("UpdateFilters: Checking banker status - player=%s, isBank=%s", 
+    TOGBankClassic_Output:DebugUI("UpdateFilters: Checking banker status - player=%s, isBank=%s",
         currentPlayer or "nil", tostring(isBank))
-    
+
     if isBank then
         -- Create highlight checkbox
         local highlightCheckbox = AceGUI:Create("CheckBox")
@@ -2181,9 +2185,9 @@ end
 5. **Final Fix:** Added GetNumGuildMembers() guard to handle roster loading timing
 
 **Testing Results:**
-- ✅ User confirmed checkbox now appears consistently after fix
-- ✅ Issue resolved - checkbox showing up reliably on banker character
-- ✅ GetNumGuildMembers() guard successfully prevents race condition
+- ? User confirmed checkbox now appears consistently after fix
+- ? Issue resolved - checkbox showing up reliably on banker character
+- ? GetNumGuildMembers() guard successfully prevents race condition
 - Note: User reports it "just started working" - the guild roster guard fix resolved the timing issue
 
 **Related Code Locations:**
@@ -2200,14 +2204,14 @@ end
 
 ---
 
-#### ✅ [MAIL-011] Order fulfillment not applying when sending mail
+#### ? [MAIL-011] Order fulfillment not applying when sending mail
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Mail / Request Fulfillment / Race Condition
 **Reporter:** User (Production - Elementals-Azuresong)
 **Date Reported:** 2026-01-30 (evening)
 **Date Resolved:** 2026-01-31 (commit 27c0bd3 from previous night)
-**Status:** ✅ RESOLVED (Fulfill button working correctly)
+**Status:** ? RESOLVED (Fulfill button working correctly)
 **Reproducibility:** Consistent
 **Related:** [MAIL-011-B] Manual mail sends still under investigation
 
@@ -2229,19 +2233,19 @@ Race condition in mail send event sequence:
 **Original Flow (Broken):**
 ```
 1. User clicks "Fulfill" button
-   └─> PrepareFulfillMail() opens mail window, attaches items
+   +-> PrepareFulfillMail() opens mail window, attaches items
        (pendingSend NOT set here)
 
 2. User clicks "Send Mail" button
-   └─> SendMail() called by Blizzard UI
-   └─> OnSendMail() hook fires
-       └─> Reads items from GetSendMailItem(1..12)
-       └─> Sets pendingSend = {items captured}
-       
+   +-> SendMail() called by Blizzard UI
+   +-> OnSendMail() hook fires
+       +-> Reads items from GetSendMailItem(1..12)
+       +-> Sets pendingSend = {items captured}
+
 3. MAIL_SEND_SUCCESS event fires
-   └─> ApplyPendingSend() called
-       └─> Reads pendingSend to apply fulfillment
-       
+   +-> ApplyPendingSend() called
+       +-> Reads pendingSend to apply fulfillment
+
 PROBLEM: Sometimes MAIL_SEND_SUCCESS fires BEFORE OnSendMail hook completes,
          causing ApplyPendingSend to see pendingSend=nil
 ```
@@ -2262,7 +2266,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
     -- Clear any previous pending send
     self.pendingSend = nil
     self.pendingSendAt = nil
-    
+
     -- Read items from mail attachments
     local items = {}
     for i = 1, 12 do
@@ -2275,7 +2279,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
             })
         end
     end
-    
+
     if #items > 0 then
         self.pendingSend = {
             recipient = recipient,
@@ -2292,27 +2296,27 @@ end
 ```lua
 function TOGBankClassic_Mail:OnSendMail(recipient)
     local now = GetTime()
-    
+
     -- Check if we have a recent pendingSend from PrepareFulfillMail
     if self.pendingSend and self.pendingSendAt and (now - self.pendingSendAt) < 10 then
-        TOGBankClassic_Output:DebugMail("OnSendMail: HOOK FIRED - Preserving recent pendingSend from PrepareFulfillMail (age: %.2fs)", 
+        TOGBankClassic_Output:DebugMail("OnSendMail: HOOK FIRED - Preserving recent pendingSend from PrepareFulfillMail (age: %.2fs)",
             now - self.pendingSendAt)
         -- Keep the existing pendingSend, don't overwrite it
         return
     end
-    
+
     TOGBankClassic_Output:DebugMail("OnSendMail: HOOK FIRED - No recent pendingSend, reading from mail")
-    
+
     -- Clear any stale pending send
     self.pendingSend = nil
     self.pendingSendAt = nil
-    
+
     -- Read items from mail attachments
     local items = {}
     for i = 1, 12 do
         local name, itemID, texture, count = GetSendMailItem(i)
         if itemID and count and count > 0 then
-            TOGBankClassic_Output:DebugMail("OnSendMail: Found item in slot %d - ID=%s, Count=%d", 
+            TOGBankClassic_Output:DebugMail("OnSendMail: Found item in slot %d - ID=%s, Count=%d",
                 i, tostring(itemID), count)
             table.insert(items, {
                 ID = itemID,
@@ -2321,14 +2325,14 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
             })
         end
     end
-    
+
     if #items > 0 then
         self.pendingSend = {
             recipient = recipient,
             items = items
         }
         self.pendingSendAt = GetTime()
-        TOGBankClassic_Output:DebugMail("OnSendMail: Set pendingSend with %d items to %s", 
+        TOGBankClassic_Output:DebugMail("OnSendMail: Set pendingSend with %d items to %s",
             #items, recipient)
     else
         TOGBankClassic_Output:DebugMail("OnSendMail: No items found in mail")
@@ -2342,14 +2346,14 @@ end
 ```lua
 function TOGBankClassic_Mail:PrepareFulfillMail(recipient, items)
     -- ... existing code to open mail window and attach items ...
-    
+
     -- NEW: Set pendingSend immediately when items attached
     self.pendingSend = {
         recipient = recipient,
         items = items
     }
     self.pendingSendAt = GetTime()
-    
+
     TOGBankClassic_Output:DebugMail("PrepareFulfillMail: Set pendingSend with %d items to %s",
         #items, recipient)
 end
@@ -2374,14 +2378,14 @@ end
 - Sufficient time for user to review mail and click Send
 - Short enough to not persist across unrelated mail sends
 - Prevents stale pendingSend from previous attempts affecting new sends
-- Typical user flow from Fulfill button → Send Mail takes 2-5 seconds
+- Typical user flow from Fulfill button ? Send Mail takes 2-5 seconds
 
 **Testing Results:**
-- ✅ User confirmed fulfillment working after reload (loading commit 27c0bd3)
-- ✅ First order didn't work (old code before reload)
-- ✅ Second order worked (new code after reload)
-- ✅ Debug output confirmed proper flow with "Preserving recent pendingSend" messages
-- ✅ Manual fulfillment also confirmed working (see MAIL-011-B)
+- ? User confirmed fulfillment working after reload (loading commit 27c0bd3)
+- ? First order didn't work (old code before reload)
+- ? Second order worked (new code after reload)
+- ? Debug output confirmed proper flow with "Preserving recent pendingSend" messages
+- ? Manual fulfillment also confirmed working (see MAIL-011-B)
 
 **Debug Output Example (Working):**
 ```
@@ -2409,14 +2413,14 @@ end
 
 ---
 
-#### ✅ [MAIL-011-B] Manual mail sends not applying fulfillment
+#### ? [MAIL-011-B] Manual mail sends not applying fulfillment
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Mail / Request Fulfillment
 **Reporter:** User (Production - Elementals-Azuresong)
 **Date Reported:** 2026-01-31
 **Date Resolved:** 2026-01-31 (by MAIL-011 fix from commit 27c0bd3)
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Was consistent, now resolved
 **Related:** [MAIL-011] Order fulfillment not applying when sending mail
 
@@ -2456,9 +2460,9 @@ The enhanced OnSendMail() hook handles both cases:
 - Both paths ultimately set pendingSend before MAIL_SEND_SUCCESS fires
 
 **Testing Results:**
-- ✅ User confirmed manual mail sends now apply fulfillment correctly
-- ✅ No separate fix needed - MAIL-011 enhancement handled both cases
-- ✅ "Just started working" indicates the original OnSendMail enhancement was sufficient
+- ? User confirmed manual mail sends now apply fulfillment correctly
+- ? No separate fix needed - MAIL-011 enhancement handled both cases
+- ? "Just started working" indicates the original OnSendMail enhancement was sufficient
 
 **Code Reference:**
 See MAIL-011 documentation above for complete code analysis and implementation details.
@@ -2480,16 +2484,16 @@ See MAIL-011 documentation above for complete code analysis and implementation d
 
 ## Resolved Bugs (2026-01-28)
 
-### 🔴 CRITICAL - All Resolved
+### ?? CRITICAL - All Resolved
 
-#### ✅ [SYNC-004] User request cancellations not propagating to other players
+#### ? [SYNC-004] User request cancellations not propagating to other players
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Request Sync / Event Sourcing
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-28
 **Date Resolved:** 2026-01-28
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Was consistent
 **Related:** Event sourcing conflict resolution
 
@@ -2518,7 +2522,7 @@ for _, entry in ipairs(list) do
         if sender then
             self:QueryRequestLog(sender, { [actor] = lastSeq + 1 })
         end
-        break  -- ❌ DISCARDS ALL REMAINING ENTRIES
+        break  -- ? DISCARDS ALL REMAINING ENTRIES
     end
 end
 ```
@@ -2553,7 +2557,7 @@ Changed `ReceiveRequestLogEntries()` to process ALL entries:
 local gapDetected = false
 for _, entry in ipairs(list) do
     local seq = tonumber(entry.seq or 0) or 0
-    
+
     -- Detect gaps for querying (but don't stop processing)
     if not gapDetected and seq > lastSeq + 1 then
         if sender then
@@ -2561,7 +2565,7 @@ for _, entry in ipairs(list) do
         end
         gapDetected = true
     end
-    
+
     -- Always try to record - RecordRequestLogEntry handles deduplication via entry.id
     if self:RecordRequestLogEntry(entry, false) then
         if seq > lastSeq then
@@ -2571,7 +2575,7 @@ for _, entry in ipairs(list) do
 end
 ```
 
-**Key improvement:** 
+**Key improvement:**
 - Removed `break` statement
 - Still queries for missing entries when gaps detected
 - But processes ALL received entries
@@ -2616,12 +2620,12 @@ end
 - Supports partial fulfills (additive delta)
 
 **Testing Results:**
-- ✅ User cancels propagate correctly to all players
-- ✅ Banker cancels continue to work correctly
-- ✅ Cancel overrides fulfill even if fulfill timestamp is newer
-- ✅ Partial fulfills accumulate correctly (additive)
-- ✅ Sequence gaps no longer discard valid entries
-- ✅ Entry deduplication works via unique `entry.id`
+- ? User cancels propagate correctly to all players
+- ? Banker cancels continue to work correctly
+- ? Cancel overrides fulfill even if fulfill timestamp is newer
+- ? Partial fulfills accumulate correctly (additive)
+- ? Sequence gaps no longer discard valid entries
+- ? Entry deduplication works via unique `entry.id`
 
 **Files Modified:**
 - `Modules/RequestLog.lua` (lines ~33-57): Added OPERATION_PRIORITY table and getOperationPriority()
@@ -2647,7 +2651,7 @@ See [REQUEST_COMMS.md](REQUEST_COMMS.md) section "Priority-Based Conflict Resolu
 #### [REPLAY-001] Empty requestLogApplied causes all requests to disappear from UI
 **Reporter:** User (Production - Galdof character)
 **Date Reported:** 2026-01-27
-**Status:** ✅ RESOLVED (2026-01-27)
+**Status:** ? RESOLVED (2026-01-27)
 **Reproducibility:** Consistent when requestLogApplied is cleared/corrupted
 **Resolution:** Data validation with automatic recovery implemented
 
@@ -2658,9 +2662,9 @@ After merging remote commits c15a32d ("use absolute values for 'fulfilled'") and
 Complex interaction between SavedVariables loading, snapshot sync, and event replay:
 
 1. **Initial State (SavedVariables on disk):**
-   - `requestLog`: 73 events intact ✅
-   - `requestLogApplied`: {} (empty) ❌
-   - `requests`: [] (empty snapshot) ❌
+   - `requestLog`: 73 events intact ?
+   - `requestLogApplied`: {} (empty) ?
+   - `requests`: [] (empty snapshot) ?
 
 2. **What Happened During Load:**
    - SavedVariables loaded with empty `requestLogApplied`
@@ -2668,7 +2672,7 @@ Complex interaction between SavedVariables loading, snapshot sync, and event rep
    - `ApplyRequestSnapshot()` overwrote empty `requestLogApplied` with snapshot's data
    - Snapshot data showed `Galdof-OldBlanchy = 42` (marking sequences 1-42 as "already applied")
    - Local event log had gromsblood entries at seq 41 and 42
-   - Replay logic: `if entry.seq <= requestLogApplied[actor] then skip` → skipped all entries!
+   - Replay logic: `if entry.seq <= requestLogApplied[actor] then skip` ? skipped all entries!
 
 3. **Why `/reload` Didn't Help:**
    - In-memory data persisted through `/reload` (WoW doesn't reload SavedVariables)
@@ -2696,7 +2700,7 @@ Added integrity validation in `EnsureRequestsInitialized()` that detects stale `
 - Scans all event log entries marked as "applied" (seq <= requestLogApplied[actor])
 - For each "add" entry, verifies the request exists in the snapshot
 - Checks tombstones to distinguish deletions from missing data
-- If 3+ entries are marked applied but missing → triggers rebuild
+- If 3+ entries are marked applied but missing ? triggers rebuild
 - Prevents false positives from legitimate deletions
 
 **Phase 2: Automatic Recovery**
@@ -2757,7 +2761,7 @@ if not self._validationComplete then
             if appliedButMissingCount >= 3 then break end
         end
     end
-    
+
     if needsRebuild then
         TOGBankClassic_Output:Debug("SYNC", "Detected %d stale entries - rebuilding from event log", appliedButMissingCount)
         -- Clear requestLogApplied so replay processes ALL entries from event log
@@ -2771,7 +2775,7 @@ if not self._validationComplete then
         TOGBankClassic_Output:Debug("SYNC", "Rebuild complete - now have %d requests", #self.Info.requests)
         return
     end
-    
+
     -- Mark validation as complete
     self._validationComplete = true
 end
@@ -2795,16 +2799,16 @@ end
 ```
 
 **Testing & Validation:**
-1. ✅ Verified SavedVariables had empty `requestLogApplied: {}`
-2. ✅ Verified event log intact with 73 entries via PowerShell queries
-3. ✅ Confirmed gromsblood entries present at sequences 41, 42
-4. ✅ Applied fix and performed `/reload`
-5. ✅ Validation detected: "STALE DATA DETECTED - Solomage-Atiesh seq 3 marked applied but request missing"
-6. ✅ Automatic rebuild executed: "Detected 3 stale entries - rebuilding from event log"
-7. ✅ Result: "Rebuild complete - now have 58 requests" (was 1, now 58)
-8. ✅ All missing gromsblood requests restored to UI
-9. ✅ Validation runs only once per session (prevents recursion)
-10. ✅ Debug messages properly categorized under "SYNC" category
+1. ? Verified SavedVariables had empty `requestLogApplied: {}`
+2. ? Verified event log intact with 73 entries via PowerShell queries
+3. ? Confirmed gromsblood entries present at sequences 41, 42
+4. ? Applied fix and performed `/reload`
+5. ? Validation detected: "STALE DATA DETECTED - Solomage-Atiesh seq 3 marked applied but request missing"
+6. ? Automatic rebuild executed: "Detected 3 stale entries - rebuilding from event log"
+7. ? Result: "Rebuild complete - now have 58 requests" (was 1, now 58)
+8. ? All missing gromsblood requests restored to UI
+9. ? Validation runs only once per session (prevents recursion)
+10. ? Debug messages properly categorized under "SYNC" category
 
 **Files Modified:**
 - `Modules/RequestLog.lua` (lines 208-281): Added validation and recovery system
@@ -2823,7 +2827,7 @@ Enable with: `/togbank debuglog` or `/togbank debugcat SYNC true`
 
 **Performance Impact:**
 - Validation runs once per session on first `EnsureRequestsInitialized()` call
-- O(actors × entries × requests) worst case, but early exits:
+- O(actors � entries � requests) worst case, but early exits:
   - Stops after finding 3 stale entries (sufficient evidence)
   - Only checks "add" type events marked as applied
   - Skips validation after first run via `_validationComplete` flag
@@ -2831,12 +2835,12 @@ Enable with: `/togbank debuglog` or `/togbank debugcat SYNC true`
 - Typical case: <50ms for validation, <100ms for rebuild
 
 **Prevention Measures:**
-1. ✅ Validation now runs automatically on every addon load
-2. ✅ Detects stale data regardless of when corruption occurred
-3. ✅ Self-healing: automatically recovers without user intervention
-4. ✅ Event log is authoritative source of truth
-5. ⚠️ Consider: Add pre-save validation to prevent empty requestLogApplied from being written
-6. ⚠️ Consider: Periodic integrity checks during runtime (not just at load)
+1. ? Validation now runs automatically on every addon load
+2. ? Detects stale data regardless of when corruption occurred
+3. ? Self-healing: automatically recovers without user intervention
+4. ? Event log is authoritative source of truth
+5. ?? Consider: Add pre-save validation to prevent empty requestLogApplied from being written
+6. ?? Consider: Periodic integrity checks during runtime (not just at load)
 
 **Related Issues:**
 - Initial suspicion: Commits c15a32d and 3f8ce50 modified request merging
@@ -2846,15 +2850,15 @@ Enable with: `/togbank debuglog` or `/togbank debugcat SYNC true`
 
 ---
 
-### 🟠 HIGH
+### ?? HIGH
 
-#### ✅ [FULFILL-001] Greedy split algorithm causes repeated unnecessary splits
+#### ? [FULFILL-001] Greedy split algorithm causes repeated unnecessary splits
 
 **Severity:**  HIGH
 **Category:** Order Fulfillment / Stack Splitting
 **Reporter:** User (Testing)
 **Date Reported:** 2026-01-25
-**Status:** ✅ RESOLVED (2026-01-27)
+**Status:** ? RESOLVED (2026-01-27)
 **Reproducibility:** Was Consistent
 
 **Description:**
@@ -2862,8 +2866,8 @@ The greedy stack splitting algorithm was using tiny stacks in calculations, caus
 
 **Solution:**
 Added smart filtering that excludes stacks smaller than the required split amount. Now only uses stacks worth the effort.
-- Example: Need 90 with [20,20,20,20,1] → Excludes 1, splits 10 ✅
-- Example: Need 95 with [20,20,20,20,14] → Excludes 14, splits 15 ✅
+- Example: Need 90 with [20,20,20,20,1] ? Excludes 1, splits 10 ?
+- Example: Need 95 with [20,20,20,20,14] ? Excludes 14, splits 15 ?
 
 **Files Modified:** Modules/Mail.lua (lines 568-593, 486), docs/ORDER_FULFILLMENT_LOGIC.md
 
@@ -2871,14 +2875,14 @@ Added smart filtering that excludes stacks smaller than the required split amoun
 
 <<<<<<< HEAD
 <<<<<<< HEAD
-#### ✅ [FULFILL-002] Fulfill button callback not updating after split completion
+#### ? [FULFILL-002] Fulfill button callback not updating after split completion
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Order Fulfillment / UI
 **Reporter:** User (Testing)
 **Date Reported:** 2026-01-27
 **Date Resolved:** 2026-01-27
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Was Consistent
 
 **Description:**
@@ -2911,29 +2915,29 @@ This ensures when needing only 1 item, a stack of 1 is not filtered out.
 This ensures exact-fit stacks are always preferred over splitting.
 
 **Testing Results:**
-- ✅ Create request for 1 item
-- ✅ Bank alt has single stack of 9 items  
-- ✅ Click scissors button - split 1 item creates stacks [8, 1]
-- ✅ Button changes to envelope icon
-- ✅ Click envelope button - items attach to mail (no split popup!) ✅
-- ✅ Request fulfilled successfully
+- ? Create request for 1 item
+- ? Bank alt has single stack of 9 items
+- ? Click scissors button - split 1 item creates stacks [8, 1]
+- ? Button changes to envelope icon
+- ? Click envelope button - items attach to mail (no split popup!) ?
+- ? Request fulfilled successfully
 
-**Files Modified:** 
+**Files Modified:**
 - `Modules/Mail.lua` (lines 591, 608-633) - Fixed greedy algorithm and minimum stack size
 - `Modules/Mail.lua` (multiple) - Migrated debug output to proper system
 
 **Bonus:** Migrated all fulfillment debug output from `print()` to `TOGBankClassic_Output:Debug("FULFILL", ...)` for integration with persistent debug log system.
 =======
-#### 🔴 [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
+#### ?? [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
 =======
-#### ✅ [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
+#### ? [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
 >>>>>>> d78c951 (Add MAIL debug category and comprehensive logging for MAIL-002 investigation)
 
-**Severity:** 🔴 CRITICAL
-**Category:** Mail Inventory / Function Signature  
+**Severity:** ?? CRITICAL
+**Category:** Mail Inventory / Function Signature
 **Reporter:** BugSack Error Log
 **Date Reported:** 2026-01-27
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Fixed In:** commit 9dfc013
 **Branch:** feature/mail-inventory-status
 **Reproducibility:** Was consistent on addon load with existing saved data
@@ -2953,10 +2957,10 @@ When loading saved data with existing inventory, `ComputeInventoryHash()` crashe
 Function signature changed from `ComputeInventoryHash(bank, bags, money)` to `ComputeInventoryHash(bank, bags, mail, money)` but there are callers still using the old 3-parameter version.
 
 When old code calls with 3 parameters:
-- `bank` = bank table ✅
-- `bags` = bags table ✅  
-- `mail` = money (number!) ❌
-- `money` = nil ❌
+- `bank` = bank table ?
+- `bags` = bags table ?
+- `mail` = money (number!) ?
+- `money` = nil ?
 
 **Example:**
 ```lua
@@ -2965,7 +2969,7 @@ local hash = ComputeInventoryHash(alt.bank, alt.bags, alt.money)
 
 -- Function receives:
 -- bank=table, bags=table, mail=298335 (money!), money=nil
--- Line 259 tries: if mail and mail.items then → CRASH
+-- Line 259 tries: if mail and mail.items then ? CRASH
 ```
 
 **Fix Required:**
@@ -2993,7 +2997,7 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney,
 		mail = mailOrMoney
 		actualMoney = money
 	end
-	
+
 	local parts = {}
 	table.insert(parts, tostring(actualMoney or 0))
 	-- ... rest of function
@@ -3007,13 +3011,13 @@ Applied backward compatibility fix to DeltaComms.lua. Function now detects param
 
 ---
 
-#### ✅ [MAIL-002] Mail inventory displaying incorrect/duplicate counts
+#### ? [MAIL-002] Mail inventory displaying incorrect/duplicate counts
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Mail Inventory / Data Aggregation
 **Reporter:** User (Testing)
 **Date Reported:** 2026-01-27
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Fixed In:** commit 990bba4 (partial), current session (complete)
 **Branch:** feature/mail-inventory-status
 **Reproducibility:** Was Consistent during gameplay
@@ -3025,13 +3029,13 @@ Mail inventory items were showing incorrect counts in both Search results and In
 
 1. **Search Corpus Building (Search.lua:346-407):**
    - Bug: Added item name to Corpus once for EACH unique item ID variant
-   - Example: Golden Sansam had 7 different item IDs → added to Corpus 7 times
-   - Result: Search loop processed "Golden Sansam" 7 times → displayed 7 rows with 223 each = 3701 total
+   - Example: Golden Sansam had 7 different item IDs ? added to Corpus 7 times
+   - Result: Search loop processed "Golden Sansam" 7 times ? displayed 7 rows with 223 each = 3701 total
 
 2. **Duplicate Detection (Search.lua:438-452):**
    - Bug: Only checked if alt name existed in lookup, not item ID
    - Result: Same item added multiple times per character if it had multiple IDs
-   - Example: Gromsblood with 2 different IDs → both added to lookup
+   - Example: Gromsblood with 2 different IDs ? both added to lookup
 
 3. **Missing Mail Aggregation (Inventory.lua:287-298):**
    - Bug: Inventory tab only aggregated bank + bags, completely omitted mail items
@@ -3093,17 +3097,17 @@ Debug logging intentionally left in place for future diagnostics.
 - Modules/UI/Inventory.lua (lines 281-308)
 - docs/DELTA_BUGS.md (this file)
 
-**Priority:** CRITICAL - Core mail inventory feature not working correctly → ✅ RESOLVED
+**Priority:** CRITICAL - Core mail inventory feature not working correctly ? ? RESOLVED
 
 ---
 
-#### ✅ [PERF-001] Serious performance degradation during normal gameplay
+#### ? [PERF-001] Serious performance degradation during normal gameplay
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Performance / Optimization
 **Reporter:** Multiple Users (Production)
 **Date Reported:** 2026-01-25
-**Status:** ✅ CLOSED (Duplicate of PERF-002)
+**Status:** ? CLOSED (Duplicate of PERF-002)
 **Fixed In:** v0.7.18 (commit 77b16a1)
 **Fixed Date:** 2026-01-26
 **Reproducibility:** Was consistent in large guilds
@@ -3123,16 +3127,16 @@ Fixed by decoupling request sync from inventory sync (same fix as PERF-002). See
 
 ## Resolved Bugs (2026-01-28)
 
-### 🔴 CRITICAL - All Resolved
+### ?? CRITICAL - All Resolved
 
-#### ✅ [SYNC-001] Incoming snapshots with higher requestLogApplied values cause local requests to disappear
+#### ? [SYNC-001] Incoming snapshots with higher requestLogApplied values cause local requests to disappear
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Snapshot Sync / Event Sourcing
 **Reporter:** User (Production - Galdof character)
 **Date Reported:** 2026-01-27
 **Date Resolved:** 2026-01-28
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Was consistent when receiving snapshots from other players
 **Related:** [REPLAY-001]
 
@@ -3176,14 +3180,14 @@ end
 - Local: `requestLogApplied[Galdof] = 40`
 - Incoming: `requestLogApplied[Galdof] = 42`
 - **Decision:** Reject (42 <= 42, would skip our local events)
-- **Result:** Keep local value 40, replay processes 41 & 42, gromsblood stays visible ✅
+- **Result:** Keep local value 40, replay processes 41 & 42, gromsblood stays visible ?
 
 **Testing Results:**
-- ✅ Requests stay visible after multiple sync cycles
-- ✅ Data persists correctly through `/reload` and logout/login
-- ✅ Smart-merge accepts legitimate updates (seq beyond event log)
-- ✅ Smart-merge rejects seq that would skip local events
-- ✅ Debug logging shows rejected sequences with actor and reason
+- ? Requests stay visible after multiple sync cycles
+- ? Data persists correctly through `/reload` and logout/login
+- ? Smart-merge accepts legitimate updates (seq beyond event log)
+- ? Smart-merge rejects seq that would skip local events
+- ? Debug logging shows rejected sequences with actor and reason
 
 **Additional Improvements:**
 
@@ -3217,7 +3221,7 @@ end
 ```
 
 **Known Limitations:**
-- Tombstone handling with rejected sequences needs validation (banker fulfills your request → tombstone should apply even if seq rejected)
+- Tombstone handling with rejected sequences needs validation (banker fulfills your request ? tombstone should apply even if seq rejected)
 - May need hybrid approach: accept seq if snapshot contains matching request with newer timestamp
 
 **See Also:**
@@ -3228,13 +3232,13 @@ end
 
 ## Resolved Bugs (2026-01-22)
 
-#### ✅ [SYNC-008] Manual request sync (`/togbank sync`) not initiating request synchronization
+#### ? [SYNC-008] Manual request sync (`/togbank sync`) not initiating request synchronization
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Request Sync / Commands
 **Reporter:** User (Testing)
 **Date Reported:** 2026-01-23
-**Status:** ✅ CLOSED (Working As Designed)
+**Status:** ? CLOSED (Working As Designed)
 **Closed Date:** 2026-01-27
 **Reproducibility:** N/A (Not a bug)
 
@@ -3242,7 +3246,7 @@ end
 After a `/wipe` command, user expected to manually trigger request data sync using `/togbank sync` to repopulate request data from other guild members. However, the command does not appear to initiate request data synchronization as expected.
 
 **Resolution:**
-This is working as designed. Request data synchronization was intentionally decoupled from inventory sync to fix PERF-002 (NormalizeRequestList broadcast storm). 
+This is working as designed. Request data synchronization was intentionally decoupled from inventory sync to fix PERF-002 (NormalizeRequestList broadcast storm).
 
 **Current Behavior (By Design):**
 - `/togbank sync` triggers inventory data sync only
@@ -3267,14 +3271,14 @@ Request data syncs automatically through:
 
 ---
 
-#### ✅ [COMPAT-002] Guild.lua nil Info crash in SendRosterData
+#### ? [COMPAT-002] Guild.lua nil Info crash in SendRosterData
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Backwards Compatibility / Error Handling
 **Reporter:** Player (Screenshot)
 **Date Reported:** 2026-01-23
 **Date Resolved:** 2026-01-23
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Related:** COMPAT-001 (Similar nil Info crash pattern)
 
 **Description:**
@@ -3337,14 +3341,14 @@ Pre-existing bug discovered through player report. Affects any scenario where ro
 
 ---
 
-#### ✅ [DATA-002] Guild.lua nil version comparison in ReceiveAltData
+#### ? [DATA-002] Guild.lua nil version comparison in ReceiveAltData
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Data Handling / Error Handling
 **Reporter:** Player (Error report)
 **Date Reported:** 2026-01-23
 **Date Resolved:** 2026-01-23
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Related:** Regression - was fixed in v2.3.0 but reintroduced
 
 **Description:**
@@ -3400,12 +3404,12 @@ This was previously fixed in v2.3.0 of the original fork but was reintroduced du
 
 #### [UI-003] Intermittent request list visibility - requests sometimes don't appear
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Data Synchronization / Request System
 **Reporter:** Multiple users + Developer
 **Date Reported:** 2026-01-23
 **Date Resolved:** NOT RESOLVED - Bug still occurring
-**Status:** 🔴 OPEN - Investigating with extensive logging
+**Status:** ?? OPEN - Investigating with extensive logging
 **Reproducibility:** Intermittent
 
 **Description:**
@@ -3438,7 +3442,7 @@ Fixed snapshot rejection logic in `ReceiveRequestsData()`:
 **Result:** Testing required - this fix should allow snapshots to merge even when they have different request subsets.
 
 **Fix Attempt #2 (2026-01-23):**
-Upgraded request log entry broadcast priority from BULK → ALERT:
+Upgraded request log entry broadcast priority from BULK ? ALERT:
 - Request creation/modification broadcasts now use ALERT priority (highest available)
 - ALERT priority ensures immediate delivery with minimal throttling
 - BULK priority was causing messages to be delayed/dropped during network congestion
@@ -3448,7 +3452,7 @@ Upgraded request log entry broadcast priority from BULK → ALERT:
 **Result:** Testing ongoing - user was offline during request creation, unable to confirm if ALERT priority prevents message loss. Issue still occurring but root cause unclear.
 
 **Fix Attempt #4 (2026-01-23):**
-Upgraded `/togbank share` announcement priority from BULK → NORMAL:
+Upgraded `/togbank share` announcement priority from BULK ? NORMAL:
 - Share announcement (togbank-s) now uses NORMAL priority to ensure quick notification
 - This is the "new data available" message that triggers players to sync
 - Actual data transfers (inventory deltas, request snapshots) remain at BULK to avoid network spam
@@ -3495,21 +3499,21 @@ Added extensive print logging throughout request system to track request lifecyc
 
 **All logging prints directly to chat (not debug channel) to avoid being lost in spam.**
 
-**⚠️ IMPORTANT: Before closing this ticket, revert all Print() calls back to Debug() calls to reduce chat spam in production.**
+**?? IMPORTANT: Before closing this ticket, revert all Print() calls back to Debug() calls to reduce chat spam in production.**
 
 **How to Debug:**
 1. Create a test request (e.g., Shamanoodles requests bags)
 2. Watch for `[UI-003]` messages in chat
-3. Track the request through creation → log entry → broadcast → merge/prune
+3. Track the request through creation ? log entry ? broadcast ? merge/prune
 4. Identify at which step the request disappears
 
 **Potential Additional Causes:**
-1. ❓ Race conditions in log replay
-2. ❓ Tombstone logic too aggressive
-3. ❓ requestLogApplied tracking has bugs
-4. ❓ PruneRequests removing new requests incorrectly
-5. ❓ NormalizeRequestList dropping valid requests
-6. ⚠️ **BULK priority message throttling** - Request log entries were using BULK priority, causing messages to be delayed or dropped during network congestion (raids, world bosses). Fixed by upgrading to ALERT priority.
+1. ? Race conditions in log replay
+2. ? Tombstone logic too aggressive
+3. ? requestLogApplied tracking has bugs
+4. ? PruneRequests removing new requests incorrectly
+5. ? NormalizeRequestList dropping valid requests
+6. ?? **BULK priority message throttling** - Request log entries were using BULK priority, causing messages to be delayed or dropped during network congestion (raids, world bosses). Fixed by upgrading to ALERT priority.
 
 **Impact:**
 Critical bug affecting all request system users. Requests are being silently deleted, leading to unfulfilled orders and user frustration.
@@ -3520,17 +3524,17 @@ Critical bug affecting all request system users. Requests are being silently del
 - Implement targeted fix based on findings
 
 **Questions to Investigate:**
-- ❓ **UI Refresh Behavior**: Are changes to the request list reflected dynamically in the open UI, or does the user need to close/reopen the requests window to see new requests? Need to verify if UI automatically updates when ApplyRequestSnapshot() completes.
+- ? **UI Refresh Behavior**: Are changes to the request list reflected dynamically in the open UI, or does the user need to close/reopen the requests window to see new requests? Need to verify if UI automatically updates when ApplyRequestSnapshot() completes.
 
 ---
 
 #### [COMM-002] Stale guild roster data in IsPlayerOnline checks
 
-**Severity:** 🔴 HIGH
+**Severity:** ?? HIGH
 **Category:** Communication / Error Prevention
 **Reporter:** User (7.11 whisper issues)
 **Date Reported:** 2026-01-23
-**Status:** ✅ FIXED (v0.7.12)
+**Status:** ? FIXED (v0.7.12)
 **Reproducibility:** Frequent during delta syncs
 
 **Description:**
@@ -3553,10 +3557,10 @@ end
 ```
 
 **Impact:**
-- ✅ Eliminates WHISPER errors from stale roster data
-- ✅ Ensures online checks reflect current server state
-- ✅ Prevents failed delta sync operations
-- ✅ Complements COMM-001 SendWhisper wrapper
+- ? Eliminates WHISPER errors from stale roster data
+- ? Ensures online checks reflect current server state
+- ? Prevents failed delta sync operations
+- ? Complements COMM-001 SendWhisper wrapper
 
 **Related Bugs:**
 - [COMM-001] - SendWhisper wrapper
@@ -3569,11 +3573,11 @@ end
 
 #### [UI-004] Banker tab selection resets to first banker intermittently
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** UI / User Experience
 **Reporter:** User
 **Date Reported:** 2026-01-23
-**Status:** ✅ FIXED (v0.7.11)
+**Status:** ? FIXED (v0.7.11)
 **Reproducibility:** Intermittent (now resolved)
 
 **Description:**
@@ -3637,11 +3641,11 @@ Previously disrupted user workflow when reviewing multiple bankers. Users had to
 
 #### [SYNC-002] Request data not syncing with /togbank sync command
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Communication / Synchronization
 **Reporter:** User
 **Date Reported:** 2026-01-23
-**Status:** ✅ FIXED (v0.7.11)
+**Status:** ? FIXED (v0.7.11)
 **Reproducibility:** Always
 
 **Description:**
@@ -3701,7 +3705,7 @@ end
 
 **Backwards Compatibility:**
 - Old clients with `if data.player == player` check will still ignore queries from new clients
-- New clients respond to any request query, so old→new queries work
+- New clients respond to any request query, so old?new queries work
 - Request data still propagates via `/togbank share` and version broadcasts (cross-version)
 - Mixed version guilds will work, but full rollout recommended for optimal sync
 
@@ -3718,12 +3722,12 @@ Users could not explicitly sync request data via commands or UI. Request data on
 
 #### [COMM-001] "No player named <banker> is currently playing" error message
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Communication / Error Handling
 **Reporter:** Multiple players
 **Date Reported:** 2026-01-23
 **Date Resolved:** 2026-01-23 (Expanded with comprehensive fix)
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Frequent
 
 **Description:**
@@ -3793,12 +3797,12 @@ end
    - Guild.lua: togbank-dr delta range requests
 
 **Benefits:**
-- ✅ Single point of maintenance for all WHISPER logic
-- ✅ Automatic online checking - impossible to forget
-- ✅ Consistent error handling and logging
-- ✅ Return value indicates send success/failure
-- ✅ Eliminates ALL "No player named" errors
-- ✅ Graceful fallback when players go offline
+- ? Single point of maintenance for all WHISPER logic
+- ? Automatic online checking - impossible to forget
+- ? Consistent error handling and logging
+- ? Return value indicates send success/failure
+- ? Eliminates ALL "No player named" errors
+- ? Graceful fallback when players go offline
 
 **Impact:**
 Completely eliminates confusing error messages for players. All WHISPER communications now automatically verify target is online before sending. System gracefully handles logout scenarios by either falling back to GUILD broadcasts or silently skipping the message with appropriate debug logging.
@@ -3819,14 +3823,14 @@ Implement GUILD_ROSTER_UPDATE cache system to maintain accurate real-time online
 
 ---
 
-#### ✅ [DELTA-008] Repeated delta sync failures causing fallback to full sync
+#### ? [DELTA-008] Repeated delta sync failures causing fallback to full sync
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Delta Application / Performance
 **Reporter:** Developer (Console warning)
 **Date Reported:** 2026-01-23
 **Date Resolved:** 2026-01-23
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Intermittent
 
 **Description:**
@@ -3888,13 +3892,13 @@ Eliminates unnecessary delta sync failures when senders are offline. System now 
 
 ## Resolved Bugs (2026-01-22)
 
-### 🟠 HIGH - All Resolved
+### ?? HIGH - All Resolved
 
-#### ✅ [SYNC-001] Cross-Guild Data Bleed After /wipe
+#### ? [SYNC-001] Cross-Guild Data Bleed After /wipe
 **Reported:** 2026-01-22
 **Severity:** HIGH
 **Category:** Database / Synchronization
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Fixed:** 2026-01-22
 
 **Description:**
@@ -3941,7 +3945,7 @@ Add roster-based validation to sync operations:
 
 **Implementation:**
 
-✅ **Added Guild Roster Validation (2026-01-22)**
+? **Added Guild Roster Validation (2026-01-22)**
 
 1. **New Helper Function** - `Guild.lua:IsInCurrentGuildRoster(playerName)`
    - Checks if a player is in the current guild by scanning `GetGuildRosterInfo()`
@@ -3976,15 +3980,15 @@ Users see incorrect banker information after data reset, potentially causing con
 
 ## Resolved Bugs (2026-01-22)
 
-### � CRITICAL - All Resolved
+### ? CRITICAL - All Resolved
 
-#### ✅ [PERF-002] NormalizeRequestList spam causes performance degradation
+#### ? [PERF-002] NormalizeRequestList spam causes performance degradation
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Performance / Request Sync
 **Reporter:** User (Production) - 100+ member guild
 **Date Reported:** 2026-01-25
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.7.18 (commit 77b16a1)
 **Fixed Date:** 2026-01-26
 **Reproducibility:** Was consistent in large guilds
@@ -4007,7 +4011,7 @@ The inventory delta sync protocol (`togbank-dv`) was piggybacking request versio
 
 **Performance Impact (Before Fix):**
 - ~12 full list iterations per second
-- 404 requests × 12 = 4,848 request reads per second  
+- 404 requests � 12 = 4,848 request reads per second
 - With PruneRequests: ~9,696 request table accesses per second
 
 **Solution Implemented:**
@@ -4027,15 +4031,15 @@ After fix, no "has fresher requests data, querying" messages observed during wip
 
 ---
 
-### �🟠 HIGH - All Resolved
+### ??? HIGH - All Resolved
 
-#### ✅ [ADDON-001] Nil itemLink passed to Pawn/BagBrother causes errors
+#### ? [ADDON-001] Nil itemLink passed to Pawn/BagBrother causes errors
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Error Handling / Addon Compatibility
 **Reporter:** User (BugSack error)
 **Date Reported:** 2026-01-22
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
@@ -4052,7 +4056,7 @@ When BagBrother addon updates the bank UI, it calls Pawn addon to display upgrad
 ```
 
 **Stack Trace Context:**
-Error occurs when opening bank → BagBrother UI updates → Pawn checks for upgrades → nil itemLink passed
+Error occurs when opening bank ? BagBrother UI updates ? Pawn checks for upgrades ? nil itemLink passed
 
 **Locals:**
 ```
@@ -4117,10 +4121,10 @@ end
 ```
 
 **Testing:**
-- ✅ Added defensive checks at all item data access points
-- ✅ Functions now gracefully handle nil item links
-- ✅ No nil values propagated to WoW API or other addons
-- ✅ UI handles missing item data without errors
+- ? Added defensive checks at all item data access points
+- ? Functions now gracefully handle nil item links
+- ? No nil values propagated to WoW API or other addons
+- ? UI handles missing item data without errors
 
 **Impact:**
 Prevents TOGBankClassic from contributing to error spam when other addons (like BagBrother) encounter nil item data. Makes the addon more robust when dealing with incomplete or loading item information.
@@ -4133,13 +4137,13 @@ Applied defensive programming throughout the codebase to check for nil item link
 
 ---
 
-#### ✅ [PERF-001] Serious performance degradation during normal gameplay
+#### ? [PERF-001] Serious performance degradation during normal gameplay
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Performance / Optimization
 **Reporter:** Multiple Users (Production)
 **Date Reported:** 2026-01-25
-**Status:** ✅ CLOSED (Same root cause as PERF-002)
+**Status:** ? CLOSED (Same root cause as PERF-002)
 **Fixed In:** v0.7.18 (commit 77b16a1)
 **Fixed Date:** 2026-01-26
 **Reproducibility:** Was consistent in large guilds
@@ -4162,13 +4166,13 @@ Fixed by decoupling request sync from inventory sync (same fix as PERF-002). See
 
 ---
 
-#### ✅ [DATA-003] Integer overflow on request version timestamp causing crash
+#### ? [DATA-003] Integer overflow on request version timestamp causing crash
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Request Sync / Data Corruption
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-25
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.7.17
 **Fixed Date:** 2026-01-25
 **Reproducibility:** Was intermittent
@@ -4199,13 +4203,13 @@ Classic Era uses 32-bit integers. Original MAX_TIMESTAMP (4102444800 for Jan 1, 
 
 ---
 
-#### ✅ [DELTA-009] Delta sync failure warnings spam for offline players
+#### ? [DELTA-009] Delta sync failure warnings spam for offline players
 
-**Severity:** 🔴 CRITICAL (User Experience)
+**Severity:** ?? CRITICAL (User Experience)
 **Category:** Error Handling / Communication
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-25
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.7.17
 **Fixed Date:** 2026-01-25
 **Reproducibility:** Was consistent
@@ -4226,13 +4230,13 @@ Delta sync failure warnings persisted and spammed chat for players who were no l
 
 ---
 
-#### ✅ [DELTA-007] TriggerCallback method does not exist
+#### ? [DELTA-007] TriggerCallback method does not exist
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Delta Application / UI Refresh
 **Reporter:** User (BugSack error)
 **Date Reported:** 2026-01-22
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
@@ -4297,10 +4301,10 @@ This approach:
 3. **Do nothing:** UI would only update on next manual refresh - poor UX
 
 **Testing:**
-- ✅ Delta updates now trigger immediate UI refresh
-- ✅ No more nil method errors
-- ✅ UI shows updated data in real-time when window is open
-- ✅ No performance impact when window is closed
+- ? Delta updates now trigger immediate UI refresh
+- ? No more nil method errors
+- ? UI shows updated data in real-time when window is open
+- ? No performance impact when window is closed
 
 **Resolution:**
 Replaced conceptual `TriggerCallback()` with pragmatic direct UI refresh. This fixes the error and provides better UX by immediately showing delta updates to users who have the inventory window open.
@@ -4310,13 +4314,13 @@ Replaced conceptual `TriggerCallback()` with pragmatic direct UI refresh. This f
 
 ---
 
-#### ✅ [ITEM-001] Item.Aggregate crashes when item.Count is nil
+#### ? [ITEM-001] Item.Aggregate crashes when item.Count is nil
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Database / Error Handling
 **Reporter:** User (BugSack error)
 **Date Reported:** 2026-01-22
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
@@ -4356,12 +4360,12 @@ end
 
 **Fix Iterations:**
 1. **v1 (Commit 29f0c41):** Added `not v.Count` validation to skip malformed items - Did NOT resolve issue
-2. **v2 (Commit 3e2eec4):** Added defensive nil checks with default value (1) for both `item.Count` and `v.Count` - ✅ RESOLVED
+2. **v2 (Commit 3e2eec4):** Added defensive nil checks with default value (1) for both `item.Count` and `v.Count` - ? RESOLVED
 
 **Testing:**
-- ✅ In-game testing confirmed crash no longer occurs
-- ✅ UI opens successfully even with corrupted/old item data
-- ✅ Items with missing Count field now default to 1
+- ? In-game testing confirmed crash no longer occurs
+- ? UI opens successfully even with corrupted/old item data
+- ? Items with missing Count field now default to 1
 
 **Resolution:**
 Applied defensive programming approach using default value of 1 for any nil Count fields during aggregation. This handles both new items with missing Count and previously stored items from old data structures.
@@ -4373,15 +4377,15 @@ Applied defensive programming approach using default value of 1 for any nil Coun
 
 ## Resolved Bugs (2026-01-21)
 
-### 🔴 CRITICAL - All Resolved
+### ?? CRITICAL - All Resolved
 
-#### ✅ [PROTO-001] Delta validation rejects link-less deltas without baseVersion
+#### ? [PROTO-001] Delta validation rejects link-less deltas without baseVersion
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Protocol / Backwards Compatibility
 **Reporter:** Testing (Galdof logs)
 **Date Reported:** 2026-01-21
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
@@ -4421,7 +4425,7 @@ When we removed `baseVersion` from `ComputeDelta()` in Guild.lua (v0.8.0 optimiz
 
 **Implementation Details:**
 
-**✅ Fixed in Core.lua (line 118-122):**
+**? Fixed in Core.lua (line 118-122):**
 ```lua
 -- v0.8.0: baseVersion is optional (removed from new protocol)
 -- Old protocol deltas will still have it, new protocol won't
@@ -4448,11 +4452,11 @@ end
 ```
 
 **Testing Results:**
-- ✅ Validation fix implemented in Core.lua
-- ✅ In-game testing completed successfully
-- ✅ Link-less deltas (togbank-d4) now accepted without errors
-- ✅ No more "missing or invalid baseVersion" validation failures
-- ✅ Backwards compatible with old protocol deltas that include baseVersion
+- ? Validation fix implemented in Core.lua
+- ? In-game testing completed successfully
+- ? Link-less deltas (togbank-d4) now accepted without errors
+- ? No more "missing or invalid baseVersion" validation failures
+- ? Backwards compatible with old protocol deltas that include baseVersion
 
 **Resolution:**
 Made `baseVersion` field optional in delta validation. Changed Core.lua line 118 from requiring the field to only validating its type IF present. This allows v0.8.0 deltas (without baseVersion) while still supporting v0.7.0 deltas (with baseVersion).
@@ -4467,13 +4471,13 @@ Made `baseVersion` field optional in delta validation. Changed Core.lua line 118
 
 ---
 
-#### ✅ [UI-001] Inventory UI crashes when alt.bank.slots is nil
+#### ? [UI-001] Inventory UI crashes when alt.bank.slots is nil
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** UI / Database
 **Reporter:** User
 **Date Reported:** 2026-01-21
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
@@ -4567,7 +4571,7 @@ Implement both Option 1 (defensive checks in UI) AND Option 2 (data migration). 
 
 **Implementation Details:**
 
-**✅ Fixed in Inventory.lua (lines 177-187):**
+**? Fixed in Inventory.lua (lines 177-187):**
 ```lua
 if alt.bank and alt.bank.slots then
     slots = slots + alt.bank.slots.count
@@ -4582,7 +4586,7 @@ end
 - Prevents crash when `slots` field is missing
 - UI gracefully handles incomplete data by skipping those characters' slot counts
 
-**✅ Fixed in Database.lua (Database:Load()):**
+**? Fixed in Database.lua (Database:Load()):**
 ```lua
 -- v0.8.0: Migrate old alt data to ensure slots fields exist
 if db.alts then
@@ -4607,11 +4611,11 @@ end
 - Ensures all existing data has proper structure going forward
 
 **Testing Results:**
-- ✅ Defensive checks prevent immediate crashes (Inventory.lua lines 177-187)
-- ✅ Data migration ensures proper structure on load (Database.lua)
-- ✅ In-game testing completed successfully
-- ✅ Inventory UI opens without crashes
-- ✅ Slot counts display correctly for all characters
+- ? Defensive checks prevent immediate crashes (Inventory.lua lines 177-187)
+- ? Data migration ensures proper structure on load (Database.lua)
+- ? In-game testing completed successfully
+- ? Inventory UI opens without crashes
+- ? Slot counts display correctly for all characters
 
 **Resolution:**
 Implemented dual-layer fix: defensive nil checks in UI code prevent crashes, and database migration ensures all alt data has proper structure. Migration runs once on addon load and initializes missing `slots` fields with zero values.
@@ -4621,13 +4625,13 @@ Implemented dual-layer fix: defensive nil checks in UI code prevent crashes, and
 
 ---
 
-#### 🔴 [UI-002] Items don't appear in UI after data integration
+#### ?? [UI-002] Items don't appear in UI after data integration
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** UI / Protocol
 **Reporter:** User (Galdof testing)
 **Date Reported:** 2026-01-21 (Evening)
-**Status:** 🐛 REOPENED - Links still missing for many items
+**Status:** ?? REOPENED - Links still missing for many items
 **Fixed In:** v0.8.0 (partial)
 **Assigned To:** Development Team
 
@@ -4710,7 +4714,7 @@ end
 
 **Implementation Details:**
 
-**✅ Fixed in Guild.lua (lines 970-1008):**
+**? Fixed in Guild.lua (lines 970-1008):**
 ```lua
 function TOGBankClassic_Guild:ReconstructItemLinks(items)
     if not items then
@@ -4757,18 +4761,18 @@ end
 4. Check if UI is open before refreshing to avoid unnecessary redraws
 
 **Behavior After Fix:**
-- Items with cached data: Links load immediately → UI refreshes once
-- Items needing server query: Links load async → UI refreshes as each completes
+- Items with cached data: Links load immediately ? UI refreshes once
+- Items needing server query: Links load async ? UI refreshes as each completes
 - User sees items appear as soon as their data becomes available
 - No delay between "integrating" message and items displaying
 
 **Testing Results:**
-- ✅ Items now appear immediately after integration
-- ✅ Cached items display instantly
-- ✅ Uncached items appear within 1-2 seconds (server query time)
-- ✅ UI updates multiple times as async callbacks complete
-- ✅ No manual refresh required
-- ✅ Works for both togbank-d3 full sync and togbank-d4 deltas
+- ? Items now appear immediately after integration
+- ? Cached items display instantly
+- ? Uncached items appear within 1-2 seconds (server query time)
+- ? UI updates multiple times as async callbacks complete
+- ? No manual refresh required
+- ? Works for both togbank-d3 full sync and togbank-d4 deltas
 
 **Related Changes:**
 - Chat.lua: Added UI refresh in togbank-d/d3 handlers when status = ADOPTED (safety net)
@@ -4776,7 +4780,7 @@ end
 - With this fix, those safety refreshes now work as intended
 
 **Current Status (2026-02-06):**
-Items now appear, but only ~25–33% retain links after link-less sync. This indicates link stripping/reconstruction still loses link data for some items (likely gear/uncached items that require full Link or ItemString).
+Items now appear, but only ~25�33% retain links after link-less sync. This indicates link stripping/reconstruction still loses link data for some items (likely gear/uncached items that require full Link or ItemString).
 
 **New Investigation Notes:**
 - Link stripping currently removes Links for all items and only preserves ItemString when link is present.
@@ -4792,15 +4796,15 @@ Items now appear, but only ~25–33% retain links after link-less sync. This ind
 
 ---
 
-### 🟠 HIGH
+### ?? HIGH
 
-#### ✅ [DATA-001] Inventory hash missing for existing alt data
+#### ? [DATA-001] Inventory hash missing for existing alt data
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Database / Protocol
 **Reporter:** Testing (hash broadcasting logs)
 **Date Reported:** 2026-01-21
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.8.0
 **Assigned To:** Development Team
 
@@ -4830,7 +4834,7 @@ The `inventoryHash` field is computed by `Core:ComputeInventoryHash(bank, bags, 
 
 **Implementation Details:**
 
-**✅ Fixed in Database.lua (Database:InitializeDatabase()):**
+**? Fixed in Database.lua (Database:InitializeDatabase()):**
 ```lua
 -- v0.8.0: Migrate alt data to compute inventory hashes for existing data
 if db.alts then
@@ -4848,17 +4852,17 @@ end
 ```
 
 **Migration Results (from logs):**
-- ✅ Successfully migrated 61 alts with inventory data
-- ✅ Computed hashes from existing bank/bags/money data
-- ✅ One alt skipped (Engnschematc-Azuresong) - missing bank or bags data
+- ? Successfully migrated 61 alts with inventory data
+- ? Computed hashes from existing bank/bags/money data
+- ? One alt skipped (Engnschematc-Azuresong) - missing bank or bags data
 
 **Testing Results:**
-- ✅ Migration runs on addon load after /reload
-- ✅ Hash values computed from saved inventory data
-- ✅ Broadcasts now show hash values: `Broadcasting X: version=Y, hash=Z`
-- ✅ Pull-based protocol hash comparison now functional
-- ✅ Hash mismatch detection triggers selective queries
-- ✅ Galdof successfully queried and received updated data based on hash difference
+- ? Migration runs on addon load after /reload
+- ? Hash values computed from saved inventory data
+- ? Broadcasts now show hash values: `Broadcasting X: version=Y, hash=Z`
+- ? Pull-based protocol hash comparison now functional
+- ? Hash mismatch detection triggers selective queries
+- ? Galdof successfully queried and received updated data based on hash difference
 
 **Resolution:**
 Added one-time migration in Database.lua that computes inventory hashes for all existing alt data on addon load. Uses same `ComputeInventoryHash()` function as Bank:Scan() to ensure consistency. Migration only runs for alts with complete bank+bags data and missing hash.
@@ -4870,19 +4874,19 @@ Added one-time migration in Database.lua that computes inventory hashes for all 
 
 ## Active Bugs
 
-### 🔴 CRITICAL
+### ?? CRITICAL
 
 *No critical bugs at this time.*
 
-### 🟠 HIGH
+### ?? HIGH
 
 *No high priority bugs at this time.*
 
-### 🟡 MEDIUM
+### ?? MEDIUM
 
 *No medium priority bugs at this time.*
 
-### 🟢 LOW
+### ?? LOW
 
 *No low priority bugs at this time.*
 
@@ -4890,11 +4894,11 @@ Added one-time migration in Database.lua that computes inventory hashes for all 
 
 ## Resolved Bugs (2026-01-21)
 
-### 🟠 HIGH - All Resolved
+### ?? HIGH - All Resolved
 
-#### ✅ [SYNC-001] Version timestamp desync causes unnecessary queries on login
+#### ? [SYNC-001] Version timestamp desync causes unnecessary queries on login
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Communication / Protocol
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
@@ -4945,9 +4949,9 @@ The bug is NOT the broadcast itself - it's that clients have DIFFERENT cached ve
 4. Should version timestamps be more deterministic (based on data hash, not time)?
 
 **Workarounds Considered:**
-- ❌ Remove version broadcast on no-change: Would prevent catching genuinely stale data
-- ❌ Add version broadcast throttling: Doesn't fix root cause of timestamp desync
-- ✅ **IMPLEMENTED: Separate broadcast systems for delta and legacy clients**
+- ? Remove version broadcast on no-change: Would prevent catching genuinely stale data
+- ? Add version broadcast throttling: Doesn't fix root cause of timestamp desync
+- ? **IMPLEMENTED: Separate broadcast systems for delta and legacy clients**
 
 **Solution Implemented:**
 Created a separate delta version broadcast system (`togbank-dv`) that operates independently from the legacy version broadcast (`togbank-v`):
@@ -4981,10 +4985,10 @@ Created a separate delta version broadcast system (`togbank-dv`) that operates i
 - Clean separation allows independent evolution of both systems
 
 **Testing Required:**
-- ✅ Verify delta clients only query on `togbank-dv` broadcasts
-- ✅ Verify legacy clients continue to work with `togbank-v` broadcasts
-- ✅ **CONFIRMED: No query spam when bank alt logs in with no changes**
-- ✅ Verify legitimate stale data still triggers queries correctly
+- ? Verify delta clients only query on `togbank-dv` broadcasts
+- ? Verify legacy clients continue to work with `togbank-v` broadcasts
+- ? **CONFIRMED: No query spam when bank alt logs in with no changes**
+- ? Verify legitimate stale data still triggers queries correctly
 
 **Test Results (2026-01-20):**
 ```
@@ -4999,17 +5003,17 @@ TOGBankClassic: [DEBUG] > Metals-Azuresong > togbank-s (Share)
 
 [Delta Sync Successfully Transmitting - 85% Bandwidth Savings]
 TOGBankClassic: [DEBUG] Comparing Metals-Azuresong: previous bank has 9 items, bags have 12 items; current bank has 9 items, bags have 13 items
-TOGBankClassic: [DEBUG] ✓ Delta selected for Metals-Azuresong: 348 bytes vs 2368 bytes full (14.7% size, 2020 bytes saved)
+TOGBankClassic: [DEBUG] ? Delta selected for Metals-Azuresong: 348 bytes vs 2368 bytes full (14.7% size, 2020 bytes saved)
 TOGBankClassic: [DEBUG] < togbank-d2 (Delta Data) to Guild (348 bytes)
 TOGBankClassic: [DEBUG] Sent delta update for Metals-Azuresong via togbank-d2
 TOGBankClassic: [DEBUG] Send complete: 2 chunks, 348 bytes in 3.1s
 ```
 
 **Results:**
-- ✅ WORKING - Delta clients successfully ignore legacy broadcasts
-- ✅ WORKING - Delta sync transmission functional (348 bytes vs 2368 bytes = 85% savings)
-- ✅ FIXED - Self-query bug (clients no longer query sender about themselves)
-- ⚠️ TESTING - Delta chain replay with removed age check
+- ? WORKING - Delta clients successfully ignore legacy broadcasts
+- ? WORKING - Delta sync transmission functional (348 bytes vs 2368 bytes = 85% savings)
+- ? FIXED - Self-query bug (clients no longer query sender about themselves)
+- ?? TESTING - Delta chain replay with removed age check
 
 **Additional Fixes (Session 2 - 2026-01-20):**
 
@@ -5037,13 +5041,13 @@ TOGBankClassic: [DEBUG] Send complete: 2 chunks, 348 bytes in 3.1s
 
 ---
 
-#### ✅ [SCAN-001] Inventory scan only triggers on window close events (not BAG_UPDATE)
+#### ? [SCAN-001] Inventory scan only triggers on window close events (not BAG_UPDATE)
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Database / Inventory Scanning
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
-**Status:** ✅ CLOSED - Moved to Feature Improvements
+**Status:** ? CLOSED - Moved to Feature Improvements
 **Resolution:** Not a bug - current design works as intended. Real-time scanning is a feature enhancement.
 **Resolution Date:** 2026-01-21
 
@@ -5078,7 +5082,7 @@ Inventory scan should trigger in real-time whenever items change, not just on wi
 With debouncing to prevent spam during rapid changes (looting, crafting, etc.)
 
 **Actual Behavior:**
-Scan triggers ONLY when closing these windows (OnUpdateStop → Scan):
+Scan triggers ONLY when closing these windows (OnUpdateStop ? Scan):
 - BANKFRAME_CLOSED (line 176)
 - MAIL_CLOSED (line 209)
 - TRADE_CLOSED (line 224)
@@ -5156,7 +5160,7 @@ This is misleading - it doesn't show bag counts, making it appear bags aren't co
 
 **Workaround:**
 After making inventory changes, BEFORE `/togbank share`:
-1. **Close any open window** (bank/mail/trade/auction/merchant) - triggers OnUpdateStop → Scan()
+1. **Close any open window** (bank/mail/trade/auction/merchant) - triggers OnUpdateStop ? Scan()
 2. OR `/reload` - Forces fresh scan on login
 3. OR open+close mailbox if nearby - MAIL_CLOSED triggers scan
 
@@ -5178,13 +5182,13 @@ Critical - blocks delta sync testing, affects all users changing character bag i
 
 ---
 
-#### ✅ [DELTA-006] Delta rejection without recovery for offline players (version mismatch gap)
+#### ? [DELTA-006] Delta rejection without recovery for offline players (version mismatch gap)
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Protocol / Delta Application
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
-**Status:** ✅ CLOSED - Abandoned with v0.7.0
+**Status:** ? CLOSED - Abandoned with v0.7.0
 **Resolution:** Superseded by v0.8.0 pull-based protocol with inventory hashing - version matching no longer relies on strict delta chains.
 **Resolution Date:** 2026-01-21
 
@@ -5203,7 +5207,7 @@ This breaks the fundamental use case: **Players who go offline should be able to
 **Steps to Reproduce:**
 1. Galdof (receiver) has Metals data at version `v1768949336`
 2. Galdof goes offline (logs out or AFK)
-3. Metals (banker) makes updates over 15 minutes → version `v1768950207`
+3. Metals (banker) makes updates over 15 minutes ? version `v1768950207`
 4. Galdof comes back online
 5. Metals sends delta: `baseVersion=1768950207, version=1768950250`
 6. Galdof rejects: "Version mismatch for Metals-Azuresong (have 1768949336, delta expects 1768950207)"
@@ -5213,12 +5217,12 @@ This breaks the fundamental use case: **Players who go offline should be able to
 
 **Expected Behavior (Current - Broken):**
 ```
-Delta rejected → Query for full sync → Metals responds → Full sync applied → Synced
+Delta rejected ? Query for full sync ? Metals responds ? Full sync applied ? Synced
 ```
 
 **Actual Behavior:**
 ```
-Delta rejected → Query sent → No response → Permanently out of sync
+Delta rejected ? Query sent ? No response ? Permanently out of sync
 ```
 
 **Root Cause:**
@@ -5234,7 +5238,7 @@ Instead of falling back to full sync, implement delta chain replay to gracefully
 1. **Sender stores delta history**: Keep last 10 deltas per alt (configurable)
 2. **New protocol**: `togbank-dr` (Delta Range Request)
 3. **Version gap detection**: Receiver detects version mismatch, calculates gap
-4. **Chain request**: Request all deltas from oldVersion → newVersion
+4. **Chain request**: Request all deltas from oldVersion ? newVersion
 5. **Sequential application**: Apply deltas in order to catch up
 
 **Example Flow:**
@@ -5251,24 +5255,24 @@ deltaHistory["Metals-Azuresong"] = {
 2. Send: togbank-dr request for range [100, 115]
 3. Metals sends 3 deltas (still smaller than full sync)
 4. Galdof applies sequentially:
-   v100 + delta1 → v105
-   v105 + delta2 → v110
-   v110 + delta3 → v115
-5. ✓ Synced! Bandwidth: ~900 bytes vs ~1800 bytes full
+   v100 + delta1 ? v105
+   v105 + delta2 ? v110
+   v110 + delta3 ? v115
+5. ? Synced! Bandwidth: ~900 bytes vs ~1800 bytes full
 ```
 
 **Benefits:**
-- ✅ Works for offline players (most common scenario)
-- ✅ Still bandwidth-efficient (chain < full sync)
-- ✅ Automatic recovery without manual intervention
-- ✅ Graceful degradation (falls back to full if gap too large)
+- ? Works for offline players (most common scenario)
+- ? Still bandwidth-efficient (chain < full sync)
+- ? Automatic recovery without manual intervention
+- ? Graceful degradation (falls back to full if gap too large)
 
 **Implementation Requirements:**
 
 **Database.lua:**
 ```lua
 SaveDeltaHistory(guildName, altName, baseVersion, version, delta)
-GetDeltaHistory(guildName, altName, fromVersion, toVersion) → delta[]
+GetDeltaHistory(guildName, altName, fromVersion, toVersion) ? delta[]
 CleanupDeltaHistory(guildName) -- Remove deltas older than 1 hour
 ```
 
@@ -5284,19 +5288,19 @@ DELTA_CHAIN_MAX_SIZE = 5000       -- If chain > 5KB, use full sync instead
 ```lua
 -- Sender side
 SendAltData(name)
-  → ComputeDelta() → SaveDeltaHistory() → Send delta
+  ? ComputeDelta() ? SaveDeltaHistory() ? Send delta
 
 -- Receiver side
 ApplyDelta(name, deltaData)
-  → if version mismatch:
-       → RequestDeltaChain(fromVersion, toVersion)
-       → Receive chain → ApplyDeltaChain()
+  ? if version mismatch:
+       ? RequestDeltaChain(fromVersion, toVersion)
+       ? Receive chain ? ApplyDeltaChain()
 ```
 
 **Chat.lua:**
 ```lua
 RegisterComm("togbank-dr") -- Delta Range Request handler
-  → GetDeltaHistory(fromVersion, toVersion) → Send chain via togbank-dc
+  ? GetDeltaHistory(fromVersion, toVersion) ? Send chain via togbank-dc
 ```
 
 **New Protocol Messages:**
@@ -5304,10 +5308,10 @@ RegisterComm("togbank-dr") -- Delta Range Request handler
 - `togbank-dc` (Delta Chain): `{altName, deltas: [{baseVersion, version, delta}]}`
 
 **Fallback Rules:**
-1. If delta chain > 10 hops → full sync
-2. If total chain size > 5KB → full sync
-3. If any delta missing in history → full sync
-4. If chain application fails → full sync
+1. If delta chain > 10 hops ? full sync
+2. If total chain size > 5KB ? full sync
+3. If any delta missing in history ? full sync
+4. If chain application fails ? full sync
 5. Cleanup old deltas (>1 hour) to prevent memory growth
 
 **Files Affected:**
@@ -5332,13 +5336,13 @@ Manual `/togbank share` from banker after player returns online forces full sync
 
 ---
 
-#### ✅ [DELTA-006-IMPL-001] Function name mismatch: BuildDeltaChain vs GetDeltaHistory
+#### ? [DELTA-006-IMPL-001] Function name mismatch: BuildDeltaChain vs GetDeltaHistory
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Implementation / Function Call Error
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
-**Status:** ✅ CLOSED (Feature Abandoned)
+**Status:** ? CLOSED (Feature Abandoned)
 **Closed Date:** 2026-01-26
 **Assigned To:** Development Team
 **Related To:** [DELTA-006] Delta Chain Replay Implementation
@@ -5374,7 +5378,7 @@ Proactive delta chain sending was failing silently due to calling non-existent f
 [Metals] < togbank-dc (Delta Chain) to Galdof-OldBlanchy (XXX bytes)
 
 [Galdof] > Metals-Azuresong > togbank-dc (Delta Chain) (3 hops)
-[Galdof] ✓ Applied delta chain for Metals-Azuresong (3 hops, v1768964533→v1768965902)
+[Galdof] ? Applied delta chain for Metals-Azuresong (3 hops, v1768964533?v1768965902)
 ```
 
 **Actual Behavior:**
@@ -5420,14 +5424,14 @@ local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.
 ```
 
 **Changes:**
-1. Function name: `BuildDeltaChain` → `GetDeltaHistory`
+1. Function name: `BuildDeltaChain` ? `GetDeltaHistory`
 2. Added missing parameter: `TOGBankClassic_Guild.Info.name` (guild name)
 
 **Verification:**
-- ✅ Confirmed function doesn't exist: `/dump TOGBankClassic_Database.BuildDeltaChain` → nil
-- ✅ Confirmed correct function exists: `/dump TOGBankClassic_Database.GetDeltaHistory` → function
-- ✅ No other incorrect calls found (grep search performed)
-- ✅ No Lua errors after fix
+- ? Confirmed function doesn't exist: `/dump TOGBankClassic_Database.BuildDeltaChain` ? nil
+- ? Confirmed correct function exists: `/dump TOGBankClassic_Database.GetDeltaHistory` ? function
+- ? No other incorrect calls found (grep search performed)
+- ? No Lua errors after fix
 
 **Testing Plan:**
 1. Check delta history exists: `/dump TOGBankClassic_Database.Info.deltaHistory["Metals-Azuresong"]`
@@ -5454,11 +5458,11 @@ local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.
 
 ---
 
-### 🟡 MEDIUM
+### ?? MEDIUM
 
-#### ⏳ [TEST-001] Unit tests need adjustment for actual implementation
+#### ? [TEST-001] Unit tests need adjustment for actual implementation
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Database / Module Initialization
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-17
@@ -5501,9 +5505,9 @@ Tests.lua was using AceAddon's `NewModule()` pattern, but other modules in the a
 
 ---
 
-#### ✅ [DELTA-002] Tests.lua addon:Print() at load time fails
+#### ? [DELTA-002] Tests.lua addon:Print() at load time fails
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Module Initialization
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-17
@@ -5546,9 +5550,9 @@ The line `addon:Print("Tests module loaded. Use /togbank test to run delta sync 
 
 ---
 
-#### ✅ [DELTA-003] Tests.lua addon reference nil in RunAllTests
+#### ? [DELTA-003] Tests.lua addon reference nil in RunAllTests
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Module Initialization
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-17
@@ -5597,11 +5601,11 @@ This creates a proxy table that dynamically looks up `TOGBankClassic_Core` whene
 
 ---
 
-### 🟠 HIGH
+### ?? HIGH
 
-#### ✅ [COMPAT-001] RequestLog.lua nil Info crash on early request log sync
+#### ? [COMPAT-001] RequestLog.lua nil Info crash on early request log sync
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Backwards Compatibility / Error Handling
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-17
@@ -5665,22 +5669,22 @@ This is a pre-existing bug not related to delta sync implementation, but discove
 
 ---
 
-### 🟡 MEDIUM
+### ?? MEDIUM
 
 ---
 
 ## Resolved Bugs
 
-### 🟢 FIXED
+### ?? FIXED
 
-#### ✅ [TEST-002] Remaining test phases need adjustment for actual implementation
+#### ? [TEST-002] Remaining test phases need adjustment for actual implementation
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Testing
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
 **Date Resolved:** 2026-01-20
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Related:** TEST-001 (Phase 5.1 completed)
 **Resolution:** Fixed all test failures + discovered and fixed ApplyItemDelta bug
 
@@ -5688,14 +5692,14 @@ This is a pre-existing bug not related to delta sync implementation, but discove
 After fixing Phase 5.1 Delta Computation tests in TEST-001, there were 11 failing tests across 4 remaining test phases. All tests have been fixed and now pass.
 
 **Final Test Results:**
-- Phase 5.1 Delta Computation: **8/8 passed** ✅
-- Phase 5.2 Size Estimation: **4/4 passed** ✅
-- Phase 5.3 Protocol Negotiation: **3/3 passed** ✅
-- Phase 5.4 Error Handling: **5/5 passed** ✅
-- Phase 5.5 Integration: **2/2 passed** ✅
-- Phase 5.6 Backwards Compatibility: **3/3 passed** ✅
+- Phase 5.1 Delta Computation: **8/8 passed** ?
+- Phase 5.2 Size Estimation: **4/4 passed** ?
+- Phase 5.3 Protocol Negotiation: **3/3 passed** ?
+- Phase 5.4 Error Handling: **5/5 passed** ?
+- Phase 5.5 Integration: **2/2 passed** ?
+- Phase 5.6 Backwards Compatibility: **3/3 passed** ?
 
-**Total: 25/25 passed (100%)** 🎉
+**Total: 25/25 passed (100%)** ??
 
 **Issues Fixed:**
 
@@ -5755,9 +5759,9 @@ All 25 tests now pass successfully, validating:
 
 ---
 
-### 🟡 MEDIUM
+### ?? MEDIUM
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Testing
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
@@ -5769,12 +5773,12 @@ All 25 tests now pass successfully, validating:
 After fixing Phase 5.1 Delta Computation tests in TEST-001, there are still 11 failing tests across 4 remaining test phases. These failures are likely due to similar issues: wrong function signatures, data structure mismatches, or missing test setup/mocking.
 
 **Current Test Results:**
-- Phase 5.1 Delta Computation: **8/8 passed** ✅ (fixed in TEST-001)
-- Phase 5.2 Size Estimation: **4/4 passed** ✅ (already working)
-- Phase 5.3 Protocol Negotiation: **0/3 passing** ❌
-- Phase 5.4 Error Handling: **1/5 passing** ❌
-- Phase 5.5 Integration: **0/2 passing** ❌
-- Phase 5.6 Backwards Compatibility: **1/3 passing** ❌
+- Phase 5.1 Delta Computation: **8/8 passed** ? (fixed in TEST-001)
+- Phase 5.2 Size Estimation: **4/4 passed** ? (already working)
+- Phase 5.3 Protocol Negotiation: **0/3 passing** ?
+- Phase 5.4 Error Handling: **1/5 passing** ?
+- Phase 5.5 Integration: **0/2 passing** ?
+- Phase 5.6 Backwards Compatibility: **1/3 passing** ?
 
 **Total: 14/25 passed (56%) - Target: 25/25 (100%)**
 
@@ -5782,31 +5786,31 @@ After fixing Phase 5.1 Delta Computation tests in TEST-001, there are still 11 f
 
 **Phase 5.3: Protocol Negotiation (0/3 passing)**
 ```
-✗ Protocol Version Detection: attempt to index local 'v2Caps' (a nil value)
-✗ Should Use Delta Logic: Assertion failed: Should use delta when conditions are met
-✗ Delta Support Threshold: Assertion failed: 30% should be below 50% threshold
+? Protocol Version Detection: attempt to index local 'v2Caps' (a nil value)
+? Should Use Delta Logic: Assertion failed: Should use delta when conditions are met
+? Delta Support Threshold: Assertion failed: 30% should be below 50% threshold
 ```
 
 **Phase 5.4: Error Handling (1/5 passing)**
 ```
-✗ Apply Delta - No Existing Data: attempt to index field 'alts' (a nil value)
-✗ Apply Delta - Version Mismatch: attempt to index field 'alts' (a nil value)
-✓ Delta Error Tracking (passing)
-✗ Snapshot Validation: Assertion failed: Corrupted bank should fail
-✗ Delta Structure Validation: Assertion failed: Valid delta should pass
+? Apply Delta - No Existing Data: attempt to index field 'alts' (a nil value)
+? Apply Delta - Version Mismatch: attempt to index field 'alts' (a nil value)
+? Delta Error Tracking (passing)
+? Snapshot Validation: Assertion failed: Corrupted bank should fail
+? Delta Structure Validation: Assertion failed: Valid delta should pass
 ```
 
 **Phase 5.5: Integration (0/2 passing)**
 ```
-✗ Full Delta Roundtrip: bad argument #2 to 'format' (string expected, got table)
-✗ Delta Size Threshold: bad argument #2 to 'format' (string expected, got table)
+? Full Delta Roundtrip: bad argument #2 to 'format' (string expected, got table)
+? Delta Size Threshold: bad argument #2 to 'format' (string expected, got table)
 ```
 
 **Phase 5.6: Backwards Compatibility (1/3 passing)**
 ```
-✗ V1 Client Ignores Delta Prefix: Assertion failed: V1 client should not support delta
-✓ V2 Client Handles Both Protocols (passing)
-✗ Fallback to Full Sync: Assertion failed: Should not use delta with V1 client
+? V1 Client Ignores Delta Prefix: Assertion failed: V1 client should not support delta
+? V2 Client Handles Both Protocols (passing)
+? Fallback to Full Sync: Assertion failed: Should not use delta with V1 client
 ```
 
 **Root Causes (Preliminary Analysis):**
@@ -5847,7 +5851,7 @@ Manual testing per TESTING.md continues to validate functionality. Core delta co
 
 ---
 
-### 🟢 LOW
+### ?? LOW
 
 *No low priority bugs reported*
 
@@ -5855,15 +5859,15 @@ Manual testing per TESTING.md continues to validate functionality. Core delta co
 
 ## Resolved Bugs
 
-### ✅ FIXED
+### ? FIXED
 
-#### ✅ [TEST-001] Unit tests need adjustment for actual implementation
+#### ? [TEST-001] Unit tests need adjustment for actual implementation
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Testing
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-17
-**Status:** ✅ Resolved & Verified
+**Status:** ? Resolved & Verified
 **Resolution Date:** 2026-01-20
 **Assigned To:** Development Team
 
@@ -5875,7 +5879,7 @@ This ticket focused on fixing Phase 5.1 (Delta Computation) and Phase 5.2 (Size 
 
 **Test Results (Before Fix):**
 - Phase 5.1 Delta Computation: 0/6 passed
-- Phase 5.2 Size Estimation: 4/4 passed ✓
+- Phase 5.2 Size Estimation: 4/4 passed ?
 - Phase 5.3 Protocol Negotiation: 1/3 passed
 - Phase 5.4 Error Handling: 1/5 passed
 - Phase 5.5 Integration: 0/2 passed
@@ -5883,8 +5887,8 @@ This ticket focused on fixing Phase 5.1 (Delta Computation) and Phase 5.2 (Size 
 - **Total: 8/25 passed (32%)**
 
 **Test Results (After Fix - VERIFIED):**
-- Phase 5.1 Delta Computation: **8/8 passed** ✅ (was 0/6)
-- Phase 5.2 Size Estimation: 4/4 passed ✓
+- Phase 5.1 Delta Computation: **8/8 passed** ? (was 0/6)
+- Phase 5.2 Size Estimation: 4/4 passed ?
 - Phase 5.3 Protocol Negotiation: 0/3 passed
 - Phase 5.4 Error Handling: 1/5 passed
 - Phase 5.5 Integration: 0/2 passed
@@ -5933,26 +5937,26 @@ Additionally:
 Ran `/togbank test` after implementing fixes:
 ```
 Phase 5.1: Delta Computation Tests
-✓ Delta Computation - No Changes
-✓ Delta Computation - Money Change
-✓ Delta Computation - Item Added
-✓ Delta Computation - Item Removed
-✓ Delta Computation - Item Count Changed
-✓ Delta Computation - Multiple Changes
-✓ Items Equal - Comparison
-✓ Get Changed Fields
+? Delta Computation - No Changes
+? Delta Computation - Money Change
+? Delta Computation - Item Added
+? Delta Computation - Item Removed
+? Delta Computation - Item Count Changed
+? Delta Computation - Multiple Changes
+? Items Equal - Comparison
+? Get Changed Fields
 
 Phase 5.2: Size Estimation Tests
-✓ Size Estimation - Empty
-✓ Size Estimation - Small Delta
-✓ Size Estimation - Large Delta
-✓ Size Estimation - Comparison
+? Size Estimation - Empty
+? Size Estimation - Small Delta
+? Size Estimation - Large Delta
+? Size Estimation - Comparison
 
 === Test Summary ===
 Total: 25 | Passed: 14 | Failed: 11
 ```
 
-**Result: SUCCESS** ✅
+**Result: SUCCESS** ?
 - All 8 Phase 5.1 delta computation tests now passing (was 0/6)
 - Test pass rate improved from 32% to 56%
 - No Lua errors during delta computation tests
@@ -5966,17 +5970,17 @@ The following 11 test failures are now tracked in **TEST-002**:
 - Phase 5.6 Backwards Compatibility: 1/3 passing
 
 **Resolution Complete:**
-✅ Core delta computation tests fixed and verified working (Phase 5.1: 8/8)
-✅ Test infrastructure properly initializes database context
-✅ Test data structures match actual implementation
-✅ All Phase 5.1 tests passing (100%)
-✅ Remaining phases split to TEST-002 for separate tracking
+? Core delta computation tests fixed and verified working (Phase 5.1: 8/8)
+? Test infrastructure properly initializes database context
+? Test data structures match actual implementation
+? All Phase 5.1 tests passing (100%)
+? Remaining phases split to TEST-002 for separate tracking
 
 *No other medium priority bugs reported*
 
 ---
 
-### 🟢 LOW
+### ?? LOW
 
 *No low priority bugs reported*
 
@@ -5984,15 +5988,15 @@ The following 11 test failures are now tracked in **TEST-002**:
 
 ## Resolved Bugs
 
-### ✅ FIXED
+### ? FIXED
 
-#### ✅ [DELTA-005] Item merging removes slot field, breaking delta comparison
+#### ? [DELTA-005] Item merging removes slot field, breaking delta comparison
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Delta Computation / Database
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
-**Status:** ✅ Resolved & Tested
+**Status:** ? Resolved & Tested
 **Resolution Date:** 2026-01-20
 **Assigned To:** Development Team
 
@@ -6010,7 +6014,7 @@ The scanning logic merges multiple stacks of the same item (e.g., 4x Mithril Bar
 1. Bank has 70 Mithril Bars (multiple stacks)
 2. Close bank (scan merges into single item: {ID, Count=70, Link})
 3. `/togbank share` (baseline snapshot saved)
-4. Remove 20 bars (70→50)
+4. Remove 20 bars (70?50)
 5. Close bank (scan merges into single item: {ID, Count=50, Link})
 6. `/togbank share`
 7. Result: "No changes detected for Metals-Azuresong (delta would be empty)"
@@ -6019,7 +6023,7 @@ The scanning logic merges multiple stacks of the same item (e.g., 4x Mithril Bar
 Delta comparison should detect quantity changes:
 ```
 Comparing Metals-Azuresong: previous bank has 9 items, bags have 7 items; current bank has 9 items, bags have 7 items
-✓ Delta selected for Metals-Azuresong (1 modifications: Mithril Bar 70→50)
+? Delta selected for Metals-Azuresong (1 modifications: Mithril Bar 70?50)
 Sent delta update for Metals-Azuresong via togbank-d2
 ```
 
@@ -6048,7 +6052,7 @@ Merged items have only `{ID, Count, Link}` - **NO `slot` field**.
 Guild.lua `ComputeItemDelta()` line 970-977 tries to compare by slot:
 ```lua
 for _, newItem in pairs(newItems) do
-    if newItem and newItem.slot then  -- ← FAILS: newItem.slot is nil
+    if newItem and newItem.slot then  -- ? FAILS: newItem.slot is nil
         local oldItem = oldBySlot[newItem.slot]
         -- comparison never runs
     end
@@ -6058,7 +6062,7 @@ end
 Guild.lua `BuildSlotIndex()` line 942-953 builds index by slot:
 ```lua
 for _, item in ipairs(items) do
-    if item and item.slot then  -- ← FAILS: item.slot is nil
+    if item and item.slot then  -- ? FAILS: item.slot is nil
         index[item.slot] = item
     end
 end
@@ -6068,38 +6072,38 @@ end
 Converted entire delta pipeline from slot-based to itemKey-based comparison:
 
 **Changes Made:**
-1. ✅ **Guild.lua lines 942-956**: `BuildSlotIndex()` → `BuildItemIndex()`
+1. ? **Guild.lua lines 942-956**: `BuildSlotIndex()` ? `BuildItemIndex()`
    - Changed from `index[item.slot] = item` to `index[tostring(item.ID) .. item.Link] = item`
    - Creates lookup table by itemKey (e.g., "2772[Mithril Bar]")
 
-2. ✅ **Guild.lua lines 958-990**: `ComputeItemDelta()` refactored
+2. ? **Guild.lua lines 958-990**: `ComputeItemDelta()` refactored
    - Compare items by itemKey instead of slot
    - Removed items now store `{ID, Link}` instead of slot number
    - Correctly detects additions, modifications, and removals of merged items
 
-3. ✅ **Guild.lua lines 920-938**: `GetChangedFields()` updated
+3. ? **Guild.lua lines 920-938**: `GetChangedFields()` updated
    - Always includes `ID` and `Link` fields for identification (was conditional)
    - Removed `slot` field dependency
    - Returns minimal delta entry: `{ID, Link, Count, Info}` (only changed fields)
 
-4. ✅ **Guild.lua lines 1086-1143**: `ApplyItemDelta()` refactored
+4. ? **Guild.lua lines 1086-1143**: `ApplyItemDelta()` refactored
    - Uses `BuildItemIndex()` to find items by key
    - Applies modifications by itemKey matching
    - Removes items by itemKey matching
    - Adds new items to array
 
-5. ✅ **Core.lua lines 153-216**: `ValidateItemDelta()` updated
+5. ? **Core.lua lines 153-216**: `ValidateItemDelta()` updated
    - Removed slot validation (merged items don't have slots)
    - Now requires `ID` (number) and `Link` (string) for all items
    - Validates structure of added/modified/removed arrays
    - Slot is optional (backwards compatible)
 
 **Test Results:**
-- ✅ Delta transmitted successfully: 311 bytes vs 1748 bytes (82% smaller)
-- ✅ Validation passed: No errors on receiver
-- ✅ Application successful: "✓ Applied delta for Metals-Azuresong (v1768947985→v1768948029) in 0.06ms"
-- ✅ Quantity changes detected correctly (70→90 Mithril Bars)
-- ✅ Compute time: 0.42ms (efficient)
+- ? Delta transmitted successfully: 311 bytes vs 1748 bytes (82% smaller)
+- ? Validation passed: No errors on receiver
+- ? Application successful: "? Applied delta for Metals-Azuresong (v1768947985?v1768948029) in 0.06ms"
+- ? Quantity changes detected correctly (70?90 Mithril Bars)
+- ? Compute time: 0.42ms (efficient)
 
 **Why Option A:**
 - Maintains existing item merging design (data structure compatibility)
@@ -6114,19 +6118,19 @@ Converted entire delta pipeline from slot-based to itemKey-based comparison:
 - `Modules/Bank.lua` (no changes - merging logic preserved)
 
 **Resolution Complete:**
-✅ All changes implemented and tested successfully
-✅ Delta sync now functional for merged items
-✅ Changes ready for commit
+? All changes implemented and tested successfully
+? Delta sync now functional for merged items
+? Changes ready for commit
 
 ---
 
-#### ✅ [DELTA-004] Delta computation not detecting inventory changes
+#### ? [DELTA-004] Delta computation not detecting inventory changes
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Delta Computation
 **Reporter:** Testing Team
 **Date Reported:** 2026-01-20
-**Status:** ✅ Resolved (Fixed via DELTA-005)
+**Status:** ? Resolved (Fixed via DELTA-005)
 **Resolution Date:** 2026-01-20
 **Assigned To:** Development Team
 
@@ -6144,7 +6148,7 @@ After removing 1 stack of mithril from the banker's inventory, `/togbank share` 
 **Expected Behavior:**
 ```
 [DEBUG] Comparing Metals-Azuresong: previous bank has X items, current bank has X-1 items
-[DEBUG] ✓ Delta selected for Metals-Azuresong: XXX bytes vs YYY bytes full
+[DEBUG] ? Delta selected for Metals-Azuresong: XXX bytes vs YYY bytes full
 [DEBUG] Sent delta update for Metals-Azuresong via togbank-d2
 ```
 
@@ -6182,7 +6186,7 @@ After removing 1 stack of mithril from the banker's inventory, `/togbank share` 
 Open bank, wait ~1-2 seconds for scan to complete, then run `/togbank share`. The automatic 3-minute share timer handles this correctly because there's plenty of time for scan to complete.
 
 **Resolution:**
-This bug was **resolved as part of [DELTA-005]** - the root cause was the slot-based comparison in `ComputeItemDelta()`. When items were merged (multiple stacks of same item → single entry), they had no `slot` field, causing the comparison logic to skip them entirely. The fix in DELTA-005 converted the entire delta pipeline from slot-based to itemKey-based comparison, which properly detects:
+This bug was **resolved as part of [DELTA-005]** - the root cause was the slot-based comparison in `ComputeItemDelta()`. When items were merged (multiple stacks of same item ? single entry), they had no `slot` field, causing the comparison logic to skip them entirely. The fix in DELTA-005 converted the entire delta pipeline from slot-based to itemKey-based comparison, which properly detects:
 - Item additions (new itemKey appears)
 - Item modifications (itemKey exists, Count/Info changed)
 - Item removals (itemKey disappears)
@@ -6193,13 +6197,13 @@ With itemKey-based comparison, delta computation now correctly detects all inven
 
 ---
 
-#### ✅ [UI-001] Debug tab doesn't persist when closed/hidden
+#### ? [UI-001] Debug tab doesn't persist when closed/hidden
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** UI/Commands
 **Reporter:** Development Team
 **Date Reported:** 2026-01-20
-**Status:** ✅ Resolved & Tested
+**Status:** ? Resolved & Tested
 **Resolution Date:** 2026-01-20
 **Assigned To:** Development Team
 
@@ -6339,7 +6343,7 @@ Code was selecting ChatFrame3 which is WoW's reserved "Voice" frame. WoW automat
 - Removed `FCF_ResetChatWindows()` call from `CreateDebugTab()` (caused all chat windows to reset)
 - Changed frame search to find first frame with no name (empty slot), avoiding all reserved frames
 - Removed `frameIndex` parameter from `FCF_SetWindowName()` call
-- Reordered operations: SetWindowName → SetWindowColor → SetLocked → SetFont → Show → Dock
+- Reordered operations: SetWindowName ? SetWindowColor ? SetLocked ? SetFont ? Show ? Dock
 - Set font size properly: `local fontFile, _, fontFlags = GameFontNormal:GetFont(); frame:SetFont(fontFile, 12, fontFlags)`
 - Added safety check to hook (`if not frame.togbankHooked then`)
 - This ensures proper `NAME` and `SIZE 12` written to `chat-cache.txt`, making frame persist with correct name
@@ -6352,19 +6356,19 @@ Remove-Item "C:\Program Files (x86)\World of Warcraft\_classic_era_\WTF\Account\
 ```
 
 **Resolution Complete:**
-✅ All issues resolved and tested successfully
-✅ Debug tab persists across reloads
-✅ Messages properly routed even when tab is hidden
+? All issues resolved and tested successfully
+? Debug tab persists across reloads
+? Messages properly routed even when tab is hidden
 
 ---
 
-#### ✅ [ERROR-001] Error tracking silent failures and test parameter mismatch
+#### ? [ERROR-001] Error tracking silent failures and test parameter mismatch
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Error Handling / Testing
 **Reporter:** Development Team
 **Date Reported:** 2026-01-20
-**Status:** ✅ Resolved & Verified
+**Status:** ? Resolved & Verified
 **Resolution Date:** 2026-01-20
 **Verified:** 2026-01-20 - Error tracking confirmed working after metrics reset
 **Assigned To:** Development Team
@@ -6491,28 +6495,28 @@ Guild:RecordDeltaError("TestRealm-ErrorAlt", "TEST_ERROR", "Test error 2")
 - `Modules/Tests.lua` (testDeltaErrorTracking function)
 
 **Benefits:**
-- ✅ **No error data loss** - errors tracked even before guild initialization
-- ✅ **Automatic migration** - temp errors moved to database when ready
-- ✅ **Graceful degradation** - query functions check both temp and database storage
-- ✅ **Debug visibility** - logs when using temporary storage
-- ✅ **Full backwards compatibility** - existing production code unchanged
-- ✅ **Test correctness** - proper parameter passing ensures valid tests
+- ? **No error data loss** - errors tracked even before guild initialization
+- ? **Automatic migration** - temp errors moved to database when ready
+- ? **Graceful degradation** - query functions check both temp and database storage
+- ? **Debug visibility** - logs when using temporary storage
+- ? **Full backwards compatibility** - existing production code unchanged
+- ? **Test correctness** - proper parameter passing ensures valid tests
 
 **How It Works:**
-1. Delta errors before `GUILD_RANKS_UPDATE` → stored in temp memory
-2. Guild initializes → `Init()` calls `MigrateTempErrors()`
+1. Delta errors before `GUILD_RANKS_UPDATE` ? stored in temp memory
+2. Guild initializes ? `Init()` calls `MigrateTempErrors()`
 3. Temp errors moved to database, temp storage cleared
 4. All future errors go directly to database
 5. Query functions check database first, fall back to temp if needed
 
 **Test Results:**
-- ✅ Early errors now tracked in temporary storage
-- ✅ Automatic migration on guild initialization
-- ✅ Error counts accurate across initialization boundary
-- ✅ `/togbank deltaerrors` shows all errors including pre-init ones (checks both DB and temp storage)
-- ✅ Test passes with correct parameter count
-- ✅ Metrics reset verified - ready to track new failures
-- ✅ System confirmed operational after reload
+- ? Early errors now tracked in temporary storage
+- ? Automatic migration on guild initialization
+- ? Error counts accurate across initialization boundary
+- ? `/togbank deltaerrors` shows all errors including pre-init ones (checks both DB and temp storage)
+- ? Test passes with correct parameter count
+- ? Metrics reset verified - ready to track new failures
+- ? System confirmed operational after reload
 
 **Verification Steps Performed:**
 1. Implemented temporary storage fallback mechanism
@@ -6531,7 +6535,7 @@ When reporting a new bug, copy this template and fill it out:
 ```markdown
 ### [BUG-XXX] Short Bug Title
 
-**Severity:** 🔴/🟠/🟡/🟢
+**Severity:** ??/??/??/??
 **Category:** [Category Name]
 **Reporter:** [Your Name]
 **Date Reported:** YYYY-MM-DD
@@ -6589,23 +6593,23 @@ When reporting a new bug, copy this template and fill it out:
 These are documented limitations of v0.7.0, not bugs to be fixed:
 
 1. **No Options Panel GUI** - Delta configuration via commands only
-   - Severity: 🟢 LOW
+   - Severity: ?? LOW
    - Reason: Phase 7 focused on commands first, GUI planned for v0.8.0
    - Workaround: Use `/togbank` commands
 
 2. **1-Hour Snapshot Expiration** - First sync after long offline uses full sync
-   - Severity: 🟢 LOW
+   - Severity: ?? LOW
    - Reason: Design decision to prevent stale snapshots
    - Workaround: None needed, automatic fallback works
 
 3. **50% Adoption Threshold** - Delta disabled if <50% guild supports v0.7.0
-   - Severity: 🟡 MEDIUM
+   - Severity: ?? MEDIUM
    - Reason: Design decision to ensure most members benefit
    - Workaround: Encourage guild to update, use `/togbank protocol` to check
    - **Testing Note:** Threshold lowered to 10% in Constants.lua for testing purposes (2026-01-20)
 
 4. **30% Size Threshold** - Large changes (>30%) fall back to full sync
-   - Severity: 🟢 LOW
+   - Severity: ?? LOW
    - Reason: Delta larger than full sync wastes bandwidth
    - Workaround: None needed, automatic fallback works
 
@@ -6617,14 +6621,14 @@ Track which test suites have been executed and results:
 
 | Test Suite | Status | Date Tested | Tester | Result | Notes |
 |------------|--------|-------------|--------|--------|-------|
-| 1. Basic Delta Sync | 🔄 In Progress | 2026-01-20 | Team | ⚠️ Issues | Threshold lowered to 10%. Debug: Delta computed but full sync sent via togbank-d instead of togbank-d2 |
-| 2. Error Handling | ⏳ Pending | - | - | - | - |
-| 3. Protocol Negotiation | ⏳ Pending | - | - | - | - |
-| 4. Performance & Metrics | ⏳ Pending | - | - | - | - |
-| 5. User Commands | ⏳ Pending | - | - | - | - |
-| 6. Edge Cases | ⏳ Pending | - | - | - | - |
-| 7. Stress Testing | ⏳ Pending | - | - | - | - |
-| 8. Integration | ⏳ Pending | - | - | - | - |
+| 1. Basic Delta Sync | ?? In Progress | 2026-01-20 | Team | ?? Issues | Threshold lowered to 10%. Debug: Delta computed but full sync sent via togbank-d instead of togbank-d2 |
+| 2. Error Handling | ? Pending | - | - | - | - |
+| 3. Protocol Negotiation | ? Pending | - | - | - | - |
+| 4. Performance & Metrics | ? Pending | - | - | - | - |
+| 5. User Commands | ? Pending | - | - | - | - |
+| 6. Edge Cases | ? Pending | - | - | - | - |
+| 7. Stress Testing | ? Pending | - | - | - | - |
+| 8. Integration | ? Pending | - | - | - | - |
 
 **Test Environment:**
 - **Banker:** Metals-Azuresong (protocol v2, delta enabled)
@@ -6636,17 +6640,17 @@ Track which test suites have been executed and results:
 **Current Issue:**
 Delta computation completes (0.03-0.04ms) but full sync is sent via `togbank-d` instead of delta via `togbank-d2`. Missing log messages:
 - "Snapshot saved for X"
-- "✓ Delta selected" or "✗ Delta too large"
+- "? Delta selected" or "? Delta too large"
 - "No changes detected"
 
 Investigating why `useDelta` flag is false despite delta being computed.
 
 **Status Legend:**
-- ⏳ Pending - Not yet tested
-- 🔄 In Progress - Currently testing
-- ✅ Passed - All tests passed
-- ⚠️ Issues Found - Some tests failed, bugs reported
-- ❌ Blocked - Cannot test due to dependency
+- ? Pending - Not yet tested
+- ?? In Progress - Currently testing
+- ? Passed - All tests passed
+- ?? Issues Found - Some tests failed, bugs reported
+- ? Blocked - Cannot test due to dependency
 1 (open), 1 (fixed)
 **Low:** 0
 **Fixed:** 5
@@ -6699,20 +6703,20 @@ Examples: DELTA-001, PROTO-002, PERF-003
 When a new bug is reported:
 
 1. **Assess Severity:**
-   - Does it crash or lose data? → 🔴 CRITICAL
-   - Does it break major functionality? → 🟠 HIGH
-   - Is it a minor issue with workaround? → 🟡 MEDIUM
-   - Is it cosmetic or rare? → 🟢 LOW
+   - Does it crash or lose data? ? ?? CRITICAL
+   - Does it break major functionality? ? ?? HIGH
+   - Is it a minor issue with workaround? ? ?? MEDIUM
+   - Is it cosmetic or rare? ? ?? LOW
 
 2. **Categorize:**
    - Which system/module is affected?
    - Assign appropriate category
 
 3. **Assign Priority:**
-   - 🔴 CRITICAL: Drop everything, fix now
-   - 🟠 HIGH: Schedule for next 24-48 hours
-   - 🟡 MEDIUM: Add to weekly sprint
-   - 🟢 LOW: Backlog for future
+   - ?? CRITICAL: Drop everything, fix now
+   - ?? HIGH: Schedule for next 24-48 hours
+   - ?? MEDIUM: Add to weekly sprint
+   - ?? LOW: Backlog for future
 
 4. **Assign Owner:**
    - Who is best suited to fix this?
@@ -6795,7 +6799,7 @@ Run automated test suite first:
 ```
 /togbank test
 ```
-Expected: 26/26 tests passing ✓
+Expected: 26/26 tests passing ?
 
 ### Enable Debug Output
 For detailed logging during manual tests:
@@ -6813,12 +6817,12 @@ For detailed logging during manual tests:
 ```
 
 ### What to Watch For
-- ❌ Lua errors (enable with `/console scriptErrors 1`)
-- ⚠️ Version mismatch messages
-- ⚠️ Delta application failures
-- ⚠️ Unexpected full syncs
-- ⚠️ Performance degradation (use `/togbank deltastats` performance section)
-- ⚠️ Missing or incorrect inventory after sync
+- ? Lua errors (enable with `/console scriptErrors 1`)
+- ?? Version mismatch messages
+- ?? Delta application failures
+- ?? Unexpected full syncs
+- ?? Performance degradation (use `/togbank deltastats` performance section)
+- ?? Missing or incorrect inventory after sync
 
 ### Reporting Tips
 - Include `/togbank deltastats` output
@@ -6829,10 +6833,10 @@ For detailed logging during manual tests:
 
 ---
 
-## ✅ [DELTA-010] Validation rejected v0.8.0 minimal removed items format
+## ? [DELTA-010] Validation rejected v0.8.0 minimal removed items format
 
 **Severity:** High
-**Status:** ✅ RESOLVED (2026-01-27)
+**Status:** ? RESOLVED (2026-01-27)
 **Impact:** Delta sync failures when items removed from bags/bank
 
 ### Problem
@@ -6914,10 +6918,10 @@ end
 
 ---
 
-## ✅ [UI-005] Inventory UI crash on missing slots field
+## ? [UI-005] Inventory UI crash on missing slots field
 
 **Severity:** Medium
-**Status:** ✅ RESOLVED (2026-01-27)
+**Status:** ? RESOLVED (2026-01-27)
 **Impact:** Lua error when hovering over status bar in Inventory window
 
 ### Problem
@@ -6960,16 +6964,16 @@ end
 
 ---
 
-**Happy testing! Report all bugs, no matter how small. Every bug found makes the addon better. 🐛➡️✅**
+**Happy testing! Report all bugs, no matter how small. Every bug found makes the addon better. ?????**
 
 ---
 
-### ✅ [MAIL-004] Non-stackable items filtered out by greedy algorithm for multi-quantity fulfills
+### ? [MAIL-004] Non-stackable items filtered out by greedy algorithm for multi-quantity fulfills
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Mail / Fulfill  
-**Date Reported:** 2026-01-28  
-**Status:** ✅ RESOLVED  
+**Severity:** ?? CRITICAL
+**Category:** Mail / Fulfill
+**Date Reported:** 2026-01-28
+**Status:** ? RESOLVED
 **Resolution Date:** 2026-01-28
 
 **Description:**
@@ -6990,7 +6994,7 @@ For **4 Runecloth Bags** (each count=1):
 largestStack = 1
 accumulated = 100  -- all bags included
 wouldNeedToSplit = max(0, 4 - 100) = 0
-minStackSize = math.min(5, qtyNeeded) = math.min(5, 4) = 4  ❌
+minStackSize = math.min(5, qtyNeeded) = math.min(5, 4) = 4  ?
 
 -- Filtering at line 593:
 if item.count >= minStackSize then  -- 1 >= 4 is FALSE
@@ -7002,7 +7006,7 @@ Result: `usefulStacks` is empty, nothing gets attached, error returned.
 
 **Why it worked for quantity=1:**
 ```lua
-minStackSize = math.min(5, 1) = 1  ✅
+minStackSize = math.min(5, 1) = 1  ?
 if 1 >= 1 then  -- TRUE, bags included
 ```
 
@@ -7022,7 +7026,7 @@ local minStackSize = math.min(largestStack, wouldNeedToSplit > 0 and wouldNeedTo
 
 Now for **4 Runecloth Bags**:
 ```lua
-minStackSize = min(1, min(5, 4)) = min(1, 4) = 1  ✅
+minStackSize = min(1, min(5, 4)) = min(1, 4) = 1  ?
 if 1 >= 1 then  -- TRUE, bags included
 ```
 
@@ -7039,12 +7043,12 @@ The `math.min(5, qtyNeeded)` logic was added to handle small quantity requests (
 
 ---
 
-### ✅ [UI-006] Highlight checkbox intermittently not appearing for bankers
+### ? [UI-006] Highlight checkbox intermittently not appearing for bankers
 
-**Severity:** 🟡 MEDIUM  
-**Category:** UI / Requests Window  
-**Date Reported:** 2026-01-28  
-**Status:** ✅ RESOLVED  
+**Severity:** ?? MEDIUM
+**Category:** UI / Requests Window
+**Date Reported:** 2026-01-28
+**Status:** ? RESOLVED
 **Resolution Date:** 2026-01-28
 
 **Description:**
@@ -7055,8 +7059,8 @@ The checkbox visibility is determined during `ShowRequestsUI()` by checking if t
 
 The flow:
 1. Player opens Requests window
-2. `ShowRequestsUI()` → `DrawContent()` calls `GetBanks()`
-3. If guild roster not loaded yet → `GetBanks()` returns empty/incomplete list
+2. `ShowRequestsUI()` ? `DrawContent()` calls `GetBanks()`
+3. If guild roster not loaded yet ? `GetBanks()` returns empty/incomplete list
 4. Checkbox not created because player not detected as banker
 5. Later, `GUILD_ROSTER_UPDATE` fires and invalidates banks cache
 6. But UI is not refreshed, so checkbox never appears
@@ -7090,12 +7094,12 @@ Now when the guild roster updates and the banks cache is rebuilt, the Requests U
 
 ---
 
-### ✅ [PERF-004] UI hangs 0.5-1s on first open
+### ? [PERF-004] UI hangs 0.5-1s on first open
 
-**Severity:** 🟡 MODERATE  
-**Category:** Performance / UI / UX  
-**Date Reported:** 2026-02-02  
-**Status:** � TESTING  
+**Severity:** ?? MODERATE
+**Category:** Performance / UI / UX
+**Date Reported:** 2026-02-02
+**Status:** ? TESTING
 
 **Problem:**
 When first logging into the game and opening the TOGBank UI, there's a noticeable 0.5-1 second delay where the addon appears to "hang" before the UI displays. This creates a poor user experience and makes the addon feel sluggish or unresponsive.
@@ -7110,11 +7114,11 @@ When first logging into the game and opening the TOGBank UI, there's a noticeabl
 The code flow was:
 ```
 Inventory:Open()
-  └─ DrawContent()
-      ├─ BuildSearchData() ← EXPENSIVE! ALL items, ALL bankers
-      ├─ Build tab list (fast)
-      └─ TabGroup triggers OnGroupSelected for first tab
-          └─ Build just that one tab's content (fast)
+  +- DrawContent()
+      +- BuildSearchData() ? EXPENSIVE! ALL items, ALL bankers
+      +- Build tab list (fast)
+      +- TabGroup triggers OnGroupSelected for first tab
+          +- Build just that one tab's content (fast)
 ```
 
 The expensive search corpus building happened **before** the window could show, even though:
@@ -7129,10 +7133,10 @@ Moved `BuildSearchData()` from `Inventory:DrawContent()` to `Search:Open()`:
 ```lua
 function TOGBankClassic_UI_Inventory:DrawContent()
     -- ... validation ...
-    
+
     -- Clear search data built flag so search rebuilds on next open (PERF-004)
     TOGBankClassic_UI_Search.searchDataBuilt = false
-    
+
     -- ... rest of function (build tabs, no expensive operations) ...
 end
 ```
@@ -7141,14 +7145,14 @@ end
 ```lua
 function TOGBankClassic_UI_Search:Open()
     -- ... setup ...
-    
+
     -- Build search data only when search UI is opened (PERF-004)
     -- Deferred from Inventory to avoid blocking initial window open
     if not self.searchDataBuilt then
         self:BuildSearchData()
         self.searchDataBuilt = true
     end
-    
+
     self.Window:Show()
     -- ... rest of function ...
 end
@@ -7164,20 +7168,20 @@ end
 Before Fix:
 - /togbank open: 500-1000ms (blocks on BuildSearchData)
 - UI appears: After search corpus built
-- Perceived delay: 🔴 Noticeable hang
+- Perceived delay: ?? Noticeable hang
 
 After Fix:
 - /togbank open: 100-200ms (just builds tab list + first tab)
 - UI appears: Immediately
 - Search open: 300-500ms (builds corpus only if search opened)
-- Perceived delay: ✅ No hang
+- Perceived delay: ? No hang
 ```
 
 **Expected Improvement:** 50-70% faster initial inventory open
 
 **User Experience:**
-- **Before:** `/togbank` → wait 1 second → see inventory (frustrating)
-- **After:** `/togbank` → see inventory instantly (smooth)
+- **Before:** `/togbank` ? wait 1 second ? see inventory (frustrating)
+- **After:** `/togbank` ? see inventory instantly (smooth)
 - Search tab: First open has short delay (acceptable, only when needed)
 
 **Testing Plan:**
@@ -7206,13 +7210,13 @@ After Fix:
 
 ---
 
-### ✅ [PERF-003] In-game stuttering during async item reconstruction
+### ? [PERF-003] In-game stuttering during async item reconstruction
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Performance / UI / Async Loading  
-**Date Reported:** 2026-01-28  
-**Date Resolved:** 2026-01-28  
-**Status:** ✅ RESOLVED  
+**Severity:** ?? CRITICAL
+**Category:** Performance / UI / Async Loading
+**Date Reported:** 2026-01-28
+**Date Resolved:** 2026-01-28
+**Status:** ? RESOLVED
 
 **Problem:**
 Severe in-game stuttering/freezing when receiving synced data, both when opening inventory windows AND during normal gameplay when UI was closed. Game became unresponsive for 1-2 seconds at a time during sync.
@@ -7233,7 +7237,7 @@ When items are reconstructed asynchronously (via `Item:ContinueOnItemLoad` callb
 **Iteration 1: Lazy Loading**
 - Removed eager reconstruction calls from Chat.lua
 - Only reconstructed links when DrawItem() called (UI open)
-- Problem: Opening UI tried to reconstruct ALL visible items at once → spike on UI open
+- Problem: Opening UI tried to reconstruct ALL visible items at once ? spike on UI open
 - Also: Blank tooltips on `/wipe` since items not in cache
 
 **Iteration 2: Batched Queue System (Final Solution)**
@@ -7244,14 +7248,14 @@ Before Fix:
 - 100 items loading eagerly when sync received
 - 100 async callbacks + 100 DrawContent() calls
 - ~10ms per DrawContent = 1000ms blocking UI
-- Stuttering: 🔴 SEVERE (even with UI closed)
+- Stuttering: ?? SEVERE (even with UI closed)
 
 After Fix:
 - Items queued and processed in batches
 - 5 items every 0.1s = ~2 seconds to process 100 items
 - 2-3 DrawContent() calls (throttled to 0.5s intervals)
 - ~30ms total UI refresh time
-- Stuttering: ✅ NONE
+- Stuttering: ? NONE
 ```
 
 **Solution: Batched Queue System with Throttled Refresh**
@@ -7265,7 +7269,7 @@ local function ThrottledUIRefresh()
         return
     end
     lastUIRefresh = now
-    
+
     -- Only refresh if UI is actually open
     if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
         TOGBankClassic_UI_Inventory:DrawContent()
@@ -7288,8 +7292,8 @@ local BATCH_DELAY = 0.2  -- 0.2 second delay between batches (slower = smoother)
 local function ProcessItemQueue()
     -- Process batch of 10 items
     -- Try synchronous load from cache first
-    -- If not in cache AND fewer than 3 async loads active → start async
-    -- If 3+ async loads already active → requeue item for next batch
+    -- If not in cache AND fewer than 3 async loads active ? start async
+    -- If 3+ async loads already active ? requeue item for next batch
     -- Refresh UI if any loaded synchronously
     -- Schedule next batch after 0.2s delay
 end
@@ -7304,7 +7308,7 @@ function TOGBankClassic_Guild:ReconstructItemLinks(items)
             table.insert(itemReconstructQueue, item)
         end
     end
-    
+
     -- Start processing if not already running
     if not isProcessingQueue then
         isProcessingQueue = true
@@ -7334,18 +7338,18 @@ end
 
 **Timeline after sync:**
 - T+0.0s: Sync received, items added to queue (not processed yet)
-- T+0.2s: Process batch 1 (10 items) → max 3 async loads → refresh UI if any loaded
-- T+0.4s: Process batch 2 (10 items) → max 3 async loads → refresh UI if any loaded
-- T+0.6s: Process batch 3 (10 items) → max 3 async loads → refresh UI if any loaded
+- T+0.2s: Process batch 1 (10 items) ? max 3 async loads ? refresh UI if any loaded
+- T+0.4s: Process batch 2 (10 items) ? max 3 async loads ? refresh UI if any loaded
+- T+0.6s: Process batch 3 (10 items) ? max 3 async loads ? refresh UI if any loaded
 - ...continues until queue empty
 
 **For each batch:**
 1. Try synchronous load from cache (instant if available)
 2. If not in cache:
    - Check if fewer than 3 async loads currently active
-   - If yes → create async `Item:ContinueOnItemLoad`
-   - If no (3+ active) → **requeue item for next batch**
-3. If any loaded synchronously → call `ThrottledUIRefresh()`
+   - If yes ? create async `Item:ContinueOnItemLoad`
+   - If no (3+ active) ? **requeue item for next batch**
+3. If any loaded synchronously ? call `ThrottledUIRefresh()`
 4. Async callbacks decrement counter and call `ThrottledUIRefresh()` when complete
 
 **Async Load Limiting:**
@@ -7392,28 +7396,28 @@ Old clients without ItemString support:
 2. On non-banker client: `/wipe`, `/sync`
 3. Observe smooth performance during sync (UI closed)
 4. Open inventory window - items appear in waves
-- ✅ Never more than 3 concurrent async Item loads (prevents overload)
-- ✅ Batch delay of 0.2s ensures smooth gameplay even with cold cache
+- ? Never more than 3 concurrent async Item loads (prevents overload)
+- ? Batch delay of 0.2s ensures smooth gameplay even with cold cache
 5. Hover over items - tooltips work for all items
 6. No stuttering at any point
 
 **Performance Metrics:**
-- ✅ Stuttering eliminated (from 1-2 second freezes to smooth)
-- ✅ Frame rate stable during item reconstruction (UI open or closed)
-- ✅ UI remains responsive while loading
-- ✅ All items populate correctly with full tooltip stats
-- ✅ Background processing doesn't impact gameplay
-- ✅ Queue processes ~50 items/second without performance impact
+- ? Stuttering eliminated (from 1-2 second freezes to smooth)
+- ? Frame rate stable during item reconstruction (UI open or closed)
+- ? UI remains responsive while loading
+- ? All items populate correctly with full tooltip stats
+- ? Background processing doesn't impact gameplay
+- ? Queue processes ~50 items/second without performance impact
 
 ---
 
-### ✅ [UI-007] Item tooltips not showing stats on gear
+### ? [UI-007] Item tooltips not showing stats on gear
 
-**Severity:** 🟡 MEDIUM  
-**Category:** UI / Item Display / Link Reconstruction  
-**Date Reported:** 2026-01-28  
-**Date Resolved:** 2026-01-28  
-**Status:** ✅ RESOLVED  
+**Severity:** ?? MEDIUM
+**Category:** UI / Item Display / Link Reconstruction
+**Date Reported:** 2026-01-28
+**Date Resolved:** 2026-01-28
+**Status:** ? RESOLVED
 
 **Problem:**
 Item tooltips in the addon interface showed armor values but were missing stat information (e.g., +Intellect, +Stamina, +Spell Power) for equipment like rings, wands, and other gear with random suffixes or unique properties.
@@ -7476,21 +7480,21 @@ end
 4. Verify tooltips show all stats (+Intellect, +Spell Power, etc.)
 
 **Verification:**
-- ✅ Tooltips show complete stats for all item types
-- ✅ ItemString preserved during send/receive cycle
-- ✅ Backward compatible (old clients ignore ItemString field)
-- ✅ Forward compatible (gracefully falls back if ItemString missing)
+- ? Tooltips show complete stats for all item types
+- ? ItemString preserved during send/receive cycle
+- ? Backward compatible (old clients ignore ItemString field)
+- ? Forward compatible (gracefully falls back if ItemString missing)
 
 ---
 
-### ✅ [SYNC-007] Backward compatibility for SYNC-006 aggregate structure
+### ? [SYNC-007] Backward compatibility for SYNC-006 aggregate structure
 
-**Severity:** 🟠 HIGH  
-**Category:** Delta Sync / Backward Compatibility / Data Structure Migration  
-**Reporter:** Internal (discovered during SYNC-006 implementation)  
-**Date Reported:** 2026-01-28  
-**Date Resolved:** 2026-01-28  
-**Status:** ✅ RESOLVED  
+**Severity:** ?? HIGH
+**Category:** Delta Sync / Backward Compatibility / Data Structure Migration
+**Reporter:** Internal (discovered during SYNC-006 implementation)
+**Date Reported:** 2026-01-28
+**Date Resolved:** 2026-01-28
+**Status:** ? RESOLVED
 **Related:** [SYNC-006] Mail quantities consolidation
 
 **Problem:**
@@ -7500,8 +7504,8 @@ SYNC-006 introduced `alt.items` as a consolidated aggregate of bank + bags + mai
 - **Mail data**: Previously never synced, now included in `alt.items` but not in legacy fields
 
 **Compatibility Issues:**
-1. **Old client → New client**: Old data lacks `alt.items`, causing new client to display empty inventory
-2. **New client → Old client**: Old client doesn't understand `alt.items`, would only see bank/bags (missing mail)
+1. **Old client ? New client**: Old data lacks `alt.items`, causing new client to display empty inventory
+2. **New client ? Old client**: Old client doesn't understand `alt.items`, would only see bank/bags (missing mail)
 3. **Mail visibility**: Old clients never had mail sync, need backward-compatible way to see mail items
 
 **Complete Solution - Bidirectional Compatibility:**
@@ -7516,7 +7520,7 @@ local needsReconstruction = not hasAnyItems(alt.items)
 if needsReconstruction then
     local bankItems = (alt.bank and alt.bank.items) or {}
     local bagItems = (alt.bags and alt.bags.items) or {}
-    
+
     -- Aggregate bank + bags ONLY (mail was never synced in old system)
     if #bankItems > 0 or #bagItems > 0 then
         local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
@@ -7543,10 +7547,10 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
     -- 1. alt.items (for new clients)
     -- 2. alt.bank.items with mail aggregated (for old clients)
     -- 3. alt.bags.items as-is (for old clients)
-    
+
     -- Check if we have mail items to aggregate
     local hasMailItems = alt.mail and alt.mail.items and next(alt.mail.items)
-    
+
     -- If legacy fields don't exist, reconstruct from alt.items
     if not alt.bank or not alt.bank.items then
         alt.bank = { items = {} }
@@ -7557,7 +7561,7 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
         alt.bags = { items = {} }
         return alt
     end
-    
+
     -- Legacy fields exist from Bank.lua scan, but don't include mail
     -- Aggregate mail items into bank.items for old client visibility
     if hasMailItems then
@@ -7567,17 +7571,17 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
                 existingBank[item.ID] = item
             end
         end
-        
+
         for itemID, mailItem in pairs(alt.mail.items) do
             if existingBank[itemID] then
                 -- Item exists in bank, add mail count
                 existingBank[itemID].Count = (existingBank[itemID].Count or 0) + (mailItem.count or 0)
             else
                 -- Item only in mail, add as new entry to bank.items
-                table.insert(alt.bank.items, { 
-                    ID = itemID, 
-                    Count = mailItem.count, 
-                    Link = mailItem.link 
+                table.insert(alt.bank.items, {
+                    ID = itemID,
+                    Count = mailItem.count,
+                    Link = mailItem.link
                 })
             end
         end
@@ -7652,18 +7656,18 @@ Added comprehensive logging in `SendAltData()`:
 local itemsCount = currentAlt.items and #currentAlt.items or 0
 local bankCount = (currentAlt.bank and currentAlt.bank.items) and #currentAlt.bank.items or 0
 local bagsCount = (currentAlt.bags and currentAlt.bags.items) and #currentAlt.bags.items or 0
-TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d", 
+TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d",
     norm, itemsCount, bankCount, bagsCount)
 ```
 
 **Verification Steps:**
-1. **Old → New sync test:**
+1. **Old ? New sync test:**
    - Old client does `/wipe`, `/sync`
    - New client receives data with only `alt.bank.items` and `alt.bags.items`
    - New client reconstructs `alt.items` automatically
    - New client displays inventory correctly in all tabs
 
-2. **New → Old sync test:**
+2. **New ? Old sync test:**
    - New client scans bank/mailbox (creates `alt.items` with mail)
    - New client sends with all 3 arrays
    - Old client receives `alt.bank.items` (with mail aggregated) and `alt.bags.items`
@@ -7676,17 +7680,17 @@ TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d
    - Mail count included in total displayed to old client
 
 **Impact:**
-- ✅ **Zero data loss:** All data visible to all client versions
-- ✅ **Seamless migration:** No user intervention required
-- ✅ **Enhanced old clients:** Old clients now see mail quantities (new capability)
-- ✅ **Bandwidth optimized:** Link stripping works on all 3 arrays
-- ✅ **Debug visibility:** Clear logging of what's being sent
+- ? **Zero data loss:** All data visible to all client versions
+- ? **Seamless migration:** No user intervention required
+- ? **Enhanced old clients:** Old clients now see mail quantities (new capability)
+- ? **Bandwidth optimized:** Link stripping works on all 3 arrays
+- ? **Debug visibility:** Clear logging of what's being sent
 
 **Edge Cases Handled:**
-1. **Mixed guild:** Some players on old version, some on new → all sync correctly
-2. **Bank-only account:** Only maintains `alt.items` → legacy fields reconstructed on send
+1. **Mixed guild:** Some players on old version, some on new ? all sync correctly
+2. **Bank-only account:** Only maintains `alt.items` ? legacy fields reconstructed on send
 3. **No mail:** Works correctly, no mail aggregation needed
-4. **Mail-only items:** Items only in mail, not in bank/bags → added to `alt.bank.items` for old clients
+4. **Mail-only items:** Items only in mail, not in bank/bags ? added to `alt.bank.items` for old clients
 
 **Migration Path:**
 - **Phase 1 (Now):** Both structures maintained, automatic backward compatibility
@@ -7706,23 +7710,23 @@ TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d
   - Lines 1415-1530: `ReceiveAltData()` - Receiver-side backward compatibility (already implemented for SYNC-006)
 
 **Testing Results:**
-- ✅ Empty tabs after `/wipe` and `/sync` - RESOLVED
-- ✅ Old clients see mail quantities - WORKING
-- ✅ New clients reconstruct from old data - WORKING
-- ✅ All 3 arrays sent correctly - VERIFIED via debug logs
-- ✅ No data loss in any direction - VERIFIED
+- ? Empty tabs after `/wipe` and `/sync` - RESOLVED
+- ? Old clients see mail quantities - WORKING
+- ? New clients reconstruct from old data - WORKING
+- ? All 3 arrays sent correctly - VERIFIED via debug logs
+- ? No data loss in any direction - VERIFIED
 
 ---
 
-### ✅ [SYNC-006] Mail quantities appearing additive during syncs
+### ? [SYNC-006] Mail quantities appearing additive during syncs
 
 
-**Severity:** 🔴 CRITICAL  
+**Severity:** ?? CRITICAL
 **Category:** Delta Sync / Data Integrity / Inventory Aggregation
 **Reporter:** User (Production)
-**Date Reported:** 2026-01-28  
-**Date Resolved:** 2026-01-28  
-**Status:** ✅ RESOLVED  
+**Date Reported:** 2026-01-28
+**Date Resolved:** 2026-01-28
+**Status:** ? RESOLVED
 **Reproducibility:** Consistent - occurred on every sync
 **Impacted Users:** All bankers with mail inventory
 
@@ -7731,7 +7735,7 @@ User reported: "there is an issue where it's becoming additive, and my bags are 
 - Banker had 70 runecloth bags in bank, 33 in bags, 1 in mail (total: 104)
 - Inventory UI displayed **368 runecloth bags** instead of 104
 - Count increased with each sync operation
-- Pattern identified: 368 = 104 + 264, where 264 = 33 × 8 (8x duplication of bag count)
+- Pattern identified: 368 = 104 + 264, where 264 = 33 � 8 (8x duplication of bag count)
 
 **Investigation Timeline:**
 
@@ -7780,7 +7784,7 @@ When aggregated: 4 + 5 + 8 + 16 + ... = 325 total bags instead of 33.
 **1. Architecture Changes (prevent future corruption):**
 - **Modules/Bank.lua (lines 200-217):** Create `alt.items` aggregate from bank + bags + mail after each scan
 - **Modules/Item.lua (lines 103-146):** Fixed `Aggregate()` to use ID-only as key (not ID+Link)
-- **Modules/DeltaComms.lua:** 
+- **Modules/DeltaComms.lua:**
   - Lines 526-543: `ComputeDelta()` uses `alt.items`
   - Lines 575-587: `DeltaHasChanges()` checks `alt.items`
   - Lines 743-753: `ApplyDelta()` applies to `alt.items`
@@ -7799,8 +7803,8 @@ When aggregated: 4 + 5 + 8 + 16 + ... = 325 total bags instead of 33.
           end
       end
       alt.bank.items = TOGBankClassic_Item:Aggregate(bankOnly)
-      
-      -- Extract only bag items and deduplicate  
+
+      -- Extract only bag items and deduplicate
       local bagsOnly = {}
       for _, v in ipairs(alt.bags.items or {}) do
           if v.ID then
@@ -7864,16 +7868,16 @@ displaying Runecloth Bag with count 104 (ID: 14046)
 
 ---
 
-### ✅ [MAIL-003] Search UI crash on undefined 'info' variable
+### ? [MAIL-003] Search UI crash on undefined 'info' variable
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Mail Inventory / UI  
-**Date Reported:** 2026-01-27  
-**Status:** ✅ RESOLVED  
+**Severity:** ?? CRITICAL
+**Category:** Mail Inventory / UI
+**Date Reported:** 2026-01-27
+**Status:** ? RESOLVED
 **Resolution Date:** 2026-01-27
 
 **Description:**
-When typing in the search box, the UI crashes with "attempt to index global 'info' (a nil value)" at line 569 of Search.lua. This happens when trying to check if items are in mail to display the ✉ icon.
+When typing in the search box, the UI crashes with "attempt to index global 'info' (a nil value)" at line 569 of Search.lua. This happens when trying to check if items are in mail to display the ? icon.
 
 **Error Message:**
 ```
@@ -7900,7 +7904,7 @@ Changed to use the fully qualified global `TOGBankClassic_Guild.Info` with prope
 1. Open search window
 2. Type 3+ characters to trigger search
 3. Verify no Lua errors
-4. Verify mail icon (✉) appears next to banker names with items in mail
+4. Verify mail icon (?) appears next to banker names with items in mail
 
 ---
 
@@ -7908,7 +7912,7 @@ Changed to use the fully qualified global `TOGBankClassic_Guild.Info` with prope
 
 **Date:** January 28, 2026
 **Severity:** Critical
-**Status:** ✅ Fixed
+**Status:** ? Fixed
 
 **Symptom:**
 Item counts in Inventory and Search UI displayed as multiples (20x, 40x, 60x) of actual values. Some tabs showed grey/empty screens. Fresh scans caused counts to increment on each reload.
@@ -8126,7 +8130,7 @@ end
 -- Wrap CreateFromItemID in pcall to catch crashes
 local success, itemData = pcall(Item.CreateFromItemID, Item, itemID)
 if not success then
-    TOGBankClassic_Output:Debug("MAIL", "[ITEM-DEBUG] CreateFromItemID FAILED for ID %s: %s", 
+    TOGBankClassic_Output:Debug("MAIL", "[ITEM-DEBUG] CreateFromItemID FAILED for ID %s: %s",
         tostring(itemID), tostring(itemData))
     total = total - 1
     if total == 0 and count == 0 then
@@ -8155,12 +8159,12 @@ end
 
 ## [MAIL-005] Duplicate item stacks for identical gear with different instance IDs
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Item Deduplication / Mail Sync
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-29
 **Date Resolved:** 2026-01-29
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Consistent for gear items in mail
 
 **Description:**
@@ -8228,9 +8232,9 @@ end
 ```
 
 **Benefits:**
-- Gear keeps full Link → proper suffix differentiation ✓
-- Consumables strip Link → ~90 bytes saved per item ✓
-- Bandwidth optimized where safe, preserved where needed ✓
+- Gear keeps full Link ? proper suffix differentiation ?
+- Consumables strip Link ? ~90 bytes saved per item ?
+- Bandwidth optimized where safe, preserved where needed ?
 
 ### 2. Normalized Deduplication Keys (GetItemKey)
 
@@ -8243,19 +8247,19 @@ function TOGBankClassic_Item:GetItemKey(link)
 	if not link or link == "" then
 		return ""
 	end
-	
+
 	local itemString = link:match("|Hitem:([^|]+)|h")
 	if not itemString then
 		itemString = link:match("item:([%d:]+)")
 	end
-	
+
 	if itemString then
 		-- Split into parts
 		local parts = {}
 		for part in string.gmatch(itemString, "([^:]+)") do
 			table.insert(parts, part)
 		end
-		
+
 		-- Keep first 7 parts only (strip uniqueID and specializationID)
 		if #parts >= 7 then
 			return "item:" .. table.concat({parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]}, ":")
@@ -8263,7 +8267,7 @@ function TOGBankClassic_Item:GetItemKey(link)
 			return "item:" .. itemString
 		end
 	end
-	
+
 	return link
 end
 ```
@@ -8278,7 +8282,7 @@ local key = tostring(v.ID) .. itemKey
 **How It Works:**
 - **Storage:** Keep FULL link with instance ID
 - **Deduplication:** Use normalized key WITHOUT instance ID
-- Two Earthborn Kilts with different instances → same key → merge ✓
+- Two Earthborn Kilts with different instances ? same key ? merge ?
 
 ### 3. Fixed Linkless Item Merge Pattern
 
@@ -8304,9 +8308,9 @@ end
 ```
 
 **What Changed:**
-- Old pattern: `"^9402[:%[]"` → failed to match `"9402item:..."`
-- New pattern: `"^9402item:"` → correctly matches composite keys ✓
-- Also checks exact ID match for consumables (`"9402"` == `"9402"`) ✓
+- Old pattern: `"^9402[:%[]"` ? failed to match `"9402item:..."`
+- New pattern: `"^9402item:"` ? correctly matches composite keys ?
+- Also checks exact ID match for consumables (`"9402"` == `"9402"`) ?
 
 ### 4. Added Aggregation Debug Logging
 
@@ -8320,11 +8324,11 @@ TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] After adding mail: %d unique ite
 ```
 
 **Result:**
-- ✅ Earthborn Kilt: 2 in bags + 2 in mail → 1 stack with count 4
-- ✅ All gear items properly deduplicate regardless of instance ID
-- ✅ Consumables continue to stack correctly
-- ✅ Bandwidth optimized (Links only sent for gear)
-- ✅ Works with old linkless data (backward compatible)
+- ? Earthborn Kilt: 2 in bags + 2 in mail ? 1 stack with count 4
+- ? All gear items properly deduplicate regardless of instance ID
+- ? Consumables continue to stack correctly
+- ? Bandwidth optimized (Links only sent for gear)
+- ? Works with old linkless data (backward compatible)
 
 **Files Changed:**
 - `Modules/Item.lua` (NeedsLink, GetItemKey, GetItemString separation, Aggregate pattern fix)
@@ -8335,12 +8339,12 @@ TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] After adding mail: %d unique ite
 
 ## [ITEM-001] Item deduplication failing for linkless synced data
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Item Deduplication / Data Migration
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-29
 **Date Resolved:** 2026-01-29
-**Status:** ✅ RESOLVED (subsumed by MAIL-005)
+**Status:** ? RESOLVED (subsumed by MAIL-005)
 **Reproducibility:** Consistent for old synced data
 
 **Description:**
@@ -8364,9 +8368,9 @@ Covered comprehensively by [MAIL-005] fixes. Key aspects:
 
 ## [ITEM-002] CRITICAL CRASH: "table index is nil" in Blizzard_ObjectAPI
 
-**Status:** ✅ FIXED (2026-01-29)  
-**Severity:** CRITICAL - Game crash  
-**Category:** Item Loading, Blizzard API  
+**Status:** ? FIXED (2026-01-29)
+**Severity:** CRITICAL - Game crash
+**Category:** Item Loading, Blizzard API
 **Error Count:** 90+ occurrences before fix
 
 **Problem:**
@@ -8392,7 +8396,7 @@ Blizzard_ObjectAPI/Classic/Item.lua:320: table index is nil
 1. **Item ID Validation** (Guild.lua, Item.lua):
    - Added `if itemObj and itemObj.itemID and itemObj.itemID == item.ID` check before ContinueOnItemLoad
    - Filters out corrupted items with ID < 100 (not valid WoW items)
-   
+
 2. **Error Protection** (Guild.lua lines 1025-1040, 1070-1085):
    - Wrapped ContinueOnItemLoad calls in `pcall` to catch race condition errors
    - Properly decrements pendingAsyncLoads counter on failure
@@ -8421,8 +8425,8 @@ Blizzard_ObjectAPI/Classic/Item.lua:320: table index is nil
 
 ## [DATA-005] Banker Data Being Overwritten by External Sources
 
-**Status:** ✅ FIXED (2026-01-29)  
-**Severity:** HIGH - Data Integrity  
+**Status:** ? FIXED (2026-01-29)
+**Severity:** HIGH - Data Integrity
 **Category:** Data Protection, Sync Protocol
 
 **Problem:**
@@ -8453,14 +8457,14 @@ DATA-004 protection was incomplete:
 **Protection Rules (Finalized):**
 
 **For Bankers:**
-1. ✅ Reject ANY external data about themselves (source of truth)
-2. ✅ Reject non-banker updates to other banker data
-3. ✅ Accept banker-to-banker updates for other bankers
+1. ? Reject ANY external data about themselves (source of truth)
+2. ? Reject non-banker updates to other banker data
+3. ? Accept banker-to-banker updates for other bankers
 
 **For Non-Bankers:**
-1. ✅ Accept all data (not the authority)
-2. ✅ Can sync with other non-bankers
-3. ✅ Can receive updates from bankers
+1. ? Accept all data (not the authority)
+2. ? Can sync with other non-bankers
+3. ? Can receive updates from bankers
 
 **Warning Messages:**
 - `[DATA-004] Rejected delta from X about ourselves (banker is source of truth for own data)`
@@ -8479,8 +8483,8 @@ DATA-004 protection was incomplete:
 
 ## [SEARCH-003] Search Returning 0 Results Despite Valid Data
 
-**Status:** ✅ FIXED (2026-01-29)  
-**Severity:** HIGH - Feature Broken  
+**Status:** ? FIXED (2026-01-29)
+**Severity:** HIGH - Feature Broken
 **Category:** Search, Lua Table Iteration
 
 **Problem:**
@@ -8536,8 +8540,8 @@ for key, item in pairs(items) do  -- Iterate all keys
 ```
 
 **Key Changes:**
-1. Changed `ipairs(items)` → `pairs(items)` for hash table iteration
-2. Changed `#items` → manual counting loop for hash tables
+1. Changed `ipairs(items)` ? `pairs(items)` for hash table iteration
+2. Changed `#items` ? manual counting loop for hash tables
 3. No logic changes needed - just proper iteration
 
 **Technical Notes:**
@@ -8563,12 +8567,12 @@ for key, item in pairs(items) do  -- Iterate all keys
 
 #### [DATA-006] Mail data being deleted by external sync for multi-banker accounts
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Data Integrity / Delta Sync
 **Reporter:** User (Production - Multi-banker workflow)
 **Date Reported:** 2026-01-29
 **Date Resolved:** 2026-01-29
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Consistent with multiple bankers on same account
 **Related:** [DATA-004], [DATA-005], Mail Inventory Persistence
 
@@ -8576,11 +8580,11 @@ for key, item in pairs(items) do  -- Iterate all keys
 When cycling through 35+ banker characters on the same account (all sharing one SavedVariables file), mail data scanned on earlier bankers would disappear after some time. Investigation revealed that external sync data from other players was overwriting locally-scanned mail data, despite mail being a local-only feature that should never be synced.
 
 **User Workflow:**
-1. Log into Banker1 → open mail → open bags → open bank → /reload
-2. Log into Banker2 → open mail → open bags → open bank → /reload
+1. Log into Banker1 ? open mail ? open bags ? open bank ? /reload
+2. Log into Banker2 ? open mail ? open bags ? open bank ? /reload
 3. Repeat for 35 bankers...
-4. Later: Log into Banker1 → mail data is GONE from UI
-5. Check SavedVariables file → `mail` field completely missing for Banker1
+4. Later: Log into Banker1 ? mail data is GONE from UI
+5. Check SavedVariables file ? `mail` field completely missing for Banker1
 
 **Root Cause:**
 
@@ -8590,16 +8594,16 @@ The DATA-004/DATA-005 banker protection logic had a critical flaw:
 ```lua
 if playerIsBanker then
     -- We are a banker - protect our data
-    
+
     -- CRITICAL: If this is data about US, reject it
     if isOwnData then
         return ADOPTION_STATUS.UNAUTHORIZED
     end
-    
+
     -- Also protect OTHER banker data from non-banker updates
     local existingIsBanker = existing and self:IsBank(norm)
     local incomingIsBanker = self:IsBank(name)
-    
+
     if existingIsBanker and not incomingIsBanker then
         -- Reject: non-banker trying to overwrite banker data
         return ADOPTION_STATUS.UNAUTHORIZED
@@ -8618,20 +8622,20 @@ self.Info.alts[norm] = alt  -- OVERWRITES entire alt object
 - Line 1827 completely replaces alt object, deleting `mail` field
 
 **Scenario:**
-1. Banker1 scans mail → `alt.mail = { items = [...], lastScan = 12345 }`
+1. Banker1 scans mail ? `alt.mail = { items = [...], lastScan = 12345 }`
 2. Later, while on Banker2, receive sync from Player3 (has data about Banker1)
 3. Player3's data lacks `mail` field (mail is never synced)
-4. Protection checks: `targetIsBanker=true, incomingIsBanker=false` → REJECT ✓ Good!
+4. Protection checks: `targetIsBanker=true, incomingIsBanker=false` ? REJECT ? Good!
 5. But then Banker2 broadcasts their version of Banker1's data (from shared SV)
-6. Protection checks: `targetIsBanker=true, incomingIsBanker=true` → ACCEPT ✗ BUG!
-7. Line 1827: `self.Info.alts[norm] = alt` → DELETES Banker1's mail field
+6. Protection checks: `targetIsBanker=true, incomingIsBanker=true` ? ACCEPT ? BUG!
+7. Line 1827: `self.Info.alts[norm] = alt` ? DELETES Banker1's mail field
 
 **Why This Happens:**
 - Multiple bankers on same account share SavedVariables
 - When Banker2 loads, they have Banker1's data in memory (from SV file)
 - Banker2 broadcasts/shares this data during sync
 - Recipient sees: "incoming from Banker2 about Banker1"
-- Both are bankers → old logic allowed this → mail data deleted
+- Both are bankers ? old logic allowed this ? mail data deleted
 
 **Solution:**
 
@@ -8682,16 +8686,16 @@ end
 
 **Mail Data Persistence:**
 Mail data is:
-- Scanned locally when banker opens mailbox (MAIL_SHOW → MAIL_CLOSED → Bank:Scan)
+- Scanned locally when banker opens mailbox (MAIL_SHOW ? MAIL_CLOSED ? Bank:Scan)
 - Stored in `alt.mail = { items = [], lastScan = timestamp }`
 - Written to SavedVariables automatically by AceDB
 - Never included in external sync messages (bandwidth optimization)
 - Protected from deletion by DATA-006 fix
 
 **Testing:**
-1. Log into Banker1 → open mail with items → verify mail data in SV file
-2. Log into Banker2 → trigger full sync from other players
-3. Log back into Banker1 → mail data should still be present
+1. Log into Banker1 ? open mail with items ? verify mail data in SV file
+2. Log into Banker2 ? trigger full sync from other players
+3. Log back into Banker1 ? mail data should still be present
 4. Check debug log for "[DATA-006] Rejected external alt data for banker"
 
 **Impact:**
@@ -8713,8 +8717,8 @@ Mail data is:
 
 **Key Insight:**
 The solution required passing `sender` to `ReceiveAltData()` so we could distinguish:
-- ✅ Banker1 sending their own data (sender==target) - ACCEPT
-- ❌ Banker3 sending Banker1's data (sender!=target) - REJECT
+- ? Banker1 sending their own data (sender==target) - ACCEPT
+- ? Banker3 sending Banker1's data (sender!=target) - REJECT
 Without sender info, all banker data looked the same and stale SV data could overwrite fresh scans.
 
 **Prevention:**
@@ -8728,13 +8732,13 @@ Without sender info, all banker data looked the same and stale SV data could ove
 
 ## [MAIL-006] Mail Items Array Format Regression
 
-**Severity:** 🔴 CRITICAL  
-**Category:** Mail Display / Data Structure Mismatch  
-**Reporter:** User  
-**Date Reported:** 2026-01-30  
-**Date Fixed:** 2026-01-30  
-**Status:** ✅ RESOLVED  
-**Related Tickets:** [MAIL-002], [MAIL-005], [DATA-004]  
+**Severity:** ?? CRITICAL
+**Category:** Mail Display / Data Structure Mismatch
+**Reporter:** User
+**Date Reported:** 2026-01-30
+**Date Fixed:** 2026-01-30
+**Status:** ? RESOLVED
+**Related Tickets:** [MAIL-002], [MAIL-005], [DATA-004]
 
 **Description:**
 
@@ -8743,7 +8747,7 @@ Mail items are multiplying/duplicating again in the UI (Search results and Inven
 **Examples of Duplication:**
 - Items appearing multiple times in Search results with incorrect counts
 - Inventory tab showing duplicate mail item stacks
-- Mail envelope icon (✉) not appearing correctly for items in mail
+- Mail envelope icon (?) not appearing correctly for items in mail
 
 **Root Cause:**
 
@@ -8819,8 +8823,8 @@ When iterating with `pairs()` over an array, the "key" is the array index (1, 2,
 **Key Takeaways:**
 
 **Array vs Hash Table Access:**
-- **Key-Value Hash:** `pairs(tbl)` → key, value | `tbl[key]`
-- **Array:** `ipairs(tbl)` → index, value | `tbl[index]`
+- **Key-Value Hash:** `pairs(tbl)` ? key, value | `tbl[key]`
+- **Array:** `ipairs(tbl)` ? index, value | `tbl[index]`
 
 **Field Name Capitalization (array format):**
 - `item.ID` (not `itemID` or `item.id`)
@@ -8844,7 +8848,7 @@ When iterating with `pairs()` over an array, the "key" is the array index (1, 2,
 ## [DELTA-011] UNAUTHORIZED rejections recorded as errors + 30% threshold blocking delta syncs
 
 **Date:** 2026-01-30
-**Status:** ✅ FIXED
+**Status:** ? FIXED
 **Severity:** High - Prevents delta sync adoption and pollutes error tracking
 
 **Problem:**
@@ -8858,7 +8862,7 @@ Two unrelated issues preventing effective delta sync usage:
 **Symptoms:**
 
 ```
-TOGBankClassic: [DEBUG] ✗ Delta too large for Booknlibram-Azuresong: 3349 bytes vs 10872 bytes full (30.8% > 30% threshold)
+TOGBankClassic: [DEBUG] ? Delta too large for Booknlibram-Azuresong: 3349 bytes vs 10872 bytes full (30.8% > 30% threshold)
 TOGBankClassic: Delta Sync Statistics
   Delta syncs: 294 B (0.0%)
   Full syncs:  814.4 KB (100.0%)
@@ -8973,7 +8977,7 @@ end
 ```
 
 **Changes:**
-- Changed `Warn()` → `Debug("DELTA", ...)` - Only visible with debug mode on
+- Changed `Warn()` ? `Debug("DELTA", ...)` - Only visible with debug mode on
 - Removed `RecordDeltaError()` calls - No longer tracked as errors
 - Added clarifying comments - "Not an error - this is expected banker protection"
 
@@ -8990,7 +8994,7 @@ if forceDelta or deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
     useDelta = true
     TOGBankClassic_Output:Debug(
         "DELTA",
-        "✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)%s",
+        "? Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)%s",
         norm,
         deltaSize,
         fullSize,
@@ -9001,7 +9005,7 @@ if forceDelta or deltaSize < fullSize * PROTOCOL.MIN_DELTA_SIZE_RATIO then
 else
     TOGBankClassic_Output:Debug(
         "DELTA",
-        "✗ Delta too large for %s: %d bytes vs %d bytes full (%.1f%% > %.0f%% threshold)",
+        "? Delta too large for %s: %d bytes vs %d bytes full (%.1f%% > %.0f%% threshold)",
         norm,
         deltaSize,
         fullSize,
@@ -9022,7 +9026,7 @@ if deltaSize < fullSize then
     useDelta = true
     TOGBankClassic_Output:Debug(
         "DELTA",
-        "✓ Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
+        "? Delta selected for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
         norm,
         deltaSize,
         fullSize,
@@ -9032,7 +9036,7 @@ if deltaSize < fullSize then
 else
     TOGBankClassic_Output:Debug(
         "DELTA",
-        "✗ Delta larger than full for %s: %d bytes vs %d bytes full (%.1f%%), using full sync",
+        "? Delta larger than full for %s: %d bytes vs %d bytes full (%.1f%%), using full sync",
         norm,
         deltaSize,
         fullSize,
@@ -9052,7 +9056,7 @@ end
 
 During the UNAUTHORIZED fix, accidentally created duplicate `ResetDeltaErrorCount()` function in `DeltaComms.lua`. Removed duplicate at lines 1075-1095.
 
-**4. Additional Fix: GetRealmName() → GetNormalizedRealmName()**
+**4. Additional Fix: GetRealmName() ? GetNormalizedRealmName()**
 
 Fixed incorrect API call in banker protection code:
 ```lua
@@ -9147,7 +9151,7 @@ end
 
 **Flow:**
 1. When `alt.items` exists (SYNC-006 format), it already contains aggregated bank+bags+mail
-2. First aggregation: Mail included in alt.items → items hash table
+2. First aggregation: Mail included in alt.items ? items hash table
 3. Second aggregation: Mail items added AGAIN from alt.mail.items
 4. Result: Mail items counted twice in UI
 
@@ -9218,7 +9222,7 @@ previousItemCount = #alt.mail.items
 ### Testing
 
 **Verification Steps:**
-1. Check SavedVariables file has correct mail.items counts ✓
+1. Check SavedVariables file has correct mail.items counts ?
 2. Verify UI search shows correct aggregated counts
 3. Confirm inventory tab doesn't multiply mail items
 4. Test with multiple mail items on banker alts
@@ -9238,18 +9242,18 @@ previousItemCount = #alt.mail.items
 ### Files Changed
 
 1. `Modules/UI/Search.lua` - Fixed 2 indentation bugs causing double aggregation
-2. `Modules/MailInventory.lua` - Fixed pairs() → # operator (1 location)
-3. `Modules/Bank.lua` - Fixed pairs() → # operator (1 location)
+2. `Modules/MailInventory.lua` - Fixed pairs() ? # operator (1 location)
+3. `Modules/Bank.lua` - Fixed pairs() ? # operator (1 location)
 
 **Total:** 4 fixes across 3 files
 
 ### Prevention
 
 **Code Review Checklist:**
-- ✓ Verify mail aggregation only runs in `else` block (fallback path)
-- ✓ Confirm alt.items already includes mail (don't re-add)
-- ✓ Use `#` operator for array length, not `pairs()` iteration
-- ✓ Test both SYNC-006 (alt.items) and legacy (separate sources) code paths
+- ? Verify mail aggregation only runs in `else` block (fallback path)
+- ? Confirm alt.items already includes mail (don't re-add)
+- ? Use `#` operator for array length, not `pairs()` iteration
+- ? Test both SYNC-006 (alt.items) and legacy (separate sources) code paths
 
 **Indentation Standards:**
 - Use tabs consistently for control flow blocks
@@ -9305,9 +9309,9 @@ end
 
 **Flow of Corruption:**
 1. User has 0 Mooncloth Bags in bank, 1 in mail
-2. **First sync:** `EnsureLegacyFields()` runs, adds 1 to bank.items → bank now shows 1
-3. **Second sync:** Same mail item still exists, adds again → bank now shows 2
-4. **Third sync:** Adds again → bank now shows 3
+2. **First sync:** `EnsureLegacyFields()` runs, adds 1 to bank.items ? bank now shows 1
+3. **Second sync:** Same mail item still exists, adds again ? bank now shows 2
+4. **Third sync:** Adds again ? bank now shows 3
 5. Each sync permanently corrupts bank.items, saved to disk
 
 ### Impact
@@ -9332,7 +9336,7 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
     -- MAIL-008: DO NOT modify alt.bank.items directly - it corrupts the data!
     -- Old clients will see mail items via alt.mail field, or can aggregate themselves
     -- If needed, create temporary copies with mail included only for transmission
-    
+
     return alt  -- No modifications to stored data
 end
 ```
@@ -9384,11 +9388,11 @@ Alternatively, manually edit SavedVariables to remove inflated counts from bank.
 ### Prevention
 
 **Code Review Checklist:**
-- ✓ Never modify stored data structures during sync/transmission
-- ✓ Create temporary copies if data transformation needed for old clients
-- ✓ Verify "EnsureLegacy" functions work on copies, not originals
-- ✓ Test with multiple syncs to detect accumulation bugs
-- ✓ Validate SavedVariables after sync matches actual inventory
+- ? Never modify stored data structures during sync/transmission
+- ? Create temporary copies if data transformation needed for old clients
+- ? Verify "EnsureLegacy" functions work on copies, not originals
+- ? Test with multiple syncs to detect accumulation bugs
+- ? Validate SavedVariables after sync matches actual inventory
 
 **Architecture Rule:**
 **Source data (bank.items, mail.items) is IMMUTABLE during sync - only scanning code modifies it**
@@ -9435,7 +9439,7 @@ end
 4. Mail field becomes nil (old client didn't send it)
 5. Non-banker loses visibility of banker's mail inventory
 
-**Intended Behavior:** 
+**Intended Behavior:**
 - New clients should maintain full visibility (including mail) regardless of incoming sync source
 - Backward compatibility should never reduce features for upgraded clients
 - Mail visibility is a selling point for adoption
@@ -9467,8 +9471,8 @@ end
 ```
 
 **New Behavior:**
-- **Old → New:** Old client sends data without mail → New client preserves its local mail knowledge
-- **New → New:** New client sends data with mail → Use the incoming mail (fresher)
+- **Old ? New:** Old client sends data without mail ? New client preserves its local mail knowledge
+- **New ? New:** New client sends data with mail ? Use the incoming mail (fresher)
 - **Banker syncing:** Banker always has authoritative mail (scanned locally)
 - **Non-banker syncing:** Non-banker preserves whatever mail data it learned before
 
@@ -9477,7 +9481,7 @@ end
 1. **Adoption Incentive:** Upgrading to v0.8.0+ gives you mail visibility permanently
 2. **Mixed Versions:** New clients maintain features even when old clients sync
 3. **Graceful Degradation:** Old clients work normally (never had mail feature anyway)
-4. **Progressive Enhancement:** More people upgrade → more complete inventory data for everyone
+4. **Progressive Enhancement:** More people upgrade ? more complete inventory data for everyone
 
 ### Testing
 
@@ -9500,7 +9504,7 @@ end
 | v0.7.x (old) | v0.7.x (old) | No mail feature |
 | v0.7.x (old) | v0.8.0+ (new) | Preserved locally |
 | v0.8.0+ (new) | v0.7.x (old) | Ignored by old client |
-| v0.8.0+ (new) | v0.8.0+ (new) | Synced normally ✓ |
+| v0.8.0+ (new) | v0.8.0+ (new) | Synced normally ? |
 
 ### Related Issues
 
@@ -9513,16 +9517,16 @@ end
 
 1. `Modules/Guild.lua` - Extended mail preservation condition (line ~1817)
 
-**Total:** 1 file, 1 conditional changed (`targetIsBanker` → `not incomingHasMail`)
+**Total:** 1 file, 1 conditional changed (`targetIsBanker` ? `not incomingHasMail`)
 
 ### Prevention
 
 **Backward Compatibility Checklist:**
-- ✓ Upgraded clients should never lose features when mixed with old clients
-- ✓ New data fields preserved when old clients don't send them
-- ✓ Feature visibility maintained across version boundaries
-- ✓ Test with both old→new and new→new sync scenarios
-- ✓ Incentivize upgrades (more features) rather than punish them (feature loss)
+- ? Upgraded clients should never lose features when mixed with old clients
+- ? New data fields preserved when old clients don't send them
+- ? Feature visibility maintained across version boundaries
+- ? Test with both old?new and new?new sync scenarios
+- ? Incentivize upgrades (more features) rather than punish them (feature loss)
 
 **Design Principle:**
 **Backward compatibility means old clients work, not that new clients degrade**
@@ -9543,7 +9547,7 @@ end
 
 **User Report:**
 - Items appear in UI initially after /reload
-- After ~10 minutes, items disappear from UI (e.g., 98 runecloth bags → 97, mooncloth bag missing)
+- After ~10 minutes, items disappear from UI (e.g., 98 runecloth bags ? 97, mooncloth bag missing)
 - Items "go away" then come back sporadically
 - Mail data PERSISTS in SavedVariables correctly (verified)
 - Problem only affects UI display (`alt.items`), not underlying data (`alt.mail`)
@@ -9575,8 +9579,8 @@ MAIL-009 preserved `alt.mail` when receiving syncs from old clients, but never u
 
 1. New client has full inventory (bank + bags + mail in `alt.items`)
 2. Old client sends sync (only bank + bags, no mail)
-3. MAIL-009 preserves `alt.mail` field ✓
-4. But `alt.items` uses incoming data (no mail) ✗
+3. MAIL-009 preserves `alt.mail` field ?
+4. But `alt.items` uses incoming data (no mail) ?
 5. UI displays incomplete inventory (missing mail items)
 
 **Timeline:**
@@ -9624,10 +9628,10 @@ When MAIL-009 restores preserved mail, update `alt.items` to include it:
 ```lua
 if existingMail and not incomingHasMail then
     self.Info.alts[norm].mail = existingMail  // MAIL-009: Preserve
-    
+
     // MAIL-010: Re-aggregate alt.items with restored mail
     if existingMail.items and #existingMail.items > 0 then
-        TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Merging %d restored mail items...", 
+        TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Merging %d restored mail items...",
             #existingMail.items)
         local aggregated = TOGBankClassic_Item:Aggregate(self.Info.alts[norm].items, existingMail.items)
         self.Info.alts[norm].items = {}
@@ -9650,21 +9654,21 @@ local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
 
 **Before Fix (Broken):**
 ```
-Old Client Sync → ReceiveAltData
-    ├─ alt.items = incoming (no mail) ✗
-    ├─ alt.mail = preserved ✓ (MAIL-009)
-    └─ UI shows alt.items (incomplete) ✗
+Old Client Sync ? ReceiveAltData
+    +- alt.items = incoming (no mail) ?
+    +- alt.mail = preserved ? (MAIL-009)
+    +- UI shows alt.items (incomplete) ?
 
 Result: Mail exists in SavedVariables but not in UI
 ```
 
 **After Fix (Working):**
 ```
-Old Client Sync → ReceiveAltData
-    ├─ alt.items = incoming (no mail)
-    ├─ alt.mail = preserved ✓ (MAIL-009)
-    ├─ Re-aggregate: alt.items + alt.mail.items ✓ (MAIL-010)
-    └─ UI shows alt.items (complete) ✓
+Old Client Sync ? ReceiveAltData
+    +- alt.items = incoming (no mail)
+    +- alt.mail = preserved ? (MAIL-009)
+    +- Re-aggregate: alt.items + alt.mail.items ? (MAIL-010)
+    +- UI shows alt.items (complete) ?
 
 Result: Mail visible in both SavedVariables and UI
 ```
@@ -9673,26 +9677,26 @@ Result: Mail visible in both SavedVariables and UI
 
 **Verification Steps:**
 1. New client scans banker with mail (e.g., 98 bags + 1 mooncloth)
-2. `/reload` - Verify UI shows 98 + 1 ✓
+2. `/reload` - Verify UI shows 98 + 1 ?
 3. Wait ~10 minutes for old client sync to arrive
-4. Check UI - Should still show 98 + 1 ✓ (not 97 + 0)
-5. `/reload` - Should remain 98 + 1 ✓
-6. Verify SavedVariables has mail data ✓
+4. Check UI - Should still show 98 + 1 ? (not 97 + 0)
+5. `/reload` - Should remain 98 + 1 ?
+6. Verify SavedVariables has mail data ?
 
 **Test Matrix:**
 
 | Sender | Receiver | Expected UI Behavior |
 |--------|----------|---------------------|
-| Old (no mail) | New | Shows mail (restored + re-aggregated) ✓ |
-| New (has mail) | New | Shows mail (from sync, deduplicated) ✓ |
-| Old (no mail) | Old | No mail feature (unaffected) ✓ |
+| Old (no mail) | New | Shows mail (restored + re-aggregated) ? |
+| New (has mail) | New | Shows mail (from sync, deduplicated) ? |
+| Old (no mail) | Old | No mail feature (unaffected) ? |
 
 ### Version Compatibility
 
 | mailHash Present | Data Source | Merge Behavior |
 |-----------------|-------------|---------------|
-| ❌ No | Old Client | Merge mail into alt.items |
-| ✅ Yes | New Client | Deduplicate only (mail already in alt.items) |
+| ? No | Old Client | Merge mail into alt.items |
+| ? Yes | New Client | Deduplicate only (mail already in alt.items) |
 
 **mailHash** acts as a version indicator:
 - Present = v0.8.0+ (mail included in scan)
@@ -9716,12 +9720,12 @@ Result: Mail visible in both SavedVariables and UI
 ### Prevention
 
 **Backward Compatibility Checklist:**
-- ✓ Distinguish between old data (needs enrichment) and new data (already complete)
-- ✓ Use version indicators (mailHash) to detect data format
-- ✓ When preserving fields, ensure dependent aggregates are updated
-- ✓ Test with mixed-version scenarios (old→new, new→new)
-- ✓ Verify both SavedVariables AND UI display after syncs
-- ✓ Wait for timed syncs (~10 min) to catch delayed issues
+- ? Distinguish between old data (needs enrichment) and new data (already complete)
+- ? Use version indicators (mailHash) to detect data format
+- ? When preserving fields, ensure dependent aggregates are updated
+- ? Test with mixed-version scenarios (old?new, new?new)
+- ? Verify both SavedVariables AND UI display after syncs
+- ? Wait for timed syncs (~10 min) to catch delayed issues
 
 **Design Principle:**
 **When preserving data fields, update all dependent aggregates that consume them**
@@ -9734,12 +9738,12 @@ If you preserve `alt.mail` but `alt.items` depends on it, you must re-aggregate.
 
 ## [MAIL-011] Order Fulfillment Not Applying When Sending Mail
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Mail / Request Fulfillment / Race Condition
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-31
 **Date Resolved:** 2026-01-31
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Consistent - 100% of fulfill operations failed to apply
 **Related:** [MAIL-010] Mail system changes
 
@@ -9750,18 +9754,18 @@ When a banker clicks the fulfill envelope button to attach items to mail and the
 > "I open the mail box. i click on send mail. the UI for requests pops up. the icon with the envelope for filling an order presents because i have the 'right' items. i click the envelope and it creates the mail. it then moves the items to the mail and fills it out. i hit send. the mail goes and i've filled the order. NOW THE UI GOES BACK TO ME NEEDED TO GET AN ITEM FROM THE BANK AND DOESN"T MARK THE ORDER AS FILLED"
 
 **Expected Flow:**
-1. Click fulfill envelope button → PrepareFulfillMail attaches items to mail
-2. Click WoW's Send Mail button → SendMail() is called
-3. SendMail hook fires → OnSendMail captures attached items in pendingSend
-4. MAIL_SEND_SUCCESS event fires → ApplyPendingSend reads pendingSend
+1. Click fulfill envelope button ? PrepareFulfillMail attaches items to mail
+2. Click WoW's Send Mail button ? SendMail() is called
+3. SendMail hook fires ? OnSendMail captures attached items in pendingSend
+4. MAIL_SEND_SUCCESS event fires ? ApplyPendingSend reads pendingSend
 5. FulfillRequest updates fulfilled count and status to "fulfilled"
 6. UI refreshes showing checkmark and gray fulfilled status
 
 **Actual Flow (Broken):**
-1. Click fulfill envelope button → PrepareFulfillMail attaches items to mail AND sets pendingSend
-2. Click WoW's Send Mail button → SendMail() is called
-3. SendMail hook fires → **OnSendMail CLEARS pendingSend at line 172**
-4. MAIL_SEND_SUCCESS event fires → ApplyPendingSend finds pendingSend is nil
+1. Click fulfill envelope button ? PrepareFulfillMail attaches items to mail AND sets pendingSend
+2. Click WoW's Send Mail button ? SendMail() is called
+3. SendMail hook fires ? **OnSendMail CLEARS pendingSend at line 172**
+4. MAIL_SEND_SUCCESS event fires ? ApplyPendingSend finds pendingSend is nil
 5. No fulfill operation applied
 6. UI still shows unfulfilled status
 
@@ -9771,7 +9775,7 @@ The bug was introduced when PrepareFulfillMail was modified to set pendingSend (
 **Mail.lua (lines 172-173) - The Bug:**
 ```lua
 function TOGBankClassic_Mail:OnSendMail(recipient)
-	self.pendingSend = nil  -- ⚠️ WIPES OUT PrepareFulfillMail's pendingSend!
+	self.pendingSend = nil  -- ?? WIPES OUT PrepareFulfillMail's pendingSend!
 	self.pendingSendAt = nil
 ```
 
@@ -9803,7 +9807,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 		TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Using pendingSend from PrepareFulfillMail")
 		return
 	end
-	
+
 	-- Clear old pendingSend and read from mail attachments
 	self.pendingSend = nil
 	self.pendingSendAt = nil
@@ -9815,7 +9819,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 3. OnSendMail checks: "Was pendingSend set recently?"
 4. If yes: Keep pendingSend, return early (don't re-read attachments)
 5. If no/stale: Clear and read from mail attachments (fallback for manual mails)
-6. MAIL_SEND_SUCCESS fires → ApplyPendingSend uses the preserved pendingSend
+6. MAIL_SEND_SUCCESS fires ? ApplyPendingSend uses the preserved pendingSend
 7. FulfillRequest applies the fulfillment
 8. UI refreshes with checkmark
 
@@ -9837,12 +9841,12 @@ This maintains backward compatibility with any code path that manually sends mai
 3. Click fulfill envelope button on a request
 4. Items attached to mail, status message shows "Click Send to complete"
 5. Click Send Mail button
-6. ✅ Mail sends successfully
-7. ✅ Debug output: "OnSendMail: Using pendingSend from PrepareFulfillMail"
-8. ✅ Debug output: "Applied X item(s) toward requests for [requester]"
-9. ✅ Request status changes to "fulfilled" with checkmark
-10. ✅ UI shows gray fulfilled status
-11. ✅ Fulfill button disappears
+6. ? Mail sends successfully
+7. ? Debug output: "OnSendMail: Using pendingSend from PrepareFulfillMail"
+8. ? Debug output: "Applied X item(s) toward requests for [requester]"
+9. ? Request status changes to "fulfilled" with checkmark
+10. ? UI shows gray fulfilled status
+11. ? Fulfill button disappears
 
 **Impact:**
 - **Severity:** CRITICAL - Core feature completely broken, 100% reproduce rate
@@ -9869,7 +9873,7 @@ When implementing a "set early to avoid race condition" pattern, ensure all code
 
 **Code Pattern (Anti-Pattern):**
 ```lua
--- ❌ BAD: Unconditionally clears
+-- ? BAD: Unconditionally clears
 function OnEvent()
     self.sharedState = nil  -- Always clears, even if recently set
     -- ... read and set new value
@@ -9878,7 +9882,7 @@ end
 
 **Code Pattern (Fixed):**
 ```lua
--- ✅ GOOD: Preserves recent sets
+-- ? GOOD: Preserves recent sets
 function OnEvent()
     if self.sharedState and self.sharedStateTime and (now - self.sharedStateTime) < STALENESS_THRESHOLD then
         return  -- Keep recent value, don't overwrite
@@ -9900,7 +9904,7 @@ end
 
 ### [MAIL-011-B] Investigation: Manual Mail Sends Not Applying Fulfillment
 
-**Status:** 🔍 **UNDER INVESTIGATION**
+**Status:** ?? **UNDER INVESTIGATION**
 **Date Started:** 2026-01-31 (late evening)
 **Related:** [MAIL-011] Order fulfillment fix
 
@@ -9909,9 +9913,9 @@ While [MAIL-011] fixed fulfillment when clicking the fulfill envelope button, th
 
 **User Report:**
 > "when i filled an order for 2x of a thing, i had to go 'around' the system so i could send 1x, why didn't it update the sent list?"
-> 
+>
 > "the fulfill button was a ? and wouldn't let me send just 1. so i sent the mail"
-> 
+>
 > "i didn't see a message" (referring to debug output)
 
 **Scenario:**
@@ -9931,7 +9935,7 @@ Even when bypassing the fulfill button, the SendMail hook should detect:
 - Recipient matches a requester with open requests
 - Item name matches a requested item
 
-Then OnSendMail should set pendingSend → MAIL_SEND_SUCCESS fires → ApplyPendingSend → FulfillRequest updates fulfilled count from 0→1.
+Then OnSendMail should set pendingSend ? MAIL_SEND_SUCCESS fires ? ApplyPendingSend ? FulfillRequest updates fulfilled count from 0?1.
 
 **Current Investigation:**
 
@@ -9940,15 +9944,15 @@ The complete absence of ANY debug messages suggests the flow is breaking very ea
 
 1. **SendMail hook not firing?**
    - Added: `"OnSendMail: HOOK FIRED for recipient=..."`
-   - Not seen → hook may not be registered or firing
+   - Not seen ? hook may not be registered or firing
 
 2. **MAIL_SEND_SUCCESS not firing?**
    - Added: `"MAIL_SEND_SUCCESS event fired"`
-   - Not seen → event may not be firing in Classic Era
+   - Not seen ? event may not be firing in Classic Era
 
 3. **ApplyPendingSend not being called?**
    - Added: `"ApplyPendingSend: Called, pendingSend=..."`
-   - Not seen → function not reached
+   - Not seen ? function not reached
 
 **Possible Root Causes:**
 
@@ -10053,12 +10057,12 @@ User to reload, manually send mail with item, report which debug messages appear
 
 ## [DELTA-012] Delta sync metrics only counting one transmission in AUTO mode
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Metrics / Statistics
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-30
 **Date Resolved:** 2026-01-30
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Affected Version:** v0.8.0+
 **Reproducibility:** 100% consistent (every delta sync in AUTO mode)
 **Related:** PROTOCOL_MODE = AUTO, dual-send compatibility (togbank-d2/d4)
@@ -10118,8 +10122,8 @@ local totalSize = (dataWithLinks ... or 0) + (dataNoLinks ... or 0)
 ```
 
 This meant:
-- Full syncs counted both transmissions ✓
-- Delta syncs only counted one transmission ✗
+- Full syncs counted both transmissions ?
+- Delta syncs only counted one transmission ?
 
 **Impact:** Delta syncs appeared to have ~50% of their actual bandwidth in metrics, or could appear as 0 bytes if only the uncounted format was sent. This made all syncs appear as full syncs in the statistics.
 
@@ -10163,7 +10167,7 @@ If both formats are sent (AUTO mode default), this only counts `deltaNoLinks` si
 
 **Example:**
 - `deltaWithLinks` = 850 bytes (sent via togbank-d2)
-- `deltaNoLinks` = 650 bytes (sent via togbank-d4) 
+- `deltaNoLinks` = 650 bytes (sent via togbank-d4)
 - **Counted:** 650 bytes
 - **Actually Sent:** 1500 bytes (850 + 650)
 - **Missing from Metrics:** 850 bytes (56% undercount!)
@@ -10205,7 +10209,7 @@ bytesSentFull = 0
 -- Counts both formats (1500 bytes total)
 bytesSentDelta = 1500  -- 850 + 650
 bytesSentFull = 0
--- Stats show: Delta syncs: 1.5 KB (100.0%) ✓
+-- Stats show: Delta syncs: 1.5 KB (100.0%) ?
 ```
 
 **Testing Steps:**
@@ -10219,9 +10223,9 @@ bytesSentFull = 0
 ### Affected Configurations
 
 **PROTOCOL_MODE Impact:**
-- **AUTO** (default): ✗ Bug affects (sends both formats, counted one)
-- **LEGACY_ONLY**: ✓ Not affected (only sends deltaWithLinks, counted correctly)
-- **NEW_ONLY**: ✓ Not affected (only sends deltaNoLinks, counted correctly)
+- **AUTO** (default): ? Bug affects (sends both formats, counted one)
+- **LEGACY_ONLY**: ? Not affected (only sends deltaWithLinks, counted correctly)
+- **NEW_ONLY**: ? Not affected (only sends deltaNoLinks, counted correctly)
 
 The bug only manifested in AUTO mode, which is the recommended and default setting for backward compatibility.
 
@@ -10271,11 +10275,11 @@ Display logic correct - shows whatever `bytesSentDelta` contains. The bug was th
 ### Prevention
 
 **Metrics Recording Checklist:**
-- ✓ When dual-sending (AUTO mode), count BOTH message sizes
-- ✓ Match logic between delta and full sync paths
-- ✓ Test metrics with all PROTOCOL_MODE settings (AUTO, LEGACY_ONLY, NEW_ONLY)
-- ✓ Verify stats display matches actual bytes transmitted
-- ✓ Check debug logs to confirm messages sent match metrics recorded
+- ? When dual-sending (AUTO mode), count BOTH message sizes
+- ? Match logic between delta and full sync paths
+- ? Test metrics with all PROTOCOL_MODE settings (AUTO, LEGACY_ONLY, NEW_ONLY)
+- ? Verify stats display matches actual bytes transmitted
+- ? Check debug logs to confirm messages sent match metrics recorded
 
 **Code Pattern:**
 Always use this pattern when recording metrics in dual-send scenarios:
@@ -10297,7 +10301,7 @@ Never use `formatA or formatB` when both might be sent - that only counts one!
 Delta Sync Statistics
 
 Bandwidth:
-  Delta syncs: 12.4 KB (73.2%)  ← Should show non-zero!
+  Delta syncs: 12.4 KB (73.2%)  ? Should show non-zero!
   Full syncs:  4.5 KB (26.8%)
   Total sent:  16.9 KB
 ```
@@ -10308,12 +10312,12 @@ Bandwidth:
 
 ## [DATA-007] Non-bankers unable to receive banker data after database wipe
 
-**Severity:** 🔴 CRITICAL
+**Severity:** ?? CRITICAL
 **Category:** Data Integrity / Authorization / Sync
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-30
 **Date Resolved:** 2026-01-30
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Affected Version:** v0.8.0+
 **Reproducibility:** 100% consistent after `/togbank wipe` for non-bankers
 **Related:** [DATA-006] Banker protection system
@@ -10362,12 +10366,12 @@ end
 ```
 
 **Problem Flow:**
-1. Non-banker runs `/togbank wipe` → all data deleted
+1. Non-banker runs `/togbank wipe` ? all data deleted
 2. `/togbank sync` sends queries for all banker data
 3. Bankers respond with their data (bankers sending data about themselves)
 4. Non-banker receives responses
-5. Code checks: `if targetIsBanker` → TRUE (data is about a banker)
-6. Code checks: `if senderNorm ~= norm` → FALSE (sender IS the banker)
+5. Code checks: `if targetIsBanker` ? TRUE (data is about a banker)
+6. Code checks: `if senderNorm ~= norm` ? FALSE (sender IS the banker)
 7. **Should accept, BUT** this whole block shouldn't run for non-bankers!
 
 Wait, actually looking at the logic again - if `senderNorm == norm` (sender IS the banker), it should pass the check and accept. Let me re-examine...
@@ -10448,16 +10452,16 @@ end
 ### Edge Cases
 
 **Case 1: Multi-banker accounts**
-- Banker A wipes, syncs → gets data from Banker B ✓
-- Banker A's data still protected (only Banker A can update Banker A) ✓
+- Banker A wipes, syncs ? gets data from Banker B ?
+- Banker A's data still protected (only Banker A can update Banker A) ?
 
 **Case 2: Mixed guild (v0.8.0 + v0.6.8)**
-- Non-bankers on v0.8.0 can receive data from v0.6.8 bankers ✓
-- Backward compatible ✓
+- Non-bankers on v0.8.0 can receive data from v0.6.8 bankers ?
+- Backward compatible ?
 
 **Case 3: Opening UI after wipe**
-- UI opens → triggers sync → populates data ✓
-- No longer shows empty inventory forever ✓
+- UI opens ? triggers sync ? populates data ?
+- No longer shows empty inventory forever ?
 
 ### Files Changed
 
@@ -10468,20 +10472,20 @@ end
 ### Prevention
 
 **Authorization Logic Checklist:**
-- ✓ Distinguish between "protecting my data" vs "receiving someone else's data"
-- ✓ Check if RECEIVER has authority, not just if TARGET has authority
-- ✓ Non-authorities should accept data from authorities (viewers accept banker data)
-- ✓ Authorities should protect their own data (bankers reject external updates)
+- ? Distinguish between "protecting my data" vs "receiving someone else's data"
+- ? Check if RECEIVER has authority, not just if TARGET has authority
+- ? Non-authorities should accept data from authorities (viewers accept banker data)
+- ? Authorities should protect their own data (bankers reject external updates)
 
 ---
 
 ## UI-009: SetName() Method Not Available on AceGUI Frames
 
-**Status:** RESOLVED  
-**Version Affected:** v0.8.0  
-**Severity:** CRITICAL - Addon fails to load  
-**Category:** UI Frame Management  
-**Date Reported:** 2026-01-30  
+**Status:** RESOLVED
+**Version Affected:** v0.8.0
+**Severity:** CRITICAL - Addon fails to load
+**Category:** UI Frame Management
+**Date Reported:** 2026-01-30
 **Resolution:** 2026-01-30
 
 ### Problem Description
@@ -10501,7 +10505,7 @@ The error occurs during addon initialization when trying to set a frame name for
 ```lua
 if window.frame and not window.frame.togRequestsEscRegistered then
     window.frame.togRequestsEscRegistered = true
-    window.frame:SetName("TOGBankClassic_RequestsWindow")  -- ❌ CRASH
+    window.frame:SetName("TOGBankClassic_RequestsWindow")  -- ? CRASH
     table.insert(UISpecialFrames, "TOGBankClassic_RequestsWindow")
 end
 ```
@@ -10542,19 +10546,19 @@ end
 ### Testing/Verification
 
 **Before Fix:**
-- ✗ Addon fails to load with SetName error
-- ✗ User cannot access any addon functionality
-- ✗ /togbank commands unavailable
+- ? Addon fails to load with SetName error
+- ? User cannot access any addon functionality
+- ? /togbank commands unavailable
 
 **After Fix:**
-- ✓ Addon loads successfully
-- ✓ ESC key closes Requests window (AceGUI built-in behavior)
-- ✓ All addon functionality available
+- ? Addon loads successfully
+- ? ESC key closes Requests window (AceGUI built-in behavior)
+- ? All addon functionality available
 
 **Test Cases:**
-1. **Standalone Requests Window** - Open via mail button → ESC closes ✓
-2. **Main UI with Requests Tab** - ESC closes entire UI ✓
-3. **Requests within Main UI** - Tab switching works ✓
+1. **Standalone Requests Window** - Open via mail button ? ESC closes ?
+2. **Main UI with Requests Tab** - ESC closes entire UI ?
+3. **Requests within Main UI** - Tab switching works ?
 
 ### Impact Assessment
 
@@ -10580,12 +10584,12 @@ end
 ### Prevention
 
 **Frame API Checklist:**
-- ✓ Check if widget library (AceGUI, LibDialog) has built-in functionality before manual registration
-- ✓ Test frame method availability with `if frame.SetName then` guards when unsure
-- ✓ Review library documentation for proper API usage patterns
-- ✓ Verify changes in-game before committing to catch runtime errors
-- ✓ Test with both banker and non-banker accounts
-- ✓ Test after `/togbank wipe` to ensure recovery works
+- ? Check if widget library (AceGUI, LibDialog) has built-in functionality before manual registration
+- ? Test frame method availability with `if frame.SetName then` guards when unsure
+- ? Review library documentation for proper API usage patterns
+- ? Verify changes in-game before committing to catch runtime errors
+- ? Test with both banker and non-banker accounts
+- ? Test after `/togbank wipe` to ensure recovery works
 
 **Design Principle:**
 **Authorization protects YOUR data, not THEIR data.**
@@ -10606,11 +10610,11 @@ This bug was introduced when banker protection was added without distinguishing 
 
 ## [DATA-008] Request Data Corruption from Empty/Invalid Required Fields
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Request Validation / Data Quality
 **Reporter:** Development Team
 **Date Reported:** 2026-01-31
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.8.0
 **Fixed Date:** 2026-01-31
 **Reproducibility:** Consistent when receiving corrupted data
@@ -10690,17 +10694,17 @@ end
 - `Modules/RequestLog.lua` (lines 55-85): Added Phase 1 validation to `sanitizeRequest()`
 
 **Benefits:**
-- ✅ Prevents corrupted requests from entering the system
-- ✅ Stops bad data from spreading via guild broadcasts
-- ✅ Provides debug visibility into rejection reasons
-- ✅ Eliminates meaningless requests cluttering the UI
-- ✅ Makes data corruption immediately visible (fails fast)
+- ? Prevents corrupted requests from entering the system
+- ? Stops bad data from spreading via guild broadcasts
+- ? Provides debug visibility into rejection reasons
+- ? Eliminates meaningless requests cluttering the UI
+- ? Makes data corruption immediately visible (fails fast)
 
 **Testing:**
 Validated that requests are properly rejected when:
 - Item name is empty or missing
 - Requester is empty, missing, or "Unknown"
-- Bank is empty or missing  
+- Bank is empty or missing
 - Quantity is zero or missing
 - All rejections are logged with clear debug messages
 
@@ -10721,11 +10725,11 @@ Validated that requests are properly rejected when:
 
 ## [DATA-009] "Zombie Requests" - Corrupted Requests with Mismatched ID/Item Fields
 
-**Severity:** 🟠 HIGH
+**Severity:** ?? HIGH
 **Category:** Request Validation / Data Integrity / Sync
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-31
-**Status:** ✅ CLOSED
+**Status:** ? CLOSED
 **Fixed In:** v0.8.0
 **Fixed Date:** 2026-01-31
 **Reproducibility:** Consistent for edited requests
@@ -10744,28 +10748,28 @@ Requests that were edited after creation had mismatched data between their ID fi
 
 ```lua
 -- Request 1: Zombie edited request
-["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921"] = {
-    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921",
-    ["item"] = "Pattern: Frostweave Tunic",    -- ❌ ID says "Greater Nether Essence"
-    ["requester"] = "Purplë-Myzrael",
+["Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-17666415ic-1766787921"] = {
+    ["id"] = "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-17666415ic-1766787921",
+    ["item"] = "Pattern: Frostweave Tunic",    -- ? ID says "Greater Nether Essence"
+    ["requester"] = "Purpl�-Myzrael",
     ["quantity"] = 1,
     ["status"] = "cancelled",
 }
 
 -- Request 2: Legitimate request (no edit)
-["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"] = {
-    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313",
-    ["item"] = "Greater Nether Essence",        -- ✅ ID matches item
-    ["requester"] = "Purplë-Myzrael",
+["Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-1766821313"] = {
+    ["id"] = "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-1766821313",
+    ["item"] = "Greater Nether Essence",        -- ? ID matches item
+    ["requester"] = "Purpl�-Myzrael",
     ["quantity"] = 12,
     ["status"] = "cancelled",
 }
 
 -- Request 3: Another zombie edited request
-["Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-st-1766641515"] = {
-    ["id"] = "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-st-1766641515",
-    ["item"] = "Formula: Enchant Gloves - Greater Agility",  -- ❌ ID says "Greater Nether Essence"
-    ["requester"] = "Purplë-Myzrael",
+["Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-st-1766641515"] = {
+    ["id"] = "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-st-1766641515",
+    ["item"] = "Formula: Enchant Gloves - Greater Agility",  -- ? ID says "Greater Nether Essence"
+    ["requester"] = "Purpl�-Myzrael",
     ["quantity"] = 1,
     ["status"] = "cancelled",
 }
@@ -10776,7 +10780,7 @@ Requests that were edited after creation had mismatched data between their ID fi
 1. **ID Generation Embeds Item Name:**
    ```lua
    -- ID format: "bank-requester-itemName-timestamp"
-   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+   "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-1766821313"
                                          ^^^^^^^^^^^^^^^^^^^^^^
                                          Item name embedded
    ```
@@ -10799,7 +10803,7 @@ Requests that were edited after creation had mismatched data between their ID fi
 ```
 Client A (editor):
   - Has: ID="...Greater Nether Essence-123", item="Pattern: Frostweave Tunic"
-  - Cancels → Creates tombstone for "...Greater Nether Essence-123"
+  - Cancels ? Creates tombstone for "...Greater Nether Essence-123"
 
 Client B (original snapshot):
   - Has: ID="...Greater Nether Essence-123", item="Greater Nether Essence"
@@ -10813,9 +10817,9 @@ Result: Request keeps coming back despite multiple cancellations
 **Debug Log Evidence:**
 
 ```
-TOGBankClassic: [DEBUG] [UI-003] ApplyRequestSnapshot: Preserving local-only request 
-  id=Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921, 
-  requester=Purplë-Myzrael, 
+TOGBankClassic: [DEBUG] [UI-003] ApplyRequestSnapshot: Preserving local-only request
+  id=Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-17666415ic-1766787921,
+  requester=Purpl�-Myzrael,
   item=Pattern: Frostweave Tunic
 ```
 
@@ -10843,7 +10847,7 @@ if req.id and type(req.id) == "string" then
     for part in string.gmatch(req.id, "[^-]+") do
         table.insert(idParts, part)
     end
-    
+
     -- ID typically has 6+ parts: bank, realm, requester, realm, itemname(s), timestamp(s)
     -- Try to extract item name from middle portion (skip first 4 parts for bank/requester)
     if #idParts >= 5 then
@@ -10857,16 +10861,16 @@ if req.id and type(req.id) == "string" then
             end
             table.insert(itemNameParts, part)
         end
-        
+
         if #itemNameParts > 0 then
             local itemInId = table.concat(itemNameParts, "-")
             -- Compare (case-insensitive, handle spaces vs dashes)
             local normalizedItem = string.lower(string.gsub(item, "%s+", ""))
             local normalizedIdItem = string.lower(string.gsub(itemInId, "%s+", ""))
-            
+
             if normalizedItem ~= normalizedIdItem then
-                TOGBankClassic_Output:Debug("REQUESTS", 
-                    "Rejected request: ID contains '%s' but item is '%s' (corrupted/edited request)", 
+                TOGBankClassic_Output:Debug("REQUESTS",
+                    "Rejected request: ID contains '%s' but item is '%s' (corrupted/edited request)",
                     itemInId, item)
                 return nil
             end
@@ -10880,21 +10884,21 @@ end
 1. **Parse ID:** Split by `-` delimiter into parts
 2. **Extract Item Name:** Skip bank/requester (first 4 parts), collect item name parts before timestamp
 3. **Normalize Both:** Convert to lowercase, remove spaces for comparison
-4. **Compare:** Reject if ID item name ≠ actual item name
+4. **Compare:** Reject if ID item name ? actual item name
 5. **Log Rejection:** Debug output shows both values for troubleshooting
 
 **What Gets Rejected:**
 
 ```lua
--- ❌ REJECTED: ID contains "Greater Nether Essence", item is "Pattern: Frostweave Tunic"
-ID:   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-17666415ic-1766787921"
+-- ? REJECTED: ID contains "Greater Nether Essence", item is "Pattern: Frostweave Tunic"
+ID:   "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-17666415ic-1766787921"
 Item: "Pattern: Frostweave Tunic"
-→ Log: "Rejected request: ID contains 'Greater Nether Essence' but item is 'Pattern: Frostweave Tunic' (corrupted/edited request)"
+? Log: "Rejected request: ID contains 'Greater Nether Essence' but item is 'Pattern: Frostweave Tunic' (corrupted/edited request)"
 
--- ✅ ACCEPTED: ID contains "Greater Nether Essence", item is "Greater Nether Essence"
-ID:   "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+-- ? ACCEPTED: ID contains "Greater Nether Essence", item is "Greater Nether Essence"
+ID:   "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-1766821313"
 Item: "Greater Nether Essence"
-→ Passes validation
+? Passes validation
 ```
 
 **Files Modified:**
@@ -10918,13 +10922,13 @@ Validated with production data:
 
 **Benefits:**
 
-- ✅ **Stops resurrection:** Zombie requests can't re-enter system via snapshots
-- ✅ **Auto-cleanup:** Existing zombies removed on next load
-- ✅ **Clear logging:** Debug output shows exactly why rejected
-- ✅ **Tombstone effectiveness:** Cancellations work correctly when IDs are consistent
-- ✅ **Data integrity:** Database can't contain internally inconsistent records
-- ✅ **Search accuracy:** Search results match actual item names
-- ✅ **User relief:** "MANY times" cancellation problem solved
+- ? **Stops resurrection:** Zombie requests can't re-enter system via snapshots
+- ? **Auto-cleanup:** Existing zombies removed on next load
+- ? **Clear logging:** Debug output shows exactly why rejected
+- ? **Tombstone effectiveness:** Cancellations work correctly when IDs are consistent
+- ? **Data integrity:** Database can't contain internally inconsistent records
+- ? **Search accuracy:** Search results match actual item names
+- ? **User relief:** "MANY times" cancellation problem solved
 
 **Prevention:**
 
@@ -10945,14 +10949,14 @@ For now, validation ensures corrupted requests can't spread or persist.
 
 ---
 
-#### ✅ [SYNC-008] Cancelled requests resurrecting from snapshots with newer timestamps
+#### ? [SYNC-008] Cancelled requests resurrecting from snapshots with newer timestamps
 
-**Severity:** 🟡 MEDIUM
+**Severity:** ?? MEDIUM
 **Category:** Snapshot Sync / Conflict Resolution
 **Reporter:** User (Production - Greater Nether Essence request)
 **Date Reported:** 2026-01-31
 **Date Resolved:** 2026-01-31
-**Status:** ✅ RESOLVED
+**Status:** ? RESOLVED
 **Reproducibility:** Consistent when other clients broadcast stale snapshots with newer timestamps
 **Related:** [DATA-009], [SYNC-001], [SYNC-004]
 
@@ -10965,7 +10969,7 @@ The `mergeRequest()` function only compared timestamps, not operation priority o
 ```lua
 -- OLD CODE (BROKEN):
 if incomingTs > existingTs then
-    requests[id] = clean  -- ❌ Blindly overwrites with newer timestamp
+    requests[id] = clean  -- ? Blindly overwrites with newer timestamp
     return "updated"
 ```
 
@@ -10975,11 +10979,11 @@ This allowed any client to resurrect cancelled/completed requests by broadcastin
 - UpdatedAt: Newer timestamp (e.g., current time from outdated client)
 
 **Why It Happens:**
-1. User cancels request on Jan 17 → `status="cancelled"`, `updatedAt=1768774810`
+1. User cancels request on Jan 17 ? `status="cancelled"`, `updatedAt=1768774810`
 2. Another client has stale snapshot where request is still `status="open"`
 3. That client updates their snapshot timestamp to current time (e.g., `updatedAt=1738306500`)
 4. They broadcast the snapshot
-5. `mergeRequest()` sees newer timestamp and overwrites cancelled status with "open" ❌
+5. `mergeRequest()` sees newer timestamp and overwrites cancelled status with "open" ?
 
 **Priority System Context:**
 - Priority system defined in docs (add=1, fulfill=2, complete=3, cancel=4, delete=5)
@@ -11000,8 +11004,8 @@ if existingIsTerminal and not incomingIsTerminal then
     -- Existing is cancelled/complete, incoming is open/fulfilled
     -- Only accept incoming if it has NEWER statusUpdatedAt (explicit status change)
     if incomingStatusTs <= existingStatusTs then
-        TOGBankClassic_Output:Debug("REQUESTS", 
-            "Rejected snapshot: trying to reopen %s status (existing %s@%d, incoming %s@%d)", 
+        TOGBankClassic_Output:Debug("REQUESTS",
+            "Rejected snapshot: trying to reopen %s status (existing %s@%d, incoming %s@%d)",
             existing.status, existing.status, existingStatusTs, clean.status, incomingStatusTs)
         return "kept"
     end
@@ -11020,39 +11024,39 @@ end
 
 ```
 Your Client State:
-  ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+  ID: "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-1766821313"
   status: "cancelled"
   statusUpdatedAt: 1768774810 (Jan 17)
   updatedAt: 1768774810 (Jan 17)
 
 Incoming Snapshot (Stale):
-  ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+  ID: "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-1766821313"
   status: "open"
   statusUpdatedAt: 1766821313 (Dec 26 - original creation, never cancelled on their client)
   updatedAt: 1738306500 (Jan 31 1:35am - just refreshed)
 
 mergeRequest() Decision:
-  ✅ existingIsTerminal = true (status="cancelled")
-  ✅ incomingIsTerminal = false (status="open")
-  ✅ incomingStatusTs (1766821313) <= existingStatusTs (1768774810)
-  → REJECTED: "trying to reopen cancelled status"
-  → result: "kept" (your cancellation protected)
+  ? existingIsTerminal = true (status="cancelled")
+  ? incomingIsTerminal = false (status="open")
+  ? incomingStatusTs (1766821313) <= existingStatusTs (1768774810)
+  ? REJECTED: "trying to reopen cancelled status"
+  ? result: "kept" (your cancellation protected)
 ```
 
 **What Gets Protected:**
 
-- ✅ **Cancelled requests** - Can't be reopened by stale "open" snapshots
-- ✅ **Completed requests** - Can't be reset to "open" by outdated clients
-- ✅ **Legitimate reopens** - If someone explicitly reopens with newer `statusUpdatedAt`, it's allowed
-- ✅ **Same-status updates** - Fulfilled → fulfilled still uses timestamp comparison
-- ✅ **Terminal transitions** - Cancelled → complete or complete → cancelled uses timestamp
+- ? **Cancelled requests** - Can't be reopened by stale "open" snapshots
+- ? **Completed requests** - Can't be reset to "open" by outdated clients
+- ? **Legitimate reopens** - If someone explicitly reopens with newer `statusUpdatedAt`, it's allowed
+- ? **Same-status updates** - Fulfilled ? fulfilled still uses timestamp comparison
+- ? **Terminal transitions** - Cancelled ? complete or complete ? cancelled uses timestamp
 
 **What's NOT Affected:**
 
-- ✅ **Quantity updates** - Fulfill operations still accumulate correctly
-- ✅ **Normal merging** - Two "open" requests still use last-writer-wins timestamp
-- ✅ **Cancellation propagation** - Newer cancels still overwrite older "open" status
-- ✅ **Log entry processing** - Priority system for log entries unchanged (SYNC-004)
+- ? **Quantity updates** - Fulfill operations still accumulate correctly
+- ? **Normal merging** - Two "open" requests still use last-writer-wins timestamp
+- ? **Cancellation propagation** - Newer cancels still overwrite older "open" status
+- ? **Log entry processing** - Priority system for log entries unchanged (SYNC-004)
 
 **Files Modified:**
 - `Modules/RequestLog.lua` (lines 271-295): Added terminal state protection to mergeRequest()
@@ -11063,19 +11067,19 @@ mergeRequest() Decision:
 **Testing:**
 
 Production validation with Greater Nether Essence request:
-- Request ID: "Shardsndust-Azuresong-Purplë-Myzrael-Greater Nether Essence-1766821313"
+- Request ID: "Shardsndust-Azuresong-Purpl�-Myzrael-Greater Nether Essence-1766821313"
 - User cancelled Jan 17: `status="cancelled"`, `statusUpdatedAt=1768774810`
 - Incoming stale snapshot with `status="open"`, `statusUpdatedAt=1766821313` (original creation)
-- New logic: Compares 1766821313 <= 1768774810 → REJECTS reopen
-- Result: Cancellation protected, request stays cancelled ✅
+- New logic: Compares 1766821313 <= 1768774810 ? REJECTS reopen
+- Result: Cancellation protected, request stays cancelled ?
 
 **Benefits:**
 
-- ✅ **Permanent cancellations:** Once cancelled, requests stay cancelled unless explicitly reopened
-- ✅ **Stale data resistance:** Old snapshots can't resurrect terminal states
-- ✅ **User control:** Users can cancel requests without them bouncing back
-- ✅ **Data consistency:** Terminal states respected across all clients
-- ✅ **Debug visibility:** Rejections logged with timestamps and reasons
+- ? **Permanent cancellations:** Once cancelled, requests stay cancelled unless explicitly reopened
+- ? **Stale data resistance:** Old snapshots can't resurrect terminal states
+- ? **User control:** Users can cancel requests without them bouncing back
+- ? **Data consistency:** Terminal states respected across all clients
+- ? **Debug visibility:** Rejections logged with timestamps and reasons
 
 **Alternative Approaches Considered:**
 

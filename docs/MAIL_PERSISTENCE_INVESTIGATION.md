@@ -1,8 +1,8 @@
 # Mail Persistence Investigation
 
-**Status:** 🟡 OPEN - Under Investigation  
-**Date Created:** 2026-01-29  
-**Priority:** High  
+**Status:** 🟡 OPEN - Under Investigation
+**Date Created:** 2026-01-29
+**Priority:** High
 **Affects:** Mail inventory feature visibility in UI
 
 ## Issue Summary
@@ -28,9 +28,9 @@ The mail inventory feature was implemented to track items in a banker's mailbox 
 ### Technical Findings
 
 #### 1. SavedVariables Location (RESOLVED)
-**Problem:** Was checking wrong account folder  
-**Root Cause:** WoW uses account-specific folders: `Account\981197530#1\` vs `Account\IANPLAMONDON\`  
-**Resolution:** Identified correct file location  
+**Problem:** Was checking wrong account folder
+**Root Cause:** WoW uses account-specific folders: `Account\981197530#1\` vs `Account\IANPLAMONDON\`
+**Resolution:** Identified correct file location
 **File:** `C:\Program Files (x86)\World of Warcraft\_classic_era_\WTF\Account\981197530#1\SavedVariables\TOGBankClassic.lua`
 
 #### 2. Data Structure Fixes (COMPLETED)
@@ -69,7 +69,7 @@ The mail inventory feature was implemented to track items in a banker's mailbox 
 
 #### 4. Aggregate Merging (NEEDS VERIFICATION)
 
-**Location:** `Modules/Guild.lua` lines 1246-1258  
+**Location:** `Modules/Guild.lua` lines 1246-1258
 **Purpose:** Merge mail items into `bank.items` aggregate for backwards compatibility
 
 **Current Code:**
@@ -97,17 +97,17 @@ end
 ## Current State
 
 ### What's Working
-✅ Mail scanning and detection (44 items found)  
-✅ Data persistence to SavedVariables  
-✅ Correct data structure in memory  
-✅ Event handling (MAIL_SHOW/MAIL_CLOSED)  
-✅ Debug logging throughout the flow  
+✅ Mail scanning and detection (44 items found)
+✅ Data persistence to SavedVariables
+✅ Correct data structure in memory
+✅ Event handling (MAIL_SHOW/MAIL_CLOSED)
+✅ Debug logging throughout the flow
 
 ### What's Unclear
-❓ Are mail items actually disappearing from UI?  
-❓ If so, under what conditions?  
-❓ Is the aggregate merge working correctly?  
-❓ Are there display/rendering issues in UI components?  
+❓ Are mail items actually disappearing from UI?
+❓ If so, under what conditions?
+❓ Is the aggregate merge working correctly?
+❓ Are there display/rendering issues in UI components?
 
 ### What Needs Testing
 1. Open mailbox with items → close → check UI immediately
@@ -156,7 +156,7 @@ Create systematic test:
 1. Start fresh (no existing mail data)
 2. Add items to mail
 3. Open/close mailbox → Note UI state
-4. /reload → Note UI state  
+4. /reload → Note UI state
 5. Logout → Note UI state
 6. Login → Note UI state
 7. Document any point where items "disappear"
@@ -165,23 +165,23 @@ Create systematic test:
 ## Theories to Investigate
 
 ### Theory 1: Array/Dict Iteration Mismatch
-**Hypothesis:** Guild.lua line 1246 treats array as dict, causing wrong IDs in aggregate  
-**Test:** Add debug logging to show itemID values during iteration  
+**Hypothesis:** Guild.lua line 1246 treats array as dict, causing wrong IDs in aggregate
+**Test:** Add debug logging to show itemID values during iteration
 **Status:** Speculative - need to confirm aggregate is actually used for display
 
 ### Theory 2: UI Filter/Display Issue
-**Hypothesis:** Mail items exist in data but UI component filters/hides them  
-**Test:** Check UI code for mail-specific filtering logic  
+**Hypothesis:** Mail items exist in data but UI component filters/hides them
+**Test:** Check UI code for mail-specific filtering logic
 **Status:** Not yet investigated
 
 ### Theory 3: Timing/Race Condition
-**Hypothesis:** UI renders before mail data loads or aggregates  
-**Test:** Check initialization order and event sequencing  
+**Hypothesis:** UI renders before mail data loads or aggregates
+**Test:** Check initialization order and event sequencing
 **Status:** Unlikely - data persists, so timing shouldn't matter on reload
 
 ### Theory 4: No Actual Bug
-**Hypothesis:** User confusion about what "disappearing" means  
-**Test:** Get clear reproduction steps  
+**Hypothesis:** User confusion about what "disappearing" means
+**Test:** Get clear reproduction steps
 **Status:** Possible - need clarification
 
 ## Documentation
@@ -258,5 +258,5 @@ Create systematic test:
 
 ---
 
-**Last Updated:** 2026-01-29  
+**Last Updated:** 2026-01-29
 **Next Review:** After reproduction steps obtained
