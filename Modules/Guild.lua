@@ -1153,15 +1153,82 @@ end
 -- DEPRECATED: Roster sync no longer uses network communication
 -- Each player rebuilds roster locally from guild notes on GUILD_ROSTER_UPDATE
 function TOGBankClassic_Guild:SendRosterData()
-	-- No-op: Roster is now local-only
-	TOGBankClassic_Output:Debug("ROSTER", "SendRosterData called but roster sync is now local-only")
+	-- Only send roster if config option is enabled (for guilds with officer-note-only gbank identification)
+	if not TOGBankClassic_Options or not TOGBankClassic_Options:IsRosterSyncEnabled() then
+		TOGBankClassic_Output:Debug("ROSTER", "SendRosterData skipped - roster sync disabled in config")
+		return
+	end
+
+	if not self.Info or not self.Info.roster or not self.Info.roster.alts then
+		TOGBankClassic_Output:Debug("ROSTER", "SendRosterData skipped - no roster data available")
+		return
+	end
+
+	local data = TOGBankClassic_Core:EncodeJSON({
+		roster = {
+			alts = self.Info.roster.alts,
+			version = self.Info.roster.version or GetServerTime()
+		}
+	})
+
+	TOGBankClassic_Output:Debug("ROSTER", "Broadcasting roster with %d bankers", #self.Info.roster.alts)
+	TOGBankClassic_Core:SendCommMessage("togbank-roster", data, "GUILD", nil, "NORMAL")
 end
 
--- DEPRECATED: Roster sync no longer uses network communication
--- Each player rebuilds roster locally from guild notes on GUILD_ROSTER_UPDATE
-function TOGBankClassic_Guild:ReceiveRosterData(roster)
-	-- No-op: Roster is now local-only
-	TOGBankClassic_Output:Debug("ROSTER", "ReceiveRosterData called but roster sync is now local-only")
+-- Receive roster broadcast from banker/officer (only if roster sync enabled)
+function TOGBankClassic_Guild:ReceiveRosterData(sender, roster)
+	-- Only accept roster if config option is enabled
+	if not TOGBankClassic_Options or not TOGBankClassic_Options:IsRosterSyncEnabled() then
+		TOGBankClassic_Output:Debug("ROSTER", "ReceiveRosterData ignored - roster sync disabled in config")
+		return
+	end
+
+	if not roster or not roster.alts then
+		TOGBankClassic_Output:Debug("ROSTER", "ReceiveRosterData ignored - invalid roster data")
+		return
+	end
+
+	-- Verify sender has gbank note or can view officer notes
+	if not self:SenderHasGbankNote(sender) and not CanViewOfficerNote() then
+		TOGBankClassic_Output:Debug("ROSTER", "ReceiveRosterData ignored - sender %s not authorized", sender or "unknown")
+		return
+	end
+
+	-- Only accept if we don't have a roster or received roster is newer
+	local currentVersion = (self.Info and self.Info.roster and self.Info.roster.version) or 0
+	local receivedVersion = roster.version or 0
+
+	if receivedVersion > currentVersion then
+		if not self.Info.roster then
+			self.Info.roster = {}
+		end
+		self.Info.roster.alts = roster.alts
+		self.Info.roster.version = receivedVersion
+		TOGBankClassic_Output:Debug("ROSTER", "Received roster update from %s with %d bankers", sender, #roster.alts)
+
+		-- Ensure local alt data exists for all roster bankers
+		if not self.Info.alts then
+			self.Info.alts = {}
+		end
+		for _, name in ipairs(roster.alts) do
+			local norm = self:NormalizeName(name)
+			if norm and not self.Info.alts[norm] then
+				self.Info.alts[norm] = {
+					name = norm,
+					version = 0,
+					money = 0,
+					inventoryHash = 0,
+					items = {},
+					mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
+					mailHash = 0,
+				}
+				self:EnsureLegacyFields(self.Info.alts[norm])
+			end
+		end
+	else
+		TOGBankClassic_Output:Debug("ROSTER", "Ignored roster from %s - not newer than current (received: %d, current: %d)",
+			sender, receivedVersion, currentVersion)
+	end
 end
 
 -- returns true if the given normalized sender has a public or officer note containing 'gbank'

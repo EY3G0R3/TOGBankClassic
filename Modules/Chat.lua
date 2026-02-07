@@ -118,6 +118,11 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	-- Roster sync (optional, for guilds with officer-note-only gbank identification)
+	TOGBankClassic_Core:RegisterComm("togbank-roster", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
 	-- Request-specific message handlers (v0.9.1+)
 	TOGBankClassic_Core:RegisterComm("togbank-rq", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
@@ -889,6 +894,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end
 			end
 		end
+	end
+
+	-- Handle roster sync (optional, for guilds with officer-note-only gbank identification)
+	if prefix == "togbank-roster" then
+		if data and data.roster then
+			TOGBankClassic_Guild:ReceiveRosterData(sender, data.roster)
+		end
+		return
 	end
 
 	-- v0.8.0: Pull-based request reply handler (togbank-rr)

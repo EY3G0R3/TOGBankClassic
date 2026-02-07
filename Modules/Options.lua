@@ -9,7 +9,7 @@ function TOGBankClassic_Options:Init()
 			framePositions = {},  -- Stores window positions/sizes
 		},
 		global = {
-			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false },
+			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, enableRosterSync = false },
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 			},
@@ -37,6 +37,9 @@ function TOGBankClassic_Options:Init()
 	end
 	if self.db.global.bank["muteWarnings"] == nil then
 		self.db.global.bank["muteWarnings"] = false
+	end
+	if self.db.global.bank["enableRosterSync"] == nil then
+		self.db.global.bank["enableRosterSync"] = false
 	end
 	-- Initialize logger with saved level
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
@@ -130,6 +133,19 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return self.db.global.bank["muteWarnings"]
+						end,
+					},
+					["enableRosterSync"] = {
+						order = 2.8,
+						type = "toggle",
+						width = "full",
+						name = "Enable Roster Sync (Officer Notes)",
+						desc = "Enable if your guild uses officer notes for 'gbank' identification and regular members can't see them. Allows bankers/officers to broadcast the roster list to guild members.",
+						set = function(_, v)
+							self.db.global.bank["enableRosterSync"] = v
+						end,
+						get = function()
+							return self.db.global.bank["enableRosterSync"]
 						end,
 					},
 					["protocolMode"] = {
@@ -654,6 +670,10 @@ end
 
 function TOGBankClassic_Options:IsWarningsMuted()
 	return self.db.global.bank["muteWarnings"] or false
+end
+
+function TOGBankClassic_Options:IsRosterSyncEnabled()
+	return self.db.global.bank["enableRosterSync"] or false
 end
 
 function TOGBankClassic_Options:GetMaxRequestPercent()
