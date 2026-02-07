@@ -84,6 +84,9 @@ function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
 			if item.Link and type(item.Link) ~= "string" then
 				return false, "added item has invalid Link"
 			end
+			if item.ItemString and type(item.ItemString) ~= "string" then
+				return false, "added item has invalid ItemString"
+			end
 			-- slot is optional (merged items don't have slots)
 		end
 	end
@@ -103,6 +106,9 @@ function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
 			-- v0.8.0: Link is optional (bandwidth optimization - receiver reconstructs)
 			if item.Link and type(item.Link) ~= "string" then
 				return false, "modified item has invalid Link"
+			end
+			if item.ItemString and type(item.ItemString) ~= "string" then
+				return false, "modified item has invalid ItemString"
 			end
 			-- slot is optional (merged items don't have slots)
 		end
@@ -340,6 +346,20 @@ function TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
 				Count = item.Count
 				-- Link removed - receiver will reconstruct
 			}
+			local forceLink = item.ForceLink == true
+			-- Preserve full link for gear/uncached/forced items, otherwise store ItemString
+			if item.Link then
+				if forceLink or (TOGBankClassic_Item and TOGBankClassic_Item.NeedsLink and TOGBankClassic_Item:NeedsLink(item.Link)) then
+					strippedItem.Link = item.Link
+				else
+					local itemString = string.match(item.Link, "item:([^|]+)")
+					if itemString then
+						strippedItem.ItemString = itemString
+					end
+				end
+			elseif item.ItemString then
+				strippedItem.ItemString = item.ItemString
+			end
 			-- Preserve Info if present (for modified items)
 			if item.Info then
 				strippedItem.Info = item.Info
@@ -353,6 +373,7 @@ function TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
 		type = delta.type,
 		name = delta.name,
 		version = delta.version,
+		updatedAt = delta.updatedAt,
 		-- v0.8.0: baseVersion no longer included (8 bytes saved)
 		changes = {}
 	}
@@ -430,7 +451,8 @@ function TOGBankClassic_DeltaComms:GetChangedFields(oldItem, newItem)
 	-- Always include ID and Link for identification (merged items use these as keys)
 	local changes = {
 		ID = newItem.ID,
-		Link = newItem.Link
+		Link = newItem.Link,
+		ItemString = newItem.ItemString,
 	}
 
 	-- Include changed fields
@@ -454,8 +476,8 @@ function TOGBankClassic_DeltaComms:BuildItemIndex(items)
 	end
 
 	for _, item in pairs(items) do
-		if item and item.ID and item.Link then
-			local key = tostring(item.ID) .. item.Link
+		if item and item.ID and (item.Link or item.ItemString) then
+			local key = tostring(item.ID) .. (item.Link or item.ItemString)
 			index[key] = item
 		end
 	end
@@ -475,8 +497,8 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 
 	-- Find added and modified items
 	for _, newItem in pairs(newItems) do
-		if newItem and newItem.ID and newItem.Link then
-			local key = tostring(newItem.ID) .. newItem.Link
+		if newItem and newItem.ID and (newItem.Link or newItem.ItemString) then
+			local key = tostring(newItem.ID) .. (newItem.Link or newItem.ItemString)
 			local oldItem = oldByKey[key]
 
 			if not oldItem then
@@ -554,6 +576,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 			type = "alt-delta",
 			name = altName,
 			version = currentAlt.version or GetServerTime(),
+			updatedAt = currentAlt.inventoryUpdatedAt or currentAlt.version or GetServerTime(),
 			-- baseVersion removed for v0.8.0 (still accepted when receiving for backwards compatibility)
 			changes = {},
 		}
@@ -681,7 +704,7 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 	-- Add new items
 	if delta.added then
 		for _, item in ipairs(delta.added) do
-			if item and item.ID and item.Link then
+			if item and item.ID and (item.Link or item.ItemString) then
 				table.insert(items, item)
 			end
 		end
@@ -690,8 +713,8 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 	-- Modify existing items
 	if delta.modified then
 		for _, changes in ipairs(delta.modified) do
-			if changes and changes.ID and changes.Link then
-				local key = tostring(changes.ID) .. changes.Link
+			if changes and changes.ID and (changes.Link or changes.ItemString) then
+				local key = tostring(changes.ID) .. (changes.Link or changes.ItemString)
 				local existingItem = itemsByKey[key]
 
 				if existingItem then
@@ -720,27 +743,25 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 		local applyStart = debugprofilestop()
 		local norm = TOGBankClassic_Guild:NormalizeName(altName)
 		local current = guildInfo.alts[norm]
+		local currentIsBanker = TOGBankClassic_Guild:IsBank(norm)
 
 		-- Validate base version matches
 		if not current then
-			-- No existing data, request full sync (but only if not already pending)
-			local hasPending = TOGBankClassic_Guild.pending_sync 
-				and TOGBankClassic_Guild.pending_sync.alts 
-				and TOGBankClassic_Guild.pending_sync.alts[norm]
-			
-			if not hasPending then
-				local errorMsg = string.format("No existing data for %s", norm)
-				TOGBankClassic_Output:Debug("DELTA", errorMsg .. ", requesting full sync")
-				self:RecordDeltaError(guildInfo.name, norm, "NO_DATA", errorMsg)
-				TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
-			else
-				TOGBankClassic_Output:Debug("DELTA", "No data for %s but full sync already pending, skipping duplicate request", norm)
+			-- No existing data: adopt delta against empty baseline to avoid full sync fallback
+			if not guildInfo.alts then
+				guildInfo.alts = {}
 			end
-			
-			if guildInfo and guildInfo.name then
-				TOGBankClassic_Database:RecordDeltaFailed(guildInfo.name)
-			end
-			return ADOPTION_STATUS.INVALID
+			current = {
+				name = norm,
+				version = 0,
+				money = 0,
+				items = {},
+				inventoryHash = 0,
+				inventoryUpdatedAt = 0,
+				mailHash = 0,
+			}
+			guildInfo.alts[norm] = current
+			TOGBankClassic_Output:Debug("DELTA", "No existing data for %s; applying delta against empty baseline", norm)
 		end
 		
 		-- DATA-004: Protect banker data - bankers are the source of truth
@@ -765,7 +786,6 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			end
 			
 			-- Also protect OTHER banker data from non-banker updates
-			local currentIsBanker = TOGBankClassic_Guild:IsBank(norm)
 			local senderNorm = sender and TOGBankClassic_Guild:NormalizeName(sender) or nil
 			local senderIsBanker = senderNorm and TOGBankClassic_Guild:IsBank(senderNorm) or false
 			
@@ -782,6 +802,13 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			end
 		end
 		-- Non-bankers accept all deltas (they're not the authority)
+
+		-- Newest-wins for non-banker alts
+		local incomingUpdatedAt = deltaData.updatedAt or deltaData.version
+		local existingUpdatedAt = current.inventoryUpdatedAt or current.version
+		if not currentIsBanker and incomingUpdatedAt and existingUpdatedAt and incomingUpdatedAt < existingUpdatedAt then
+			return ADOPTION_STATUS.STALE
+		end
 
 		local currentVersion = current.version or 0
 		-- v0.8.0: baseVersion no longer sent, but accept it for backwards compatibility
@@ -852,6 +879,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 
 			-- Update version
 			current.version = deltaData.version
+			current.inventoryUpdatedAt = deltaData.updatedAt or deltaData.version or current.inventoryUpdatedAt
 		end)
 
 		if not success then
@@ -960,6 +988,7 @@ function TOGBankClassic_DeltaComms:ApplyDeltaChain(guildInfo, altName, deltaChai
 			type = "alt-delta",
 			name = altName,
 			version = deltaEntry.version,
+			updatedAt = deltaEntry.updatedAt or deltaEntry.version,
 			baseVersion = deltaEntry.baseVersion,
 			changes = deltaEntry.delta
 		}
@@ -1224,11 +1253,14 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	end
 
 	local missing = {}
+	local missingDebug = {}
 	for _, altName in ipairs(rosterAlts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(altName)
 		-- Check if we have this alt locally
 		if not guildInfo.alts or not guildInfo.alts[norm] then
 			table.insert(missing, norm)
+			local hasRaw = guildInfo.alts and guildInfo.alts[altName] ~= nil
+			table.insert(missingDebug, string.format("%s (norm=%s, rawKey=%s)", tostring(altName), tostring(norm), tostring(hasRaw)))
 		end
 	end
 
@@ -1237,7 +1269,12 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		return
 	end
 
-	TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", #missing, #rosterAlts - #missing, #rosterAlts)
+	local haveCount, totalCount = TOGBankClassic_Guild:GetBankerDataProgress()
+	TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", #missing, haveCount, totalCount)
+	TOGBankClassic_Guild:ReportBankerDataProgress("fast-fill", true)
+	if #missingDebug > 0 then
+		TOGBankClassic_Output:Debug("DELTA", "Fast-fill missing alts: %s", table.concat(missingDebug, ", "))
+	end
 
 	-- Query each missing alt using pull-based protocol
 	for _, norm in ipairs(missing) do

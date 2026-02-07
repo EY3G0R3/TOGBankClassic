@@ -291,12 +291,18 @@ function TOGBankClassic_Bank:Scan()
 
 	if currentHash ~= previousHash then
 		-- Inventory changed, update version timestamp
-		alt.version = GetServerTime()
+		local updatedAt = GetServerTime()
+		alt.version = updatedAt
+		alt.inventoryUpdatedAt = updatedAt
 		alt.inventoryHash = currentHash
 		TOGBankClassic_Output:Debug("SYNC", "Inventory changed for %s, version updated to %d (hash: %s)", player, alt.version, tostring(currentHash))
 	else
 		-- No changes detected, preserve existing version
 		TOGBankClassic_Output:Debug("SYNC", "No inventory changes for %s, version unchanged (hash: %s)", player, tostring(currentHash))
+		-- Backfill inventoryUpdatedAt if missing
+		if not alt.inventoryUpdatedAt and alt.version then
+			alt.inventoryUpdatedAt = alt.version
+		end
 	end
 
 	-- MAIL-012: Compute mailHash for mail-specific change detection

@@ -59,13 +59,20 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 				
 				if itemID and name then
 					local link = GetInboxItemLink(i, j)
+					if not link and itemID then
+						link = select(2, GetItemInfo(itemID))
+					end
+					local itemString = link and TOGBankClassic_Item:GetItemString(link) or nil
 					
 					-- Conditionally include Link based on item class
 					-- Gear (weapons/armor) needs FULL Link for suffix differentiation
 					-- Consumables/trade goods don't need Link (saves bandwidth in d3 sync)
 					local storageLink = nil
+					local storageItemString = itemString
+					local storageForceLink = nil
 					if link and TOGBankClassic_Item:NeedsLink(link) then
-						storageLink = link  -- Store FULL link for gear
+						storageLink = link
+						storageForceLink = true
 					end
 					
 					-- Use NORMALIZED key for deduplication (strips unique instance ID)
@@ -76,12 +83,24 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 					if mailItemsTable[key] then
 						-- Item already exists, add to count
 						local item = mailItemsTable[key]
-						mailItemsTable[key] = { ID = item.ID, Count = item.Count + count, Link = item.Link or storageLink }
+						mailItemsTable[key] = {
+							ID = item.ID,
+							Count = item.Count + count,
+							Link = item.Link or storageLink,
+							ItemString = item.ItemString or storageItemString,
+							ForceLink = item.ForceLink or storageForceLink,
+						}
 						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] Item %s: MERGED (key=%s) added %d, total now %d",
 							name, key, count, mailItemsTable[key].Count)
 					else
 						-- New item
-						mailItemsTable[key] = { ID = itemID, Count = count, Link = storageLink }
+						mailItemsTable[key] = {
+							ID = itemID,
+							Count = count,
+							Link = storageLink,
+							ItemString = storageItemString,
+							ForceLink = storageForceLink,
+						}
 						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] New item in mailbox: %s (ID: %d, Count: %d, Link: %s, Key: %s)",
 							name, itemID, count, storageLink and "preserved" or "stripped", key)
 					end

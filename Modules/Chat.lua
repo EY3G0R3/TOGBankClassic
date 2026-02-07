@@ -132,6 +132,7 @@ function TOGBankClassic_Chat:PerformSync()
 	-- SYNC-008 fix: Also send legacy version broadcast like the automatic timer does
 	--TOGBankClassic_Events:Sync("ALERT")  -- COMMENTED OUT: togbank-v ignored by delta clients
 	TOGBankClassic_Guild:FastFillMissingAlts()
+	TOGBankClassic_Guild:ReportBankerDataProgress("sync", true)
 	-- Query request snapshot with ALERT priority for immediate sync
 	local player = TOGBankClassic_Guild:GetPlayer()
 	TOGBankClassic_Guild:QueryRequestsSnapshot(player, "ALERT")
@@ -370,6 +371,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 				-- v0.8.0: Handle both old format (number) and new format (table with version+hash)
 				local theirVersion = type(v) == "table" and v.version or v
 				local theirHash = type(v) == "table" and v.hash or nil
+				local theirUpdatedAt = type(v) == "table" and v.updatedAt or nil
 				local ourVersion = type(ourAlt) == "table" and ourAlt.version or nil
 				local ourHash = type(ourAlt) == "table" and ourAlt.inventoryHash or nil
 
@@ -377,11 +379,12 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 				if theirHash then
 					TOGBankClassic_Output:Debug(
 						"PROTOCOL",
-						"[MAIL-012] Received %s from %s: theirVer=%d, theirHash=%d, ourVer=%s, ourHash=%s",
+						"[MAIL-012] Received %s from %s: theirVer=%d, theirHash=%d, theirUpdatedAt=%s, ourVer=%s, ourHash=%s",
 						kNorm,
 						sender,
 						theirVersion,
 						theirHash,
+						theirUpdatedAt and tostring(theirUpdatedAt) or "nil",
 						ourVersion and tostring(ourVersion) or "nil",
 						ourHash and tostring(ourHash) or "nil"
 					)
@@ -1979,6 +1982,7 @@ function TOGBankClassic_Chat:ProcessQueue()
 	end
 
 	self.is_syncing = true
+	local startTime = debugprofilestop()
 
 	local time = GetServerTime()
 
@@ -1989,12 +1993,20 @@ function TOGBankClassic_Chat:ProcessQueue()
 		-- This sends full delta to everyone
 		TOGBankClassic_Guild:SendAltData(name, 0, 0)
 	end
+	local duration = debugprofilestop() - startTime
+	TOGBankClassic_Output:Debug("EVENTS", "ProcessQueue took %.2fms (name=%s, queue=%d)", duration, tostring(name), #self.sync_queue)
 
-	TOGBankClassic_Chat:ReprocessQueue()
+	if #self.sync_queue > 0 then
+		TOGBankClassic_Chat:ReprocessQueue()
+	end
 end
 
 function TOGBankClassic_Chat:ReprocessQueue()
-	TOGBankClassic_Core:ScheduleTimer(function(...)
+	if self.reprocessTimer then
+		return
+	end
+	self.reprocessTimer = TOGBankClassic_Core:ScheduleTimer(function(...)
+		TOGBankClassic_Chat.reprocessTimer = nil
 		TOGBankClassic_Chat:OnTimer()
 	end, TIMER_INTERVALS.ALT_DATA_QUEUE_RETRY)
 end

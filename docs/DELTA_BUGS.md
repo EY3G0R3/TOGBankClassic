@@ -61,6 +61,10 @@ User reports noticeable UI "stuttering" during normal usage without any Lua erro
 - Search data rebuilds or mail aggregation spikes
 - High-frequency events (BAG_UPDATE, GUILD_ROSTER_UPDATE, timers)
 
+**Update (2026-02-06):**
+- Likely source: repeated full guild roster scans on GUILD_ROSTER_UPDATE during login/logout bursts.
+- Plan/Action: switch to online/offline updates from CHAT_MSG_SYSTEM and restrict full scans to init/reload and join/leave.
+
 **Next Steps:**
 1. Enable PERF debug and capture timestamps around stutter
 2. Capture addon CPU usage from in-game Performance panel
@@ -4654,6 +4658,14 @@ After receiving link-less data via togbank-d3 protocol, items don't appear in th
 
 **Root Cause:**
 The `ReconstructItemLinks()` function in Guild.lua uses asynchronous `Item:ContinueOnItemLoad()` callbacks to fetch item data from the server. When the callback completes and sets `item.Link`, the UI has already been rendered and doesn't know the link is now available. There's no mechanism to refresh the UI after async link reconstruction completes.
+
+**Update (2026-02-07):**
+- Mail gear/weapon links were still stripped on sync despite banker view showing links.
+- Fixes implemented:
+    - `NeedsLink()` now uses classID/equipLoc (non-localized) to preserve gear/weapon links.
+    - Mail scan preserves links only for `NeedsLink()` items and falls back to `GetItemInfo` when inbox link is nil.
+    - Deltas carry `ItemString` and use `Link or ItemString` for keys; apply/validate supports ItemString-only items.
+    - UI refresh triggered after `ReceiveAltData()` even when no reconstruction is needed.
 
 **Affected Code (Guild.lua:970-995 - Before Fix):**
 ```lua

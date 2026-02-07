@@ -389,6 +389,27 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 		self.Info.roster.alts = banks
 		TOGBankClassic_Output:Debug("ROSTER", "Rebuilt banker roster from guild notes: %d bankers", #banks)
 	end
+
+	-- Ensure local alt data exists for all roster bankers (authoritative roster cache)
+	if not self.Info.alts then
+		self.Info.alts = {}
+	end
+	for _, name in ipairs(banks) do
+		local norm = self:NormalizeName(name)
+		if norm and not self.Info.alts[norm] then
+			self.Info.alts[norm] = {
+				name = norm,
+				version = 0,
+				money = 0,
+				inventoryHash = 0,
+				items = {},
+				mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
+				mailHash = 0,
+			}
+			self:EnsureLegacyFields(self.Info.alts[norm])
+			TOGBankClassic_Output:Debug("ROSTER", "Added missing banker stub data for %s", norm)
+		end
+	end
 end
 
 function TOGBankClassic_Guild:GetRosterAlts()
@@ -422,6 +443,97 @@ function TOGBankClassic_Guild:GetRosterAlts()
 	end
 
 	return list
+end
+
+function TOGBankClassic_Guild:HasAltData(alt)
+	if not alt or type(alt) ~= "table" then
+		return false
+	end
+	if alt.version and alt.version > 0 then
+		return true
+	end
+	if alt.inventoryHash and alt.inventoryHash > 0 then
+		return true
+	end
+	if alt.items and #alt.items > 0 then
+		return true
+	end
+	return false
+end
+
+function TOGBankClassic_Guild:GetBankerDataProgress()
+	if not self.Info then
+		return 0, 0
+	end
+
+	local rosterAlts = self:GetRosterAlts()
+	if not rosterAlts or #rosterAlts == 0 then
+		rosterAlts = self:GetBanks()
+	end
+	if not rosterAlts or #rosterAlts == 0 then
+		return 0, 0
+	end
+
+	local have = 0
+	for _, altName in ipairs(rosterAlts) do
+		local norm = self:NormalizeName(altName)
+		if norm and self:HasAltData(self.Info.alts and self.Info.alts[norm]) then
+			have = have + 1
+		end
+	end
+
+	return have, #rosterAlts
+end
+
+function TOGBankClassic_Guild:ReportBankerDataProgress(context, force)
+	if TOGBankClassic_Options and TOGBankClassic_Options.IsSyncProgressMuted and TOGBankClassic_Options:IsSyncProgressMuted() then
+		return
+	end
+
+	local have, total = self:GetBankerDataProgress()
+	if total == 0 then
+		return
+	end
+
+	-- Reset completion tracking if roster size changes
+	if self.lastBankerProgressTotal ~= total then
+		self.lastBankerProgressTotal = total
+		self.bankerProgressComplete = false
+	end
+
+	-- If already complete and previously at full, suppress further progress spam
+	if have >= total then
+		if self.lastBankerProgress == total then
+			self.bankerProgressBuffer = {}
+			return
+		end
+		self.bankerProgressComplete = true
+	else
+		self.bankerProgressComplete = false
+	end
+
+	-- Aggregate banker names added in the same tick
+	self.bankerProgressBuffer = self.bankerProgressBuffer or {}
+	if context and context:find("received ") then
+		local name = context:gsub("^received ", "")
+		table.insert(self.bankerProgressBuffer, name)
+		context = nil
+	end
+
+	local lastHave = self.lastBankerProgress or -1
+	if force or have ~= lastHave then
+		self.lastBankerProgress = have
+		local delta = (lastHave >= 0) and (have - lastHave) or 0
+		local deltaStr = (delta and delta ~= 0) and string.format(" (+%d)", delta) or ""
+		local names = ""
+		if self.bankerProgressBuffer and #self.bankerProgressBuffer > 0 then
+			names = " (received " .. table.concat(self.bankerProgressBuffer, ", ") .. ")"
+			self.bankerProgressBuffer = {}
+		elseif context then
+			names = " (" .. context .. ")"
+		end
+		TOGBankClassic_Output:Info("Banker sync progress: %d/%d%s%s", have, total, deltaStr, names)
+	end
 end
 
 -- v0.8.0: Fast-fill - Request missing banker alts on UI open
@@ -517,6 +629,7 @@ function TOGBankClassic_Guild:GetVersion()
 					data.alts[k] = {
 						version = v.version,
 						hash = v.inventoryHash,
+						updatedAt = v.inventoryUpdatedAt or v.version,
 					}
 					TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d, hash=%d", k, v.version, v.inventoryHash)
 				else
@@ -780,6 +893,23 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	TOGBankClassic_Output:Debug("ROSTER", "[GUILD ROSTER] Refreshed online cache: %d members online", count)
 end
 
+-- Update a single member's online state (from CHAT_MSG_SYSTEM)
+function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline)
+	if not memberName then
+		return
+	end
+	self.onlineMembers = self.onlineMembers or {}
+	local normalized = self:NormalizeName(memberName)
+	if not normalized then
+		return
+	end
+	if isOnline then
+		self.onlineMembers[normalized] = true
+	else
+		self.onlineMembers[normalized] = nil
+	end
+end
+
 -- Check if a player is currently online in the guild
 -- Uses cached roster data updated via GUILD_ROSTER_UPDATE event
 function TOGBankClassic_Guild:IsPlayerOnline(playerName)
@@ -814,6 +944,7 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 	local summary = {
 		version = alt.version or 0,
 		hash = alt.inventoryHash or nil,  -- v0.8.0: Include inventory hash for delta comparison
+		updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
 		money = alt.money or 0,
 		items = {}  -- {[itemID] = quantity}
 	}
@@ -893,6 +1024,9 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	end
 
 	local currentAlt = self.Info.alts[norm]
+	if currentAlt and not currentAlt.inventoryUpdatedAt and currentAlt.version then
+		currentAlt.inventoryUpdatedAt = currentAlt.version
+	end
 	local requesterVersion = summary.version or 0
 	local currentVersion = currentAlt.version or 0
 
@@ -993,13 +1127,22 @@ function TOGBankClassic_Guild:StripItemLinks(items)
 			-- Link removed - receiver will reconstruct
 		}
 
+		local forceLink = item.ForceLink == true
+
 		-- Preserve itemString for items with unique stats (suffixes, enchants, etc.)
 		-- Extract from Link if available: |Hitem:itemString|h[Name]|h
 		if item.Link then
-			local itemString = string.match(item.Link, "item:([^|]+)")
-			if itemString then
-				strippedItem.ItemString = itemString
+			if forceLink or (TOGBankClassic_Item and TOGBankClassic_Item.NeedsLink and TOGBankClassic_Item:NeedsLink(item.Link)) then
+				-- Preserve full link for forced/gear/uncached items
+				strippedItem.Link = item.Link
+			else
+				local itemString = string.match(item.Link, "item:([^|]+)")
+				if itemString then
+					strippedItem.ItemString = itemString
+				end
 			end
+		elseif item.ItemString then
+			strippedItem.ItemString = item.ItemString
 		end
 
 		table.insert(stripped, strippedItem)
@@ -1231,6 +1374,7 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 		version = alt.version,
 		money = alt.money,
 		inventoryHash = alt.inventoryHash,
+		inventoryUpdatedAt = alt.inventoryUpdatedAt or alt.version,
 		items = strippedItems,
 		bank = strippedBank,
 		bags = strippedBags,
@@ -1809,6 +1953,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 
 		local norm = self:NormalizeName(name)
 		local existing = self.Info.alts[norm]
+		local hadBankerData = self:HasAltData(existing)
 		local senderNorm = sender and self:NormalizeName(sender) or nil
 
 		-- DATA-004/DATA-006: Banker protection logic
@@ -1848,49 +1993,52 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 
 		-- Rule 3: Non-bankers accept all data, non-banker data accepted from anyone
 
-		-- Version checking for all alts
-	if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
-		return ADOPTION_STATUS.STALE
-	end
+		-- Non-banker conflict resolution: newest wins (timestamped hash)
+		local incomingUpdatedAt = alt.inventoryUpdatedAt or alt.version
+		local existingUpdatedAt = existing and (existing.inventoryUpdatedAt or existing.version) or nil
 
-	-- Accept incoming if newer version
-	-- If same version, accept the alt with more items
-	local function itemCount(a)
-		local c = 0
-		if a and a.items then
-			for _, v in pairs(a.items) do
-				if v and v.ID then
-					c = c + 1
+		-- Backfill missing inventoryUpdatedAt on incoming data
+		if incomingUpdatedAt and not alt.inventoryUpdatedAt then
+			alt.inventoryUpdatedAt = incomingUpdatedAt
+		end
+
+		local function itemCount(a)
+			local c = 0
+			if a and a.items then
+				for _, v in pairs(a.items) do
+					if v and v.ID then
+						c = c + 1
+					end
+				end
+			end
+			return c
+		end
+
+		if not targetIsBanker and existing and incomingUpdatedAt and existingUpdatedAt then
+			if incomingUpdatedAt < existingUpdatedAt then
+				return ADOPTION_STATUS.STALE
+			elseif incomingUpdatedAt == existingUpdatedAt then
+				-- Tie-breaker: choose the one with more items
+				if itemCount(alt) <= itemCount(existing) then
+					return ADOPTION_STATUS.STALE
 				end
 			end
 		end
-		return c
-	end
 
-	if existing and existing.version and alt.version and alt.version < existing.version then
-		-- Incoming is older; ignore
-		return ADOPTION_STATUS.STALE
-	elseif existing and existing.version and alt.version and alt.version == existing.version then
-		-- Tie-breaker: choose the one with more items (unless banker priority applies)
-		if itemCount(alt) <= itemCount(existing) then
+		-- Legacy fallback: version-based staleness check
+		if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
 			return ADOPTION_STATUS.STALE
 		end
-	end
 
-	-- Check against existing alt data, but only if version exists
-	if self.Info.alts[name] and alt.version ~= nil and self.Info.alts[name].version ~= nil and alt.version < self.Info.alts[name].version then
-		return ADOPTION_STATUS.STALE
-	end
-
-	if self.hasRequested then
-		if self.requestCount == nil then
-			self.requestCount = 0
-		else
-			self.requestCount = self.requestCount - 1
-		end
-		if self.requestCount == 0 then
-			self.hasRequested = false
-			TOGBankClassic_Output:Info("Sync completed.")
+		if self.hasRequested then
+			if self.requestCount == nil then
+				self.requestCount = 0
+			else
+				self.requestCount = self.requestCount - 1
+			end
+			if self.requestCount == 0 then
+				self.hasRequested = false
+				TOGBankClassic_Output:Info("Sync completed.")
 			end
 		end
 
@@ -1898,53 +2046,53 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			self.Info.alts = {}
 		end
 
--- DATA-006/MAIL-009: Preserve mail field from existing data when incoming sync lacks it
-	-- Mail is now synced in v0.8.0+, but old clients don't include it in their syncs
-	-- Preserve locally-scanned mail data to maintain visibility for new clients
-	local existingMail = existing and existing.mail or nil
-	local incomingHasMail = alt.mail ~= nil
+		-- DATA-006/MAIL-009: Preserve mail field from existing data when incoming sync lacks it
+		-- Mail is now synced in v0.8.0+, but old clients don't include it in their syncs
+		-- Preserve locally-scanned mail data to maintain visibility for new clients
+		local existingMail = existing and existing.mail or nil
+		local incomingHasMail = alt.mail ~= nil
 
-	TOGBankClassic_Output:Debug("MAIL", "AdoptAltData for %s: existingMail=%s, incomingHasMail=%s",
-		norm, existingMail and "YES" or "NO", tostring(incomingHasMail))
-	if existingMail then
-		TOGBankClassic_Output:Debug("MAIL", "  existingMail has %d items", existingMail.items and #existingMail.items or 0)
-	end
-
-	---@diagnostic disable-next-line: need-check-nil
-	self.Info.alts[norm] = alt
-	TOGBankClassic_Output:Debug("MAIL", "Overwrote self.Info.alts[%s], mail field now: %s",
-		norm, alt.mail and "EXISTS" or "GONE")
-
-	-- [MAIL-012] Log mailHash after storing to verify it persisted
-	TOGBankClassic_Output:Debug("SYNC", "[MAIL-012] Stored alt data for %s: mailHash=%s", norm, tostring(self.Info.alts[norm].mailHash))
-
-	-- Restore preserved mail if we had it locally and incoming sync doesn't have it
-	-- This handles backward compatibility: new clients preserve mail when receiving from old clients
-	if existingMail and not incomingHasMail then
-		self.Info.alts[norm].mail = existingMail
-		local mailItemCount = existingMail.items and #existingMail.items or 0
-		TOGBankClassic_Output:Debug("MAIL", "Restored mail for %s (%d items) - incoming sync lacked mail",
-			norm, mailItemCount)
-		TOGBankClassic_Output:Debug("MAIL",
-			"[MAIL-009] Preserved mail data for %s (%d items, lastScan=%s) - backward compat",
-			norm, mailItemCount, tostring(existingMail.lastScan))
-
-		-- MAIL-010: Re-aggregate alt.items to include the restored mail
-		-- The incoming alt.items doesn't have mail, so we need to merge it back in
-		if existingMail.items and #existingMail.items > 0 then
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Merging %d restored mail items into alt.items for %s",
-				#existingMail.items, norm)
-			local aggregated = TOGBankClassic_Item:Aggregate(self.Info.alts[norm].items, existingMail.items)
-			self.Info.alts[norm].items = {}
-			for _, item in pairs(aggregated) do
-				table.insert(self.Info.alts[norm].items, item)
-			end
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Re-aggregated alt.items for %s: %d items (including restored mail)",
-				norm, #self.Info.alts[norm].items)
+		TOGBankClassic_Output:Debug("MAIL", "AdoptAltData for %s: existingMail=%s, incomingHasMail=%s",
+			norm, existingMail and "YES" or "NO", tostring(incomingHasMail))
+		if existingMail then
+			TOGBankClassic_Output:Debug("MAIL", "  existingMail has %d items", existingMail.items and #existingMail.items or 0)
 		end
-	elseif incomingHasMail then
-		TOGBankClassic_Output:Debug("MAIL", "Using incoming mail data for %s (new client sync)", norm)
-	end
+
+		---@diagnostic disable-next-line: need-check-nil
+		self.Info.alts[norm] = alt
+		TOGBankClassic_Output:Debug("MAIL", "Overwrote self.Info.alts[%s], mail field now: %s",
+			norm, alt.mail and "EXISTS" or "GONE")
+
+		-- [MAIL-012] Log mailHash after storing to verify it persisted
+		TOGBankClassic_Output:Debug("SYNC", "[MAIL-012] Stored alt data for %s: mailHash=%s", norm, tostring(self.Info.alts[norm].mailHash))
+
+		-- Restore preserved mail if we had it locally and incoming sync doesn't have it
+		-- This handles backward compatibility: new clients preserve mail when receiving from old clients
+		if existingMail and not incomingHasMail then
+			self.Info.alts[norm].mail = existingMail
+			local mailItemCount = existingMail.items and #existingMail.items or 0
+			TOGBankClassic_Output:Debug("MAIL", "Restored mail for %s (%d items) - incoming sync lacked mail",
+				norm, mailItemCount)
+			TOGBankClassic_Output:Debug("MAIL",
+				"[MAIL-009] Preserved mail data for %s (%d items, lastScan=%s) - backward compat",
+				norm, mailItemCount, tostring(existingMail.lastScan))
+
+			-- MAIL-010: Re-aggregate alt.items to include the restored mail
+			-- The incoming alt.items doesn't have mail, so we need to merge it back in
+			if existingMail.items and #existingMail.items > 0 then
+				TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Merging %d restored mail items into alt.items for %s",
+					#existingMail.items, norm)
+				local aggregated = TOGBankClassic_Item:Aggregate(self.Info.alts[norm].items, existingMail.items)
+				self.Info.alts[norm].items = {}
+				for _, item in pairs(aggregated) do
+					table.insert(self.Info.alts[norm].items, item)
+				end
+				TOGBankClassic_Output:Debug("MAIL", "[MAIL-010] Re-aggregated alt.items for %s: %d items (including restored mail)",
+					norm, #self.Info.alts[norm].items)
+			end
+		elseif incomingHasMail then
+			TOGBankClassic_Output:Debug("MAIL", "Using incoming mail data for %s (new client sync)", norm)
+		end
 
 		-- Reset search data flag so inventory UI rebuilds search index (UI-008 fix)
 		if TOGBankClassic_UI_Inventory then
@@ -1954,10 +2102,25 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
 		if alt.items then
 			self:ReconstructItemLinks(alt.items)
+			-- Ensure UI refresh even when no links need reconstruction
+			ThrottledUIRefresh()
 		end
 
 		-- Reset error count on successful full sync
 		self:ResetDeltaErrorCount(norm)
+
+		-- Progress reporting for banker sync coverage
+		local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
+		local isRosterBanker = false
+		for _, altName in ipairs(rosterAlts) do
+			if self:NormalizeName(altName) == norm then
+				isRosterBanker = true
+				break
+			end
+		end
+		if isRosterBanker and not hadBankerData then
+			self:ReportBankerDataProgress("received " .. tostring(norm), true)
+		end
 
 		return ADOPTION_STATUS.ADOPTED
 	end)

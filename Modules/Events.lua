@@ -43,6 +43,7 @@ function TOGBankClassic_Events:RegisterEvents()
 	self:RegisterEvent("MAIL_SEND_SUCCESS")
 	self:RegisterEvent("UI_ERROR_MESSAGE")
 	self:RegisterEvent("GUILD_ROSTER_UPDATE")
+	self:RegisterEvent("CHAT_MSG_SYSTEM")
 	self:RegisterEvent("PLAYER_ENTERING_WORLD")
 	self:RegisterEvent("TRADE_SHOW")
 	self:RegisterEvent("TRADE_CLOSED")
@@ -115,6 +116,7 @@ function TOGBankClassic_Events:UnregisterEvents()
 	self:UnregisterEvent("MAIL_CLOSED")
 	self:UnregisterEvent("MAIL_SEND_SUCCESS")
 	self:UnregisterEvent("UI_ERROR_MESSAGE")
+	self:UnregisterEvent("CHAT_MSG_SYSTEM")
 	self:UnregisterEvent("TRADE_SHOW")
 	self:UnregisterEvent("TRADE_CLOSED")
 	self:UnregisterEvent("AUCTION_HOUSE_SHOW")
@@ -159,9 +161,7 @@ function TOGBankClassic_Events:OnShareTimer()
 	local startTime = debugprofilestop()
 	TOGBankClassic_Guild:Share("reply", "version")
 	local duration = debugprofilestop() - startTime
-	if duration > 20 then
-		TOGBankClassic_Output:Debug("EVENTS", "OnShareTimer took %.2fms", duration)
-	end
+	TOGBankClassic_Output:Debug("EVENTS", "OnShareTimer took %.2fms", duration)
 
 	self:SetShareTimer()
 end
@@ -231,9 +231,7 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] togbank-dv2 message size: %d bytes", #data)
 	TOGBankClassic_Core:SendCommMessage("togbank-dv2", data, "Guild", nil, priority or "NORMAL")
 	local duration = debugprofilestop() - startTime
-	if duration > 20 then
-		TOGBankClassic_Output:Debug("EVENTS", "SyncDeltaVersion took %.2fms (alts=%d, size=%d)", duration, altCount, #data)
-	end
+	TOGBankClassic_Output:Debug("EVENTS", "SyncDeltaVersion took %.2fms (alts=%d, size=%d)", duration, altCount, #data)
 	
 	-- Also send on togbank-dv for old pre-SYNC-006 clients
 	-- Note: Old clients will compute hash from their legacy alt.bank/alt.bags structure
@@ -322,20 +320,68 @@ function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_)
 	GuildRoster()
 	-- Initialize cache immediately in case GUILD_ROSTER_UPDATE is delayed
 	TOGBankClassic_Guild:RefreshOnlineCache()
+	-- Allow one full scan on init to populate roster/banker cache
+	self.needsFullRosterRefresh = true
+	self.fullRosterInitAttempts = 0
 end
 
 -- Refresh online members cache when roster updates
 function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 	TOGBankClassic_Performance:RecordEvent("GUILD_ROSTER_UPDATE")
-	TOGBankClassic_Guild:RefreshOnlineCache()
-	-- Invalidate banks cache when roster updates
-	TOGBankClassic_Guild:InvalidateBanksCache()
-	-- Rebuild banker roster from guild notes (local only, no network communication)
-	TOGBankClassic_Guild:RebuildBankerRoster()
-	-- Clear delta error counters for offline players
-	TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
-	-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
-	TOGBankClassic_Guild:RefreshRequestsUI()
+	if self.needsFullRosterRefresh then
+		self.fullRosterInitAttempts = (self.fullRosterInitAttempts or 0) + 1
+		self.needsFullRosterRefresh = false
+		TOGBankClassic_Guild:RefreshOnlineCache()
+		-- Invalidate banks cache when roster updates
+		TOGBankClassic_Guild:InvalidateBanksCache()
+		-- Rebuild banker roster from guild notes (local only, no network communication)
+		TOGBankClassic_Guild:RebuildBankerRoster()
+		-- Clear delta error counters for offline players
+		TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
+		-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
+		TOGBankClassic_Guild:RefreshRequestsUI()
+
+		-- Keep refreshing on init until roster data appears complete or we've tried twice
+		local totalMembers, onlineMembers = GetNumGuildMembers()
+		if self.fullRosterInitAttempts < 2 or (totalMembers and onlineMembers and totalMembers <= onlineMembers) then
+			self.needsFullRosterRefresh = true
+		end
+	else
+		TOGBankClassic_Output:Debug("EVENTS", "GUILD_ROSTER_UPDATE ignored (online/offline handled via system messages)")
+	end
+end
+
+-- Lightweight online/offline updates from system messages
+function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
+	if not message or message == "" then
+		return
+	end
+
+	local onlineName = message:match("^%[?(.-)%]? has come online%.$")
+	if onlineName then
+		TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true)
+		return
+	end
+
+	local offlineName = message:match("^%[?(.-)%]? has gone offline%.$")
+	if offlineName then
+		TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false)
+		return
+	end
+
+	local joinedName = message:match("^%[?(.-)%]? has joined the guild%.$")
+	if joinedName then
+		self.needsFullRosterRefresh = true
+		GuildRoster()
+		return
+	end
+
+	local leftName = message:match("^%[?(.-)%]? has left the guild%.$")
+	if leftName then
+		self.needsFullRosterRefresh = true
+		GuildRoster()
+		return
+	end
 end
 
 function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)

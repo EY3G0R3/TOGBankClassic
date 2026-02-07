@@ -558,7 +558,8 @@
 			"tIndexOf",
 			"CallErrorHandler",
 			"EventTrace",
-			"SecondsToTime"
+			"SecondsToTime",
+			"SendMailSubjectEditBox"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

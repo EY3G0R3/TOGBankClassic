@@ -65,27 +65,23 @@ Inventory Status for Metals-Azuresong:
 -- Add to alt data structure
 alt.mail = {
     slots = 50,           -- Total mail slots (always 50 in Classic)
-    items = {
-        [itemID] = {
-            id = 12345,
-            name = "Iron Ore",
-            link = "|cffffffff|Hitem:2770::::::::60:::::|h[Copper Ore]|h|r",
-            count = 20,
-            sources = {      -- Track which mail items contain this
-                {
-                    index = 1,   -- GetInboxHeaderInfo index
-                    count = 20,
-                    sender = "Galdof-Azuresong",
-                    daysLeft = 29,
-                    subject = "Materials"
-                }
-            }
+    items = {              -- Array (same as bank/bags)
+        {
+            ID = 12345,
+            Count = 20,
+            Link = "|cffffffff|Hitem:2770::::::::60:::::|h[Copper Ore]|h|r",
+            ItemString = "item:2770:0:0:0:0:0:0:0"
         }
     },
     version = 1234567890,  -- Timestamp of last scan
     lastScan = 1234567890  -- When mailbox was last opened
 }
 ```
+
+**Implementation Notes (v0.8.7):**
+- Mail items are stored as arrays like bank/bags.
+- Links are preserved only for `NeedsLink()` items (gear/weapons/uncached), matching bag/bank behavior.
+- When `GetInboxItemLink` is nil, fallback to `GetItemInfo(itemID)` to capture gear links for sync.
 
 #### Request Enhancement
 ```lua

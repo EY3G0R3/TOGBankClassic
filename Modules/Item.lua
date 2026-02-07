@@ -27,8 +27,19 @@ end
 function TOGBankClassic_Item:NeedsLink(itemLink)
 	if not itemLink then return false end
 	
-	local _, _, _, _, _, itemClass = GetItemInfo(itemLink)
-	return ITEM_CLASSES_NEEDING_LINK[itemClass] == true
+	local _, _, _, _, _, _, _, _, itemEquipLoc, _, _, classID = GetItemInfo(itemLink)
+	if classID == nil then
+		-- If item isn't cached, preserve the link to avoid losing suffix data
+		return true
+	end
+	if ITEM_CLASSES_NEEDING_LINK[classID] == true then
+		return true
+	end
+	-- Fallback: any equippable item should keep its link
+	if itemEquipLoc and itemEquipLoc ~= "" then
+		return true
+	end
+	return false
 end
 
 -- Extract ItemString from item link (full, unmodified)
@@ -349,7 +360,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 			else
 				-- Use NORMALIZED key (strips unique instance ID) for deduplication
 				-- This allows identical items with different instance IDs to merge
-				local itemKey = self:GetItemKey(v.Link)
+				local itemKey = self:GetItemKey(v.Link or v.ItemString)
 				local key = tostring(v.ID) .. itemKey
 				
 				-- If no Link, also check if there's an existing entry with same ID but with link
@@ -364,8 +375,10 @@ function TOGBankClassic_Item:Aggregate(a, b)
 						local existingItem = items[existingKey]
 						local itemCount = existingItem.Count or 1
 						local vCount = v.Count or 1
-						existingItem.Count = itemCount + vCount
-						existingItem.Link = existingItem.Link or v.Link
+								existingItem.Count = itemCount + vCount
+								existingItem.Link = existingItem.Link or v.Link
+								existingItem.ItemString = existingItem.ItemString or v.ItemString
+								existingItem.ForceLink = existingItem.ForceLink or v.ForceLink
 						key = nil  -- Signal that we already merged
 					end
 				end
@@ -376,10 +389,10 @@ function TOGBankClassic_Item:Aggregate(a, b)
 						-- Defensive: use default value if Count is missing
 						local itemCount = item.Count or 1
 						local vCount = v.Count or 1
-						items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link or v.Link }
+							items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link or v.Link, ItemString = item.ItemString or v.ItemString, ForceLink = item.ForceLink or v.ForceLink }
 					else
 						-- Ensure stored item has Count field
-						items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link }
+							items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link, ItemString = v.ItemString, ForceLink = v.ForceLink }
 						-- Add to ID index
 						local idStr = tostring(v.ID)
 						if not itemsByID[idStr] then
@@ -400,7 +413,7 @@ function TOGBankClassic_Item:Aggregate(a, b)
 			else
 				-- Use NORMALIZED key (strips unique instance ID) for deduplication
 				-- This allows identical items with different instance IDs to merge
-				local itemKey = self:GetItemKey(v.Link)
+				local itemKey = self:GetItemKey(v.Link or v.ItemString)
 				local key = tostring(v.ID) .. itemKey
 				
 				-- If no Link, also check if there's an existing entry with same ID but with link
@@ -415,8 +428,10 @@ function TOGBankClassic_Item:Aggregate(a, b)
 						local existingItem = items[existingKey]
 						local itemCount = existingItem.Count or 1
 						local vCount = v.Count or 1
-						existingItem.Count = itemCount + vCount
-						existingItem.Link = existingItem.Link or v.Link
+							existingItem.Count = itemCount + vCount
+							existingItem.Link = existingItem.Link or v.Link
+							existingItem.ItemString = existingItem.ItemString or v.ItemString
+							existingItem.ForceLink = existingItem.ForceLink or v.ForceLink
 						key = nil  -- Signal that we already merged
 					end
 				end
@@ -427,10 +442,10 @@ function TOGBankClassic_Item:Aggregate(a, b)
 						-- Defensive: use default value if Count is missing
 						local itemCount = item.Count or 1
 						local vCount = v.Count or 1
-						items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link or v.Link }
+							items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link or v.Link, ItemString = item.ItemString or v.ItemString, ForceLink = item.ForceLink or v.ForceLink }
 					else
 						-- Ensure stored item has Count field
-						items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link }
+							items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link, ItemString = v.ItemString, ForceLink = v.ForceLink }
 						-- Add to ID index
 						local idStr = tostring(v.ID)
 						if not itemsByID[idStr] then

@@ -173,6 +173,11 @@ function TOGBankClassic_Database:Load(name)
 					alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
 				TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: computed inventory hash for %s (hash=%d)", name, alt.inventoryHash)
 				end
+				-- v0.8.7: Backfill inventoryUpdatedAt for alts that have hashes but no timestamp
+				if alt.inventoryHash and not alt.inventoryUpdatedAt then
+					alt.inventoryUpdatedAt = alt.version or GetServerTime()
+					TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: backfilled inventoryUpdatedAt for %s (ts=%s)", name, tostring(alt.inventoryUpdatedAt))
+				end
 				-- Recalculate aggregated items from bank/bags/mail with corrected Aggregate function
 				-- This fixes item count duplication without requiring a full scan
 				-- AGGRESSIVE FIX: Clear and rebuild alt.items on every load to prevent accumulation

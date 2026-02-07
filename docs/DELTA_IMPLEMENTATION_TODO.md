@@ -128,6 +128,8 @@ return PROTOCOL.SUPPORTS_DELTA
 - ✅ `/togbank share` command updated
 - ✅ Guild support threshold removed
 - ✅ Link removal for bandwidth savings
+  - Gear/weapons (`NeedsLink`) always retain full links (including mail items)
+  - `ItemString` is carried for link-less items and supported in delta keys/apply
 - ✅ Backwards compatibility maintained
 - ✅ Fast-fill feature (auto-request missing alts)
 - ✅ Link reconstruction with UI refresh
@@ -161,10 +163,10 @@ return PROTOCOL.SUPPORTS_DELTA
 
 ### Authority Hierarchy
 
-**The Responder is Always Authoritative:**
+**Responder-First, with Newest-Wins for Non-Bankers:**
 1. **Pull-Based Protocol**: When Player A requests data for Alt X, whoever responds becomes the source of truth
 2. **Banker Preference**: System tries to reach bankers first via whisper, but any player with data can respond
-3. **No Conflict Resolution**: If multiple players have different data (different hashes), first responder wins
+3. **Non-Banker Conflict Resolution**: If multiple responders have different data for a **non-banker** alt, the **newest** data wins (see `inventoryUpdatedAt` below)
 
 ### Hash-Based Delta Computation (DELTA-014)
 
@@ -187,11 +189,10 @@ return PROTOCOL.SUPPORTS_DELTA
 - **Authority**: Banker's data is correct (they scan their own inventory)
 
 **Scenario 2: No Banker, Two Non-Bankers Have Data**
-- Both Player B (hash=200) and Player C (hash=300) have data for Alt X
+- Both Player B (hash=200, updatedAt=1000) and Player C (hash=300, updatedAt=1200) have data for Alt X
 - Requester broadcasts `togbank-r` to guild
-- Both B and C send state-summary
-- **Result**: First response wins, second response is ignored
-- **No Validation**: System doesn't detect divergent data or choose "best" version
+- Both B and C respond
+- **Result**: Newest data wins (`updatedAt`=1200), older response is rejected as stale
 
 **Scenario 3: Peer-to-Peer (PERF-005)**
 - Requester whispers banker for hash only
@@ -200,12 +201,28 @@ return PROTOCOL.SUPPORTS_DELTA
 - Any peer with matching hash can respond
 - **Validation**: Peer's hash must match expectedHash from banker
 
+### Timestamped Hashes (Newest-Wins)
+
+**New Field:** `inventoryUpdatedAt`
+- Stored alongside `inventoryHash`
+- Set when a **real inventory change** occurs (same moment `version` is updated)
+- Backfilled on load for legacy data that has a hash but no timestamp
+
+**Where It Travels:**
+- Version broadcasts (`togbank-dv2`): `data.alts[name] = {version, hash, updatedAt}`
+- Full sync (`togbank-d3`): `alt.inventoryUpdatedAt`
+- Delta sync (`togbank-d4`): `delta.updatedAt`
+
+**Conflict Rule (Non-Banker Alts Only):**
+- If incoming `updatedAt` is **older** than local `updatedAt`, reject as stale
+- If equal, fall back to item-count tie-breaker (existing behavior)
+
 ### Limitations
 
-**No Conflict Detection:**
-- System doesn't detect when multiple players have divergent data
-- No "version vector" or "newest wins" logic
-- No alerts about data inconsistencies
+**No Divergence Detection:**
+- System doesn't alert when multiple players have divergent data
+- No "version vector" or multi-source consensus
+- Newest-wins reduces stale overwrite risk but does not detect root divergence
 
 **Race Conditions:**
 - If two players respond simultaneously, network timing determines winner
