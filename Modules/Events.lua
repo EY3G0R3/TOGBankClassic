@@ -163,6 +163,9 @@ function TOGBankClassic_Events:OnShareTimer()
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Output:Debug("EVENTS", "OnShareTimer took %.2fms", duration)
 
+	-- Request hash list from banker, which triggers comparison and P2P broadcasts for missing alts
+	TOGBankClassic_Guild:RequestHashListFromBanker()
+
 	self:SetShareTimer()
 end
 ---END CHANGES

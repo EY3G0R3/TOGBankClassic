@@ -1,5 +1,69 @@
 # TOGBankClassic Changelog
 
+## [v0.8.9] (2026-02-07) - P2P Hash Backfill Complete
+
+**Status:** Production Ready  
+**Priority:** HIGH
+
+### 🎯 P2P Hash Backfill Implementation
+
+#### Core Features Implemented
+- **NEW**: Banker HLR (hash list reply) stores authoritative hashes for all roster alts
+- **NEW**: Version broadcasts store peer hashes when local hash is missing
+- **NEW**: 3-minute rebroadcast timer requests hash list and rebroadcasts P2P for missing alts
+- **FIXED**: /wipe now rebuilds banker roster immediately (progress shows 0/35 instead of 0/2)
+- **FIXED**: Data payloads always use GUILD channel (removed WHISPER routing for togbank-d3/d4)
+- **ENHANCED**: P2P broadcasts happen for both "pending" (hash mismatch) and "missingContent" (hash match, no data)
+
+### 📝 Technical Details
+
+**Hash Storage Priority System:**
+
+1. **Primary: Banker HLR (togbank-hlr)** - Most authoritative
+   - Banker has scanned all alts, provides definitive hash list
+   - Stores hash+updatedAt for all roster alts immediately
+   - Triggered on /sync, UI open, and every 3 minutes via timer
+   - Implementation: Chat.lua lines 1476-1510
+
+2. **Secondary: Peer Version Broadcasts (togbank-dv2)** - Supplemental
+   - Fills gaps if HLR not received yet
+   - Only stores hash if we don't have one (hash=0 or nil)
+   - Implementation: Chat.lua lines 394-434
+
+**Result:** After HLR, all 35 alts have authoritative hashes (pending=0)
+
+**Files Changed:**
+- `Modules/Chat.lua`:
+  - Added hash storage in HLR handler (two-pass: store hashes, then compare)
+  - Added hash storage in version broadcast handler (only if missing)
+  - Added debug logging for pending/missingContent broadcasts
+- `Modules/Guild.lua`:
+  - Added `RebuildBankerRoster()` call to `Reset()` for immediate banker list after /wipe
+  - Removed forceFull bypass logic (preserves P2P design)
+  - Changed `SendAltData()` to always use GUILD channel for togbank-d3/d4
+- `Modules/Events.lua`:
+  - Added `RequestHashListFromBanker()` call to `OnShareTimer()` (3-minute rebroadcast)
+- `Modules/DeltaComms.lua`:
+  - Updated `FastFillMissingAlts()` to use P2P broadcasts when banker offline
+
+**How It Works:**
+1. **On /sync or UI open**: Request hash list from banker (togbank-hl)
+2. **Banker replies**: Send all alt hashes via togbank-hlr
+3. **Store hashes**: Create/update local alt stubs with banker's authoritative hash+updatedAt
+4. **Compare**: Categorize as "pending" (hash mismatch) or "missingContent" (hash match, no data)
+5. **Broadcast**: Send P2P requests to GUILD for missing alts with expectedHash
+6. **Peers respond**: Players with matching hash send data via GUILD
+7. **Fallback**: After 5s timeout, query banker directly via whisper
+8. **Rebroadcast**: Every 3 minutes, repeat steps 1-7 for still-missing alts
+
+**Design Principles:**
+- Banker is authoritative source for hash list
+- P2P broadcasts reduce banker load
+- GUILD channel for data, WHISPER for handshakes
+- Newest-wins conflict resolution using inventoryUpdatedAt timestamps
+
+---
+
 ## [v0.8.4] (2026-02-02) - Mail Hash Synchronization Fix
 
 **Status:** Critical Bug Fix  

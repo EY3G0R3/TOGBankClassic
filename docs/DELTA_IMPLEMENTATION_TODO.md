@@ -181,10 +181,33 @@ return PROTOCOL.SUPPORTS_DELTA
 
 **Key Insight:** Responder always "wins" - delta brings requester FROM their state TO responder's state
 
+### P2P Hash Backfill Flow (v0.8.8+)
+
+**Status:** ✅ IMPLEMENTED (February 7, 2026)
+
+**Expanded Steps:**
+1. **Login** → guild cache + banker list built
+2. **/togbank sync or UI open** → trigger hash backfill
+3. **Whisper banker** (`togbank-hl`) → request full hash list + timestamps
+4. **Banker replies** (`togbank-hlr`) → authoritative hash list for all 35 alts
+5. **Store banker hashes** → Create/update local alt stubs with banker's hash+updatedAt
+6. **Guild broadcast** (`togbank-r`) for alts with missing/different hashes (P2P expectedHash)
+7. **Peer response wins** → peers with matching hash respond with data
+8. **Fallback** → if no peer responds in 5s, query banker directly via whisper
+9. **3-minute rebroadcast** → RequestHashListFromBanker() repeats HLR flow every 3 min
+
+**Implementation Status:**
+- ✅ HLR handler stores banker's authoritative hashes (Chat.lua lines 1476-1510)
+- ✅ Version broadcasts store peer hashes if missing (Chat.lua lines 394-434)
+- ✅ P2P broadcasts for both `pending` and `missingContent` (Chat.lua lines 1550-1570)
+- ✅ 3-minute rebroadcast timer (Events.lua OnShareTimer)
+- ✅ /wipe rebuilds banker roster immediately (Guild.lua Reset)
+- ✅ Data payloads always use GUILD channel (Guild.lua SendAltData)
+
 ### Multi-Responder Scenarios
 
 **Scenario 1: Banker Online**
-- Requester whispers banker directly
+- Requester whispers banker directly via togbank-r
 - Banker responds with their current data
 - **Authority**: Banker's data is correct (they scan their own inventory)
 
@@ -195,11 +218,11 @@ return PROTOCOL.SUPPORTS_DELTA
 - **Result**: Newest data wins (`updatedAt`=1200), older response is rejected as stale
 
 **Scenario 3: Peer-to-Peer (PERF-005)**
-- Requester whispers banker for hash only
-- Banker responds with expectedHash
-- Requester broadcasts to guild with expectedHash
+- Requester whispers banker for hash list (togbank-hl)
+- Banker responds with hash list (togbank-hlr)
+- Requester stores banker's hashes and broadcasts to guild with expectedHash
 - Any peer with matching hash can respond
-- **Validation**: Peer's hash must match expectedHash from banker
+- **Validation**: Response hash must match expectedHash from banker
 
 ### Timestamped Hashes (Newest-Wins)
 
@@ -210,12 +233,31 @@ return PROTOCOL.SUPPORTS_DELTA
 
 **Where It Travels:**
 - Version broadcasts (`togbank-dv2`): `data.alts[name] = {version, hash, updatedAt}`
+- Hash list reply (`togbank-hlr`): `data.alts[name] = {hash, updatedAt, version}`
 - Full sync (`togbank-d3`): `alt.inventoryUpdatedAt`
 - Delta sync (`togbank-d4`): `delta.updatedAt`
 
 **Conflict Rule (Non-Banker Alts Only):**
 - If incoming `updatedAt` is **older** than local `updatedAt`, reject as stale
 - If equal, fall back to item-count tie-breaker (existing behavior)
+- Implemented in Guild.lua ReceiveAltData() lines 2326-2366
+
+### Hash Storage Priority
+
+**Primary Source: Banker HLR (togbank-hlr)**
+- Most authoritative - banker has scanned all alts
+- Stores hash+updatedAt for all roster alts immediately
+- Happens on /sync, UI open, and every 3 minutes
+
+**Secondary Source: Peer Version Broadcasts (togbank-dv2)**
+- Supplemental - fills gaps if HLR not received yet
+- Only stores hash if we don't have one (hash=0 or nil)
+- Handles alts that peers have but banker hasn't broadcast yet
+
+**Result After HLR:**
+- All 35 alts have authoritative hashes from banker
+- pending=0 (no missing hashes)
+- All alts categorized as either "has content" or "hash matched but no content"
 
 ### Limitations
 

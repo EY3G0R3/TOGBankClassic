@@ -238,6 +238,9 @@ function TOGBankClassic_Guild:Reset(name)
 
 	-- Migrate any temporary errors to database
 	self:MigrateTempErrors()
+
+	-- Rebuild banker roster from guild notes after wipe
+	self:RebuildBankerRoster()
 end
 
 function TOGBankClassic_Guild:Init(name)
@@ -461,6 +464,25 @@ function TOGBankClassic_Guild:HasAltData(alt)
 	return false
 end
 
+function TOGBankClassic_Guild:HasAltContent(alt)
+	if not alt or type(alt) ~= "table" then
+		return false
+	end
+	if alt.items and next(alt.items) then
+		return true
+	end
+	if alt.bank and alt.bank.items and next(alt.bank.items) then
+		return true
+	end
+	if alt.bags and alt.bags.items and next(alt.bags.items) then
+		return true
+	end
+	if alt.mail and alt.mail.items and next(alt.mail.items) then
+		return true
+	end
+	return false
+end
+
 function TOGBankClassic_Guild:GetBankerDataProgress()
 	if not self.Info then
 		return 0, 0
@@ -477,7 +499,7 @@ function TOGBankClassic_Guild:GetBankerDataProgress()
 	local have = 0
 	for _, altName in ipairs(rosterAlts) do
 		local norm = self:NormalizeName(altName)
-		if norm and self:HasAltData(self.Info.alts and self.Info.alts[norm]) then
+		if norm and self:HasAltContent(self.Info.alts and self.Info.alts[norm]) then
 			have = have + 1
 		end
 	end
@@ -490,15 +512,41 @@ function TOGBankClassic_Guild:ReportBankerDataProgress(context, force)
 		return
 	end
 
-	local have, total = self:GetBankerDataProgress()
-	if total == 0 then
+	local rosterAlts = self:GetRosterAlts()
+	if not rosterAlts or #rosterAlts == 0 then
+		rosterAlts = self:GetBanks()
+	end
+	if not rosterAlts or #rosterAlts == 0 then
 		return
 	end
+
+	local have = 0
+	local total = #rosterAlts
+	local addedNames = {}
+	self.bankerProgressKnown = self.bankerProgressKnown or {}
+	local lastHave = self.lastBankerProgress or -1
 
 	-- Reset completion tracking if roster size changes
 	if self.lastBankerProgressTotal ~= total then
 		self.lastBankerProgressTotal = total
 		self.bankerProgressComplete = false
+		self.bankerProgressKnown = {}
+		lastHave = -1
+		self.lastBankerProgress = lastHave
+	end
+
+	for _, altName in ipairs(rosterAlts) do
+		local norm = self:NormalizeName(altName)
+		local hasContent = norm and self:HasAltContent(self.Info.alts and self.Info.alts[norm])
+		if hasContent then
+			have = have + 1
+			if lastHave >= 0 and not self.bankerProgressKnown[norm] then
+				table.insert(addedNames, norm)
+			end
+			self.bankerProgressKnown[norm] = true
+		else
+			self.bankerProgressKnown[norm] = nil
+		end
 	end
 
 	-- If already complete and previously at full, suppress further progress spam
@@ -526,7 +574,10 @@ function TOGBankClassic_Guild:ReportBankerDataProgress(context, force)
 		local delta = (lastHave >= 0) and (have - lastHave) or 0
 		local deltaStr = (delta and delta ~= 0) and string.format(" (+%d)", delta) or ""
 		local names = ""
-		if self.bankerProgressBuffer and #self.bankerProgressBuffer > 0 then
+		if addedNames and #addedNames > 0 then
+			names = " (received " .. table.concat(addedNames, ", ") .. ")"
+			self.bankerProgressBuffer = {}
+		elseif self.bankerProgressBuffer and #self.bankerProgressBuffer > 0 then
 			names = " (received " .. table.concat(self.bankerProgressBuffer, ", ") .. ")"
 			self.bankerProgressBuffer = {}
 		elseif context then
@@ -573,6 +624,230 @@ function TOGBankClassic_Guild:GetAnyBanker()
 	end
 	-- Return the first banker (normalized)
 	return self:NormalizeName(banks[1])
+end
+
+function TOGBankClassic_Guild:BuildBankerHashList()
+	local list = {}
+	local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
+	for _, altName in ipairs(rosterAlts) do
+		local norm = self:NormalizeName(altName)
+		local alt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
+		local hash = (alt and alt.inventoryHash) or 0
+		local updatedAt = (alt and (alt.inventoryUpdatedAt or alt.version)) or 0
+		local version = (alt and alt.version) or 0
+		list[norm] = {
+			hash = hash,
+			updatedAt = updatedAt,
+			version = version,
+		}
+	end
+	return list
+end
+
+function TOGBankClassic_Guild:ReportHashListCoverage()
+	local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
+	local bankerList = self:BuildBankerHashList()
+	local localAlts = self.Info and self.Info.alts or {}
+
+	local matched = 0
+	local pending = {}
+	local matchedNoContent = {}
+	for altName, summary in pairs(bankerList) do
+		local localAlt = localAlts and localAlts[altName]
+		local localHash = localAlt and localAlt.inventoryHash or 0
+		if localAlt and localHash ~= 0 and summary and summary.hash == localHash then
+			matched = matched + 1
+			if not self:HasAltContent(localAlt) then
+				table.insert(matchedNoContent, altName)
+			end
+		else
+			table.insert(pending, altName)
+		end
+	end
+
+	local rosterMissing = {}
+	for _, altName in ipairs(rosterAlts) do
+		local norm = self:NormalizeName(altName)
+		if norm and not bankerList[norm] then
+			table.insert(rosterMissing, norm)
+		end
+	end
+
+	table.sort(pending)
+	table.sort(rosterMissing)
+
+	local bankerCount = 0
+	for _ in pairs(bankerList) do
+		bankerCount = bankerCount + 1
+	end
+
+	local haveContent = 0
+	for _, altName in ipairs(rosterAlts) do
+		local norm = self:NormalizeName(altName)
+		local localAlt = localAlts and norm and localAlts[norm]
+		if norm and self:HasAltContent(localAlt) then
+			haveContent = haveContent + 1
+		end
+	end
+
+	TOGBankClassic_Output:Response(
+		"Hash list coverage: banker=%d, matched=%d, pending=%d, rosterMissing=%d, haveContent=%d",
+		bankerCount,
+		matched,
+		#pending,
+		#rosterMissing,
+		haveContent
+	)
+
+	local function printList(title, list)
+		if #list == 0 then
+			TOGBankClassic_Output:Response("%s: none", title)
+			return
+		end
+		local cap = 20
+		local count = math.min(#list, cap)
+		local slice = {}
+		for i = 1, count do
+			slice[#slice + 1] = list[i]
+		end
+		local suffix = ""
+		if #list > cap then
+			suffix = string.format(" (showing %d of %d)", cap, #list)
+		end
+		TOGBankClassic_Output:Response("%s: %s%s", title, table.concat(slice, ", "), suffix)
+	end
+
+	printList("HLR pending", pending)
+	printList("Hash matched but no content", matchedNoContent)
+	printList("Missing from banker list", rosterMissing)
+end
+
+function TOGBankClassic_Guild:SendHashList(target)
+	if not target then
+		return
+	end
+	local normalizedTarget = self:NormalizeName(target)
+	local list = self:BuildBankerHashList()
+	local payload = {
+		type = "hash-list-reply",
+		alts = list,
+		banker = self:GetNormalizedPlayer(),
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	local altCount = 0
+	for _ in pairs(list) do
+		altCount = altCount + 1
+	end
+	TOGBankClassic_Output:Debug(
+		"PROTOCOL",
+		"HLR send: target=%s (normalized=%s), alts=%d, bytes=%d",
+		tostring(target),
+		tostring(normalizedTarget),
+		altCount,
+		data and #data or 0
+	)
+	local sent = TOGBankClassic_Core:SendWhisper("togbank-hlr", data, normalizedTarget, "ALERT")
+	TOGBankClassic_Output:Debug("PROTOCOL", "HLR send result: %s", tostring(sent))
+end
+
+function TOGBankClassic_Guild:RequestHashListFromBanker()
+	-- Find an online banker from guild roster
+	local banker = nil
+	for member, _ in pairs(self.onlineMembers or {}) do
+		if self:IsBank(member) and self:IsPlayerOnline(member) then
+			banker = member
+			break
+		end
+	end
+	if not banker then
+		-- No banker online: broadcast requests using local hashes when possible
+		local rosterAlts = self:GetBanks()
+		local pendingCount = 0
+		if rosterAlts and #rosterAlts > 0 then
+			for _, altName in ipairs(rosterAlts) do
+				local norm = self:NormalizeName(altName)
+				local localAlt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
+				local hasContent = localAlt and self:HasAltContent(localAlt)
+				if not hasContent then
+					local localHash = localAlt and localAlt.inventoryHash or nil
+					local updatedAt = localAlt and (localAlt.inventoryUpdatedAt or localAlt.version) or nil
+					pendingCount = pendingCount + 1
+					if localHash then
+						TOGBankClassic_Output:Debug(
+							"PROTOCOL",
+							"HLR fallback: no banker online, broadcasting %s (expectedHash=%s, updatedAt=%s)",
+							tostring(norm),
+							tostring(localHash),
+							tostring(updatedAt)
+						)
+						self:BroadcastP2PRequest(norm, localHash, updatedAt, nil)
+					else
+						TOGBankClassic_Output:Debug(
+							"PROTOCOL",
+							"HLR fallback: no banker online, broadcasting query for %s (no local hash)",
+							tostring(norm)
+						)
+						self:QueryAltPullBased(norm, false)
+					end
+				end
+			end
+		end
+		if pendingCount > 0 then
+			TOGBankClassic_Output:Info("Fast-fill: No banker online, broadcasting %d requests", pendingCount)
+		end
+		return false
+	end
+
+	local request = {
+		type = "hash-list-request",
+		requester = self:GetNormalizedPlayer(),
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
+	TOGBankClassic_Core:SendWhisper("togbank-hl", data, banker, "NORMAL")
+	return true
+end
+
+function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expectedUpdatedAt, bankerSender)
+	if not altName or not expectedHash then
+		return
+	end
+	TOGBankClassic_Output:Debug(
+		"PROTOCOL",
+		"HLR broadcast: requesting %s (expectedHash=%s, updatedAt=%s) from banker=%s",
+		tostring(altName),
+		tostring(expectedHash),
+		tostring(expectedUpdatedAt),
+		tostring(bankerSender)
+	)
+	self.expectedHashes = self.expectedHashes or {}
+	self.expectedHashes[altName] = expectedHash
+	if expectedUpdatedAt then
+		self.expectedHashUpdatedAt = self.expectedHashUpdatedAt or {}
+		self.expectedHashUpdatedAt[altName] = expectedUpdatedAt
+	end
+	self.pendingP2PRequests = self.pendingP2PRequests or {}
+	self.pendingP2PRequests[altName] = { banker = bankerSender, requestedAt = GetTime() }
+
+	local p2pRequest = {
+		type = "alt-request",
+		name = altName,
+		requester = self:GetNormalizedPlayer(),
+		hashOnly = false,
+		expectedHash = expectedHash,
+		updatedAt = expectedUpdatedAt,
+	}
+	local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
+	TOGBankClassic_Core:SendCommMessage("togbank-r", p2pData, "GUILD", nil, "NORMAL")
+
+	local timeout = (PEER_TO_PEER and PEER_TO_PEER.PEER_RESPONSE_TIMEOUT) or 5
+	C_Timer.After(timeout, function()
+		local pending = self.pendingP2PRequests and self.pendingP2PRequests[altName]
+		if pending then
+			self.pendingP2PRequests[altName] = nil
+			TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
+			self:QueryAltPullBased(altName, false)
+		end
+	end)
 end
 
 function TOGBankClassic_Guild:CheckVersion(version)
@@ -751,12 +1026,31 @@ function TOGBankClassic_Guild:QueryAlt(player, name, version)
 end
 
 -- v0.8.0: Pull-based query - WHISPER to banker if known, GUILD if unknown
-function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly)
+function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull)
 	if not name then
 		return
 	end
 
-	local norm = self:NormalizeName(name)
+	-- Rate-limit repeated queries for the same alt to reduce stutter
+	self.lastAltQueryTime = self.lastAltQueryTime or {}
+	self.pendingAltRequests = self.pendingAltRequests or {}
+	local now = GetTime()
+	local normName = self:NormalizeName(name)
+	local pendingAt = self.pendingAltRequests[normName]
+	if pendingAt and (now - pendingAt) < 10 then
+		TOGBankClassic_Output:Debug("SYNC", "Skipping query for %s (pending request)", normName)
+		return
+	elseif pendingAt then
+		self.pendingAltRequests[normName] = nil
+	end
+	local lastQuery = self.lastAltQueryTime[normName]
+	if lastQuery and (now - lastQuery) < 3 then
+		TOGBankClassic_Output:Debug("SYNC", "Skipping query for %s (rate-limited)", normName)
+		return
+	end
+	self.lastAltQueryTime[normName] = now
+
+	local norm = normName
 	self.hasRequested = true
 	if self.requestCount == nil then
 		self.requestCount = 1
@@ -777,6 +1071,21 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly)
 			-- Use first found banker (could randomize or prefer by name)
 			if not banker then
 				banker = member
+			end
+		end
+	end
+	-- Fallback: scan live guild roster if cache is stale
+	if not banker then
+		GuildRoster()
+		for i = 1, GetNumGuildMembers() do
+			local rosterName, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
+			if rosterName and online then
+				local normRoster = self:NormalizeName(rosterName)
+				if self:IsBank(normRoster) then
+					bankerCount = bankerCount + 1
+					banker = banker or normRoster
+					TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Online banker from live roster: %s, isOnline=true", normRoster)
+				end
 			end
 		end
 	end
@@ -805,7 +1114,6 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly)
 	end
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
-
 	if banker and self:IsPlayerOnline(banker) then
 		-- Banker found in guild roster AND currently online - WHISPER directly
 		TOGBankClassic_Output:DebugComm("SENDING WHISPER: togbank-r to %s for alt %s", banker, norm)
@@ -817,6 +1125,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly)
 			TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		end
 		self:MarkPendingSync("alt", banker, norm)
+		self.pendingAltRequests[norm] = now
 	else
 		-- No known banker or offline - broadcast on GUILD
 		local reason = "unknown"
@@ -829,6 +1138,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly)
 		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] GUILD query for %s, reason: %s", norm, reason)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", nil, norm)
+		self.pendingAltRequests[norm] = now
 	end
 end
 
@@ -983,6 +1293,24 @@ function TOGBankClassic_Guild:SendStateSummary(name, target)
 		return
 	end
 
+	local norm = self:NormalizeName(name)
+	local forceFull = self.forceFullRequests and norm and self.forceFullRequests[norm]
+	local localAlt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
+	local hasContent = localAlt and self:HasAltContent(localAlt) or false
+	if forceFull or not hasContent then
+		summary.hash = nil
+		summary.version = 0
+		TOGBankClassic_Output:DebugComm(
+			"SendStateSummary: forcing full data for %s (forceFull=%s, hasContent=%s)",
+			tostring(name),
+			tostring(forceFull and true or false),
+			tostring(hasContent)
+		)
+		if self.forceFullRequests and norm then
+			self.forceFullRequests[norm] = nil
+		end
+	end
+
 	local message = {
 		type = "state-summary",
 		name = name,
@@ -1043,7 +1371,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			TOGBankClassic_Output:DebugComm("DELTA MODE: Current alt missing hash - sending full data for %s", norm)
 			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (responder has no hash)", requester, norm)
 			-- DELTA-014: Pass zero hashes (requester baseline unknown, send everything)
-			self:SendAltData(norm, 0, 0)
+			self:SendAltData(norm, 0, 0, requester)
 			return
 		end
 
@@ -1052,7 +1380,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			TOGBankClassic_Output:DebugComm("DELTA MODE: REQUESTER HAS NO DATA (hash=nil) - sending full data for %s", norm)
 			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (requester has no data)", requester, norm)
 			-- DELTA-014: Pass zero hashes (requester has no data, everything is new)
-			self:SendAltData(norm, 0, 0)
+			self:SendAltData(norm, 0, 0, requester)
 			return
 		end
 
@@ -1083,7 +1411,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 				currentHash
 			)
 			-- DELTA-014: Pass requester hashes to compute proper delta
-			self:SendAltData(norm, requesterHash, summary.mailHash or 0)
+			self:SendAltData(norm, requesterHash, summary.mailHash or 0, requester)
 			return
 		end
 	end
@@ -1109,7 +1437,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	-- Version mismatch - send full data
 	TOGBankClassic_Output:Debug("SYNC", "Sending data to %s for %s (version mismatch: requester=%d, current=%d)", requester, norm, requesterVersion, currentVersion)
 	-- DELTA-014: Legacy mode doesn't use hashes, pass zeros
-	self:SendAltData(norm, 0, 0)
+	self:SendAltData(norm, 0, 0, requester)
 end
 
 -- Strip Link fields from items for transmission (v0.8.0 bandwidth optimization)
@@ -1439,7 +1767,7 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	return alt
 end
 
-function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requesterMailHash)
+function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requesterMailHash, target)
 	if not name then
 		return
 	end
@@ -1952,6 +2280,12 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		end
 
 		local norm = self:NormalizeName(name)
+		if self.pendingP2PRequests then
+			self.pendingP2PRequests[norm] = nil
+		end
+		if self.pendingAltRequests then
+			self.pendingAltRequests[norm] = nil
+		end
 		local existing = self.Info.alts[norm]
 		local hadBankerData = self:HasAltData(existing)
 		local senderNorm = sender and self:NormalizeName(sender) or nil
@@ -2014,7 +2348,18 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			return c
 		end
 
-		if not targetIsBanker and existing and incomingUpdatedAt and existingUpdatedAt then
+		local existingHasContent = existing and self:HasAltContent(existing) or false
+		local incomingHasContent = self:HasAltContent(alt)
+		local allowStaleBecauseMissingContent = existing and (not existingHasContent) and incomingHasContent
+		if allowStaleBecauseMissingContent then
+			TOGBankClassic_Output:Debug("SYNC", "Accepting stale data for %s because existing has no content", norm)
+		end
+		if existingHasContent and not incomingHasContent then
+			TOGBankClassic_Output:Debug("SYNC", "Rejecting empty data for %s because existing has content", norm)
+			return ADOPTION_STATUS.STALE
+		end
+
+		if not targetIsBanker and existing and incomingUpdatedAt and existingUpdatedAt and not allowStaleBecauseMissingContent then
 			if incomingUpdatedAt < existingUpdatedAt then
 				return ADOPTION_STATUS.STALE
 			elseif incomingUpdatedAt == existingUpdatedAt then
@@ -2026,7 +2371,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		end
 
 		-- Legacy fallback: version-based staleness check
-		if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version then
+		if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version and not allowStaleBecauseMissingContent then
 			return ADOPTION_STATUS.STALE
 		end
 

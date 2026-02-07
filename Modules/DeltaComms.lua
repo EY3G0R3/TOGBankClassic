@@ -25,6 +25,13 @@ function TOGBankClassic_DeltaComms:ValidateDeltaStructure(delta)
 		return false, "missing or invalid version"
 	end
 
+	if delta.inventoryHash and type(delta.inventoryHash) ~= "number" then
+		return false, "invalid inventoryHash"
+	end
+	if delta.updatedAt and type(delta.updatedAt) ~= "number" then
+		return false, "invalid updatedAt"
+	end
+
 	-- v0.8.0: baseVersion is optional (removed from new protocol)
 	-- Old protocol deltas will still have it, new protocol won't
 	if delta.baseVersion and type(delta.baseVersion) ~= "number" then
@@ -146,6 +153,8 @@ function TOGBankClassic_DeltaComms:SanitizeDelta(delta)
 		name = delta.name,
 		version = delta.version,
 		baseVersion = delta.baseVersion,
+		inventoryHash = delta.inventoryHash,
+		updatedAt = delta.updatedAt,
 		changes = {},
 	}
 
@@ -374,6 +383,7 @@ function TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
 		name = delta.name,
 		version = delta.version,
 		updatedAt = delta.updatedAt,
+		inventoryHash = delta.inventoryHash,
 		-- v0.8.0: baseVersion no longer included (8 bytes saved)
 		changes = {}
 	}
@@ -577,6 +587,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 			name = altName,
 			version = currentAlt.version or GetServerTime(),
 			updatedAt = currentAlt.inventoryUpdatedAt or currentAlt.version or GetServerTime(),
+			inventoryHash = currentAlt.inventoryHash or 0,
 			-- baseVersion removed for v0.8.0 (still accepted when receiving for backwards compatibility)
 			changes = {},
 		}
@@ -880,6 +891,9 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			-- Update version
 			current.version = deltaData.version
 			current.inventoryUpdatedAt = deltaData.updatedAt or deltaData.version or current.inventoryUpdatedAt
+			if deltaData.inventoryHash and deltaData.inventoryHash ~= 0 then
+				current.inventoryHash = deltaData.inventoryHash
+			end
 		end)
 
 		if not success then
@@ -1254,13 +1268,26 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 
 	local missing = {}
 	local missingDebug = {}
+	local missingInfo = {}
 	for _, altName in ipairs(rosterAlts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(altName)
-		-- Check if we have this alt locally
-		if not guildInfo.alts or not guildInfo.alts[norm] then
+		local localAlt = guildInfo.alts and norm and guildInfo.alts[norm]
+		local hasEntry = localAlt ~= nil
+		local hasContent = hasEntry and TOGBankClassic_Guild:HasAltContent(localAlt)
+		-- Check if we have this alt locally with content
+		if not hasEntry or not hasContent then
 			table.insert(missing, norm)
 			local hasRaw = guildInfo.alts and guildInfo.alts[altName] ~= nil
-			table.insert(missingDebug, string.format("%s (norm=%s, rawKey=%s)", tostring(altName), tostring(norm), tostring(hasRaw)))
+			local reason = hasEntry and "no content" or "no entry"
+			missingInfo[norm] = {
+				reason = reason,
+				hash = localAlt and localAlt.inventoryHash or nil,
+				updatedAt = localAlt and (localAlt.inventoryUpdatedAt or localAlt.version) or nil,
+			}
+			table.insert(
+				missingDebug,
+				string.format("%s (norm=%s, rawKey=%s, reason=%s)", tostring(altName), tostring(norm), tostring(hasRaw), reason)
+			)
 		end
 	end
 
@@ -1276,8 +1303,41 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		TOGBankClassic_Output:Debug("DELTA", "Fast-fill missing alts: %s", table.concat(missingDebug, ", "))
 	end
 
+	local hasOnlineBanker = false
+	for member, _ in pairs(TOGBankClassic_Guild.onlineMembers or {}) do
+		if TOGBankClassic_Guild:IsBank(member) and TOGBankClassic_Guild:IsPlayerOnline(member) then
+			hasOnlineBanker = true
+			break
+		end
+	end
+	if not hasOnlineBanker then
+		GuildRoster()
+		for i = 1, GetNumGuildMembers() do
+			local rosterName, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
+			if rosterName and online then
+				local normRoster = TOGBankClassic_Guild:NormalizeName(rosterName)
+				if TOGBankClassic_Guild:IsBank(normRoster) then
+					hasOnlineBanker = true
+					break
+				end
+			end
+		end
+	end
+
 	-- Query each missing alt using pull-based protocol
 	for _, norm in ipairs(missing) do
-		TOGBankClassic_Guild:QueryAltPullBased(norm)
+		local info = missingInfo[norm]
+		if not hasOnlineBanker and info and info.reason == "no content" and info.hash then
+			TOGBankClassic_Output:Debug(
+				"PROTOCOL",
+				"Fast-fill P2P broadcast (no banker): requesting %s (expectedHash=%s, updatedAt=%s)",
+				tostring(norm),
+				tostring(info.hash),
+				tostring(info.updatedAt)
+			)
+			TOGBankClassic_Guild:BroadcastP2PRequest(norm, info.hash, info.updatedAt, nil)
+		else
+			TOGBankClassic_Guild:QueryAltPullBased(norm, false)
+		end
 	end
 end

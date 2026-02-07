@@ -35,6 +35,14 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	TOGBankClassic_Core:RegisterComm("togbank-hl", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
+	TOGBankClassic_Core:RegisterComm("togbank-hlr", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
+
 	TOGBankClassic_Core:RegisterComm("togbank-d4", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -131,6 +139,10 @@ function TOGBankClassic_Chat:PerformSync()
 	TOGBankClassic_Events:SyncDeltaVersion("ALERT")
 	-- SYNC-008 fix: Also send legacy version broadcast like the automatic timer does
 	--TOGBankClassic_Events:Sync("ALERT")  -- COMMENTED OUT: togbank-v ignored by delta clients
+	local hashListRequested = false
+	if PEER_TO_PEER and PEER_TO_PEER.ENABLED then
+		hashListRequested = TOGBankClassic_Guild:RequestHashListFromBanker()
+	end
 	TOGBankClassic_Guild:FastFillMissingAlts()
 	TOGBankClassic_Guild:ReportBankerDataProgress("sync", true)
 	-- Query request snapshot with ALERT priority for immediate sync
@@ -366,7 +378,8 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 				altCount, sender, tostring(isDeltaVersion))
 			for k, v in pairs(data.alts) do
 				local kNorm = TOGBankClassic_Guild:NormalizeName(k)
-				local ourAlt = current_data.alts[kNorm]
+				local ourAlt = (TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[kNorm])
+					or current_data.alts[kNorm]
 
 				-- v0.8.0: Handle both old format (number) and new format (table with version+hash)
 				local theirVersion = type(v) == "table" and v.version or v
@@ -388,6 +401,32 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 						ourVersion and tostring(ourVersion) or "nil",
 						ourHash and tostring(ourHash) or "nil"
 					)
+
+					-- Store peer's hash locally ONLY if we don't have one
+					if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
+						if not ourAlt then
+							-- Create stub entry for this alt
+							TOGBankClassic_Guild.Info.alts[kNorm] = {
+								name = kNorm,
+								version = theirVersion,
+								money = 0,
+								inventoryHash = theirHash,
+								inventoryUpdatedAt = theirUpdatedAt,
+								items = {},
+								mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
+								mailHash = 0,
+							}
+							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[kNorm])
+							TOGBankClassic_Output:Debug("PROTOCOL", "Stored hash for new alt %s: hash=%d, updatedAt=%s", kNorm, theirHash, tostring(theirUpdatedAt))
+						elseif not ourHash or ourHash == 0 then
+							-- Store hash if we don't have one
+							ourAlt.inventoryHash = theirHash
+							if theirUpdatedAt then
+								ourAlt.inventoryUpdatedAt = theirUpdatedAt
+							end
+							TOGBankClassic_Output:Debug("PROTOCOL", "Stored missing hash for %s: hash=%d, updatedAt=%s", kNorm, theirHash, tostring(theirUpdatedAt))
+						end
+					end
 				end
 
 				-- MAIL-012 fix: Don't query if WE are the sender (prevents self-queries)
@@ -489,7 +528,12 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 					if shouldQuery then
 						-- v0.8.0: Use pull-based query for delta version broadcasts
 						TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QUERYING %s from %s", kNorm, sender)
-						TOGBankClassic_Guild:QueryAltPullBased(kNorm)
+						if PEER_TO_PEER and PEER_TO_PEER.ENABLED then
+							-- P2P flow step 1: hash-only whisper to banker
+							TOGBankClassic_Guild:QueryAltPullBased(kNorm, true)
+						else
+							TOGBankClassic_Guild:QueryAltPullBased(kNorm)
+						end
 					end
 				else
 					-- MAIL-012 DEBUG: Log when we skip because we are the sender
@@ -508,6 +552,10 @@ end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
+
+	if prefix == "togbank-hlr" then
+		TOGBankClassic_Output:Debug("PROTOCOL", "HLR incoming: from=%s via=%s (%d bytes)", tostring(sender), tostring(distribution), message and #message or 0)
+	end
 
 	-- Debug: Log ALL incoming messages before any filtering
 	if prefix == "togbank-dv" or prefix == "togbank-dv2" then
@@ -541,6 +589,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	local success, data = TOGBankClassic_Core:DeserializeWithChecksum(message)
 	if not success then
 		self:Debug("PROTOCOL", "> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender), "error:", tostring(data))
+		if prefix == "togbank-hlr" then
+			TOGBankClassic_Output:Debug("PROTOCOL", "HLR deserialize failed: %s", tostring(data))
+		end
 		return
 	end
 
@@ -678,6 +729,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			-- For regular queries, anyone with matching hash can respond (if P2P enabled)
 			local shouldRespond = false
 			local expectedHash = nil
+			local expectedUpdatedAt = nil
 			
 			if hashOnly then
 				-- Hash query: only banker responds with authoritative hash
@@ -685,6 +737,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if shouldRespond then
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					expectedHash = alt.inventoryHash or 0
+					expectedUpdatedAt = alt.inventoryUpdatedAt or alt.version or 0
 				end
 			else
 				-- Regular query: bankers always respond, peers respond if hash matches (P2P)
@@ -693,6 +746,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					-- PERF-005: Banker includes hash for P2P validation
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					expectedHash = alt.inventoryHash or 0
+					expectedUpdatedAt = alt.inventoryUpdatedAt or alt.version or 0
 				elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
 					-- PERF-005: Non-bankers can respond if they have matching hash
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
@@ -714,12 +768,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					hasData = hasData,
 					hashOnly = hashOnly,
 					expectedHash = expectedHash,  -- PERF-005: Include hash for P2P validation
+					expectedUpdatedAt = expectedUpdatedAt,
 				}
 				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
 
 				-- Send acknowledgment via WHISPER to reduce guild channel spam
-				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s)", 
-					sender, tostring(isBanker), tostring(hasData), tostring(expectedHash))
+				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)", 
+					sender, tostring(isBanker), tostring(hasData), tostring(expectedHash), tostring(expectedUpdatedAt))
 				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
 
 				self:Debug(
@@ -844,9 +899,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local hasData = data.hasData or false
 			local hashOnly = data.hashOnly or false
 			local expectedHash = data.expectedHash
+			local expectedUpdatedAt = data.expectedUpdatedAt
 
-			TOGBankClassic_Output:DebugComm("RECEIVED ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s, hashOnly=%s, hash=%s)", 
-				sender, altName, tostring(isBanker), tostring(hasData), tostring(hashOnly), tostring(expectedHash))
+			TOGBankClassic_Output:DebugComm("RECEIVED ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s, hashOnly=%s, hash=%s, updatedAt=%s)", 
+				sender, altName, tostring(isBanker), tostring(hasData), tostring(hashOnly), tostring(expectedHash), tostring(expectedUpdatedAt))
 
 			self:Debug(
 				"SYNC",
@@ -862,12 +918,20 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 			-- PERF-005: If we have a hash from banker, broadcast to GUILD to enable P2P
 			-- Any peer with matching hash can respond instead of just the banker
-			if isBanker and expectedHash and PEER_TO_PEER and PEER_TO_PEER.ENABLED then
+			if isBanker and hashOnly and expectedHash and PEER_TO_PEER and PEER_TO_PEER.ENABLED then
 				-- Store expected hash for validation when peers respond
 				if not TOGBankClassic_Guild.expectedHashes then
 					TOGBankClassic_Guild.expectedHashes = {}
 				end
 				TOGBankClassic_Guild.expectedHashes[altName] = expectedHash
+				if expectedUpdatedAt then
+					TOGBankClassic_Guild.expectedHashUpdatedAt = TOGBankClassic_Guild.expectedHashUpdatedAt or {}
+					TOGBankClassic_Guild.expectedHashUpdatedAt[altName] = expectedUpdatedAt
+				end
+
+				-- Track pending P2P request for fallback
+				TOGBankClassic_Guild.pendingP2PRequests = TOGBankClassic_Guild.pendingP2PRequests or {}
+				TOGBankClassic_Guild.pendingP2PRequests[altName] = { banker = sender, requestedAt = GetTime() }
 				
 				-- Now broadcast regular request to GUILD with expectedHash so peers can respond
 				local p2pRequest = {
@@ -883,7 +947,21 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				TOGBankClassic_Core:SendCommMessage("togbank-r", p2pData, "GUILD", nil, "NORMAL")
 				
 				self:Debug("SYNC", "< Broadcasting P2P request for %s (hash=%s)", ColorPlayerName(altName), tostring(expectedHash))
+
+				-- Fallback: if no peer responds, request from banker directly
+				C_Timer.After(5, function()
+					local pending = TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[altName]
+					if pending then
+						TOGBankClassic_Guild.pendingP2PRequests[altName] = nil
+						TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
+						TOGBankClassic_Guild:QueryAltPullBased(altName, false)
+					end
+				end)
 				return
+			end
+
+			if not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
+				TOGBankClassic_Guild.pendingP2PRequests[altName] = nil
 			end
 
 			-- If sender has the data, send our state summary to them
@@ -923,6 +1001,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		if data.type == "no-change" then
 			local altName = data.name
 			local version = data.version or 0
+			if TOGBankClassic_Guild.pendingAltRequests then
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				TOGBankClassic_Guild.pendingAltRequests[norm] = nil
+			end
+			if TOGBankClassic_Guild.pendingP2PRequests then
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
+			end
 
 			TOGBankClassic_Output:DebugComm("RECEIVED NO-CHANGE from %s for alt %s (version=%d)", sender, altName, version)
 
@@ -1376,6 +1462,155 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	end
 	if prefix == "togbank-hr" then
 		self:Debug("PROTOCOL", data)
+	end
+	if prefix == "togbank-hl" then
+		if data.type == "hash-list-request" then
+			local replyTarget = data.requester or sender
+			TOGBankClassic_Output:Debug("PROTOCOL", "HL request from %s (replyTarget=%s)", tostring(sender), tostring(replyTarget))
+			TOGBankClassic_Guild:SendHashList(replyTarget)
+		end
+	end
+	if prefix == "togbank-hlr" then
+		if data.type == "hash-list-reply" and data.alts then
+			local altCount = 0
+			for _ in pairs(data.alts) do
+				altCount = altCount + 1
+			end
+			TOGBankClassic_Output:Debug("PROTOCOL", "HLR received from %s (alts=%d)", tostring(sender), altCount)
+			TOGBankClassic_Guild.latestBankerHashes = data.alts
+			local localAlts = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
+			local pending = {}
+			local missingContent = {}
+			local totalCount = 0
+
+			-- First pass: Store banker's authoritative hashes locally if we don't have them
+			if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
+				for altName, summary in pairs(data.alts) do
+					local norm = TOGBankClassic_Guild:NormalizeName(altName)
+					local localAlt = localAlts[norm]
+					local localHash = localAlt and localAlt.inventoryHash or 0
+
+					if summary and summary.hash and summary.hash > 0 then
+						if not localAlt then
+							-- Create stub entry with banker's authoritative hash
+							TOGBankClassic_Guild.Info.alts[norm] = {
+								name = norm,
+								version = summary.version or 0,
+								money = 0,
+								inventoryHash = summary.hash,
+								inventoryUpdatedAt = summary.updatedAt,
+								items = {},
+								mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
+								mailHash = 0,
+							}
+							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
+							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for new alt %s: hash=%d, updatedAt=%s", norm, summary.hash, tostring(summary.updatedAt))
+						elseif localHash == 0 then
+							-- Store banker's hash if we don't have one
+							localAlt.inventoryHash = summary.hash
+							if summary.updatedAt then
+								localAlt.inventoryUpdatedAt = summary.updatedAt
+							end
+							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for %s: hash=%d, updatedAt=%s", norm, summary.hash, tostring(summary.updatedAt))
+						end
+					end
+				end
+				-- Refresh localAlts reference after potentially creating new entries
+				localAlts = TOGBankClassic_Guild.Info.alts
+			end
+
+			-- Second pass: Compare hashes and categorize alts
+			for altName, summary in pairs(data.alts) do
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				local localAlt = localAlts and localAlts[norm]
+				local localHash = localAlt and localAlt.inventoryHash or 0
+				totalCount = totalCount + 1
+				if not localAlt or localHash == 0 or (summary.hash and summary.hash ~= localHash) then
+					pending[norm] = summary
+					TOGBankClassic_Output:Debug(
+						"PROTOCOL",
+						"HLR pending: %s (localHash=%s, bankerHash=%s)",
+						tostring(norm),
+						tostring(localHash),
+						tostring(summary and summary.hash)
+					)
+				else
+					local hasContent = TOGBankClassic_Guild and TOGBankClassic_Guild.HasAltContent
+						and TOGBankClassic_Guild:HasAltContent(localAlt)
+					if not hasContent then
+						missingContent[norm] = summary
+						TOGBankClassic_Output:Debug(
+							"PROTOCOL",
+							"HLR missing content: %s (localHash=%s matches bankerHash=%s)",
+							tostring(norm),
+							tostring(localHash),
+							tostring(summary and summary.hash)
+						)
+					else
+						TOGBankClassic_Output:Debug(
+							"PROTOCOL",
+							"HLR skip: %s (localHash=%s matches bankerHash=%s)",
+							tostring(norm),
+							tostring(localHash),
+							tostring(summary and summary.hash)
+						)
+					end
+				end
+			end
+
+			local pendingCount = 0
+			for _ in pairs(pending) do
+				pendingCount = pendingCount + 1
+			end
+			TOGBankClassic_Output:Debug(
+				"PROTOCOL",
+				"HLR compare complete: total=%d pending=%d",
+				totalCount,
+				pendingCount
+			)
+			local missingCount = 0
+			for _ in pairs(missingContent) do
+				missingCount = missingCount + 1
+			end
+			if pendingCount > 0 then
+				local haveCount, totalCount = TOGBankClassic_Guild:GetBankerDataProgress()
+				TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", pendingCount, haveCount, totalCount)
+				TOGBankClassic_Guild:ReportBankerDataProgress("fast-fill", true)
+			end
+			if missingCount > 0 then
+				TOGBankClassic_Output:Info("Fast-fill: Re-requesting %d alts with hash but no content", missingCount)
+			end
+
+			for altName, summary in pairs(pending) do
+				TOGBankClassic_Output:Debug(
+					"PROTOCOL",
+					"HLR broadcast pending: %s (hash=%s, updatedAt=%s)",
+					tostring(altName),
+					tostring(summary and summary.hash),
+					tostring(summary and summary.updatedAt)
+				)
+				TOGBankClassic_Guild:BroadcastP2PRequest(altName, summary.hash, summary.updatedAt, sender)
+			end
+			for altName, summary in pairs(missingContent) do
+				TOGBankClassic_Output:Debug(
+					"PROTOCOL",
+					"HLR broadcast missingContent: %s (hash=%s, updatedAt=%s)",
+					tostring(altName),
+					tostring(summary and summary.hash),
+					tostring(summary and summary.updatedAt)
+				)
+				if summary and summary.hash then
+					TOGBankClassic_Guild:BroadcastP2PRequest(altName, summary.hash, summary.updatedAt, sender)
+				else
+					TOGBankClassic_Output:Debug(
+						"PROTOCOL",
+						"HLR missingContent no hash: %s - querying banker directly",
+						tostring(altName)
+					)
+					TOGBankClassic_Guild:QueryAltPullBased(altName, false)
+				end
+			end
+		end
 	end
 	if prefix == "togbank-s" then
 		TOGBankClassic_Guild:Share("reply")
@@ -1886,6 +2121,16 @@ local COMMAND_REGISTRY = {
 			end
 			if i == 0 then
 				TOGBankClassic_Output:Response("no entries")
+			end
+		end,
+	},
+	{
+		name = "hashdebug",
+		help = "show hash-list coverage and missing alts",
+		expert = true,
+		handler = function()
+			if TOGBankClassic_Guild and TOGBankClassic_Guild.ReportHashListCoverage then
+				TOGBankClassic_Guild:ReportHashListCoverage()
 			end
 		end,
 	},
