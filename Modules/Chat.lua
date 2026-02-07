@@ -1574,11 +1574,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			end
 			if pendingCount > 0 then
 				local haveCount, totalCount = TOGBankClassic_Guild:GetBankerDataProgress()
-				TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", pendingCount, haveCount, totalCount)
+				if not (TOGBankClassic_Options and TOGBankClassic_Options.IsSyncProgressMuted and TOGBankClassic_Options:IsSyncProgressMuted()) then
+					TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", pendingCount, haveCount, totalCount)
+				end
 				TOGBankClassic_Guild:ReportBankerDataProgress("fast-fill", true)
 			end
 			if missingCount > 0 then
-				TOGBankClassic_Output:Info("Fast-fill: Re-requesting %d alts with hash but no content", missingCount)
+				if not (TOGBankClassic_Options and TOGBankClassic_Options.IsSyncProgressMuted and TOGBankClassic_Options:IsSyncProgressMuted()) then
+					TOGBankClassic_Output:Info("Fast-fill: Re-requesting %d alts with hash but no content", missingCount)
+				end
 			end
 
 			for altName, summary in pairs(pending) do

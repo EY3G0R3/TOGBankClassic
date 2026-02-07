@@ -1297,7 +1297,9 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	end
 
 	local haveCount, totalCount = TOGBankClassic_Guild:GetBankerDataProgress()
-	TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", #missing, haveCount, totalCount)
+	if not (TOGBankClassic_Options and TOGBankClassic_Options.IsSyncProgressMuted and TOGBankClassic_Options:IsSyncProgressMuted()) then
+		TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", #missing, haveCount, totalCount)
+	end
 	TOGBankClassic_Guild:ReportBankerDataProgress("fast-fill", true)
 	if #missingDebug > 0 then
 		TOGBankClassic_Output:Debug("DELTA", "Fast-fill missing alts: %s", table.concat(missingDebug, ", "))
