@@ -11,10 +11,13 @@
 - **NEW**: Banker HLR (hash list reply) stores authoritative hashes for all roster alts
 - **NEW**: Version broadcasts store peer hashes when local hash is missing
 - **NEW**: 3-minute rebroadcast timer requests hash list and rebroadcasts P2P for missing alts
+- **NEW**: Roster sync fallback for officer-note-only guilds (config option, default OFF)
 - **FIXED**: /wipe now rebuilds banker roster immediately (progress shows 0/35 instead of 0/2)
 - **FIXED**: Data payloads always use GUILD channel (removed WHISPER routing for togbank-d3/d4)
 - **FIXED**: SendWhisper now correctly treats AceComm nil return as success
 - **FIXED**: Nil table access errors in Guild.lua (table initialization before access)
+- **FIXED**: Inventory disappearing during async item loads - added loading indicator [UI-005]
+- **FIXED**: Severe tooltip performance issues causing PC stuttering
 - **ENHANCED**: P2P broadcasts happen for both "pending" (hash mismatch) and "missingContent" (hash match, no data)
 
 ### 📝 Technical Details

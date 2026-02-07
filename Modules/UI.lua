@@ -1,5 +1,10 @@
 TOGBankClassic_UI = LibStub("AceGUI-3.0")
 
+-- Tooltip throttling to prevent performance issues
+TOGBankClassic_UI.tooltipThrottle = 0
+TOGBankClassic_UI.TOOLTIP_THROTTLE_MS = 50  -- 50ms between tooltip updates
+TOGBankClassic_UI.currentTooltipLink = nil
+
 function TOGBankClassic_UI:Init()
 	TOGBankClassic_UI_Minimap:Init()
 	TOGBankClassic_UI_Inventory:Init()
@@ -91,8 +96,12 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 		TOGBankClassic_Guild:ReconstructItemLink(item)
 	end
 
-	-- Get icon from Info if available, otherwise try to fetch from item ID
-	local icon = (item.Info and item.Info.icon) or select(10, GetItemInfo(item.ID or 0))
+	-- Get icon from Info (already loaded by GetItems), fallback to cached GetItemInfo only if needed
+	local icon = item.Info and item.Info.icon
+	if not icon and item.ID then
+		-- Only query if not in Info (fallback for old data)
+		icon = select(10, GetItemInfo(item.ID))
+	end
 	if icon then
 		slot:SetImage(icon)
 	end
@@ -143,12 +152,23 @@ function TOGBankClassic_UI:ShowItemTooltip(link)
 	if not link then
 		return
 	end
+
+	-- Throttle tooltip updates to prevent performance issues
+	local now = debugprofilestop()
+	if self.currentTooltipLink == link and (now - self.tooltipThrottle) < self.TOOLTIP_THROTTLE_MS then
+		return
+	end
+
+	self.tooltipThrottle = now
+	self.currentTooltipLink = link
+
 	GameTooltip:SetOwner(WorldFrame, "ANCHOR_CURSOR")
 	GameTooltip:SetHyperlink(link)
 	GameTooltip:Show()
 end
 
 function TOGBankClassic_UI:HideTooltip()
+	self.currentTooltipLink = nil
 	GameTooltip:Hide()
 	GameTooltip_SetDefaultAnchor(GameTooltip, UIParent)
 end
