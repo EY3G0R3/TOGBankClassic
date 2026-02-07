@@ -4617,14 +4617,14 @@ Implemented dual-layer fix: defensive nil checks in UI code prevent crashes, and
 
 ---
 
-#### ✅ [UI-002] Items don't appear in UI after data integration
+#### 🔴 [UI-002] Items don't appear in UI after data integration
 
 **Severity:** 🔴 CRITICAL
 **Category:** UI / Protocol
 **Reporter:** User (Galdof testing)
 **Date Reported:** 2026-01-21 (Evening)
-**Status:** ✅ CLOSED
-**Fixed In:** v0.8.0
+**Status:** 🐛 REOPENED - Links still missing for many items
+**Fixed In:** v0.8.0 (partial)
 **Assigned To:** Development Team
 
 **Description:**
@@ -4763,11 +4763,20 @@ end
 - Already had UI refresh attempts, but weren't effective because Links were nil
 - With this fix, those safety refreshes now work as intended
 
-**Resolution:**
-Added UI refresh mechanism to `ReconstructItemLinks()` that triggers `DrawContent()` after successful link reconstruction. Handles both immediate (cached) and async (server query) cases. Items now appear as soon as their links become available from WoW API.
+**Current Status (2026-02-06):**
+Items now appear, but only ~25–33% retain links after link-less sync. This indicates link stripping/reconstruction still loses link data for some items (likely gear/uncached items that require full Link or ItemString).
 
-**Verified By:** In-game testing on 2026-01-21 (Evening)
-**Closed:** 2026-01-21
+**New Investigation Notes:**
+- Link stripping currently removes Links for all items and only preserves ItemString when link is present.
+- Gear (weapons/armor) requires full Link to preserve suffix/enchant data.
+- Uncached items may not resolve class and need Link preserved to avoid data loss.
+
+**Next Steps:**
+1. Update link stripping to preserve full Link for gear and uncached items
+2. Preserve ItemString for all other items to allow reconstruction
+3. Apply the same rule to deltas and full snapshots
+
+**Reopened:** 2026-02-06
 
 ---
 
