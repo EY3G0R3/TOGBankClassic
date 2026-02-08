@@ -193,55 +193,10 @@ end
 
 -- Delta-specific version broadcast (SYNC-001 fix)
 -- v0.8.0 SYNC-006: Bankers send BOTH togbank-dv (old) and togbank-dv2 (new) during migration
+-- DISABLED: Legacy version broadcast system replaced by P2P + HL/HLR
 function TOGBankClassic_Events:SyncDeltaVersion(priority)
-	local startTime = debugprofilestop()
-	local guild = TOGBankClassic_Guild:GetGuild()
-	if not guild then
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SyncDeltaVersion SKIP: no guild")
-		return
-	end
-
-	-- Only broadcast delta version if we support delta
-	if not TOGBankClassic_Guild:ShouldUseDelta() then
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SyncDeltaVersion SKIP: ShouldUseDelta=false (DELTA_ENABLED=%s, SUPPORTS_DELTA=%s)",
-			tostring(FEATURES.DELTA_ENABLED), tostring(PROTOCOL.SUPPORTS_DELTA))
-		return
-	end
-
-	local version = TOGBankClassic_Guild:GetVersion()
-	if version == nil then
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SyncDeltaVersion SKIP: version is nil")
-		return
-	end
-	-- REMOVED: roster.version check - roster is now local-only, no need to gate broadcasts on it
-
-	-- v0.8.0: Include banker status for pull-based protocol
-	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
-	local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
-	version.isBanker = isBanker
-
-	-- SYNC-006 Migration: Send on BOTH channels
-	-- togbank-dv2 for new clients (with aggregated items hash)
-	local altCount = 0
-	if version.alts then
-		for _ in pairs(version.alts) do
-			altCount = altCount + 1
-		end
-	end
-	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] SENDING togbank-dv2 from %s (isBanker=%s, altCount=%d)",
-		player, tostring(isBanker), altCount)
-	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
-	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] togbank-dv2 message size: %d bytes", #data)
-	TOGBankClassic_Core:SendCommMessage("togbank-dv2", data, "Guild", nil, priority or "NORMAL")
-	local duration = debugprofilestop() - startTime
-	TOGBankClassic_Output:Debug("EVENTS", "SyncDeltaVersion took %.2fms (alts=%d, size=%d)", duration, altCount, #data)
-
-	-- Also send on togbank-dv for old pre-SYNC-006 clients
-	-- Note: Old clients will compute hash from their legacy alt.bank/alt.bags structure
-	-- New clients ignore togbank-dv, so no conflict
-	--[[ COMMENTED OUT - Legacy togbank-dv protocol (pre-SYNC-006)
-	TOGBankClassic_Core:SendCommMessage("togbank-dv", data, "Guild", nil, priority or "NORMAL")
-	--]]
+	-- No-op: version broadcasts disabled in favor of P2P + HL/HLR system
+	return
 end
 
 function TOGBankClassic_Events:PLAYER_LOGIN(_)

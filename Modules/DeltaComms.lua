@@ -1272,11 +1272,15 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	local missing = {}
 	local missingDebug = {}
 	local missingInfo = {}
+	TOGBankClassic_Output:Debug("PROTOCOL", "FastFill: Starting check of %d roster alts", #rosterAlts)
 	for _, altName in ipairs(rosterAlts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(altName)
 		local localAlt = guildInfo.alts and norm and guildInfo.alts[norm]
 		local hasEntry = localAlt ~= nil
 		local hasContent = hasEntry and TOGBankClassic_Guild:HasAltContent(localAlt)
+		-- DEBUG: Log every alt to see what's happening
+		TOGBankClassic_Output:Debug("PROTOCOL", "FastFill check: %s hasEntry=%s hasContent=%s", 
+			tostring(norm), tostring(hasEntry), tostring(hasContent))
 		-- Check if we have this alt locally with content
 		if not hasEntry or not hasContent then
 			table.insert(missing, norm)

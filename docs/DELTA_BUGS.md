@@ -1,12 +1,218 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** February 6, 2026
+**Last Updated:** February 8, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 
-### ?? [MAIL-013] "Internal mail database error" when sending fulfillment
+_None - All critical issues resolved_
+
+---
+
+**Recently Resolved Issues:**
+
+### ✅ [P2P-004] Stub entries sending requesterHash=0 instead of actual hash - RESOLVED
+
+**Severity:** 🔴 CRITICAL (P2P system non-functional for stubs)
+**Category:** P2P / Hash Matching / Stub Entries
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Date Resolved:** 2026-02-08
+**Status:** ✅ RESOLVED (Guild.lua lines 1149-1163)
+
+**Problem:**
+When receiving version broadcast with hash but no content (stub entry), QueryAltPullBased was checking HasAltContent() and sending `requesterHash=0` because stub entries have no items/bank/bags/mail. This caused P2P peers to ignore the request (no expectedHash match) since the requester was saying "I have nothing" when they actually had the hash from the version broadcast.
+
+**Impact:**
+- P2P system completely non-functional for stub entry fills
+- All stub queries fell back to banker (scalability issue with 1000 members)
+- P2P peers received `expectedHash=0`, checked `myHash == 0` → FALSE → no response
+
+**Root Cause:**
+Lines 1149-1161 in Guild.lua checked `HasAltContent(requesterAlt)` and only sent actual hash if content existed. For stub entries (hash from version broadcast but items={}), this returned false, causing `requesterHash=0` to be sent.
+
+**Fix:**
+Changed logic to ALWAYS send the hash we have (from version broadcast or actual data), regardless of HasAltContent():
+```lua
+-- OLD (WRONG):
+if requesterAlt and self:HasAltContent(requesterAlt) then
+    request.requesterInventoryHash = requesterAlt.inventoryHash or 0
+else
+    request.requesterInventoryHash = 0  -- BREAKS P2P FOR STUBS!
+end
+
+-- NEW (CORRECT):
+if requesterAlt then
+    -- Send the hash we have (from version broadcast or actual data)
+    request.requesterInventoryHash = requesterAlt.inventoryHash or 0
+    local hasContent = self:HasAltContent(requesterAlt)
+    -- Log whether stub or full data
+else
+    request.requesterInventoryHash = 0  -- Only if NO local entry at all
+end
+```
+
+**Expected Behavior After Fix:**
+1. Receive version broadcast: `Metals-Azuresong hash=811921521` (no content)
+2. Query P2P: `requesterHash=811921521` (stub hash)
+3. P2P peer checks: `myHash == 811921521 and hasContent` → TRUE → responds with data
+4. Stub filled via P2P without banker involvement
+
+**Testing:**
+- Requires multiple guild members on updated code
+- Monitor for `> [PeerName] shares delta ... for [StubAlt]` from non-bankers
+- Verify P2P responses for stub entries
+
+---
+
+### ✅ [P2P-003] Version broadcasts querying banker instead of P2P sender - RESOLVED
+
+**Severity:** 🟡 MEDIUM (P2P system inefficient)
+**Category:** P2P / Target Selection / Version Broadcasts
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Date Resolved:** 2026-02-08
+**Status:** ✅ RESOLVED (Guild.lua + Chat.lua)
+
+**Problem:**
+When receiving version broadcast from Nahmean with hash for Metals-Azuresong, system was querying Lowerherbs (banker) instead of Nahmean (sender who clearly has the data). This defeated the purpose of P2P distribution by funneling all requests to banker.
+
+**Impact:**
+- Banker overload (send queue full 3/3)
+- P2P senders broadcasting "I have this data" but never being queried
+- Version broadcasts not enabling P2P as designed
+
+**Root Cause:**
+QueryAltPullBased() had no targetPlayer parameter. Version broadcast handler called it without specifying sender, so it always searched for banker from guild roster.
+
+**Fix:**
+1. Added `targetPlayer` parameter to QueryAltPullBased (4th param)
+2. Modified banker selection logic: `local banker = targetPlayer or nil` (use provided target first)
+3. Updated version broadcast handler in Chat.lua to pass sender:
+```lua
+if PEER_TO_PEER and PEER_TO_PEER.ENABLED then
+    TOGBankClassic_Guild:QueryAltPullBased(kNorm, true, false, sender)  -- Pass sender!
+else
+    TOGBankClassic_Guild:QueryAltPullBased(kNorm, false, false, sender)
+end
+```
+
+**Verification:**
+- Log shows: `[MAIL-012] QueryAltPullBased for Metals-Azuresong: using target Nahmean-Myzrael (P2P from version broadcast)`
+- Queries go directly to version broadcast sender
+- Banker only queried as fallback when no P2P target available
+
+---
+
+### ✅ [P2P-002] Hash match skipping queries for stub entries - RESOLVED
+
+**Severity:** 🔴 CRITICAL (Stub entries never filled)
+**Category:** Version Broadcast / Query Logic / Stub Entries
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Date Resolved:** 2026-02-08
+**Status:** ✅ RESOLVED (Chat.lua lines 509-523)
+
+**Problem:**
+Version broadcast handler showed `HASH_MATCH` and skipped queries even when user had stub entry (hash but no content - items={}). User received version broadcast with matching hash, but handler didn't check HasAltContent() before skipping query.
+
+**Impact:**
+- Stub entries never filled from version broadcasts
+- User stuck with hash metadata but no actual items
+- Queries only triggered on hash mismatch, not on missing content
+
+**Root Cause:**
+Hash comparison logic was simple if/else without secondary content check:
+```lua
+-- OLD (WRONG):
+if theirHash ~= ourHash then
+    shouldQuery = true
+else
+    -- Hash match - skip query (WRONG FOR STUBS!)
+end
+```
+
+**Fix:**
+Changed to if/elseif chain with hasContent check:
+```lua
+-- NEW (CORRECT):
+if theirHash ~= ourHash then
+    shouldQuery = true  -- Hash mismatch
+elseif not hasContent then
+    shouldQuery = true  -- Hash match but stub entry (HASH_MATCH_NO_CONTENT)
+    TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: HASH_MATCH_NO_CONTENT (filling stub)", kNorm)
+else
+    -- Hash match with content (HASH_MATCH_WITH_CONTENT) - no query
+end
+```
+
+**Verification:**
+- Logs now show: `[MAIL-012] Query decision for Metals-Azuresong: HASH_MATCH_NO_CONTENT (filling stub)`
+- Queries triggered for stub entries despite hash match
+- Stub entries being filled via P2P
+
+---
+
+### ✅ [P2P-001] Pull-based responses broadcasting to GUILD instead of whispering - RESOLVED
+
+**Severity:** 🔴 CRITICAL (Unsolicited data floods)
+**Category:** P2P / Response Distribution / SendAltData
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Date Resolved:** 2026-02-08
+**Status:** ✅ RESOLVED (Guild.lua lines 1884-1902)
+
+**Problem:**
+Pull-based request handler called SendAltData with target parameter, but SendAltData ignored it and always sent to "Guild" channel. This caused everyone in guild to receive data they didn't request (UNSOLICITED broadcasts).
+
+**Impact:**
+- All guild members receiving data for alts they didn't query
+- Version broadcast spam despite disabling SyncDeltaVersion
+- Network bandwidth waste
+- Users receiving STALE data updates for alts they already possessed
+
+**Root Cause:**
+SendAltData function had `target` parameter but hardcoded `distribution = "Guild"`:
+```lua
+-- OLD (WRONG):
+function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requesterMailHash, target)
+    -- target parameter passed but never used!
+    TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, "Guild", nil, "BULK", OnChunkSent)
+end
+```
+
+**Fix:**
+Added distribution/distTarget variables at start of SendAltData:
+```lua
+-- NEW (CORRECT):
+local distribution = "GUILD"
+local distTarget = nil
+if target then
+    distribution = "WHISPER"
+    distTarget = target
+    TOGBankClassic_Output:Debug("PROTOCOL", "[RESPONSE] Sending %s data via WHISPER to %s (pull-based response)", norm, target)
+else
+    TOGBankClassic_Output:Debug("PROTOCOL", "[RESPONSE] Sending %s data via GUILD broadcast (manual share)", norm)
+end
+
+-- Use variables in SendCommMessage calls:
+TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, distribution, distTarget, "BULK", OnChunkSent)
+TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, distribution, distTarget, "BULK", OnChunkSent)
+```
+
+**Impact:**
+- Pull-based responses now whispered to requester only
+- Manual shares still broadcast to GUILD (preserves existing behavior)
+- Eliminates unsolicited data floods
+- Guild members no longer receiving data they didn't request
+
+**Note:**
+Old clients still broadcast responses until they update. This is expected behavior during transition period.
+
+---
+
+### ✅ [MAIL-013] "Internal mail database error" when sending fulfillment
 
 **Severity:** ?? HIGH
 **Category:** Mail / Fulfillment

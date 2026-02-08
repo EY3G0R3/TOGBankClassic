@@ -2,8 +2,8 @@
 
 **Project:** TOGBankClassic Delta Sync Protocol
 **Target Version:** v0.8.0
-**Status:** Production - Core Features Complete, Maintenance Mode
-**Last Updated:** January 29, 2026
+**Status:** Production - Core Features Complete, P2P System Operational
+**Last Updated:** February 8, 2026
 **Branch:** main
 
 ---
@@ -202,7 +202,76 @@ return PROTOCOL.SUPPORTS_DELTA
 - ✅ P2P broadcasts for both `pending` and `missingContent` (Chat.lua lines 1550-1570)
 - ✅ 3-minute rebroadcast timer (Events.lua OnShareTimer)
 - ✅ /wipe rebuilds banker roster immediately (Guild.lua Reset)
-- ✅ Data payloads always use GUILD channel (Guild.lua SendAltData)
+- ✅ Data payloads always use GUILD channel (Guild.lua SendAltData) **[FIXED Feb 8: Now uses WHISPER for pull-based responses]**
+- ✅ **P2P-001**: Pull-based responses now whisper to requester (Feb 8, 2026)
+- ✅ **P2P-002**: Version broadcasts now query sender, not banker (Feb 8, 2026)
+- ✅ **P2P-003**: Hash match logic checks hasContent for stub entries (Feb 8, 2026)
+- ✅ **P2P-004**: Stub entries send actual hash, not 0, for P2P matching (Feb 8, 2026)
+
+### P2P Stub Entry Fixes (February 8, 2026)
+
+**Problem Identified:**
+P2P system was completely non-functional for stub entries (hash from version broadcast but no content). Four critical bugs prevented P2P peers from responding to stub queries.
+
+**Bug #1: Broadcast Responses (P2P-001)**
+- **Issue**: SendAltData ignored `target` parameter, always sent to GUILD channel
+- **Impact**: All guild members received UNSOLICITED data they didn't request
+- **Fix**: Added distribution/distTarget variables, whisper to requester when target provided
+- **Location**: Guild.lua lines 1884-1902, 1984-1989, 2065-2070
+
+**Bug #2: Version Broadcast P2P Target (P2P-003)**
+- **Issue**: Version broadcasts queried banker instead of sender who advertised data
+- **Impact**: P2P senders broadcasting "I have this" but never being queried, banker overload
+- **Fix**: Added `targetPlayer` parameter to QueryAltPullBased(), pass sender from version broadcasts
+- **Location**: Guild.lua QueryAltPullBased() signature, Chat.lua lines 558-566
+
+**Bug #3: Hash Match Skip Logic (P2P-002)**
+- **Issue**: Version broadcast handler skipped queries when hash matched, even for stub entries with no content
+- **Impact**: Stub entries never filled despite receiving matching version broadcasts
+- **Fix**: Changed if/else to if/elseif chain with hasContent check for HASH_MATCH_NO_CONTENT case
+- **Location**: Chat.lua lines 509-523
+
+**Bug #4: Stub Entry Hash Reporting (P2P-004) - CRITICAL**
+- **Issue**: QueryAltPullBased checked HasAltContent() and sent `requesterHash=0` for stubs, causing P2P peers to see no expectedHash match
+- **Impact**: P2P system completely non-functional - all stub queries fell back to banker (defeats scalability)
+- **Fix**: Always send the hash we have (from version broadcast or actual data), regardless of HasAltContent(). Only send hash=0 if no local entry exists at all.
+- **Logic Change**:
+  ```lua
+  -- OLD (WRONG):
+  if requesterAlt and self:HasAltContent(requesterAlt) then
+      request.requesterInventoryHash = requesterAlt.inventoryHash or 0
+  else
+      request.requesterInventoryHash = 0  -- BREAKS P2P FOR STUBS!
+  end
+  
+  -- NEW (CORRECT):
+  if requesterAlt then
+      request.requesterInventoryHash = requesterAlt.inventoryHash or 0  -- Send hash even for stubs!
+  else
+      request.requesterInventoryHash = 0  -- Only if NO local entry
+  end
+  ```
+- **Location**: Guild.lua lines 1149-1163
+- **Result**: P2P peers can now match stub hash and respond with data
+
+**Expected Behavior After Fixes:**
+1. Receive version broadcast: `Metals-Azuresong hash=811921521` from Slapshift (no content locally)
+2. Create stub entry with hash=811921521 but items={}
+3. Query P2P: `togbank-r` to Slapshift with `requesterHash=811921521` (not 0!)
+4. Slapshift checks: `myHash == 811921521 and hasContent` → TRUE → responds via WHISPER
+5. Receive data from Slapshift, fill stub entry
+6. P2P distribution working, banker not overloaded
+
+**Testing Requirements:**
+- Requires multiple guild members on updated code (backwards compatible)
+- Old clients still work but won't respond to P2P stub queries (will update later)
+- Monitor logs for: `> [PeerName] shares delta ... for [StubAlt]` from non-bankers
+- Verify P2P responses fill stub entries without banker involvement
+
+**Debug Categories:**
+- **PROTOCOL**: Query decisions, P2P target selection, WHISPER/GUILD routing
+- **DELTA**: Requester hash values (0 vs actual), delta computation
+- **SYNC**: "Applied delta", adoption status, staleness checks
 
 ### Multi-Responder Scenarios
 

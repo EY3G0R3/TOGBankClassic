@@ -476,21 +476,27 @@ end
 
 function TOGBankClassic_Guild:HasAltContent(alt)
 	if not alt or type(alt) ~= "table" then
+		TOGBankClassic_Output:Debug("DELTA", "[CONTENT-CHECK] %s: not a table", alt and alt.name or "unknown")
 		return false
 	end
-	if alt.items and next(alt.items) then
-		return true
-	end
-	if alt.bank and alt.bank.items and next(alt.bank.items) then
-		return true
-	end
-	if alt.bags and alt.bags.items and next(alt.bags.items) then
-		return true
-	end
-	if alt.mail and alt.mail.items and next(alt.mail.items) then
-		return true
-	end
-	return false
+	
+	local hasItems = alt.items and next(alt.items)
+	local hasBankItems = alt.bank and alt.bank.items and next(alt.bank.items)
+	local hasBagsItems = alt.bags and alt.bags.items and next(alt.bags.items)
+	local hasMailItems = alt.mail and alt.mail.items and next(alt.mail.items)
+	
+	local result = hasItems or hasBankItems or hasBagsItems or hasMailItems
+	
+	TOGBankClassic_Output:Debug("DELTA", 
+		"[CONTENT-CHECK] %s: items=%s, bank=%s, bags=%s, mail=%s => %s",
+		alt.name or "unknown",
+		tostring(hasItems and "Y" or "N"),
+		tostring(hasBankItems and "Y" or "N"),
+		tostring(hasBagsItems and "Y" or "N"),
+		tostring(hasMailItems and "Y" or "N"),
+		tostring(result))
+	
+	return result
 end
 
 function TOGBankClassic_Guild:GetBankerDataProgress()
@@ -832,6 +838,15 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	if not altName or not expectedHash then
 		return
 	end
+	
+	-- Check if we already have this data with content - don't broadcast if we do
+	local norm = self:NormalizeName(altName)
+	local existing = self.Info and self.Info.alts and self.Info.alts[norm]
+	if existing and self:HasAltContent(existing) then
+		TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping P2P broadcast for %s (already have content)", altName)
+		return
+	end
+	
 	TOGBankClassic_Output:Debug(
 		"PROTOCOL",
 		"HLR broadcast: requesting %s (expectedHash=%s, updatedAt=%s) from banker=%s",
@@ -929,15 +944,15 @@ function TOGBankClassic_Guild:GetVersion()
 						hash = v.inventoryHash,
 						updatedAt = v.inventoryUpdatedAt or v.version,
 					}
-					TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d, hash=%d", k, v.version, v.inventoryHash)
+					TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: including %s in local version data (ver=%d, hash=%d)", k, v.version, v.inventoryHash)
 				else
 					-- Legacy format for old clients
 					data.alts[k] = v.version
-					TOGBankClassic_Output:Debug("SYNC", "Broadcasting %s: version=%d (no hash)", k, v.version)
+					TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: including %s in local version data (ver=%d, no hash)", k, v.version)
 				end
 			end
 		else
-			TOGBankClassic_Output:Debug("SYNC", "Skipping %s from version broadcast: not a banker in current guild", k)
+			TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: excluding %s from local version data (not a banker in current guild)", k)
 		end
 		---END CHANGES
 	end
@@ -1049,16 +1064,20 @@ function TOGBankClassic_Guild:QueryAlt(player, name, version)
 end
 
 -- v0.8.0: Pull-based query - WHISPER to banker if known, GUILD if unknown
-function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull)
+function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targetPlayer)
 	if not name then
 		return
 	end
+
+	local normName = self:NormalizeName(name)
+
+	-- Log that we're sending a query
+	TOGBankClassic_Output:Debug("PROTOCOL", "[QUERY] QueryAltPullBased called for %s (hashOnly=%s, target=%s)", normName, tostring(hashOnly or false), targetPlayer or "banker")
 
 	-- Rate-limit repeated queries for the same alt to reduce stutter
 	self.lastAltQueryTime = self.lastAltQueryTime or {}
 	self.pendingAltRequests = self.pendingAltRequests or {}
 	local now = GetTime()
-	local normName = self:NormalizeName(name)
 	local pendingAt = self.pendingAltRequests[normName]
 	if pendingAt and (now - pendingAt) < 10 then
 		TOGBankClassic_Output:Debug("SYNC", "Skipping query for %s (pending request)", normName)
@@ -1082,37 +1101,42 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull)
 	end
 
 	-- Check if we have an online banker (from guild roster, not broadcasts)
-	local banker = nil
+	local banker = targetPlayer or nil
 	local bankerCount = 0
 
-	-- MAIL-012 DEBUG: Log all online bankers from guild roster
-	for member, _ in pairs(self.onlineMembers or {}) do
-		if self:IsBank(member) then
-			bankerCount = bankerCount + 1
-			TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Online banker from roster: %s, isOnline=%s",
-				member, tostring(self:IsPlayerOnline(member)))
-			-- Use first found banker (could randomize or prefer by name)
-			if not banker then
-				banker = member
-			end
-		end
-	end
-	-- Fallback: scan live guild roster if cache is stale
+	-- If no target specified, find a banker
 	if not banker then
-		GuildRoster()
-		for i = 1, GetNumGuildMembers() do
-			local rosterName, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
-			if rosterName and online then
-				local normRoster = self:NormalizeName(rosterName)
-				if self:IsBank(normRoster) then
-					bankerCount = bankerCount + 1
-					banker = banker or normRoster
-					TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Online banker from live roster: %s, isOnline=true", normRoster)
+		-- MAIL-012 DEBUG: Log all online bankers from guild roster
+		for member, _ in pairs(self.onlineMembers or {}) do
+			if self:IsBank(member) then
+				bankerCount = bankerCount + 1
+				TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Online banker from roster: %s, isOnline=%s",
+					member, tostring(self:IsPlayerOnline(member)))
+				-- Use first found banker (could randomize or prefer by name)
+				if not banker then
+					banker = member
 				end
 			end
 		end
+		-- Fallback: scan live guild roster if cache is stale
+		if not banker then
+			GuildRoster()
+			for i = 1, GetNumGuildMembers() do
+				local rosterName, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
+				if rosterName and online then
+					local normRoster = self:NormalizeName(rosterName)
+					if self:IsBank(normRoster) then
+						bankerCount = bankerCount + 1
+						banker = banker or normRoster
+						TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Online banker from live roster: %s, isOnline=true", normRoster)
+					end
+				end
+			end
+		end
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: %d online bankers found from guild roster", norm, bankerCount)
+	else
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: using target %s (P2P from version broadcast)", norm, banker)
 	end
-	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: %d online bankers found from guild roster", norm, bankerCount)
 
 	-- Build request message
 	local request = {
@@ -1122,18 +1146,21 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull)
 		hashOnly = hashOnly or false,  -- PERF-005: Request only hash for P2P distribution
 	}
 
-	-- DELTA-014: Include requester's current hashes so banker can compute proper delta
+	-- DELTA-014: Include requester's current hashes (even for stubs!)
+	-- P2P peers will respond ONLY if they have matching hash AND content
 	local requesterAlt = self.Info and self.Info.alts and self.Info.alts[norm]
 	if requesterAlt then
+		-- Send the hash we have (from version broadcast or actual data)
 		request.requesterInventoryHash = requesterAlt.inventoryHash or 0
 		request.requesterMailHash = requesterAlt.mailHash or 0
-		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%d, mailHash=%d",
-			norm, request.requesterInventoryHash, request.requesterMailHash)
+		local hasContent = self:HasAltContent(requesterAlt)
+		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%d, mailHash=%d (%s)",
+			norm, request.requesterInventoryHash, request.requesterMailHash, hasContent and "have content" or "stub - need data")
 	else
-		-- No local data - requester is starting from empty
+		-- No local data at all - send hash=0
 		request.requesterInventoryHash = 0
 		request.requesterMailHash = 0
-		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: no local data (empty baseline)", norm)
+		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=0 (no local entry)", norm)
 	end
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
@@ -1866,6 +1893,17 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		return
 	end
 
+	-- Determine distribution channel: WHISPER to target if provided, otherwise GUILD broadcast
+	local distribution = "GUILD"
+	local distTarget = nil
+	if target then
+		distribution = "WHISPER"
+		distTarget = target
+		TOGBankClassic_Output:Debug("PROTOCOL", "[RESPONSE] Sending %s data via WHISPER to %s (pull-based response)", norm, target)
+	else
+		TOGBankClassic_Output:Debug("PROTOCOL", "[RESPONSE] Sending %s data via GUILD broadcast (manual share)", norm)
+	end
+
 	-- v0.8.0: Version is ONLY set by Bank:Scan() when inventory actually changes
 	-- No longer bump version here - that caused version drift from communication
 
@@ -1955,8 +1993,8 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		if mode.sendNew then
 			local strippedDelta = self:StripDeltaLinks(deltaData)
 			deltaNoLinks = TOGBankClassic_Core:SerializeWithChecksum(strippedDelta)
-			TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, "Guild", nil, "BULK", OnChunkSent)
-			TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d4 (no Links)", norm)
+			TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, distribution, distTarget, "BULK", OnChunkSent)
+			TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d4 to %s (no Links)", norm, distribution)
 
 			-- Log bandwidth savings if dual-sending
 			if mode.sendLegacy and deltaWithLinks then
@@ -2037,8 +2075,8 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		if mode.sendNew then
 			local strippedAlt = self:StripAltLinks(currentAlt)
 			dataNoLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
-			TOGBankClassic_Output:DebugComm("SENDING RESPONSE: togbank-d3 (new) for %s (%d bytes)", norm, #dataNoLinks)
-			TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, "Guild", nil, "BULK", OnChunkSent)
+			TOGBankClassic_Output:DebugComm("SENDING RESPONSE: togbank-d3 (new) for %s (%d bytes) to %s", norm, #dataNoLinks, distribution)
+			TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, distribution, distTarget, "BULK", OnChunkSent)
 		end
 
 		-- Log what was sent
@@ -2443,9 +2481,10 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 
 		local existingHasContent = existing and self:HasAltContent(existing) or false
 		local incomingHasContent = self:HasAltContent(alt)
-		local allowStaleBecauseMissingContent = existing and (not existingHasContent) and incomingHasContent
+		-- Allow incoming data if we have no existing data OR existing has no content
+		local allowStaleBecauseMissingContent = (not existing) or (not existingHasContent and incomingHasContent)
 		if allowStaleBecauseMissingContent then
-			TOGBankClassic_Output:Debug("SYNC", "Accepting stale data for %s because existing has no content", norm)
+			TOGBankClassic_Output:Debug("SYNC", "Accepting data for %s (no existing data or existing has no content)", norm)
 		end
 		if existingHasContent and not incomingHasContent then
 			TOGBankClassic_Output:Debug("SYNC", "Rejecting empty data for %s because existing has content", norm)
@@ -2465,22 +2504,33 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 
 	-- Hash-based staleness check: If inventory hash matches, data is identical (PERFORMANCE FIX)
 	-- Skip expensive mail preservation if nothing changed
-	if existing and alt.inventoryHash and existing.inventoryHash and alt.inventoryHash == existing.inventoryHash then
+	-- ONLY reject if we actually have content - if existing has no content, always accept incoming data
+	if existing and existingHasContent and alt.inventoryHash and existing.inventoryHash and alt.inventoryHash == existing.inventoryHash then
 		TOGBankClassic_Output:Debug("SYNC", "Hash match for %s (hash=%d) - data unchanged, rejecting as STALE",
 			norm, alt.inventoryHash)
 		return ADOPTION_STATUS.STALE
 	end
 
 	if not targetIsBanker and existing and incomingUpdatedAt and existingUpdatedAt and not allowStaleBecauseMissingContent then
-			if incomingUpdatedAt < existingUpdatedAt then
+		TOGBankClassic_Output:Debug("SYNC", "Timestamp staleness check for %s: incoming=%d, existing=%d, hasContent=%s", 
+			norm, incomingUpdatedAt, existingUpdatedAt, tostring(existingHasContent))
+		if incomingUpdatedAt < existingUpdatedAt then
+			TOGBankClassic_Output:Debug("SYNC", "Rejecting %s: incoming timestamp %d < existing %d", 
+				norm, incomingUpdatedAt, existingUpdatedAt)
+			return ADOPTION_STATUS.STALE
+		elseif incomingUpdatedAt == existingUpdatedAt then
+			-- Tie-breaker: choose the one with more items
+			local incomingCount = itemCount(alt)
+			local existingCount = itemCount(existing)
+			TOGBankClassic_Output:Debug("SYNC", "Timestamp tie for %s: incomingCount=%d, existingCount=%d", 
+				norm, incomingCount, existingCount)
+			if incomingCount <= existingCount then
+				TOGBankClassic_Output:Debug("SYNC", "Rejecting %s: incoming itemCount %d <= existing %d", 
+					norm, incomingCount, existingCount)
 				return ADOPTION_STATUS.STALE
-			elseif incomingUpdatedAt == existingUpdatedAt then
-				-- Tie-breaker: choose the one with more items
-				if itemCount(alt) <= itemCount(existing) then
-					return ADOPTION_STATUS.STALE
-				end
 			end
 		end
+	end
 
 		-- Legacy fallback: version-based staleness check
 		if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version and not allowStaleBecauseMissingContent then
@@ -2915,3 +2965,4 @@ function TOGBankClassic_Guild:SenderIsGM(player)
 	return false
 end
 ---END CHANGES
+
