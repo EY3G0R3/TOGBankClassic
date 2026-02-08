@@ -664,11 +664,17 @@ function TOGBankClassic_Guild:ReportHashListCoverage()
 		local localAlt = localAlts and localAlts[altName]
 		local localHash = localAlt and localAlt.inventoryHash or 0
 		if localAlt and localHash ~= 0 and summary and summary.hash == localHash then
-			matched = matched + 1
+			-- Hash matches, but check if we have actual content
 			if not self:HasAltContent(localAlt) then
+				-- Hash matches but no content - treat as pending (need to request)
 				table.insert(matchedNoContent, altName)
+				table.insert(pending, altName)
+			else
+				-- Hash matches and we have content - truly matched
+				matched = matched + 1
 			end
 		else
+			-- Hash mismatch or no local data - pending
 			table.insert(pending, altName)
 		end
 	end
@@ -780,16 +786,19 @@ function TOGBankClassic_Guild:RequestHashListFromBanker()
 					local localHash = localAlt and localAlt.inventoryHash or nil
 					local updatedAt = localAlt and (localAlt.inventoryUpdatedAt or localAlt.version) or nil
 					pendingCount = pendingCount + 1
-					if localHash then
+					if localHash and localHash ~= 0 then
+						-- We have hash but no content - broadcast P2P request WITH hash
+						-- Peers with matching hash will respond (PERF-005 P2P protocol)
 						TOGBankClassic_Output:Debug(
 							"PROTOCOL",
-							"HLR fallback: no banker online, broadcasting %s (expectedHash=%s, updatedAt=%s)",
+							"HLR fallback: no banker online, broadcasting P2P for %s (expectedHash=%s, updatedAt=%s)",
 							tostring(norm),
 							tostring(localHash),
 							tostring(updatedAt)
 						)
 						self:BroadcastP2PRequest(norm, localHash, updatedAt, nil)
 					else
+						-- No hash at all - regular query
 						TOGBankClassic_Output:Debug(
 							"PROTOCOL",
 							"HLR fallback: no banker online, broadcasting query for %s (no local hash)",
@@ -827,6 +836,8 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 		tostring(expectedUpdatedAt),
 		tostring(bankerSender)
 	)
+	TOGBankClassic_Output:Info("P2P: Broadcasting request for %s with hash=%d (waiting for peers)", altName, expectedHash)
+	
 	self.expectedHashes = self.expectedHashes or {}
 	self.expectedHashes[altName] = expectedHash
 	if expectedUpdatedAt then
@@ -852,7 +863,7 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 		local pending = self.pendingP2PRequests and self.pendingP2PRequests[altName]
 		if pending then
 			self.pendingP2PRequests[altName] = nil
-			TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
+			TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout", altName, timeout)
 			self:QueryAltPullBased(altName, false)
 		end
 	end)

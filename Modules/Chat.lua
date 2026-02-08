@@ -753,13 +753,19 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					expectedHash = alt.inventoryHash or 0
 					expectedUpdatedAt = alt.inventoryUpdatedAt or alt.version or 0
 				elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
-					-- PERF-005: Non-bankers can respond if they have matching hash
+					-- PERF-005: Non-bankers can respond if they have matching hash AND actual content
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					local myHash = alt.inventoryHash or 0
-					if myHash == data.expectedHash then
+					local hasContent = TOGBankClassic_Guild:HasAltContent(alt)
+					if myHash == data.expectedHash and hasContent then
 						shouldRespond = true
 						expectedHash = myHash
 						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Peer responding for %s (hash match: %d)", altName, myHash)
+						TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d)", sender, altName, myHash)
+					elseif myHash == data.expectedHash and not hasContent then
+						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping response for %s (hash matches but no content)", altName)
+					elseif data.expectedHash then
+						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash mismatch for %s (have %d, expected %d)", altName, myHash, data.expectedHash)
 					end
 				end
 			end
@@ -974,7 +980,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			end
 
 			if not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
+				-- P2P SUCCESS: Non-banker responded with data
+				local wasPending = TOGBankClassic_Guild.pendingP2PRequests[altName] ~= nil
 				TOGBankClassic_Guild.pendingP2PRequests[altName] = nil
+				if wasPending then
+					TOGBankClassic_Output:Info("P2P: Received data for %s from peer %s (bypassed banker)", altName, sender)
+				end
 			end
 
 			-- If sender has the data, send our state summary to them
