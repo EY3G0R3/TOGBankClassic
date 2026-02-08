@@ -12,6 +12,202 @@ _None - All critical issues resolved_
 
 **Recently Resolved Issues:**
 
+### ✅ [P2P-007] Stub entries in outgoing version broadcasts cause empty deltas - RESOLVED
+
+**Severity:** 🔴 CRITICAL (Stub entries never filled, network spam)
+**Category:** Version Broadcast / Stub Entries / Empty Deltas
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Date Resolved:** 2026-02-08
+**Status:** ✅ RESOLVED (Guild.lua lines 933-960, commit d4d985e)
+
+**Problem:**
+GetVersion() was broadcasting stub entries (hash but no content) to guild. Others cached these hashes and sent empty deltas (vX→vX) back, thinking the user already had the data. User received "Applied delta for X (v1770424645→v1770424645)" with no actual data written.
+
+**Impact:**
+- Stub entries never filled via regular delta sharing
+- Received continuous empty deltas from bankers who had cached stub hashes
+- Network bandwidth waste (sending deltas with no changes)
+- Only P2P queries could fill stubs (but bankers kept sending empty deltas)
+
+**Root Cause:**
+GetVersion() included ALL banker alts in version broadcast without checking HasAltContent():
+```lua
+-- OLD (WRONG):
+for k, v in pairs(self.Info.alts) do
+    if self:IsBank(k) then
+        if PROTOCOL.SUPPORTS_DELTA and v.inventoryHash then
+            data.alts[k] = {
+                version = v.version,
+                hash = v.inventoryHash,  -- BROADCASTS STUB HASHES!
+                updatedAt = v.inventoryUpdatedAt or v.version,
+            }
+        end
+    end
+end
+```
+
+**Fix:**
+Added HasAltContent check before including alt in version broadcast:
+```lua
+-- NEW (CORRECT):
+for k, v in pairs(self.Info.alts) do
+    if self:IsBank(k) then
+        -- P2P-007: Don't broadcast stub entries (hash but no content)
+        local hasContent = self:HasAltContent(v, k)
+        if not hasContent then
+            TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: excluding %s from version broadcast (stub entry - no content)", k)
+        else
+            -- Only broadcast alts with actual content
+            if PROTOCOL.SUPPORTS_DELTA and v.inventoryHash then
+                data.alts[k] = {
+                    version = v.version,
+                    hash = v.inventoryHash,
+                    updatedAt = v.inventoryUpdatedAt or v.version,
+                }
+            end
+        end
+    end
+end
+```
+
+**Expected Behavior After Fix:**
+1. Receive version broadcast from peer (creates stub entry locally)
+2. GetVersion() excludes stub from outgoing broadcast
+3. Others don't cache stub hash, can't send empty deltas
+4. Stub filled via P2P queries (P2P-006) or HL/HLR
+5. After stub filled, included in next version broadcast
+
+**Verification:**
+- Logs show: `GetVersion: excluding X from version broadcast (stub entry - no content)`
+- No more empty deltas from bankers for stub entries
+- Stub entries only filled via P2P queries, not regular delta sharing
+
+**Related Issues:** P2P-005, P2P-006
+
+---
+
+### ✅ [P2P-006] SendStateSummary not detecting stub entries - RESOLVED
+
+**Severity:** 🔴 CRITICAL (Empty deltas sent for stub entries)
+**Category:** P2P / State Summary / Stub Detection
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Date Resolved:** 2026-02-08
+**Status:** ✅ RESOLVED (Guild.lua line 1418, commit d4d985e)
+
+**Problem:**
+SendStateSummary called HasAltContent without the altName parameter, so stub detection failed. When requester sent state summary with hash=X for stub entry, sender computed delta from X→X (no changes) and sent empty delta. User saw "Applied delta for X (v1770424645→v1770424645)" with no data written.
+
+**Impact:**
+- P2P queries for stub entries resulted in empty deltas
+- Stub entries never filled via P2P (defeats entire stub filling system)
+- Users stuck with hash metadata but no items forever
+- HasAltContent logged "[CONTENT-CHECK] unknown: ..." (missing alt name)
+
+**Root Cause:**
+SendStateSummary line 1418 called HasAltContent without the altName parameter:
+```lua
+-- OLD (WRONG):
+local hasContent = localAlt and self:HasAltContent(localAlt) or false
+-- Without altName, couldn't check items/bank/bags/mail properly
+```
+
+**Fix:**
+Added norm parameter to HasAltContent call in SendStateSummary:
+```lua
+-- NEW (CORRECT):
+local hasContent = localAlt and self:HasAltContent(localAlt, norm) or false
+-- Now properly detects stub entries
+if forceFull or not hasContent then
+    summary.hash = nil
+    summary.version = 0  -- Forces full data send
+end
+```
+
+Also updated HasAltContent signature and all 16+ calls across Chat/Guild/DeltaComms to include altName parameter for proper logging.
+
+**Expected Behavior After Fix:**
+1. Receive P2P query for stub entry
+2. SendStateSummary detects hasContent=false
+3. Sends summary with hash=nil, version=0
+4. Peer sees version=0 → sends FULL data (not empty delta)
+5. Stub entry filled with actual items
+
+**Verification:**
+- Logs show: `[CONTENT-CHECK] Stubalt-Realm: items=N, bank=N, bags=N, mail=N => nil`
+- Logs show: `SendStateSummary: forcing full data for X (hasContent=false)`
+- Receive deltas with version change: `✓ Applied delta for X (v0→v1770424645)`
+
+**Related Issues:** P2P-005, P2P-007
+
+---
+
+### ✅ [P2P-005] Unsolicited version broadcasts causing STALE rejections - RESOLVED
+
+**Severity:** 🟡 MEDIUM (P2P system bypassed, network spam)
+**Category:** Version Broadcast / Protocol Flow / Unsolicited Data
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Date Resolved:** 2026-02-08
+**Status:** ✅ RESOLVED (Chat.lua lines 377-384, 783-793, commit d4d985e)
+
+**Problem:**
+Version broadcasts from others were being processed as queries, creating stub entries, and triggering unsolicited delta sends. User then received STALE rejections because the data was older than their existing stub entry timestamp. Also, bankers were responding to queries even when they only had stub entries (no content), sending empty state summaries.
+
+**Impact:**
+- Continuous STALE rejection messages from unsolicited data
+- Version broadcasts bypassing HL/HLR hash comparison system
+- Bankers responding with "0 unique items" for stub entries
+- Network spam from unnecessary data transfers
+
+**Root Cause:**
+1. ProcessVersionBroadcast processed data.alts from all broadcasts, creating queries for every alt mentioned
+2. No distinction between solicited (HL/HLR) vs unsolicited (automatic broadcast) version data
+3. Chat.lua query handler didn't check HasAltContent before banker responded
+
+**Fix:**
+1. Added early return in ProcessVersionBroadcast when data.alts exists:
+```lua
+-- P2P-005: Ignore unsolicited version broadcasts - use HL/HLR for sync
+if data.alts then
+    TOGBankClassic_Output:Debug("PROTOCOL", "[VERSION-BROADCAST] Ignoring unsolicited version broadcast from %s (alts=%d) - use HL/HLR for sync", sender, altCount)
+    return
+end
+```
+
+2. Added content check in banker query response (Chat.lua lines 783-793):
+```lua
+if isBanker and hasData then
+    local alt = TOGBankClassic_Guild.Info.alts[normAltName]
+    local hasContent = TOGBankClassic_Guild:HasAltContent(alt, altName)
+    if hasContent then
+        shouldRespond = true
+        expectedHash = alt.inventoryHash or 0
+    else
+        TOGBankClassic_Output:Debug("QUERIES", "P2P-005: Banker skipping response for %s (no content - stub entry)", altName)
+    end
+end
+```
+
+**Expected Behavior After Fix:**
+1. Receive version broadcast → ignore if unsolicited
+2. Only process version data from HL/HLR responses (solicited)
+3. Bankers only respond to queries if they have actual content
+4. No more STALE rejections from unsolicited broadcasts
+
+**Verification:**
+- Logs show: `[VERSION-BROADCAST] Ignoring unsolicited version broadcast from X (alts=35)`
+- Logs show: `P2P-005: Banker skipping response for X (no content - stub entry)`
+- No STALE rejections from version broadcasts
+
+**Related Issues:** P2P-006, P2P-007
+
+**Additional Changes:**
+Created new **QUERIES** debug category to separate P2P query/response messages from SYNC data transfer logs. Added to Constants.lua, Database.lua, Options.lua with checkbox in Debug tab.
+
+---
+
 ### ✅ [P2P-004] Stub entries sending requesterHash=0 instead of actual hash - RESOLVED
 
 **Severity:** 🔴 CRITICAL (P2P system non-functional for stubs)

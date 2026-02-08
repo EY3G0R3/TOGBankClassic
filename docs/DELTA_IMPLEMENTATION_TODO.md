@@ -207,8 +207,11 @@ return PROTOCOL.SUPPORTS_DELTA
 - ✅ **P2P-002**: Version broadcasts now query sender, not banker (Feb 8, 2026)
 - ✅ **P2P-003**: Hash match logic checks hasContent for stub entries (Feb 8, 2026)
 - ✅ **P2P-004**: Stub entries send actual hash, not 0, for P2P matching (Feb 8, 2026)
+- ✅ **P2P-005**: Ignore unsolicited version broadcasts, banker content check (Feb 8, 2026)
+- ✅ **P2P-006**: SendStateSummary detects stubs and forces full data (Feb 8, 2026)
+- ✅ **P2P-007**: Exclude stub entries from outgoing version broadcasts (Feb 8, 2026)
 
-### P2P Stub Entry Fixes (February 8, 2026)
+### P2P Stub Entry Fixes (February 8, 2026) - COMPLETE
 
 **Problem Identified:**
 P2P system was completely non-functional for stub entries (hash from version broadcast but no content). Four critical bugs prevented P2P peers from responding to stub queries.
@@ -268,10 +271,61 @@ P2P system was completely non-functional for stub entries (hash from version bro
 - Monitor logs for: `> [PeerName] shares delta ... for [StubAlt]` from non-bankers
 - Verify P2P responses fill stub entries without banker involvement
 
+**P2P-005/006/007 Additional Fixes (February 8, 2026) - COMPLETE**
+
+Three additional critical bugs discovered during testing prevented stub entries from being filled even after P2P-001 through P2P-004 fixes.
+
+**Bug #5: Unsolicited Version Broadcasts (P2P-005)**
+- **Issue**: Version broadcasts from others being processed as queries, creating stub entries, triggering unsolicited delta sends causing STALE rejections. Bankers also responding to queries even with only stub entries.
+- **Impact**: Continuous STALE rejection messages, network spam, bankers sending empty state summaries (0 unique items)
+- **Fix Part 1**: Early return in ProcessVersionBroadcast when data.alts exists - forces HL/HLR hash comparison flow instead
+- **Fix Part 2**: Banker checks HasAltContent before responding to queries (Chat.lua lines 783-793)
+- **Location**: Chat.lua lines 377-384 (ignore broadcasts), 783-793 (banker content check)
+- **Result**: No more unsolicited broadcasts, no STALE rejections, bankers only respond with actual content
+
+**Bug #6: SendStateSummary Stub Detection (P2P-006) - CRITICAL**
+- **Issue**: SendStateSummary called HasAltContent without altName parameter, so stub detection failed. State summary sent with hash=X, peer computed delta X→X (no changes), sent empty delta.
+- **Impact**: P2P queries resulted in empty deltas for stub entries - "Applied delta for X (v1770424645→v1770424645)" with no data written
+- **Fix**: Added norm parameter to HasAltContent call (line 1418), updated all 16+ HasAltContent calls across Chat/Guild/DeltaComms to include altName for proper logging
+- **Location**: Guild.lua line 1418 (SendStateSummary), plus HasAltContent function signature and all call sites
+- **Logic**: When hasContent=false, forces hash=nil and version=0 in state summary, making sender send FULL data instead of empty delta
+- **Result**: Stub entries now receive full data fills via P2P, proper content detection logging
+
+**Bug #7: Outgoing Stub Broadcasts (P2P-007)**
+- **Issue**: GetVersion() broadcasting stub entries (hash but no content), others cached these hashes and sent empty deltas back
+- **Impact**: Received continuous empty deltas from bankers who cached stub hashes, stub entries never filled via regular delta sharing
+- **Fix**: Added HasAltContent check in GetVersion() before including alt in version broadcast
+- **Location**: Guild.lua lines 933-960
+- **Logic**: Exclude stub entries from data.alts in version broadcast, log "excluding X from version broadcast (stub entry - no content)"
+- **Result**: Others don't cache stub hashes, can't send empty deltas, stubs only filled via P2P queries
+
+**QUERIES Debug Category:**
+- Created new category to separate P2P query/response messages from SYNC data transfer logs
+- Added to Constants.lua, Database.lua, Options.lua with checkbox in Debug tab
+- Moved peer response/hash matching messages from SYNC to QUERIES
+
+**Complete P2P Stub Entry Flow After All Fixes:**
+1. Receive version broadcast from peer (creates stub entry with hash, no items)
+2. P2P-007: Don't broadcast stub hash back out (prevents others sending empty deltas)
+3. Fast-fill or HLR detects stub entry needs data
+4. P2P-004: Send query with actual stub hash (not 0)
+5. P2P-005: Banker only responds if has content, ignores unsolicited broadcasts
+6. P2P-006: Send state summary with version=0 (forces full data)
+7. Peer sends FULL data (not empty delta)
+8. Apply data and fill stub entry
+9. Next version broadcast includes alt (now has content)
+
+**Backward Compatibility:**
+- All fixes work on requester's side only
+- Old clients without P2P-006 still work (will get empty deltas among themselves)
+- New clients get full data from both old and new senders (version=0 is standard)
+- No breaking changes to protocol
+
 **Debug Categories:**
-- **PROTOCOL**: Query decisions, P2P target selection, WHISPER/GUILD routing
-- **DELTA**: Requester hash values (0 vs actual), delta computation
+- **PROTOCOL**: Query decisions, P2P target selection, WHISPER/GUILD routing, version broadcast handling
+- **DELTA**: Requester hash values (0 vs actual), delta computation, content checks
 - **SYNC**: "Applied delta", adoption status, staleness checks
+- **QUERIES**: P2P query/response decisions, hash matching, peer responses (NEW)
 
 ### Multi-Responder Scenarios
 
