@@ -17,6 +17,10 @@ TOGBankClassic_Guild.pendingP2PRequests = {}
 TOGBankClassic_Guild.lastAltQueryTime = {}
 TOGBankClassic_Guild.bankerProgressKnown = {}
 
+-- P2P send queue tracking (limit concurrent sends to prevent overwhelming chat throttle)
+TOGBankClassic_Guild.pendingSendCount = 0
+TOGBankClassic_Guild.MAX_PENDING_SENDS = 3
+
 -- Temporary in-memory error storage for when Guild.Info is not initialized
 TOGBankClassic_Guild.tempDeltaErrors = {
 	lastErrors = {},
@@ -2157,6 +2161,13 @@ function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
 
 		if not TOGBankClassic_Options:IsSyncProgressMuted() then
 			TOGBankClassic_Output:Info(summary)
+		end
+
+		-- Decrement P2P send queue counter
+		if TOGBankClassic_Guild.pendingSendCount > 0 then
+			TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
+			TOGBankClassic_Output:Debug("SYNC", "P2P send completed - queue now: %d/%d", 
+				TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 		end
 
 		-- Warn on failures

@@ -757,11 +757,17 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					local myHash = alt.inventoryHash or 0
 					local hasContent = TOGBankClassic_Guild:HasAltContent(alt)
-					if myHash == data.expectedHash and hasContent then
+					local sendQueueFull = TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS
+					if myHash == data.expectedHash and hasContent and not sendQueueFull then
 						shouldRespond = true
 						expectedHash = myHash
+						TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
 						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Peer responding for %s (hash match: %d)", altName, myHash)
-						TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d)", sender, altName, myHash)
+						TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d", 
+							sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+					elseif sendQueueFull then
+						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping response (send queue full: %d/%d)", 
+							TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 					elseif myHash == data.expectedHash and not hasContent then
 						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping response for %s (hash matches but no content)", altName)
 					elseif data.expectedHash then
@@ -795,6 +801,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					ColorPlayerName(sender),
 					string.format("(isBanker=%s, hasData=%s, hash=%s)", tostring(isBanker), tostring(hasData), tostring(expectedHash))
 				)
+
 			else
 				-- Don't respond if we don't have the data
 				if not hasData then
@@ -980,25 +987,25 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			end
 
 			if not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
-				-- P2P SUCCESS: Non-banker responded with data
-				local wasPending = TOGBankClassic_Guild.pendingP2PRequests[altName] ~= nil
-				TOGBankClassic_Guild.pendingP2PRequests[altName] = nil
-				if wasPending then
-					TOGBankClassic_Output:Info("P2P: Received data for %s from peer %s (bypassed banker)", altName, sender)
-				end
-			end
-
-			-- If sender has the data, send our state summary to them
-			if hasData then
-				TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
-				TOGBankClassic_Guild:SendStateSummary(altName, sender)
-			else
-				TOGBankClassic_Output:DebugComm("NOT sending state summary (hasData=false)")
+			-- P2P: Non-banker (peer) acknowledged - continue with delta sync
+			local wasPending = TOGBankClassic_Guild.pendingP2PRequests[altName] ~= nil
+			if wasPending then
+				TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
+				-- Keep pending request active - clear it when actual data arrives
 			end
 		end
-	end
 
-	-- v0.8.0: State summary handler (togbank-state) - Step 5 & 6 of pull-based flow
+		-- If sender has the data, send our state summary to them for delta comparison
+		if hasData then
+			TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
+			TOGBankClassic_Guild:SendStateSummary(altName, sender)
+		else
+			TOGBankClassic_Output:DebugComm("NOT sending state summary (hasData=false)")
+		end
+	end
+end
+
+-- v0.8.0: State summary handler (togbank-state) - Step 5 & 6 of pull-based flow
 	if prefix == "togbank-state" then
 		if data.type == "state-summary" then
 			local altName = data.name
@@ -1182,6 +1189,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				-- ReceiveAltData already applied/rejected; refresh UI if open
 				if status == ADOPTION_STATUS.ADOPTED and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 					TOGBankClassic_UI_Inventory:DrawContent()
+				end
+
+				-- Clear P2P pending request if this was a peer response
+				if TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[claimedNorm] then
+					TOGBankClassic_Guild.pendingP2PRequests[claimedNorm] = nil
+					TOGBankClassic_Output:Info("P2P: Successfully received data for %s from peer %s (bypassed banker)", claimedNorm, sender)
 				end
 			else
 				-- ignore spoofed alt data
