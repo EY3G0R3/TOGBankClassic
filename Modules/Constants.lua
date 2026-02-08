@@ -97,7 +97,7 @@ PROTOCOL = {
 -- Peer-to-Peer distribution settings (PERF-005)
 PEER_TO_PEER = {
 	ENABLED = true,                  -- Enable P2P distribution (allows any peer with matching hash to respond)
-	MIN_GUILD_SIZE = 50,             -- Only enable for guilds with >50 members
+	MIN_GUILD_SIZE = 3,              -- Only enable for guilds with >3 members
 	HASH_QUERY_TIMEOUT = 5,          -- Seconds to wait for hash from banker
 	PEER_RESPONSE_TIMEOUT = 5,       -- Seconds to wait for peer data
 	FALLBACK_TO_BANKER = true,       -- Always fall back to banker on hash mismatch or timeout
