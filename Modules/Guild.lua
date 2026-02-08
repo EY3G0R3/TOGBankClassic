@@ -474,9 +474,9 @@ function TOGBankClassic_Guild:HasAltData(alt)
 	return false
 end
 
-function TOGBankClassic_Guild:HasAltContent(alt)
+function TOGBankClassic_Guild:HasAltContent(alt, altName)
 	if not alt or type(alt) ~= "table" then
-		TOGBankClassic_Output:Debug("DELTA", "[CONTENT-CHECK] %s: not a table", alt and alt.name or "unknown")
+		TOGBankClassic_Output:Debug("DELTA", "[CONTENT-CHECK] %s: not a table", altName or (alt and alt.name) or "unknown")
 		return false
 	end
 	
@@ -489,7 +489,7 @@ function TOGBankClassic_Guild:HasAltContent(alt)
 	
 	TOGBankClassic_Output:Debug("DELTA", 
 		"[CONTENT-CHECK] %s: items=%s, bank=%s, bags=%s, mail=%s => %s",
-		alt.name or "unknown",
+		altName or alt.name or "unknown",
 		tostring(hasItems and "Y" or "N"),
 		tostring(hasBankItems and "Y" or "N"),
 		tostring(hasBagsItems and "Y" or "N"),
@@ -515,7 +515,7 @@ function TOGBankClassic_Guild:GetBankerDataProgress()
 	local have = 0
 	for _, altName in ipairs(rosterAlts) do
 		local norm = self:NormalizeName(altName)
-		if norm and self:HasAltContent(self.Info.alts and self.Info.alts[norm]) then
+		if norm and self:HasAltContent(self.Info.alts and self.Info.alts[norm], norm) then
 			have = have + 1
 		end
 	end
@@ -553,7 +553,7 @@ function TOGBankClassic_Guild:ReportBankerDataProgress(context, force)
 
 	for _, altName in ipairs(rosterAlts) do
 		local norm = self:NormalizeName(altName)
-		local hasContent = norm and self:HasAltContent(self.Info.alts and self.Info.alts[norm])
+		local hasContent = norm and self:HasAltContent(self.Info.alts and self.Info.alts[norm], norm)
 		if hasContent then
 			have = have + 1
 			if lastHave >= 0 and not self.bankerProgressKnown[norm] then
@@ -675,7 +675,7 @@ function TOGBankClassic_Guild:ReportHashListCoverage()
 		local localHash = localAlt and localAlt.inventoryHash or 0
 		if localAlt and localHash ~= 0 and summary and summary.hash == localHash then
 			-- Hash matches, but check if we have actual content
-			if not self:HasAltContent(localAlt) then
+			if not self:HasAltContent(localAlt, altName) then
 				-- Hash matches but no content - treat as pending (need to request)
 				table.insert(matchedNoContent, altName)
 				table.insert(pending, altName)
@@ -709,7 +709,7 @@ function TOGBankClassic_Guild:ReportHashListCoverage()
 	for _, altName in ipairs(rosterAlts) do
 		local norm = self:NormalizeName(altName)
 		local localAlt = localAlts and norm and localAlts[norm]
-		if norm and self:HasAltContent(localAlt) then
+		if norm and self:HasAltContent(localAlt, norm) then
 			haveContent = haveContent + 1
 		end
 	end
@@ -791,7 +791,7 @@ function TOGBankClassic_Guild:RequestHashListFromBanker()
 			for _, altName in ipairs(rosterAlts) do
 				local norm = self:NormalizeName(altName)
 				local localAlt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
-				local hasContent = localAlt and self:HasAltContent(localAlt)
+				local hasContent = localAlt and self:HasAltContent(localAlt, norm)
 				if not hasContent then
 					local localHash = localAlt and localAlt.inventoryHash or nil
 					local updatedAt = localAlt and (localAlt.inventoryUpdatedAt or localAlt.version) or nil
@@ -842,7 +842,7 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	-- Check if we already have this data with content - don't broadcast if we do
 	local norm = self:NormalizeName(altName)
 	local existing = self.Info and self.Info.alts and self.Info.alts[norm]
-	if existing and self:HasAltContent(existing) then
+	if existing and self:HasAltContent(existing, norm) then
 		TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping P2P broadcast for %s (already have content)", altName)
 		return
 	end
@@ -933,22 +933,28 @@ function TOGBankClassic_Guild:GetVersion()
 		---START CHANGES
 		-- Only broadcast bankers from the CURRENT guild (cross-guild data leak fix)
 		if self:IsBank(k) then
-			-- Only store bank alt data if the sender is a bank alt
-			--data.alts[k] = v.version
-			-- v0.8.0: Include inventory hash for pull-based protocol
-			if type(v) == "table" and v.version then
-				-- Send hash only in delta-enabled mode (backwards compatibility)
-				if PROTOCOL.SUPPORTS_DELTA and v.inventoryHash then
-					data.alts[k] = {
-						version = v.version,
-						hash = v.inventoryHash,
-						updatedAt = v.inventoryUpdatedAt or v.version,
-					}
-					TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: including %s in local version data (ver=%d, hash=%d)", k, v.version, v.inventoryHash)
-				else
-					-- Legacy format for old clients
-					data.alts[k] = v.version
-					TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: including %s in local version data (ver=%d, no hash)", k, v.version)
+			-- P2P-007: Don't broadcast stub entries (hash but no content) - causes others to send empty deltas
+			local hasContent = self:HasAltContent(v, k)
+			if not hasContent then
+				TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: excluding %s from version broadcast (stub entry - no content)", k)
+			else
+				-- Only store bank alt data if the sender is a bank alt
+				--data.alts[k] = v.version
+				-- v0.8.0: Include inventory hash for pull-based protocol
+				if type(v) == "table" and v.version then
+					-- Send hash only in delta-enabled mode (backwards compatibility)
+					if PROTOCOL.SUPPORTS_DELTA and v.inventoryHash then
+						data.alts[k] = {
+							version = v.version,
+							hash = v.inventoryHash,
+							updatedAt = v.inventoryUpdatedAt or v.version,
+						}
+						TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: including %s in local version data (ver=%d, hash=%d)", k, v.version, v.inventoryHash)
+					else
+						-- Legacy format for old clients
+						data.alts[k] = v.version
+						TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: including %s in local version data (ver=%d, no hash)", k, v.version)
+					end
 				end
 			end
 		else
@@ -1153,13 +1159,16 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 		-- Send the hash we have (from version broadcast or actual data)
 		request.requesterInventoryHash = requesterAlt.inventoryHash or 0
 		request.requesterMailHash = requesterAlt.mailHash or 0
-		local hasContent = self:HasAltContent(requesterAlt)
-		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%d, mailHash=%d (%s)",
-			norm, request.requesterInventoryHash, request.requesterMailHash, hasContent and "have content" or "stub - need data")
+		local hasContent = self:HasAltContent(requesterAlt, norm)
+		-- P2P-006: Tell sender if we have content - if not, they should send full data
+		request.requesterHasContent = hasContent
+		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%d, mailHash=%d, hasContent=%s",
+			norm, request.requesterInventoryHash, request.requesterMailHash, tostring(hasContent))
 	else
 		-- No local data at all - send hash=0
 		request.requesterInventoryHash = 0
 		request.requesterMailHash = 0
+		request.requesterHasContent = false
 		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=0 (no local entry)", norm)
 	end
 
@@ -1413,7 +1422,7 @@ function TOGBankClassic_Guild:SendStateSummary(name, target)
 	local norm = self:NormalizeName(name)
 	local forceFull = self.forceFullRequests and norm and self.forceFullRequests[norm]
 	local localAlt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
-	local hasContent = localAlt and self:HasAltContent(localAlt) or false
+	local hasContent = localAlt and self:HasAltContent(localAlt, norm) or false
 	if forceFull or not hasContent then
 		summary.hash = nil
 		summary.version = 0
@@ -2479,8 +2488,8 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			return c
 		end
 
-		local existingHasContent = existing and self:HasAltContent(existing) or false
-		local incomingHasContent = self:HasAltContent(alt)
+		local existingHasContent = existing and self:HasAltContent(existing, norm) or false
+		local incomingHasContent = self:HasAltContent(alt, norm)
 		-- Allow incoming data if we have no existing data OR existing has no content
 		local allowStaleBecauseMissingContent = (not existing) or (not existingHasContent and incomingHasContent)
 		if allowStaleBecauseMissingContent then

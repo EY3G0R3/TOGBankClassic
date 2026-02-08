@@ -1277,7 +1277,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		local norm = TOGBankClassic_Guild:NormalizeName(altName)
 		local localAlt = guildInfo.alts and norm and guildInfo.alts[norm]
 		local hasEntry = localAlt ~= nil
-		local hasContent = hasEntry and TOGBankClassic_Guild:HasAltContent(localAlt)
+		local hasContent = hasEntry and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
 		-- DEBUG: Log every alt to see what's happening
 		TOGBankClassic_Output:Debug("PROTOCOL", "FastFill check: %s hasEntry=%s hasContent=%s", 
 			tostring(norm), tostring(hasEntry), tostring(hasContent))

@@ -16,6 +16,7 @@ function TOGBankClassic_Database:Init()
 				DATABASE = false,
 				EVENTS = false,
 				MAIL = false,
+				QUERIES = false,
 			},
 			showUncategorizedDebug = true,  -- Show legacy debug messages by default
 		},

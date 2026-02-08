@@ -382,6 +382,18 @@ function TOGBankClassic_Options:Init()
 							return TOGBankClassic_Output:IsCategoryEnabled("ITEM")
 						end,
 					},
+					["queries"] = {
+						order = 23,
+						type = "toggle",
+						width = "full",
+						name = "QUERIES - P2P query/response decisions and hash matching",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("QUERIES", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("QUERIES")
+						end,
+					},
 					["spacer"] = {
 						order = 30,
 						type = "description",

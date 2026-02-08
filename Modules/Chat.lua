@@ -374,6 +374,15 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 		end
 		-- PERF-002 fix: Request sync decoupled from inventory sync (togbank-dv)
 		-- Request syncs now handled independently via SendRequestsVersionPing()
+		
+		-- P2P-005: Ignore unsolicited version broadcasts - use HL/HLR hash comparison instead
+		-- Keep handler active for banker tracking, protocol capabilities, and roster sync above
+		if data.alts then
+			TOGBankClassic_Output:Debug("PROTOCOL", "[VERSION-BROADCAST] Ignoring unsolicited version broadcast from %s (alts=%d) - use HL/HLR for sync",
+				sender, data.alts and (function() local c=0; for _ in pairs(data.alts) do c=c+1 end return c end)() or 0)
+			return
+		end
+		--[[
 		if data.alts then
 			local altCount = 0
 			for _ in pairs(data.alts) do
@@ -577,6 +586,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 				end
 			end
 		end
+		--]]
 	end
 end
 
@@ -726,12 +736,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 			TOGBankClassic_Output:DebugComm("RECEIVED PULL-BASED REQUEST from %s for alt %s (hashOnly=%s)", sender, altName, tostring(hashOnly))
 
-			self:Debug(
-				"SYNC",
-				">",
+			TOGBankClassic_Output:Debug("QUERIES", "> %s %s %s",
 				ColorPlayerName(sender),
-				QUERIES_COLOR,
-				hashOnly and "hash query for" or "pull-based request for",
+				hashOnly and "queries hash query for" or "queries pull-based request for",
 				ColorPlayerName(altName)
 			)
 
@@ -770,33 +777,38 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					expectedUpdatedAt = alt.inventoryUpdatedAt or alt.version or 0
 				end
 			else
-				-- Regular query: bankers always respond, peers respond if hash matches (P2P)
+				-- Regular query: bankers respond if they have content, peers respond if hash matches (P2P)
 				if isBanker and hasData then
-					shouldRespond = true
-					-- PERF-005: Banker includes hash for P2P validation
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
-					expectedHash = alt.inventoryHash or 0
-					expectedUpdatedAt = alt.inventoryUpdatedAt or alt.version or 0
+					local hasContent = TOGBankClassic_Guild:HasAltContent(alt, altName)
+					if hasContent then
+						shouldRespond = true
+						-- PERF-005: Banker includes hash for P2P validation
+						expectedHash = alt.inventoryHash or 0
+						expectedUpdatedAt = alt.inventoryUpdatedAt or alt.version or 0
+					else
+						TOGBankClassic_Output:Debug("QUERIES", "P2P-005: Banker skipping response for %s (no content - stub entry)", altName)
+					end
 				elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
 					-- PERF-005: Non-bankers can respond if they have matching hash AND actual content
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					local myHash = alt.inventoryHash or 0
-					local hasContent = TOGBankClassic_Guild:HasAltContent(alt)
+					local hasContent = TOGBankClassic_Guild:HasAltContent(alt, altName)
 					local sendQueueFull = TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS
 					if myHash == data.expectedHash and hasContent and not sendQueueFull then
 						shouldRespond = true
 						expectedHash = myHash
 						TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
-						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Peer responding for %s (hash match: %d)", altName, myHash)
+						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Peer responding for %s (hash match: %d)", altName, myHash)
 						TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
 							sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 					elseif sendQueueFull then
-						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping response (send queue full: %d/%d)",
+						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Skipping response (send queue full: %d/%d)",
 							TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 					elseif myHash == data.expectedHash and not hasContent then
-						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping response for %s (hash matches but no content)", altName)
+						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Skipping response for %s (hash matches but no content)", altName)
 					elseif data.expectedHash then
-						TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash mismatch for %s (have %d, expected %d)", altName, myHash, data.expectedHash)
+						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Hash mismatch for %s (have %d, expected %d)", altName, myHash, data.expectedHash)
 					end
 				end
 			end
@@ -831,7 +843,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				-- Don't respond if we don't have the data
 				if not hasData then
 					TOGBankClassic_Output:Debug(
-						"PROTOCOL",
+						"QUERIES",
 						"Ignoring pull-based request for %s (no data): isBanker=%s, hasInfo=%s",
 						altName,
 						tostring(isBanker),
@@ -850,7 +862,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						else
 							local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 							local myHash = alt and alt.inventoryHash or 0
-							local hasContent = alt and TOGBankClassic_Guild:HasAltContent(alt) or false
+							local hasContent = alt and TOGBankClassic_Guild:HasAltContent(alt, altName) or false
 							local sendQueueFull = TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS
 							if sendQueueFull then
 								reason = string.format("send queue full (%d/%d)", TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
@@ -863,7 +875,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							end
 						end
 					end
-					TOGBankClassic_Output:Debug("PROTOCOL", "Ignoring pull-based request for %s (%s)", altName, reason)
+					TOGBankClassic_Output:Debug("QUERIES", "Ignoring pull-based request for %s (%s)", altName, reason)
 				end
 			end
 
@@ -1651,7 +1663,7 @@ end
 				local localAlt = localAlts and localAlts[norm]
 				local localHash = localAlt and localAlt.inventoryHash or 0
 				local hasContent = localAlt and TOGBankClassic_Guild and TOGBankClassic_Guild.HasAltContent
-					and TOGBankClassic_Guild:HasAltContent(localAlt)
+					and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
 				-- DEBUG: Log every alt to see what's happening
 				TOGBankClassic_Output:Debug("PROTOCOL", "HLR check: %s hasContent=%s localHash=%s bankerHash=%s",
 					tostring(norm), tostring(hasContent), tostring(localHash), tostring(summary and summary.hash))

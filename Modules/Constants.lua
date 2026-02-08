@@ -37,6 +37,7 @@ DEBUG_CATEGORY = {
 	EVENTS = "EVENTS",           -- WoW event handling
 	MAIL = "MAIL",               -- Mail inventory scanning and tracking
 	ITEM = "ITEM",               -- Item loading, validation, and processing
+	QUERIES = "QUERIES",         -- P2P query/response decisions and hash matching
 }
 
 -- Request storage settings
