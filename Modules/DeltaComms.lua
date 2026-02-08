@@ -1336,16 +1336,19 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	-- Query each missing alt using pull-based protocol
 	for _, norm in ipairs(missing) do
 		local info = missingInfo[norm]
-		if not hasOnlineBanker and info and info.reason == "no content" and info.hash then
+		-- PERF-006: Use P2P whenever we have a hash, regardless of banker online status
+		if info and info.hash and info.hash ~= 0 then
+			-- We have hash but no content - broadcast P2P request (GUILD → timeout → banker fallback)
 			TOGBankClassic_Output:Debug(
 				"PROTOCOL",
-				"Fast-fill P2P broadcast (no banker): requesting %s (expectedHash=%s, updatedAt=%s)",
+				"Fast-fill P2P broadcast: requesting %s (expectedHash=%s, updatedAt=%s)",
 				tostring(norm),
 				tostring(info.hash),
 				tostring(info.updatedAt)
 			)
 			TOGBankClassic_Guild:BroadcastP2PRequest(norm, info.hash, info.updatedAt, nil)
 		else
+			-- No hash available - go straight to banker whisper as last resort
 			TOGBankClassic_Guild:QueryAltPullBased(norm, false)
 		end
 	end

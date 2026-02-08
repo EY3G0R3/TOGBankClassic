@@ -564,12 +564,13 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 				end -- Close hasContent else block
 
 				if shouldQuery then
-					-- v0.8.0: Use pull-based query for delta version broadcasts
-					TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QUERYING %s from %s (reason: version broadcast hash mismatch)", kNorm, sender)
-					if PEER_TO_PEER and PEER_TO_PEER.ENABLED then
-						-- P2P flow step 1: hash-only whisper to sender (who has the data)
-						TOGBankClassic_Guild:QueryAltPullBased(kNorm, true, false, sender)
+					-- v0.8.0: Use P2P broadcast when hash available, fallback to banker query
+					TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QUERYING %s from %s (reason: version broadcast mismatch)", kNorm, sender)
+					if theirHash and theirHash ~= 0 then
+						-- P2P: Broadcast to guild with hash, wait for peers, fallback to banker
+						TOGBankClassic_Guild:BroadcastP2PRequest(kNorm, theirHash, theirVersion, sender)
 					else
+						-- No hash available, go straight to banker as last resort
 						TOGBankClassic_Guild:QueryAltPullBased(kNorm, false, false, sender)
 					end
 				end
@@ -1030,7 +1031,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
 
 				TOGBankClassic_Output:DebugComm("PERF-005: Broadcasting P2P request to GUILD for %s with expectedHash=%s", altName, tostring(expectedHash))
-				TOGBankClassic_Core:SendCommMessage("togbank-r", p2pData, "GUILD", nil, "NORMAL")
+				-- PERF-006: Use togbank-hl for P2P broadcasts so old code without hash support doesn't see them
+				TOGBankClassic_Core:SendCommMessage("togbank-hl", p2pData, "GUILD", nil, "NORMAL")
 
 				self:Debug("SYNC", "< Broadcasting P2P request for %s (hash=%s)", ColorPlayerName(altName), tostring(expectedHash))
 
@@ -1039,29 +1041,38 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					local pending = TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[altName]
 					if pending then
 						TOGBankClassic_Guild.pendingP2PRequests[altName] = nil
+						-- PERF-006: Clear pendingAltRequests to allow banker fallback
+						if TOGBankClassic_Guild.pendingAltRequests then
+							TOGBankClassic_Guild.pendingAltRequests[altName] = nil
+						end
 						TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
 						TOGBankClassic_Guild:QueryAltPullBased(altName, false)
 					end
 				end)
-				return
-			end
+			elseif not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
+				-- P2P: Non-banker (peer) acknowledged - continue with delta sync
+				local wasPending = TOGBankClassic_Guild.pendingP2PRequests[altName] ~= nil
+				if wasPending then
+					TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
+				end
 
-			if not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
-			-- P2P: Non-banker (peer) acknowledged - continue with delta sync
-			local wasPending = TOGBankClassic_Guild.pendingP2PRequests[altName] ~= nil
-			if wasPending then
-				TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
-				-- Keep pending request active - clear it when actual data arrives
+				-- Send state summary for delta comparison
+				if hasData and expectedHash then
+					TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
+					TOGBankClassic_Guild:SendStateSummary(altName, sender)
+				end
+			elseif hasData then
+				-- Banker (non-P2P path) or fallback - send state summary
+				if expectedHash == nil then
+					TOGBankClassic_Output:Debug("PROTOCOL", "PERF-006: Responder has no hash support (old code) - forcing full data request for %s", altName)
+					TOGBankClassic_Guild:SendStateSummary(altName, sender, true) -- forceFull=true
+				else
+					TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
+					TOGBankClassic_Guild:SendStateSummary(altName, sender)
+				end
+			else
+				TOGBankClassic_Output:DebugComm("NOT sending state summary (hasData=false)")
 			end
-		end
-
-		-- If sender has the data, send our state summary to them for delta comparison
-		if hasData then
-			TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
-			TOGBankClassic_Guild:SendStateSummary(altName, sender)
-		else
-			TOGBankClassic_Output:DebugComm("NOT sending state summary (hasData=false)")
-		end
 	end
 end
 
@@ -1605,6 +1616,14 @@ end
 			local replyTarget = data.requester or sender
 			TOGBankClassic_Output:Debug("PROTOCOL", "HL request from %s (replyTarget=%s)", tostring(sender), tostring(replyTarget))
 			TOGBankClassic_Guild:SendHashList(replyTarget)
+		elseif data.type == "alt-request" then
+			-- PERF-006: P2P broadcast on togbank-hl channel (modern code only)
+			-- Process exactly the same as togbank-r alt-request, but only modern peers see this
+			TOGBankClassic_Output:Debug("PROTOCOL", "P2P alt-request from %s for %s (expectedHash=%s)",
+				tostring(sender), tostring(data.name), tostring(data.expectedHash))
+			
+			-- Forward to togbank-r handler for processing
+			prefix = "togbank-r"
 		end
 	end
 	if prefix == "togbank-hlr" then

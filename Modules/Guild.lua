@@ -875,14 +875,19 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 		updatedAt = expectedUpdatedAt,
 	}
 	local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
-	TOGBankClassic_Core:SendCommMessage("togbank-r", p2pData, "GUILD", nil, "NORMAL")
+	-- PERF-006: Use togbank-hl for P2P broadcasts so old code without hash support doesn't see them
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", p2pData, "GUILD", nil, "NORMAL")
 
 	local timeout = (PEER_TO_PEER and PEER_TO_PEER.PEER_RESPONSE_TIMEOUT) or 5
 	C_Timer.After(timeout, function()
 		local pending = self.pendingP2PRequests and self.pendingP2PRequests[altName]
 		if pending then
 			self.pendingP2PRequests[altName] = nil
-			TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout", altName, timeout)
+			-- PERF-006: Clear pendingAltRequests to allow banker fallback
+			if self.pendingAltRequests then
+				self.pendingAltRequests[altName] = nil
+			end
+			TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout, falling back to banker", altName, timeout)
 			self:QueryAltPullBased(altName, false)
 		end
 	end)
@@ -1173,32 +1178,30 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	end
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
-	if banker and self:IsPlayerOnline(banker) then
-		-- Banker found in guild roster AND currently online - WHISPER directly
-		TOGBankClassic_Output:DebugComm("SENDING WHISPER: togbank-r to %s for alt %s", banker, norm)
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query for %s to banker %s (from guild roster, online=%s)",
-			norm, banker, tostring(self:IsPlayerOnline(banker)))
-		-- Try WHISPER first, fallback to GUILD if it fails
-		if not TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL") then
-			TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query failed for %s to %s, falling back to GUILD", norm, banker)
-			TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
-		end
-		self:MarkPendingSync("alt", banker, norm)
-		self.pendingAltRequests[norm] = now
-	else
-		-- No known banker or offline - broadcast on GUILD
-		local reason = "unknown"
-		if not banker then
-			reason = "no banker found in guild roster"
-		elseif not self:IsPlayerOnline(banker) then
-			reason = "banker offline"
-		end
-		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST: togbank-r for alt %s (no online banker)", norm)
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] GUILD query for %s, reason: %s", norm, reason)
-		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
-		self:MarkPendingSync("alt", nil, norm)
-		self.pendingAltRequests[norm] = now
+	
+	-- QueryAltPullBased is "last resort" - WHISPER banker directly
+	-- (P2P guild broadcast should be done via BroadcastP2PRequest first)
+	if not banker then
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: no banker found, cannot send query", norm)
+		return
 	end
+	
+	if not self:IsPlayerOnline(banker) then
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: banker %s offline, cannot send query", norm, banker)
+		return
+	end
+	
+	-- WHISPER banker as last resort
+	TOGBankClassic_Output:DebugComm("SENDING WHISPER (last resort): togbank-r to %s for alt %s", banker, norm)
+	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query for %s to banker %s (last resort after P2P timeout)", norm, banker)
+	
+	if not TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL") then
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query failed for %s to %s", norm, banker)
+		return
+	end
+	
+	self:MarkPendingSync("alt", banker, norm)
+	self.pendingAltRequests[norm] = now
 end
 
 -- DEPRECATED: Roster sync no longer uses network communication
@@ -1405,8 +1408,8 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 end
 
 -- v0.8.0: Send state summary to responder (Step 4 of pull-based flow)
-function TOGBankClassic_Guild:SendStateSummary(name, target)
-	TOGBankClassic_Output:DebugComm("SendStateSummary CALLED: name=%s, target=%s", tostring(name), tostring(target))
+function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
+	TOGBankClassic_Output:DebugComm("SendStateSummary CALLED: name=%s, target=%s, forceFull=%s", tostring(name), tostring(target), tostring(forceFullParam))
 	if not name or not target then
 		TOGBankClassic_Output:DebugComm("SendStateSummary EARLY RETURN: missing params")
 		return
@@ -1420,11 +1423,13 @@ function TOGBankClassic_Guild:SendStateSummary(name, target)
 	end
 
 	local norm = self:NormalizeName(name)
-	local forceFull = self.forceFullRequests and norm and self.forceFullRequests[norm]
+	local forceFull = forceFullParam or (self.forceFullRequests and norm and self.forceFullRequests[norm])
 	local localAlt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
 	local hasContent = localAlt and self:HasAltContent(localAlt, norm) or false
 	if forceFull or not hasContent then
-		summary.hash = nil
+		-- PERF-006: Set hash=0 (not nil) to force full data from responder
+		-- If we set hash=nil and responder also has hash=nil (old code), they'll match and send NO-CHANGE
+		summary.hash = 0
 		summary.version = 0
 		TOGBankClassic_Output:DebugComm(
 			"SendStateSummary: forcing full data for %s (forceFull=%s, hasContent=%s)",
