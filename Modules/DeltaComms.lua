@@ -929,9 +929,12 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 		-- Reset error count on successful application
 		self:ResetDeltaErrorCount(guildInfo.name, norm)
 
-		-- Trigger UI refresh if Inventory window is open
+		-- Trigger UI refresh if Inventory window is open AND viewing this alt
 		if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-			TOGBankClassic_UI_Inventory:DrawContent()
+			-- Only refresh if we're viewing the alt that was updated
+			if not TOGBankClassic_UI_Inventory.currentTab or TOGBankClassic_UI_Inventory.currentTab == norm then
+				TOGBankClassic_UI_Inventory:DrawContent()
+			end
 		end
 
 		return ADOPTION_STATUS.ADOPTED

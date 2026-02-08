@@ -264,6 +264,19 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 	self.TabGroup:SetCallback("OnGroupSelected", function(group)
 		local tab = group.localstatus.selected
+		
+		-- Prevent processing the same tab multiple times
+		if self.currentTab == tab and self.tabLoaded then
+			TOGBankClassic_Output:Debug("MAIL", "[RACE-CONDITION] BLOCKED duplicate OnGroupSelected for tab %s - something is triggering tab reload!", tab)
+			-- Print stack trace to see what's calling this
+			local stack = debugstack(2)
+			TOGBankClassic_Output:Debug("MAIL", "[RACE-CONDITION] Stack trace:\n%s", stack)
+			return
+		end
+		self.currentTab = tab
+		self.tabLoaded = false  -- Will be set to true after GetItems completes
+		
+		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Loading tab %s", tab)
 
 		self.TabGroup:ReleaseChildren()
 
@@ -278,6 +291,10 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		scroll:SetFullHeight(true)
 		scroll:SetFullWidth(true)
 		g:AddChild(scroll)
+		
+		-- Track scroll container to prevent race conditions
+		local scrollId = tostring(scroll)
+		scroll.callbackProcessed = false
 
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
@@ -351,6 +368,14 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			end
 
 			TOGBankClassic_Item:GetItems(validItems, function(list)
+				-- Prevent callback from running twice on same scroll container
+				if scroll.callbackProcessed then
+					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Ignoring duplicate callback for tab %s", tab)
+					return
+				end
+				scroll.callbackProcessed = true
+				self.tabLoaded = true  -- Mark tab as fully loaded
+				
 				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items",
 					tab, list and #list or 0)
 				
@@ -383,8 +408,11 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	-- Only select first_tab if no tab is currently selected
 	local currentTab = self.TabGroup.localstatus and self.TabGroup.localstatus.selected
 	if currentTab and info.alts[currentTab] then
-		-- Preserve current selection if it's still valid
-		self.TabGroup:SelectTab(currentTab)
+		-- Don't call SelectTab if it's already the current tab (prevents reload on sync)
+		-- The tab is already displayed, no need to trigger OnGroupSelected again
+		if self.currentTab ~= currentTab then
+			self.TabGroup:SelectTab(currentTab)
+		end
 	else
 		-- No current selection or invalid tab, select first tab
 		self.TabGroup:SelectTab(first_tab)

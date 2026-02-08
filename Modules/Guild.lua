@@ -2430,7 +2430,26 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			return ADOPTION_STATUS.STALE
 		end
 
-		if not targetIsBanker and existing and incomingUpdatedAt and existingUpdatedAt and not allowStaleBecauseMissingContent then
+-- PERFORMANCE FIX: Reject old client syncs if we already have mail preserved
+	-- Old clients (pre-v0.8.0) don't include mail in their syncs
+	-- If we already have data with mail, don't accept incomplete data from old clients
+	local incomingHasMail = alt.mail ~= nil
+	local existingHasMail = existing and existing.mail ~= nil
+	if existing and existingHasMail and not incomingHasMail then
+		TOGBankClassic_Output:Debug("SYNC", "Rejecting old client sync for %s (we have mail, incoming doesn't) - STALE",
+			norm)
+		return ADOPTION_STATUS.STALE
+	end
+
+	-- Hash-based staleness check: If inventory hash matches, data is identical (PERFORMANCE FIX)
+	-- Skip expensive mail preservation if nothing changed
+	if existing and alt.inventoryHash and existing.inventoryHash and alt.inventoryHash == existing.inventoryHash then
+		TOGBankClassic_Output:Debug("SYNC", "Hash match for %s (hash=%d) - data unchanged, rejecting as STALE",
+			norm, alt.inventoryHash)
+		return ADOPTION_STATUS.STALE
+	end
+
+	if not targetIsBanker and existing and incomingUpdatedAt and existingUpdatedAt and not allowStaleBecauseMissingContent then
 			if incomingUpdatedAt < existingUpdatedAt then
 				return ADOPTION_STATUS.STALE
 			elseif incomingUpdatedAt == existingUpdatedAt then

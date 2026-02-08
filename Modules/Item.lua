@@ -27,18 +27,19 @@ end
 function TOGBankClassic_Item:NeedsLink(itemLink)
 	if not itemLink then return false end
 
-	local _, _, _, _, _, _, _, _, itemEquipLoc, _, _, classID = GetItemInfo(itemLink)
-	if classID == nil then
-		-- If item isn't cached, preserve the link to avoid losing suffix data
+	-- Parse link to check if it has suffix/bonus data (indicates gear)
+	-- Format: item:id:enchant:gem1:gem2:gem3:gem4:suffix:unique:level:spec:upgrade:difficulty...
+	local hasModifiers = itemLink:match("item:%d+:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^%-]") -- Has non-zero suffix
+	if hasModifiers then
 		return true
 	end
-	if ITEM_CLASSES_NEEDING_LINK[classID] == true then
+	
+	-- Fallback: check if link indicates it's equippable (has bonus/suffix fields)
+	local hasSuffix = itemLink:match("item:%d+:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:%-?%d+")
+	if hasSuffix then
 		return true
 	end
-	-- Fallback: any equippable item should keep its link
-	if itemEquipLoc and itemEquipLoc ~= "" then
-		return true
-	end
+	
 	return false
 end
 
@@ -134,6 +135,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 	local count = 0
 	local processed = 0  -- Track total items processed (success + failures)
 	local callbackFired = false  -- Ensure callback only fires once
+	local pendingAsync = 0  -- Track items waiting for async load
 
 	-- If there are no valid items to load, return an empty list immediately
 	if total == 0 then
@@ -142,7 +144,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 	end
 
 	local function checkComplete()
-		if not callbackFired and processed >= total then
+		if not callbackFired and processed >= total and pendingAsync == 0 then
 			callbackFired = true
 			callback(list)
 		end
@@ -175,19 +177,51 @@ function TOGBankClassic_Item:GetItems(items, callback)
 				processed = processed + 1
 				checkComplete()
 			else
-				-- Check if item data is already cached (fast path)
-				local itemInfo = GetItemInfo(capturedItemID)
-				if itemInfo then
-					-- Item data is cached, use it directly
-					TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Item %d already cached", capturedItemID)
-					capturedItem.Info = self:GetInfo(capturedItemID, capturedItemLink)
+				-- BRANCH 1: Item has link - just use it directly, no GetItemInfo calls
+				if capturedItemLink then
+					TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Item %d has link, using directly", capturedItemID)
+					-- Only extract icon if Info doesn't already exist
+					if not capturedItem.Info then
+						-- Extract icon using GetItemInfoInstant (no server query)
+						local _, _, _, _, iconID = GetItemInfoInstant(capturedItemLink)
+						if iconID then
+							capturedItem.Info = {
+								icon = iconID,
+								name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID))
+							}
+						end
+					end
 					table.insert(list, capturedItem)
 					count = count + 1
 					processed = processed + 1
-					checkComplete()
+					-- Don't call checkComplete here - will batch check after loop
+				-- BRANCH 2: No link - need to load item data
+				else
+					-- Check if item data is already cached (fast path)
+					local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemID)
+					if name then
+						-- Item data is cached, build Info directly without calling GetInfo (avoids redundant GetItemInfo call)
+						TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Item %d already cached", capturedItemID)
+						local equip = C_Item.GetItemInventoryTypeByID(capturedItemID)
+						capturedItem.Info = {
+						class = itemClassId,
+						subClass = itemSubClassId,
+						equipId = equip,
+						rarity = rarity,
+						name = name,
+						level = level,
+						price = price,
+						icon = icon,
+					}
+					table.insert(list, capturedItem)
+					count = count + 1
+					processed = processed + 1
+					-- Don't call checkComplete here - will batch check after loop
 				else
 					-- Item not cached, need async load
 					TOGBankClassic_Output:Debug("ITEM", "[TRACE-1] Item %d not cached, calling CreateFromItemID", capturedItemID)
+					
+					pendingAsync = pendingAsync + 1  -- Track this async operation
 
 					local success, itemData = pcall(Item.CreateFromItemID, Item, capturedItemID)
 
@@ -246,6 +280,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 									capturedItem.Info = self:GetInfo(capturedItemID, capturedItemLink)
 									table.insert(list, capturedItem)
 									count = count + 1
+									pendingAsync = pendingAsync - 1  -- Async operation completed
 									checkComplete()
 								end)
 							end)
@@ -258,6 +293,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 							if not callbackSuccess then
 								TOGBankClassic_Output:Debug("ITEM", "[TRACE-15] ContinueOnItemLoad pcall FAILED for ID %d: %s",
 									capturedItemID, tostring(callbackError))
+								pendingAsync = pendingAsync - 1  -- Async operation failed
 								checkComplete()
 							end
 						end
@@ -265,7 +301,12 @@ function TOGBankClassic_Item:GetItems(items, callback)
 				end
 			end
 		end
-	end
+		end  -- close else from line 168
+	end  -- close for loop from line 153
+	
+	-- After processing all items, check if we can fire callback
+	-- (handles case where all items had links and were processed synchronously)
+	checkComplete()
 end
 
 function TOGBankClassic_Item:GetInfo(id, link)
@@ -324,6 +365,32 @@ end
 
 -- NOTE: Sort was adapted from ElvUI
 function TOGBankClassic_Item:Sort(items)
+	-- Ensure all items have Info with required fields for sorting
+	for _, item in ipairs(items) do
+		if not item.Info then
+			-- No Info at all - create minimal
+			item.Info = {
+				class = 0,
+				subClass = 0,
+				equipId = 0,
+				rarity = 1,
+				name = item.Link and item.Link:match("%[(.-)%]") or ("Item " .. tostring(item.ID or "?")),
+				level = 1,
+				price = 0,
+				icon = 134400,
+			}
+		elseif not item.Info.class then
+			-- Info exists but missing sort fields (linked items) - add defaults
+			item.Info.class = item.Info.class or 0
+			item.Info.subClass = item.Info.subClass or 0
+			item.Info.equipId = item.Info.equipId or 0
+			item.Info.rarity = item.Info.rarity or 1
+			item.Info.level = item.Info.level or 1
+			item.Info.price = item.Info.price or 0
+			item.Info.name = item.Info.name or (item.Link and item.Link:match("%[(.-)%]")) or ("Item " .. tostring(item.ID or "?"))
+		end
+	end
+	
 	table.sort(items, function(a, b)
 		if a.Info.rarity ~= b.Info.rarity and a.Info.rarity and b.Info.rarity then
 			return a.Info.rarity < b.Info.rarity
@@ -331,7 +398,7 @@ function TOGBankClassic_Item:Sort(items)
 		if a.Info.class ~= b.Info.class then
 			return (a.Info.class or 99) < (b.Info.class or 99)
 		end
-		if a.Info.equipId > 0 then
+		if (a.Info.equipId or 0) > 0 then
 			if a.Info.equipId == b.Info.equipId then
 				return BasicSort(a, b)
 			end

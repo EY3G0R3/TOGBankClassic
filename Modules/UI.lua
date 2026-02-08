@@ -96,12 +96,8 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 		TOGBankClassic_Guild:ReconstructItemLink(item)
 	end
 
-	-- Get icon from Info (already loaded by GetItems), fallback to cached GetItemInfo only if needed
+	-- Icon already loaded by GetItems (via GetItemInfoInstant for linked items, GetItemInfo for non-linked)
 	local icon = item.Info and item.Info.icon
-	if not icon and item.ID then
-		-- Only query if not in Info (fallback for old data)
-		icon = select(10, GetItemInfo(item.ID))
-	end
 	if icon then
 		slot:SetImage(icon)
 	end

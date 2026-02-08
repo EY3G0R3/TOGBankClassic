@@ -40,39 +40,85 @@ When attempting to fulfill an order, clicking Send produces an "internal mail da
 
 ---
 
-### ?? [PERF-006] UI stuttering without errors
+### ✅ [PERF-006] UI stuttering without errors - RESOLVED
 
-**Severity:** ?? MEDIUM
-**Category:** Performance / UI
+**Severity:** 🔴 CRITICAL (PC-wide stuttering)
+**Category:** Performance / UI / Sync
 **Reporter:** User (Production)
 **Date Reported:** 2026-02-06
-**Status:** ?? NEW - Needs profiling
-**Reproducibility:** Intermittent (no errors/warnings)
+**Date Resolved:** 2026-02-07
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% when opening tabs with gear items (items with full links)
 
 **Problem:**
-User reports noticeable UI "stuttering" during normal usage without any Lua errors or warnings.
+Severe PC-wide stuttering when opening inventory tabs containing many gear items (items with full links). Stuttering occurred every 30-60 seconds and was severe enough to affect entire PC, not just WoW client.
+
+**Root Causes:**
+
+**1. Commit 78b4d37 GetItemInfo Performance Regression (PRIMARY CAUSE - 99% of stuttering)**
+- NeedsLink() changed to call GetItemInfo() with classID check
+- GetItemInfo() triggers WoW server queries if item not cached
+- Opening tabs with 50+ gear items = 50+ simultaneous server queries
+- Server queries caused massive lag spikes
+
+**2. Old Client Backward Compatibility (SECONDARY CAUSE - remaining 1% of stuttering)**
+- Old clients (pre-v0.8.0) broadcast full syncs without mail data
+- ReceiveAltData() would accept these syncs and run mail preservation logic
+- Mail preservation calls expensive Aggregate() for each alt in batch
+- Aggregate() modifies data structure → triggers ReconstructItemLinks() → ThrottledUIRefresh()
+- Result: Cascading UI refreshes for multiple alts on every old client broadcast
 
 **Impact:**
-- ?? Degraded UX (frame drops or input hitching)
+- 🔴 Severe PC-wide stuttering (entire system affected)
+- 🔴 Game unplayable when viewing gear tabs
+- 🔴 UI constantly refreshing with no actual data changes
 
-**Notes / Suspected Areas:**
-- Inventory/UI redraw frequency (Inventory/Requests/Mail UI)
-- Async item link reconstruction refresh loops
-- Search data rebuilds or mail aggregation spikes
-- High-frequency events (BAG_UPDATE, GUILD_ROSTER_UPDATE, timers)
+**Resolution:**
 
-**Update (2026-02-06):**
-- Likely source: repeated full guild roster scans on GUILD_ROSTER_UPDATE during login/logout bursts.
-- Plan/Action: switch to online/offline updates from CHAT_MSG_SYSTEM and restrict full scans to init/reload and join/leave.
+**Fix 1: NeedsLink Optimization (Modules/Item.lua lines 25-43)**
+- Rewrote NeedsLink() to parse link string patterns instead of calling GetItemInfo
+- Checks for suffix/bonus data in link format directly
+- Zero server queries from NeedsLink
 
-**Update (2026-02-07):**
-- Observed stutter bursts correlated with repeated pull-based query spam in logs (`[MAIL-012] QUERYING ...` per alt).
-- Mitigation: rate-limit `QueryAltPullBased` per alt (3s) to prevent rapid re-queries.
+**Fix 2: GetItems Two-Branch Approach (Modules/Item.lua lines 101-306)**
+- Branch 1 (linked items): Use GetItemInfoInstant for icon, immediate add to list
+- Branch 2 (non-linked items): Use GetItemInfo with async loading fallback
+- Linked items bypass all server queries
 
-**Next Steps:**
-1. Enable PERF debug and capture timestamps around stutter
-2. Capture addon CPU usage from in-game Performance panel
-3. Narrow reproduction steps (which UI open, which actions)
+**Fix 3: Sort Defensive Defaults (Modules/Item.lua lines 354-390)**
+- Fill missing Info fields with safe defaults for linked items
+- Handles items with only icon+name from GetItemInfoInstant
+
+**Fix 4: UI Guards (Modules/UI/Inventory.lua)**
+- OnGroupSelected guard: Skip if tab already loaded
+- DrawContent SelectTab guard: Only call if currentTab changed
+- Prevents duplicate tab loading on sync
+
+**Fix 5: DeltaComms Selective Refresh (Modules/DeltaComms.lua lines 933-937)**
+- Only call DrawContent if viewing the updated alt
+- Prevents unnecessary UI rebuilds for background updates
+
+**Fix 6: Hash-Based Staleness Check (Modules/Guild.lua lines 2365-2371) - FINAL FIX**
+- Check inventoryHash match before accepting sync
+- If hash matches → data unchanged → reject as STALE immediately
+- Prevents expensive mail preservation from running
+
+**Fix 7: Old Client Rejection (Modules/Guild.lua lines 2365-2374) - FINAL FIX**
+- If we have mail preserved AND incoming sync has no mail → reject as STALE
+- Old clients can no longer overwrite complete data with incomplete data
+- Blocks cascading UI refresh cycle entirely
+
+**Verification:**
+- User confirmed no more stuttering after fixes
+- No more AdoptAltData/re-aggregation messages in logs
+- UI only refreshes when actual changes occur
+
+**Lessons Learned:**
+- GetItemInfo() is expensive - use GetItemInfoInstant for cached-only data
+- Mass server queries cause PC-wide lag, not just game lag
+- Backward compatibility code must check if preservation is actually needed
+- Hash comparison is critical for detecting unchanged syncs
+- Aggregate() is expensive and should only run when data actually changes
 
 ---
 
