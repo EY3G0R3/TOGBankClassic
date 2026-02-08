@@ -165,6 +165,9 @@ function TOGBankClassic_Events:OnShareTimer()
 
 	-- Request hash list from banker, which triggers comparison and P2P broadcasts for missing alts
 	TOGBankClassic_Guild:RequestHashListFromBanker()
+	
+	-- REQUEST-001: Automatic index-based request sync on 3-minute timer
+	TOGBankClassic_Guild:QueryRequestsIndex(nil, "BULK")
 
 	self:SetShareTimer()
 end

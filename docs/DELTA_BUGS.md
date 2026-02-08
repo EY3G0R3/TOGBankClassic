@@ -6,7 +6,141 @@
 
 **Active Issues:**
 
-_None - All critical issues resolved_
+### 🔴 [REQUEST-001] `/togbank sync` using legacy snapshot protocol instead of modern index-based sync
+
+**Severity:** 🔴 HIGH (Manual sync not working, requests not auto-syncing)
+**Category:** Request Sync / Delta Protocol / Timer System
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Date Resolved:** 2026-02-08
+**Status:** ✅ FIXED
+
+**Problem:**
+Request data synchronization was using outdated snapshot protocol (`QueryRequestsSnapshot`) instead of the modern index-based delta protocol (`QueryRequestsIndex`). Additionally, the 3-minute automatic timer was not syncing request data at all, leaving players who logged in offline unable to see requests made while they were gone.
+
+**Symptoms:**
+1. `/togbank sync` sends wildcard query for full snapshot - inefficient, sends all request data
+2. 3-minute timer (`OnShareTimer`) calls `Share("reply", "version")` which does nothing for requests
+3. Players logging in after being offline never catch up on missed requests
+4. Only real-time mutations (via `togbank-rm`) propagate - no retroactive sync
+
+**Root Cause:**
+When inventory sync migrated from snapshot-based to index/delta protocol, request sync was never updated:
+
+1. **Manual Sync Issue**: `PerformSync()` in Chat.lua:155 called `QueryRequestsSnapshot(player, "ALERT")` (legacy snapshot protocol)
+2. **Auto-Timer Issue**: `OnShareTimer()` in Events.lua:162 called `Share("reply", "version")` which skips request data broadcast
+3. **Index Protocol Exists But Unused**: Modern `QueryRequestsIndex()` function exists but was never wired up
+
+**Expected Flow (Index-Based):**
+1. Client sends `togbank-r` with `type="requests-index"`, includes local version+hash
+2. Responder compares, sends index (list of request IDs with timestamps)
+3. Client compares index against local data, identifies missing/outdated IDs
+4. Client queries specific IDs via `requests-by-id`
+5. Responder sends only those specific requests
+6. Much more efficient than sending all requests every time
+
+**Fix Applied:**
+
+**File: `Modules/Chat.lua` (PerformSync function)**
+```lua
+// Before:
+local player = TOGBankClassic_Guild:GetPlayer()
+TOGBankClassic_Guild:QueryRequestsSnapshot(player, "ALERT")
+
+// After:
+-- REQUEST-001: Use index-based request sync (modern delta protocol)
+TOGBankClassic_Guild:QueryRequestsIndex(nil, "ALERT")
+```
+
+**File: `Modules/Events.lua` (OnShareTimer function)**
+```lua
+// Before:
+TOGBankClassic_Guild:RequestHashListFromBanker()
+self:SetShareTimer()
+
+// After:
+TOGBankClassic_Guild:RequestHashListFromBanker()
+
+-- REQUEST-001: Automatic index-based request sync on 3-minute timer
+TOGBankClassic_Guild:QueryRequestsIndex(nil, "BULK")
+
+self:SetShareTimer()
+```
+
+**Files Changed:**
+- `Modules/Chat.lua` (line 155): Changed manual sync from snapshot to index protocol
+- `Modules/Events.lua` (line 168): Added automatic request index query to 3-minute timer
+
+**Behavior After Fix:**
+1. **Manual `/togbank sync`**: Uses `QueryRequestsIndex()` with ALERT priority for immediate sync
+2. **Automatic 3-minute timer**: Calls `QueryRequestsIndex()` with BULK priority for background sync
+3. **Real-time updates**: Mutations still broadcast immediately via `togbank-rm`
+4. **Efficient protocol**: Only missing/outdated requests transferred, not full snapshots
+
+**Testing:**
+- Player logs in with requests made while offline
+- Within 3 minutes: automatic index query triggers
+- Responders send index, client identifies missing requests
+- Client queries by ID, receives only new requests
+- Request log updates with merged data via LWW
+
+**Related:**
+- PERF-002: Request sync decoupled from inventory sync
+- Modern index protocol already implemented but never activated
+- Matches inventory data flow (HL/HLR hash comparison → delta/full data)
+
+---
+
+### 🔴 [HASH-001] /togbank share not broadcasting updated hashes after inventory changes
+
+**Severity:** 🟡 MEDIUM (Stub entries not auto-updating)
+**Category:** Version Broadcast / Hash Updates / Inventory Changes
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-08
+**Status:** 🔴 OPEN - Investigation Needed
+
+**Problem:**
+When bankers fulfill orders, take items from mail, or otherwise change their inventory, `/togbank share` does not broadcast the new hash. Non-bankers retain the old hash from previous broadcasts and show "Hash matched but no content" (stub entries). The hash comparison shows a match (old cached hash == old cached hash), so no query is triggered, leaving stub entries unfilled.
+
+**Symptoms:**
+```
+Hash list coverage: banker=35, matched=33, pending=2, rosterMissing=0, haveContent=33
+HLR pending: Squirrelover-OldBlanchy, Togscales-Azuresong
+Hash matched but no content: Togscales-Azuresong, Squirrelover-OldBlanchy
+```
+
+**Impact:**
+- Stub entries remain unfilled despite banker having updated data
+- Hash comparison shows false match (comparing cached old hash on both sides)
+- Requires manual `/wipe` or waiting for banker to rescan to trigger hash update
+- Breaks automatic stub entry filling via HL/HLR flow
+
+**Root Cause:**
+Unknown - needs investigation. Possible causes:
+- Banker not recomputing hash after inventory changes?
+- `/togbank share` using stale cached hash instead of current inventory hash?
+- Hash not being updated in savedvariables after fulfillment/mail operations?
+- Version broadcast including old hash from cache instead of live data?
+
+**Expected Behavior:**
+1. Banker fulfills order / takes mail items → inventory changes
+2. Banker runs `/togbank share` → recomputes current inventory hash
+3. Version broadcast includes NEW hash for changed alts
+4. Non-bankers receive broadcast, compare hashes, detect mismatch
+5. Non-bankers query for updated data (hash mismatch triggers query)
+6. Stub entries filled with current data
+
+**Investigation Needed:**
+- Where is hash computed during `/togbank share`?
+- Is hash being recomputed or using cached value?
+- Check GetVersion() and SyncDeltaVersion() hash source
+- Verify hash updates after MAIL_CLOSED, BAG_UPDATE events
+- Check if hash is written to savedvariables after changes
+
+**Workaround:**
+- Banker can `/reload` to force hash recomputation
+- Users can `/wipe` and wait for rescan
+- Wait for banker to log out/in (loads fresh data)
 
 ---
 

@@ -150,9 +150,8 @@ function TOGBankClassic_Chat:PerformSync()
 	end
 	TOGBankClassic_Guild:FastFillMissingAlts()
 	TOGBankClassic_Guild:ReportBankerDataProgress("sync", true)
-	-- Query request snapshot with ALERT priority for immediate sync
-	local player = TOGBankClassic_Guild:GetPlayer()
-	TOGBankClassic_Guild:QueryRequestsSnapshot(player, "ALERT")
+	-- REQUEST-001: Use index-based request sync (modern delta protocol)
+	TOGBankClassic_Guild:QueryRequestsIndex(nil, "ALERT")
 end
 
 local SHARES_COLOR = "|cff80bfffshares|r"
