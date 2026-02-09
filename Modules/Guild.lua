@@ -2876,18 +2876,22 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		end
 	end
 	if self.Info.alts[normPlayer] and TOGBankClassic_Guild:IsBank(normPlayer) then
-		-- Banker running /togbank share: broadcast ALL BANK alt data to guild
-		TOGBankClassic_Output:Info("Broadcasting all guild bank data...")
+		-- Banker running /togbank share: broadcast hash-list on togbank-hl for P2P discovery
+		TOGBankClassic_Output:Info("Broadcasting guild bank hash-list for P2P discovery...")
+		local hashList = self:BuildBankerHashList()
+		local payload = {
+			type = "hash-list-broadcast",
+			alts = hashList,
+			banker = normPlayer,
+		}
+		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+		TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
+		
 		local count = 0
-		for altName, altData in pairs(self.Info.alts) do
-			-- Only broadcast data for actual bank alts (with "gbank" in notes)
-			if self:IsBank(altName) then
-				-- DELTA-014: Broadcast mode - no specific requester, use empty baseline (0,0)
-				TOGBankClassic_Guild:SendAltData(altName, 0, 0)
-				count = count + 1
-			end
+		for _ in pairs(hashList) do
+			count = count + 1
 		end
-		TOGBankClassic_Output:Info("Broadcasted data for %d bank alts", count)
+		TOGBankClassic_Output:Info("Broadcasted hash-list for %d bank alts on togbank-hl", count)
 	end
 
 	if mode == "snapshot" then

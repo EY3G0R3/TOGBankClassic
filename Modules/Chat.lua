@@ -1616,6 +1616,11 @@ end
 			local replyTarget = data.requester or sender
 			TOGBankClassic_Output:Debug("PROTOCOL", "HL request from %s (replyTarget=%s)", tostring(sender), tostring(replyTarget))
 			TOGBankClassic_Guild:SendHashList(replyTarget)
+		elseif data.type == "hash-list-broadcast" and data.alts then
+			-- Banker broadcasting hash-list via /togbank share - process like togbank-hlr
+			TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast from banker %s", tostring(sender))
+			-- Reuse togbank-hlr handler logic by forwarding
+			prefix = "togbank-hlr"
 		elseif data.type == "alt-request" then
 			-- PERF-006: P2P broadcast on togbank-hl channel (modern code only)
 			-- Process exactly the same as togbank-r alt-request, but only modern peers see this
