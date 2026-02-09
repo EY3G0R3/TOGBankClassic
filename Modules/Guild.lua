@@ -652,10 +652,14 @@ function TOGBankClassic_Guild:BuildBankerHashList()
 			local hash = (alt and alt.inventoryHash) or 0
 			local updatedAt = (alt and (alt.inventoryUpdatedAt or alt.version)) or 0
 			local version = (alt and alt.version) or 0
+			local mailHash = (alt and alt.mailHash) or 0
+			local mailUpdatedAt = (alt and alt.mail and alt.mail.version) or 0
 			list[norm] = {
 				hash = hash,
 				updatedAt = updatedAt,
 				version = version,
+				mailHash = mailHash,
+				mailUpdatedAt = mailUpdatedAt,
 			}
 		end
 	end
@@ -2849,6 +2853,39 @@ function TOGBankClassic_Guild:Wipe(type)
 	end
 end
 
+function TOGBankClassic_Guild:HashUpdate()
+	local guild = TOGBankClassic_Guild:GetGuild()
+	if not guild then
+		return
+	end
+	self.Info = TOGBankClassic_Database:Load(guild)
+	local player = TOGBankClassic_Guild:GetPlayer()
+	local normPlayer = TOGBankClassic_Guild:GetNormalizedPlayer(player)
+	
+	-- Only bankers can use this command
+	if not (self.Info.alts[normPlayer] and TOGBankClassic_Guild:IsBank(normPlayer)) then
+		TOGBankClassic_Output:Response("Only bankers can use /togbank hashupdate")
+		return
+	end
+	
+	-- Broadcast hash-list for ALL bank alts
+	TOGBankClassic_Output:Info("Broadcasting hash-list for ALL bank alts...")
+	local hashList = self:BuildBankerHashList()
+	local payload = {
+		type = "hash-list-broadcast",
+		alts = hashList,
+		banker = normPlayer,
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
+	
+	local count = 0
+	for _ in pairs(hashList) do
+		count = count + 1
+	end
+	TOGBankClassic_Output:Info("Broadcasted hash-list for %d bank alts", count)
+end
+
 function TOGBankClassic_Guild:WipeMine(type)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then
@@ -2876,22 +2913,29 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		end
 	end
 	if self.Info.alts[normPlayer] and TOGBankClassic_Guild:IsBank(normPlayer) then
-		-- Banker running /togbank share: broadcast hash-list on togbank-hl for P2P discovery
-		TOGBankClassic_Output:Info("Broadcasting guild bank hash-list for P2P discovery...")
-		local hashList = self:BuildBankerHashList()
-		local payload = {
-			type = "hash-list-broadcast",
-			alts = hashList,
-			banker = normPlayer,
-		}
-		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-		TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
-		
-		local count = 0
-		for _ in pairs(hashList) do
-			count = count + 1
+		-- Banker running /togbank share: broadcast hash for CURRENT banker only
+		local alt = self.Info.alts[normPlayer]
+		if alt then
+			local singleAltHash = {
+				[normPlayer] = {
+					hash = alt.inventoryHash or 0,
+					updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
+					version = alt.version or 0,
+					mailHash = alt.mailHash or 0,
+					mailUpdatedAt = (alt.mail and alt.mail.version) or 0,
+				}
+			}
+			local payload = {
+				type = "hash-list-broadcast",
+				alts = singleAltHash,
+				banker = normPlayer,
+			}
+			local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+			TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
+			TOGBankClassic_Output:Info("Broadcasted hash for %s (invHash=%d, mailHash=%d)", normPlayer, singleAltHash[normPlayer].hash, singleAltHash[normPlayer].mailHash)
+		else
+			TOGBankClassic_Output:Response("No data available for %s", normPlayer)
 		end
-		TOGBankClassic_Output:Info("Broadcasted hash-list for %d bank alts on togbank-hl", count)
 	end
 
 	if mode == "snapshot" then

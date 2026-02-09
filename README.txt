@@ -132,13 +132,13 @@ MANUAL SYNC:
 
 SHARING YOUR DATA:
   /togbank share
-    Manually shares your bank character's inventory with other online
-    guild members. This happens automatically every 3 minutes.
+    Manually broadcasts your bank character's hash to notify other guild
+    members that you have updated data. They will automatically pull the
+    data during their next sync cycle. This happens automatically every
+    3 minutes.
 
-    IMPORTANT: You must have your bank open and wait ~1 second for the
-    scan to complete before using this command. The addon needs time to
-    read all items from your bank bags. For best results, open the bank,
-    wait a moment, then run /togbank share.
+    For bankers who want to broadcast ALL bank alt hashes at once (after
+    bulk inventory changes), use /togbank hashupdate instead.
 
 ================================================================================
 COMMAND REFERENCE
@@ -160,11 +160,13 @@ BASIC COMMANDS:
   (Automatic sync happens every 10 minutes)
 
 /togbank share
-  Manually share your guild bank contents with online users
-  (Automatic sharing happens every 3 minutes)
+  Manually broadcast your bank character's hash to notify other users
+  of available data. Other users will pull the data during their next
+  sync cycle (manual /togbank sync, UI open, or automatic 3-minute timer).
+  (Automatic hash broadcasting happens every 3 minutes)
 
-  NOTE: Bank must be open and scanned before sharing. Open your bank,
-  wait ~1 second for items to load, then run this command.
+  NOTE: For bankers only. To broadcast ALL bank alt hashes, use
+  /togbank hashupdate (see Expert Commands).
 
 /togbank reset
   Resets your TOGBankClassic database (clears all stored data)
@@ -183,6 +185,16 @@ listed alphabetically for easy reference.
 
 /togbank compact
   Manually runs database compaction to prune old requests and log entries
+
+/togbank hashupdate
+  (BANKER ONLY) Broadcasts hash-list for ALL bank alts to force a
+  guild-wide hash refresh. This is useful after bulk inventory changes
+  or when you want to ensure all guild members have current hashes.
+  Users will pull updated data during their next sync cycle.
+  
+  NOTE: This is a "nuke" command - use after major inventory changes.
+  For normal sharing, use /togbank share to broadcast only your current
+  character's hash.
 
 /togbank debuglog [N] [filter]
   Exports last N debug log entries (default 500), optionally filtered by keyword

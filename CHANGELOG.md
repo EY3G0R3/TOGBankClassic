@@ -1,5 +1,48 @@
 # TOGBankClassic Changelog
 
+## Unreleased - Hash Broadcast Improvements
+
+**Status:** In Development
+**Priority:** MEDIUM
+
+### 🔄 Hash Broadcasting Overhaul
+
+#### Changes to `/togbank share`
+- **CHANGED**: Now broadcasts hash for ONLY the current banker character (single alt)
+- **CHANGED**: Uses togbank-hl channel for hash announcement (P2P discovery)
+- **CHANGED**: No longer pushes full data - clients pull data via sync cycle
+- **IMPACT**: Reduces spam when banker shares (1 hash vs 35+ data packets)
+
+#### New Command: `/togbank hashupdate`
+- **NEW**: Banker-only command to broadcast ALL bank alt hashes (the "nuke")
+- **USE CASE**: Force guild-wide hash refresh after bulk inventory changes
+- **BEHAVIOR**: Broadcasts hash-list for all bank alts on togbank-hl
+- **OUTPUT**: "Broadcasted hash-list for N bank alts"
+
+#### Hash Broadcast Enhancements
+- **ENHANCED**: `BuildBankerHashList()` now includes `mailHash` and `mailUpdatedAt`
+- **ENHANCED**: Hash-list-broadcast handler stores both inventory and mail hashes
+- **ENHANCED**: Handler tracks what changed: "Updated AltName: inv: 123->456, mail: 789->999"
+- **FIXED**: Non-bankers can now detect mail-only changes from hash broadcasts
+- **BEHAVIOR**: No automatic requests triggered - users must run `/togbank sync` or wait for automatic sync cycle
+
+#### Technical Details
+- Hash broadcasts contain: `inventoryHash`, `inventoryUpdatedAt`, `version`, `mailHash`, `mailUpdatedAt`
+- Clients update local hash stubs when received
+- Actual data requests happen during next sync cycle (manual, UI open, or 3-minute timer)
+
+**Files Changed:**
+- `Modules/Guild.lua`:
+  - Updated `BuildBankerHashList()` to include mail hashes
+  - Modified `Share()` to broadcast single-alt hash on togbank-hl
+  - Added `HashUpdate()` function for all-alts hash broadcast
+- `Modules/Chat.lua`:
+  - Updated hash-list-broadcast handler to store both inventory and mail hashes
+  - Added `/togbank hashupdate` command registration
+  - Enhanced hash change detection and logging
+
+---
+
 ## [v0.8.9] (2026-02-07) - P2P Hash Backfill Complete
 
 **Status:** Production Ready

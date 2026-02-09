@@ -1617,10 +1617,47 @@ end
 			TOGBankClassic_Output:Debug("PROTOCOL", "HL request from %s (replyTarget=%s)", tostring(sender), tostring(replyTarget))
 			TOGBankClassic_Guild:SendHashList(replyTarget)
 		elseif data.type == "hash-list-broadcast" and data.alts then
-			-- Banker broadcasting hash-list via /togbank share - process like togbank-hlr
-			TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast from banker %s", tostring(sender))
-			-- Reuse togbank-hlr handler logic by forwarding
-			prefix = "togbank-hlr"
+			-- Banker broadcasting hash-list via /togbank share - update local hashes only
+			local altCount = 0
+			for _ in pairs(data.alts) do
+				altCount = altCount + 1
+			end
+			TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast from banker %s (alts=%d)", tostring(sender), altCount)
+			
+			-- Store banker's authoritative hashes locally (do NOT trigger requests)
+			if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
+				for altName, summary in pairs(data.alts) do
+					local norm = TOGBankClassic_Guild:NormalizeName(altName)
+					local localAlt = TOGBankClassic_Guild.Info.alts[norm]
+					local localHash = localAlt and localAlt.inventoryHash or 0
+
+					if summary and summary.hash and summary.hash > 0 then
+						if not localAlt then
+							-- Create stub entry with banker's authoritative hash
+							TOGBankClassic_Guild.Info.alts[norm] = {
+								name = norm,
+								version = summary.version or 0,
+								money = 0,
+								inventoryHash = summary.hash,
+								inventoryUpdatedAt = summary.updatedAt,
+								items = {},
+								mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
+								mailHash = 0,
+							}
+							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
+							TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Stored hash for new alt %s: hash=%d", norm, summary.hash)
+						elseif localHash == 0 or localHash ~= summary.hash then
+							-- Update hash if we don't have one or it changed
+							localAlt.inventoryHash = summary.hash
+							if summary.updatedAt then
+								localAlt.inventoryUpdatedAt = summary.updatedAt
+							end
+							TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Updated hash for %s: %d -> %d", norm, localHash, summary.hash)
+						end
+					end
+				end
+				TOGBankClassic_Output:Info("Updated hashes for %d bank alts (run /togbank sync to fetch changes)", altCount)
+			end
 		elseif data.type == "alt-request" then
 			-- PERF-006: P2P broadcast on togbank-hl channel (modern code only)
 			-- Process exactly the same as togbank-r alt-request, but only modern peers see this
@@ -1835,6 +1872,14 @@ local COMMAND_REGISTRY = {
 			TOGBankClassic_Bank:OnUpdateStart()
 			TOGBankClassic_Bank:OnUpdateStop()
 			TOGBankClassic_Guild:Share()
+		end,
+	},
+	{
+		name = "hashupdate",
+		help = "(banker only) broadcast hash-list for ALL bank alts to force guild-wide hash refresh",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:HashUpdate()
 		end,
 	},
 	{
