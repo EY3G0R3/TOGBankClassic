@@ -2876,8 +2876,15 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		end
 	end
 	if self.Info.alts[normPlayer] and TOGBankClassic_Guild:IsBank(normPlayer) then
-		-- DELTA-014: Broadcast mode - no specific requester, use empty baseline (0,0)
-		TOGBankClassic_Guild:SendAltData(normPlayer, 0, 0)
+		-- Banker running /togbank share: broadcast ALL alt data to guild
+		TOGBankClassic_Output:Info("Broadcasting all guild bank data...")
+		local count = 0
+		for altName, altData in pairs(self.Info.alts) do
+			-- DELTA-014: Broadcast mode - no specific requester, use empty baseline (0,0)
+			TOGBankClassic_Guild:SendAltData(altName, 0, 0)
+			count = count + 1
+		end
+		TOGBankClassic_Output:Info("Broadcasted data for %d alts", count)
 	end
 
 	if mode == "snapshot" then
