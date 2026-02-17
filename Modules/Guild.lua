@@ -2014,34 +2014,39 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	local deltaData = nil
 	local computeStart = debugprofilestop()
 
-	-- Check if delta sync should be used
-	-- v0.8.0: No longer skip delta based on force flag (removed)
+	-- DELTA-ONLY: All syncs use delta protocol, no full sync fallback
 	-- DELTA-014: Pass requester's hashes for proper baseline comparison
-	if self:ShouldUseDelta() then
-		deltaData = self:ComputeDelta(norm, currentAlt, requesterInventoryHash, requesterMailHash)
-		if deltaData and self:DeltaHasChanges(deltaData) then
-			local deltaSize = self:EstimateSize(deltaData)
-			local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
-
-			-- DELTA-014: Delta IS the system - always use delta, no size comparison fallback
-			useDelta = true
-			TOGBankClassic_Output:Debug(
-				"DELTA",
-				"✓ Delta for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
-				norm,
-				deltaSize,
-				fullSize,
-				(deltaSize / fullSize) * 100,
-				fullSize - deltaSize
-			)
-		else
-			if deltaData then
-				TOGBankClassic_Output:Debug("DELTA", "No changes detected for %s (delta would be empty)", norm)
-			else
-				TOGBankClassic_Output:Debug("DELTA", "No previous snapshot for %s (first sync)", norm)
-			end
-		end
+	if not self:ShouldUseDelta() then
+		TOGBankClassic_Output:Error("Delta protocol disabled - cannot send data for %s", norm)
+		return
 	end
+
+	deltaData = self:ComputeDelta(norm, currentAlt, requesterInventoryHash, requesterMailHash)
+	
+	if not deltaData then
+		TOGBankClassic_Output:Error("Failed to compute delta for %s", norm)
+		return
+	end
+
+	if not self:DeltaHasChanges(deltaData) then
+		-- No changes detected - skip send (requester already has current data)
+		TOGBankClassic_Output:Debug("DELTA", "No changes detected for %s (requester has current data, skipping send)", norm)
+		return
+	end
+
+	-- Delta has changes - send it
+	local deltaSize = self:EstimateSize(deltaData)
+	local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
+	useDelta = true
+	TOGBankClassic_Output:Debug(
+		"DELTA",
+		"✓ Delta for %s: %d bytes vs %d bytes full (%.1f%% size, %.0f bytes saved)",
+		 norm,
+		deltaSize,
+		fullSize,
+		(deltaSize / fullSize) * 100,
+		fullSize - deltaSize
+	)
 
 	-- Record compute time if delta was computed
 	if deltaData and self.Info and self.Info.name then
@@ -2050,147 +2055,41 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		TOGBankClassic_Output:Debug("DELTA", "Delta computation took %.2fms", computeTime)
 	end
 
-	if useDelta then
-		-- Send delta with dual-send for backwards compatibility (v0.8.0)
-		local mode = PROTOCOL_MODES[FEATURES.PROTOCOL_MODE] or PROTOCOL_MODES.AUTO
-		local deltaWithLinks, deltaNoLinks
+	-- DELTA-ONLY: Send via togbank-d4 (no legacy channels)
+	local strippedDelta = self:StripDeltaLinks(deltaData)
+	local deltaNoLinks = TOGBankClassic_Core:SerializeWithChecksum(strippedDelta)
+	TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, distribution, distTarget, "BULK", OnChunkSent)
+	TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d4 to %s (%d bytes)", norm, distribution, string.len(deltaNoLinks))
 
-		-- Prepare legacy format (with Links) if needed
-		--[[ COMMENTED OUT FOR MAIL-012 TESTING
-		if mode.sendLegacy then
-			deltaWithLinks = TOGBankClassic_Core:SerializeWithChecksum(deltaData)
-			TOGBankClassic_Core:SendCommMessage("togbank-d2", deltaWithLinks, "Guild", nil, "BULK", OnChunkSent)
-			TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d2 (with Links)", norm)
-		end
-		--]]
+	-- Track metrics
+	local totalSize = string.len(deltaNoLinks)
+	TOGBankClassic_Output:Debug("DELTA", "Final delta size: %d bytes", totalSize)
 
-		-- Prepare new format (without Links) if needed - saves 60-80 bytes per item
-		if mode.sendNew then
-			local strippedDelta = self:StripDeltaLinks(deltaData)
-			deltaNoLinks = TOGBankClassic_Core:SerializeWithChecksum(strippedDelta)
-			TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, distribution, distTarget, "BULK", OnChunkSent)
-			TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d4 to %s (no Links)", norm, distribution)
+	if self.Info and self.Info.name then
+		TOGBankClassic_Database:RecordDeltaSent(self.Info.name, totalSize)
+	end
 
-			-- Log bandwidth savings if dual-sending
-			if mode.sendLegacy and deltaWithLinks then
-				local savings = string.len(deltaWithLinks) - string.len(deltaNoLinks)
-				TOGBankClassic_Output:Debug("DELTA", "Bandwidth saved: %d bytes (%.1f%%)", savings, (savings / string.len(deltaWithLinks)) * 100)
-			end
-		end
-
-		-- Track metrics - count both transmissions if dual-sending (DELTA-010)
-		local totalSize = (deltaWithLinks and string.len(deltaWithLinks) or 0) + (deltaNoLinks and string.len(deltaNoLinks) or 0)
-		TOGBankClassic_Output:Debug("DELTA", "Final delta size: %d bytes total", totalSize)
-
-		-- Track metrics
-		if self.Info and self.Info.name then
-			TOGBankClassic_Database:RecordDeltaSent(self.Info.name, totalSize)
-		end
-
-		-- Save delta to history for potential chain replay (DELTA-006)
-		-- v0.8.0: Use previous.version for baseVersion in history (delta no longer includes it)
+	-- Save delta to history for potential chain replay (DELTA-006)
+	-- v0.8.0: Use previous.version for baseVersion in history (delta no longer includes it)
+	---@diagnostic disable-next-line: need-check-nil
+	if self.Info and self.Info.name and deltaData.version and deltaData.changes then
 		---@diagnostic disable-next-line: need-check-nil
-		if self.Info and self.Info.name and deltaData.version and deltaData.changes then
+		local previous = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
+		local baseVer = previous and previous.version or 0
+		TOGBankClassic_Database:SaveDeltaHistory(
 			---@diagnostic disable-next-line: need-check-nil
-			local previous = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
-			local baseVer = previous and previous.version or 0
-			TOGBankClassic_Database:SaveDeltaHistory(
-				---@diagnostic disable-next-line: need-check-nil
-				self.Info.name,
-				norm,
-				baseVer,
-				---@diagnostic disable-next-line: need-check-nil
-				deltaData.version,
-				deltaData  -- Save full delta, not just changes
-			)
-		end
+			self.Info.name,
+			norm,
+			baseVer,
+			---@diagnostic disable-next-line: need-check-nil
+			deltaData.version,
+			deltaData  -- Save full delta, not just changes
+		)
+	end
 
-		-- Save snapshot for next delta
-		if self.Info and self.Info.name then
-			TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
-		end
-	else
-		-- Fallback to full sync via togbank-d/togbank-d3
-		-- Record fallback reason if we computed delta but chose full sync
-		if deltaData and self:DeltaHasChanges(deltaData) then
-			if self.Info and self.Info.name then
-				TOGBankClassic_Database:RecordFullSyncFallback(self.Info.name)
-			end
-
-			-- Save delta to history even when falling back to full sync (DELTA-006)
-			-- This allows chain replay to work for offline players even when deltas were too large
-			-- v0.8.0: Use previous.version for baseVersion in history (delta no longer includes it)
-			if self.Info and self.Info.name and deltaData.version and deltaData.changes then
-				local previous = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
-				local baseVer = previous and previous.version or 0
-				TOGBankClassic_Database:SaveDeltaHistory(
-					self.Info.name,
-					norm,
-					baseVer,
-					deltaData.version,
-					deltaData  -- Save full delta, not just changes
-				)
-			end
-		end
-
-		-- Send full sync based on protocol mode (user-configurable)
-		local mode = PROTOCOL_MODES[FEATURES.PROTOCOL_MODE] or PROTOCOL_MODES.AUTO
-		local dataWithLinks, dataNoLinks
-
-		-- Prepare legacy format (with Links) if needed
-		--[[ COMMENTED OUT FOR MAIL-012 TESTING
-		if mode.sendLegacy then
-			dataWithLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = currentAlt })
-			TOGBankClassic_Output:DebugComm("SENDING RESPONSE: togbank-d (legacy) for %s (%d bytes)", norm, #dataWithLinks)
-			TOGBankClassic_Core:SendCommMessage("togbank-d", dataWithLinks, "Guild", nil, "BULK", OnChunkSent)
-		end
-		--]]
-
-		-- Prepare new format (without Links) if needed
-		if mode.sendNew then
-			local strippedAlt = self:StripAltLinks(currentAlt)
-			dataNoLinks = TOGBankClassic_Core:SerializeWithChecksum({ type = "alt", name = norm, alt = strippedAlt })
-			TOGBankClassic_Output:DebugComm("SENDING RESPONSE: togbank-d3 (new) for %s (%d bytes) to %s", norm, #dataNoLinks, distribution)
-			TOGBankClassic_Core:SendCommMessage("togbank-d3", dataNoLinks, distribution, distTarget, "BULK", OnChunkSent)
-		end
-
-		-- Log what was sent
-		if mode.sendLegacy and mode.sendNew then
-			TOGBankClassic_Output:Debug(
-				"SYNC",
-				"Sent full sync for %s [%s]: togbank-d (%d bytes) + togbank-d3 (%d bytes, %.1f%% savings)",
-				norm,
-				FEATURES.PROTOCOL_MODE,
-				string.len(dataWithLinks or ""),
-				string.len(dataNoLinks or ""),
-				100 - (string.len(dataNoLinks or "") / string.len(dataWithLinks or "") * 100)
-			)
-		elseif mode.sendLegacy then
-			TOGBankClassic_Output:Debug(
-				"SYNC",
-				"Sent full sync for %s [LEGACY_ONLY]: togbank-d (%d bytes with Links)",
-				norm,
-				string.len(dataWithLinks or "")
-			)
-		elseif mode.sendNew then
-			TOGBankClassic_Output:Debug(
-				"SYNC",
-				"Sent full sync for %s [NEW_ONLY]: togbank-d3 (%d bytes without Links)",
-				norm,
-				string.len(dataNoLinks or "")
-			)
-		end
-
-		-- Track metrics
-		if self.Info and self.Info.name then
-			local totalSize = (dataWithLinks and string.len(dataWithLinks) or 0) + (dataNoLinks and string.len(dataNoLinks) or 0)
-			TOGBankClassic_Database:RecordFullSyncSent(self.Info.name, totalSize)
-		end
-
-		-- Save snapshot for next delta
-		if self.Info and self.Info.name then
-			TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
-		end
+	-- Save snapshot for next delta
+	if self.Info and self.Info.name then
+		TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
 	end
 end
 
@@ -2520,24 +2419,46 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 		if receiverIsBanker and targetIsBanker then
 			-- We are a banker, and data is about a banker - only accept if sender is that banker
 			if senderNorm ~= norm then
+			-- OPTION-B: Check timestamps before rejecting - allow if incoming is newer
+			local incomingUpdatedAt = alt.inventoryUpdatedAt or alt.version
+			local existingUpdatedAt = existing and (existing.inventoryUpdatedAt or existing.version) or nil
+			
+			-- Allow if: no existing data OR incoming is newer
+			local shouldAccept = false
+			if not existing then
+				shouldAccept = true
+				TOGBankClassic_Output:Info(
+					"[OPTION-B] Accepting banker data from non-banker: no existing data for %s", norm)
+			elseif incomingUpdatedAt and existingUpdatedAt and incomingUpdatedAt > existingUpdatedAt then
+				shouldAccept = true
+				TOGBankClassic_Output:Info(
+					"[OPTION-B] Accepting newer banker data: %s about %s (timestamp %d > %d)",
+					senderNorm or "unknown", norm, incomingUpdatedAt, existingUpdatedAt)
+			end
+			
+			if not shouldAccept then
+				-- Reject: incoming is not newer
 				TOGBankClassic_Output:Debug("SYNC",
-					"[DATA-006] Rejected data about banker %s from %s (bankers only update themselves)",
-					norm, senderNorm or "unknown")
+					"[DATA-006] Rejected data about banker %s from %s (not newer: incoming=%s, existing=%s)",
+					norm, senderNorm or "unknown", 
+					tostring(incomingUpdatedAt), tostring(existingUpdatedAt))
 				return ADOPTION_STATUS.UNAUTHORIZED
 			end
+		else
 			-- If we get here: senderNorm == norm (banker updating themselves) - ACCEPT
 			TOGBankClassic_Output:Debug("SYNC",
 				"[DATA-006] Accepting data about banker %s from themselves",
 				norm)
 		end
+	end
 
-		-- Rule 3: Non-bankers accept all data, non-banker data accepted from anyone
+	-- Rule 3: Non-bankers accept all data, non-banker data accepted from anyone
 
-		-- Non-banker conflict resolution: newest wins (timestamped hash)
-		local incomingUpdatedAt = alt.inventoryUpdatedAt or alt.version
-		local existingUpdatedAt = existing and (existing.inventoryUpdatedAt or existing.version) or nil
+	-- Non-banker conflict resolution: newest wins (timestamped hash)
+	local incomingUpdatedAt = alt.inventoryUpdatedAt or alt.version
+	local existingUpdatedAt = existing and (existing.inventoryUpdatedAt or existing.version) or nil
 
-		-- Backfill missing inventoryUpdatedAt on incoming data
+	-- Backfill missing inventoryUpdatedAt on incoming data
 		if incomingUpdatedAt and not alt.inventoryUpdatedAt then
 			alt.inventoryUpdatedAt = incomingUpdatedAt
 		end
