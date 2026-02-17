@@ -825,6 +825,19 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
 						TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
 							sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+						
+						-- Safety timeout: if requester never sends state summary (disconnect/crash),
+						-- auto-decrement counter after 30 seconds to prevent permanent queue blocking
+						local timeoutAlt = normAltName
+						local timer = C_Timer.After(30, function()
+							if TOGBankClassic_Guild.pendingSendCount > 0 then
+								TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
+								TOGBankClassic_Output:Debug("SYNC", "P2P: Send timeout for %s - decremented queue (now %d/%d)",
+									timeoutAlt, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+							end
+							TOGBankClassic_Guild.pendingSendTimeouts[timeoutAlt] = nil
+						end)
+						TOGBankClassic_Guild.pendingSendTimeouts[normAltName] = timer
 					end
 				end
 			end
@@ -1085,6 +1098,19 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					if TOGBankClassic_Guild.pendingAltRequests then
 						TOGBankClassic_Guild.pendingAltRequests[norm] = nil
 					end
+
+					-- Secondary timeout: if peer ACKs but never sends data (disconnect/crash),
+					-- fallback to banker after 15 seconds
+					C_Timer.After(15, function()
+						-- Check if we still don't have content (peer never delivered)
+						local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
+						if not alt or not TOGBankClassic_Guild:HasAltContent(alt, norm) then
+							TOGBankClassic_Output:Debug("SYNC", "P2P: Peer %s ACKed %s but never delivered data - falling back to banker", sender, altName)
+							TOGBankClassic_Guild:QueryAltPullBased(altName, false)
+						else
+							TOGBankClassic_Output:Debug("SYNC", "P2P: Peer %s successfully delivered data for %s", sender, altName)
+						end
+					end)
 
 					-- Send state summary for delta comparison
 					if hasData and expectedHash then

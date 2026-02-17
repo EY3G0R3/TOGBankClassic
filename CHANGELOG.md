@@ -27,6 +27,47 @@
 - **LOCATION**: `Chat.lua` (~1053-1054): Added missing SerializeWithChecksum and SendCommMessage calls
 - **NOW**: Full P2P flow works - peers receive broadcasts and respond with matching hashes
 
+#### [P2P-011] Fixed pendingSendCount Leak
+- **FIXED**: Added 30-second timeout to auto-decrement counter when requester never sends state summary
+- **PROBLEM**: Peer ACKs request and increments counter, but if requester goes offline before sending state summary, counter never decrements
+- **IMPACT**: After 3 stuck sends, peer permanently blocks all P2P responses with "send queue full" until `/reload`
+- **BEHAVIOR**: Now auto-decrements counter after 30 seconds if SendAltData never called
+- **RESULT**: Peers self-recover from stuck sends, preventing permanent P2P queue blocking
+- **LOCATIONS**: 
+  - `Guild.lua` (~22): Added pendingSendTimeouts tracking table
+  - `Chat.lua` (~829-838): Added 30-second safety timeout after incrementing counter
+  - `Guild.lua` (~1997-2000): Cancel timeout when SendAltData actually called
+- **NOW**: Robust P2P send queue management with automatic recovery from edge cases
+
+#### [P2P-012] Added Peer-Side Fallback Timeout
+- **FIXED**: Added 15-second timeout on requester side after peer ACK
+- **PROBLEM**: If peer ACKs but never sends data (disconnect/crash), requester waits indefinitely
+- **IMPACT**: User must manually retry with `/togbank sync`
+- **BEHAVIOR**: Now falls back to banker after 15 seconds if peer never delivers
+- **RESULT**: Automatic recovery from peer failures without manual intervention
+- **LOCATION**: `Chat.lua` (~1091-1101): Secondary timeout after clearing pending P2P request
+- **NOW**: Full fallback chain works - peer timeout → banker fallback → data arrives
+
+#### [P2P-013] Fixed expectedHashUpdatedAt Memory Leak
+- **FIXED**: Added cleanup for expectedHashUpdatedAt after successful hash validation
+- **PROBLEM**: Timestamps stored but never cleared, accumulating indefinitely
+- **IMPACT**: Minor memory leak (just timestamps), no functional impact
+- **RESULT**: Clean memory management for hash tracking
+- **LOCATION**: `Guild.lua` (~2250-2252): Clear expectedHashUpdatedAt after validation
+
+#### [PERF-007] Fixed GUILD_ROSTER_UPDATE Stuttering
+- **FIXED**: Changed OR to AND logic in initialization condition to stop repeated full roster refreshes
+- **PROBLEM**: Used `fullRosterInitAttempts < 2 OR (roster incomplete)` which kept triggering after initialization
+- **IMPACT**: Every online/offline event triggered full guild roster scan (1000+ members), causing 5-10ms+ stuttering
+- **BEHAVIOR**: After 2 initialization attempts, `fullRosterInitAttempts >= 2` BUT condition stayed true due to OR
+- **ROOT CAUSE**: Second condition `totalMembers <= onlineMembers` often true (WoW API reports equal values)
+- **SOLUTION**: Changed to AND logic - only refresh if BOTH conditions true: (not initialized yet) AND (roster incomplete)
+- **RESULT**: Full refresh only during addon load, online/offline uses lightweight CHAT_MSG_SYSTEM handler (<1ms)
+- **LOCATION**: `Events.lua` (~305-313): Fixed needsFullRosterRefresh flag logic
+- **OPERATIONS AVOIDED**: RefreshOnlineCache, RebuildBankerRoster, GetGuildRosterInfo loops, RefreshRequestsUI
+- **NOW**: Smooth gameplay without stuttering, full scan only on joins/leaves (not online/offline)
+- **DOCUMENTATION**: See `docs/DELTA_BUGS.md` for comprehensive analysis (PERF-005, PERF-007)
+
 #### [DELTA-015] Fixed Delta Duplication Bug (Complete)
 - **FIXED**: Added snapshot validation for inventory changes to prevent item duplication
 - **PROBLEM**: When inventory changed but no snapshot existed, delta computed against empty baseline

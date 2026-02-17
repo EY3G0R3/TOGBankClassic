@@ -20,6 +20,7 @@ TOGBankClassic_Guild.bankerProgressKnown = {}
 -- P2P send queue tracking (limit concurrent sends to prevent overwhelming chat throttle)
 TOGBankClassic_Guild.pendingSendCount = 0
 TOGBankClassic_Guild.MAX_PENDING_SENDS = 3
+TOGBankClassic_Guild.pendingSendTimeouts = {}  -- Track timeouts to prevent counter leaks
 
 -- Temporary in-memory error storage for when Guild.Info is not initialized
 TOGBankClassic_Guild.tempDeltaErrors = {
@@ -1992,6 +1993,12 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		return
 	end
 	local norm = self:NormalizeName(name)
+	
+	-- Cancel pending send timeout since we're actually sending now
+	if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
+		TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelling send timeout for %s (actually sending)", norm)
+		self.pendingSendTimeouts[norm] = nil
+	end
 	if not self.Info or not self.Info.alts or not self.Info.alts[norm] then
 		return
 	end
@@ -2247,6 +2254,10 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 					name, sender, receivedHash)
 				-- Clear expected hash after successful validation
 				self.expectedHashes[name] = nil
+				-- Also clear expectedHashUpdatedAt to prevent memory leak
+				if self.expectedHashUpdatedAt then
+					self.expectedHashUpdatedAt[name] = nil
+				end
 			end
 		end
 

@@ -302,9 +302,13 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 		-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
 		TOGBankClassic_Guild:RefreshRequestsUI()
 
-		-- Keep refreshing on init until roster data appears complete or we've tried twice
+		-- Keep refreshing on init until roster data appears complete AND we've tried at least twice
 		local totalMembers, onlineMembers = GetNumGuildMembers()
-		if self.fullRosterInitAttempts < 2 or (totalMembers and onlineMembers and totalMembers <= onlineMembers) then
+		-- PERF-007 FIX: Changed OR to AND - only continue if BOTH conditions true:
+		--   1. We haven't tried at least 2 times yet
+		--   2. Roster seems incomplete (some member info missing or everyone online)
+		-- Once we've tried twice, stop refreshing regardless - online/offline will use lightweight updates
+		if self.fullRosterInitAttempts < 2 and (not totalMembers or not onlineMembers or totalMembers <= onlineMembers) then
 			self.needsFullRosterRefresh = true
 		end
 	else

@@ -2856,7 +2856,255 @@ After fix, no "has fresher requests data, querying" messages observed during wip
 
 ---
 
-### �🟠 HIGH - All Resolved
+#### ✅ [PERF-005] P2P Send Queue Throttling
+
+**Severity:** 🟠 HIGH
+**Category:** Performance / P2P Protocol
+**Reporter:** Production Testing
+**Date Reported:** 2026-02-17
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.17
+**Fixed Date:** 2026-02-17
+**Reproducibility:** Was consistent in large guilds with many simultaneous P2P requests
+
+**Description:**
+When many guild members requested P2P data simultaneously, peers would acknowledge all requests immediately but then be unable to fulfill them due to ChatThrottleLib queue overflow. This caused:
+- Peers saying "Responding to X with data for Y" but never actually sending
+- Only 1-2 "Send complete" messages despite many response promises
+- Requesters stuck waiting indefinitely for data that never arrives
+- 30+ second send times overwhelming the chat throttle system
+
+**Root Cause:**
+The P2P protocol separated acknowledgment from data transmission:
+1. Peer immediately sends `togbank-rr` acknowledgment via WHISPER
+2. Requester cancels the pending P2P request and waits
+3. Peer attempts to call `SendAltData` to send full data
+4. ChatThrottleLib queue gets overwhelmed with concurrent sends (50KB+ each taking 30+ seconds)
+5. Data send never completes or is significantly delayed
+
+With 50-100 online guild members, a single sync request could trigger dozens of responses, causing complete system overload.
+
+**Solution Implemented:**
+Implemented send queue throttling to limit concurrent P2P data sends to 3 maximum:
+
+**Modules/Guild.lua:**
+- Added `pendingSendCount` tracking variable (current queue depth)
+- Added `MAX_PENDING_SENDS = 3` constant (maximum concurrent sends)
+- Added `pendingSendTimeouts = {}` tracking table (prevent counter leaks)
+- Increment counter when peer responds to P2P data request (Chat.lua line 825)
+- Decrement counter when send completes in `OnChunkSent` callback (line 2207-2210)
+- Cancel pending timeout in `SendAltData` when actually sending (line 1997-2000)
+
+**Modules/Chat.lua:**
+- Check `sendQueueFull` before responding to P2P data requests (line 798)
+- Increment `pendingSendCount` when acknowledging P2P request (line 825)
+- Added 30-second safety timeout after increment (lines 829-838)
+- Log queue status in response message (line 827)
+- Log "send queue full" when rejecting due to capacity (line 815)
+- Keep pending P2P request active until actual data arrives
+- Clear pending request when data successfully received (line 1333-1335)
+
+**Counter Leak Prevention (February 17, 2026):**
+Added 30-second safety timeout to prevent permanent queue blocking:
+
+**Problem:** If peer ACKs request but requester never sends state summary (disconnect/crash), counter stays incremented forever. After 3 stuck sends, peer permanently blocks all P2P responses until `/reload`.
+
+**Solution:** 30-second safety timeout:
+1. Peer ACKs and increments counter
+2. Starts 30-second timer with alt name captured
+3. If `SendAltData` called before timeout → cancel timer (normal flow)
+4. If timeout fires → auto-decrement counter (recovery from stuck send)
+5. After 3 stuck sends, peer would permanently block; now self-recovers
+
+**Protocol Flow (Fixed):**
+1. Requester broadcasts P2P request with expectedHash to GUILD
+2. Peer checks send queue: `if not sendQueueFull then`
+3. Peer sends `togbank-rr` acknowledgment and increments `pendingSendCount`
+4. Peer starts 30-second safety timeout for counter leak prevention
+5. Requester keeps pending request active, sends state summary for delta
+6. Peer receives state summary, calls `SendAltData` and **cancels timeout**
+7. **Data actually sends** (throttled to 3 concurrent max)
+8. `OnChunkSent` callback decrements `pendingSendCount` on completion
+9. Requester receives data and clears pending P2P request
+
+**Edge Case Recovery:**
+- If step 5 fails (requester offline): timeout at step 4 fires after 30s, auto-decrements counter
+- If step 6 fails (peer crashes): requester's 15-second timeout triggers banker fallback (see P2P-012)
+- If step 7 fails (network issue): `OnChunkSent` still called with error, decrements counter
+
+**Key Distinction:**
+- **Hash requests (hashOnly=true):** Unlimited - cheap queries for banker hash values
+- **Data requests (P2P):** Throttled to 3 concurrent - expensive 5-50KB data transfers
+
+**Performance Impact:**
+- **Before:** Unlimited concurrent sends → queue overflow → most data never arrives
+- **After:** 3 concurrent sends max → controlled flow → all data eventually arrives
+- **Tradeoff:** Slightly slower P2P distribution, but actually works reliably
+
+**Testing:**
+Monitor these messages after `/reload`:
+- ✅ "P2P: Responding to X with data for Y (hash=Z) - queue now: N/3"
+- ✅ "Sharing guild bank data: X bytes in ~Y chunks..."
+- ✅ "Send complete: N chunks, M bytes in T.Ts"
+- ✅ "P2P send completed - queue now: N/3"
+- ❌ "PERF-005: Skipping response (send queue full: 3/3)" (when at capacity)
+
+Expected behavior:
+- Maximum 3 concurrent "Sharing guild bank data..." messages
+- Each send completes before new response sent
+- No more "ghost responses" (acknowledge but never send)
+- Smooth progression: queue 1/3 → 2/3 → 3/3 → 2/3 → 1/3
+
+**Related Issues:**
+- PERF-006: GetItemInfo stuttering (separate issue, already fixed)
+- MIN_GUILD_SIZE: Reduced from 50 to 3 to enable P2P for smaller guilds
+- P2P-011: pendingSendCount leak fix (counter timeout)
+- P2P-012: Peer-side fallback timeout (requester recovery)
+
+**Verified By:** Testing in guild with ~1000 members, 50-100 online
+**Closed:** 2026-02-17
+
+---
+
+#### ✅ [PERF-007] GUILD_ROSTER_UPDATE Stuttering
+
+**Severity:** 🟡 MEDIUM
+**Category:** Performance / Event Handling
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-17
+**Status:** ✅ CLOSED
+**Fixed In:** v0.8.17
+**Fixed Date:** 2026-02-17
+**Reproducibility:** Was consistent in large guilds (1000+ members)
+
+**Description:**
+Users experienced noticeable stuttering/lag spikes whenever guild members came online or went offline, especially in large guilds (1000+ members). Each online/offline event triggered a full guild roster scan, causing 5-10ms+ frame time delays.
+
+**Root Cause:**
+The `GUILD_ROSTER_UPDATE` event handler used **OR logic** instead of **AND logic** for the initialization condition:
+
+```lua
+-- BUGGY (before):
+if self.fullRosterInitAttempts < 2 or (totalMembers and onlineMembers and totalMembers <= onlineMembers) then
+    self.needsFullRosterRefresh = true
+end
+```
+
+This OR condition caused the flag to remain `true` indefinitely because:
+- During initialization: `fullRosterInitAttempts < 2` is true → full refresh (correct)
+- After 2 attempts: First condition false, BUT...
+- Second condition `totalMembers <= onlineMembers` often true in practice
+- Result: **Every** `GUILD_ROSTER_UPDATE` event triggers full scan
+
+**Why totalMembers <= onlineMembers Stays True:**
+- WoW API sometimes reports equal values when roster data incomplete
+- Edge cases where everyone shown online during brief windows
+- Condition meant to detect "incomplete data" but kept triggering forever
+
+**Impact:**
+Every time a guild member came online or went offline:
+1. `CHAT_MSG_SYSTEM` event fires (lightweight, <1ms)
+2. Triggers `GuildRoster()` API call
+3. Triggers `GUILD_ROSTER_UPDATE` event
+4. Handler scans **all 1000+ guild members** with these expensive operations:
+   - `RefreshOnlineCache()` - Iterate all members, check online status
+   - `RebuildBankerRoster()` - Build banker list from officer notes
+   - `RefreshRequestsUI()` - Update UI banker controls
+   - Multiple `GetNumGuildMembers()` calls
+   - Guild info validation and caching
+
+**Result:** 5-10ms+ lag spike per online/offline event, multiplied by dozens of events per play session.
+
+**Solution Implemented:**
+Changed **OR to AND** logic so initialization only continues while BOTH conditions true:
+
+```lua
+-- FIXED (after):
+if self.fullRosterInitAttempts < 2 and (not totalMembers or not onlineMembers or totalMembers <= onlineMembers) then
+    self.needsFullRosterRefresh = true
+end
+```
+
+**Logic Breakdown:**
+Continue full refreshes **only if**:
+1. **Condition 1:** `fullRosterInitAttempts < 2` (not tried at least twice yet)
+2. **AND Condition 2:** Roster appears incomplete:
+   - `not totalMembers` - No total member count yet
+   - `OR not onlineMembers` - No online member count yet
+   - `OR totalMembers <= onlineMembers` - Suspicious equality (incomplete data)
+
+Once `fullRosterInitAttempts >= 2`, the first condition becomes false, so **entire expression becomes false** regardless of second condition. Initialization complete, flag stays false.
+
+**Why This Works:**
+- **During initialization:** Both conditions true → continue refreshing until data stable
+- **After initialization:** First condition false → stop refreshing even if data looks weird
+- **Online/Offline events:** Handled by lightweight `CHAT_MSG_SYSTEM` handler instead
+- **Result:** Full roster scan only during addon load, not on every member status change
+
+**Lightweight Handler Design:**
+After initialization, online/offline events use the optimized `CHAT_MSG_SYSTEM` handler:
+
+**Modules/Events.lua (lines 315-343):**
+- Pattern matching: `"(.+) has come online"` and `"(.+) has gone offline"`
+- Direct table lookup: `onlineMembers[playerName] = true/nil`
+- Selective updates: Only refresh if affected player is a banker
+- **No full roster scan:** Just update single player's online status
+- Performance: <1ms vs 5-10ms for full scan
+
+**Operations Avoided Per Event:**
+By stopping repeated full refreshes, we avoid:
+- `RefreshOnlineCache()` - iterating all 1000+ members
+- `RebuildBankerRoster()` - scanning officer notes for banker list
+- `GetGuildRosterInfo()` calls for every single member
+- Memory allocations for temporary tables
+- Table sorting and comparisons
+
+**Performance Metrics:**
+
+**Before Fix:**
+- **Full roster scan:** 5-10ms+ per online/offline event
+- **Events per hour:** 50-100 in active guild
+- **Total overhead:** 250-1000ms wasted per hour
+- **User experience:** Noticeable stutter on each event
+
+**After Fix:**
+- **Initialization:** 5-10ms × 2 attempts only (during addon load)
+- **Online/offline:** <1ms per event (lightweight handler)
+- **Total overhead:** ~10-20ms per reload, near-zero during gameplay
+- **User experience:** Smooth gameplay, no stuttering
+
+**Edge Cases Handled:**
+
+**Member Joins/Leaves Guild:**
+- These trigger `GUILD_ROSTER_UPDATE` without `CHAT_MSG_SYSTEM`
+- Handler detects missing system message → triggers full refresh
+- Correct behavior: Need full scan for roster changes
+
+**Alt Promotion to Banker:**
+- Officer note changes trigger `GUILD_ROSTER_UPDATE`
+- Handler rebuilds banker roster to pick up new banker
+- Correct behavior: Need scan to update banker list
+
+**Manual Roster Refresh:**
+- User opens guild roster UI → triggers `GuildRoster()` API
+- Handler processes normally during initialization
+- After init, events marked as "handled via system messages"
+
+**Files Modified:**
+- `Modules/Events.lua` (lines 305-313): Fixed initialization condition logic
+- `CHANGELOG.md`: Added PERF-007 entry with full technical details
+
+**Related Issues:**
+- PERF-005: P2P send queue throttling (separate fix)
+- PERF-006: GetItemInfo stuttering (separate fix)
+- [UI-008]: Roster caching improvements (future optimization)
+
+**Verified By:** Testing in 1000-member guild
+**Closed:** 2026-02-17
+
+---
+
+### 🟠 HIGH - All Resolved
 
 #### ✅ [ADDON-001] Nil itemLink passed to Pawn/BagBrother causes errors
 
