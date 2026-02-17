@@ -1687,8 +1687,10 @@ end
 			TOGBankClassic_Output:Debug("PROTOCOL", "P2P alt-request from %s for %s (expectedHash=%s)",
 				tostring(sender), tostring(data.name), tostring(data.expectedHash))
 			
-			-- Forward to togbank-r handler for processing
-			prefix = "togbank-r"
+			-- Forward to togbank-r handler by recursively calling OnCommReceived
+			-- (can't just set prefix="togbank-r" since that handler already executed above)
+			self:OnCommReceived("togbank-r", message, distribution, sender)
+			return
 		end
 	end
 	if prefix == "togbank-hlr" then

@@ -8,6 +8,7 @@
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 
 **Recent Fixes (2026-02-17):**
+- ✅ [P2P-009] **CRITICAL** P2P data requests not being processed - Fixed togbank-hl handler forwarding logic. P2P requests broadcast via togbank-hl (type="alt-request") were never processed because the handler attempted to forward to togbank-r by setting prefix variable, but togbank-r handler had already executed earlier in the function. Changed to recursively call OnCommReceived("togbank-r") to properly process requests. Result: Peers now respond to P2P broadcasts with actual data instead of silence. Without this fix, P2P protocol was completely non-functional - users saw "Broadcasting request" messages but received no data from peers. Location: Chat.lua OnCommReceived togbank-hl handler (~1685-1693).
 - ✅ [DELTA-015] Delta duplication bug (COMPLETE) - Fixed snapshot validation for ALL change scenarios (mail-only AND inventory). Previously only mail-only changes checked for snapshot availability before computing delta. When inventory changed without snapshot, system computed delta against empty baseline, causing duplicate items on requester's side. Now BOTH mail-only and inventory changes validate snapshot exists before computing delta, or force full data (hash=0) to prevent duplication. Locations: Guild.lua RespondToStateSummary (~1568-1624) and DeltaComms.lua ComputeDelta error handling (~561-567).
 - ✅ [SYNC-009] Non-banker hash sync failing - HLR handler skipping updates when hasContent=true - Fixed HLR handler to check hash equality BEFORE skipping alts. Previously skipped any alt with content even when hashes mismatched, preventing non-bankers from detecting stale data for other non-bankers. Now only skips if BOTH hasContent AND hashes match.
 - ✅ [MAIL-009] mailHash not stored when hashes differ - Fixed HLR and HL-broadcast handlers to update mailHash when it differs from banker's authoritative value, not just when localHash=0. Previously only stored mailHash for new alts or when no inventory hash existed, leaving mailHash stale when only mail changed. Now properly caches banker's mailHash in all scenarios.
@@ -7561,5 +7562,203 @@ elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData then
 - Design fallback paths for common scenarios (no banker, post-wipe)
 - Test recovery scenarios explicitly (wipe, offline, empty guild)
 - Log WHY requests are skipped (not just that they were skipped)
+
+---
+
+#### [P2P-009] P2P data requests not being processed at all
+
+**Severity:** 🔴 CRITICAL
+**Category:** P2P / Communication / Protocol
+**Reporter:** User (Production Testing)
+**Date Reported:** 2026-02-17
+**Date Resolved:** 2026-02-17
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - P2P protocol completely non-functional since PERF-006 channel migration
+**Related:** PERF-006 (channel migration to togbank-hl), PERF-005 (P2P protocol design)
+
+**Problem:**
+After PERF-006 migrated P2P broadcasts from `togbank-r` to `togbank-hl` channel (for modern code segregation), P2P requests were never actually processed by peers. Users saw "P2P: Broadcasting request for Toglowweap-Azuresong with hash=1866095815 (waiting for peers)" messages but received no data. After 5 second timeout, system would fall back to querying banker (but with no banker online for testing, remained stuck at 0/35 indefinitely).
+
+**Symptoms:**
+1. User runs `/togbank sync` with no banker online
+2. System broadcasts P2P requests via `togbank-hl`: "P2P: Broadcasting request for X with hash=Y (waiting for peers)"
+3. Peers with matching data receive the `togbank-hl` message
+4. **Peers never respond** - no "P2P: Responding to..." messages
+5. After 5 seconds: timeout occurs, falls back to QueryAltPullBased
+6. With no banker online: stuck at 0/35 indefinitely
+7. With banker online: bypasses P2P entirely, queries banker directly
+
+**Root Cause:**
+
+The `togbank-hl` handler attempted to forward P2P requests to the `togbank-r` handler by changing the `prefix` variable, but this doesn't work due to control flow order.
+
+**Chat.lua OnCommReceived structure (simplified):**
+```lua
+function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+    -- Line 728: togbank-r handler executes FIRST
+    if prefix == "togbank-r" then
+        if data.type == "alt-request" then
+            // Process request, check hash match, send togbank-rr ack
+        end
+    end
+    
+    -- ... many other handlers in between ...
+    
+    -- Line 1631: togbank-hl handler executes LATER
+    if prefix == "togbank-hl" then
+        if data.type == "alt-request" then
+            // BEFORE FIX:
+            prefix = "togbank-r"  // ❌ Too late! togbank-r already checked above
+        end
+    end
+end
+```
+
+**Why the Bug Occurred:**
+1. `BroadcastP2PRequest()` sends message on `togbank-hl` channel (Guild.lua:888)
+2. Peers receive message, enter OnCommReceived with `prefix = "togbank-hl"`
+3. Function checks handlers top-to-bottom:
+   - Line 728: `if prefix == "togbank-r"` → FALSE (prefix is "togbank-hl"), **SKIPS**
+   - Line 1631: `if prefix == "togbank-hl"` → TRUE, enters handler
+   - Line 1692: Sets `prefix = "togbank-r"` (attempting to forward)
+4. **Control flow continues forward**, never goes back to line 728
+5. Request is never processed, peer never responds
+
+**Impact:**
+- **Severity:** CRITICAL - Complete P2P protocol failure
+- **Affected Users:** Anyone testing P2P without banker online
+- **User Experience:** "Broadcasting request" spam, no data, looks broken
+- **Workaround:** Have banker online (bypasses P2P entirely via QueryAltPullBased)
+- **Silent Failure:** No errors, just infinite waiting
+- **Introduced:** During PERF-006 channel migration (2026-02-08)
+- **Duration:** ~9 days undetected (only affected no-banker testing scenarios)
+
+**Fix:**
+
+**Chat.lua togbank-hl handler (lines 1685-1693)**
+```lua
+// BEFORE:
+elseif data.type == "alt-request" then
+    TOGBankClassic_Output:Debug("PROTOCOL", "P2P alt-request from %s for %s", sender, data.name)
+    prefix = "togbank-r"  // ❌ Doesn't work - that handler already executed
+end
+
+// AFTER:
+elseif data.type == "alt-request" then
+    TOGBankClassic_Output:Debug("PROTOCOL", "P2P alt-request from %s for %s", sender, data.name)
+    // Recursively call OnCommReceived with togbank-r prefix
+    // This properly processes the request as if it came via togbank-r
+    self:OnCommReceived("togbank-r", message, distribution, sender)
+    return  // Exit to prevent double processing
+end
+```
+
+**How the Fix Works:**
+1. Peer receives `togbank-hl` message with `type = "alt-request"`
+2. togbank-hl handler (line 1685) matches
+3. **Recursively calls** `self:OnCommReceived("togbank-r", message, ...)`
+4. New call enters function with `prefix = "togbank-r"`
+5. Line 728: `if prefix == "togbank-r"` → TRUE, enters handler
+6. Processes request normally:
+   - Checks if peer has data
+   - Validates hash match: `myHash == data.expectedHash`
+   - If match + has content: sends `togbank-rr` acknowledgment
+7. Requester receives ack, sends `togbank-state` summary
+8. Peer compares hashes, sends data via `togbank-d`
+9. **P2P protocol completes successfully**
+
+**Testing:**
+```
+BEFORE FIX:
+1. `/wipe` (clear local data)
+2. Logout all bankers
+3. `/togbank sync` from non-banker
+4. Output: "P2P: Broadcasting request..." × 35
+5. Output: "Fast-fill: No banker online, broadcasting 35 requests"
+6. **NO RESPONSES** - peers silent despite having data
+7. After 5 seconds: timeout, tries QueryAltPullBased (fails, no banker)
+8. Progress: 0/35 indefinitely
+
+AFTER FIX:
+1. `/wipe` (clear local data)
+2. Logout all bankers
+3. `/togbank sync` from non-banker
+4. Output: "P2P: Broadcasting request..." × 35
+5. Peer outputs: "PERF-005: Peer responding for X (hash match: Y)"
+6. Peer outputs: "P2P: Responding to Sender with data for X (hash=Y) - queue now: 1/3"
+7. Requester outputs: "P2P: Peer Username acknowledged X - will send delta"
+8. Data transfer completes via togbank-state → togbank-d
+9. Progress: 1/35, 2/35, ... 35/35 (completes in 1-2 minutes)
+```
+
+**Expected Behavior After Fix:**
+- ✅ P2P requests broadcast via `togbank-hl` are properly processed
+- ✅ Peers with matching hash respond with data
+- ✅ P2P transfer completes without banker online
+- ✅ No 5-second timeouts or fallback needed (unless all peers busy)
+- ✅ Much faster sync (parallel P2P vs sequential banker queries)
+
+**Backwards Compatibility:**
+- **Old code (< v0.8.0):** Doesn't listen to `togbank-hl`, unaffected ✅
+- **New code (v0.8.0-8.15):** P2P broken, relies on banker fallback ⚠️
+- **New code (v0.8.16+):** P2P fully operational ✅
+- **Migration:** All users should update to v0.8.16+ for P2P benefits
+
+**Flow Comparison:**
+
+**BEFORE (Broken):**
+```
+Requester → togbank-hl broadcast (P2P request)
+Peers     → receive togbank-hl, attempt to forward to togbank-r
+         → forwarding fails (already passed that check)
+         → request ignored, no response sent
+Requester → waits 5 seconds, timeout
+         → falls back to QueryAltPullBased
+         → if banker online: queries banker (slow, sequential)
+         → if banker offline: stuck at 0/35
+```
+
+**AFTER (Fixed):**
+```
+Requester → togbank-hl broadcast (P2P request)
+Peers     → receive togbank-hl, recursively call OnCommReceived("togbank-r")
+         → togbank-r handler processes request
+         → checks hash match: myHash == expectedHash
+         → sends togbank-rr acknowledgment (WHISPER)
+Requester → receives togbank-rr, sends togbank-state (WHISPER)
+Peer      → receives togbank-state, compares hashes, sends togbank-d (WHISPER)
+Requester → receives togbank-d, applies data
+         → Progress: 1/35, 2/35, ... (fast, parallel)
+```
+
+**Why This Bug Was Hard to Detect:**
+1. **Fast fallback:** 5-second timeout meant banker queries happened quickly
+2. **Banker usually online:** Testing typically done with banker available
+3. **No errors:** Silent failure, just looked slow
+4. **Bandwidth savings still worked:** Hash comparisons prevented unnecessary transfers
+5. **PERF-006 was focused on channel segregation:** Forwarding logic wasn't tested
+
+**Files Changed:**
+- [Modules/Chat.lua](Modules/Chat.lua#L1685-1693) - togbank-hl forwarding to togbank-r
+
+**Related Issues:**
+- [PERF-006] Channel migration that introduced the bug
+- [P2P-008] Post-wipe recovery (companion fix for no-banker scenarios)
+- [PERF-005] Original P2P protocol design
+
+**Prevention:**
+- **Test forwarding logic explicitly** - Don't assume variable reassignment works
+- **Test P2P without banker online** - Catches both P2P-008 and P2P-009
+- **Use recursive calls for message forwarding** - More reliable than variable manipulation
+- **Log at each step** - Would have shown "request received but not processed"
+- **Validate channel migration changes** - Especially when moving from working code
+
+**Key Insight:**
+When forwarding messages between handlers in the same function, you can't just change the prefix variable - you must either:
+1. **Recursively call** the function with new prefix (chosen solution)
+2. **Extract shared logic** to separate function, call from both handlers
+3. **Reorder handlers** to process forwarded prefix first (fragile, order-dependent)
+
+Recursive calling is cleanest because it isolates the forwarding logic and makes intent clear.
 
 ---
