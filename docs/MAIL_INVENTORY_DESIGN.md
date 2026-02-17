@@ -20,6 +20,15 @@ Mail inventory tracking is now fully integrated into TOGBankClassic, allowing us
 6. **Search Integration**: Mail items searchable (no double-counting)
 7. **P2P Distribution**: Mail data distributed via peer-to-peer protocol
 
+## Recent Fixes (February 17, 2026)
+
+### Issue #7: Mail-Only Change Sync Abort ✅ FIXED
+**Problem:** When mail changed but inventory didn't, and no snapshot was available, `ComputeDelta()` returned `nil`, causing complete sync failure. Requesters with matching inventory but outdated mail would never receive updates.  
+**Root Cause:** Line 567 in DeltaComms.lua returned `nil` instead of falling back to empty baseline like the general hash mismatch case.  
+**Solution:** Changed to use same fallback as inventory mismatch: `previous = { items = {}, money = 0, mailHash = 0 }`. Delta still contains all items as additions (against empty baseline), but sync succeeds.  
+**Result:** Mail-only changes always sync successfully, even after snapshot expiration. No more permanent out-of-sync states.  
+**Files:** [DeltaComms.lua](../Modules/DeltaComms.lua#L557-L567)
+
 ## Recent Fixes (February 16, 2026)
 
 The following critical issues were resolved to make mail a true first-class inventory component:

@@ -7,6 +7,17 @@
 
 ### 🐛 Bug Fixes
 
+#### [MAIL-010] Fixed Mail-Only Change Sync Abort (CRITICAL)
+- **FIXED**: ComputeDelta now uses empty baseline fallback instead of returning nil
+- **PROBLEM**: When mail changed but inventory matched, and no snapshot existed, returned nil (line 567)
+- **IMPACT**: Complete sync failure - requesters with matching inventory but outdated mail never received updates
+- **BEHAVIOR**: Guild.lua aborted sync at line 2054-2055 with "Failed to compute delta" error
+- **ROOT CAUSE**: Inconsistent error handling - inventory mismatch used empty baseline, mail-only change returned nil
+- **SOLUTION**: Changed to `previous = { items = {}, money = 0, mailHash = 0 }` (same as inventory mismatch case)
+- **RESULT**: Mail-only changes always sync successfully via delta (contains all items as additions against empty baseline)
+- **LOCATION**: `DeltaComms.lua` (~557-567): Mail-only change handler now matches inventory mismatch fallback behavior
+- **NOTE**: Still pure delta protocol - empty baseline causes delta to include all items, but transmitted as delta message
+
 #### [P2P-010] Fixed P2P Broadcast Never Sent (CRITICAL)
 - **FIXED**: togbank-rr handler now actually sends P2P broadcast to guild
 - **PROBLEM**: Handler built P2P request but never serialized or sent it
