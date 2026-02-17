@@ -1,11 +1,15 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** February 8, 2026
+**Last Updated:** February 16, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+
+**Recent Fixes (2026-02-16):**
+- ✅ [MAIL-007] HLR handler ignoring mailHash when storing and comparing - Fixed HLR handler to store banker's mailHash (was hardcoded to 0), compare mailHash when deciding to sync, and properly detect mail-only changes. Mail-only changes now trigger syncs correctly.
+- ✅ [MAIL-008] RespondToStateSummary ignoring mailHash comparison - Fixed to check both inventoryHash and mailHash when deciding whether to send no-change vs delta. Added three-way detection: both match (no-change), mail-only change (mail delta), inventory change (full delta). Mail-only changes now properly sync.
 
 **Recent Fixes (2026-02-08):**
 - ✅ [PERF-006] P2P protocol bypassed, queries going directly to banker - Fixed in multiple locations: (1) QueryAltPullBased now only WHISPERs banker as last resort, (2) Version broadcast handler uses BroadcastP2PRequest for P2P, (3) FastFillMissingAlts always uses P2P when hash available, (4) P2P timeout handlers clear pendingAltRequests to allow banker fallback, (5) Migrated P2P broadcasts from togbank-r to togbank-hl for modern-code-only channel segregation, (6) SendStateSummary uses hash=0 instead of hash=nil to prevent false matches. Result: P2P operational with forced adoption (modern peers help each other, old code waits for banker)
@@ -218,6 +222,221 @@ for _, mailItem in ipairs(alt.mail.items) do
 
 **Current Status:** 
 🔍 **ON HOLD** - Awaiting clear bug definition and reproduction steps from user before proceeding with any code changes.
+
+---
+
+#### [MAIL-007] HLR handler ignoring mailHash when storing and comparing
+
+**Severity:** 🔴 CRITICAL
+**Category:** Mail / Communication / Protocol
+**Reporter:** Code Review
+**Date Reported:** 2026-02-16
+**Date Resolved:** 2026-02-16
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - Mail-only changes never triggered syncs
+**Related:** [MAIL-008] RespondToStateSummary mailHash, MAIL inventory design
+
+**Problem:**
+The HLR (Hash List Reply) handler received mailHash from the banker but completely ignored it when storing hashes locally and when deciding whether to sync. This broke the mail-only change detection feature, preventing mail updates from propagating to other players.
+
+**Symptoms:**
+1. Banker sends `mailHash` in HLR (verified in Guild.lua BuildBankerHashList)
+2. Receiver hardcodes `mailHash = 0` when creating stub entries
+3. Receiver never stores `mailHash` when updating existing alts
+4. Receiver only compares `inventoryHash`, ignoring `mailHash` entirely
+5. Mail-only changes (inventory unchanged) never triggered sync requests
+6. Mail updates only propagated when inventory also changed
+
+**Root Cause:**
+Three separate issues in Chat.lua HLR handler (lines ~1685-1750):
+
+1. **Line ~1700**: Stub creation hardcoded `mailHash = 0` instead of `summary.mailHash`
+2. **Line ~1710**: Missing code to store `summary.mailHash` when updating alts
+3. **Line ~1743**: Conditional only checked `summary.hash ~= localHash`, missing mailHash comparison
+
+**Impact:**
+- **Severity:** CRITICAL - Completely breaks mail-only change detection
+- **Feature Impact:** Mail inventory cannot sync independently of bank/bags
+- **User Experience:** Mail updates only visible after bank/bags changes
+- **Design Violation:** Mail not treated as first-class inventory component per MAIL_INVENTORY_DESIGN.md
+
+**Fix:**
+
+**Chat.lua (lines ~1692-1715) - Store banker's mailHash:**
+```lua
+-- BEFORE:
+mailHash = 0,  // Hardcoded
+
+-- AFTER:
+mailHash = summary.mailHash or 0,  // Use banker's value
+
+-- AND add when updating existing alts:
+if summary.mailHash then
+    localAlt.mailHash = summary.mailHash
+end
+```
+
+**Chat.lua (lines ~1718-1748) - Compare mailHash for sync decision:**
+```lua
+-- BEFORE:
+local localHash = localAlt and localAlt.inventoryHash or 0
+elseif not localAlt or localHash == 0 or (summary.hash and summary.hash ~= localHash) then
+
+-- AFTER:
+local localHash = localAlt and localAlt.inventoryHash or 0
+local localMailHash = localAlt and localAlt.mailHash or 0
+elseif not localAlt or localHash == 0 or 
+       (summary.hash and summary.hash ~= localHash) or 
+       (summary.mailHash and summary.mailHash ~= localMailHash) then
+    -- Added mailHash comparison to detect mail-only changes
+```
+
+**Testing:**
+1. Banker scans mail with items → mailHash computed
+2. Peer requests hash list → receives mailHash in HLR
+3. Peer stores mailHash locally (verify in debug logs)
+4. Banker changes only mail (no bank/bags changes) → mailHash changes
+5. Next HLR shows different mailHash
+6. Peer detects mismatch → requests update
+7. Mail-only changes propagate successfully
+
+**Three-Way Change Detection Now Working:**
+- Both hashes unchanged → No sync
+- Only mailHash changed → Mail-only sync triggered ✅ (was broken)
+- Only inventoryHash changed → Inventory-only sync
+- Both changed → Full sync
+
+**Files Changed:**
+- [Modules/Chat.lua](Modules/Chat.lua#L1692-1715) - Store mailHash from banker in HLR handler
+- [Modules/Chat.lua](Modules/Chat.lua#L1718-1748) - Compare mailHash when deciding to sync
+
+**Related Issues:**
+- [MAIL-008] Companion fix for RespondToStateSummary
+- [MAIL-012] Previous mail sync fixes (hash broadcasting)
+- MAIL_INVENTORY_DESIGN.md - Documents three-way detection requirement
+
+**Prevention:**
+- Code review should verify all hash fields are compared consistently
+- When adding new hash fields, grep for all comparison locations
+- Test mail-only changes explicitly in sync scenarios
+
+---
+
+#### [MAIL-008] RespondToStateSummary ignoring mailHash comparison
+
+**Severity:** 🔴 CRITICAL
+**Category:** Mail / Communication / Delta Computation
+**Reporter:** Code Review
+**Date Reported:** 2026-02-16
+**Date Resolved:** 2026-02-16
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - Mail-only changes sent "no-change" response
+**Related:** [MAIL-007] HLR mailHash handling, DELTA-014 hash-based deltas
+
+**Problem:**
+When responding to state summaries from peers, the code only checked if `inventoryHash` matched to decide whether to send "no-change" vs delta. It completely ignored `mailHash`, causing mail-only changes to be treated as "no changes" and never synced.
+
+**Symptoms:**
+1. Requester and responder have same inventoryHash but different mailHash
+2. RespondToStateSummary checks only inventoryHash → sees match
+3. Sends "no-change" response even though mail changed
+4. Requester never receives mail updates
+5. Mail changes only propagate when inventory also changes
+
+**Root Cause:**
+Guild.lua RespondToStateSummary (lines ~1506-1548) had single-hash comparison logic:
+
+```lua
+// BEFORE (BROKEN):
+if requesterHash == currentHash then
+    // Send no-change (ignores mail!)
+else
+    // Send delta
+end
+```
+
+This ignored the entire mailHash field that was being tracked separately for mail-only change detection.
+
+**Impact:**
+- **Severity:** CRITICAL - Mail-only changes never sync
+- **Breaks:** Three-way detection (inventory + mail separate tracking)
+- **User Impact:** Mail appears to "disappear" or not update
+- **Design Violation:** Defeats purpose of dual-hash system
+
+**Fix:**
+
+**Guild.lua RespondToStateSummary (lines ~1506-1580) - Three-way hash comparison:**
+
+```lua
+// Extract both hashes
+local requesterMailHash = summary.mailHash or 0
+local currentMailHash = currentAlt.mailHash or 0
+
+// Three-way comparison:
+if requesterHash == currentHash and requesterMailHash == currentMailHash then
+    // Both match → no-change
+    local noChangeMsg = {
+        type = "no-change",
+        name = norm,
+        version = currentVersion,
+        hash = currentHash,
+        mailHash = currentMailHash,  // Include both hashes
+    }
+    // Send no-change
+elseif requesterHash == currentHash and requesterMailHash ~= currentMailHash then
+    // Mail-only change → mail delta
+    TOGBankClassic_Output:Debug("SYNC", "Sending data to %s for %s (mail-only change: requester=%d, current=%d)",
+        requester, norm, requesterMailHash, currentMailHash)
+    self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+else
+    // Inventory changed (mail may or may not have changed) → full delta
+    self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+end
+```
+
+**Key Changes:**
+1. **Extract mailHash** from summary and currentAlt
+2. **Three-way logic:**
+   - Both match → no-change
+   - Mail differs, inventory same → mail-only delta
+   - Inventory differs → full delta (may include mail)
+3. **Include mailHash in no-change message** for completeness
+4. **Pass requesterMailHash to SendAltData** for proper delta computation
+
+**Testing:**
+1. Banker changes only mail → mailHash changes
+2. Peer requests data via state summary
+3. Peer's requesterMailHash differs, requesterHash matches
+4. RespondToStateSummary detects mail-only change
+5. Sends delta with mail updates
+6. Peer receives and applies mail changes
+7. Verify mail items appear in peer's UI
+
+**Three-Way Detection Working:**
+- inventoryHash match + mailHash match → ✅ No-change
+- inventoryHash match + mailHash differ → ✅ Mail-only delta (was broken)
+- inventoryHash differ + mailHash match → ✅ Inventory-only delta
+- Both differ → ✅ Full delta
+
+**Debug Logging:**
+Added detailed logs to show which scenario was detected:
+- "Sending data to %s for %s (mail-only change: requester=%d, current=%d)"
+- "Sending data to %s for %s (hash mismatch: inv=%d->%d, mail=%d->%d)"
+- "Sent no-change reply to %s for %s (hash=%d, mailHash=%d)"
+
+**Files Changed:**
+- [Modules/Guild.lua](Modules/Guild.lua#L1506-1580) - Rewritten hash comparison with three-way logic
+
+**Related Issues:**
+- [MAIL-007] Companion fix for HLR handler
+- [DELTA-014] Hash-based delta computation (uses requesterMailHash)
+- MAIL_INVENTORY_DESIGN.md - Three-way detection design
+
+**Prevention:**
+- When adding new hash fields, update ALL comparison points
+- Test each scenario: both match, one differs, both differ
+- Verify debug logs show correct detection reason
+- Add integration tests for mail-only changes
 
 ---
 

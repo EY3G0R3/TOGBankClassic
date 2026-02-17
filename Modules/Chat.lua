@@ -1700,17 +1700,21 @@ end
 								inventoryUpdatedAt = summary.updatedAt,
 								items = {},
 								mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
-								mailHash = 0,
+								mailHash = summary.mailHash or 0,
 							}
 							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
-							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for new alt %s: hash=%d, updatedAt=%s", norm, summary.hash, tostring(summary.updatedAt))
+							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for new alt %s: hash=%d, mailHash=%d, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
 						elseif localHash == 0 then
 							-- Store banker's hash if we don't have one
 							localAlt.inventoryHash = summary.hash
 							if summary.updatedAt then
 								localAlt.inventoryUpdatedAt = summary.updatedAt
 							end
-							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for %s: hash=%d, updatedAt=%s", norm, summary.hash, tostring(summary.updatedAt))
+							-- Store mail hash from banker
+							if summary.mailHash then
+								localAlt.mailHash = summary.mailHash
+							end
+							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for %s: hash=%d, mailHash=%d, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
 						end
 					end
 				end
@@ -1723,30 +1727,37 @@ end
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
 				local localAlt = localAlts and localAlts[norm]
 				local localHash = localAlt and localAlt.inventoryHash or 0
+				local localMailHash = localAlt and localAlt.mailHash or 0
 				local hasContent = localAlt and TOGBankClassic_Guild and TOGBankClassic_Guild.HasAltContent
 					and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
 				-- DEBUG: Log every alt to see what's happening
-				TOGBankClassic_Output:Debug("PROTOCOL", "HLR check: %s hasContent=%s localHash=%s bankerHash=%s",
-					tostring(norm), tostring(hasContent), tostring(localHash), tostring(summary and summary.hash))
+				TOGBankClassic_Output:Debug("PROTOCOL", "HLR check: %s hasContent=%s localHash=%s bankerHash=%s localMailHash=%s bankerMailHash=%s",
+					tostring(norm), tostring(hasContent), tostring(localHash), tostring(summary and summary.hash), tostring(localMailHash), tostring(summary and summary.mailHash))
 				totalCount = totalCount + 1
 
 				-- Skip alts we already have content for - no need to request
 				if hasContent then
 					TOGBankClassic_Output:Debug(
 						"PROTOCOL",
-						"HLR skip: %s (already have content, localHash=%s, bankerHash=%s)",
+						"HLR skip: %s (already have content, localHash=%s, bankerHash=%s, localMailHash=%s, bankerMailHash=%s)",
 						tostring(norm),
 						tostring(localHash),
-						tostring(summary and summary.hash)
+						tostring(summary and summary.hash),
+						tostring(localMailHash),
+						tostring(summary and summary.mailHash)
 					)
-				elseif not localAlt or localHash == 0 or (summary.hash and summary.hash ~= localHash) then
+				elseif not localAlt or localHash == 0 or (summary.hash and summary.hash ~= localHash) or (summary.mailHash and summary.mailHash ~= localMailHash) then
 					pending[norm] = summary
+					local reason = (not localAlt or localHash == 0) and "no data" or ((summary.hash and summary.hash ~= localHash) and "inventory mismatch" or "mail mismatch")
 					TOGBankClassic_Output:Debug(
 						"PROTOCOL",
-						"HLR pending: %s (localHash=%s, bankerHash=%s)",
+						"HLR pending: %s (%s: localHash=%s, bankerHash=%s, localMailHash=%s, bankerMailHash=%s)",
 						tostring(norm),
+						reason,
 						tostring(localHash),
-						tostring(summary and summary.hash)
+						tostring(summary and summary.hash),
+						tostring(localMailHash),
+						tostring(summary and summary.mailHash)
 					)
 				else
 					-- Hash matches but no content - request it

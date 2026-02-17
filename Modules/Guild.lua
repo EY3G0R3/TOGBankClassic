@@ -1503,7 +1503,11 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	local requesterHash = summary.hash or nil
 	local currentHash = currentAlt.inventoryHash or nil
 
-	TOGBankClassic_Output:DebugComm("RespondToStateSummary: %s requesterV=%d currentV=%d requesterHash=%s currentHash=%s", norm, requesterVersion, currentVersion, tostring(requesterHash), tostring(currentHash))
+	-- Extract mail hashes for comparison
+	local requesterMailHash = summary.mailHash or 0
+	local currentMailHash = currentAlt.mailHash or 0
+	
+	TOGBankClassic_Output:DebugComm("RespondToStateSummary: %s requesterV=%d currentV=%d requesterHash=%s currentHash=%s requesterMailHash=%s currentMailHash=%s", norm, requesterVersion, currentVersion, tostring(requesterHash), tostring(currentHash), tostring(requesterMailHash), tostring(currentMailHash))
 
 	-- v0.8.0: Delta mode - ONLY use hashes, no version fallback
 	if self:ShouldUseDelta() then
@@ -1525,34 +1529,52 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			return
 		end
 
-		if requesterHash == currentHash then
-			-- Hashes match - no changes needed
+		-- Check both inventory and mail hashes
+		if requesterHash == currentHash and requesterMailHash == currentMailHash then
+			-- Both hashes match - no changes needed
 			local noChangeMsg = {
 				type = "no-change",
 				name = norm,
 				version = currentVersion,
 				hash = currentHash,
+				mailHash = currentMailHash,
 			}
 			local data = TOGBankClassic_Core:SerializeWithChecksum(noChangeMsg)
-			TOGBankClassic_Output:DebugComm("DELTA MODE: SENDING NO-CHANGE to %s for %s (hash match: %d)", requester, norm, currentHash)
+			TOGBankClassic_Output:DebugComm("DELTA MODE: SENDING NO-CHANGE to %s for %s (hash match: inv=%d, mail=%d)", requester, norm, currentHash, currentMailHash)
 			if not TOGBankClassic_Core:SendWhisper("togbank-nochange", data, requester, "NORMAL") then
 				return
 			end
-			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%d)", requester, norm, currentHash)
+			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%d, mailHash=%d)", requester, norm, currentHash, currentMailHash)
 			return
-		else
-			-- Hashes differ - send delta (DELTA-014: pass requester hashes for proper baseline)
-			TOGBankClassic_Output:DebugComm("DELTA MODE: HASH MISMATCH - calling SendAltData for %s (requester=%d, current=%d)", norm, requesterHash, currentHash)
+		elseif requesterHash == currentHash and requesterMailHash ~= currentMailHash then
+			-- Only mail changed - send mail-only delta
+			TOGBankClassic_Output:DebugComm("DELTA MODE: MAIL-ONLY CHANGE - calling SendAltData for %s (mail: requester=%d, current=%d)", norm, requesterMailHash, currentMailHash)
 			TOGBankClassic_Output:Debug(
 				"SYNC",
-				"Sending data to %s for %s (hash mismatch: requester=%d, current=%d)",
+				"Sending data to %s for %s (mail-only change: requester=%d, current=%d)",
+				requester,
+				norm,
+				requesterMailHash,
+				currentMailHash
+			)
+			-- DELTA-014: Pass requester hashes to compute proper delta (inventory unchanged)
+			self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+			return
+		else
+			-- Inventory changed (mail may or may not have changed) - send delta
+			TOGBankClassic_Output:DebugComm("DELTA MODE: INVENTORY CHANGE - calling SendAltData for %s (inv: requester=%d, current=%d, mail: requester=%d, current=%d)", norm, requesterHash, currentHash, requesterMailHash, currentMailHash)
+			TOGBankClassic_Output:Debug(
+				"SYNC",
+				"Sending data to %s for %s (hash mismatch: inv=%d->%d, mail=%d->%d)",
 				requester,
 				norm,
 				requesterHash,
-				currentHash
+				currentHash,
+				requesterMailHash,
+				currentMailHash
 			)
 			-- DELTA-014: Pass requester hashes to compute proper delta
-			self:SendAltData(norm, requesterHash, summary.mailHash or 0, requester)
+			self:SendAltData(norm, requesterHash, requesterMailHash, requester)
 			return
 		end
 	end
