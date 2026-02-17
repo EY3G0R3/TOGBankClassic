@@ -544,14 +544,27 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 		-- DELTA-014: Compute delta using requester's baseline
 		local previous = nil
 		local currentHash = currentAlt.inventoryHash or 0
+		local currentMailHash = currentAlt.mailHash or 0
+		requesterMailHash = requesterMailHash or 0  -- Default to 0 if not provided
 
 		if requesterInventoryHash and requesterInventoryHash ~= 0 then
-			-- Requester has data - check if it matches current
-			if requesterInventoryHash == currentHash then
-				-- Hash match - no changes needed (empty delta)
-				TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash match: requester=%d, banker=%d (no changes)",
-					requesterInventoryHash, currentHash)
+			-- Requester has data - check if it matches current (both inventory AND mail)
+			if requesterInventoryHash == currentHash and requesterMailHash == currentMailHash then
+				-- Hash match (both hashes) - no changes needed (empty delta)
+				TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Hash match: requester inv=%d mail=%d, banker inv=%d mail=%d (no changes)",
+					requesterInventoryHash, requesterMailHash, currentHash, currentMailHash)
 				previous = currentAlt  -- Use current as previous (results in empty delta)
+			elseif requesterInventoryHash == currentHash and requesterMailHash ~= currentMailHash then
+				-- Inventory matches but mail changed - send delta from previous broadcast
+				previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
+				if previous then
+					TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail hash changed: requester=%d, banker=%d (sending mail changes only)",
+						requesterMailHash, currentMailHash)
+				else
+					-- No snapshot - send everything as additions
+					previous = { items = {}, money = 0, mailHash = 0 }
+					TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail hash changed but no snapshot: sending all as additions")
+				end
 			else
 				-- Hash mismatch - compute delta from banker's previous broadcast
 				-- This assumes requester likely has previous broadcast data if they were online

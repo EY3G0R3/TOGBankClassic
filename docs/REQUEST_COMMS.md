@@ -32,6 +32,19 @@ self.Info.requests = {
     },
     -- ... more requests ...
 }
+
+-- Alt data with mail support
+self.Info.alts["BankerName-Realm"] = {
+    version = 1769171234,
+    money = 123456,
+    inventoryHash = 98765,       -- Hash of bank + bags + mail
+    mailHash = 12345,            -- Separate hash for mail-only changes
+    inventoryUpdatedAt = 1769171234,
+    items = { ... },             -- Aggregated bank + bags + mail
+    bank = { items = {...} },
+    bags = { items = {...} },
+    mail = { items = {...}, version = 1769171200, lastScan = 1769171200 }
+}
 ```
 
 ### 2. Event Log (`self.Info.requestLog`)

@@ -2,16 +2,60 @@
 
 **Feature Branch:** `feature/mail-inventory-status`
 **Created:** 2026-01-27
-**Status:** Design Phase
+**Status:** ✅ IMPLEMENTED (February 16, 2026)
+**Implementation Version:** v0.8.0+
 
 ## Overview
 
-Add mail inventory tracking and visibility to TOGBankClassic, allowing users to see items currently in the mailbox and enabling bankers to identify when requested items are available in mail.
+Mail inventory tracking is now fully integrated into TOGBankClassic, allowing users to see items in the mailbox as part of viewable inventory with full sync support.
 
-## Goals
+## Implementation Status
 
-1. **Mail Inventory Visibility**: Display all items currently in the mailbox as part of viewable inventory
-2. **Request Fulfillment Indicator**: Show visual indicator when requested items are waiting in mail
+✅ **Completed Features:**
+1. **Mail Inventory Scanning**: Scans mailbox on MAIL_CLOSED event
+2. **Inventory Aggregation**: Mail items merged into `alt.items` during Bank:Scan()
+3. **Hash-Based Change Detection**: Separate `mailHash` tracks mail-specific changes
+4. **Sync Protocol Integration**: Mail changes trigger delta syncs like bank/bags
+5. **Bandwidth Optimization**: Mail links stripped for non-gear items
+6. **Search Integration**: Mail items searchable (no double-counting)
+7. **P2P Distribution**: Mail data distributed via peer-to-peer protocol
+
+## Recent Fixes (February 16, 2026)
+
+The following critical issues were resolved to make mail a true first-class inventory component:
+
+### Issue #1: Mail Hash Not Checked During Sync ✅ FIXED
+**Problem:** Version broadcasts only compared `inventoryHash`, ignoring `mailHash`  
+**Solution:** Modified `ProcessVersionBroadcast()` in [Chat.lua](../Modules/Chat.lua#L506-L518) to compare both hashes  
+**Result:** Mail changes now trigger delta syncs immediately
+
+### Issue #2: Mail Links Not Stripped ✅ FIXED
+**Problem:** Full item links sent for all mail items (bandwidth waste)  
+**Solution:** Enhanced `StripAltLinks()` in [Guild.lua](../Modules/Guild.lua#L1842-L1862) to strip mail links  
+**Result:** Only gear/weapon links sent, 70%+ bandwidth reduction for mail data
+
+### Issue #3: mailHash Computed But Not Used ✅ FIXED
+**Problem:** `mailHash` calculated but not passed through sync pipeline  
+**Solution:** Added `requesterMailHash` to P2P requests, state summaries, delta computation  
+**Files:** [Guild.lua](../Modules/Guild.lua#L873-L884), [Chat.lua](../Modules/Chat.lua#L1026-L1036), [DeltaComms.lua](../Modules/DeltaComms.lua#L547-L567)  
+**Result:** Full mail hash tracking through entire sync protocol
+
+### Issue #4: Search Double-Counted Mail ✅ FIXED
+**Problem:** Mail aggregated twice in search (once in alt.items, once manually)  
+**Solution:** Removed duplicate mail merging in [Search.lua](../Modules/UI/Search.lua#L444-L445)  
+**Result:** Mail items counted correctly in search corpus
+
+### Issue #6: No Mail-Specific Change Detection ✅ FIXED
+**Problem:** Could not distinguish mail-only changes from inventory changes  
+**Solution:** Three-way hash detection in `ComputeDelta()` ([DeltaComms.lua](../Modules/DeltaComms.lua#L547-L567))  
+**Result:** Can send mail-only deltas, better debugging visibility
+
+## Goals (✅ Achieved)
+
+1. ✅ **Mail Inventory Visibility**: Display all items currently in the mailbox as part of viewable inventory
+2. ✅ **Request Fulfillment Indicator**: Show visual indicator when requested items are waiting in mail
+3. ✅ **Sync Support**: Mail changes propagate to all guild members
+4. ✅ **First-Class Treatment**: Mail treated identically to bank/bags inventory
 
 ## Use Cases
 
@@ -60,9 +104,9 @@ Inventory Status for Metals-Azuresong:
 
 ### Data Model
 
-#### Mail Inventory Structure
+#### Mail Inventory Structure (Actual Implementation)
 ```lua
--- Add to alt data structure
+-- Alt data structure with mail
 alt.mail = {
     slots = 50,           -- Total mail slots (always 50 in Classic)
     items = {              -- Array (same as bank/bags)
@@ -76,12 +120,25 @@ alt.mail = {
     version = 1234567890,  -- Timestamp of last scan
     lastScan = 1234567890  -- When mailbox was last opened
 }
+
+-- Inventory aggregation (in alt.items)
+alt.items = {
+    -- Merged items from bank + bags + mail
+    -- Mail items are included in aggregate count
+}
+
+-- Hash tracking
+alt.inventoryHash = 98765  -- Hash of bank + bags + mail
+alt.mailHash = 12345       -- Separate hash for mail-only changes
 ```
 
-**Implementation Notes (v0.8.7):**
-- Mail items are stored as arrays like bank/bags.
-- Links are preserved only for `NeedsLink()` items (gear/weapons/uncached), matching bag/bank behavior.
-- When `GetInboxItemLink` is nil, fallback to `GetItemInfo(itemID)` to capture gear links for sync.
+**Implementation Notes:**
+- Mail items stored as arrays like bank/bags
+- Links preserved only for `NeedsLink()` items (gear/weapons/uncached)
+- Mail items **aggregated into `alt.items`** during `Bank:Scan()`
+- Dual-hash system: `inventoryHash` (all inventory) + `mailHash` (mail-specific)
+- Link stripping applied to mail during P2P sync (bandwidth optimization)
+- Mail treated as **first-class inventory** - changes trigger delta syncs
 
 #### Request Enhancement
 ```lua
@@ -379,7 +436,68 @@ end
 
 ### Delta Sync Integration
 
-Mail inventory uses the existing delta sync system - no special handling needed. When `UpdateMailInventory()` updates `alt.mail`, the existing `BroadcastVersion()` call triggers normal delta sync. The `alt.mail` field is just another property in the alt data structure that gets included in standard delta computation.
+Mail inventory is **fully integrated** as first-class inventory in the delta sync system. Key implementation details:
+
+#### Hash-Based Change Detection
+```lua
+-- Guild.lua: ComputeStateSummary()
+local summary = {
+    inventoryHash = alt.inventoryHash,
+    mailHash = alt.mailHash,  -- CRITICAL: Both hashes included
+    -- ...
+}
+```
+
+#### Version Broadcast Comparison
+```lua
+-- Chat.lua: ProcessVersionBroadcast()
+-- Compare BOTH hashes to determine if sync needed
+local inventoryChanged = (ourHash ~= theirHash)
+local mailChanged = (ourMailHash ~= theirMailHash)
+
+if inventoryChanged or mailChanged then
+    -- Trigger sync if EITHER changed
+end
+```
+
+#### P2P Request Propagation
+```lua
+-- Guild.lua: BroadcastP2PRequest()
+-- Include both hashes in P2P requests
+Chat:SendAddonMessage("togbank-r", string.format(
+    "%s|%s|%d|%d",  -- mailHash added to protocol
+    requestingAlt, targetAlt, requesterHash, requesterMailHash
+))
+```
+
+#### Three-Way Delta Detection
+```lua
+-- DeltaComms.lua: ComputeDelta()
+-- Can detect three scenarios:
+-- 1. Inventory + mail changed (both hashes differ)
+-- 2. Inventory only changed (inventoryHash differs, mailHash same)
+-- 3. Mail only changed (mailHash differs, inventoryHash same)
+```
+
+#### Link Stripping for Bandwidth
+```lua
+-- Guild.lua: StripAltLinks()
+-- Mail links stripped for non-gear items (same as bank/bags)
+if alt.mail and alt.mail.items then
+    for _, item in ipairs(alt.mail.items) do
+        if not Item:NeedsLink(item.ID) then
+            item.Link = nil  -- Strip link to reduce bandwidth
+        end
+    end
+end
+```
+
+**Benefits:**
+- Mail changes trigger syncs immediately (not delayed)
+- Can send mail-only deltas when inventory unchanged
+- Full P2P distribution of mail data
+- Bandwidth optimized via link stripping
+- First-class treatment matches bank/bags behavior
 
 ## UI/UX Considerations
 

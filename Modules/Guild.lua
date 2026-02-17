@@ -870,6 +870,10 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	self.pendingP2PRequests = self.pendingP2PRequests or {}
 	self.pendingP2PRequests[altName] = { banker = bankerSender, requestedAt = GetTime() }
 
+	-- MAIL-SYNC: Get requester's current mailHash to detect mail changes
+	local ourAlt = self.Info and self.Info.alts and self.Info.alts[altName]
+	local ourMailHash = (ourAlt and ourAlt.mailHash) or 0
+
 	local p2pRequest = {
 		type = "alt-request",
 		name = altName,
@@ -877,6 +881,7 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 		hashOnly = false,
 		expectedHash = expectedHash,
 		updatedAt = expectedUpdatedAt,
+		requesterMailHash = ourMailHash,  -- MAIL-SYNC: Include mail hash
 	}
 	local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
 	-- PERF-006: Use togbank-hl for P2P broadcasts so old code without hash support doesn't see them
@@ -1388,6 +1393,7 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 		version = alt.version or 0,
 		hash = alt.inventoryHash or nil,  -- v0.8.0: Include inventory hash for delta comparison
 		updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
+		mailHash = alt.mailHash or 0,  -- MAIL-SYNC: Include mail hash for mail change detection
 		money = alt.money or 0,
 		items = {}  -- {[itemID] = quantity}
 	}
@@ -1833,6 +1839,17 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 		}
 	end
 
+	-- MAIL-SYNC: Strip mail links for bandwidth optimization
+	local strippedMail = nil
+	if alt.mail then
+		strippedMail = {
+			slots = alt.mail.slots,
+			items = self:StripItemLinks(alt.mail.items),
+			version = alt.mail.version,
+			lastScan = alt.mail.lastScan
+		}
+	end
+
 	local stripped = {
 		version = alt.version,
 		money = alt.money,
@@ -1841,8 +1858,8 @@ function TOGBankClassic_Guild:StripAltLinks(alt)
 		items = strippedItems,
 		bank = strippedBank,
 		bags = strippedBags,
-		mail = alt.mail,
-		mailHash = alt.mailHash  -- MAIL-012: Include mailHash in stripped data
+		mail = strippedMail,  -- MAIL-SYNC: Include stripped mail
+		mailHash = alt.mailHash
 	}
 	return stripped
 end

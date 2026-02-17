@@ -441,15 +441,8 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 				if alt.bags then
 					items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
 				end
-				-- Include mail items (now in array format like bank/bags)
-				if alt.mail and alt.mail.items then
-					local mailItemCount = 0
-					for _ in ipairs(alt.mail.items) do mailItemCount = mailItemCount + 1 end
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: aggregating mail for %s (%d unique items)",
-						player, mailItemCount)
-					-- Mail items are now in array format {ID, Count, Link}, not key-value
-					items = TOGBankClassic_Item:Aggregate(items, alt.mail.items)
-				end
+				-- MAIL-SYNC: Don't aggregate mail separately - it's already in alt.items
+				-- (Mail is aggregated during Bank:Scan into alt.items)
 			end
 		end
 	end
@@ -525,13 +518,8 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 					if alt.bags then
 						altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)
 					end
-					-- Include mail items (now in array format like bank/bags)
-					if alt.mail and alt.mail.items then
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: aggregating mail for %s (%d unique items)",
-							player, #alt.mail.items)
-						-- Mail items are now in array format {ID, Count, Link}, not key-value
-						altItems = TOGBankClassic_Item:Aggregate(altItems, alt.mail.items)
-					end
+				-- MAIL-SYNC: Don't aggregate mail separately - it's already in alt.items
+				-- (Mail is aggregated during Bank:Scan into alt.items)
 				end
 			end
 

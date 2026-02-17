@@ -503,17 +503,19 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 										ColorPlayerName(kNorm) .. " (we have none), querying."
 									)
 									TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: NO_OUR_HASH", kNorm)
-								elseif theirHash ~= ourHash then
-									-- Hashes differ - we need an update
+								elseif theirHash ~= ourHash or theirMailHash ~= ourMailHash then
+									-- Hashes differ (inventory or mail) - we need an update
 									shouldQuery = true
+									local reason = (theirHash ~= ourHash) and "inventory" or "mail"
 									self:Debug(
 										"SYNC",
 										">",
 										ColorPlayerName(sender),
-										"has different inventory for",
+										"has different " .. reason .. " for",
 										ColorPlayerName(kNorm) .. " (hash mismatch), querying."
 									)
-									TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Query decision for %s: HASH_MISMATCH (our=%d, their=%d)", kNorm, ourHash, theirHash)
+									TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-SYNC] Query decision for %s: HASH_MISMATCH %s (ourInv=%d, theirInv=%d, ourMail=%d, theirMail=%d)", 
+										kNorm, reason, ourHash, theirHash, ourMailHash, theirMailHash)
 								elseif not hasContent then
 									-- Hash matches but we don't have content (stub entry) - need to fill it
 									shouldQuery = true
@@ -1021,18 +1023,17 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				TOGBankClassic_Guild.pendingP2PRequests[altName] = { banker = sender, requestedAt = GetTime() }
 
 				-- Now broadcast regular request to GUILD with expectedHash so peers can respond
-				local p2pRequest = {
-					type = "alt-request",
-					name = altName,
-					requester = TOGBankClassic_Guild:GetNormalizedPlayer(),
-					hashOnly = false,
-					expectedHash = expectedHash,  -- Peers will validate against this
-				}
-				local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
-
-				TOGBankClassic_Output:DebugComm("PERF-005: Broadcasting P2P request to GUILD for %s with expectedHash=%s", altName, tostring(expectedHash))
-				-- PERF-006: Use togbank-hl for P2P broadcasts so old code without hash support doesn't see them
-				TOGBankClassic_Core:SendCommMessage("togbank-hl", p2pData, "GUILD", nil, "NORMAL")
+			-- MAIL-SYNC: Include requester's mailHash for mail change detection
+			local ourAlt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[altName]
+			local ourMailHash = (ourAlt and ourAlt.mailHash) or 0
+			local p2pRequest = {
+				type = "alt-request",
+				name = altName,
+				requester = TOGBankClassic_Guild:GetNormalizedPlayer(),
+				hashOnly = false,
+				expectedHash = expectedHash,  -- Peers will validate against this
+				requesterMailHash = ourMailHash,  -- MAIL-SYNC: Mail change detection
+			}
 
 				self:Debug("SYNC", "< Broadcasting P2P request for %s (hash=%s)", ColorPlayerName(altName), tostring(expectedHash))
 

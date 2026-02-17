@@ -3,7 +3,7 @@
 **Project:** TOGBankClassic Delta Sync Protocol
 **Target Version:** v0.8.0
 **Status:** Production - Core Features Complete, P2P System Operational
-**Last Updated:** February 8, 2026
+**Last Updated:** February 16, 2026
 **Branch:** main
 
 ---
@@ -29,15 +29,35 @@
 **Purpose:** Detect real inventory changes without full data comparison
 
 **Implementation:**
-- `ComputeInventoryHash(bank, bags, money)` - Generates numeric hash of inventory state
+- `ComputeInventoryHash(bank, bags, mail, money)` - Generates numeric hash of inventory state
 - Hash computed on every bank scan (BANKFRAME_CLOSED event)
 - Stored in `alt.inventoryHash` field alongside version timestamp
+- **Mail tracking:** Separate `alt.mailHash` tracks mail-only changes
 - Used for pull-based comparison instead of version timestamps
 
 **Benefits:**
 - Detects actual inventory changes (version can change without inventory change)
 - More reliable than version timestamps for sync decisions
 - Minimal overhead (single number vs full inventory comparison)
+- **Mail-specific detection:** Can identify when only mail changes (inventory unchanged)
+
+### Mail Hash Integration ✅ COMPLETE (Feb 16, 2026)
+
+**Purpose:** Detect mail-only changes without triggering full inventory sync
+
+**Implementation:**
+- `alt.mailHash` computed separately from `inventoryHash`
+- Both hashes compared during version broadcasts
+- `requesterMailHash` passed through entire delta pipeline
+- Delta computation can detect three scenarios:
+  - Inventory + mail changed
+  - Inventory only changed
+  - Mail only changed
+
+**Benefits:**
+- Bandwidth optimization: Send mail-only deltas when inventory unchanged
+- First-class mail support: Mail changes trigger syncs like bank/bags
+- Better debugging: Can distinguish inventory vs mail changes in logs
 
 ### Broadcast System ✅ COMPLETE
 
