@@ -7,6 +7,15 @@
 
 ### 🐛 Bug Fixes
 
+#### [P2P-010] Fixed P2P Broadcast Never Sent (CRITICAL)
+- **FIXED**: togbank-rr handler now actually sends P2P broadcast to guild
+- **PROBLEM**: Handler built P2P request but never serialized or sent it
+- **IMPACT**: P2P only worked when no banker online initially; failed when banker responded with hash (common case)
+- **BEHAVIOR**: Request was built, log said "Broadcasting", but SendCommMessage was missing
+- **RESULT**: 5-second timeout always triggered, forcing 100% fallback to banker despite peers having data
+- **LOCATION**: `Chat.lua` (~1053-1054): Added missing SerializeWithChecksum and SendCommMessage calls
+- **NOW**: Full P2P flow works - peers receive broadcasts and respond with matching hashes
+
 #### [DELTA-015] Fixed Delta Duplication Bug (Complete)
 - **FIXED**: Added snapshot validation for inventory changes to prevent item duplication
 - **PROBLEM**: When inventory changed but no snapshot existed, delta computed against empty baseline
