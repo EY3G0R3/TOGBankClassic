@@ -1593,20 +1593,34 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			end
 			return
 		else
-			-- Inventory changed (mail may or may not have changed) - send delta
-			TOGBankClassic_Output:DebugComm("DELTA MODE: INVENTORY CHANGE - calling SendAltData for %s (inv: requester=%d, current=%d, mail: requester=%d, current=%d)", norm, requesterHash, currentHash, requesterMailHash, currentMailHash)
-			TOGBankClassic_Output:Debug(
-				"SYNC",
-				"Sending data to %s for %s (hash mismatch: inv=%d->%d, mail=%d->%d)",
-				requester,
-				norm,
-				requesterHash,
-				currentHash,
-				requesterMailHash,
-				currentMailHash
-			)
-			-- DELTA-014: Pass requester hashes to compute proper delta
-			self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+			-- Inventory changed (mail may or may not have changed) - check if we have snapshot
+			local hasSnapshot = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
+			if hasSnapshot or requesterHash == 0 then
+				-- Can compute proper delta from snapshot, OR requester has no data (safe baseline)
+				TOGBankClassic_Output:DebugComm("DELTA MODE: INVENTORY CHANGE - calling SendAltData for %s (inv: requester=%d, current=%d, mail: requester=%d, current=%d)", norm, requesterHash, currentHash, requesterMailHash, currentMailHash)
+				TOGBankClassic_Output:Debug(
+					"SYNC",
+					"Sending data to %s for %s (hash mismatch: inv=%d->%d, mail=%d->%d)",
+					requester,
+					norm,
+					requesterHash,
+					currentHash,
+					requesterMailHash,
+					currentMailHash
+				)
+				-- DELTA-014: Pass requester hashes to compute proper delta
+				self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+			else
+				-- No snapshot and requester has data - force full data to avoid duplication bug
+				TOGBankClassic_Output:Debug(
+					"SYNC",
+					"Inventory changed for %s but no snapshot available - forcing full data to %s",
+					norm,
+					requester
+				)
+				-- Send with hash=0 to force requester to accept all items as new baseline
+				self:SendAltData(norm, 0, 0, requester)
+			end
 			return
 		end
 	end
