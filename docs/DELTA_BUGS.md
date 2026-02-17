@@ -8,6 +8,7 @@
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 
 **Recent Fixes (2026-02-17):**
+- ✅ [DELTA-015] Delta duplication bug (COMPLETE) - Fixed snapshot validation for ALL change scenarios (mail-only AND inventory). Previously only mail-only changes checked for snapshot availability before computing delta. When inventory changed without snapshot, system computed delta against empty baseline, causing duplicate items on requester's side. Now BOTH mail-only and inventory changes validate snapshot exists before computing delta, or force full data (hash=0) to prevent duplication. Locations: Guild.lua RespondToStateSummary (~1568-1624) and DeltaComms.lua ComputeDelta error handling (~561-567).
 - ✅ [SYNC-009] Non-banker hash sync failing - HLR handler skipping updates when hasContent=true - Fixed HLR handler to check hash equality BEFORE skipping alts. Previously skipped any alt with content even when hashes mismatched, preventing non-bankers from detecting stale data for other non-bankers. Now only skips if BOTH hasContent AND hashes match.
 - ✅ [MAIL-009] mailHash not stored when hashes differ - Fixed HLR and HL-broadcast handlers to update mailHash when it differs from banker's authoritative value, not just when localHash=0. Previously only stored mailHash for new alts or when no inventory hash existed, leaving mailHash stale when only mail changed. Now properly caches banker's mailHash in all scenarios.
 

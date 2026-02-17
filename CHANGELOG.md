@@ -7,6 +7,16 @@
 
 ### 🐛 Bug Fixes
 
+#### [DELTA-015] Fixed Delta Duplication Bug (Complete)
+- **FIXED**: Added snapshot validation for inventory changes to prevent item duplication
+- **PROBLEM**: When inventory changed but no snapshot existed, delta computed against empty baseline
+- **IMPACT**: Requester would receive delta additions on top of existing stale data, causing duplicates
+- **BEHAVIOR**: Now checks for snapshot before computing delta for both mail-only AND inventory changes
+- **RESULT**: Forces full data (hash=0) when no snapshot available, preventing duplication
+- **LOCATIONS**: 
+  - `Guild.lua` (~1568-1594): Mail-only change validation (previously fixed)
+  - `Guild.lua` (~1596-1624): Inventory change validation (newly fixed)
+
 #### [SYNC-009] Fixed Non-Banker Hash Sync
 - **FIXED**: HLR handler now checks hash equality BEFORE skipping alts
 - **PROBLEM**: Previously skipped any alt with hasContent=true without comparing hashes
