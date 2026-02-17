@@ -1,5 +1,34 @@
 # TOGBankClassic Changelog
 
+## Unreleased - Non-Banker Sync Fix
+
+**Status:** In Development
+**Priority:** CRITICAL
+
+### 🐛 Bug Fixes
+
+#### [SYNC-009] Fixed Non-Banker Hash Sync
+- **FIXED**: HLR handler now checks hash equality BEFORE skipping alts
+- **PROBLEM**: Previously skipped any alt with hasContent=true without comparing hashes
+- **IMPACT**: Non-banker updates never propagated to peers with stale data
+- **BEHAVIOR**: Now only skips if BOTH hasContent AND hashes match
+- **RESULT**: Non-banker-to-non-banker sync working correctly
+
+**Technical Details:**
+```lua
+-- Old (broken): Skip if we have ANY content
+if hasContent then skip end
+
+-- New (fixed): Skip only if we have CURRENT content
+if hasContent AND hashesMatch then skip end
+```
+
+**Files Changed:**
+- `Modules/Chat.lua` (lines ~1754-1765): Added hash comparison before hasContent skip
+- `docs/DELTA_BUGS.md`: Documented SYNC-009 with full analysis
+
+---
+
 ## Unreleased - Hash Broadcast Improvements
 
 **Status:** In Development

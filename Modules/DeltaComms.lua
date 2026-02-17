@@ -558,12 +558,13 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 				-- Inventory matches but mail changed - send delta from previous broadcast
 				previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
 				if previous then
-					TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail hash changed: requester=%d, banker=%d (sending mail changes only)",
+					TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail hash changed: requester=%d, banker=%d (computing delta from snapshot)",
 						requesterMailHash, currentMailHash)
 				else
-					-- No snapshot - send everything as additions
-					previous = { items = {}, money = 0, mailHash = 0 }
-					TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail hash changed but no snapshot: sending all as additions")
+					-- No snapshot - cannot compute safe mail-only delta without duplicating inventory
+					-- Caller should have checked for snapshot availability and sent hash=0 instead
+					TOGBankClassic_Output:Error("[MAIL-SYNC] Mail-only change requested but no snapshot available for %s - cannot compute safe delta", altName)
+					return nil  -- Abort delta computation
 				end
 			else
 				-- Hash mismatch - compute delta from banker's previous broadcast

@@ -1565,18 +1565,32 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%d, mailHash=%d)", requester, norm, currentHash, currentMailHash)
 			return
 		elseif requesterHash == currentHash and requesterMailHash ~= currentMailHash then
-			-- Only mail changed - send mail-only delta
-			TOGBankClassic_Output:DebugComm("DELTA MODE: MAIL-ONLY CHANGE - calling SendAltData for %s (mail: requester=%d, current=%d)", norm, requesterMailHash, currentMailHash)
-			TOGBankClassic_Output:Debug(
-				"SYNC",
-				"Sending data to %s for %s (mail-only change: requester=%d, current=%d)",
-				requester,
-				norm,
-				requesterMailHash,
-				currentMailHash
-			)
-			-- DELTA-014: Pass requester hashes to compute proper delta (inventory unchanged)
-			self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+			-- Only mail changed - check if we have a snapshot to compute proper delta
+			local hasSnapshot = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
+			if hasSnapshot then
+				-- Can compute proper mail-only delta from snapshot
+				TOGBankClassic_Output:DebugComm("DELTA MODE: MAIL-ONLY CHANGE - calling SendAltData for %s (mail: requester=%d, current=%d)", norm, requesterMailHash, currentMailHash)
+				TOGBankClassic_Output:Debug(
+					"SYNC",
+					"Sending data to %s for %s (mail-only change: requester=%d, current=%d)",
+					requester,
+					norm,
+					requesterMailHash,
+					currentMailHash
+				)
+				-- DELTA-014: Pass requester hashes to compute proper delta (inventory unchanged)
+				self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+			else
+				-- No snapshot - force full data to avoid duplication bug
+				TOGBankClassic_Output:Debug(
+					"SYNC",
+					"Mail changed for %s but no snapshot available - forcing full data to %s",
+					norm,
+					requester
+				)
+				-- Send with hash=0 to force requester to accept all items as new baseline
+				self:SendAltData(norm, 0, 0, requester)
+			end
 			return
 		else
 			-- Inventory changed (mail may or may not have changed) - send delta

@@ -7,6 +7,9 @@
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 
+**Recent Fixes (2026-02-17):**
+- ✅ [SYNC-009] Non-banker hash sync failing - HLR handler skipping updates when hasContent=true - Fixed HLR handler to check hash equality BEFORE skipping alts. Previously skipped any alt with content even when hashes mismatched, preventing non-bankers from detecting stale data for other non-bankers. Now only skips if BOTH hasContent AND hashes match.
+
 **Recent Fixes (2026-02-16):**
 - ✅ [P2P-008] Post-wipe recovery failing when no banker online - Fixed QueryAltPullBased to broadcast to GUILD instead of dropping requests when banker offline, and updated peer response logic to allow any guild member (not just bankers) to respond when requester has requesterInventoryHash=0 (post-wipe scenario). Enables recovery without online bankers.
 - ✅ [MAIL-007] HLR handler ignoring mailHash when storing and comparing - Fixed HLR handler to store banker's mailHash (was hardcoded to 0), compare mailHash when deciding to sync, and properly detect mail-only changes. Mail-only changes now trigger syncs correctly.
@@ -438,6 +441,202 @@ Added detailed logs to show which scenario was detected:
 - Test each scenario: both match, one differs, both differ
 - Verify debug logs show correct detection reason
 - Add integration tests for mail-only changes
+
+---
+
+#### [SYNC-009] Non-banker hash sync failing - HLR handler unconditionally skipping alts with hasContent
+
+**Severity:** 🔴 CRITICAL
+**Category:** Sync / Protocol / Hash Comparison
+**Reporter:** Code Review
+**Date Reported:** 2026-02-17
+**Date Resolved:** 2026-02-17
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - Non-banker updates never propagated to peers with stale data
+**Related:** [MAIL-007] HLR mailHash handling, [PERF-006] P2P protocol
+
+**Problem:**
+The HLR (Hash List Reply) handler skipped any alt that had `hasContent=true` without checking if the hashes matched. This completely broke non-banker-to-non-banker synchronization: when a non-banker updated their data (new hash), other non-bankers with OLD data for that alt would skip requesting the update because they had "content" (even though it was stale).
+
+**Symptoms:**
+1. Non-banker A updates their inventory → new inventoryHash computed
+2. Banker receives and stores the update with new hash
+3. Non-banker C (with old data for A) runs `/togbank sync`
+4. Non-banker C requests HLR from banker
+5. Banker sends hash list including A's NEW hash
+6. Non-banker C has OLD data for A (hasContent=true, but STALE hash)
+7. HLR handler checks: `if hasContent then SKIP` ✗ (skips without comparing hashes!)
+8. Non-banker C never detects the hash mismatch
+9. Non-banker C never requests updated data from A
+10. Non-banker C continues showing stale data for A indefinitely
+
+**Root Cause:**
+Chat.lua HLR handler (lines ~1755-1770) had faulty skip logic:
+
+```lua
+// BEFORE (BROKEN):
+if hasContent then
+    // Skip immediately without checking hashes!
+    TOGBankClassic_Output:Debug("HLR skip: %s (already have content...)")
+elseif not localAlt or localHash == 0 or 
+       (summary.hash and summary.hash ~= localHash) or 
+       (summary.mailHash and summary.mailHash ~= localMailHash) then
+    // Request update (hash mismatch)
+    pending[norm] = summary
+end
+```
+
+The problem: **Hash comparison only happened in the `elseif` branch**, which was unreachable when `hasContent=true`.
+
+**Why This Specifically Broke Non-Banker Sync:**
+
+**Banker Data:** Works fine because:
+- Bankers are authoritative sources for their own data
+- Banker data protected by ownership rules
+- Banker updates immediately visible to self
+
+**Non-Banker Data:** Broken because:
+- Non-bankers don't directly control other non-banker data
+- Must rely on sync to get updates from peers
+- If sync skips due to "hasContent", never sees updates
+- Creates permanent staleness for non-banker-to-non-banker data flow
+
+**Example Scenario:**
+
+```
+Initial State:
+- NonBankerA: inventoryHash=1000, items=[...]
+- NonBankerC: (cached) inventoryHash=1000, items=[...]
+
+Update Flow:
+1. NonBankerA scans bank → inventoryHash=2000 (changed)
+2. NonBankerA broadcasts version → Banker receives
+3. Banker stores: NonBankerA inventoryHash=2000
+4. NonBankerC logs in, runs /togbank sync
+5. NonBankerC requests HLR from Banker
+6. Banker replies: "NonBankerA hash=2000"
+
+BUG TRIGGERS HERE:
+7. NonBankerC checks: hasContent(NonBankerA)? YES (has old data)
+8. NonBankerC: "if hasContent then SKIP" → Skips without checking hash!
+9. NonBankerC never compares: local=1000 vs banker=2000
+10. NonBankerC keeps showing stale data with hash=1000
+
+RESULT:
+- NonBankerC permanently shows outdated inventory for NonBankerA
+- Only fixes if NonBankerC wipes and resyncs from scratch
+- Defeats entire purpose of hash-based change detection
+```
+
+**Impact:**
+- **Severity:** CRITICAL - Non-banker sync completely broken
+- **Affected:** Any guild member viewing non-banker alts
+- **User Experience:** Shows stale/incorrect inventory for other players
+- **Design Violation:** Hash-based sync should detect ALL mismatches
+- **Workaround:** Manual `/wipe` and full resync required
+
+**Fix:**
+
+**Chat.lua (lines ~1754-1765) - Check hash equality BEFORE skipping:**
+
+```lua
+// AFTER (FIXED):
+// Compute whether hashes match (nil/0 hashes always match)
+local inventoryHashMatches = (summary.hash == nil or summary.hash == 0 or summary.hash == localHash)
+local mailHashMatches = (summary.mailHash == nil or summary.mailHash == 0 or summary.mailHash == localMailHash)
+local hashesMatch = inventoryHashMatches and mailHashMatches
+
+// Only skip if BOTH conditions are true: hasContent AND hashes match
+if hasContent and hashesMatch then
+    // Skip (we have correct, up-to-date data)
+    TOGBankClassic_Output:Debug("HLR skip: %s (have content + hashes match...)")
+elseif not localAlt or localHash == 0 or 
+       (summary.hash and summary.hash ~= localHash) or 
+       (summary.mailHash and summary.mailHash ~= localMailHash) then
+    // Request update (no data, or hash mismatch)
+    pending[norm] = summary
+else
+    // Hash matches but no content - request it (stub entry)
+    missingContent[norm] = summary
+end
+```
+
+**Key Changes:**
+1. **Compute hash equality FIRST** before checking hasContent
+2. **Check both hashes:** inventoryHash AND mailHash
+3. **Handle nil/0 hashes:** Treat as "no hash = matches anything" (backwards compatibility)
+4. **Skip only when BOTH:** hasContent=true AND hashesMatch=true
+5. **If hasContent but hash differs:** Fall through to pending (request update)
+
+**Testing:**
+
+**Test 1: Non-Banker Update Propagates**
+1. NonBankerA updates inventory → hash changes from 1000 to 2000
+2. Banker receives update, stores hash=2000
+3. NonBankerC (with old data, hash=1000) runs `/togbank sync`
+4. NonBankerC receives HLR with A's hash=2000
+5. NonBankerC detects: hasContent=true, localHash=1000, bankerHash=2000
+6. NonBankerC: hashesMatch=false → Don't skip, request update
+7. NonBankerC broadcasts P2P request for A's data
+8. NonBankerC receives updated data from A or Banker
+9. NonBankerC now shows correct, current inventory for A
+
+**Test 2: Up-to-Date Data Still Skipped**
+1. NonBankerC has correct data for A (hash matches banker)
+2. NonBankerC runs `/togbank sync`
+3. NonBankerC receives HLR with matching hash
+4. NonBankerC detects: hasContent=true, hashesMatch=true
+5. NonBankerC: Skip (no request needed) ✅
+6. Efficient - no unnecessary data transfer
+
+**Test 3: Mail-Only Changes Detected**
+1. NonBankerA updates only mail → mailHash changes, inventoryHash same
+2. NonBankerC has old mail data
+3. NonBankerC receives HLR with new mailHash
+4. NonBankerC: inventoryHashMatches=true, mailHashMatches=false
+5. NonBankerC: hashesMatch=false → Request update
+6. Mail changes propagate correctly ✅
+
+**Debug Output:**
+
+**Before Fix:**
+```
+HLR skip: PlayerA (already have content, localHash=1000, bankerHash=2000)
+[Never requests update - WRONG!]
+```
+
+**After Fix:**
+```
+HLR check: PlayerA hasContent=true localHash=1000 bankerHash=2000 localMailHash=50 bankerMailHash=50
+HLR pending: PlayerA (inventory mismatch: localHash=1000, bankerHash=2000, localMailHash=50, bankerMailHash=50)
+P2P: Responding to Requester with data for PlayerA (hash=2000)
+[Update received and applied - CORRECT!]
+```
+
+**Files Changed:**
+- [Modules/Chat.lua](c:/Program%20Files%20(x86)/World%20of%20Warcraft/_classic_era_/Interface/AddOns/TOGBankClassic/Modules/Chat.lua#L1754-L1765) - Added hash comparison before hasContent skip
+
+**Related Issues:**
+- [MAIL-007] HLR mailHash storage (complementary fix)
+- [MAIL-008] RespondToStateSummary mailHash comparison
+- [PERF-006] P2P protocol relies on accurate hash comparison
+
+**Prevention:**
+- When checking `hasContent`, ALWAYS compare hashes first
+- Pattern: `if hasContent AND hashMatches then skip`
+- Never: `if hasContent then skip` (broken pattern)
+- Code review should catch unconditional hasContent skips
+- Add integration tests for non-banker sync scenarios
+- Test stale data detection explicitly
+
+**Design Notes:**
+
+This bug highlights a critical principle in hash-based sync:
+
+**✗ WRONG:** "If we have data, skip"
+**✓ CORRECT:** "If we have data AND it's current (hash matches), skip"
+
+The entire purpose of hash-based sync is detecting when local data is stale. Skipping based solely on existence defeats the mechanism. Always check hash equality before deciding to skip.
 
 ---
 
