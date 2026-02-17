@@ -1,6 +1,6 @@
 # TOGBankClassic Changelog
 
-## Unreleased - Non-Banker Sync Fix
+## Unreleased - Hash Sync Fixes
 
 **Status:** In Development
 **Priority:** CRITICAL
@@ -14,18 +14,36 @@
 - **BEHAVIOR**: Now only skips if BOTH hasContent AND hashes match
 - **RESULT**: Non-banker-to-non-banker sync working correctly
 
+#### [MAIL-009] Fixed mailHash Storage When Hashes Differ
+- **FIXED**: HLR and HL-broadcast handlers now update mailHash when it differs from banker
+- **PROBLEM**: Only stored mailHash when localHash=0, not when hashes differed
+- **IMPACT**: Mail-only changes never cached banker's new mailHash
+- **LOCATIONS**: Fixed in both HLR handler (togbank-hlr) and hash broadcast handler (togbank-hl)
+- **RESULT**: Banker's authoritative mailHash properly cached in all scenarios
+
 **Technical Details:**
 ```lua
--- Old (broken): Skip if we have ANY content
-if hasContent then skip end
+// OLD: Only update when localHash == 0
+elseif localHash == 0 then
+    localAlt.inventoryHash = summary.hash
+    if summary.mailHash then
+        localAlt.mailHash = summary.mailHash  // Only here!
+    end
+end
 
--- New (fixed): Skip only if we have CURRENT content
-if hasContent AND hashesMatch then skip end
+// NEW: Also update when hashes differ
+elseif localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
+    localAlt.inventoryHash = summary.hash
+    if summary.mailHash then
+        localAlt.mailHash = summary.mailHash  // Now cached properly!
+    end
+end
 ```
 
 **Files Changed:**
-- `Modules/Chat.lua` (lines ~1754-1765): Added hash comparison before hasContent skip
-- `docs/DELTA_BUGS.md`: Documented SYNC-009 with full analysis
+- `Modules/Chat.lua` (~1740-1753): HLR handler - added elseif block for hash diff
+- `Modules/Chat.lua` (~1654-1679): HL broadcast handler - updated stub creation and hash updates
+- `docs/DELTA_BUGS.md`: Documented SYNC-009 and MAIL-009 with full analysis
 
 ---
 

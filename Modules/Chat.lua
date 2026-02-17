@@ -1659,17 +1659,23 @@ end
 								inventoryUpdatedAt = summary.updatedAt,
 								items = {},
 								mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
-								mailHash = 0,
+								mailHash = summary.mailHash or 0,  -- FIXED: Use banker's mailHash, not hardcoded 0
 							}
 							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
-							TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Stored hash for new alt %s: hash=%d", norm, summary.hash)
-						elseif localHash == 0 or localHash ~= summary.hash then
-							-- Update hash if we don't have one or it changed
+							TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Stored hash for new alt %s: hash=%d, mailHash=%d", norm, summary.hash, summary.mailHash or 0)
+						elseif localHash == 0 or localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
+							-- Update hashes if we don't have one or they changed
+							local oldHash = localHash
+							local oldMailHash = localAlt.mailHash or 0
 							localAlt.inventoryHash = summary.hash
 							if summary.updatedAt then
 								localAlt.inventoryUpdatedAt = summary.updatedAt
 							end
-							TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Updated hash for %s: %d -> %d", norm, localHash, summary.hash)
+							-- FIXED: Also update mailHash when it changes
+							if summary.mailHash then
+								localAlt.mailHash = summary.mailHash
+							end
+							TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Updated hashes for %s: inv=%d->%d, mail=%d->%d", norm, oldHash, summary.hash, oldMailHash, summary.mailHash or 0)
 						end
 					end
 				end
@@ -1731,6 +1737,20 @@ end
 								localAlt.mailHash = summary.mailHash
 							end
 							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for %s: hash=%d, mailHash=%d, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
+						elseif localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
+							-- CRITICAL FIX: Update hashes when they differ from banker's authoritative values
+							-- This ensures we cache the banker's hash even if we already have stale data
+							local oldHash = localHash
+							local oldMailHash = localAlt.mailHash or 0
+							localAlt.inventoryHash = summary.hash
+							if summary.updatedAt then
+								localAlt.inventoryUpdatedAt = summary.updatedAt
+							end
+							if summary.mailHash then
+								localAlt.mailHash = summary.mailHash
+							end
+							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Updated hashes for %s: inv=%d->%d, mail=%d->%d", 
+								norm, oldHash, summary.hash, oldMailHash, summary.mailHash or 0)
 						end
 					end
 				end

@@ -1,7 +1,7 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** February 16, 2026
+**Last Updated:** February 17, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
@@ -9,6 +9,7 @@
 
 **Recent Fixes (2026-02-17):**
 - ✅ [SYNC-009] Non-banker hash sync failing - HLR handler skipping updates when hasContent=true - Fixed HLR handler to check hash equality BEFORE skipping alts. Previously skipped any alt with content even when hashes mismatched, preventing non-bankers from detecting stale data for other non-bankers. Now only skips if BOTH hasContent AND hashes match.
+- ✅ [MAIL-009] mailHash not stored when hashes differ - Fixed HLR and HL-broadcast handlers to update mailHash when it differs from banker's authoritative value, not just when localHash=0. Previously only stored mailHash for new alts or when no inventory hash existed, leaving mailHash stale when only mail changed. Now properly caches banker's mailHash in all scenarios.
 
 **Recent Fixes (2026-02-16):**
 - ✅ [P2P-008] Post-wipe recovery failing when no banker online - Fixed QueryAltPullBased to broadcast to GUILD instead of dropping requests when banker offline, and updated peer response logic to allow any guild member (not just bankers) to respond when requester has requesterInventoryHash=0 (post-wipe scenario). Enables recovery without online bankers.
@@ -441,6 +442,185 @@ Added detailed logs to show which scenario was detected:
 - Test each scenario: both match, one differs, both differ
 - Verify debug logs show correct detection reason
 - Add integration tests for mail-only changes
+
+---
+
+#### [MAIL-009] mailHash not stored when hashes differ - incomplete first-pass hash update logic
+
+**Severity:** 🟠 HIGH
+**Category:** Mail / Protocol / Hash Storage
+**Reporter:** Code Review
+**Date Reported:** 2026-02-17
+**Date Resolved:** 2026-02-17
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - mailHash never cached when it differed from local value
+**Related:** [MAIL-007] HLR mailHash storage, [MAIL-008] mailHash comparison, [SYNC-009] Hash matching
+
+**Problem:**
+Both HLR and HL-broadcast handlers only stored `mailHash` when `localHash == 0`, but failed to update it when hashes **differed from banker's authoritative values**. This left mailHash stale when mail-only changes occurred, causing inefficient repeated requests and out-of-sync hash stubs.
+
+**Symptoms:**
+1. We have `localHash=100, localMailHash=50` (old data)
+2. Banker sends HLR/HL-broadcast: `hash=100, mailHash=75` (mail changed!)
+3. First pass: `elseif localHash == 0` → **FALSE** (we have hash=100)
+4. **mailHash=75 is NEVER stored!** (no code path to store when hashes differ)
+5. Second pass detects mismatch (50 ≠ 75), requests data
+6. Request completes, we receive new data
+7. **But we still have cached localMailHash=50 from step 1, not the expected 75**
+8. Next sync cycle repeats same request (wrong expected hash)
+
+**Root Cause:**
+Two locations had incomplete hash storage logic in the "first pass" (store authoritative hashes):
+
+**Location 1: HLR Handler (Chat.lua ~1724-1734)**
+```lua
+// BEFORE (BROKEN):
+elseif localHash == 0 then
+    -- Store banker's hash if we don't have one
+    localAlt.inventoryHash = summary.hash
+    if summary.mailHash then
+        localAlt.mailHash = summary.mailHash  // Only stored here!
+    end
+end
+// Missing case: localHash != 0 but mailHash differs
+```
+
+**Location 2: HL-Broadcast Handler (Chat.lua ~1651-1665)**
+```lua
+// BEFORE (BROKEN):
+if not localAlt then
+    TOGBankClassic_Guild.Info.alts[norm] = {
+        mailHash = 0,  // Hardcoded to 0!
+    }
+elseif localHash == 0 or localHash ~= summary.hash then
+    localAlt.inventoryHash = summary.hash
+    // Missing: no mailHash update at all!
+end
+```
+
+**Impact:**
+- **Severity:** HIGH - breaks mail-only change caching
+- **User Experience:** Repeated inefficient requests for same data
+- **Performance:** Unnecessary network traffic and processing
+- **Data Consistency:** Hash stubs out of sync with banker's authoritative values
+- **Workaround:** None - requires code fix
+
+**Fix:**
+
+**Chat.lua HLR Handler (~1740-1753) - Add elseif for hash differences:**
+```lua
+elseif localHash == 0 then
+    -- Store banker's hash if we don't have one
+    localAlt.inventoryHash = summary.hash
+    if summary.mailHash then
+        localAlt.mailHash = summary.mailHash
+    end
+elseif localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
+    -- CRITICAL FIX: Update hashes when they differ from banker's authoritative values
+    -- This ensures we cache the banker's hash even if we already have stale data
+    local oldHash = localHash
+    local oldMailHash = localAlt.mailHash or 0
+    localAlt.inventoryHash = summary.hash
+    if summary.updatedAt then
+        localAlt.inventoryUpdatedAt = summary.updatedAt
+    end
+    if summary.mailHash then
+        localAlt.mailHash = summary.mailHash
+    end
+    TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Updated hashes for %s: inv=%d->%d, mail=%d->%d", 
+        norm, oldHash, summary.hash, oldMailHash, summary.mailHash or 0)
+end
+```
+
+**Chat.lua HL-Broadcast Handler (~1654-1679) - Fix stub + add mailHash updates:**
+```lua
+if not localAlt then
+    TOGBankClassic_Guild.Info.alts[norm] = {
+        mailHash = summary.mailHash or 0,  // FIXED: Use banker's value
+    }
+elseif localHash == 0 or localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
+    -- Update hashes if we don't have one or they changed
+    localAlt.inventoryHash = summary.hash
+    if summary.updatedAt then
+        localAlt.inventoryUpdatedAt = summary.updatedAt
+    end
+    // FIXED: Also update mailHash when it changes
+    if summary.mailHash then
+        localAlt.mailHash = summary.mailHash
+    end
+    TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Updated hashes for %s: inv=%d->%d, mail=%d->%d", ...)
+end
+```
+
+**Key Changes:**
+1. **HLR Handler:** Added third condition to catch hash differences
+2. **HL Broadcast:** Fixed stub creation to use banker's mailHash (not 0)
+3. **HL Broadcast:** Updated condition to also check mailHash difference
+4. **HL Broadcast:** Store mailHash when updating hashes
+5. **Debug logs:** Show both old and new values for visibility
+
+**Testing:**
+
+**Test 1: Mail-Only Change Caching**
+1. Local state: `localHash=100, localMailHash=50`
+2. Banker broadcasts HLR: `hash=100, mailHash=75`
+3. HLR handler detects: `localHash == summary.hash` (100==100) but `localMailHash != summary.mailHash` (50≠75)
+4. Triggers new elseif: Updates `localMailHash=75`
+5. Verify: `localMailHash` now cached at 75 ✅
+6. Next sync: Uses correct expected hash (75), efficient ✅
+
+**Test 2: Inventory Change Still Works**
+1. Local state: `localHash=100, localMailHash=50`
+2. Banker broadcasts HLR: `hash=200, mailHash=50`
+3. HLR handler detects: `localHash != summary.hash` (100≠200)
+4. Triggers new elseif: Updates `localHash=200`, keeps `mailMailHash=50`
+5. Both hashes properly cached ✅
+
+**Test 3: New Alt Creation Uses Banker's mailHash**
+1. Banker broadcasts HL: `hash=100, mailHash=50` for new alt
+2. HL handler creates stub: `mailHash=50` (not 0)
+3. Verify: Stub has correct mailHash from creation ✅
+
+**Debug Output:**
+```
+[Before Fix]
+HLR: Stored banker hash for PlayerA: hash=100, mailHash=0, updatedAt=1234
+// Mail changed to mailHash=75, but never updated!
+HLR check: PlayerA localMailHash=0, bankerMailHash=75
+HLR pending: PlayerA (mail mismatch)
+
+[After Fix]
+HLR: Stored banker hash for PlayerA: hash=100, mailHash=50, updatedAt=1234
+// Mail changes
+HLR: Updated hashes for PlayerA: inv=100->100, mail=50->75
+HLR check: PlayerA localMailHash=75, bankerMailHash=75
+HLR skip: PlayerA (have content + hashes match) ✅
+```
+
+**Files Changed:**
+- [Modules/Chat.lua](c:/Program%20Files%20(x86)/World%20of%20Warcraft/_classic_era_/Interface/AddOns/TOGBankClassic/Modules/Chat.lua#L1740-L1753) - HLR handler: Added elseif for hash diff
+- [Modules/Chat.lua](c:/Program%20Files%20(x86)/World%20of%20Warcraft/_classic_era_/Interface/AddOns/TOGBankClassic/Modules/Chat.lua#L1654-L1679) - HL broadcast: Fixed stub + hash updates
+
+**Related Issues:**
+- [MAIL-007] Initial mailHash storage fix (incomplete)
+- [MAIL-008] mailHash comparison fix (companion)
+- [SYNC-009] Hash matching before skip (uses cached mailHash)
+
+**Prevention:**
+- When storing hashes, always check ALL conditions: new alt, no hash, hash differs
+- Pattern: `if new then store elseif zero then store elseif differs then update`
+- Never assume hash=0 is the only "needs update" scenario
+- Test mail-only change scenarios explicitly
+- Verify hash stubs stay in sync with banker's authoritative values
+
+**Design Notes:**
+
+The "first pass" hash storage logic must handle **three scenarios**:
+1. **New alt** (no local record) → Create stub with all banker's hashes
+2. **No hash** (localHash=0) → Store banker's hash (initializing)
+3. **Hash differs** → Update to banker's hash (re-syncing)
+
+Missing case #3 breaks incremental hash updates and leaves stale values cached.
 
 ---
 
