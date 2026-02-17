@@ -896,7 +896,15 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 			if self.pendingAltRequests then
 				self.pendingAltRequests[altName] = nil
 			end
-			TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout, falling back to banker", altName, timeout)
+			
+			-- Check if we have any way to get this data
+			local banker = pending.banker
+			local bankerOnline = banker and self:IsPlayerOnline(banker)
+			if bankerOnline then
+				TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout, falling back to banker %s", altName, timeout, banker)
+			else
+				TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout, broadcasting to GUILD (no banker online)", altName, timeout)
+			end
 			self:QueryAltPullBased(altName, false)
 		end
 	end)
@@ -1188,19 +1196,29 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
 	
-	-- QueryAltPullBased is "last resort" - WHISPER banker directly
+	-- QueryAltPullBased is "last resort" - WHISPER banker directly if online, GUILD broadcast if not
 	-- (P2P guild broadcast should be done via BroadcastP2PRequest first)
 	if not banker then
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: no banker found, cannot send query", norm)
+		-- No banker found in roster - broadcast to GUILD hoping someone has data
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: no banker found, broadcasting to GUILD", norm)
+		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST (no banker): togbank-r for alt %s", norm)
+		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
+		self:MarkPendingSync("alt", "guild", norm)
+		self.pendingAltRequests[norm] = now
 		return
 	end
 	
 	if not self:IsPlayerOnline(banker) then
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: banker %s offline, cannot send query", norm, banker)
+		-- Banker exists but offline - broadcast to GUILD hoping someone else has data
+		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: banker %s offline, broadcasting to GUILD", norm, banker)
+		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST (banker offline): togbank-r for alt %s", norm)
+		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
+		self:MarkPendingSync("alt", "guild", norm)
+		self.pendingAltRequests[norm] = now
 		return
 	end
 	
-	-- WHISPER banker as last resort
+	-- WHISPER banker as last resort (banker confirmed online)
 	TOGBankClassic_Output:DebugComm("SENDING WHISPER (last resort): togbank-r to %s for alt %s", banker, norm)
 	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query for %s to banker %s (last resort after P2P timeout)", norm, banker)
 	

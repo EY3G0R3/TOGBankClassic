@@ -791,26 +791,40 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					else
 						TOGBankClassic_Output:Debug("QUERIES", "P2P-005: Banker skipping response for %s (no content - stub entry)", altName)
 					end
-				elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
-					-- PERF-005: Non-bankers can respond if they have matching hash AND actual content
+				elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData then
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					local myHash = alt.inventoryHash or 0
 					local hasContent = TOGBankClassic_Guild:HasAltContent(alt, altName)
 					local sendQueueFull = TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS
-					if myHash == data.expectedHash and hasContent and not sendQueueFull then
-						shouldRespond = true
-						expectedHash = myHash
-						TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
+					local requesterHash = data.requesterInventoryHash or 0
+					
+					-- Allow response in two scenarios:
+					-- 1. P2P with expectedHash: hash must match (normal P2P operation)
+					-- 2. No expectedHash but requesterHash=0: post-wipe recovery, any peer can help
+					local shouldRespondP2P = false
+					if data.expectedHash and myHash == data.expectedHash and hasContent and not sendQueueFull then
+						-- Normal P2P: hash match required
+						shouldRespondP2P = true
 						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Peer responding for %s (hash match: %d)", altName, myHash)
-						TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
-							sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+					elseif not data.expectedHash and requesterHash == 0 and hasContent and not sendQueueFull then
+						-- Post-wipe recovery: requester has no data, any peer can help
+						shouldRespondP2P = true
+						TOGBankClassic_Output:Debug("QUERIES", "WIPE-RECOVERY: Peer responding for %s (requester wiped, providing fresh data)", altName)
 					elseif sendQueueFull then
 						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Skipping response (send queue full: %d/%d)",
 							TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
-					elseif myHash == data.expectedHash and not hasContent then
+					elseif data.expectedHash and myHash == data.expectedHash and not hasContent then
 						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Skipping response for %s (hash matches but no content)", altName)
-					elseif data.expectedHash then
+					elseif data.expectedHash and myHash ~= data.expectedHash then
 						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Hash mismatch for %s (have %d, expected %d)", altName, myHash, data.expectedHash)
+					end
+					
+					if shouldRespondP2P then
+						shouldRespond = true
+						expectedHash = myHash
+						TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
+						TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
+							sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 					end
 				end
 			end
@@ -859,19 +873,21 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					elseif not hashOnly and not isBanker then
 						if not PEER_TO_PEER or not PEER_TO_PEER.ENABLED then
 							reason = "P2P disabled"
-						elseif not data.expectedHash then
-							reason = "no expectedHash in request"
 						else
 							local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 							local myHash = alt and alt.inventoryHash or 0
 							local hasContent = alt and TOGBankClassic_Guild:HasAltContent(alt, altName) or false
 							local sendQueueFull = TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS
+							local requesterHash = data.requesterInventoryHash or 0
+							
 							if sendQueueFull then
 								reason = string.format("send queue full (%d/%d)", TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
-							elseif myHash ~= data.expectedHash then
-								reason = string.format("hash mismatch (have %d, expected %d)", myHash, data.expectedHash)
 							elseif not hasContent then
-								reason = string.format("no content (hash match: %d)", myHash)
+								reason = "no content (stub entry)"
+							elseif data.expectedHash and myHash ~= data.expectedHash then
+								reason = string.format("hash mismatch (have %d, expected %d)", myHash, data.expectedHash)
+							elseif not data.expectedHash and requesterHash ~= 0 then
+								reason = string.format("no expectedHash but requester has data (requesterHash=%d)", requesterHash)
 							else
 								reason = "shouldRespond logic failed"
 							end

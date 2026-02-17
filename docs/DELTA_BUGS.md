@@ -8,6 +8,7 @@
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 
 **Recent Fixes (2026-02-16):**
+- ✅ [P2P-008] Post-wipe recovery failing when no banker online - Fixed QueryAltPullBased to broadcast to GUILD instead of dropping requests when banker offline, and updated peer response logic to allow any guild member (not just bankers) to respond when requester has requesterInventoryHash=0 (post-wipe scenario). Enables recovery without online bankers.
 - ✅ [MAIL-007] HLR handler ignoring mailHash when storing and comparing - Fixed HLR handler to store banker's mailHash (was hardcoded to 0), compare mailHash when deciding to sync, and properly detect mail-only changes. Mail-only changes now trigger syncs correctly.
 - ✅ [MAIL-008] RespondToStateSummary ignoring mailHash comparison - Fixed to check both inventoryHash and mailHash when deciding whether to send no-change vs delta. Added three-way detection: both match (no-change), mail-only change (mail delta), inventory change (full delta). Mail-only changes now properly sync.
 
@@ -7035,5 +7036,150 @@ Without sender info, all banker data looked the same and stale SV data could ove
 - External sync checks: banker targets must have sender==target
 - Mail preservation as defense-in-depth (even if rejection fails)
 - Test with multiple bankers on same account sharing SavedVariables
+
+---
+
+#### [P2P-008] Post-wipe recovery failing when no banker online
+
+**Severity:** 🔴 CRITICAL
+**Category:** P2P / Communication / Error Handling
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-16
+**Date Resolved:** 2026-02-16
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - After `/wipe` with no banker online, remained 0/35 indefinitely
+**Related:** PERF-005 P2P protocol, PERF-006 P2P bypass fixes, RequestHashListFromBanker
+
+**Problem:**
+After running `/wipe` to clear local database, users remained stuck at 0/35 alts for hours even when guild members had full data. The system failed to recover because:
+1. QueryAltPullBased silently dropped requests when no banker was online
+2. Non-banker peers required `expectedHash` in requests to respond (not present in post-wipe GUILD broadcasts)
+
+**Symptoms:**
+1. User runs `/wipe` to clear local database → all data wiped
+2. RequestHashListFromBanker runs every 3 minutes (OnShareTimer)
+3. No banker online → enters fallback path (line 790)
+4. For each alt, calls QueryAltPullBased(norm, false) (line 821)
+5. QueryAltPullBased checks if banker online (line 1198)
+6. Returns early: "banker offline, cannot send query" (line 1199)
+7. **Request silently dropped** - no GUILD broadcast sent
+8. Remains 0/35 indefinitely despite peers having full data
+
+**Secondary Issue:**
+Even after fixing GUILD broadcasts, non-bankers still wouldn't respond:
+- Post-wipe requests have `requesterInventoryHash = 0` (no data)
+- Post-wipe requests have NO `expectedHash` field (only set by BroadcastP2PRequest)
+- Non-banker response logic: `elseif ... and data.expectedHash then` (line 795)
+- Non-bankers skip requests without expectedHash → only bankers respond
+- If no banker online → **no one responds** despite having data
+
+**Root Cause:**
+
+**Issue 1: QueryAltPullBased drops requests (Guild.lua:1193-1200)**
+```lua
+-- BEFORE:
+if not banker then
+    TOGBankClassic_Output:Debug("PROTOCOL", "no banker found, cannot send query")
+    return  // REQUEST DROPPED!
+end
+if not self:IsPlayerOnline(banker) then
+    TOGBankClassic_Output:Debug("PROTOCOL", "banker offline, cannot send query")
+    return  // REQUEST DROPPED!
+end
+```
+
+**Issue 2: Non-bankers require expectedHash (Chat.lua:795)**
+```lua
+-- BEFORE:
+elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData and data.expectedHash then
+    // Only responds if expectedHash present and matches
+```
+
+**Impact:**
+- **Severity:** CRITICAL - Complete system failure after `/wipe` in common scenario
+- **User Experience:** Stuck at 0/35 for hours, requires manual banker scan to recover
+- **Workaround:** Log into banker character, scan, and share manually
+- **Adoption Blocker:** Makes `/wipe` command effectively broken for testing/recovery
+
+**Fix:**
+
+**Part 1: Guild.lua QueryAltPullBased (lines 1191-1224) - GUILD broadcast fallback**
+```lua
+-- AFTER:
+if not banker then
+    // Broadcast to GUILD - any member can respond
+    TOGBankClassic_Output:Debug("PROTOCOL", "no banker found, broadcasting to GUILD")
+    TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
+    self:MarkPendingSync("alt", "guild", norm)
+    self.pendingAltRequests[norm] = now
+    return
+end
+
+if not self:IsPlayerOnline(banker) then
+    // Broadcast to GUILD - any member can respond
+    TOGBankClassic_Output:Debug("PROTOCOL", "banker offline, broadcasting to GUILD")
+    TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
+    self:MarkPendingSync("alt", "guild", norm)
+    self.pendingAltRequests[norm] = now
+    return
+end
+```
+
+**Part 2: Chat.lua alt-request handler (lines 782-833) - Post-wipe recovery mode**
+```lua
+-- AFTER:
+elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData then
+    local requesterHash = data.requesterInventoryHash or 0
+    local shouldRespondP2P = false
+    
+    // Allow response in two scenarios:
+    if data.expectedHash and myHash == data.expectedHash and hasContent then
+        // Scenario 1: Normal P2P with hash match
+        shouldRespondP2P = true
+    elseif not data.expectedHash and requesterHash == 0 and hasContent then
+        // Scenario 2: Post-wipe recovery (requester wiped, any peer can help)
+        shouldRespondP2P = true
+        TOGBankClassic_Output:Debug("QUERIES", "WIPE-RECOVERY: Peer responding for %s", altName)
+    end
+```
+
+**Testing:**
+1. Run `/wipe` to clear all local data
+2. Verify 0/35 alts, no hashes
+3. Wait for 3-minute timer (OnShareTimer)
+4. Observe GUILD broadcasts: "HLR fallback: no banker online, broadcasting query for X (no local hash)"
+5. Peers with data respond: "WIPE-RECOVERY: Peer responding for X (requester wiped, providing fresh data)"
+6. Data populates progressively: 1/35, 2/35, ... 35/35
+7. Verify works without any banker online
+
+**Expected Behavior After Fix:**
+- ✅ Requests broadcast to GUILD when banker unavailable
+- ✅ Any guild member with content can respond (not just bankers)
+- ✅ Post-wipe recovery completes within 1-2 timer cycles (3-6 minutes)
+- ✅ No manual intervention required
+
+**Backwards Compatibility:**
+- **Bankers (any version):** Already respond without expectedHash ✅
+- **Non-bankers (old code):** Still require expectedHash ⚠️
+- **Migration Path:** Requires at least one other member (banker or non-banker) to update
+- **Testing:** Works immediately if any banker is online (old or new code)
+
+**Files Changed:**
+- [Modules/Guild.lua](Modules/Guild.lua#L1191-1224) - QueryAltPullBased GUILD broadcast fallback
+- [Modules/Guild.lua](Modules/Guild.lua#L890-903) - Better P2P timeout logging
+- [Modules/Chat.lua](Modules/Chat.lua#L782-833) - Post-wipe recovery response logic
+- [Modules/Chat.lua](Modules/Chat.lua#L873-893) - Improved debug logging for skip reasons
+
+**Related Issues:**
+- [PERF-005] P2P send queue throttling
+- [PERF-006] P2P protocol bypass fixes
+- RequestHashListFromBanker fallback logic
+- OnShareTimer 3-minute periodic sync
+
+**Prevention:**
+- Never silently drop sync requests - always broadcast or queue
+- Design fallback paths for common scenarios (no banker, post-wipe)
+- Test recovery scenarios explicitly (wipe, offline, empty guild)
+- Log WHY requests are skipped (not just that they were skipped)
 
 ---
