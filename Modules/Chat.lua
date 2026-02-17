@@ -1028,15 +1028,16 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if not TOGBankClassic_Guild.expectedHashes then
 					TOGBankClassic_Guild.expectedHashes = {}
 				end
-				TOGBankClassic_Guild.expectedHashes[altName] = expectedHash
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				TOGBankClassic_Guild.expectedHashes[norm] = expectedHash
 				if expectedUpdatedAt then
 					TOGBankClassic_Guild.expectedHashUpdatedAt = TOGBankClassic_Guild.expectedHashUpdatedAt or {}
-					TOGBankClassic_Guild.expectedHashUpdatedAt[altName] = expectedUpdatedAt
+					TOGBankClassic_Guild.expectedHashUpdatedAt[norm] = expectedUpdatedAt
 				end
 
 				-- Track pending P2P request for fallback
 				TOGBankClassic_Guild.pendingP2PRequests = TOGBankClassic_Guild.pendingP2PRequests or {}
-				TOGBankClassic_Guild.pendingP2PRequests[altName] = { banker = sender, requestedAt = GetTime() }
+				TOGBankClassic_Guild.pendingP2PRequests[norm] = { banker = sender, requestedAt = GetTime() }
 
 				-- Now broadcast regular request to GUILD with expectedHash so peers can respond
 			-- MAIL-SYNC: Include requester's mailHash for mail change detection
@@ -1057,12 +1058,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 				-- Fallback: if no peer responds, request from banker directly
 				C_Timer.After(5, function()
-					local pending = TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[altName]
+					local norm = TOGBankClassic_Guild:NormalizeName(altName)
+					local pending = TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[norm]
 					if pending then
-						TOGBankClassic_Guild.pendingP2PRequests[altName] = nil
+						TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
 						-- PERF-006: Clear pendingAltRequests to allow banker fallback
 						if TOGBankClassic_Guild.pendingAltRequests then
-							TOGBankClassic_Guild.pendingAltRequests[altName] = nil
+							TOGBankClassic_Guild.pendingAltRequests[norm] = nil
 						end
 						TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
 						TOGBankClassic_Guild:QueryAltPullBased(altName, false)
@@ -1070,15 +1072,25 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end)
 			elseif not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
 				-- P2P: Non-banker (peer) acknowledged - continue with delta sync
-				local wasPending = TOGBankClassic_Guild.pendingP2PRequests[altName] ~= nil
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				local wasPending = TOGBankClassic_Guild.pendingP2PRequests[norm] ~= nil
+				
 				if wasPending then
 					TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
-				end
+					
+					-- Clear pending P2P request since peer is responding
+					TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
+					
+					-- Also clear pendingAltRequests to prevent banker fallback
+					if TOGBankClassic_Guild.pendingAltRequests then
+						TOGBankClassic_Guild.pendingAltRequests[norm] = nil
+					end
 
-				-- Send state summary for delta comparison
-				if hasData and expectedHash then
-					TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
-					TOGBankClassic_Guild:SendStateSummary(altName, sender)
+					-- Send state summary for delta comparison
+					if hasData and expectedHash then
+						TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
+						TOGBankClassic_Guild:SendStateSummary(altName, sender)
+					end
 				end
 			elseif hasData then
 				-- Banker (non-P2P path) or fallback - send state summary

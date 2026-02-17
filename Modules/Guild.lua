@@ -862,16 +862,16 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	TOGBankClassic_Output:Info("P2P: Broadcasting request for %s with hash=%d (waiting for peers)", altName, expectedHash)
 	
 	self.expectedHashes = self.expectedHashes or {}
-	self.expectedHashes[altName] = expectedHash
+	self.expectedHashes[norm] = expectedHash
 	if expectedUpdatedAt then
 		self.expectedHashUpdatedAt = self.expectedHashUpdatedAt or {}
-		self.expectedHashUpdatedAt[altName] = expectedUpdatedAt
+		self.expectedHashUpdatedAt[norm] = expectedUpdatedAt
 	end
 	self.pendingP2PRequests = self.pendingP2PRequests or {}
-	self.pendingP2PRequests[altName] = { banker = bankerSender, requestedAt = GetTime() }
+	self.pendingP2PRequests[norm] = { banker = bankerSender, requestedAt = GetTime() }
 
 	-- MAIL-SYNC: Get requester's current mailHash to detect mail changes
-	local ourAlt = self.Info and self.Info.alts and self.Info.alts[altName]
+	local ourAlt = self.Info and self.Info.alts and self.Info.alts[norm]
 	local ourMailHash = (ourAlt and ourAlt.mailHash) or 0
 
 	local p2pRequest = {
@@ -889,12 +889,12 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 
 	local timeout = (PEER_TO_PEER and PEER_TO_PEER.PEER_RESPONSE_TIMEOUT) or 5
 	C_Timer.After(timeout, function()
-		local pending = self.pendingP2PRequests and self.pendingP2PRequests[altName]
+		local pending = self.pendingP2PRequests and self.pendingP2PRequests[norm]
 		if pending then
-			self.pendingP2PRequests[altName] = nil
+			self.pendingP2PRequests[norm] = nil
 			-- PERF-006: Clear pendingAltRequests to allow banker fallback
 			if self.pendingAltRequests then
-				self.pendingAltRequests[altName] = nil
+				self.pendingAltRequests[norm] = nil
 			end
 			
 			-- Check if we have any way to get this data
