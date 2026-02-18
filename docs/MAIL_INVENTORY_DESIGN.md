@@ -25,7 +25,7 @@ Mail inventory tracking is now fully integrated into TOGBankClassic, allowing us
 ### Issue #7: Mail-Only Change Sync Abort ✅ FIXED
 **Problem:** When mail changed but inventory didn't, and no snapshot was available, `ComputeDelta()` returned `nil`, causing complete sync failure. Requesters with matching inventory but outdated mail would never receive updates.  
 **Root Cause:** Line 567 in DeltaComms.lua returned `nil` instead of falling back to empty baseline like the general hash mismatch case.  
-**Solution:** Changed to use same fallback as inventory mismatch: `previous = { items = {}, money = 0, mailHash = 0 }`. Delta still contains all items as additions (against empty baseline), but sync succeeds.  
+**Solution:** Changed to use same fallback as inventory mismatch: `previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }`. Delta still contains all items as additions (against empty baseline), but sync succeeds. *Note: Updated Feb 18 with [DELTA-017] to include complete bank/bags/mail structures.*  
 **Result:** Mail-only changes always sync successfully, even after snapshot expiration. No more permanent out-of-sync states.  
 **Files:** [DeltaComms.lua](../Modules/DeltaComms.lua#L557-L567)
 
