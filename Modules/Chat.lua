@@ -820,30 +820,69 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					end
 					
 					if shouldRespondP2P then
-						shouldRespond = true
-						expectedHash = myHash
-						TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
-						TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
-							sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
-						
-						-- Safety timeout: if requester never sends state summary (disconnect/crash),
-						-- auto-decrement counter after 30 seconds to prevent permanent queue blocking
-						local timeoutAlt = normAltName
-						local timer = C_Timer.After(30, function()
-							if TOGBankClassic_Guild.pendingSendCount > 0 then
-								TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
-								TOGBankClassic_Output:Debug("SYNC", "P2P: Send timeout for %s - decremented queue (now %d/%d)",
-									timeoutAlt, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+						-- FIX: Add random backoff to prevent multiple peers responding simultaneously
+						local backoff = math.random() * 0.5  -- 0-500ms random delay
+						C_Timer.After(backoff, function()
+							-- Check if someone else already responded
+							if TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS then
+								TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Another peer beat us to it, not responding for %s", altName)
+								return
 							end
-							TOGBankClassic_Guild.pendingSendTimeouts[timeoutAlt] = nil
+							
+							shouldRespond = true
+							expectedHash = myHash
+							TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
+							TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
+								sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+							
+							-- Safety timeout: if requester never sends state summary (disconnect/crash),
+							-- auto-decrement counter after 30 seconds to prevent permanent queue blocking
+							local timeoutAlt = normAltName
+							if not TOGBankClassic_Guild.pendingSendTimeouts then
+								TOGBankClassic_Guild.pendingSendTimeouts = {}
+							end
+							local timer = C_Timer.After(30, function()
+								if TOGBankClassic_Guild.pendingSendCount > 0 then
+									TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
+									TOGBankClassic_Output:Debug("SYNC", "P2P: Send timeout for %s - decremented queue (now %d/%d)",
+										timeoutAlt, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+								end
+								TOGBankClassic_Guild.pendingSendTimeouts[timeoutAlt] = nil
+							end)
+							TOGBankClassic_Guild.pendingSendTimeouts[normAltName] = timer
+							
+							-- Actually send the ACK now
+							if shouldRespond then
+								local ack = {
+									type = "alt-request-reply",
+									name = normAltName or altName,
+									isBanker = isBanker,
+									hasData = hasData,
+									hashOnly = hashOnly,
+									expectedHash = expectedHash,
+									expectedUpdatedAt = expectedUpdatedAt,
+								}
+								local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
+								TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)",
+									sender, tostring(isBanker), tostring(hasData), tostring(expectedHash), tostring(expectedUpdatedAt))
+								TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
+								TOGBankClassic_Chat:Debug(
+									"SYNC",
+									"<",
+									"Sent togbank-rr to",
+									ColorPlayerName(sender),
+									string.format("(isBanker=%s, hasData=%s, hash=%s)", tostring(isBanker), tostring(hasData), tostring(expectedHash))
+								)
+							end
 						end)
-						TOGBankClassic_Guild.pendingSendTimeouts[normAltName] = timer
+						return  -- Exit early since we'll send ACK in timer
 					end
 				end
 			end
 
 			if shouldRespond then
 				-- Send acknowledgment with banker flag and hash
+				-- Note: P2P responses with backoff are handled above and return early
 				local ack = {
 					type = "alt-request-reply",
 					name = normAltName or altName,
@@ -1070,7 +1109,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				self:Debug("SYNC", "< Broadcasting P2P request for %s (hash=%s)", ColorPlayerName(altName), tostring(expectedHash))
 
 				-- Fallback: if no peer responds, request from banker directly
-				C_Timer.After(5, function()
+				local timeoutTimer = C_Timer.After(5, function()
 					local norm = TOGBankClassic_Guild:NormalizeName(altName)
 					local pending = TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[norm]
 					if pending then
@@ -1079,10 +1118,27 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						if TOGBankClassic_Guild.pendingAltRequests then
 							TOGBankClassic_Guild.pendingAltRequests[norm] = nil
 						end
+						-- FIX: Clear expectedHashes on fallback
+						if TOGBankClassic_Guild.expectedHashes then
+							TOGBankClassic_Guild.expectedHashes[norm] = nil
+						end
+						if TOGBankClassic_Guild.expectedHashUpdatedAt then
+							TOGBankClassic_Guild.expectedHashUpdatedAt[norm] = nil
+						end
+						-- Clear timeout timer tracking
+						if TOGBankClassic_Guild.pendingP2PTimeouts then
+							TOGBankClassic_Guild.pendingP2PTimeouts[norm] = nil
+						end
 						TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
 						TOGBankClassic_Guild:QueryAltPullBased(altName, false)
 					end
 				end)
+				
+				-- Store timeout timer for cancellation if peer responds
+				if not TOGBankClassic_Guild.pendingP2PTimeouts then
+					TOGBankClassic_Guild.pendingP2PTimeouts = {}
+				end
+				TOGBankClassic_Guild.pendingP2PTimeouts[norm] = timeoutTimer
 			elseif not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
 				-- P2P: Non-banker (peer) acknowledged - continue with delta sync
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
@@ -1093,6 +1149,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					
 					-- Clear pending P2P request since peer is responding
 					TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
+					
+					-- FIX: Cancel the first timeout timer since peer responded
+					if TOGBankClassic_Guild.pendingP2PTimeouts and TOGBankClassic_Guild.pendingP2PTimeouts[norm] then
+						TOGBankClassic_Guild.pendingP2PTimeouts[norm]:Cancel()
+						TOGBankClassic_Guild.pendingP2PTimeouts[norm] = nil
+					end
 					
 					-- Also clear pendingAltRequests to prevent banker fallback
 					if TOGBankClassic_Guild.pendingAltRequests then

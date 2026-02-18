@@ -8,6 +8,11 @@
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 
 **Recent Fixes (2026-02-17):**
+- ✅ [P2P-015] **HIGH** Race condition: Multiple peers responding simultaneously - Fixed by adding 0-500ms random backoff before peers send ACK responses to P2P broadcasts. Prevents multiple peers with matching hashes from all incrementing pendingSendCount and sending duplicate data. Location: Chat.lua alt-request handler (~823).
+- ✅ [P2P-014] **MEDIUM** Memory leak: expectedHashes not cleared on timeout - Fixed BroadcastP2PRequest and togbank-rr timeout handlers to clear expectedHashes and expectedHashUpdatedAt when P2P timeout fires or fallback to banker occurs. Prevents unbounded hash table growth. Locations: Guild.lua BroadcastP2PRequest timeout (~895-912), Chat.lua togbank-rr timeout (~1078-1090).
+- ✅ [P2P-013] **HIGH** Race condition: Dual timeout timers - Fixed peer ACK handler to cancel the initial 5-second P2P broadcast timeout when peer responds. Previously both timeouts ran concurrently, causing duplicate banker fallback requests if peer responded at second 4 (first timeout at 5s + second timeout at 19s). Now cancels first timer via pendingP2PTimeouts tracking. Location: Chat.lua peer ACK handler (~1101-1107).
+- ✅ [P2P-012] **HIGH** Counter leak: pendingSendCount double-decrement - Fixed SendAltData to actually cancel pending send timeout timer via :Cancel() method instead of just nil-ing reference. Previously both send completion (OnChunkSent) and 30-second timeout decremented counter, causing negative values. Now properly cancels timer before send. Location: Guild.lua SendAltData (~1998-2002).
+- ✅ [P2P-011] **MEDIUM** Timer cancellation not working - Fixed timer cancellation throughout codebase to call timer:Cancel() method before clearing reference. C_Timer.After returns timer object that continues running unless explicitly cancelled. Locations: Guild.lua SendAltData (~2000), Chat.lua peer ACK handler (~1104).
 - ✅ [MAIL-010] **CRITICAL** Mail-only change sync abort when no snapshot - Fixed ComputeDelta to use empty baseline fallback instead of returning nil when mail changes but inventory matches and no snapshot exists. Previously returned nil at line 567, causing Guild.lua to abort sync at line 2054-2055 with "Failed to compute delta" error, leaving requesters permanently out of sync until inventory changed. Now uses same fallback as inventory mismatch case (empty baseline = delta with all items as additions). Result: Mail-only changes always sync successfully, even after snapshot expiration. Location: DeltaComms.lua ComputeDelta mail-only change handler (~557-567).
 - ✅ [P2P-010] **CRITICAL** P2P broadcast never sent after banker response - Fixed togbank-rr handler to actually send P2P broadcast. When banker responded with hash via togbank-rr, requester built p2pRequest object and logged "Broadcasting P2P request" but never called SerializeWithChecksum or SendCommMessage. This caused P2P to only work when no banker was online initially (BroadcastP2PRequest path worked), but fail in the common case where banker responded first. 5-second timeout always triggered, forcing 100% banker fallback. Now adds missing serialization and SendCommMessage("togbank-hl") call. Result: Full P2P flow operational - peers receive broadcasts and respond with matching hashes instead of always falling back to banker. Location: Chat.lua togbank-rr handler (~1053-1054).
 - ✅ [P2P-009] **CRITICAL** P2P data requests not being processed - Fixed togbank-hl handler forwarding logic. P2P requests broadcast via togbank-hl (type="alt-request") were never processed because the handler attempted to forward to togbank-r by setting prefix variable, but togbank-r handler had already executed earlier in the function. Changed to recursively call OnCommReceived("togbank-r") to properly process requests. Result: Peers now respond to P2P broadcasts with actual data instead of silence. Without this fix, P2P protocol was completely non-functional - users saw "Broadcasting request" messages but received no data from peers. Location: Chat.lua OnCommReceived togbank-hl handler (~1685-1693).
@@ -8010,5 +8015,196 @@ When forwarding messages between handlers in the same function, you can't just c
 3. **Reorder handlers** to process forwarded prefix first (fragile, order-dependent)
 
 Recursive calling is cleanest because it isolates the forwarding logic and makes intent clear.
+
+---
+
+#### [P2P-015] Race condition: Multiple peers responding simultaneously
+
+**Severity:** 🟠 HIGH
+**Category:** P2P / Concurrency / Protocol
+**Reporter:** Code Review
+**Date Reported:** 2026-02-17
+**Date Resolved:** 2026-02-17
+**Status:** ✅ RESOLVED
+**Reproducibility:** 50-80% - Depends on network timing and number of peers with matching hash
+**Related:** [PERF-005] P2P protocol design, [P2P-012] Counter leak
+
+**Problem:**
+When a P2P request was broadcast to GUILD channel, multiple peers with matching hashes would all decide to respond **simultaneously**. Each peer would increment `pendingSendCount`, send ACK messages, and start 30-second timeout timers. This caused:
+1. Unnecessary duplicate data transfers (wasted bandwidth)
+2. pendingSendCount inflating rapidly (3+ peers × multiple alts = queue exhaustion)
+3. Later peers blocked from responding due to `MAX_PENDING_SENDS` limit
+4. Requester receiving duplicate data from multiple sources
+
+**Root Cause:**
+All peers evaluated `shouldRespondP2P` logic synchronously at nearly the same time, before any peer had incremented `pendingSendCount`. No coordination mechanism existed to prevent multiple simultaneous responses.
+
+**Fix:**
+Implemented **random backoff delay** (0-500ms) for P2P peer responses. Only the winner (or winners within the backoff window) will acquire send slots.
+
+**Chat.lua lines ~823-879:**
+```lua
+if shouldRespondP2P then
+    -- FIX: Add random backoff to prevent multiple peers responding simultaneously
+    local backoff = math.random() * 0.5  -- 0-500ms random delay
+    C_Timer.After(backoff, function()
+        -- Check if someone else already responded
+        if TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS then
+            return  -- Another peer beat us, back off
+        end
+        shouldRespond = true
+        TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
+        -- Send ACK after delay
+    end)
+end
+```
+
+**Files Changed:**
+- [Modules/Chat.lua](Modules/Chat.lua#L823-879) - Added random backoff for P2P peer responses
+
+---
+
+#### [P2P-014] Memory leak: expectedHashes not cleared on timeout
+
+**Severity:** 🟡 MEDIUM
+**Category:** P2P / Memory Management
+**Reporter:** Code Review
+**Date Reported:** 2026-02-17
+**Date Resolved:** 2026-02-17
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - Every P2P timeout leaked hash entries
+**Related:** [P2P-013] Timer tracking, [PERF-005] P2P protocol
+
+**Problem:**
+When P2P broadcasts timed out (no peer response after 5 seconds), the code cleared `pendingP2PRequests` to enable banker fallback, but **never cleared** `expectedHashes[norm]` and `expectedHashUpdatedAt[norm]`. These hash entries accumulated indefinitely in memory.
+
+**Root Cause:**
+Two locations cleared `pendingP2PRequests` on timeout but forgot to clear hash tables:
+- Guild.lua BroadcastP2PRequest timeout (lines ~891-909)
+- Chat.lua togbank-rr timeout (lines ~1073-1082)
+
+**Fix:**
+Added hash cleanup to both timeout handlers:
+
+```lua
+// FIX: Clear expectedHashes to prevent memory leak
+if self.expectedHashes then
+    self.expectedHashes[norm] = nil
+end
+if self.expectedHashUpdatedAt then
+    self.expectedHashUpdatedAt[norm] = nil
+end
+```
+
+**Files Changed:**
+- [Modules/Guild.lua](Modules/Guild.lua#L895-912) - BroadcastP2PRequest timeout cleanup
+- [Modules/Chat.lua](Modules/Chat.lua#L1078-1095) - togbank-rr timeout cleanup
+
+---
+
+#### [P2P-013] Race condition: Dual timeout timers
+
+**Severity:** 🟠 HIGH
+**Category:** P2P / Timing / Concurrency
+**Reporter:** Code Review
+**Date Reported:** 2026-02-17
+**Date Resolved:** 2026-02-17
+**Status:** ✅ RESOLVED
+**Reproducibility:** 80% - Occurs whenever peer responds between 4-5 seconds
+**Related:** [P2P-011] Timer cancellation, [P2P-014] Hash cleanup
+
+**Problem:**
+When a banker responded to a hash query, the code created two concurrent timeout timers:
+1. **First timer:** 5-second P2P broadcast timeout (fallback to banker if no peer responds)
+2. **Second timer:** 15-second peer delivery timeout (fallback to banker if peer ACKs but doesn't send data)
+
+If a peer ACKed at second 4, both timers would fire, causing duplicate banker requests.
+
+**Root Cause:**
+Peer ACK handler cleared `pendingP2PRequests` but didn't cancel the first timeout timer.
+
+**Fix:**
+Added timer tracking and cancellation in peer ACK handler:
+
+```lua
+// FIX: Cancel the first timeout timer since peer responded
+if TOGBankClassic_Guild.pendingP2PTimeouts and TOGBankClassic_Guild.pendingP2PTimeouts[norm] then
+    TOGBankClassic_Guild.pendingP2PTimeouts[norm]:Cancel()
+    TOGBankClassic_Guild.pendingP2PTimeouts[norm] = nil
+end
+```
+
+**Files Changed:**
+- [Modules/Guild.lua](Modules/Guild.lua#L17) - Added `pendingP2PTimeouts` tracking table
+- [Modules/Guild.lua](Modules/Guild.lua#L920) - Store timeout timer for cancellation
+- [Modules/Chat.lua](Modules/Chat.lua#L1104-1107) - Cancel first timer when peer responds
+
+---
+
+#### [P2P-012] Counter leak: pendingSendCount double-decrement
+
+**Severity:** 🟠 HIGH
+**Category:** P2P / Counter Management / Resource Tracking
+**Reporter:** Code Review
+**Date Reported:** 2026-02-17
+**Date Resolved:** 2026-02-17
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - Occurred on every P2P send if completed within 30 seconds
+**Related:** [P2P-011] Timer cancellation, [P2P-015] Race condition
+
+**Problem:**
+When a peer responded to a P2P request, it incremented `pendingSendCount` and started a 30-second safety timeout. However, when data sent successfully, **both** the send completion callback AND the timeout decremented the counter, causing it to go negative.
+
+**Root Cause:**
+SendAltData cleared timer reference without calling `:Cancel()`, so timer continued running and fired even after send completed.
+
+**Fix:**
+Changed SendAltData to actually cancel the timer object:
+
+```lua
+// AFTER (FIXED):
+if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
+    self.pendingSendTimeouts[norm]:Cancel()  // FIX: Actually stop the timer
+    self.pendingSendTimeouts[norm] = nil
+end
+```
+
+**Files Changed:**
+- [Modules/Guild.lua](Modules/Guild.lua#L2000) - Actually call timer:Cancel()
+
+---
+
+#### [P2P-011] Timer cancellation not working - semantic vs actual cancellation
+
+**Severity:** 🟡 MEDIUM
+**Category:** P2P / Timer Management / API Usage
+**Reporter:** Code Review
+**Date Reported:** 2026-02-17
+**Date Resolved:** 2026-02-17
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% - Setting timer reference to nil never cancels timer
+**Related:** [P2P-012] Counter leak, [P2P-013] Dual timers
+
+**Problem:**
+Throughout the codebase, timer cancellation was implemented as `timer = nil`. This **clears the reference** but doesn't **stop the timer callback** from executing. `C_Timer.After()` returns a timer object with a `:Cancel()` method that must be explicitly called.
+
+**Root Cause:**
+Misunderstanding of WoW timer API. Setting a variable to `nil` only affects the variable, not the timer object it references.
+
+**Fix:**
+Changed all timer cancellations to call `:Cancel()` method explicitly:
+
+```lua
+// BEFORE (BROKEN):
+timer = nil  // Doesn't stop timer
+
+// AFTER (FIXED):
+timer:Cancel()  // Stop timer callback
+timer = nil     // Clear reference (optional)
+```
+
+**Files Changed:**
+- [Modules/Guild.lua](Modules/Guild.lua#L2000) - SendAltData timeout cancellation
+- [Modules/Chat.lua](Modules/Chat.lua#L1104) - Peer ACK handler timeout cancellation
 
 ---

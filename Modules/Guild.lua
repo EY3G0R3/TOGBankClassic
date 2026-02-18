@@ -14,6 +14,7 @@ TOGBankClassic_Guild.banksCache = nil
 -- Pending request tracking tables
 TOGBankClassic_Guild.pendingAltRequests = {}
 TOGBankClassic_Guild.pendingP2PRequests = {}
+TOGBankClassic_Guild.pendingP2PTimeouts = {}   -- Track P2P broadcast timeouts for cancellation
 TOGBankClassic_Guild.lastAltQueryTime = {}
 TOGBankClassic_Guild.bankerProgressKnown = {}
 
@@ -889,13 +890,21 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", p2pData, "GUILD", nil, "NORMAL")
 
 	local timeout = (PEER_TO_PEER and PEER_TO_PEER.PEER_RESPONSE_TIMEOUT) or 5
-	C_Timer.After(timeout, function()
+	local timeoutTimer = C_Timer.After(timeout, function()
 		local pending = self.pendingP2PRequests and self.pendingP2PRequests[norm]
 		if pending then
 			self.pendingP2PRequests[norm] = nil
 			-- PERF-006: Clear pendingAltRequests to allow banker fallback
 			if self.pendingAltRequests then
 				self.pendingAltRequests[norm] = nil
+			end
+			
+			-- FIX: Clear expectedHashes to prevent memory leak
+			if self.expectedHashes then
+				self.expectedHashes[norm] = nil
+			end
+			if self.expectedHashUpdatedAt then
+				self.expectedHashUpdatedAt[norm] = nil
 			end
 			
 			-- Check if we have any way to get this data
@@ -909,6 +918,12 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 			self:QueryAltPullBased(altName, false)
 		end
 	end)
+	
+	-- Store timeout timer for cancellation if peer responds
+	if not self.pendingP2PTimeouts then
+		self.pendingP2PTimeouts = {}
+	end
+	self.pendingP2PTimeouts[norm] = timeoutTimer
 end
 
 function TOGBankClassic_Guild:CheckVersion(version)
@@ -1997,6 +2012,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	-- Cancel pending send timeout since we're actually sending now
 	if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
 		TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelling send timeout for %s (actually sending)", norm)
+		self.pendingSendTimeouts[norm]:Cancel()
 		self.pendingSendTimeouts[norm] = nil
 	end
 	if not self.Info or not self.Info.alts or not self.Info.alts[norm] then
