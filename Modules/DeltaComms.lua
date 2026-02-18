@@ -1406,18 +1406,38 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		local localAlt = guildInfo.alts and norm and guildInfo.alts[norm]
 		local hasEntry = localAlt ~= nil
 		local hasContent = hasEntry and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
+		
+		-- Check for hash mismatch (stale data)
+		local bankerCache = TOGBankClassic_Guild.latestBankerHashes and TOGBankClassic_Guild.latestBankerHashes[norm]
+		local hashMismatch = false
+		local mismatchReason = nil
+		if bankerCache and hasEntry and localAlt then
+			local localHash = (localAlt.inventoryHash) or 0
+			local bankerHash = bankerCache.hash or 0
+			local localMailHash = (localAlt.mailHash) or 0
+			local bankerMailHash = bankerCache.mailHash or 0
+			if localHash ~= bankerHash then
+				hashMismatch = true
+				mismatchReason = string.format("inventory hash mismatch (local=%s, banker=%s)", tostring(localHash), tostring(bankerHash))
+			elseif localMailHash ~= bankerMailHash then
+				hashMismatch = true
+				mismatchReason = string.format("mail hash mismatch (local=%s, banker=%s)", tostring(localMailHash), tostring(bankerMailHash))
+			end
+		end
+		
 		-- DEBUG: Log every alt to see what's happening
-		TOGBankClassic_Output:Debug("PROTOCOL", "FastFill check: %s hasEntry=%s hasContent=%s", 
-			tostring(norm), tostring(hasEntry), tostring(hasContent))
-		-- Check if we have this alt locally with content
-		if not hasEntry or not hasContent then
+		TOGBankClassic_Output:Debug("PROTOCOL", "FastFill check: %s hasEntry=%s hasContent=%s hashMismatch=%s", 
+			tostring(norm), tostring(hasEntry), tostring(hasContent), tostring(hashMismatch))
+		
+		-- Check if we need to request this alt: no entry, no content, OR hash mismatch
+		if not hasEntry or not hasContent or hashMismatch then
 			table.insert(missing, norm)
 			local hasRaw = guildInfo.alts and guildInfo.alts[altName] ~= nil
-			local reason = hasEntry and "no content" or "no entry"
+			local reason = mismatchReason or (hasEntry and "no content" or "no entry")
 			missingInfo[norm] = {
 				reason = reason,
-				hash = localAlt and localAlt.inventoryHash or nil,
-				updatedAt = localAlt and (localAlt.inventoryUpdatedAt or localAlt.version) or nil,
+				hash = (bankerCache and bankerCache.hash) or (localAlt and localAlt.inventoryHash) or nil,
+				updatedAt = (bankerCache and bankerCache.updatedAt) or (localAlt and (localAlt.inventoryUpdatedAt or localAlt.version)) or nil,
 			}
 			table.insert(
 				missingDebug,
@@ -1464,6 +1484,15 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	-- Query each missing alt using pull-based protocol
 	for _, norm in ipairs(missing) do
 		local info = missingInfo[norm]
+		TOGBankClassic_Output:Debug(
+			"PROTOCOL",
+			"Fast-fill processing: %s (info=%s, hash=%s, hasHash=%s, hashNotZero=%s)",
+			tostring(norm),
+			tostring(info ~= nil),
+			tostring(info and info.hash),
+			tostring(info and info.hash and true or false),
+			tostring(info and info.hash and info.hash ~= 0 or false)
+		)
 		-- PERF-006: Use P2P whenever we have a hash, regardless of banker online status
 		if info and info.hash and info.hash ~= 0 then
 			-- We have hash but no content - broadcast P2P request (GUILD → timeout → banker fallback)
@@ -1477,6 +1506,11 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 			TOGBankClassic_Guild:BroadcastP2PRequest(norm, info.hash, info.updatedAt, nil)
 		else
 			-- No hash available - go straight to banker whisper as last resort
+			TOGBankClassic_Output:Debug(
+				"PROTOCOL",
+				"Fast-fill banker query: requesting %s (no hash or hash=0)",
+				tostring(norm)
+			)
 			TOGBankClassic_Guild:QueryAltPullBased(norm, false)
 		end
 	end

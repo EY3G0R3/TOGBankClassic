@@ -359,6 +359,13 @@ function TOGBankClassic_Bank:Scan()
 	else
 		TOGBankClassic_Output:Debug("MAIL", "No mail data to save for %s", player)
 	end
+
+	-- DELTA-021: Save snapshot after scan so next broadcast can compute proper delta
+	-- Without this, first broadcast after scan always sends full data (no baseline)
+	if info.name then
+		TOGBankClassic_Database:SaveSnapshot(info.name, player, alt)
+		TOGBankClassic_Output:Debug("DELTA", "Saved snapshot for %s after scan (hash=%s)", player, tostring(alt.inventoryHash))
+	end
 end
 
 function TOGBankClassic_Bank:HasInventorySpace()

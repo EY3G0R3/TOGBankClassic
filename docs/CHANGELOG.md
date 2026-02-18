@@ -6,6 +6,93 @@
 
 ### 🐛 Critical Delta Protocol Fix
 
+#### [DELTA-019] CRITICAL: Premature Hash Update Before Data Received
+- **Fixed:** Removed HLR first pass branch that updated hash when `localHash == 0`
+- **Root Cause:** Hash updated from banker's broadcast before delta data arrived and was applied
+- **Symptoms:**
+  - User has hash 529743613 with data, banker broadcasts hash 461905621
+  - Hash immediately updates from 529743613 → 461905621 in HLR first pass
+  - Old data remains unchanged (data still corresponds to hash 529743613)
+  - Next HLR sees matching hashes (461905621 == 461905621) and skips sync
+  - Permanent stale data until `/wipe` command executed
+  - User scenario: "i have hash 5xxxx with data, banker sends hash 4xxxx, I should use hash 4xxxx to trigger delta sync comparing hash 5xx with 4xx to determine the delta, and then get new data"
+- **Technical Issue:** 
+  - HLR first pass had three branches:
+    1. `if not localAlt` - Create new stub with banker's hash (CORRECT - for brand new alts)
+    2. `elseif localHash == 0` - Update existing alt's hash to banker's value (BUG - fires during pending sync)
+    3. `elseif mismatch` - Log mismatch without updating hash (CORRECT)
+  - Branch 2 intended for "empty inventory slot" scenario where no hash exists yet
+  - Actually triggered when: ApplyDelta creates stub with `inventoryHash = 0` (waiting for delta), OR hash cleared between HLRs
+  - Between HLRs: 1) Mismatch detected → pending, 2) localHash becomes 0, 3) Next HLR hits branch 2, 4) Hash updated prematurely
+  - Result: Hash updated before delta data requested/received, creating data/hash desync
+- **Data/Hash Desynchronization:** 
+  - Old data (from hash 529743613) stored in SavedVariables
+  - New hash (461905621) stored in alt.inventoryHash
+  - Future comparisons: banker's 461905621 == local 461905621 → "matched"
+  - Sync skipped because hashes match despite having wrong data
+  - Only recovery: `/wipe` command clears all data
+- **Design Flaw:** Hash update happened in TWO places:
+  1. HLR first pass branch 2 (Chat.lua:1861-1873) - Updated hash prematurely (BUG)
+  2. ApplyDelta (DeltaComms.lua:971) - Updated hash after applying data (CORRECT)
+  - Only ApplyDelta should ever update hash (atomic data + hash update)
+- **Solution:** Removed entire `elseif localHash == 0` branch from HLR first pass
+  - Branch 1: Still creates NEW stubs for brand new alts with banker's hash
+  - Branch 2: **REMOVED** - no longer updates hash when localHash == 0
+  - Branch 3: Still logs mismatch and triggers sync without updating hash
+  - Only ApplyDelta updates hash (after successfully applying delta data)
+- **Hash Update Policy:**
+  - **Only place hash updated:** DeltaComms.lua ApplyDelta (~971) after successful delta application
+  - **Never updated:** During hash broadcasts, HLR processing, or comparison logic
+  - **Result:** Data and hash updated atomically together (never desynchronized)
+- **Files Modified:**
+  - Chat.lua HLR handler first pass (~1847-1878): Removed `elseif localHash == 0` branch (lines 1861-1873)
+- **Integration with DELTA-018:**
+  - DELTA-018: Maintains latestBankerHashes cache (what banker says) separate from local storage (what we have)
+  - DELTA-019: Ensures local storage hash only updates when data updates (in ApplyDelta)
+  - Together: Cache tracks banker's authoritative hash, local tracks actual data hash, only ApplyDelta synchronizes them
+- **Impact:** Hash remains at local value until delta received and applied, preventing data/hash desync
+- **Result:** User scenario now works correctly:
+  - Have hash 529743613 with data
+  - Banker broadcasts 461905621
+  - Hash stays at 529743613 (local unchanged)
+  - Mismatch detected (cache 461905621 vs local 529743613)
+  - Delta requested and received
+  - ApplyDelta updates both data AND hash to 461905621 atomically
+
+#### [DELTA-018] CRITICAL: Hash Broadcast Circular Comparison Preventing Sync Detection
+- **Fixed:** Hash sync protocol now maintains separate in-memory cache (latestBankerHashes) from local storage (alt.inventoryHash)
+- **Root Cause:** Circular comparison - hash broadcasts updated local storage, then comparison read from same local storage (compared local against itself)
+- **Symptoms:**
+  - /togbank share broadcast from banker updated receiver's hash in SavedVariables
+  - /togbank hashdebug showed alt as "matched" despite having stale data
+  - No sync request triggered - receiver never detected mismatch
+  - Stale inventory appeared "up to date" in UI
+- **Technical Issue:** 
+  - ReportHashListCoverage called BuildBankerHashList() to get "banker hashes"
+  - BuildBankerHashList() read from local alt.inventoryHash values (SavedVariables)
+  - Comparison: alt.inventoryHash vs BuildBankerHashList()[alt] (both from same source)
+  - Result: local 598376845 == local 598376845 → "matched" (but data still old 529743613)
+- **Design Flaw:** No separation between "banker's authoritative hash" (what they say we should have) and "hash of data we actually have" (what's in our SavedVariables)
+- **Solution:**
+  - **Initialize cache on load:** Guild:Init populates latestBankerHashes from all local alt.inventoryHash values in SavedVariables
+  - **Broadcast updates cache only:** hash-list-broadcast handler updates latestBankerHashes, never modifies local storage
+  - **Reply updates cache only:** hash-list-reply handler updates cache on mismatch, never modifies local storage  
+  - **Comparison uses cache exclusively:** ReportHashListCoverage uses latestBankerHashes directly (removed BuildBankerHashList call and merge logic)
+  - **Local only updated on data receipt:** alt.inventoryHash in SavedVariables only updated when actual delta data received and applied
+- **Cache Structure:** Per-alt: `{hash, updatedAt, version, mailHash, mailUpdatedAt}`
+- **Comparison Logic:** `cache.hash` ("what banker broadcast") vs `localAlt.inventoryHash` ("data we have")
+- **Files Modified:**
+  - Guild.lua Guild:Init (~276-290): Initialize latestBankerHashes from SavedVariables on load
+  - Guild.lua ReportHashListCoverage (~693-710): Use latestBankerHashes directly, removed merge
+  - Chat.lua hash-list-broadcast (~1773-1795): Update cache only, removed local storage updates
+  - Chat.lua hash-list-reply (~1843-1847): Update cache only on mismatch, removed local storage updates
+- **Verification:** Tested with manual hash revert (598376845 → 529743613):
+  - On init: cache loaded with 529743613, alt showed "matched"
+  - After /togbank share with 598376845: cache updated, local unchanged, alt moved to "pending"
+  - Proper mismatch detection restored
+- **Impact:** Hash broadcasts now properly trigger sync requests; receivers detect stale data and request updates
+- **Result:** /togbank share → cache updated → hashdebug shows pending → /togbank sync requests delta → data synchronized
+
 #### [DELTA-016] CRITICAL: Delta Protocol Sending Aggregated Items Instead of Separate Inventories
 - **Fixed:** ComputeDelta now computes and sends separate deltas for bank.items, bags.items, and mail.items
 - **Root Cause:** Used aggregated `alt.items` field (UI display only) which was often empty despite non-zero inventoryHash

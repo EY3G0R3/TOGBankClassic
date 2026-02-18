@@ -1771,53 +1771,37 @@ end
 			TOGBankClassic_Output:Debug("PROTOCOL", "HL request from %s (replyTarget=%s)", tostring(sender), tostring(replyTarget))
 			TOGBankClassic_Guild:SendHashList(replyTarget)
 		elseif data.type == "hash-list-broadcast" and data.alts then
-			-- Banker broadcasting hash-list via /togbank share - update local hashes only
+			-- Banker broadcasting hash-list via /togbank share
+			-- Process this exactly the same as hash-list-reply - reuse that handler's logic
 			local altCount = 0
 			for _ in pairs(data.alts) do
 				altCount = altCount + 1
 			end
-			TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast from banker %s (alts=%d)", tostring(sender), altCount)
+			TOGBankClassic_Output:Info("HL broadcast from banker %s (alts=%d) - forwarding to HLR handler", tostring(sender), altCount)
 			
-			-- Store banker's authoritative hashes locally (do NOT trigger requests)
-			if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
-				for altName, summary in pairs(data.alts) do
-					local norm = TOGBankClassic_Guild:NormalizeName(altName)
-					local localAlt = TOGBankClassic_Guild.Info.alts[norm]
-					local localHash = localAlt and localAlt.inventoryHash or 0
-
-					if summary and summary.hash and summary.hash > 0 then
-						if not localAlt then
-							-- Create stub entry with banker's authoritative hash
-							TOGBankClassic_Guild.Info.alts[norm] = {
-								name = norm,
-								version = summary.version or 0,
-								money = 0,
-								inventoryHash = summary.hash,
-								inventoryUpdatedAt = summary.updatedAt,
-								items = {},
-								mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
-								mailHash = summary.mailHash or 0,  -- FIXED: Use banker's mailHash, not hardcoded 0
-							}
-							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
-							TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Stored hash for new alt %s: hash=%d, mailHash=%d", norm, summary.hash, summary.mailHash or 0)
-						elseif localHash == 0 or localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
-							-- Update hashes if we don't have one or they changed
-							local oldHash = localHash
-							local oldMailHash = localAlt.mailHash or 0
-							localAlt.inventoryHash = summary.hash
-							if summary.updatedAt then
-								localAlt.inventoryUpdatedAt = summary.updatedAt
-							end
-							-- FIXED: Also update mailHash when it changes
-							if summary.mailHash then
-								localAlt.mailHash = summary.mailHash
-							end
-							TOGBankClassic_Output:Debug("PROTOCOL", "HL broadcast: Updated hashes for %s: inv=%d->%d, mail=%d->%d", norm, oldHash, summary.hash, oldMailHash, summary.mailHash or 0)
-						end
-					end
-				end
-				TOGBankClassic_Output:Info("Updated hashes for %d bank alts (run /togbank sync to fetch changes)", altCount)
+			-- Update cached banker hashes so hashdebug and sync can detect mismatches
+			if not TOGBankClassic_Guild.latestBankerHashes then
+				TOGBankClassic_Guild.latestBankerHashes = {}
 			end
+			for altName, summary in pairs(data.alts) do
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				if norm and summary then
+					TOGBankClassic_Guild.latestBankerHashes[norm] = summary
+					TOGBankClassic_Output:Info("HL broadcast: Received hash for %s: inv=%d, mail=%d", 
+						norm, summary.hash or 0, summary.mailHash or 0)
+				end
+			end
+			
+			-- Convert to hash-list-reply and forward to togbank-hlr handler
+			data.type = "hash-list-reply"
+			local hlrPayload = {
+				type = "hash-list-reply",
+				alts = data.alts,
+				banker = data.banker or sender,
+			}
+			local hlrData = TOGBankClassic_Core:SerializeWithChecksum(hlrPayload)
+			self:OnCommReceived("togbank-hlr", hlrData, distribution, sender)
+			return
 		elseif data.type == "alt-request" then
 			-- PERF-006: P2P broadcast on togbank-hl channel (modern code only)
 			-- Process exactly the same as togbank-r alt-request, but only modern peers see this
@@ -1836,8 +1820,17 @@ end
 			for _ in pairs(data.alts) do
 				altCount = altCount + 1
 			end
-			TOGBankClassic_Output:Debug("PROTOCOL", "HLR received from %s (alts=%d)", tostring(sender), altCount)
-			TOGBankClassic_Guild.latestBankerHashes = data.alts
+			TOGBankClassic_Output:Info("HLR received from %s (alts=%d)", tostring(sender), altCount)
+			-- Update cache incrementally to support both full replies and partial broadcasts
+			if not TOGBankClassic_Guild.latestBankerHashes then
+				TOGBankClassic_Guild.latestBankerHashes = {}
+			end
+			for altName, summary in pairs(data.alts) do
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				if norm and summary then
+					TOGBankClassic_Guild.latestBankerHashes[norm] = summary
+				end
+			end
 			local localAlts = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
 			local pending = {}
 			local missingContent = {}
@@ -1865,40 +1858,21 @@ end
 							}
 							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
 							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for new alt %s: hash=%d, mailHash=%d, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
-						elseif localHash == 0 then
-							-- Store banker's hash if we don't have one
-							localAlt.inventoryHash = summary.hash
-							if summary.updatedAt then
-								localAlt.inventoryUpdatedAt = summary.updatedAt
-							end
-							-- Store mail hash from banker
-							if summary.mailHash then
-								localAlt.mailHash = summary.mailHash
-							end
-							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for %s: hash=%d, mailHash=%d, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
 						elseif localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
-							-- CRITICAL FIX: Update hashes when they differ from banker's authoritative values
-							-- This ensures we cache the banker's hash even if we already have stale data
-							local oldHash = localHash
-							local oldMailHash = localAlt.mailHash or 0
-							localAlt.inventoryHash = summary.hash
-							if summary.updatedAt then
-								localAlt.inventoryUpdatedAt = summary.updatedAt
-							end
-							if summary.mailHash then
-								localAlt.mailHash = summary.mailHash
-							end
-							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Updated hashes for %s: inv=%d->%d, mail=%d->%d", 
-								norm, oldHash, summary.hash, oldMailHash, summary.mailHash or 0)
+							-- Hash mismatch detected - banker has different hash than our local data
+							-- DO NOT update local hash here - it will be updated when we receive and apply the delta
+							-- Second pass will detect this mismatch and trigger a delta sync request
+							TOGBankClassic_Output:Info("HLR: Hash mismatch detected for %s - local inv=%d/mail=%d vs banker inv=%d/mail=%d (delta sync needed)", 
+								norm, localHash, localAlt.mailHash or 0, summary.hash, summary.mailHash or 0)
 						end
 					end
 				end
-				-- Refresh localAlts reference after potentially creating new entries
-				localAlts = TOGBankClassic_Guild.Info.alts
-			end
+			-- Refresh localAlts reference after potentially creating new entries
+			localAlts = TOGBankClassic_Guild.Info.alts
+		end
 
-			-- Second pass: Compare hashes and categorize alts
-			for altName, summary in pairs(data.alts) do
+		-- Second pass: Compare hashes and categorize alts
+		for altName, summary in pairs(data.alts) do
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
 				local localAlt = localAlts and localAlts[norm]
 				local localHash = localAlt and localAlt.inventoryHash or 0
@@ -1923,26 +1897,24 @@ end
 				
 				-- Skip alts we already have content for AND hashes match - no need to request
 				if hasContent and hashesMatch then
-					TOGBankClassic_Output:Debug(
-						"PROTOCOL",
-						"HLR skip: %s (have content + hashes match, localHash=%s, bankerHash=%s, localMailHash=%s, bankerMailHash=%s)",
+					TOGBankClassic_Output:Info(
+						"HLR: Skipping %s (have content + hashes match: local inv=%d/mail=%d, banker inv=%d/mail=%d)",
 						tostring(norm),
 						tostring(localHash),
-						tostring(summary and summary.hash),
 						tostring(localMailHash),
+						tostring(summary and summary.hash),
 						tostring(summary and summary.mailHash)
 					)
 				elseif not localAlt or localHash == 0 or (summary.hash and summary.hash ~= localHash) or (summary.mailHash and summary.mailHash ~= localMailHash) then
 					pending[norm] = summary
 					local reason = (not localAlt or localHash == 0) and "no data" or ((summary.hash and summary.hash ~= localHash) and "inventory mismatch" or "mail mismatch")
-					TOGBankClassic_Output:Debug(
-						"PROTOCOL",
-						"HLR pending: %s (%s: localHash=%s, bankerHash=%s, localMailHash=%s, bankerMailHash=%s)",
+					TOGBankClassic_Output:Info(
+						"HLR: Adding %s to pending (%s: local inv=%d/mail=%d, banker inv=%d/mail=%d)",
 						tostring(norm),
 						reason,
 						tostring(localHash),
-						tostring(summary and summary.hash),
 						tostring(localMailHash),
+						tostring(summary and summary.hash),
 						tostring(summary and summary.mailHash)
 					)
 				else

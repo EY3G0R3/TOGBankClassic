@@ -7,6 +7,23 @@
 
 ### 🐛 Bug Fixes
 
+#### [HASH-001] Fixed Hash Broadcast Not Triggering P2P Requests (CRITICAL)
+- **FIXED**: hash-list-broadcast handler now triggers P2P requests for changed data
+- **PROBLEM**: `/togbank share` only updated latestBankerHashes cache without triggering any data requests
+- **IMPACT**: Complete sync failure - receivers saw "Updated banker hashes" but never requested changed data
+- **BEHAVIOR**: Users had to manually run `/togbank sync` or wait 3 minutes for auto-sync timer
+- **ROOT CAUSE**: hash-list-broadcast (togbank-hl) only cached hashes, while hash-list-reply (togbank-hlr) also compared and broadcast P2P
+- **INCONSISTENCY**: Same data (hash updates) handled differently depending on source (broadcast vs reply)
+- **SOLUTION**:
+  - hash-list-broadcast handler updates latestBankerHashes cache (immediate)
+  - Converts message to hash-list-reply format
+  - Recursively calls OnCommReceived with "togbank-hlr" prefix to reuse existing logic
+  - hash-list-reply handler now updates cache incrementally (not replacement) to support partial broadcasts
+  - Avoids code duplication - single code path for all hash processing
+- **RESULT**: `/togbank share` now triggers immediate P2P broadcasts, data syncs automatically
+- **LOCATION**: `Modules/Chat.lua` (~1773-1800, ~1816-1828): Forward broadcast to reply handler, incremental cache update
+- **NOW**: Hash broadcasts work identically whether from `/togbank share` (broadcast) or `/togbank sync` (reply)
+
 #### [COMM-003] Fixed Offline Player Detection from Whisper Errors
 - **FIXED**: CHAT_MSG_SYSTEM now detects "No player named X is currently playing" errors
 - **PROBLEM**: Addon repeatedly attempted whispers to offline players causing error spam
@@ -21,6 +38,27 @@
 - **LOCATION**: 
   - Events.lua CHAT_MSG_SYSTEM (~334-375): Added error pattern detection
   - Guild.lua UpdateOnlineMember (~1425-1443): Clear recentlySeen on offline
+
+#### [DELTA-019] Fixed Premature Hash Update Before Data Received (CRITICAL)
+- **FIXED**: Removed HLR first pass branch that updated hash when `localHash == 0`
+- **PROBLEM**: Hash updated from banker's broadcast before delta data arrived and was applied
+- **IMPACT**: Data/hash desynchronization - old data stored with new hash value
+- **BEHAVIOR**: User has hash 529743613 with data, banker broadcasts 461905621, hash immediately updates to 461905621 but old data remains
+- **CONSEQUENCE**: Future sync attempts see matching hashes and skip update, leaving permanent stale data until `/wipe` command
+- **ROOT CAUSE**: HLR first pass had three branches:
+  1. `if not localAlt` - Create new stub with banker's hash (CORRECT - for brand new alts)
+  2. `elseif localHash == 0` - Update existing alt's hash (BUG - fires during pending sync)
+  3. `elseif mismatch` - Log mismatch without updating (CORRECT)
+- **TRIGGER SCENARIO**: Between HLR broadcasts, localHash becomes 0 (ApplyDelta creates stub, or other process clears it), next HLR hits branch 2 and updates hash prematurely
+- **USER SCENARIO**: "i have hash 5xxxx with data, banker sends hash 4xxxx, I should use hash 4xxxx to trigger delta sync comparing hash 5xx with 4xx to determine the delta, and then get new data"
+- **ACTUAL BUG BEHAVIOR**: Hash 5xxxx → 4xxxx update happens immediately in HLR first pass, before delta data request sent/received
+- **SOLUTION**: Removed branch 2 entirely from HLR first pass (Chat.lua lines 1861-1873)
+  - Only create NEW stubs for brand new alts (branch 1)
+  - Only update hash in ApplyDelta after successful data application (DeltaComms.lua:971)
+  - Hash mismatch detection (branch 3) triggers requests without updating hash
+- **RESULT**: Hash stays at local value until delta received and applied, maintaining data/hash consistency
+- **LOCATION**: Chat.lua HLR handler first pass (~1847-1878): Removed `elseif localHash == 0` branch
+- **RELATED**: Works with DELTA-018 fix - latestBankerHashes cache tracks "what banker says", local inventoryHash tracks "what data we have", only ApplyDelta updates local hash
 
 #### [DELTA-018] Fixed Hash Broadcast Circular Comparison (CRITICAL)
 - **FIXED**: Hash sync protocol now maintains separate in-memory cache from local storage
