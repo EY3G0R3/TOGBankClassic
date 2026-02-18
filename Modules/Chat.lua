@@ -617,6 +617,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	-- Normalize the sender so spacing/hyphen formats match
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
+	-- Track that we received a message from this sender (they're online)
+	-- This enables whisper responses to cross-realm/cross-guild players
+	TOGBankClassic_Guild:MarkPlayerSeen(sender)
+
 	-- MAIL-012 DEBUG: Log the player check for delta version messages
 	if prefix == "togbank-dv2" or prefix == "togbank-dv" then
 		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Player check: player=%s, sender=%s, match=%s",

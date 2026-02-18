@@ -1,5 +1,38 @@
 # TOGBankClassic Changelog
 
+## [Unreleased] - Delta Protocol Critical Fix
+
+**Added:** 2026-02-18
+
+### 🐛 Critical Delta Protocol Fix
+
+#### [DELTA-016] CRITICAL: Delta Protocol Sending Aggregated Items Instead of Separate Inventories
+- **Fixed:** ComputeDelta now computes and sends separate deltas for bank.items, bags.items, and mail.items
+- **Root Cause:** Used aggregated `alt.items` field (UI display only) which was often empty despite non-zero inventoryHash
+- **Symptoms:**
+  - Debug logs: "hasChanges.items=false, itemCount=0" despite inventoryHash=1371056519
+  - Receivers got money updates but no items
+  - SavedVariables showed empty items/bank.items/bags.items/mail.items arrays
+  - Complete inventory sync failure
+- **Protocol Design Issue:** `alt.items` is computed during Bank:Scan() for UI aggregation only, not guaranteed during delta computation
+- **Solution:** 
+  - ComputeDelta: Source from `currentAlt.bank.items`, `.bags.items`, `.mail.items` separately
+  - Send separate `changes.bank`, `changes.bags`, `changes.mail` deltas
+  - ApplyDelta: Apply to `current.bank.items`, `.bags.items`, `.mail.items` individually
+  - Recalculate aggregated `current.items` for UI display after delta application
+  - Updated DeltaHasChanges, ValidateDeltaStructure, SanitizeDelta, StripDeltaLinks
+- **Files Modified:** 
+  - DeltaComms.lua ComputeDelta (~627-648)
+  - DeltaComms.lua ApplyDelta (~912-969)
+  - DeltaComms.lua DeltaHasChanges, ValidateDeltaStructure, SanitizeDelta, StripDeltaLinks
+- **Impact:** Full inventory synchronization now operational; items populate correctly on receiver side
+- **Documentation Updated:**
+  - DELTA_BUGS.md: Added [DELTA-016] entry
+  - FEATURE_IMPROVEMENTS.md: Updated delta structure with bank/bags/mail separate
+  - DELTA_IMPLEMENTATION_TODO.md: Updated delta structure documentation
+
+---
+
 ## [Unreleased] - P2P Resource Management Fixes
 
 **Added:** 2026-02-17

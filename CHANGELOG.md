@@ -7,6 +7,25 @@
 
 ### 🐛 Bug Fixes
 
+#### [DELTA-016] Fixed Delta Protocol Sending Aggregated Items (CRITICAL)
+- **FIXED**: ComputeDelta now sends separate bank/bags/mail inventories instead of aggregated items
+- **PROBLEM**: Used `alt.items` (UI display field) which was often empty on sender side despite non-zero hash
+- **IMPACT**: Complete data sync failure - deltas contained only money updates, no item data
+- **BEHAVIOR**: Debug showed "hasChanges.items=false, itemCount=0" with non-zero inventoryHash (contradiction)
+- **ROOT CAUSE**: `alt.items` computed during Bank:Scan() for UI aggregation, not guaranteed during delta computation
+- **PROTOCOL DESIGN**: Should send bank/bags/mail separately so receiver populates individual inventories
+- **SOLUTION**: 
+  - ComputeDelta: Source from `currentAlt.bank.items`, `bags.items`, `mail.items` separately
+  - ApplyDelta: Apply to `current.bank.items`, `bags.items`, `mail.items` individually
+  - Recalculate aggregated `current.items` after delta application (UI display only)
+  - DeltaHasChanges: Check bank/bags/mail separately
+  - ValidateDeltaStructure: Validate mail delta
+  - SanitizeDelta: Sanitize mail delta
+  - StripDeltaLinks: Strip mail links
+- **RESULT**: Deltas now contain actual item data (ID + Count) in separate bank/bags/mail structures
+- **LOCATION**: `DeltaComms.lua` ComputeDelta (~627-648), ApplyDelta (~912-969), DeltaHasChanges, validation/sanitization
+- **NOW**: Full inventory synchronization working - items populate correctly on receiver side
+
 #### [MAIL-010] Fixed Mail-Only Change Sync Abort (CRITICAL)
 - **FIXED**: ComputeDelta now uses empty baseline fallback instead of returning nil
 - **PROBLEM**: When mail changed but inventory matched, and no snapshot existed, returned nil (line 567)

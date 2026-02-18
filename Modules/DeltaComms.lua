@@ -66,6 +66,14 @@ function TOGBankClassic_DeltaComms:ValidateDeltaStructure(delta)
 		end
 	end
 
+	-- Validate mail delta if present
+	if changes.mail then
+		local valid, err = self:ValidateItemDelta(changes.mail)
+		if not valid then
+			return false, "invalid mail delta: " .. err
+		end
+	end
+
 	return true
 end
 
@@ -177,6 +185,11 @@ function TOGBankClassic_DeltaComms:SanitizeDelta(delta)
 	-- Sanitize bags delta
 	if changes.bags and type(changes.bags) == "table" then
 		sanitized.changes.bags = self:SanitizeItemDelta(changes.bags)
+	end
+
+	-- Sanitize mail delta
+	if changes.mail and type(changes.mail) == "table" then
+		sanitized.changes.mail = self:SanitizeItemDelta(changes.mail)
 	end
 
 	return sanitized
@@ -393,6 +406,11 @@ function TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
 		strippedDelta.changes.money = delta.changes.money
 	end
 
+	-- Copy mailHash change
+	if delta.changes.mailHash then
+		strippedDelta.changes.mailHash = delta.changes.mailHash
+	end
+
 	-- Strip Links from bank changes
 	if delta.changes.bank then
 		strippedDelta.changes.bank = {
@@ -408,6 +426,15 @@ function TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
 			added = stripItemArray(delta.changes.bags.added),
 			modified = stripItemArray(delta.changes.bags.modified),
 			removed = stripItemArray(delta.changes.bags.removed)
+		}
+	end
+
+	-- Strip Links from mail changes
+	if delta.changes.mail then
+		strippedDelta.changes.mail = {
+			added = stripItemArray(delta.changes.mail.added),
+			modified = stripItemArray(delta.changes.mail.modified),
+			removed = stripItemArray(delta.changes.mail.removed)
 		}
 	end
 
@@ -624,19 +651,29 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 			)
 		end
 
-		-- Items delta (aggregated bank + bags + mail)
-		local previousItems = previous.items or {}
-		local currentItems = currentAlt.items or {}
+		-- Compute separate deltas for bank, bags, and mail inventories
+		-- These are sent individually (not aggregated) so receiver can populate them correctly
+		local previousBank = (previous.bank and previous.bank.items) or {}
+		local currentBank = (currentAlt.bank and currentAlt.bank.items) or {}
+		delta.changes.bank = self:ComputeItemDelta(previousBank, currentBank)
 
-		-- Debug: Log item counts
+		local previousBags = (previous.bags and previous.bags.items) or {}
+		local currentBags = (currentAlt.bags and currentAlt.bags.items) or {}
+		delta.changes.bags = self:ComputeItemDelta(previousBags, currentBags)
+
+		local previousMail = (previous.mail and previous.mail.items) or {}
+		local currentMail = (currentAlt.mail and currentAlt.mail.items) or {}
+		delta.changes.mail = self:ComputeItemDelta(previousMail, currentMail)
+
+		-- Debug: Log what's being sent
 		TOGBankClassic_Output:Debug(
 			"DELTA",
-			"Comparing %s: previous has %d items, current has %d items",
+			"[SEPARATE-INV] Delta for %s: bank=%d→%d, bags=%d→%d, mail=%d→%d",
 			altName,
-			#previousItems,
-			#currentItems
+			#previousBank, #currentBank,
+			#previousBags, #currentBags,
+			#previousMail, #currentMail
 		)
-		delta.changes.items = self:ComputeItemDelta(previousItems, currentItems)
 
 		return delta
 	end)
@@ -671,7 +708,28 @@ function TOGBankClassic_DeltaComms:DeltaHasChanges(delta)
 		return true
 	end
 
-	-- Check items changes
+	-- Check bank changes
+	if changes.bank then
+		if next(changes.bank.added) or next(changes.bank.modified) or next(changes.bank.removed) then
+			return true
+		end
+	end
+
+	-- Check bags changes
+	if changes.bags then
+		if next(changes.bags.added) or next(changes.bags.modified) or next(changes.bags.removed) then
+			return true
+		end
+	end
+
+	-- Check mail changes
+	if changes.mail then
+		if next(changes.mail.added) or next(changes.mail.modified) or next(changes.mail.removed) then
+			return true
+		end
+	end
+
+	-- Legacy: Check aggregated items changes (for backwards compatibility)
 	if changes.items then
 		if next(changes.items.added) or next(changes.items.modified) or next(changes.items.removed) then
 			return true
@@ -894,12 +952,68 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 				TOGBankClassic_Output:Debug("DELTA", "[MAIL-012] Updated mailHash for %s to %s", norm, tostring(changes.mailHash))
 			end
 
-			-- Apply item changes (aggregated bank + bags + mail)
+			-- Apply bank changes
+			if changes.bank then
+				if not current.bank then
+					current.bank = { items = {} }
+				end
+				if not current.bank.items then
+					current.bank.items = {}
+				end
+				self:ApplyItemDelta(current.bank.items, changes.bank)
+				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied bank delta for %s: now %d items", norm, #current.bank.items)
+			end
+
+			-- Apply bags changes
+			if changes.bags then
+				if not current.bags then
+					current.bags = { items = {} }
+				end
+				if not current.bags.items then
+					current.bags.items = {}
+				end
+				self:ApplyItemDelta(current.bags.items, changes.bags)
+				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied bags delta for %s: now %d items", norm, #current.bags.items)
+			end
+
+			-- Apply mail changes
+			if changes.mail then
+				if not current.mail then
+					current.mail = { items = {} }
+				end
+				if not current.mail.items then
+					current.mail.items = {}
+				end
+				self:ApplyItemDelta(current.mail.items, changes.mail)
+				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied mail delta for %s: now %d items", norm, #current.mail.items)
+			end
+
+			-- Recalculate aggregated items for UI display
+			if changes.bank or changes.bags or changes.mail then
+				local bankItems = (current.bank and current.bank.items) or {}
+				local bagItems = (current.bags and current.bags.items) or {}
+				local mailItems = (current.mail and current.mail.items) or {}
+				
+				-- Aggregate all three sources using Item module
+				if TOGBankClassic_Item then
+					local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+					aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
+					current.items = {}
+					for _, item in pairs(aggregated) do
+						table.insert(current.items, item)
+					end
+					TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Recalculated aggregated items for %s: %d items (bank=%d, bags=%d, mail=%d)",
+						norm, #current.items, #bankItems, #bagItems, #mailItems)
+				end
+			end
+
+			-- Legacy: Apply aggregated items changes (for backwards compatibility with old deltas)
 			if changes.items then
 				if not current.items then
 					current.items = {}
 				end
 				self:ApplyItemDelta(current.items, changes.items)
+				TOGBankClassic_Output:Debug("DELTA", "[LEGACY] Applied aggregated items delta for %s: now %d items", norm, #current.items)
 			end
 
 			-- Update version

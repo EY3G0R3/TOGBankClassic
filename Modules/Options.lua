@@ -226,16 +226,16 @@ function TOGBankClassic_Options:Init()
 						type = "description",
 						name = " ",
 					},
-					["roster"] = {
+					["cache"] = {
 						order = 10,
 						type = "toggle",
 						width = "full",
-						name = "ROSTER - Guild roster updates, online/offline tracking",
+						name = "CACHE - Cache operations (guild roster cache, etc.)",
 						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("ROSTER", v)
+							TOGBankClassic_Output:SetCategoryEnabled("CACHE", v)
 						end,
 						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("ROSTER")
+							return TOGBankClassic_Output:IsCategoryEnabled("CACHE")
 						end,
 					},
 					["comms"] = {
@@ -250,92 +250,8 @@ function TOGBankClassic_Options:Init()
 							return TOGBankClassic_Output:IsCategoryEnabled("COMMS")
 						end,
 					},
-					["delta"] = {
-						order = 12,
-						type = "toggle",
-						width = "full",
-						name = "DELTA - Delta sync operations and computations",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("DELTA", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("DELTA")
-						end,
-					},
-					["sync"] = {
-						order = 13,
-						type = "toggle",
-						width = "full",
-						name = "SYNC - Data synchronization operations",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("SYNC", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("SYNC")
-						end,
-					},
-					["cache"] = {
-						order = 14,
-						type = "toggle",
-						width = "full",
-						name = "CACHE - Cache operations (guild roster cache, etc.)",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("CACHE", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("CACHE")
-						end,
-					},
-					["whisper"] = {
-						order = 15,
-						type = "toggle",
-						width = "full",
-						name = "WHISPER - Whisper sends, skips, and online checks",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("WHISPER", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("WHISPER")
-						end,
-					},
-					["requests"] = {
-						order = 16,
-						type = "toggle",
-						width = "full",
-						name = "REQUESTS - Request system activity and updates",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("REQUESTS", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("REQUESTS")
-						end,
-					},
-					["ui"] = {
-						order = 17,
-						type = "toggle",
-						width = "full",
-						name = "UI - UI operations, window opens/closes",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("UI", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("UI")
-						end,
-					},
-					["protocol"] = {
-						order = 18,
-						type = "toggle",
-						width = "full",
-						name = "PROTOCOL - Protocol version negotiation",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("PROTOCOL", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("PROTOCOL")
-						end,
-					},
 					["database"] = {
-						order = 19,
+						order = 12,
 						type = "toggle",
 						width = "full",
 						name = "DATABASE - Database operations, SavedVariables",
@@ -346,8 +262,20 @@ function TOGBankClassic_Options:Init()
 							return TOGBankClassic_Output:IsCategoryEnabled("DATABASE")
 						end,
 					},
+					["delta"] = {
+						order = 13,
+						type = "toggle",
+						width = "full",
+						name = "DELTA - Delta sync operations and computations",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("DELTA", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("DELTA")
+						end,
+					},
 					["events"] = {
-						order = 20,
+						order = 14,
 						type = "toggle",
 						width = "full",
 						name = "EVENTS - WoW event handling (GUILD_ROSTER_UPDATE, etc.)",
@@ -358,20 +286,8 @@ function TOGBankClassic_Options:Init()
 							return TOGBankClassic_Output:IsCategoryEnabled("EVENTS")
 						end,
 					},
-					["mail"] = {
-						order = 21,
-						type = "toggle",
-						width = "full",
-						name = "MAIL - Mail inventory scanning and tracking",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("MAIL", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("MAIL")
-						end,
-					},
 					["item"] = {
-						order = 22,
+						order = 15,
 						type = "toggle",
 						width = "full",
 						name = "ITEM - Item loading, validation, and processing",
@@ -382,8 +298,32 @@ function TOGBankClassic_Options:Init()
 							return TOGBankClassic_Output:IsCategoryEnabled("ITEM")
 						end,
 					},
+					["mail"] = {
+						order = 16,
+						type = "toggle",
+						width = "full",
+						name = "MAIL - Mail inventory scanning and tracking",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("MAIL", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("MAIL")
+						end,
+					},
+					["protocol"] = {
+						order = 17,
+						type = "toggle",
+						width = "full",
+						name = "PROTOCOL - Protocol version negotiation",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("PROTOCOL", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("PROTOCOL")
+						end,
+					},
 					["queries"] = {
-						order = 23,
+						order = 18,
 						type = "toggle",
 						width = "full",
 						name = "QUERIES - P2P query/response decisions and hash matching",
@@ -392,6 +332,66 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return TOGBankClassic_Output:IsCategoryEnabled("QUERIES")
+						end,
+					},
+					["requests"] = {
+						order = 19,
+						type = "toggle",
+						width = "full",
+						name = "REQUESTS - Request system activity and updates",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("REQUESTS", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("REQUESTS")
+						end,
+					},
+					["roster"] = {
+						order = 20,
+						type = "toggle",
+						width = "full",
+						name = "ROSTER - Guild roster updates, online/offline tracking",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("ROSTER", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("ROSTER")
+						end,
+					},
+					["sync"] = {
+						order = 21,
+						type = "toggle",
+						width = "full",
+						name = "SYNC - Data synchronization operations",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("SYNC", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("SYNC")
+						end,
+					},
+					["ui"] = {
+						order = 22,
+						type = "toggle",
+						width = "full",
+						name = "UI - UI operations, window opens/closes",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("UI", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("UI")
+						end,
+					},
+					["whisper"] = {
+						order = 23,
+						type = "toggle",
+						width = "full",
+						name = "WHISPER - Whisper sends, skips, and online checks",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("WHISPER", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("WHISPER")
 						end,
 					},
 					["spacer"] = {

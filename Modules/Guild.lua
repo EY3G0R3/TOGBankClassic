@@ -7,6 +7,12 @@ TOGBankClassic_Guild.Info = nil
 -- Avoids stale data from GuildRoster() which only requests an update
 TOGBankClassic_Guild.onlineMembers = {}
 
+-- Cache of recently-seen players (cross-realm/cross-guild)
+-- Tracks players who have sent messages recently (5 minute expiry)
+-- Format: {[normalizedName] = lastSeenTimestamp}
+TOGBankClassic_Guild.recentlySeen = {}
+TOGBankClassic_Guild.RECENTLY_SEEN_EXPIRY = 300  -- 5 minutes
+
 -- Cache of guild bankers (updated via GUILD_ROSTER_UPDATE)
 -- Prevents iterating through entire guild roster on every IsBank() call
 TOGBankClassic_Guild.banksCache = nil
@@ -1357,7 +1363,11 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	local startTime = debugprofilestop()
 	self.onlineMembers = self.onlineMembers or {}
 	wipe(self.onlineMembers)
-	for i = 1, GetNumGuildMembers() do
+	
+	local totalMembers = GetNumGuildMembers()
+	TOGBankClassic_Output:Debug("ROSTER", "[INIT] GetNumGuildMembers() returned %d", totalMembers or 0)
+	
+	for i = 1, totalMembers do
 		local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
 		if name and isOnline then
 			local normalized = self:NormalizeName(name)
@@ -1366,14 +1376,18 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 			end
 		end
 	end
+	
 	local count = 0
 	for _ in pairs(self.onlineMembers) do
 		count = count + 1
 	end
+	
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Performance:RecordOperation("RefreshOnlineCache", duration)
-	TOGBankClassic_Output:Debug("CACHE", "Refreshed online cache: %d members online", count)
-	TOGBankClassic_Output:Debug("ROSTER", "[GUILD ROSTER] Refreshed online cache: %d members online", count)
+	TOGBankClassic_Output:Debug("CACHE", "Refreshed online cache: %d/%d members online", count, totalMembers or 0)
+	TOGBankClassic_Output:Debug("ROSTER", "[GUILD ROSTER] Refreshed online cache: %d/%d members online", count, totalMembers or 0)
+	
+	return count, totalMembers
 end
 
 -- Update a single member's online state (from CHAT_MSG_SYSTEM)
@@ -1395,12 +1409,39 @@ end
 
 -- Check if a player is currently online in the guild
 -- Uses cached roster data updated via GUILD_ROSTER_UPDATE event
+-- Track when we receive a message from a player (they're obviously online)
+function TOGBankClassic_Guild:MarkPlayerSeen(playerName)
+	if not playerName then
+		return
+	end
+	local norm = self:NormalizeName(playerName)
+	self.recentlySeen[norm] = GetServerTime()
+end
+
 function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	if not playerName then
 		return false
 	end
 	local norm = self:NormalizeName(playerName)
-	return self.onlineMembers[norm] == true
+	
+	-- Check guild members first (fast path)
+	if self.onlineMembers[norm] == true then
+		return true
+	end
+	
+	-- Check recently-seen players (cross-realm/cross-guild)
+	-- If we received a message from them recently, they're online
+	local lastSeen = self.recentlySeen[norm]
+	if lastSeen then
+		local now = GetServerTime()
+		if now - lastSeen < self.RECENTLY_SEEN_EXPIRY then
+			return true
+		end
+		-- Clean up expired entry
+		self.recentlySeen[norm] = nil
+	end
+	
+	return false
 end
 
 -- v0.8.0: Compute minimal state summary for pull-based protocol

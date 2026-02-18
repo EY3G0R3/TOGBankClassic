@@ -278,10 +278,11 @@ end
 -- Request initial guild roster update on world enter
 function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_)
 	TOGBankClassic_Performance:RecordEvent("PLAYER_ENTERING_WORLD")
+	TOGBankClassic_Output:Debug("ROSTER", "[INIT] PLAYER_ENTERING_WORLD - Requesting guild roster")
 	GuildRoster()
-	-- Initialize cache immediately in case GUILD_ROSTER_UPDATE is delayed
-	TOGBankClassic_Guild:RefreshOnlineCache()
-	-- Allow one full scan on init to populate roster/banker cache
+	-- Don't try to cache before GUILD_ROSTER_UPDATE fires - GuildRoster() is async
+	-- The cache will be populated when GUILD_ROSTER_UPDATE event fires
+	-- Allow full refresh cycles on init to populate roster/banker cache
 	self.needsFullRosterRefresh = true
 	self.fullRosterInitAttempts = 0
 end
@@ -291,8 +292,11 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 	TOGBankClassic_Performance:RecordEvent("GUILD_ROSTER_UPDATE")
 	if self.needsFullRosterRefresh then
 		self.fullRosterInitAttempts = (self.fullRosterInitAttempts or 0) + 1
+		TOGBankClassic_Output:Debug("ROSTER", "[INIT] GUILD_ROSTER_UPDATE #%d - Full refresh starting", self.fullRosterInitAttempts)
+		
 		self.needsFullRosterRefresh = false
-		TOGBankClassic_Guild:RefreshOnlineCache()
+		local onlineCount, totalMembers = TOGBankClassic_Guild:RefreshOnlineCache()
+		
 		-- Invalidate banks cache when roster updates
 		TOGBankClassic_Guild:InvalidateBanksCache()
 		-- Rebuild banker roster from guild notes (local only, no network communication)
@@ -302,14 +306,24 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 		-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
 		TOGBankClassic_Guild:RefreshRequestsUI()
 
-		-- Keep refreshing on init until roster data appears complete AND we've tried at least twice
-		local totalMembers, onlineMembers = GetNumGuildMembers()
-		-- PERF-007 FIX: Changed OR to AND - only continue if BOTH conditions true:
-		--   1. We haven't tried at least 2 times yet
-		--   2. Roster seems incomplete (some member info missing or everyone online)
-		-- Once we've tried twice, stop refreshing regardless - online/offline will use lightweight updates
-		if self.fullRosterInitAttempts < 2 and (not totalMembers or not onlineMembers or totalMembers <= onlineMembers) then
+		-- Keep refreshing until we get actual online member data OR we've tried 5 times
+		-- If we have 0 online members after API returns data, roster API hasn't initialized yet
+		local needsRetry = false
+		if self.fullRosterInitAttempts < 5 then
+			if not totalMembers or totalMembers == 0 then
+				TOGBankClassic_Output:Debug("ROSTER", "[INIT] Retry needed: GetNumGuildMembers returned %d", totalMembers or 0)
+				needsRetry = true
+			elseif onlineCount == 0 then
+				TOGBankClassic_Output:Debug("ROSTER", "[INIT] Retry needed: 0 online members (guild not empty)")
+				needsRetry = true
+			end
+		end
+		
+		if needsRetry then
 			self.needsFullRosterRefresh = true
+			TOGBankClassic_Output:Debug("ROSTER", "[INIT] Will retry on next GUILD_ROSTER_UPDATE")
+		else
+			TOGBankClassic_Output:Debug("ROSTER", "[INIT] Roster initialization complete after %d attempts", self.fullRosterInitAttempts)
 		end
 	else
 		TOGBankClassic_Output:Debug("EVENTS", "GUILD_ROSTER_UPDATE ignored (online/offline handled via system messages)")

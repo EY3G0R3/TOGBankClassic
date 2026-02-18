@@ -1,11 +1,14 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** February 17, 2026
+**Last Updated:** February 18, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+
+**Recent Fixes (2026-02-18):**
+- ✅ [DELTA-016] **CRITICAL** Delta protocol sending aggregated items instead of separate inventories - Fixed ComputeDelta to compute and send separate deltas for bank.items, bags.items, and mail.items instead of using the aggregated alt.items array (which is for UI display only). Previously used alt.items field which was often empty on sender side despite non-zero inventoryHash, resulting in "hasChanges.items=false, itemCount=0" deltas with no inventory data. Receivers only got money updates but no items. Root cause: alt.items is computed during Bank:Scan() for UI display aggregation, but wasn't guaranteed to exist during delta computation. Protocol should send individual inventories so receiver can populate bank/bags/mail separately. Fixed: (1) ComputeDelta now uses currentAlt.bank.items, .bags.items, .mail.items as sources (~line 627-648), (2) ApplyDelta applies to current.bank.items, .bags.items, .mail.items separately then recalculates aggregated current.items (~line 912-969), (3) DeltaHasChanges checks bank/bags/mail separately, (4) ValidateDeltaStructure validates mail delta, (5) SanitizeDelta sanitizes mail delta, (6) StripDeltaLinks strips mail links. Result: Deltas now contain actual item data (ID + Count) in separate bank/bags/mail structures, properly populating receiver's inventories. Locations: DeltaComms.lua ComputeDelta, ApplyDelta, DeltaHasChanges, ValidateDeltaStructure, SanitizeDelta, StripDeltaLinks.
 
 **Recent Fixes (2026-02-17):**
 - ✅ [P2P-018] **HIGH** 15-second fallback timeout not cancelled after peer delivery - Fixed peer ACK handler to track and cancel the 15-second fallback timeout when peer delivers data or sends no-change response. Previously after peer ACKed a request, a 15-second fallback timer was created but never cancelled, causing duplicate banker requests even when peer successfully sent data or confirmed hashes matched. Added pendingP2PFallbackTimeouts tracking table at module level, timer is now stored when created and cancelled in all completion paths: (1) no-change received, (2) data successfully received, (3) initial P2P timeout fires (defensive). Result: No more duplicate banker requests after successful P2P transactions. Locations: Guild.lua tracking table (~25), Chat.lua timer creation with tracking (~1171-1190), no-change cancellation (~1249-1253), data received cancellation (~1513-1517), defensive timeout cancellation (~1132-1136).

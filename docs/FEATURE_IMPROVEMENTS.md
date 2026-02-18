@@ -850,32 +850,48 @@ MIN_DELTA_SIZE_RATIO = 0.3  -- Only use delta if <30% of full size
 
 #### 3. Delta Data Structure
 ```lua
--- New togbank-d2 message format
+-- v0.8.0 togbank-d4 message format (link-less)
 {
     type = "alt-delta",
     name = "BankAlt-Realm",
     version = 1234567900,           -- New version timestamp
-    baseVersion = 1234567890,       -- Version this delta applies to
+    updatedAt = 1234567900,         -- Inventory update timestamp
+    inventoryHash = 123456789,      -- Inventory hash for validation
     changes = {
         money = 50000,              -- New total (if changed)
+        mailHash = 987654,          -- Mail hash (if changed)
         bank = {
-            added = {               -- New items
-                {slot=5, ID=123, Count=10, Link="..."},
-                {slot=12, ID=456, Count=5, Link="..."}
+            added = {               -- New items (ID + Count, link-less)
+                {ID=123, Count=10},
+                {ID=456, Count=5}
             },
-            modified = {            -- Changed items (count, link, etc.)
-                {slot=3, Count=15},
-                {slot=7, Count=2, Link="..."}
+            modified = {            -- Changed items (ID + Count)
+                {ID=789, Count=15},
+                {ID=234, Count=2}
             },
-            removed = {2, 8, 15}   -- Removed slot numbers
+            removed = {             -- Removed items (ID only)
+                {ID=567},
+                {ID=890}
+            }
         },
         bags = {
+            added = {...},
+            modified = {...},
+            removed = {...}
+        },
+        mail = {
             added = {...},
             modified = {...},
             removed = {...}
         }
     }
 }
+
+-- Note: bank, bags, and mail are sent as SEPARATE inventories
+-- Receiver populates current.bank.items, current.bags.items, current.mail.items individually
+-- Aggregated current.items is recalculated after delta application for UI display
+-- Link-less protocol: Links removed for bandwidth savings (except gear via NeedsLink())
+-- baseVersion removed in v0.8.0 (pull-based protocol renders it redundant)
 ```
 
 #### 4. Peer Capability Detection

@@ -766,22 +766,44 @@ end
 
 **Delta Structure:**
 ```lua
+-- v0.8.0+ (togbank-d4 link-less protocol)
 {
   type = "alt-delta",
   name = "BankAlt-Realm",
   version = 1234567900,       -- New version
-  baseVersion = 1234567890,   -- Version delta applies to
+  updatedAt = 1234567900,     -- Inventory update timestamp
+  inventoryHash = 123456789,  -- Inventory hash for validation
+  -- baseVersion removed in v0.8.0 (pull-based protocol)
   changes = {
     money = 50000,            -- Optional: only if changed
+    mailHash = 987654,        -- Optional: only if changed
     bank = {
-      added = [{slot, ID, Count, Link, Info}, ...],
-      modified = [{slot, Count, Link, ...}, ...],
-      removed = {2, 8, 15, ...}
+      added = [{ID=123, Count=10}, ...],      -- ID + Count only (link-less)
+      modified = [{ID=456, Count=5}, ...],    -- Changed items
+      removed = [{ID=789}, ...]               -- Removed items (ID only)
     },
-    bags = { ... }
+    bags = {
+      added = [{ID=234, Count=20}, ...],
+      modified = [{ID=567, Count=15}, ...],
+      removed = [{ID=890}, ...]
+    },
+    mail = {
+      added = [{ID=345, Count=3}, ...],
+      modified = [{ID=678, Count=8}, ...],
+      removed = [{ID=901}, ...]
+    }
   }
 }
 ```
+
+**Important Notes:**
+- `bank`, `bags`, and `mail` sent as **SEPARATE** inventories (not aggregated)
+- Receiver populates `current.bank.items`, `current.bags.items`, `current.mail.items` individually
+- Aggregated `current.items` is **recalculated** after delta application for UI display only
+- Link-less protocol: Links stripped for bandwidth savings (except gear via `NeedsLink()`)
+- `slot` field removed in v0.8.0 (items identified by ID+Link/ItemString)
+- `baseVersion` removed in v0.8.0 (pull-based protocol makes it redundant)
+
 
 ### 2.2 Item Comparison Logic
 - [x] Implement robust item comparison
