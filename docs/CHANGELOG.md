@@ -31,6 +31,22 @@
   - FEATURE_IMPROVEMENTS.md: Updated delta structure with bank/bags/mail separate
   - DELTA_IMPLEMENTATION_TODO.md: Updated delta structure documentation
 
+#### [DELTA-017] CRITICAL: Empty Baseline Missing Bank/Bags/Mail Structures in Delta Computation
+- **Fixed:** ComputeDelta empty baseline fallback now includes complete bank/bags/mail structures
+- **Root Cause:** Empty baseline was `{ items = {}, money = 0, mailHash = 0 }` missing bank/bags/mail structures
+- **Symptoms:**
+  - First-time sync sent empty deltas despite sender having inventory
+  - Hash mismatch without snapshot sent empty deltas
+  - Requester with no data received empty deltas
+- **Technical Issue:** When ComputeDelta accessed `previous.bank.items`, it defaulted to `{}` but created ambiguity about whether baseline was incomplete or sender's inventory was empty
+- **Solution:**
+  - Changed empty baseline to: `{ items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }`
+  - Fixed in 3 locations: mail-only change without snapshot (~594), hash mismatch without snapshot (~606), requester has no data (~613)
+- **Files Modified:**
+  - DeltaComms.lua ComputeDelta empty baseline initialization (3 locations)
+- **Impact:** First-time sync and hash mismatch scenarios now send actual item data instead of empty deltas
+- **Result:** All sync scenarios now populate receiver correctly with sender's actual inventory
+
 ---
 
 ## [Unreleased] - P2P Resource Management Fixes

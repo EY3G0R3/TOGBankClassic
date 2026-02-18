@@ -26,6 +26,20 @@
 - **LOCATION**: `DeltaComms.lua` ComputeDelta (~627-648), ApplyDelta (~912-969), DeltaHasChanges, validation/sanitization
 - **NOW**: Full inventory synchronization working - items populate correctly on receiver side
 
+#### [DELTA-017] Fixed Empty Baseline Missing Bank/Bags/Mail Structures (CRITICAL)
+- **FIXED**: ComputeDelta empty baseline now includes bank/bags/mail structures
+- **PROBLEM**: Empty baseline fallback only had `{ items = {}, money = 0, mailHash = 0 }` without bank/bags/mail
+- **IMPACT**: First-time sync sent empty deltas despite sender having inventory data
+- **BEHAVIOR**: ComputeDelta compared empty baseline to sender's current but both appeared empty
+- **ROOT CAUSE**: When accessing `previous.bank.items`, defaulted to `{}` but didn't distinguish between incomplete baseline vs empty inventory
+- **SOLUTION**: 
+  - Changed empty baseline to include complete structures:
+    `{ items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }`
+  - Fixed in 3 locations: mail-only change without snapshot, hash mismatch without snapshot, requester has no data
+- **RESULT**: First-time sync and hash mismatch scenarios now send actual items (not empty deltas)
+- **LOCATION**: `DeltaComms.lua` ComputeDelta empty baseline initialization (~594, ~606, ~613)
+- **NOW**: All sync scenarios populate receiver correctly with sender's inventory data
+
 #### [MAIL-010] Fixed Mail-Only Change Sync Abort (CRITICAL)
 - **FIXED**: ComputeDelta now uses empty baseline fallback instead of returning nil
 - **PROBLEM**: When mail changed but inventory matched, and no snapshot existed, returned nil (line 567)
