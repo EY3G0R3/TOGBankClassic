@@ -169,7 +169,7 @@ return PROTOCOL.SUPPORTS_DELTA
 - **Fast-Fill**: Auto-requests missing banker alts when UI opens (delta mode only)
 - **Async Link Loading**: Items display as links become available from WoW API
 - **UI Auto-Refresh**: UI updates when data arrives and links reconstruct
-- **State Summary**: ~800 bytes for 100 items, minimal data for delta computation
+- **State Summary**: ~1-2KB for 100 items, sends minimal {ID, Count} structures for separate bank/bags/mail arrays (DELTA-020)
 - **Banker Data Protection (DATA-004, DATA-005)**: Bankers reject external updates about themselves
 - **Dual Protocol Support**: togbank-dv (legacy) and togbank-dv2 (SYNC-006+) for backward compatibility
 - **Item Validation**: Three-layer defense against corrupted item data and Blizzard API crashes
@@ -188,18 +188,23 @@ return PROTOCOL.SUPPORTS_DELTA
 2. **Banker Preference**: System tries to reach bankers first via whisper, but any player with data can respond
 3. **Non-Banker Conflict Resolution**: If multiple responders have different data for a **non-banker** alt, the **newest** data wins (see `inventoryUpdatedAt` below)
 
-### Hash-Based Delta Computation (DELTA-014)
+### Hash-Based Delta Computation (DELTA-014, DELTA-020)
 
 **Purpose:** Ensure delta compares requester's state to responder's state (not responder to responder)
 
 **How It Works:**
-- Requester sends their current hash in `togbank-r` request
+- Requester sends their current hash AND minimal item structures (bank/bags/mail) in state summary
 - Responder compares requester's hash to their own current hash
 - **Hash Match**: Send empty delta or no-change message (requester is up to date)
-- **Hash Mismatch**: Compute delta from responder's previous broadcast to current state
+- **Hash Mismatch (DELTA-020)**: Compute delta from requester's ACTUAL baseline (sent in state summary) to responder's current state
+  - State summary contains minimal `{ID, Count}` structures for bank/bags/mail arrays
+  - Responder uses requester's sent baseline instead of GetSnapshot (which returns responder's own old data)
+  - Fixes duplication bug when responder broadcasts multiple times
 - **Hash = 0 or nil**: Requester has no data, send everything as additions
 
-**Key Insight:** Responder always "wins" - delta brings requester FROM their state TO responder's state
+**Key Insight:** Delta = (responder's current data) - (requester's actual baseline from state summary)
+
+**Bandwidth:** Minimal structures ~1-2KB vs full with Links ~20-50KB (~85% savings)
 
 ### P2P Hash Backfill Flow (v0.8.8+)
 
@@ -649,10 +654,10 @@ end
 - [x] Never update version on: queries, responses, no-change replies
 - [x] Prevents version drift from communication
 
-#### New Message Types ⏳ PENDING
-- [ ] `togbank-rr` - Query reply with isBanker flag
-- [ ] `togbank-state` - Receiver sends state summary `{[itemID] = quantity}`
-- [ ] `togbank-nochange` - Explicit no-change response
+#### New Message Types ✅ COMPLETE
+- [x] `togbank-rr` - Query reply with isBanker flag
+- [x] `togbank-state` - Receiver sends state summary with bank/bags/mail arrays `{bank: [{ID, Count}], bags: [{ID, Count}], mail: [{ID, Count}]}` (DELTA-020)
+- [x] `togbank-nochange` - Explicit no-change response
 
 #### Pull-Based Handshake Flow ✅ COMPLETE
 - [x] Implement 7-step handshake protocol

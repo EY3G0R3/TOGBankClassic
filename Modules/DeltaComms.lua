@@ -562,17 +562,29 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 end
 
 -- Compute full delta for an alt
-function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, requesterInventoryHash, requesterMailHash)
+function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, requesterInventoryHash, requesterMailHash, requesterBaseline)
 	return TOGBankClassic_Performance:Track("ComputeDelta", function()
 		if not guildName or not altName or not currentAlt then
 			return nil
 		end
 
-		-- DELTA-014: Compute delta using requester's baseline
+		-- DELTA-020: Compute delta using requester's actual baseline from state summary
+		-- requesterBaseline = { bank = {}, bags = {}, mail = {}, money = 0 } with minimal item structures
 		local previous = nil
 		local currentHash = currentAlt.inventoryHash or 0
 		local currentMailHash = currentAlt.mailHash or 0
 		requesterMailHash = requesterMailHash or 0  -- Default to 0 if not provided
+
+		-- Helper: Convert minimal item structure to full structure (without Links)
+		local function expandMinimalItems(minimalItems)
+			if not minimalItems then return {} end
+			local expanded = {}
+			for _, item in ipairs(minimalItems) do
+				-- Create full item structure with ID and Count, Link will be nil
+				table.insert(expanded, { ID = item.ID, Count = item.Count or 1 })
+			end
+			return expanded
+		end
 
 		if requesterInventoryHash and requesterInventoryHash ~= 0 then
 			-- Requester has data - check if it matches current (both inventory AND mail)
@@ -582,31 +594,60 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 					requesterInventoryHash, requesterMailHash, currentHash, currentMailHash)
 				previous = currentAlt  -- Use current as previous (results in empty delta)
 			elseif requesterInventoryHash == currentHash and requesterMailHash ~= currentMailHash then
-				-- Inventory matches but mail changed - send delta from previous broadcast
-				previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
-				if previous then
-					TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail hash changed: requester=%d, banker=%d (computing delta from snapshot)",
-						requesterMailHash, currentMailHash)
+				-- Inventory matches but mail changed - use requester's actual baseline if available
+				if requesterBaseline then
+					-- DELTA-020: Use requester's sent baseline (correct approach)
+					previous = {
+						items = {},
+						money = requesterBaseline.money or 0,
+						mailHash = requesterMailHash,
+						bank = { items = expandMinimalItems(requesterBaseline.bank) },
+						bags = { items = expandMinimalItems(requesterBaseline.bags) },
+						mail = { items = expandMinimalItems(requesterBaseline.mail) },
+					}
+					TOGBankClassic_Output:Debug("DELTA", "[DELTA-020] Mail changed: using requester's actual baseline (bank=%d, bags=%d, mail=%d)",
+						#previous.bank.items, #previous.bags.items, #previous.mail.items)
 				else
-					-- No snapshot - use empty baseline to send all items as delta additions (same as inventory hash mismatch case)
-					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-					TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail changed but no snapshot for %s: requester mail=%d, banker mail=%d (sending all items as delta additions)",
-						altName, requesterMailHash, currentMailHash)
+					-- Fallback: Try GetSnapshot (will be wrong if responder broadcast multiple times)
+					previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
+					if previous then
+						TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail hash changed: requester=%d, banker=%d (using snapshot - may be incorrect)",
+							requesterMailHash, currentMailHash)
+					else
+						-- No snapshot - use empty baseline to send all items as delta additions
+						previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
+						TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail changed but no snapshot for %s: requester mail=%d, banker mail=%d (sending all items as delta additions)",
+							altName, requesterMailHash, currentMailHash)
+					end
 				end
 			else
-				-- Hash mismatch - compute delta from banker's previous broadcast
-				-- This assumes requester likely has previous broadcast data if they were online
-				-- Only sends the CHANGES since last broadcast (proper delta optimization)
-				previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
-				if previous then
-					TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch: requester=%d, banker=%d, using GetSnapshot baseline (only sending diff)",
-						requesterInventoryHash, currentHash)
+				-- Hash mismatch - use requester's actual baseline if available
+				if requesterBaseline then
+					-- DELTA-020: Use requester's sent baseline (correct approach - fixes duplication bug!)
+					previous = {
+						items = {},
+						money = requesterBaseline.money or 0,
+						mailHash = requesterMailHash,
+						bank = { items = expandMinimalItems(requesterBaseline.bank) },
+						bags = { items = expandMinimalItems(requesterBaseline.bags) },
+						mail = { items = expandMinimalItems(requesterBaseline.mail) },
+					}
+					TOGBankClassic_Output:Debug("DELTA", "[DELTA-020] Using requester's actual baseline: inv=%d→%d (bank=%d, bags=%d, mail=%d items)",
+						requesterInventoryHash, currentHash,
+						#previous.bank.items, #previous.bags.items, #previous.mail.items)
 				else
-					-- No previous snapshot - first sync or snapshot expired
-					-- Use empty baseline (send everything as delta additions)
-					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-					TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch but no snapshot: requester=%d, banker=%d (sending all as additions)",
-						requesterInventoryHash, currentHash)
+					-- Fallback: Try GetSnapshot (will be wrong if responder broadcast multiple times)
+					previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
+					if previous then
+						TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch: requester=%d, banker=%d, using GetSnapshot baseline (may be incorrect - missing requester baseline)",
+							requesterInventoryHash, currentHash)
+					else
+						-- No previous snapshot - first sync or snapshot expired
+						-- Use empty baseline (send everything as delta additions)
+						previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
+						TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch but no snapshot: requester=%d, banker=%d (sending all as additions)",
+							requesterInventoryHash, currentHash)
+					end
 				end
 			end
 		else

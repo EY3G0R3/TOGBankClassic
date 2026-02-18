@@ -1495,7 +1495,9 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 			version = 0,
 			hash = nil,
 			money = 0,
-			items = {}
+			bank = {},
+			bags = {},
+			mail = {}
 		}
 	end
 
@@ -1506,23 +1508,36 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 		updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
 		mailHash = alt.mailHash or 0,  -- MAIL-SYNC: Include mail hash for mail change detection
 		money = alt.money or 0,
-		items = {}  -- {[itemID] = quantity}
+		-- DELTA-020: Send minimal item structures (ID+Count only, no Links) for accurate delta baseline
+		bank = {},
+		bags = {},
+		mail = {}
 	}
 
-	-- Aggregate items by ID
-	local function addItems(items)
-		if not items then return end
+	-- Extract minimal item data (ID and Count only, no Links) for delta computation baseline
+	local function extractMinimalItems(items)
+		local minimal = {}
+		if not items then return minimal end
 		for _, item in ipairs(items) do
 			if item and item.ID then
-				local id = tostring(item.ID)
-				local count = item.Count or 1
-				summary.items[id] = (summary.items[id] or 0) + count
+				table.insert(minimal, {
+					ID = item.ID,
+					Count = item.Count or 1
+				})
 			end
 		end
+		return minimal
 	end
 
-	if alt.items then
-		addItems(alt.items)
+	-- Send bank/bags/mail structures separately so sender can compute accurate delta
+	if alt.bank and alt.bank.items then
+		summary.bank = extractMinimalItems(alt.bank.items)
+	end
+	if alt.bags and alt.bags.items then
+		summary.bags = extractMinimalItems(alt.bags.items)
+	end
+	if alt.mail and alt.mail.items then
+		summary.mail = extractMinimalItems(alt.mail.items)
 	end
 
 	return summary
@@ -1575,14 +1590,20 @@ function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
 		return
 	end
 
+	-- DELTA-020: Count total items from bank/bags/mail structures
 	local itemCount = 0
-	for _ in pairs(summary.items) do itemCount = itemCount + 1 end
+	if summary.bank then itemCount = itemCount + #summary.bank end
+	if summary.bags then itemCount = itemCount + #summary.bags end
+	if summary.mail then itemCount = itemCount + #summary.mail end
 	TOGBankClassic_Output:Debug(
 		"SYNC",
-		"Sent state summary for %s to %s (%d unique items, %d bytes)",
+		"Sent state summary for %s to %s (%d total items: bank=%d, bags=%d, mail=%d, %d bytes)",
 		name,
 		target,
 		itemCount,
+		summary.bank and #summary.bank or 0,
+		summary.bags and #summary.bags or 0,
+		summary.mail and #summary.mail or 0,
 		string.len(data)
 	)
 end
@@ -1618,6 +1639,14 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	local requesterMailHash = summary.mailHash or 0
 	local currentMailHash = currentAlt.mailHash or 0
 	
+	-- DELTA-020: Extract requester's baseline from state summary for accurate delta computation
+	local requesterBaseline = {
+		bank = summary.bank or {},
+		bags = summary.bags or {},
+		mail = summary.mail or {},
+		money = summary.money or 0
+	}
+	
 	TOGBankClassic_Output:DebugComm("RespondToStateSummary: %s requesterV=%d currentV=%d requesterHash=%s currentHash=%s requesterMailHash=%s currentMailHash=%s", norm, requesterVersion, currentVersion, tostring(requesterHash), tostring(currentHash), tostring(requesterMailHash), tostring(currentMailHash))
 
 	-- v0.8.0: Delta mode - ONLY use hashes, no version fallback
@@ -1627,7 +1656,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			TOGBankClassic_Output:DebugComm("DELTA MODE: Current alt missing hash - sending full data for %s", norm)
 			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (responder has no hash)", requester, norm)
 			-- DELTA-014: Pass zero hashes (requester baseline unknown, send everything)
-			self:SendAltData(norm, 0, 0, requester)
+			self:SendAltData(norm, 0, 0, requester, nil)
 			return
 		end
 
@@ -1636,7 +1665,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			TOGBankClassic_Output:DebugComm("DELTA MODE: REQUESTER HAS NO DATA (hash=nil) - sending full data for %s", norm)
 			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (requester has no data)", requester, norm)
 			-- DELTA-014: Pass zero hashes (requester has no data, everything is new)
-			self:SendAltData(norm, 0, 0, requester)
+			self:SendAltData(norm, 0, 0, requester, nil)
 			return
 		end
 
@@ -1684,8 +1713,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 					requesterMailHash,
 					currentMailHash
 				)
-				-- DELTA-014: Pass requester hashes to compute proper delta (inventory unchanged)
-				self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+				-- DELTA-020: Pass requester baseline for accurate delta computation
+				self:SendAltData(norm, requesterHash, requesterMailHash, requester, requesterBaseline)
 			else
 				-- No snapshot - force full data to avoid duplication bug
 				TOGBankClassic_Output:Debug(
@@ -1695,7 +1724,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 					requester
 				)
 				-- Send with hash=0 to force requester to accept all items as new baseline
-				self:SendAltData(norm, 0, 0, requester)
+				self:SendAltData(norm, 0, 0, requester, nil)
 			end
 			return
 		else
@@ -1714,8 +1743,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 					requesterMailHash,
 					currentMailHash
 				)
-				-- DELTA-014: Pass requester hashes to compute proper delta
-				self:SendAltData(norm, requesterHash, requesterMailHash, requester)
+				-- DELTA-020: Pass requester baseline for accurate delta computation
+				self:SendAltData(norm, requesterHash, requesterMailHash, requester, requesterBaseline)
 			else
 				-- No snapshot and requester has data - force full data to avoid duplication bug
 				TOGBankClassic_Output:Debug(
@@ -1725,7 +1754,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 					requester
 				)
 				-- Send with hash=0 to force requester to accept all items as new baseline
-				self:SendAltData(norm, 0, 0, requester)
+				self:SendAltData(norm, 0, 0, requester, nil)
 			end
 			return
 		end
@@ -1764,8 +1793,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 
 	-- Version mismatch - send full data
 	TOGBankClassic_Output:Debug("SYNC", "Sending data to %s for %s (version mismatch: requester=%d, current=%d)", requester, norm, requesterVersion, currentVersion)
-	-- DELTA-014: Legacy mode doesn't use hashes, pass zeros
-	self:SendAltData(norm, 0, 0, requester)
+	-- DELTA-014: Legacy mode doesn't use hashes, pass zeros (no baseline)
+	self:SendAltData(norm, 0, 0, requester, nil)
 end
 
 -- Strip Link fields from items for transmission (v0.8.0 bandwidth optimization)
@@ -2207,7 +2236,7 @@ local function CreateOnChunkSentCallback(altName)
 end
 ---END CHANGES
 
-function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requesterMailHash, target)
+function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requesterMailHash, target, requesterBaseline)
 	if not name then
 		return
 	end
@@ -2271,12 +2300,13 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 
 	-- DELTA-ONLY: All syncs use delta protocol, no full sync fallback
 	-- DELTA-014: Pass requester's hashes for proper baseline comparison
+	-- DELTA-020: Pass requester's baseline from state summary for accurate delta
 	if not self:ShouldUseDelta() then
 		TOGBankClassic_Output:Error("Delta protocol disabled - cannot send data for %s", norm)
 		return
 	end
 
-	deltaData = self:ComputeDelta(norm, currentAlt, requesterInventoryHash, requesterMailHash)
+	deltaData = self:ComputeDelta(norm, currentAlt, requesterInventoryHash, requesterMailHash, requesterBaseline)
 	
 	if not deltaData then
 		TOGBankClassic_Output:Error("Failed to compute delta for %s", norm)
@@ -2838,8 +2868,8 @@ function TOGBankClassic_Guild:ComputeItemDelta(oldItems, newItems)
 end
 
 -- Compute full delta for an alt
-function TOGBankClassic_Guild:ComputeDelta(name, currentAlt, requesterInventoryHash, requesterMailHash)
-	return TOGBankClassic_DeltaComms:ComputeDelta(self.Info and self.Info.name, name, currentAlt, requesterInventoryHash, requesterMailHash)
+function TOGBankClassic_Guild:ComputeDelta(name, currentAlt, requesterInventoryHash, requesterMailHash, requesterBaseline)
+	return TOGBankClassic_DeltaComms:ComputeDelta(self.Info and self.Info.name, name, currentAlt, requesterInventoryHash, requesterMailHash, requesterBaseline)
 end
 
 -- Estimate serialized size of a data structure

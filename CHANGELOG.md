@@ -39,6 +39,36 @@
   - Events.lua CHAT_MSG_SYSTEM (~334-375): Added error pattern detection
   - Guild.lua UpdateOnlineMember (~1425-1443): Clear recentlySeen on offline
 
+#### [DELTA-020] Fixed Delta Computation Using Wrong Baseline (CRITICAL)
+- **FIXED**: ComputeDelta now uses requester's actual item structures from state summary instead of responder's snapshot
+- **PROBLEM**: When responder broadcast multiple times (hash 461905621 → 317352773), GetSnapshot returned responder's NEW snapshot (317352773) instead of requester's OLD baseline (461905621)
+- **IMPACT**: Item count duplication/corruption - delta computed as (317352773 - 317352773) = empty/minimal instead of (317352773 - 461905621) = proper changes
+- **BEHAVIOR**: Requester with hash 461905621 applied incorrect delta to their old data, causing items to double instead of updating
+- **ROOT CAUSE**: 
+  - Snapshot system stores ONE snapshot per alt (keyed only by altName, not hash)
+  - When responder broadcasts twice, old snapshot overwritten (461905621 deleted, only 317352773 remains)
+  - State summary previously sent aggregated items `{[itemID] = count}` (useless for delta computation)
+  - ComputeDelta used GetSnapshot(altName) which returned responder's OWN latest state, not requester's actual baseline
+- **DESIGN ISSUE**: Delta needs requester's actual item structure (bank/bags/mail) to compute `delta = current - requester's baseline`
+- **SOLUTION**:
+  1. Modified ComputeStateSummary to send minimal item structures `{ID, Count}` (no Links) for separate bank/bags/mail arrays
+  2. Modified ComputeDelta to accept optional `requesterBaseline` parameter with minimal structures
+  3. ComputeDelta now uses requester's sent baseline as `previous` instead of GetSnapshot when available
+  4. RespondToStateSummary extracts bank/bags/mail from state summary and passes through SendAltData → ComputeDelta chain
+  5. SendAltData signature updated to accept and forward requesterBaseline parameter
+  6. All SendAltData call sites updated to pass baseline (or nil for legacy paths)
+- **BANDWIDTH SAVINGS**: Minimal structures ~1-2KB vs full with Links ~20-50KB (~85% reduction)
+- **RESULT**: Delta computation uses correct baseline - requester's actual data (what they have) vs responder's current (what to send)
+- **LOCATIONS**:
+  - Guild.lua ComputeStateSummary (~1485-1542): Send bank/bags/mail arrays with {ID, Count} only
+  - Guild.lua SendStateSummary (~1593-1606): Updated logging to count bank+bags+mail items
+  - Guild.lua RespondToStateSummary (~1640-1644): Extract requesterBaseline from state summary
+  - Guild.lua SendAltData (~2231, ~2301): Added requesterBaseline parameter
+  - Guild.lua ComputeDelta wrapper (~2862): Pass through requesterBaseline
+  - DeltaComms.lua ComputeDelta (~565-620): Accept requesterBaseline, use expandMinimalItems() helper, compute from requester's actual data
+- **NOW**: Proper delta application - item counts update correctly without duplication, works regardless of how many broadcasts requester missed
+- **RELATED**: Completes DELTA-019 fix - hash stays at local value until correct delta (computed from actual baseline) received and applied
+
 #### [DELTA-019] Fixed Premature Hash Update Before Data Received (CRITICAL)
 - **FIXED**: Removed HLR first pass branch that updated hash when `localHash == 0`
 - **PROBLEM**: Hash updated from banker's broadcast before delta data arrived and was applied
