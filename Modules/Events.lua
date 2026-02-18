@@ -338,13 +338,23 @@ function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
 
 	local onlineName = message:match("^%[?(.-)%]? has come online%.$")
 	if onlineName then
+		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player came online: %s", onlineName)
 		TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true)
 		return
 	end
 
 	local offlineName = message:match("^%[?(.-)%]? has gone offline%.$")
 	if offlineName then
+		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player went offline: %s", offlineName)
 		TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false)
+		return
+	end
+
+	-- Detect "No player named X is currently playing" errors from failed whispers
+	local notFoundName = message:match("^No player named (.+) is currently playing%.$")
+	if notFoundName then
+		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
+		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false)
 		return
 	end
 

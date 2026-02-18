@@ -8,6 +8,7 @@
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 
 **Recent Fixes (2026-02-18):**
+- ✅ [DELTA-018] **CRITICAL** Hash broadcast circular comparison preventing sync detection - Fixed hash sync protocol to maintain separate in-memory cache (latestBankerHashes) from local storage (alt.inventoryHash). Previously hash-list-broadcast immediately updated alt.inventoryHash in SavedVariables, then ReportHashListCoverage compared alt.inventoryHash against itself (via BuildBankerHashList reading local data), creating circular comparison where local always matched local. Result: /togbank share broadcasts updated local hash without triggering sync requests, leaving receivers with stale data that appeared "synced". Root cause: No separation between "banker's authoritative hash" (what banker broadcasts) and "hash of data we actually have" (what's in SavedVariables). Solution: (1) Initialize latestBankerHashes on addon load from all local alt.inventoryHash values in Guild:Init (~276-290), (2) hash-list-broadcast only updates cache, not local storage (~1773-1795), (3) hash-list-reply only updates cache on mismatch, not local storage (~1843-1847), (4) ReportHashListCoverage uses latestBankerHashes exclusively for comparison (~693-710), (5) Local alt.inventoryHash only updated when actual delta data received and applied. Result: Proper mismatch detection - cache shows "what banker says we should have", local shows "what data we actually have", comparison detects staleness and triggers sync. Locations: Guild.lua Init hash cache initialization, ReportHashListCoverage comparison logic; Chat.lua hash-list-broadcast handler, hash-list-reply handler.
 - ✅ [DELTA-017] **CRITICAL** Empty baseline missing bank/bags/mail structures in delta computation - Fixed ComputeDelta empty baseline fallback to include separate bank/bags/mail structures. Previously empty baseline was `{ items = {}, money = 0, mailHash = 0 }` missing bank/bags/mail structures. When ComputeDelta accessed `previous.bank.items` it defaulted to empty array but this caused ambiguity about whether sender's current inventory was empty or baseline was incomplete. Fixed empty baseline in 3 locations to include complete structures: `{ items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }`. Result: First-time sync and hash mismatch without snapshot now send actual item data instead of empty deltas. Locations: DeltaComms.lua ComputeDelta mail-only change without snapshot (~594), hash mismatch without snapshot (~606), requester has no data (~613).
 - ✅ [DELTA-016] **CRITICAL** Delta protocol sending aggregated items instead of separate inventories - Fixed ComputeDelta to compute and send separate deltas for bank.items, bags.items, and mail.items instead of using the aggregated alt.items array (which is for UI display only). Previously used alt.items field which was often empty on sender side despite non-zero inventoryHash, resulting in "hasChanges.items=false, itemCount=0" deltas with no inventory data. Receivers only got money updates but no items. Root cause: alt.items is computed during Bank:Scan() for UI display aggregation, but wasn't guaranteed to exist during delta computation. Protocol should send individual inventories so receiver can populate bank/bags/mail separately. Fixed: (1) ComputeDelta now uses currentAlt.bank.items, .bags.items, .mail.items as sources (~line 627-648), (2) ApplyDelta applies to current.bank.items, .bags.items, .mail.items separately then recalculates aggregated current.items (~line 912-969), (3) DeltaHasChanges checks bank/bags/mail separately, (4) ValidateDeltaStructure validates mail delta, (5) SanitizeDelta sanitizes mail delta, (6) StripDeltaLinks strips mail links. Result: Deltas now contain actual item data (ID + Count) in separate bank/bags/mail structures, properly populating receiver's inventories. Locations: DeltaComms.lua ComputeDelta, ApplyDelta, DeltaHasChanges, ValidateDeltaStructure, SanitizeDelta, StripDeltaLinks.
 
@@ -66,6 +67,9 @@
 
 **Recent Fixes (2026-01-26):**
 - ✅ [PERF-002] NormalizeRequestList broadcast storm - Decoupled request sync from inventory delta sync to eliminate 12+ calls/second
+
+**Recent Fixes (2026-02-18):**
+- ✅ [COMM-003] Missing whisper error detection - Added CHAT_MSG_SYSTEM pattern for "No player named X is currently playing", clears both online caches
 
 **Recent Fixes (2026-01-25):**
 - ✅ [DATA-003] Integer overflow on request version timestamp - Fixed MAX_TIMESTAMP to 2147483647 (32-bit limit)
@@ -2405,6 +2409,196 @@ end
 
 **Version:** v0.7.12
 **Commit:** 6949617
+
+---
+
+#### [COMM-003] Missing error detection for "No player named X is currently playing"
+
+**Severity:** 🔴 HIGH
+**Category:** Communication / Error Handling / Online Status Detection
+**Reporter:** User (EY3G0R3)
+**Date Reported:** 2026-02-18
+**Status:** ✅ FIXED (v0.8.21)
+**Reproducibility:** Always when whispering offline players
+
+**Description:**
+When attempting to whisper an offline player, WoW returns the system message "No player named 'X' is currently playing" via `CHAT_MSG_SYSTEM` event. The addon's event handler detected "has gone offline" messages but **did not detect these whisper failure errors**, causing several critical issues:
+
+1. **No roster update on whisper failure** - Player remained marked "online" in `onlineMembers` cache
+2. **Stale recentlySeen cache** - Player remained in `recentlySeen` table for up to 10 minutes
+3. **Repeated whisper attempts** - `IsPlayerOnline()` continued returning `true`, causing hundreds of repeated whisper failures
+4. **Error message spam** - Console flooded with error messages every few seconds
+
+**Error Messages Observed:**
+```
+Player not found (retail pattern): Malformed
+Malformed not found. The player is not added to the exceptions list.
+No player named 'Malformed' is currently playing.
+[repeated hundreds of times]
+```
+
+**Root Cause Analysis:**
+
+**Issue 1: CHAT_MSG_SYSTEM Handler Gap**
+The `CHAT_MSG_SYSTEM` event handler only detected:
+- `"[Player] has come online."` → marks player online
+- `"[Player] has gone offline."` → marks player offline
+- `"[Player] has joined the guild."` → triggers full roster refresh
+- `"[Player] has left the guild."` → triggers full roster refresh
+
+**Missing pattern:**
+- `"No player named 'X' is currently playing."` → ❌ NOT DETECTED
+
+**Issue 2: Incomplete Cache Clearing**
+`UpdateOnlineMember(memberName, false)` only cleared `onlineMembers` cache:
+```lua
+function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline)
+    if isOnline then
+        self.onlineMembers[normalized] = true
+    else
+        self.onlineMembers[normalized] = nil  -- Clears this cache
+        -- BUT recentlySeen cache was NOT cleared!
+    end
+end
+```
+
+**Impact on IsPlayerOnline():**
+```lua
+function TOGBankClassic_Guild:IsPlayerOnline(playerName)
+    -- Check 1: Guild members (fast path)
+    if self.onlineMembers[norm] == true then
+        return true  -- ❌ Would be false after whisper failure detection
+    end
+    
+    -- Check 2: Recently-seen players (cross-realm/cross-guild)
+    local lastSeen = self.recentlySeen[norm]
+    if lastSeen and now - lastSeen < RECENTLY_SEEN_EXPIRY then
+        return true  -- ❌ STALE! Player marked seen but offline
+    end
+    
+    return false
+end
+```
+
+Even if `onlineMembers` was cleared (via "has gone offline"), `recentlySeen` cache persisted for 10 minutes, causing `IsPlayerOnline()` to return `true` and `SendWhisper()` to attempt whispers.
+
+**Steps to Reproduce:**
+1. Player "Malformed" is online and sends a message (marked in `recentlySeen`)
+2. Player "Malformed" logs off (may or may not trigger "has gone offline" message)
+3. Within 10 minutes, banker attempts whisper via `SendWhisper()`
+4. `IsPlayerOnline()` returns `true` (from `recentlySeen` cache)
+5. Whisper sent, WoW returns: "No player named 'Malformed' is currently playing"
+6. Message appears in chat/console, but `CHAT_MSG_SYSTEM` handler ignores it
+7. Player remains in `onlineMembers` and `recentlySeen` caches
+8. Step 3 repeats indefinitely, causing error spam
+
+**Why "has gone offline" Wasn't Reliable:**
+- Not all logoffs trigger the message (crashes, disconnects, realm shutdown)
+- Cross-realm players don't trigger guild roster events
+- Message may arrive before `CHAT_MSG_SYSTEM` handler registers
+- Even when triggered, `recentlySeen` cache was never cleared
+
+**Fix Implementation (2026-02-18):**
+
+**Part 1: Add Whisper Error Detection** (Modules/Events.lua ~354)
+```lua
+function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
+    -- Existing patterns (online, offline, joined, left)...
+    
+    -- NEW: Detect "No player named X is currently playing" errors from failed whispers
+    local notFoundName = message:match("^No player named (.+) is currently playing%.$")
+    if notFoundName then
+        TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
+        TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false)
+        return
+    end
+end
+```
+
+**Pattern Notes:**
+- Classic Era does NOT use quotes: `"No player named Malformed is currently playing."`
+- Pattern: `^No player named (.+) is currently playing%.$`
+- Captures player name (including spaces, special characters, realm suffix)
+- Period escaped as `%.` in Lua pattern
+
+**Part 2: Clear Both Caches** (Modules/Guild.lua ~1425-1443)
+```lua
+function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline)
+    if not memberName then return end
+    
+    self.onlineMembers = self.onlineMembers or {}
+    self.recentlySeen = self.recentlySeen or {}  -- NEW: Ensure initialized
+    
+    local normalized = self:NormalizeName(memberName)
+    if not normalized then return end
+    
+    if isOnline then
+        self.onlineMembers[normalized] = true
+    else
+        self.onlineMembers[normalized] = nil
+        -- NEW: Also clear from recentlySeen cache to prevent stale "online" status
+        self.recentlySeen[normalized] = nil
+    end
+end
+```
+
+**Part 3: Add Debug Logging** (Modules/Events.lua ~341-352)
+```lua
+local onlineName = message:match("^%[?(.-)%]? has come online%.$")
+if onlineName then
+    TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player came online: %s", onlineName)
+    TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true)
+    return
+end
+
+local offlineName = message:match("^%[?(.-)%]? has gone offline%.$")
+if offlineName then
+    TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player went offline: %s", offlineName)
+    TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false)
+    return
+end
+```
+
+**Code Flow After Fix:**
+1. Whisper attempt fails → WoW sends "No player named X is currently playing"
+2. `CHAT_MSG_SYSTEM` handler detects error pattern
+3. Calls `UpdateOnlineMember(playerName, false)`
+4. **Both** `onlineMembers` and `recentlySeen` cleared
+5. Next `IsPlayerOnline()` check returns `false`
+6. `SendWhisper()` refuses to send, logs debug message
+7. No more whisper attempts, no more error spam
+
+**Benefits:**
+- ✅ Immediate offline detection from whisper failures
+- ✅ No reliance on "has gone offline" message
+- ✅ Works for cross-realm players
+- ✅ Works for crashes/disconnects/realm shutdown
+- ✅ Clears both online status caches
+- ✅ Prevents error message spam
+- ✅ Complements COMM-001 (SendWhisper wrapper)
+- ✅ Complements COMM-002 (GuildRoster refresh)
+
+**Testing:**
+1. Have player log in, send message (populates `recentlySeen`)
+2. Player logs off **without** triggering "has gone offline"
+3. Attempt whisper via `/togbank share` or delta sync
+4. Verify error detected in debug log: `[CHAT_MSG_SYSTEM] Player not found: X - marking offline`
+5. Verify subsequent `IsPlayerOnline()` returns `false`
+6. Verify no repeated whisper attempts
+
+**Impact:**
+Eliminates massive error spam (hundreds of errors) when attempting to communicate with offline players. Provides immediate feedback from actual whisper failures rather than relying on roster events which may not fire for all logout scenarios.
+
+**Related Bugs:**
+- [COMM-001] - SendWhisper wrapper with online checking
+- [COMM-002] - GuildRoster refresh for IsPlayerOnline
+- [DELTA-008] - RequestDeltaChain online validation
+
+**Version:** v0.8.21
+**Files Modified:**
+- `Modules/Events.lua` - Added whisper error pattern detection
+- `Modules/Guild.lua` - Clear both caches on offline
+- `CHANGELOG.md` - Documented as COMM-003
 
 ---
 

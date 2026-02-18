@@ -7,6 +7,44 @@
 
 ### 🐛 Bug Fixes
 
+#### [COMM-003] Fixed Offline Player Detection from Whisper Errors
+- **FIXED**: CHAT_MSG_SYSTEM now detects "No player named X is currently playing" errors
+- **PROBLEM**: Addon repeatedly attempted whispers to offline players causing error spam
+- **ROOT CAUSE**: CHAT_MSG_SYSTEM handler only detected "has gone offline" but not whisper failure errors
+- **IMPACT**: Hundreds of error messages when trying to communicate with offline players
+- **SOLUTION**:
+  - Added pattern matching for "No player named X is currently playing" in CHAT_MSG_SYSTEM
+  - When detected, immediately marks player as offline in both onlineMembers and recentlySeen caches
+  - Updated UpdateOnlineMember() to clear recentlySeen cache when marking offline
+  - Added debug logging for all online/offline state changes
+- **RESULT**: Player marked offline immediately when whisper fails, preventing repeat attempts
+- **LOCATION**: 
+  - Events.lua CHAT_MSG_SYSTEM (~334-375): Added error pattern detection
+  - Guild.lua UpdateOnlineMember (~1425-1443): Clear recentlySeen on offline
+
+#### [DELTA-018] Fixed Hash Broadcast Circular Comparison (CRITICAL)
+- **FIXED**: Hash sync protocol now maintains separate in-memory cache from local storage
+- **PROBLEM**: hash-list-broadcast immediately updated local alt.inventoryHash, then comparison read from same local storage
+- **IMPACT**: Complete sync failure - /togbank share broadcasts updated hash without triggering sync requests
+- **BEHAVIOR**: Receivers had stale data but /togbank hashdebug showed "matched" (compared local hash against itself)
+- **ROOT CAUSE**: Circular comparison - BuildBankerHashList() read from alt.inventoryHash, ReportHashListCoverage compared alt.inventoryHash vs BuildBankerHashList() output (both same source)
+- **DESIGN FLAW**: No separation between "banker's authoritative hash" (what they broadcast) vs "hash of data we actually have" (what's in SavedVariables)
+- **SOLUTION**:
+  - Initialize `latestBankerHashes` in-memory cache on addon load from all local alt.inventoryHash values
+  - hash-list-broadcast handler: Only update cache, never modify local storage
+  - hash-list-reply handler: Only update cache on mismatch, never modify local storage
+  - ReportHashListCoverage: Use latestBankerHashes exclusively (no BuildBankerHashList, no merge)
+  - Local alt.inventoryHash: Only updated when actual delta data received and applied
+- **CACHE STRUCTURE**: `{hash, updatedAt, version, mailHash, mailUpdatedAt}` per alt
+- **COMPARISON LOGIC**: cache.hash ("what banker says") vs localAlt.inventoryHash ("what we have")
+- **RESULT**: Proper mismatch detection - cache updated by broadcasts, local unchanged until delta received, comparison detects staleness
+- **LOCATION**: 
+  - Guild.lua Init (~276-290): Initialize latestBankerHashes from SavedVariables
+  - Guild.lua ReportHashListCoverage (~693-710): Use cache directly for comparison
+  - Chat.lua hash-list-broadcast (~1773-1795): Update cache only
+  - Chat.lua hash-list-reply (~1843-1847): Update cache only on mismatch
+- **VERIFICATION**: Tested with manual hash revert - broadcast updated cache, local stayed stale, hashdebug showed pending, sync requested delta
+
 #### [DELTA-016] Fixed Delta Protocol Sending Aggregated Items (CRITICAL)
 - **FIXED**: ComputeDelta now sends separate bank/bags/mail inventories instead of aggregated items
 - **PROBLEM**: Used `alt.items` (UI display field) which was often empty on sender side despite non-zero hash

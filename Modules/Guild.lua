@@ -280,6 +280,27 @@ function TOGBankClassic_Guild:Init(name)
 		self:MigrateTempErrors()
 		-- Rebuild banker roster from guild notes on init
 		self:RebuildBankerRoster()
+		
+		-- Initialize latestBankerHashes cache from local data on load
+		-- This cache will be updated when we receive hash-list-reply or hash-list-broadcast
+		self.latestBankerHashes = {}
+		local hashCount = 0
+		if self.Info.alts then
+			for altName, alt in pairs(self.Info.alts) do
+				if alt then
+					self.latestBankerHashes[altName] = {
+						hash = alt.inventoryHash or 0,
+						updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
+						version = alt.version or 0,
+						mailHash = alt.mailHash or 0,
+						mailUpdatedAt = (alt.mail and alt.mail.version) or 0,
+					}
+					hashCount = hashCount + 1
+				end
+			end
+		end
+		TOGBankClassic_Output:Debug("PROTOCOL", "Initialized banker hash cache with %d alts from SavedVariables", hashCount)
+		
 		return true
 	end
 
@@ -677,7 +698,9 @@ end
 
 function TOGBankClassic_Guild:ReportHashListCoverage()
 	local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
-	local bankerList = self:BuildBankerHashList()
+	
+	-- Use in-memory hash cache (populated on load and updated by hash broadcasts)
+	local bankerList = self.latestBankerHashes or {}
 	local localAlts = self.Info and self.Info.alts or {}
 
 	local matched = 0
@@ -686,7 +709,14 @@ function TOGBankClassic_Guild:ReportHashListCoverage()
 	for altName, summary in pairs(bankerList) do
 		local localAlt = localAlts and localAlts[altName]
 		local localHash = localAlt and localAlt.inventoryHash or 0
-		if localAlt and localHash ~= 0 and summary and summary.hash == localHash then
+		local localMailHash = localAlt and localAlt.mailHash or 0
+		
+		-- Check if BOTH inventory and mail hashes match
+		local inventoryHashMatches = (summary.hash ~= nil and summary.hash == localHash)
+		local mailHashMatches = (summary.mailHash ~= nil and summary.mailHash == localMailHash)
+		local hashesMatch = inventoryHashMatches and mailHashMatches
+		
+		if localAlt and localHash ~= 0 and hashesMatch then
 			-- Hash matches, but check if we have actual content
 			if not self:HasAltContent(localAlt, altName) then
 				-- Hash matches but no content - treat as pending (need to request)
@@ -852,11 +882,13 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 		return
 	end
 	
-	-- Check if we already have this data with content - don't broadcast if we do
+	-- Only skip broadcast if we have matching hash AND content
 	local norm = self:NormalizeName(altName)
 	local existing = self.Info and self.Info.alts and self.Info.alts[norm]
-	if existing and self:HasAltContent(existing, norm) then
-		TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping P2P broadcast for %s (already have content)", altName)
+	local existingHash = existing and existing.inventoryHash or 0
+	
+	if existingHash == expectedHash and existing and self:HasAltContent(existing, norm) then
+		TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping P2P broadcast for %s (hash matches and have content)", altName)
 		return
 	end
 	
@@ -1396,6 +1428,7 @@ function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline)
 		return
 	end
 	self.onlineMembers = self.onlineMembers or {}
+	self.recentlySeen = self.recentlySeen or {}
 	local normalized = self:NormalizeName(memberName)
 	if not normalized then
 		return
@@ -1404,6 +1437,8 @@ function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline)
 		self.onlineMembers[normalized] = true
 	else
 		self.onlineMembers[normalized] = nil
+		-- Also clear from recentlySeen cache to prevent stale "online" status
+		self.recentlySeen[normalized] = nil
 	end
 end
 
