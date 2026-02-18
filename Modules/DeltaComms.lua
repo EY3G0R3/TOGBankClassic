@@ -589,7 +589,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 						requesterMailHash, currentMailHash)
 				else
 					-- No snapshot - use empty baseline to send all items as delta additions (same as inventory hash mismatch case)
-					previous = { items = {}, money = 0, mailHash = 0 }
+					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
 					TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail changed but no snapshot for %s: requester mail=%d, banker mail=%d (sending all items as delta additions)",
 						altName, requesterMailHash, currentMailHash)
 				end
@@ -604,14 +604,14 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 				else
 					-- No previous snapshot - first sync or snapshot expired
 					-- Use empty baseline (send everything as delta additions)
-					previous = { items = {}, money = 0, mailHash = 0 }
+					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
 					TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch but no snapshot: requester=%d, banker=%d (sending all as additions)",
 						requesterInventoryHash, currentHash)
 				end
 			end
 		else
 			-- Requester has no data (hash 0 or nil) - send everything as delta additions
-			previous = { items = {}, money = 0, mailHash = 0 }
+			previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
 			TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Requester has no data (hash=%s), sending all as additions",
 				tostring(requesterInventoryHash))
 		end
