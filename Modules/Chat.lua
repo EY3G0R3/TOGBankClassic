@@ -1129,6 +1129,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						if TOGBankClassic_Guild.pendingP2PTimeouts then
 							TOGBankClassic_Guild.pendingP2PTimeouts[norm] = nil
 						end
+						-- Also cancel 15s fallback if it exists (shouldn't exist yet, but be defensive)
+						if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
+							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
+							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
+						end
 						TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
 						TOGBankClassic_Guild:QueryAltPullBased(altName, false)
 					end
@@ -1163,7 +1168,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 					-- Secondary timeout: if peer ACKs but never sends data (disconnect/crash),
 					-- fallback to banker after 15 seconds
-					C_Timer.After(15, function()
+					local fallbackTimer = C_Timer.After(15, function()
 						-- Check if we still don't have content (peer never delivered)
 						local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
 						if not alt or not TOGBankClassic_Guild:HasAltContent(alt, norm) then
@@ -1172,7 +1177,17 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						else
 							TOGBankClassic_Output:Debug("SYNC", "P2P: Peer %s successfully delivered data for %s", sender, altName)
 						end
+						-- Clean up timer reference
+						if TOGBankClassic_Guild.pendingP2PFallbackTimeouts then
+							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
+						end
 					end)
+
+					-- Store timer for cancellation
+					if not TOGBankClassic_Guild.pendingP2PFallbackTimeouts then
+						TOGBankClassic_Guild.pendingP2PFallbackTimeouts = {}
+					end
+					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = fallbackTimer
 
 					-- Send state summary for delta comparison
 					if hasData and expectedHash then
@@ -1229,6 +1244,13 @@ end
 			if TOGBankClassic_Guild.pendingP2PRequests then
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
 				TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
+				
+				-- Cancel 15s fallback timeout since peer confirmed no changes
+				if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
+					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
+					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
+					TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelled fallback timeout for %s (no-change received)", altName)
+				end
 			end
 
 			TOGBankClassic_Output:DebugComm("RECEIVED NO-CHANGE from %s for alt %s (version=%d)", sender, altName, version)
@@ -1486,6 +1508,15 @@ end
 				end
 
 				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
+				
+				-- Cancel 15s fallback timeout since peer delivered data
+				local norm = TOGBankClassic_Guild:NormalizeName(claimedNorm)
+				if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
+					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
+					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
+					TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelled fallback timeout for %s (data received)", claimedNorm)
+				end
+				
 				self:Debug(
 					"DELTA",
 					">",

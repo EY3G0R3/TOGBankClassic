@@ -22,6 +22,7 @@ TOGBankClassic_Guild.bankerProgressKnown = {}
 TOGBankClassic_Guild.pendingSendCount = 0
 TOGBankClassic_Guild.MAX_PENDING_SENDS = 3
 TOGBankClassic_Guild.pendingSendTimeouts = {}  -- Track timeouts to prevent counter leaks
+TOGBankClassic_Guild.pendingP2PFallbackTimeouts = {}  -- Track 15s peer fallback timeouts
 
 -- Temporary in-memory error storage for when Guild.Info is not initialized
 TOGBankClassic_Guild.tempDeltaErrors = {
@@ -1566,6 +1567,19 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		-- Check both inventory and mail hashes
 		if requesterHash == currentHash and requesterMailHash == currentMailHash then
 			-- Both hashes match - no changes needed
+			-- FIX: Clean up P2P resources before sending no-change (don't wait for 30s timeout)
+			if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
+				TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelling send timeout for %s (no changes)", norm)
+				self.pendingSendTimeouts[norm]:Cancel()
+				self.pendingSendTimeouts[norm] = nil
+				-- Decrement queue counter since we're not actually sending
+				if self.pendingSendCount > 0 then
+					self.pendingSendCount = self.pendingSendCount - 1
+					TOGBankClassic_Output:Debug("SYNC", "P2P no-change for %s - queue now: %d/%d", 
+						norm, self.pendingSendCount, self.MAX_PENDING_SENDS)
+				end
+			end
+			
 			local noChangeMsg = {
 				type = "no-change",
 				name = norm,
@@ -1645,6 +1659,19 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	TOGBankClassic_Output:DebugComm("LEGACY MODE: Comparing versions")
 	if requesterVersion == currentVersion then
 		-- No changes - send no-change message
+		-- FIX: Clean up P2P resources before sending no-change (don't wait for 30s timeout)
+		if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
+			TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelling send timeout for %s (no changes - legacy)", norm)
+			self.pendingSendTimeouts[norm]:Cancel()
+			self.pendingSendTimeouts[norm] = nil
+			-- Decrement queue counter since we're not actually sending
+			if self.pendingSendCount > 0 then
+				self.pendingSendCount = self.pendingSendCount - 1
+				TOGBankClassic_Output:Debug("SYNC", "P2P no-change (legacy) for %s - queue now: %d/%d", 
+					norm, self.pendingSendCount, self.MAX_PENDING_SENDS)
+			end
+		end
+		
 		local noChangeMsg = {
 			type = "no-change",
 			name = norm,
@@ -2003,6 +2030,107 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	return alt
 end
 
+---START CHANGES
+-- SendAddonMessageResult enum values from ChatThrottleLib
+local SEND_RESULT = {
+	Success = 0,
+	AddonMessageThrottle = 3,
+	NotInGroup = 5,
+	ChannelThrottle = 8,
+	GeneralError = 9,
+}
+
+local function GetSendResultName(result)
+	if result == SEND_RESULT.Success or result == true then return "Success"
+	elseif result == SEND_RESULT.AddonMessageThrottle then return "AddonMessageThrottle"
+	elseif result == SEND_RESULT.NotInGroup then return "NotInGroup"
+	elseif result == SEND_RESULT.ChannelThrottle then return "ChannelThrottle"
+	elseif result == SEND_RESULT.GeneralError then return "GeneralError"
+	elseif result == false then return "Failed"
+	else return tostring(result)
+	end
+end
+
+-- Create a per-send callback with its own stats tracking
+-- FIX: Prevents stats corruption when multiple P2P sends happen concurrently
+local function CreateOnChunkSentCallback(altName)
+	-- Per-send stats (closure captures these)
+	local sendStats = {
+		startTime = nil,
+		lastBytes = 0,
+		chunksSent = 0,
+		failures = 0,
+		throttled = 0,
+	}
+	
+	return function(arg, bytesSent, totalBytes, sendResult)
+		-- Track chunk count (each callback = one chunk sent, ~254 bytes each)
+		local bytesThisChunk = bytesSent - sendStats.lastBytes
+		if bytesThisChunk > 0 then
+			sendStats.chunksSent = sendStats.chunksSent + 1
+		end
+		sendStats.lastBytes = bytesSent
+
+		-- Track failures
+		local isSuccess = (sendResult == SEND_RESULT.Success or sendResult == true or sendResult == nil)
+		local isThrottled = (sendResult == SEND_RESULT.AddonMessageThrottle or sendResult == SEND_RESULT.ChannelThrottle)
+		if isThrottled then
+			sendStats.throttled = sendStats.throttled + 1
+		elseif not isSuccess then
+			sendStats.failures = sendStats.failures + 1
+		end
+
+		-- Initialize start time on first chunk
+		if sendStats.startTime == nil then
+			sendStats.startTime = GetTime()
+		end
+
+		local totalChunks = math.ceil(totalBytes / 254)
+
+		-- Print error on failed send
+		if not isSuccess then
+			local resultStr = GetSendResultName(sendResult)
+			TOGBankClassic_Output:Error("chunk %d/%d failed: %s", sendStats.chunksSent, totalChunks, resultStr)
+		end
+
+		-- Show progress at start
+		if sendStats.chunksSent == 1 then
+			if not TOGBankClassic_Options:IsSyncProgressMuted() then
+				TOGBankClassic_Output:Info("Sharing guild bank data: %d bytes in ~%d chunks...", totalBytes, totalChunks)
+			end
+		end
+
+		-- Completion summary
+		if bytesSent >= totalBytes then
+			local elapsed = GetTime() - (sendStats.startTime or GetTime())
+			local summary = string.format(
+				"Send complete: %d chunks, %d bytes in %.1fs",
+				sendStats.chunksSent, totalBytes, elapsed
+			)
+			if sendStats.failures > 0 or sendStats.throttled > 0 then
+				summary = summary .. string.format(" | failures: %d, throttled: %d", sendStats.failures, sendStats.throttled)
+			end
+
+			if not TOGBankClassic_Options:IsSyncProgressMuted() then
+				TOGBankClassic_Output:Info(summary)
+			end
+
+			-- Decrement P2P send queue counter
+			if TOGBankClassic_Guild.pendingSendCount > 0 then
+				TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
+				TOGBankClassic_Output:Debug("SYNC", "P2P send completed for %s - queue now: %d/%d", 
+					altName, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+			end
+
+			-- Warn on failures
+			if sendStats.failures > 0 then
+				TOGBankClassic_Output:Warn("%d send failures occurred!", sendStats.failures)
+			end
+		end
+	end
+end
+---END CHANGES
+
 function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requesterMailHash, target)
 	if not name then
 		return
@@ -2109,7 +2237,9 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	-- DELTA-ONLY: Send via togbank-d4 (no legacy channels)
 	local strippedDelta = self:StripDeltaLinks(deltaData)
 	local deltaNoLinks = TOGBankClassic_Core:SerializeWithChecksum(strippedDelta)
-	TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, distribution, distTarget, "BULK", OnChunkSent)
+	-- Create per-send callback to prevent stats corruption with concurrent sends
+	local onChunkSent = CreateOnChunkSentCallback(norm)
+	TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, distribution, distTarget, "BULK", onChunkSent)
 	TOGBankClassic_Output:Debug("DELTA", "Sent delta update for %s via togbank-d4 to %s (%d bytes)", norm, distribution, string.len(deltaNoLinks))
 
 	-- Track metrics
@@ -2143,110 +2273,6 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		TOGBankClassic_Database:SaveSnapshot(self.Info.name, norm, currentAlt)
 	end
 end
-
----START CHANGES
--- Tracking stats for current send operation
-local SendStats = {
-	startTime = nil,
-	lastBytes = 0,
-	chunksSent = 0,
-	failures = 0,
-	throttled = 0,
-}
-
--- SendAddonMessageResult enum values from ChatThrottleLib
-local SEND_RESULT = {
-	Success = 0,
-	AddonMessageThrottle = 3,
-	NotInGroup = 5,
-	ChannelThrottle = 8,
-	GeneralError = 9,
-}
-
-local function GetSendResultName(result)
-	if result == SEND_RESULT.Success or result == true then return "Success"
-	elseif result == SEND_RESULT.AddonMessageThrottle then return "AddonMessageThrottle"
-	elseif result == SEND_RESULT.NotInGroup then return "NotInGroup"
-	elseif result == SEND_RESULT.ChannelThrottle then return "ChannelThrottle"
-	elseif result == SEND_RESULT.GeneralError then return "GeneralError"
-	elseif result == false then return "Failed"
-	else return tostring(result)
-	end
-end
-
-function OnChunkSent(arg, bytesSent, totalBytes, sendResult)
-	-- Track chunk count (each callback = one chunk sent, ~254 bytes each)
-	local bytesThisChunk = bytesSent - SendStats.lastBytes
-	if bytesThisChunk > 0 then
-		SendStats.chunksSent = SendStats.chunksSent + 1
-	end
-	SendStats.lastBytes = bytesSent
-
-	-- Track failures
-	local isSuccess = (sendResult == SEND_RESULT.Success or sendResult == true or sendResult == nil)
-	local isThrottled = (sendResult == SEND_RESULT.AddonMessageThrottle or sendResult == SEND_RESULT.ChannelThrottle)
-	if isThrottled then
-		SendStats.throttled = SendStats.throttled + 1
-	elseif not isSuccess then
-		SendStats.failures = SendStats.failures + 1
-	end
-
-	-- Initialize start time on first chunk
-	if SendStats.startTime == nil then
-		SendStats.startTime = GetTime()
-	end
-
-	local totalChunks = math.ceil(totalBytes / 254)
-
-	-- Print error on failed send
-	if not isSuccess then
-		local resultStr = GetSendResultName(sendResult)
-		TOGBankClassic_Output:Error("chunk %d/%d failed: %s", SendStats.chunksSent, totalChunks, resultStr)
-	end
-
-	-- Show progress at start
-	if SendStats.chunksSent == 1 then
-		if not TOGBankClassic_Options:IsSyncProgressMuted() then
-			TOGBankClassic_Output:Info("Sharing guild bank data: %d bytes in ~%d chunks...", totalBytes, totalChunks)
-		end
-	end
-
-	-- Completion summary
-	if bytesSent >= totalBytes then
-		local elapsed = GetTime() - (SendStats.startTime or GetTime())
-		local summary = string.format(
-			"Send complete: %d chunks, %d bytes in %.1fs",
-			SendStats.chunksSent, totalBytes, elapsed
-		)
-		if SendStats.failures > 0 or SendStats.throttled > 0 then
-			summary = summary .. string.format(" | failures: %d, throttled: %d", SendStats.failures, SendStats.throttled)
-		end
-
-		if not TOGBankClassic_Options:IsSyncProgressMuted() then
-			TOGBankClassic_Output:Info(summary)
-		end
-
-		-- Decrement P2P send queue counter
-		if TOGBankClassic_Guild.pendingSendCount > 0 then
-			TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
-			TOGBankClassic_Output:Debug("SYNC", "P2P send completed - queue now: %d/%d", 
-				TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
-		end
-
-		-- Warn on failures
-		if SendStats.failures > 0 then
-			TOGBankClassic_Output:Warn("%d send failures occurred!", SendStats.failures)
-		end
-
-		-- Reset stats for next operation
-		SendStats.startTime = nil
-		SendStats.lastBytes = 0
-		SendStats.chunksSent = 0
-		SendStats.failures = 0
-		SendStats.throttled = 0
-	end
-end
----END CHANGES
 
 function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 	return TOGBankClassic_Performance:Track("ReceiveAltData", function()

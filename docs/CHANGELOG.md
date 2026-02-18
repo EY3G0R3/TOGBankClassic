@@ -1,5 +1,35 @@
 # TOGBankClassic Changelog
 
+## [Unreleased] - P2P Resource Management Fixes
+
+**Added:** 2026-02-17
+
+### 🐛 Critical P2P Bug Fixes
+
+#### [P2P-016] CRITICAL: Concurrent P2P Sends Corrupting Shared SendStats
+- **Fixed:** SendAltData now uses per-send isolated statistics via closure-based callbacks
+- **Root Cause:** Multiple concurrent P2P sends shared single module-level `SendStats` global
+- **Symptoms:** 
+  - Corrupted send progress logs ("sent 5000/3000 bytes" impossible values)
+  - pendingSendCount leaks when `bytesSent >= totalBytes` check failed due to stat corruption
+  - Premature counter decrements from one send affecting another
+- **Solution:** Implemented `CreateOnChunkSentCallback(altName)` factory function that creates isolated stats table per send via closure capture
+- **Files Modified:** Guild.lua (~2030-2140 new function, ~2139 usage)
+- **Impact:** Concurrent P2P operations now have independent statistics, preventing cross-contamination
+
+#### [P2P-017] HIGH: No-Change Responses Not Releasing P2P Resources
+- **Fixed:** RespondToStateSummary now properly cleans up P2P resources before sending no-change
+- **Root Cause:** When requester's hash matched local hash, code sent `togbank-nochange` without cleanup
+- **Symptoms:**
+  - P2P queue slots occupied for 30 seconds on hash match (wasted capacity)
+  - Queue exhaustion (MAX_PENDING_SENDS = 3) when multiple requesters had matching hashes
+  - Resources only released by timeout timer instead of immediately
+- **Solution:** Added P2P resource cleanup (cancel timeout timer, decrement pendingSendCount) in both delta mode and legacy mode paths before sending no-change response
+- **Files Modified:** Guild.lua RespondToStateSummary delta mode (~1567-1581), legacy mode (~1645-1659)
+- **Impact:** P2P queue slots immediately available when no sync needed; 10x capacity improvement for hash-match scenarios
+
+---
+
 ## [Unreleased] - Critical Bug Fixes
 
 **Added:** 2026-01-29
