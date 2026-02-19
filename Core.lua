@@ -66,14 +66,9 @@ function TOGBankClassic_Core:OnInitialize()
     end
 
     -- Setup periodic memory snapshots (every 5 minutes)
-    local memoryFrame = CreateFrame("Frame")
-    memoryFrame:SetScript("OnUpdate", function(self, elapsed)
-        self.elapsed = (self.elapsed or 0) + elapsed
-        if self.elapsed >= 300 then  -- 5 minutes
-            self.elapsed = 0
-            TOGBankClassic_Performance:RecordMemory("periodic")
-        end
-    end)
+    self:ScheduleRepeatingTimer(function()
+        TOGBankClassic_Performance:RecordMemory("periodic")
+    end, 300)
 
     -- Enable VersionCheck-1.0 addon integration
     do
