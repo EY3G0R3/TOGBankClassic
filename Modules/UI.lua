@@ -175,3 +175,53 @@ function TOGBankClassic_UI:OnInsertLink(link)
 		TOGBankClassic_UI_Search:DrawContent()
 	end
 end
+
+-- Clamp a frame to stay within screen boundaries
+function TOGBankClassic_UI:ClampFrameToScreen(frame)
+	if not frame then
+		return
+	end
+
+	-- Get the actual frame object (handle both AceGUI widgets and raw frames)
+	local actualFrame = frame.frame or frame
+	if not actualFrame or not actualFrame.GetRect then
+		return
+	end
+
+	-- Get frame dimensions
+	local left, bottom, width, height = actualFrame:GetRect()
+	if not left or not bottom or not width or not height then
+		return
+	end
+
+	local right = left + width
+	local top = bottom + height
+
+	-- Get screen dimensions
+	local screenWidth = UIParent:GetWidth()
+	local screenHeight = UIParent:GetHeight()
+
+	-- Calculate adjustments needed
+	local xOffset = 0
+	local yOffset = 0
+
+	-- Check horizontal bounds
+	if left < 0 then
+		xOffset = -left
+	elseif right > screenWidth then
+		xOffset = screenWidth - right
+	end
+
+	-- Check vertical bounds
+	if bottom < 0 then
+		yOffset = -bottom
+	elseif top > screenHeight then
+		yOffset = screenHeight - top
+	end
+
+	-- Apply adjustments if needed
+	if xOffset ~= 0 or yOffset ~= 0 then
+		actualFrame:ClearAllPoints()
+		actualFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left + xOffset, bottom + yOffset)
+	end
+end

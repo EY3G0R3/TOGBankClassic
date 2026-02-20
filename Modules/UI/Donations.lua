@@ -33,6 +33,9 @@ function TOGBankClassic_UI_Donations:Open()
 		self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
 	end
 
+	-- Ensure window stays within screen bounds
+	TOGBankClassic_UI:ClampFrameToScreen(self.Window)
+
 	self:DrawContent()
 
 	if _G["TOGBankClassic"] then

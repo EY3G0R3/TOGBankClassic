@@ -155,6 +155,8 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 		self.RequestDialog.frame:SetPoint("TOPRIGHT", self.Window.frame, "TOPLEFT", -10, 0)
 	end
 	self.RequestDialog:Show()
+	-- Ensure dialog stays within screen bounds
+	TOGBankClassic_UI:ClampFrameToScreen(self.RequestDialog)
 	self.RequestDialog:DoLayout()
 	if self.RequestDialog.QuantityInput.editbox and self.RequestDialog.QuantityInput.editbox.SetFocus then
 		self.RequestDialog.QuantityInput.editbox:SetFocus()
@@ -295,6 +297,9 @@ function TOGBankClassic_UI_Search:Open()
 		self.Window:ClearAllPoints()
 		self.Window:SetPoint("TOPRIGHT", TOGBankClassic_UI_Inventory.Window.frame, "TOPLEFT", 0, 0)
 	end
+
+	-- Ensure window stays within screen bounds
+	TOGBankClassic_UI:ClampFrameToScreen(self.Window)
 
 	self:DrawContent()
 
