@@ -1872,61 +1872,68 @@ end
 		end
 
 		-- Second pass: Compare hashes and categorize alts
+		local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 		for altName, summary in pairs(data.alts) do
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
-				local localAlt = localAlts and localAlts[norm]
-				local localHash = localAlt and localAlt.inventoryHash or 0
-				local localMailHash = localAlt and localAlt.mailHash or 0
-				local hasContent = localAlt and TOGBankClassic_Guild and TOGBankClassic_Guild.HasAltContent
-					and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
-				-- DEBUG: Log every alt to see what's happening
-				TOGBankClassic_Output:Debug("PROTOCOL", "HLR check: %s hasContent=%s localHash=%s bankerHash=%s localMailHash=%s bankerMailHash=%s",
-					tostring(norm), tostring(hasContent), tostring(localHash), tostring(summary and summary.hash), tostring(localMailHash), tostring(summary and summary.mailHash))
-				totalCount = totalCount + 1
-
-				-- SYNC-009: Check if hashes match BEFORE skipping (non-banker sync bug fix)
-				-- Previously, we skipped any alt with hasContent=true without checking hashes.
-				-- This broke non-banker sync: if we had OLD content for a non-banker alt,
-				-- we'd skip it even when the banker had a different (newer) hash.
-				-- Now we only skip if BOTH hasContent AND hashes match.
-				-- BUGFIX: Hash=0 should NOT be treated as a wildcard match - it means "empty inventory"
-				-- and should only match another hash=0, not any hash value.
-				local inventoryHashMatches = (summary.hash ~= nil and summary.hash == localHash)
-				local mailHashMatches = (summary.mailHash ~= nil and summary.mailHash == localMailHash)
-				local hashesMatch = inventoryHashMatches and mailHashMatches
 				
-				-- Skip alts we already have content for AND hashes match - no need to request
-				if hasContent and hashesMatch then
-					TOGBankClassic_Output:Info(
-						"HLR: Skipping %s (have content + hashes match: local inv=%d/mail=%d, banker inv=%d/mail=%d)",
-						tostring(norm),
-						tostring(localHash),
-						tostring(localMailHash),
-						tostring(summary and summary.hash),
-						tostring(summary and summary.mailHash)
-					)
-				elseif not localAlt or localHash == 0 or (summary.hash and summary.hash ~= localHash) or (summary.mailHash and summary.mailHash ~= localMailHash) then
-					pending[norm] = summary
-					local reason = (not localAlt or localHash == 0) and "no data" or ((summary.hash and summary.hash ~= localHash) and "inventory mismatch" or "mail mismatch")
-					TOGBankClassic_Output:Info(
-						"HLR: Adding %s to pending (%s: local inv=%d/mail=%d, banker inv=%d/mail=%d)",
-						tostring(norm),
-						reason,
-						tostring(localHash),
-						tostring(localMailHash),
-						tostring(summary and summary.hash),
-						tostring(summary and summary.mailHash)
-					)
+				-- Skip current player (can't request your own data)
+				if norm ~= currentPlayer then
+					local localAlt = localAlts and localAlts[norm]
+					local localHash = localAlt and localAlt.inventoryHash or 0
+					local localMailHash = localAlt and localAlt.mailHash or 0
+					local hasContent = localAlt and TOGBankClassic_Guild and TOGBankClassic_Guild.HasAltContent
+						and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
+					-- DEBUG: Log every alt to see what's happening
+					TOGBankClassic_Output:Debug("PROTOCOL", "HLR check: %s hasContent=%s localHash=%s bankerHash=%s localMailHash=%s bankerMailHash=%s",
+						tostring(norm), tostring(hasContent), tostring(localHash), tostring(summary and summary.hash), tostring(localMailHash), tostring(summary and summary.mailHash))
+					totalCount = totalCount + 1
+
+					-- SYNC-009: Check if hashes match BEFORE skipping (non-banker sync bug fix)
+					-- Previously, we skipped any alt with hasContent=true without checking hashes.
+					-- This broke non-banker sync: if we had OLD content for a non-banker alt,
+					-- we'd skip it even when the banker had a different (newer) hash.
+					-- Now we only skip if BOTH hasContent AND hashes match.
+					-- BUGFIX: Hash=0 should NOT be treated as a wildcard match - it means "empty inventory"
+					-- and should only match another hash=0, not any hash value.
+					local inventoryHashMatches = (summary.hash ~= nil and summary.hash == localHash)
+					local mailHashMatches = (summary.mailHash ~= nil and summary.mailHash == localMailHash)
+					local hashesMatch = inventoryHashMatches and mailHashMatches
+					
+					-- Skip alts we already have content for AND hashes match - no need to request
+					if hasContent and hashesMatch then
+						TOGBankClassic_Output:Info(
+							"HLR: Skipping %s (have content + hashes match: local inv=%d/mail=%d, banker inv=%d/mail=%d)",
+							tostring(norm),
+							tostring(localHash),
+							tostring(localMailHash),
+							tostring(summary and summary.hash),
+							tostring(summary and summary.mailHash)
+						)
+					elseif not localAlt or localHash == 0 or (summary.hash and summary.hash ~= localHash) or (summary.mailHash and summary.mailHash ~= localMailHash) then
+						pending[norm] = summary
+						local reason = (not localAlt or localHash == 0) and "no data" or ((summary.hash and summary.hash ~= localHash) and "inventory mismatch" or "mail mismatch")
+						TOGBankClassic_Output:Info(
+							"HLR: Adding %s to pending (%s: local inv=%d/mail=%d, banker inv=%d/mail=%d)",
+							tostring(norm),
+							reason,
+							tostring(localHash),
+							tostring(localMailHash),
+							tostring(summary and summary.hash),
+							tostring(summary and summary.mailHash)
+						)
+					else
+						-- Hash matches but no content - request it
+						missingContent[norm] = summary
+						TOGBankClassic_Output:Debug(
+							"PROTOCOL",
+							"HLR missing content: %s (localHash=%s matches bankerHash=%s)",
+							tostring(norm),
+							tostring(localHash),
+							tostring(summary and summary.hash)
+						)
+					end
 				else
-					-- Hash matches but no content - request it
-					missingContent[norm] = summary
-					TOGBankClassic_Output:Debug(
-						"PROTOCOL",
-						"HLR missing content: %s (localHash=%s matches bankerHash=%s)",
-						tostring(norm),
-						tostring(localHash),
-						tostring(summary and summary.hash)
-					)
+					TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Skipping %s (current player)", tostring(norm))
 				end
 			end
 

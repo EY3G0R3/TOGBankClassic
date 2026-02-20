@@ -699,36 +699,49 @@ end
 function TOGBankClassic_Guild:ReportHashListCoverage()
 	local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
 	
+	-- Build roster lookup table for faster validation
+	local rosterLookup = {}
+	for _, altName in ipairs(rosterAlts) do
+		local norm = self:NormalizeName(altName)
+		if norm then
+			rosterLookup[norm] = true
+		end
+	end
+	
 	-- Use in-memory hash cache (populated on load and updated by hash broadcasts)
 	local bankerList = self.latestBankerHashes or {}
 	local localAlts = self.Info and self.Info.alts or {}
+	local currentPlayer = self:GetNormalizedPlayer()
 
 	local matched = 0
 	local pending = {}
 	local matchedNoContent = {}
 	for altName, summary in pairs(bankerList) do
-		local localAlt = localAlts and localAlts[altName]
-		local localHash = localAlt and localAlt.inventoryHash or 0
-		local localMailHash = localAlt and localAlt.mailHash or 0
-		
-		-- Check if BOTH inventory and mail hashes match
-		local inventoryHashMatches = (summary.hash ~= nil and summary.hash == localHash)
-		local mailHashMatches = (summary.mailHash ~= nil and summary.mailHash == localMailHash)
-		local hashesMatch = inventoryHashMatches and mailHashMatches
-		
-		if localAlt and localHash ~= 0 and hashesMatch then
-			-- Hash matches, but check if we have actual content
-			if not self:HasAltContent(localAlt, altName) then
-				-- Hash matches but no content - treat as pending (need to request)
-				table.insert(matchedNoContent, altName)
-				table.insert(pending, altName)
+		-- Skip current player (can't request your own data) and non-roster alts (old/invalid data)
+		if altName ~= currentPlayer and rosterLookup[altName] then
+			local localAlt = localAlts and localAlts[altName]
+			local localHash = localAlt and localAlt.inventoryHash or 0
+			local localMailHash = localAlt and localAlt.mailHash or 0
+			
+			-- Check if BOTH inventory and mail hashes match
+			local inventoryHashMatches = (summary.hash ~= nil and summary.hash == localHash)
+			local mailHashMatches = (summary.mailHash ~= nil and summary.mailHash == localMailHash)
+			local hashesMatch = inventoryHashMatches and mailHashMatches
+			
+			if localAlt and localHash ~= 0 and hashesMatch then
+				-- Hash matches, but check if we have actual content
+				if not self:HasAltContent(localAlt, altName) then
+					-- Hash matches but no content - treat as pending (need to request)
+					table.insert(matchedNoContent, altName)
+					table.insert(pending, altName)
+				else
+					-- Hash matches and we have content - truly matched
+					matched = matched + 1
+				end
 			else
-				-- Hash matches and we have content - truly matched
-				matched = matched + 1
+				-- Hash mismatch or no local data - pending
+				table.insert(pending, altName)
 			end
-		else
-			-- Hash mismatch or no local data - pending
-			table.insert(pending, altName)
 		end
 	end
 
@@ -831,6 +844,18 @@ function TOGBankClassic_Guild:RequestHashListFromBanker()
 		local rosterAlts = self:GetBanks()
 		local pendingCount = 0
 		if rosterAlts and #rosterAlts > 0 then
+			-- WIPE-RECOVERY: Bypass rate limiting for bulk requests when user has blank DB
+			local isWipeRecovery = true
+			for _, altName in ipairs(rosterAlts) do
+				local norm = self:NormalizeName(altName)
+				local localAlt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
+				local localHash = localAlt and localAlt.inventoryHash or 0
+				if localHash ~= 0 or self:HasAltContent(localAlt, norm) then
+					isWipeRecovery = false
+					break
+				end
+			end
+			
 			for _, altName in ipairs(rosterAlts) do
 				local norm = self:NormalizeName(altName)
 				local localAlt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
@@ -848,16 +873,17 @@ function TOGBankClassic_Guild:RequestHashListFromBanker()
 							tostring(norm),
 							tostring(localHash),
 							tostring(updatedAt)
-						)
+							)
 						self:BroadcastP2PRequest(norm, localHash, updatedAt, nil)
 					else
-						-- No hash at all - regular query
+						-- No hash at all - need to request from peers
 						TOGBankClassic_Output:Debug(
 							"PROTOCOL",
-							"HLR fallback: no banker online, broadcasting query for %s (no local hash)",
-							tostring(norm)
+							"HLR fallback: no banker online, broadcasting query for %s (no local hash, wipeRecovery=%s)",
+							tostring(norm),
+							tostring(isWipeRecovery)
 						)
-						self:QueryAltPullBased(norm, false)
+						self:QueryAltPullBased(norm, false, nil, nil)
 					end
 				end
 			end
@@ -882,8 +908,15 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 		return
 	end
 	
-	-- Only skip broadcast if we have matching hash AND content
+	-- Skip if requesting data for ourselves (can't P2P request your own data)
 	local norm = self:NormalizeName(altName)
+	local currentPlayer = self:GetNormalizedPlayer()
+	if norm == currentPlayer then
+		TOGBankClassic_Output:Debug("SYNC", "Skipping P2P broadcast for %s (requesting own data)", altName)
+		return
+	end
+	
+	-- Only skip broadcast if we have matching hash AND content
 	local existing = self.Info and self.Info.alts and self.Info.alts[norm]
 	local existingHash = existing and existing.inventoryHash or 0
 	
@@ -1260,6 +1293,9 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", "guild", norm)
 		self.pendingAltRequests[norm] = now
+		-- Track as pending P2P request so peer ACKs are processed
+		self.pendingP2PRequests = self.pendingP2PRequests or {}
+		self.pendingP2PRequests[norm] = { noBanker = true, requestedAt = now }
 		return
 	end
 	
@@ -1270,6 +1306,9 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", "guild", norm)
 		self.pendingAltRequests[norm] = now
+		-- Track as pending P2P request so peer ACKs are processed
+		self.pendingP2PRequests = self.pendingP2PRequests or {}
+		self.pendingP2PRequests[norm] = { bankerOffline = true, requestedAt = now }
 		return
 	end
 	
