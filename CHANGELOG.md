@@ -39,6 +39,19 @@
   - Events.lua CHAT_MSG_SYSTEM (~334-375): Added error pattern detection
   - Guild.lua UpdateOnlineMember (~1425-1443): Clear recentlySeen on offline
 
+#### [COMM-003b] Fixed Whisper Error Pattern Not Matching Single-Quoted Names
+- **FIXED**: CHAT_MSG_SYSTEM now detects both single-quoted and unquoted variants of whisper failure messages
+- **PROBLEM**: Pattern only matched `No player named Axkva is currently playing.` but Classic Era can also send `No player named 'Axkva' is currently playing.` (with single quotes around name)
+- **ROOT CAUSE**: COMM-003 documentation incorrectly stated "Classic Era does NOT use quotes" but testing showed single quotes are sometimes used around player names
+- **IMPACT**: Whisper failures with single-quoted names not detected, causing repeated whisper attempts and error spam
+- **SOLUTION**:
+  - Added dual pattern matching: tries single-quoted pattern `'(.+)'` first, falls back to unquoted `(.+)` if no match
+  - Updated documentation to reflect both formats are possible
+- **RESULT**: All whisper failure formats now detected, player marked offline immediately
+- **LOCATION**: 
+  - Events.lua CHAT_MSG_SYSTEM (~353-361): Dual pattern matching
+  - DELTA_BUGS.md (~2521-2527): Updated pattern documentation
+
 #### [DELTA-020] Fixed Delta Computation Using Wrong Baseline (CRITICAL)
 - **FIXED**: ComputeDelta now uses requester's actual item structures from state summary instead of responder's snapshot
 - **PROBLEM**: When responder broadcast multiple times (hash 461905621 → 317352773), GetSnapshot returned responder's NEW snapshot (317352773) instead of requester's OLD baseline (461905621)

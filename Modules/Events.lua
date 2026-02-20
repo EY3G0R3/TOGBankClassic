@@ -351,7 +351,11 @@ function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
 	end
 
 	-- Detect "No player named X is currently playing" errors from failed whispers
-	local notFoundName = message:match("^No player named (.+) is currently playing%.$")
+	-- Classic can send either format:
+	--   No player named 'Axkva' is currently playing.  (with single quotes around name)
+	--   No player named Axkva is currently playing.    (without quotes)
+	local notFoundName = message:match("^No player named '(.+)' is currently playing%.$")
+		or message:match("^No player named (.+) is currently playing%.$")
 	if notFoundName then
 		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
 		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false)
