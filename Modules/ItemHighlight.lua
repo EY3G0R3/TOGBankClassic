@@ -8,10 +8,16 @@ local ItemHighlight = TOGBankClassic_ItemHighlight
 ItemHighlight.enabled = false
 ItemHighlight.neededItems = {} -- {itemName: quantityNeeded}
 ItemHighlight.overlays = {} -- Texture overlays for dimming items
+ItemHighlight.lastBagnonSearch = nil -- Cache last Bagnon search string to avoid redundant signals
 
 -- Settings
 local OVERLAY_ALPHA = 0.7 -- Alpha for grey overlay (0=transparent, 1=opaque)
 local OVERLAY_COLOR = {0.2, 0.2, 0.2} -- RGB grey color
+
+-- Throttling to prevent Bagnon execution timeout
+local REFRESH_THROTTLE = 0.5 -- seconds
+local lastRefresh = 0
+local pendingRefresh = false
 
 -- Initialize the module
 function ItemHighlight:Initialize()
@@ -26,6 +32,23 @@ function ItemHighlight:Initialize()
 	frame:RegisterEvent("BANKFRAME_CLOSED")
 	frame:SetScript("OnEvent", function(_, event, ...)
 		if self.enabled then
+			-- Throttle refresh to prevent Bagnon execution timeout during rapid BAG_UPDATE spam
+			local now = GetTime()
+			if now - lastRefresh < REFRESH_THROTTLE then
+				-- Schedule delayed refresh if not already pending
+				if not pendingRefresh then
+					pendingRefresh = true
+					C_Timer.After(REFRESH_THROTTLE, function()
+						pendingRefresh = false
+						if self.enabled then
+							lastRefresh = GetTime()
+							ItemHighlight:RefreshHighlighting()
+						end
+					end)
+				end
+				return
+			end
+			lastRefresh = now
 			ItemHighlight:RefreshHighlighting()
 		end
 	end)
@@ -69,8 +92,9 @@ function ItemHighlight:SetEnabled(enabled)
 		self:RefreshHighlighting()
 	else
 		self:ClearAllOverlays()
-		-- Clear Bagnon search when disabling
-		if Bagnon then
+		-- Clear Bagnon search when disabling (only if it was previously set)
+		if Bagnon and self.lastBagnonSearch ~= nil then
+			self.lastBagnonSearch = nil
 			local addon = Bagnon
 			addon.search = nil
 			addon.canSearch = false
@@ -229,6 +253,15 @@ function ItemHighlight:UpdateBagnonHighlighting()
 
 	-- Join with | (OR operator) so Bagnon matches items containing ANY of these names
 	local searchString = table.concat(searchTerms, "|")
+	
+	-- Only trigger SEARCH_CHANGED if the search string actually changed
+	-- This prevents redundant Bagnon UI rebuilds that can cause execution timeout
+	if self.lastBagnonSearch == searchString then
+		TOGBankClassic_Output:Debug("REQUESTS", "Search string unchanged, skipping SEARCH_CHANGED signal")
+		return true
+	end
+	
+	self.lastBagnonSearch = searchString
 	TOGBankClassic_Output:Debug("REQUESTS", "Setting Bagnon search (%d items): %s", #searchTerms, searchString)
 
 	-- Set Bagnon's search string (use whichever global is available)
@@ -332,8 +365,9 @@ end
 -- Refresh all highlighting
 function ItemHighlight:RefreshHighlighting()
 	if not self.enabled then
-		-- If disabled, clear Bagnon search
-		if Bagnon then
+		-- If disabled, clear Bagnon search (only if it was previously set)
+		if Bagnon and self.lastBagnonSearch ~= nil then
+			self.lastBagnonSearch = nil
 			local addon = Bagnon
 			addon.search = nil
 			addon.canSearch = false

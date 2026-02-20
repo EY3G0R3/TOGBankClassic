@@ -7,6 +7,24 @@
 
 ### 🐛 Bug Fixes
 
+#### [PERF-007] Fixed Bagnon Execution Timeout from BAG_UPDATE Spam (CRITICAL)
+- **FIXED**: ItemHighlight now throttles BAG_UPDATE events and caches search strings
+- **PROBLEM**: Bagnon exceeded execution time limit during zone changes
+- **ROOT CAUSE**: Every BAG_UPDATE event triggered RefreshHighlighting which called Bagnon's SendSignal('SEARCH_CHANGED'), causing full UI rebuild
+- **IMPACT**: "Script from Bagnon has exceeded its execution time limit" errors on zone change
+- **BEHAVIOR**: Zone changes fire multiple rapid BAG_UPDATE events, each triggering Bagnon UI rebuild
+- **SOLUTION**:
+  1. Added 500ms throttling to BAG_UPDATE event handler (same pattern as Requests UI)
+  2. Cache last Bagnon search string and only send SEARCH_CHANGED signal when it actually changes
+  3. Clear cache when disabling highlighting to avoid unnecessary signals
+  4. Prevents rapid-fire Bagnon UI rebuilds during zone transitions
+- **RESULT**: Eliminated Bagnon execution timeout errors, highlighting still works correctly
+- **LOCATION**:
+  - ItemHighlight.lua Initialize (~18-41): Added throttling to event handler
+  - ItemHighlight.lua UpdateBagnonHighlighting (~252-260): Cache and compare search string
+  - ItemHighlight.lua RefreshHighlighting (~367-377): Clear cache when disabled
+  - ItemHighlight.lua SetEnabled (~95-105): Clear cache when disabling
+
 #### [HASH-001] Fixed Hash Broadcast Not Triggering P2P Requests (CRITICAL)
 - **FIXED**: hash-list-broadcast handler now triggers P2P requests for changed data
 - **PROBLEM**: `/togbank share` only updated latestBankerHashes cache without triggering any data requests
