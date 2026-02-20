@@ -1,7 +1,7 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** February 18, 2026
+**Last Updated:** February 20, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
@@ -54,7 +54,7 @@
 - ✅ [SYNC-007] Backward compatibility for SYNC-006 aggregate structure - Implemented bidirectional sync between pre-SYNC-006 and post-SYNC-006 clients
 - ✅ [SYNC-006] Mail quantities appearing additive during syncs - Consolidated inventory into single alt.items aggregate
 - ✅ [MAIL-004] Non-stackable items filtered out by greedy algorithm - Fixed minStackSize to never exceed largestStack
-- ✅ [UI-006] Highlight checkbox not appearing for bankers - Fixed by refreshing UI on GUILD_ROSTER_UPDATE
+- ✅ [UI-006] Highlight checkbox not appearing on first login for bankers - Fixed by adding delayed creation logic to UpdateFilters()
 - ✅ [SYNC-005] Failed log entries retrying infinitely - Implemented permanent vs transient failure detection
 - ✅ [SYNC-004] User request cancellations not propagating to other players - Fixed sequential entry requirement and implemented priority-based conflict resolution
 - ✅ [SYNC-001] Request data disappearing after snapshots - Implemented smart-merge algorithm to protect local event log from being skipped
@@ -6307,54 +6307,103 @@ The `math.min(5, qtyNeeded)` logic was added to handle small quantity requests (
 
 ---
 
-### ✅ [UI-006] Highlight checkbox intermittently not appearing for bankers
+### ✅ [UI-006] Highlight checkbox not appearing on first login for bankers
 
 **Severity:** 🟡 MEDIUM  
 **Category:** UI / Requests Window  
 **Date Reported:** 2026-01-28  
 **Status:** ✅ RESOLVED  
-**Resolution Date:** 2026-01-28
+**Resolution Date:** 2026-02-20 (Complete fix)
 
 **Description:**
-The "Highlight needed items" checkbox in the Requests window (banker-only feature) was appearing intermittently. Sometimes it would show up, sometimes it wouldn't, even for characters marked as bankers with "gbank" in their guild notes.
+The "Highlight needed items" checkbox in the Requests window (banker-only feature) was not appearing on first login for banker characters. After doing `/reload`, the checkbox would appear correctly every time.
+
+**Symptoms:**
+- First login as banker: checkbox missing
+- After `/reload`: checkbox present  
+- Subsequent logins after `/reload`: checkbox still missing until another `/reload`
 
 **Root Cause:**
-The checkbox visibility is determined during `ShowRequestsUI()` by checking if the current player is in the banks list via `GetBanks()`. However, `GetBanks()` relies on guild roster data from `GetNumGuildMembers()` and `GetGuildRosterInfo()`, which may not be loaded immediately after login, reload, or character switches.
+**Initial Diagnostic (2026-01-28):** The checkbox visibility is determined during window creation by checking if the current player is a banker via `GetBanks()` → `IsBank()`. These functions rely on guild roster data from `GetNumGuildMembers()` and `GetGuildRosterInfo()`, which may not be loaded immediately after login.
+
+**Complete Root Cause (2026-02-20):** The issue had two parts:
+
+1. **Initial Window Creation:** When `DrawWindow()` is called on first login, the checkbox creation code checks `GetNumGuildMembers() > 0` at line 625. If guild roster isn't loaded yet, this returns 0/false, and the checkbox is skipped entirely.
+
+2. **Missing Delayed Creation:** When `GUILD_ROSTER_UPDATE` fires later and calls `RefreshRequestsUI()` → `UpdateFilters()`, the `UpdateFilters()` function only updated the dropdown filters. It had **no logic to create the checkbox** if it was missing. The checkbox only existed if it was created during initial window creation.
+
+3. **Why `/reload` worked:** After a `/reload`, the guild roster data is already cached in memory from the previous session, so `GetNumGuildMembers() > 0` returns true immediately during window creation.
 
 The flow:
-1. Player opens Requests window
-2. `ShowRequestsUI()` → `DrawContent()` calls `GetBanks()`
-3. If guild roster not loaded yet → `GetBanks()` returns empty/incomplete list
-4. Checkbox not created because player not detected as banker
-5. Later, `GUILD_ROSTER_UPDATE` fires and invalidates banks cache
-6. But UI is not refreshed, so checkbox never appears
+1. First login: Player opens Requests window
+2. `DrawWindow()` checks `GetNumGuildMembers() > 0` → returns 0 (roster not loaded)
+3. Checkbox creation skipped, `self.HighlightCheckbox` remains nil
+4. Later, `GUILD_ROSTER_UPDATE` fires → calls `UpdateFilters()`
+5. `UpdateFilters()` updates dropdowns but doesn't create missing checkbox
+6. Checkbox never appears until window is destroyed and recreated (e.g., banker status change or `/reload`)
 
 **Solution:**
-Added `TOGBankClassic_Guild:RefreshRequestsUI()` call to `GUILD_ROSTER_UPDATE` event handler.
 
-**File:** `Modules/Events.lua:217-227`
+**Phase 1 (2026-01-28):** Added `TOGBankClassic_Guild:RefreshRequestsUI()` call to `GUILD_ROSTER_UPDATE` event handler. This ensured `UpdateFilters()` was called when roster data became available, but wasn't sufficient because `UpdateFilters()` didn't create the checkbox.
+
+**Phase 2 (2026-02-20):** Added delayed checkbox creation logic to `UpdateFilters()` function.
+
+**Files:** 
+- `Modules/Events.lua:~307` (Phase 1)
+- `Modules/UI/Requests.lua:~1095-1117` (Phase 2)
 
 **Changes:**
 ```lua
-function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
-	TOGBankClassic_Performance:RecordEvent("GUILD_ROSTER_UPDATE")
-	TOGBankClassic_Guild:RefreshOnlineCache()
-	TOGBankClassic_Guild:InvalidateBanksCache()
-	TOGBankClassic_Guild:RebuildBankerRoster()
-	TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
-	-- NEW: Refresh Requests UI to update banker-only controls
-	TOGBankClassic_Guild:RefreshRequestsUI()
+-- Modules/UI/Requests.lua: UpdateFilters() (NEW section added after line 1093)
+function TOGBankClassic_UI_Requests:UpdateFilters()
+	if not self.FilterRequester or not self.FilterBank then
+		return
+	end
+	
+	-- ... existing filter setup code ...
+
+	-- NEW: Create highlight checkbox if it doesn't exist but should (banker status now available)
+	if not self.HighlightCheckbox and self.FilterGroup and GetNumGuildMembers() > 0 then
+		local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
+		if isBank then
+			TOGBankClassic_Output:Debug("UI", "UpdateFilters: Creating highlight checkbox (delayed)")
+			local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
+			highlightCheckbox:SetLabel("Highlight needed items")
+			highlightCheckbox:SetFullWidth(true)
+			highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
+			highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
+				if TOGBankClassic_ItemHighlight then
+					TOGBankClassic_ItemHighlight:SetEnabled(value)
+				end
+			end)
+			self.FilterGroup:AddChild(highlightCheckbox)
+			self.HighlightCheckbox = highlightCheckbox
+			-- Re-layout filter group to show new checkbox
+			if self.FilterGroup.DoLayout then
+				self.FilterGroup:DoLayout()
+			end
+			TOGBankClassic_Output:Debug("UI", "UpdateFilters: Highlight checkbox created and added")
+		end
+	end
+
+	-- ... rest of UpdateFilters code ...
 end
 ```
 
-Now when the guild roster updates and the banks cache is rebuilt, the Requests UI automatically refreshes to show/hide the checkbox based on current banker status.
+Now when `GUILD_ROSTER_UPDATE` fires and calls `UpdateFilters()`, the function checks if:
+1. Checkbox doesn't exist yet (`!self.HighlightCheckbox`)
+2. Guild roster is now loaded (`GetNumGuildMembers() > 0`)
+3. Current player is a banker (`IsBank(currentPlayer)`)
+
+If all conditions are met, the checkbox is created dynamically and added to the filter group. The UI is then re-laid out to display the new checkbox.
 
 **Testing:**
-1. Log in as a banker character
-2. Open Requests window immediately (before guild roster fully loads)
-3. Verify checkbox appears after a few seconds (when GUILD_ROSTER_UPDATE fires)
-4. Log in as non-banker character
-5. Verify checkbox never appears
+1. ✅ Log in as banker character for the first time (cold start)
+2. ✅ Open Requests window immediately after login
+3. ✅ Checkbox should appear within 1-2 seconds as guild roster loads
+4. ✅ No `/reload` required
+5. ✅ Log in as non-banker character - checkbox should never appear
+6. ✅ Switch between banker and non-banker alts - checkbox appears/disappears correctly
 
 ---
 

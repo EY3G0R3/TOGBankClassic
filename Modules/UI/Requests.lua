@@ -1092,6 +1092,30 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 		end
 	end
 
+	-- Create highlight checkbox if it doesn't exist but should (banker status now available)
+	if not self.HighlightCheckbox and self.FilterGroup and GetNumGuildMembers() > 0 then
+		local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
+		if isBank then
+			TOGBankClassic_Output:Debug("UI", "UpdateFilters: Creating highlight checkbox (delayed)")
+			local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
+			highlightCheckbox:SetLabel("Highlight needed items")
+			highlightCheckbox:SetFullWidth(true)
+			highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
+			highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
+				if TOGBankClassic_ItemHighlight then
+					TOGBankClassic_ItemHighlight:SetEnabled(value)
+				end
+			end)
+			self.FilterGroup:AddChild(highlightCheckbox)
+			self.HighlightCheckbox = highlightCheckbox
+			-- Re-layout filter group to show new checkbox
+			if self.FilterGroup.DoLayout then
+				self.FilterGroup:DoLayout()
+			end
+			TOGBankClassic_Output:Debug("UI", "UpdateFilters: Highlight checkbox created and added")
+		end
+	end
+
 	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
 
 	-- Only update the requester dropdown if the list has changed
