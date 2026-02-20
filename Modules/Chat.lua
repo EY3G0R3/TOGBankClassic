@@ -2464,6 +2464,23 @@ local COMMAND_REGISTRY = {
 			TOGBankClassic_Guild:Wipe()
 		end,
 	},
+	{
+		name = "wipeframes",
+		help = "reset all saved window positions to default",
+		expert = true,
+		handler = function()
+			if TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char then
+				local count = 0
+				for _ in pairs(TOGBankClassic_Options.db.char.framePositions or {}) do
+					count = count + 1
+				end
+				TOGBankClassic_Options.db.char.framePositions = {}
+				TOGBankClassic_Output:Response("Cleared %d saved window position(s). Type /reload to reset window positions.", count)
+			else
+				TOGBankClassic_Output:Response("No frame positions to clear")
+			end
+		end,
+	},
 	-- Hidden commands (no help text)
 	{
 		name = "debug",

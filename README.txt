@@ -285,6 +285,11 @@ listed alphabetically for easy reference.
   (OFFICER ONLY) Resets database for all online guild members
   WARNING: This affects everyone - use with caution!
 
+/togbank wipeframes
+  Resets all saved window positions to default
+  Use this if windows are positioned off-screen or incorrectly placed
+  Requires /reload to take effect
+
 
 DEBUG COMMANDS:
 ---------------

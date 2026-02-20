@@ -22,6 +22,48 @@
 - [x] ~~**Guild-wide request percentage limits**~~ **IMPLEMENTED: Officers can configure max request amount as percentage of available inventory (1-100%); setting syncs guild-wide; protects single items (gear) by always allowing at least 1 if available**
 - [ ] **Bagnon-style item highlighting** - Implement visual highlighting system that greys out all items except those needed to fulfill active orders; works across player bags and bank; helps bankers quickly locate and gather items for order fulfillment
 - [ ] **Deprecate legacy protocols** - Phase out togbank-v (non-delta), togbank-dv (pre-SYNC-006), and separate bank/bags structures in favor of unified togbank-dv2 (SYNC-006+) with `alt.items` aggregate; includes removing 5-second dv/dv2 prioritization delay once all clients upgraded; currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
+- [x] ~~**Window position reset command**~~ **IMPLEMENTED: /togbank wipeframes to clear saved positions**
+
+---
+
+## 🪟 Window Position Reset Command - IMPLEMENTED
+
+**Added:** February 20, 2026
+**Purpose:** Provide easy recovery when addon windows become positioned off-screen or incorrectly placed
+
+### Problem
+- Window positions are persisted in SavedVariables per-character
+- Windows can become stuck off-screen after resolution changes, monitor disconnection, or UI bugs
+- No easy way to reset positions without manually editing SavedVariables files
+- Users have to delete SavedVariables or manually edit TOGBankClassicOptionDB to recover
+
+### Solution
+New `/togbank wipeframes` command:
+- Clears all saved window positions from `TOGBankClassicOptionDB`
+- Preserves all other addon data (inventory, requests, settings)
+- Reports how many positions were cleared
+- Requires `/reload` for changes to take effect
+- Windows return to default positions after reload
+
+### Implementation Details
+- **Storage:** Window positions stored in `TOGBankClassic_Options.db.char.framePositions`
+- **Scope:** Per-character data (each character maintains own window positions)
+- **Not affected by:** `/togbank wipe` or `/togbank wipeall` (those only reset guild bank data)
+- **Command location:** Expert commands section (alphabetically between wipeall and debug commands)
+
+### Usage
+```lua
+/togbank wipeframes
+-- Output: "Cleared 3 saved window position(s). Type /reload to reset window positions."
+/reload
+-- Windows now appear at default positions
+```
+
+### Technical Notes
+- Counts existing positions before clearing for user feedback
+- Handles missing or uninitialized framePositions table gracefully
+- Uses AceGUI-3.0 `SetStatusTable()` system for position persistence
+- Affects Inventory, Search, and Requests windows
 
 ---
 
