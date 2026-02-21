@@ -295,41 +295,42 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 		TOGBankClassic_Output:Debug("ROSTER", "[INIT] GUILD_ROSTER_UPDATE #%d - Full refresh starting", self.fullRosterInitAttempts)
 		
 		self.needsFullRosterRefresh = false
-		local onlineCount, totalMembers = TOGBankClassic_Guild:RefreshOnlineCache()
 		
 		-- Invalidate banks cache when roster updates
 		TOGBankClassic_Guild:InvalidateBanksCache()
 		
-		-- PERF-008: Defer expensive RebuildBankerRoster() to prevent roster update freeze
-		-- Loops through all guild members (500+) which can block for several seconds
+		-- PERF-008: Defer ALL expensive roster operations to prevent freeze
+		-- RefreshOnlineCache and RebuildBankerRoster both loop through 500+ guild members
 		C_Timer.After(0.5, function()
+			local onlineCount, totalMembers = TOGBankClassic_Guild:RefreshOnlineCache()
 			TOGBankClassic_Guild:RebuildBankerRoster()
-		end)
-		
-		-- Clear delta error counters for offline players
-		TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
-		-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
-		TOGBankClassic_Guild:RefreshRequestsUI()
-
-		-- Keep refreshing until we get actual online member data OR we've tried 5 times
-		-- If we have 0 online members after API returns data, roster API hasn't initialized yet
-		local needsRetry = false
-		if self.fullRosterInitAttempts < 5 then
-			if not totalMembers or totalMembers == 0 then
-				TOGBankClassic_Output:Debug("ROSTER", "[INIT] Retry needed: GetNumGuildMembers returned %d", totalMembers or 0)
-				needsRetry = true
-			elseif onlineCount == 0 then
-				TOGBankClassic_Output:Debug("ROSTER", "[INIT] Retry needed: 0 online members (guild not empty)")
-				needsRetry = true
+			
+			-- Clear delta error counters for offline players (depends on RefreshOnlineCache)
+			TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
+			-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
+			TOGBankClassic_Guild:RefreshRequestsUI()
+			
+			-- Keep refreshing until we get actual online member data OR we've tried 5 times
+			-- If we have 0 online members after API returns data, roster API hasn't initialized yet
+			local needsRetry = false
+			local attempts = self.fullRosterInitAttempts or 0
+			if attempts < 5 then
+				if not totalMembers or totalMembers == 0 then
+					TOGBankClassic_Output:Debug("ROSTER", "[INIT] Retry needed: GetNumGuildMembers returned %d", totalMembers or 0)
+					needsRetry = true
+				elseif onlineCount == 0 then
+					TOGBankClassic_Output:Debug("ROSTER", "[INIT] Retry needed: 0 online members (guild not empty)")
+					needsRetry = true
+				end
 			end
-		end
-		
-		if needsRetry then
-			self.needsFullRosterRefresh = true
-			TOGBankClassic_Output:Debug("ROSTER", "[INIT] Will retry on next GUILD_ROSTER_UPDATE")
-		else
-			TOGBankClassic_Output:Debug("ROSTER", "[INIT] Roster initialization complete after %d attempts", self.fullRosterInitAttempts)
-		end
+			
+			if needsRetry then
+				self.needsFullRosterRefresh = true
+				TOGBankClassic_Output:Debug("ROSTER", "[INIT] Will retry on next GUILD_ROSTER_UPDATE")
+			else
+				TOGBankClassic_Output:Debug("ROSTER", "[INIT] Roster initialization complete after %d attempts", attempts)
+			end
+		end)
 	else
 		TOGBankClassic_Output:Debug("EVENTS", "GUILD_ROSTER_UPDATE ignored (online/offline handled via system messages)")
 	end

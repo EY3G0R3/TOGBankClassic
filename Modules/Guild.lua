@@ -258,8 +258,12 @@ function TOGBankClassic_Guild:Reset(name)
 	-- Migrate any temporary errors to database
 	self:MigrateTempErrors()
 
-	-- Rebuild banker roster from guild notes after wipe
-	self:RebuildBankerRoster()
+	-- PERF-008: Defer expensive RebuildBankerRoster() to prevent freeze on first load/wipe
+	-- Reset() is called during Init() if no data exists, which happens on GUILD_RANKS_UPDATE
+	-- Loops through all guild members (500+) which blocks for 5+ seconds on large guilds
+	C_Timer.After(1, function()
+		self:RebuildBankerRoster()
+	end)
 end
 
 function TOGBankClassic_Guild:Init(name)
