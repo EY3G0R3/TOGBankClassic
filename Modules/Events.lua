@@ -299,8 +299,13 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 		
 		-- Invalidate banks cache when roster updates
 		TOGBankClassic_Guild:InvalidateBanksCache()
-		-- Rebuild banker roster from guild notes (local only, no network communication)
-		TOGBankClassic_Guild:RebuildBankerRoster()
+		
+		-- PERF-008: Defer expensive RebuildBankerRoster() to prevent roster update freeze
+		-- Loops through all guild members (500+) which can block for several seconds
+		C_Timer.After(0.5, function()
+			TOGBankClassic_Guild:RebuildBankerRoster()
+		end)
+		
 		-- Clear delta error counters for offline players
 		TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
 		-- Refresh Requests UI to update banker-only controls (like highlight checkbox)

@@ -33,23 +33,21 @@ function ItemHighlight:Initialize()
 	frame:SetScript("OnEvent", function(_, event, ...)
 		if self.enabled then
 			-- Throttle refresh to prevent Bagnon execution timeout during rapid BAG_UPDATE spam
+			-- ALWAYS delay the refresh to ensure minimum time between Bagnon signal calls
 			local now = GetTime()
-			if now - lastRefresh < REFRESH_THROTTLE then
-				-- Schedule delayed refresh if not already pending
-				if not pendingRefresh then
-					pendingRefresh = true
-					C_Timer.After(REFRESH_THROTTLE, function()
-						pendingRefresh = false
-						if self.enabled then
-							lastRefresh = GetTime()
-							ItemHighlight:RefreshHighlighting()
-						end
-					end)
-				end
-				return
+			
+			-- Schedule delayed refresh if not already pending
+			if not pendingRefresh then
+				local delay = math.max(0, REFRESH_THROTTLE - (now - lastRefresh))
+				pendingRefresh = true
+				C_Timer.After(delay, function()
+					pendingRefresh = false
+					if self.enabled then
+						lastRefresh = GetTime()
+						ItemHighlight:RefreshHighlighting()
+					end
+				end)
 			end
-			lastRefresh = now
-			ItemHighlight:RefreshHighlighting()
 		end
 	end)
 

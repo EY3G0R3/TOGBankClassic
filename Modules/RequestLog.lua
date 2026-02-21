@@ -874,7 +874,7 @@ function Guild:SendRequestsSnapshot(target)
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	-- Send on old prefix for backwards compat; new clients listen on both
-	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "BULK")
+	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "NORMAL")
 end
 
 function Guild:SendRequestsData(target)

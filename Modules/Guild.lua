@@ -278,8 +278,13 @@ function TOGBankClassic_Guild:Init(name)
 		self:EnsureRequestsInitialized()
 		-- Migrate any temporary errors to database
 		self:MigrateTempErrors()
-		-- Rebuild banker roster from guild notes on init
-		self:RebuildBankerRoster()
+		
+		-- PERF-008: Defer expensive RebuildBankerRoster() to prevent login freeze
+		-- Loops through all guild members (500+) which blocks for 5+ seconds on large guilds
+		-- Delay by 1 second to allow UI to become responsive first
+		C_Timer.After(1, function()
+			self:RebuildBankerRoster()
+		end)
 		
 		-- Initialize latestBankerHashes cache from local data on load
 		-- This cache will be updated when we receive hash-list-reply or hash-list-broadcast
