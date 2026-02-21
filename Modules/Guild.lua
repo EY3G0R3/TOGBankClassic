@@ -441,6 +441,15 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 		self.Info.roster.alts = banks
 		TOGBankClassic_Output:Debug("ROSTER", "Rebuilt banker roster from guild notes: %d bankers", #banks)
 	end
+	
+	-- PERF-008: Rebuild banksCache directly to prevent lazy synchronous rebuild
+	-- If cache is nil and IsBank() is called, GetBanks() will synchronously rebuild
+	-- By rebuilding here, we ensure future IsBank() calls use cached data
+	if #banks == 0 then
+		self.banksCache = nil
+	else
+		self.banksCache = banks
+	end
 
 	-- Ensure local alt data exists for all roster bankers (authoritative roster cache)
 	if not self.Info.alts then

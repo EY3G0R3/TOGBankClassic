@@ -296,12 +296,13 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 		
 		self.needsFullRosterRefresh = false
 		
-		-- Invalidate banks cache when roster updates
-		TOGBankClassic_Guild:InvalidateBanksCache()
-		
-		-- PERF-008: Defer ALL expensive roster operations to prevent freeze
-		-- RefreshOnlineCache and RebuildBankerRoster both loop through 500+ guild members
+		-- PERF-008: Defer ALL expensive roster operations AND cache invalidation
+		-- Must invalidate cache INSIDE the deferred block, otherwise any IsBank() call
+		-- between invalidation and rebuild will synchronously rebuild cache, causing freeze
 		C_Timer.After(0.5, function()
+			-- Invalidate banks cache AFTER deferring, not before
+			TOGBankClassic_Guild:InvalidateBanksCache()
+			
 			local onlineCount, totalMembers = TOGBankClassic_Guild:RefreshOnlineCache()
 			TOGBankClassic_Guild:RebuildBankerRoster()
 			
