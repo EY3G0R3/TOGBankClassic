@@ -1493,9 +1493,37 @@ function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline)
 	if isOnline then
 		self.onlineMembers[normalized] = true
 	else
+		-- When marking offline, clear the normalized name
 		self.onlineMembers[normalized] = nil
-		-- Also clear from recentlySeen cache to prevent stale "online" status
 		self.recentlySeen[normalized] = nil
+		
+		-- BUGFIX: Server clusters - same-server players have no realm, cross-server have realm.
+		-- WoW error messages never include realm ("No player named 'Various' is currently playing.")
+		-- So when memberName has no realm, we must clear ALL variants:
+		--   1. "Various" (if stored without realm - same server)
+		--   2. "Various-CurrentRealm" (normalized same-server)
+		--   3. "Various-OtherRealm" (cross-server in cluster)
+		if not memberName:find("-") then
+			local baseName = memberName
+			
+			-- Clear the bare name without realm (same-server case)
+			self.onlineMembers[baseName] = nil
+			self.recentlySeen[baseName] = nil
+			
+			-- Clear all realm variants of this name
+			for cachedName, _ in pairs(self.onlineMembers) do
+				local cachedBase = cachedName:match("^(.-)%-") or cachedName
+				if cachedBase == baseName then
+					self.onlineMembers[cachedName] = nil
+				end
+			end
+			for cachedName, _ in pairs(self.recentlySeen) do
+				local cachedBase = cachedName:match("^(.-)%-") or cachedName
+				if cachedBase == baseName then
+					self.recentlySeen[cachedName] = nil
+				end
+			end
+		end
 	end
 end
 

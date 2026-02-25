@@ -79,17 +79,44 @@ function TOGBankClassic_Item:GetItemKey(link)
 	if not itemString then
 		itemString = link:match("item:([%d:]+)")
 	end
+	-- DUPLICATION-FIX: Handle raw itemStrings without "item:" prefix (e.g., "929::::::::1::::::::::")
+	if not itemString and link:match("^%d+:") then
+		itemString = link
+	end
 
 	if itemString then
-		-- Split into parts
+		-- Split into parts, PRESERVING empty parts between colons
+		-- Item format: itemID:enchant:gem1:gem2:gem3:gem4:suffixID:uniqueID:level:...
+		-- We want to keep parts 1-7 (itemID through suffixID), stripping uniqueID (part 8), level (part 9), etc.
+		
+		-- Use simpler approach: manually split by colons
 		local parts = {}
-		for part in string.gmatch(itemString, "([^:]+)") do
-			table.insert(parts, part)
+		local current = ""
+		for i = 1, #itemString do
+			local char = itemString:sub(i, i)
+			if char == ":" then
+				table.insert(parts, current)
+				current = ""
+			else
+				current = current .. char
+			end
 		end
+		-- Add final part after last colon
+		table.insert(parts, current)
 
-		-- Keep first 7 parts only (strip uniqueID and specializationID)
+		-- Keep first 7 parts only (itemID through suffixID, strip uniqueID/level/etc)
+		-- Parts 8+ (uniqueID, level) cause the same item to appear as different keys
 		if #parts >= 7 then
-			return "item:" .. table.concat({parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]}, ":")
+			local normalized = {}
+			for i = 1, 7 do
+				normalized[i] = parts[i]
+			end
+			local result = "item:" .. table.concat(normalized, ":")
+			-- DEBUG: Log key normalization for items that might have level variations
+			if parts[9] and parts[9] ~= "" and parts[9] ~= "0" then
+				TOGBankClassic_Output:Debug("ITEM", "[DEDUP] GetItemKey: ID=%s level=%s -> key=%s", parts[1], parts[9], result)
+			end
+			return result
 		else
 			return "item:" .. itemString
 		end

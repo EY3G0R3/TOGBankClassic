@@ -1,11 +1,14 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** February 20, 2026
+**Last Updated:** February 24, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+
+**Recent Fixes (2026-02-24):**
+- ✅ [DELTA-021] **CRITICAL** ApplyItemDelta creating duplicates from incorrect "added" items - Fixed ApplyItemDelta to check if items in delta.added already exist in the inventory (by ID) and UPDATE them instead of appending. When ComputeItemDelta's link normalization fails, items appear in delta.added that should be in delta.modified. Previously this caused duplicate entries in the items array. Now ApplyItemDelta searches for existing items by ID first: if found, updates Count/Link/ItemString/Info fields; if not found, appends as new. This provides defense-in-depth against link normalization failures in ComputeItemDelta. Combined with the existing 3-tier fallback (normalized key → ID-only → deep ID search), this ensures deltas are applied correctly even when item matching fails. Result: No more duplicate item entries, counts stay accurate across syncs. Location: DeltaComms.lua ApplyItemDelta Step 3 (~938-972).
 
 **Recent Fixes (2026-02-20):**
 - ✅ [PERF-008] **CRITICAL** 5-second freeze on login/reload/zoning from synchronous roster operations and cache invalidation - Fixed by deferring ALL expensive roster operations (RefreshOnlineCache and RebuildBankerRoster) AND moving cache invalidation inside the deferred block. Previously cache was invalidated BEFORE deferring operations, causing any IsBank() call between invalidation and rebuild to synchronously scan 500+ guild members. Root cause: GUILD_ROSTER_UPDATE called InvalidateBanksCache() immediately, then C_Timer.After deferred the rebuild. If anything called IsBank() in that window (during zoning, UI updates, etc), GetBanks() found nil cache and synchronously rebuilt it. Fixed in FOUR places: (1) Events.lua GUILD_ROSTER_UPDATE now invalidates cache INSIDE deferred block after 0.5s delay (~295-332), (2) RebuildBankerRoster() now explicitly rebuilds banksCache instead of relying on lazy rebuild (~420-432), (3) Guild:Init() defers RebuildBankerRoster with 1s delay when data exists (~282-287), (4) Guild:Reset() defers RebuildBankerRoster with 1s delay on first load/wipe (~259-265). Result: No more freezes on login, reload, or zoning - all roster operations happen in background. Locations: Events.lua GUILD_ROSTER_UPDATE, Guild.lua RebuildBankerRoster, Init, Reset.
@@ -133,6 +136,197 @@
 - **UI/Commands** - User interface, command output
 - **Database** - Snapshot management, saved variables
 - **Backwards Compatibility** - Issues with v0.6.8 clients
+
+---
+
+## Delta Sync Duplication - Technical Analysis
+
+**Last Updated:** February 24, 2026  
+**Status:** ✅ ALL BUGS FIXED
+
+### Executive Summary
+
+Through comprehensive analysis of the delta sync flow, we identified and fixed **4 CRITICAL BUGS** that caused item duplication and count inflation:
+
+1. **[DELTA-021] ApplyItemDelta not checking for existing items** - ✅ FIXED (2026-02-24)
+2. **[DELTA-020] Wrong baseline usage in delta computation** - ✅ FIXED (2026-02-18)
+3. **[DEDUP-FIX] Link normalization failures in ComputeItemDelta** - ✅ FIXED (deep ID fallback)
+4. **[SEPARATE-INV] Using aggregated items instead of separate inventories** - ✅ FIXED (2026-02-18)
+
+### The Core Problem
+
+When delta syncs failed to match items correctly, they would mark items as "added" instead of "modified". This caused:
+
+**Before Fixes:**
+```
+Sender: Runecloth Bag Count=7
+Receiver: Runecloth Bag Count=7
+
+Delta (WRONG): { added: [14046 Count=7] }
+Apply: Append item → [14046 Count=7], [14046 Count=7]
+Display: 7 + 7 = 14 ❌
+```
+
+**After Fixes:**
+```
+Sender: Runecloth Bag Count=7
+Receiver: Runecloth Bag Count=7
+
+Delta (CORRECT): { } (no changes)
+OR if link normalization fails:
+Delta: { added: [14046 Count=7] }
+Apply: Find existing 14046, UPDATE Count to 7 ✓
+Display: 7 ✓
+```
+
+### Root Causes Identified
+
+#### 1. Missing Existing Item Check in ApplyItemDelta
+**File:** `DeltaComms.lua` Lines ~938-972  
+**Severity:** CRITICAL
+
+When processing `delta.added`, ApplyItemDelta blindly appended items without checking if they already existed:
+
+```lua
+-- BEFORE (WRONG):
+if delta.added then
+    for _, item in ipairs(delta.added) do
+        table.insert(items, item)  -- ❌ Always appends!
+    end
+end
+
+-- AFTER (CORRECT):
+if delta.added then
+    for _, newItem in ipairs(delta.added) do
+        -- Look for existing item by ID
+        local existingItem = nil
+        for _, item in ipairs(items) do
+            if item.ID == newItem.ID then
+                existingItem = item
+                break
+            end
+        end
+        
+        if existingItem then
+            -- UPDATE existing item
+            existingItem.Count = newItem.Count
+            existingItem.Link = newItem.Link or existingItem.Link
+        else
+            -- ADD new item
+            table.insert(items, newItem)
+        end
+    end
+end
+```
+
+**Impact:** Defense-in-depth - even if ComputeItemDelta generates incorrect deltas due to link normalization failures, ApplyItemDelta still handles them correctly.
+
+#### 2. Wrong Baseline in Delta Computation
+**File:** `DeltaComms.lua`, `Guild.lua`  
+**Severity:** CRITICAL
+
+ComputeDelta was comparing against responder's OLD snapshot instead of requester's CURRENT data:
+
+```lua
+-- BEFORE (WRONG):
+local previous = self:GetSnapshot(altName)  -- Responder's old data
+local delta = self:ComputeItemDelta(previous.bank.items, current.bank.items)
+-- Computed: (responder's NEW) - (responder's OLD) ❌
+
+-- AFTER (CORRECT):
+local previous = requesterBaseline or self:GetSnapshot(altName)
+local delta = self:ComputeItemDelta(previous.bank.items, current.bank.items)
+-- Computed: (responder's NEW) - (requester's CURRENT) ✓
+```
+
+**Fix:** Modified `ComputeStateSummary` to send minimal item structures {ID, Count} from requester's current data, used as baseline.
+
+#### 3. Link Normalization Failures
+**File:** `DeltaComms.lua` Lines ~568-645  
+**Severity:** HIGH
+
+Items with different link formats (character level differences) failed to match during delta computation:
+
+```lua
+// Sender's item:   |Hitem:14046::::::::1::|h[Runecloth Bag]|h|r  (level 1)
+// Receiver's item: |Hitem:14046::::::::43::|h[Runecloth Bag]|h|r (level 43)
+// GetItemKey normalization should strip level, but sometimes failed
+```
+
+**Fix:** Implemented 3-tier fallback in ComputeItemDelta:
+1. **Normalized key match** - `14046item:14046:::::::` (strips level)
+2. **ID-only index** - For items without links
+3. **Deep ID search** - Loop through all oldItems by ID when normalization fails
+
+```lua
+-- Fallback 2: Deep ID search
+if not oldItem then
+    for _, item in pairs(oldItems) do
+        if item.ID == newItem.ID then
+            oldItem = item  -- Match by ID, ignore link differences
+            break
+        end
+    end
+end
+```
+
+#### 4. Using Aggregated Items Instead of Separate Inventories
+**File:** `DeltaComms.lua`  
+**Severity:** CRITICAL
+
+Delta protocol was using `alt.items` (UI aggregate) instead of separate `bank.items`, `bags.items`, `mail.items`:
+
+```lua
+-- BEFORE (WRONG):
+local delta = self:ComputeItemDelta(oldAlt.items, newAlt.items)
+// alt.items is computed UI aggregate, not always up-to-date
+
+-- AFTER (CORRECT):
+local bankDelta = self:ComputeItemDelta(old.bank.items, new.bank.items)
+local bagsDelta = self:ComputeItemDelta(old.bags.items, new.bags.items)
+local mailDelta = self:ComputeItemDelta(old.mail.items, new.mail.items)
+```
+
+**Fix:** Delta protocol now computes and applies deltas for each inventory category separately.
+
+### Defense-in-Depth Strategy
+
+The fixes work together to ensure correct behavior even when individual components fail:
+
+**Layer 1: ComputeItemDelta** - 3-tier matching (normalized → ID-only → deep search)  
+**Layer 2: ApplyItemDelta** - Check for existing items before append  
+**Layer 3: Separate Inventories** - Process bags/bank/mail independently  
+**Layer 4: Correct Baseline** - Use requester's actual data, not responder's old snapshot
+
+### Testing & Verification
+
+**Symptoms Fixed:**
+- ✅ Runecloth Bag count inflated from 28 to 949 → Now stable at 28
+- ✅ Multiple duplicate entries for same item → Now single entry per item
+- ✅ Counts doubling on each sync → Now updates correctly
+- ✅ Items appearing in wrong categories → Now categorized properly
+
+**Debug Logging Added:**
+```
+[DELTA] Applied 7 added items (6 updated existing, 1 new)
+[DELTA] ComputeItemDelta: matched 12 items using deep ID fallback - link normalization mismatch detected
+```
+
+### Related Issues
+
+- **DELTA-020:** Baseline usage (fixed 2026-02-18)
+- **DELTA-019:** Premature hash update (fixed 2026-02-18)
+- **DELTA-018:** Circular hash comparison (fixed 2026-02-18)
+- **DELTA-017:** Empty baseline structure (fixed 2026-02-18)
+- **DELTA-016:** Aggregated items vs separate inventories (fixed 2026-02-18)
+
+### Implementation Status
+
+✅ **COMPLETE** - All critical delta sync bugs have been identified and fixed. System now correctly:
+1. Computes deltas using requester's actual baseline
+2. Matches items across different link formats
+3. Processes separate inventories independently
+4. Updates existing items instead of creating duplicates
 
 ---
 

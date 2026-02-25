@@ -512,11 +512,35 @@ function TOGBankClassic_DeltaComms:BuildItemIndex(items)
 		return index
 	end
 
+	local withLinks = 0
+	local withoutLinks = 0
+	
 	for _, item in pairs(items) do
-		if item and item.ID and (item.Link or item.ItemString) then
-			local key = tostring(item.ID) .. (item.Link or item.ItemString)
-			index[key] = item
+		if item and item.ID then
+			-- DUPLICATION-FIX: Handle items without Links (from minimal baselines)
+			-- Items without Links use ID-only key for deduplication
+			if item.Link or item.ItemString then
+				-- Full item with Link - use normalized key (strips character level)
+				local normalizedKey = TOGBankClassic_Item:GetItemKey(item.Link or item.ItemString)
+				local key = tostring(item.ID) .. normalizedKey
+				index[key] = item
+				withLinks = withLinks + 1
+			else
+				-- Minimal item without Link - use ID-only key as fallback
+				-- This allows baseline items (ID+Count only) to be matched during delta computation
+				local key = tostring(item.ID)
+				-- Only add if not already present (prefer items with Links)
+				if not index[key] then
+					index[key] = item
+					withoutLinks = withoutLinks + 1
+				end
+			end
 		end
+	end
+	
+	if withoutLinks > 0 then
+		TOGBankClassic_Output:Debug("DELTA", "[DEDUP-FIX] BuildItemIndex: indexed %d items (%d with links, %d without links)",
+			withLinks + withoutLinks, withLinks, withoutLinks)
 	end
 
 	return index
@@ -531,13 +555,62 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 
 	-- Build item index for old items by itemID+Link key
 	local oldByKey = self:BuildItemIndex(oldItems)
+	
+	-- Build ID-only lookup for items without Links (from minimal baselines)
+	local oldByIDOnly = {}
+	for _, item in pairs(oldItems) do
+		if item and item.ID and not (item.Link or item.ItemString) then
+			oldByIDOnly[tostring(item.ID)] = item
+		end
+	end
 
 	-- Find added and modified items
+	local fallbackMatches = 0
+	local deepFallbackMatches = 0
 	for _, newItem in pairs(newItems) do
-		if newItem and newItem.ID and (newItem.Link or newItem.ItemString) then
-			local key = tostring(newItem.ID) .. (newItem.Link or newItem.ItemString)
-			local oldItem = oldByKey[key]
-
+		if newItem and newItem.ID then
+			-- DUPLICATION-FIX: Try full key first, then fallback to ID-only
+			local key
+			local oldItem = nil
+			local usedFallback = false
+			local usedDeepFallback = false
+			
+			if newItem.Link or newItem.ItemString then
+				-- Full item with Link - use normalized key (strips character level)
+				local normalizedKey = TOGBankClassic_Item:GetItemKey(newItem.Link or newItem.ItemString)
+				key = tostring(newItem.ID) .. normalizedKey
+				oldItem = oldByKey[key]
+				
+				-- Fallback 1: check ID-only index if not found (handles minimal baseline items)
+				if not oldItem then
+					oldItem = oldByIDOnly[tostring(newItem.ID)]
+					if oldItem then
+						key = tostring(newItem.ID)  -- Use ID-only key for marking processed
+						usedFallback = true
+						fallbackMatches = fallbackMatches + 1
+					end
+				end
+				
+				-- Fallback 2: search all oldItems by ID if normalized key lookup failed
+				-- This handles cases where GetItemKey generates different keys for same item
+				-- (e.g., link parsing inconsistencies, different link formats)
+				if not oldItem then
+					for _, item in pairs(oldItems) do
+						if item and item.ID == newItem.ID then
+							oldItem = item
+							key = tostring(newItem.ID)  -- Use ID as key for tracking
+							usedDeepFallback = true
+							deepFallbackMatches = deepFallbackMatches + 1
+							break
+						end
+					end
+				end
+			else
+				-- Minimal item without Link - use ID-only key
+				key = tostring(newItem.ID)
+				oldItem = oldByKey[key] or oldByIDOnly[key]
+			end
+			
 			if not oldItem then
 				-- Item was added
 				table.insert(delta.added, newItem)
@@ -547,14 +620,48 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 			end
 
 			-- Mark as processed
-			oldByKey[key] = nil
+			if key then
+				oldByKey[key] = nil
+				oldByIDOnly[key] = nil
+			end
+			
+			-- If we used deep fallback, we need to remove the matched item from indices
+			-- since it was found under a different key than expected
+			if usedDeepFallback and oldItem then
+				-- Remove from oldByKey by searching for the item
+				for k, v in pairs(oldByKey) do
+					if v == oldItem then
+						oldByKey[k] = nil
+						break
+					end
+				end
+				-- Remove from oldByIDOnly as well
+				local idKey = tostring(oldItem.ID)
+				if oldByIDOnly[idKey] == oldItem then
+					oldByIDOnly[idKey] = nil
+				end
+			end
 		end
+	end
+	
+	if fallbackMatches > 0 then
+		TOGBankClassic_Output:Debug("DELTA", "[DEDUP-FIX] ComputeItemDelta: matched %d items using ID-only fallback (prevents duplication)",
+			fallbackMatches)
+	end
+	
+	if deepFallbackMatches > 0 then
+		TOGBankClassic_Output:Debug("DELTA", "[DEDUP-FIX] ComputeItemDelta: matched %d items using deep ID fallback - link normalization mismatch detected",
+			deepFallbackMatches)
 	end
 
 	-- Remaining old items were removed
 	for _, item in pairs(oldByKey) do
 		-- v0.8.0: Minimal removes format (just ID, no Link or Count)
 		-- Saves 4 bytes per removed item
+		table.insert(delta.removed, { ID = item.ID })
+	end
+	for _, item in pairs(oldByIDOnly) do
+		-- Also check ID-only items that weren't processed
 		table.insert(delta.removed, { ID = item.ID })
 	end
 
@@ -608,17 +715,13 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 					TOGBankClassic_Output:Debug("DELTA", "[DELTA-020] Mail changed: using requester's actual baseline (bank=%d, bags=%d, mail=%d)",
 						#previous.bank.items, #previous.bags.items, #previous.mail.items)
 				else
-					-- Fallback: Try GetSnapshot (will be wrong if responder broadcast multiple times)
-					previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
-					if previous then
-						TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail hash changed: requester=%d, banker=%d (using snapshot - may be incorrect)",
-							requesterMailHash, currentMailHash)
-					else
-						-- No snapshot - use empty baseline to send all items as delta additions
-						previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-						TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Mail changed but no snapshot for %s: requester mail=%d, banker mail=%d (sending all items as delta additions)",
-							altName, requesterMailHash, currentMailHash)
-					end
+					-- BUGFIX: No requester baseline - cannot compute accurate delta
+					-- GetSnapshot returns RESPONDER's saved data, not REQUESTER's actual data
+					-- This causes severe duplication (items added multiple times)
+					-- Force full sync by using empty baseline instead
+					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
+					TOGBankClassic_Output:Warn("DELTA", "[DUPLICATION-FIX] Missing requester baseline (mail change) - forcing full sync for %s (mail=%d→%d)",
+						altName, requesterMailHash, currentMailHash)
 				end
 			else
 				-- Hash mismatch - use requester's actual baseline if available
@@ -636,18 +739,13 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 						requesterInventoryHash, currentHash,
 						#previous.bank.items, #previous.bags.items, #previous.mail.items)
 				else
-					-- Fallback: Try GetSnapshot (will be wrong if responder broadcast multiple times)
-					previous = TOGBankClassic_Database:GetSnapshot(guildName, altName)
-					if previous then
-						TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch: requester=%d, banker=%d, using GetSnapshot baseline (may be incorrect - missing requester baseline)",
-							requesterInventoryHash, currentHash)
-					else
-						-- No previous snapshot - first sync or snapshot expired
-						-- Use empty baseline (send everything as delta additions)
-						previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-						TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Hash mismatch but no snapshot: requester=%d, banker=%d (sending all as additions)",
-							requesterInventoryHash, currentHash)
-					end
+					-- BUGFIX: No requester baseline - cannot compute accurate delta
+					-- GetSnapshot returns RESPONDER's saved data, not REQUESTER's actual data
+					-- This causes severe duplication (items added multiple times)
+					-- Force full sync by using empty baseline instead
+					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
+					TOGBankClassic_Output:Warn("DELTA", "[DUPLICATION-FIX] Missing requester baseline - forcing full sync for %s (hash=%d→%d)",
+						altName, requesterInventoryHash or 0, currentHash)
 				end
 			end
 		else
@@ -790,8 +888,19 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 
 	-- Build current items index by itemKey
 	local itemsByKey = self:BuildItemIndex(items)
+	
+	-- Build ID-only lookup for items without Links
+	local itemsByIDOnly = {}
+	for _, item in pairs(items) do
+		if item and item.ID and not (item.Link or item.ItemString) then
+			itemsByIDOnly[tostring(item.ID)] = item
+		end
+	end
 
-	-- Remove items
+	-- STALE-INDEX-FIX: Process operations in order: removed → modified → added
+	-- This prevents indexes from becoming invalid when Aggregate() clears the array
+	
+	-- STEP 1: Remove items
 	-- v0.8.0: Removed items now only have ID (Link removed for bandwidth savings)
 	if delta.removed then
 		for _, removedItem in ipairs(delta.removed) do
@@ -799,12 +908,15 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 				-- v0.8.0: Match by ID only (Link field removed)
 				-- Still support old format with Link for backwards compatibility
 				if removedItem.Link then
-					-- Old format (v0.7.0): Has Link, use ID+Link key
-					local key = tostring(removedItem.ID) .. removedItem.Link
+					-- Old format (v0.7.0): Has Link, use ID+normalized key
+					-- DUPLICATION-FIX: Normalize both keys to match items regardless of character level
+					local normalizedRemovedKey = TOGBankClassic_Item:GetItemKey(removedItem.Link)
+					local key = tostring(removedItem.ID) .. normalizedRemovedKey
 					for i = #items, 1, -1 do
 						local item = items[i]
 						if item and item.ID and item.Link then
-							local itemKey = tostring(item.ID) .. item.Link
+							local normalizedItemKey = TOGBankClassic_Item:GetItemKey(item.Link)
+							local itemKey = tostring(item.ID) .. normalizedItemKey
 							if itemKey == key then
 								table.remove(items, i)
 								break
@@ -825,21 +937,28 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 		end
 	end
 
-	-- Add new items
-	if delta.added then
-		for _, item in ipairs(delta.added) do
-			if item and item.ID and (item.Link or item.ItemString) then
-				table.insert(items, item)
-			end
-		end
-	end
-
-	-- Modify existing items
+	-- STEP 2: Modify existing items (MUST be before added to use valid indexes)
 	if delta.modified then
 		for _, changes in ipairs(delta.modified) do
-			if changes and changes.ID and (changes.Link or changes.ItemString) then
-				local key = tostring(changes.ID) .. (changes.Link or changes.ItemString)
-				local existingItem = itemsByKey[key]
+			if changes and changes.ID then
+				-- DUPLICATION-FIX: Try full key first, then fallback to ID-only
+				local existingItem = nil
+				
+				if changes.Link or changes.ItemString then
+					-- Full item with Link - use normalized key
+					local normalizedKey = TOGBankClassic_Item:GetItemKey(changes.Link or changes.ItemString)
+					local key = tostring(changes.ID) .. normalizedKey
+					existingItem = itemsByKey[key]
+					
+					-- Fallback: check ID-only index if not found
+					if not existingItem then
+						existingItem = itemsByIDOnly[tostring(changes.ID)]
+					end
+				else
+					-- Minimal item without Link - use ID-only key
+					local key = tostring(changes.ID)
+					existingItem = itemsByKey[key] or itemsByIDOnly[key]
+				end
 
 				if existingItem then
 					-- Apply changed fields to existing item
@@ -849,9 +968,50 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 				else
 					-- Item doesn't exist (shouldn't happen), add as new
 					table.insert(items, changes)
+					TOGBankClassic_Output:Debug("DELTA", "[STALE-INDEX-FIX] Modified item not found, adding as new: ID=%d", changes.ID)
 				end
 			end
 		end
+	end
+
+	-- STEP 3: Add new items (CAN invalidate indexes, but no more operations depend on them)
+	if delta.added then
+		-- DELTA-FIX: Check if "added" items already exist (by ID only) and UPDATE instead of append
+		-- This handles cases where ComputeItemDelta's link normalization failed to match items
+		local updated = 0
+		local added = 0
+		
+		for _, newItem in ipairs(delta.added) do
+			if newItem and newItem.ID and (newItem.Link or newItem.ItemString) then
+				-- Look for existing item by ID
+				local existingItem = nil
+				for _, item in ipairs(items) do
+					if item and item.ID == newItem.ID then
+						existingItem = item
+						break
+					end
+				end
+				
+				if existingItem then
+					-- Item exists - UPDATE quantities and fields
+					existingItem.Count = newItem.Count
+					existingItem.Link = newItem.Link or existingItem.Link
+					existingItem.ItemString = newItem.ItemString or existingItem.ItemString
+					existingItem.ForceLink = newItem.ForceLink or existingItem.ForceLink
+					if newItem.Info then
+						existingItem.Info = newItem.Info
+					end
+					updated = updated + 1
+				else
+					-- Item doesn't exist - ADD it
+					table.insert(items, newItem)
+					added = added + 1
+				end
+			end
+		end
+		
+		TOGBankClassic_Output:Debug("DELTA", "Applied %d added items (%d updated existing, %d new)", 
+			#delta.added, updated, added)
 	end
 
 	return true
@@ -1002,6 +1162,17 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					current.bank.items = {}
 				end
 				self:ApplyItemDelta(current.bank.items, changes.bank)
+				-- DEFENSIVE: Deduplicate bank items after delta application
+				if TOGBankClassic_Item and #current.bank.items > 0 then
+					local deduped = TOGBankClassic_Item:Aggregate(current.bank.items, nil)
+					current.bank.items = {}
+					local keys = {}
+					for k in pairs(deduped) do table.insert(keys, k) end
+					table.sort(keys)
+					for _, k in ipairs(keys) do
+						table.insert(current.bank.items, deduped[k])
+					end
+				end
 				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied bank delta for %s: now %d items", norm, #current.bank.items)
 			end
 
@@ -1014,6 +1185,17 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					current.bags.items = {}
 				end
 				self:ApplyItemDelta(current.bags.items, changes.bags)
+				-- DEFENSIVE: Deduplicate bags items after delta application
+				if TOGBankClassic_Item and #current.bags.items > 0 then
+					local deduped = TOGBankClassic_Item:Aggregate(current.bags.items, nil)
+					current.bags.items = {}
+					local keys = {}
+					for k in pairs(deduped) do table.insert(keys, k) end
+					table.sort(keys)
+					for _, k in ipairs(keys) do
+						table.insert(current.bags.items, deduped[k])
+					end
+				end
 				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied bags delta for %s: now %d items", norm, #current.bags.items)
 			end
 
@@ -1026,6 +1208,17 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					current.mail.items = {}
 				end
 				self:ApplyItemDelta(current.mail.items, changes.mail)
+				-- DEFENSIVE: Deduplicate mail items after delta application
+				if TOGBankClassic_Item and #current.mail.items > 0 then
+					local deduped = TOGBankClassic_Item:Aggregate(current.mail.items, nil)
+					current.mail.items = {}
+					local keys = {}
+					for k in pairs(deduped) do table.insert(keys, k) end
+					table.sort(keys)
+					for _, k in ipairs(keys) do
+						table.insert(current.mail.items, deduped[k])
+					end
+				end
 				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied mail delta for %s: now %d items", norm, #current.mail.items)
 			end
 
@@ -1040,8 +1233,14 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
 					aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
 					current.items = {}
-					for _, item in pairs(aggregated) do
-						table.insert(current.items, item)
+					-- DETERMINISTIC-ORDER-FIX: Sort keys before inserting to ensure consistent array ordering
+					local keys = {}
+					for k in pairs(aggregated) do
+						table.insert(keys, k)
+					end
+					table.sort(keys)
+					for _, k in ipairs(keys) do
+						table.insert(current.items, aggregated[k])
 					end
 					TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Recalculated aggregated items for %s: %d items (bank=%d, bags=%d, mail=%d)",
 						norm, #current.items, #bankItems, #bagItems, #mailItems)

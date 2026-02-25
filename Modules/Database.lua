@@ -28,6 +28,22 @@ function TOGBankClassic_Database:Reset(name)
 		return
 	end
 
+	-- Explicitly clear existing delta data before resetting to ensure SavedVariables persistence
+	if self.db.faction[name] then
+		if self.db.faction[name].deltaHistory then
+			-- Clear all entries
+			for k in pairs(self.db.faction[name].deltaHistory) do
+				self.db.faction[name].deltaHistory[k] = nil
+			end
+		end
+		if self.db.faction[name].deltaSnapshots then
+			-- Clear all entries
+			for k in pairs(self.db.faction[name].deltaSnapshots) do
+				self.db.faction[name].deltaSnapshots[k] = nil
+			end
+		end
+	end
+
 	---START CHANGES
 	--self.db.factionrealm[name] = {
 	self.db.faction[name] = {
@@ -60,7 +76,7 @@ function TOGBankClassic_Database:Reset(name)
 		},
 	}
 
-	TOGBankClassic_Output:Response("Reset Database")
+	TOGBankClassic_Output:Response("Reset Database (cleared deltaHistory and deltaSnapshots)")
 end
 
 function TOGBankClassic_Database:ResetPlayer(name, player)
