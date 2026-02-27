@@ -50,6 +50,20 @@ function TOGBankClassic_Item:NeedsLink(itemLink)
 	return false
 end
 
+-- Check by item ID whether this item's class requires a Link to be preserved.
+-- Returns true  = weapon/armor (class 2/4) — link required
+-- Returns false = other class — link optional
+-- Returns nil   = item not in client cache yet — caller must decide
+-- Used by ApplyItemDelta to guard against accepting link-stripped items on the receive side.
+function TOGBankClassic_Item:ItemClassNeedsLink(itemID)
+	if not itemID then return nil end
+	local _, _, _, _, _, _, _, _, _, _, _, itemClassId = GetItemInfo(itemID)
+	if itemClassId then
+		return ITEM_CLASSES_NEEDING_LINK[itemClassId] == true
+	end
+	return nil  -- not cached
+end
+
 -- Extract ItemString from item link (full, unmodified)
 -- Example: "[Revenant Helmet of the Bear]" -> "item:10132:0:0:0:0:0:0:0:863"
 -- If link is nil/empty, returns empty string

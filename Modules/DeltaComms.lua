@@ -459,8 +459,14 @@ function TOGBankClassic_DeltaComms:ItemsEqual(item1, item2)
 	if item1.Count ~= item2.Count then
 		return false
 	end
-	if item1.Link ~= item2.Link then
-		return false
+	-- Only compare Links when both items have them.
+	-- Minimal baseline items (from state-summary expandMinimalItems) have no Link.
+	-- Comparing nil vs an actual link would always return false, causing every
+	-- unchanged item to land in modified[] and producing full-sized deltas.
+	if item1.Link ~= nil and item2.Link ~= nil then
+		if item1.Link ~= item2.Link then
+			return false
+		end
 	end
 
 	-- Compare Info table if present (deep comparison)
@@ -983,9 +989,29 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 						existingItem[field] = value
 					end
 				else
-					-- Item doesn't exist (shouldn't happen), add as new
-					table.insert(items, changes)
-					TOGBankClassic_Output:Debug("DELTA", "[STALE-INDEX-FIX] Modified item not found, adding as new: ID=%d", changes.ID)
+					-- Item doesn't exist (shouldn't happen), add as new.
+					-- ITEM-003 GUARD: Reject linkless items for weapon/armor types (same logic as STEP 3).
+					local guardBlock = false
+					if not changes.Link and TOGBankClassic_Item then
+						local needsLink = TOGBankClassic_Item:ItemClassNeedsLink(changes.ID)
+						if needsLink == true then
+							guardBlock = true
+							TOGBankClassic_Output:Debug("DELTA", "[ITEM-003] STEP2: blocked linkless modified-as-new weapon/armor ID=%d", changes.ID)
+						elseif needsLink == nil then
+							-- Class not cached; block if any linked entry already exists for this base ID
+							for _, existingEntry in ipairs(items) do
+								if existingEntry and existingEntry.ID == changes.ID and existingEntry.Link then
+									guardBlock = true
+									TOGBankClassic_Output:Debug("DELTA", "[ITEM-003] STEP2: blocked linkless modified-as-new ID=%d (linked entry exists, class uncached)", changes.ID)
+									break
+								end
+							end
+						end
+					end
+					if not guardBlock then
+						table.insert(items, changes)
+						TOGBankClassic_Output:Debug("DELTA", "[STALE-INDEX-FIX] Modified item not found, adding as new: ID=%d", changes.ID)
+					end
 				end
 			end
 		end
@@ -1041,9 +1067,35 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 					end
 					updated = updated + 1
 				else
-					-- Item doesn't exist - ADD it
-					table.insert(items, newItem)
-					added = added + 1
+					-- Item doesn't exist - ADD it.
+					-- ITEM-003 GUARD: Reject linkless items for weapon/armor types.
+					-- When GetItemInfo confirms class 2 (Weapon) or 4 (Armor), a Link is required
+					-- to distinguish suffix variants (e.g. plain vs. "of the Wolf"). Accepting an
+					-- ItemString-only entry would create a ghost plain-weapon stack that dedup
+					-- cannot merge with existing suffixed entries sharing the same base ID.
+					-- If the item class is uncached, fall back to: block if any linked entry for
+					-- this base ID already exists in storage (the linked version is authoritative).
+					local guardBlock = false
+					if not newItem.Link and TOGBankClassic_Item then
+						local needsLink = TOGBankClassic_Item:ItemClassNeedsLink(newItem.ID)
+						if needsLink == true then
+							guardBlock = true
+							TOGBankClassic_Output:Debug("DELTA", "[ITEM-003] STEP3: blocked linkless weapon/armor ID=%d (class confirmed)", newItem.ID)
+						elseif needsLink == nil then
+							-- Class not cached; block if any linked entry already exists for this base ID
+							for _, existingEntry in ipairs(items) do
+								if existingEntry and existingEntry.ID == newItem.ID and existingEntry.Link then
+									guardBlock = true
+									TOGBankClassic_Output:Debug("DELTA", "[ITEM-003] STEP3: blocked linkless ID=%d (linked entry exists, class uncached)", newItem.ID)
+									break
+								end
+							end
+						end
+					end
+					if not guardBlock then
+						table.insert(items, newItem)
+						added = added + 1
+					end
 				end
 			end
 		end
