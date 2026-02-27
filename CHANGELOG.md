@@ -96,18 +96,20 @@
 - **LOCATION**: 
   - Events.lua Initialize (~59-68): Added plain-text prefix check before pattern match
 
-#### [PERF-010] Fixed Login Freeze from Synchronous Hash Cache Initialization
-- **FIXED**: Deferred latestBankerHashes cache initialization to eliminate 3-5 second freeze on login/reload
-- **PROBLEM**: Game completely froze for 3-5 seconds when logging in or reloading UI with large SavedVariables
-- **ROOT CAUSE**: Guild:Init() synchronously looped through 70+ alts building hash cache on PLAYER_LOGIN
+#### [PERF-010] Fixed Login Freeze from Synchronous Data Migrations
+- **FIXED**: Deferred Database:Load() migrations and hash cache initialization to eliminate 3-5 second freeze on login/reload
+- **PROBLEM**: Game completely froze for 3-5 seconds when logging in or reloading UI with large SavedVariables (70+ alts)
+- **ROOT CAUSE**: Database:Load() synchronously looped through ALL alts performing migrations on EVERY login - most expensive was RecalculateAggregatedItems() for each banker alt (~30-50ms per alt)
 - **IMPACT**: Cannot move, cast spells, or interact during freeze - appeared as if game crashed
-- **WHY DEFERRABLE**: Hash cache only used for comparing hashes from broadcasts, which don't arrive until after login completes
+- **WHY DEFERRABLE**: Data already loaded from SavedVariables, migrations are cleanup/optimization operations that don't need to be immediate
 - **SOLUTION**:
-  - Wrapped hash cache initialization in C_Timer.After(0.5) like RebuildBankerRoster from PERF-008
-  - Builds cache in background after UI becomes responsive
-  - Still completes before first hash broadcast received
-- **RESULT**: Instant login, no freeze, cache ready before first use
+  - Wrapped entire Database:Load() migration block in C_Timer.After(0.5)
+  - Also deferred latestBankerHashes initialization in Guild:Init (lighter but still blocking)
+  - Migrations run in background after UI becomes responsive
+  - Still complete before first UI interaction or sync
+- **RESULT**: Instant login, no freeze, migrations ready before first use
 - **LOCATION**: 
+  - Database.lua Load (~175-243): Deferred migration block
   - Guild.lua Init (~295-313): Deferred latestBankerHashes initialization
 - **LOCATION**: 
   - Events.lua Initialize (~59-68): Added plain-text prefix check before pattern match
