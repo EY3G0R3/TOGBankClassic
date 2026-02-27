@@ -227,6 +227,22 @@ function TOGBankClassic_Database:Load(name)
 							TOGBankClassic_Output:Debug("DATABASE", "AFTER recalc - Banker %s alt.items: %s", name, table.concat(afterSample, ", "))
 						end
 
+						-- Recompute inventory hash using SYNC-006 path (same as Bank:Scan) so
+						-- the stored hash matches what Bank:Scan() produces.  The old migration
+						-- path used pre-SYNC-006 (ComputeInventoryHash(bank, bags, money)) which
+						-- hashes bank.items+bags.items separately; Bank:Scan uses SYNC-006
+						-- (ComputeInventoryHash(items, nil, nil, money)) which hashes the
+						-- aggregated array.  Different inputs → different hash → false "inventory
+						-- changed" on every startup until the first real scan fixed it.
+						if alt.items then
+							local money = alt.money or 0
+							local syncHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, money)
+							if syncHash ~= alt.inventoryHash then
+								alt.inventoryHash = syncHash
+								TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: corrected inventory hash for %s to SYNC-006 format (hash=%d)", name, syncHash)
+							end
+						end
+
 						TOGBankClassic_Output:Debug("DATABASE", "FORCED recalculation for banker %s from bank/bags/mail", name)
 					elseif alt.items then
 						-- Synced alt - FORCE deduplicate

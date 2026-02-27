@@ -1827,62 +1827,43 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%d, mailHash=%d)", requester, norm, currentHash, currentMailHash)
 			return
 		elseif requesterHash == currentHash and requesterMailHash ~= currentMailHash then
-			-- Only mail changed - check if we have a snapshot to compute proper delta
-			local hasSnapshot = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
-			if hasSnapshot then
-				-- Can compute proper mail-only delta from snapshot
-				TOGBankClassic_Output:DebugComm("DELTA MODE: MAIL-ONLY CHANGE - calling SendAltData for %s (mail: requester=%d, current=%d)", norm, requesterMailHash, currentMailHash)
-				TOGBankClassic_Output:Debug(
-					"SYNC",
-					"Sending data to %s for %s (mail-only change: requester=%d, current=%d)",
-					requester,
-					norm,
-					requesterMailHash,
-					currentMailHash
-				)
-				-- DELTA-020: Pass requester baseline for accurate delta computation
-				self:SendAltData(norm, requesterHash, requesterMailHash, requester, requesterBaseline)
-			else
-				-- No snapshot - force full data to avoid duplication bug
-				TOGBankClassic_Output:Debug(
-					"SYNC",
-					"Mail changed for %s but no snapshot available - forcing full data to %s",
-					norm,
-					requester
-				)
-				-- Send with hash=0 to force requester to accept all items as new baseline
-				self:SendAltData(norm, 0, 0, requester, nil)
-			end
+			-- Only mail changed.
+			-- DELTA-020: requesterBaseline from state summary is sufficient for delta computation.
+			-- The old hasSnapshot gate was a pre-DELTA-020 safety measure (snapshot held the
+			-- responder's data, not the requester's). ComputeDelta now uses requesterBaseline
+			-- directly, so no snapshot is needed.
+			TOGBankClassic_Output:DebugComm("DELTA MODE: MAIL-ONLY CHANGE - calling SendAltData for %s (mail: requester=%d, current=%d)", norm, requesterMailHash, currentMailHash)
+			TOGBankClassic_Output:Debug(
+				"SYNC",
+				"Sending data to %s for %s (mail-only change: requester=%d, current=%d)",
+				requester,
+				norm,
+				requesterMailHash,
+				currentMailHash
+			)
+			-- DELTA-020: Pass requester baseline for accurate delta computation
+			self:SendAltData(norm, requesterHash, requesterMailHash, requester, requesterBaseline)
 			return
 		else
-			-- Inventory changed (mail may or may not have changed) - check if we have snapshot
-			local hasSnapshot = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
-			if hasSnapshot or requesterHash == 0 then
-				-- Can compute proper delta from snapshot, OR requester has no data (safe baseline)
-				TOGBankClassic_Output:DebugComm("DELTA MODE: INVENTORY CHANGE - calling SendAltData for %s (inv: requester=%d, current=%d, mail: requester=%d, current=%d)", norm, requesterHash, currentHash, requesterMailHash, currentMailHash)
-				TOGBankClassic_Output:Debug(
-					"SYNC",
-					"Sending data to %s for %s (hash mismatch: inv=%d->%d, mail=%d->%d)",
-					requester,
-					norm,
-					requesterHash,
-					currentHash,
-					requesterMailHash,
-					currentMailHash
-				)
-				-- DELTA-020: Pass requester baseline for accurate delta computation
-				self:SendAltData(norm, requesterHash, requesterMailHash, requester, requesterBaseline)
-			else
-				-- No snapshot and requester has data - force full data to avoid duplication bug
-				TOGBankClassic_Output:Debug(
-					"SYNC",
-					"Inventory changed for %s but no snapshot available - forcing full data to %s",
-					norm,
-					requester
-				)
-				-- Send with hash=0 to force requester to accept all items as new baseline
-				self:SendAltData(norm, 0, 0, requester, nil)
-			end
+			-- Inventory changed (mail may or may not have changed).
+			-- DELTA-020: requesterBaseline from state summary is sufficient for delta computation.
+			-- The old hasSnapshot gate was a pre-DELTA-020 safety measure (snapshot held the
+			-- responder's data, not the requester's). ComputeDelta now uses requesterBaseline
+			-- directly, so no snapshot is needed. requesterHash == 0 (new requester with no data)
+			-- is handled inside ComputeDelta by sending all items as additions.
+			TOGBankClassic_Output:DebugComm("DELTA MODE: INVENTORY CHANGE - calling SendAltData for %s (inv: requester=%d, current=%d, mail: requester=%d, current=%d)", norm, requesterHash, currentHash, requesterMailHash, currentMailHash)
+			TOGBankClassic_Output:Debug(
+				"SYNC",
+				"Sending data to %s for %s (hash mismatch: inv=%d->%d, mail=%d->%d)",
+				requester,
+				norm,
+				requesterHash,
+				currentHash,
+				requesterMailHash,
+				currentMailHash
+			)
+			-- DELTA-020: Pass requester baseline for accurate delta computation
+			self:SendAltData(norm, requesterHash, requesterMailHash, requester, requesterBaseline)
 			return
 		end
 	end
