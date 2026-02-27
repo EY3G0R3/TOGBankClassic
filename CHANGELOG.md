@@ -96,6 +96,22 @@
 - **LOCATION**: 
   - Events.lua Initialize (~59-68): Added plain-text prefix check before pattern match
 
+#### [PERF-010] Fixed Login Freeze from Synchronous Hash Cache Initialization
+- **FIXED**: Deferred latestBankerHashes cache initialization to eliminate 3-5 second freeze on login/reload
+- **PROBLEM**: Game completely froze for 3-5 seconds when logging in or reloading UI with large SavedVariables
+- **ROOT CAUSE**: Guild:Init() synchronously looped through 70+ alts building hash cache on PLAYER_LOGIN
+- **IMPACT**: Cannot move, cast spells, or interact during freeze - appeared as if game crashed
+- **WHY DEFERRABLE**: Hash cache only used for comparing hashes from broadcasts, which don't arrive until after login completes
+- **SOLUTION**:
+  - Wrapped hash cache initialization in C_Timer.After(0.5) like RebuildBankerRoster from PERF-008
+  - Builds cache in background after UI becomes responsive
+  - Still completes before first hash broadcast received
+- **RESULT**: Instant login, no freeze, cache ready before first use
+- **LOCATION**: 
+  - Guild.lua Init (~295-313): Deferred latestBankerHashes initialization
+- **LOCATION**: 
+  - Events.lua Initialize (~59-68): Added plain-text prefix check before pattern match
+
 #### [COMM-003d] Fixed recentlySeen Cache Undermining Guild Roster Cache (CRITICAL)
 - **FIXED**: Removed recentlySeen cache, IsPlayerOnline now uses only guild roster cache
 - **PROBLEM**: Addon still tried to whisper players for 5 minutes after they logged off

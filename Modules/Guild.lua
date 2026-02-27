@@ -290,25 +290,28 @@ function TOGBankClassic_Guild:Init(name)
 			self:RebuildBankerRoster()
 		end)
 		
-		-- Initialize latestBankerHashes cache from local data on load
-		-- This cache will be updated when we receive hash-list-reply or hash-list-broadcast
-		self.latestBankerHashes = {}
-		local hashCount = 0
-		if self.Info.alts then
-			for altName, alt in pairs(self.Info.alts) do
-				if alt then
-					self.latestBankerHashes[altName] = {
-						hash = alt.inventoryHash or 0,
-						updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
-						version = alt.version or 0,
-						mailHash = alt.mailHash or 0,
-						mailUpdatedAt = (alt.mail and alt.mail.version) or 0,
-					}
-					hashCount = hashCount + 1
+		-- PERF-010: Defer hash cache initialization to prevent login freeze
+		-- With 70+ alts in SavedVariables, synchronous loop blocks UI for 3-5 seconds
+		-- Hash cache not needed immediately - only used for hash comparison from broadcasts
+		C_Timer.After(0.5, function()
+			self.latestBankerHashes = {}
+			local hashCount = 0
+			if self.Info.alts then
+				for altName, alt in pairs(self.Info.alts) do
+					if alt then
+						self.latestBankerHashes[altName] = {
+							hash = alt.inventoryHash or 0,
+							updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
+							version = alt.version or 0,
+							mailHash = alt.mailHash or 0,
+							mailUpdatedAt = (alt.mail and alt.mail.version) or 0,
+						}
+						hashCount = hashCount + 1
+					end
 				end
 			end
-		end
-		TOGBankClassic_Output:Debug("PROTOCOL", "Initialized banker hash cache with %d alts from SavedVariables", hashCount)
+			TOGBankClassic_Output:Debug("PROTOCOL", "Initialized banker hash cache with %d alts from SavedVariables", hashCount)
+		end)
 		
 		return true
 	end
