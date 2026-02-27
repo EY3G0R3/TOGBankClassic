@@ -58,10 +58,13 @@ function TOGBankClassic_Events:RegisterEvents()
 
 	-- Filter out "No player named X is currently playing" errors from chat
 	-- These are detected and handled by CHAT_MSG_SYSTEM event handler
+	-- Use fast plain-text check before pattern matching for performance
 	ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function(self, event, message, ...)
-		if message and message:match("^No player named .+ is currently playing%.$") then
-			-- Suppress this message from appearing in chat
-			return true
+		if message and message:find("No player named ", 1, true) then
+			-- Only do pattern match if we found the error prefix
+			if message:match("^No player named .+ is currently playing%.$") then
+				return true  -- Suppress this message
+			end
 		end
 		return false
 	end)
