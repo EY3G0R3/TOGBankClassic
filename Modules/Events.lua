@@ -56,6 +56,16 @@ function TOGBankClassic_Events:RegisterEvents()
 		TOGBankClassic_UI:OnInsertLink(link)
 	end)
 
+	-- Filter out "No player named X is currently playing" errors from chat
+	-- These are detected and handled by CHAT_MSG_SYSTEM event handler
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function(self, event, message, ...)
+		if message and message:match("^No player named .+ is currently playing%.$") then
+			-- Suppress this message from appearing in chat
+			return true
+		end
+		return false
+	end)
+
 	-- Hook MailFrame visibility changes directly for more reliable detection
 	if MailFrame and not MailFrame.togBankHooked then
 		MailFrame.togBankHooked = true

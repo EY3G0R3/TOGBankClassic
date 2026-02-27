@@ -1529,13 +1529,9 @@ end
 
 -- Check if a player is currently online in the guild
 -- Uses cached roster data updated via GUILD_ROSTER_UPDATE event
--- Track when we receive a message from a player (they're obviously online)
 function TOGBankClassic_Guild:MarkPlayerSeen(playerName)
-	if not playerName then
-		return
-	end
-	local norm = self:NormalizeName(playerName)
-	self.recentlySeen[norm] = GetServerTime()
+	-- DEPRECATED: No longer needed - guild roster cache is authoritative
+	-- Kept for backwards compatibility
 end
 
 function TOGBankClassic_Guild:IsPlayerOnline(playerName)
@@ -1544,24 +1540,9 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	end
 	local norm = self:NormalizeName(playerName)
 	
-	-- Check guild members first (fast path)
-	if self.onlineMembers[norm] == true then
-		return true
-	end
-	
-	-- Check recently-seen players (cross-realm/cross-guild)
-	-- If we received a message from them recently, they're online
-	local lastSeen = self.recentlySeen[norm]
-	if lastSeen then
-		local now = GetServerTime()
-		if now - lastSeen < self.RECENTLY_SEEN_EXPIRY then
-			return true
-		end
-		-- Clean up expired entry
-		self.recentlySeen[norm] = nil
-	end
-	
-	return false
+	-- Use guild roster cache as single source of truth
+	-- Updated by GUILD_ROSTER_UPDATE and CHAT_MSG_SYSTEM events
+	return self.onlineMembers[norm] == true
 end
 
 -- v0.8.0: Compute minimal state summary for pull-based protocol

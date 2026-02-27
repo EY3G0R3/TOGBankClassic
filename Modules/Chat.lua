@@ -617,10 +617,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	-- Normalize the sender so spacing/hyphen formats match
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
-	-- Track that we received a message from this sender (they're online)
-	-- This enables whisper responses to cross-realm/cross-guild players
-	TOGBankClassic_Guild:MarkPlayerSeen(sender)
-
 	-- MAIL-012 DEBUG: Log the player check for delta version messages
 	if prefix == "togbank-dv2" or prefix == "togbank-dv" then
 		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Player check: player=%s, sender=%s, match=%s",
@@ -901,15 +897,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				-- Send acknowledgment via WHISPER to reduce guild channel spam
 				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)",
 					sender, tostring(isBanker), tostring(hasData), tostring(expectedHash), tostring(expectedUpdatedAt))
-				TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
-
-				self:Debug(
-					"SYNC",
-					"<",
-					"Sent togbank-rr to",
-					ColorPlayerName(sender),
-					string.format("(isBanker=%s, hasData=%s, hash=%s)", tostring(isBanker), tostring(hasData), tostring(expectedHash))
-				)
+				if TOGBankClassic_Core:SendWhisper("togbank-rr", ackData, sender, "NORMAL") then
+					self:Debug(
+						"SYNC",
+						"<",
+						"Sent togbank-rr to",
+						ColorPlayerName(sender),
+						string.format("(isBanker=%s, hasData=%s, hash=%s)", tostring(isBanker), tostring(hasData), tostring(expectedHash))
+					)
+				end
 
 			else
 				-- Don't respond if we don't have the data

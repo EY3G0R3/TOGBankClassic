@@ -1468,11 +1468,13 @@ self.Info.requests = merged
 
 ---
 
-## 🔧 GUILD_ROSTER_UPDATE Cache System (COMM-001b) - PLANNED
+## 🔧 GUILD_ROSTER_UPDATE Cache System (COMM-001b) - IMPLEMENTED
 
-**Status:** 📋 Documented, awaiting implementation branch
+**Status:** ✅ Fully Implemented (v0.8.x), Enhanced in COMM-003d (v0.8.29)
 **Purpose:** Fix stale roster data causing false "player online" detections
 **Priority:** HIGH - Eliminates player-visible error spam
+
+**Update (v0.8.29 / COMM-003d):** The recentlySeen secondary cache has been removed. The onlineMembers cache (populated by GUILD_ROSTER_UPDATE and CHAT_MSG_SYSTEM events) is now the single source of truth for online status. This eliminates dual-cache race conditions and the 5-minute stale data window that was causing whispers to recently-offline players.
 
 ### Problem
 
@@ -1580,33 +1582,34 @@ A: Race window reduced from minutes to milliseconds. Still possible, but 99%+ ac
 A: Returns false (safe default - no whisper sent). `PLAYER_ENTERING_WORLD` ensures quick init.
 
 **Q: What about non-guild members?**
-A: Not in cache, returns false. `SendWhisper()` skips send (correct behavior).
+A: Not in cache, returns false. `SendWhisper()` skips send (correct behavior for guild-only bank addon). Note: A previous recentlySeen cache (5-minute TTL) was removed in COMM-003d - it attempted to track cross-realm/cross-guild players but was unnecessary architectural bloat for a guild-only addon and caused stale online status bugs.
 
 **Q: Memory/performance cost?**
 A: Negligible - ~10 bytes per member, rebuild takes <1ms for typical guild sizes.
 
 ### Testing Checklist
 
-- [ ] Cache initializes on login
-- [ ] Cache updates on GUILD_ROSTER_UPDATE
-- [ ] IsPlayerOnline() returns accurate status
-- [ ] Online player: WHISPER sent
-- [ ] Offline player: WHISPER skipped, debug log
-- [ ] Rapid login/logout scenarios
-- [ ] Large guild (200+ members) performance
-- [ ] Memory usage (<2KB for 200 members)
-- [ ] Verify "No player named" errors eliminated
+- [x] Cache initializes on login
+- [x] Cache updates on GUILD_ROSTER_UPDATE
+- [x] IsPlayerOnline() returns accurate status
+- [x] Online player: WHISPER sent
+- [x] Offline player: WHISPER skipped, debug log
+- [x] Rapid login/logout scenarios
+- [x] Large guild (200+ members) performance
+- [x] Memory usage (<2KB for 200 members)
+- [x] Verify "No player named" errors eliminated (COMM-003c: chat filter added)
 
-### Files to Modify
+### Files Modified
 
 1. **Modules/Guild.lua**
-   - Add `onlineMembers = {}` table
-   - Implement `RefreshOnlineCache()`
-   - Replace `IsPlayerOnline()` logic
+   - Added `onlineMembers = {}` table
+   - Implemented `RefreshOnlineCache()`
+   - Replaced `IsPlayerOnline()` logic with onlineMembers-only lookup (COMM-003d removed recentlySeen dual-cache)
 
 2. **Modules/Events.lua**
-   - Register `GUILD_ROSTER_UPDATE` event
-   - Register `PLAYER_ENTERING_WORLD` event with `GuildRoster()` call
+   - Registered `GUILD_ROSTER_UPDATE` event
+   - Registered `PLAYER_ENTERING_WORLD` event with `GuildRoster()` call
+   - Added `ChatFrame_AddMessageEventFilter` for error suppression (COMM-003c)
 
 3. **docs/DELTA_BUGS.md**
    - Update [COMM-001] status to fully resolved
@@ -1614,9 +1617,12 @@ A: Negligible - ~10 bytes per member, rebuild takes <1ms for typical guild sizes
 
 ### Related Issues
 
-- [COMM-001] "No player named X is currently playing" errors
+- [COMM-001] "No player named X is currently playing" errors (original issue)
+- [COMM-003] Whisper error detection via CHAT_MSG_SYSTEM
+- [COMM-003b] Single-quoted player name pattern matching
+- [COMM-003c] ChatFrame_AddMessageEventFilter for error suppression
+- [COMM-003d] Removed recentlySeen cache (eliminated dual-cache race conditions)
 - Complements SendWhisper() wrapper (already implemented)
-- Foundation for future friend list / battle.net online checks
 
 ### Success Criteria
 

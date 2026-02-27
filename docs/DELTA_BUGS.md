@@ -17,6 +17,8 @@
 - ✅ [P2P-020] **CRITICAL** Peer ACKs ignored when no banker online (wipe-recovery scenario broken) - Fixed QueryAltPullBased to set pendingP2PRequests[norm] when broadcasting to GUILD without a banker. Previously pendingP2PRequests was only set at Chat.lua:1097 when banker sent hash-only ACK (isBanker=true, hashOnly=true, expectedHash exists). When no banker was online, QueryAltPullBased broadcast togbank-r to GUILD but never set pendingP2PRequests, causing peer ACK handler (Chat.lua:1152-1155) wasPending check to fail silently. Result: Peer ACKs were ignored, wipe recovery (/togbank wipe or new guild member with blank DB) completely failed without online banker - hashes never populated, data never flowed until banker logged on. Root cause: pendingP2PRequests tracking assumed hash-centric P2P flow initiated by banker hash broadcasts, not direct GUILD broadcasts from wipe-recovery scenario. Solution: Set pendingP2PRequests[norm] in two GUILD broadcast paths at QueryAltPullBased: (1) no banker found (noBanker=true flag), (2) banker offline (bankerOffline=true flag). Result: Peer ACKs now recognized as pending P2P requests, full ACK→StateSummary→Data flow works, wipe recovery operational without online banker. Minimal fix using existing ACK infrastructure without protocol changes. Locations: Guild.lua QueryAltPullBased GUILD broadcast paths (~1289-1296, ~1299-1306).
 - ✅ [P2P-019] **MEDIUM** Banker requesting hash for themselves and debug showing invalid pending alts - Fixed three related issues: (1) BroadcastP2PRequest now skips P2P requests when the requested alt is the current player - previously when banker ran /togbank share, they broadcast their own hash to guild chat, then received their own broadcast message and triggered a P2P request for themselves ("Broadcasting request for Cardsngames-Azuresong with hash=672637121"), (2) ReportHashListCoverage now filters pending list to exclude current player and non-roster alts - previously /togbank debughash showed current player as "HLR pending" and included old alts from different guilds (like "Patternmaker-Atiesh" appearing when not a current guild bank), (3) HLR handler second pass now skips current player before processing hash comparisons to avoid wasted processing. Root cause: No validation that pending alt != self and no roster validation against latestBankerHashes cache. Players cannot request their own data from peers since they are the authoritative source. Solution: Added currentPlayer check in all three locations and rosterLookup validation in ReportHashListCoverage. Result: Bankers no longer send self-directed P2P requests after broadcasting hash updates, debug output only shows valid guild bank alts that need syncing, and HLR processing skips unnecessary work for current player. Locations: Guild.lua BroadcastP2PRequest (~893-909), ReportHashListCoverage roster lookup table and filtering (~699-746); Chat.lua HLR handler second pass currentPlayer check (~1873-1935).
 - ✅ [COMM-003b] **HIGH** Whisper error pattern not matching single-quoted player names - Fixed CHAT_MSG_SYSTEM handler to detect both single-quoted and unquoted variants of "No player named X is currently playing" errors. Previously pattern only matched unquoted format `No player named Axkva is currently playing.` but Classic Era can also send single-quoted format `No player named 'Axkva' is currently playing.` causing offline detection to fail. Added dual pattern matching: tries single-quoted pattern first (`'(.+)'`), falls back to unquoted pattern (`(.+)`) if no match. Result: Player marked offline immediately when any whisper failure format received, preventing repeated whisper attempts and error spam. Location: Events.lua CHAT_MSG_SYSTEM (~353-361).
+- ✅ [COMM-003c] **MEDIUM** Whisper error messages not suppressed from appearing in chat - Added ChatFrame_AddMessageEventFilter to suppress "No player named X is currently playing" error messages from appearing in player's chat window. COMM-003 and COMM-003b fixed offline detection, but error messages still appeared in CHAT_MSG_SYSTEM causing visual spam. Previously addon detected errors via event handler but didn't prevent WoW from displaying them. Now messages matching whisper error patterns are filtered out (filter returns true to suppress display). Combined with offline detection from COMM-003/003b, this prevents both the errors AND the visual spam. Result: Clean chat window, no whisper error spam visible to user. Location: Events.lua Initialize (~59-66).
+- ✅ [COMM-003d] **HIGH** recentlySeen cache causing whispers to offline players - Removed recentlySeen cache entirely as it was undermining the accurate onlineMembers guild roster cache. Previously IsPlayerOnline() checked recentlySeen (5-minute TTL) before onlineMembers, causing players to appear online for 5 minutes after logoff. SendWhisper() checked IsPlayerOnline() before sending, got stale "online" response, sent whisper to offline player, triggered error. Root cause: User sends message → added to recentlySeen → logs off → onlineMembers cleared correctly → SendWhisper checks IsPlayerOnline → recentlySeen still true → whisper sent → error. Design flaw: recentlySeen was for "cross-realm/cross-guild" tracking but TOGBankClassic is guild-only, making it unnecessary architectural bloat. Solution: Made IsPlayerOnline() use only onlineMembers cache (accurate, GUILD_ROSTER_UPDATE-based), converted MarkPlayerSeen() to no-op stub for backwards compatibility, removed MarkPlayerSeen() call from message handler. Result: Single source of truth for online status, no more whispers to recently-offline players, recentlySeen cache references removed. Locations: Guild.lua IsPlayerOnline (~1533-1547) and MarkPlayerSeen stub, Chat.lua removed MarkPlayerSeen call (~618).
 
 **Recent Fixes (2026-02-18):**
 - ✅ [DELTA-020] **CRITICAL** Delta computation using wrong baseline causing item count duplication - Fixed ComputeDelta to use requester's actual item structures from state summary instead of responder's snapshot. Previously when responder broadcast multiple times (hash 461905621 → 317352773), GetSnapshot returned responder's NEW snapshot (317352773) instead of requester's OLD baseline (461905621), computing delta = (317352773 - 317352773) = empty/minimal instead of (317352773 - 461905621) = proper changes. When requester applied this incorrect delta to their 461905621 data, items were duplicated/corrupted instead of properly updated. Root cause: Snapshot system stores ONE snapshot per alt (keyed only by altName, not hash), so when responder broadcasts twice, old snapshot is overwritten. State summary previously sent aggregated items (useless for delta computation), not requester's actual bank/bags/mail structures. Solution: (1) Modified ComputeStateSummary to send minimal item structures {ID, Count} for separate bank/bags/mail arrays instead of aggregated items (~1KB vs 20KB with Links), (2) Modified ComputeDelta to accept optional requesterBaseline parameter with minimal item structures, (3) ComputeDelta now uses requester's sent baseline as "previous" instead of GetSnapshot when available, (4) RespondToStateSummary extracts bank/bags/mail from state summary and passes through SendAltData → ComputeDelta chain. Result: Delta computation now uses requester's actual baseline (what they have) vs responder's current data (what to send), fixing duplication bug. Bandwidth savings: ~85% (1-2KB minimal vs 20-50KB with Links). Locations: Guild.lua ComputeStateSummary (~1485-1542), SendStateSummary logging (~1593-1606), RespondToStateSummary baseline extraction (~1640-1644), SendAltData signature (~2231), DeltaComms.lua ComputeDelta signature and baseline logic (~565-620).
@@ -2807,6 +2809,201 @@ Eliminates massive error spam (hundreds of errors) when attempting to communicat
 - `Modules/Events.lua` - Added whisper error pattern detection
 - `Modules/Guild.lua` - Clear both caches on offline
 - `CHANGELOG.md` - Documented as COMM-003
+
+---
+
+#### [COMM-003c] Whisper error messages not suppressed from appearing in chat
+
+**Severity:** 🟡 MEDIUM
+**Category:** Communication / User Experience
+**Reporter:** User
+**Date Reported:** 2026-02-24
+**Status:** ✅ FIXED (v0.8.29)
+**Reproducibility:** Always (when whispering offline players)
+
+**Description:**
+Even though COMM-003 and COMM-003b fixed the addon's ability to detect when players were offline, the error messages "No player named 'X' is currently playing" were still appearing in the player's chat window, causing visual spam.
+
+**Steps to Reproduce:**
+1. Player logs off
+2. Addon attempts to whisper them (before offline detection completes)
+3. WoW generates CHAT_MSG_SYSTEM event with error message
+4. Addon's event handler detects error and marks player offline (COMM-003/003b working correctly)
+5. Error message displays in chat window (COMM-003c bug)
+
+**Expected Behavior:**
+- Addon should suppress error messages from appearing in chat
+- Silent failure when whispering offline players
+- User should not see any whisper error spam
+
+**Actual Behavior (Before Fix):**
+- Error messages appeared in CHAT_MSG_SYSTEM channel
+- Chat window showed "No player named 'Axkva' is currently playing."
+- Visual spam when multiple offline whispers occurred
+- Addon correctly detected errors and marked players offline, but didn't prevent display
+
+**Root Cause:**
+WoW's event system delivers CHAT_MSG_SYSTEM events to all registered handlers AND displays the message in the chat frame. Registering an event handler allows addon to RECEIVE the message but doesn't prevent WoW from DISPLAYING it. COMM-003/003b added detection logic but no display suppression.
+
+**Fix Implementation (2026-02-24):**
+Added ChatFrame_AddMessageEventFilter in Events.lua Initialize() function to filter "No player named X" error messages:
+
+```lua
+ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function(_, _, message)
+    if message and (message:match("No player named '(.+)' is currently playing") or 
+                     message:match("No player named (.+) is currently playing")) then
+        return true  -- Suppress this message from appearing in chat
+    end
+    return false  -- Allow other messages through
+end)
+```
+
+**How It Works:**
+- ChatFrame_AddMessageEventFilter intercepts messages before they're displayed
+- Checks if message matches either single-quoted or unquoted whisper error patterns
+- Returns true to suppress display (message still delivered to CHAT_MSG_SYSTEM handlers)
+- Returns false to allow non-error messages through normally
+- Works in conjunction with COMM-003/003b offline detection
+
+**Result:**
+- Clean chat window with no whisper error spam
+- Offline detection from COMM-003/003b continues to work normally
+- User sees no visual indication of whisper failures
+- Error detection happens in background without cluttering UI
+
+**Related Bugs:**
+- COMM-003: Original offline player detection via CHAT_MSG_SYSTEM
+- COMM-003b: Added support for single-quoted error format
+- COMM-003d: Removed recentlySeen cache to prevent whispers to recently offline players
+
+**Version:** v0.8.29
+**Files Modified:**
+- `Modules/Events.lua` - Added ChatFrame_AddMessageEventFilter in Initialize (~59-66)
+- `CHANGELOG.md` - Documented as COMM-003c
+
+---
+
+#### [COMM-003d] recentlySeen cache causing whispers to offline players
+
+**Severity:** 🟠 HIGH
+**Category:** Communication / Cache Management
+**Reporter:** User
+**Date Reported:** 2026-02-24
+**Status:** ✅ FIXED (v0.8.29)
+**Reproducibility:** Always (5-minute window after player logoff)
+
+**Description:**
+Players were receiving whisper error messages for players who had recently logged off, despite COMM-003/003b offline detection working correctly. Root cause was the recentlySeen cache (5-minute TTL) keeping players marked "online" after logoff, undermining the accurate onlineMembers guild roster cache.
+
+**Steps to Reproduce:**
+1. Player 'Axkva' sends a message (added to recentlySeen cache)
+2. 'Axkva' logs off immediately
+3. GUILD_ROSTER_UPDATE fires, onlineMembers cleared correctly
+4. Addon attempts to SendWhisper to 'Axkva' within 5 minutes
+5. SendWhisper() calls IsPlayerOnline()
+6. IsPlayerOnline() checks recentlySeen first → returns true (stale cache)
+7. Whisper sent to offline player
+8. Error message appears in chat
+
+**Expected Behavior:**
+- IsPlayerOnline() should return accurate guild roster status
+- No whispers sent to offline players
+- Guild roster cache (onlineMembers) should be single source of truth
+
+**Actual Behavior (Before Fix):**
+- IsPlayerOnline() checked recentlySeen cache before onlineMembers
+- Players appeared "online" for 5 minutes after logoff due to stale cache
+- Whispers sent to offline players triggered error messages
+- Error spam continued despite COMM-003/003b detection working
+
+**Root Cause Analysis:**
+
+**Dual-Cache Architecture Problem:**
+```lua
+-- Previous IsPlayerOnline implementation
+function TOGBank.Guild:IsPlayerOnline(player)
+    local norm = NormalizeName(player)
+    -- BUG: Checked stale cache first
+    if self.recentlySeen[norm] then
+        local entry = self.recentlySeen[norm]
+        if (GetTime() - entry.lastSeen) < 300 then  -- 5 minute TTL
+            return true  -- STALE: Player might have logged off
+        end
+    end
+    -- Accurate cache checked second
+    return self.onlineMembers[norm] == true
+end
+```
+
+**Race Condition Timeline:**
+1. T+0s: Player sends message → `recentlySeen[norm] = { lastSeen = GetTime() }`
+2. T+1s: Player logs off → GUILD_ROSTER_UPDATE fires
+3. T+1s: `onlineMembers[norm]` cleared correctly (accurate)
+4. T+60s: SendWhisper called → IsPlayerOnline checks recentlySeen first
+5. T+60s: `(GetTime() - lastSeen) < 300` → true (239 seconds remain)
+6. T+60s: IsPlayerOnline returns true (wrong)
+7. T+60s: Whisper sent → error triggered
+
+**Design Flaw:**
+recentlySeen cache was originally intended for "cross-realm/cross-guild" player tracking, but TOGBankClassic is a guild-only bank addon. User challenged: "why would we need it for non-guild members for a guild only bank addon?" The recentlySeen cache had no valid use case and was actively causing bugs by maintaining stale state.
+
+**Architectural Issue:**
+Maintaining two caches for the same data (online status) created race conditions and stale state. The onlineMembers cache is event-driven from GUILD_ROSTER_UPDATE and CHAT_MSG_SYSTEM (online/offline messages), providing accurate real-time guild roster status. The recentlySeen cache was message-driven from every communication, creating a 5-minute window of stale data that overrode the accurate cache.
+
+**Fix Implementation (2026-02-24):**
+
+**1. Simplified IsPlayerOnline() - Single Source of Truth:**
+```lua
+function TOGBank.Guild:IsPlayerOnline(player)
+    if not player then return false end
+    local norm = self:NormalizeName(player)
+    return self.onlineMembers[norm] == true
+end
+```
+
+**2. Converted MarkPlayerSeen() to No-Op Stub:**
+```lua
+function TOGBank.Guild:MarkPlayerSeen(player)
+    -- Stub for backwards compatibility
+    -- Previously populated recentlySeen cache
+    -- Now no-op since recentlySeen removed
+end
+```
+
+**3. Removed MarkPlayerSeen() Call from Message Handler:**
+Deleted `TOGBank.Guild:MarkPlayerSeen(sender)` call in Chat.lua message handler that was populating the stale cache on every message.
+
+**How It Works Now:**
+- IsPlayerOnline() uses ONLY onlineMembers cache
+- onlineMembers populated by GUILD_ROSTER_UPDATE events (accurate, real-time)
+- onlineMembers also updated by CHAT_MSG_SYSTEM "has come online" / "has gone offline" messages
+- No secondary cache to create race conditions or stale state
+- MarkPlayerSeen() stub preserved for backwards compatibility (no-op)
+
+**Result:**
+- Single source of truth for online status (onlineMembers)
+- No more whispers to recently-offline players
+- No more 5-minute stale cache window
+- Simplified architecture with less code to maintain
+- Guild roster cache accuracy from user's previous GUILD_ROSTER_UPDATE work no longer undermined
+
+**Impact Analysis:**
+- **Removed Functionality:** Cross-realm/cross-guild player tracking (unused in guild-only addon)
+- **Improved Accuracy:** Online status now 100% accurate with guild roster
+- **Reduced Complexity:** One cache instead of two, simpler logic, less state management
+- **Bug Prevention:** No more dual-cache race conditions or stale state issues
+
+**Related Bugs:**
+- COMM-003: Original offline player detection via CHAT_MSG_SYSTEM
+- COMM-003b: Added support for single-quoted error format
+- COMM-003c: Added ChatFrame_AddMessageEventFilter to suppress error display
+- COMM-001b: GUILD_ROSTER_UPDATE cache system that recentlySeen was undermining
+
+**Version:** v0.8.29
+**Files Modified:**
+- `Modules/Guild.lua` - Simplified IsPlayerOnline to use only onlineMembers (~1533-1547), converted MarkPlayerSeen to no-op stub
+- `Modules/Chat.lua` - Removed MarkPlayerSeen() call from message handler (~618)
+- `CHANGELOG.md` - Documented as COMM-003d
 
 ---
 

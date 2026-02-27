@@ -70,6 +70,36 @@
   - Events.lua CHAT_MSG_SYSTEM (~353-361): Dual pattern matching
   - DELTA_BUGS.md (~2521-2527): Updated pattern documentation
 
+#### [COMM-003c] Fixed Whisper Error Messages Still Appearing in Chat
+- **FIXED**: Added chat message filter to suppress "No player named X is currently playing" errors from appearing in chat
+- **PROBLEM**: While COMM-003/COMM-003b fixed offline detection, the error messages still appeared in chat window
+- **ROOT CAUSE**: Event handler detected and processed errors but didn't suppress chat display
+- **IMPACT**: Chat spam with "No player named 'X' is currently playing" even though addon correctly marked players offline
+- **SOLUTION**:
+  - Added ChatFrame_AddMessageEventFilter for CHAT_MSG_SYSTEM
+  - Filter returns true to suppress any message matching "No player named .+ is currently playing."
+  - Works for both single-quoted and unquoted name variants
+- **RESULT**: Error messages silently handled - player marked offline without chat spam
+- **LOCATION**: 
+  - Events.lua RegisterEvents (~59-66): Added chat message filter
+
+#### [COMM-003d] Fixed recentlySeen Cache Undermining Guild Roster Cache (CRITICAL)
+- **FIXED**: Removed recentlySeen cache, IsPlayerOnline now uses only guild roster cache
+- **PROBLEM**: Addon still tried to whisper players for 5 minutes after they logged off
+- **ROOT CAUSE**: IsPlayerOnline checked both onlineMembers (accurate) and recentlySeen (5-minute stale cache)
+- **FLOW**: Player sends message → added to recentlySeen → logs off → onlineMembers cleared correctly → but recentlySeen keeps them "online" for 5 minutes → whispers sent → errors
+- **IMPACT**: Despite accurate guild roster updates (COMM-003), whisper errors still occurred due to secondary stale cache
+- **WHY IT EXISTED**: Originally added for "cross-realm/cross-guild" players, but this is a guild-only addon
+- **SOLUTION**:
+  - Removed recentlySeen check from IsPlayerOnline - guild roster cache is single source of truth
+  - Removed MarkPlayerSeen call in Chat.lua
+  - MarkPlayerSeen() kept as no-op for backwards compatibility
+- **RESULT**: IsPlayerOnline returns false immediately when player logs off, no stale 5-minute window
+- **LOCATION**: 
+  - Guild.lua IsPlayerOnline (~1542-1547): Removed recentlySeen logic, only check onlineMembers
+  - Guild.lua MarkPlayerSeen (~1533-1537): Made no-op
+  - Chat.lua OnCommReceived (~617-619): Removed MarkPlayerSeen call
+
 #### [DELTA-020] Fixed Delta Computation Using Wrong Baseline (CRITICAL)
 - **FIXED**: ComputeDelta now uses requester's actual item structures from state summary instead of responder's snapshot
 - **PROBLEM**: When responder broadcast multiple times (hash 461905621 → 317352773), GetSnapshot returned responder's NEW snapshot (317352773) instead of requester's OLD baseline (461905621)
