@@ -564,6 +564,12 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 		end
 	end
 
+	-- DUPLICATION-FIX-003: Track which oldItems entries have been matched by deep fallback.
+	-- Without this, multiple new items with the same base ID (e.g. "Stone Hammer" plain and
+	-- "Stone Hammer of Tiger" suffix, both ID=15260) would both deep-fallback to the same
+	-- old item, marking both as "modified" rather than one matched + one new.
+	local deepFallbackUsed = {}  -- keyed by item identity (the table itself)
+
 	-- Find added and modified items
 	local fallbackMatches = 0
 	local deepFallbackMatches = 0
@@ -591,15 +597,19 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 					end
 				end
 				
-				-- Fallback 2: search all oldItems by ID if normalized key lookup failed
-				-- This handles cases where GetItemKey generates different keys for same item
-				-- (e.g., link parsing inconsistencies, different link formats)
+				-- Fallback 2: search all oldItems by ID if normalized key lookup failed.
+				-- DUPLICATION-FIX-003: Skip items already matched by a previous deep fallback.
+				-- Without this guard, "Stone Hammer" (plain) and "Stone Hammer of Tiger" (suffix)
+				-- would BOTH match the same minimal baseline entry {ID=15260, Count=N}, causing
+				-- one to be treated as modified (correct) and the other to send a spurious
+				-- second "modified" for the same old item.
 				if not oldItem then
 					for _, item in pairs(oldItems) do
-						if item and item.ID == newItem.ID then
+						if item and item.ID == newItem.ID and not deepFallbackUsed[item] then
 							oldItem = item
 							key = tostring(newItem.ID)  -- Use ID as key for tracking
 							usedDeepFallback = true
+							deepFallbackUsed[item] = true  -- Mark so next item won't re-use it
 							deepFallbackMatches = deepFallbackMatches + 1
 							break
 						end
@@ -655,10 +665,17 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 	end
 
 	-- Remaining old items were removed
+	-- DUPLICATION-FIX-003: Preserve Link/ItemString in removes for items that have them.
+	-- ID-only removes can't distinguish "Stone Hammer" from "Stone Hammer of Tiger" when
+	-- both variants of ID=15260 exist on the receiver — the wrong one gets removed.
 	for _, item in pairs(oldByKey) do
-		-- v0.8.0: Minimal removes format (just ID, no Link or Count)
-		-- Saves 4 bytes per removed item
-		table.insert(delta.removed, { ID = item.ID })
+		local removed = { ID = item.ID }
+		if item.Link then
+			removed.Link = item.Link
+		elseif item.ItemString then
+			removed.ItemString = item.ItemString
+		end
+		table.insert(delta.removed, removed)
 	end
 	for _, item in pairs(oldByIDOnly) do
 		-- Also check ID-only items that weren't processed
@@ -908,14 +925,14 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 				-- v0.8.0: Match by ID only (Link field removed)
 				-- Still support old format with Link for backwards compatibility
 				if removedItem.Link then
-					-- Old format (v0.7.0): Has Link, use ID+normalized key
-					-- DUPLICATION-FIX: Normalize both keys to match items regardless of character level
+					-- Has Link (new format with link-preserved remove, OR old v0.7.0 format):
+					-- Match by normalized key so suffix variants are distinguished precisely
 					local normalizedRemovedKey = TOGBankClassic_Item:GetItemKey(removedItem.Link)
 					local key = tostring(removedItem.ID) .. normalizedRemovedKey
 					for i = #items, 1, -1 do
 						local item = items[i]
-						if item and item.ID and item.Link then
-							local normalizedItemKey = TOGBankClassic_Item:GetItemKey(item.Link)
+						if item and item.ID and (item.Link or item.ItemString) then
+							local normalizedItemKey = TOGBankClassic_Item:GetItemKey(item.Link or item.ItemString)
 							local itemKey = tostring(item.ID) .. normalizedItemKey
 							if itemKey == key then
 								table.remove(items, i)
@@ -976,22 +993,43 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 
 	-- STEP 3: Add new items (CAN invalidate indexes, but no more operations depend on them)
 	if delta.added then
-		-- DELTA-FIX: Check if "added" items already exist (by ID only) and UPDATE instead of append
-		-- This handles cases where ComputeItemDelta's link normalization failed to match items
+		-- DUPLICATION-FIX-003: Use normalized key (Link/ItemString → GetItemKey) to find existing items.
+		-- The previous ID-only lookup caused items with same base ID but different suffixes
+		-- (e.g., "Stone Hammer" ×4 and "Stone Hammer of Tiger" ×1, both ID=15260) to collide:
+		-- the second item processed would find the first by ID and overwrite it, corrupting
+		-- counts and links. Fix: match by normalized key; only fall back to ID-only for
+		-- truly linkless existing entries (old-format upgrade: {ID,Count} → linked item).
 		local updated = 0
 		local added = 0
-		
+
 		for _, newItem in ipairs(delta.added) do
 			if newItem and newItem.ID and (newItem.Link or newItem.ItemString) then
-				-- Look for existing item by ID
 				local existingItem = nil
+				local newNormKey = TOGBankClassic_Item:GetItemKey(newItem.Link or newItem.ItemString)
+				local newFullKey = tostring(newItem.ID) .. newNormKey
+
+				-- Primary: exact normalized-key match (distinguishes suffix variants)
 				for _, item in ipairs(items) do
 					if item and item.ID == newItem.ID then
-						existingItem = item
-						break
+						local existingNormKey = TOGBankClassic_Item:GetItemKey(item.Link or item.ItemString or "")
+						if (tostring(item.ID) .. existingNormKey) == newFullKey then
+							existingItem = item
+							break
+						end
 					end
 				end
-				
+
+				-- Fallback: ID-only match ONLY for linkless existing entries
+				-- (upgrades old-format {ID,Count} stubs to linked items)
+				if not existingItem then
+					for _, item in ipairs(items) do
+						if item and item.ID == newItem.ID and not item.Link and not item.ItemString then
+							existingItem = item
+							break
+						end
+					end
+				end
+
 				if existingItem then
 					-- Item exists - UPDATE quantities and fields
 					existingItem.Count = newItem.Count
@@ -1009,8 +1047,8 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 				end
 			end
 		end
-		
-		TOGBankClassic_Output:Debug("DELTA", "Applied %d added items (%d updated existing, %d new)", 
+
+		TOGBankClassic_Output:Debug("DELTA", "Applied %d added items (%d updated existing, %d new)",
 			#delta.added, updated, added)
 	end
 

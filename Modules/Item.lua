@@ -24,22 +24,29 @@ end
 -- Check if an item needs its Link preserved based on item class
 -- Gear (weapons/armor) can have random suffixes, so Link is required
 -- Consumables and trade goods don't vary, so Link can be stripped
+-- Weapons (class 2) and Armor (class 4) ALWAYS keep their Link regardless of suffix,
+-- because plain and suffixed variants of the same item share the same base ID and must
+-- be distinguished by their full link string to avoid deduplication collisions.
 function TOGBankClassic_Item:NeedsLink(itemLink)
 	if not itemLink then return false end
 
-	-- Parse link to check if it has suffix/bonus data (indicates gear)
-	-- Format: item:id:enchant:gem1:gem2:gem3:gem4:suffix:unique:level:spec:upgrade:difficulty...
-	local hasModifiers = itemLink:match("item:%d+:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^%-]") -- Has non-zero suffix
-	if hasModifiers then
-		return true
+	-- Primary check: item class via GetItemInfo (synchronous cache lookup at send time).
+	-- ITEM_CLASSES_NEEDING_LINK = { [2]=Weapon, [4]=Armor } — these ALWAYS preserve Link.
+	local itemID = tonumber(itemLink:match("|Hitem:(%d+)"))
+	if itemID then
+		local _, _, _, _, _, _, _, _, _, _, _, itemClassId = GetItemInfo(itemID)
+		if itemClassId and ITEM_CLASSES_NEEDING_LINK[itemClassId] then
+			return true
+		end
 	end
-	
-	-- Fallback: check if link indicates it's equippable (has bonus/suffix fields)
+
+	-- Fallback (uncached items or raw itemString input): preserve link if link has a
+	-- non-zero suffix field (part 7 of the itemString: enchant:gem1:gem2:gem3:gem4:suffixID).
 	local hasSuffix = itemLink:match("item:%d+:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:%-?%d+")
 	if hasSuffix then
 		return true
 	end
-	
+
 	return false
 end
 

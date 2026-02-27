@@ -1,11 +1,79 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** February 24, 2026
+**Last Updated:** February 27, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+
+**Recent Fixes (2026-02-27):**
+- ✅ [PERF-011] **HIGH** 3-5 second freeze on first few reloads from unbounded deltaHistory growth - CleanupDeltaHistory() existed but was never called, allowing stale delta entries (>1 hour old) to accumulate indefinitely. SavedVariables grew to 33,421 lines for deltaHistory alone (52,764 total / ~1.3MB), causing WoW to freeze 3-5s parsing it on every load. Freeze cleared after 3-4 reloads because the per-alt count limit (10) gradually displaced old large entries with new smaller ones. Fix: (1) Call CleanupDeltaHistory() 2s after guild init in GUILD_RANKS_UPDATE handler, (2) Call CleanupDeltaHistory() every 3 minutes in OnShareTimer to keep entries pruned during long sessions. Result: First reload after fix prunes all stale entries; subsequent reloads parse a tiny deltaHistory. Locations: Events.lua GUILD_RANKS_UPDATE (~428-438), OnShareTimer (~186-194).
+- ✅ [ROSTER-002] **MEDIUM** Stale ex-banker persists as "HLR pending" indefinitely after leaving guild - RebuildBankerRoster() created zero-data stubs in alts for discovered bankers but never removed them when they left. SavedVariables confirmed Raideronly-OldBlanchy in roster.alts (line 14515) and as a zero stub in alts (line 17572) despite not being a current guild member. Three compounding failures: (1) stubs not cleaned on roster rebuild, (2) latestBankerHashes seeded from ALL alts including stale stubs, (3) stub in roster.alts bypassed the rosterLookup filter added in P2P-019. Fix: (1) RebuildBankerRoster() now deletes zero stubs (version==0, inventoryHash==0, no items) for alts not in the new banker roster after each rebuild, (2) latestBankerHashes init delayed from 0.5s to 1.5s and filtered to banksCache only (populated by RebuildBankerRoster at 1s), preventing stale stubs from re-entering the cache, (3) BuildBankerHashList() skips zero-stub alts so they are never broadcast to other guild members and cannot seed phantom pending entries on receivers. Result: Raideronly and any future ex-bankers are cleaned on next load with a live guild roster; "HLR pending" only shows alts that actually need syncing. Locations: Guild.lua RebuildBankerRoster (~498-521), Init latestBankerHashes init (~293-325), BuildBankerHashList (~752-780).
+
+---
+
+## [ROSTER-002] Stale ex-banker persists as HLR pending after leaving guild
+
+**Severity:** MEDIUM
+**Status:** Open
+**Reported:** February 27, 2026
+
+**Symptom:**
+```
+TOGBankClassic: Hash list coverage: banker=36, matched=35, pending=1, rosterMissing=0, haveContent=35
+TOGBankClassic: HLR pending: Raideronly-OldBlanchy
+```
+A player (`Raideronly-OldBlanchy`) who is no longer a banker appears permanently as "HLR pending" in hash coverage reports and drives ongoing (futile) P2P/HLR requests.
+
+**SV Verification:**
+- Line 14515 in SavedVariables: `Raideronly-OldBlanchy` is IN `roster.alts` (the banker list) — confirmed still present
+- Line 17572: Raideronly has a zero-data stub in `alts` (all fields = 0) — never received actual data
+
+**How a non-current banker gets into the system (entry path):**
+1. At some point, `Raideronly-OldBlanchy` was a guild member with `"gbank"` in their public or officer note
+2. `RebuildBankerRoster()` scanned `GetGuildRosterInfo()` and found the "gbank" keyword → added them to `roster.alts` AND created a zero stub in `self.Info.alts`
+3. Both entries persisted to SavedVariables
+4. They later left the guild (or their note was changed), but the cleanup never happened
+
+**Why they are NOT removed (the bug — three compounding failures):**
+
+**Failure 1: `RebuildBankerRoster()` doesn't purge stale `alts` stubs.**
+In `Guild.lua:RebuildBankerRoster()` (~470): newly discovered bankers get a stub created in `self.Info.alts`. When they leave the guild, `roster.alts` is correctly replaced via `self.Info.roster.alts = banks`, BUT nothing removes the dead stub from `self.Info.alts`. The stub persists across sessions indefinitely.
+
+**Failure 2: `latestBankerHashes` is seeded from ALL `self.Info.alts`, not just current roster.**
+In `Guild.lua:Init()` (~297): the `C_Timer.After(0.5)` block iterates `self.Info.alts` with no filter:
+```lua
+for altName, alt in pairs(self.Info.alts) do
+    self.latestBankerHashes[altName] = { hash = ..., mailHash = ... }
+end
+```
+This seeds Raideronly into `latestBankerHashes` on every login/reload, even though they're no longer a banker.
+
+**Failure 3: `roster.alts` in SV still contains Raideronly, so `rosterLookup` doesn't filter them.**
+`ReportHashListCoverage()` filters `latestBankerHashes` via `rosterLookup` (built from `GetRosterAlts()` → `roster.alts`). Since `roster.alts` in SavedVariables still contains Raideronly (confirmed in SV), the filter passes them through as valid pending. The `rosterLookup` guard added in P2P-019 only works correctly if `roster.alts` itself is clean — but cleaning requires a successful post-login `RebuildBankerRoster()` run that saves before logout, which hasn't happened in this case.
+
+**Root cause of Failure 3:** `RebuildBankerRoster()` correctly updates `roster.alts` in-memory (replacing it with the current guild scan), but if the player logs out before the clean roster is persisted (e.g., before the 1s deferred timer fires, or before the first `GUILD_ROSTER_UPDATE` deferred block completes with fresh guild data), the stale `roster.alts` survives to the next session.
+
+**Why it doesn't self-heal:** Every login the sequence is:
+- `t=0`: Load SV → `roster.alts` has Raideronly, `alts` has Raideronly stub
+- `t=0.5s`: `latestBankerHashes` seeded from all `alts` → Raideronly included
+- `t=0.5–1s`: `RebuildBankerRoster()` runs → `roster.alts` cleaned in-memory (Raideronly removed) → `banksCache` updated
+- `t=any`: `ReportHashListCoverage` called → uses `latestBankerHashes` (has Raideronly) vs `rosterLookup` (from updated `roster.alts`, Raideronly absent) → Raideronly filtered OUT by rosterLookup ✓
+- BUT: `latestBankerHashes` can be repopulated later via incoming HLR broadcasts from OTHER guild members whose `roster.alts` still contains Raideronly (their SavedVariables hasn't been cleaned yet either)
+
+**Fix required:**
+
+1. **`RebuildBankerRoster()` should remove stale `alts` stubs** for alts that are no longer in the banker roster. After building the new `banks` array, identify any key in `self.Info.alts` that is NOT in the new roster AND has only zero/empty data (stub indicator: `version == 0 and inventoryHash == 0 and #items == 0`) and remove it. This prevents permanent zombie entries.
+
+2. **`latestBankerHashes` init should filter to current roster only.** In `Guild:Init()`, the `C_Timer.After(0.5)` hash cache initialization should only include alts that are in `roster.alts` (or `banksCache`). However, since `RebuildBankerRoster()` runs at 1s (after the 0.5s init), this requires either (a) delaying the hash init to 1.5s after `RebuildBankerRoster()`, or (b) accepting the 0.5s window with stale hashes (acceptable since the rosterLookup filter handles it by 1s).
+
+3. **`BuildBankerHashList()` should not include zero-stub alts.** When a banker builds their hash list to broadcast, alts with `version == 0 and inventoryHash == 0` and no items are dead stubs and should be excluded. This prevents stale stubs from propagating to other guild members via HLR broadcasts.
+
+**Locations:**
+- `Guild.lua RebuildBankerRoster()` (~423–480): add stale stub cleanup after roster diff
+- `Guild.lua Init() latestBankerHashes init` (~297–313): filter to roster-only
+- `Guild.lua BuildBankerHashList()` (~695–717): skip zero-stub alts
 
 **Recent Fixes (2026-02-26):**
 - ✅ [PERF-010] **HIGH** Login freeze from synchronous data migrations in Database:Load - Deferred alt data migrations to prevent 3-5 second freeze when logging in with large SavedVariables. Root cause: Database:Load() synchronously looped through all alts (70+ in production) performing migrations: slots initialization, inventory hash computation, inventoryUpdatedAt backfill, and MOST EXPENSIVE: RecalculateAggregatedItems() for every banker alt. This ran on EVERY login/reload. Total time: 70 alts × ~50-70ms per iteration = 3-5 second freeze. Solution: Wrapped entire migration block in C_Timer.After(0.5) - data already loaded from SavedVariables, migrations don't need to be immediate. Also deferred latestBankerHashes initialization in Guild:Init. Result: Instant login, migrations run in background. Locations: Database.lua Load (~175-243), Guild.lua Init (~295-313).
@@ -9339,5 +9407,159 @@ timer = nil     // Clear reference (optional)
 **Files Changed:**
 - [Modules/Guild.lua](Modules/Guild.lua#L2000) - SendAltData timeout cancellation
 - [Modules/Chat.lua](Modules/Chat.lua#L1104) - Peer ACK handler timeout cancellation
+
+---
+
+#### [PERF-011] Load freeze: CleanupDeltaHistory() defined but never called
+
+**Severity:** 🔴 HIGH
+**Category:** Performance / SavedVariables
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-27
+**Date Resolved:** 2026-02-27
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% — occurs on every fresh login until SV is cleaned
+
+**Problem:**
+3-5 second game freeze on first few `/reload`s. SavedVariables file ballooned to 52,764 lines / 1.3 MB. The `deltaHistory` section alone was 33,421 lines — full delta diffs for every alt accumulated over many sessions with no eviction.
+
+**Root Cause:**
+`CleanupDeltaHistory()` was defined in `Database.lua` and had a correct 1-hour TTL (`DELTA_HISTORY_MAX_AGE = 3600`), but was never called anywhere. Every delta send wrote a new entry via `SaveDeltaHistory()` with no corresponding cleanup.
+
+**Fix:**
+Added two call sites in `Events.lua`:
+1. `GUILD_RANKS_UPDATE` startup handler — deferred 2s cleanup on first init (`-- PERF-011`)
+2. `OnShareTimer` periodic callback — cleanup every 3-minute share cycle (`-- PERF-011`)
+
+**Result:**
+`deltaHistory` section in SV dropped to 2 lines (empty table) after one reload.
+
+**Files Modified:**
+- [Modules/Events.lua](Modules/Events.lua) — Added `CleanupDeltaHistory` calls at startup and periodically
+
+---
+
+#### [PERF-012] Load freeze: deltaSnapshots and deltaHistory persisted to SavedVariables unnecessarily
+
+**Severity:** 🔴 HIGH
+**Category:** Performance / SavedVariables / Data Architecture
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-27
+**Date Resolved:** 2026-02-27
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% — every reload parsed 18.7k lines of redundant data
+
+**Problem:**
+After PERF-011 fixed `deltaHistory`, the SV file was still ~50k lines. Investigation found `deltaSnapshots` section was 18,710 lines — full inventory copies of all 35 banker alts stored as delta computation baselines. These were re-parsed by WoW on every load despite being immediately invalidated and rebuilt from live sync data each session.
+
+`deltaHistory` was also persisted, but its consumer (`RequestDeltaChain` / `togbank-dr`) is dead code since v0.8.0 stopped sending `baseVersion` in delta messages — the only gate condition for that code path.
+
+**Root Cause:**
+Both `deltaSnapshots` and `deltaHistory` were stored in AceDB `faction` scope, meaning WoW serialized and parsed them on every login. Neither needed to survive a reload:
+- Snapshots: rebuilt from the first sync of each session
+- Delta chain history: consumed only by a code path that can never be reached
+
+**Fix:**
+1. Moved `deltaSnapshots` to a module-local in-memory table `deltaSnapshotsCache` — fully functional within a session, zero SV footprint
+2. Made `SaveDeltaHistory` a no-op stub; removed `deltaHistory` from AceDB schema
+3. `Database:Load()` now nils both fields on existing SV data to purge old entries on first save after update
+4. Removed `SaveDeltaHistory` call in `Guild.lua` (after every delta send)
+5. All snapshot functions (`SaveSnapshot`, `GetSnapshot`, `GetSnapshotAge`, `CleanupOldSnapshots`) redirected to in-memory cache
+
+**Result:**
+SV file dropped from 50,672 lines to 32,426 lines (-18,246 lines, ~36% reduction) after two reloads. `deltaSnapshots` and `deltaHistory` keys absent from SV entirely.
+
+**Files Modified:**
+- [Modules/Database.lua](Modules/Database.lua) — In-memory snapshot cache, no-op SaveDeltaHistory, Load() purge
+- [Modules/Guild.lua](Modules/Guild.lua) — Removed SaveDeltaHistory call after delta send
+
+---
+
+#### [ROSTER-002] Stale ex-banker appearing permanently as "HLR pending"
+
+**Severity:** 🟡 MEDIUM
+**Category:** Roster / Data Integrity
+**Reporter:** User (Production)
+**Date Reported:** 2026-02-27
+**Date Resolved:** 2026-02-27
+**Status:** ✅ RESOLVED
+**Reproducibility:** Consistent — any ex-banker with residual zero stub persists indefinitely
+
+**Problem:**
+`Raideronly-OldBlanchy` appeared as "HLR pending" in the UI despite not being a current guild banker. The character existed in `roster.alts` and as a zero stub `{version=0, inventoryHash=0, mailHash=0}` in `alts`, causing `BuildBankerHashList` to include them in the hash broadcast, and `latestBankerHashes` to seed them as a pending sync target.
+
+**Root Cause — Three compounding failures:**
+
+1. **`RebuildBankerRoster()`** never purged zero stubs for ex-bankers. When a character left the banker rank, their stub stayed in `alts` forever.
+
+2. **`latestBankerHashes` init** ran 0.5s after login (before `RebuildBankerRoster` at 1s) and iterated ALL `alts` — including ex-banker stubs — seeding them into the hash cache as permanently pending.
+
+3. **`BuildBankerHashList()`** included zero stubs in the hash list broadcast, causing all peers to treat the ex-banker as a live sync target.
+
+**Fix:**
+
+1. **`RebuildBankerRoster()`** — Added cleanup loop: after building the new roster, deletes any `alts` entry that is a zero stub (`version==0, inventoryHash==0, mailHash==0`, no items) AND is not in the new banker roster. Tagged `-- ROSTER-002`.
+
+2. **`Guild:Init()` latestBankerHashes init** — Delayed timer from 0.5s → 1.5s (fires after RebuildBankerRoster at 1s). Now filtered through `banksCache` — only current roster members seeded. Tagged `-- PERF-010 / ROSTER-002`.
+
+3. **`BuildBankerHashList()`** — Added `hasAnyData` check; skips entries where `version`, `inventoryHash`, `mailHash` are all zero/nil and no items exist. Tagged `-- ROSTER-002`.
+
+**Self-review catch:** Initial fix missed `mailHash` in both the zero-stub detection and the `hasAnyData` check — corrected before shipping.
+
+**Files Modified:**
+- [Modules/Guild.lua](Modules/Guild.lua) — `RebuildBankerRoster()`, `Init()` latestBankerHashes, `BuildBankerHashList()`
+
+---
+
+#### [ITEM-003] Link stripping on weapons/armor causes deduplication collisions for same-ID suffix variants
+
+**Severity:** 🔴 CRITICAL
+**Category:** Data Integrity / Delta Sync / Item Deduplication
+**Reporter:** User (Production — Toglowweap-Azuresong inventory)
+**Date Reported:** 2026-02-27
+**Date Resolved:** 2026-02-27
+**Status:** ✅ RESOLVED
+**Reproducibility:** 100% — any banker holding two variants of same weapon (e.g. plain + suffixed) triggers duplication
+
+**Problem:**
+Toglowweap's inventory showed ghost stacks — e.g. `Acrobatic Staff ×6` alongside `Acrobatic Staff of the Wolf ×1`. The plain ×6 didn't exist in the actual bank; it was a phantom created by delta sync corruption. Similar ghosts appeared for other weapon IDs with mixed plain/suffixed variants.
+
+**Root Cause — Three interlocking bugs:**
+
+**Bug 1 — `NeedsLink` ignored `ITEM_CLASSES_NEEDING_LINK`:**
+`ITEM_CLASSES_NEEDING_LINK = { [2]=Weapon, [4]=Armor }` was defined but `NeedsLink()` never checked it. Instead it only checked for a non-zero suffix field in the link string. Plain weapons (suffix=0) returned `false` → link stripped to bare ItemString. Suffixed weapons returned `true` → full Link preserved. Two variants of the same weapon (e.g. both `ID=3185`) were stored in completely different formats, making deduplication impossible.
+
+**Bug 2 — `ComputeItemDelta` deep fallback re-used same old item:**
+The "fallback 2" loop searched for any old item with a matching ID when normalized key lookup failed. With a minimal baseline `{ID=3185, Count=N}`, both `Acrobatic Staff` (plain) and `Acrobatic Staff of the Wolf` would match the same entry — producing two `modified` entries for one old item, making one new item invisible (treated as already-present) and creating duplicates.
+
+**Bug 3 — `ApplyItemDelta` STEP 3 used ID-only existence check:**
+When inserting "added" items, a raw ID scan found the first item with matching ID and overwrote it instead of inserting a distinct entry. `Stone Hammer ×4` and `Stone Hammer of Tiger ×1` (both `ID=15260`) — the second one processed would stomp the first, corrupting count and link.
+
+**Bonus Bug — `ComputeItemDelta` removed entries were ID-only:**
+Removed items were serialized as `{ ID = item.ID }` only. On the receiver, the ID-only remove path (`table.remove` on first ID match) would hit whichever variant came first in the array — potentially removing the correct item and leaving the ghost, or vice versa.
+
+**Fix:**
+
+**`NeedsLink` (Item.lua):**
+Primary check now uses `GetItemInfo(itemID)` to get `itemClassId` (12th return). If class is `2` (Weapon) or `4` (Armor), always returns `true` regardless of suffix. Suffix-field regex kept as fallback for uncached items.
+
+**`ComputeItemDelta` removed entries (DeltaComms.lua):**
+Removed entries now carry `Link` (or `ItemString`) when available. ID-only removed entries only for items that had no link data.
+
+**`ApplyItemDelta` remove handler (DeltaComms.lua):**
+Remove matching with Link now also checks `item.ItemString` as a source for key normalization (previously only checked `item.Link`), so ItemString-only entries are also matched precisely.
+
+**`ComputeItemDelta` deep fallback (DeltaComms.lua):**
+Added `deepFallbackUsed` table keyed by item identity. Once an old item is claimed by deep fallback, subsequent new items with the same base ID get no match and correctly land in `delta.added`.
+
+**`ApplyItemDelta` STEP 3 add handler (DeltaComms.lua):**
+Primary lookup changed to normalized key (`ID + GetItemKey(Link|ItemString)`). Falls back to ID-only only for linkless existing entries (`{ID, Count}` stubs from old format) — the legitimate upgrade case.
+
+**Ghost cleanup:**
+Existing ghost stacks in SV will be corrected on the next delta push from the banker — the delta will now include a remove entry with the plain variant's full Link, which the receiver applies with exact key match.
+
+**Files Modified:**
+- [Modules/Item.lua](Modules/Item.lua) — `NeedsLink()`: check item class via GetItemInfo
+- [Modules/DeltaComms.lua](Modules/DeltaComms.lua) — `ComputeItemDelta` removes carry Link; deep fallback guard; `ApplyItemDelta` STEP 3 normalized key lookup; remove handler ItemString normalization
 
 ---

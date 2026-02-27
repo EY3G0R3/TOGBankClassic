@@ -290,15 +290,25 @@ function TOGBankClassic_Guild:Init(name)
 			self:RebuildBankerRoster()
 		end)
 		
-		-- PERF-010: Defer hash cache initialization to prevent login freeze
-		-- With 70+ alts in SavedVariables, synchronous loop blocks UI for 3-5 seconds
-		-- Hash cache not needed immediately - only used for hash comparison from broadcasts
-		C_Timer.After(0.5, function()
+		-- PERF-010 / ROSTER-002: Defer hash cache initialization to prevent login freeze.
+		-- Delayed to 1.5s (after RebuildBankerRoster at 1s) so banksCache is already clean.
+		-- Filtered to current banksCache only — prevents stale ex-banker stubs (removed by
+		-- RebuildBankerRoster) from being seeded into latestBankerHashes and showing as
+		-- perpetual "HLR pending" entries.
+		C_Timer.After(1.5, function()
 			self.latestBankerHashes = {}
 			local hashCount = 0
+			-- Use banksCache (freshly built by RebuildBankerRoster) as the filter.
+			-- Fall back to roster.alts from SV only if banksCache hasn't been built yet.
+			local currentBankers = self.banksCache or (self.Info and self.Info.roster and self.Info.roster.alts) or {}
+			local bankerLookup = {}
+			for _, name in ipairs(currentBankers) do
+				local norm = self:NormalizeName(name)
+				if norm then bankerLookup[norm] = true end
+			end
 			if self.Info.alts then
 				for altName, alt in pairs(self.Info.alts) do
-					if alt then
+					if alt and bankerLookup[altName] then
 						self.latestBankerHashes[altName] = {
 							hash = alt.inventoryHash or 0,
 							updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
@@ -310,7 +320,7 @@ function TOGBankClassic_Guild:Init(name)
 					end
 				end
 			end
-			TOGBankClassic_Output:Debug("PROTOCOL", "Initialized banker hash cache with %d alts from SavedVariables", hashCount)
+			TOGBankClassic_Output:Debug("PROTOCOL", "Initialized banker hash cache with %d alts (filtered to current roster)", hashCount)
 		end)
 		
 		return true
@@ -458,6 +468,14 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 	if not self.Info.alts then
 		self.Info.alts = {}
 	end
+	-- ROSTER-002: Build lookup of current bankers for stub-cleanup pass below
+	local newBanksLookup = {}
+	for _, name in ipairs(banks) do
+		local norm = self:NormalizeName(name)
+		if norm then
+			newBanksLookup[norm] = true
+		end
+	end
 	for _, name in ipairs(banks) do
 		local norm = self:NormalizeName(name)
 		if norm and not self.Info.alts[norm] then
@@ -473,6 +491,34 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 			self:EnsureLegacyFields(self.Info.alts[norm])
 			TOGBankClassic_Output:Debug("ROSTER", "Added missing banker stub data for %s", norm)
 		end
+	end
+
+	-- ROSTER-002: Remove zero-data stubs for alts no longer in the banker roster.
+	-- RebuildBankerRoster() creates stubs when someone joins the banker list but never
+	-- removed them when they left, causing permanent "HLR pending" phantom entries.
+	-- Only remove stubs that have never received real data (version==0, inventoryHash==0,
+	-- no items) — non-zero alts are never touched regardless of roster status.
+	local removedStubs = 0
+	for altName, alt in pairs(self.Info.alts) do
+		if not newBanksLookup[altName] then
+			local isZeroStub = (
+				type(alt) == "table"
+				and (not alt.version or alt.version == 0)
+				and (not alt.inventoryHash or alt.inventoryHash == 0)
+				and (not alt.mailHash or alt.mailHash == 0)
+				and (not alt.items or #alt.items == 0)
+				and (not alt.bank or not alt.bank.items or #alt.bank.items == 0)
+				and (not alt.mail or not alt.mail.items or #alt.mail.items == 0)
+			)
+			if isZeroStub then
+				self.Info.alts[altName] = nil
+				removedStubs = removedStubs + 1
+				TOGBankClassic_Output:Debug("ROSTER", "ROSTER-002: Removed stale zero-stub for ex-banker %s", altName)
+			end
+		end
+	end
+	if removedStubs > 0 then
+		TOGBankClassic_Output:Info("Cleaned %d stale ex-banker stub(s) from database", removedStubs)
 	end
 end
 
@@ -705,13 +751,25 @@ function TOGBankClassic_Guild:BuildBankerHashList()
 			local version = (alt and alt.version) or 0
 			local mailHash = (alt and alt.mailHash) or 0
 			local mailUpdatedAt = (alt and alt.mail and alt.mail.version) or 0
-			list[norm] = {
-				hash = hash,
-				updatedAt = updatedAt,
-				version = version,
-				mailHash = mailHash,
-				mailUpdatedAt = mailUpdatedAt,
-			}
+			-- ROSTER-002: Skip zero-data stubs — alts with no real data have nothing
+			-- useful to broadcast and would seed phantom HLR-pending entries on receivers.
+			-- Include mailHash and mail items: a banker might have mail data but no bank
+			-- data yet (never opened bank), so mailHash alone qualifies as real data.
+			local hasAnyData = (version ~= 0) or (hash ~= 0) or (mailHash ~= 0)
+				or (alt and alt.items and #alt.items > 0)
+				or (alt and alt.bank and alt.bank.items and #alt.bank.items > 0)
+				or (alt and alt.mail and alt.mail.items and #alt.mail.items > 0)
+			if not hasAnyData then
+				TOGBankClassic_Output:Debug("ROSTER", "ROSTER-002: Skipping zero-stub %s from hash list broadcast", norm)
+			else
+				list[norm] = {
+					hash = hash,
+					updatedAt = updatedAt,
+					version = version,
+					mailHash = mailHash,
+					mailUpdatedAt = mailUpdatedAt,
+				}
+			end
 		end
 	end
 	return list
@@ -2425,23 +2483,8 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		TOGBankClassic_Database:RecordDeltaSent(self.Info.name, totalSize)
 	end
 
-	-- Save delta to history for potential chain replay (DELTA-006)
-	-- v0.8.0: Use previous.version for baseVersion in history (delta no longer includes it)
-	---@diagnostic disable-next-line: need-check-nil
-	if self.Info and self.Info.name and deltaData.version and deltaData.changes then
-		---@diagnostic disable-next-line: need-check-nil
-		local previous = TOGBankClassic_Database:GetSnapshot(self.Info.name, norm)
-		local baseVer = previous and previous.version or 0
-		TOGBankClassic_Database:SaveDeltaHistory(
-			---@diagnostic disable-next-line: need-check-nil
-			self.Info.name,
-			norm,
-			baseVer,
-			---@diagnostic disable-next-line: need-check-nil
-			deltaData.version,
-			deltaData  -- Save full delta, not just changes
-		)
-	end
+	-- PERF-012: SaveDeltaHistory call removed. Delta chain replay is dead code since v0.8.0
+	-- (togbank-dr handler only triggered when deltaData.baseVersion is set, which v0.8.0 stopped sending).
 
 	-- Save snapshot for next delta
 	if self.Info and self.Info.name then

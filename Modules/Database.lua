@@ -1,3 +1,8 @@
+-- PERF-012: deltaSnapshots stored in-memory only — no persistence needed.
+-- Snapshots are delta computation baselines that are rebuilt from live data each session.
+-- Persisting them to SavedVariables added ~18k lines / 0.5 MB and caused the load freeze.
+local deltaSnapshotsCache = {}
+
 TOGBankClassic_Database = {}
 
 function TOGBankClassic_Database:Init()
@@ -28,21 +33,8 @@ function TOGBankClassic_Database:Reset(name)
 		return
 	end
 
-	-- Explicitly clear existing delta data before resetting to ensure SavedVariables persistence
-	if self.db.faction[name] then
-		if self.db.faction[name].deltaHistory then
-			-- Clear all entries
-			for k in pairs(self.db.faction[name].deltaHistory) do
-				self.db.faction[name].deltaHistory[k] = nil
-			end
-		end
-		if self.db.faction[name].deltaSnapshots then
-			-- Clear all entries
-			for k in pairs(self.db.faction[name].deltaSnapshots) do
-				self.db.faction[name].deltaSnapshots[k] = nil
-			end
-		end
-	end
+	-- PERF-012: Clear in-memory snapshot cache for this guild on reset
+	deltaSnapshotsCache[name] = nil
 
 	---START CHANGES
 	--self.db.factionrealm[name] = {
@@ -58,8 +50,8 @@ function TOGBankClassic_Database:Reset(name)
 			maxRequestPercent = 100,  -- Default to no limit
 		},
 		-- Delta sync fields
-		deltaSnapshots = {},
-		deltaHistory = {},  -- DELTA-006: Store delta chain for offline players
+		-- PERF-012: deltaSnapshots moved to in-memory deltaSnapshotsCache (not persisted)
+		-- PERF-012: deltaHistory removed — delta chain replay dead code since v0.8.0
 		guildProtocolVersions = {},
 		deltaMetrics = {
 			bytesSentDelta = 0,
@@ -135,6 +127,16 @@ function TOGBankClassic_Database:Load(name)
 		db.requests = {}
 	end
 
+	-- PERF-012: Purge legacy persisted fields — no longer stored in SavedVariables.
+	-- deltaSnapshots moved to in-memory cache; deltaHistory is dead code since v0.8.0.
+	-- Niling these removes the old 18k+ lines of data from the SV file on next save.
+	if db.deltaHistory ~= nil then
+		db.deltaHistory = nil
+	end
+	if db.deltaSnapshots ~= nil then
+		db.deltaSnapshots = nil
+	end
+
 	if not db.requestsVersion then
 		db.requestsVersion = 0
 	end
@@ -144,12 +146,6 @@ function TOGBankClassic_Database:Load(name)
 	end
 
 	-- Initialize delta sync fields if missing
-	if not db.deltaSnapshots then
-		db.deltaSnapshots = {}
-	end
-	if not db.deltaHistory then
-		db.deltaHistory = {}
-	end
 	if not db.guildProtocolVersions then
 		db.guildProtocolVersions = {}
 	end
@@ -252,12 +248,6 @@ function TOGBankClassic_Database:Load(name)
 	end
 
 	-- Initialize delta sync fields if not present
-	if not db.deltaSnapshots then
-		db.deltaSnapshots = {}
-	end
-	if not db.deltaHistory then
-		db.deltaHistory = {}  -- DELTA-006: Initialize delta chain history
-	end
 	if not db.guildProtocolVersions then
 		db.guildProtocolVersions = {}
 	end
@@ -284,18 +274,18 @@ end
 -- Snapshot Management Functions
 
 -- Save a snapshot of alt data for future delta computation
+-- PERF-012: Uses in-memory cache only — not persisted to SavedVariables
 function TOGBankClassic_Database:SaveSnapshot(name, altName, altData)
 	if not name or not altName or not altData then
 		return false
 	end
 
-	local db = self.db.faction[name]
-	if not db or not db.deltaSnapshots then
-		return false
+	if not deltaSnapshotsCache[name] then
+		deltaSnapshotsCache[name] = {}
 	end
 
 	-- Create a deep copy with timestamp
-	db.deltaSnapshots[altName] = {
+	deltaSnapshotsCache[name][altName] = {
 		data = TOGBankClassic_Database:DeepCopy(altData),
 		timestamp = GetServerTime(),
 	}
@@ -304,17 +294,18 @@ function TOGBankClassic_Database:SaveSnapshot(name, altName, altData)
 end
 
 -- Retrieve a snapshot of alt data for delta computation
+-- PERF-012: Uses in-memory cache only — not persisted to SavedVariables
 function TOGBankClassic_Database:GetSnapshot(name, altName)
 	if not name or not altName then
 		return nil
 	end
 
-	local db = self.db.faction[name]
-	if not db or not db.deltaSnapshots then
+	local cache = deltaSnapshotsCache[name]
+	if not cache then
 		return nil
 	end
 
-	local snapshot = db.deltaSnapshots[altName]
+	local snapshot = cache[altName]
 	if not snapshot then
 		return nil
 	end
@@ -323,14 +314,14 @@ function TOGBankClassic_Database:GetSnapshot(name, altName)
 	local age = GetServerTime() - (snapshot.timestamp or 0)
 	if age > PROTOCOL.DELTA_SNAPSHOT_MAX_AGE then
 		-- Snapshot expired, remove it
-		db.deltaSnapshots[altName] = nil
+		cache[altName] = nil
 		return nil
 	end
 
 	-- Validate snapshot structure
 	if not self:ValidateSnapshot(snapshot.data) then
 		-- Corrupted snapshot, remove it
-		db.deltaSnapshots[altName] = nil
+		cache[altName] = nil
 		return nil
 	end
 
@@ -372,17 +363,18 @@ function TOGBankClassic_Database:ValidateSnapshot(snapshot)
 end
 
 -- Get the age of a snapshot in seconds
+-- PERF-012: Uses in-memory cache only
 function TOGBankClassic_Database:GetSnapshotAge(name, altName)
 	if not name or not altName then
 		return nil
 	end
 
-	local db = self.db.faction[name]
-	if not db or not db.deltaSnapshots then
+	local cache = deltaSnapshotsCache[name]
+	if not cache then
 		return nil
 	end
 
-	local snapshot = db.deltaSnapshots[altName]
+	local snapshot = cache[altName]
 	if not snapshot or not snapshot.timestamp then
 		return nil
 	end
@@ -391,29 +383,30 @@ function TOGBankClassic_Database:GetSnapshotAge(name, altName)
 end
 
 -- Clean up old snapshots (older than DELTA_SNAPSHOT_MAX_AGE)
+-- PERF-012: Uses in-memory cache only
 function TOGBankClassic_Database:CleanupOldSnapshots(name)
 	if not name then
 		return 0
 	end
 
-	local db = self.db.faction[name]
-	if not db or not db.deltaSnapshots then
+	local cache = deltaSnapshotsCache[name]
+	if not cache then
 		return 0
 	end
 
 	local currentTime = GetServerTime()
 	local removed = 0
 
-	for altName, snapshot in pairs(db.deltaSnapshots) do
+	for altName, snapshot in pairs(cache) do
 		if snapshot and snapshot.timestamp then
 			local age = currentTime - snapshot.timestamp
 			if age > PROTOCOL.DELTA_SNAPSHOT_MAX_AGE then
-				db.deltaSnapshots[altName] = nil
+				cache[altName] = nil
 				removed = removed + 1
 			end
 		else
 			-- Malformed snapshot, remove it
-			db.deltaSnapshots[altName] = nil
+			cache[altName] = nil
 			removed = removed + 1
 		end
 	end
@@ -437,41 +430,12 @@ end
 
 -- Delta History Management (DELTA-006: Delta Chain Replay)
 
--- Save a delta to history for potential chain replay
+-- PERF-012: SaveDeltaHistory is a no-op. Delta chain replay was only triggered by
+-- deltaData.baseVersion which v0.8.0 stopped sending. GetDeltaHistory/togbank-dr/togbank-dc
+-- callers are all dead code. Keeping the function stub so Chat.lua compile-time refs are safe.
 function TOGBankClassic_Database:SaveDeltaHistory(name, altName, baseVersion, version, delta)
-	if not name or not altName or not baseVersion or not version or not delta then
-		return false
-	end
-
-	local db = self.db.faction[name]
-	if not db then
-		return false
-	end
-
-	-- Initialize deltaHistory if needed
-	if not db.deltaHistory then
-		db.deltaHistory = {}
-	end
-
-	if not db.deltaHistory[altName] then
-		db.deltaHistory[altName] = {}
-	end
-
-	-- Add delta to history
-	table.insert(db.deltaHistory[altName], {
-		baseVersion = baseVersion,
-		version = version,
-		delta = self:DeepCopy(delta),  -- Deep copy to prevent mutation
-		timestamp = GetServerTime()
-	})
-
-	-- Enforce max count limit (keep most recent)
-	local maxCount = PROTOCOL.DELTA_HISTORY_MAX_COUNT or 10
-	while #db.deltaHistory[altName] > maxCount do
-		table.remove(db.deltaHistory[altName], 1)  -- Remove oldest
-	end
-
-	return true
+	-- No-op: delta chain replay is dead code since v0.8.0
+	return false
 end
 
 -- Get delta history for an alt within a version range
