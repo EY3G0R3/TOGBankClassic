@@ -444,56 +444,10 @@ function TOGBankClassic_Database:DeepCopy(obj)
 	return copy
 end
 
--- Delta History Management (DELTA-006: Delta Chain Replay)
-
--- PERF-012: SaveDeltaHistory is a no-op. Delta chain replay was only triggered by
--- deltaData.baseVersion which v0.8.0 stopped sending. GetDeltaHistory/togbank-dr/togbank-dc
--- callers are all dead code. Keeping the function stub so Chat.lua compile-time refs are safe.
-function TOGBankClassic_Database:SaveDeltaHistory(name, altName, baseVersion, version, delta)
-	-- No-op: delta chain replay is dead code since v0.8.0
-	return false
-end
-
--- Get delta history for an alt within a version range
-function TOGBankClassic_Database:GetDeltaHistory(name, altName, fromVersion, toVersion)
-	if not name or not altName then
-		return nil
-	end
-
-	local db = self.db.faction[name]
-	if not db or not db.deltaHistory or not db.deltaHistory[altName] then
-		return nil
-	end
-
-	-- Build chain of deltas from fromVersion to toVersion
-	local chain = {}
-	local currentVersion = fromVersion
-
-	for _, deltaEntry in ipairs(db.deltaHistory[altName]) do
-		if deltaEntry.baseVersion == currentVersion and deltaEntry.version <= toVersion then
-			table.insert(chain, {
-				baseVersion = deltaEntry.baseVersion,
-				version = deltaEntry.version,
-				delta = deltaEntry.delta
-			})
-			currentVersion = deltaEntry.version
-
-			-- Stop if we've reached the target
-			if currentVersion == toVersion then
-				break
-			end
-		end
-	end
-
-	-- Return nil if we couldn't build a complete chain
-	if currentVersion ~= toVersion then
-		return nil
-	end
-
-	return chain
-end
-
 -- Clean up old delta history (older than DELTA_HISTORY_MAX_AGE)
+-- Note: SaveDeltaHistory was removed (dead code since v0.8.0 stopped sending baseVersion).
+-- CleanupDeltaHistory is still called to prune any deltaHistory that persists in SavedVariables
+-- from before the migration.
 function TOGBankClassic_Database:CleanupDeltaHistory(name)
 	if not name then
 		return 0

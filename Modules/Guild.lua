@@ -2464,8 +2464,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		TOGBankClassic_Database:RecordDeltaSent(self.Info.name, totalSize)
 	end
 
-	-- PERF-012: SaveDeltaHistory call removed. Delta chain replay is dead code since v0.8.0
-	-- (togbank-dr handler only triggered when deltaData.baseVersion is set, which v0.8.0 stopped sending).
+	-- PERF-012: Delta chain replay removed (v0.8.0 stopped sending baseVersion, making it dead code).
 
 	-- Save snapshot for next delta
 	if self.Info and self.Info.name then
@@ -2983,16 +2982,6 @@ end
 -- Apply a delta to alt data
 function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 	return TOGBankClassic_DeltaComms:ApplyDelta(self.Info, name, deltaData, sender)
-end
-
--- Request a chain of deltas to catch up from an old version (DELTA-006)
-function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion, sender)
-	return TOGBankClassic_DeltaComms:RequestDeltaChain(self.Info and self.Info.name, altName, fromVersion, toVersion, sender)
-end
-
--- Apply a chain of deltas sequentially (DELTA-006)
-function TOGBankClassic_Guild:ApplyDeltaChain(altName, deltaChain)
-	return TOGBankClassic_DeltaComms:ApplyDeltaChain(self.Info, altName, deltaChain)
 end
 
 function TOGBankClassic_Guild:Hello(type)
