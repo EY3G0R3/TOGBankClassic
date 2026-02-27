@@ -10,6 +10,7 @@
 **Recent Fixes (2026-02-27):**
 - ✅ [PERF-011] **HIGH** 3-5 second freeze on first few reloads from unbounded deltaHistory growth - CleanupDeltaHistory() existed but was never called, allowing stale delta entries (>1 hour old) to accumulate indefinitely. SavedVariables grew to 33,421 lines for deltaHistory alone (52,764 total / ~1.3MB), causing WoW to freeze 3-5s parsing it on every load. Freeze cleared after 3-4 reloads because the per-alt count limit (10) gradually displaced old large entries with new smaller ones. Fix: (1) Call CleanupDeltaHistory() 2s after guild init in GUILD_RANKS_UPDATE handler, (2) Call CleanupDeltaHistory() every 3 minutes in OnShareTimer to keep entries pruned during long sessions. Result: First reload after fix prunes all stale entries; subsequent reloads parse a tiny deltaHistory. Locations: Events.lua GUILD_RANKS_UPDATE (~428-438), OnShareTimer (~186-194).
 - ✅ [ROSTER-002] **MEDIUM** Stale ex-banker persists as "HLR pending" indefinitely after leaving guild - RebuildBankerRoster() created zero-data stubs in alts for discovered bankers but never removed them when they left. SavedVariables confirmed Raideronly-OldBlanchy in roster.alts (line 14515) and as a zero stub in alts (line 17572) despite not being a current guild member. Three compounding failures: (1) stubs not cleaned on roster rebuild, (2) latestBankerHashes seeded from ALL alts including stale stubs, (3) stub in roster.alts bypassed the rosterLookup filter added in P2P-019. Fix: (1) RebuildBankerRoster() now deletes zero stubs (version==0, inventoryHash==0, no items) for alts not in the new banker roster after each rebuild, (2) latestBankerHashes init delayed from 0.5s to 1.5s and filtered to banksCache only (populated by RebuildBankerRoster at 1s), preventing stale stubs from re-entering the cache, (3) BuildBankerHashList() skips zero-stub alts so they are never broadcast to other guild members and cannot seed phantom pending entries on receivers. Result: Raideronly and any future ex-bankers are cleaned on next load with a live guild roster; "HLR pending" only shows alts that actually need syncing. Locations: Guild.lua RebuildBankerRoster (~498-521), Init latestBankerHashes init (~293-325), BuildBankerHashList (~752-780).
+- ✅ [ITEM-003b] **CRITICAL** Receive-side ghost weapon stacks persist after ITEM-003 sender fixes — even with corrected NeedsLink on the sender, a race condition (GetItemInfo cache miss at send time) still allows plain-weapon ItemStrings to reach the receiver. When the receiver's ApplyItemDelta STEP 3 found no normalized-key match for the linkless entry, it inserted it as a new ghost stack alongside the existing suffixed entry instead of discarding it. Fix: added `ItemClassNeedsLink(itemID)` helper to Item.lua (returns true/false/nil based on GetItemInfo class; nil = uncached). In ApplyItemDelta STEP 2 and STEP 3, before inserting a linkless item as new: (a) if GetItemInfo confirms weapon/armor class → block insert, (b) if class uncached → block if any linked entry for the same base ID already exists (linked version is authoritative). Root cause confirmed by inspecting banker SV (account 981197530#1) — banker had only the suffixed wolf variant with full Link; the ghost plain entry was being created on the receiver when the linkless ItemString arrived and keyed differently. Commit: 8ced667. Locations: Item.lua ItemClassNeedsLink() (new), DeltaComms.lua ApplyItemDelta STEP 2 linkless-as-new guard, STEP 3 linkless-as-new guard.
 
 ---
 
@@ -9556,10 +9557,55 @@ Added `deepFallbackUsed` table keyed by item identity. Once an old item is claim
 Primary lookup changed to normalized key (`ID + GetItemKey(Link|ItemString)`). Falls back to ID-only only for linkless existing entries (`{ID, Count}` stubs from old format) — the legitimate upgrade case.
 
 **Ghost cleanup:**
-Existing ghost stacks in SV will be corrected on the next delta push from the banker — the delta will now include a remove entry with the plain variant's full Link, which the receiver applies with exact key match.
+Existing ghost stacks in SV were expected to be corrected on the next delta push from the banker. However, post-fix testing (`/wipe` + resync) showed ghosts still returning — see follow-up investigation below (ITEM-003b).
 
-**Files Modified:**
+**Files Modified (commit 5a40d73):**
 - [Modules/Item.lua](Modules/Item.lua) — `NeedsLink()`: check item class via GetItemInfo
 - [Modules/DeltaComms.lua](Modules/DeltaComms.lua) — `ComputeItemDelta` removes carry Link; deep fallback guard; `ApplyItemDelta` STEP 3 normalized key lookup; remove handler ItemString normalization
+
+---
+
+#### [ITEM-003b] Receive-side ghost weapon stacks survive sender-side fix due to GetItemInfo cache-miss race
+
+**Severity:** 🔴 CRITICAL
+**Category:** Data Integrity / Delta Sync / Receive-Side Guard
+**Reporter:** User (Production — ghost `Acrobatic Staff ×6` persisted after ITEM-003 fix + `/wipe`)
+**Date Reported:** 2026-02-27
+**Date Resolved:** 2026-02-27
+**Status:** ✅ RESOLVED
+**Commit:** `8ced667`
+
+**Problem:**
+After deploying ITEM-003 and doing `/wipe` + resync, the ghost `Acrobatic Staff ×6` plain stack returned in the receiver's SV alongside the correct `Acrobatic Staff of the Wolf ×1`. The sender-side `NeedsLink` fix was not fully effective by itself.
+
+**Investigation:**
+Inspected banker's SavedVariables (`981197530#1`):
+- Banker had only **two** `Acrobatic Staff` entries, both line 40262 and 40512, both with full Link `|cff1eff00|Hitem:3185...366387584...` (the `366387584` suffix encodes "of the Wolf").
+- No plain `Acrobatic Staff` (suffix=0) existed in banker's SV — the ghost was not from banker's scan data.
+
+**Root cause:**
+`StripDeltaLinks` (sender-side) calls `NeedsLink` to decide whether to keep the full Link or downgrade to an ItemString. For **plain weapons** (suffix=0), when `GetItemInfo` is **not yet cached** on the sender at the moment of the call, `NeedsLink` falls through to the suffix-regex fallback — which matches a non-zero suffix field, but suffix=0 produces no match — so it returns `false` and strips the link to `ItemString="3185:0:0:0:0:0:0"`.
+
+On the **receiver**, `ApplyItemDelta` STEP 3 normalized-key lookup computes a different key for `item:3185:0:0:0:0:0:0` vs `item:3185:::::521` (the wolf variant). No existing entry matches → the linkless plain entry is **inserted as a brand-new ghost stack**.
+
+The sender may be sending a correct suffixed entry AND an inadvertently linkless-stripped plain entry if `GetItemInfo` was cold on one of them at transmit time.
+
+**Fix:**
+Added `TOGBankClassic_Item:ItemClassNeedsLink(itemID)` to [Modules/Item.lua](Modules/Item.lua):
+- Calls `GetItemInfo(itemID)`, reads `itemClassId` (12th return)
+- Returns `true` if class 2 (Weapon) or 4 (Armor), `false` for other known classes, `nil` if not cached
+
+In `ApplyItemDelta` [Modules/DeltaComms.lua](Modules/DeltaComms.lua), **before inserting any linkless item** (has `ItemString` but no `Link`) as a new entry in **STEP 2** (modified-fallback-to-new) and **STEP 3** (added):
+
+1. **Class confirmed (cached):** `ItemClassNeedsLink` returns `true` → block insert, log `[ITEM-003] STEP3: blocked linkless weapon/armor ID=X (class confirmed)`
+2. **Class uncached:** `ItemClassNeedsLink` returns `nil` → scan existing items for any entry with same base ID that **has a Link** → if found, block insert (linked version is authoritative), log `[ITEM-003] STEP3: blocked linkless ID=X (linked entry exists, class uncached)`
+3. **Class is not weapon/armor, no linked entry:** allow insert (normal consumable/trade-good without any pre-existing linked entry)
+
+**Why the secondary guard is needed:**
+The receiver's client may also have `GetItemInfo` uncached for items it hasn't directly seen. Using the presence of an existing linked entry as a proxy for "this item type needs a link" covers the cache-miss window without requiring a server round-trip.
+
+**Files Modified (commit 8ced667):**
+- [Modules/Item.lua](Modules/Item.lua) — new `ItemClassNeedsLink(itemID)` helper
+- [Modules/DeltaComms.lua](Modules/DeltaComms.lua) — `ApplyItemDelta` STEP 2 and STEP 3 linkless-insert guard
 
 ---
