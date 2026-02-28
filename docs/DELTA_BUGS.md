@@ -8,12 +8,67 @@
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 
 **Recent Fixes (2026-02-27):**
+- ✅ [DELTA-025] **CRITICAL** Non-banker's `inventoryHash` stamped with banker's value instead of recomputed from actual applied items — after `ApplyDelta` wrote bank/bags/mail items and recalculated the aggregated `current.items`, the final step blindly set `current.inventoryHash = deltaData.inventoryHash` (the banker's hash) and `current.mailHash = changes.mailHash` (stamped *before* mail items were even applied). If the applied items differed from the banker's in any way (stale bags, different mail, partial apply), the stored hash matched the banker's anyway → next sync: Ian sent `summary.hash = banker's hash`, banker saw no mismatch → sent no-change → items stayed stale permanently. Fix: replace both stamps with recomputation from the actual resulting items after all delta changes are applied: `inventoryHash = ComputeInventoryHash(current.items, nil, nil, current.money)` and `mailHash = ComputeInventoryHash(current.mail.items, nil, nil, nil)`. If items are correct the hash naturally converges; if anything is still wrong the hash diverges, the next sync detects the mismatch and self-heals. Locations: DeltaComms.lua `ApplyDelta` (~1237, ~1352-1371).
 - ✅ [PERF-011] **HIGH** 3-5 second freeze on first few reloads from unbounded deltaHistory growth - CleanupDeltaHistory() existed but was never called, allowing stale delta entries (>1 hour old) to accumulate indefinitely. SavedVariables grew to 33,421 lines for deltaHistory alone (52,764 total / ~1.3MB), causing WoW to freeze 3-5s parsing it on every load. Freeze cleared after 3-4 reloads because the per-alt count limit (10) gradually displaced old large entries with new smaller ones. Fix: (1) Call CleanupDeltaHistory() 2s after guild init in GUILD_RANKS_UPDATE handler, (2) Call CleanupDeltaHistory() every 3 minutes in OnShareTimer to keep entries pruned during long sessions. Result: First reload after fix prunes all stale entries; subsequent reloads parse a tiny deltaHistory. Locations: Events.lua GUILD_RANKS_UPDATE (~428-438), OnShareTimer (~186-194).
 - ✅ [ROSTER-002] **MEDIUM** Stale ex-banker persists as "HLR pending" indefinitely after leaving guild - RebuildBankerRoster() created zero-data stubs in alts for discovered bankers but never removed them when they left. SavedVariables confirmed Raideronly-OldBlanchy in roster.alts (line 14515) and as a zero stub in alts (line 17572) despite not being a current guild member. Three compounding failures: (1) stubs not cleaned on roster rebuild, (2) latestBankerHashes seeded from ALL alts including stale stubs, (3) stub in roster.alts bypassed the rosterLookup filter added in P2P-019. Fix: (1) RebuildBankerRoster() now deletes zero stubs (version==0, inventoryHash==0, no items) for alts not in the new banker roster after each rebuild, (2) latestBankerHashes init delayed from 0.5s to 1.5s and filtered to banksCache only (populated by RebuildBankerRoster at 1s), preventing stale stubs from re-entering the cache, (3) BuildBankerHashList() skips zero-stub alts so they are never broadcast to other guild members and cannot seed phantom pending entries on receivers. Result: Raideronly and any future ex-bankers are cleaned on next load with a live guild roster; "HLR pending" only shows alts that actually need syncing. Locations: Guild.lua RebuildBankerRoster (~498-521), Init latestBankerHashes init (~293-325), BuildBankerHashList (~752-780).
 - ✅ [ITEM-003b] **CRITICAL** Receive-side ghost weapon stacks persist after ITEM-003 sender fixes — even with corrected NeedsLink on the sender, a race condition (GetItemInfo cache miss at send time) still allows plain-weapon ItemStrings to reach the receiver. When the receiver's ApplyItemDelta STEP 3 found no normalized-key match for the linkless entry, it inserted it as a new ghost stack alongside the existing suffixed entry instead of discarding it. Fix: added `ItemClassNeedsLink(itemID)` helper to Item.lua (returns true/false/nil based on GetItemInfo class; nil = uncached). In ApplyItemDelta STEP 2 and STEP 3, before inserting a linkless item as new: (a) if GetItemInfo confirms weapon/armor class → block insert, (b) if class uncached → block if any linked entry for the same base ID already exists (linked version is authoritative). Root cause confirmed by inspecting banker SV (account 981197530#1) — banker had only the suffixed wolf variant with full Link; the ghost plain entry was being created on the receiver when the linkless ItemString arrived and keyed differently. Commit: 8ced667. Locations: Item.lua ItemClassNeedsLink() (new), DeltaComms.lua ApplyItemDelta STEP 2 linkless-as-new guard, STEP 3 linkless-as-new guard.
 - ✅ [DELTA-022] **CRITICAL** Every delta sync was effectively a full sync — `ItemsEqual` compared `item1.Link ~= item2.Link` where `item1` was a minimal baseline item (Link=nil, from `expandMinimalItems` in `ComputeDelta`) and `item2` was a current inventory item (always has Link). `nil ~= "item:12345:..."` is always true, so every unchanged item landed in `modified[]` regardless of actual changes. The resulting delta contained the entire inventory as modified entries — same size as a full sync — defeating the point of delta protocol entirely. Fix: Only compare Links when both items have them. A nil Link on either side means the field is simply absent/unknown (minimal baseline), not a meaningful difference. Locations: DeltaComms.lua `ItemsEqual` (~446-490).
 - ✅ [DELTA-023] **HIGH** Stale `hasSnapshot` gate in `RespondToStateSummary` caused unnecessary full syncs after any reload — Both the mail-only-change and inventory-change branches in `RespondToStateSummary` checked `GetSnapshot()` before computing a delta, falling back to `SendAltData(norm, 0, 0, ...)` (full sync) when no snapshot existed. Since snapshots are in-memory only (PERF-012), they are lost on every reload. After DELTA-020 landed, `ComputeDelta` uses `requesterBaseline` from the state summary directly and no longer uses `GetSnapshot` at all — but the gate in `RespondToStateSummary` was never removed. Result: The first sync after any reload always sent a full "everything as additions" delta even though the requester sent their exact baseline in the state summary. Fix: Removed both `hasSnapshot` gates entirely. `ComputeDelta` handles `requesterHash == 0` (no prior data) internally; `requesterBaseline` covers all other cases. Locations: Guild.lua `RespondToStateSummary` mail-only branch (~1829) and inventory-change branch (~1847).
 - ✅ [DELTA-024] **LOW** Migration computes inventory hash using a different algorithm than `Bank:Scan()`, causing a false "inventory changed" event on every startup — The `Database.lua` migration block (post-load, deferred 0.5s) called `ComputeInventoryHash(alt.bank, alt.bags, money)` which routes through the pre-SYNC-006 code path and hashes `"B:bank.items|G:bags.items"` separately. `Bank:Scan()` always calls `ComputeInventoryHash(alt.items, nil, nil, money)` which is the SYNC-006 path and hashes `"I:aggregated_items"`. Same hash algorithm but different string input → different numeric output for identical inventory data. On startup the migration wrote the pre-SYNC-006 hash; then on first `Bank:Scan()` the SYNC-006 hash differed → `currentHash ~= previousHash` → version bumped, snapshot saved, and `dv2` broadcast triggered as if inventory had changed. Transient (self-healed after first scan), but caused one spurious version bump and broadcast per session. Fix: After `RecalculateAggregatedItems` populates `alt.items`, recompute hash using SYNC-006 calling convention to match `Bank:Scan()` format. Locations: Database.lua deferred migration block (~220).
+
+---
+
+## [DELTA-025] Non-banker inventoryHash stamped from delta instead of recomputed from applied items
+
+**Severity:** CRITICAL
+**Status:** Fixed 2026-02-27
+**Reported:** February 27, 2026
+
+**Symptom:**
+Non-banker Ian (`IANPLAMONDON`) had correct hash metadata but stale bag item counts for banker alt `Taylorrcp-Azuresong` even after banker ran `/togbank share`. SV confirmed:
+- Ian's `inventoryHash = 174890764` (stale) while banker had `1003899929`
+- Ian's `bags.items` had wrong counts (e.g. ID 7114 Count=3 vs banker's Count=1)
+- Ian's `bank.items` was correct (matched banker exactly)
+- Ian's `version = 1770402326` but `inventoryUpdatedAt = 1772245514` — a prior delta had updated `inventoryUpdatedAt` but not corrected the items
+
+**Root Cause:**
+At the end of `ApplyDelta`, after all bank/bags/mail item changes were applied and `current.items` was recalculated, the code stamped:
+```lua
+-- Wrong: blindly copies banker's hash value
+if deltaData.inventoryHash and deltaData.inventoryHash ~= 0 then
+    current.inventoryHash = deltaData.inventoryHash  -- banker's hash, not Ian's
+end
+```
+And separately, `mailHash` was stamped from `changes.mailHash` **before** mail items were applied:
+```lua
+-- Wrong: stamped before mail items exist
+if changes.mailHash ~= nil then
+    current.mailHash = changes.mailHash
+end
+```
+
+If the applied items on Ian's side differed from the banker's in any way (stale bags, different mail contents, partial apply), the stored `inventoryHash` matched the banker's anyway. On the next sync:
+1. Ian sent `summary.hash = 1003899929` (stamped from banker)
+2. Banker compared: `requesterHash (1003899929) == currentHash (1003899929)` → **hashes match**
+3. Banker sent `no-change`
+4. Ian's items remained stale permanently — the false hash match silenced all future syncs
+
+**Fix (DeltaComms.lua `ApplyDelta`):**
+Replaced both hash stamps with recomputation from the actual resulting items after all delta changes are applied:
+```lua
+-- Correct: recompute from what we actually have
+local recomputedInvHash = self:ComputeInventoryHash(current.items or {}, nil, nil, current.money or 0)
+current.inventoryHash = recomputedInvHash
+
+if current.mail and current.mail.items then
+    local recomputedMailHash = self:ComputeInventoryHash(current.mail.items, nil, nil, nil)
+    current.mailHash = recomputedMailHash
+end
+```
+
+**Self-healing behaviour:** If items are applied correctly the recomputed hash naturally converges with the banker's on the next sync cycle. If anything is still wrong, the hash diverges, the mismatch is detected, another delta is sent, and the system self-corrects — rather than silently perpetuating stale data.
+
+**Locations:** `DeltaComms.lua` `ApplyDelta` — removed premature `mailHash` stamp (~line 1237), replaced `inventoryHash` stamp with recompute block (~lines 1352–1371).
 
 ---
 

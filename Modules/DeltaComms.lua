@@ -1236,12 +1236,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 				current.money = changes.money
 			end
 
-			-- MAIL-012: Apply mailHash changes
-			-- This allows receivers to detect when mail data has been updated
-			if changes.mailHash ~= nil then
-				current.mailHash = changes.mailHash
-				TOGBankClassic_Output:Debug("DELTA", "[MAIL-012] Updated mailHash for %s to %s", norm, tostring(changes.mailHash))
-			end
+			-- MAIL-012: mailHash is now recomputed from actual items after mail delta is applied (see below)
 
 			-- Apply bank changes
 			if changes.bank then
@@ -1349,8 +1344,25 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			-- Update version
 			current.version = deltaData.version
 			current.inventoryUpdatedAt = deltaData.updatedAt or deltaData.version or current.inventoryUpdatedAt
-			if deltaData.inventoryHash and deltaData.inventoryHash ~= 0 then
-				current.inventoryHash = deltaData.inventoryHash
+
+			-- HASH-RECOMPUTE: Derive inventoryHash from the actual applied items rather than
+			-- stamping the banker's hash value. This ensures the stored hash always reflects
+			-- what we actually have locally. If items weren't applied correctly the hash
+			-- will diverge → next sync detects the mismatch → self-heals automatically.
+			-- Stamping deltaData.inventoryHash can create a false "in-sync" state that
+			-- silences future syncs even when item counts are still stale.
+			local recomputedInvHash = self:ComputeInventoryHash(current.items or {}, nil, nil, current.money or 0)
+			current.inventoryHash = recomputedInvHash
+			TOGBankClassic_Output:Debug("DELTA", "[HASH-RECOMPUTE] %s inventoryHash recomputed=%d (delta had %d)",
+				norm, recomputedInvHash, deltaData.inventoryHash or 0)
+
+			-- HASH-RECOMPUTE: Also recompute mailHash from actual mail items after delta application.
+			-- Previously stamped from changes.mailHash before items were applied (wrong order).
+			if current.mail and current.mail.items then
+				local recomputedMailHash = self:ComputeInventoryHash(current.mail.items, nil, nil, nil)
+				current.mailHash = recomputedMailHash
+				TOGBankClassic_Output:Debug("DELTA", "[HASH-RECOMPUTE] %s mailHash recomputed=%d (delta had %d)",
+					norm, recomputedMailHash, changes.mailHash or 0)
 			end
 		end)
 
