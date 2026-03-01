@@ -295,10 +295,10 @@ function TOGBankClassic_Bank:Scan()
 		alt.version = updatedAt
 		alt.inventoryUpdatedAt = updatedAt
 		alt.inventoryHash = currentHash
-		TOGBankClassic_Output:Debug("SYNC", "Inventory changed for %s, version updated to %d (hash: %s)", player, alt.version, tostring(currentHash))
+		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Inventory changed for %s, version updated to %d (hash: %s)", player, alt.version, tostring(currentHash))
 	else
 		-- No changes detected, preserve existing version
-		TOGBankClassic_Output:Debug("SYNC", "No inventory changes for %s, version unchanged (hash: %s)", player, tostring(currentHash))
+		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "No inventory changes for %s, version unchanged (hash: %s)", player, tostring(currentHash))
 		-- Backfill inventoryUpdatedAt if missing
 		if not alt.inventoryUpdatedAt and alt.version then
 			alt.inventoryUpdatedAt = alt.version
@@ -364,7 +364,7 @@ function TOGBankClassic_Bank:Scan()
 	-- Without this, first broadcast after scan always sends full data (no baseline)
 	if info.name then
 		TOGBankClassic_Database:SaveSnapshot(info.name, player, alt)
-		TOGBankClassic_Output:Debug("DELTA", "Saved snapshot for %s after scan (hash=%s)", player, tostring(alt.inventoryHash))
+		TOGBankClassic_Output:Debug("DELTA", "APPLY", "Saved snapshot for %s after scan (hash=%s)", player, tostring(alt.inventoryHash))
 	end
 end
 

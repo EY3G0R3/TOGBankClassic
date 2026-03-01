@@ -116,7 +116,7 @@ local function sanitizeRequest(req)
 				local normalizedIdItem = string.lower(string.gsub(itemInId, "%s+", ""))
 
 				if normalizedItem ~= normalizedIdItem then
-					TOGBankClassic_Output:Debug("REQUESTS",
+					TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE",
 						"Rejected request: ID contains '%s' but item is '%s' (corrupted/edited request)",
 						itemInId, item)
 					return nil
@@ -260,7 +260,7 @@ local function mergeRequest(requests, tombstones, id, incoming)
 
 	local clean = sanitizeRequest(incoming)
 	if not clean then
-		TOGBankClassic_Output:Debug("SYNC", "mergeRequest: sanitizeRequest failed for id=%s", tostring(id))
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "mergeRequest: sanitizeRequest failed for id=%s", tostring(id))
 		return nil
 	end
 
@@ -290,20 +290,20 @@ local function mergeRequest(requests, tombstones, id, incoming)
 			-- Only accept incoming if it has NEWER statusUpdatedAt (explicit status change)
 			-- If incoming has no statusUpdatedAt, treat it as old/unknown (don't reopen)
 			if incomingStatusTs <= existingStatusTs then
-				TOGBankClassic_Output:Debug("SYNC",
+				TOGBankClassic_Output:Debug("SYNC", "MERGE",
 					"mergeRequest: REJECTED - Trying to reopen %s status (id=%s, existing %s@%d, incoming %s@%d)",
 					existing.status, id, existing.status, existingStatusTs, clean.status, incomingStatusTs)
 				return "kept"
 			end
 			-- If incoming has newer status timestamp, it's an explicit reopening - allow it
-			TOGBankClassic_Output:Debug("SYNC",
+			TOGBankClassic_Output:Debug("SYNC", "MERGE",
 				"mergeRequest: Allowing explicit status change from %s to %s (id=%s, statusUpdatedAt %d -> %d)",
 				existing.status, clean.status, id, existingStatusTs, incomingStatusTs)
 		end
 
 		if not existingIsTerminal and incomingIsTerminal then
 			-- Incoming is trying to cancel/complete an open request
-			TOGBankClassic_Output:Debug("SYNC",
+			TOGBankClassic_Output:Debug("SYNC", "MERGE",
 				"mergeRequest: Applying terminal status change %s -> %s (id=%s, statusUpdatedAt %d -> %d, updatedAt %d -> %d)",
 				existing.status, clean.status, id, existingStatusTs, incomingStatusTs, existingTs, incomingTs)
 		end
@@ -314,32 +314,32 @@ local function mergeRequest(requests, tombstones, id, incoming)
 			-- Both are terminal states - only reject if status AND general timestamp unchanged
 			if incomingStatusTs <= existingStatusTs and incomingTs <= existingTs then
 				-- Same terminal state, same timestamps - just a refresh, reject it
-				TOGBankClassic_Output:Debug("SYNC",
+				TOGBankClassic_Output:Debug("SYNC", "MERGE",
 					"mergeRequest: REJECTED - Timestamp refresh on %s status (id=%s, existing@%d, incoming@%d)",
 					existing.status, id, existingStatusTs, incomingStatusTs)
 				return "kept"
 			end
 			-- Otherwise fall through to normal timestamp comparison (allows quantity updates, etc.)
-			TOGBankClassic_Output:Debug("SYNC",
+			TOGBankClassic_Output:Debug("SYNC", "MERGE",
 				"mergeRequest: Allowing terminal state update (id=%s, status=%s, statusTs %d -> %d, ts %d -> %d)",
 				id, clean.status, existingStatusTs, incomingStatusTs, existingTs, incomingTs)
 		end
 
 		if incomingTs > existingTs then
 			requests[id] = clean
-			TOGBankClassic_Output:Debug("SYNC",
+			TOGBankClassic_Output:Debug("SYNC", "MERGE",
 				"mergeRequest: UPDATED - id=%s, status %s->%s, updatedAt %d->%d",
 				id, existing.status, clean.status, existingTs, incomingTs)
 			return "updated"
 		else
-			TOGBankClassic_Output:Debug("SYNC",
+			TOGBankClassic_Output:Debug("SYNC", "MERGE",
 				"mergeRequest: KEPT - id=%s (incoming older: %d <= %d)",
 				id, incomingTs, existingTs)
 			return "kept"
 		end
 	else
 		requests[id] = clean
-		TOGBankClassic_Output:Debug("SYNC",
+		TOGBankClassic_Output:Debug("SYNC", "MERGE",
 			"mergeRequest: ADDED - id=%s, status=%s, updatedAt=%d",
 			id, clean.status, incomingTs)
 		return "added"

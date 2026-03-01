@@ -545,7 +545,7 @@ function TOGBankClassic_DeltaComms:BuildItemIndex(items)
 	end
 	
 	if withoutLinks > 0 then
-		TOGBankClassic_Output:Debug("DELTA", "[DEDUP-FIX] BuildItemIndex: indexed %d items (%d with links, %d without links)",
+		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] BuildItemIndex: indexed %d items (%d with links, %d without links)",
 			withLinks + withoutLinks, withLinks, withoutLinks)
 	end
 
@@ -661,12 +661,12 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 	end
 	
 	if fallbackMatches > 0 then
-		TOGBankClassic_Output:Debug("DELTA", "[DEDUP-FIX] ComputeItemDelta: matched %d items using ID-only fallback (prevents duplication)",
+		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] ComputeItemDelta: matched %d items using ID-only fallback (prevents duplication)",
 			fallbackMatches)
 	end
 	
 	if deepFallbackMatches > 0 then
-		TOGBankClassic_Output:Debug("DELTA", "[DEDUP-FIX] ComputeItemDelta: matched %d items using deep ID fallback - link normalization mismatch detected",
+		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] ComputeItemDelta: matched %d items using deep ID fallback - link normalization mismatch detected",
 			deepFallbackMatches)
 	end
 
@@ -720,7 +720,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 			-- Requester has data - check if it matches current (both inventory AND mail)
 			if requesterInventoryHash == currentHash and requesterMailHash == currentMailHash then
 				-- Hash match (both hashes) - no changes needed (empty delta)
-				TOGBankClassic_Output:Debug("DELTA", "[MAIL-SYNC] Hash match: requester inv=%d mail=%d, banker inv=%d mail=%d (no changes)",
+				TOGBankClassic_Output:Debug("DELTA", "BUILD", "[MAIL-SYNC] Hash match: requester inv=%d mail=%d, banker inv=%d mail=%d (no changes)",
 					requesterInventoryHash, requesterMailHash, currentHash, currentMailHash)
 				previous = currentAlt  -- Use current as previous (results in empty delta)
 			elseif requesterInventoryHash == currentHash and requesterMailHash ~= currentMailHash then
@@ -735,7 +735,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 						bags = { items = expandMinimalItems(requesterBaseline.bags) },
 						mail = { items = expandMinimalItems(requesterBaseline.mail) },
 					}
-					TOGBankClassic_Output:Debug("DELTA", "[DELTA-020] Mail changed: using requester's actual baseline (bank=%d, bags=%d, mail=%d)",
+					TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-020] Mail changed: using requester's actual baseline (bank=%d, bags=%d, mail=%d)",
 						#previous.bank.items, #previous.bags.items, #previous.mail.items)
 				else
 					-- BUGFIX: No requester baseline - cannot compute accurate delta
@@ -758,7 +758,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 						bags = { items = expandMinimalItems(requesterBaseline.bags) },
 						mail = { items = expandMinimalItems(requesterBaseline.mail) },
 					}
-					TOGBankClassic_Output:Debug("DELTA", "[DELTA-020] Using requester's actual baseline: inv=%d→%d (bank=%d, bags=%d, mail=%d items)",
+					TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-020] Using requester's actual baseline: inv=%d→%d (bank=%d, bags=%d, mail=%d items)",
 						requesterInventoryHash, currentHash,
 						#previous.bank.items, #previous.bags.items, #previous.mail.items)
 				else
@@ -774,7 +774,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 		else
 			-- Requester has no data (hash 0 or nil) - send everything as delta additions
 			previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-			TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] Requester has no data (hash=%s), sending all as additions",
+			TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-014] Requester has no data (hash=%s), sending all as additions",
 				tostring(requesterInventoryHash))
 		end
 
@@ -996,13 +996,13 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 						local needsLink = TOGBankClassic_Item:ItemClassNeedsLink(changes.ID)
 						if needsLink == true then
 							guardBlock = true
-							TOGBankClassic_Output:Debug("DELTA", "[ITEM-003] STEP2: blocked linkless modified-as-new weapon/armor ID=%d", changes.ID)
+							TOGBankClassic_Output:Debug("DELTA", "APPLY", "[ITEM-003] STEP2: blocked linkless modified-as-new weapon/armor ID=%d", changes.ID)
 						elseif needsLink == nil then
 							-- Class not cached; block if any linked entry already exists for this base ID
 							for _, existingEntry in ipairs(items) do
 								if existingEntry and existingEntry.ID == changes.ID and existingEntry.Link then
 									guardBlock = true
-									TOGBankClassic_Output:Debug("DELTA", "[ITEM-003] STEP2: blocked linkless modified-as-new ID=%d (linked entry exists, class uncached)", changes.ID)
+									TOGBankClassic_Output:Debug("DELTA", "APPLY", "[ITEM-003] STEP2: blocked linkless modified-as-new ID=%d (linked entry exists, class uncached)", changes.ID)
 									break
 								end
 							end
@@ -1010,7 +1010,7 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 					end
 					if not guardBlock then
 						table.insert(items, changes)
-						TOGBankClassic_Output:Debug("DELTA", "[STALE-INDEX-FIX] Modified item not found, adding as new: ID=%d", changes.ID)
+						TOGBankClassic_Output:Debug("DELTA", "APPLY", "[STALE-INDEX-FIX] Modified item not found, adding as new: ID=%d", changes.ID)
 					end
 				end
 			end
@@ -1080,13 +1080,13 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 						local needsLink = TOGBankClassic_Item:ItemClassNeedsLink(newItem.ID)
 						if needsLink == true then
 							guardBlock = true
-							TOGBankClassic_Output:Debug("DELTA", "[ITEM-003] STEP3: blocked linkless weapon/armor ID=%d (class confirmed)", newItem.ID)
+							TOGBankClassic_Output:Debug("DELTA", "APPLY", "[ITEM-003] STEP3: blocked linkless weapon/armor ID=%d (class confirmed)", newItem.ID)
 						elseif needsLink == nil then
 							-- Class not cached; block if any linked entry already exists for this base ID
 							for _, existingEntry in ipairs(items) do
 								if existingEntry and existingEntry.ID == newItem.ID and existingEntry.Link then
 									guardBlock = true
-									TOGBankClassic_Output:Debug("DELTA", "[ITEM-003] STEP3: blocked linkless ID=%d (linked entry exists, class uncached)", newItem.ID)
+									TOGBankClassic_Output:Debug("DELTA", "APPLY", "[ITEM-003] STEP3: blocked linkless ID=%d (linked entry exists, class uncached)", newItem.ID)
 									break
 								end
 							end
@@ -1100,7 +1100,7 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 			end
 		end
 
-		TOGBankClassic_Output:Debug("DELTA", "Applied %d added items (%d updated existing, %d new)",
+		TOGBankClassic_Output:Debug("DELTA", "APPLY", "Applied %d added items (%d updated existing, %d new)",
 			#delta.added, updated, added)
 	end
 
@@ -1135,7 +1135,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 				mailHash = 0,
 			}
 			guildInfo.alts[norm] = current
-			TOGBankClassic_Output:Debug("DELTA", "No existing data for %s; applying delta against empty baseline", norm)
+			TOGBankClassic_Output:Debug("DELTA", "APPLY", "No existing data for %s; applying delta against empty baseline", norm)
 		end
 
 		-- DATA-004: Protect banker data - bankers are the source of truth
@@ -1154,7 +1154,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					"Rejected delta from %s about ourselves (banker is source of truth for own data)",
 					sender or "unknown"
 				)
-				TOGBankClassic_Output:Debug("DELTA", "[DATA-004] %s", errorMsg)
+				TOGBankClassic_Output:Debug("DELTA", "VALIDATE", "[DATA-004] %s", errorMsg)
 				-- Not an error - this is expected banker protection, don't record as error
 				return ADOPTION_STATUS.UNAUTHORIZED
 			end
@@ -1170,7 +1170,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					sender or "unknown",
 					norm
 				)
-				TOGBankClassic_Output:Debug("DELTA", "[DATA-004] %s", errorMsg)
+				TOGBankClassic_Output:Debug("DELTA", "VALIDATE", "[DATA-004] %s", errorMsg)
 				-- Not an error - this is expected banker protection, don't record as error
 				return ADOPTION_STATUS.UNAUTHORIZED
 			end
@@ -1258,7 +1258,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 						table.insert(current.bank.items, deduped[k])
 					end
 				end
-				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied bank delta for %s: now %d items", norm, #current.bank.items)
+				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied bank delta for %s: now %d items", norm, #current.bank.items)
 			end
 
 			-- Apply bags changes
@@ -1281,7 +1281,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 						table.insert(current.bags.items, deduped[k])
 					end
 				end
-				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied bags delta for %s: now %d items", norm, #current.bags.items)
+				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied bags delta for %s: now %d items", norm, #current.bags.items)
 			end
 
 			-- Apply mail changes
@@ -1304,7 +1304,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 						table.insert(current.mail.items, deduped[k])
 					end
 				end
-				TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Applied mail delta for %s: now %d items", norm, #current.mail.items)
+				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied mail delta for %s: now %d items", norm, #current.mail.items)
 			end
 
 			-- Recalculate aggregated items for UI display
@@ -1327,7 +1327,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					for _, k in ipairs(keys) do
 						table.insert(current.items, aggregated[k])
 					end
-					TOGBankClassic_Output:Debug("DELTA", "[SEPARATE-INV] Recalculated aggregated items for %s: %d items (bank=%d, bags=%d, mail=%d)",
+					TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Recalculated aggregated items for %s: %d items (bank=%d, bags=%d, mail=%d)",
 						norm, #current.items, #bankItems, #bagItems, #mailItems)
 				end
 			end
@@ -1338,7 +1338,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					current.items = {}
 				end
 				self:ApplyItemDelta(current.items, changes.items)
-				TOGBankClassic_Output:Debug("DELTA", "[LEGACY] Applied aggregated items delta for %s: now %d items", norm, #current.items)
+				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[LEGACY] Applied aggregated items delta for %s: now %d items", norm, #current.items)
 			end
 
 			-- Update version
@@ -1353,7 +1353,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			-- silences future syncs even when item counts are still stale.
 			local recomputedInvHash = self:ComputeInventoryHash(current.items or {}, nil, nil, current.money or 0)
 			current.inventoryHash = recomputedInvHash
-			TOGBankClassic_Output:Debug("DELTA", "[HASH-RECOMPUTE] %s inventoryHash recomputed=%d (delta had %d)",
+			TOGBankClassic_Output:Debug("DELTA", "APPLY", "[HASH-RECOMPUTE] %s inventoryHash recomputed=%d (delta had %d)",
 				norm, recomputedInvHash, deltaData.inventoryHash or 0)
 
 			-- HASH-RECOMPUTE: Also recompute mailHash from actual mail items after delta application.
@@ -1361,7 +1361,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			if current.mail and current.mail.items then
 				local recomputedMailHash = self:ComputeInventoryHash(current.mail.items, nil, nil, nil)
 				current.mailHash = recomputedMailHash
-				TOGBankClassic_Output:Debug("DELTA", "[HASH-RECOMPUTE] %s mailHash recomputed=%d (delta had %d)",
+				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[HASH-RECOMPUTE] %s mailHash recomputed=%d (delta had %d)",
 					norm, recomputedMailHash, changes.mailHash or 0)
 			end
 		end)
@@ -1421,7 +1421,7 @@ function TOGBankClassic_DeltaComms:ApplyDeltaChain(guildInfo, altName, deltaChai
 	local current = guildInfo and guildInfo.alts and guildInfo.alts[norm]
 
 	if not current then
-		TOGBankClassic_Output:Debug("DELTA", "No existing data for %s, cannot apply delta chain", norm)
+		TOGBankClassic_Output:Debug("DELTA", "VALIDATE", "No existing data for %s, cannot apply delta chain", norm)
 		return ADOPTION_STATUS.INVALID
 	end
 
@@ -1685,7 +1685,7 @@ function TOGBankClassic_DeltaComms:RequestDeltaChain(guildName, altName, fromVer
 
 	-- Validate request parameters
 	if fromVersion >= toVersion then
-		TOGBankClassic_Output:Debug("DELTA", "Invalid delta chain request: fromVersion >= toVersion")
+		TOGBankClassic_Output:Debug("DELTA", "VALIDATE", "Invalid delta chain request: fromVersion >= toVersion")
 		return false
 	end
 
@@ -1789,7 +1789,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	end
 
 	if #missing == 0 then
-		TOGBankClassic_Output:Debug("DELTA", "Fast-fill: All %d roster alts present locally", #rosterAlts)
+		TOGBankClassic_Output:Debug("DELTA", "APPLY", "Fast-fill: All %d roster alts present locally", #rosterAlts)
 		return
 	end
 
@@ -1799,7 +1799,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	end
 	TOGBankClassic_Guild:ReportBankerDataProgress("fast-fill", true)
 	if #missingDebug > 0 then
-		TOGBankClassic_Output:Debug("DELTA", "Fast-fill missing alts: %s", table.concat(missingDebug, ", "))
+		TOGBankClassic_Output:Debug("DELTA", "APPLY", "Fast-fill missing alts: %s", table.concat(missingDebug, ", "))
 	end
 
 	local hasOnlineBanker = false

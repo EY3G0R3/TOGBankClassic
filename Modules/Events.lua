@@ -255,7 +255,7 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK")
-	TOGBankClassic_Output:Debug("PROTOCOL", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
+	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
 		altCount, tostring(payload.isBanker))
 
 	-- Begin P2P collect window so incoming hash-offer responses are gathered.
@@ -340,7 +340,7 @@ end
 -- Request initial guild roster update on world enter
 function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_)
 	TOGBankClassic_Performance:RecordEvent("PLAYER_ENTERING_WORLD")
-	TOGBankClassic_Output:Debug("ROSTER", "[INIT] PLAYER_ENTERING_WORLD - Requesting guild roster")
+	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] PLAYER_ENTERING_WORLD - Requesting guild roster")
 	GuildRoster()
 	-- Don't try to cache before GUILD_ROSTER_UPDATE fires - GuildRoster() is async
 	-- The cache will be populated when GUILD_ROSTER_UPDATE event fires
@@ -354,7 +354,7 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 	TOGBankClassic_Performance:RecordEvent("GUILD_ROSTER_UPDATE")
 	if self.needsFullRosterRefresh then
 		self.fullRosterInitAttempts = (self.fullRosterInitAttempts or 0) + 1
-		TOGBankClassic_Output:Debug("ROSTER", "[INIT] GUILD_ROSTER_UPDATE #%d - Full refresh starting", self.fullRosterInitAttempts)
+TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d - Full refresh starting", self.fullRosterInitAttempts)
 		
 		self.needsFullRosterRefresh = false
 		
@@ -379,19 +379,19 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 			local attempts = self.fullRosterInitAttempts or 0
 			if attempts < 5 then
 				if not totalMembers or totalMembers == 0 then
-					TOGBankClassic_Output:Debug("ROSTER", "[INIT] Retry needed: GetNumGuildMembers returned %d", totalMembers or 0)
+						TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Retry needed: GetNumGuildMembers returned %d", totalMembers or 0)
 					needsRetry = true
 				elseif onlineCount == 0 then
-					TOGBankClassic_Output:Debug("ROSTER", "[INIT] Retry needed: 0 online members (guild not empty)")
+						TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Retry needed: 0 online members (guild not empty)")
 					needsRetry = true
 				end
 			end
 			
 			if needsRetry then
 				self.needsFullRosterRefresh = true
-				TOGBankClassic_Output:Debug("ROSTER", "[INIT] Will retry on next GUILD_ROSTER_UPDATE")
+					TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Will retry on next GUILD_ROSTER_UPDATE")
 			else
-				TOGBankClassic_Output:Debug("ROSTER", "[INIT] Roster initialization complete after %d attempts", attempts)
+					TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Roster initialization complete after %d attempts", attempts)
 			end
 		end)
 	else
@@ -407,14 +407,14 @@ function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
 
 	local onlineName = message:match("^%[?(.-)%]? has come online%.$")
 	if onlineName then
-		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player came online: %s", onlineName)
+		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player came online: %s", onlineName)
 		TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true)
 		return
 	end
 
 	local offlineName = message:match("^%[?(.-)%]? has gone offline%.$")
 	if offlineName then
-		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player went offline: %s", offlineName)
+		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player went offline: %s", offlineName)
 		TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false)
 		return
 	end
@@ -426,7 +426,7 @@ function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
 	local notFoundName = message:match("^No player named '(.+)' is currently playing%.$")
 		or message:match("^No player named (.+) is currently playing%.$")
 	if notFoundName then
-		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
+		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
 		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false)
 		return
 	end

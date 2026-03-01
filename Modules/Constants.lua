@@ -65,6 +65,8 @@ DEBUG_TAGS = {
 		["HASH-MATCH"]      = "hash comparison decisions",
 		["P2P-FALLBACK"]    = "P2P timeout / banker fallback events",
 		["HASH-CORRECTION"] = "hash field auto-correction",
+		["RECEIVE"]         = "full alt data receive / sanitize",
+		["MERGE"]           = "request log merge decisions",
 	},
 	DELTA = {
 		APPLY    = "applying deltas to local state",

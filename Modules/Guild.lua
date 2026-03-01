@@ -320,7 +320,7 @@ function TOGBankClassic_Guild:Init(name)
 					end
 				end
 			end
-			TOGBankClassic_Output:Debug("PROTOCOL", "Initialized banker hash cache with %d alts (filtered to current roster)", hashCount)
+			TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "Initialized banker hash cache with %d alts (filtered to current roster)", hashCount)
 		end)
 		
 		return true
@@ -452,7 +452,7 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 
 	if oldRoster ~= newRoster then
 		self.Info.roster.alts = banks
-		TOGBankClassic_Output:Debug("ROSTER", "Rebuilt banker roster from guild notes: %d bankers", #banks)
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Rebuilt banker roster from guild notes: %d bankers", #banks)
 	end
 	
 	-- PERF-008: Rebuild banksCache directly to prevent lazy synchronous rebuild
@@ -489,7 +489,7 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 				mailHash = 0,
 			}
 			self:EnsureLegacyFields(self.Info.alts[norm])
-			TOGBankClassic_Output:Debug("ROSTER", "Added missing banker stub data for %s", norm)
+			TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Added missing banker stub data for %s", norm)
 		end
 	end
 
@@ -513,7 +513,7 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 			if isZeroStub then
 				self.Info.alts[altName] = nil
 				removedStubs = removedStubs + 1
-				TOGBankClassic_Output:Debug("ROSTER", "ROSTER-002: Removed stale zero-stub for ex-banker %s", altName)
+				TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ROSTER-002: Removed stale zero-stub for ex-banker %s", altName)
 			end
 		end
 	end
@@ -573,7 +573,7 @@ end
 
 function TOGBankClassic_Guild:HasAltContent(alt, altName)
 	if not alt or type(alt) ~= "table" then
-		TOGBankClassic_Output:Debug("DELTA", "[CONTENT-CHECK] %s: not a table", altName or (alt and alt.name) or "unknown")
+		TOGBankClassic_Output:Debug("DELTA", "VALIDATE", "[CONTENT-CHECK] %s: not a table", altName or (alt and alt.name) or "unknown")
 		return false
 	end
 	
@@ -584,7 +584,7 @@ function TOGBankClassic_Guild:HasAltContent(alt, altName)
 	
 	local result = hasItems or hasBankItems or hasBagsItems or hasMailItems
 	
-	TOGBankClassic_Output:Debug("DELTA", 
+	TOGBankClassic_Output:Debug("DELTA", "VALIDATE",
 		"[CONTENT-CHECK] %s: items=%s, bank=%s, bags=%s, mail=%s => %s",
 		altName or alt.name or "unknown",
 		tostring(hasItems and "Y" or "N"),
@@ -760,7 +760,7 @@ function TOGBankClassic_Guild:BuildBankerHashList()
 				or (alt and alt.bank and alt.bank.items and #alt.bank.items > 0)
 				or (alt and alt.mail and alt.mail.items and #alt.mail.items > 0)
 			if not hasAnyData then
-				TOGBankClassic_Output:Debug("ROSTER", "ROSTER-002: Skipping zero-stub %s from hash list broadcast", norm)
+				TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ROSTER-002: Skipping zero-stub %s from hash list broadcast", norm)
 			else
 				list[norm] = {
 					hash = hash,
@@ -906,7 +906,7 @@ function TOGBankClassic_Guild:SendHashList(target)
 		data and #data or 0
 	)
 	local sent = TOGBankClassic_Core:SendWhisper("togbank-hlr", data, normalizedTarget, "ALERT")
-	TOGBankClassic_Output:Debug("PROTOCOL", "HLR send result: %s", tostring(sent))
+	TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR send result: %s", tostring(sent))
 end
 
 function TOGBankClassic_Guild:RequestHashListFromBanker()
@@ -991,7 +991,7 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	local norm = self:NormalizeName(altName)
 	local currentPlayer = self:GetNormalizedPlayer()
 	if norm == currentPlayer then
-		TOGBankClassic_Output:Debug("SYNC", "Skipping P2P broadcast for %s (requesting own data)", altName)
+		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Skipping P2P broadcast for %s (requesting own data)", altName)
 		return
 	end
 	
@@ -1000,7 +1000,7 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	local existingHash = existing and existing.inventoryHash or 0
 	
 	if existingHash == expectedHash and existing and self:HasAltContent(existing, norm) then
-		TOGBankClassic_Output:Debug("SYNC", "PERF-005: Skipping P2P broadcast for %s (hash matches and have content)", altName)
+		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "PERF-005: Skipping P2P broadcast for %s (hash matches and have content)", altName)
 		return
 	end
 	
@@ -1065,9 +1065,9 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 			local banker = pending.banker
 			local bankerOnline = banker and self:IsPlayerOnline(banker)
 			if bankerOnline then
-				TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout, falling back to banker %s", altName, timeout, banker)
+				TOGBankClassic_Output:Debug("SYNC", "P2P-FALLBACK", "PERF-005: No P2P response for %s after %ds timeout, falling back to banker %s", altName, timeout, banker)
 			else
-				TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout, broadcasting to GUILD (no banker online)", altName, timeout)
+				TOGBankClassic_Output:Debug("SYNC", "P2P-FALLBACK", "PERF-005: No P2P response for %s after %ds timeout, broadcasting to GUILD (no banker online)", altName, timeout)
 			end
 			if self.Info and self.Info.name then
 				TOGBankClassic_Database:RecordP2PBankerFallback(self.Info.name)
@@ -1131,7 +1131,7 @@ function TOGBankClassic_Guild:GetVersion()
 			-- P2P-007: Don't broadcast stub entries (hash but no content) - causes others to send empty deltas
 			local hasContent = self:HasAltContent(v, k)
 			if not hasContent then
-				TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: excluding %s from version broadcast (stub entry - no content)", k)
+				TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: excluding %s from version broadcast (stub entry - no content)", k)
 			else
 				-- Only store bank alt data if the sender is a bank alt
 				--data.alts[k] = v.version
@@ -1144,16 +1144,16 @@ function TOGBankClassic_Guild:GetVersion()
 							hash = v.inventoryHash,
 							updatedAt = v.inventoryUpdatedAt or v.version,
 						}
-						TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: including %s in local version data (ver=%d, hash=%d)", k, v.version, v.inventoryHash)
+						TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: including %s in local version data (ver=%d, hash=%d)", k, v.version, v.inventoryHash)
 					else
 						-- Legacy format for old clients
 						data.alts[k] = v.version
-						TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: including %s in local version data (ver=%d, no hash)", k, v.version)
+						TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: including %s in local version data (ver=%d, no hash)", k, v.version)
 					end
 				end
 			end
 		else
-			TOGBankClassic_Output:Debug("PROTOCOL", "GetVersion: excluding %s from local version data (not a banker in current guild)", k)
+			TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: excluding %s from local version data (not a banker in current guild)", k)
 		end
 		---END CHANGES
 	end
@@ -1249,7 +1249,7 @@ end
 -- Each player rebuilds roster locally from guild notes on GUILD_ROSTER_UPDATE
 function TOGBankClassic_Guild:QueryRoster(player, version)
 	-- No-op: Roster is now local-only
-	TOGBankClassic_Output:Debug("ROSTER", "QueryRoster called but roster sync is now local-only")
+	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "QueryRoster called but roster sync is now local-only")
 end
 
 function TOGBankClassic_Guild:QueryAlt(player, name, version)
@@ -1273,7 +1273,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	local normName = self:NormalizeName(name)
 
 	-- Log that we're sending a query
-	TOGBankClassic_Output:Debug("PROTOCOL", "[QUERY] QueryAltPullBased called for %s (hashOnly=%s, target=%s)", normName, tostring(hashOnly or false), targetPlayer or "banker")
+	TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "[QUERY] QueryAltPullBased called for %s (hashOnly=%s, target=%s)", normName, tostring(hashOnly or false), targetPlayer or "banker")
 
 	-- Rate-limit repeated queries for the same alt to reduce stutter
 	self.lastAltQueryTime = self.lastAltQueryTime or {}
@@ -1281,14 +1281,14 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	local now = GetTime()
 	local pendingAt = self.pendingAltRequests[normName]
 	if pendingAt and (now - pendingAt) < 10 then
-		TOGBankClassic_Output:Debug("SYNC", "Skipping query for %s (pending request)", normName)
+		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Skipping query for %s (pending request)", normName)
 		return
 	elseif pendingAt then
 		self.pendingAltRequests[normName] = nil
 	end
 	local lastQuery = self.lastAltQueryTime[normName]
 	if lastQuery and (now - lastQuery) < 3 then
-		TOGBankClassic_Output:Debug("SYNC", "Skipping query for %s (rate-limited)", normName)
+		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Skipping query for %s (rate-limited)", normName)
 		return
 	end
 	self.lastAltQueryTime[normName] = now
@@ -1311,7 +1311,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 		for member, _ in pairs(self.onlineMembers or {}) do
 			if self:IsBank(member) then
 				bankerCount = bankerCount + 1
-				TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Online banker from roster: %s, isOnline=%s",
+				TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Online banker from roster: %s, isOnline=%s",
 					member, tostring(self:IsPlayerOnline(member)))
 				-- Use first found banker (could randomize or prefer by name)
 				if not banker then
@@ -1329,14 +1329,14 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 					if self:IsBank(normRoster) then
 						bankerCount = bankerCount + 1
 						banker = banker or normRoster
-						TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Online banker from live roster: %s, isOnline=true", normRoster)
+						TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Online banker from live roster: %s, isOnline=true", normRoster)
 					end
 				end
 			end
 		end
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: %d online bankers found from guild roster", norm, bankerCount)
+		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] QueryAltPullBased for %s: %d online bankers found from guild roster", norm, bankerCount)
 	else
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: using target %s (P2P from version broadcast)", norm, banker)
+		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] QueryAltPullBased for %s: using target %s (P2P from version broadcast)", norm, banker)
 	end
 
 	-- Build request message
@@ -1357,14 +1357,14 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 		local hasContent = self:HasAltContent(requesterAlt, norm)
 		-- P2P-006: Tell sender if we have content - if not, they should send full data
 		request.requesterHasContent = hasContent
-		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%d, mailHash=%d, hasContent=%s",
+		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%d, mailHash=%d, hasContent=%s",
 			norm, request.requesterInventoryHash, request.requesterMailHash, tostring(hasContent))
 	else
 		-- No local data at all - send hash=0
 		request.requesterInventoryHash = 0
 		request.requesterMailHash = 0
 		request.requesterHasContent = false
-		TOGBankClassic_Output:Debug("DELTA", "[DELTA-014] QueryAltPullBased for %s: requester invHash=0 (no local entry)", norm)
+		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-014] QueryAltPullBased for %s: requester invHash=0 (no local entry)", norm)
 	end
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
@@ -1373,7 +1373,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	-- (P2P guild broadcast should be done via BroadcastP2PRequest first)
 	if not banker then
 		-- No banker found in roster - broadcast to GUILD hoping someone has data
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: no banker found, broadcasting to GUILD", norm)
+		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] QueryAltPullBased for %s: no banker found, broadcasting to GUILD", norm)
 		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST (no banker): togbank-r for alt %s", norm)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", "guild", norm)
@@ -1386,7 +1386,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	
 	if not self:IsPlayerOnline(banker) then
 		-- Banker exists but offline - broadcast to GUILD hoping someone else has data
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] QueryAltPullBased for %s: banker %s offline, broadcasting to GUILD", norm, banker)
+		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] QueryAltPullBased for %s: banker %s offline, broadcasting to GUILD", norm, banker)
 		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST (banker offline): togbank-r for alt %s", norm)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", "guild", norm)
@@ -1399,10 +1399,10 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	
 	-- WHISPER banker as last resort (banker confirmed online)
 	TOGBankClassic_Output:DebugComm("SENDING WHISPER (last resort): togbank-r to %s for alt %s", banker, norm)
-	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query for %s to banker %s (last resort after P2P timeout)", norm, banker)
+	TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] WHISPER query for %s to banker %s (last resort after P2P timeout)", norm, banker)
 	
 	if not TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL") then
-		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] WHISPER query failed for %s to %s", norm, banker)
+		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] WHISPER query failed for %s to %s", norm, banker)
 		return
 	end
 	
@@ -1415,12 +1415,12 @@ end
 function TOGBankClassic_Guild:SendRosterData()
 	-- Only send roster if config option is enabled (for guilds with officer-note-only gbank identification)
 	if not TOGBankClassic_Options or not TOGBankClassic_Options:IsRosterSyncEnabled() then
-		TOGBankClassic_Output:Debug("ROSTER", "SendRosterData skipped - roster sync disabled in config")
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "SendRosterData skipped - roster sync disabled in config")
 		return
 	end
 
 	if not self.Info or not self.Info.roster or not self.Info.roster.alts then
-		TOGBankClassic_Output:Debug("ROSTER", "SendRosterData skipped - no roster data available")
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "SendRosterData skipped - no roster data available")
 		return
 	end
 
@@ -1431,7 +1431,7 @@ function TOGBankClassic_Guild:SendRosterData()
 		}
 	})
 
-	TOGBankClassic_Output:Debug("ROSTER", "Broadcasting roster with %d bankers", #self.Info.roster.alts)
+	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Broadcasting roster with %d bankers", #self.Info.roster.alts)
 	TOGBankClassic_Core:SendCommMessage("togbank-roster", data, "GUILD", nil, "NORMAL")
 end
 
@@ -1439,18 +1439,18 @@ end
 function TOGBankClassic_Guild:ReceiveRosterData(sender, roster)
 	-- Only accept roster if config option is enabled
 	if not TOGBankClassic_Options or not TOGBankClassic_Options:IsRosterSyncEnabled() then
-		TOGBankClassic_Output:Debug("ROSTER", "ReceiveRosterData ignored - roster sync disabled in config")
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ReceiveRosterData ignored - roster sync disabled in config")
 		return
 	end
 
 	if not roster or not roster.alts then
-		TOGBankClassic_Output:Debug("ROSTER", "ReceiveRosterData ignored - invalid roster data")
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ReceiveRosterData ignored - invalid roster data")
 		return
 	end
 
 	-- Verify sender has gbank note or can view officer notes
 	if not self:SenderHasGbankNote(sender) and not CanViewOfficerNote() then
-		TOGBankClassic_Output:Debug("ROSTER", "ReceiveRosterData ignored - sender %s not authorized", sender or "unknown")
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ReceiveRosterData ignored - sender %s not authorized", sender or "unknown")
 		return
 	end
 
@@ -1464,7 +1464,7 @@ function TOGBankClassic_Guild:ReceiveRosterData(sender, roster)
 		end
 		self.Info.roster.alts = roster.alts
 		self.Info.roster.version = receivedVersion
-		TOGBankClassic_Output:Debug("ROSTER", "Received roster update from %s with %d bankers", sender, #roster.alts)
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Received roster update from %s with %d bankers", sender, #roster.alts)
 
 		-- Ensure local alt data exists for all roster bankers
 		if not self.Info.alts then
@@ -1486,7 +1486,7 @@ function TOGBankClassic_Guild:ReceiveRosterData(sender, roster)
 			end
 		end
 	else
-		TOGBankClassic_Output:Debug("ROSTER", "Ignored roster from %s - not newer than current (received: %d, current: %d)",
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Ignored roster from %s - not newer than current (received: %d, current: %d)",
 			sender, receivedVersion, currentVersion)
 	end
 end
@@ -1521,7 +1521,7 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	wipe(self.onlineMembers)
 	
 	local totalMembers = GetNumGuildMembers()
-	TOGBankClassic_Output:Debug("ROSTER", "[INIT] GetNumGuildMembers() returned %d", totalMembers or 0)
+	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GetNumGuildMembers() returned %d", totalMembers or 0)
 	
 	for i = 1, totalMembers do
 		local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
@@ -1541,7 +1541,7 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Performance:RecordOperation("RefreshOnlineCache", duration)
 	TOGBankClassic_Output:Debug("CACHE", "Refreshed online cache: %d/%d members online", count, totalMembers or 0)
-	TOGBankClassic_Output:Debug("ROSTER", "[GUILD ROSTER] Refreshed online cache: %d/%d members online", count, totalMembers or 0)
+	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[GUILD ROSTER] Refreshed online cache: %d/%d members online", count, totalMembers or 0)
 	
 	return count, totalMembers
 end
@@ -1687,7 +1687,7 @@ function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
 	local summary = self:ComputeStateSummary(name)
 	if not summary then
 		TOGBankClassic_Output:DebugComm("SendStateSummary: No summary for %s", tostring(name))
-		TOGBankClassic_Output:Debug("SYNC", "Cannot send state summary for %s (no data)", name)
+		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Cannot send state summary for %s (no data)", name)
 		return
 	end
 
@@ -2397,9 +2397,9 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	if target then
 		distribution = "WHISPER"
 		distTarget = target
-		TOGBankClassic_Output:Debug("PROTOCOL", "[RESPONSE] Sending %s data via WHISPER to %s (pull-based response)", norm, target)
+		TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "[RESPONSE] Sending %s data via WHISPER to %s (pull-based response)", norm, target)
 	else
-		TOGBankClassic_Output:Debug("PROTOCOL", "[RESPONSE] Sending %s data via GUILD broadcast (manual share)", norm)
+		TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "[RESPONSE] Sending %s data via GUILD broadcast (manual share)", norm)
 	end
 
 	-- v0.8.0: Version is ONLY set by Bank:Scan() when inventory actually changes
@@ -2412,13 +2412,13 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	self:EnsureLegacyFields(currentAlt)  -- Modifies in place, no need to reassign
 
 	-- [MAIL-012] Log mailHash before sending to verify it's in the alt object
-	TOGBankClassic_Output:Debug("SYNC", "[MAIL-012] SendAltData for %s: mailHash=%s", norm, tostring(currentAlt.mailHash))
+	TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "[MAIL-012] SendAltData for %s: mailHash=%s", norm, tostring(currentAlt.mailHash))
 
 	-- Log what we're about to send (all 3 arrays for backward compatibility)
 	local itemsCount = currentAlt.items and #currentAlt.items or 0
 	local bankCount = (currentAlt.bank and currentAlt.bank.items) and #currentAlt.bank.items or 0
 	local bagsCount = (currentAlt.bags and currentAlt.bags.items) and #currentAlt.bags.items or 0
-	TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d",
+	TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Sending %s: alt.items=%d, alt.bank.items=%d (includes mail), alt.bags.items=%d",
 		norm, itemsCount, bankCount, bagsCount)
 
 	-- DEBUG: Log sample counts from what we're about to send
@@ -2430,7 +2430,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 				table.insert(sampleItems, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("SYNC", "First 5 items in alt.items being sent: %s", table.concat(sampleItems, ", "))
+		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "First 5 items in alt.items being sent: %s", table.concat(sampleItems, ", "))
 	end
 
 	local useDelta = false
@@ -2570,7 +2570,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			end
 
 			-- [MAIL-012] Log mailHash IMMEDIATELY upon receiving alt data
-			TOGBankClassic_Output:Debug("SYNC", "[MAIL-012] ReceiveAltData for %s: received mailHash=%s", name, tostring(a.mailHash))
+			TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "[MAIL-012] ReceiveAltData for %s: received mailHash=%s", name, tostring(a.mailHash))
 			if a.items then
 				local cleaned = {}
 				for k, v in pairs(a.items) do
@@ -2605,11 +2605,11 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 						validCount = validCount + 1
 					else
 						invalidCount = invalidCount + 1
-						TOGBankClassic_Output:Debug("SYNC", "  Sanitize: invalid bag item at [%s]: v=%s, type=%s, ID=%s",
+						TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "  Sanitize: invalid bag item at [%s]: v=%s, type=%s, ID=%s",
 							tostring(k), tostring(v), type(v), v and tostring(v.ID) or "nil")
 					end
 				end
-				TOGBankClassic_Output:Debug("SYNC", "Sanitized bags: before=%d, valid=%d, invalid=%d",
+					TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Sanitized bags: before=%d, valid=%d, invalid=%d",
 					beforeCount, validCount, invalidCount)
 				a.bags.items = cleaned
 			end
@@ -2630,7 +2630,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			return count
 		end
 
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveAltData for %s: alt.items=%d, alt.bank.items=%d, alt.bags.items=%d",
+		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "ReceiveAltData for %s: alt.items=%d, alt.bank.items=%d, alt.bags.items=%d",
 			name,
 			countItems(alt.items),
 			(alt.bank and alt.bank.items) and countItems(alt.bank.items) or 0,
@@ -2652,7 +2652,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			local bankItems = (alt.bank and alt.bank.items) or {}
 			local bagItems = (alt.bags and alt.bags.items) or {}
 
-			TOGBankClassic_Output:Debug("SYNC", "Reconstructing alt.items for %s: bank=%d, bags=%d",
+			TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Reconstructing alt.items for %s: bank=%d, bags=%d",
 				name, #bankItems, #bagItems)
 
 			-- Aggregate bank + bags ONLY (mail was never synced in old system)
@@ -2662,10 +2662,10 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				for _, item in pairs(aggregated) do
 					table.insert(alt.items, item)
 				end
-				TOGBankClassic_Output:Debug("SYNC", "Reconstructed alt.items for %s: %d items from bank+bags",
+				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Reconstructed alt.items for %s: %d items from bank+bags",
 					name, #alt.items)
 			else
-				TOGBankClassic_Output:Debug("SYNC", "No items to reconstruct for %s (bank and bags both empty)", name)
+				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "No items to reconstruct for %s (bank and bags both empty)", name)
 			end
 		else
 			-- alt.items exists, deduplicate and ensure array format
@@ -2679,7 +2679,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 						table.insert(beforeSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 					end
 				end
-				TOGBankClassic_Output:Debug("SYNC", "BEFORE dedupe - First 5 items received: %s", table.concat(beforeSample, ", "))
+				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "BEFORE dedupe - First 5 items received: %s", table.concat(beforeSample, ", "))
 			end
 
 			-- MAIL-010: Check if we need to merge mail items into alt.items
@@ -2691,7 +2691,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			local needsMailMerge = hasMailItems and not hasMailHash
 
 			if needsMailMerge then
-				TOGBankClassic_Output:Debug("SYNC", "OLD DATA: Merging %d mail items into alt.items for %s (no mailHash)", #mailItems, name)
+				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "OLD DATA: Merging %d mail items into alt.items for %s (no mailHash)", #mailItems, name)
 				-- Aggregate alt.items with mail to ensure mail is included
 				local aggregated = TOGBankClassic_Item:Aggregate(alt.items, mailItems)
 				local arrayItems = {}
@@ -2699,11 +2699,11 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 					table.insert(arrayItems, item)
 				end
 				alt.items = arrayItems
-				TOGBankClassic_Output:Debug("SYNC", "Merged alt.items for %s: %d items (including mail)",
+				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Merged alt.items for %s: %d items (including mail)",
 					name, #alt.items)
 			else
 				if hasMailHash then
-					TOGBankClassic_Output:Debug("SYNC", "NEW DATA: alt.items already includes mail (mailHash present) for %s", name)
+					TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "NEW DATA: alt.items already includes mail (mailHash present) for %s", name)
 				end
 				-- No mail merge needed, just deduplicate
 				local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
@@ -2712,7 +2712,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 					table.insert(arrayItems, item)
 				end
 				alt.items = arrayItems
-				TOGBankClassic_Output:Debug("SYNC", "alt.items exists for %s, deduplicated and converted to array: %d items",
+				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "alt.items exists for %s, deduplicated and converted to array: %d items",
 					name, #alt.items)
 			end
 
@@ -2725,7 +2725,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 						table.insert(afterSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 					end
 				end
-				TOGBankClassic_Output:Debug("SYNC", "AFTER dedupe - First 5 items stored: %s", table.concat(afterSample, ", "))
+				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "AFTER dedupe - First 5 items stored: %s", table.concat(afterSample, ", "))
 			end
 		end
 
@@ -2779,7 +2779,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			
 			if not shouldAccept then
 				-- Reject: incoming is not newer
-				TOGBankClassic_Output:Debug("SYNC",
+				TOGBankClassic_Output:Debug("SYNC", "RECEIVE",
 					"[DATA-006] Rejected data about banker %s from %s (not newer: incoming=%s, existing=%s)",
 					norm, senderNorm or "unknown", 
 					tostring(incomingUpdatedAt), tostring(existingUpdatedAt))
@@ -2787,7 +2787,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			end
 		else
 			-- If we get here: senderNorm == norm (banker updating themselves) - ACCEPT
-			TOGBankClassic_Output:Debug("SYNC",
+			TOGBankClassic_Output:Debug("SYNC", "RECEIVE",
 				"[DATA-006] Accepting data about banker %s from themselves",
 				norm)
 		end
@@ -2908,7 +2908,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 			norm, alt.mail and "EXISTS" or "GONE")
 
 		-- [MAIL-012] Log mailHash after storing to verify it persisted
-		TOGBankClassic_Output:Debug("SYNC", "[MAIL-012] Stored alt data for %s: mailHash=%s", norm, tostring(self.Info.alts[norm].mailHash))
+		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "[MAIL-012] Stored alt data for %s: mailHash=%s", norm, tostring(self.Info.alts[norm].mailHash))
 
 		-- Restore preserved mail if we had it locally and incoming sync doesn't have it
 		-- This handles backward compatibility: new clients preserve mail when receiving from old clients
@@ -3272,7 +3272,7 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		TOGBankClassic_Events:Sync()
 	end
 	--]]
-	TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] About to call SyncDeltaVersion (exists=%s)", tostring(TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion ~= nil))
+	TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] About to call SyncDeltaVersion (exists=%s)", tostring(TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion ~= nil))
 	if TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion then
 		TOGBankClassic_Events:SyncDeltaVersion()
 	end
