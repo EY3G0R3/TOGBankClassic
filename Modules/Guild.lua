@@ -1038,6 +1038,9 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	}
 	local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
 	-- PERF-006: Use togbank-hl for P2P broadcasts so old code without hash support doesn't see them
+	if self.Info and self.Info.name then
+		TOGBankClassic_Database:RecordP2PRequestBroadcast(self.Info.name)
+	end
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", p2pData, "GUILD", nil, "NORMAL")
 
 	local timeout = (PEER_TO_PEER and PEER_TO_PEER.PEER_RESPONSE_TIMEOUT) or 5
@@ -1825,6 +1828,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 				return
 			end
 			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%d, mailHash=%d)", requester, norm, currentHash, currentMailHash)
+			if self.Info and self.Info.name then TOGBankClassic_Database:RecordNoChangeSent(self.Info.name) end
 			return
 		elseif requesterHash == currentHash and requesterMailHash ~= currentMailHash then
 			-- Only mail changed.
@@ -1896,6 +1900,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			return
 		end
 		TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (v%d)", requester, norm, currentVersion)
+		if self.Info and self.Info.name then TOGBankClassic_Database:RecordNoChangeSent(self.Info.name) end
 		return
 	end
 
@@ -2462,6 +2467,10 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 
 	if self.Info and self.Info.name then
 		TOGBankClassic_Database:RecordDeltaSent(self.Info.name, totalSize)
+		local isBankerSelf = self:IsBank(self:GetNormalizedPlayer()) or false
+		if not isBankerSelf then
+			TOGBankClassic_Database:RecordP2PSent(self.Info.name)
+		end
 	end
 
 	-- PERF-012: SaveDeltaHistory call removed. Delta chain replay is dead code since v0.8.0

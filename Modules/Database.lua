@@ -56,6 +56,16 @@ function TOGBankClassic_Database:Reset(name)
 		deltaMetrics = {
 			bytesSentDelta = 0,
 			bytesSentFull = 0,
+			deltasSentCount = 0,
+			p2pSentCount = 0,
+			noChangeSentCount = 0,
+			bytesReceived = 0,
+			deltasReceivedFromBanker = 0,
+			deltasReceivedFromPeer = 0,
+			p2pOffered = 0,
+			p2pRequestsBroadcast = 0,
+			p2pFulfilledByPeer = 0,
+			p2pBankerFallback = 0,
 			deltasApplied = 0,
 			deltasFailed = 0,
 			fullSyncFallbacks = 0,
@@ -153,6 +163,16 @@ function TOGBankClassic_Database:Load(name)
 		db.deltaMetrics = {
 			bytesSentDelta = 0,
 			bytesSentFull = 0,
+			deltasSentCount = 0,
+			p2pSentCount = 0,
+			noChangeSentCount = 0,
+			bytesReceived = 0,
+			deltasReceivedFromBanker = 0,
+			deltasReceivedFromPeer = 0,
+			p2pOffered = 0,
+			p2pRequestsBroadcast = 0,
+			p2pFulfilledByPeer = 0,
+			p2pBankerFallback = 0,
 			deltasApplied = 0,
 			deltasFailed = 0,
 			fullSyncFallbacks = 0,
@@ -271,6 +291,16 @@ function TOGBankClassic_Database:Load(name)
 		db.deltaMetrics = {
 			bytesSentDelta = 0,
 			bytesSentFull = 0,
+			deltasSentCount = 0,
+			p2pSentCount = 0,
+			noChangeSentCount = 0,
+			bytesReceived = 0,
+			deltasReceivedFromBanker = 0,
+			deltasReceivedFromPeer = 0,
+			p2pOffered = 0,
+			p2pRequestsBroadcast = 0,
+			p2pFulfilledByPeer = 0,
+			p2pBankerFallback = 0,
 			deltasApplied = 0,
 			deltasFailed = 0,
 			fullSyncFallbacks = 0,
@@ -617,6 +647,67 @@ function TOGBankClassic_Database:RecordDeltaSent(name, bytes)
 	local db = self.db.faction[name]
 	if db and db.deltaMetrics then
 		db.deltaMetrics.bytesSentDelta = (db.deltaMetrics.bytesSentDelta or 0) + bytes
+		db.deltaMetrics.deltasSentCount = (db.deltaMetrics.deltasSentCount or 0) + 1
+	end
+end
+
+-- Record a P2P send (non-banker serving data to a peer)
+function TOGBankClassic_Database:RecordP2PSent(name)
+	if not name then return end
+	local db = self.db.faction[name]
+	if db and db.deltaMetrics then
+		db.deltaMetrics.p2pSentCount = (db.deltaMetrics.p2pSentCount or 0) + 1
+	end
+end
+
+-- Record a no-change reply sent to a requester
+function TOGBankClassic_Database:RecordNoChangeSent(name)
+	if not name then return end
+	local db = self.db.faction[name]
+	if db and db.deltaMetrics then
+		db.deltaMetrics.noChangeSentCount = (db.deltaMetrics.noChangeSentCount or 0) + 1
+	end
+end
+
+-- Record receiving delta data from another client
+function TOGBankClassic_Database:RecordDeltaReceived(name, bytes, isFromBanker)
+	if not name then return end
+	local db = self.db.faction[name]
+	if db and db.deltaMetrics then
+		db.deltaMetrics.bytesReceived = (db.deltaMetrics.bytesReceived or 0) + (bytes or 0)
+		if isFromBanker then
+			db.deltaMetrics.deltasReceivedFromBanker = (db.deltaMetrics.deltasReceivedFromBanker or 0) + 1
+		else
+			db.deltaMetrics.deltasReceivedFromPeer = (db.deltaMetrics.deltasReceivedFromPeer or 0) + 1
+			db.deltaMetrics.p2pFulfilledByPeer = (db.deltaMetrics.p2pFulfilledByPeer or 0) + 1
+		end
+	end
+end
+
+-- Record sending a P2P ACK offer to a requester
+function TOGBankClassic_Database:RecordP2POffered(name)
+	if not name then return end
+	local db = self.db.faction[name]
+	if db and db.deltaMetrics then
+		db.deltaMetrics.p2pOffered = (db.deltaMetrics.p2pOffered or 0) + 1
+	end
+end
+
+-- Record broadcasting a P2P request to the guild
+function TOGBankClassic_Database:RecordP2PRequestBroadcast(name)
+	if not name then return end
+	local db = self.db.faction[name]
+	if db and db.deltaMetrics then
+		db.deltaMetrics.p2pRequestsBroadcast = (db.deltaMetrics.p2pRequestsBroadcast or 0) + 1
+	end
+end
+
+-- Record falling back to banker after no peer responded
+function TOGBankClassic_Database:RecordP2PBankerFallback(name)
+	if not name then return end
+	local db = self.db.faction[name]
+	if db and db.deltaMetrics then
+		db.deltaMetrics.p2pBankerFallback = (db.deltaMetrics.p2pBankerFallback or 0) + 1
 	end
 end
 
@@ -696,6 +787,16 @@ function TOGBankClassic_Database:ResetDeltaMetrics(name)
 	db.deltaMetrics = {
 		bytesSentDelta = 0,
 		bytesSentFull = 0,
+		deltasSentCount = 0,
+		p2pSentCount = 0,
+		noChangeSentCount = 0,
+		bytesReceived = 0,
+		deltasReceivedFromBanker = 0,
+		deltasReceivedFromPeer = 0,
+		p2pOffered = 0,
+		p2pRequestsBroadcast = 0,
+		p2pFulfilledByPeer = 0,
+		p2pBankerFallback = 0,
 		deltasApplied = 0,
 		deltasFailed = 0,
 		fullSyncFallbacks = 0,

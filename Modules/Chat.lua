@@ -834,6 +834,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
 							TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
 								sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+							if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
+								TOGBankClassic_Database:RecordP2POffered(TOGBankClassic_Guild.Info.name)
+							end
 							
 							-- Safety timeout: if requester never sends state summary (disconnect/crash),
 							-- auto-decrement counter after 30 seconds to prevent permanent queue blocking
@@ -1135,6 +1138,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
 						end
 						TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
+						if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
+							TOGBankClassic_Database:RecordP2PBankerFallback(TOGBankClassic_Guild.Info.name)
+						end
 						TOGBankClassic_Guild:QueryAltPullBased(altName, false)
 					end
 				end)
@@ -1507,6 +1513,11 @@ end
 					end
 				end
 
+				-- Track inbound receive metrics
+				if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
+					local isFromBanker = TOGBankClassic_Guild:IsBank(sender) or false
+					TOGBankClassic_Database:RecordDeltaReceived(TOGBankClassic_Guild.Info.name, #message, isFromBanker)
+				end
 				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
 				
 				-- Cancel 15s fallback timeout since peer delivered data
@@ -2734,7 +2745,6 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 		return
 	end
 
-	-- Helper to format bytes
 	local function formatBytes(bytes)
 		if bytes < 1024 then
 			return string.format("%d B", bytes)
@@ -2748,66 +2758,91 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 	TOGBankClassic_Output:Response("|cff00ffffDelta Sync Statistics|r")
 	TOGBankClassic_Output:Response("")
 
-	-- Bandwidth stats
-	local deltaBytes = metrics.bytesSentDelta or 0
-	local fullBytes = metrics.bytesSentFull or 0
-	local totalBytes = deltaBytes + fullBytes
-
-	if totalBytes > 0 then
-		TOGBankClassic_Output:Response("|cffffff00Bandwidth:|r")
-		TOGBankClassic_Output:Response("  Delta syncs: %s (%.1f%%)",
-			formatBytes(deltaBytes),
-			(deltaBytes / totalBytes) * 100)
-		TOGBankClassic_Output:Response("  Full syncs:  %s (%.1f%%)",
-			formatBytes(fullBytes),
-			(fullBytes / totalBytes) * 100)
-		TOGBankClassic_Output:Response("  Total sent:  %s", formatBytes(totalBytes))
-
-		-- Estimate bandwidth saved (assume delta would have been full sync)
-		local deltasApplied = metrics.deltasApplied or 0
-		if deltasApplied > 0 and deltaBytes > 0 then
-			-- Estimate: if we sent full syncs instead of deltas, how much more data?
-			local avgFullSize = fullBytes > 0 and (fullBytes / math.max(1, (metrics.fullSyncFallbacks or 0) + 1)) or 5000
-			local estimatedFullBytes = deltasApplied * avgFullSize
-			local saved = estimatedFullBytes - deltaBytes
-			if saved > 0 then
-				local reduction = (saved / estimatedFullBytes) * 100
-				TOGBankClassic_Output:Response("  |cff00ff00Saved: ~%s (%.1f%% reduction)|r",
-					formatBytes(saved), reduction)
-			end
+	-- Outbound: what this client served to others
+	local sentCount = metrics.deltasSentCount or 0
+	local sentBytes = metrics.bytesSentDelta or 0
+	local p2pSent = metrics.p2pSentCount or 0
+	local p2pOffered = metrics.p2pOffered or 0
+	local noChangeSent = metrics.noChangeSentCount or 0
+	TOGBankClassic_Output:Response("|cffffff00Outbound (what I served):|r")
+	if sentCount > 0 then
+		local avgBytes = sentBytes / sentCount
+		TOGBankClassic_Output:Response("  Data sends:        %d sends, %s (avg %s/send)",
+			sentCount, formatBytes(sentBytes), formatBytes(avgBytes))
+		if p2pSent > 0 then
+			TOGBankClassic_Output:Response("  Of which P2P:      %d sends (%.0f%%)",
+				p2pSent, (p2pSent / sentCount) * 100)
+		else
+			TOGBankClassic_Output:Response("  Of which P2P:      0 (all sent in banker role)")
 		end
-		TOGBankClassic_Output:Response("")
+	else
+		TOGBankClassic_Output:Response("  Data sends:        0 (no data served yet)")
 	end
+	if p2pOffered > 0 then
+		local converted = p2pSent
+		TOGBankClassic_Output:Response("  P2P offered/sent:  %d offered, %d sent (%.0f%% resulted in data)",
+			p2pOffered, converted, (converted / p2pOffered) * 100)
+	end
+	TOGBankClassic_Output:Response("  No-change replies: %d", noChangeSent)
+	TOGBankClassic_Output:Response("")
 
-	-- Operation stats
+	-- Inbound: what this client received from others
+	local bytesReceived = metrics.bytesReceived or 0
+	local fromBanker = metrics.deltasReceivedFromBanker or 0
+	local fromPeer = metrics.deltasReceivedFromPeer or 0
+	local totalReceived = fromBanker + fromPeer
+	TOGBankClassic_Output:Response("|cffffff00Inbound (what I received):|r")
+	if totalReceived > 0 then
+		TOGBankClassic_Output:Response("  Received:          %d deltas, %s", totalReceived, formatBytes(bytesReceived))
+		TOGBankClassic_Output:Response("  From banker:       %d (%.0f%%)", fromBanker, (fromBanker / totalReceived) * 100)
+		TOGBankClassic_Output:Response("  From peers:        %d (%.0f%%)", fromPeer, (fromPeer / totalReceived) * 100)
+	else
+		TOGBankClassic_Output:Response("  Received:          0 deltas")
+	end
+	TOGBankClassic_Output:Response("")
+
+	-- P2P requests: what this client asked peers for
+	local p2pBroadcast = metrics.p2pRequestsBroadcast or 0
+	local p2pFulfilled = metrics.p2pFulfilledByPeer or 0
+	local p2pFallback = metrics.p2pBankerFallback or 0
+	TOGBankClassic_Output:Response("|cffffff00P2P Requests (what I asked peers for):|r")
+	if p2pBroadcast > 0 then
+		local p2pUnresolved = math.max(0, p2pBroadcast - p2pFulfilled - p2pFallback)
+		TOGBankClassic_Output:Response("  Broadcast:           %d", p2pBroadcast)
+		TOGBankClassic_Output:Response("  Peer responded:      %d (%.0f%%)",
+			p2pFulfilled, (p2pFulfilled / p2pBroadcast) * 100)
+		TOGBankClassic_Output:Response("  Fell back to banker: %d (%.0f%%)",
+			p2pFallback, (p2pFallback / p2pBroadcast) * 100)
+		if p2pUnresolved > 0 then
+			TOGBankClassic_Output:Response("  Still pending:       %d", p2pUnresolved)
+		end
+	else
+		TOGBankClassic_Output:Response("  No P2P requests broadcast yet")
+	end
+	TOGBankClassic_Output:Response("")
+
+	-- Protocol health
 	local deltasApplied = metrics.deltasApplied or 0
 	local deltasFailed = metrics.deltasFailed or 0
 	local fullSyncFallbacks = metrics.fullSyncFallbacks or 0
 	local totalOps = deltasApplied + deltasFailed
-
+	TOGBankClassic_Output:Response("|cffffff00Protocol Health:|r")
+	TOGBankClassic_Output:Response("  Deltas applied:      %d", deltasApplied)
+	TOGBankClassic_Output:Response("  Deltas failed:       %d", deltasFailed)
+	TOGBankClassic_Output:Response("  Full sync fallbacks: %d", fullSyncFallbacks)
 	if totalOps > 0 then
-		TOGBankClassic_Output:Response("|cffffff00Operations:|r")
-		TOGBankClassic_Output:Response("  Deltas applied:      %d", deltasApplied)
-		TOGBankClassic_Output:Response("  Deltas failed:       %d", deltasFailed)
-		TOGBankClassic_Output:Response("  Full sync fallbacks: %d", fullSyncFallbacks)
-
 		local successRate = (deltasApplied / totalOps) * 100
-		local rateColor = "|cff00ff00" -- green
-		if successRate < 95 then
-			rateColor = "|cffffff00" -- yellow
-		end
-		if successRate < 80 then
-			rateColor = "|cffff0000" -- red
-		end
+		local rateColor = "|cff00ff00"
+		if successRate < 95 then rateColor = "|cffffff00" end
+		if successRate < 80 then rateColor = "|cffff0000" end
 		TOGBankClassic_Output:Response("  Success rate:        %s%.1f%%|r", rateColor, successRate)
-		TOGBankClassic_Output:Response("")
 	end
 
-	-- Performance stats
+	-- Performance (only show if populated)
 	local computeCount = metrics.computeCount or 0
 	local applyCount = metrics.applyCount or 0
-
 	if computeCount > 0 or applyCount > 0 then
+		TOGBankClassic_Output:Response("")
 		TOGBankClassic_Output:Response("|cffffff00Performance:|r")
 		if computeCount > 0 then
 			local avgCompute = (metrics.totalComputeTime or 0) / computeCount
@@ -2819,7 +2854,7 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 		end
 	end
 
-	if totalOps == 0 and totalBytes == 0 then
+	if sentCount == 0 and totalReceived == 0 and p2pBroadcast == 0 then
 		TOGBankClassic_Output:Response("No delta sync activity yet")
 	end
 end
