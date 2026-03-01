@@ -31,6 +31,26 @@ function TOGBankClassic_Output:SetCategoryEnabled(category, enabled)
 	TOGBankClassic_Database.db.global.debugCategories[category] = enabled
 end
 
+-- Tag filtering: opt-out model — nil (never set) means the tag IS shown.
+-- Set a tag to false to suppress it; true to explicitly allow it.
+function TOGBankClassic_Output:IsTagEnabled(category, tag)
+	if not TOGBankClassic_Database or not TOGBankClassic_Database.db then return true end
+	local dbTags = TOGBankClassic_Database.db.global.debugTags
+	if not dbTags then return true end
+	local catTags = dbTags[category]
+	if not catTags then return true end       -- no per-tag settings for this category
+	if catTags[tag] == nil then return true end -- unknown / new tag → show by default
+	return catTags[tag] == true
+end
+
+function TOGBankClassic_Output:SetTagEnabled(category, tag, enabled)
+	if not TOGBankClassic_Database or not TOGBankClassic_Database.db then return end
+	local global = TOGBankClassic_Database.db.global
+	if not global.debugTags then global.debugTags = {} end
+	if not global.debugTags[category] then global.debugTags[category] = {} end
+	global.debugTags[category][tag] = enabled
+end
+
 function TOGBankClassic_Output:EnableAllCategories()
 	if not TOGBankClassic_Database or not TOGBankClassic_Database.db then
 		return
@@ -318,20 +338,38 @@ local function Log(level, prefix, fmt, ...)
 end
 
 -- Debug: development/troubleshooting details
+-- Signature:
+--   Debug("CATEGORY", "TAG", fmt, ...)  -- tagged: shows as [CATEGORY.TAG]
+--   Debug("CATEGORY", fmt, ...)         -- category-only: shows as [CATEGORY]
+--   Debug(fmt, ...)                      -- uncategorised (legacy)
+-- Tag detection: second arg must be a key present in DEBUG_TAGS[category].
+-- Tags use opt-out semantics: nil in DB = enabled by default.
 function TOGBankClassic_Output:Debug(fmt, ...)
-	-- Check if first parameter is a category
 	if type(fmt) == "string" and DEBUG_CATEGORY[fmt] then
 		local category = fmt
-		-- Check if category is enabled
 		if not self:IsCategoryEnabled(category) then
 			return false
 		end
-		-- Shift parameters: first arg after category becomes the format string
+		local firstArg = select(1, ...)
+		-- Detect optional tag: must be a known key in DEBUG_TAGS for this category
+		if type(firstArg) == "string"
+				and DEBUG_TAGS
+				and DEBUG_TAGS[category]
+				and DEBUG_TAGS[category][firstArg] ~= nil then
+			local tag = firstArg
+			if not self:IsTagEnabled(category, tag) then
+				return false
+			end
+			local actualFmt = select(2, ...)
+			local args = {select(3, ...)}
+			return Log(LOG_LEVEL.DEBUG, "|cff888888[" .. category .. "." .. tag .. "]|r", actualFmt, unpack(args))
+		end
+		-- No tag (or unrecognised string) — plain category prefix
 		local actualFmt = select(1, ...)
 		local args = {select(2, ...)}
-		return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG]|r", actualFmt, unpack(args))
+		return Log(LOG_LEVEL.DEBUG, "|cff888888[" .. category .. "]|r", actualFmt, unpack(args))
 	end
-	-- No category or unknown category - check if uncategorized debug is enabled
+	-- Uncategorised — check showUncategorizedDebug flag
 	if TOGBankClassic_Database and TOGBankClassic_Database.db then
 		if not TOGBankClassic_Database.db.global.showUncategorizedDebug then
 			return false

@@ -41,6 +41,47 @@ DEBUG_CATEGORY = {
 	P2P = "P2P",                 -- P2P session manager: collect window, dispatch, handshake
 }
 
+-- Debug sub-tags: optional second argument to Output:Debug() for per-feature filtering.
+-- Signature: Output:Debug("CATEGORY", "TAG", fmt, ...)  or  Output:Debug("CATEGORY", fmt, ...)
+-- If a tag is supplied and matches a key in this table, only that tag's toggle gates it.
+-- If no tag is supplied (or the string is not a known tag), the category master switch gates it.
+-- nil entry in debugTags DB = tag is ALLOWED by default (opt-out model; new tags auto-show).
+DEBUG_TAGS = {
+	P2P = {
+		OFFER     = "hash-offer send / receive",
+		DISPATCH  = "session creation and peer selection",
+		HANDSHAKE = "sync-request / sync-accept / sync-busy",
+		COMPLETE  = "ACTIVE / COMPLETE / FAILED state transitions",
+	},
+	PROTOCOL = {
+		["HLR"]               = "hash-list-reply processing",
+		["VERSION-BROADCAST"] = "version broadcast processing",
+		["ALT-REQUEST"]       = "alt-request send / receive decisions",
+		["HASH-SKIP"]         = "hash comparison skip paths",
+		["MAIL-012"]          = "MAIL-012 diagnostic traces",
+		["DELTA-014"]         = "DELTA-014 diagnostic traces",
+	},
+	SYNC = {
+		["HASH-MATCH"]      = "hash comparison decisions",
+		["P2P-FALLBACK"]    = "P2P timeout / banker fallback events",
+		["HASH-CORRECTION"] = "hash field auto-correction",
+	},
+	DELTA = {
+		APPLY    = "applying deltas to local state",
+		BUILD    = "constructing deltas",
+		VALIDATE = "delta validation / error recovery",
+	},
+	ROSTER = {
+		ONLINE  = "member online / offline events",
+		REFRESH = "GuildRoster() refresh cycles",
+	},
+	REQUESTS = {
+		RECEIVE = "incoming request data",
+		SEND    = "outgoing request data",
+		INDEX   = "index sync operations",
+	},
+}
+
 -- Request storage settings
 REQUEST_LOG = {
 	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests and tombstones removed after this

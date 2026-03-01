@@ -1,3 +1,171 @@
+﻿-- ─── Debug category metadata ────────────────────────────────────────────────
+-- Controls display order and description text in the Options UI.
+-- Must stay in sync with DEBUG_CATEGORY in Constants.lua.
+local CATEGORY_META = {
+	CACHE    = { order = 10, desc = "Cache operations (guild roster cache, etc.)" },
+	COMMS    = { order = 11, desc = "All addon communication traffic (high volume)" },
+	DATABASE = { order = 12, desc = "Database operations, SavedVariables" },
+	DELTA    = { order = 13, desc = "Delta sync operations and computations" },
+	EVENTS   = { order = 14, desc = "WoW event handling (GUILD_ROSTER_UPDATE, etc.)" },
+	ITEM     = { order = 15, desc = "Item loading, validation, and processing" },
+	MAIL     = { order = 16, desc = "Mail inventory scanning and tracking" },
+	P2P      = { order = 17, desc = "Session manager: collect window, dispatch, handshake" },
+	PROTOCOL = { order = 18, desc = "Protocol version negotiation" },
+	QUERIES  = { order = 19, desc = "P2P query/response decisions and hash matching" },
+	REQUESTS = { order = 20, desc = "Request system activity and updates" },
+	ROSTER   = { order = 21, desc = "Guild roster updates, online/offline tracking" },
+	SYNC     = { order = 22, desc = "Data synchronization operations" },
+	UI       = { order = 23, desc = "UI operations, window opens/closes" },
+	WHISPER  = { order = 24, desc = "Whisper sends, skips, and online checks" },
+}
+
+-- Build one inline AceConfig group for a single debug category.
+-- Contains the master enable toggle plus a sub-toggle per pre-registered tag.
+local function BuildCategoryGroup(catKey, meta)
+	local tags   = DEBUG_TAGS and DEBUG_TAGS[catKey]
+	local hasTags = tags ~= nil and next(tags) ~= nil
+
+	local groupArgs = {}
+
+	-- Master category toggle
+	groupArgs["enabled"] = {
+		order = 1,
+		type  = "toggle",
+		width = "full",
+		name  = "|cffffffff" .. catKey .. "|r",
+		desc  = meta.desc,
+		set   = function(_, v) TOGBankClassic_Output:SetCategoryEnabled(catKey, v) end,
+		get   = function()    return TOGBankClassic_Output:IsCategoryEnabled(catKey) end,
+	}
+
+	if hasTags then
+		groupArgs["tagLabel"] = {
+			order = 2,
+			type  = "description",
+			name  = "|cffaaaaaa  Tags — uncheck to suppress specific messages:|r",
+		}
+		local tagOrder = 10
+		for tagKey, tagDesc in pairs(tags) do
+			local tk, td = tagKey, tagDesc  -- upvalue capture for closures
+			groupArgs["tag_" .. tk] = {
+				order    = tagOrder,
+				type     = "toggle",
+				name     = tk,
+				desc     = td,
+				disabled = function() return not TOGBankClassic_Output:IsCategoryEnabled(catKey) end,
+				set      = function(_, v) TOGBankClassic_Output:SetTagEnabled(catKey, tk, v) end,
+				get      = function()    return TOGBankClassic_Output:IsTagEnabled(catKey, tk)  end,
+			}
+			tagOrder = tagOrder + 1
+		end
+	end
+
+	return {
+		order  = meta.order,
+		type   = "group",
+		inline = true,
+		name   = catKey .. " — " .. meta.desc,
+		args   = groupArgs,
+	}
+end
+
+-- Build the full args table for the Debug options tab.
+-- Called once at Init() time; includes headers, all category groups, bulk buttons,
+-- and the Performance Monitoring + Debug Logging sub-sections.
+local function BuildDebugArgs()
+	local args = {
+		["debugHeader"] = {
+			order = 0,
+			type  = "header",
+			name  = "Debug Categories",
+		},
+		["debugDesc"] = {
+			order = 1,
+			type  = "description",
+			name  = "Enable categories to filter debug output. Expand a category to toggle individual message tags. Log Level must be set to 'Debug' for any of these to appear.",
+		},
+		["showUncategorized"] = {
+			order = 2,
+			type  = "toggle",
+			width = "full",
+			name  = "Show Uncategorized Debug Messages (legacy)",
+			desc  = "Show old debug messages that don't have a category assigned. Disable to only see categorized messages.",
+			set   = function(_, v) TOGBankClassic_Database.db.global.showUncategorizedDebug = v end,
+			get   = function()    return TOGBankClassic_Database.db.global.showUncategorizedDebug end,
+		},
+		["spacer1"] = { order = 9, type = "description", name = " " },
+	}
+
+	-- One inline group per category
+	for catKey, meta in pairs(CATEGORY_META) do
+		args["cat_" .. catKey] = BuildCategoryGroup(catKey, meta)
+	end
+
+	-- Bulk action buttons
+	args["spacer_actions"] = { order = 100, type = "description", name = " " }
+	args["enableAll"] = {
+		order = 101,
+		type  = "execute",
+		name  = "Enable All Categories",
+		func  = function()
+			TOGBankClassic_Output:EnableAllCategories()
+			TOGBankClassic_Output:Info("All debug categories enabled")
+		end,
+	}
+	args["disableAll"] = {
+		order = 102,
+		type  = "execute",
+		name  = "Disable All Categories",
+		func  = function()
+			TOGBankClassic_Output:DisableAllCategories()
+			TOGBankClassic_Output:Info("All debug categories disabled")
+		end,
+	}
+
+	-- Performance monitoring section
+	args["spacer2"]     = { order = 200, type = "description", name = " " }
+	args["perfHeader"]  = { order = 201, type = "header",      name = "Performance Monitoring" }
+	args["perfEnabled"] = {
+		order = 202,
+		type  = "toggle",
+		width = "full",
+		name  = "Enable Performance Monitoring",
+		desc  = "Track event frequency, operation timing, and memory usage. Disable to reduce overhead if experiencing performance issues.",
+		get   = function() return TOGBankClassic_PerfEnabled end,
+		set   = function(_, value)
+			TOGBankClassic_PerfEnabled = value
+			TOGBankClassic_Output:Info(value and "Performance monitoring enabled" or "Performance monitoring disabled")
+		end,
+	}
+	args["perfStatsButton"] = {
+		order = 203,
+		type  = "execute",
+		width = "full",
+		name  = "Show Performance Statistics",
+		desc  = "Display event frequency, operation timing, and memory usage for current session",
+		func  = function() TOGBankClassic_Performance:PrintReport() end,
+	}
+
+	-- Debug log section
+	args["spacer3"]        = { order = 300, type = "description", name = " " }
+	args["debugLogHeader"] = { order = 301, type = "header",      name = "Debug Logging" }
+	args["debugLogEnabled"] = {
+		order = 302,
+		type  = "toggle",
+		width = "full",
+		name  = "Enable Debug Log to SavedVariables",
+		desc  = "Save debug messages to SavedVariables (TOGBankClassicDB_DebugLog). Auto-cleans old entries (max 50,000 entries or 7 days). Disable to reduce SavedVariables file size.",
+		get   = function() return TOGBankClassic_DebugLogEnabled end,
+		set   = function(_, value)
+			TOGBankClassic_DebugLogEnabled = value
+			TOGBankClassic_Output:Info(value and "Debug logging to SavedVariables enabled" or "Debug logging to SavedVariables disabled")
+		end,
+	}
+
+	return args
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
 TOGBankClassic_Options = {}
 
 function TOGBankClassic_Options:Init()
@@ -197,301 +365,7 @@ function TOGBankClassic_Options:Init()
 				order = 2,
 				type = "group",
 				name = "Debug",
-				args = {
-					["debugHeader"] = {
-						order = 0,
-						type = "header",
-						name = "Debug Categories",
-					},
-					["debugDesc"] = {
-						order = 1,
-						type = "description",
-						name = "Enable specific debug categories to filter output. Categories are only active when Log Level is set to 'Debug'.",
-					},
-					["showUncategorized"] = {
-						order = 2,
-						type = "toggle",
-						width = "full",
-						name = "Show Uncategorized Debug Messages (legacy)",
-						desc = "Show old debug messages that don't have a category assigned. Disable this to only see categorized messages.",
-						set = function(_, v)
-							TOGBankClassic_Database.db.global.showUncategorizedDebug = v
-						end,
-						get = function()
-							return TOGBankClassic_Database.db.global.showUncategorizedDebug
-						end,
-					},
-					["spacer1"] = {
-						order = 9,
-						type = "description",
-						name = " ",
-					},
-					["cache"] = {
-						order = 10,
-						type = "toggle",
-						width = "full",
-						name = "CACHE - Cache operations (guild roster cache, etc.)",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("CACHE", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("CACHE")
-						end,
-					},
-					["comms"] = {
-						order = 11,
-						type = "toggle",
-						width = "full",
-						name = "COMMS - All addon communication traffic (high volume)",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("COMMS", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("COMMS")
-						end,
-					},
-					["database"] = {
-						order = 12,
-						type = "toggle",
-						width = "full",
-						name = "DATABASE - Database operations, SavedVariables",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("DATABASE", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("DATABASE")
-						end,
-					},
-					["delta"] = {
-						order = 13,
-						type = "toggle",
-						width = "full",
-						name = "DELTA - Delta sync operations and computations",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("DELTA", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("DELTA")
-						end,
-					},
-					["events"] = {
-						order = 14,
-						type = "toggle",
-						width = "full",
-						name = "EVENTS - WoW event handling (GUILD_ROSTER_UPDATE, etc.)",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("EVENTS", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("EVENTS")
-						end,
-					},
-					["item"] = {
-						order = 15,
-						type = "toggle",
-						width = "full",
-						name = "ITEM - Item loading, validation, and processing",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("ITEM", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("ITEM")
-						end,
-					},
-					["mail"] = {
-						order = 16,
-						type = "toggle",
-						width = "full",
-						name = "MAIL - Mail inventory scanning and tracking",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("MAIL", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("MAIL")
-						end,
-					},
-					["protocol"] = {
-						order = 17,
-						type = "toggle",
-						width = "full",
-						name = "PROTOCOL - Protocol version negotiation",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("PROTOCOL", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("PROTOCOL")
-						end,
-					},
-					["queries"] = {
-						order = 18,
-						type = "toggle",
-						width = "full",
-						name = "QUERIES - P2P query/response decisions and hash matching",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("QUERIES", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("QUERIES")
-						end,
-					},
-					["requests"] = {
-						order = 19,
-						type = "toggle",
-						width = "full",
-						name = "REQUESTS - Request system activity and updates",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("REQUESTS", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("REQUESTS")
-						end,
-					},
-					["roster"] = {
-						order = 20,
-						type = "toggle",
-						width = "full",
-						name = "ROSTER - Guild roster updates, online/offline tracking",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("ROSTER", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("ROSTER")
-						end,
-					},
-					["sync"] = {
-						order = 21,
-						type = "toggle",
-						width = "full",
-						name = "SYNC - Data synchronization operations",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("SYNC", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("SYNC")
-						end,
-					},
-					["ui"] = {
-						order = 22,
-						type = "toggle",
-						width = "full",
-						name = "UI - UI operations, window opens/closes",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("UI", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("UI")
-						end,
-					},
-					["whisper"] = {
-						order = 23,
-						type = "toggle",
-						width = "full",
-						name = "WHISPER - Whisper sends, skips, and online checks",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("WHISPER", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("WHISPER")
-						end,
-					},
-					["p2p"] = {
-						order = 24,
-						type = "toggle",
-						width = "full",
-						name = "P2P - Session manager: collect window, dispatch, handshake",
-						set = function(_, v)
-							TOGBankClassic_Output:SetCategoryEnabled("P2P", v)
-						end,
-						get = function()
-							return TOGBankClassic_Output:IsCategoryEnabled("P2P")
-						end,
-					},
-					["spacer"] = {
-						order = 30,
-						type = "description",
-						name = " ",
-					},
-					["enableAll"] = {
-						order = 31,
-						type = "execute",
-						name = "Enable All Categories",
-						func = function()
-							TOGBankClassic_Output:EnableAllCategories()
-							TOGBankClassic_Output:Info("All debug categories enabled")
-						end,
-					},
-					["disableAll"] = {
-						order = 32,
-						type = "execute",
-						name = "Disable All Categories",
-						func = function()
-							TOGBankClassic_Output:DisableAllCategories()
-							TOGBankClassic_Output:Info("All debug categories disabled")
-						end,
-					},
-					["spacer2"] = {
-						order = 40,
-						type = "description",
-						name = " ",
-					},
-					["perfHeader"] = {
-						order = 41,
-						type = "header",
-						name = "Performance Monitoring",
-					},
-					["perfEnabled"] = {
-						order = 42,
-						type = "toggle",
-						width = "full",
-						name = "Enable Performance Monitoring",
-						desc = "Track event frequency, operation timing, and memory usage. Disable to reduce overhead if experiencing performance issues.",
-						get = function() return TOGBankClassic_PerfEnabled end,
-						set = function(info, value)
-							TOGBankClassic_PerfEnabled = value
-							if value then
-								TOGBankClassic_Output:Info("Performance monitoring enabled")
-							else
-								TOGBankClassic_Output:Info("Performance monitoring disabled")
-							end
-						end,
-					},
-					["perfStatsButton"] = {
-						order = 43,
-						type = "execute",
-						width = "full",
-						name = "Show Performance Statistics",
-						desc = "Display event frequency, operation timing, and memory usage for current session",
-						func = function()
-							TOGBankClassic_Performance:PrintReport()
-						end,
-					},
-					["spacer3"] = {
-						order = 44,
-						type = "description",
-						name = " ",
-					},
-					["debugLogHeader"] = {
-						order = 45,
-						type = "header",
-						name = "Debug Logging",
-					},
-					["debugLogEnabled"] = {
-						order = 46,
-						type = "toggle",
-						width = "full",
-						name = "Enable Debug Log to SavedVariables",
-						desc = "Save debug messages to SavedVariables (TOGBankClassicDB_DebugLog). Auto-cleans old entries (max 50,000 entries or 7 days). Disable to reduce SavedVariables file size.",
-						get = function() return TOGBankClassic_DebugLogEnabled end,
-						set = function(info, value)
-							TOGBankClassic_DebugLogEnabled = value
-							if value then
-								TOGBankClassic_Output:Info("Debug logging to SavedVariables enabled")
-							else
-								TOGBankClassic_Output:Info("Debug logging to SavedVariables disabled")
-							end
-						end,
-					},
-				},
+				args = BuildDebugArgs(),
 			},
 			requests = {
 				order = 3,

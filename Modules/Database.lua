@@ -24,6 +24,7 @@ function TOGBankClassic_Database:Init()
 				QUERIES = false,
 				P2P = false,
 			},
+			debugTags = {},  -- per-category tag overrides: debugTags["P2P"]["OFFER"] = false
 			showUncategorizedDebug = true,  -- Show legacy debug messages by default
 		},
 	})

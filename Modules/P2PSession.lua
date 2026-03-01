@@ -59,8 +59,8 @@ local function MakeSessionId(altName)
 	return Me() .. ":" .. altName .. ":" .. tostring(math.floor(GetTime() * 1000))
 end
 
-local function Dbg(fmt, ...)
-	TOGBankClassic_Output:Debug("P2P", fmt, ...)
+local function Dbg(...)
+	TOGBankClassic_Output:Debug("P2P", ...)
 end
 
 -- ─── Collect Window ───────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ function P2P:BeginCollectWindow(myHashes) -- luacheck: ignore myHashes
 		self.collectTimer = C_Timer.After(COLLECT_WINDOW, function()
 			P2P:Dispatch()
 		end)
-		Dbg("Collect window extended (%ds)", COLLECT_WINDOW)
+		Dbg("OFFER", "Collect window extended (%ds)", COLLECT_WINDOW)
 		return
 	end
 
@@ -85,7 +85,7 @@ function P2P:BeginCollectWindow(myHashes) -- luacheck: ignore myHashes
 	self.collectTimer = C_Timer.After(COLLECT_WINDOW, function()
 		P2P:Dispatch()
 	end)
-	Dbg("Collect window started (%ds)", COLLECT_WINDOW)
+	Dbg("OFFER", "Collect window started (%ds)", COLLECT_WINDOW)
 end
 
 --- Called when a hash-offer whisper arrives from a peer.
@@ -94,7 +94,7 @@ end
 function P2P:OnOffer(peerName, alts)
 	if not alts then return end
 	if not self.isCollecting then
-		Dbg("OnOffer from %s ignored (not collecting)", tostring(peerName))
+		Dbg("OFFER", "OnOffer from %s ignored (not collecting)", tostring(peerName))
 		return
 	end
 
@@ -121,7 +121,7 @@ function P2P:OnOffer(peerName, alts)
 			if not inserted then
 				table.insert(self.offers[norm], entry)
 			end
-			Dbg("  offer: %s from %s (updatedAt=%s)", norm, peerName, tostring(summary.updatedAt))
+				Dbg("OFFER", "  offer: %s from %s (updatedAt=%s)", norm, peerName, tostring(summary.updatedAt))
 		end
 	end
 end
@@ -159,11 +159,11 @@ function P2P:Dispatch()
 	end
 
 	if #altList == 0 then
-		Dbg("Dispatch: no offers to dispatch")
+		Dbg("DISPATCH", "Dispatch: no offers to dispatch")
 		return
 	end
 
-	Dbg("Dispatch: %d alts with offers", #altList)
+	Dbg("DISPATCH", "Dispatch: %d alts with offers", #altList)
 	self:DispatchList(altList)
 end
 
@@ -171,7 +171,7 @@ end
 function P2P:DispatchList(altList)
 	local slots = MAX_ACTIVE_SESSIONS - self.activeSessions
 	if slots <= 0 then
-		Dbg("DispatchList: at cap (%d active), queuing %d alts", self.activeSessions, #altList)
+		Dbg("DISPATCH", "DispatchList: at cap (%d active), queuing %d alts", self.activeSessions, #altList)
 		for _, item in ipairs(altList) do
 			table.insert(self.pendingDispatch, item)
 		end
@@ -203,7 +203,7 @@ function P2P:DispatchList(altList)
 				self.sessionsByAlt[item.altName] = sid
 				self:SendSyncRequest(sid)
 				dispatched = dispatched + 1
-				Dbg("  → %s to %s (sid=%s)", item.altName, peer, sid)
+				Dbg("DISPATCH", "  → %s to %s (sid=%s)", item.altName, peer, sid)
 			end
 		end
 	end
@@ -226,7 +226,7 @@ function P2P:SendSyncRequest(sessionId)
 	s.timers.dispatch = C_Timer.After(DISPATCH_TIMEOUT, function()
 		local live = P2P.sessions[sessionId]
 		if live and live.state == STATE.DISPATCHED then
-			Dbg("Dispatch timeout for %s/%s - next candidate", live.altName, live.peer)
+			Dbg("HANDSHAKE", "Dispatch timeout for %s/%s - next candidate", live.altName, live.peer)
 			P2P:AdvanceCandidate(sessionId, "timeout")
 		end
 	end)
@@ -238,11 +238,11 @@ end
 function P2P:OnSyncAccept(sessionId, sender)
 	local s = self.sessions[sessionId]
 	if not s then
-		Dbg("OnSyncAccept: unknown session %s from %s", tostring(sessionId), sender)
+		Dbg("HANDSHAKE", "OnSyncAccept: unknown session %s from %s", tostring(sessionId), sender)
 		return
 	end
 	if s.state ~= STATE.DISPATCHED then
-		Dbg("OnSyncAccept: session %s wrong state %s", sessionId, s.state)
+		Dbg("HANDSHAKE", "OnSyncAccept: session %s wrong state %s", sessionId, s.state)
 		return
 	end
 
@@ -253,13 +253,13 @@ function P2P:OnSyncAccept(sessionId, sender)
 
 	s.state = STATE.ACTIVE
 	self.activeSessions = self.activeSessions + 1
-	Dbg("ACTIVE: %s ← %s (activeSessions=%d)", s.altName, sender, self.activeSessions)
+	Dbg("COMPLETE", "ACTIVE: %s \xe2\x86\x90 %s (activeSessions=%d)", s.altName, sender, self.activeSessions)
 
 	-- Delivery watchdog in case peer accepts but never delivers.
 	s.timers.delivery = C_Timer.After(60, function()
 		local live = P2P.sessions[sessionId]
 		if live and live.state == STATE.ACTIVE then
-			Dbg("Delivery timeout for %s", live.altName)
+			Dbg("COMPLETE", "Delivery timeout for %s", live.altName)
 			P2P:OnFailed(sessionId, "delivery_timeout")
 		end
 	end)
@@ -274,7 +274,7 @@ end
 function P2P:OnSyncBusy(sessionId, sender)
 	local s = self.sessions[sessionId]
 	if not s then return end
-	Dbg("BUSY: %s from %s - advancing", s.altName, sender)
+	Dbg("HANDSHAKE", "BUSY: %s from %s - advancing", s.altName, sender)
 	self:AdvanceCandidate(sessionId, "busy")
 end
 
@@ -297,7 +297,7 @@ function P2P:AdvanceCandidate(sessionId, reason)
 	end
 
 	if not nextPeer then
-		Dbg("All candidates exhausted for %s (%s)", s.altName, reason)
+		Dbg("HANDSHAKE", "All candidates exhausted for %s (%s)", s.altName, reason)
 		self:OnFailed(sessionId, "no_candidates")
 		return
 	end
@@ -333,7 +333,7 @@ function P2P:OnAltCompleted(altName, sender)
 	s.state                  = STATE.COMPLETE
 	self.sessions[sessionId] = nil
 	self.sessionsByAlt[norm] = nil
-	Dbg("COMPLETE: %s from %s (activeSessions=%d)", norm, tostring(sender), self.activeSessions)
+	Dbg("COMPLETE", "COMPLETE: %s from %s (activeSessions=%d)", norm, tostring(sender), self.activeSessions)
 
 	self:FlushPendingDispatch()
 end
@@ -353,7 +353,7 @@ function P2P:OnFailed(sessionId, reason)
 	s.state                  = STATE.FAILED
 	self.sessions[sessionId] = nil
 	self.sessionsByAlt[altName] = nil
-	Dbg("FAILED (%s): %s - banker fallback (activeSessions=%d)", reason, altName, self.activeSessions)
+	Dbg("COMPLETE", "FAILED (%s): %s - banker fallback (activeSessions=%d)", reason, altName, self.activeSessions)
 
 	TOGBankClassic_Guild:QueryAltPullBased(altName, false)
 	self:FlushPendingDispatch()
@@ -390,7 +390,7 @@ function P2P:HandleSyncRequest(sessionId, requester, altName)
 		and TOGBankClassic_Guild.Info.alts
 		and TOGBankClassic_Guild.Info.alts[norm]
 	if not myAlt or not TOGBankClassic_Guild:HasAltContent(myAlt, norm) then
-		Dbg("HandleSyncRequest: no content for %s - busy to %s", norm, requester)
+		Dbg("HANDSHAKE", "HandleSyncRequest: no content for %s - busy to %s", norm, requester)
 		local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-busy", sessionId = sessionId })
 		TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "NORMAL")
 		return false
@@ -402,7 +402,7 @@ function P2P:HandleSyncRequest(sessionId, requester, altName)
 		total = total + count
 	end
 	if total >= MAX_ACTIVE_SENDS then
-		Dbg("HandleSyncRequest: at send cap (%d) - busy to %s for %s", total, requester, norm)
+		Dbg("HANDSHAKE", "HandleSyncRequest: at send cap (%d) - busy to %s for %s", total, requester, norm)
 		local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-busy", sessionId = sessionId })
 		TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "NORMAL")
 		return false
@@ -412,14 +412,14 @@ function P2P:HandleSyncRequest(sessionId, requester, altName)
 	local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-accept", sessionId = sessionId })
 	TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "NORMAL")
 	self.activeSends[requester] = (self.activeSends[requester] or 0) + 1
-	Dbg("HandleSyncRequest: accepted %s for %s (sends=%d)", norm, requester, total + 1)
+	Dbg("HANDSHAKE", "HandleSyncRequest: accepted %s for %s (sends=%d)", norm, requester, total + 1)
 
 	-- Safety release: decrement activeSends after SEND_TIMEOUT regardless of
 	-- whether we receive a completion signal.  Prevents permanent slot leaks.
 	C_Timer.After(SEND_TIMEOUT, function()
 		if (P2P.activeSends[requester] or 0) > 0 then
 			P2P.activeSends[requester] = P2P.activeSends[requester] - 1
-			Dbg("Send slot auto-released (timeout) for %s/%s", norm, requester)
+			Dbg("HANDSHAKE", "Send slot auto-released (timeout) for %s/%s", norm, requester)
 		end
 	end)
 
