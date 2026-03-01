@@ -23,6 +23,7 @@
 - [ ] **Bagnon-style item highlighting** - Implement visual highlighting system that greys out all items except those needed to fulfill active orders; works across player bags and bank; helps bankers quickly locate and gather items for order fulfillment
 - [ ] **Deprecate legacy protocols** - Phase out togbank-v (non-delta), togbank-dv (pre-SYNC-006), and separate bank/bags structures in favor of unified togbank-dv2 (SYNC-006+) with `alt.items` aggregate; includes removing 5-second dv/dv2 prioritization delay once all clients upgraded; currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
 - [x] ~~**Window position reset command**~~ **IMPLEMENTED: /togbank wipeframes to clear saved positions**
+- [x] ~~**/togbank deltastats redesign**~~ **IMPLEMENTED: Meaningful P2P telemetry with outbound/inbound/P2P/health/savings sections (STATS-001/002/003)**
 
 ---
 
