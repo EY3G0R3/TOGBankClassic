@@ -1108,8 +1108,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			}
 			local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
 			TOGBankClassic_Core:SendCommMessage("togbank-hl", p2pData, "GUILD", nil, "NORMAL")
-
-				self:Debug("SYNC", "< Broadcasting P2P request for %s (hash=%s)", ColorPlayerName(altName), tostring(expectedHash))
+				if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
+					TOGBankClassic_Database:RecordP2PRequestBroadcast(TOGBankClassic_Guild.Info.name)
+				end
 
 				-- Fallback: if no peer responds, request from banker directly
 				local timeoutTimer = C_Timer.After(5, function()

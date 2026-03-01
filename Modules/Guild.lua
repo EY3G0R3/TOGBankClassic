@@ -1069,6 +1069,9 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 			else
 				TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s after %ds timeout, broadcasting to GUILD (no banker online)", altName, timeout)
 			end
+			if self.Info and self.Info.name then
+				TOGBankClassic_Database:RecordP2PBankerFallback(self.Info.name)
+			end
 			self:QueryAltPullBased(altName, false)
 		end
 	end)
