@@ -176,8 +176,22 @@ function TOGBankClassic_Events:OnShareTimer()
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Output:Debug("EVENTS", "OnShareTimer took %.2fms", duration)
 
-	-- Request hash list from banker, which triggers comparison and P2P broadcasts for missing alts
-	TOGBankClassic_Guild:RequestHashListFromBanker()
+-- P2P-006: New clients broadcast their hashes via SyncDeltaVersion (called above
+	-- inside Guild:Share).  Only fall back to the banker whisper for wipe-recovery:
+	-- if we have NO hash data at all we can't participate in P2P comparison, so we
+	-- need the banker to seed our stub table first.
+	local hasAnyHashes = false
+	local myAlts = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
+	for _, alt in pairs(myAlts) do
+		if (alt.inventoryHash or 0) ~= 0 or (alt.mailHash or 0) ~= 0 then
+			hasAnyHashes = true
+			break
+		end
+	end
+	if not hasAnyHashes then
+		-- Wipe-recovery: no local hashes at all → seed from banker so future P2P cycles work.
+		TOGBankClassic_Guild:RequestHashListFromBanker()
+	end
 	
 	-- REQUEST-001: Automatic index-based request sync on 3-minute timer
 	TOGBankClassic_Guild:QueryRequestsIndex(nil, "BULK")
@@ -219,10 +233,35 @@ end
 
 -- Delta-specific version broadcast (SYNC-001 fix)
 -- v0.8.0 SYNC-006: Bankers send BOTH togbank-dv (old) and togbank-dv2 (new) during migration
--- DISABLED: Legacy version broadcast system replaced by P2P + HL/HLR
+-- P2P-006: Broadcast our hash list to the guild so peers can offer newer data.
+-- Called on the 3-minute timer (via Guild:Share) and after every bank scan.
 function TOGBankClassic_Events:SyncDeltaVersion(priority)
-	-- No-op: version broadcasts disabled in favor of P2P + HL/HLR system
-	return
+	local guild = TOGBankClassic_Guild:GetGuild()
+	if not guild then return end
+
+	local list = TOGBankClassic_Guild:BuildBankerHashList()
+	if not list then return end
+
+	local altCount = 0
+	for _ in pairs(list) do altCount = altCount + 1 end
+	if altCount == 0 then return end
+
+	local myPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local payload = {
+		type     = "hash-list-broadcast",
+		alts     = list,
+		banker   = myPlayer,
+		isBanker = TOGBankClassic_Guild:IsBank(myPlayer),
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK")
+	TOGBankClassic_Output:Debug("PROTOCOL", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
+		altCount, tostring(payload.isBanker))
+
+	-- Begin P2P collect window so incoming hash-offer responses are gathered.
+	if TOGBankClassic_P2PSession then
+		TOGBankClassic_P2PSession:BeginCollectWindow(list)
+	end
 end
 
 function TOGBankClassic_Events:PLAYER_LOGIN(_)

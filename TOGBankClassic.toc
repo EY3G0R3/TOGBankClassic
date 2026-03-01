@@ -24,6 +24,7 @@ Modules/Chat.lua
 Modules/Database.lua
 Modules/Events.lua
 Modules/Guild.lua
+Modules/P2PSession.lua
 Modules/RequestLog.lua
 Modules/Item.lua
 Modules/ItemHighlight.lua
