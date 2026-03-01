@@ -56,6 +56,7 @@ function TOGBankClassic_Database:Reset(name)
 		deltaMetrics = {
 			bytesSentDelta = 0,
 			bytesSentFull = 0,
+			bytesSavedByDelta = 0,
 			deltasSentCount = 0,
 			p2pSentCount = 0,
 			noChangeSentCount = 0,
@@ -163,6 +164,7 @@ function TOGBankClassic_Database:Load(name)
 		db.deltaMetrics = {
 			bytesSentDelta = 0,
 			bytesSentFull = 0,
+			bytesSavedByDelta = 0,
 			deltasSentCount = 0,
 			p2pSentCount = 0,
 			noChangeSentCount = 0,
@@ -291,6 +293,7 @@ function TOGBankClassic_Database:Load(name)
 		db.deltaMetrics = {
 			bytesSentDelta = 0,
 			bytesSentFull = 0,
+			bytesSavedByDelta = 0,
 			deltasSentCount = 0,
 			p2pSentCount = 0,
 			noChangeSentCount = 0,
@@ -651,6 +654,15 @@ function TOGBankClassic_Database:RecordDeltaSent(name, bytes)
 	end
 end
 
+-- Record bytes saved by sending a delta instead of a full sync
+function TOGBankClassic_Database:RecordDeltaSavings(name, bytesSaved)
+	if not name or not bytesSaved or bytesSaved <= 0 then return end
+	local db = self.db.faction[name]
+	if db and db.deltaMetrics then
+		db.deltaMetrics.bytesSavedByDelta = (db.deltaMetrics.bytesSavedByDelta or 0) + bytesSaved
+	end
+end
+
 -- Record a P2P send (non-banker serving data to a peer)
 function TOGBankClassic_Database:RecordP2PSent(name)
 	if not name then return end
@@ -787,6 +799,7 @@ function TOGBankClassic_Database:ResetDeltaMetrics(name)
 	db.deltaMetrics = {
 		bytesSentDelta = 0,
 		bytesSentFull = 0,
+		bytesSavedByDelta = 0,
 		deltasSentCount = 0,
 		p2pSentCount = 0,
 		noChangeSentCount = 0,

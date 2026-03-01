@@ -2794,8 +2794,11 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 	TOGBankClassic_Output:Response("|cffffff00Outbound (what I served):|r")
 	if sentCount > 0 then
 		local avgBytes = sentBytes / sentCount
+		local bytesSaved = metrics.bytesSavedByDelta or 0
 		TOGBankClassic_Output:Response("  Data sends:        %d sends, %s (avg %s/send)",
 			sentCount, formatBytes(sentBytes), formatBytes(avgBytes))
+		TOGBankClassic_Output:Response("  Bandwidth saved:   %s vs full sync (%.0f%% reduction)",
+			formatBytes(bytesSaved), bytesSaved / (sentBytes + bytesSaved) * 100)
 		if p2pSent > 0 then
 			TOGBankClassic_Output:Response("  Of which P2P:      %d sends (%.0f%%)",
 				p2pSent, (p2pSent / sentCount) * 100)

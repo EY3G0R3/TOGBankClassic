@@ -2483,6 +2483,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	-- Delta has changes - send it
 	local deltaSize = self:EstimateSize(deltaData)
 	local fullSize = self:EstimateSize({ type = "alt", name = norm, alt = currentAlt })
+	local bytesSaved = math.max(0, fullSize - deltaSize)
 	useDelta = true
 	TOGBankClassic_Output:Debug(
 		"DELTA",
@@ -2491,8 +2492,11 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		deltaSize,
 		fullSize,
 		(deltaSize / fullSize) * 100,
-		fullSize - deltaSize
+		bytesSaved
 	)
+	if self.Info and self.Info.name then
+		TOGBankClassic_Database:RecordDeltaSavings(self.Info.name, bytesSaved)
+	end
 
 	-- Record compute time if delta was computed
 	if deltaData and self.Info and self.Info.name then
