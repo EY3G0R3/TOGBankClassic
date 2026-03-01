@@ -982,8 +982,16 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			if data.type == "requests-index" then
 				local matches = (data.player == "*" or data.player == player)
 				if matches then
-					TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query")
-					TOGBankClassic_Guild:SendRequestsIndex(sender)
+					-- SYNC-011: Only respond if our hash differs from the querier's.
+					-- If hashes match, querier already has exactly what we have - stay silent.
+					local myHash = TOGBankClassic_Guild:GetRequestsHash()
+					local querierHash = tonumber(data.hash) or 0
+					if querierHash == 0 or myHash ~= querierHash then
+						TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query (hash mismatch: mine=%d theirs=%d)", myHash, querierHash)
+						TOGBankClassic_Guild:SendRequestsIndex(sender)
+					else
+						TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Skipping (hash match %d, querier already in sync)", myHash)
+					end
 				end
 			end
 			if data.type == "requests-by-id" then
@@ -1743,8 +1751,16 @@ end
 		if data.type == "requests-index" then
 			local matches = (data.player == "*" or data.player == player)
 			if matches then
-				TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query")
-				TOGBankClassic_Guild:SendRequestsIndex(sender)
+				-- SYNC-011: Only respond if our hash differs from the querier's.
+				-- If hashes match, querier already has exactly what we have - stay silent.
+				local myHash = TOGBankClassic_Guild:GetRequestsHash()
+				local querierHash = tonumber(data.hash) or 0
+				if querierHash == 0 or myHash ~= querierHash then
+					TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query (hash mismatch: mine=%d theirs=%d)", myHash, querierHash)
+					TOGBankClassic_Guild:SendRequestsIndex(sender)
+				else
+					TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Skipping (hash match %d, querier already in sync)", myHash)
+				end
 			end
 		end
 		if data.type == "requests-by-id" then
