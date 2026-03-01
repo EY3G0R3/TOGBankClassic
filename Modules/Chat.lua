@@ -1269,6 +1269,32 @@ end
 				string.format("no changes for %s (v%d)", ColorPlayerName(altName), version)
 			)
 
+			-- HASH-CORRECTION: If the responder sends corrected hash values, apply them.
+			-- This fixes stale inventoryHash/mailHash left by the pre-DELTA-025 bug
+			-- (hash was blindly stamped from the delta instead of recomputed from items).
+			-- The sender only reaches this no-change path if our item baseline matched
+			-- their current items exactly, so their hash IS correct for our data.
+			local norm = TOGBankClassic_Guild:NormalizeName(altName)
+			local correctedHash = data.hash
+			local correctedMailHash = data.mailHash
+			if correctedHash and correctedHash ~= 0 and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
+				local localAlt = TOGBankClassic_Guild.Info.alts[norm]
+				if localAlt then
+					local oldInvHash = localAlt.inventoryHash
+					local oldMailHash = localAlt.mailHash
+					if oldInvHash ~= correctedHash then
+						localAlt.inventoryHash = correctedHash
+						TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION: %s inventoryHash %s→%d (from %s)",
+							norm, tostring(oldInvHash), correctedHash, sender)
+					end
+					if correctedMailHash ~= nil and oldMailHash ~= correctedMailHash then
+						localAlt.mailHash = correctedMailHash
+						TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION: %s mailHash %s→%d (from %s)",
+							norm, tostring(oldMailHash), correctedMailHash, sender)
+					end
+				end
+			end
+
 			-- Mark sync as complete
 			TOGBankClassic_Guild:ConsumePendingSync("alt", sender, altName)
 			if TOGBankClassic_Guild.hasRequested then

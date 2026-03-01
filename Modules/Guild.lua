@@ -2452,8 +2452,27 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	end
 
 	if not self:DeltaHasChanges(deltaData) then
-		-- No changes detected - skip send (requester already has current data)
-		TOGBankClassic_Output:Debug("DELTA", "No changes detected for %s (requester has current data, skipping send)", norm)
+		-- No changes detected — items are identical but requester may have a stale hash
+		-- (e.g. loaded before the DELTA-025 fix was deployed, hash was wrong-stamped).
+		-- Send a hash-correction no-change whisper so the requester updates their stored
+		-- inventoryHash/mailHash without needing a full resync.
+		TOGBankClassic_Output:Debug("DELTA", "No changes detected for %s (items match, sending hash correction to %s)", norm, tostring(target))
+		if target then
+			local hashCorrMsg = {
+				type = "no-change",
+				name = norm,
+				version = currentAlt.version or 0,
+				hash = currentAlt.inventoryHash or 0,
+				mailHash = currentAlt.mailHash or 0,
+			}
+			local ncData = TOGBankClassic_Core:SerializeWithChecksum(hashCorrMsg)
+			TOGBankClassic_Core:SendWhisper("togbank-nochange", ncData, target, "NORMAL")
+			TOGBankClassic_Output:Debug("SYNC", "Sent hash-correction no-change to %s for %s (hash=%d, mailHash=%d)",
+				target, norm, currentAlt.inventoryHash or 0, currentAlt.mailHash or 0)
+			if self.Info and self.Info.name then
+				TOGBankClassic_Database:RecordNoChangeSent(self.Info.name)
+			end
+		end
 		releaseP2PSlot("no changes")
 		return
 	end
