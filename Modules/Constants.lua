@@ -38,6 +38,7 @@ DEBUG_CATEGORY = {
 	MAIL = "MAIL",               -- Mail inventory scanning and tracking
 	ITEM = "ITEM",               -- Item loading, validation, and processing
 	QUERIES = "QUERIES",         -- P2P query/response decisions and hash matching
+	P2P = "P2P",                 -- P2P session manager: collect window, dispatch, handshake
 }
 
 -- Request storage settings

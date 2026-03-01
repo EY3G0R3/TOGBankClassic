@@ -394,6 +394,18 @@ function TOGBankClassic_Options:Init()
 							return TOGBankClassic_Output:IsCategoryEnabled("WHISPER")
 						end,
 					},
+					["p2p"] = {
+						order = 24,
+						type = "toggle",
+						width = "full",
+						name = "P2P - Session manager: collect window, dispatch, handshake",
+						set = function(_, v)
+							TOGBankClassic_Output:SetCategoryEnabled("P2P", v)
+						end,
+						get = function()
+							return TOGBankClassic_Output:IsCategoryEnabled("P2P")
+						end,
+					},
 					["spacer"] = {
 						order = 30,
 						type = "description",
