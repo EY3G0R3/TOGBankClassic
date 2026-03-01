@@ -2355,6 +2355,28 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	end
 	local norm = self:NormalizeName(name)
 	
+	-- Capture whether this is a P2P send BEFORE cancelling the timeout.
+	-- pendingSendTimeouts[norm] is only set during the P2P backoff timer path,
+	-- alongside pendingSendCount++. We need this flag to correctly decrement
+	-- pendingSendCount on all early-return paths (empty delta, no data, etc).
+	local isP2PSend = self.pendingSendTimeouts and self.pendingSendTimeouts[norm] ~= nil
+
+	-- Helper: release the P2P queue slot if this send was initiated as P2P.
+	-- Must be called on every early return that won't trigger the onChunkSent callback.
+	local function releaseP2PSlot(reason)
+		if isP2PSend then
+			if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
+				self.pendingSendTimeouts[norm]:Cancel()
+				self.pendingSendTimeouts[norm] = nil
+			end
+			if self.pendingSendCount and self.pendingSendCount > 0 then
+				self.pendingSendCount = self.pendingSendCount - 1
+				TOGBankClassic_Output:Debug("SYNC", "P2P: Released queue slot for %s (%s) - queue now: %d/%d",
+					norm, reason, self.pendingSendCount, self.MAX_PENDING_SENDS)
+			end
+		end
+	end
+
 	-- Cancel pending send timeout since we're actually sending now
 	if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
 		TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelling send timeout for %s (actually sending)", norm)
@@ -2362,6 +2384,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		self.pendingSendTimeouts[norm] = nil
 	end
 	if not self.Info or not self.Info.alts or not self.Info.alts[norm] then
+		releaseP2PSlot("no alt data")
 		return
 	end
 
@@ -2416,6 +2439,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	-- DELTA-020: Pass requester's baseline from state summary for accurate delta
 	if not self:ShouldUseDelta() then
 		TOGBankClassic_Output:Error("Delta protocol disabled - cannot send data for %s", norm)
+		releaseP2PSlot("delta disabled")
 		return
 	end
 
@@ -2423,12 +2447,14 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	
 	if not deltaData then
 		TOGBankClassic_Output:Error("Failed to compute delta for %s", norm)
+		releaseP2PSlot("delta compute failed")
 		return
 	end
 
 	if not self:DeltaHasChanges(deltaData) then
 		-- No changes detected - skip send (requester already has current data)
 		TOGBankClassic_Output:Debug("DELTA", "No changes detected for %s (requester has current data, skipping send)", norm)
+		releaseP2PSlot("no changes")
 		return
 	end
 
