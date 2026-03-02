@@ -31,8 +31,8 @@ local STATE = {
 
 local MAX_ACTIVE_SESSIONS = 3  -- max concurrent inbound data streams (requester side)
 local MAX_ACTIVE_SENDS    = 3  -- max concurrent outbound sends (sender side)
-local COLLECT_WINDOW      = 10 -- seconds to accumulate hash-offer responses
-local DISPATCH_TIMEOUT    = 8  -- seconds to wait for sync-accept before next candidate
+local COLLECT_WINDOW      = 60 -- seconds to accumulate hash-offer responses (large guild congestion)
+local DISPATCH_TIMEOUT    = 15 -- seconds to wait for sync-accept before next candidate (whisper congestion)
 local SEND_TIMEOUT        = 90 -- seconds before auto-releasing an outbound send slot
 
 -- ─── State ────────────────────────────────────────────────────────────────────
