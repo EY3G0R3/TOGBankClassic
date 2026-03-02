@@ -617,6 +617,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	-- Normalize the sender so spacing/hyphen formats match
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
+	-- Mark sender as online (they just sent us a message, so they're definitionally online)
+	-- This prevents race conditions where SendWhisper checks cache before CHAT_MSG_SYSTEM updates it
+	TOGBankClassic_Guild:UpdateOnlineMember(sender, true)
+
 	-- MAIL-012 DEBUG: Log the player check for delta version messages
 	if prefix == "togbank-dv2" or prefix == "togbank-dv" then
 		TOGBankClassic_Output:Debug("PROTOCOL", "[MAIL-012] Player check: player=%s, sender=%s, match=%s",
