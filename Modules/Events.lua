@@ -361,34 +361,38 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 end
 
 -- Lightweight online/offline updates from system messages
+-- PRIMARY method for tracking online/offline state changes in real-time
 function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
 	if not message or message == "" then
 		return
 	end
 
+	-- Pattern 1: Player comes online
 	local onlineName = message:match("^%[?(.-)%]? has come online%.$")
 	if onlineName then
-		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player came online: %s", onlineName)
-		TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true)
+		TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true, "system-msg-online")
 		return
 	end
 
+	-- Pattern 2: Player goes offline
 	local offlineName = message:match("^%[?(.-)%]? has gone offline%.$")
 	if offlineName then
-		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player went offline: %s", offlineName)
-		TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false)
+		TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false, "system-msg-offline")
 		return
 	end
 
-	-- Detect "No player named X is currently playing" errors from failed whispers
+	-- Pattern 3: CRITICAL - Failed whisper detection
+	-- "No player named X is currently playing" means player is OFFLINE
+	-- This is the AUTHORITATIVE offline signal - if WoW says they're not online, they're not
 	-- Classic can send either format:
 	--   No player named 'Axkva' is currently playing.  (with single quotes around name)
 	--   No player named Axkva is currently playing.    (without quotes)
 	local notFoundName = message:match("^No player named '(.+)' is currently playing%.$")
 		or message:match("^No player named (.+) is currently playing%.$")
 	if notFoundName then
-		TOGBankClassic_Output:Debug("ROSTER", "[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
-		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false)
+		-- CRITICAL: This marks player offline to prevent spam whispers
+		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false, "wow-error-not-online")
+		TOGBankClassic_Output:Info("Player %s is not online (WoW error - marked offline to prevent spam)", notFoundName)
 		return
 	end
 

@@ -3,8 +3,13 @@ TOGBankClassic_Guild = {}
 
 TOGBankClassic_Guild.Info = nil
 
--- Cache of online guild members (updated via GUILD_ROSTER_UPDATE)
--- Avoids stale data from GuildRoster() which only requests an update
+-- Full guild roster cache with online status (updated via GUILD_ROSTER_UPDATE)
+-- Stores ALL guild members with explicit online/offline state
+-- Format: {["Name-Realm"] = {name="Name-Realm", class="CLASS", level=60, isOnline=true}, ...}
+TOGBankClassic_Guild.memberRoster = {}
+
+-- Legacy compatibility: onlineMembers still exists but now derived from memberRoster
+-- Will be phased out once all code migrates to memberRoster
 TOGBankClassic_Guild.onlineMembers = {}
 
 -- Cache of recently-seen players (cross-realm/cross-guild)
@@ -1513,71 +1518,123 @@ function TOGBankClassic_Guild:SenderHasGbankNote(sender)
 	return false
 end
 
--- Refresh the online members cache from current guild roster
+-- Refresh the full guild roster cache from current guild roster
 -- Called automatically when GUILD_ROSTER_UPDATE event fires
+-- Builds comprehensive roster with ALL members and online/offline state
 function TOGBankClassic_Guild:RefreshOnlineCache()
 	local startTime = debugprofilestop()
+	self.memberRoster = self.memberRoster or {}
 	self.onlineMembers = self.onlineMembers or {}
+	wipe(self.memberRoster)
 	wipe(self.onlineMembers)
 	
 	local totalMembers = GetNumGuildMembers()
 	TOGBankClassic_Output:Debug("ROSTER", "[INIT] GetNumGuildMembers() returned %d", totalMembers or 0)
 	
+	local onlineCount = 0
+	
+	-- Build full roster with explicit online/offline state for ALL members
 	for i = 1, totalMembers do
-		local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
-		if name and isOnline then
+		local name, rankName, rankIndex, level, class, zone, note, officernote, isOnline, status, classFileName = GetGuildRosterInfo(i)
+		if name then
 			local normalized = self:NormalizeName(name)
-			if self.onlineMembers and normalized then
-				self.onlineMembers[normalized] = true
+			if normalized then
+				-- Store full member data
+				self.memberRoster[normalized] = {
+					name = normalized,
+					class = classFileName,
+					level = level or 1,
+					rankIndex = rankIndex,
+					rankName = rankName,
+					isOnline = isOnline or false,
+					lastUpdated = GetServerTime()
+				}
+				
+				-- Update legacy onlineMembers cache for backwards compatibility
+				if isOnline then
+					self.onlineMembers[normalized] = true
+					onlineCount = onlineCount + 1
+				end
 			end
 		end
 	end
 	
-	local count = 0
-	for _ in pairs(self.onlineMembers) do
-		count = count + 1
-	end
-	
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Performance:RecordOperation("RefreshOnlineCache", duration)
-	TOGBankClassic_Output:Debug("CACHE", "Refreshed online cache: %d/%d members online", count, totalMembers or 0)
-	TOGBankClassic_Output:Debug("ROSTER", "[GUILD ROSTER] Refreshed online cache: %d/%d members online", count, totalMembers or 0)
+	TOGBankClassic_Output:Debug("CACHE", "Refreshed guild roster cache: %d total, %d online (%d ms)", 
+		totalMembers or 0, onlineCount, duration)
+	TOGBankClassic_Output:Debug("ROSTER", "[GUILD ROSTER] Built full roster: %d members, %d online", 
+		totalMembers or 0, onlineCount)
 	
-	return count, totalMembers
+	return onlineCount, totalMembers
 end
 
--- Update a single member's online state (from CHAT_MSG_SYSTEM)
-function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline)
+-- Update a single member's online state (from CHAT_MSG_SYSTEM or addon messages)
+-- Handles both full roster updates and incremental state changes
+function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline, source)
 	if not memberName then
 		return
 	end
+	
+	self.memberRoster = self.memberRoster or {}
 	self.onlineMembers = self.onlineMembers or {}
 	self.recentlySeen = self.recentlySeen or {}
+	
 	local normalized = self:NormalizeName(memberName)
 	if not normalized then
 		return
 	end
+	
+	source = source or "unknown"
+	
 	if isOnline then
-		self.onlineMembers[normalized] = true
-	else
-		-- When marking offline, clear the normalized name
-		self.onlineMembers[normalized] = nil
-		self.recentlySeen[normalized] = nil
+		-- Mark player as online
+		-- Update full roster entry if it exists
+		if self.memberRoster[normalized] then
+			self.memberRoster[normalized].isOnline = true
+			self.memberRoster[normalized].lastUpdated = GetServerTime()
+		else
+			-- Create stub entry if member not in roster yet (shouldn't happen, but safeguard)
+			self.memberRoster[normalized] = {
+				name = normalized,
+				class = "Unknown",
+				level = 0,
+				isOnline = true,
+				lastUpdated = GetServerTime()
+			}
+			TOGBankClassic_Output:Debug("ROSTER", "[ONLINE-UPDATE] Created stub entry for %s (source: %s)", normalized, source)
+		end
 		
-		-- BUGFIX: Server clusters - same-server players have no realm, cross-server have realm.
-		-- WoW error messages never include realm ("No player named 'Various' is currently playing.")
-		-- So when memberName has no realm, we must clear ALL variants:
-		--   1. "Various" (if stored without realm - same server)
-		--   2. "Various-CurrentRealm" (normalized same-server)
-		--   3. "Various-OtherRealm" (cross-server in cluster)
+		-- Update legacy cache
+		self.onlineMembers[normalized] = true
+		
+		TOGBankClassic_Output:Debug("ROSTER", "[ONLINE-UPDATE] %s marked ONLINE (source: %s)", normalized, source)
+	else
+		--Mark player as offline
+		-- CRITICAL: Handle cross-realm and same-server name variants
+		-- WoW error messages NEVER include realm: "No player named Eturnity is currently playing"
+		-- But our cache stores "Eturnity-Myzrael"
+		
+		local baseName = memberName:match("^(.-)%-") or memberName
+		local markedOffline = false
+		
+		-- Search memberRoster for ALL variants of this base name
+		for cachedName, memberData in pairs(self.memberRoster) do
+			local cachedBase = cachedName:match("^(.-)%-") or cachedName
+			if cachedBase == baseName or cachedName == normalized then
+				memberData.isOnline = false
+				memberData.lastUpdated = GetServerTime()
+				self.onlineMembers[cachedName] = nil
+				self.recentlySeen[cachedName] = nil
+				markedOffline = true
+				TOGBankClassic_Output:Debug("ROSTER", "[OFFLINE-UPDATE] %s marked OFFLINE (matched base: %s, source: %s)", 
+					cachedName, baseName, source)
+			end
+		end
+		
+		-- Also clear from legacy caches by base name search
 		if not memberName:find("-") then
-			local baseName = memberName
-			
-			-- Clear the bare name without realm (same-server case)
-			self.onlineMembers[baseName] = nil
-			self.recentlySeen[baseName] = nil
-			
-			-- Clear all realm variants of this name
+			-- Clear all realm variants when error message has no realm
 			for cachedName, _ in pairs(self.onlineMembers) do
 				local cachedBase = cachedName:match("^(.-)%-") or cachedName
 				if cachedBase == baseName then
@@ -1590,6 +1647,11 @@ function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline)
 					self.recentlySeen[cachedName] = nil
 				end
 			end
+		end
+		
+		if not markedOffline then
+			TOGBankClassic_Output:Debug("ROSTER", "[OFFLINE-UPDATE] WARNING: No member found matching %s / base %s (source: %s)", 
+				normalized, baseName, source)
 		end
 	end
 end
@@ -1607,9 +1669,14 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	end
 	local norm = self:NormalizeName(playerName)
 	
-	-- Use guild roster cache as single source of truth
-	-- Updated by GUILD_ROSTER_UPDATE and CHAT_MSG_SYSTEM events
-	return self.onlineMembers[norm] == true
+	-- Use full member roster cache as single source of truth
+	-- Falls back to legacy onlineMembers if memberRoster not populated yet
+	if self.memberRoster and self.memberRoster[norm] then
+		return self.memberRoster[norm].isOnline == true
+	end
+	
+	-- Legacy fallback for backwards compatibility during transition
+	return self.onlineMembers and self.onlineMembers[norm] == true
 end
 
 -- v0.8.0: Compute minimal state summary for pull-based protocol
