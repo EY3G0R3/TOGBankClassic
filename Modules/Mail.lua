@@ -68,6 +68,50 @@ function TOGBankClassic_Mail:Check()
 	CheckInbox()
 end
 
+-- Check if received item matches an active request from current player
+function TOGBankClassic_Mail:CheckForFulfilledRequest(itemName, quantity, sender)
+	local info = TOGBankClassic_Guild.Info
+	if not info or not info.requests then
+		return false
+	end
+
+	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local normSender = TOGBankClassic_Guild:NormalizeName(sender)
+	local normItemName = string.lower(itemName)
+
+	-- Check if sender is a bank alt
+	local banks = TOGBankClassic_Guild:GetBanks()
+	local isBankAlt = false
+	if banks then
+		for _, bank in pairs(banks) do
+			if TOGBankClassic_Guild:NormalizeName(bank) == normSender then
+				isBankAlt = true
+				break
+			end
+		end
+	end
+
+	if not isBankAlt then
+		return false
+	end
+
+	-- Look for matching active request from current player
+	for _, req in pairs(info.requests) do
+		if req.requester == currentPlayer and 
+		   string.lower(req.item or "") == normItemName and
+		   req.status ~= "complete" and 
+		   req.status ~= "cancelled" then
+			local fulfilled = tonumber(req.fulfilled or 0)
+			local requested = tonumber(req.quantity or 0)
+			if fulfilled < requested then
+				return true, req
+			end
+		end
+	end
+
+	return false
+end
+
 function TOGBankClassic_Mail:Scan()
 	if not TOGBankClassic_Options:GetDonationEnabled() then
 		return
@@ -402,6 +446,21 @@ function TOGBankClassic_Mail:Open(mailId)
 
 					if TOGBankClassic_Options:GetBankReporting() then
 						TOGBankClassic_Output:Info("Received %s (%d) from %s", name, quantity, sender)
+					end
+
+					-- Check if this fulfills an active request
+					local isFulfillment, request = self:CheckForFulfilledRequest(name, quantity, sender)
+					if isFulfillment and request then
+						-- Play completion sound and show notification
+						---@diagnostic disable-next-line: undefined-global
+						PlaySound("AuctionWindowClose") -- Pleasant "ding" sound (Classic Era compatible)
+						local fulfilled = tonumber(request.fulfilled or 0) + quantity
+						local requested = tonumber(request.quantity or 0)
+						if fulfilled >= requested then
+							TOGBankClassic_Output:Response("|cff00ff00[Order Filled]|r Received %dx %s from %s - Request Complete!", quantity, name, sender)
+						else
+							TOGBankClassic_Output:Response("|cff00ff00[Order Filled]|r Received %dx %s from %s (%d/%d)", quantity, name, sender, fulfilled, requested)
+						end
 					end
 
 					if TOGBankClassic_UI_Mail.ScoreMail and not self.Roster[sender] then
