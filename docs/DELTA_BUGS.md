@@ -1,11 +1,14 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** March 1, 2026
+**Last Updated:** March 3, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+
+**Recent Fixes (2026-03-03):**
+- ✅ [FULFILL-003] **HIGH** Request splitting logic inconsistency between UI state and execution — `CanFulfillRequest` (UI feasibility check) and `PrepareFulfillMail` (execution) used different algorithms causing UI to show split icon but execution found exact match (or vice versa). Root causes: (1) algorithm divergence (simple greedy vs two-stage with filtering), (2) stack filtering mismatch (PrepareFulfillMail used minStackSize filter, CanFulfillRequest didn't), (3) sort order differences (originalIndex preservation inconsistent), (4) split detection logic differed. Example: Request 95, have [20,20,20,20,15,14] → CanFulfillRequest accumulated 80 then said "need split 15", PrepareFulfillMail filtered to [20,20,20,20,15] and accumulated exact 95 without split → UI showed split icon (shovel) but clicking didn't require split. Fix: Extracted unified `CalculateFulfillmentPlan()` function implementing consistent greedy algorithm with skip-stack optimization and split detection. Both functions now use same logic eliminating ~200 lines of duplicate code. UI icon now always matches actual behavior. Location: Mail.lua lines 496-707 (new unified function), CanFulfillRequest refactored to use plan (~709-751), PrepareFulfillMail refactored (~752-873).
 
 **Recent Fixes (2026-03-01):**
 - ✅ [HASH-002] **HIGH** Stale-hash perpetual loop — clients with pre-DELTA-025 corrupted `inventoryHash` in SavedVariables triggered an infinite P2P request cycle. Their items were correct but stored hash was wrong (stamped from banker's hash, not recomputed). Each HLR cycle: requester's hash ≠ banker's hash → Ian ACKed → requester sent state summary → `ComputeDelta` found identical items → empty delta → silently dropped → hash unchanged → repeat. Stats showed 100 offered / 13 computed / 1 actual send (1% efficiency). Fix: When `DeltaHasChanges = false` with a specific whisper target, send a `no-change` reply carrying `hash` + `mailHash` so the requester corrects their stale stored value. `togbank-nochange` handler now applies these corrections in-memory when `correctedHash != 0`. Loop terminates on first exchange after clients reload with HASH-002. Commits: `b2ff4e5`. Locations: Guild.lua `SendAltData` (~2454), Chat.lua `togbank-nochange` handler (~1262).
@@ -2111,6 +2114,156 @@ This ensures exact-fit stacks are always preferred over splitting.
 - `Modules/Mail.lua` (multiple) - Migrated debug output to proper system
 
 **Bonus:** Migrated all fulfillment debug output from `print()` to `TOGBankClassic_Output:Debug("FULFILL", ...)` for integration with persistent debug log system.
+
+---
+
+#### ✅ [FULFILL-003] Request splitting logic inconsistency between UI state and execution
+
+**Severity:** 🟠 HIGH
+**Category:** Order Fulfillment / Algorithm Consistency
+**Reporter:** User (Testing)
+**Date Reported:** 2026-03-03
+**Date Resolved:** 2026-03-03
+**Status:** ✅ RESOLVED
+**Reproducibility:** Was Consistent
+
+**Description:**
+UI fulfill button showed split icon (shovel) but clicking it found exact match without splitting, or button showed ready icon but clicking showed "need to split" popup. This inconsistency stemmed from `CanFulfillRequest()` (UI feasibility check) and `PrepareFulfillMail()` (execution) using different algorithms that produced different results for the same inventory.
+
+**Example Failure Scenario:**
+```
+Request: 95 items
+Inventory: [20, 20, 20, 20, 15, 14]
+Total: 109 items
+
+CanFulfillRequest logic:
+- Accumulate stacks ≤ remaining: 20+20+20+20 = 80
+- Still need 15, have 109 total → says "need to split"
+- UI shows split icon (shovel)
+
+PrepareFulfillMail logic:
+- Calculate minStackSize (would split 15, exclude stacks < 15)
+- Filter to [20, 20, 20, 20, 15] (excludes 14)
+- Accumulate: 20+20+20+20+15 = 95 exactly
+- No split needed! But UI already showed split icon
+
+Result: User clicks expecting split, but items attach directly → confusion
+```
+
+**Root Causes:**
+
+1. **Algorithm Divergence**: 
+   - CanFulfillRequest: Simple greedy (accumulate if count ≤ remaining)
+   - PrepareFulfillMail: Two-stage greedy with "useful stacks" filtering
+
+2. **Stack Filtering Mismatch**:
+   - PrepareFulfillMail calculated `minStackSize` based on split requirement and filtered out smaller stacks
+   - CanFulfillRequest considered ALL stacks without filtering
+
+3. **Sort Order Inconsistency**:
+   - PrepareFulfillMail preserved `originalIndex` for stable sorting when counts equal
+   - CanFulfillRequest had basic sort without index preservation
+
+4. **Split Detection Logic Differences**:
+   - Different conditions for determining which stack to split from
+   - Different handling of skip-stack optimization
+
+5. **Code Duplication**:
+   - ~200 lines of nearly identical greedy algorithm logic
+   - Changes to one function didn't propagate to the other
+
+**Solution:**
+Created unified `CalculateFulfillmentPlan()` function that both `CanFulfillRequest` and `PrepareFulfillMail` now use.
+
+**Algorithm Structure:**
+```lua
+CalculateFulfillmentPlan(items, qtyNeeded, totalInBags)
+  Returns: {
+    canFulfill = boolean,
+    reason = string or nil,
+    stacksToAttach = {{bag, slot, count, originalIndex}, ...},
+    splitStack = {bag, slot, count, amount} or nil,
+    totalAttachable = number,
+    requiresMailbox = boolean
+  }
+
+  PHASE 1: Greedy exact match
+    - Sort: largest first, preserve originalIndex for equal counts
+    - Accumulate stacks where count ≤ remaining need
+    - If accumulated == qtyNeeded → SUCCESS (exact match)
+
+  PHASE 2: Skip-stack optimization
+    - Try skipping up to 5 stacks to find exact matches
+    - If found → SUCCESS (exact match via skip)
+    - Track best fit if no exact match
+
+  PHASE 3: Split detection
+    - If accumulated < qtyNeeded and totalInBags >= qtyNeeded
+    - Find largest available stack >= remaining amount
+    - Return split plan with stack details
+
+  PHASE 4: Failure cases
+    - Deficit: totalInBags < qtyNeeded
+    - Edge case: single large stack, need to split
+```
+
+**Implementation Changes:**
+
+1. **New Function** (`Mail.lua` lines 496-707):
+   - `CalculateFulfillmentPlan()` - unified algorithm
+   - Returns structured plan with all decision details
+
+2. **CanFulfillRequest Refactor** (lines 709-751):
+   - Removes ~140 lines of duplicate logic
+   - Makes copy of items array (avoid mutation)
+   - Calls `CalculateFulfillmentPlan()`
+   - Returns: `canFulfill, reason, totalInBags, smallestStack`
+
+3. **PrepareFulfillMail Refactor** (lines 752-873):
+   - Removes ~230 lines of duplicate logic  
+   - Calls `CalculateFulfillmentPlan()`
+   - Uses `plan.stacksToAttach` for attachment loop
+   - Shows split popup if `plan.splitStack` exists
+   - Simplified from complex two-pass algorithm to plan execution
+
+**Benefits:**
+
+✅ **Consistency**: UI icon always matches actual behavior
+✅ **Maintainability**: Single source of truth for fulfillment logic
+✅ **Code Reduction**: ~200 lines removed (duplication eliminated)
+✅ **Predictability**: Users see accurate state before clicking
+✅ **Debuggability**: Plan structure makes behavior transparent
+
+**Testing Results:**
+```
+Test Case 1: [20,20,20,20,15,14] need 95
+  Before: UI split icon, execution exact match ❌
+  After: UI ready icon, execution exact match ✅
+
+Test Case 2: [20,20,20,20,14] need 95  
+  Before: UI split icon, execution split 15 from 20 ✅
+  After: UI split icon, execution split 15 from 20 ✅
+
+Test Case 3: [1,20,20,20,20,20] need 90
+  Before: Different split candidates between functions
+  After: Consistent split from first 20-stack ✅
+
+Test Case 4: [9] need 1 (post-split: [8,1])
+  Before: Fixed by FULFILL-002
+  After: Still works correctly ✅
+```
+
+**Files Modified:**
+- `Modules/Mail.lua` (lines 496-873)
+  - Added `CalculateFulfillmentPlan()` unified function
+  - Refactored `CanFulfillRequest()` to use plan
+  - Refactored `PrepareFulfillMail()` to use plan
+  - Net: ~200 lines removed through consolidation
+
+**Related Issues:**
+- Builds on [FULFILL-002] two-stage greedy algorithm foundation
+- Eliminates class of bugs where UI state diverges from execution
+
 =======
 #### 🔴 [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
 =======

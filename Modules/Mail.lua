@@ -340,10 +340,11 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 			pending.sender,
 			pending.recipient,
 			item.name,
-			item.quantity
+			item.quantity,
+			pending.requestId  -- Pass specific request ID to target
 		)
 		if applied > 0 then
-			TOGBankClassic_Output:Info("  Applied %dx %s toward %s's request", applied, item.name, pending.recipient)
+			TOGBankClassic_Output:Info("  Applied %dx %s toward %s's request (ID: %s)", applied, item.name, pending.recipient, tostring(pending.requestId))
 		end
 		totalApplied = totalApplied + applied
 	end
@@ -493,6 +494,207 @@ function TOGBankClassic_Mail:OnRetryTimer(mailId)
 	TOGBankClassic_Mail:Open(mailId)
 end
 
+-- Unified fulfillment plan calculator
+-- Returns plan: {
+--   canFulfill = boolean,
+--   reason = string or nil,
+--   stacksToAttach = {{bag, slot, count, originalIndex}, ...},
+--   splitStack = {bag, slot, count, amount} or nil,
+--   totalAttachable = number,
+--   requiresMailbox = boolean
+-- }
+function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInBags)
+	if not items or #items == 0 then
+		return {
+			canFulfill = false,
+			reason = "No items found in bags.",
+			stacksToAttach = {},
+			splitStack = nil,
+			totalAttachable = 0,
+			requiresMailbox = false
+		}
+	end
+
+	-- Add original index for stable sorting
+	for i, item in ipairs(items) do
+		item.originalIndex = i
+	end
+
+	-- Sort: largest first, maintain scan order for equal counts
+	table.sort(items, function(a, b)
+		if a.count == b.count then
+			return a.originalIndex < b.originalIndex
+		end
+		return a.count > b.count
+	end)
+
+	local largestStack = items[1].count
+	local smallestStack = items[#items].count
+
+	-- PHASE 1: Try greedy exact match (accumulate stacks that fit without exceeding)
+	local accumulated = 0
+	local attachList = {}
+	
+	for i, item in ipairs(items) do
+		local remaining = qtyNeeded - accumulated
+		if item.count <= remaining then
+			accumulated = accumulated + item.count
+			table.insert(attachList, {
+				bag = item.bag,
+				slot = item.slot,
+				count = item.count,
+				originalIndex = item.originalIndex
+			})
+		end
+	end
+
+	-- SUCCESS: Exact match without splitting
+	if accumulated == qtyNeeded then
+		return {
+			canFulfill = true,
+			reason = nil,
+			stacksToAttach = attachList,
+			splitStack = nil,
+			totalAttachable = accumulated,
+			requiresMailbox = true
+		}
+	end
+
+	-- PHASE 2: Try skipping small stacks to find exact match
+	if accumulated < qtyNeeded and totalInBags >= qtyNeeded then
+		local bestAccumulated = accumulated
+		local bestAttachList = attachList
+		local bestSkipIndex = nil
+
+		for skipIndex = 1, math.min(5, #items) do
+			local testAccumulated = 0
+			local testAttachList = {}
+			
+			for i, item in ipairs(items) do
+				if i ~= skipIndex then
+					local remaining = qtyNeeded - testAccumulated
+					if item.count <= remaining then
+						testAccumulated = testAccumulated + item.count
+						table.insert(testAttachList, {
+							bag = item.bag,
+							slot = item.slot,
+							count = item.count,
+							originalIndex = item.originalIndex
+						})
+					end
+				end
+			end
+
+			-- Found exact match by skipping
+			if testAccumulated == qtyNeeded then
+				return {
+					canFulfill = true,
+					reason = nil,
+					stacksToAttach = testAttachList,
+					splitStack = nil,
+					totalAttachable = testAccumulated,
+					requiresMailbox = true
+				}
+			end
+
+			-- Better fit than before (closer to target)
+			if testAccumulated > bestAccumulated and testAccumulated < qtyNeeded then
+				bestAccumulated = testAccumulated
+				bestAttachList = testAttachList
+				bestSkipIndex = skipIndex
+			end
+		end
+
+		-- Use best fit found
+		accumulated = bestAccumulated
+		attachList = bestAttachList
+	end
+
+	-- PHASE 3: Need to split to fulfill
+	if accumulated < qtyNeeded and totalInBags >= qtyNeeded then
+		local remaining = qtyNeeded - accumulated
+		
+		-- Find a stack large enough to split from
+		-- Prefer splitting from largest available stack
+		local splitCandidate = nil
+		for i, item in ipairs(items) do
+			if item.count >= remaining then
+				-- Check if this stack is already in attach list
+				local alreadyAttaching = false
+				for _, attached in ipairs(attachList) do
+					if attached.originalIndex == item.originalIndex then
+						alreadyAttaching = true
+						break
+					end
+				end
+				
+				if not alreadyAttaching then
+					-- Prefer largest split candidate (first one found due to sorting)
+					if not splitCandidate then
+						splitCandidate = item
+					end
+				end
+			end
+		end
+
+		if splitCandidate then
+			return {
+				canFulfill = true,
+				reason = string.format("Split %d from stack of %d.", remaining, splitCandidate.count),
+				stacksToAttach = attachList,
+				splitStack = {
+					bag = splitCandidate.bag,
+					slot = splitCandidate.slot,
+					count = splitCandidate.count,
+					amount = remaining
+				},
+				totalAttachable = accumulated,
+				requiresMailbox = true
+			}
+		end
+	end
+
+	-- PHASE 4: Can't fulfill even with splitting
+	local deficit = qtyNeeded - totalInBags
+	if deficit > 0 then
+		return {
+			canFulfill = false,
+			reason = string.format("Need %d more items.", deficit),
+			stacksToAttach = {},
+			splitStack = nil,
+			totalAttachable = totalInBags,
+			requiresMailbox = false
+		}
+	end
+
+	-- Edge case: single large stack, need to split
+	if accumulated == 0 and smallestStack > qtyNeeded and totalInBags >= qtyNeeded then
+		return {
+			canFulfill = true,
+			reason = string.format("Split from stack of %d.", smallestStack),
+			stacksToAttach = {},
+			splitStack = {
+				bag = items[1].bag,
+				slot = items[1].slot,
+				count = items[1].count,
+				amount = qtyNeeded
+			},
+			totalAttachable = 0,
+			requiresMailbox = true
+		}
+	end
+
+	-- Shouldn't reach here, but fallback
+	return {
+		canFulfill = false,
+		reason = "Unable to determine fulfillment strategy.",
+		stacksToAttach = {},
+		splitStack = nil,
+		totalAttachable = accumulated,
+		requiresMailbox = false
+	}
+end
+
 -- Check if a request can be fulfilled by the current player
 -- Returns: canFulfill (boolean), reason (string), itemsInBags (number), smallestStack (number)
 function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
@@ -527,111 +729,23 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 		return false, "Items not in bags. Pick up from bank first.", 0, 0
 	end
 
-	-- Sort items by stack size (largest first) to match attachment behavior
-	table.sort(items, function(a, b) return a.count > b.count end)
+	-- Use unified fulfillment calc (make copy of items array to avoid mutation)
+	local itemsCopy = {}
+	for i, item in ipairs(items) do
+		itemsCopy[i] = {bag = item.bag, slot = item.slot, count = item.count}
+	end
 
-	-- Find smallest and largest stacks, and count usable items (stacks that fit without exceeding qtyNeeded)
+	local plan = self:CalculateFulfillmentPlan(itemsCopy, qtyNeeded, totalInBags)
+
+	-- Find smallest stack for legacy return value
 	local smallestStack = nil
-	local largestStack = nil
-	local usableItems = 0
 	for _, item in ipairs(items) do
 		if not smallestStack or item.count < smallestStack then
 			smallestStack = item.count
 		end
-		if not largestStack or item.count > largestStack then
-			largestStack = item.count
-		end
-		-- Only count this stack if adding it doesn't exceed what we need
-		if usableItems + item.count <= qtyNeeded then
-			usableItems = usableItems + item.count
-		end
 	end
 
-	-- If greedy smallest-first didn't get exact match, try skipping individual small stacks
-	if usableItems < qtyNeeded and totalInBags >= qtyNeeded then
-		for skipIndex = 1, math.min(5, #items) do
-			local testUsable = 0
-			for i = 1, #items do
-				if i ~= skipIndex and testUsable + items[i].count <= qtyNeeded then
-					testUsable = testUsable + items[i].count
-				end
-			end
-			if testUsable == qtyNeeded then
-				usableItems = testUsable
-				break
-			elseif testUsable > usableItems and testUsable <= qtyNeeded then
-				-- Better fit, use it
-				usableItems = testUsable
-			end
-		end
-	end
-
-	-- Check if we need to split
-	if usableItems < qtyNeeded and totalInBags >= qtyNeeded then
-		-- We have enough total, but need to split to fulfill
-		-- Efficiency check: if we have any stack large enough to provide what we need,
-		-- prefer splitting from it rather than using multiple small stacks
-		if largestStack and largestStack >= qtyNeeded then
-			-- Can split exactly what we need from a single stack - more efficient
-			local reason = string.format("Split %d from available stacks.", qtyNeeded)
-			return true, reason, totalInBags, smallestStack
-		end
-
-		local remaining = qtyNeeded - usableItems
-
-		-- Additional efficiency check: if using small partials requires a split,
-		-- check if using only the largest stacks would require similar or smaller effort
-		-- Example: [1,20,20,20,20,20] need 90 -> better to use 4×20+split(10) than 1+4×20+split(9)
-		-- The trade-off: splitting 10 from one stack vs using a 1-stack + splitting 9
-		if largestStack and largestStack > 1 and remaining > 0 then
-			-- Count how many complete largest stacks we can use
-			local largeStacksUsable = 0
-			for _, item in ipairs(items) do
-				if item.count == largestStack and largeStacksUsable + item.count <= qtyNeeded then
-					largeStacksUsable = largeStacksUsable + item.count
-				end
-			end
-
-			-- If we have at least one more largest stack available to split from
-			local hasExtraLargeStack = false
-			for _, item in ipairs(items) do
-				if item.count == largestStack then
-					local testTotal = largeStacksUsable + item.count
-					if testTotal > largeStacksUsable and testTotal >= qtyNeeded then
-						hasExtraLargeStack = true
-						break
-					end
-				end
-			end
-
-			if hasExtraLargeStack and largeStacksUsable < qtyNeeded then
-				local largeSplitAmount = qtyNeeded - largeStacksUsable
-				-- Prefer this if it means not attaching tiny partial stacks
-				-- (using fewer mail attachment slots is more efficient)
-				if largeSplitAmount <= largestStack then
-					usableItems = largeStacksUsable
-					remaining = largeSplitAmount
-				end
-			end
-		end
-
-		local reason = string.format("Splitting %d to fill the order.", remaining)
-		return true, reason, totalInBags, smallestStack
-	end
-
-	-- If no stacks are small enough, we can split automatically
-	if usableItems == 0 and smallestStack and smallestStack > qtyNeeded then
-		local reason = string.format("Split from stack of %d.", smallestStack)
-		return true, reason, totalInBags, smallestStack
-	end
-
-	-- Check if we have enough usable items to fulfill the request
-	if usableItems >= qtyNeeded then
-		return true, nil, usableItems, smallestStack
-	end
-
-	-- Not enough items even with splitting
-	return false, string.format("Need %d more items.", qtyNeeded - usableItems), totalInBags, smallestStack
+	return plan.canFulfill, plan.reason, totalInBags, smallestStack or 0
 end
 
 -- Prepare mail to fulfill a request: sets recipient and attaches items
@@ -672,174 +786,41 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		SendMailNameEditBox:SetText(requester)
 	end
 
-	-- Attach items (up to ATTACHMENTS_MAX_SEND slots)
-	-- NOTE: Classic Era doesn't support programmatic stack splitting,
-	-- so we only attach stacks that won't exceed the needed quantity
-	local attached = 0
-	local attachmentSlot = 1
-	local maxSlots = ATTACHMENTS_MAX_SEND or 12
-	local skippedLargeStack = nil
+	-- Use unified fulfillment plan
+	local plan = self:CalculateFulfillmentPlan(items, qtyNeeded, totalInBags)
 
-	-- Sort items by stack size (largest first) - full stacks before partial stacks
-	-- When counts are equal, maintain the original scan order (bottom-right to top-left in bags)
-	-- by adding an index to each item before sorting
-	for i, item in ipairs(items) do
-		item.originalIndex = i
-	end
-	table.sort(items, function(a, b)
-		if a.count == b.count then
-			return a.originalIndex < b.originalIndex  -- Maintain physical order for equal counts
-		end
-		return a.count > b.count
-	end)
-
-	-- FIRST PASS: Calculate minimum useful stack size based on split requirement
-	-- Strategy: Don't use stacks smaller than what we'll need to split
-	-- Example: Need 95, have [20,20,20,20,14] → need to split 15, so exclude 14
-
-	-- Accumulate largest stacks to see what we'd need to split
-	local accumulated = 0
-	local largestStack = items[1] and items[1].count or 0
-
-	for _, item in ipairs(items) do
-		if accumulated >= qtyNeeded then
-			break
-		end
-		-- Only accumulate stacks that are at least half the largest stack size
-		-- This gets us the "main" stacks and ignores tiny partials
-		if item.count >= (largestStack * 0.5) then
-			accumulated = accumulated + item.count
-		end
+	if not plan.canFulfill then
+		return false, plan.reason, 0
 	end
 
-	-- Calculate what we'd need to split
-	local wouldNeedToSplit = math.max(0, qtyNeeded - accumulated)
-
-	-- Minimum stack size = the split amount (must be able to split that much from a stack)
-	-- If no split needed, use min(5, qtyNeeded) to avoid filtering out perfectly sized stacks
-	-- Example: Need 1 item → minStackSize should be 1, not 5
-	-- CRITICAL: Never set minStackSize higher than largestStack (fixes non-stackable items like bags)
-	local minStackSize = math.min(largestStack, wouldNeedToSplit > 0 and wouldNeedToSplit or math.min(5, qtyNeeded))
-
-	-- Build useful stacks list
-	local usefulStacks = {}
-	for i, item in ipairs(items) do
-		if item.count >= minStackSize then
-			table.insert(usefulStacks, item)
-		end
-	end
-
-	TOGBankClassic_Output:Debug("FULFILL", "Need %d, accumulated %d from large stacks, would split %d",
-		qtyNeeded, accumulated, wouldNeedToSplit)
-	TOGBankClassic_Output:Debug("FULFILL", "Filtered %d useful stacks from %d total (min size: %d)",
-		#usefulStacks, #items, minStackSize)
-
-	-- SECOND PASS: Run greedy algorithm on useful stacks only
-	local simulatedAttached = 0
-	local skipStackIndex = nil  -- Track which stack to skip during attachment for optimal fit
-	local splitStackIndex = nil  -- Track which stack we'll split from
-
-	-- Greedy pass: accumulate items until we need more than a stack can provide
-	-- CRITICAL FIX: Process in TWO stages to prefer exact-fit stacks before splits
-	-- Stage 1: Accumulate all stacks that fit exactly without exceeding qtyNeeded
-	for i, item in ipairs(usefulStacks) do
-		if simulatedAttached >= qtyNeeded then
-			break
-		end
-		local remaining = qtyNeeded - simulatedAttached
-
-		if item.count <= remaining then
-			-- This stack fits completely - accumulate it
-			simulatedAttached = simulatedAttached + item.count
-			TOGBankClassic_Output:Debug("FULFILL", "Stack %d: count=%d, accumulate, total=%d", i, item.count, simulatedAttached)
-		end
-	end
-
-	-- Stage 2: If we didn't get enough, look for a stack to split
-	if simulatedAttached < qtyNeeded then
-		local remaining = qtyNeeded - simulatedAttached
-		for i, item in ipairs(usefulStacks) do
-			if item.count > remaining and item.count >= remaining then
-				-- This stack can provide the remaining amount
-				skippedLargeStack = item
-				splitStackIndex = i
-				TOGBankClassic_Output:Debug("FULFILL", "Stack %d: count=%d, can split (need %d), mark as candidate", i, item.count, remaining)
-				break  -- Found a split candidate, stop looking
-			end
-		end
-	else
-		-- We accumulated enough - no split needed
-		TOGBankClassic_Output:Debug("FULFILL", "Accumulated enough - no split needed")
-	end
-
-	TOGBankClassic_Output:Debug("FULFILL", "Greedy result: attached=%d, splitStackIndex=%s", simulatedAttached, tostring(splitStackIndex))
-
-	-- If greedy didn't get exact match AND didn't find a split candidate, try skipping individual stacks to find better fit
-	if simulatedAttached < qtyNeeded and totalInBags >= qtyNeeded and not skippedLargeStack then
-		for skipIndex = 1, math.min(5, #items) do
-			local testAttached = 0
-			local testSkippedLargeStack = nil
-			local testSplitStackIndex = nil
-			for i = 1, #items do
-				if i ~= skipIndex then
-					local remaining = qtyNeeded - testAttached
-					if testAttached >= qtyNeeded then
-						break
-					elseif items[i].count <= remaining then
-						testAttached = testAttached + items[i].count
-					elseif items[i].count >= remaining then
-						-- This stack can provide the remaining amount - keep track of it
-						-- Continue iterating to find the LAST stack that can be split
-						testSkippedLargeStack = items[i]
-						testSplitStackIndex = i
-					else
-						-- This stack is too small to split - stop here
-						break
-					end
-				end
-			end
-			if testAttached == qtyNeeded then
-				simulatedAttached = testAttached
-				skipStackIndex = skipIndex  -- Remember to skip this stack during attachment
-				skippedLargeStack = nil  -- No split needed - found exact match!
-				splitStackIndex = nil
-				break
-			elseif testAttached > simulatedAttached or
-			       (testAttached == simulatedAttached and testSplitStackIndex and splitStackIndex and
-			        testSplitStackIndex > splitStackIndex) then
-				-- Better fit found, or same fit but with split from a later stack (preferred)
-				simulatedAttached = testAttached
-				skipStackIndex = skipIndex
-				skippedLargeStack = testSkippedLargeStack
-				splitStackIndex = testSplitStackIndex
-			end
-		end
-	end
-
-	-- If we need to split, show popup FIRST without attaching anything
-	if skippedLargeStack then
-		local remaining = qtyNeeded - simulatedAttached
-
-		-- Show confirmation popup
-		local popupText = string.format("Split %d from stack of %d %s?", remaining, skippedLargeStack.count, itemName)
+	-- If plan requires split, show popup FIRST without attaching anything
+	if plan.splitStack then
+		local splitInfo = plan.splitStack
+		local popupText = string.format("Split %d from stack of %d %s?", 
+			splitInfo.amount, splitInfo.count, itemName)
 		local dialog = StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText)
 		if dialog then
 			dialog.data = {
-				bag = skippedLargeStack.bag,
-				slot = skippedLargeStack.slot,
-				amount = remaining,
-				attachmentSlot = attachmentSlot,
+				bag = splitInfo.bag,
+				slot = splitInfo.slot,
+				amount = splitInfo.amount,
+				attachmentSlot = 1,  -- Will be set after attaching plan stacks
 				itemName = itemName,
 				requester = requester
 			}
 		end
 
-		local message = string.format("Click Split to prepare %d %s for mailing.", remaining, itemName)
+		local message = string.format("Click Split to prepare %d %s for mailing.", 
+			splitInfo.amount, itemName)
 		return false, message, 0
 	end
 
-	-- No split needed, proceed with normal attachment
-	for i, item in ipairs(usefulStacks) do
+	-- No split needed, attach items from plan
+	local attached = 0
+	local attachmentSlot = 1
+	local maxSlots = ATTACHMENTS_MAX_SEND or 12
+
+	for _, stack in ipairs(plan.stacksToAttach) do
 		if attached >= qtyNeeded then
 			break
 		end
@@ -847,20 +828,12 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			break
 		end
 
-		-- Skip this stack if it was identified as needing to be skipped for optimal fit
-		if not (skipStackIndex and i == skipStackIndex) then
-			local remaining = qtyNeeded - attached
+		ClearCursor()
+		C_Container.PickupContainerItem(stack.bag, stack.slot)
+		ClickSendMailItemButton(attachmentSlot)
 
-			-- Attach full stacks that don't exceed what we need
-			if item.count <= remaining then
-				ClearCursor()
-				C_Container.PickupContainerItem(item.bag, item.slot)
-				ClickSendMailItemButton(attachmentSlot)
-
-				attached = attached + item.count
-				attachmentSlot = attachmentSlot + 1
-			end
-		end
+		attached = attached + stack.count
+		attachmentSlot = attachmentSlot + 1
 	end
 
 	local message
@@ -883,11 +856,12 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		self.pendingSend = {
 			sender = sender,
 			recipient = normRecipient,
+			requestId = request.id,  -- Track which specific request is being fulfilled
 			items = {{ name = itemName, quantity = attached }}
 		}
 		self.pendingSendAt = GetTime()
-		TOGBankClassic_Output:Debug("MAIL", "PrepareFulfillMail: Set pendingSend for %s (%d %s)",
-			tostring(normRecipient), attached, itemName)
+		TOGBankClassic_Output:Debug("MAIL", "PrepareFulfillMail: Set pendingSend for %s (%d %s) - requestId=%s",
+			tostring(normRecipient), attached, itemName, tostring(request.id))
 	end
 
 	return true, message, attached
