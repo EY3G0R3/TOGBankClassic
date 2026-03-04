@@ -1351,14 +1351,19 @@ function TOGBankClassic_UI_Requests:DrawContent()
 					-- Instead, store disabled state and check in OnClick, use alpha for visual
 					if row and row.fulfillButton and row.fulfillButton.frame then
 						-- Special case: if split is needed, keep button enabled (PrepareFulfillMail will handle it)
-						local needsSplit = fulfillReason and fulfillReason:find("Split")
-						local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and needsSplit)
+						local needsSplit = fulfillReason and string.find(fulfillReason, "Split")
+						local isPartial = fulfillReason and string.find(fulfillReason, "Partial")
+						local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and (needsSplit or isPartial))
 						row.fulfillButton.frame.togDisabled = not buttonEnabled
 						row.fulfillButton.frame:SetAlpha(buttonEnabled and 1.0 or 0.4)
 
 						-- Determine icon and tooltip based on state
 						local icon, tooltipDetail
-						if fulfillReason and fulfillReason:find("Split") then
+						if fulfillReason and string.find(fulfillReason, "Partial") then
+							-- Partial fulfillment available - show envelope icon
+							icon = FULFILL_ICON_READY
+							tooltipDetail = fulfillReason
+						elseif fulfillReason and string.find(fulfillReason, "Split") then
 							-- Split needed - show special icon (shovel)
 							icon = FULFILL_ICON_NEED_SPLIT
 							tooltipDetail = fulfillReason
@@ -1369,11 +1374,11 @@ function TOGBankClassic_UI_Requests:DrawContent()
 						elseif not mailboxOpen then
 							icon = FULFILL_ICON_NO_MAILBOX
 							tooltipDetail = "Open a mailbox to fulfill this request."
-						elseif fulfillReason and fulfillReason:find("Split") then
+						elseif fulfillReason and string.find(fulfillReason, "Split") then
 							-- Stack size issue
 							icon = FULFILL_ICON_NEED_SPLIT
 							tooltipDetail = fulfillReason
-						elseif fulfillReason and fulfillReason:find("not in bags") then
+						elseif fulfillReason and string.find(fulfillReason, "not in bags") then
 							-- Items in bank but not picked up
 							icon = FULFILL_ICON_NOT_IN_BAGS
 							tooltipDetail = fulfillReason

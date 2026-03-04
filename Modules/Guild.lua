@@ -1562,8 +1562,8 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Performance:RecordOperation("RefreshOnlineCache", duration)
 	TOGBankClassic_Output:Debug("CACHE", "Refreshed guild roster cache: %d total, %d online (%.1f ms)", 
-		totalMembers or 0, count, duration)
-	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[GUILD ROSTER] Refreshed online cache: %d/%d members online", count, totalMembers or 0)
+		totalMembers or 0, onlineCount, duration)
+	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[GUILD ROSTER] Refreshed online cache: %d/%d members online", onlineCount, totalMembers or 0)
 	
 	return onlineCount, totalMembers
 end
