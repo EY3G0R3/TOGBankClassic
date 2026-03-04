@@ -56,14 +56,21 @@ function TOGBankClassic_Events:RegisterEvents()
 		TOGBankClassic_UI:OnInsertLink(link)
 	end)
 
-	-- Filter out "No player named X is currently playing" errors from chat
+	-- Filter out "No player named X is currently playing" and "Player not found" errors from chat
 	-- These are detected and handled by CHAT_MSG_SYSTEM event handler
 	-- Use fast plain-text check before pattern matching for performance
 	ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function(self, event, message, ...)
-		if message and message:find("No player named ", 1, true) then
-			-- Only do pattern match if we found the error prefix
-			if message:match("^No player named .+ is currently playing%.$") then
-				return true  -- Suppress this message
+		if message then
+			-- Check for Classic Era pattern
+			if message:find("No player named ", 1, true) then
+				-- Only do pattern match if we found the error prefix
+				if message:match("^No player named .+ is currently playing%.$") then
+					return true  -- Suppress this message
+				end
+			end
+			-- Check for alternate "Player not found" pattern
+			if message:find("Player not found", 1, true) then
+				return true  -- Suppress this message too
 			end
 		end
 		return false
@@ -400,34 +407,45 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 end
 
 -- Lightweight online/offline updates from system messages
+-- PRIMARY method for tracking online/offline state changes in real-time
 function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
 	if not message or message == "" then
 		return
 	end
 
+	-- Pattern 1: Player comes online
 	local onlineName = message:match("^%[?(.-)%]? has come online%.$")
 	if onlineName then
 		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player came online: %s", onlineName)
-		TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true)
+		TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true, "system-msg-online")
 		return
 	end
 
+	-- Pattern 2: Player goes offline
 	local offlineName = message:match("^%[?(.-)%]? has gone offline%.$")
 	if offlineName then
 		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player went offline: %s", offlineName)
-		TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false)
+		TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false, "system-msg-offline")
 		return
 	end
 
-	-- Detect "No player named X is currently playing" errors from failed whispers
-	-- Classic can send either format:
+	-- Pattern 3: CRITICAL - Failed whisper detection
+	-- "No player named X is currently playing" means player is OFFLINE
+	-- This is the AUTHORITATIVE offline signal - if WoW says they're not online, they're not
+	-- Classic can send multiple formats:
 	--   No player named 'Axkva' is currently playing.  (with single quotes around name)
 	--   No player named Axkva is currently playing.    (without quotes)
+	--   Player not found (retail pattern): Axkva       (alternate format - seen in some Classic versions)
+	--   Player not found: Axkva                        (simplified format)
 	local notFoundName = message:match("^No player named '(.+)' is currently playing%.$")
 		or message:match("^No player named (.+) is currently playing%.$")
+		or message:match("^Player not found %(retail pattern%): (.+)$")
+		or message:match("^Player not found: (.+)$")
 	if notFoundName then
+		-- CRITICAL: This marks player offline to prevent spam whispers
 		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
-		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false)
+		TOGBankClassic_Output:Info("[WHISPER-SPAM-FIX] Player %s is not online (WoW error - marked offline to prevent spam)", notFoundName)
+		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false, "wow-error-not-online")
 		return
 	end
 

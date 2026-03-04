@@ -617,6 +617,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	-- Normalize the sender so spacing/hyphen formats match
 	sender = TOGBankClassic_Guild:NormalizeName(sender)
 
+	-- Mark sender as online (they just sent us a message, so they're definitionally online)
+	-- This is a FALLBACK for when CHAT_MSG_SYSTEM events haven't fired yet
+	-- Source tracking helps debug where online status updates come from
+	TOGBankClassic_Guild:UpdateOnlineMember(sender, true, "addon-message-received")
+
 	-- MAIL-012 DEBUG: Log the player check for delta version messages
 	if prefix == "togbank-dv2" or prefix == "togbank-dv" then
 		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Player check: player=%s, sender=%s, match=%s",
