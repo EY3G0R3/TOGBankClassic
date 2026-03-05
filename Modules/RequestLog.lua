@@ -1173,10 +1173,11 @@ function Guild:ReceiveRequestMutations(payload, sender)
 	TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Processing %d entries from %s", #entries, tostring(sender))
 
 	local applied = 0
+	local fetchIds = {}  -- IDs of unknown requests referenced by fulfill mutations
 	for i, entry in ipairs(entries) do
 		if entry and type(entry) == "table" then
 			local entryType = entry.type or "unknown"
-			local requestId = entry.requestId or "?"
+			local requestId = entry.requestId or (entry.request and entry.request.id) or "?"
 			TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Entry %d/%d: type=%s, requestId=%s",
 				i, #entries, entryType, tostring(requestId))
 
@@ -1187,8 +1188,24 @@ function Guild:ReceiveRequestMutations(payload, sender)
 			else
 				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Entry %d REJECTED (type=%s, id=%s)",
 					i, entryType, tostring(requestId))
+				-- SYNC-013: If a fulfill mutation is rejected because we don't have the request
+				-- locally, queue an immediate by-id fetch from the sender (the banker who just
+				-- filled the order).  This closes the race where the by-id response was
+				-- serialised before the fill happened, so it arrived with status="open".
+				if entryType == "fulfill" and requestId and requestId ~= "?" then
+					if not self.Info.requests[requestId] then
+						TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Queuing on-demand fetch for unknown request id=%s from %s", tostring(requestId), tostring(sender))
+						table.insert(fetchIds, requestId)
+					end
+				end
 			end
 		end
+	end
+
+	-- Fire on-demand by-id fetch for any fulfill-referenced requests we don't have locally
+	if #fetchIds > 0 and sender and sender ~= "" then
+		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Fetching %d unknown request(s) from %s", #fetchIds, tostring(sender))
+		self:QueryRequestsById(sender, fetchIds, "NORMAL")
 	end
 
 	if applied > 0 then
