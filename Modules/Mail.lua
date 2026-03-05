@@ -250,7 +250,8 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	end
 
 	local info = TOGBankClassic_Guild.Info
-	if not info or not info.requests or #info.requests == 0 then
+	-- requests is a map (string keys), # always returns 0 -- use next() to check emptiness
+	if not info or not info.requests or next(info.requests) == nil then
 		return
 	end
 
