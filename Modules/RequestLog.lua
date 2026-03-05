@@ -873,8 +873,8 @@ function Guild:SendRequestsSnapshot(target)
 		tombstones = self.Info.requestsTombstones or {},
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	-- Send on old prefix for backwards compat; new clients listen on both
-	TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", target, "NORMAL")
+	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
+	TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", target, "NORMAL")
 end
 
 function Guild:SendRequestsData(target)
@@ -950,11 +950,11 @@ function Guild:SendRequestsIndex(target)
 		tombstones = tombstonesIndex,
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	-- Send on old prefix for backwards compat; new clients listen on both
+	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
 	if target and target ~= "" then
-		TOGBankClassic_Core:SendWhisper("togbank-d", data, target, "BULK")
+		TOGBankClassic_Core:SendWhisper("togbank-rd", data, target, "NORMAL")
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
 	end
 end
 
@@ -1074,11 +1074,11 @@ function Guild:SendRequestsById(target, ids)
 		tombstones = tombstones,
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	-- Send on old prefix for backwards compat; new clients listen on both
+	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
 	if target and target ~= "" then
-		TOGBankClassic_Core:SendWhisper("togbank-d", data, target, "BULK")
+		TOGBankClassic_Core:SendWhisper("togbank-rd", data, target, "NORMAL")
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-d", data, "Guild", nil, "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
 	end
 end
 

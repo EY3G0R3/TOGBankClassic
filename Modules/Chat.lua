@@ -27,14 +27,7 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
-	TOGBankClassic_Core:RegisterComm("togbank-d2", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-d3", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
+	-- togbank-d2, togbank-d3 removed: never sent in code (legacy docs only)
 	TOGBankClassic_Core:RegisterComm("togbank-hl", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -62,17 +55,13 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
-	TOGBankClassic_Core:RegisterComm("togbank-v", function(prefix, message, distribution, sender)
+	-- togbank-v registration REMOVED: never sent (all sends commented out), ignored on receive by delta clients
+	-- Slot freed for togbank-rd (request data) which was previously at slot #25, over WoW's 16-prefix limit
+	TOGBankClassic_Core:RegisterComm("togbank-rd", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
-	-- Delta-specific version broadcast (SYNC-001 fix)
-	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[INIT] Registering togbank-dv handler")
-	TOGBankClassic_Core:RegisterComm("togbank-dv", function(prefix, message, distribution, sender)
-		TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[HANDLER] togbank-dv called: %s from %s (%d bytes)", prefix, sender, #message)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
+	-- togbank-dv removed: all clients now use togbank-dv2 (SYNC-006+); slot freed
 	-- SYNC-006: New protocol for aggregated items structure
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[INIT] Registering togbank-dv2 handler")
 	TOGBankClassic_Core:RegisterComm("togbank-dv2", function(prefix, message, distribution, sender)
@@ -96,6 +85,7 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
+	-- togbank-h / togbank-hr: hello/hello-reply handshake (now slots 14/15 after legacy removals)
 	TOGBankClassic_Core:RegisterComm("togbank-h", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -103,33 +93,9 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Core:RegisterComm("togbank-hr", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-s", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-	TOGBankClassic_Core:RegisterComm("togbank-sr", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-w", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-	TOGBankClassic_Core:RegisterComm("togbank-wr", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	-- Roster sync (optional, for guilds with officer-note-only gbank identification)
-	TOGBankClassic_Core:RegisterComm("togbank-roster", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	-- Request-specific message handlers (v0.9.1+)
-	TOGBankClassic_Core:RegisterComm("togbank-rq", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-	TOGBankClassic_Core:RegisterComm("togbank-rd", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
+	-- togbank-s/sr, togbank-w/wr, togbank-roster, togbank-rq removed:
+	-- share/wipe/roster traffic migrated onto togbank-hl type dispatch (SYNC-013)
+	-- sr and wr had no handler; rq was never sent
 end
 
 -- Wrapper for debug logging (delegates to centralized logger)
@@ -664,68 +630,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		self:Debug("PROTOCOL", ">", ColorPlayerName(sender), ">", prefix, prefixDesc)
 	end
 
-	if prefix == "togbank-v" or prefix == "togbank-dv" or prefix == "togbank-dv2" then
-		local isDeltaVersion = (prefix == "togbank-dv" or prefix == "togbank-dv2")
-		local isSYNC006 = (prefix == "togbank-dv2")  -- SYNC-006 aggregated items
-
-		-- Delta clients ignore legacy version broadcasts (SYNC-001 fix)
-		local weUseDelta = TOGBankClassic_Guild:ShouldUseDelta()
-		if weUseDelta and prefix == "togbank-v" then
-			-- Legacy clients ignore togbank-v
-			return
-		end
-
-		-- SYNC-006 clients only listen to togbank-dv2, ignore togbank-dv
-		-- Pre-SYNC-006 clients only listen to togbank-dv, ignore togbank-dv2
-		local weUseSYNC006 = TOGBankClassic_Guild:UsesSYNC006()
-		if weUseSYNC006 and prefix == "togbank-dv" then
-			-- Delay dv processing to allow dv2 to arrive first (prioritize newer protocol)
-			TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Delaying dv message from %s for %d seconds (waiting for dv2)", sender, self.DV_DELAY)
-
-			-- Store the message with a timer
-			if not self.pending_dv_messages then
-				self.pending_dv_messages = {}
-			end
-			if sender and not self.pending_dv_messages[sender] then
-				self.pending_dv_messages[sender] = {}
-			end
-
-			-- Extract alt names from data to track what needs canceling
-			local altNames = {}
-			if data.alts then
-				for altName in pairs(data.alts) do
-					table.insert(altNames, altName)
-					-- Store pending message keyed by alt name for easy cancellation
-					self.pending_dv_messages[sender][altName] = {
-						data = data,
-						prefix = prefix,
-						message = message,
-						distribution = distribution,
-					}
-				end
-			end
-
-			-- Create timer to process after delay
-			C_Timer.After(self.DV_DELAY, function()
-				self:ProcessDelayedDvMessage(sender, data, prefix, message, distribution)
-			end)
-
-			return
-		elseif not weUseSYNC006 and prefix == "togbank-dv2" then
-			-- Pre-SYNC-006 clients ignore SYNC-006 protocol
-			return
-		end
-
-		-- If we're processing dv2, cancel any pending dv messages for these alts
-		if prefix == "togbank-dv2" and data.alts then
-			local altNames = {}
-			for altName in pairs(data.alts) do
-				table.insert(altNames, altName)
-			end
-			self:CancelPendingDvMessages(sender, altNames)
-		end
-
-		-- Process the message immediately
+	-- togbank-v and togbank-dv unregistered; only togbank-dv2 (SYNC-006) is active
+	if prefix == "togbank-dv2" then
 		self:ProcessVersionBroadcast(prefix, data, sender, message, distribution)
 		return
 	end
@@ -837,7 +743,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							shouldRespond = true
 							expectedHash = myHash
 							TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
-							TOGBankClassic_Output:Info("P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
+							TOGBankClassic_Output:Debug("P2P", "RESPOND", "P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
 								sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 							if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
 								TOGBankClassic_Database:RecordP2POffered(TOGBankClassic_Guild.Info.name)
@@ -1054,14 +960,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end
 			end
 		end
-	end
-
-	-- Handle roster sync (optional, for guilds with officer-note-only gbank identification)
-	if prefix == "togbank-roster" then
-		if data and data.roster then
-			TOGBankClassic_Guild:ReceiveRosterData(sender, data.roster)
-		end
-		return
 	end
 
 	-- v0.8.0: Pull-based request reply handler (togbank-rr)
@@ -1858,7 +1756,8 @@ end
 		TOGBankClassic_Guild:Hello("reply")
 	end
 	if prefix == "togbank-hr" then
-		self:Debug("PROTOCOL", data)
+		-- hello-reply: log the text response from the remote side
+		TOGBankClassic_Output:Debug("PROTOCOL", "Hello reply from %s: %s", tostring(sender), tostring(data))
 	end
 	if prefix == "togbank-hl" then
 		if data.type == "hash-list-request" then
@@ -1941,11 +1840,22 @@ end
 			-- Process exactly the same as togbank-r alt-request, but only modern peers see this
 			TOGBankClassic_Output:Debug("PROTOCOL", "P2P alt-request from %s for %s (expectedHash=%s)",
 				tostring(sender), tostring(data.name), tostring(data.expectedHash))
-			
 			-- Forward to togbank-r handler by recursively calling OnCommReceived
-			-- (can't just set prefix="togbank-r" since that handler already executed above)
 			self:OnCommReceived("togbank-r", message, distribution, sender)
 			return
+		-- SYNC-013: share/wipe/roster migrated from dead prefixes onto togbank-hl type dispatch
+		elseif data.type == "share-request" then
+			TOGBankClassic_Guild:Share("reply")
+			local now = GetServerTime()
+			if not self.last_share_sync or now - self.last_share_sync > 30 then
+				self.last_share_sync = now
+			end
+		elseif data.type == "wipe-command" then
+			TOGBankClassic_Guild:Wipe("reply")
+		elseif data.type == "roster-broadcast" then
+			if data.roster then
+				TOGBankClassic_Guild:ReceiveRosterData(sender, data.roster)
+			end
 		end
 	end
 	if prefix == "togbank-hlr" then
@@ -1954,7 +1864,7 @@ end
 			for _ in pairs(data.alts) do
 				altCount = altCount + 1
 			end
-			TOGBankClassic_Output:Info("HLR received from %s (alts=%d)", tostring(sender), altCount)
+			TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "HLR received from %s (alts=%d)", tostring(sender), altCount)
 			-- Update cache incrementally to support both full replies and partial broadcasts
 			if not TOGBankClassic_Guild.latestBankerHashes then
 				TOGBankClassic_Guild.latestBankerHashes = {}
@@ -1996,7 +1906,7 @@ end
 							-- Hash mismatch detected - banker has different hash than our local data
 							-- DO NOT update local hash here - it will be updated when we receive and apply the delta
 							-- Second pass will detect this mismatch and trigger a delta sync request
-							TOGBankClassic_Output:Info("HLR: Hash mismatch detected for %s - local inv=%d/mail=%d vs banker inv=%d/mail=%d (delta sync needed)", 
+							TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "HLR: Hash mismatch detected for %s - local inv=%d/mail=%d vs banker inv=%d/mail=%d (delta sync needed)",
 								norm, localHash, localAlt.mailHash or 0, summary.hash, summary.mailHash or 0)
 						end
 					end
@@ -2035,7 +1945,7 @@ end
 					
 					-- Skip alts we already have content for AND hashes match - no need to request
 					if hasContent and hashesMatch then
-						TOGBankClassic_Output:Info(
+						TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE",
 							"HLR: Skipping %s (have content + hashes match: local inv=%d/mail=%d, banker inv=%d/mail=%d)",
 							tostring(norm),
 							tostring(localHash),
@@ -2046,7 +1956,7 @@ end
 					elseif not localAlt or localHash == 0 or (summary.hash and summary.hash ~= localHash) or (summary.mailHash and summary.mailHash ~= localMailHash) then
 						pending[norm] = summary
 						local reason = (not localAlt or localHash == 0) and "no data" or ((summary.hash and summary.hash ~= localHash) and "inventory mismatch" or "mail mismatch")
-						TOGBankClassic_Output:Info(
+						TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE",
 							"HLR: Adding %s to pending (%s: local inv=%d/mail=%d, banker inv=%d/mail=%d)",
 							tostring(norm),
 							reason,
@@ -2087,9 +1997,7 @@ end
 			end
 			if pendingCount > 0 then
 				local haveCount, totalCount = TOGBankClassic_Guild:GetBankerDataProgress()
-				if not (TOGBankClassic_Options and TOGBankClassic_Options.IsSyncProgressMuted and TOGBankClassic_Options:IsSyncProgressMuted()) then
-					TOGBankClassic_Output:Info("Fast-fill: Requesting %d missing alts (have %d/%d)", pendingCount, haveCount, totalCount)
-				end
+				TOGBankClassic_Output:Debug("DELTA", "FAST-FILL", "Fast-fill: Requesting %d missing alts (have %d/%d)", pendingCount, haveCount, totalCount)
 				TOGBankClassic_Guild:ReportBankerDataProgress("fast-fill", true)
 			end
 			if missingCount > 0 then
@@ -2129,17 +2037,7 @@ end
 			end
 		end
 	end
-	if prefix == "togbank-s" then
-		TOGBankClassic_Guild:Share("reply")
-		local now = GetServerTime()
-		if not self.last_share_sync or now - self.last_share_sync > 30 then
-			self.last_share_sync = now
-			--TOGBankClassic_Events:Sync()  -- COMMENTED OUT: togbank-v ignored by delta clients
-		end
-	end
-	if prefix == "togbank-w" then
-		TOGBankClassic_Guild:Wipe("reply")
-	end
+	-- togbank-s and togbank-w handlers removed: migrated to togbank-hl type dispatch (SYNC-013)
 end
 
 -- Help text color codes

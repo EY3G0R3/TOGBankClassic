@@ -701,7 +701,7 @@ function TOGBankClassic_Guild:ReportBankerDataProgress(context, force)
 		elseif context then
 			names = " (" .. context .. ")"
 		end
-		TOGBankClassic_Output:Info("Banker sync progress: %d/%d%s%s", have, total, deltaStr, names)
+		TOGBankClassic_Output:Debug("SYNC", "PROGRESS", "Banker sync progress: %d/%d%s%s", have, total, deltaStr, names)
 	end
 end
 
@@ -1017,7 +1017,7 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 		tostring(expectedUpdatedAt),
 		tostring(bankerSender)
 	)
-	TOGBankClassic_Output:Info("P2P: Broadcasting request for %s with hash=%d (waiting for peers)", altName, expectedHash)
+	TOGBankClassic_Output:Debug("P2P", "BROADCAST", "P2P: Broadcasting request for %s with hash=%d (waiting for peers)", altName, expectedHash)
 	
 	self.expectedHashes = self.expectedHashes or {}
 	self.expectedHashes[norm] = expectedHash
@@ -1429,7 +1429,10 @@ function TOGBankClassic_Guild:SendRosterData()
 		return
 	end
 
-	local data = TOGBankClassic_Core:EncodeJSON({
+	-- SYNC-013: Fixed serialization (was EncodeJSON, receiver uses DeserializeWithChecksum)
+	-- SYNC-013: Migrated from dead togbank-roster prefix onto togbank-hl type dispatch
+	local data = TOGBankClassic_Core:SerializeWithChecksum({
+		type = "roster-broadcast",
 		roster = {
 			alts = self.Info.roster.alts,
 			version = self.Info.roster.version or GetServerTime()
@@ -1437,7 +1440,7 @@ function TOGBankClassic_Guild:SendRosterData()
 	})
 
 	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Broadcasting roster with %d bankers", #self.Info.roster.alts)
-	TOGBankClassic_Core:SendCommMessage("togbank-roster", data, "GUILD", nil, "NORMAL")
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
 end
 
 -- Receive roster broadcast from banker/officer (only if roster sync enabled)
@@ -3230,11 +3233,11 @@ function TOGBankClassic_Guild:Wipe(type)
 	local wipe = "I wiped all addon data from " .. guild .. "."
 	TOGBankClassic_Guild:Reset(guild)
 
-	local data = TOGBankClassic_Core:SerializeWithChecksum(wipe)
+	-- SYNC-013: Migrated from dead togbank-w/wr prefixes onto togbank-hl type dispatch
+	-- togbank-wr (reply) had no handler so the reply direction is simply dropped
 	if type ~= "reply" then
-		TOGBankClassic_Core:SendCommMessage("togbank-w", data, "Guild", nil, "BULK")
-	else
-		TOGBankClassic_Core:SendCommMessage("togbank-wr", data, "Guild", nil, "BULK")
+		local hlData = TOGBankClassic_Core:SerializeWithChecksum({ type = "wipe-command", message = wipe })
+		TOGBankClassic_Core:SendCommMessage("togbank-hl", hlData, "Guild", nil, "BULK")
 	end
 end
 
@@ -3343,14 +3346,12 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		TOGBankClassic_Events:SyncDeltaVersion()
 	end
 
-	local data = TOGBankClassic_Core:SerializeWithChecksum(share)
+	-- SYNC-013: Migrated from dead togbank-s/sr prefixes onto togbank-hl type dispatch
+	-- togbank-sr (reply) had no handler so the reply direction is simply dropped
 	if type ~= "reply" then
+		local hlData = TOGBankClassic_Core:SerializeWithChecksum({ type = "share-request", message = share })
 		-- Use NORMAL priority for share announcement so users are notified quickly
-		-- Actual data transfers (deltas/snapshots) use BULK to avoid network spam
-		TOGBankClassic_Core:SendCommMessage("togbank-s", data, "Guild", nil, "NORMAL")
-	else
-		-- TODO: togbank-sr is only used for debug output; consider removing or repurposing.
-		TOGBankClassic_Core:SendCommMessage("togbank-sr", data, "Guild", nil, "NORMAL")
+		TOGBankClassic_Core:SendCommMessage("togbank-hl", hlData, "Guild", nil, "NORMAL")
 	end
 end
 

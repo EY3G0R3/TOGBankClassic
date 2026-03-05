@@ -422,6 +422,11 @@ function TOGBankClassic_UI_Requests:Open()
 		RegisterBagEvents()
 	end
 
+	-- REQUEST-001: Pull latest request state when the window opens so a banker
+	-- sees current data without needing to wait for the periodic timer.
+	-- CanQueryRequestsIndex cooldown prevents spam if the window is toggled rapidly.
+	TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
+
 	if _G["TOGBankClassic"] then
 		_G["TOGBankClassic"]:Show()
 	else

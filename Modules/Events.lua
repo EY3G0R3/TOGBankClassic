@@ -200,8 +200,8 @@ function TOGBankClassic_Events:OnShareTimer()
 		TOGBankClassic_Guild:RequestHashListFromBanker()
 	end
 	
-	-- REQUEST-001: Automatic index-based request sync on 3-minute timer
-	TOGBankClassic_Guild:QueryRequestsIndex(nil, "BULK")
+	-- REQUEST-001: Automatic index-based request sync on periodic timer
+	TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
 
 	-- PERF-011: Periodically prune stale delta history so SavedVariables stays small.
 	-- Runs every VERSION_BROADCAST interval (3 min); cheap when already clean.
@@ -399,6 +399,8 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 					TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Will retry on next GUILD_ROSTER_UPDATE")
 			else
 					TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Roster initialization complete after %d attempts", attempts)
+				-- REQUEST-001: Sync request state shortly after login, don't wait for the periodic timer
+				TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
 			end
 		end)
 	else

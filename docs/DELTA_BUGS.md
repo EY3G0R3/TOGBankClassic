@@ -1,11 +1,17 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** March 3, 2026
+**Last Updated:** March 5, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+
+**Recent Fixes (2026-03-05):**
+- ✅ [COMM-004] **CRITICAL** WoW AceComm 16-prefix hard limit exceeded — 9 of 24 registered prefixes (slots 17-25) silently dropped by WoW, causing `/togbank hello`, `/togbank share`, `/togbank wipe`, and `/togbank roster` to have never worked in production, and the SYNC-012 fix (`togbank-rd`) to also be silently discarded. Affected: `togbank-h`, `togbank-hr` (hello broadcast/reply), `togbank-s`, `togbank-sr` (share command), `togbank-w`, `togbank-wr` (wipe command), `togbank-roster` (roster sync), `togbank-rq` (dead), `togbank-rd` (request data). Fix: Removed 4 dead registrations (`d2`, `d3`, `dv`, `rq`) and consolidated `togbank-s/sr/w/wr/roster` onto existing `togbank-hl` type dispatch (new types: `share-request`, `wipe-command`, `roster-broadcast`). Replaced slot 10's dead `togbank-v` with `togbank-rd`. Moved `togbank-h/hr` from slots 17-18 to slots 14-15. Final count: 15 prefixes. Locations: Chat.lua (RegisterComm block, OnCommReceived handlers for `togbank-hl`, `togbank-hr`), Guild.lua (`Share()`, `Wipe()`, `SendRosterData()`), RequestLog.lua (`SendRequestsSnapshot`, `SendRequestsIndex`, `SendRequestsById`).
+- ✅ [COMM-005] **HIGH** Dead prefixes consuming 4 registration slots — `togbank-d2`, `togbank-d3`, `togbank-dv`, and `togbank-rq` were all registered via `RegisterComm` but never sent from anywhere in the codebase, wasting 4 of the 16 available prefix slots. `togbank-d2`/`d3` were legacy multi-chunk delta prefixes from an abandoned approach; `togbank-dv` was the original version broadcast prefix superseded by `togbank-dv2`; `togbank-rq` was never implemented. Additionally, `togbank-v` (slot 10) was registered but all sends had been commented out and the receive handler immediately discarded all messages. Fix: Removed all 5 dead registrations and collapsed the `togbank-v/dv/dv2` handler fallback chain to a single `if prefix == "togbank-dv2" then` check. Freed slots now occupied by `togbank-h`, `togbank-hr`, and `togbank-rd`. Locations: Chat.lua RegisterComm block, OnCommReceived version-broadcast handler.
+- ✅ [SYNC-012] **CRITICAL** Request responses starved on bulk-inventory throttle bucket — `SendRequestsSnapshot`, `SendRequestsIndex`, and `SendRequestsById` all sent on `togbank-d`, the same AceComm throttle bucket used for full alt inventory data payloads (~100-500KB per alt). Request responses (~1-5KB) were queued behind bulk inventory traffic and delayed minutes to hours. Symptom: operator fills a request and changes propagate through `/togbank share` immediately, but after `/reload` on the banker the request data takes hours to arrive. Fix: Migrated all three request-data send functions to `togbank-rd` (dedicated throttle bucket). Also added `QueryRequestsIndex()` call on login (GUILD_ROSTER_UPDATE deferred block) and on Requests UI open, so request data is pro-actively fetched rather than relying only on push. Locations: RequestLog.lua `SendRequestsSnapshot` (~877), `SendRequestsIndex` (~830), `SendRequestsById` (~856); Events.lua GUILD_ROSTER_UPDATE handler; UI/Requests.lua open handler.
+- ✅ [ROSTER-003] **HIGH** `SendRosterData` serialization mismatch — `SendRosterData()` encoded its payload with `EncodeJSON({roster={...}})` (JSON format) while the `togbank-roster` receive handler called `DeserializeWithChecksum()` (AceSerializer binary format). These two formats are completely incompatible — `DeserializeWithChecksum` always fails on JSON input, silently returning nil, so roster sync had never worked at the wire level regardless of the prefix limit issue. Fix: Changed `SendRosterData` to use `SerializeWithChecksum({type="roster-broadcast", roster={...}})` and send on `togbank-hl` with type dispatch. The `togbank-hl` `roster-broadcast` handler passes `data.roster` to `ReceiveRosterData(sender, data.roster)`. Locations: Guild.lua `SendRosterData` (~1432); Chat.lua `togbank-hl` type dispatch (new `roster-broadcast` branch).
 
 **Recent Fixes (2026-03-03):**
 - ✅ [FULFILL-003] **HIGH** Request splitting logic inconsistency between UI state and execution — `CanFulfillRequest` (UI feasibility check) and `PrepareFulfillMail` (execution) used different algorithms causing UI to show split icon but execution found exact match (or vice versa). Root causes: (1) algorithm divergence (simple greedy vs two-stage with filtering), (2) stack filtering mismatch (PrepareFulfillMail used minStackSize filter, CanFulfillRequest didn't), (3) sort order differences (originalIndex preservation inconsistent), (4) split detection logic differed. Example: Request 95, have [20,20,20,20,15,14] → CanFulfillRequest accumulated 80 then said "need split 15", PrepareFulfillMail filtered to [20,20,20,20,15] and accumulated exact 95 without split → UI showed split icon (shovel) but clicking didn't require split. Fix: Extracted unified `CalculateFulfillmentPlan()` function implementing consistent greedy algorithm with skip-stack optimization and split detection. Both functions now use same logic eliminating ~200 lines of duplicate code. UI icon now always matches actual behavior. Location: Mail.lua lines 496-707 (new unified function), CanFulfillRequest refactored to use plan (~709-751), PrepareFulfillMail refactored (~752-873).
@@ -23,6 +29,202 @@
 - ✅ [DELTA-022] **CRITICAL** Every delta sync was effectively a full sync — `ItemsEqual` compared `item1.Link ~= item2.Link` where `item1` was a minimal baseline item (Link=nil, from `expandMinimalItems` in `ComputeDelta`) and `item2` was a current inventory item (always has Link). `nil ~= "item:12345:..."` is always true, so every unchanged item landed in `modified[]` regardless of actual changes. The resulting delta contained the entire inventory as modified entries — same size as a full sync — defeating the point of delta protocol entirely. Fix: Only compare Links when both items have them. A nil Link on either side means the field is simply absent/unknown (minimal baseline), not a meaningful difference. Locations: DeltaComms.lua `ItemsEqual` (~446-490).
 - ✅ [DELTA-023] **HIGH** Stale `hasSnapshot` gate in `RespondToStateSummary` caused unnecessary full syncs after any reload — Both the mail-only-change and inventory-change branches in `RespondToStateSummary` checked `GetSnapshot()` before computing a delta, falling back to `SendAltData(norm, 0, 0, ...)` (full sync) when no snapshot existed. Since snapshots are in-memory only (PERF-012), they are lost on every reload. After DELTA-020 landed, `ComputeDelta` uses `requesterBaseline` from the state summary directly and no longer uses `GetSnapshot` at all — but the gate in `RespondToStateSummary` was never removed. Result: The first sync after any reload always sent a full "everything as additions" delta even though the requester sent their exact baseline in the state summary. Fix: Removed both `hasSnapshot` gates entirely. `ComputeDelta` handles `requesterHash == 0` (no prior data) internally; `requesterBaseline` covers all other cases. Locations: Guild.lua `RespondToStateSummary` mail-only branch (~1829) and inventory-change branch (~1847).
 - ✅ [DELTA-024] **LOW** Migration computes inventory hash using a different algorithm than `Bank:Scan()`, causing a false "inventory changed" event on every startup — The `Database.lua` migration block (post-load, deferred 0.5s) called `ComputeInventoryHash(alt.bank, alt.bags, money)` which routes through the pre-SYNC-006 code path and hashes `"B:bank.items|G:bags.items"` separately. `Bank:Scan()` always calls `ComputeInventoryHash(alt.items, nil, nil, money)` which is the SYNC-006 path and hashes `"I:aggregated_items"`. Same hash algorithm but different string input → different numeric output for identical inventory data. On startup the migration wrote the pre-SYNC-006 hash; then on first `Bank:Scan()` the SYNC-006 hash differed → `currentHash ~= previousHash` → version bumped, snapshot saved, and `dv2` broadcast triggered as if inventory had changed. Transient (self-healed after first scan), but caused one spurious version bump and broadcast per session. Fix: After `RecalculateAggregatedItems` populates `alt.items`, recompute hash using SYNC-006 calling convention to match `Bank:Scan()` format. Locations: Database.lua deferred migration block (~220).
+
+---
+
+## [COMM-004] WoW AceComm 16-prefix hard limit exceeded — 9 prefixes silently dropped
+
+**Severity:** CRITICAL
+**Status:** Fixed 2026-03-05
+**Reported:** March 5, 2026
+
+**Symptom:**
+Multiple slash commands had never worked in production:
+- `/togbank hello` — sent on `togbank-h` but no player ever received it
+- `/togbank share` — sent on `togbank-s` but no player ever received it
+- `/togbank wipe` — sent on `togbank-w` but no player ever received it
+- `/togbank roster` — sent on `togbank-roster` but no player ever received it
+
+Additionally, the SYNC-012 fix (migrating request data to `togbank-rd`) appeared to be correctly implemented but had no effect at all, since `togbank-rd` was also silently dropped.
+
+**Root Cause:**
+WoW's AceComm-3.0 (via ChatThrottleLib) enforces a hard limit of **16 `RegisterComm` prefixes per addon**. Prefixes registered beyond the 16th slot are accepted by the API without error but are **silently discarded** on the receive side — messages arrive at WoW's network layer but are never dispatched to the addon handler.
+
+At the time of discovery, `Chat.lua` had grown to **24 active `RegisterComm` calls** (plus 1 legacy `togbank-v`), placing slots 17-25 permanently in the dead zone:
+
+| Slot | Prefix | Status |
+|------|--------|--------|
+| 1 | `togbank-d` | ✅ Active |
+| 2 | `togbank-hl` | ✅ Active |
+| 3 | `togbank-hlr` | ✅ Active |
+| 4 | `togbank-d4` | ✅ Active |
+| 5 | `togbank-rm` | ✅ Active |
+| 6 | `togbank-dr` | ✅ Active |
+| 7 | `togbank-dc` | ✅ Active |
+| 8 | `togbank-d2` | ❌ Never sent (dead) |
+| 9 | `togbank-d3` | ❌ Never sent (dead) |
+| 10 | `togbank-v` | ❌ Never sent, handler discarded all |
+| 11 | `togbank-dv` | ❌ Superseded by dv2, never sent |
+| 12 | `togbank-dv2` | ✅ Active |
+| 13 | `togbank-r` | ✅ Active |
+| 14 | `togbank-rr` | ✅ Active |
+| 15 | `togbank-state` | ✅ Active |
+| 16 | `togbank-nochange` | ✅ Active |
+| ~~17~~ | ~~`togbank-h`~~ | ❌ **Over limit — never received** |
+| ~~18~~ | ~~`togbank-hr`~~ | ❌ **Over limit — never received** |
+| ~~19~~ | ~~`togbank-s`~~ | ❌ **Over limit — never received** |
+| ~~20~~ | ~~`togbank-sr`~~ | ❌ **Over limit — never received** |
+| ~~21~~ | ~~`togbank-w`~~ | ❌ **Over limit — never received** |
+| ~~22~~ | ~~`togbank-wr`~~ | ❌ **Over limit — never received** |
+| ~~23~~ | ~~`togbank-roster`~~ | ❌ **Over limit — never received** |
+| ~~24~~ | ~~`togbank-rq`~~ | ❌ **Never sent AND over limit** |
+| ~~25~~ | ~~`togbank-rd`~~ | ❌ **Over limit — SYNC-012 fix silently broken** |
+
+**Fix:**
+1. **Removed 5 dead registrations** that consumed slots without any active sends or handles: `togbank-d2`, `togbank-d3`, `togbank-v`, `togbank-dv`, `togbank-rq`.
+2. **Merged `togbank-s`, `togbank-sr`, `togbank-w`, `togbank-wr`, `togbank-roster`** — consolidated onto existing `togbank-hl` type dispatch with new message types: `share-request`, `wipe-command`, `roster-broadcast`. Removed standalone handlers and registrations for all five.
+3. **Replaced slot 10** (`togbank-v`) with `togbank-rd`, placing the request-data prefix within the safe range.
+4. **`togbank-h`/`togbank-hr`** moved from slots 17-18 to slots 14-15 (now actually received).
+5. **`togbank-rq`** removed — no send site was ever implemented.
+
+**Final prefix registry (15 slots):**
+```
+1.  togbank-d      — Alt inventory data (bulk)
+2.  togbank-hl     — Coordinator hub: hashes, share, wipe, roster, P2P
+3.  togbank-hlr    — Hash-list replies
+4.  togbank-d4     — Delta data payloads
+5.  togbank-rm     — Request mutations (ALERT priority, own bucket)
+6.  togbank-dr     — Delta range requests
+7.  togbank-dc     — Delta chain responses
+8.  togbank-rd     — Request data responses (own bucket, SYNC-012)
+9.  togbank-dv2    — Version broadcasts
+10. togbank-r      — Pull-based queries
+11. togbank-rr     — Pull ACKs / session handshake
+12. togbank-state  — P2P state summaries
+13. togbank-nochange — P2P no-change signals
+14. togbank-h      — Hello broadcast
+15. togbank-hr     — Hello reply
+```
+
+**Locations:**
+- `Chat.lua` RegisterComm block: removed 5 dead registrations, reordered `togbank-h`/`togbank-hr`
+- `Chat.lua` OnCommReceived: added `share-request`, `wipe-command`, `roster-broadcast` type handlers in `togbank-hl` block; removed standalone `togbank-s`, `togbank-w`, `togbank-roster` handlers; collapsed version-broadcast chain to single `togbank-dv2` check
+- `Guild.lua` `Share()` (~3347): migrated `togbank-s` → `togbank-hl` type=`share-request`
+- `Guild.lua` `Wipe()` (~3224): migrated `togbank-w` → `togbank-hl` type=`wipe-command`
+- `Guild.lua` `SendRosterData()` (~1432): migrated `togbank-roster` → `togbank-hl` type=`roster-broadcast`
+
+---
+
+## [COMM-005] Dead prefixes consuming 4 of 16 registration slots
+
+**Severity:** HIGH
+**Status:** Fixed 2026-03-05
+**Reported:** March 5, 2026
+
+**Symptom:**
+Not directly user-visible, but a structural cause of [COMM-004]: 4 prefix slots were consumed by prefixes that were never sent and never did useful work, contributing to the slot overflow that pushed active prefixes past the 16-slot limit.
+
+**Root Cause:**
+Four `RegisterComm` calls in `Chat.lua` registered prefixes with no corresponding active send site:
+
+- **`togbank-d2`** — Legacy multi-chunk delta prefix from an earlier protocol design. All sends were removed when the architecture changed, but the `RegisterComm` call was left in place. The receive handler was reachable but never triggered.
+- **`togbank-d3`** — Same as `togbank-d2`; companion prefix from the multi-chunk design. Dead.
+- **`togbank-dv`** — Original version broadcast prefix, superseded by `togbank-dv2` (which appended `2` to avoid conflicts with older clients). All `togbank-dv` sends had been replaced with `togbank-dv2`, but `RegisterComm("togbank-dv")` remained. The receive handler had a 5-second timer to delay in favour of `dv2`, making it functionally dead.
+- **`togbank-rq`** — Reserved for a "request query" flow that was never implemented. No send site existed anywhere in the codebase.
+
+Additionally, **`togbank-v`** was registered and placed at slot 10 but: (1) all sends were commented out with `-- V SENDS COMMENTED OUT`, and (2) the receive handler executed `return` immediately after logging, discarding every message. This was the most wasteful slot — it both consumed a low-numbered slot and did nothing.
+
+**Fix:**
+Removed `RegisterComm` calls for `togbank-d2`, `togbank-d3`, `togbank-v`, `togbank-dv`, and `togbank-rq`. Collapsed the version-broadcast receive handler from a three-way `if prefix == "togbank-v" / elseif "togbank-dv" / elseif "togbank-dv2"` chain to a single `if prefix == "togbank-dv2" then` check, eliminating ~15 lines of dead fallback logic.
+
+**Locations:**
+- `Chat.lua` RegisterComm block: removed 5 entries
+- `Chat.lua` OnCommReceived version-broadcast handler: collapsed fallback chain
+
+---
+
+## [SYNC-012] Request responses compete with bulk inventory on shared throttle bucket
+
+**Severity:** CRITICAL
+**Status:** Fixed 2026-03-05
+**Reported:** March 5, 2026
+
+**Symptom:**
+After a `/reload` on the banker, request data (guild requests, item asks, cancellations) took **hours** to propagate — even for a single new request. Operator creates a request, other player `/reload`s their banker, banker UI shows no requests. After 2-3 hours the data eventually appears.
+
+**Root Cause:**
+AceComm-3.0 uses ChatThrottleLib, which maintains **one queue per registered prefix**. All messages on the same prefix compete for throughput in insertion order — a large payload blocks smaller payloads behind it.
+
+`SendRequestsSnapshot`, `SendRequestsIndex`, and `SendRequestsById` all sent their data on **`togbank-d`** — the same prefix used to broadcast full alt inventory data. A single alt inventory payload is 50-200KB serialized; a guild with multiple active bankers generates several of these on every login. A request sync payload is typically 1-5KB.
+
+The result: when a non-banker logged in and triggered multiple alt inventory syncs, the 5-10 large inventory payloads queued on `togbank-d` serialized back-to-back, taking 10-60 minutes to drain at WoW's chat throttle rate. Any `QueryRequestsIndex` response queued after them waited in line behind all that bulk data.
+
+Secondary issue: `QueryRequestsIndex` was only called from a timer that fired periodically — there was no pro-active fetch on login or when the user opened the Requests UI, so after a `/reload` the user had no request data at all until the timer happened to fire AND the response made it through the throttle queue.
+
+**Fix:**
+1. **Migrated all three send functions to `togbank-rd`**: `SendRequestsSnapshot`, `SendRequestsIndex`, `SendRequestsById` now send on `togbank-rd`, which has its own dedicated throttle bucket independent of bulk inventory traffic. A request response is now processed as soon as bandwidth is available for that prefix specifically.
+2. **Added `QueryRequestsIndex` on login**: GUILD_ROSTER_UPDATE deferred block (Events.lua) now calls `QueryRequestsIndex()` after the standard sync, ensuring request data is fetched immediately after joining the guild channel on each reload.
+3. **Added `QueryRequestsIndex` on Requests UI open**: When the player opens the Requests UI panel, if local request data is absent or stale, a fresh query is sent immediately.
+
+**Note:** This fix depended on [COMM-004] — `togbank-rd` was originally placed at slot 25 (silently dropped by WoW). The slot fix in COMM-004 moved `togbank-rd` to slot 8 (replacing dead `togbank-v`), making this fix actually effective.
+
+**Locations:**
+- `RequestLog.lua` `SendRequestsSnapshot` (~877): prefix `togbank-d` → `togbank-rd`
+- `RequestLog.lua` `SendRequestsIndex` (~830): prefix `togbank-d` → `togbank-rd`
+- `RequestLog.lua` `SendRequestsById` (~856): prefix `togbank-d` → `togbank-rd`
+- `Events.lua` GUILD_ROSTER_UPDATE deferred block (~428-438): added `QueryRequestsIndex()` call
+- `UI/Requests.lua` panel open handler: added `QueryRequestsIndex()` call
+
+---
+
+## [ROSTER-003] SendRosterData uses incompatible serialization format
+
+**Severity:** HIGH
+**Status:** Fixed 2026-03-05
+**Reported:** March 5, 2026
+
+**Symptom:**
+`/togbank roster` (the command to broadcast the banker's roster to guild members) appeared to complete successfully — the sender logged "Sending roster data..." — but no receiver ever processed the data. Guild members never received updated roster information via this path. This was masked by the [COMM-004] prefix limit bug (the prefix was also over the 16-slot limit), making the two bugs compound: even if serialization had been correct, the message would still have been silently dropped.
+
+**Root Cause:**
+`SendRosterData()` in `Guild.lua` serialized its payload using `EncodeJSON({roster={...}})`, producing a JSON string:
+```lua
+-- Wrong (sends JSON)
+local data = self:EncodeJSON({roster = rosterList})
+self:SendCommMessage("togbank-roster", data, "GUILD", nil, "BULK")
+```
+
+The receive handler in `Chat.lua` for `togbank-roster` decoded using `DeserializeWithChecksum(message)` (AceSerializer binary format):
+```lua
+-- Wrong (expects AceSerializer, receives JSON)
+elseif prefix == "togbank-roster" then
+    local ok, data = self:DeserializeWithChecksum(message)
+    if not ok then return end  -- always fails
+    ReceiveRosterData(sender, data.roster)
+end
+```
+
+AceSerializer and JSON are completely incompatible wire formats. `DeserializeWithChecksum` always returned `ok = false` on JSON input, so `ReceiveRosterData` was never called. Every roster broadcast was silently discarded on every receiver.
+
+**Fix:**
+Changed `SendRosterData` to use `SerializeWithChecksum` with a structured type envelope and send on `togbank-hl` (within the 16-prefix limit via [COMM-004] consolidation):
+```lua
+-- Correct (AceSerializer + type dispatch)
+local data = self:SerializeWithChecksum({type = "roster-broadcast", roster = rosterList})
+self:SendCommMessage("togbank-hl", data, "GUILD", nil, "BULK")
+```
+
+Added `roster-broadcast` handler in the `togbank-hl` type dispatch block in `Chat.lua`:
+```lua
+elseif data.type == "roster-broadcast" then
+    TOGBankClassic_Output:Debug("PROTOCOL", "Roster broadcast from %s (%d entries)", sender, data.roster and #data.roster or 0)
+    ReceiveRosterData(sender, data.roster)
+```
+
+**Locations:**
+- `Guild.lua` `SendRosterData()` (~1432): `EncodeJSON` → `SerializeWithChecksum`, prefix `togbank-roster` → `togbank-hl`, added `type="roster-broadcast"` field
+- `Chat.lua` `togbank-hl` type dispatch: added `roster-broadcast` branch calling `ReceiveRosterData(sender, data.roster)`
+- `Chat.lua` standalone `togbank-roster` handler: removed
 
 ---
 
