@@ -684,3 +684,142 @@ The data **should** persist across reloads because `self.Info` directly referenc
 - AceDB not detecting table modifications (add explicit `MarkChanged()` call)
 
 Next step: Add debug logging to trace what happens to `requestLogApplied` between logout and next login.
+
+---
+
+> **NOTE:** The sections above describe the old event-log/sequence architecture (pre-v0.9.0).
+> The current implementation uses a simpler LWW (last-writer-wins) delta model with tombstones.
+> See `RequestLog.lua` and the findings below for the current design.
+
+---
+
+## Known Issues & Findings (March 2026 Audit)
+
+The following issues were identified during a code review of the current request sync system
+(`RequestLog.lua`, `Chat.lua`, `Constants.lua`). They are listed in priority order.
+Address one at a time; mark each as Fixed when resolved.
+
+---
+
+### REQSYNC-001 — No authorization check on received mutations ✅ Fixed
+
+**Severity:** High
+**Location:** `RequestLog.lua` → `ApplyRequestMutation`
+
+`ReceiveRequestMutations` → `ApplyRequestMutation` applies incoming `cancel`, `complete`,
+`delete`, and `fulfill` operations without verifying the sender had permission to perform them.
+
+The local mutation functions (`CancelRequest`, `CompleteRequest`, `DeleteRequest`) all gate on
+`CanCancelRequest`, `CanCompleteRequest`, and `CanDeleteRequest` respectively, but those checks
+are bypassed entirely when the mutation arrives over the wire.
+
+Since WoW's addon API guarantees the `sender` field in `OnCommReceived` reflects the true sending
+character, proper role checks are enforceable:
+- `cancel` should require `CanCancelRequest(req, sender)`.
+- `complete` should require `CanCompleteRequest(req, sender)`.
+- `delete` should require `CanDeleteRequest(req, sender)`.
+- `fulfill` should require the sender to be the assigned bank (`req.bank == normSender`) or a GM.
+
+**Impact:** Any guild member can broadcast a crafted `requests-log` message to delete, cancel, or
+complete any open request on every peer's client simultaneously.
+
+---
+
+### REQSYNC-002 — Tombstones accepted from any sender in snapshot/index merges ❌ Open
+
+**Severity:** High
+**Location:** `RequestLog.lua` → `ApplyRequestSnapshot`, `ReceiveRequestsIndex`
+
+Both functions unconditionally merge tombstones from the incoming payload with no check on whether
+the sender was authorized to delete those requests. A guild member can send a crafted snapshot or
+index response with a high-timestamp tombstone for any request ID, causing every peer to silently
+delete it and block resurrection for 30 days.
+
+**Fix:** Gate tombstone acceptance on `IsBank(sender)` or `SenderIsGM(sender)`. Tombstones from
+unprivileged senders should be ignored (or at most accepted only for requests where
+`req.requester == sender`).
+
+---
+
+### REQSYNC-003 — `inFlight` stalls next sync cycle when all peers match hash ❌ Open
+
+**Severity:** Low / UX
+**Location:** `RequestLog.lua` → `CanQueryRequestsIndex` / `BeginRequestsIndexSync`
+
+When `QueryRequestsIndex(nil)` broadcasts and every peer already has a matching hash (SYNC-011
+causes them all to stay silent), `EndRequestsIndexSync` is never called. `inFlight` remains set
+for the full `INDEX_INFLIGHT_TIMEOUT` (30 s) before expiring, and `INDEX_QUERY_COOLDOWN` (60 s)
+starts from broadcast time, so the next query is effectively blocked for up to 90 seconds even
+though nothing was wrong.
+
+**Fix:** After broadcasting, schedule a short timer (e.g., 5 s) to optimistically clear `inFlight`
+if no `requests-index` response has arrived, since silence means everyone agreed.
+
+---
+
+### REQSYNC-004 — Double `PruneRequests` call in `ApplyRequestSnapshot` ❌ Open
+
+**Severity:** Low / Performance
+**Location:** `RequestLog.lua` → `ApplyRequestSnapshot`
+
+`ApplyRequestSnapshot` calls `NormalizeRequestList()` (which itself calls `PruneRequests` at the
+end), then immediately calls `PruneRequests()` again explicitly. Requests are pruned twice on every
+incoming snapshot merge — harmless but wasteful on large request maps.
+
+**Fix:** Remove the redundant explicit `PruneRequests()` call from `ApplyRequestSnapshot` since
+`NormalizeRequestList` already invokes it.
+
+---
+
+### REQSYNC-005 — Fragile ID-vs-item-name validation in `sanitizeRequest` ❌ Open
+
+**Severity:** Medium
+**Location:** `RequestLog.lua` → `sanitizeRequest` (lines ~100–125)
+
+The heuristic that extracts an item name from the request ID (split on `-`, skip parts that look
+like timestamps, compare against `req.item`) will produce false mismatches for:
+- Item names containing dashes (e.g., "Two-Handed Sword", "Long-Barreled Musket").
+- Item names where a segment is short (<=3 chars) and triggers the early-stop rule.
+
+When a mismatch fires, the incoming request is silently dropped with only a debug log. This causes
+remote requests to disappear on receive without any visible error.
+
+**Fix options (discuss before changing):**
+1. Harden: use a stricter ID format (store item name in the ID as a hash rather than verbatim text).
+2. Soften: remove the cross-check entirely since it only guards against hand-edited IDs and harms
+   legitimate data more than it helps.
+3. Narrow: only apply the check to locally originated IDs (skip for received-over-wire data).
+
+---
+
+### REQSYNC-006 — Same-second fulfill timestamp collision ❌ Open
+
+**Severity:** Low
+**Location:** `RequestLog.lua` → `FulfillRequest`
+
+`FulfillRequest` stamps all mutations with `now = GetServerTime()` (1-second precision). If two
+fill events fire within the same second (e.g., banker quickly fills two items from different bag
+slots), both mutations get the same `ts`. The `req.statusUpdatedAt` could collide if the first fill
+triggers a status change to `"fulfilled"`, causing the second mutation to be considered a no-op by
+the terminal-state guards in `mergeRequest`.
+
+**Fix:** Bump `now` by 1 for each successive mutation in the same `FulfillRequest` call loop so
+rapid same-second fills each get a unique timestamp.
+
+---
+
+### REQSYNC-007 — Index sync constants left at "quick testing" values ❌ Open
+
+**Severity:** Low / Configuration
+**Location:** `Constants.lua` → `REQUESTS_SYNC` table
+
+Both constants carry the comment `-- NOTE: Short values for quick testing; production values
+should be higher`:
+
+```lua
+INDEX_QUERY_COOLDOWN  = 60   -- seconds between index queries
+INDEX_INFLIGHT_TIMEOUT = 30  -- seconds before in-flight sync is considered stale
+```
+
+These are currently the live production values. Decide the appropriate production numbers and
+remove or update the comment.

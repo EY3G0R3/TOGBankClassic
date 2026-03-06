@@ -3422,5 +3422,33 @@ function TOGBankClassic_Guild:SenderIsGM(player)
 	end
 	return false
 end
+
+-- REQSYNC-001: Check if a named player's guild rank has officer-note (officer) permission.
+-- Uses memberRoster cache (populated on GUILD_ROSTER_UPDATE) for an O(1) lookup rather
+-- than scanning all guild members via GetGuildRosterInfo. Returns false if the cache has
+-- not yet been populated (secure default: deny when uncertain).
+function TOGBankClassic_Guild:SenderIsOfficer(player)
+	if not player then
+		return false
+	end
+	if not self.memberRoster then
+		return false
+	end
+	local member = self.memberRoster[player]
+	if not member then
+		return false
+	end
+	if member.rankIndex == 0 then
+		return true  -- GM always counts as officer
+	end
+	-- GuildControlGetRankFlags takes a 1-based rank order
+	local flags = { GuildControlGetRankFlags(member.rankIndex + 1) }
+	for _, flag in ipairs(flags) do
+		if flag == "OFFICERNOTES" then
+			return true
+		end
+	end
+	return false
+end
 ---END CHANGES
 

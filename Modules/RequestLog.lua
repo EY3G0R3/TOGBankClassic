@@ -602,7 +602,9 @@ function Guild:PruneRequests()
 end
 
 -- Apply a mutation entry received from another player.
-function Guild:ApplyRequestMutation(entry)
+-- REQSYNC-001: sender is the WoW-verified character name from OnCommReceived.
+-- Each mutation type is gated on the appropriate permission check.
+function Guild:ApplyRequestMutation(entry, sender)
 	if not entry or type(entry) ~= "table" or not self.Info then
 		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: Invalid entry or missing Guild Info")
 		return false
@@ -618,12 +620,25 @@ function Guild:ApplyRequestMutation(entry)
 		return false
 	end
 
-	TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: type=%s, requestId=%s, ts=%d", entryType, requestId, entryTs)
+	TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: type=%s, requestId=%s, ts=%d, sender=%s",
+		entryType, requestId, entryTs, tostring(sender))
+
+	-- REQSYNC-001: Normalize sender once for all checks below.
+	-- sender is nil only for locally-applied mutations (no remote auth needed).
+	local normSender = sender and self:NormalizeName(sender) or nil
 
 	local tombstones = self.Info.requestsTombstones or {}
 
 	-- Handle delete: remove request and record tombstone
+	-- Permission: GM only (matches CanDeleteRequest)
 	if entryType == "delete" then
+		if normSender then
+			local fakeReq = {}  -- CanDeleteRequest only needs actor+GM check, not req fields
+			if not self:CanDeleteRequest(fakeReq, normSender) then
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: DELETE rejected - sender %s lacks permission", normSender)
+				return false
+			end
+		end
 		self.Info.requests[requestId] = nil
 		local tombstoneTs = tonumber(tombstones[requestId] or 0) or 0
 		if entryTs > tombstoneTs then
@@ -635,7 +650,14 @@ function Guild:ApplyRequestMutation(entry)
 	end
 
 	-- Handle fulfill: idempotent delta application
+	-- Permission: banker or GM only
 	if entryType == "fulfill" then
+		if normSender then
+			if not (self:IsBank(normSender) or self:SenderIsGM(normSender)) then
+				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: FULFILL rejected - sender %s is not a banker or GM", normSender)
+				return false
+			end
+		end
 		local req = self.Info.requests[requestId]
 		if not req or req.status == "cancelled" or req.status == "complete" then
 			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: FULFILL rejected (request not found or terminal state) id=%s", requestId)
@@ -671,6 +693,36 @@ function Guild:ApplyRequestMutation(entry)
 
 	-- Handle add/cancel/complete: merge request snapshot using LWW
 	if entry.request then
+		-- REQSYNC-001: Auth checks per operation type before merging.
+		if normSender then
+			if entryType == "add" then
+				-- Anyone can add, but the requester field must match the sender.
+				local claimedRequester = entry.request.requester and self:NormalizeName(entry.request.requester)
+				if claimedRequester and claimedRequester ~= normSender then
+					TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: ADD rejected - sender %s claimed requester %s",
+						normSender, claimedRequester)
+					return false
+				end
+			elseif entryType == "cancel" then
+				-- Requester (own request), officer, banker, or GM.
+				-- Use existing req if we have it; fall back to the embedded snapshot.
+				local reqForCheck = self.Info.requests[requestId] or entry.request
+				if not self:CanCancelRequest(reqForCheck, normSender) then
+					TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: CANCEL rejected - sender %s lacks permission for id=%s",
+						normSender, requestId)
+					return false
+				end
+			elseif entryType == "complete" then
+				-- Banker or GM only.
+				local reqForCheck = self.Info.requests[requestId] or entry.request
+				if not self:CanCompleteRequest(reqForCheck, normSender) then
+					TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: COMPLETE rejected - sender %s lacks permission for id=%s",
+						normSender, requestId)
+					return false
+				end
+			end
+		end
+
 		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: Merging request snapshot type=%s, id=%s, status=%s, statusUpdatedAt=%s, updatedAt=%s",
 			entryType, requestId, tostring(entry.request.status),
 			tostring(entry.request.statusUpdatedAt), tostring(entry.request.updatedAt))
@@ -1199,7 +1251,7 @@ function Guild:ReceiveRequestMutations(payload, sender)
 			TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Entry %d/%d: type=%s, requestId=%s",
 				i, #entries, entryType, tostring(requestId))
 
-			if self:ApplyRequestMutation(entry) then
+			if self:ApplyRequestMutation(entry, sender) then
 				applied = applied + 1
 				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Entry %d APPLIED (type=%s, id=%s)",
 					i, entryType, tostring(requestId))
@@ -1277,12 +1329,14 @@ function Guild:AddRequest(request)
 end
 
 -- Access control for requests.
+-- REQSYNC-001: Replaced CanViewOfficerNote() (local-player check) with SenderIsOfficer(normActor)
+-- so the check evaluates the *actor's* rank rather than the local player's rank.
 function Guild:CanManageRequests(actor, actorIsGM)
-	if CanViewOfficerNote() then
+	local normActor = self:NormalizeName(actor)
+
+	if normActor and self.SenderIsOfficer and self:SenderIsOfficer(normActor) then
 		return true
 	end
-
-	local normActor = self:NormalizeName(actor)
 
 	if normActor and self.IsBank and self:IsBank(normActor) then
 		return true
