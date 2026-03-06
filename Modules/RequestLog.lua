@@ -1015,7 +1015,12 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 
 	if #missingIds > 0 then
 		self:MarkRequestsIndexAwaitingById()
-		self:QueryRequestsById(sender, missingIds)
+		if not self:QueryRequestsById(sender, missingIds) then
+			-- Send failed (e.g. sender went offline between index and by-id send).
+			-- Clear inFlight immediately instead of waiting 30s for timeout.
+			self:EndRequestsIndexSync()
+			self:RefreshRequestsUI()
+		end
 	else
 		self:EndRequestsIndexSync()
 		self:RefreshRequestsUI()
@@ -1083,7 +1088,12 @@ function Guild:SendRequestsById(target, ids)
 end
 
 function Guild:ReceiveRequestsById(payload)
+	-- Only clear inFlight if we're actually in the index-sync awaiting-by-id state.
+	-- On-demand fetches (SYNC-013 fulfill race) must not stomp an unrelated index sync.
+	local shouldEndSync = self.requestsIndexSync and self.requestsIndexSync.awaitingById
+
 	if not payload or type(payload) ~= "table" then
+		if shouldEndSync then self:EndRequestsIndexSync() end
 		return ADOPTION_STATUS.INVALID
 	end
 	if not self.Info then
@@ -1093,18 +1103,18 @@ function Guild:ReceiveRequestsById(payload)
 
 	local requests = payload.requests
 	if not requests or type(requests) ~= "table" then
+		if shouldEndSync then self:EndRequestsIndexSync() end
 		return ADOPTION_STATUS.INVALID
 	end
 
-	if self:ApplyRequestSnapshot({
+	-- Always end sync regardless of whether snapshot merge succeeded.
+	-- ApplyRequestSnapshot failing means empty/corrupt payload — either way we're done waiting.
+	local adopted = self:ApplyRequestSnapshot({
 		requests = requests,
 		tombstones = payload.tombstones or {},
-	}) then
-		self:EndRequestsIndexSync()
-		return ADOPTION_STATUS.ADOPTED
-	end
-
-	return ADOPTION_STATUS.INVALID
+	})
+	if shouldEndSync then self:EndRequestsIndexSync() end
+	return adopted and ADOPTION_STATUS.ADOPTED or ADOPTION_STATUS.INVALID
 end
 
 -- Receive and merge a requests snapshot from another player.
@@ -1120,7 +1130,15 @@ function Guild:ReceiveRequestsData(payload)
 	end
 	self:EnsureRequestsInitialized()
 
-	local incomingCount = (payload.requests and type(payload.requests) == "table") and #payload.requests or 0
+	-- payload.requests may be an array (wire format) or a map; use # only for arrays
+	local incomingCount = 0
+	if payload.requests and type(payload.requests) == "table" then
+		if payload.requests[1] ~= nil then
+			incomingCount = #payload.requests  -- array
+		else
+			for _ in pairs(payload.requests) do incomingCount = incomingCount + 1 end  -- map
+		end
+	end
 	local localCountBefore = self.Info.requests and countRequests(self.Info.requests) or 0
 	TOGBankClassic_Output:Debug(string.format("[SYNC] ReceiveRequestsData: START - local=%d, incoming=%d",
 		localCountBefore, incomingCount))

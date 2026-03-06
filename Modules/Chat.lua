@@ -1668,53 +1668,6 @@ end
 		end
 	end
 
-	-- v0.9.1+: Request-specific query handler (togbank-rq)
-	-- This is the dedicated prefix for request queries, replacing togbank-r with type="requests*"
-	if prefix == "togbank-rq" then
-		TOGBankClassic_Output:DebugComm("togbank-rq DATA.TYPE = %s from %s", tostring(data.type), sender)
-
-		self:Debug(
-			"REQUESTS",
-			">",
-			ColorPlayerName(sender),
-			QUERIES_COLOR,
-			"request query:",
-			data.type or "unknown"
-		)
-
-		-- Request data is guild-wide, anyone can respond (player="*")
-		if data.type == "requests" then
-			local matches = (data.player == "*" or data.player == player)
-			TOGBankClassic_Output:DebugComm("REQUEST HANDLER CHECK: type=requests, player=%s, myName=%s, matches=%s", tostring(data.player), tostring(player), tostring(matches))
-			if matches then
-				TOGBankClassic_Output:DebugComm("REQUEST HANDLER: Responding to requests query")
-				TOGBankClassic_Guild:SendRequestsSnapshot(sender)
-			end
-		end
-		if data.type == "requests-index" then
-			local matches = (data.player == "*" or data.player == player)
-			if matches then
-				-- SYNC-011: Only respond if our hash differs from the querier's.
-				-- If hashes match, querier already has exactly what we have - stay silent.
-				local myHash = TOGBankClassic_Guild:GetRequestsHash()
-				local querierHash = tonumber(data.hash) or 0
-				if querierHash == 0 or myHash ~= querierHash then
-					TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query (hash mismatch: mine=%d theirs=%d)", myHash, querierHash)
-					TOGBankClassic_Guild:SendRequestsIndex(sender)
-				else
-					TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Skipping (hash match %d, querier already in sync)", myHash)
-				end
-			end
-		end
-		if data.type == "requests-by-id" then
-			local matches = (data.player == "*" or data.player == player)
-			if matches then
-				TOGBankClassic_Output:DebugComm("REQUEST BY-ID HANDLER: Responding to requests-by-id query")
-				TOGBankClassic_Guild:SendRequestsById(sender, data.ids)
-			end
-		end
-	end
-
 	-- v0.9.1+: Request-specific data handler (togbank-rd)
 	-- This is the dedicated prefix for request data, replacing togbank-d with type="requests*"
 	if prefix == "togbank-rd" then
@@ -2376,7 +2329,11 @@ local COMMAND_REGISTRY = {
 					table.insert(appliedActors, string.format("%s=%d", actor, seq))
 				end
 			end
-			local requestCount = #(G.Info.requests or {})
+			local requestCount = (function()
+				local n = 0
+				for _ in pairs(G.Info.requests or {}) do n = n + 1 end
+				return n
+			end)()
 			local seqCount = 0
 			if G.Info.requestLogSeq then
 				for _ in pairs(G.Info.requestLogSeq) do
