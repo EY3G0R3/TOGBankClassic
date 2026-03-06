@@ -544,9 +544,10 @@ function Guild:ApplyRequestSnapshot(payload)
 	end
 
 	-- Update version and clean up
+	-- REQSYNC-004: NormalizeRequestList already calls PruneRequests internally;
+	-- the explicit PruneRequests() call that was here was redundant and has been removed.
 	self.Info.requestsVersion = calculateRequestsVersion(self.Info.requests)
 	self:NormalizeRequestList()
-	self:PruneRequests()
 	self:PruneRequestTombstones()
 	self:RefreshRequestsUI()
 

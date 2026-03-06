@@ -767,17 +767,18 @@ is unaffected — only the 30 s `inFlight` lock is shortened for the silence cas
 
 ---
 
-### REQSYNC-004 — Double `PruneRequests` call in `ApplyRequestSnapshot` ❌ Open
+### REQSYNC-004 — Double `PruneRequests` call in `ApplyRequestSnapshot` ✅ Fixed
 
 **Severity:** Low / Performance
 **Location:** `RequestLog.lua` → `ApplyRequestSnapshot`
 
-`ApplyRequestSnapshot` calls `NormalizeRequestList()` (which itself calls `PruneRequests` at the
-end), then immediately calls `PruneRequests()` again explicitly. Requests are pruned twice on every
+`ApplyRequestSnapshot` called `NormalizeRequestList()` (which itself calls `PruneRequests` at the
+end), then immediately called `PruneRequests()` again explicitly. Requests were pruned twice on every
 incoming snapshot merge — harmless but wasteful on large request maps.
 
-**Fix:** Remove the redundant explicit `PruneRequests()` call from `ApplyRequestSnapshot` since
-`NormalizeRequestList` already invokes it.
+**Fix:** Removed the redundant explicit `PruneRequests()` call from `ApplyRequestSnapshot`.
+`NormalizeRequestList` already invokes it as its final step. All callers go through
+`ApplyRequestSnapshot` so no pruning coverage is lost.
 
 ---
 
