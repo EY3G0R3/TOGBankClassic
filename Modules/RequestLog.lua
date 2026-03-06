@@ -1526,6 +1526,12 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 
 	local applied = 0
 	local mutations = {}
+	-- REQSYNC-006: Use a per-mutation offset so successive requests fulfilled in the same
+	-- call get strictly increasing timestamps (now, now+1, now+2, …).  GetServerTime() has
+	-- 1-second precision; without the offset every request in the loop gets the same
+	-- updatedAt/statusUpdatedAt, which causes snapshot-based mergeRequest to silently
+	-- discard later updates as "not newer" when a peer already holds any version at ts=now.
+	local mutationCount = 0
 
 	for _, req in pairs(self.Info.requests) do
 		if count <= 0 then break end
@@ -1543,17 +1549,21 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 			count = count - delta
 			applied = applied + delta
 
+			-- Each mutation in this call gets a unique timestamp to prevent same-second collisions.
+			local mutationTs = now + mutationCount
+			mutationCount = mutationCount + 1
+
 			-- Apply mutation directly
 			local targetFulfilled = fulfilled + delta
 			req.fulfilled = targetFulfilled
-			req.updatedAt = now
+			req.updatedAt = mutationTs
 
 			TOGBankClassic_Output:Debug("FULFILL", "Request %s: fulfilled=%d->%d, qty=%d, status=%s",
 				req.id or "unknown", fulfilled, targetFulfilled, qty, tostring(req.status))
 
 			if qty > 0 and targetFulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
 				req.status = "fulfilled"
-				req.statusUpdatedAt = now
+				req.statusUpdatedAt = mutationTs
 				TOGBankClassic_Output:Debug("FULFILL", "Set status to FULFILLED (fulfilled %d >= qty %d)", targetFulfilled, qty)
 			else
 				TOGBankClassic_Output:Debug("FULFILL", "Status NOT changed: qty=%d, fulfilled=%d, status=%s",
@@ -1576,7 +1586,8 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 	end
 
 	if applied > 0 then
-		self:FinalizeMutation(now)
+		-- Pass the last timestamp used so requestsVersion advances past all mutations.
+		self:FinalizeMutation(now + math.max(mutationCount - 1, 0))
 	end
 
 	return applied

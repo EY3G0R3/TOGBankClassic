@@ -803,7 +803,7 @@ format makes the check structurally unreachable regardless.
 
 ---
 
-### REQSYNC-006 — Same-second fulfill timestamp collision ❌ Open
+### REQSYNC-006 — Same-second fulfill timestamp collision ✅ Fixed
 
 **Severity:** Low
 **Location:** `RequestLog.lua` → `FulfillRequest`
@@ -814,8 +814,15 @@ slots), both mutations get the same `ts`. The `req.statusUpdatedAt` could collid
 triggers a status change to `"fulfilled"`, causing the second mutation to be considered a no-op by
 the terminal-state guards in `mergeRequest`.
 
-**Fix:** Bump `now` by 1 for each successive mutation in the same `FulfillRequest` call loop so
-rapid same-second fills each get a unique timestamp.
+More precisely: `GetServerTime()` has 1-second granularity, so if the loop touches N requests all
+N receive `updatedAt = now`. When a peer later receives a full snapshot and calls `mergeRequest`,
+`incomingTs (now) <= existingTs (now)` → "kept" — the snapshot silently discards any update the
+peer missed via the live mutation path.
+
+**Fix:** Introduced a `mutationCount` offset counter. Each request touched in the loop gets
+`mutationTs = now + mutationCount` (0, 1, 2, …), and `FinalizeMutation` is called with the last
+timestamp used (`now + mutationCount - 1`). All timestamps are now strictly increasing within a
+single `FulfillRequest` call.
 
 ---
 
