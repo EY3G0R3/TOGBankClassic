@@ -1535,13 +1535,39 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GetNumGuildMembers() returned %d", totalMembers or 0)
 	
 	local onlineCount = 0
-	
+
+	-- REQSYNC-008: Determine the officer rank threshold at cache-build time.
+	-- Classic Era has no per-rank permission API (GuildControlGetRankFlags is Retail-only).
+	-- CanViewOfficerNote() tells us whether the LOCAL player has officer-note access.
+	-- In Classic, ranks are strictly ordered: lower rankIndex = more permissions.
+	-- Therefore if the local player at rankIndex N can view officer notes, every member
+	-- with rankIndex <= N also has officer-note access.
+	-- If local player cannot view officer notes, only rankIndex 0 (GM) is definitive.
+	local localOfficerThreshold = nil
+	if CanViewOfficerNote and CanViewOfficerNote() then
+		local localName = self:GetNormalizedPlayer()
+		if localName then
+			for i = 1, totalMembers do
+				local n, _, ri = GetGuildRosterInfo(i)
+				if n and self:NormalizeName(n) == localName then
+					localOfficerThreshold = ri
+					break
+				end
+			end
+		end
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Officer threshold rankIndex: %s", tostring(localOfficerThreshold))
+	end
+
 	-- Build full roster with explicit online/offline state for ALL members
 	for i = 1, totalMembers do
 		local name, rankName, rankIndex, level, class, zone, note, officernote, isOnline, status, classFileName = GetGuildRosterInfo(i)
 		if name then
 			local normalized = self:NormalizeName(name)
 			if normalized then
+				-- isOfficer: GM always qualifies; otherwise true only if local player can see
+				-- officer notes AND this member's rank is at or above the local player's rank.
+				local isOfficer = (rankIndex == 0) or
+					(localOfficerThreshold ~= nil and rankIndex <= localOfficerThreshold)
 				-- Store full member data
 				self.memberRoster[normalized] = {
 					name = normalized,
@@ -1550,6 +1576,7 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 					rankIndex = rankIndex,
 					rankName = rankName,
 					isOnline = isOnline or false,
+					isOfficer = isOfficer,
 					lastUpdated = GetServerTime()
 				}
 				
@@ -3424,9 +3451,10 @@ function TOGBankClassic_Guild:SenderIsGM(player)
 end
 
 -- REQSYNC-001: Check if a named player's guild rank has officer-note (officer) permission.
--- Uses memberRoster cache (populated on GUILD_ROSTER_UPDATE) for an O(1) lookup rather
--- than scanning all guild members via GetGuildRosterInfo. Returns false if the cache has
--- not yet been populated (secure default: deny when uncertain).
+-- Uses the isOfficer field stored in memberRoster at cache-build time (RefreshOnlineCache).
+-- No WoW API calls at lookup time. Returns false if cache not yet populated (deny when uncertain).
+-- REQSYNC-008: GuildControlGetRankFlags does not exist in Classic Era (Retail-only API).
+-- Officer status is now computed in RefreshOnlineCache via CanViewOfficerNote() threshold.
 function TOGBankClassic_Guild:SenderIsOfficer(player)
 	if not player then
 		return false
@@ -3438,17 +3466,7 @@ function TOGBankClassic_Guild:SenderIsOfficer(player)
 	if not member then
 		return false
 	end
-	if member.rankIndex == 0 then
-		return true  -- GM always counts as officer
-	end
-	-- GuildControlGetRankFlags takes a 1-based rank order
-	local flags = { GuildControlGetRankFlags(member.rankIndex + 1) }
-	for _, flag in ipairs(flags) do
-		if flag == "OFFICERNOTES" then
-			return true
-		end
-	end
-	return false
+	return member.isOfficer == true
 end
 ---END CHANGES
 
