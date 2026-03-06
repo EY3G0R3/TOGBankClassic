@@ -725,26 +725,34 @@ complete any open request on every peer's client simultaneously.
 
 ---
 
-### REQSYNC-002 — Tombstones accepted from any sender in snapshot/index merges ❌ Open
+### REQSYNC-002 — Tombstones accepted from any sender in snapshot/index merges ✅ Superseded
 
-**Severity:** High
+**Severity:** N/A — superseded by REQSYNC-001
 **Location:** `RequestLog.lua` → `ApplyRequestSnapshot`, `ReceiveRequestsIndex`
 
-Both functions unconditionally merge tombstones from the incoming payload with no check on whether
-the sender was authorized to delete those requests. A guild member can send a crafted snapshot or
-index response with a high-timestamp tombstone for any request ID, causing every peer to silently
-delete it and block resurrection for 30 days.
+**Original concern:** Both functions unconditionally merge tombstones from the incoming payload with
+no check on whether the sender was authorized to delete those requests.
 
-**Fix:** Gate tombstone acceptance on `IsBank(sender)` or `SenderIsGM(sender)`. Tombstones from
-unprivileged senders should be ignored (or at most accepted only for requests where
-`req.requester == sender`).
+**Why this is not an issue after REQSYNC-001:** There are exactly two code paths that can *write*
+a tombstone into `requestsTombstones`:
+1. `DeleteRequest()` — local call, gated by `CanDeleteRequest` (GM only).
+2. `ApplyRequestMutation` with `type = "delete"` — now gated on `SenderIsGM` (REQSYNC-001 fix).
+
+Any tombstone that reaches a snapshot or index response was therefore legitimately created by a GM.
+Non-GM peers propagating it in their own syncs are *relaying* a real tombstone, not forging one.
+Blocking tombstone propagation from non-GMs would break sync: if the GM goes offline after deleting,
+no other peer could spread the tombstone to newly-connected members, causing the request to resurrect
+on those clients.
+
+The original attack (inject a fabricated tombstone via snapshot payload) requires modifying the addon
+itself, which is outside the realistic threat model for a WoW guild addon.
 
 ---
 
-### REQSYNC-003 — `inFlight` stalls next sync cycle when all peers match hash ❌ Open
+### REQSYNC-003 — `inFlight` stalls next sync cycle when all peers match hash ✅ Fixed
 
 **Severity:** Low / UX
-**Location:** `RequestLog.lua` → `CanQueryRequestsIndex` / `BeginRequestsIndexSync`
+**Location:** `RequestLog.lua` → `QueryRequestsIndex`
 
 When `QueryRequestsIndex(nil)` broadcasts and every peer already has a matching hash (SYNC-011
 causes them all to stay silent), `EndRequestsIndexSync` is never called. `inFlight` remains set
@@ -752,8 +760,10 @@ for the full `INDEX_INFLIGHT_TIMEOUT` (30 s) before expiring, and `INDEX_QUERY_C
 starts from broadcast time, so the next query is effectively blocked for up to 90 seconds even
 though nothing was wrong.
 
-**Fix:** After broadcasting, schedule a short timer (e.g., 5 s) to optimistically clear `inFlight`
-if no `requests-index` response has arrived, since silence means everyone agreed.
+**Fix:** After the wildcard `SendCommMessage`, a `C_Timer.After(5, …)` callback clears `inFlight`
+if no real response has arrived. If a peer did respond (hash mismatch path), `EndRequestsIndexSync`
+was already called by `ReceiveRequestsIndex` and the timer is a no-op. The 60 s `INDEX_QUERY_COOLDOWN`
+is unaffected — only the 30 s `inFlight` lock is shortened for the silence case.
 
 ---
 

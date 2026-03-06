@@ -963,6 +963,20 @@ function Guild:QueryRequestsIndex(target, priority)
 		end
 	else
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, priority or "BULK")
+		-- REQSYNC-003: Optimistic inFlight clear for wildcard broadcasts.
+		-- SYNC-011 causes peers that already match our hash to stay silent, so
+		-- EndRequestsIndexSync() is never called on a fully-synced guild, leaving
+		-- inFlight set for the full INDEX_INFLIGHT_TIMEOUT (30s) and blocking any
+		-- reactive re-query triggered by external events in that window.
+		-- The timer fires after 5s; if a real response already cleared inFlight it
+		-- is a no-op, so no explicit cancellation is needed.
+		local syncStateAtBroadcast = self.requestsIndexSync
+		C_Timer.After(5, function()
+			if self.requestsIndexSync == syncStateAtBroadcast and self.requestsIndexSync.inFlight then
+				TOGBankClassic_Output:Debug("SYNC", "QueryRequestsIndex: No index response in 5s (guild in sync) - clearing inFlight")
+				self:EndRequestsIndexSync()
+			end
+		end)
 	end
 	return true
 end
