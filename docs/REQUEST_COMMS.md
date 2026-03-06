@@ -782,24 +782,24 @@ incoming snapshot merge — harmless but wasteful on large request maps.
 
 ---
 
-### REQSYNC-005 — Fragile ID-vs-item-name validation in `sanitizeRequest` ❌ Open
+### REQSYNC-005 — Fragile ID-vs-item-name validation in `sanitizeRequest` ✅ Fixed
 
 **Severity:** Medium
-**Location:** `RequestLog.lua` → `sanitizeRequest` (lines ~100–125)
+**Location:** `RequestLog.lua` → `sanitizeRequest`
 
-The heuristic that extracts an item name from the request ID (split on `-`, skip parts that look
-like timestamps, compare against `req.item`) will produce false mismatches for:
-- Item names containing dashes (e.g., "Two-Handed Sword", "Long-Barreled Musket").
-- Item names where a segment is short (<=3 chars) and triggers the early-stop rule.
+The heuristic that extracted an item name from the request ID (split on `-`, skip parts that look
+like timestamps, compare against `req.item`) was targeting the old ID format
+`"bank-requester-itemName-timestamp"`. The current ID format is `"Actor-Realm:xxxxxx"` (colon +
+hex suffix), so the `#idParts >= 5` gate is never reached on any current request — the check was
+permanently dead code.
 
-When a mismatch fires, the incoming request is silently dropped with only a debug log. This causes
-remote requests to disappear on receive without any visible error.
+Additionally, when the gate *did* trigger on legacy IDs, it false-positived on items with any word
+≤3 characters (e.g. `"Elixir of the Mongoose"` → stop at `"of"` → extracted `"Elixir"` only →
+mismatch → silent drop).
 
-**Fix options (discuss before changing):**
-1. Harden: use a stricter ID format (store item name in the ID as a hash rather than verbatim text).
-2. Soften: remove the cross-check entirely since it only guards against hand-edited IDs and harms
-   legitimate data more than it helps.
-3. Narrow: only apply the check to locally originated IDs (skip for received-over-wire data).
+**Fix:** Removed the block entirely. The existing field validations (`item`, `requester`, `bank`,
+`quantity`) cover the actual corruption cases this was meant to protect against. The current ID
+format makes the check structurally unreachable regardless.
 
 ---
 

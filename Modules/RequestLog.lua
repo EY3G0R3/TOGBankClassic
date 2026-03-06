@@ -85,45 +85,14 @@ local function sanitizeRequest(req)
 		return nil
 	end
 
-	-- REJECT requests where ID contains different item name (corrupted edited requests)
-	if req.id and type(req.id) == "string" then
-		-- ID format: "bank-requester-itemName-timestamp" or variations
-		-- Extract item name from ID by finding the pattern between requester and timestamp
-		-- Pattern: everything after the second "-realm-" and before the last timestamp portion
-		local idParts = {}
-		for part in string.gmatch(req.id, "[^-]+") do
-			table.insert(idParts, part)
-		end
-
-		-- ID typically has 6+ parts: bank, realm, requester, realm, itemname(s), timestamp(s)
-		-- Try to extract item name from middle portion (skip first 4 parts for bank/requester)
-		if #idParts >= 5 then
-			-- Find where the item name ends (before timestamp-like numbers)
-			local itemNameParts = {}
-			for i = 5, #idParts do
-				local part = idParts[i]
-				-- Stop if we hit a pure numeric timestamp (8+ digits) or very short suffix
-				if string.match(part, "^%d%d%d%d%d%d%d%d+") or #part <= 3 then
-					break
-				end
-				table.insert(itemNameParts, part)
-			end
-
-			if #itemNameParts > 0 then
-				local itemInId = table.concat(itemNameParts, "-")
-				-- Compare (case-insensitive, handle spaces vs dashes)
-				local normalizedItem = string.lower(string.gsub(item, "%s+", ""))
-				local normalizedIdItem = string.lower(string.gsub(itemInId, "%s+", ""))
-
-				if normalizedItem ~= normalizedIdItem then
-					TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE",
-						"Rejected request: ID contains '%s' but item is '%s' (corrupted/edited request)",
-						itemInId, item)
-					return nil
-				end
-			end
-		end
-	end
+	-- REQSYNC-005: Removed ID-vs-item-name cross-check. The check parsed the ID by splitting on
+	-- '-' and comparing the middle segment against req.item, but the current ID format is
+	-- "Actor-Realm:xxxxxx" (colon-separated hex suffix), so the old dash-split parser never
+	-- reaches its #idParts >= 5 gate on any current request and is permanently dead code.
+	-- When the gate did trigger (legacy IDs), it false-positived on items with words <=3 chars
+	-- (e.g. "Elixir of the Mongoose" → extracted "Elixir" only → silent drop). The other
+	-- sanitizeRequest field validations (item, requester, bank, quantity) cover the actual
+	-- corruption cases this was meant to catch.
 
 	local fulfilled = math.max(tonumber(req.fulfilled or 0) or 0, 0)
 	if quantity > 0 then
