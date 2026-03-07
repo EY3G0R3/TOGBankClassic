@@ -808,21 +808,59 @@ format makes the check structurally unreachable regardless.
 **Severity:** Low
 **Location:** `RequestLog.lua` → `FulfillRequest`
 
-`FulfillRequest` stamps all mutations with `now = GetServerTime()` (1-second precision). If two
-fill events fire within the same second (e.g., banker quickly fills two items from different bag
-slots), both mutations get the same `ts`. The `req.statusUpdatedAt` could collide if the first fill
-triggers a status change to `"fulfilled"`, causing the second mutation to be considered a no-op by
-the terminal-state guards in `mergeRequest`.
+`GetServerTime()` has 1-second precision. Before the fix, `FulfillRequest` captured `now` once
+before the loop and stamped every request it touched with the same value:
 
-More precisely: `GetServerTime()` has 1-second granularity, so if the loop touches N requests all
-N receive `updatedAt = now`. When a peer later receives a full snapshot and calls `mergeRequest`,
-`incomingTs (now) <= existingTs (now)` → "kept" — the snapshot silently discards any update the
-peer missed via the live mutation path.
+```lua
+local now = GetServerTime()           -- e.g. 1709727600
+for _, req in pairs(self.Info.requests) do
+    req.updatedAt      = now           -- ALL requests get 1709727600
+    req.statusUpdatedAt = now          -- ALL requests get 1709727600
+end
+```
+
+This produces silent data loss in two distinct scenarios:
+
+**Scenario A — live broadcast followed by snapshot**
+
+1. The banker fulfills N requests. All N get `updatedAt = T`.
+2. `BroadcastRequestMutation` fires immediately; each broadcast derives its own `entry.ts` from
+   another `GetServerTime()` call — also `T` (same second). Peers that receive it store
+   `existingTs = T` for those requests.
+3. Seconds later a peer reconnects and receives a full snapshot. The snapshot still carries
+   `updatedAt = T` for those requests.
+4. `mergeRequest` evaluates `incomingTs (T) > existingTs (T)` → **false** → `return "kept"`.
+   The fulfilled status is silently discarded; the peer's UI still shows the request as `open`.
+
+**Scenario B — two fulfill calls within the same second**
+
+If a second `FulfillRequest` call touches the same request within the same second,
+`updatedAt = T` again. Any downstream `mergeRequest` comparison treats it as identical to the
+first write and discards it.
+
+The root cause is `mergeRequest`'s strict `>` test:
+
+```lua
+if incomingTs > existingTs then   -- strict: equal timestamps → DISCARD
+    requests[id] = clean
+else
+    return "kept"
+end
+```
 
 **Fix:** Introduced a `mutationCount` offset counter. Each request touched in the loop gets
-`mutationTs = now + mutationCount` (0, 1, 2, …), and `FinalizeMutation` is called with the last
-timestamp used (`now + mutationCount - 1`). All timestamps are now strictly increasing within a
-single `FulfillRequest` call.
+`mutationTs = now + mutationCount` (incrementing from 0), ensuring timestamps are strictly
+increasing within a single call:
+
+```lua
+local mutationTs = now + mutationCount
+mutationCount = mutationCount + 1
+req.updatedAt       = mutationTs
+req.statusUpdatedAt = mutationTs
+```
+
+`FinalizeMutation` is called with `now + (mutationCount - 1)` so `requestsVersion` advances
+past all mutations made in that call.
 
 ---
 
