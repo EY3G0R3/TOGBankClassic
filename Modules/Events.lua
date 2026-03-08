@@ -400,8 +400,9 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 			else
 					TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Roster initialization complete after %d attempts", attempts)
 				-- REQUEST-001: Sync request state shortly after login, don't wait for the periodic timer
-				TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
-			end
+				TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")				-- SYNC-014: Broadcast our hashes immediately on login so peers can offer data
+				-- without waiting for the 10-minute periodic timer to fire first.
+				TOGBankClassic_Events:SyncDeltaVersion("NORMAL")			end
 		end)
 	else
 		TOGBankClassic_Output:Debug("EVENTS", "GUILD_ROSTER_UPDATE ignored (online/offline handled via system messages)")

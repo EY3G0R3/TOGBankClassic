@@ -1,11 +1,14 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** March 5, 2026
+**Last Updated:** March 7, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+
+**Recent Fixes (2026-03-07):**
+- ✅ [SYNC-014] **HIGH** No P2P sync on login until zone or 10-minute timer — `SyncDeltaVersion` was never called on login; the first broadcast was deferred entirely to the 10-minute `OnShareTimer`. Players had to zone or wait 10 minutes before peers could offer them fresher data. Fix: Call `SyncDeltaVersion("NORMAL")` immediately after roster init completes in the `GUILD_ROSTER_UPDATE` deferred block (alongside the existing `QueryRequestsIndex` call). Location: Events.lua `GUILD_ROSTER_UPDATE` handler.
 
 **Recent Fixes (2026-03-06):**
 - ✅ [REQSYNC-008] **CRITICAL** `SenderIsOfficer` crashed with "attempt to call global 'GuildControlGetRankFlags' (a nil value)" on every bank open — `GuildControlGetRankFlags` is a Retail-only WoW API that does not exist in Classic Era. It was introduced in the REQSYNC-001 fix as a way to check per-rank permissions at lookup time. Fix: Moved officer determination to `RefreshOnlineCache` (cache-build time). Classic Era has no per-rank permission API, but `CanViewOfficerNote()` returns whether the LOCAL player has officer-note access. Since Classic ranks are strictly ordered (lower rankIndex = more permissions), if the local player at rankIndex N has officer-note access, all members with rankIndex <= N also have it. `isOfficer` is now stored on each memberRoster entry at cache-build time; `SenderIsOfficer` is a pure O(1) cache read with zero WoW API calls. Regression introduced in commit 4e68f63. Locations: Guild.lua `RefreshOnlineCache`, `SenderIsOfficer`.
@@ -34,6 +37,43 @@
 - ✅ [DELTA-022] **CRITICAL** Every delta sync was effectively a full sync — `ItemsEqual` compared `item1.Link ~= item2.Link` where `item1` was a minimal baseline item (Link=nil, from `expandMinimalItems` in `ComputeDelta`) and `item2` was a current inventory item (always has Link). `nil ~= "item:12345:..."` is always true, so every unchanged item landed in `modified[]` regardless of actual changes. The resulting delta contained the entire inventory as modified entries — same size as a full sync — defeating the point of delta protocol entirely. Fix: Only compare Links when both items have them. A nil Link on either side means the field is simply absent/unknown (minimal baseline), not a meaningful difference. Locations: DeltaComms.lua `ItemsEqual` (~446-490).
 - ✅ [DELTA-023] **HIGH** Stale `hasSnapshot` gate in `RespondToStateSummary` caused unnecessary full syncs after any reload — Both the mail-only-change and inventory-change branches in `RespondToStateSummary` checked `GetSnapshot()` before computing a delta, falling back to `SendAltData(norm, 0, 0, ...)` (full sync) when no snapshot existed. Since snapshots are in-memory only (PERF-012), they are lost on every reload. After DELTA-020 landed, `ComputeDelta` uses `requesterBaseline` from the state summary directly and no longer uses `GetSnapshot` at all — but the gate in `RespondToStateSummary` was never removed. Result: The first sync after any reload always sent a full "everything as additions" delta even though the requester sent their exact baseline in the state summary. Fix: Removed both `hasSnapshot` gates entirely. `ComputeDelta` handles `requesterHash == 0` (no prior data) internally; `requesterBaseline` covers all other cases. Locations: Guild.lua `RespondToStateSummary` mail-only branch (~1829) and inventory-change branch (~1847).
 - ✅ [DELTA-024] **LOW** Migration computes inventory hash using a different algorithm than `Bank:Scan()`, causing a false "inventory changed" event on every startup — The `Database.lua` migration block (post-load, deferred 0.5s) called `ComputeInventoryHash(alt.bank, alt.bags, money)` which routes through the pre-SYNC-006 code path and hashes `"B:bank.items|G:bags.items"` separately. `Bank:Scan()` always calls `ComputeInventoryHash(alt.items, nil, nil, money)` which is the SYNC-006 path and hashes `"I:aggregated_items"`. Same hash algorithm but different string input → different numeric output for identical inventory data. On startup the migration wrote the pre-SYNC-006 hash; then on first `Bank:Scan()` the SYNC-006 hash differed → `currentHash ~= previousHash` → version bumped, snapshot saved, and `dv2` broadcast triggered as if inventory had changed. Transient (self-healed after first scan), but caused one spurious version bump and broadcast per session. Fix: After `RecalculateAggregatedItems` populates `alt.items`, recompute hash using SYNC-006 calling convention to match `Bank:Scan()` format. Locations: Database.lua deferred migration block (~220).
+
+---
+
+## [SYNC-014] No P2P sync on login until zone or 10-minute timer
+
+**Severity:** HIGH
+**Status:** Fixed 2026-03-07
+**Reported:** March 7, 2026
+
+**Symptom:**
+After logging in or reloading, the addon showed no inventory data from online peers until either:
+- The player zoned (triggering `PLAYER_ENTERING_WORLD`), which caused other clients to re-broadcast their own periodic hashes into the P2P window incidentally, or
+- The 10-minute `OnShareTimer` fired.
+
+No hash broadcast was initiated by the local client on login, so peers had no way to know this client needed their data.
+
+**Root Cause:**
+`SyncDeltaVersion` (which broadcasts our local hash list to the guild and opens the P2P collect window) was only ever called from two places:
+1. `OnShareTimer` — fires 600 seconds after `RegisterEvents` (10 minutes post-login/reload)
+2. `Bank:Scan()` / `Guild:Share()` — only fires when the player physically opens the bank
+
+There was no call to `SyncDeltaVersion` on login. `PLAYER_ENTERING_WORLD` only called `GuildRoster()`. `GUILD_ROSTER_UPDATE` only called `QueryRequestsIndex`. Neither triggered a hash broadcast.
+
+Zoning appeared to "fix" the problem because other already-logged-in peers were past their 10-minute mark and would broadcast on their next timer tick shortly after seeing the player in the roster. The fix was being provided reactively by remote peers, not by the local client.
+
+**Fix:**
+Added `SyncDeltaVersion("NORMAL")` call in the `GUILD_ROSTER_UPDATE` deferred completion block, immediately after the existing `QueryRequestsIndex` call. This fires once roster initialization is confirmed complete (typically 1–3 seconds post-login), ensuring the local client broadcasts its hashes and opens the P2P collect window without delay.
+
+```lua
+-- REQUEST-001: Sync request state shortly after login, don't wait for the periodic timer
+TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
+-- SYNC-014: Broadcast our hashes immediately on login so peers can offer data
+-- without waiting for the 10-minute periodic timer to fire first.
+TOGBankClassic_Events:SyncDeltaVersion("NORMAL")
+```
+
+**Location:** Events.lua `GUILD_ROSTER_UPDATE` handler, deferred completion block.
 
 ---
 
