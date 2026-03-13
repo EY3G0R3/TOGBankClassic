@@ -28,6 +28,12 @@
 - [ ] **Deprecate legacy protocols** - Phase out togbank-v (non-delta), togbank-dv (pre-SYNC-006), and separate bank/bags structures in favor of unified togbank-dv2 (SYNC-006+) with `alt.items` aggregate; includes removing 5-second dv/dv2 prioritization delay once all clients upgraded; currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
 - [x] ~~**Window position reset command**~~ **IMPLEMENTED: /togbank wipeframes to clear saved positions**
 - [x] ~~**/togbank deltastats redesign**~~ **IMPLEMENTED: Meaningful P2P telemetry with outbound/inbound/P2P/health/savings sections (STATS-001/002/003)**
+- [ ] **Item type sort grouping** - Offer sort modes beyond alphabetical: group items by type (armor, weapons, consumables, recipes, reagents, etc.) so guild members can browse all cloaks, helms, wands, etc. together; currently highest-priority adoption blocker (this is the primary behavioral difference vs GBank Classic - Revived that is blocking guild-wide rollout)
+- [ ] **Officer cancel permission toggle** - Add a configurable permission to enable/disable officers' ability to cancel requests; currently all officers can cancel any request with no restriction
+- [ ] **Requestor self-delete** - Allow requestors to permanently delete their own open requests (distinct from cancel, which is an officer action); gives requestors autonomy to clean up their own entries
+- [ ] **Request status visual differentiation** - Display fulfilled and cancelled requests with distinct visual styling in the request list UI so the two terminal states are immediately distinguishable at a glance
+- [ ] **Command alias** - Add `/bank` (or a user-configurable slash command) as an alias to open the addon window; reduces friction for new guild members accustomed to `/bank` opening a bank frame
+- [ ] **Scoreboard UI or deprecation** - The bank acceptance window contains an "add to scoreboard" checkbox but no scoreboard UI exists or is accessible; either implement scoreboard access or remove the checkbox to avoid confusion
 
 ---
 
@@ -2193,5 +2199,103 @@ end
 - No rejected valid requests (false positives)
 - Debug logs show rejection reasons
 - No crashes or errors during validation
+
+---
+
+## Item Type Sort Grouping
+
+**Added:** March 12, 2026
+**Priority:** HIGH — primary adoption blocker for guild-wide rollout
+**Source:** External user feedback
+
+### Problem
+Items are currently displayed in alphabetical order only. Guild members who want to browse by gear slot (all cloaks, all helms, all wands) or item category (all consumables, all reagents) have no way to do so. This is the most-cited behavioral difference compared to GBank Classic - Revived and is the single biggest barrier to pushing the addon to the full guild.
+
+### Proposed Solution
+Add a sort mode selector (dropdown or cycle button) to the inventory window offering at minimum:
+- **Alphabetical** (current default) — items sorted A→Z by name
+- **By Type** — items grouped by item class/subclass (armor by slot, weapons by type, consumables, recipes, reagents, etc.), then sorted alphabetically within each group
+
+The existing `TOGBankClassic_Item:Sort()` in `Modules/Item.lua` already sorts by rarity → class → equip slot → name. A "by type" mode would re-order the primary sort key to group by `Info.class` + `Info.subClass` first, with alphabetical as the tiebreaker.
+
+### Implementation Notes
+- Sort mode should persist per-character in `TOGBankClassic_Options`
+- The sort is applied in `UI/Inventory.lua` just before rendering (`TOGBankClassic_Item:Sort(list)` call)
+- No changes needed to the data layer; all required fields (`Info.class`, `Info.subClass`, `Info.equip`) are already populated during item display
+
+---
+
+## Officer Cancel Permission Toggle
+
+**Added:** March 12, 2026
+**Source:** External user feedback
+
+### Problem
+Officers can cancel any guild member's request with no configuration option to restrict or disable this. Some guild setups want only the bank manager role (not all officers) to have cancellation rights.
+
+### Proposed Solution
+Add a guild-officer permission setting (configurable by the bank manager) that enables or disables officers' ability to cancel requests. The setting should sync guild-wide via the existing options sync mechanism.
+
+---
+
+## Requestor Self-Delete
+
+**Added:** March 12, 2026
+**Source:** External user feedback
+
+### Problem
+Guild members cannot remove their own open requests. Only officers can cancel requests. If a member no longer wants an item they requested, they have no self-service option.
+
+### Proposed Solution
+Add a "Delete" button (or context menu option) on open requests that is visible to the requestor on their own requests. This permanently removes the request (distinct from officer "cancel" which marks status as cancelled and keeps the record). The delete action should broadcast a mutation to all online clients.
+
+---
+
+## Request Status Visual Differentiation
+
+**Added:** March 12, 2026
+**Source:** External user feedback
+
+### Problem
+Fulfilled and cancelled requests are both "terminal" states but look visually identical in the request list. Users cannot tell at a glance whether a request was completed successfully or cancelled.
+
+### Proposed Solution
+Apply distinct visual styling to the two states in the request list UI:
+- **Fulfilled** — green tint or checkmark icon to indicate successful completion
+- **Cancelled** — red tint or X icon to indicate the request was not filled
+
+---
+
+## Command Alias (/bank)
+
+**Added:** March 12, 2026
+**Source:** External user feedback
+
+### Problem
+The addon opens with `/togbank`. New guild members accustomed to other bank addons expect `/bank` to open a bank window, creating a friction point for adoption.
+
+### Proposed Solution
+Register `/bank` as an additional slash command alias that opens the TOGBankClassic inventory window, alongside the existing `/togbank`. Optionally make the alias user-configurable in Options so guilds that use a different addon for `/bank` can change or disable it.
+
+### Considerations
+- `/bank` may conflict with other addons; the registration should be conditional or opt-in
+- WoW's default `/bank` command does not exist, so registration is safe in a vanilla addon environment
+- Location: `Chat.lua` slash command registration block
+
+---
+
+## Scoreboard UI or Deprecation
+
+**Added:** March 12, 2026
+**Source:** External user feedback
+
+### Problem
+The bank acceptance window contains an "Add to scoreboard" checkbox, implying a donation scoring feature exists. However, no scoreboard UI is accessible anywhere in the addon. This creates confusion for users who find the checkbox and cannot locate the corresponding feature.
+
+### Options
+1. **Implement scoreboard access** — add a scoreboard panel (likely in the Donations UI or as a tab) that displays per-member donation totals and exposes the existing scoring data
+2. **Deprecate the checkbox** — remove or hide "Add to scoreboard" from the acceptance window until the feature is fully implemented
+
+The existing `Modules/UI/Donations.lua` file may contain relevant scaffolding.
 
 ---

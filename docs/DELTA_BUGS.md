@@ -29,6 +29,12 @@
 
 **Recent Fixes (2026-03-06):**
 - ✅ [REQSYNC-008] **CRITICAL** `SenderIsOfficer` crashed with "attempt to call global 'GuildControlGetRankFlags' (a nil value)" on every bank open — `GuildControlGetRankFlags` is a Retail-only WoW API that does not exist in Classic Era. It was introduced in the REQSYNC-001 fix as a way to check per-rank permissions at lookup time. Fix: Moved officer determination to `RefreshOnlineCache` (cache-build time). Classic Era has no per-rank permission API, but `CanViewOfficerNote()` returns whether the LOCAL player has officer-note access. Since Classic ranks are strictly ordered (lower rankIndex = more permissions), if the local player at rankIndex N has officer-note access, all members with rankIndex <= N also have it. `isOfficer` is now stored on each memberRoster entry at cache-build time; `SenderIsOfficer` is a pure O(1) cache read with zero WoW API calls. Regression introduced in commit 4e68f63. Locations: Guild.lua `RefreshOnlineCache`, `SenderIsOfficer`.
+- ⚠️ [UI-003] Item quality border color not showing for non-recipe gear (green/blue items show white border)
+- ⚠️ [UI-004] Tooltips missing for some food items (Homemade Cherry Pie, Roasted Quail confirmed)
+
+**Recent Fixes (2026-03-12):**
+- ✅ [UI-001] **MEDIUM** Inventory slot counts show 0/0 for non-bank members — delta protocol transmitted bank/bags item changes but never included `bank.slots`/`bags.slots`. Non-bank members received correct item lists after sync but the status bar always displayed 0/0 because slot totals were never part of the delta payload. Full snapshots (via `StripAltLinks`) did include slots, so bankers themselves always saw correct counts. Fix: `DeltaComms.lua` delta builder now appends `changes.bankSlots` and `changes.bagsSlots` to every delta; the applier writes them onto `current.bank.slots`/`current.bags.slots` after item changes are applied. Locations: DeltaComms.lua `ComputeDelta` (after mail delta computation), `ApplyDelta` (after bags item apply block).
+- ✅ [UI-002] **LOW** Broken square icon when hovering over gold amount in status bar — `GetCoinTextureString()` returns `|T...|t` texture-embed codes that do not render reliably in AceGUI status bar FontStrings; the coin medallion texture appears as a white/broken square. Fix: Replaced both calls in `UI/Inventory.lua` with a new local `FormatMoneyText()` helper that formats gold/silver/copper as colored text (`|cffFFD700Xg|r`, `|cffc0c0c0Xs|r`, `|cffb46a2fXc|r`) with no embedded textures — renders correctly in any FontString context. Location: UI/Inventory.lua `FormatMoneyText` (new local, top of file), `DrawWindow` default status and `OnEnterStatusBar` callback.
 
 **Recent Fixes (2026-03-05):**
 - ✅ [COMM-004] **CRITICAL** WoW AceComm 16-prefix hard limit exceeded — 9 of 24 registered prefixes (slots 17-25) silently dropped by WoW, causing `/togbank hello`, `/togbank share`, `/togbank wipe`, and `/togbank roster` to have never worked in production, and the SYNC-012 fix (`togbank-rd`) to also be silently discarded. Affected: `togbank-h`, `togbank-hr` (hello broadcast/reply), `togbank-s`, `togbank-sr` (share command), `togbank-w`, `togbank-wr` (wipe command), `togbank-roster` (roster sync), `togbank-rq` (dead), `togbank-rd` (request data). Fix: Removed 4 dead registrations (`d2`, `d3`, `dv`, `rq`) and consolidated `togbank-s/sr/w/wr/roster` onto existing `togbank-hl` type dispatch (new types: `share-request`, `wipe-command`, `roster-broadcast`). Replaced slot 10's dead `togbank-v` with `togbank-rd`. Moved `togbank-h/hr` from slots 17-18 to slots 14-15. Final count: 15 prefixes. Locations: Chat.lua (RegisterComm block, OnCommReceived handlers for `togbank-hl`, `togbank-hr`), Guild.lua (`Share()`, `Wipe()`, `SendRosterData()`), RequestLog.lua (`SendRequestsSnapshot`, `SendRequestsIndex`, `SendRequestsById`).
@@ -2324,8 +2330,6 @@ Added smart filtering that excludes stacks smaller than the required split amoun
 
 ---
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 #### ✅ [FULFILL-002] Fulfill button callback not updating after split completion
 
 **Severity:** 🟠 HIGH
@@ -2528,11 +2532,7 @@ Test Case 4: [9] need 1 (post-split: [8,1])
 - Builds on [FULFILL-002] two-stage greedy algorithm foundation
 - Eliminates class of bugs where UI state diverges from execution
 
-=======
-#### 🔴 [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
-=======
 #### ✅ [MAIL-001] ComputeInventoryHash parameter order mismatch causing crashes
->>>>>>> d78c951 (Add MAIL debug category and comprehensive logging for MAIL-002 investigation)
 
 **Severity:** 🔴 CRITICAL
 **Category:** Mail Inventory / Function Signature  
@@ -10087,5 +10087,79 @@ The receiver's client may also have `GetItemInfo` uncached for items it hasn't d
 **Files Modified (commit 8ced667):**
 - [Modules/Item.lua](Modules/Item.lua) — new `ItemClassNeedsLink(itemID)` helper
 - [Modules/DeltaComms.lua](Modules/DeltaComms.lua) — `ApplyItemDelta` STEP 2 and STEP 3 linkless-insert guard
+
+---
+
+## [UI-001] Inventory slot counts show 0/0 for non-bank members
+
+**Severity:** MEDIUM
+**Status:** Fixed 2026-03-12
+**Reported:** March 12, 2026 (external user feedback)
+
+**Symptom:**
+Non-bank members (guild members who are not the banker) open the TOGBankClassic window and the status bar at the bottom shows `0/0` for used/total slots. The banker themselves sees the correct count (e.g. `188/200`).
+
+**Root Cause:**
+The delta protocol (`DeltaComms.lua`) transmits item changes for bank and bags as add/modify/remove arrays, but never included `bank.slots` or `bags.slots` (the used/total slot counts). The UI status bar reads these fields directly — when they are absent the nil-safe guard skips them and the running totals stay at zero.
+
+Full snapshots sent via `StripAltLinks` (Guild.lua) do include `slots`, which is why the banker's own client always showed correct counts (it never needs to receive its own data via delta).
+
+**Fix:**
+`DeltaComms.lua` delta builder (`ComputeDelta`) now appends `changes.bankSlots` and `changes.bagsSlots` to every delta when the source alt has slot data. The applier (`ApplyDelta`) writes these onto `current.bank.slots` / `current.bags.slots` immediately after item changes are applied.
+
+**Files Modified:**
+- [Modules/DeltaComms.lua](Modules/DeltaComms.lua) — `ComputeDelta` (include bankSlots/bagsSlots), `ApplyDelta` (apply bankSlots/bagsSlots)
+
+---
+
+## [UI-002] Broken square icon when hovering over gold amount
+
+**Severity:** LOW
+**Status:** Fixed 2026-03-12
+**Reported:** March 12, 2026 (external user feedback)
+
+**Symptom:**
+When hovering over the status bar at the bottom of the inventory window, a broken/square icon appears where the gold coin medallion texture should be.
+
+**Root Cause:**
+`GetCoinTextureString()` returns `|T<path>:14:14:2:0|t` texture-embed codes. These render correctly in most WoW UI contexts (GameTooltip, chat frames) but do not render reliably in AceGUI status bar FontStrings — the texture shows as a white or broken square box.
+
+**Fix:**
+Replaced both `GetCoinTextureString()` calls in `UI/Inventory.lua` (default status and `OnEnterStatusBar` hover) with a new module-local `FormatMoneyText()` helper. The helper formats money as colored plain text: gold in `|cffFFD700|r`, silver in `|cffc0c0c0|r`, copper in `|cffb46a2f|r`. No embedded textures — renders correctly in any FontString context.
+
+**Files Modified:**
+- [Modules/UI/Inventory.lua](Modules/UI/Inventory.lua) — `FormatMoneyText` local helper (new), `DrawWindow` default status and `OnEnterStatusBar` callback
+
+---
+
+## [UI-003] Item quality border color missing for non-recipe gear
+
+**Severity:** LOW
+**Status:** Active
+**Reported:** March 12, 2026 (external user feedback)
+
+**Symptom:**
+Recipe items correctly display green quality borders. However, green- and blue-quality gear (weapons, armor, etc.) display a white border instead of the appropriate quality color.
+
+**Investigation Needed:**
+- Locate where item frame border color is set in `UI/Inventory.lua` or `ItemHighlight.lua`
+- Determine why the quality color lookup works for recipes but not for equippable items
+- Check whether `GetItemQualityColor` / `ITEM_QUALITY_COLORS` lookup is conditioned on item class in a way that excludes gear
+
+---
+
+## [UI-004] Tooltips missing for some food items
+
+**Severity:** LOW
+**Status:** Active
+**Reported:** March 12, 2026 (external user feedback)
+
+**Symptom:**
+Certain food items show no tooltip on hover in the inventory window. Confirmed affected: Homemade Cherry Pie, Roasted Quail. Other food items may be affected.
+
+**Investigation Needed:**
+- Determine whether the tooltip is never shown or shown with empty text
+- Check whether affected items share a common trait (e.g. item class/subclass, cache miss at tooltip time, specific item IDs)
+- Inspect the tooltip population path in `UI/Inventory.lua` for early-return conditions that would suppress display for food-class items
 
 ---
