@@ -849,6 +849,15 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 		local currentMail = (currentAlt.mail and currentAlt.mail.items) or {}
 		delta.changes.mail = self:ComputeItemDelta(previousMail, currentMail)
 
+		-- Always include slot counts so non-bank members can display accurate inventory totals.
+		-- Item deltas carry item changes but never slot totals, so receivers would always see 0/0.
+		if currentAlt.bank and currentAlt.bank.slots then
+			delta.changes.bankSlots = currentAlt.bank.slots
+		end
+		if currentAlt.bags and currentAlt.bags.slots then
+			delta.changes.bagsSlots = currentAlt.bags.slots
+		end
+
 		-- Debug: Log what's being sent
 		TOGBankClassic_Output:Debug(
 			"DELTA",
@@ -1316,6 +1325,16 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					end
 				end
 				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied bags delta for %s: now %d items", norm, #current.bags.items)
+			end
+
+			-- Apply bank/bags slot counts so the inventory status bar shows correct totals
+			if changes.bankSlots then
+				if not current.bank then current.bank = { items = {} } end
+				current.bank.slots = changes.bankSlots
+			end
+			if changes.bagsSlots then
+				if not current.bags then current.bags = { items = {} } end
+				current.bags.slots = changes.bagsSlots
 			end
 
 			-- Apply mail changes

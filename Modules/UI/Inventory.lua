@@ -1,5 +1,28 @@
 TOGBankClassic_UI_Inventory = {}
 
+-- Formats a copper amount as colored text (gold/silver/copper).
+-- Replaces GetCoinTextureString() which renders broken square icons in AceGUI status bars.
+local function FormatMoneyText(copper)
+	copper = copper or 0
+	if copper <= 0 then
+		return "|cff7f7f7f0c|r"
+	end
+	local gold   = math.floor(copper / 10000)
+	local silver = math.floor((copper % 10000) / 100)
+	local cp     = copper % 100
+	local parts  = {}
+	if gold > 0 then
+		table.insert(parts, string.format("|cffFFD700%dg|r", gold))
+	end
+	if silver > 0 or gold > 0 then
+		table.insert(parts, string.format("|cffc0c0c0%ds|r", silver))
+	end
+	if cp > 0 or (gold == 0 and silver == 0) then
+		table.insert(parts, string.format("|cffb46a2f%dc|r", cp))
+	end
+	return table.concat(parts, " ")
+end
+
 function TOGBankClassic_UI_Inventory:Init()
 	-- Frame creation deferred to first Open() call (PERF-015)
 end
@@ -207,7 +230,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	local percent = total_slots > 0 and (slots / total_slots) or 0
 	local color = TOGBankClassic_UI_Inventory:GetPercentColor(percent)
 	local defaultStatus =
-		string.format("%s    |c%s%d/%d|r", GetCoinTextureString(total_gold), color, slots, total_slots)
+		string.format("%s    |c%s%d/%d|r", FormatMoneyText(total_gold), color, slots, total_slots)
 	self.Window:SetStatusText(defaultStatus)
 	self.Window:SetCallback("OnEnterStatusBar", function(_)
 		local tab = self.TabGroup.localstatus.selected
@@ -262,7 +285,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		local status = string.format(
 			"As of %s    %s    |c%s%d/%d|r%s",
 			datetime,
-			GetCoinTextureString(money),
+			FormatMoneyText(money),
 			color,
 			slot_count,
 			slot_total,
