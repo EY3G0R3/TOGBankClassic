@@ -118,11 +118,15 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	buttonContainer:SetUserData("table", {
 		columns = {
 			{
-				width = 0.5,
+				width = 0.34,
 				align = "start",
 			},
 			{
-				width = 0.5,
+				width = 0.33,
+				align = "center",
+			},
+			{
+				width = 0.33,
 				align = "end",
 			},
 		},
@@ -142,16 +146,40 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	searchButton:SetCallback("OnClick", function(_)
 		TOGBankClassic_UI_Search:Toggle()
 	end)
-	searchButton:SetWidth(175)
+	searchButton:SetWidth(160)
 	searchButton:SetHeight(24)
 	buttonContainer:AddChild(searchButton)
+
+	local function GetSortLabel(m)
+		return m == "type" and "Sort: By Type" or "Sort: A\226\134\146Z"
+	end
+	local sortButton = TOGBankClassic_UI:Create("Button")
+	local initMode = (TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char.sortMode) or "alpha"
+	sortButton:SetText(GetSortLabel(initMode))
+	sortButton:SetWidth(160)
+	sortButton:SetHeight(24)
+	sortButton:SetCallback("OnClick", function(_)
+		local db = TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char
+		if not db then return end
+		db.sortMode = (db.sortMode == "type") and "alpha" or "type"
+		sortButton:SetText(GetSortLabel(db.sortMode))
+		-- Reload current tab with new sort order
+		local tab = self.TabGroup.localstatus and self.TabGroup.localstatus.selected
+		if tab then
+			self.currentTab = nil
+			self.tabLoaded = false
+			self.TabGroup:SelectTab(tab)
+		end
+	end)
+	self.SortButton = sortButton
+	buttonContainer:AddChild(sortButton)
 
 	local requestsButton = TOGBankClassic_UI:Create("Button")
 	requestsButton:SetText("Requests")
 	requestsButton:SetCallback("OnClick", function(_)
 		TOGBankClassic_UI_Requests:Toggle()
 	end)
-	requestsButton:SetWidth(175)
+	requestsButton:SetWidth(160)
 	requestsButton:SetHeight(24)
 	buttonContainer:AddChild(requestsButton)
 
@@ -172,6 +200,12 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		OnClose()
 		TOGBankClassic_Output:Response("Database is empty; wait for sync.")
 		return
+	end
+
+	-- Sync sort button label with persisted mode (db available by the time DrawContent runs)
+	if self.SortButton and TOGBankClassic_Options and TOGBankClassic_Options.db then
+		local m = TOGBankClassic_Options.db.char.sortMode or "alpha"
+		self.SortButton:SetText(m == "type" and "Sort: By Type" or "Sort: A\226\134\146Z")
 	end
 
 	-- Clear search data built flag so search rebuilds on next open (PERF-004)
@@ -417,7 +451,8 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 				-- Clear previous items before adding new ones
 				scroll:ReleaseChildren()
 				
-				TOGBankClassic_Item:Sort(list)
+					local sortMode = TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char.sortMode or "alpha"
+				TOGBankClassic_Item:Sort(list, sortMode)
 
 				for _, item in pairs(list) do
 					if item and item.Info and item.Info.name then

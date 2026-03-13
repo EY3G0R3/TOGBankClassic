@@ -412,7 +412,8 @@ local function BasicSort(a, b)
 end
 
 -- NOTE: Sort was adapted from ElvUI
-function TOGBankClassic_Item:Sort(items)
+-- mode: "alpha" (default) = A-Z by name; "type" = grouped by item class/slot/subclass then name
+function TOGBankClassic_Item:Sort(items, mode)
 	-- Ensure all items have Info with required fields for sorting
 	for _, item in ipairs(items) do
 		if not item.Info then
@@ -438,28 +439,34 @@ function TOGBankClassic_Item:Sort(items)
 			item.Info.name = item.Info.name or (item.Link and item.Link:match("%[(.-)%]")) or ("Item " .. tostring(item.ID or "?"))
 		end
 	end
-	
-	table.sort(items, function(a, b)
-		if a.Info.rarity ~= b.Info.rarity and a.Info.rarity and b.Info.rarity then
-			return a.Info.rarity < b.Info.rarity
-		end
-		if a.Info.class ~= b.Info.class then
-			return (a.Info.class or 99) < (b.Info.class or 99)
-		end
-		if (a.Info.equipId or 0) > 0 then
-			if a.Info.equipId == b.Info.equipId then
-				return BasicSort(a, b)
-			end
 
-			if a.Info.equip and b.Info.equip then
-				return a.Info.equip < b.Info.equip
+	if mode == "type" then
+		-- By Type: group by item class (armor/weapon/consumable/etc.), then by equip slot
+		-- (all helms together, all cloaks together, all wands together), then by subclass,
+		-- then by rarity, then alphabetically within each group.
+		table.sort(items, function(a, b)
+			if a.Info.class ~= b.Info.class then
+				return (a.Info.class or 99) < (b.Info.class or 99)
 			end
-		end
-		if a.Info.class == b.Info.class and a.Info.subClass == b.Info.subClass then
-			return BasicSort(a, b)
-		end
-		return (a.Info.subClass or 99) < (b.Info.subClass or 99)
-	end)
+			local aEquip = a.Info.equip or ""
+			local bEquip = b.Info.equip or ""
+			if aEquip ~= bEquip then
+				return aEquip < bEquip
+			end
+			if a.Info.subClass ~= b.Info.subClass then
+				return (a.Info.subClass or 99) < (b.Info.subClass or 99)
+			end
+			if a.Info.rarity ~= b.Info.rarity then
+				return (a.Info.rarity or 0) < (b.Info.rarity or 0)
+			end
+			return (a.Info.name or "") < (b.Info.name or "")
+		end)
+	else
+		-- Alphabetical (default): pure A-Z by name
+		table.sort(items, function(a, b)
+			return (a.Info.name or "") < (b.Info.name or "")
+		end)
+	end
 end
 
 function TOGBankClassic_Item:Aggregate(a, b)

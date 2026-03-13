@@ -184,6 +184,7 @@ function TOGBankClassic_Options:Init()
 			combat = { hide = true },
 			bank = { donations = true },
 			framePositions = {},  -- Stores window positions/sizes
+			sortMode = "alpha",   -- Inventory sort mode: "alpha" (A→Z) or "type" (by item type)
 		},
 		global = {
 			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, enableRosterSync = false },
