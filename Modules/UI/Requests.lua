@@ -367,7 +367,7 @@ function TOGBankClassic_UI_Requests:Init()
 	self.requesterFilter = nil
 	self.bankFilter = nil
 	self.defaultFiltersApplied = false
-	self:DrawWindow()
+	-- Frame creation deferred to first Open() call (PERF-015)
 end
 
 function TOGBankClassic_UI_Requests:Toggle()

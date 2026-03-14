@@ -149,16 +149,25 @@ local function BuildDebugArgs()
 	-- Debug log section
 	args["spacer3"]        = { order = 300, type = "description", name = " " }
 	args["debugLogHeader"] = { order = 301, type = "header",      name = "Debug Logging" }
-	args["debugLogEnabled"] = {
+	args["debugLogDescription"] = {
 		order = 302,
+		type = "description",
+		name = "Debug categories (below) control what messages are shown. Persistent logging (optional) saves those messages to SavedVariables for later review.",
+	}
+	args["debugLogEnabled"] = {
+		order = 303,
 		type  = "toggle",
 		width = "full",
-		name  = "Enable Debug Log to SavedVariables",
-		desc  = "Save debug messages to SavedVariables (TOGBankClassicDB_DebugLog). Auto-cleans old entries (max 50,000 entries or 7 days). Disable to reduce SavedVariables file size.",
+		name  = "Enable Persistent Logging to SavedVariables",
+		desc  = "When ENABLED: Debug messages are saved to TOGBankClassicDB_DebugLog SavedVariables file (max 50,000 entries or 7 days) for later review via /togbank debuglog. When DISABLED (default): Debug messages are still shown in chat/debug frame but NOT saved to disk. WARNING: Enabling this increases SavedVariables file size (1-5 MB) and reload time. Requires /reload to take effect.",
 		get   = function() return TOGBankClassic_DebugLogEnabled end,
 		set   = function(_, value)
 			TOGBankClassic_DebugLogEnabled = value
-			TOGBankClassic_Output:Info(value and "Debug logging to SavedVariables enabled" or "Debug logging to SavedVariables disabled")
+			if value then
+				TOGBankClassic_Output:Info("Persistent logging ENABLED. Debug messages will be saved to SavedVariables for later review. Requires /reload to load existing logs.")
+			else
+				TOGBankClassic_Output:Info("Persistent logging DISABLED. Debug messages will still show in chat but will NOT be saved to SavedVariables. Requires /reload to skip loading logs.")
+			end
 		end,
 	}
 

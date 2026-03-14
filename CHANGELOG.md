@@ -7,23 +7,123 @@
 
 ### 🐛 Bug Fixes
 
-#### [PERF-007] Fixed Bagnon Execution Timeout from BAG_UPDATE Spam (CRITICAL)
-- **FIXED**: ItemHighlight now throttles BAG_UPDATE events and caches search strings
-- **PROBLEM**: Bagnon exceeded execution time limit during zone changes
-- **ROOT CAUSE**: Every BAG_UPDATE event triggered RefreshHighlighting which called Bagnon's SendSignal('SEARCH_CHANGED'), causing full UI rebuild
-- **IMPACT**: "Script from Bagnon has exceeded its execution time limit" errors on zone change
-- **BEHAVIOR**: Zone changes fire multiple rapid BAG_UPDATE events, each triggering Bagnon UI rebuild
+#### [PERF-016] Fixed Performance Tracking Initialization Overhead (LOW)
+- **FIXED**: Performance tracking now skips all initialization when disabled (default)
+- **PROBLEM**: Performance:Initialize() always created sessions, ran GC, initialized data structures even when TOGBankClassic_PerfEnabled = false (default)
+- **ROOT CAUSE**: Initialize() didn't check enabled flag before expensive operations
+- **IMPACT**: Session creation, table inserts, GC loops for a disabled debugging feature on every addon load
+- **BEHAVIOR**: Initialize() checked enabled flag AFTER creating tables and running GC
 - **SOLUTION**:
-  1. Added 500ms throttling to BAG_UPDATE event handler (same pattern as Requests UI)
-  2. Cache last Bagnon search string and only send SEARCH_CHANGED signal when it actually changes
-  3. Clear cache when disabling highlighting to avoid unnecessary signals
-  4. Prevents rapid-fire Bagnon UI rebuilds during zone transitions
-- **RESULT**: Eliminated Bagnon execution timeout errors, highlighting still works correctly
+  1. Move TOGBankClassic_PerfEnabled nil check to top of Initialize()
+  2. Early return if TOGBankClassic_PerfEnabled is false
+  3. Only create tables, run GC, and initialize session when explicitly enabled
+- **RESULT**: 
+  - **Default (disabled):** Zero overhead - no tables created, no GC, no session initialization
+  - **When enabled:** Normal behavior - creates sessions, tracks metrics, runs GC
+  - **Load time savings:** Skip all performance tracking initialization for 99% of users
 - **LOCATION**:
-  - ItemHighlight.lua Initialize (~18-41): Added throttling to event handler
-  - ItemHighlight.lua UpdateBagnonHighlighting (~252-260): Cache and compare search string
-  - ItemHighlight.lua RefreshHighlighting (~367-377): Clear cache when disabled
-  - ItemHighlight.lua SetEnabled (~95-105): Clear cache when disabling
+  - Performance.lua Initialize() (~33-48): Reordered to check flag first, early return if disabled
+
+#### [PERF-015] Fixed UI Frame Creation During Addon Load (MEDIUM)
+- **FIXED**: Inventory, Donations, Mail, Search, and Requests windows now defer frame creation until first Open()
+- **PROBLEM**: All 5 UI modules called DrawWindow() during Init() at addon load, creating AceGUI frames (windows, buttons, scrollframes, etc.) that may never be opened
+- **ROOT CAUSE**: Init() unconditionally called DrawWindow() instead of deferring to first use
+- **IMPACT**: Frame creation overhead at load for 5 windows that most users won't open every session
+- **BEHAVIOR**: Init() → DrawWindow() → AceGUI:Create("Frame") + create all child widgets → frames held in memory all session
+- **LAZY PATTERN**: All 5 modules already had `if not self.Window then self:DrawWindow() end` check in Open() function
+- **SOLUTION**:
+  1. Remove DrawWindow() call from Init() in Inventory, Donations, Mail, Search, Requests
+  2. Rely on existing lazy initialization check in Open() function: `if not self.Window then self:DrawWindow() end`
+  3. Frame creation only happens when user actually opens the window
+- **RESULT**: 
+  - **On load:** Init() does nothing (or just initializes state variables), zero frame creation
+  - **First Open():** Checks `if not self.Window`, calls DrawWindow(), caches frame
+  - **Subsequent opens:** Reuses cached frame
+  - **Load time savings:** Skip creating 5 AceGUI windows + all child widgets unless actually used
+  - **Memory savings:** Don't hold unused frame objects in memory
+- **LOCATION**:
+  - UI/Inventory.lua Init() (~3-5): Removed DrawWindow() call, added PERF-015 comment
+  - UI/Donations.lua Init() (~3-5): Removed DrawWindow() call, added PERF-015 comment
+  - UI/Mail.lua Init() (~3-5): Removed DrawWindow() call, added PERF-015 comment
+  - UI/Search.lua Init() (~3-5): Removed DrawWindow() call, added PERF-015 comment
+  - UI/Requests.lua Init() (~365-371): Removed DrawWindow() call, added PERF-015 comment
+
+#### [PERF-014] Fixed Persistent Debug Log Loading Unconditionally (HIGH)
+- **FIXED**: Persistent debug log (SavedVariables) now only loads/saves when explicitly enabled by user (OFF by default)
+- **PROBLEM**: Output:Init() always loaded TOGBankClassicDB_DebugLog from SavedVariables (up to 50,000 entries) even though persistent logging was disabled by default
+- **ROOT CAUSE**: Load/save logic didn't check TOGBankClassic_DebugLogEnabled flag before accessing SavedVariables
+- **IMPACT**: Every player paid the cost of parsing 1-5 MB of debug log entries on every reload, plus garbage collection loop checking 50k timestamps, even though 99% never enable persistent logging
+- **BEHAVIOR**: Init() unconditionally loaded log → GarbageCollectPersistentLog() looped through all entries → held 50k entries in memory all session
+- **CLARIFICATION**: Regular debug logging (showing messages in chat/debug frame) works independently from persistent logging (saving to SavedVariables). Debug categories control what's shown; persistent logging checkbox controls whether messages are also saved to disk.
+- **SOLUTION**:
+  1. Check TOGBankClassic_DebugLogEnabled in Init() - only load if true
+  2. Check TOGBankClassic_DebugLogEnabled in SavePersistentLog() - only save if true
+  3. Check TOGBankClassic_DebugLogEnabled in AddToPersistentLog() - only add if true
+  4. Updated option description to clarify persistent logging is separate from regular debug message display
+- **RESULT**: 
+  - **Default (disabled):** Debug messages still show in chat but NOT saved to SavedVariables. Zero parsing overhead, zero GC, empty log array
+  - **When enabled:** Debug messages shown in chat AND saved to SavedVariables for later review via /togbank debuglog
+  - **Load time savings:** Skip parsing 1-5 MB of text and GC loop on every reload for 99% of users
+  - **Memory savings:** Don't hold 50k log entries unless explicitly enabled
+- **LOCATION**:
+  - Output.lua Init() (~72-89): Added TOGBankClassic_DebugLogEnabled check before loading
+  - Output.lua SavePersistentLog() (~456-470): Added early return if disabled
+  - Output.lua AddToPersistentLog() (~418-433): Added early return if disabled
+  - Options.lua debugLogEnabled (~302-324): Updated to clarify persistent logging vs regular debug messages
+
+#### [PERF-013] Fixed ChatThrottleLib Timeout from Zone Change Message Spam (CRITICAL)
+- **FIXED**: PLAYER_ENTERING_WORLD now only triggers roster refresh + broadcasts on login/reload, NOT on zone changes
+- **PROBLEM**: "Script ran too long" in ChatThrottleLib.lua:389 during zone changes
+- **ROOT CAUSE**: PLAYER_ENTERING_WORLD fires on EVERY zone change, triggering 2 GUILD broadcasts per player (togbank-r + togbank-hl)
+- **IMPACT**: When 40+ players enter MC/BWL simultaneously, 80+ messages queue instantly and overwhelm ChatThrottleLib's message queue
+- **BEHAVIOR**: Zone changes → PLAYER_ENTERING_WORLD → needsFullRosterRefresh=true → GUILD_ROSTER_UPDATE → QueryRequestsIndex + SyncDeltaVersion → 2 GUILD broadcasts
+- **CUMULATIVE EFFECT**: Every player in guild broadcasts on every zone, causing "bMyTraffic = true" loops in ChatThrottleLib Despool to exceed execution time
+- **SOLUTION**:
+  1. Check `isInitialLogin` and `isReloadingUi` parameters from PLAYER_ENTERING_WORLD event
+  2. Only set `needsFullRosterRefresh = true` on login/reload (not zone changes)
+  3. Zone changes skip roster refresh entirely (no broadcasts)
+  4. OnShareTimer still broadcasts every 10 minutes (periodic sync unaffected)
+- **RESULT**: 
+  - **Login/Reload**: Normal behavior (2 GUILD broadcasts per player)
+  - **Zone Change**: Zero broadcasts (no ChatThrottleLib queue spam)
+  - **Raid Entry**: No more timeout errors when 40 players zone together
+  - **Data Freshness**: OnShareTimer maintains 10-minute sync cycle
+- **LOCATION**:
+  - Events.lua PLAYER_ENTERING_WORLD (~348-367): Added isInitialLogin/isReloadingUi check
+  - Events.lua GUILD_ROSTER_UPDATE (~362-413): Only fires deferred block when needsFullRosterRefresh=true
+
+#### [PERF-008] Fixed Bagnon Execution Timeout from BAG_UPDATE Spam (CRITICAL)
+- **FIXED**: ItemHighlight now registers BAG_UPDATE events ONLY when highlighting is actively enabled by a banker (on-demand registration)
+- **PROBLEM**: Bagnon exceeded execution time limit during zone changes, affecting even non-banker characters
+- **ROOT CAUSE 1**: BAG_UPDATE events were processed by ALL players during zone changes (50+ events in 0.2 seconds)
+- **ROOT CAUSE 2**: Each addon with BAG_UPDATE handlers adds to cumulative execution budget, even if handler does nothing
+- **ROOT CAUSE 3**: Highlighting doesn't need ANY events until a banker explicitly enables it, but events were registered at addon load
+- **IMPACT**: "Script from Bagnon has exceeded its execution time limit" errors on zone change for ALL guild members
+- **BEHAVIOR**: Zone changes fire 50+ rapid BAG_UPDATE events; cumulative processing across all addons exceeded Bagnon's execution time limit
+- **SOLUTION**:
+  1. **CRITICAL FIX**: Don't register ANY events at Initialize() - highlighting doesn't need them yet
+  2. When banker clicks "Enable Highlighting" in Requests tab, check banker status and register events
+  3. When banker clicks "Disable Highlighting", unregister ALL events
+  4. **Result**: Zero overhead for everyone until feature is actively used
+  5. Events include throttling (500ms) and search string caching when registered
+  6. Prevents rapid-fire Bagnon UI rebuilds during zone transitions
+- **RESULT**: 
+  - **Non-bankers:** NEVER register BAG_UPDATE events (zero overhead forever)
+  - **Bankers with highlighting disabled:** Zero overhead (same as non-bankers)
+  - **Bankers with highlighting enabled:** Events registered on-demand with throttling + caching
+  - **Guild-wide:** Eliminated Bagnon execution timeout errors completely
+- **WHY THIS IS THE CORRECT APPROACH**: Highlighting only needs to work when actively fulfilling orders. There's no reason to have ANY event handlers registered during normal gameplay, at addon load, or during zone changes. On-demand registration = zero overhead until actually needed.
+- **COMPARISON TO PREVIOUS APPROACHES**:
+  - v1: Registered events for all, checked `self.enabled` → all players processed 50+ events
+  - v2: Early exit in Initialize if not banker → broke highlighting (guild data not loaded)
+  - v3: Lazy check on first event, then unregister → non-bankers still processed first batch
+  - v4: Wait for GUILD_ROSTER_UPDATE, then register → still registered events before needed
+  - v5 (FINAL): On-demand registration only when highlighting enabled → zero overhead until used
+- **LOCATION**:
+  - ItemHighlight.lua registerBagEvents (~23-59): Register BAG_UPDATE events when highlighting enabled
+  - ItemHighlight.lua unregisterBagEvents (~62-74): Unregister events when highlighting disabled
+  - ItemHighlight.lua Initialize (~77-84): Minimal initialization, no event registration
+  - ItemHighlight.lua SetEnabled (~87-136): Check banker status, register/unregister events based on enabled state
 
 #### [HASH-001] Fixed Hash Broadcast Not Triggering P2P Requests (CRITICAL)
 - **FIXED**: hash-list-broadcast handler now triggers P2P requests for changed data

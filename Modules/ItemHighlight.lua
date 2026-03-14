@@ -18,20 +18,23 @@ local OVERLAY_COLOR = {0.2, 0.2, 0.2} -- RGB grey color
 local REFRESH_THROTTLE = 0.5 -- seconds
 local lastRefresh = 0
 local pendingRefresh = false
+local eventFrame = nil -- Frame for event handling
+local eventsRegistered = false -- Track if BAG_UPDATE events are registered
 
--- Initialize the module
-function ItemHighlight:Initialize()
-	-- Don't auto-enable from saved settings - let the checkbox control it
-	self.enabled = false
-
-	-- Register events
-	local frame = CreateFrame("Frame")
-	frame:RegisterEvent("BAG_UPDATE")
-	frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
-	frame:RegisterEvent("BANKFRAME_OPENED")
-	frame:RegisterEvent("BANKFRAME_CLOSED")
-	frame:SetScript("OnEvent", function(_, event, ...)
-		if self.enabled then
+-- Register BAG_UPDATE events (called when highlighting is enabled)
+local function registerBagEvents()
+	if eventsRegistered then
+		return -- Already registered
+	end
+	
+	eventFrame = CreateFrame("Frame")
+	eventFrame:RegisterEvent("BAG_UPDATE")
+	eventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+	eventFrame:RegisterEvent("BANKFRAME_OPENED")
+	eventFrame:RegisterEvent("BANKFRAME_CLOSED")
+	eventFrame:SetScript("OnEvent", function(_, event, ...)
+		-- Only process if highlighting is enabled
+		if ItemHighlight.enabled then
 			-- Throttle refresh to prevent Bagnon execution timeout during rapid BAG_UPDATE spam
 			-- ALWAYS delay the refresh to ensure minimum time between Bagnon signal calls
 			local now = GetTime()
@@ -42,7 +45,7 @@ function ItemHighlight:Initialize()
 				pendingRefresh = true
 				C_Timer.After(delay, function()
 					pendingRefresh = false
-					if self.enabled then
+					if ItemHighlight.enabled then
 						lastRefresh = GetTime()
 						ItemHighlight:RefreshHighlighting()
 					end
@@ -50,19 +53,45 @@ function ItemHighlight:Initialize()
 			end
 		end
 	end)
+	
+	eventsRegistered = true
+	TOGBankClassic_Output:Debug("REQUESTS", "ItemHighlight: BAG_UPDATE events registered")
+end
 
-	TOGBankClassic_Output:Debug("REQUESTS", "ItemHighlight initialized")
+-- Unregister BAG_UPDATE events (called when highlighting is disabled)
+local function unregisterBagEvents()
+	if not eventsRegistered then
+		return -- Already unregistered
+	end
+	
+	if eventFrame then
+		eventFrame:UnregisterAllEvents()
+		eventFrame:SetScript("OnEvent", nil)
+		eventFrame = nil
+	end
+	
+	eventsRegistered = false
+	TOGBankClassic_Output:Debug("REQUESTS", "ItemHighlight: BAG_UPDATE events unregistered")
+end
+
+-- Initialize the module
+function ItemHighlight:Initialize()
+	-- Don't auto-enable from saved settings - let the checkbox control it
+	self.enabled = false
+	
+	-- No events registered at initialization - they'll be registered when highlighting is enabled
+	TOGBankClassic_Output:Debug("REQUESTS", "ItemHighlight: initialized (events will be registered when enabled)")
 end
 
 -- Enable/disable highlighting
 function ItemHighlight:SetEnabled(enabled)
-	-- Only allow bankers to use highlighting
+	-- Check if player is a banker
 	local banks = TOGBankClassic_Guild:GetBanks()
 	if not banks then
-		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting disabled: no banks found")
+		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting unavailable: guild data not loaded")
 		return
 	end
-
+	
 	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local isBank = false
 	for _, bankName in ipairs(banks) do
@@ -72,7 +101,7 @@ function ItemHighlight:SetEnabled(enabled)
 			break
 		end
 	end
-
+	
 	if not isBank then
 		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting disabled: not a banker")
 		return
@@ -87,6 +116,8 @@ function ItemHighlight:SetEnabled(enabled)
 	TOGBankClassicDB.settings.highlightEnabled = enabled
 
 	if enabled then
+		-- Register BAG_UPDATE events when enabling highlighting
+		registerBagEvents()
 		self:RefreshHighlighting()
 	else
 		self:ClearAllOverlays()
@@ -98,6 +129,8 @@ function ItemHighlight:SetEnabled(enabled)
 			addon.canSearch = false
 			addon:SendSignal('SEARCH_CHANGED')
 		end
+		-- Unregister BAG_UPDATE events when disabling highlighting
+		unregisterBagEvents()
 	end
 end
 

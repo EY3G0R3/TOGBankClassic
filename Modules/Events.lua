@@ -345,15 +345,24 @@ function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 end
 
 -- Request initial guild roster update on world enter
-function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_)
+function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
 	TOGBankClassic_Performance:RecordEvent("PLAYER_ENTERING_WORLD")
-	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] PLAYER_ENTERING_WORLD - Requesting guild roster")
-	GuildRoster()
-	-- Don't try to cache before GUILD_ROSTER_UPDATE fires - GuildRoster() is async
-	-- The cache will be populated when GUILD_ROSTER_UPDATE event fires
-	-- Allow full refresh cycles on init to populate roster/banker cache
-	self.needsFullRosterRefresh = true
-	self.fullRosterInitAttempts = 0
+	
+	-- PERF-013: Only do full roster refresh + broadcasts on login/reload, not zone changes
+	-- Every zone change was broadcasting 2 GUILD messages (togbank-r + togbank-hl), causing
+	-- ChatThrottleLib timeouts when 40+ players entered raids simultaneously
+	if isInitialLogin or isReloadingUi then
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] PLAYER_ENTERING_WORLD (login=%s, reload=%s) - Requesting guild roster", 
+			tostring(isInitialLogin), tostring(isReloadingUi))
+		GuildRoster()
+		-- Don't try to cache before GUILD_ROSTER_UPDATE fires - GuildRoster() is async
+		-- The cache will be populated when GUILD_ROSTER_UPDATE event fires
+		-- Allow full refresh cycles on init to populate roster/banker cache
+		self.needsFullRosterRefresh = true
+		self.fullRosterInitAttempts = 0
+	else
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] PLAYER_ENTERING_WORLD (zone change) - Skipping roster refresh")
+	end
 end
 
 -- Refresh online members cache when roster updates

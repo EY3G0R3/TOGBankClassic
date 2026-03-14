@@ -1,7 +1,7 @@
 TOGBankClassic_UI_Inventory = {}
 
 function TOGBankClassic_UI_Inventory:Init()
-	self:DrawWindow()
+	-- Frame creation deferred to first Open() call (PERF-015)
 end
 
 local function QueryEmpty()

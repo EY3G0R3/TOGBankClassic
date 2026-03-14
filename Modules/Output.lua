@@ -76,8 +76,9 @@ function TOGBankClassic_Output:Init()
 		TOGBankClassic_DebugLogEnabled = false
 	end
 
-	-- Load persistent log from SavedVariables if it exists
-	if TOGBankClassicDB_DebugLog then
+	-- PERF-014: Only load persistent log if explicitly enabled by user
+	-- Most users never enable debug logging, so skip parsing potentially 50k entries from SavedVariables
+	if TOGBankClassic_DebugLogEnabled and TOGBankClassicDB_DebugLog then
 		self.persistentLog = TOGBankClassicDB_DebugLog
 		TOGBankClassic_Output:Debug("SYSTEM", "Loaded %d persistent debug log entries from SavedVariables", #self.persistentLog)
 		-- Clean up old entries on load
@@ -416,6 +417,11 @@ end
 
 -- Add entry to persistent debug log with timestamp
 function TOGBankClassic_Output:AddToPersistentLog(message)
+	-- PERF-014: Only add to log if persistent logging is enabled
+	if not TOGBankClassic_DebugLogEnabled then
+		return
+	end
+
 	local entry = {
 		timestamp = time(),
 		message = message
@@ -452,6 +458,11 @@ end
 
 -- Save persistent log to SavedVariables
 function TOGBankClassic_Output:SavePersistentLog()
+	-- PERF-014: Only save if persistent logging is enabled
+	if not TOGBankClassic_DebugLogEnabled then
+		return
+	end
+
 	-- Run garbage collection before saving
 	self:GarbageCollectPersistentLog()
 

@@ -31,17 +31,22 @@ end
 
 -- Initialize performance metrics on addon load
 function Performance:Initialize()
+	-- Initialize enabled state (default to false - users can enable in options)
+	if TOGBankClassic_PerfEnabled == nil then
+		TOGBankClassic_PerfEnabled = false
+	end
+
+	-- Skip initialization if performance tracking is disabled
+	if not TOGBankClassic_PerfEnabled then
+		return
+	end
+
 	if not TOGBankClassic_PerfMetrics then
 		TOGBankClassic_PerfMetrics = {}
 	end
 
 	-- Run garbage collection on initialization
 	self:GarbageCollectSessions()
-
-	-- Initialize enabled state (default to false - users can enable in options)
-	if TOGBankClassic_PerfEnabled == nil then
-		TOGBankClassic_PerfEnabled = false
-	end
 
 	-- Create new session
 	local sessionStart = time()
