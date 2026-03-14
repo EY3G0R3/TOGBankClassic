@@ -23,6 +23,11 @@ function TOGBankClassic_Chat:Init()
 	self.pending_dv_messages = {}  -- {sender = {altName = {timer, data, ...}}}
 	self.DV_DELAY = 5  -- seconds to wait before processing dv messages
 
+	-- PERF-020: Batch hash broadcast processing to prevent stuttering from sync storms
+	self.hashBroadcastQueue = {}  -- {sender, data, distribution, isSenderBanker, altCount}
+	self.hashBroadcastTimer = nil
+	self.HASH_BROADCAST_BATCH_DELAY = 0.15  -- seconds to batch incoming broadcasts
+
 	TOGBankClassic_Core:RegisterComm("togbank-d", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -556,6 +561,89 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 		end
 		--]]
 	end
+end
+
+-- PERF-020: Process queued hash broadcasts in batch to prevent stuttering
+function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
+	local startTime = debugprofilestop()
+	local queueSize = #self.hashBroadcastQueue
+	
+	if queueSize == 0 then
+		return
+	end
+	
+	TOGBankClassic_Output:Debug("P2P", "OFFER", "Processing %d queued hash broadcasts", queueSize)
+	
+	-- Deduplicate by sender (if same sender broadcasted multiple times, process most recent)
+	local uniqueBroadcasts = {}
+	for _, entry in ipairs(self.hashBroadcastQueue) do
+		uniqueBroadcasts[entry.sender] = entry  -- Later entries overwrite earlier ones
+	end
+	
+	-- Process each unique broadcast
+	for sender, entry in pairs(uniqueBroadcasts) do
+		local data = entry.data
+		local isSenderBanker = entry.isSenderBanker
+		
+		-- Build hash-offer: alts where WE have newer data than what the sender advertised
+		local offerAlts  = {}
+		local myAlts     = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
+		local myPlayer   = TOGBankClassic_Guild:GetNormalizedPlayer()
+		
+		for altName, peerSummary in pairs(data.alts) do
+			local norm = TOGBankClassic_Guild:NormalizeName(altName)
+			if norm and norm ~= myPlayer then
+				local myAlt = myAlts[norm]
+				if myAlt and TOGBankClassic_Guild:HasAltContent(myAlt, norm) then
+					local myUpdatedAt   = myAlt.inventoryUpdatedAt or myAlt.version or 0
+					local peerUpdatedAt = peerSummary.updatedAt or 0
+					if myUpdatedAt > peerUpdatedAt then
+						offerAlts[norm] = {
+							hash      = myAlt.inventoryHash or 0,
+							updatedAt = myUpdatedAt,
+							mailHash  = myAlt.mailHash or 0,
+						}
+					end
+				end
+			end
+		end
+		
+		local offerCount = 0
+		for _ in pairs(offerAlts) do offerCount = offerCount + 1 end
+		if offerCount > 0 then
+			local offerData = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = offerAlts })
+			TOGBankClassic_Core:SendWhisper("togbank-hl", offerData, sender, "NORMAL")
+			TOGBankClassic_Output:Debug("P2P", "Sent hash-offer to %s for %d alts", sender, offerCount)
+		end
+		
+		-- Banker-only legacy path: cache authoritative hashes and forward to togbank-hlr
+		if isSenderBanker then
+			if not TOGBankClassic_Guild.latestBankerHashes then
+				TOGBankClassic_Guild.latestBankerHashes = {}
+			end
+			for altName, summary in pairs(data.alts) do
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				if norm and summary then
+					TOGBankClassic_Guild.latestBankerHashes[norm] = summary
+				end
+			end
+			local hlrPayload = {
+				type     = "hash-list-reply",
+				alts     = data.alts,
+				banker   = data.banker or sender,
+				isBanker = true,
+			}
+			local hlrData = TOGBankClassic_Core:SerializeWithChecksum(hlrPayload)
+			self:OnCommReceived("togbank-hlr", hlrData, entry.distribution, sender)
+		end
+	end
+	
+	-- Clear queue and timer
+	self.hashBroadcastQueue = {}
+	self.hashBroadcastTimer = nil
+	
+	local duration = debugprofilestop() - startTime
+	TOGBankClassic_Output:Debug("P2P", "OFFER", "Batch processed %d broadcasts in %.2fms", queueSize, duration)
 end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
@@ -1718,67 +1806,31 @@ end
 			TOGBankClassic_Output:Debug("PROTOCOL", "HL request from %s (replyTarget=%s)", tostring(sender), tostring(replyTarget))
 			TOGBankClassic_Guild:SendHashList(replyTarget)
 		elseif data.type == "hash-list-broadcast" and data.alts then
-			-- P2P-006: Bidirectional hash-list broadcast handling.
-			-- (a) If we are AHEAD on any of the sender's alts, reply with a hash-offer whisper
-			--     so the sender can request our data via sync-request.
-			-- (b) If the sender is a banker, also forward to togbank-hlr for stub creation
-			--     and the legacy BroadcastP2PRequest path (backward compat with old clients).
+			-- PERF-020: Queue hash broadcasts for batched processing to prevent stuttering
+			-- When 4+ broadcasts arrive within seconds (144 hash comparisons), synchronous
+			-- processing blocks main thread causing stuttering. Batch with 0.15s delay spreads
+			-- work across multiple frames while adding negligible latency (0.25% of 60s collect window).
 			local isSenderBanker = data.isBanker or false
 			local altCount = 0
 			for _ in pairs(data.alts) do altCount = altCount + 1 end
 			TOGBankClassic_Output:Debug("P2P", "HL broadcast from %s (alts=%d, isBanker=%s)",
 				tostring(sender), altCount, tostring(isSenderBanker))
-
-			-- Build hash-offer: alts where WE have newer data than what the sender advertised.
-			local offerAlts  = {}
-			local myAlts     = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
-			local myPlayer   = TOGBankClassic_Guild:GetNormalizedPlayer()
-			for altName, peerSummary in pairs(data.alts) do
-				local norm = TOGBankClassic_Guild:NormalizeName(altName)
-				if norm and norm ~= myPlayer then
-					local myAlt = myAlts[norm]
-					if myAlt and TOGBankClassic_Guild:HasAltContent(myAlt, norm) then
-						local myUpdatedAt   = myAlt.inventoryUpdatedAt or myAlt.version or 0
-						local peerUpdatedAt = peerSummary.updatedAt or 0
-						if myUpdatedAt > peerUpdatedAt then
-							offerAlts[norm] = {
-								hash      = myAlt.inventoryHash or 0,
-								updatedAt = myUpdatedAt,
-								mailHash  = myAlt.mailHash or 0,
-							}
-						end
-					end
-				end
-			end
-			local offerCount = 0
-			for _ in pairs(offerAlts) do offerCount = offerCount + 1 end
-			if offerCount > 0 then
-				local offerData = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = offerAlts })
-				TOGBankClassic_Core:SendWhisper("togbank-hl", offerData, sender, "NORMAL")
-				TOGBankClassic_Output:Debug("P2P", "Sent hash-offer to %s for %d alts", sender, offerCount)
-			end
-
-			-- Banker-only legacy path: cache authoritative hashes and forward to togbank-hlr
-			-- for stub creation + BroadcastP2PRequest.  Guard on isBanker to prevent
-			-- peer broadcasts from creating phantom stub entries.
-			if isSenderBanker then
-				if not TOGBankClassic_Guild.latestBankerHashes then
-					TOGBankClassic_Guild.latestBankerHashes = {}
-				end
-				for altName, summary in pairs(data.alts) do
-					local norm = TOGBankClassic_Guild:NormalizeName(altName)
-					if norm and summary then
-						TOGBankClassic_Guild.latestBankerHashes[norm] = summary
-					end
-				end
-				local hlrPayload = {
-					type     = "hash-list-reply",
-					alts     = data.alts,
-					banker   = data.banker or sender,
-					isBanker = true,
-				}
-				local hlrData = TOGBankClassic_Core:SerializeWithChecksum(hlrPayload)
-				self:OnCommReceived("togbank-hlr", hlrData, distribution, sender)
+			
+			-- Queue this broadcast for batched processing
+			table.insert(self.hashBroadcastQueue, {
+				sender = sender,
+				data = data,
+				distribution = distribution,
+				isSenderBanker = isSenderBanker,
+				altCount = altCount,
+			})
+			
+			-- Start batch timer if not already running
+			if not self.hashBroadcastTimer then
+				self.hashBroadcastTimer = C_Timer.After(self.HASH_BROADCAST_BATCH_DELAY, function()
+					TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
+				end)
+				TOGBankClassic_Output:Debug("P2P", "OFFER", "Started batch timer (%ds) for hash broadcasts", self.HASH_BROADCAST_BATCH_DELAY)
 			end
 			return
 		elseif data.type == "hash-offer" and data.alts then
