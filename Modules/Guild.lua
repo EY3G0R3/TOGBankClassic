@@ -630,6 +630,12 @@ function TOGBankClassic_Guild:ReportBankerDataProgress(context, force)
 		return
 	end
 
+	-- Defensive: Check if Info exists before attempting to access alts
+	if not self.Info then
+		TOGBankClassic_Output:Debug("SYNC", "ReportBankerDataProgress: self.Info is nil, cannot report progress")
+		return
+	end
+
 	local rosterAlts = self:GetRosterAlts()
 	if not rosterAlts or #rosterAlts == 0 then
 		rosterAlts = self:GetBanks()

@@ -819,9 +819,31 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 		local currentBank = (currentAlt.bank and currentAlt.bank.items) or {}
 		delta.changes.bank = self:ComputeItemDelta(previousBank, currentBank)
 
+		-- Include bank slots metadata if changed
+		local previousBankSlots = previous.bank and previous.bank.slots
+		local currentBankSlots = currentAlt.bank and currentAlt.bank.slots
+		if currentBankSlots and (not previousBankSlots or 
+			currentBankSlots.count ~= previousBankSlots.count or 
+			currentBankSlots.total ~= previousBankSlots.total) then
+			delta.changes.bank.slots = currentBankSlots
+			TOGBankClassic_Output:Debug("DELTA", "BUILD", "Including bank slots in delta: %d/%d",
+				currentBankSlots.count, currentBankSlots.total)
+		end
+
 		local previousBags = (previous.bags and previous.bags.items) or {}
 		local currentBags = (currentAlt.bags and currentAlt.bags.items) or {}
 		delta.changes.bags = self:ComputeItemDelta(previousBags, currentBags)
+
+		-- Include bags slots metadata if changed
+		local previousBagsSlots = previous.bags and previous.bags.slots
+		local currentBagsSlots = currentAlt.bags and currentAlt.bags.slots
+		if currentBagsSlots and (not previousBagsSlots or
+			currentBagsSlots.count ~= previousBagsSlots.count or
+			currentBagsSlots.total ~= previousBagsSlots.total) then
+			delta.changes.bags.slots = currentBagsSlots
+			TOGBankClassic_Output:Debug("DELTA", "BUILD", "Including bags slots in delta: %d/%d",
+				currentBagsSlots.count, currentBagsSlots.total)
+		end
 
 		local previousMail = (previous.mail and previous.mail.items) or {}
 		local currentMail = (currentAlt.mail and currentAlt.mail.items) or {}
@@ -1247,6 +1269,12 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					current.bank.items = {}
 				end
 				self:ApplyItemDelta(current.bank.items, changes.bank)
+				-- Apply bank slots metadata if present in delta
+				if changes.bank.slots then
+					current.bank.slots = changes.bank.slots
+					TOGBankClassic_Output:Debug("DELTA", "APPLY", "Applied bank slots for %s: %d/%d",
+						norm, changes.bank.slots.count, changes.bank.slots.total)
+				end
 				-- DEFENSIVE: Deduplicate bank items after delta application
 				if TOGBankClassic_Item and #current.bank.items > 0 then
 					local deduped = TOGBankClassic_Item:Aggregate(current.bank.items, nil)
@@ -1270,6 +1298,12 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					current.bags.items = {}
 				end
 				self:ApplyItemDelta(current.bags.items, changes.bags)
+				-- Apply bags slots metadata if present in delta
+				if changes.bags.slots then
+					current.bags.slots = changes.bags.slots
+					TOGBankClassic_Output:Debug("DELTA", "APPLY", "Applied bags slots for %s: %d/%d",
+						norm, changes.bags.slots.count, changes.bags.slots.total)
+				end
 				-- DEFENSIVE: Deduplicate bags items after delta application
 				if TOGBankClassic_Item and #current.bags.items > 0 then
 					local deduped = TOGBankClassic_Item:Aggregate(current.bags.items, nil)

@@ -214,6 +214,18 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
 
+		-- Defensive: Check if alt exists and has valid data
+		if not alt or type(alt) ~= "table" then
+			self.Window:SetStatusText("No data available")
+			return
+		end
+
+		-- Check if alt has been synced (version > 0 means real data)
+		if not alt.version or alt.version == 0 then
+			self.Window:SetStatusText("Waiting for sync...")
+			return
+		end
+
 		local datetime = date("%Y-%m-%d %H:%M:%S", alt.version)
 		local slot_count = 0
 		local slot_total = 0
