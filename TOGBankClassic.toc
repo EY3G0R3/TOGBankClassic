@@ -4,7 +4,7 @@
 ## Author: Dominion-Myzrael, GrumpyPlayers (also known as <SG>Soul), Lothsahn, Huntmehuntme-Myzrael, Pimptasty
 ## Version: @project-version@
 
-## SavedVariables: TOGBankClassicDB, TOGBankClassicIcon, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog, TOGBankClassic_PerfMetrics, TOGBankClassic_PerfEnabled, TOGBankClassic_DebugLogEnabled, TOGBankClassic_MailDebugLog
+## SavedVariables: TOGBankClassicDB, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog, TOGBankClassic_PerfMetrics, TOGBankClassic_PerfEnabled, TOGBankClassic_DebugLogEnabled
 ## Dependencies: Ace3, VersionCheck-1.0
 ## OptionalDeps: Bagnon
 ## X-Curse-Project-ID: 1400244

@@ -38,6 +38,8 @@ function Performance:Initialize()
 
 	-- Skip initialization if performance tracking is disabled
 	if not TOGBankClassic_PerfEnabled then
+		-- Clear any existing metrics from previous sessions when disabled
+		TOGBankClassic_PerfMetrics = nil
 		return
 	end
 

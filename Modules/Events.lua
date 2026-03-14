@@ -276,70 +276,6 @@ function TOGBankClassic_Events:PLAYER_LOGIN(_)
 end
 
 function TOGBankClassic_Events:PLAYER_LOGOUT(_)
-	-- DEBUG: Check if mail field exists before logout
-	local player = UnitName("player") .. "-" .. GetRealmName()
-
-	-- Store debug info in a SavedVariable so we can check after logout
-	if not TOGBankClassic_MailDebugLog then
-		TOGBankClassic_MailDebugLog = {}
-	end
-
-	local debugInfo = {
-		player = player,
-		timestamp = GetServerTime(),
-		mailExists = false,
-		mailItemCount = 0,
-	}
-
-	TOGBankClassic_Output:Debug("MAIL", "========================================")
-	TOGBankClassic_Output:Debug("MAIL", "Checking mail at logout for: %s", player)
-	if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[player] then
-		local alt = TOGBankClassic_Guild.Info.alts[player]
-		if alt.mail then
-			local mailCount = alt.mail.items and #alt.mail.items or 0
-			debugInfo.mailExists = true
-			debugInfo.mailItemCount = mailCount
-			debugInfo.versionType = type(alt.mail.version)
-			debugInfo.versionValue = tostring(alt.mail.version)
-			debugInfo.lastScanType = type(alt.mail.lastScan)
-			debugInfo.slotsType = type(alt.mail.slots)
-			debugInfo.hasMetatable = getmetatable(alt.mail) ~= nil
-
-			-- Check if items is a proper array
-			debugInfo.itemsIsTable = type(alt.mail.items) == "table"
-			if alt.mail.items then
-				local hasSequentialKeys = true
-				for i = 1, mailCount do
-					if alt.mail.items[i] == nil then
-						hasSequentialKeys = false
-						break
-					end
-				end
-				debugInfo.hasSequentialKeys = hasSequentialKeys
-			end
-
-			TOGBankClassic_Output:Debug("MAIL", "Mail field exists with %d items", mailCount)
-			TOGBankClassic_Output:Debug("MAIL", "  version: %s (type: %s)", tostring(alt.mail.version), type(alt.mail.version))
-			TOGBankClassic_Output:Debug("MAIL", "  lastScan: %s (type: %s)", tostring(alt.mail.lastScan), type(alt.mail.lastScan))
-			TOGBankClassic_Output:Debug("MAIL", "  slots type: %s", type(alt.mail.slots))
-			if alt.mail.slots then
-				debugInfo.slotsCount = alt.mail.slots.count
-				TOGBankClassic_Output:Debug("MAIL", "  slots.count: %s", tostring(alt.mail.slots.count))
-			end
-			-- Check for metatables or functions that would prevent serialization
-			if getmetatable(alt.mail) then
-				TOGBankClassic_Output:Debug("MAIL", "WARNING: alt.mail has a metatable!")
-			end
-		else
-			TOGBankClassic_Output:Debug("MAIL", "Mail field missing!")
-		end
-	else
-		debugInfo.noAltData = true
-		TOGBankClassic_Output:Debug("MAIL", "Alt data not found")
-	end
-
-	TOGBankClassic_MailDebugLog[player] = debugInfo
-	TOGBankClassic_Output:Debug("MAIL", "========================================")
 	-- Save persistent debug log to SavedVariables
 	TOGBankClassic_Output:SavePersistentLog()
 end
@@ -368,11 +304,15 @@ end
 -- Refresh online members cache when roster updates
 function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 	TOGBankClassic_Performance:RecordEvent("GUILD_ROSTER_UPDATE")
-	if self.needsFullRosterRefresh then
+	-- PERF-019: Guard against overlapping roster refresh operations
+	-- If GUILD_ROSTER_UPDATE fires while a deferred refresh is in progress (e.g., during
+	-- zone changes while sending data), skip it to prevent cascading expensive operations
+	if self.needsFullRosterRefresh and not self.refreshInProgress then
 		self.fullRosterInitAttempts = (self.fullRosterInitAttempts or 0) + 1
 TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d - Full refresh starting", self.fullRosterInitAttempts)
 		
 		self.needsFullRosterRefresh = false
+		self.refreshInProgress = true
 		
 		-- PERF-008: Defer ALL expensive roster operations AND cache invalidation
 		-- Must invalidate cache INSIDE the deferred block, otherwise any IsBank() call
@@ -412,9 +352,16 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 				TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")				-- SYNC-014: Broadcast our hashes immediately on login so peers can offer data
 				-- without waiting for the 10-minute periodic timer to fire first.
 				TOGBankClassic_Events:SyncDeltaVersion("NORMAL")			end
+			
+			-- PERF-019: Clear in-progress flag to allow next refresh cycle
+			self.refreshInProgress = false
 		end)
 	else
-		TOGBankClassic_Output:Debug("EVENTS", "GUILD_ROSTER_UPDATE ignored (online/offline handled via system messages)")
+		if self.needsFullRosterRefresh and self.refreshInProgress then
+			TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE skipped (refresh already in progress)")
+		else
+			TOGBankClassic_Output:Debug("EVENTS", "GUILD_ROSTER_UPDATE ignored (online/offline handled via system messages)")
+		end
 	end
 end
 

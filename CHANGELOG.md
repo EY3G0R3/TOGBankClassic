@@ -7,6 +7,68 @@
 
 ### 🐛 Bug Fixes
 
+#### [PERF-019] Prevented Overlapping Roster Refresh Operations During Zone Changes (CRITICAL)
+- **FIXED**: GUILD_ROSTER_UPDATE handler now guards against concurrent execution to prevent cascading expensive operations
+- **PROBLEM**: When player zoned while sending data (65-chunk ChatThrottleLib queue processing) or during roster refresh retries, WoW fires GUILD_ROSTER_UPDATE automatically during zone transition
+- **ROOT CAUSE**: No guard flag preventing concurrent roster refresh operations. If `needsFullRosterRefresh=true` from previous retry attempt (roster API returned 0 members), GUILD_ROSTER_UPDATE would start another 0.5s deferred operation even if previous one still in progress
+- **IMPACT**: Explained intermittent "execution limit exceeded" errors (1 in 5 login/reload/zone) - only occurred when multiple expensive operations overlapped during critical init/zone window
+- **BEHAVIOR**: 
+  - Zone while sending → GUILD_ROSTER_UPDATE fires → starts InvalidateBanksCache + RefreshOnlineCache (loops all members) + RebuildBankerRoster (scans all notes)
+  - If roster API slow, retry flag = true → next GUILD_ROSTER_UPDATE starts ANOTHER 0.5s timer
+  - Multiple overlapping timers + ChatThrottleLib chunk callbacks (30 failures × callback overhead) = cumulative execution limit exceeded
+- **SOLUTION**:
+  1. Add `refreshInProgress` guard flag alongside existing `needsFullRosterRefresh` flag
+  2. Check `needsFullRosterRefresh AND NOT refreshInProgress` before starting refresh cycle
+  3. Set `refreshInProgress = true` when starting 0.5s deferred work
+  4. Clear `refreshInProgress = false` at end of deferred function (after retry check, broadcasts)
+  5. Log skip message when GUILD_ROSTER_UPDATE arrives while refresh in progress
+- **RESULT**: 
+  - **Maximum one roster refresh operation in-flight at any time**
+  - **Prevents cascading retries** when GUILD_ROSTER_UPDATE fires during zone transitions
+  - **Eliminates overlap with ChatThrottleLib** chunk processing during sends
+  - **Combined with PERF-008/013/014/015/016/017/018:** Should eliminate execution limit errors completely
+- **LOCATION**:
+  - Events.lua GUILD_ROSTER_UPDATE() (~305-360): Added refreshInProgress guard check at start, set flag before deferral, clear flag in deferred completion
+
+#### [PERF-018] Deferred Debug Options UI Creation Until Needed (MEDIUM)
+- **FIXED**: Debug options UI no longer built at addon load - created lazily on first access
+- **PROBLEM**: BuildDebugArgs() created ~55 AceConfig entries (15 categories, 28 sub-tags, 12 headers/buttons) during Options:Init() at addon load
+- **ROOT CAUSE**: Debug tab args field called BuildDebugArgs() directly in options table definition, executing at addon start regardless of whether user ever opens Debug tab
+- **IMPACT**: Contributed to intermittent "execution limit exceeded" errors (1 in 5 login/reload/zone changes) when combined with other init operations (GUILD_ROSTER_UPDATE retries, event registration, AceComm prefixes)
+- **BEHAVIOR**: Every login/reload created all debug category/tag options UI (~55 elements), even though most users never open Debug tab
+- **SOLUTION**:
+  1. Change debug tab args from direct BuildDebugArgs() call to lazy function
+  2. Function checks TOGBankClassic_Options.debugArgsBuilt flag
+  3. First access builds UI and caches result; subsequent accesses return cached table
+- **RESULT**: 
+  - **Default (never open Debug tab):** Zero options UI creation overhead at addon load
+  - **First time opening Debug tab:** Builds ~55 entries and caches
+  - **Subsequent opens:** Instant (reuses cache)
+  - **Combined with PERF-008/013/014/015/016/017:** Reduced intermittent execution limit errors
+- **LOCATION**:
+  - Options.lua Init() debug tab definition (~372-384): Changed args from BuildDebugArgs() call to lazy function with caching
+
+#### [PERF-017] Cleaned Up Unnecessary SavedVariables Persistence (LOW)
+- **FIXED**: Removed unnecessary SavedVariables from being persisted to disk
+- **PROBLEM 1**: TOGBankClassicIcon was declared in SavedVariables but always nil (never used)
+- **PROBLEM 2**: TOGBankClassic_PerfMetrics persisted ~400 lines per session even when TOGBankClassic_PerfEnabled = false
+- **PROBLEM 3**: TOGBankClassic_MailDebugLog was developer debugging code left in production, persisting at every logout
+- **ROOT CAUSE**: SavedVariables list included unused/debug variables; perf metrics didn't clear when disabled
+- **IMPACT**: Unnecessary data written to SavedVariables on every logout, increasing file size and parse time
+- **SOLUTION**:
+  1. Removed TOGBankClassicIcon from .toc SavedVariables declaration
+  2. Set TOGBankClassic_PerfMetrics = nil when performance tracking is disabled (similar to PERF-014/016 pattern)
+  3. Removed TOGBankClassic_MailDebugLog entirely - deleted from .toc and removed entire debug block from PLAYER_LOGOUT
+- **RESULT**: 
+  - **TOGBankClassicIcon:** No longer persisted (was always nil anyway)
+  - **PerfMetrics:** Only persists when explicitly enabled; cleared to nil when disabled
+  - **MailDebugLog:** Completely removed (was dev debugging, not production feature)
+  - **File size savings:** ~400-600 lines removed from SavedVariables for typical user
+- **LOCATION**:
+  - TOGBankClassic.toc (~7): Removed TOGBankClassicIcon and TOGBankClassic_MailDebugLog from SavedVariables
+  - Performance.lua Initialize() (~42): Added TOGBankClassic_PerfMetrics = nil when disabled
+  - Events.lua PLAYER_LOGOUT (~278-345): Removed entire MailDebugLog collection block
+
 #### [PERF-016] Fixed Performance Tracking Initialization Overhead (LOW)
 - **FIXED**: Performance tracking now skips all initialization when disabled (default)
 - **PROBLEM**: Performance:Initialize() always created sessions, ran GC, initialized data structures even when TOGBankClassic_PerfEnabled = false (default)
