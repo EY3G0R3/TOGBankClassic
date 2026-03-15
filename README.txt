@@ -260,10 +260,6 @@ listed alphabetically for easy reference.
   - Displays delta sync adoption percentage
   - Lists recently seen members with their protocol versions
 
-/togbank requestlog [N|all]
-  Shows the item request log (optionally limited to N entries)
-  Example: /togbank requestlog 10
-
 /togbank resetmetrics
   Resets all delta sync statistics to zero
 

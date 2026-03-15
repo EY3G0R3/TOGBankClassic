@@ -2438,15 +2438,6 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
-		name = "requestlog",
-		usage = "[N|all]",
-		help = "print the request log, optionally limited to N entries",
-		expert = true,
-		handler = function(arg1)
-			TOGBankClassic_Guild:PrintRequestLog(arg1)
-		end,
-	},
-	{
 		name = "resetmetrics",
 		help = "reset delta sync statistics and metrics",
 		expert = true,
