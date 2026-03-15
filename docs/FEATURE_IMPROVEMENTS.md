@@ -31,7 +31,7 @@
 - [ ] **Item type sort grouping** - Offer sort modes beyond alphabetical: group items by type (armor, weapons, consumables, recipes, reagents, etc.) so guild members can browse all cloaks, helms, wands, etc. together; currently highest-priority adoption blocker (this is the primary behavioral difference vs GBank Classic - Revived that is blocking guild-wide rollout)
 - [ ] **Officer cancel permission toggle** - Add a configurable permission to enable/disable officers' ability to cancel requests; currently all officers can cancel any request with no restriction
 - [ ] **Requestor self-delete** - Allow requestors to permanently delete their own open requests (distinct from cancel, which is an officer action); gives requestors autonomy to clean up their own entries
-- [ ] **Request status visual differentiation** - Display fulfilled and cancelled requests with distinct visual styling in the request list UI so the two terminal states are immediately distinguishable at a glance
+- [x] ~~**Request status visual differentiation**~~ **IMPLEMENTED: Fulfilled rows tinted green with checkmark icon; cancelled rows tinted red with X icon**
 - [ ] **Command alias** - Add `/bank` (or a user-configurable slash command) as an alias to open the addon window; reduces friction for new guild members accustomed to `/bank` opening a bank frame
 - [ ] **Scoreboard UI or deprecation** - The bank acceptance window contains an "add to scoreboard" checkbox but no scoreboard UI exists or is accessible; either implement scoreboard access or remove the checkbox to avoid confusion
 

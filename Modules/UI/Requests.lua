@@ -976,8 +976,16 @@ function TOGBankClassic_UI_Requests:EnsureEmptyLabel()
 	return empty
 end
 
-local function colorize(text, completed)
-	local color = completed and "ff7f7f7f" or "ffffffff"
+local function colorize(text, reqStatus)
+	local color
+	if reqStatus == "cancelled" then
+		color = "ffff6666"
+	-- "complete" = officer manually marked done; "fulfilled" = quantity fully sent
+	elseif reqStatus == "fulfilled" or reqStatus == "complete" then
+		color = "ff66ff66"
+	else
+		color = "ffffffff"
+	end
 	return string.format("|c%s%s|r", color, text)
 end
 
@@ -1255,6 +1263,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		end
 
 		local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
+		local CancelledIcon = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:0|t "
 		local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
 		local actorIsGM = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
 
@@ -1263,6 +1272,10 @@ function TOGBankClassic_UI_Requests:DrawContent()
 			self:SetRowVisible(row, true)
 
 			local completed = isComplete(req)
+			local reqStatus = req.status or "open"
+			if completed and reqStatus == "open" then
+				reqStatus = "fulfilled"
+			end
 			local requestId = req.id
 			local canCancel = not completed
 				and requestId
@@ -1274,7 +1287,9 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				and TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
 			local ts = tonumber(req.date or 0) or 0
 			local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
-			if completed then
+			if reqStatus == "cancelled" then
+				dateText = CancelledIcon .. dateText
+			elseif completed then
 				dateText = CheckMarkIcon .. dateText
 			end
 
@@ -1451,7 +1466,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				else
 					if row and row.cells then
 						local label = row.cells[i]
-						label:SetText(colorize(cellText(col.key), completed))
+						label:SetText(colorize(cellText(col.key), reqStatus))
 						label:SetWidth(columnWidth)
 						setWidgetShown(label, true)
 					end
