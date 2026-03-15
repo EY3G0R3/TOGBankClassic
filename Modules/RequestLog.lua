@@ -7,6 +7,69 @@ local warnedAbout = {
 	corruptedTimestamps = {},  -- Track by request ID
 }
 
+-- Queue for staggered by-id batch sends.
+-- Sending all batches at once would flood the peer's ChatThrottleLib outbound queue,
+-- delaying all 30 responses by minutes. Instead we send one batch every
+-- REQUESTS_BY_ID_BATCH_DELAY seconds so the peer can respond to each before the next arrives.
+-- byIdQueueGen is bumped whenever a new sync starts; stale C_Timer callbacks check it
+-- before proceeding, making them silent no-ops (C_Timer has no cancel API in Classic Era).
+local byIdQueue = {}
+local byIdQueueGen = 0
+
+local function drainByIdQueue(gen)
+	if gen ~= byIdQueueGen then return end  -- stale callback from a previous sync; abort
+	if #byIdQueue == 0 then return end
+
+	local item = table.remove(byIdQueue, 1)
+	local remaining = #byIdQueue
+	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+		"Sending by-id batch to %s (%d IDs, %d batch(es) remaining in queue)",
+		tostring(item.sender), #item.ids, remaining)
+
+	if not TOGBankClassic_Guild:QueryRequestsById(item.sender, item.ids) then
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"QueryRequestsById send failed for %s — aborting queue (%d batch(es) dropped)",
+			tostring(item.sender), remaining)
+		byIdQueue = {}
+		byIdQueueGen = byIdQueueGen + 1
+		TOGBankClassic_Guild:EndRequestsIndexSync()
+		TOGBankClassic_Guild:RefreshRequestsUI()
+		return
+	end
+
+	if remaining > 0 then
+		C_Timer.After(REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, function()
+			drainByIdQueue(gen)
+		end)
+	else
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"By-id queue drained — all batches sent to %s", tostring(item.sender))
+	end
+end
+
+function Guild:EnqueueByIdBatches(sender, missingIds)
+	-- Cancel any in-progress drain from a previous sync.
+	byIdQueueGen = byIdQueueGen + 1
+	byIdQueue = {}
+
+	local batchSize = REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_SIZE
+	local totalBatches = math.ceil(#missingIds / batchSize)
+	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+		"Queuing %d missing requests → %d batch(es) of up to %d IDs each, %ds apart, for %s",
+		#missingIds, totalBatches, batchSize, REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, tostring(sender))
+
+	for batchStart = 1, #missingIds, batchSize do
+		local batch = {}
+		for i = batchStart, math.min(batchStart + batchSize - 1, #missingIds) do
+			batch[#batch + 1] = missingIds[i]
+		end
+		byIdQueue[#byIdQueue + 1] = { sender = sender, ids = batch }
+	end
+
+	-- Fire the first batch immediately; subsequent ones are staggered by the timer.
+	drainByIdQueue(byIdQueueGen)
+end
+
 --[[
 Request sync and storage
 ========================
@@ -1061,31 +1124,7 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 
 	if #missingIds > 0 then
 		self:MarkRequestsIndexAwaitingById()
-		local batchSize = REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_SIZE
-		local totalBatches = math.ceil(#missingIds / batchSize)
-		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
-			"Querying %s for %d missing requests in %d batch(es) of %d",
-			tostring(sender), #missingIds, totalBatches, batchSize)
-		-- Split into batches to avoid WoW chat throttle on large syncs.
-		-- Each batch is a separate query; the peer responds to each independently.
-		local anyFailed = false
-		for batchStart = 1, #missingIds, batchSize do
-			local batch = {}
-			for i = batchStart, math.min(batchStart + batchSize - 1, #missingIds) do
-				batch[#batch + 1] = missingIds[i]
-			end
-			if not self:QueryRequestsById(sender, batch) then
-				anyFailed = true
-				break
-			end
-		end
-		if anyFailed then
-			-- Send failed (e.g. sender went offline between index and by-id send).
-			-- Clear inFlight immediately instead of waiting 30s for timeout.
-			TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "QueryRequestsById send failed for %s", tostring(sender))
-			self:EndRequestsIndexSync()
-			self:RefreshRequestsUI()
-		end
+		self:EnqueueByIdBatches(sender, missingIds)
 	else
 		TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "Already in sync with %s (0 missing)", tostring(sender))
 		self:EndRequestsIndexSync()
