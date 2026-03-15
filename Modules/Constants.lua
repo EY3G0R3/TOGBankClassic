@@ -35,6 +35,7 @@ DEBUG_CATEGORY = {
 	PROTOCOL = "PROTOCOL",       -- Protocol version negotiation
 	DATABASE = "DATABASE",       -- Database operations, SavedVariables
 	EVENTS = "EVENTS",           -- WoW event handling
+	BANK = "BANK",               -- Bank inventory aggregation and recalculation
 	MAIL = "MAIL",               -- Mail inventory scanning and tracking
 	ITEM = "ITEM",               -- Item loading, validation, and processing
 	QUERIES = "QUERIES",         -- P2P query/response decisions and hash matching
