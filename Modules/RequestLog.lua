@@ -1061,8 +1061,25 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 
 	if #missingIds > 0 then
 		self:MarkRequestsIndexAwaitingById()
-		TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "Querying %s for %d missing requests", tostring(sender), #missingIds)
-		if not self:QueryRequestsById(sender, missingIds) then
+		local batchSize = REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_SIZE
+		local totalBatches = math.ceil(#missingIds / batchSize)
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"Querying %s for %d missing requests in %d batch(es) of %d",
+			tostring(sender), #missingIds, totalBatches, batchSize)
+		-- Split into batches to avoid WoW chat throttle on large syncs.
+		-- Each batch is a separate query; the peer responds to each independently.
+		local anyFailed = false
+		for batchStart = 1, #missingIds, batchSize do
+			local batch = {}
+			for i = batchStart, math.min(batchStart + batchSize - 1, #missingIds) do
+				batch[#batch + 1] = missingIds[i]
+			end
+			if not self:QueryRequestsById(sender, batch) then
+				anyFailed = true
+				break
+			end
+		end
+		if anyFailed then
 			-- Send failed (e.g. sender went offline between index and by-id send).
 			-- Clear inFlight immediately instead of waiting 30s for timeout.
 			TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "QueryRequestsById send failed for %s", tostring(sender))
