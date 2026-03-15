@@ -375,14 +375,7 @@ function TOGBankClassic_Options:Init()
 				order = 2,
 				type = "group",
 				name = "Debug",
-				-- PERF-018: Lazy build debug options - only create ~55 UI elements when tab is opened
-				args = function()
-					if not TOGBankClassic_Options.debugArgsBuilt then
-						TOGBankClassic_Options.debugArgs = BuildDebugArgs()
-						TOGBankClassic_Options.debugArgsBuilt = true
-					end
-					return TOGBankClassic_Options.debugArgs
-				end,
+				args = BuildDebugArgs(),
 			},
 			requests = {
 				order = 3,
