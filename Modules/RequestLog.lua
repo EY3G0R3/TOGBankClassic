@@ -1049,15 +1049,28 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 		end
 	end
 
+	local localCount = 0
+	for _ in pairs(self.Info.requests or {}) do localCount = localCount + 1 end
+	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+		"ReceiveRequestsIndex from %s: peer has %d requests + %d tombstones, we have %d local, %d missing",
+		tostring(sender),
+		#incomingRequests,
+		#(incomingTombstones or {}),
+		localCount,
+		#missingIds)
+
 	if #missingIds > 0 then
 		self:MarkRequestsIndexAwaitingById()
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "Querying %s for %d missing requests", tostring(sender), #missingIds)
 		if not self:QueryRequestsById(sender, missingIds) then
 			-- Send failed (e.g. sender went offline between index and by-id send).
 			-- Clear inFlight immediately instead of waiting 30s for timeout.
+			TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "QueryRequestsById send failed for %s", tostring(sender))
 			self:EndRequestsIndexSync()
 			self:RefreshRequestsUI()
 		end
 	else
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "Already in sync with %s (0 missing)", tostring(sender))
 		self:EndRequestsIndexSync()
 		self:RefreshRequestsUI()
 	end
