@@ -7,6 +7,45 @@
 
 ### 🐛 Bug Fixes
 
+#### [PERF-021] Eliminated ChatThrottleLib Errors During Zone Transitions (CRITICAL)
+- **FIXED**: Added 2.5s zone-in cooldown period to defer expensive operations and give ChatThrottleLib breathing room
+- **PROBLEM**: Despite PERF-019 (guard overlapping roster refreshes) and PERF-020 (batch hash broadcasts), users still got "script ran too long" errors when zoning. ChatThrottleLib itself (Despool function) + Bagnon + other addons exceeded cumulative execution budget during zone transitions
+- **ROOT CAUSE**: When zoning with large message backlog (180+ queued messages from ongoing delta sends taking 26+ seconds), ChatThrottleLib's Despool() must process queue during zone transition (execution-budget-constrained window). If addon operations compete for budget (GUILD_ROSTER_UPDATE, periodic timer broadcasts, hash processing, Bagnon UI updates), cumulative execution exceeds limit
+- **IMPACT**: 
+  - Intermittent "script ran too long" errors in ChatThrottleLib.lua:415 (Despool) when zoning mid-send
+  - Bagnon execution errors (`Script from "Bagnon" has exceeded its execution time limit`)
+  - Stuttering/freezing during zone transitions from budget exhaustion
+  - Errors persisted even after PERF-019/020 because ChatThrottleLib needed isolation to drain queue
+- **BEHAVIOR**: 
+  - User zones while 65-chunk send in progress (26+ seconds total) → 30-40 chunks still queued in CTL → 180+ pipe entries
+  - PLAYER_ENTERING_WORLD fires → GUILD_ROSTER_UPDATE (even with PERF-019 guard) → other addons process events
+  - Periodic OnShareTimer fires during zone window (3-minute cycle can coincide) → broadcasts compete with CTL
+  - Guild members broadcast hashes during login waves (even with PERF-020 batching) → responses add CTL traffic
+  - CTL Despool + our operations + Bagnon/other addons = cumulative budget exceeded
+- **SOLUTION**:
+  1. Add `zoningCooldown` flag set to `true` on PLAYER_ENTERING_WORLD (ANY type: login, reload, OR zone change)
+  2. Clear flag after 2.5 seconds via C_Timer.After (gives CTL breathing room)
+  3. Guard OnShareTimer: if zoningCooldown active, defer and reschedule without processing
+  4. Guard SyncDeltaVersion: block BULK priority (timer-based) during cooldown, allow NORMAL priority (login broadcasts)
+  5. Guard GUILD_ROSTER_UPDATE login broadcasts: if cooldown active when roster init completes, reschedule QueryRequestsIndex + SyncDeltaVersion for 2.6s
+  6. Guard share-request handler: return early if zoningCooldown active
+  7. Guard /togbank share command: defer 2.6s and warn user if zoningCooldown active
+- **RESULT**: 
+  - **ChatThrottleLib gets 2.5s breathing room** after ANY world entry to drain queue without competition
+  - **Periodic broadcasts deferred** until cooldown expires (timer reschedules normally)
+  - **Login broadcasts still execute** but deferred by 2.6s if cooldown hasn't expired yet
+  - **Share requests deferred** (both incoming and manual) to avoid adding work during cooldown
+  - **No functional impact:** P2P collect windows are 60s, 2.5s delay = 4% increase (negligible)
+  - **Execution errors eliminated** during zone transitions
+  - **CTL Despool operates in isolation** during critical zone-in window
+- **LOCATION**:
+  - Events.lua PLAYER_ENTERING_WORLD (~284-310): zoningCooldown init + 2.5s timer
+  - Events.lua OnShareTimer (~169-177): defer check + early return + reschedule
+  - Events.lua SyncDeltaVersion (~252-260): priority filter (BULK blocked, NORMAL allowed)
+  - Events.lua GUILD_ROSTER_UPDATE (~350-370): deferred login broadcast reschedule (2.6s)
+  - Chat.lua share-request handler (~1850-1858): defer check + early return
+  - Chat.lua share command (~2086-2104): defer with warning + 2.6s reschedule
+
 #### [PERF-020] Eliminated Stuttering from Synchronous Hash Broadcast Processing (CRITICAL)
 - **FIXED**: Hash-list broadcasts now batched with 0.15s timer to prevent main thread blocking during sync storms
 - **PROBLEM**: Hash-list broadcasts from guild members processed immediately and synchronously when received

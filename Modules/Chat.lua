@@ -1850,6 +1850,11 @@ end
 			return
 		-- SYNC-013: share/wipe/roster migrated from dead prefixes onto togbank-hl type dispatch
 		elseif data.type == "share-request" then
+			-- PERF-021: Defer share replies during zone-in cooldown
+			if TOGBankClassic_Events.zoningCooldown then
+				TOGBankClassic_Output:Debug("PERF", "Share reply deferred (zone-in cooldown active)")
+				return
+			end
 			TOGBankClassic_Guild:Share("reply")
 			local now = GetServerTime()
 			if not self.last_share_sync or now - self.last_share_sync > 30 then
@@ -2083,6 +2088,16 @@ local COMMAND_REGISTRY = {
 		name = "share",
 		help = "manually share the contents of your guild bank with other online users of TOGBankClassic; this is done every 3 minutes automatically",
 		handler = function()
+			-- PERF-021: Warn user if zone-in cooldown is active
+			if TOGBankClassic_Events.zoningCooldown then
+				TOGBankClassic_Output:Response("Zone-in cooldown active, deferring share for 2.5s...")
+				C_Timer.After(2.6, function()
+					TOGBankClassic_Bank:OnUpdateStart()
+					TOGBankClassic_Bank:OnUpdateStop()
+					TOGBankClassic_Guild:Share()
+				end)
+				return
+			end
 			TOGBankClassic_Bank:OnUpdateStart()
 			TOGBankClassic_Bank:OnUpdateStop()
 			TOGBankClassic_Guild:Share()

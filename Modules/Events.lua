@@ -170,6 +170,14 @@ function TOGBankClassic_Events:SetShareTimer()
 end
 
 function TOGBankClassic_Events:OnShareTimer()
+	-- PERF-021: Defer periodic broadcasts during zone-in cooldown to give ChatThrottleLib
+	-- breathing room when processing backlogged message queues
+	if self.zoningCooldown then
+		TOGBankClassic_Output:Debug("PERF", "OnShareTimer deferred (zone-in cooldown active)")
+		self:SetShareTimer()
+		return
+	end
+	
 	local now = GetTime()
 	if self.lastShareTimerAt then
 		local delta = now - self.lastShareTimerAt
@@ -235,7 +243,15 @@ function TOGBankClassic_Events:Sync(priority)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(version)
 	-- Use provided priority or default to BULK for automatic timer-based syncs
 	TOGBankClassic_Core:SendCommMessage("togbank-v", data, "Guild", nil, priority or "BULK")
-end
+e-- PERF-021: Defer hash broadcasts during zone-in cooldown (except NORMAL priority from login)
+	-- Normal zone changes shouldn't broadcast, but login needs to broadcast after roster init.
+	-- Allow NORMAL priority through (used by GUILD_ROSTER_UPDATE after login), block BULK (timer).
+	if self.zoningCooldown and priority ~= "NORMAL" then
+		TOGBankClassic_Output:Debug("PERF", "SyncDeltaVersion deferred (zone-in cooldown active)")
+		return
+	end
+	
+	nd
 --]]
 
 -- Delta-specific version broadcast (SYNC-001 fix)
@@ -283,6 +299,16 @@ end
 -- Request initial guild roster update on world enter
 function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
 	TOGBankClassic_Performance:RecordEvent("PLAYER_ENTERING_WORLD")
+	
+	-- PERF-021: Set zone-in cooldown for ALL world entries (login, reload, zone change)
+	-- When entering world with ChatThrottleLib backlog (e.g., 180+ queued messages from ongoing
+	-- delta sends), CTL's Despool() can exceed execution limits. Defer expensive operations
+	-- for 2.5s to give CTL time to drain queue without competing with our work.
+	self.zoningCooldown = true
+	C_Timer.After(2.5, function()
+		self.zoningCooldown = false
+		TOGBankClassic_Output:Debug("PERF", "Zone-in cooldown expired, resuming normal operations")
+	end)
 	
 	-- PERF-013: Only do full roster refresh + broadcasts on login/reload, not zone changes
 	-- Every zone change was broadcasting 2 GUILD messages (togbank-r + togbank-hl), causing
@@ -348,10 +374,25 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 					TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Will retry on next GUILD_ROSTER_UPDATE")
 			else
 					TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Roster initialization complete after %d attempts", attempts)
-				-- REQUEST-001: Sync request state shortly after login, don't wait for the periodic timer
-				TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")				-- SYNC-014: Broadcast our hashes immediately on login so peers can offer data
-				-- without waiting for the 10-minute periodic timer to fire first.
-				TOGBankClassic_Events:SyncDeltaVersion("NORMAL")			end
+				-- PERF-021: Only broadcast on login if zone-in cooldown has expired
+				-- Roster init completes ~1s after login, well before 2.5s cooldown expires.
+				-- Defer these broadcasts until cooldown clears to avoid competing with CTL backlog.
+				if not self.zoningCooldown then
+					-- REQUEST-001: Sync request state shortly after login, don't wait for the periodic timer
+					TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")				-- SYNC-014: Broadcast our hashes immediately on login so peers can offer data
+					-- without waiting for the 10-minute periodic timer to fire first.
+					TOGBankClassic_Events:SyncDeltaVersion("NORMAL")
+				else
+					TOGBankClassic_Output:Debug("PERF", "Login broadcasts deferred (zone-in cooldown active)")
+					-- Reschedule after cooldown expires
+					C_Timer.After(2.6, function()
+						if not self.zoningCooldown then
+							TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
+							TOGBankClassic_Events:SyncDeltaVersion("NORMAL")
+						end
+					end)
+				end
+			end
 			
 			-- PERF-019: Clear in-progress flag to allow next refresh cycle
 			self.refreshInProgress = false
