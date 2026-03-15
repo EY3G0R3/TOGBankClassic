@@ -1779,7 +1779,10 @@ end
 			)
 		end
 		if data.type == "requests-index" then
-			self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR, "requests index.")
+			local reqCount = data.requests and #data.requests or 0
+			local tombCount = data.tombstones and #data.tombstones or 0
+			self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR,
+				string.format("requests index (%d requests, %d tombstones).", reqCount, tombCount))
 			TOGBankClassic_Guild:ReceiveRequestsIndex(data, sender)
 		end
 		if data.type == "requests-by-id" then
