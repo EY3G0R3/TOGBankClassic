@@ -821,8 +821,8 @@ function Guild:CanQueryRequestsIndex(sender)
 	return true
 end
 
-function Guild:BeginRequestsIndexSync(sender)
-	if not self:CanQueryRequestsIndex(sender) then
+function Guild:BeginRequestsIndexSync(sender, force)
+	if not force and not self:CanQueryRequestsIndex(sender) then
 		return false
 	end
 	self:EnsureRequestsIndexSyncState()
@@ -914,8 +914,8 @@ function Guild:QueryRequestsSnapshot(player, priority)
 end
 
 -- Request index query/response for hash-based sync.
-function Guild:QueryRequestsIndex(target, priority)
-	if not self:BeginRequestsIndexSync(target) then
+function Guild:QueryRequestsIndex(target, priority, force)
+	if not self:BeginRequestsIndexSync(target, force) then
 		return false
 	end
 	local payload = {

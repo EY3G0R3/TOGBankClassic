@@ -122,7 +122,13 @@ function TOGBankClassic_Chat:PerformSync()
 	TOGBankClassic_Guild:FastFillMissingAlts()
 	TOGBankClassic_Guild:ReportBankerDataProgress("sync", true)
 	-- REQUEST-001: Use index-based request sync (modern delta protocol)
-	TOGBankClassic_Guild:QueryRequestsIndex(nil, "ALERT")
+	-- Pass force=true to bypass the 60s cooldown — this is an explicit user action, not a timer.
+	local sent = TOGBankClassic_Guild:QueryRequestsIndex(nil, "ALERT", true)
+	if sent then
+		TOGBankClassic_Output:Response("Syncing requests with guild...")
+	else
+		TOGBankClassic_Output:Response("Request sync failed to send.")
+	end
 end
 
 local SHARES_COLOR = "|cff80bfffshares|r"
