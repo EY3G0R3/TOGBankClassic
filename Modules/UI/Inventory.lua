@@ -151,7 +151,7 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	buttonContainer:AddChild(searchButton)
 
 	local function GetSortLabel(m)
-		return m == "type" and "Sort: By Type" or "Sort: A\226\134\146Z"
+		return m == "type" and "Sort: By Type" or "Sort: A-Z"
 	end
 	local sortButton = TOGBankClassic_UI:Create("Button")
 	local initMode = (TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char.sortMode) or "alpha"
@@ -205,7 +205,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	-- Sync sort button label with persisted mode (db available by the time DrawContent runs)
 	if self.SortButton and TOGBankClassic_Options and TOGBankClassic_Options.db then
 		local m = TOGBankClassic_Options.db.char.sortMode or "alpha"
-		self.SortButton:SetText(m == "type" and "Sort: By Type" or "Sort: A\226\134\146Z")
+		self.SortButton:SetText(m == "type" and "Sort: By Type" or "Sort: A-Z")
 	end
 
 	-- Clear search data built flag so search rebuilds on next open (PERF-004)
