@@ -7,7 +7,7 @@ local warnedAbout = {
 	corruptedTimestamps = {},  -- Track by request ID
 }
 
--- Queue for staggered by-id batch sends.
+-- Queue for staggered by-id batch sends (requester side).
 -- Sending all batches at once would flood the peer's ChatThrottleLib outbound queue,
 -- delaying all 30 responses by minutes. Instead we send one batch every
 -- REQUESTS_BY_ID_BATCH_DELAY seconds so the peer can respond to each before the next arrives.
@@ -15,6 +15,48 @@ local warnedAbout = {
 -- before proceeding, making them silent no-ops (C_Timer has no cancel API in Classic Era).
 local byIdQueue = {}
 local byIdQueueGen = 0
+
+-- Queue for staggered by-id batch responses (responder side).
+-- When a peer queries us for 1500 IDs at once (e.g. an older client), building one
+-- giant response and handing it to AceComm monopolises our ChatThrottleLib NORMAL queue
+-- for ~4 minutes. Instead we resolve all IDs immediately, split into batches, and
+-- stagger the sends. Each batch is a separate togbank-rd message; the receiver's
+-- ReceiveRequestsById handles multiple messages correctly.
+-- sendByIdQueueGen ensures a new large query cancels any in-progress response drain.
+local sendByIdQueue = {}
+local sendByIdQueueGen = 0
+
+local function drainSendByIdQueue(gen)
+	if gen ~= sendByIdQueueGen then return end
+	if #sendByIdQueue == 0 then return end
+
+	local item = table.remove(sendByIdQueue, 1)
+	local remaining = #sendByIdQueue
+	TOGBankClassic_Output:Debug("REQUESTS", "SEND",
+		"Sending by-id response batch to %s (%d requests + %d tombstones, %d batch(es) remaining)",
+		tostring(item.target), #item.requests, item.tombstoneCount, remaining)
+
+	local payload = {
+		type = "requests-by-id",
+		requests = item.requests,
+		tombstones = item.tombstones,
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	if item.target and item.target ~= "" then
+		TOGBankClassic_Core:SendWhisper("togbank-rd", data, item.target, "NORMAL")
+	else
+		TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
+	end
+
+	if remaining > 0 then
+		C_Timer.After(REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, function()
+			drainSendByIdQueue(gen)
+		end)
+	else
+		TOGBankClassic_Output:Debug("REQUESTS", "SEND",
+			"By-id response queue drained — all batches sent to %s", tostring(item.target))
+	end
+end
 
 local function drainByIdQueue(gen)
 	if gen ~= byIdQueueGen then return end  -- stale callback from a previous sync; abort
@@ -1162,34 +1204,61 @@ function Guild:SendRequestsById(target, ids)
 	end
 	self:EnsureRequestsInitialized()
 
-	local requests = {}
-	local tombstones = {}
+	-- Resolve all IDs immediately so we snapshot current state at query time,
+	-- regardless of how long the staggered send takes.
+	local allRequests = {}
+	local allTombstones = {}
 	for _, id in ipairs(ids) do
 		if id then
 			local req = self.Info.requests[id]
 			if req then
-				table.insert(requests, req)
+				table.insert(allRequests, req)
 			else
 				local ts = tonumber((self.Info.requestsTombstones or {})[id] or 0) or 0
 				if ts > 0 then
-					tombstones[id] = ts
+					allTombstones[id] = ts
 				end
 			end
 		end
 	end
 
-	local payload = {
-		type = "requests-by-id",
-		requests = requests,
-		tombstones = tombstones,
-	}
-	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
-	if target and target ~= "" then
-		TOGBankClassic_Core:SendWhisper("togbank-rd", data, target, "NORMAL")
-	else
-		TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
+	local batchSize = REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_SIZE
+	local totalRequests = #allRequests
+	local totalBatches = math.max(1, math.ceil(totalRequests / batchSize))
+
+	TOGBankClassic_Output:Debug("REQUESTS", "SEND",
+		"Responding to by-id query from %s: %d requests + %d tombstones → %d batch(es)",
+		tostring(target), totalRequests, 0, totalBatches)
+
+	-- Cancel any previous response drain (a new large query supersedes it).
+	sendByIdQueueGen = sendByIdQueueGen + 1
+	sendByIdQueue = {}
+
+	-- Split allRequests into batches; tombstones go in the first batch only
+	-- (they are keyed by ID and typically few in number).
+	local tombstonesAttached = false
+	for batchStart = 1, math.max(1, totalRequests), batchSize do
+		local batch = {}
+		for i = batchStart, math.min(batchStart + batchSize - 1, totalRequests) do
+			batch[#batch + 1] = allRequests[i]
+		end
+		local batchTombstones = {}
+		local tombstoneCount = 0
+		if not tombstonesAttached then
+			batchTombstones = allTombstones
+			for _ in pairs(allTombstones) do tombstoneCount = tombstoneCount + 1 end
+			tombstonesAttached = true
+		end
+		sendByIdQueue[#sendByIdQueue + 1] = {
+			target = target,
+			requests = batch,
+			tombstones = batchTombstones,
+			tombstoneCount = tombstoneCount,
+		}
 	end
+
+	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
+	drainSendByIdQueue(sendByIdQueueGen)
 end
 
 function Guild:ReceiveRequestsById(payload)
