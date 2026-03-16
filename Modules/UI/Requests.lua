@@ -1240,6 +1240,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	end
 
 	local sorted = self:SortedRequests()
+	local total = #sorted
 	sorted = self:ApplyFilters(sorted)
 	local count = #sorted
 
@@ -1484,7 +1485,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		end
 	end
 
-	local status = string.format("%d Request%s", count, count == 1 and "" or "s")
+	local status = string.format("Showing %d request%s out of %d total", count, count == 1 and "" or "s", total)
 	self.Window:SetStatusText(status)
 
 	content:ResumeLayout()
