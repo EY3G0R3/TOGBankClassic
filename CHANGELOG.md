@@ -1,5 +1,34 @@
 # TOGBankClassic Changelog
 
+## [v0.9.4] (2026-03-15) - Request Sync Overhaul & UI Fixes
+
+**Status:** Production Ready
+
+### ✨ New Features
+
+- **Request status colours** — Fulfilled requests are now tinted green with a checkmark icon; cancelled requests are tinted red with an X icon, making it easy to scan request history at a glance.
+- **Item sort toggle** — Inventory view now has an A–Z / By Type sort toggle button.
+
+### 🐛 Bug Fixes
+
+- **Request sync stalling on login** — Fixed a critical issue where syncing after being offline could stall indefinitely. Three root causes addressed:
+  - `/togbank sync` was silently blocked by a 60-second cooldown; it now always fires immediately when invoked manually.
+  - Querying a peer for 1500+ missing requests sent one massive message, overwhelming WoW's chat throttle. Queries are now batched (50 IDs each) and staggered 2 seconds apart.
+  - The responding peer now also sends replies in staggered batches, preventing their outbound throttle queue from being monopolised for several minutes.
+- **Options window crash** — Fixed crash on open (`AceConfig: expected a table, got 'function'`).
+- **Debug message formatting** — Fixed `%d` appearing literally in bank-related debug messages instead of actual numbers.
+- **`/togbank hello` crash** — Fixed crash when running from source due to unsubstituted `@project-version@` placeholder.
+- **Slot counts showing 0/0** — Fixed slot count display for non-banker characters (UI-001).
+- **Gold icon broken** — Fixed broken gold icon in the inventory UI (UI-002).
+- **Zone transition errors** — Fixed ChatThrottleLib errors during zone transitions (PERF-021).
+- **Delta sync crash** — Fixed delta syncs missing slot metadata and a nil crash on Info access (SLOTS-001, SYNC-015).
+
+### 🗑️ Removed
+
+- `/togbank requestlog` command — superseded by the Requests UI tab. The command had no handler and crashed on use.
+
+---
+
 ## Unreleased - Hash Sync Fixes
 
 **Status:** In Development
