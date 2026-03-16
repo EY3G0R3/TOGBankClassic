@@ -212,7 +212,7 @@ end
 		number - age in seconds, or nil if no data
 ]]
 function TOGBankClassic_MailInventory:GetMailDataAge(alt)
-	if not alt or not alt.mail or not alt.mail.lastScan then
+	if not alt or not alt.mail or not alt.mail.lastScan or alt.mail.lastScan == 0 then
 		return nil
 	end
 
