@@ -260,7 +260,15 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.9.4 (Latest)
+v0.9.5 (Latest)
+• Live network queue indicator in status bar (sends, queue depth, fetches, request sync progress)
+• Request index sync shows target player name and batch progress (e.g. "r:2/7")
+• /togbank versions now shows all online guild members, not just bankers
+• Fixed request sync stalling on guilds with 1000+ requests (increased timeouts and batch delay)
+• Fixed mail age showing "20000 days ago" for characters with no mail scan data
+• Fixed date column misalignment between pending and fulfilled/cancelled requests
+
+v0.9.4
 • Request status colours: fulfilled = green, cancelled = red
 • Item sort toggle: A-Z or By Type in inventory view
 • Fixed request sync stalling on login for players offline 1+ days
