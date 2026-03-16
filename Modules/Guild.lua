@@ -921,10 +921,11 @@ function TOGBankClassic_Guild:SendHashList(target)
 end
 
 function TOGBankClassic_Guild:RequestHashListFromBanker()
-	-- Find an online banker from guild roster
+	-- Find an online banker from guild roster (excluding ourselves)
+	local myPlayer = self:GetNormalizedPlayer()
 	local banker = nil
 	for member, _ in pairs(self.onlineMembers or {}) do
-		if self:IsBank(member) and self:IsPlayerOnline(member) then
+		if self:IsBank(member) and self:IsPlayerOnline(member) and member ~= myPlayer then
 			banker = member
 			break
 		end
@@ -1318,10 +1319,11 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	local bankerCount = 0
 
 	-- If no target specified, find a banker
+	local myPlayer = self:GetNormalizedPlayer()
 	if not banker then
 		-- MAIL-012 DEBUG: Log all online bankers from guild roster
 		for member, _ in pairs(self.onlineMembers or {}) do
-			if self:IsBank(member) then
+			if self:IsBank(member) and member ~= myPlayer then
 				bankerCount = bankerCount + 1
 				TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Online banker from roster: %s, isOnline=%s",
 					member, tostring(self:IsPlayerOnline(member)))
@@ -1338,7 +1340,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 				local rosterName, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
 				if rosterName and online then
 					local normRoster = self:NormalizeName(rosterName)
-					if self:IsBank(normRoster) then
+					if self:IsBank(normRoster) and normRoster ~= myPlayer then
 						bankerCount = bankerCount + 1
 						banker = banker or normRoster
 						TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Online banker from live roster: %s, isOnline=true", normRoster)
@@ -1409,6 +1411,12 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 		return
 	end
 	
+	-- Never whisper ourselves (WoW delivers whispers back to sender, causing self-loops)
+	if banker == myPlayer then
+		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Skipping self-query for alt %s - we are the banker (%s)", norm, banker)
+		return
+	end
+
 	-- WHISPER banker as last resort (banker confirmed online)
 	TOGBankClassic_Output:DebugComm("SENDING WHISPER (last resort): togbank-r to %s for alt %s", banker, norm)
 	TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] WHISPER query for %s to banker %s (last resort after P2P timeout)", norm, banker)
