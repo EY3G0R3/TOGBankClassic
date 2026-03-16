@@ -196,6 +196,25 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	self.TabGroup = tabGroup
 end
 
+local function CTLQueueDepth()
+	local ctl = _G.ChatThrottleLib
+	if not ctl or not ctl.Prio then return 0 end
+	local total = 0
+	local function walkRing(ring)
+		if not ring or not ring.pos then return end
+		local pipe = ring.pos
+		repeat
+			total = total + #pipe
+			pipe = pipe.next
+		until pipe == ring.pos
+	end
+	for _, prio in pairs(ctl.Prio) do
+		walkRing(prio.Ring)
+		walkRing(prio.Blocked)
+	end
+	return total
+end
+
 function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 	local parts = {}
 
@@ -240,6 +259,13 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 				table.insert(parts, string.format("|cff87ceebQuerying requests index from %s|r", target))
 			end
 		end
+	end
+
+	-- ChatThrottleLib outbound queue (actual network packets waiting to be sent)
+	local ctlDepth = CTLQueueDepth()
+	if ctlDepth > 0 then
+		local c = ctlDepth > 20 and "ffff4444" or "ffff9900"
+		table.insert(parts, string.format("|c%snet:%d|r", c, ctlDepth))
 	end
 
 	if #parts == 0 then return "" end
