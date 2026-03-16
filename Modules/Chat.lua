@@ -965,6 +965,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			-- Use REQUESTS category for request-related queries, SYNC for alt queries
 			local isRequestQuery = data.type and string.find(data.type, "^requests") ~= nil
 			local category = isRequestQuery and "REQUESTS" or "SYNC"
+			local extraInfo = ""
+			if data.type == "requests-index" and data.hash then
+				local myHash = TOGBankClassic_Guild:GetRequestsHash()
+				local querierHash = tonumber(data.hash) or 0
+				extraInfo = string.format(" (their:%d ours:%d)", querierHash, myHash)
+			end
 			self:Debug(
 				category,
 				">",
@@ -972,7 +978,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				QUERIES_COLOR,
 				isRequestQuery and "[REQ]" or "",
 				data.type,
-				data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or ""
+				(data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or "") .. extraInfo
 			)
 
 			-- Request data is guild-wide, anyone can respond (player="*")
