@@ -260,35 +260,24 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.8.0 (Latest)
-• Link-less delta optimization for additional bandwidth savings
-• Fixed hash broadcast not triggering P2P requests (HASH-001)
-• Fixed offline player detection from whisper errors (COMM-003/003b/003c)
-• Optimized chat filter performance (PERF-009)
-• Fixed login freeze from synchronous migrations (PERF-010)
-• Fixed Bagnon execution timeout from BAG_UPDATE spam (PERF-007)
+v0.9.4 (Latest)
+• Request status colours: fulfilled = green, cancelled = red
+• Item sort toggle: A-Z or By Type in inventory view
+• Fixed request sync stalling on login for players offline 1+ days
+• Fixed options window crash on open
+• Fixed /togbank sync being silently blocked by cooldown
+• Fixed /togbank hello crash on unpackaged builds
+• Fixed slot counts showing 0/0 for non-banker characters
+• Removed broken /togbank requestlog command (superseded by Requests UI)
 
-v0.7.11
-• Persistent debug logging with 50k entry buffer and 7-day retention
-• Guild-wide request percentage limits (officer feature)
-• Mute warnings checkbox to reduce chat spam
-• Automatic stack splitting with confirmation dialogs
+v0.9.0
+• Event-sourced request log with merge-based conflict resolution
+• Request fulfillment tracking with partial fulfillment support
+• Officer permission controls for request management
+• P2P session manager for faster data distribution
 
 
 ================================================================================
-
-Download TOGBankClassic today and revolutionize your guild's bank management!
-
-No more alt-hopping. No more whisper spam. Just efficient, organized guild banking.
-- ⚡ Fixed Bagnon execution timeout from BAG_UPDATE spam (PERF-007)
-
-### **v0.7.11**
-- 📊 Persistent debug logging with 50k entry buffer and 7-day retention
-- 🛠️ Guild-wide request percentage limits (officer feature)
-- 🔇 Mute warnings checkbox to reduce chat spam
-- ✂️ Automatic stack splitting with confirmation dialogs
-
----
 
 **Download TOGBankClassic today and revolutionize your guild's bank management!**
 
