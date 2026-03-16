@@ -215,6 +215,37 @@ local function CTLQueueDepth()
 	return total
 end
 
+-- Returns (prefix, destination) for the next message CTL will send, in priority order.
+-- destination is the whisper target if present, otherwise the chattype (GUILD, RAID, etc.)
+local CTL_PRIO_ORDER = {"ALERT", "NORMAL", "BULK"}
+local function CTLNextMessage()
+	local ctl = _G.ChatThrottleLib
+	if not ctl or not ctl.Prio then return nil, nil end
+	for _, prioName in ipairs(CTL_PRIO_ORDER) do
+		local prio = ctl.Prio[prioName]
+		if prio then
+			for _, ring in ipairs({prio.Ring, prio.Blocked}) do
+				if ring and ring.pos then
+					local pipe = ring.pos
+					repeat
+						if #pipe > 0 then
+							local msg = pipe[1]
+							if msg then
+								local prefix   = msg[1]
+								local chattype = msg[3]
+								local target   = msg[4]
+								return prefix, target or chattype
+							end
+						end
+						pipe = pipe.next
+					until pipe == ring.pos
+				end
+			end
+		end
+	end
+	return nil, nil
+end
+
 function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 	local parts = {}
 
@@ -264,8 +295,14 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 	-- ChatThrottleLib outbound queue (actual network packets waiting to be sent)
 	local ctlDepth = CTLQueueDepth()
 	if ctlDepth > 0 then
-		local c = ctlDepth > 20 and "ffff4444" or "ffff9900"
-		table.insert(parts, string.format("|c%snet:%d|r", c, ctlDepth))
+		local nextPrefix, nextDest = CTLNextMessage()
+		if nextPrefix then
+			local desc = COMM_PREFIX_DESCRIPTIONS and COMM_PREFIX_DESCRIPTIONS[nextPrefix]
+			local msgType = (desc and string.match(desc, "^%((.-)%)$")) or nextPrefix
+			table.insert(parts, string.format("|cffffffffSending %s to %s|r", msgType, nextDest or "?"))
+		end
+		local c = ctlDepth >= 1000 and "ffff4444" or "ffff9900"
+		table.insert(parts, string.format("|c%sBacklog: %d packets|r", c, ctlDepth))
 	end
 
 	if #parts == 0 then return "" end
