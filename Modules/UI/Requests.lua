@@ -1264,6 +1264,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 
 		local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
 		local CancelledIcon = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:0|t "
+		local PaddingIcon   = "|TInterface\\AddOns\\TOGBankClassic\\Media\\blank:0|t "
 		local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
 		local actorIsGM = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
 
@@ -1291,6 +1292,8 @@ function TOGBankClassic_UI_Requests:DrawContent()
 				dateText = CancelledIcon .. dateText
 			elseif completed then
 				dateText = CheckMarkIcon .. dateText
+			else
+				dateText = PaddingIcon .. dateText
 			end
 
 			local function cellText(colKey)
