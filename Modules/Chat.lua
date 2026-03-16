@@ -407,14 +407,14 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 								mailHash = 0,
 							}
 							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[kNorm])
-							TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Stored hash for new alt %s: hash=%d, updatedAt=%s", kNorm, theirHash, tostring(theirUpdatedAt))
+							TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Stored hash for new alt %s: hash=%08x, updatedAt=%s", kNorm, theirHash, tostring(theirUpdatedAt))
 						elseif not ourHash or ourHash == 0 then
 							-- Store hash if we don't have one
 							ourAlt.inventoryHash = theirHash
 							if theirUpdatedAt then
 								ourAlt.inventoryUpdatedAt = theirUpdatedAt
 							end
-							TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Stored missing hash for %s: hash=%d, updatedAt=%s", kNorm, theirHash, tostring(theirUpdatedAt))
+							TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Stored missing hash for %s: hash=%08x, updatedAt=%s", kNorm, theirHash, tostring(theirUpdatedAt))
 						end
 					end
 				end
@@ -837,7 +837,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							shouldRespond = true
 							expectedHash = myHash
 							TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
-							TOGBankClassic_Output:Debug("P2P", "RESPOND", "P2P: Responding to %s with data for %s (hash=%d) - queue now: %d/%d",
+							TOGBankClassic_Output:Debug("P2P", "RESPOND", "P2P: Responding to %s with data for %s (hash=%08x) - queue now: %d/%d",
 								sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 							if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
 								TOGBankClassic_Database:RecordP2POffered(TOGBankClassic_Guild.Info.name)
@@ -969,7 +969,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			if data.type == "requests-index" and data.hash then
 				local myHash = TOGBankClassic_Guild:GetRequestsHash()
 				local querierHash = tonumber(data.hash) or 0
-				extraInfo = string.format(" (their:%d ours:%d)", querierHash, myHash)
+				extraInfo = string.format(" (their:%08x ours:%08x)", querierHash, myHash)
 			end
 			self:Debug(
 				category,
@@ -1944,7 +1944,7 @@ end
 								mailHash = summary.mailHash or 0,
 							}
 							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
-							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for new alt %s: hash=%d, mailHash=%d, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
+							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for new alt %s: hash=%08x, mailHash=%08x, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
 						elseif localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
 							-- Hash mismatch detected - banker has different hash than our local data
 							-- DO NOT update local hash here - it will be updated when we receive and apply the delta

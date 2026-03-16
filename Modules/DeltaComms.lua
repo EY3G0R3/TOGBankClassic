@@ -767,7 +767,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 					-- This causes severe duplication (items added multiple times)
 					-- Force full sync by using empty baseline instead
 					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-					TOGBankClassic_Output:Warn("DELTA", "[DUPLICATION-FIX] Missing requester baseline - forcing full sync for %s (hash=%d→%d)",
+					TOGBankClassic_Output:Warn("DELTA", "[DUPLICATION-FIX] Missing requester baseline - forcing full sync for %s (hash=%08x→%08x)",
 						altName, requesterInventoryHash or 0, currentHash)
 				end
 			end

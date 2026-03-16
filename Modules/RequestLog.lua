@@ -1100,7 +1100,7 @@ function Guild:SendRequestsIndex(target)
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
-		"Sending requests-index to %s (%d requests, %d tombstones, hash=%d)",
+		"Sending requests-index to %s (%d requests, %d tombstones, hash=%08x)",
 		tostring(target or "guild"), #requestsIndex, #tombstonesIndex, payload.hash or 0)
 	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
 	if target and target ~= "" then

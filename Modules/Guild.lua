@@ -1023,7 +1023,7 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 		tostring(expectedUpdatedAt),
 		tostring(bankerSender)
 	)
-	TOGBankClassic_Output:Debug("P2P", "BROADCAST", "P2P: Broadcasting request for %s with hash=%d (waiting for peers)", altName, expectedHash)
+	TOGBankClassic_Output:Debug("P2P", "BROADCAST", "P2P: Broadcasting request for %s with hash=%08x (waiting for peers)", altName, expectedHash)
 	
 	self.expectedHashes = self.expectedHashes or {}
 	self.expectedHashes[norm] = expectedHash
@@ -1156,7 +1156,7 @@ function TOGBankClassic_Guild:GetVersion()
 							hash = v.inventoryHash,
 							updatedAt = v.inventoryUpdatedAt or v.version,
 						}
-						TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: including %s in local version data (ver=%d, hash=%d)", k, v.version, v.inventoryHash)
+						TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: including %s in local version data (ver=%d, hash=%08x)", k, v.version, v.inventoryHash)
 					else
 						-- Legacy format for old clients
 						data.alts[k] = v.version
@@ -1369,7 +1369,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 		local hasContent = self:HasAltContent(requesterAlt, norm)
 		-- P2P-006: Tell sender if we have content - if not, they should send full data
 		request.requesterHasContent = hasContent
-		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%d, mailHash=%d, hasContent=%s",
+		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%08x, mailHash=%08x, hasContent=%s",
 			norm, request.requesterInventoryHash, request.requesterMailHash, tostring(hasContent))
 	else
 		-- No local data at all - send hash=0
@@ -1933,7 +1933,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			if not TOGBankClassic_Core:SendWhisper("togbank-nochange", data, requester, "NORMAL") then
 				return
 			end
-			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%d, mailHash=%d)", requester, norm, currentHash, currentMailHash)
+			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%08x, mailHash=%08x)", requester, norm, currentHash, currentMailHash)
 			if self.Info and self.Info.name then TOGBankClassic_Database:RecordNoChangeSent(self.Info.name) end
 			return
 		elseif requesterHash == currentHash and requesterMailHash ~= currentMailHash then
@@ -2573,7 +2573,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 			}
 			local ncData = TOGBankClassic_Core:SerializeWithChecksum(hashCorrMsg)
 			TOGBankClassic_Core:SendWhisper("togbank-nochange", ncData, target, "NORMAL")
-			TOGBankClassic_Output:Debug("SYNC", "Sent hash-correction no-change to %s for %s (hash=%d, mailHash=%d)",
+			TOGBankClassic_Output:Debug("SYNC", "Sent hash-correction no-change to %s for %s (hash=%08x, mailHash=%08x)",
 				target, norm, currentAlt.inventoryHash or 0, currentAlt.mailHash or 0)
 			if self.Info and self.Info.name then
 				TOGBankClassic_Database:RecordNoChangeSent(self.Info.name)
@@ -2655,7 +2655,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 				-- Don't clear expected hash - let timeout handle fallback to banker
 				return ADOPTION_STATUS.INVALID
 			else
-				TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash validated for %s from %s (hash=%d)",
+				TOGBankClassic_Output:Debug("SYNC", "PERF-005: Hash validated for %s from %s (hash=%08x)",
 					name, sender, receivedHash)
 				-- Clear expected hash after successful validation
 				self.expectedHashes[name] = nil
@@ -2946,7 +2946,7 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 	-- Skip expensive mail preservation if nothing changed
 	-- ONLY reject if we actually have content - if existing has no content, always accept incoming data
 	if existing and existingHasContent and alt.inventoryHash and existing.inventoryHash and alt.inventoryHash == existing.inventoryHash then
-		TOGBankClassic_Output:Debug("SYNC", "Hash match for %s (hash=%d) - data unchanged, rejecting as STALE",
+		TOGBankClassic_Output:Debug("SYNC", "Hash match for %s (hash=%08x) - data unchanged, rejecting as STALE",
 			norm, alt.inventoryHash)
 		return ADOPTION_STATUS.STALE
 	end
@@ -3354,7 +3354,7 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 			}
 			local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 			TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
-			TOGBankClassic_Output:Info("Broadcasted hash for %s (invHash=%d, mailHash=%d)", normPlayer, singleAltHash[normPlayer].hash, singleAltHash[normPlayer].mailHash)
+			TOGBankClassic_Output:Info("Broadcasted hash for %s (invHash=%08x, mailHash=%08x)", normPlayer, singleAltHash[normPlayer].hash, singleAltHash[normPlayer].mailHash)
 		else
 			TOGBankClassic_Output:Response("No data available for %s", normPlayer)
 		end

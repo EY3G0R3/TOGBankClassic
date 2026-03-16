@@ -212,7 +212,7 @@ function TOGBankClassic_Database:Load(name)
 					if not alt.inventoryHash and alt.bank and alt.bags then
 						local money = alt.money or 0
 						alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
-					TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: computed inventory hash for %s (hash=%d)", name, alt.inventoryHash)
+					TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: computed inventory hash for %s (hash=%08x)", name, alt.inventoryHash)
 					end
 					-- v0.8.7: Backfill inventoryUpdatedAt for alts that have hashes but no timestamp
 					if alt.inventoryHash and not alt.inventoryUpdatedAt then
@@ -263,7 +263,7 @@ function TOGBankClassic_Database:Load(name)
 							local syncHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, money)
 							if syncHash ~= alt.inventoryHash then
 								alt.inventoryHash = syncHash
-								TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: corrected inventory hash for %s to SYNC-006 format (hash=%d)", name, syncHash)
+								TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: corrected inventory hash for %s to SYNC-006 format (hash=%08x)", name, syncHash)
 							end
 						end
 
