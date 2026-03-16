@@ -37,6 +37,10 @@ local function QueryEmpty()
 end
 
 local function OnClose(_)
+	if TOGBankClassic_UI_Inventory.networkTicker then
+		TOGBankClassic_UI_Inventory.networkTicker:Cancel()
+		TOGBankClassic_UI_Inventory.networkTicker = nil
+	end
 	TOGBankClassic_UI_Inventory.isOpen = false
 	TOGBankClassic_UI_Inventory.Window:Hide()
 
@@ -192,6 +196,52 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	self.TabGroup = tabGroup
 end
 
+function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
+	local parts = {}
+
+	-- P2P sends in flight (alt inventory data being sent to peers)
+	local sends = TOGBankClassic_Guild.pendingSendCount or 0
+	if sends > 0 then
+		local max = TOGBankClassic_Guild.MAX_PENDING_SENDS or 3
+		local c = (sends >= max) and "ffff4444" or "ffff9900"
+		table.insert(parts, string.format("|c%ssend:%d/%d|r", c, sends, max))
+	end
+
+	-- Outgoing sync queue (alts queued to broadcast their data)
+	local syncQ = TOGBankClassic_Chat and TOGBankClassic_Chat.sync_queue and #TOGBankClassic_Chat.sync_queue or 0
+	if syncQ > 0 then
+		table.insert(parts, string.format("|cffffff00q:%d|r", syncQ))
+	end
+
+	-- P2P data fetches in flight (waiting for alt data from peers)
+	local fetches = 0
+	if TOGBankClassic_Guild.pendingP2PRequests then
+		for _ in pairs(TOGBankClassic_Guild.pendingP2PRequests) do fetches = fetches + 1 end
+	end
+	if fetches > 0 then
+		table.insert(parts, string.format("|cff87ceebfetch:%d|r", fetches))
+	end
+
+	-- Request sync state (requests-index handshake)
+	local rSync = TOGBankClassic_Guild.requestsIndexSync
+	if rSync then
+		if rSync.awaitingById then
+			table.insert(parts, "|cff87ceebr:ids|r")
+		elseif rSync.inFlight then
+			table.insert(parts, "|cff87ceebr:idx|r")
+		end
+	end
+
+	if #parts == 0 then return "" end
+	return "    " .. table.concat(parts, "  ")
+end
+
+function TOGBankClassic_UI_Inventory:RefreshStatusBar()
+	if not self.Window then return end
+	if self.statusHovered then return end
+	self.Window:SetStatusText((self.baseStatusText or "") .. self:BuildNetworkStatus())
+end
+
 function TOGBankClassic_UI_Inventory:DrawContent()
 	local info = TOGBankClassic_Guild.Info
 	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
@@ -265,8 +315,20 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	local color = TOGBankClassic_UI_Inventory:GetPercentColor(percent)
 	local defaultStatus =
 		string.format("%s    |c%s%d/%d|r", FormatMoneyText(total_gold), color, slots, total_slots)
-	self.Window:SetStatusText(defaultStatus)
+	self.baseStatusText = defaultStatus
+	self.statusHovered = false
+	self:RefreshStatusBar()
+
+	-- Start network status refresh ticker (cancelled in OnClose)
+	if self.networkTicker then
+		self.networkTicker:Cancel()
+	end
+	self.networkTicker = C_Timer.NewTicker(0.5, function()
+		TOGBankClassic_UI_Inventory:RefreshStatusBar()
+	end)
+
 	self.Window:SetCallback("OnEnterStatusBar", function(_)
+		self.statusHovered = true
 		local tab = self.TabGroup.localstatus.selected
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
@@ -328,7 +390,8 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		self.Window:SetStatusText(status)
 	end)
 	self.Window:SetCallback("OnLeaveStatusBar", function(_)
-		self.Window:SetStatusText(defaultStatus)
+		self.statusHovered = false
+		self:RefreshStatusBar()
 	end)
 
 	self.TabGroup:SetCallback("OnGroupSelected", function(group)
