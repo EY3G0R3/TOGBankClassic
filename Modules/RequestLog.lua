@@ -1044,12 +1044,12 @@ function Guild:QueryRequestsIndex(target, priority, force)
 		-- EndRequestsIndexSync() is never called on a fully-synced guild, leaving
 		-- inFlight set for the full INDEX_INFLIGHT_TIMEOUT (30s) and blocking any
 		-- reactive re-query triggered by external events in that window.
-		-- The timer fires after 5s; if a real response already cleared inFlight it
+		-- The timer fires after 10s; if a real response already cleared inFlight it
 		-- is a no-op, so no explicit cancellation is needed.
 		local syncStateAtBroadcast = self.requestsIndexSync
-		C_Timer.After(5, function()
+		C_Timer.After(10, function()
 			if self.requestsIndexSync == syncStateAtBroadcast and self.requestsIndexSync.inFlight then
-				TOGBankClassic_Output:Debug("SYNC", "QueryRequestsIndex: No index response in 5s (guild in sync) - clearing inFlight")
+				TOGBankClassic_Output:Debug("SYNC", "QueryRequestsIndex: No index response in 10s (guild in sync) - clearing inFlight")
 				self:EndRequestsIndexSync()
 			end
 		end)
