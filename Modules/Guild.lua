@@ -1111,10 +1111,11 @@ function TOGBankClassic_Guild:GetVersion()
 		return nil
 	end
 
-	local versionInfo = GetAddOnMetadata("TOGBankClassic", "Version"):gsub("%.", "")
-	local versionNumber = tonumber(versionInfo)
+	local versionRaw = GetAddOnMetadata("TOGBankClassic", "Version") or "dev"
+	local versionNumber = tonumber((versionRaw:gsub("%.", ""))) or 0  -- 0 for unpackaged/dev builds
 	local data = {
 		addon = versionNumber,
+		addonDisplay = (versionNumber > 0) and versionRaw or "dev",
 		protocol_version = PROTOCOL.VERSION,
 		supports_delta = PROTOCOL.SUPPORTS_DELTA,
 		roster = nil,
@@ -3164,7 +3165,7 @@ function TOGBankClassic_Guild:Hello(type)
 	if addon_data and current_data then
 		local roster_alts = ""
 		local guild_bank_alts = ""
-		local hello = "Hi! " .. TOGBankClassic_Guild:GetPlayer() .. " is using version " .. addon_data.addon .. "."
+		local hello = "Hi! " .. TOGBankClassic_Guild:GetPlayer() .. " is using version " .. (addon_data.addonDisplay or tostring(addon_data.addon)) .. "."
 		if s(current_data.roster) > 0 and s(current_data.alts) > 0 then
 			for _, v in pairs(current_data.roster.alts) do
 				if roster_alts ~= "" then
