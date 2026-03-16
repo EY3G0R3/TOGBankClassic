@@ -985,6 +985,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end
 			end
 			if data.type == "requests-index" then
+				-- Track addon version (all clients broadcast this on login and periodically)
+				if data.addon then
+					if not self.guild_versions then self.guild_versions = {} end
+					self.guild_versions[sender] = {
+						version = data.addon,
+						seen    = time(),
+					}
+				end
 				local matches = (data.player == "*" or data.player == player)
 				if matches then
 					-- SYNC-011: Only respond if our hash differs from the querier's.

@@ -1028,6 +1028,7 @@ function Guild:QueryRequestsIndex(target, priority, force)
 		type = "requests-index",
 		version = self:GetRequestsVersion(),
 		hash = self:GetRequestsHash(),
+		addon = GetAddOnMetadata("TOGBankClassic", "Version") or "dev",
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	-- Send on old prefix for backwards compat; new clients listen on both
