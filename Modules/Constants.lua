@@ -102,7 +102,7 @@ REQUESTS_SYNC = {
 	INDEX_QUERY_COOLDOWN = 60,         -- seconds between index queries (global and per-sender)
 	INDEX_INFLIGHT_TIMEOUT = 180,      -- seconds before in-flight index sync is considered stale (must exceed max batch sequence: ceil(requests/BATCH_SIZE) * BATCH_DELAY)
 	REQUESTS_BY_ID_BATCH_SIZE = 50,    -- max IDs per by-id query (prevents throttle on large syncs)
-	REQUESTS_BY_ID_BATCH_DELAY = 2,    -- seconds between batches (lets peer respond before next batch arrives)
+	REQUESTS_BY_ID_BATCH_DELAY = 5,    -- seconds between batches (lets peer respond before next batch arrives)
 }
 
 -- Communication prefix descriptions for debug logging
