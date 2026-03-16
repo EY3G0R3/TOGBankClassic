@@ -12,7 +12,8 @@ function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target,
     end
 
     local bytes = text and #text or 0
-    TOGBankClassic_Output:Debug("COMMS", "< %s %s to %s (%d bytes)", prefix, prefixDesc, distribution, bytes)
+    local dest = (target and target ~= "") and (distribution .. "/" .. target) or distribution
+    TOGBankClassic_Output:Debug("COMMS", "< %s %s to %s (%d bytes)", prefix, prefixDesc, dest, bytes)
 
     return AceComm_SendCommMessage(self, prefix, text, distribution, target, prio, callbackFn, callbackArg)
 end
