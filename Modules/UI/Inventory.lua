@@ -376,7 +376,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		if mailCount > 0 then
 			local age = TOGBankClassic_MailInventory:GetMailDataAge(alt)
 			local ageText = age and (" (" .. SecondsToTime(age) .. " ago)") or ""
-			mailText = string.format("    |cff87ceeb✉ %d item%s%s|r", mailCount, mailCount > 1 and "s" or "", ageText)
+			mailText = string.format("    |cff87ceebMail: %d item%s%s|r", mailCount, mailCount > 1 and "s" or "", ageText)
 		end
 		local status = string.format(
 			"As of %s    %s    |c%s%d/%d|r%s",
