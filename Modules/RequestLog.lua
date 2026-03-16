@@ -64,6 +64,9 @@ local function drainByIdQueue(gen)
 
 	local item = table.remove(byIdQueue, 1)
 	local remaining = #byIdQueue
+	if Guild.requestsIndexSync then
+		Guild.requestsIndexSync.batchSent = (Guild.requestsIndexSync.batchTotal or 0) - remaining
+	end
 	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
 		"Sending by-id batch to %s (%d IDs, %d batch(es) remaining in queue)",
 		tostring(item.sender), #item.ids, remaining)
@@ -99,6 +102,10 @@ function Guild:EnqueueByIdBatches(sender, missingIds)
 	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
 		"Queuing %d missing requests → %d batch(es) of up to %d IDs each, %ds apart, for %s",
 		#missingIds, totalBatches, batchSize, REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, tostring(sender))
+	if Guild.requestsIndexSync then
+		Guild.requestsIndexSync.batchTotal = totalBatches
+		Guild.requestsIndexSync.batchSent  = 0
+	end
 
 	for batchStart = 1, #missingIds, batchSize do
 		local batch = {}

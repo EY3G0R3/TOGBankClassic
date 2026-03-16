@@ -226,7 +226,12 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 	local rSync = TOGBankClassic_Guild.requestsIndexSync
 	if rSync then
 		if rSync.awaitingById then
-			table.insert(parts, "|cff87ceebr:ids|r")
+			local bTotal = rSync.batchTotal
+			if bTotal and bTotal > 0 then
+				table.insert(parts, string.format("|cff87ceebr:%d/%d|r", rSync.batchSent or 0, bTotal))
+			else
+				table.insert(parts, "|cff87ceebr:ids|r")
+			end
 		elseif rSync.inFlight then
 			table.insert(parts, "|cff87ceebr:idx|r")
 		end
