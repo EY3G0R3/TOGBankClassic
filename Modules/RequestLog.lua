@@ -16,45 +16,106 @@ local warnedAbout = {
 local byIdQueue = {}
 local byIdQueueGen = 0
 
--- Queue for staggered by-id batch responses (responder side).
--- When a peer queries us for 1500 IDs at once (e.g. an older client), building one
--- giant response and handing it to AceComm monopolises our ChatThrottleLib NORMAL queue
--- for ~4 minutes. Instead we resolve all IDs immediately, split into batches, and
--- stagger the sends. Each batch is a separate togbank-rd message; the receiver's
--- ReceiveRequestsById handles multiple messages correctly.
--- sendByIdQueueGen ensures a new large query cancels any in-progress response drain.
-local sendByIdQueue = {}
-local sendByIdQueueGen = 0
+-- Pending by-id response map (responder side).
+-- Maps requestId -> querier (player name, or "*" for guild broadcast).
+-- Deduplication rules when a new query arrives for an ID already in the map:
+--   same querier  -> silent duplicate, skip
+--   new querier   -> upgrade to "*" (multiple people need it, broadcast to guild)
+--   already "*"   -> no change
+-- A CTL-aware drain sends batches of RESPOND_BY_ID_BATCH_SIZE IDs per tick (one send per tick).
+-- Sending is gated on ChatThrottleLib queue depth <= RESPOND_BY_ID_CTL_THRESHOLD.
+local queriedRequestsMap  = {}   -- [requestId] -> querier
+local queriedRequestsDraining = false
 
-local function drainSendByIdQueue(gen)
-	if gen ~= sendByIdQueueGen then return end
-	if #sendByIdQueue == 0 then return end
 
-	local item = table.remove(sendByIdQueue, 1)
-	local remaining = #sendByIdQueue
-	TOGBankClassic_Output:Debug("REQUESTS", "SEND",
-		"Sending by-id response batch to %s (%d requests + %d tombstones, %d batch(es) remaining)",
-		tostring(item.target), #item.requests, item.tombstoneCount, remaining)
+local function ctlDepthForDrain()
+	local ctl = _G.ChatThrottleLib
+	if not ctl or not ctl.Prio then return 0 end
+	local n = 0
+	local function walkRing(ring)
+		if not ring or not ring.pos then return end
+		local pipe = ring.pos
+		repeat n = n + #pipe; pipe = pipe.next until pipe == ring.pos
+	end
+	for _, prio in pairs(ctl.Prio) do
+		walkRing(prio.Ring)
+		walkRing(prio.Blocked)
+	end
+	return n
+end
 
-	local payload = {
-		type = "requests-by-id",
-		requests = item.requests,
-		tombstones = item.tombstones,
-	}
-	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	if item.target and item.target ~= "" then
-		TOGBankClassic_Core:SendWhisper("togbank-rd", data, item.target, "NORMAL")
-	else
-		TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
+local function drainQueriedRequests()
+	queriedRequestsDraining = false
+	if not next(queriedRequestsMap) then return end
+
+	local info = Guild.Info
+	if not info then
+		queriedRequestsMap = {}
+		return
 	end
 
-	if remaining > 0 then
-		C_Timer.After(REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, function()
-			drainSendByIdQueue(gen)
-		end)
-	else
+	if ctlDepthForDrain() > REQUESTS_SYNC.RESPOND_BY_ID_CTL_THRESHOLD then
+		queriedRequestsDraining = true
+		C_Timer.After(REQUESTS_SYNC.RESPOND_BY_ID_DRAIN_BACKOFF, drainQueriedRequests)
+		return
+	end
+
+	-- Pick the first target encountered and collect up to RESPOND_BY_ID_BATCH_SIZE IDs for it.
+	-- One tick = one send: CTL check maps 1:1 to one enqueue.
+	local target, ids = nil, {}
+	for id, t in pairs(queriedRequestsMap) do
+		if target == nil then target = t end
+		if t == target then
+			table.insert(ids, id)
+			if #ids >= REQUESTS_SYNC.RESPOND_BY_ID_BATCH_SIZE then break end
+		end
+	end
+
+	-- Resolve and send one togbank-rd message
+	local requests  = {}
+	local tombstones = {}
+	for _, id in ipairs(ids) do
+		local req = info.requests and info.requests[id]
+		if req then
+			table.insert(requests, req)
+		else
+			local ts = tonumber((info.requestsTombstones or {})[id] or 0) or 0
+			if ts > 0 then tombstones[id] = ts end
+		end
+		queriedRequestsMap[id] = nil
+	end
+	if #requests > 0 or next(tombstones) then
+		local tsCount = 0
+		for _ in pairs(tombstones) do tsCount = tsCount + 1 end
+		local dest = target == "*" and "GUILD" or target
 		TOGBankClassic_Output:Debug("REQUESTS", "SEND",
-			"By-id response queue drained — all batches sent to %s", tostring(item.target))
+			"Drain: sending %d requests + %d tombstone(s) to %s",
+			#requests, tsCount, dest)
+		local payload = {
+			type = "requests-by-id",
+			requests = requests,
+			tombstones = tombstones,
+		}
+		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+		if target == "*" then
+			TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
+		else
+			TOGBankClassic_Core:SendWhisper("togbank-rd", data, target, "NORMAL")
+		end
+	end
+
+	if next(queriedRequestsMap) then
+		queriedRequestsDraining = true
+		C_Timer.After(REQUESTS_SYNC.RESPOND_BY_ID_DRAIN_INTERVAL, drainQueriedRequests)
+	else
+		TOGBankClassic_Output:Debug("REQUESTS", "SEND", "Queried requests map fully drained")
+	end
+end
+
+local function startDrainQueriedRequests()
+	if not queriedRequestsDraining then
+		queriedRequestsDraining = true
+		C_Timer.After(0, drainQueriedRequests)
 	end
 end
 
@@ -1208,70 +1269,41 @@ function Guild:QueryRequestsById(target, ids, priority)
 	return true
 end
 
-function Guild:SendRequestsById(target, ids)
-	if not ids or type(ids) ~= "table" or #ids == 0 then
-		return
-	end
-	if not self.Info then
-		return
-	end
+function Guild:GetQueriedRequestsCount()
+	local n = 0
+	for _ in pairs(queriedRequestsMap) do n = n + 1 end
+	return n
+end
+
+function Guild:EnqueueRequestsById(sender, ids)
+	if not ids or type(ids) ~= "table" or #ids == 0 then return end
+	if not self.Info then return end
 	self:EnsureRequestsInitialized()
 
-	-- Resolve all IDs immediately so we snapshot current state at query time,
-	-- regardless of how long the staggered send takes.
-	local allRequests = {}
-	local allTombstones = {}
+	local added, duped, upgraded = 0, 0, 0
 	for _, id in ipairs(ids) do
 		if id then
-			local req = self.Info.requests[id]
-			if req then
-				table.insert(allRequests, req)
-			else
-				local ts = tonumber((self.Info.requestsTombstones or {})[id] or 0) or 0
-				if ts > 0 then
-					allTombstones[id] = ts
-				end
+			local existing = queriedRequestsMap[id]
+			if existing == nil then
+				queriedRequestsMap[id] = sender
+				added = added + 1
+			elseif existing == sender then
+				duped = duped + 1
+			elseif existing ~= "*" then
+				queriedRequestsMap[id] = "*"
+				upgraded = upgraded + 1
 			end
+			-- existing == "*": already broadcasting, no change
 		end
 	end
-
-	local batchSize = REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_SIZE
-	local totalRequests = #allRequests
-	local totalBatches = math.max(1, math.ceil(totalRequests / batchSize))
 
 	TOGBankClassic_Output:Debug("REQUESTS", "SEND",
-		"Responding to by-id query from %s: %d requests + %d tombstones → %d batch(es)",
-		tostring(target), totalRequests, 0, totalBatches)
+		"EnqueueRequestsById from %s: +%d new, %d dupes ignored, %d upgraded to broadcast",
+		tostring(sender), added, duped, upgraded)
 
-	-- Cancel any previous response drain (a new large query supersedes it).
-	sendByIdQueueGen = sendByIdQueueGen + 1
-	sendByIdQueue = {}
-
-	-- Split allRequests into batches; tombstones go in the first batch only
-	-- (they are keyed by ID and typically few in number).
-	local tombstonesAttached = false
-	for batchStart = 1, math.max(1, totalRequests), batchSize do
-		local batch = {}
-		for i = batchStart, math.min(batchStart + batchSize - 1, totalRequests) do
-			batch[#batch + 1] = allRequests[i]
-		end
-		local batchTombstones = {}
-		local tombstoneCount = 0
-		if not tombstonesAttached then
-			batchTombstones = allTombstones
-			for _ in pairs(allTombstones) do tombstoneCount = tombstoneCount + 1 end
-			tombstonesAttached = true
-		end
-		sendByIdQueue[#sendByIdQueue + 1] = {
-			target = target,
-			requests = batch,
-			tombstones = batchTombstones,
-			tombstoneCount = tombstoneCount,
-		}
+	if added > 0 or upgraded > 0 then
+		startDrainQueriedRequests()
 	end
-
-	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
-	drainSendByIdQueue(sendByIdQueueGen)
 end
 
 function Guild:ReceiveRequestsById(payload)

@@ -196,54 +196,42 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	self.TabGroup = tabGroup
 end
 
-local function CTLQueueDepth()
+-- Single-pass CTL queue inspector: returns total, nextPrefix, nextDest, recipientCount.
+-- Walks in ALERT->NORMAL->BULK order so "next" reflects true send priority.
+local CTL_PRIO_ORDER = {"ALERT", "NORMAL", "BULK"}
+local function CTLQueueInfo()
 	local ctl = _G.ChatThrottleLib
-	if not ctl or not ctl.Prio then return 0 end
+	if not ctl or not ctl.Prio then return 0, nil, nil, 0 end
 	local total = 0
+	local nextPrefix, nextDest
+	local recipients = {}
 	local function walkRing(ring)
 		if not ring or not ring.pos then return end
 		local pipe = ring.pos
 		repeat
-			total = total + #pipe
+			for i = 1, #pipe do
+				local msg = pipe[i]
+				total = total + 1
+				local dest = msg[4] or msg[3]
+				if dest then recipients[dest] = true end
+				if not nextPrefix and msg[1] then
+					nextPrefix = msg[1]
+					nextDest = dest
+				end
+			end
 			pipe = pipe.next
 		until pipe == ring.pos
 	end
-	for _, prio in pairs(ctl.Prio) do
-		walkRing(prio.Ring)
-		walkRing(prio.Blocked)
-	end
-	return total
-end
-
--- Returns (prefix, destination) for the next message CTL will send, in priority order.
--- destination is the whisper target if present, otherwise the chattype (GUILD, RAID, etc.)
-local CTL_PRIO_ORDER = {"ALERT", "NORMAL", "BULK"}
-local function CTLNextMessage()
-	local ctl = _G.ChatThrottleLib
-	if not ctl or not ctl.Prio then return nil, nil end
 	for _, prioName in ipairs(CTL_PRIO_ORDER) do
 		local prio = ctl.Prio[prioName]
 		if prio then
-			for _, ring in ipairs({prio.Ring, prio.Blocked}) do
-				if ring and ring.pos then
-					local pipe = ring.pos
-					repeat
-						if #pipe > 0 then
-							local msg = pipe[1]
-							if msg then
-								local prefix   = msg[1]
-								local chattype = msg[3]
-								local target   = msg[4]
-								return prefix, target or chattype
-							end
-						end
-						pipe = pipe.next
-					until pipe == ring.pos
-				end
-			end
+			walkRing(prio.Ring)
+			walkRing(prio.Blocked)
 		end
 	end
-	return nil, nil
+	local recipientCount = 0
+	for _ in pairs(recipients) do recipientCount = recipientCount + 1 end
+	return total, nextPrefix, nextDest, recipientCount
 end
 
 function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
@@ -272,6 +260,12 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		table.insert(parts, string.format("|cff87ceebfetch:%d|r", fetches))
 	end
 
+	-- Queued request responses (IDs pending in queriedRequestsMap)
+	local queriedCount = TOGBankClassic_Guild:GetQueriedRequestsCount()
+	if queriedCount > 0 then
+		table.insert(parts, string.format("|cff87ceeb%d queried requests|r", queriedCount))
+	end
+
 	-- Request sync state (requests-index handshake)
 	local rSync = TOGBankClassic_Guild.requestsIndexSync
 	if rSync then
@@ -293,16 +287,19 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 	end
 
 	-- ChatThrottleLib outbound queue (actual network packets waiting to be sent)
-	local ctlDepth = CTLQueueDepth()
+	local ctlDepth, nextPrefix, nextDest, recipientCount = CTLQueueInfo()
 	if ctlDepth > 0 then
-		local nextPrefix, nextDest = CTLNextMessage()
 		if nextPrefix then
 			local desc = COMM_PREFIX_DESCRIPTIONS and COMM_PREFIX_DESCRIPTIONS[nextPrefix]
 			local msgType = (desc and string.match(desc, "^%((.-)%)$")) or nextPrefix
 			table.insert(parts, string.format("|cffffffffSending %s to %s|r", msgType, nextDest or "?"))
 		end
 		local c = ctlDepth >= 1000 and "ffff4444" or "ffff9900"
-		table.insert(parts, string.format("|c%sBacklog: %d packets|r", c, ctlDepth))
+		if recipientCount > 1 then
+			table.insert(parts, string.format("|c%sBacklog: %d packets, %d recipients|r", c, ctlDepth, recipientCount))
+		else
+			table.insert(parts, string.format("|c%sBacklog: %d packets|r", c, ctlDepth))
+		end
 	end
 
 	if #parts == 0 then return "" end

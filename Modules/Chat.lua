@@ -1018,7 +1018,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if matches then
 					TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
 						"%s queries [REQ] requests-by-id (%d IDs)", tostring(sender), data.ids and #data.ids or 0)
-					TOGBankClassic_Guild:SendRequestsById(sender, data.ids)
+					TOGBankClassic_Guild:EnqueueRequestsById(sender, data.ids)
 				end
 			end
 			if data.type == "requests-log" then

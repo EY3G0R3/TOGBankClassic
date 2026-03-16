@@ -103,6 +103,11 @@ REQUESTS_SYNC = {
 	INDEX_INFLIGHT_TIMEOUT = 180,      -- seconds before in-flight index sync is considered stale (must exceed max batch sequence: ceil(requests/BATCH_SIZE) * BATCH_DELAY)
 	REQUESTS_BY_ID_BATCH_SIZE = 50,    -- max IDs per by-id query (prevents throttle on large syncs)
 	REQUESTS_BY_ID_BATCH_DELAY = 5,    -- seconds between batches (lets peer respond before next batch arrives)
+	-- Responding to incoming requests-by-id queries (queriedRequestsMap drain)
+	RESPOND_BY_ID_BATCH_SIZE     = 50,   -- max IDs to resolve and send per drain tick
+	RESPOND_BY_ID_DRAIN_INTERVAL = 1,    -- seconds between drain ticks
+	RESPOND_BY_ID_DRAIN_BACKOFF  = 2,    -- seconds to wait when CTL is backlogged
+	RESPOND_BY_ID_CTL_THRESHOLD  = 50000, -- pause sending when CTL queue depth exceeds this
 }
 
 -- Communication prefix descriptions for debug logging
