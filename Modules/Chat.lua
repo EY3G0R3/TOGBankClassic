@@ -2561,6 +2561,65 @@ local COMMAND_REGISTRY = {
 			end
 		end,
 	},
+	{
+		name = "netq",
+		help = "show a breakdown of the ChatThrottleLib outbound queue by message type and recipient",
+		expert = true,
+		handler = function()
+			local ctl = _G.ChatThrottleLib
+			if not ctl or not ctl.Prio then
+				TOGBankClassic_Output:Response("ChatThrottleLib not available.")
+				return
+			end
+
+			-- Tally messages by "prefix/chattype/target" bucket
+			local buckets = {}
+			local grandTotal = 0
+
+			local function walkRing(ring, prioName)
+				if not ring or not ring.pos then return end
+				local pipe = ring.pos
+				repeat
+					for i = 1, #pipe do
+						local msg = pipe[i]
+						local prefix   = tostring(msg[1] or "?")
+						local chattype = tostring(msg[3] or "?")
+						local target   = msg[4] and tostring(msg[4]) or nil
+						local desc = COMM_PREFIX_DESCRIPTIONS[prefix]
+						local prefixLabel = desc and (prefix .. " " .. desc) or prefix
+						local key = target and (prefixLabel .. " -> " .. chattype .. "/" .. target)
+						              or (prefixLabel .. " -> " .. chattype)
+						buckets[key] = (buckets[key] or 0) + 1
+						grandTotal = grandTotal + 1
+					end
+					pipe = pipe.next
+				until pipe == ring.pos
+			end
+
+			for prioName, prio in pairs(ctl.Prio) do
+				walkRing(prio.Ring,    prioName)
+				walkRing(prio.Blocked, prioName)
+			end
+
+			if grandTotal == 0 then
+				TOGBankClassic_Output:Response("ChatThrottleLib queue is empty.")
+				return
+			end
+
+			-- Sort buckets by count descending
+			local sorted = {}
+			for key, count in pairs(buckets) do
+				table.insert(sorted, { key = key, count = count })
+			end
+			table.sort(sorted, function(a, b) return a.count > b.count end)
+
+			TOGBankClassic_Output:Response("ChatThrottleLib queue: %d msgs total", grandTotal)
+			for _, entry in ipairs(sorted) do
+				local pct = math.floor(entry.count / grandTotal * 100 + 0.5)
+				TOGBankClassic_Output:Response("  %s: %d (%d%%)", entry.key, entry.count, pct)
+			end
+		end,
+	},
 	-- Hidden commands (no help text)
 	{
 		name = "debug",
