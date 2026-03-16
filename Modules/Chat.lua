@@ -1824,6 +1824,15 @@ end
 			for _ in pairs(data.alts) do altCount = altCount + 1 end
 			TOGBankClassic_Output:Debug("P2P", "HL broadcast from %s (alts=%d, isBanker=%s)",
 				tostring(sender), altCount, tostring(isSenderBanker))
+
+			-- Track addon version from hash-list-broadcast (version tracking channel)
+			if data.addon then
+				if not self.guild_versions then self.guild_versions = {} end
+				self.guild_versions[sender] = {
+					version = data.addon,
+					seen    = time(),
+				}
+			end
 			
 			-- Queue this broadcast for batched processing
 			table.insert(self.hashBroadcastQueue, {

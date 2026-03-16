@@ -275,6 +275,7 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 		alts     = list,
 		banker   = myPlayer,
 		isBanker = TOGBankClassic_Guild:IsBank(myPlayer),
+		addon    = GetAddOnMetadata("TOGBankClassic", "Version") or "dev",
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK")
