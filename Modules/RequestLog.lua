@@ -1189,6 +1189,8 @@ function Guild:QueryRequestsById(target, ids, priority)
 	if not ids or type(ids) ~= "table" or #ids == 0 then
 		return false
 	end
+	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+		"Sending [REQ] requests-by-id to %s (%d IDs)", tostring(target), #ids)
 	local payload = {
 		player = "*",
 		type = "requests-by-id",
@@ -1291,6 +1293,9 @@ function Guild:ReceiveRequestsById(payload)
 		if shouldEndSync then self:EndRequestsIndexSync() end
 		return ADOPTION_STATUS.INVALID
 	end
+
+	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE",
+		"Received by-id response: %d requests", #requests)
 
 	-- Always end sync regardless of whether snapshot merge succeeded.
 	-- ApplyRequestSnapshot failing means empty/corrupt payload — either way we're done waiting.

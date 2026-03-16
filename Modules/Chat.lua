@@ -1016,7 +1016,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			if data.type == "requests-by-id" then
 				local matches = (data.player == "*" or data.player == player)
 				if matches then
-					TOGBankClassic_Output:DebugComm("REQUEST BY-ID HANDLER: Responding to requests-by-id query")
+					TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+						"%s queries [REQ] requests-by-id (%d IDs)", tostring(sender), data.ids and #data.ids or 0)
 					TOGBankClassic_Guild:SendRequestsById(sender, data.ids)
 				end
 			end
