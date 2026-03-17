@@ -274,15 +274,6 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		table.insert(leftParts, string.format("|cffffff00q:%d|r", syncQ))
 	end
 
-	-- P2P data fetches in flight (waiting for alt data from peers) -> LEFT
-	local fetches = 0
-	if TOGBankClassic_Guild.pendingP2PRequests then
-		for _ in pairs(TOGBankClassic_Guild.pendingP2PRequests) do fetches = fetches + 1 end
-	end
-	if fetches > 0 then
-		table.insert(leftParts, string.format("|cff87ceebfetch:%d|r", fetches))
-	end
-
 	-- Request sync state (requests-index handshake) -> RIGHT
 	local rSync = TOGBankClassic_Guild.requestsIndexSync
 	if rSync then
@@ -297,6 +288,10 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 	end
 
 	-- ChatThrottleLib outbound queue: next message -> CENTER, backlog -> RIGHT
+	local fetches = 0
+	if TOGBankClassic_Guild.pendingP2PRequests then
+		for _ in pairs(TOGBankClassic_Guild.pendingP2PRequests) do fetches = fetches + 1 end
+	end
 	local ctlDepth, nextPrefix, nextDest, recipientCount = CTLQueueInfo()
 	local queriedCount = TOGBankClassic_Guild:GetQueriedRequestsCount()
 	if ctlDepth > 0 then
@@ -312,6 +307,9 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		end
 		if queriedCount > 0 then
 			backlog = backlog .. string.format(", %d requests", queriedCount)
+		end
+		if fetches > 0 then
+			backlog = backlog .. string.format(", %d P2P", fetches)
 		end
 		table.insert(rightParts, string.format("|c%sBacklog: %s|r", c, backlog))
 	end
