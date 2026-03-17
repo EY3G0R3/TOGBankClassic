@@ -356,8 +356,9 @@ function TOGBankClassic_UI_Inventory:RefreshStatusBar()
 	local centerRight = barWidth / 2 + centerW / 2
 	local rightLeft   = barWidth - 7 - rightW
 
-	local showCenter = center ~= "" and (leftW + gap <= centerLeft) and (centerRight + gap <= rightLeft)
-	local showRight  = right  ~= "" and (leftW + gap <= rightLeft)
+	local allThreeFit = (leftW + gap <= centerLeft) and (centerRight + gap <= rightLeft)
+	local showRight  = right  ~= "" and allThreeFit
+	local showCenter = center ~= "" and (leftW + gap <= centerLeft)
 
 	if not showCenter then self.Window.statusCenter:SetText("") end
 	if not showRight  then self.Window.statusRight:SetText("")  end
