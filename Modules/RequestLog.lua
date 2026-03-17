@@ -8,13 +8,15 @@ local warnedAbout = {
 }
 
 -- Queue for staggered by-id batch sends (requester side).
--- Sending all batches at once would flood the peer's ChatThrottleLib outbound queue,
--- delaying all 30 responses by minutes. Instead we send one batch every
--- REQUESTS_BY_ID_BATCH_DELAY seconds so the peer can respond to each before the next arrives.
--- byIdQueueGen is bumped whenever a new sync starts; stale C_Timer callbacks check it
--- before proceeding, making them silent no-ops (C_Timer has no cancel API in Classic Era).
+-- byIdQueueGen is bumped when sender changes; stale C_Timer callbacks check it and
+-- exit silently (C_Timer has no cancel API in Classic Era).
+-- byIdDraining is true while a timer is pending; EnqueueByIdBatches skips re-firing
+-- the drain when the same sender sends multiple index chunks.
+-- byIdCurrentSender tracks who we are querying so we can accumulate across chunks.
 local byIdQueue = {}
 local byIdQueueGen = 0
+local byIdDraining = false
+local byIdCurrentSender = nil
 
 -- Pending by-id response map (responder side).
 -- Maps requestId -> querier (player name, or "*" for guild broadcast).
@@ -120,6 +122,7 @@ local function startDrainQueriedRequests()
 end
 
 local function drainByIdQueue(gen)
+	byIdDraining = false
 	if gen ~= byIdQueueGen then return end  -- stale callback from a previous sync; abort
 	if #byIdQueue == 0 then return end
 
@@ -134,50 +137,64 @@ local function drainByIdQueue(gen)
 
 	if not TOGBankClassic_Guild:QueryRequestsById(item.sender, item.ids) then
 		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
-			"QueryRequestsById send failed for %s — aborting queue (%d batch(es) dropped)",
+			"QueryRequestsById send failed for %s -- aborting queue (%d batch(es) dropped)",
 			tostring(item.sender), remaining)
 		byIdQueue = {}
 		byIdQueueGen = byIdQueueGen + 1
+		byIdCurrentSender = nil
 		TOGBankClassic_Guild:EndRequestsIndexSync()
 		TOGBankClassic_Guild:RefreshRequestsUI()
 		return
 	end
 
 	if remaining > 0 then
+		byIdDraining = true
 		C_Timer.After(REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, function()
 			drainByIdQueue(gen)
 		end)
 	else
+		byIdCurrentSender = nil
 		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
-			"By-id queue drained — all batches sent to %s", tostring(item.sender))
+			"By-id queue drained -- all batches sent to %s", tostring(item.sender))
 	end
 end
 
 function Guild:EnqueueByIdBatches(sender, missingIds)
-	-- Cancel any in-progress drain from a previous sync.
-	byIdQueueGen = byIdQueueGen + 1
-	byIdQueue = {}
-
-	local batchSize = REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_SIZE
-	local totalBatches = math.ceil(#missingIds / batchSize)
-	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
-		"Queuing %d missing requests → %d batch(es) of up to %d IDs each, %ds apart, for %s",
-		#missingIds, totalBatches, batchSize, REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, tostring(sender))
-	if Guild.requestsIndexSync then
-		Guild.requestsIndexSync.batchTotal = totalBatches
-		Guild.requestsIndexSync.batchSent  = 0
+	-- If sender changed, cancel any in-progress drain and start fresh.
+	-- Same sender: accumulate new batches (multiple index chunks arrive from one sender).
+	if sender ~= byIdCurrentSender then
+		byIdQueueGen = byIdQueueGen + 1
+		byIdQueue = {}
+		byIdCurrentSender = sender
+		if Guild.requestsIndexSync then
+			Guild.requestsIndexSync.batchTotal = 0
+			Guild.requestsIndexSync.batchSent  = 0
+		end
 	end
 
+	local batchSize = REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_SIZE
+	local newBatches = 0
 	for batchStart = 1, #missingIds, batchSize do
 		local batch = {}
 		for i = batchStart, math.min(batchStart + batchSize - 1, #missingIds) do
 			batch[#batch + 1] = missingIds[i]
 		end
 		byIdQueue[#byIdQueue + 1] = { sender = sender, ids = batch }
+		newBatches = newBatches + 1
 	end
 
-	-- Fire the first batch immediately; subsequent ones are staggered by the timer.
-	drainByIdQueue(byIdQueueGen)
+	if Guild.requestsIndexSync then
+		Guild.requestsIndexSync.batchTotal = (Guild.requestsIndexSync.batchTotal or 0) + newBatches
+	end
+
+	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+		"Queuing %d missing requests -> %d new batch(es) for %s (total queue: %d batch(es))",
+		#missingIds, newBatches, tostring(sender), #byIdQueue)
+
+	-- Start drain only if not already running (may be mid-drain from a previous chunk).
+	if not byIdDraining then
+		drainByIdQueue(byIdQueueGen)
+	end
 end
 
 --[[
@@ -1130,6 +1147,33 @@ end
 local pendingIndexSenders   = nil   -- nil | player_name | "*"
 local pendingIndexScheduled = false
 
+-- Chunked index drain (sender side).
+-- SendRequestsIndex enqueues N small chunk messages here instead of one large payload.
+-- One chunk is sent per tick, gated on CTL depth so we don't stampede the queue.
+local pendingIndexChunks = {}
+local pendingIndexChunksDraining = false
+
+local function drainIndexChunks()
+	pendingIndexChunksDraining = false
+	if not pendingIndexChunks[1] then return end
+	if ctlDepthForDrain() > 20 then
+		pendingIndexChunksDraining = true
+		C_Timer.After(REQUESTS_SYNC.RESPOND_INDEX_CHUNK_INTERVAL, drainIndexChunks)
+		return
+	end
+	local chunk = table.remove(pendingIndexChunks, 1)
+	local data = TOGBankClassic_Core:SerializeWithChecksum(chunk.payload)
+	if chunk.target then
+		TOGBankClassic_Core:SendWhisper("togbank-rd", data, chunk.target, "NORMAL")
+	else
+		TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
+	end
+	if pendingIndexChunks[1] then
+		pendingIndexChunksDraining = true
+		C_Timer.After(REQUESTS_SYNC.RESPOND_INDEX_CHUNK_INTERVAL, drainIndexChunks)
+	end
+end
+
 local function flushIndexQueue()
 	pendingIndexScheduled = false
 	local target = pendingIndexSenders
@@ -1195,22 +1239,40 @@ function Guild:SendRequestsIndex(target)
 		return tostring(a.id) < tostring(b.id)
 	end)
 
-	local payload = {
-		type = "requests-index",
-		version = self:GetRequestsVersion(),
-		hash = self:GetRequestsHash(),
-		requests = requestsIndex,
-		tombstones = tombstonesIndex,
-	}
-	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	-- SYNC-012: Use dedicated togbank-rd prefix -- own throttle bucket, not shared with alt data on togbank-d.
+	-- Split into small chunks so the receiver can start querying before all arrive (Option 2).
+	-- Tombstones go in the first chunk so the receiver can filter deleted IDs immediately.
+	local chunkSize = REQUESTS_SYNC.RESPOND_INDEX_CHUNK_SIZE
+	local totalChunks = math.max(1, math.ceil(#requestsIndex / chunkSize))
+	local version = self:GetRequestsVersion()
+	local hash    = self:GetRequestsHash()
+
 	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
-		"Sending requests-index to %s (%d requests, %d tombstones, hash=%08x)",
-		tostring(target or "guild"), #requestsIndex, #tombstonesIndex, payload.hash or 0)
-	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
-	if target and target ~= "" then
-		TOGBankClassic_Core:SendWhisper("togbank-rd", data, target, "NORMAL")
-	else
-		TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
+		"Queuing requests-index to %s: %d requests + %d tombstones -> %d chunk(s) of %d",
+		tostring(target or "guild"), #requestsIndex, #tombstonesIndex, totalChunks, chunkSize)
+
+	for chunkNum = 1, totalChunks do
+		local startIdx = (chunkNum - 1) * chunkSize + 1
+		local endIdx   = math.min(chunkNum * chunkSize, #requestsIndex)
+		local chunkRequests = {}
+		for i = startIdx, endIdx do
+			chunkRequests[#chunkRequests + 1] = requestsIndex[i]
+		end
+		-- Tombstones only in first chunk; subsequent chunks carry an empty table.
+		local chunkTombstones = chunkNum == 1 and tombstonesIndex or {}
+		local payload = {
+			type      = "requests-index",
+			version   = version,
+			hash      = hash,
+			requests  = chunkRequests,
+			tombstones = chunkTombstones,
+		}
+		table.insert(pendingIndexChunks, { payload = payload, target = target })
+	end
+
+	if not pendingIndexChunksDraining then
+		pendingIndexChunksDraining = true
+		C_Timer.After(0, drainIndexChunks)
 	end
 end
 

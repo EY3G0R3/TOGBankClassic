@@ -108,8 +108,10 @@ REQUESTS_SYNC = {
 	RESPOND_BY_ID_DRAIN_INTERVAL = 1,    -- seconds between drain ticks
 	RESPOND_BY_ID_DRAIN_BACKOFF  = 2,    -- seconds to wait when CTL is backlogged
 	RESPOND_BY_ID_CTL_THRESHOLD  = 500,  -- pause sending when CTL queue depth exceeds this
-	-- Responding to incoming requests-index queries (coalesced send)
-	RESPOND_INDEX_COALESCE_DELAY = 20,   -- seconds to wait for more queries before sending (single whisper -> guild broadcast)
+	-- Responding to incoming requests-index queries (coalesced send + chunked drain)
+	RESPOND_INDEX_COALESCE_DELAY  = 20,  -- seconds to wait for more queries before sending (single whisper -> guild broadcast)
+	RESPOND_INDEX_CHUNK_SIZE      = 20,  -- IDs per chunk message (receiver can start querying after first chunk arrives)
+	RESPOND_INDEX_CHUNK_INTERVAL  = 1,   -- seconds between chunk sends
 }
 
 -- Communication prefix descriptions for debug logging

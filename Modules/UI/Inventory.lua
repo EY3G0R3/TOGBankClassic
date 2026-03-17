@@ -260,12 +260,6 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		table.insert(parts, string.format("|cff87ceebfetch:%d|r", fetches))
 	end
 
-	-- Queued request responses (IDs pending in queriedRequestsMap)
-	local queriedCount = TOGBankClassic_Guild:GetQueriedRequestsCount()
-	if queriedCount > 0 then
-		table.insert(parts, string.format("|cff87ceeb%d queried requests|r", queriedCount))
-	end
-
 	-- Request sync state (requests-index handshake)
 	local rSync = TOGBankClassic_Guild.requestsIndexSync
 	if rSync then
@@ -288,6 +282,7 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 
 	-- ChatThrottleLib outbound queue (actual network packets waiting to be sent)
 	local ctlDepth, nextPrefix, nextDest, recipientCount = CTLQueueInfo()
+	local queriedCount = TOGBankClassic_Guild:GetQueriedRequestsCount()
 	if ctlDepth > 0 then
 		if nextPrefix then
 			local desc = COMM_PREFIX_DESCRIPTIONS and COMM_PREFIX_DESCRIPTIONS[nextPrefix]
@@ -295,11 +290,14 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 			table.insert(parts, string.format("|cffffffffSending %s to %s|r", msgType, nextDest or "?"))
 		end
 		local c = ctlDepth >= 1000 and "ffff4444" or "ffff9900"
+		local backlog = string.format("%d packets", ctlDepth)
 		if recipientCount > 1 then
-			table.insert(parts, string.format("|c%sBacklog: %d packets, %d recipients|r", c, ctlDepth, recipientCount))
-		else
-			table.insert(parts, string.format("|c%sBacklog: %d packets|r", c, ctlDepth))
+			backlog = backlog .. string.format(", %d recipients", recipientCount)
 		end
+		if queriedCount > 0 then
+			backlog = backlog .. string.format(", %d requests", queriedCount)
+		end
+		table.insert(parts, string.format("|c%sBacklog: %s|r", c, backlog))
 	end
 
 	if #parts == 0 then return "" end
