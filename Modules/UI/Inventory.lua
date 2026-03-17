@@ -128,6 +128,8 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	statusCenter:SetHeight(20)
 	statusCenter:SetJustifyH("CENTER")
 	statusCenter:SetText("")
+	local scFont, scSize = statusCenter:GetFont()
+	statusCenter:SetFont(scFont, scSize, "ITALIC")
 	window.statusCenter = statusCenter
 
 	local statusRight = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -308,7 +310,7 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		if nextPrefix then
 			local desc = COMM_PREFIX_DESCRIPTIONS and COMM_PREFIX_DESCRIPTIONS[nextPrefix]
 			local msgType = (desc and string.match(desc, "^%((.-)%)$")) or nextPrefix
-			centerText = string.format("|cffffffffSending %s to %s|r", msgType, nextDest or "?")
+			centerText = string.format("|cff888888Sending %s to %s|r", msgType, nextDest or "?")
 		end
 		local c = ctlDepth >= 1000 and "ffff4444" or "ffff9900"
 		local ctl = string.format("CTL:%d", ctlDepth)
