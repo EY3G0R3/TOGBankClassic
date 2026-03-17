@@ -258,7 +258,6 @@ end
 
 -- Returns leftText, centerText, rightText for tri-part status bar alignment.
 function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
-	local leftParts  = {}
 	local centerText = ""
 	local rightParts = {}
 
@@ -270,10 +269,10 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		table.insert(rightParts, string.format("|c%sTx:%d/%d|r", c, sends, max))
 	end
 
-	-- Outgoing sync queue (alts queued to broadcast their data) -> LEFT
+	-- Outgoing sync queue (alts queued to broadcast their data) -> RIGHT
 	local syncQ = TOGBankClassic_Chat and TOGBankClassic_Chat.sync_queue and #TOGBankClassic_Chat.sync_queue or 0
 	if syncQ > 0 then
-		table.insert(leftParts, string.format("|cffffff00q:%d|r", syncQ))
+		table.insert(rightParts, string.format("|cffffff00Bcast:%d|r", syncQ))
 	end
 
 	-- Request sync state (requests-index handshake) -> RIGHT
@@ -320,9 +319,8 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		table.insert(rightParts, string.format("|c%s%s|r", c, ctl))
 	end
 
-	local left = #leftParts > 0 and ("    " .. table.concat(leftParts, "  ")) or ""
 	local right = #rightParts > 0 and ("Network: " .. table.concat(rightParts, "  ")) or ""
-	return left, centerText, right
+	return "", centerText, right
 end
 
 function TOGBankClassic_UI_Inventory:RefreshStatusBar()
