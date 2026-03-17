@@ -1125,6 +1125,49 @@ function Guild:QueryRequestsIndex(target, priority, force)
 	return true
 end
 
+-- Coalescing index response: accumulate senders within a short window before sending.
+-- Single sender -> whisper. Multiple different senders -> one guild broadcast.
+local pendingIndexSenders   = nil   -- nil | player_name | "*"
+local pendingIndexScheduled = false
+
+local function flushIndexQueue()
+	pendingIndexScheduled = false
+	local target = pendingIndexSenders
+	if not target then return end
+
+	-- Defer if CTL is busy or we're draining by-id responses.
+	-- Reschedule and check again after the coalesce delay.
+	local ctlDepth = ctlDepthForDrain()
+	if ctlDepth > 20 or next(queriedRequestsMap) then
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"flushIndexQueue: deferring index send (CTL=%d, by-id pending=%d)",
+			ctlDepth, Guild:GetQueriedRequestsCount())
+		pendingIndexScheduled = true
+		C_Timer.After(REQUESTS_SYNC.RESPOND_INDEX_COALESCE_DELAY, flushIndexQueue)
+		return
+	end
+
+	pendingIndexSenders = nil
+	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+		"flushIndexQueue: sending index to %s", target == "*" and "GUILD" or target)
+	Guild:SendRequestsIndex(target == "*" and nil or target)
+end
+
+function Guild:EnqueueIndexResponse(sender)
+	if pendingIndexSenders == nil then
+		pendingIndexSenders = sender
+	elseif pendingIndexSenders ~= sender and pendingIndexSenders ~= "*" then
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"EnqueueIndexResponse: upgrading to guild broadcast (%s + %s)", pendingIndexSenders, sender)
+		pendingIndexSenders = "*"
+	end
+	-- duplicate sender or already "*": no change
+	if not pendingIndexScheduled then
+		pendingIndexScheduled = true
+		C_Timer.After(REQUESTS_SYNC.RESPOND_INDEX_COALESCE_DELAY, flushIndexQueue)
+	end
+end
+
 function Guild:SendRequestsIndex(target)
 	if not self.Info then
 		return

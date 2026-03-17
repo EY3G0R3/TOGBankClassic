@@ -1007,7 +1007,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					local querierHash = tonumber(data.hash) or 0
 					if querierHash == 0 or myHash ~= querierHash then
 						TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query (hash mismatch: mine=%08x theirs=%08x)", myHash, querierHash)
-						TOGBankClassic_Guild:SendRequestsIndex(sender)
+						TOGBankClassic_Guild:EnqueueIndexResponse(sender)
 					else
 						TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Skipping (hash match %d, querier already in sync)", myHash)
 					end
