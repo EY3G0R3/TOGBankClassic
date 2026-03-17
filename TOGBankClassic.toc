@@ -33,6 +33,7 @@ Modules/MailInventory.lua
 Modules/Options.lua
 Modules/UI.lua
 Modules/UI/Donations.lua
+Modules/UI/StatusBar.lua
 Modules/UI/Inventory.lua
 Modules/UI/Mail.lua
 Modules/UI/Minimap.lua
