@@ -1,5 +1,36 @@
 # TOGBankClassic Changelog
 
+## [v0.9.6] (2026-03-16) - Request Sync Throttle Overhaul & Network Status Bar
+
+**Status:** Production Ready
+
+### New Features
+
+- **Request sync throttle overhaul** — The requests-index pipeline was reworked to eliminate multi-minute CTL backlogs on guilds with 1000+ requests:
+  - **Deduplicating response drain** — Replaced `SendRequestsById` with a `queriedRequests` map. Duplicate requests for the same ID from the same peer are dropped; requests from two different peers are automatically upgraded to a guild broadcast. Responses drain at one batch per second, gated on CTL queue depth.
+  - **Coalesced index responses** — Multiple guild members querying the requests index within a 20-second window now trigger a single response instead of N. If different senders query, one guild broadcast replaces N individual whispers; sends are also deferred while the CTL queue is busy.
+  - **Chunked index sending** — Requests-index payloads are now split into chunks of 20 IDs sent 1 second apart (previously: one ~400-packet burst). Receivers can begin fetching missing requests after the very first chunk arrives. Old clients (v0.9.5 and below) remain compatible.
+- **Network status bar** (opt-in) — The inventory window status bar now optionally shows live sync activity. Enable in Options -> General -> "Show Network Status in Status Bar":
+  - Left: send / queue / fetch counters
+  - Centre: "Sending [type] to [recipient]" (next queued CTL message)
+  - Right: "Backlog: N packets[, N recipients][, N requests]"
+  - Sections hide automatically when the window is too narrow to show all three without overlap.
+- **/togbank netq** — New expert command showing a full CTL queue breakdown by message type and recipient count.
+- **Request count in status bar** — The Requests window now shows the total request count alongside the filtered count (e.g. "3 / 47").
+
+### Bug Fixes
+
+- **Self-query loop on login** — If the logged-in character was the only eligible banker, `QueryAltPullBased` would whisper itself, triggering a useless sync loop. Self is now excluded from the banker search.
+
+### Diagnostics
+
+- Hash values in request-index log lines are now shown in hex, consistent with the rest of the codebase.
+- Outgoing COMMS log messages now include the recipient.
+- Requests-by-id queries and responses (both directions) are now logged under REQUESTS/SEND and REQUESTS/RECEIVE.
+- Requests-index log lines now show both the querier's hash and the local hash side-by-side, making SYNC-011 hash-match decisions easier to trace.
+
+---
+
 ## [v0.9.5] (2026-03-16) - Request Sync Diagnostics & UI Polish
 
 **Status:** Production Ready

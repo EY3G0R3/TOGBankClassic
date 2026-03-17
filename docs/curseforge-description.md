@@ -260,15 +260,14 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.9.5 (Latest)
-• Live network queue indicator in status bar (sends, queue depth, fetches, request sync progress)
-• Request index sync shows target player name and batch progress (e.g. "r:2/7")
-• /togbank versions now shows all online guild members, not just bankers
-• Fixed request sync stalling on guilds with 1000+ requests (increased timeouts and batch delay)
-• Fixed mail age showing "20000 days ago" for characters with no mail scan data
-• Fixed date column misalignment between pending and fulfilled/cancelled requests
+v0.9.6 (Latest)
+• Request sync throttle overhaul: deduplicating response drain, coalesced index responses, chunked 20-ID sending — eliminates multi-minute CTL backlogs on large guilds
+• Network status bar (opt-in, Options -> General): live CTL activity with left/centre/right alignment; hides sections automatically when window is narrow
+• /togbank netq: new command showing full CTL queue breakdown by message type and recipient
+• Request window now shows total count alongside filtered count (e.g. "3 / 47")
+• Fixed self-query loop where a lone banker would whisper themselves on login
 
-v0.9.4
+v0.9.5
 • Request status colours: fulfilled = green, cancelled = red
 • Item sort toggle: A-Z or By Type in inventory view
 • Fixed request sync stalling on login for players offline 1+ days
