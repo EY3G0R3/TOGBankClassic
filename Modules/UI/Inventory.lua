@@ -121,17 +121,17 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	-- AceGUI's statustext spans TOPLEFT->BOTTOMRIGHT with LEFT justification;
 	-- we create two siblings over the same area with CENTER and RIGHT justification.
 	local statusbg = window.statustext:GetParent()
+	window.statusbg = statusbg  -- stored for width measurement in RefreshStatusBar
+
 	local statusCenter = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	statusCenter:SetPoint("TOPLEFT", statusbg, "TOPLEFT", 7, -2)
-	statusCenter:SetPoint("BOTTOMRIGHT", statusbg, "BOTTOMRIGHT", -7, 2)
+	statusCenter:SetPoint("CENTER", statusbg, "CENTER", 0, 0)
 	statusCenter:SetHeight(20)
 	statusCenter:SetJustifyH("CENTER")
 	statusCenter:SetText("")
 	window.statusCenter = statusCenter
 
 	local statusRight = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	statusRight:SetPoint("TOPLEFT", statusbg, "TOPLEFT", 7, -2)
-	statusRight:SetPoint("BOTTOMRIGHT", statusbg, "BOTTOMRIGHT", -7, 2)
+	statusRight:SetPoint("RIGHT", statusbg, "RIGHT", -7, 0)
 	statusRight:SetHeight(20)
 	statusRight:SetJustifyH("RIGHT")
 	statusRight:SetText("")
@@ -325,8 +325,30 @@ function TOGBankClassic_UI_Inventory:RefreshStatusBar()
 	if self.statusHovered then return end
 	local left, center, right = self:BuildNetworkStatus()
 	self.Window:SetStatusText((self.baseStatusText or "") .. left)
-	if self.Window.statusCenter then self.Window.statusCenter:SetText(center) end
-	if self.Window.statusRight  then self.Window.statusRight:SetText(right)   end
+	if not self.Window.statusCenter or not self.Window.statusRight then return end
+
+	-- Set texts so GetStringWidth() returns the actual rendered pixel widths.
+	self.Window.statusCenter:SetText(center)
+	self.Window.statusRight:SetText(right)
+
+	-- Use actual statusbg width (excludes frame borders and resize handle).
+	local barWidth    = self.Window.statusbg and self.Window.statusbg:GetWidth() or 500
+	local leftW       = self.Window.statustext:GetStringWidth()
+	local centerW     = self.Window.statusCenter:GetStringWidth()
+	local rightW      = self.Window.statusRight:GetStringWidth()
+	local gap         = 12  -- minimum pixel gap between sections
+
+	-- Center is anchored at barWidth/2; right is anchored at the right edge.
+	-- Check each section's pixel position for overlap rather than just total width.
+	local centerLeft  = barWidth / 2 - centerW / 2
+	local centerRight = barWidth / 2 + centerW / 2
+	local rightLeft   = barWidth - 7 - rightW
+
+	local showCenter = center ~= "" and (leftW + gap <= centerLeft) and (centerRight + gap <= rightLeft)
+	local showRight  = right  ~= "" and (leftW + gap <= rightLeft)
+
+	if not showCenter then self.Window.statusCenter:SetText("") end
+	if not showRight  then self.Window.statusRight:SetText("")  end
 end
 
 function TOGBankClassic_UI_Inventory:DrawContent()
