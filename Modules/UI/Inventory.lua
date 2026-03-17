@@ -287,13 +287,23 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		end
 	end
 
-	-- ChatThrottleLib outbound queue: next message -> CENTER, backlog -> RIGHT
+	-- P2P fetches in flight -> RIGHT
 	local fetches = 0
 	if TOGBankClassic_Guild.pendingP2PRequests then
 		for _ in pairs(TOGBankClassic_Guild.pendingP2PRequests) do fetches = fetches + 1 end
 	end
-	local ctlDepth, nextPrefix, nextDest, recipientCount = CTLQueueInfo()
+	if fetches > 0 then
+		table.insert(rightParts, string.format("|cff87ceebP2P:%d|r", fetches))
+	end
+
+	-- Queried requests -> RIGHT
 	local queriedCount = TOGBankClassic_Guild:GetQueriedRequestsCount()
+	if queriedCount > 0 then
+		table.insert(rightParts, string.format("|cff98fb98Req:%d|r", queriedCount))
+	end
+
+	-- ChatThrottleLib outbound queue: next message -> CENTER, depth -> RIGHT
+	local ctlDepth, nextPrefix, nextDest, recipientCount = CTLQueueInfo()
 	if ctlDepth > 0 then
 		if nextPrefix then
 			local desc = COMM_PREFIX_DESCRIPTIONS and COMM_PREFIX_DESCRIPTIONS[nextPrefix]
@@ -301,21 +311,16 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 			centerText = string.format("|cffffffffSending %s to %s|r", msgType, nextDest or "?")
 		end
 		local c = ctlDepth >= 1000 and "ffff4444" or "ffff9900"
-		local backlog = string.format("%d packets", ctlDepth)
+		local ctl = string.format("CTL:%d", ctlDepth)
 		if recipientCount > 1 then
-			backlog = backlog .. string.format(", %d recipients", recipientCount)
+			ctl = ctl .. string.format(" (%d recipients)", recipientCount)
 		end
-		if queriedCount > 0 then
-			backlog = backlog .. string.format(", %d requests", queriedCount)
-		end
-		if fetches > 0 then
-			backlog = backlog .. string.format(", %d P2P", fetches)
-		end
-		table.insert(rightParts, string.format("|c%sBacklog: %s|r", c, backlog))
+		table.insert(rightParts, string.format("|c%s%s|r", c, ctl))
 	end
 
 	local left = #leftParts > 0 and ("    " .. table.concat(leftParts, "  ")) or ""
-	return left, centerText, table.concat(rightParts, "  ")
+	local right = #rightParts > 0 and ("Network: " .. table.concat(rightParts, "  ")) or ""
+	return left, centerText, right
 end
 
 function TOGBankClassic_UI_Inventory:RefreshStatusBar()
