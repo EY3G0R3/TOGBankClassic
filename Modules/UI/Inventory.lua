@@ -327,6 +327,13 @@ function TOGBankClassic_UI_Inventory:RefreshStatusBar()
 	self.Window:SetStatusText((self.baseStatusText or "") .. left)
 	if not self.Window.statusCenter or not self.Window.statusRight then return end
 
+	-- If the user disabled network status, clear both sections and stop.
+	if TOGBankClassic_Options and not TOGBankClassic_Options:IsStatusBarNetworkInfoEnabled() then
+		self.Window.statusCenter:SetText("")
+		self.Window.statusRight:SetText("")
+		return
+	end
+
 	-- Set texts so GetStringWidth() returns the actual rendered pixel widths.
 	self.Window.statusCenter:SetText(center)
 	self.Window.statusRight:SetText(right)

@@ -184,7 +184,8 @@ function TOGBankClassic_Options:Init()
 			combat = { hide = true },
 			bank = { donations = true },
 			framePositions = {},  -- Stores window positions/sizes
-			sortMode = "alpha",   -- Inventory sort mode: "alpha" (A→Z) or "type" (by item type)
+			sortMode = "alpha",   -- Inventory sort mode: "alpha" (A->Z) or "type" (by item type)
+			statusBarNetworkInfo = false,  -- Show sync activity in inventory status bar
 		},
 		global = {
 			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, enableRosterSync = false },
@@ -262,6 +263,19 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return self.db.char.combat["hide"]
+						end,
+					},
+					["statusBarNetworkInfo"] = {
+						order = 1.5,
+						type = "toggle",
+						width = "full",
+						name = "Show Network Status in Status Bar",
+						desc = "Shows sync activity (sending / backlog) in the inventory window status bar. Disable for a cleaner display.",
+						set = function(_, v)
+							self.db.char.statusBarNetworkInfo = v
+						end,
+						get = function()
+							return self.db.char.statusBarNetworkInfo
 						end,
 					},
 					["logLevel"] = {
@@ -582,6 +596,11 @@ end
 
 function TOGBankClassic_Options:IsRosterSyncEnabled()
 	return self.db.global.bank["enableRosterSync"] or false
+end
+function TOGBankClassic_Options:IsStatusBarNetworkInfoEnabled()
+	if not self.db or not self.db.char then return true end
+	local v = self.db.char.statusBarNetworkInfo
+	return v == true
 end
 
 function TOGBankClassic_Options:GetMaxRequestPercent()
