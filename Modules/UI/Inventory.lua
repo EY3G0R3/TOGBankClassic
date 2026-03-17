@@ -262,12 +262,12 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 	local centerText = ""
 	local rightParts = {}
 
-	-- P2P sends in flight (alt inventory data being sent to peers) -> LEFT
+	-- P2P sends in flight (alt inventory data being sent to peers) -> RIGHT
 	local sends = TOGBankClassic_Guild.pendingSendCount or 0
 	if sends > 0 then
 		local max = TOGBankClassic_Guild.MAX_PENDING_SENDS or 3
 		local c = (sends >= max) and "ffff4444" or "ffff9900"
-		table.insert(leftParts, string.format("|c%ssend:%d/%d|r", c, sends, max))
+		table.insert(rightParts, string.format("|c%sTx:%d/%d|r", c, sends, max))
 	end
 
 	-- Outgoing sync queue (alts queued to broadcast their data) -> LEFT
@@ -289,13 +289,13 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		end
 	end
 
-	-- P2P fetches in flight -> RIGHT
+	-- P2P fetches in flight (Rx) -> RIGHT
 	local fetches = 0
 	if TOGBankClassic_Guild.pendingP2PRequests then
 		for _ in pairs(TOGBankClassic_Guild.pendingP2PRequests) do fetches = fetches + 1 end
 	end
 	if fetches > 0 then
-		table.insert(rightParts, string.format("|cff87ceebP2P:%d|r", fetches))
+		table.insert(rightParts, string.format("|cff87ceebRx:%d|r", fetches))
 	end
 
 	-- Queried requests -> RIGHT
