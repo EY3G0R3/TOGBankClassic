@@ -293,13 +293,6 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 			else
 				table.insert(rightParts, "|cff87ceebr:ids|r")
 			end
-		elseif rSync.inFlight then
-			local target = rSync.inFlight
-			if target == "*" then
-				table.insert(rightParts, "|cff87ceebQuerying requests index...|r")
-			else
-				table.insert(rightParts, string.format("|cff87ceebQuerying requests index from %s|r", target))
-			end
 		end
 	end
 
