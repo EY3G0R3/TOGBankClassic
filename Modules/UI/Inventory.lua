@@ -117,6 +117,26 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 
 	self.Window = window
 
+	-- Add center and right FontStrings to the status bar for tri-part alignment.
+	-- AceGUI's statustext spans TOPLEFT->BOTTOMRIGHT with LEFT justification;
+	-- we create two siblings over the same area with CENTER and RIGHT justification.
+	local statusbg = window.statustext:GetParent()
+	local statusCenter = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	statusCenter:SetPoint("TOPLEFT", statusbg, "TOPLEFT", 7, -2)
+	statusCenter:SetPoint("BOTTOMRIGHT", statusbg, "BOTTOMRIGHT", -7, 2)
+	statusCenter:SetHeight(20)
+	statusCenter:SetJustifyH("CENTER")
+	statusCenter:SetText("")
+	window.statusCenter = statusCenter
+
+	local statusRight = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	statusRight:SetPoint("TOPLEFT", statusbg, "TOPLEFT", 7, -2)
+	statusRight:SetPoint("BOTTOMRIGHT", statusbg, "BOTTOMRIGHT", -7, 2)
+	statusRight:SetHeight(20)
+	statusRight:SetJustifyH("RIGHT")
+	statusRight:SetText("")
+	window.statusRight = statusRight
+
 	local buttonContainer = TOGBankClassic_UI:Create("SimpleGroup")
 	buttonContainer:SetLayout("Table")
 	buttonContainer:SetUserData("table", {
@@ -234,60 +254,63 @@ local function CTLQueueInfo()
 	return total, nextPrefix, nextDest, recipientCount
 end
 
+-- Returns leftText, centerText, rightText for tri-part status bar alignment.
 function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
-	local parts = {}
+	local leftParts  = {}
+	local centerText = ""
+	local rightParts = {}
 
-	-- P2P sends in flight (alt inventory data being sent to peers)
+	-- P2P sends in flight (alt inventory data being sent to peers) -> LEFT
 	local sends = TOGBankClassic_Guild.pendingSendCount or 0
 	if sends > 0 then
 		local max = TOGBankClassic_Guild.MAX_PENDING_SENDS or 3
 		local c = (sends >= max) and "ffff4444" or "ffff9900"
-		table.insert(parts, string.format("|c%ssend:%d/%d|r", c, sends, max))
+		table.insert(leftParts, string.format("|c%ssend:%d/%d|r", c, sends, max))
 	end
 
-	-- Outgoing sync queue (alts queued to broadcast their data)
+	-- Outgoing sync queue (alts queued to broadcast their data) -> LEFT
 	local syncQ = TOGBankClassic_Chat and TOGBankClassic_Chat.sync_queue and #TOGBankClassic_Chat.sync_queue or 0
 	if syncQ > 0 then
-		table.insert(parts, string.format("|cffffff00q:%d|r", syncQ))
+		table.insert(leftParts, string.format("|cffffff00q:%d|r", syncQ))
 	end
 
-	-- P2P data fetches in flight (waiting for alt data from peers)
+	-- P2P data fetches in flight (waiting for alt data from peers) -> LEFT
 	local fetches = 0
 	if TOGBankClassic_Guild.pendingP2PRequests then
 		for _ in pairs(TOGBankClassic_Guild.pendingP2PRequests) do fetches = fetches + 1 end
 	end
 	if fetches > 0 then
-		table.insert(parts, string.format("|cff87ceebfetch:%d|r", fetches))
+		table.insert(leftParts, string.format("|cff87ceebfetch:%d|r", fetches))
 	end
 
-	-- Request sync state (requests-index handshake)
+	-- Request sync state (requests-index handshake) -> RIGHT
 	local rSync = TOGBankClassic_Guild.requestsIndexSync
 	if rSync then
 		if rSync.awaitingById then
 			local bTotal = rSync.batchTotal
 			if bTotal and bTotal > 0 then
-				table.insert(parts, string.format("|cff87ceebr:%d/%d|r", rSync.batchSent or 0, bTotal))
+				table.insert(rightParts, string.format("|cff87ceebr:%d/%d|r", rSync.batchSent or 0, bTotal))
 			else
-				table.insert(parts, "|cff87ceebr:ids|r")
+				table.insert(rightParts, "|cff87ceebr:ids|r")
 			end
 		elseif rSync.inFlight then
 			local target = rSync.inFlight
 			if target == "*" then
-				table.insert(parts, "|cff87ceebQuerying requests index...|r")
+				table.insert(rightParts, "|cff87ceebQuerying requests index...|r")
 			else
-				table.insert(parts, string.format("|cff87ceebQuerying requests index from %s|r", target))
+				table.insert(rightParts, string.format("|cff87ceebQuerying requests index from %s|r", target))
 			end
 		end
 	end
 
-	-- ChatThrottleLib outbound queue (actual network packets waiting to be sent)
+	-- ChatThrottleLib outbound queue: next message -> CENTER, backlog -> RIGHT
 	local ctlDepth, nextPrefix, nextDest, recipientCount = CTLQueueInfo()
 	local queriedCount = TOGBankClassic_Guild:GetQueriedRequestsCount()
 	if ctlDepth > 0 then
 		if nextPrefix then
 			local desc = COMM_PREFIX_DESCRIPTIONS and COMM_PREFIX_DESCRIPTIONS[nextPrefix]
 			local msgType = (desc and string.match(desc, "^%((.-)%)$")) or nextPrefix
-			table.insert(parts, string.format("|cffffffffSending %s to %s|r", msgType, nextDest or "?"))
+			centerText = string.format("|cffffffffSending %s to %s|r", msgType, nextDest or "?")
 		end
 		local c = ctlDepth >= 1000 and "ffff4444" or "ffff9900"
 		local backlog = string.format("%d packets", ctlDepth)
@@ -297,17 +320,20 @@ function TOGBankClassic_UI_Inventory:BuildNetworkStatus()
 		if queriedCount > 0 then
 			backlog = backlog .. string.format(", %d requests", queriedCount)
 		end
-		table.insert(parts, string.format("|c%sBacklog: %s|r", c, backlog))
+		table.insert(rightParts, string.format("|c%sBacklog: %s|r", c, backlog))
 	end
 
-	if #parts == 0 then return "" end
-	return "    " .. table.concat(parts, "  ")
+	local left = #leftParts > 0 and ("    " .. table.concat(leftParts, "  ")) or ""
+	return left, centerText, table.concat(rightParts, "  ")
 end
 
 function TOGBankClassic_UI_Inventory:RefreshStatusBar()
 	if not self.Window then return end
 	if self.statusHovered then return end
-	self.Window:SetStatusText((self.baseStatusText or "") .. self:BuildNetworkStatus())
+	local left, center, right = self:BuildNetworkStatus()
+	self.Window:SetStatusText((self.baseStatusText or "") .. left)
+	if self.Window.statusCenter then self.Window.statusCenter:SetText(center) end
+	if self.Window.statusRight  then self.Window.statusRight:SetText(right)   end
 end
 
 function TOGBankClassic_UI_Inventory:DrawContent()
@@ -397,6 +423,8 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 	self.Window:SetCallback("OnEnterStatusBar", function(_)
 		self.statusHovered = true
+		if self.Window.statusCenter then self.Window.statusCenter:SetText("") end
+		if self.Window.statusRight  then self.Window.statusRight:SetText("")  end
 		local tab = self.TabGroup.localstatus.selected
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		local alt = info.alts[normTab]
