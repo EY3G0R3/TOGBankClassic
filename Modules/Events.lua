@@ -221,6 +221,11 @@ function TOGBankClassic_Events:OnShareTimer()
 		end
 	end
 
+	-- REQUEST-RETIRE-001: Prune expired done requests on the periodic timer so fulfilled/
+	-- cancelled requests don't accumulate indefinitely.  PruneIfNeeded is throttled
+	-- internally (5-min guard) so calling it here every ~3 min is safe.
+	TOGBankClassic_Guild:PruneIfNeeded()
+
 	self:SetShareTimer()
 end
 ---END CHANGES
