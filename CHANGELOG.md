@@ -1,5 +1,21 @@
 # TOGBankClassic Changelog
 
+## [v0.9.7] (2026-03-18) - Request Retirement Fix & Status Bar Cleanup
+
+**Status:** Production Ready
+
+### Bug Fixes
+
+- **Expired requests never pruned** — Fulfilled and cancelled requests from 30+ days ago were accumulating indefinitely. `PruneIfNeeded` was only called after mutations, never on a timer, so requests were never cleaned up on clients that hadn't recently submitted or fulfilled a request. It now runs automatically every ~3 minutes via the periodic share timer.
+
+### Improvements
+
+- **Status bar network labels renamed** — The network counters in the inventory status bar are now labelled `Tx:` (outgoing sends), `Rx:` (P2P data fetches), and `Bcast:` (sync broadcast queue), replacing the cryptic `send:`, `P2P:`, and `q:` labels.
+- **Status bar layout** — When the window is too narrow to show all three sections, the right section drops first (was: center). Left + center are shown until even narrower, then left only.
+- **Status bar refactored into StatusBar.lua** — All status bar logic (formatters, inventory summary, network parts, ticker lifecycle, hover callbacks) is now in `Modules/UI/StatusBar.lua`. `Inventory.lua` retains only two lines of status bar surface.
+
+---
+
 ## [v0.9.6] (2026-03-16) - Request Sync Throttle Overhaul & Network Status Bar
 
 **Status:** Production Ready

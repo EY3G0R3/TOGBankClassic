@@ -260,7 +260,12 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.9.6 (Latest)
+v0.9.7 (Latest)
+• Fixed expired requests never being pruned — fulfilled/cancelled requests from 30+ days ago were accumulating indefinitely; pruning now runs automatically every ~3 minutes
+• Network status bar labels renamed: Tx: (outgoing), Rx: (P2P fetches), Bcast: (broadcast queue) — clearer than the old send:/P2P:/q: labels
+• Status bar now drops the right section first when the window is narrow, keeping the more useful left + centre visible longer
+
+v0.9.6
 • Request sync throttle overhaul: deduplicating response drain, coalesced index responses, chunked 20-ID sending — eliminates multi-minute CTL backlogs on large guilds
 • Network status bar (opt-in, Options -> General): live CTL activity with left/centre/right alignment; hides sections automatically when window is narrow
 • /togbank netq: new command showing full CTL queue breakdown by message type and recipient
