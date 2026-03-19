@@ -99,6 +99,7 @@ local function drainQueriedRequests()
 			tombstones = tombstones,
 		}
 		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+		TOGBankClassic_Output:Debug("COMMS", "togbank-rd [by-id] %d reqs to %s", #requests, dest)
 		if target == "*" then
 			TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
 		else
@@ -1106,6 +1107,7 @@ function Guild:SendRequestsSnapshot(target)
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
+	TOGBankClassic_Output:Debug("COMMS", "togbank-rd [snap] to %s", target or "guild")
 	TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", target, "NORMAL")
 end
 
@@ -1183,6 +1185,8 @@ local function drainIndexChunks()
 	end
 	local chunk = table.remove(pendingIndexChunks, 1)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(chunk.payload)
+	TOGBankClassic_Output:Debug("COMMS", "togbank-rd [idx] %d ids (+%d remaining chunks) to %s",
+		#(chunk.payload.requests or {}), #pendingIndexChunks, chunk.target or "guild")
 	if chunk.target then
 		TOGBankClassic_Core:SendWhisper("togbank-rd", data, chunk.target, "NORMAL")
 	else
