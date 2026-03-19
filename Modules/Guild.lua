@@ -3161,16 +3161,6 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 	return TOGBankClassic_DeltaComms:ApplyDelta(self.Info, name, deltaData, sender)
 end
 
--- Request a chain of deltas to catch up from an old version (DELTA-006)
-function TOGBankClassic_Guild:RequestDeltaChain(altName, fromVersion, toVersion, sender)
-	return TOGBankClassic_DeltaComms:RequestDeltaChain(self.Info and self.Info.name, altName, fromVersion, toVersion, sender)
-end
-
--- Apply a chain of deltas sequentially (DELTA-006)
-function TOGBankClassic_Guild:ApplyDeltaChain(altName, deltaChain)
-	return TOGBankClassic_DeltaComms:ApplyDeltaChain(self.Info, altName, deltaChain)
-end
-
 function TOGBankClassic_Guild:Hello(type)
 	local addon_data = TOGBankClassic_Guild:GetVersion()
 	local current_data = TOGBankClassic_Guild.Info

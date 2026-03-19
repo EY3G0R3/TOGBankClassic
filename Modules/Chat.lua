@@ -63,10 +63,6 @@ Comms system breakdown as of 2026-03-18:
   ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
   │ togbank-d3 │ Full sync without links — registered but never sent                                           │
   ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ togbank-dr │ Delta chain replay request — only triggered by a baseVersion field that v0.8+ stopped sending │
-  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ togbank-dc │ Delta chain response — dead code path, paired with togbank-dr                                 │
-  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
   │ togbank-rq │ Defined in constants, no send code anywhere                                                   │
   └────────────┴───────────────────────────────────────────────────────────────────────────────────────────────┘
 
@@ -133,14 +129,9 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
-	-- DELTA-006: Delta chain replay handlers
-	TOGBankClassic_Core:RegisterComm("togbank-dr", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-dc", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
+	-- togbank-dr / togbank-dc (DELTA-006 delta chain replay) REMOVED:
+	-- togbank-dr was only triggered by deltaData.baseVersion which v0.8+ stopped sending.
+	-- togbank-dc was the paired response; both are dead code paths. Slots freed for future use.
 
 	-- togbank-v registration REMOVED: never sent (all sends commented out), ignored on receive by delta clients
 	-- Slot freed for togbank-rd (request data) which was previously at slot #25, over WoW's 16-prefix limit
@@ -1747,87 +1738,6 @@ end
 					FormatSyncStatus(ADOPTION_STATUS.UNAUTHORIZED)
 				)
 			end
-		end
-	end
-
-	-- DELTA-006: Delta Range Request handler
-	if prefix == "togbank-dr" then
-		if data.altName and data.fromVersion and data.toVersion then
-			local altName = data.altName
-			local fromVersion = data.fromVersion
-			local toVersion = data.toVersion
-
-			self:Debug(
-				"REQUESTS",
-				">",
-				ColorPlayerName(sender),
-				QUERIES_COLOR,
-				"requests delta chain for",
-				ColorPlayerName(altName),
-				string.format("(v%d→v%d)", fromVersion, toVersion)
-			)
-
-			-- Get delta history
-			if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
-				local deltaChain = TOGBankClassic_Database:GetDeltaHistory(
-					TOGBankClassic_Guild.Info.name,
-					altName,
-					fromVersion,
-					toVersion
-				)
-
-				if deltaChain then
-					-- Send delta chain back via whisper
-					local chainData = {
-						altName = altName,
-						deltas = deltaChain
-					}
-					local serialized = TOGBankClassic_Core:SerializeWithChecksum(chainData)
-					if not TOGBankClassic_Core:SendWhisper("togbank-dc", serialized, sender, "ALERT") then
-						return
-					end
-
-					self:Debug(
-						"<",
-						"togbank-dc (Delta Chain) to",
-						ColorPlayerName(sender),
-						string.format("(%d hops, %d bytes)", #deltaChain, string.len(serialized or ""))
-					)
-				else
-					-- Can't build chain, let them request full sync
-					self:Debug(
-						"< Cannot build delta chain for",
-						ColorPlayerName(altName),
-						string.format("(v%d→v%d), no history", fromVersion, toVersion)
-					)
-				end
-			end
-		end
-	end
-
-	-- DELTA-006: Delta Chain response handler
-	if prefix == "togbank-dc" then
-		if data.altName and data.deltas then
-			local altName = data.altName
-			local deltaChain = data.deltas
-
-			self:Debug(
-				"REQUESTS",
-				">",
-				ColorPlayerName(sender),
-				SHARES_COLOR,
-				"delta chain for",
-				ColorPlayerName(altName),
-				string.format("(%d hops)", #deltaChain)
-			)
-
-			-- Apply delta chain
-			local status = TOGBankClassic_Guild:ApplyDeltaChain(altName, deltaChain)
-			self:Debug(
-				"REQUESTS",
-				"Delta chain application",
-				FormatSyncStatus(status)
-			)
 		end
 	end
 
