@@ -757,12 +757,16 @@ function Guild:PruneRequests()
 			or req.status == "complete"
 			or req.status == "cancelled"
 			or (quantity > 0 and fulfilled >= quantity)
-		local tooOld = isDone and (now - updated) > REQUEST_LOG.EXPIRY_SECONDS
+		-- Use statusUpdatedAt as the expiry anchor: updatedAt is bumped on every sync
+		-- so requests would never age out; statusUpdatedAt only changes when status does.
+		local statusTs = isDone and (tonumber(req.statusUpdatedAt or 0) or 0) or 0
+		local expiryAnchor = (statusTs > 0) and statusTs or updated
+		local tooOld = isDone and (now - expiryAnchor) > REQUEST_LOG.EXPIRY_SECONDS
 		if tooOld then
 			self.Info.requests[id] = nil
 			prunedCount = prunedCount + 1
 			TOGBankClassic_Output:Debug(string.format("PruneRequests: Pruning request id=%s, status=%s, age=%d seconds",
-				req.id or "nil", req.status or "nil", now - updated))
+				req.id or "nil", req.status or "nil", now - expiryAnchor))
 		else
 			if updated > latest then
 				latest = updated
