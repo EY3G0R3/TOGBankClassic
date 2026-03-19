@@ -211,7 +211,7 @@ Data model (Guild.Info):
 
 Request record schema:
 {
-  id, date, updatedAt, statusUpdatedAt,
+  id, date, updatedAt,
   requester, bank, item, quantity, fulfilled,
   status = "open" | "fulfilled" | "cancelled" | "complete",
   notes
@@ -307,7 +307,6 @@ local function sanitizeRequest(req)
 
 	local updatedAt = validateTimestamp(req.updatedAt or req.date or now, now)
 	local dateVal = validateTimestamp(req.date or updatedAt, updatedAt)
-	local statusUpdatedAt = validateTimestamp(req.statusUpdatedAt or updatedAt, updatedAt)
 	local status = req.status
 	if not VALID_REQUEST_STATUS[status] then
 		status = "open"
@@ -322,7 +321,6 @@ local function sanitizeRequest(req)
 		id = id,
 		date = dateVal,
 		updatedAt = updatedAt,
-		statusUpdatedAt = statusUpdatedAt,
 		requester = requester,
 		bank = bank,
 		item = item,
@@ -457,60 +455,34 @@ local function mergeRequest(requests, tombstones, id, incoming)
 	local existing = requests[id]
 	if existing then
 		local existingTs = tonumber(existing.updatedAt or existing.date or 0) or 0
-		local existingStatusTs = tonumber(existing.statusUpdatedAt or existingTs or 0) or 0
-		local incomingStatusTs = tonumber(clean.statusUpdatedAt or 0) or 0  -- Don't fall back to incomingTs!
-
-		-- STATUS PRIORITY CHECK: Don't allow reopening cancelled/completed requests
-		-- Cancel/complete are terminal states that should not be overwritten by "open" status
 		local existingIsTerminal = (existing.status == "cancelled" or existing.status == "complete")
 		local incomingIsTerminal = (clean.status == "cancelled" or clean.status == "complete")
 
-		if existingIsTerminal and not incomingIsTerminal then
-			-- Existing is cancelled/complete, incoming is open/fulfilled
-			-- Only accept incoming if it has NEWER statusUpdatedAt (explicit status change)
-			-- If incoming has no statusUpdatedAt, treat it as old/unknown (don't reopen)
-			if incomingStatusTs <= existingStatusTs then
-				TOGBankClassic_Output:Debug("SYNC", "MERGE",
-					"mergeRequest: REJECTED - Trying to reopen %s status (id=%s, existing %s@%d, incoming %s@%d)",
-					existing.status, id, existing.status, existingStatusTs, clean.status, incomingStatusTs)
-				return "kept"
-			end
-			-- If incoming has newer status timestamp, it's an explicit reopening - allow it
-			TOGBankClassic_Output:Debug("SYNC", "MERGE",
-				"mergeRequest: Allowing explicit status change from %s to %s (id=%s, statusUpdatedAt %d -> %d)",
-				existing.status, clean.status, id, existingStatusTs, incomingStatusTs)
-		end
-
-		if not existingIsTerminal and incomingIsTerminal then
-			-- Incoming is trying to cancel/complete an open request
-			TOGBankClassic_Output:Debug("SYNC", "MERGE",
-				"mergeRequest: Applying terminal status change %s -> %s (id=%s, statusUpdatedAt %d -> %d, updatedAt %d -> %d)",
-				existing.status, clean.status, id, existingStatusTs, incomingStatusTs, existingTs, incomingTs)
-		end
-
-		-- TERMINAL STATE TIMESTAMP PROTECTION: Don't update timestamps on cancelled/complete requests
-		-- unless status actually changed (prevents "zombie" date refreshing)
-		if existingIsTerminal and incomingIsTerminal then
-			-- Both are terminal states - only reject if status AND general timestamp unchanged
-			if incomingStatusTs <= existingStatusTs and incomingTs <= existingTs then
-				-- Same terminal state, same timestamps - just a refresh, reject it
-				TOGBankClassic_Output:Debug("SYNC", "MERGE",
-					"mergeRequest: REJECTED - Timestamp refresh on %s status (id=%s, existing@%d, incoming@%d)",
-					existing.status, id, existingStatusTs, incomingStatusTs)
-				return "kept"
-			end
-			-- Otherwise fall through to normal timestamp comparison (allows quantity updates, etc.)
-			TOGBankClassic_Output:Debug("SYNC", "MERGE",
-				"mergeRequest: Allowing terminal state update (id=%s, status=%s, statusTs %d -> %d, ts %d -> %d)",
-				id, clean.status, existingStatusTs, incomingStatusTs, existingTs, incomingTs)
-		end
-
 		if incomingTs > existingTs then
-			requests[id] = clean
-			TOGBankClassic_Output:Debug("SYNC", "MERGE",
-				"mergeRequest: UPDATED - id=%s, status %s->%s, updatedAt %d->%d",
-				id, existing.status, clean.status, existingTs, incomingTs)
-			return "updated"
+			if existingIsTerminal and not incomingIsTerminal then
+				-- Ratchet: incoming has a higher updatedAt (e.g. a partial fulfillment that arrived
+				-- after a cancel on a stale peer) but we must never revert a terminal status.
+				-- Accept the incoming record's data fields but restore the terminal status and
+				-- take the higher fulfilled count.
+				local merged = {}
+				for k, v in pairs(clean) do merged[k] = v end
+				merged.status = existing.status
+				merged.fulfilled = math.max(
+					tonumber(clean.fulfilled or 0) or 0,
+					tonumber(existing.fulfilled or 0) or 0
+				)
+				requests[id] = merged
+				TOGBankClassic_Output:Debug("SYNC", "MERGE",
+					"mergeRequest: RATCHET - kept terminal %s, advanced updatedAt %d->%d (id=%s)",
+					existing.status, existingTs, incomingTs, id)
+				return "updated"
+			else
+				requests[id] = clean
+				TOGBankClassic_Output:Debug("SYNC", "MERGE",
+					"mergeRequest: UPDATED - id=%s, status %s->%s, updatedAt %d->%d",
+					id, existing.status, clean.status, existingTs, incomingTs)
+				return "updated"
+			end
 		else
 			TOGBankClassic_Output:Debug("SYNC", "MERGE",
 				"mergeRequest: KEPT - id=%s (incoming older: %d <= %d)",
@@ -757,16 +729,12 @@ function Guild:PruneRequests()
 			or req.status == "complete"
 			or req.status == "cancelled"
 			or (quantity > 0 and fulfilled >= quantity)
-		-- Use statusUpdatedAt as the expiry anchor: updatedAt is bumped on every sync
-		-- so requests would never age out; statusUpdatedAt only changes when status does.
-		local statusTs = isDone and (tonumber(req.statusUpdatedAt or 0) or 0) or 0
-		local expiryAnchor = (statusTs > 0) and statusTs or updated
-		local tooOld = isDone and (now - expiryAnchor) > REQUEST_LOG.EXPIRY_SECONDS
+		local tooOld = isDone and (now - updated) > REQUEST_LOG.EXPIRY_SECONDS
 		if tooOld then
 			self.Info.requests[id] = nil
 			prunedCount = prunedCount + 1
 			TOGBankClassic_Output:Debug(string.format("PruneRequests: Pruning request id=%s, status=%s, age=%d seconds",
-				req.id or "nil", req.status or "nil", now - expiryAnchor))
+				req.id or "nil", req.status or "nil", now - updated))
 		else
 			if updated > latest then
 				latest = updated
@@ -865,7 +833,6 @@ function Guild:ApplyRequestMutation(entry, sender)
 			req.fulfilled = math.min(req.fulfilled, qty)
 			if req.fulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
 				req.status = "fulfilled"
-				req.statusUpdatedAt = entryTs
 			end
 		end
 		if entryTs > 0 then
@@ -908,9 +875,8 @@ function Guild:ApplyRequestMutation(entry, sender)
 			end
 		end
 
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: Merging request snapshot type=%s, id=%s, status=%s, statusUpdatedAt=%s, updatedAt=%s",
-			entryType, requestId, tostring(entry.request.status),
-			tostring(entry.request.statusUpdatedAt), tostring(entry.request.updatedAt))
+		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: Merging request snapshot type=%s, id=%s, status=%s, updatedAt=%s",
+			entryType, requestId, tostring(entry.request.status), tostring(entry.request.updatedAt))
 
 		local result = mergeRequest(self.Info.requests, tombstones, requestId, entry.request)
 
@@ -1539,7 +1505,6 @@ function Guild:AddRequest(request)
 	request.date = request.date or now
 	request.updatedAt = now
 	request.status = request.status or "open"
-	request.statusUpdatedAt = request.statusUpdatedAt or now  -- Track when status was set
 	request.fulfilled = tonumber(request.fulfilled or 0) or 0
 
 	-- Generate request ID in actor:random format
@@ -1688,11 +1653,10 @@ function Guild:CancelRequest(requestId, actor)
 	local now = GetServerTime()
 	local oldStatus = req.status
 	req.status = "cancelled"
-	req.statusUpdatedAt = now
 	req.updatedAt = now
 
-	TOGBankClassic_Output:Debug("SYNC", "CancelRequest SUCCESS: id=%s, item=%s, requester=%s, oldStatus=%s, statusUpdatedAt=%d, updatedAt=%d",
-		requestId, req.item or "?", req.requester or "?", oldStatus, now, now)
+	TOGBankClassic_Output:Debug("SYNC", "CancelRequest SUCCESS: id=%s, item=%s, requester=%s, oldStatus=%s, updatedAt=%d",
+		requestId, req.item or "?", req.requester or "?", oldStatus, now)
 
 	-- Broadcast and finalize
 	self:BroadcastRequestMutation({ type = "cancel", requestId = requestId, request = req })
@@ -1729,7 +1693,6 @@ function Guild:CompleteRequest(requestId, actor)
 	-- Apply mutation directly
 	local now = GetServerTime()
 	req.status = "complete"
-	req.statusUpdatedAt = now
 	req.updatedAt = now
 
 	-- Broadcast and finalize
@@ -1782,7 +1745,7 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 	-- REQSYNC-006: Use a per-mutation offset so successive requests fulfilled in the same
 	-- call get strictly increasing timestamps (now, now+1, now+2, …).  GetServerTime() has
 	-- 1-second precision; without the offset every request in the loop gets the same
-	-- updatedAt/statusUpdatedAt, which causes snapshot-based mergeRequest to silently
+	-- updatedAt, which causes snapshot-based mergeRequest to silently
 	-- discard later updates as "not newer" when a peer already holds any version at ts=now.
 	local mutationCount = 0
 
@@ -1816,7 +1779,6 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 
 			if qty > 0 and targetFulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
 				req.status = "fulfilled"
-				req.statusUpdatedAt = mutationTs
 				TOGBankClassic_Output:Debug("FULFILL", "Set status to FULFILLED (fulfilled %d >= qty %d)", targetFulfilled, qty)
 			else
 				TOGBankClassic_Output:Debug("FULFILL", "Status NOT changed: qty=%d, fulfilled=%d, status=%s",
@@ -1890,10 +1852,10 @@ function Guild:ReqScan()
 	local expiry = REQUEST_LOG.EXPIRY_SECONDS
 	local DAY = 86400
 	local total, done, expired = 0, 0, 0
-	local noStatusTs, noUpdatedAt, noDate = 0, 0, 0
-	local updatedAtString, dateString, statusTsString = 0, 0, 0
+	local noUpdatedAt, noDate = 0, 0
+	local updatedAtString, dateString = 0, 0
 	local statusCounts = {}
-	-- statusUpdatedAt age buckets: 0-7d, 7-14d, 14-21d, 21-30d, >30d, future
+	-- updatedAt age buckets: 0-7d, 7-14d, 14-21d, 21-30d, >30d, future
 	local ageBuckets = { [1]=0, [2]=0, [3]=0, [4]=0, [5]=0, [6]=0 }
 	local example  -- first done request, for raw field inspection
 
@@ -1910,23 +1872,19 @@ function Guild:ReqScan()
 
 		if isDone then
 			done = done + 1
-			local updated  = tonumber(req.updatedAt or 0) or 0
-			local statusTs = tonumber(req.statusUpdatedAt or 0) or 0
-			local dateTs   = tonumber(req.date or 0) or 0
-			if statusTs == 0 then noStatusTs = noStatusTs + 1 end
-			if updated  == 0 then noUpdatedAt = noUpdatedAt + 1 end
-			if dateTs   == 0 then noDate = noDate + 1 end
+			local updated = tonumber(req.updatedAt or 0) or 0
+			local dateTs  = tonumber(req.date or 0) or 0
+			if updated == 0 then noUpdatedAt = noUpdatedAt + 1 end
+			if dateTs  == 0 then noDate = noDate + 1 end
 			if type(req.updatedAt) == "string" and tonumber(req.updatedAt) == nil then updatedAtString = updatedAtString + 1 end
 			if type(req.date) == "string" and tonumber(req.date) == nil then dateString = dateString + 1 end
-			if type(req.statusUpdatedAt) == "string" and tonumber(req.statusUpdatedAt) == nil then statusTsString = statusTsString + 1 end
 
-			local expiryAnchor = (statusTs > 0) and statusTs or updated
-			if (now - expiryAnchor) > expiry then expired = expired + 1 end
+			if (now - updated) > expiry then expired = expired + 1 end
 
-			-- Age distribution by statusUpdatedAt
-			local ageDays = statusTs > 0 and ((now - statusTs) / DAY) or nil
+			-- Age distribution by updatedAt
+			local ageDays = updated > 0 and ((now - updated) / DAY) or nil
 			if ageDays == nil then
-				ageBuckets[5] = ageBuckets[5] + 1  -- no statusTs, count as >30d
+				ageBuckets[5] = ageBuckets[5] + 1  -- no updatedAt
 			elseif ageDays < 0 then
 				ageBuckets[6] = ageBuckets[6] + 1  -- future timestamp
 			elseif ageDays < 7 then
@@ -1945,25 +1903,24 @@ function Guild:ReqScan()
 		end
 	end
 
-	TOGBankClassic_Output:Response("ReqScan: %d total, %d done, %d done+expired (by statusUpdatedAt)", total, done, expired)
+	TOGBankClassic_Output:Response("ReqScan: %d total, %d done, %d done+expired (by updatedAt)", total, done, expired)
 	TOGBankClassic_Output:Response("  Status breakdown:")
 	for s, n in pairs(statusCounts) do
 		TOGBankClassic_Output:Response("    %s: %d", s, n)
 	end
-	TOGBankClassic_Output:Response("  Completed-at age (statusUpdatedAt):")
+	TOGBankClassic_Output:Response("  Completed-at age (updatedAt):")
 	TOGBankClassic_Output:Response("    0-7d: %d  7-14d: %d  14-21d: %d  21-30d: %d  >30d: %d  future: %d",
 		ageBuckets[1], ageBuckets[2], ageBuckets[3], ageBuckets[4], ageBuckets[5], ageBuckets[6])
-	TOGBankClassic_Output:Response("  Done requests missing fields: statusUpdatedAt=%d, updatedAt=%d, date=%d", noStatusTs, noUpdatedAt, noDate)
-	TOGBankClassic_Output:Response("  Done requests with non-numeric timestamp strings: updatedAt=%d, date=%d, statusUpdatedAt=%d",
-		updatedAtString, dateString, statusTsString)
+	TOGBankClassic_Output:Response("  Done requests missing fields: updatedAt=%d, date=%d", noUpdatedAt, noDate)
+	TOGBankClassic_Output:Response("  Done requests with non-numeric timestamp strings: updatedAt=%d, date=%d",
+		updatedAtString, dateString)
 
 	if example then
 		TOGBankClassic_Output:Response("  Example done request (raw fields):")
 		TOGBankClassic_Output:Response("    id=%s status=%s", tostring(example.id), tostring(example.status))
-		TOGBankClassic_Output:Response("    date=(%s)%s updatedAt=(%s)%s statusUpdatedAt=(%s)%s",
+		TOGBankClassic_Output:Response("    date=(%s)%s updatedAt=(%s)%s",
 			type(example.date), tostring(example.date),
-			type(example.updatedAt), tostring(example.updatedAt),
-			type(example.statusUpdatedAt), tostring(example.statusUpdatedAt))
+			type(example.updatedAt), tostring(example.updatedAt))
 		TOGBankClassic_Output:Response("    requester=%s item=%s", tostring(example.requester), tostring(example.item))
 	end
 end
