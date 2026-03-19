@@ -291,6 +291,6 @@ v0.9.0
 
 ================================================================================
 
-**Download TOGBankClassic today and revolutionize your guild's bank management!**
+Download TOGBankClassic today and revolutionize your guild's bank management!
 
-*No more alt-hopping. No more whisper spam. Just efficient, organized guild banking.*
+No more alt-hopping. No more whisper spam. Just efficient, organized guild banking.
