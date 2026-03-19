@@ -3368,10 +3368,7 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		end
 	end
 
-	if mode == "snapshot" then
-		-- Share current requests state alongside bank data so everyone stays in sync
-		self:SendRequestsData()
-	elseif mode == "version" then
+	if mode == "version" then
 		-- Lightweight ping; snapshots are sent only when queried.
 		--self:SendRequestsVersionPing()  -- COMMENTED OUT: togbank-v ignored by delta clients (BANDWIDTH-001)
 	end

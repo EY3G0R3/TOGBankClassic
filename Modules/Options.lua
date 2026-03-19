@@ -426,10 +426,7 @@ function TOGBankClassic_Options:Init()
 							-- Write to guild-synced settings (propagates to all clients)
 							if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
 								TOGBankClassic_Guild.Info.settings.maxRequestPercent = v
-								-- Broadcast settings change to guild
-								if TOGBankClassic_Guild.SendRequestsData then
-									TOGBankClassic_Guild:SendRequestsData()
-								end
+								-- Settings propagate on next regular guild share
 							end
 							-- Also write to local settings as backup
 							self.db.global.requests.maxRequestPercent = v

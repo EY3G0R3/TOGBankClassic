@@ -1063,15 +1063,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				(data.name and ColorPlayerName(TOGBankClassic_Guild:NormalizeName(data.name)) or "") .. extraInfo
 			)
 
-			-- Request data is guild-wide, anyone can respond (player="*")
-			if data.type == "requests" then
-				local matches = (data.player == "*" or data.player == player)
-				TOGBankClassic_Output:DebugComm("REQUEST HANDLER CHECK: type=requests, player=%s, myName=%s, matches=%s", tostring(data.player), tostring(player), tostring(matches))
-				if matches then
-					TOGBankClassic_Output:DebugComm("REQUEST HANDLER: Responding to requests query")
-					TOGBankClassic_Guild:SendRequestsSnapshot(sender)
-				end
-			end
 			if data.type == "requests-index" then
 				-- Track addon version (all clients broadcast this on login and periodically)
 				if data.addon then
@@ -1101,14 +1092,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
 						"%s queries [REQ] requests-by-id (%d IDs)", tostring(sender), data.ids and #data.ids or 0)
 					TOGBankClassic_Guild:EnqueueRequestsById(sender, data.ids)
-				end
-			end
-			if data.type == "requests-log" then
-				-- Legacy query type - respond with full snapshot
-				local matches = (data.player == "*" or data.player == player)
-				if matches then
-					TOGBankClassic_Output:DebugComm("REQUEST LOG HANDLER: Responding with snapshot (log queries deprecated)")
-					TOGBankClassic_Guild:SendRequestsSnapshot(sender)
 				end
 			end
 		end
@@ -1479,17 +1462,6 @@ end
 			-- Roster sync removed: Roster is now rebuilt locally from guild notes
 		end
 
-		if data.type == "requests" then
-			local status = TOGBankClassic_Guild:ReceiveRequestsData(data)
-			self:Debug(
-				"REQUESTS",
-				">",
-				ColorPlayerName(sender),
-				SHARES_COLOR,
-				"requests snapshot. We accept it by default.",
-				FormatSyncStatus(status)
-			)
-		end
 		if data.type == "requests-index" then
 			self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR, "requests index. We accept it by default.")
 			TOGBankClassic_Guild:ReceiveRequestsIndex(data, sender)
@@ -1864,17 +1836,6 @@ end
 	if prefix == "togbank-rd" then
 		TOGBankClassic_Output:DebugComm("[SYNC-003p] togbank-rd received from %s: type=%s", sender, tostring(data.type))
 
-		if data.type == "requests" then
-			local status = TOGBankClassic_Guild:ReceiveRequestsData(data)
-			self:Debug(
-				"REQUESTS",
-				">",
-				ColorPlayerName(sender),
-				SHARES_COLOR,
-				"requests snapshot.",
-				FormatSyncStatus(status)
-			)
-		end
 		if data.type == "requests-index" then
 			local reqCount = data.requests and #data.requests or 0
 			local tombCount = data.tombstones and #data.tombstones or 0

@@ -1090,39 +1090,11 @@ function Guild:GetRequestsVersion()
 	return version
 end
 
-function Guild:SendRequestsSnapshot(target)
-	-- Always send snapshot, even if empty (so querying player knows we have nothing)
-	if not self.Info then
-		TOGBankClassic_Output:DebugComm("SendRequestsSnapshot: Skipping (self.Info is nil)")
-		return
-	end
-	self:EnsureRequestsInitialized()
-	self:NormalizeRequestList()
-	local payload = {
-		type = "requests",
-		player = "*",  -- Backwards compat: v0.7.11-v0.7.13 need this field to process responses
-		version = self:GetRequestsVersion(),
-		requests = requestsToArray(self.Info.requests),  -- Convert map to array for wire format
-		tombstones = self.Info.requestsTombstones or {},
-	}
-	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	-- SYNC-012: Use dedicated togbank-rd prefix — own throttle bucket, not shared with alt inventory data on togbank-d
-	TOGBankClassic_Output:Debug("COMMS", "togbank-rd [snap] to %s", target or "guild")
-	TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", target, "NORMAL")
-end
-
-function Guild:SendRequestsData(target)
-	self:SendRequestsSnapshot(target)
-end
-
 function Guild:QueryRequestsSnapshot(player, priority)
-	-- Send wildcard query (v0.7.14+)
-	-- Note: Old clients won't respond to wildcard, but targeted queries flood guild chat
-	-- and trigger WoW throttling which blocks responses. Wildcard-only is the fix.
-	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = "*", type = "requests" })
-	-- Send on old prefix for backwards compat; new clients listen on both
-	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, priority or "BULK")
-	TOGBankClassic_Output:DebugComm("[SYNC-004] QUERY REQUESTS: Sent wildcard query")
+	-- Deprecated: kept only so callers referencing this name don't crash on mixed-version guilds.
+	-- The modern flow uses QueryRequestsIndex (hash-based index/by-id protocol).
+	TOGBankClassic_Output:DebugComm("[SYNC-004] QueryRequestsSnapshot called - using QueryRequestsIndex instead")
+	self:QueryRequestsIndex(player, priority)
 end
 
 -- Request index query/response for hash-based sync.
@@ -1466,44 +1438,6 @@ function Guild:ReceiveRequestsById(payload)
 	})
 	if shouldEndSync then self:EndRequestsIndexSync() end
 	return adopted and ADOPTION_STATUS.ADOPTED or ADOPTION_STATUS.INVALID
-end
-
--- Receive and merge a requests snapshot from another player.
--- Uses merge-based sync - always merges, ApplyRequestSnapshot handles conflict resolution.
-function Guild:ReceiveRequestsData(payload)
-	if not payload or type(payload) ~= "table" then
-		TOGBankClassic_Output:Debug("[SYNC] ReceiveRequestsData: INVALID - payload not a table")
-		return ADOPTION_STATUS.INVALID
-	end
-	if not self.Info then
-		TOGBankClassic_Output:Debug("[SYNC] ReceiveRequestsData: IGNORED - self.Info is nil")
-		return ADOPTION_STATUS.IGNORED
-	end
-	self:EnsureRequestsInitialized()
-
-	-- payload.requests may be an array (wire format) or a map; use # only for arrays
-	local incomingCount = 0
-	if payload.requests and type(payload.requests) == "table" then
-		if payload.requests[1] ~= nil then
-			incomingCount = #payload.requests  -- array
-		else
-			for _ in pairs(payload.requests) do incomingCount = incomingCount + 1 end  -- map
-		end
-	end
-	local localCountBefore = self.Info.requests and countRequests(self.Info.requests) or 0
-	TOGBankClassic_Output:Debug(string.format("[SYNC] ReceiveRequestsData: START - local=%d, incoming=%d",
-		localCountBefore, incomingCount))
-
-	-- Always merge - ApplyRequestSnapshot handles last-writer-wins per request
-	if self:ApplyRequestSnapshot(payload) then
-		local localCountAfter = self.Info.requests and countRequests(self.Info.requests) or 0
-		TOGBankClassic_Output:Debug(string.format("[SYNC] ReceiveRequestsData: ADOPTED - final=%d (was %d, incoming=%d)",
-			localCountAfter, localCountBefore, incomingCount))
-		return ADOPTION_STATUS.ADOPTED
-	end
-
-	TOGBankClassic_Output:Debug("[SYNC] ReceiveRequestsData: INVALID - ApplyRequestSnapshot returned false")
-	return ADOPTION_STATUS.INVALID
 end
 
 --[[ COMMENTED OUT - togbank-v legacy protocol (request version already in togbank-dv2)
