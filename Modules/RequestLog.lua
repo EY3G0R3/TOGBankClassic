@@ -238,9 +238,11 @@ local VALID_REQUEST_STATUS = {
 
 -- Expiry/prune settings are defined in Constants.lua (REQUEST_LOG table)
 
-local function generateRequestId(actor)
-	local rand = string.format("%06x", math.random(0, 0xFFFFFF))
-	return string.format("%s:%s", actor or "unknown", rand)
+local function generateRequestId()
+	local hi = math.random(0, 0xFFFFFF)
+	local lo = math.random(0, 0xFFFFFF)
+	local tail = math.random(0, 0xFF)
+	return string.format("%06x%06x%02x", hi, lo, tail)
 end
 
 -- Normalize incoming request data and ensure required fields exist.
@@ -1507,10 +1509,8 @@ function Guild:AddRequest(request)
 	request.status = request.status or "open"
 	request.fulfilled = tonumber(request.fulfilled or 0) or 0
 
-	-- Generate request ID in actor:random format
 	if not request.id then
-		local actor = self:GetNormalizedPlayer() or "unknown"
-		request.id = generateRequestId(actor)
+		request.id = generateRequestId()
 	end
 
 	local clean = sanitizeRequest(request)
