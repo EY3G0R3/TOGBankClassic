@@ -42,6 +42,7 @@ local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local FILTER_ANY = "__tog_any__"
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
 local FILTER_SEPARATOR_ANY_REST = "__tog_sep_any_rest__"
+local FILTER_SEPARATOR_HIST = "__tog_sep_hist__"
 local FILTER_SEPARATOR_LABEL = "----------"
 
 local function useTwoHeaderLayout()
@@ -49,7 +50,9 @@ local function useTwoHeaderLayout()
 end
 
 local function isFilterSeparator(value)
-	return value == FILTER_SEPARATOR_ME_ANY or value == FILTER_SEPARATOR_ANY_REST
+	return value == FILTER_SEPARATOR_ME_ANY
+		or value == FILTER_SEPARATOR_ANY_REST
+		or value == FILTER_SEPARATOR_HIST
 end
 
 local function currentFilterValue(self, key)
@@ -726,99 +729,103 @@ local function isPending(request)
 	return fulfilled < qty
 end
 
-local function pendingCounts(requests)
-	local requesterCounts = {}
-	local bankCounts = {}
-	-- Use pairs() since requests is now a map keyed by ID, not an array
+-- Returns open counts and total counts per requester/banker across all requests.
+-- Open counts drive the top section of the dropdown; total counts drive the history section.
+local function allCounts(requests)
+	local requesterOpen  = {}
+	local requesterTotal = {}
+	local bankOpen  = {}
+	local bankTotal = {}
 	for _, req in pairs(requests or {}) do
-		if isPending(req) then
-			local requester = req.requester
-			if requester and requester ~= "" then
-				requesterCounts[requester] = (requesterCounts[requester] or 0) + 1
+		local requester = req.requester
+		if requester and requester ~= "" then
+			requesterTotal[requester] = (requesterTotal[requester] or 0) + 1
+			if isPending(req) then
+				requesterOpen[requester] = (requesterOpen[requester] or 0) + 1
 			end
-			local bank = req.bank
-			if bank and bank ~= "" then
-				bankCounts[bank] = (bankCounts[bank] or 0) + 1
+		end
+		local bank = req.bank
+		if bank and bank ~= "" then
+			bankTotal[bank] = (bankTotal[bank] or 0) + 1
+			if isPending(req) then
+				bankOpen[bank] = (bankOpen[bank] or 0) + 1
 			end
 		end
 	end
-	return requesterCounts, bankCounts
+	return requesterOpen, requesterTotal, bankOpen, bankTotal
 end
 
-local function buildRequesterOptions(currentPlayer, requesterCounts)
+local function buildNameOptions(anyLabel, currentPlayer, openCounts, totalCounts)
 	local list = {}
 	local order = {}
+
+	-- "Me" entry at top (show open count if any, else total)
 	if currentPlayer and currentPlayer ~= "" then
-		list[currentPlayer] = string.format("(%d) Me - %s", requesterCounts[currentPlayer] or 0, currentPlayer)
+		local myOpen  = openCounts[currentPlayer] or 0
+		local myTotal = totalCounts[currentPlayer] or 0
+		local myCount = myOpen > 0 and myOpen or myTotal
+		list[currentPlayer] = string.format("(%d) Me - %s", myCount, currentPlayer)
 		table.insert(order, currentPlayer)
 		list[FILTER_SEPARATOR_ME_ANY] = FILTER_SEPARATOR_LABEL
 		table.insert(order, FILTER_SEPARATOR_ME_ANY)
 	end
-	list[FILTER_ANY] = "Any Requester"
+
+	list[FILTER_ANY] = anyLabel
 	table.insert(order, FILTER_ANY)
 
-	local names = {}
-	for name in pairs(requesterCounts or {}) do
+	-- Split others into open-having and history-only
+	local openNames = {}
+	local histNames = {}
+	for name in pairs(totalCounts or {}) do
 		if name ~= currentPlayer then
-			table.insert(names, name)
+			if (openCounts[name] or 0) > 0 then
+				table.insert(openNames, name)
+			else
+				table.insert(histNames, name)
+			end
 		end
 	end
-	table.sort(names, function(a, b)
-		local countA = requesterCounts[a] or 0
-		local countB = requesterCounts[b] or 0
-		if countA == countB then
-			return tostring(a) < tostring(b)
-		end
-		return countA > countB
+
+	table.sort(openNames, function(a, b)
+		local cA = openCounts[a] or 0
+		local cB = openCounts[b] or 0
+		if cA == cB then return tostring(a) < tostring(b) end
+		return cA > cB
 	end)
-	if #names > 0 then
-		list[FILTER_SEPARATOR_ANY_REST] = FILTER_SEPARATOR_LABEL
+	table.sort(histNames, function(a, b)
+		local cA = totalCounts[a] or 0
+		local cB = totalCounts[b] or 0
+		if cA == cB then return tostring(a) < tostring(b) end
+		return cA > cB
+	end)
+
+	if #openNames > 0 then
+		list[FILTER_SEPARATOR_ANY_REST] = "-- Open requests --"
 		table.insert(order, FILTER_SEPARATOR_ANY_REST)
+		for _, name in ipairs(openNames) do
+			list[name] = string.format("(%d) %s", openCounts[name], name)
+			table.insert(order, name)
+		end
 	end
-	for _, name in ipairs(names) do
-		list[name] = string.format("(%d) %s", requesterCounts[name], name)
-		table.insert(order, name)
+
+	if #histNames > 0 then
+		list[FILTER_SEPARATOR_HIST] = "-- History --"
+		table.insert(order, FILTER_SEPARATOR_HIST)
+		for _, name in ipairs(histNames) do
+			list[name] = string.format("(%d) %s", totalCounts[name], name)
+			table.insert(order, name)
+		end
 	end
 
 	return list, order
 end
 
-local function buildBankOptions(currentPlayer, bankCounts)
-	local list = {}
-	local order = {}
-	if currentPlayer and currentPlayer ~= "" then
-		list[currentPlayer] = string.format("(%d) Me - %s", bankCounts[currentPlayer] or 0, currentPlayer)
-		table.insert(order, currentPlayer)
-		list[FILTER_SEPARATOR_ME_ANY] = FILTER_SEPARATOR_LABEL
-		table.insert(order, FILTER_SEPARATOR_ME_ANY)
-	end
-	list[FILTER_ANY] = "Any Bank"
-	table.insert(order, FILTER_ANY)
+local function buildRequesterOptions(currentPlayer, requesterOpen, requesterTotal)
+	return buildNameOptions("Any Requester", currentPlayer, requesterOpen, requesterTotal)
+end
 
-	local names = {}
-	for name in pairs(bankCounts or {}) do
-		if name ~= currentPlayer then
-			table.insert(names, name)
-		end
-	end
-	table.sort(names, function(a, b)
-		local countA = bankCounts[a] or 0
-		local countB = bankCounts[b] or 0
-		if countA == countB then
-			return tostring(a) < tostring(b)
-		end
-		return countA > countB
-	end)
-	if #names > 0 then
-		list[FILTER_SEPARATOR_ANY_REST] = FILTER_SEPARATOR_LABEL
-		table.insert(order, FILTER_SEPARATOR_ANY_REST)
-	end
-	for _, name in ipairs(names) do
-		list[name] = string.format("(%d) %s", bankCounts[name], name)
-		table.insert(order, name)
-	end
-
-	return list, order
+local function buildBankOptions(currentPlayer, bankOpen, bankTotal)
+	return buildNameOptions("Any Bank", currentPlayer, bankOpen, bankTotal)
 end
 
 function TOGBankClassic_UI_Requests:SortedRequests()
@@ -1093,7 +1100,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 
 	local info = TOGBankClassic_Guild.Info
 	local requests = info and info.requests or {}
-	local requesterCounts, bankCounts = pendingCounts(requests)
+	local requesterOpen, requesterTotal, bankOpen, bankTotal = allCounts(requests)
 	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 	if not self.defaultFiltersApplied then
 		if self.requesterFilter ~= nil or self.bankFilter ~= nil then
@@ -1132,7 +1139,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 		end
 	end
 
-	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterCounts)
+	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterOpen, requesterTotal)
 
 	-- Only update the requester dropdown if the list has changed
 	local requesterListChanged = false
@@ -1154,7 +1161,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 		TOGBankClassic_Output:Debug("UI", "UpdateFilters: Requester dropdown list updated")
 	end
 
-	local bankList, bankOrder = buildBankOptions(currentPlayer, bankCounts)
+	local bankList, bankOrder = buildBankOptions(currentPlayer, bankOpen, bankTotal)
 
 	-- Only update the bank dropdown if the list has changed
 	local bankListChanged = false
