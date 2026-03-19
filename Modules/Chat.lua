@@ -3,6 +3,88 @@ TOGBankClassic_Chat = {}
 -- Store pre-debug log level for restoration
 local preDebugLogLevel = nil
 
+--[[
+Comms system breakdown as of 2026-03-18:
+
+  Active Protocol Messages
+
+  ┌──────────────────┬────────────────┬─────────────┬───────────────────────────────────────────────────────────────────────────────────┐
+  │      Prefix      │    Channel     │  Priority   │                                      Purpose                                      │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-dv2      │ GUILD          │ BULK        │ Periodic version/hash broadcast so peers know if their data is stale              │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-d4       │ GUILD or       │ BULK        │ Delta inventory data (no item links, bandwidth-optimized) — current standard      │
+  │                  │ WHISPER        │             │                                                                                   │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-hl       │ GUILD          │ NORMAL/BULK │ Multi-purpose hash protocol: hash-list-broadcast (banker→all), share-request,     │
+  │                  │                │             │ wipe-command                                                                      │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-hlr      │ WHISPER        │ ALERT       │ Hash list reply — peer responds to banker's broadcast with their matching alts    │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-r        │ GUILD or       │ NORMAL/BULK │ Universal query — requests alt data, requests-index, or requests-by-id            │
+  │                  │ WHISPER        │             │                                                                                   │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rr       │ WHISPER        │ NORMAL      │ P2P handshake control: sync-request / sync-accept / sync-busy                     │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-state    │ WHISPER        │ NORMAL      │ Requester sends minimal state summary to responder; responder decides delta vs.   │
+  │                  │                │             │ full                                                                              │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-nochange │ WHISPER        │ NORMAL      │ Responder tells requester "your data is already current, nothing to send"         │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rd       │ GUILD or       │ NORMAL      │ Request log data: chunked requests-index, requests-by-id responses, mutations     │
+  │                  │ WHISPER        │             │                                                                                   │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rm       │ GUILD          │ ALERT       │ Request log mutations (add/cancel/complete) — ALERT priority so it isn't blocked  │
+  │                  │                │             │ by BULK sends                                                                     │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-h        │ GUILD          │ BULK        │ Hello broadcast (administrative, informational text)                              │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-hr       │ GUILD          │ BULK        │ Hello reply                                                                       │
+  └──────────────────┴────────────────┴─────────────┴───────────────────────────────────────────────────────────────────────────────────┘
+
+  Legacy — Still Sent in AUTO Mode (for Backward Compatibility)
+
+  ┌────────────┬───────────────────────────────────────────────────────────────────────────────────────────┐
+  │   Prefix   │                                           Notes                                           │
+  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-d  │ Full sync with item links — pre-v0.8 format; still sent alongside togbank-d4 in AUTO mode │
+  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-dv │ Old delta version broadcast — superseded by togbank-dv2                                   │
+  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-v  │ Very old version broadcast — ignored by delta clients                                     │
+  └────────────┴───────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Dead Code / Never Sent
+
+  ┌────────────┬───────────────────────────────────────────────────────────────────────────────────────────────┐
+  │   Prefix   │                                             Notes                                             │
+  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-d2 │ Old delta format — never sent in current code                                                 │
+  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-d3 │ Full sync without links — registered but never sent                                           │
+  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-dr │ Delta chain replay request — only triggered by a baseVersion field that v0.8+ stopped sending │
+  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-dc │ Delta chain response — dead code path, paired with togbank-dr                                 │
+  ├────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rq │ Defined in constants, no send code anywhere                                                   │
+  └────────────┴───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+ A typical sync looks like this:
+
+  1. Banker scans bank → broadcasts togbank-dv2 (hash) to guild
+  2. Peer receives hash, compares to local — if stale, initiates P2P session via togbank-rr handshake
+  3. Peer sends togbank-state (minimal summary) to banker
+  4. Banker compares hashes:
+    - Same → togbank-nochange
+    - Different → togbank-d4 (delta) or togbank-d (full, legacy)
+  5. Separately, togbank-r (requests-index query) → togbank-rd (chunked index response) → togbank-r (requests-by-id) → togbank-rd (request
+  data)
+  6. New/changed requests propagate immediately via togbank-rm (ALERT priority)
+
+]]
+
 function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[INIT] TOGBankClassic_Chat:Init() starting")
 	TOGBankClassic_Core:RegisterChatCommand("togbank", function(input)
