@@ -1875,6 +1875,74 @@ function Guild:Compact()
 	end
 end
 
+-- Diagnostic scan: report done requests that should be expired but aren't being pruned.
+function Guild:ReqScan()
+	if not self.Info or not self.Info.requests then
+		TOGBankClassic_Output:Response("ReqScan: no requests loaded.")
+		return
+	end
+
+	local now = GetServerTime()
+	local expiry = REQUEST_LOG.EXPIRY_SECONDS
+	local total, done, expired, wouldPrune = 0, 0, 0, 0
+	local noStatusTs, noUpdatedAt, noDate = 0, 0, 0
+	local updatedAtString, dateString, statusTsString = 0, 0, 0
+	local statusCounts = {}
+	local example  -- first done request, for raw field inspection
+
+	for _, req in pairs(self.Info.requests) do
+		total = total + 1
+		local status = req.status or "nil"
+		statusCounts[status] = (statusCounts[status] or 0) + 1
+
+		local quantity  = tonumber(req.quantity or 0) or 0
+		local fulfilled = tonumber(req.fulfilled or 0) or 0
+		local isDone = status == "fulfilled" or status == "complete"
+			or status == "cancelled"
+			or (quantity > 0 and fulfilled >= quantity)
+
+		if isDone then
+			done = done + 1
+			local updated  = tonumber(req.updatedAt or 0) or 0
+			local statusTs = tonumber(req.statusUpdatedAt or 0) or 0
+			local dateTs   = tonumber(req.date or 0) or 0
+			if statusTs == 0 then noStatusTs = noStatusTs + 1 end
+			if updated  == 0 then noUpdatedAt = noUpdatedAt + 1 end
+			if dateTs   == 0 then noDate = noDate + 1 end
+			-- Track how many have string-typed timestamp fields (tonumber returns nil on them)
+			if type(req.updatedAt) == "string" and tonumber(req.updatedAt) == nil then updatedAtString = updatedAtString + 1 end
+			if type(req.date) == "string" and tonumber(req.date) == nil then dateString = dateString + 1 end
+			if type(req.statusUpdatedAt) == "string" and tonumber(req.statusUpdatedAt) == nil then statusTsString = statusTsString + 1 end
+
+			if (now - updated) > expiry then expired = expired + 1 end
+			if statusTs > 0 and (now - statusTs) > expiry then wouldPrune = wouldPrune + 1 end
+
+			if not example then example = req end
+		end
+	end
+
+	TOGBankClassic_Output:Response("ReqScan: %d total, %d done, %d done+expired (by updatedAt)", total, done, expired)
+	TOGBankClassic_Output:Response("  Status breakdown:")
+	for s, n in pairs(statusCounts) do
+		TOGBankClassic_Output:Response("    %s: %d", s, n)
+	end
+	TOGBankClassic_Output:Response("  Done requests missing fields: statusUpdatedAt=%d, updatedAt=%d, date=%d", noStatusTs, noUpdatedAt, noDate)
+	TOGBankClassic_Output:Response("  Done requests with non-numeric timestamp strings: updatedAt=%d, date=%d, statusUpdatedAt=%d",
+		updatedAtString, dateString, statusTsString)
+	if wouldPrune > 0 then
+		TOGBankClassic_Output:Response("  %d done requests would prune if statusUpdatedAt was used", wouldPrune)
+	end
+	if example then
+		TOGBankClassic_Output:Response("  Example done request (raw fields):")
+		TOGBankClassic_Output:Response("    id=%s status=%s", tostring(example.id), tostring(example.status))
+		TOGBankClassic_Output:Response("    date=(%s)%s updatedAt=(%s)%s statusUpdatedAt=(%s)%s",
+			type(example.date), tostring(example.date),
+			type(example.updatedAt), tostring(example.updatedAt),
+			type(example.statusUpdatedAt), tostring(example.statusUpdatedAt))
+		TOGBankClassic_Output:Response("    requester=%s item=%s", tostring(example.requester), tostring(example.item))
+	end
+end
+
 --[[
 	CheckMailFulfillment(request)
 	Checks if requested items are available in mail across all alts

@@ -2256,6 +2256,14 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		name = "reqscan",
+		help = "scan done requests and report why expired ones are not being pruned",
+		expert = true,
+		handler = function()
+			TOGBankClassic_Guild:ReqScan()
+		end,
+	},
+	{
 		name = "deltaerrors",
 		help = "show recent delta sync errors and failure counts",
 		expert = true,
