@@ -1,5 +1,25 @@
 # TOGBankClassic Changelog
 
+## [v0.9.10] (2026-03-19) - 60% Bandwidth Reduction for Request Sync
+
+**Status:** Production Ready
+
+### Performance
+
+- **Request sync uses ~60% less bandwidth** — The request index and per-record wire format has been rewritten from verbose key-value dicts to compact positional arrays. Two new prefixes carry this traffic:
+  - `togbank-ri` — requests index as a flat positional array (`{version, liveCount, id, updatedAt, ..., tombId, tombTs, ...}`), eliminating per-field string keys across hundreds of IDs.
+  - `togbank-rd2` — individual request records as positional arrays, avoiding repeated field-name overhead when syncing large request logs.
+
+  Guilds with 500+ requests will see the most noticeable improvement during initial sync and after being offline.
+
+### Internal
+
+- **Request IDs changed to 14-char random hex** — The previous `actor:random` composite format has been replaced with 14 random hex characters. Existing requests retain their old IDs.
+- **Removed `statusUpdatedAt` field** — The per-request status-change timestamp field has been dropped from the wire format and storage schema.
+- **Removed dead protocol slots** — `togbank-dr` and `togbank-dc` (DELTA-006 delta chain replay) were never triggered by current clients and have been removed.
+
+---
+
 ## [v0.9.8] (2026-03-19) - Request Expiry Fixes & Dropdown Improvements
 
 **Status:** Production Ready

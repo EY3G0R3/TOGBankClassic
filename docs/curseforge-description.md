@@ -58,6 +58,7 @@ Blazing-Fast Synchronization
 • Delta Sync Protocol: Only syncs what changed—achieves 90-99% bandwidth reduction
 • Link-Less Optimization: Removes redundant item links for additional bandwidth savings (v0.8.0+)
 • Pull-Based Handshake: Clients request only the data they need, when they need it
+• Compact Request Protocol: Request index and records sync in a compact positional format — ~60% less bandwidth than the previous key-value format
 • Event-Sourced Requests: Append-only request log prevents conflicts and data loss
 • Offline Resilience: Players who were offline automatically catch up when they log in
 
@@ -260,13 +261,10 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.9.8 (Latest)
-• Fixed 30-day expiry clock starting from last sync instead of last status change — fulfilled/cancelled requests now correctly expire 30 days after they were completed, not 30 days after the last time someone synced them
-• Fixed expired done requests re-appearing after sync — stale requests received from peers are now tombstoned on arrival so they cannot be re-imported
-• Fixed pruning not running on login — expired requests are now cleaned up immediately when the addon loads, not after the first 3-minute timer tick
-• Requester and Banker filter dropdowns now show everyone, not just people with open requests — open-request names appear at the top under "Open requests", fulfilled/cancelled-only names appear below under "History"
+v0.9.10 (Latest)
+• Request sync now uses ~60% less bandwidth — a new compact positional wire format replaces the verbose key-value protocol for both the requests index and individual records; guilds with 500+ requests will see the biggest improvement on initial sync and after being offline
 
-v0.9.7
+v0.9.8
 • Fixed expired requests never being pruned — fulfilled/cancelled requests from 30+ days ago were accumulating indefinitely; pruning now runs automatically every ~3 minutes
 • Network status bar labels renamed: Tx: (outgoing), Rx: (P2P fetches), Bcast: (broadcast queue) — clearer than the old send:/P2P:/q: labels
 • Status bar now drops the right section first when the window is narrow, keeping the more useful left + centre visible longer
