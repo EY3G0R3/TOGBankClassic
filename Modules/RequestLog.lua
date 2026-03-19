@@ -46,6 +46,37 @@ local function ctlDepthForDrain()
 	return n
 end
 
+-- togbank-ri: positional index wire format (version 1)
+-- {RI_VERSION, liveCount, id1, updatedAt1, ...[liveCount pairs]..., tombId1, tombTs1, ...}
+-- First liveCount stride-2 pairs are live entries; remaining stride-2 pairs are tombstones.
+local RI_VERSION  = 1
+local RD2_VERSION = 1
+
+-- togbank-rd2: positional single-record wire format (version 1)
+-- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes}
+-- Tombstone:    {RD2_VERSION, id, false, tombstoneTs}
+-- Receiver distinguishes by type(arr[3]): number = record, false = tombstone.
+
+local function serializeRequestV1(req)
+	return {
+		RD2_VERSION,
+		req.id,
+		req.date,
+		req.updatedAt,
+		req.requester,
+		req.bank,
+		req.item,
+		req.quantity,
+		req.fulfilled,
+		req.status,
+		req.notes or "",
+	}
+end
+
+local function serializeTombstoneV1(id, ts)
+	return { RD2_VERSION, id, false, ts }
+end
+
 local function drainQueriedRequests()
 	queriedRequestsDraining = false
 	if not next(queriedRequestsMap) then return end
@@ -238,37 +269,6 @@ local VALID_REQUEST_STATUS = {
 }
 
 -- Expiry/prune settings are defined in Constants.lua (REQUEST_LOG table)
-
--- togbank-ri: positional index wire format (version 1)
--- {RI_VERSION, liveCount, id1, updatedAt1, ...[liveCount pairs]..., tombId1, tombTs1, ...}
--- First liveCount stride-2 pairs are live entries; remaining stride-2 pairs are tombstones.
-local RI_VERSION  = 1
-local RD2_VERSION = 1
-
--- togbank-rd2: positional single-record wire format (version 1)
--- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes}
--- Tombstone:    {RD2_VERSION, id, false, tombstoneTs}
--- Receiver distinguishes by type(arr[3]): number = record, false = tombstone.
-
-local function serializeRequestV1(req)
-	return {
-		RD2_VERSION,
-		req.id,
-		req.date,
-		req.updatedAt,
-		req.requester,
-		req.bank,
-		req.item,
-		req.quantity,
-		req.fulfilled,
-		req.status,
-		req.notes or "",
-	}
-end
-
-local function serializeTombstoneV1(id, ts)
-	return { RD2_VERSION, id, false, ts }
-end
 
 local function deserializeRequestV1(arr)
 	-- arr[3] is date (number) — caller must verify before calling this
