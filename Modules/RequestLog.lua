@@ -73,38 +73,39 @@ local function drainQueriedRequests()
 		end
 	end
 
-	-- Resolve and send one togbank-rd message
-	local requests  = {}
-	local tombstones = {}
+	-- Send one togbank-rd2 message per record/tombstone.
+	local sent = 0
+	local dest = target == "*" and "GUILD" or target
 	for _, id in ipairs(ids) do
 		local req = info.requests and info.requests[id]
+		local payload, data
 		if req then
-			table.insert(requests, req)
+			payload = serializeRequestV1(req)
+			data    = TOGBankClassic_Core:SerializeWithChecksum(payload)
+			if target == "*" then
+				TOGBankClassic_Core:SendCommMessage("togbank-rd2", data, "Guild", nil, "NORMAL")
+			else
+				TOGBankClassic_Core:SendWhisper("togbank-rd2", data, target, "NORMAL")
+			end
+			sent = sent + 1
 		else
 			local ts = tonumber((info.requestsTombstones or {})[id] or 0) or 0
-			if ts > 0 then tombstones[id] = ts end
+			if ts > 0 then
+				payload = serializeTombstoneV1(id, ts)
+				data    = TOGBankClassic_Core:SerializeWithChecksum(payload)
+				if target == "*" then
+					TOGBankClassic_Core:SendCommMessage("togbank-rd2", data, "Guild", nil, "NORMAL")
+				else
+					TOGBankClassic_Core:SendWhisper("togbank-rd2", data, target, "NORMAL")
+				end
+				sent = sent + 1
+			end
 		end
 		queriedRequestsMap[id] = nil
 	end
-	if #requests > 0 or next(tombstones) then
-		local tsCount = 0
-		for _ in pairs(tombstones) do tsCount = tsCount + 1 end
-		local dest = target == "*" and "GUILD" or target
+	if sent > 0 then
 		TOGBankClassic_Output:Debug("REQUESTS", "SEND",
-			"Drain: sending %d requests + %d tombstone(s) to %s",
-			#requests, tsCount, dest)
-		local payload = {
-			type = "requests-by-id",
-			requests = requests,
-			tombstones = tombstones,
-		}
-		local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-		TOGBankClassic_Output:Debug("COMMS", "togbank-rd [by-id] %d reqs to %s", #requests, dest)
-		if target == "*" then
-			TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
-		else
-			TOGBankClassic_Core:SendWhisper("togbank-rd", data, target, "NORMAL")
-		end
+			"Drain: sent %d togbank-rd2 message(s) to %s", sent, dest)
 	end
 
 	if next(queriedRequestsMap) then
@@ -241,7 +242,49 @@ local VALID_REQUEST_STATUS = {
 -- togbank-ri: positional index wire format (version 1)
 -- {RI_VERSION, liveCount, id1, updatedAt1, ...[liveCount pairs]..., tombId1, tombTs1, ...}
 -- First liveCount stride-2 pairs are live entries; remaining stride-2 pairs are tombstones.
-local RI_VERSION = 1
+local RI_VERSION  = 1
+local RD2_VERSION = 1
+
+-- togbank-rd2: positional single-record wire format (version 1)
+-- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes}
+-- Tombstone:    {RD2_VERSION, id, false, tombstoneTs}
+-- Receiver distinguishes by type(arr[3]): number = record, false = tombstone.
+
+local function serializeRequestV1(req)
+	return {
+		RD2_VERSION,
+		req.id,
+		req.date,
+		req.updatedAt,
+		req.requester,
+		req.bank,
+		req.item,
+		req.quantity,
+		req.fulfilled,
+		req.status,
+		req.notes or "",
+	}
+end
+
+local function serializeTombstoneV1(id, ts)
+	return { RD2_VERSION, id, false, ts }
+end
+
+local function deserializeRequestV1(arr)
+	-- arr[3] is date (number) — caller must verify before calling this
+	return {
+		id        = arr[2],
+		date      = tonumber(arr[3]),
+		updatedAt = tonumber(arr[4]),
+		requester = arr[5],
+		bank      = arr[6],
+		item      = arr[7],
+		quantity  = tonumber(arr[8]),
+		fulfilled = tonumber(arr[9]),
+		status    = arr[10],
+		notes     = tostring(arr[11] or ""),
+	}
+end
 
 local function serializeIndexChunkV1(requestsSlice, tombstonesSlice)
 	local arr = { RI_VERSION, #requestsSlice }
@@ -1357,6 +1400,33 @@ function Guild:ReceiveRequestsIndexV1(arr, sender)
 	if not arr or type(arr) ~= "table" then return end
 	local requests, tombstones = deserializeIndexChunkV1(arr)
 	self:ReceiveRequestsIndex({ requests = requests, tombstones = tombstones }, sender)
+end
+
+-- Receive a single togbank-rd2 positional record or tombstone.
+function Guild:ReceiveRequestsByIdV1(arr)
+	if not arr or type(arr) ~= "table" then return end
+	if not self.Info then return end
+	self:EnsureRequestsInitialized()
+
+	local id = arr[2]
+	if not id then return end
+
+	if arr[3] == false then
+		-- Tombstone: {RD2_VERSION, id, false, tombstoneTs}
+		local ts = tonumber(arr[4]) or 0
+		if ts > 0 then
+			self:ApplyRequestSnapshot({ requests = {}, tombstones = { [id] = ts } })
+		end
+	else
+		-- Full record: {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes}
+		local req = deserializeRequestV1(arr)
+		if req then
+			self:ApplyRequestSnapshot({ requests = { req }, tombstones = {} })
+		end
+	end
+
+	local shouldEndSync = self.requestsIndexSync and self.requestsIndexSync.awaitingById
+	if shouldEndSync then self:EndRequestsIndexSync() end
 end
 
 function Guild:QueryRequestsById(target, ids, priority)

@@ -174,6 +174,9 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Core:RegisterComm("togbank-ri", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
+	TOGBankClassic_Core:RegisterComm("togbank-rd2", function(prefix, message, distribution, sender)
+		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
+	end)
 	-- togbank-s/sr, togbank-w/wr, togbank-roster, togbank-rq removed:
 	-- share/wipe/roster traffic migrated onto togbank-hl type dispatch (SYNC-013)
 	-- sr and wr had no handler; rq was never sent
@@ -1751,6 +1754,14 @@ end
 		self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR,
 			string.format("requests index v1 (%d requests, %d tombstones).", liveCount, tombCount))
 		TOGBankClassic_Guild:ReceiveRequestsIndexV1(data, sender)
+	end
+
+	-- togbank-rd2: positional single-record request data (v1).
+	if prefix == "togbank-rd2" then
+		local isTombstone = data[3] == false
+		self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR,
+			isTombstone and "request tombstone v1." or "request record v1.")
+		TOGBankClassic_Guild:ReceiveRequestsByIdV1(data)
 	end
 
 	-- v0.9.1+: Request-specific data handler (togbank-rd, legacy key-value format)
