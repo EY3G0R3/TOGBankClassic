@@ -260,7 +260,13 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.9.7 (Latest)
+v0.9.8 (Latest)
+• Fixed 30-day expiry clock starting from last sync instead of last status change — fulfilled/cancelled requests now correctly expire 30 days after they were completed, not 30 days after the last time someone synced them
+• Fixed expired done requests re-appearing after sync — stale requests received from peers are now tombstoned on arrival so they cannot be re-imported
+• Fixed pruning not running on login — expired requests are now cleaned up immediately when the addon loads, not after the first 3-minute timer tick
+• Requester and Banker filter dropdowns now show everyone, not just people with open requests — open-request names appear at the top under "Open requests", fulfilled/cancelled-only names appear below under "History"
+
+v0.9.7
 • Fixed expired requests never being pruned — fulfilled/cancelled requests from 30+ days ago were accumulating indefinitely; pruning now runs automatically every ~3 minutes
 • Network status bar labels renamed: Tx: (outgoing), Rx: (P2P fetches), Bcast: (broadcast queue) — clearer than the old send:/P2P:/q: labels
 • Status bar now drops the right section first when the window is narrow, keeping the more useful left + centre visible longer
