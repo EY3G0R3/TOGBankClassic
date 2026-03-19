@@ -3368,11 +3368,6 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 		end
 	end
 
-	if mode == "version" then
-		-- Lightweight ping; snapshots are sent only when queried.
-		--self:SendRequestsVersionPing()  -- COMMENTED OUT: togbank-v ignored by delta clients (BANDWIDTH-001)
-	end
-
 	-- v0.8.0: Broadcast delta version with hashes for pull-based protocol
 	-- Send BOTH legacy and delta version broadcasts (SYNC-001 fix)
 	--[[ COMMENTED OUT: togbank-v ignored by delta clients
