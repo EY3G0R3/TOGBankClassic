@@ -1888,10 +1888,13 @@ function Guild:ReqScan()
 
 	local now = GetServerTime()
 	local expiry = REQUEST_LOG.EXPIRY_SECONDS
-	local total, done, expired, wouldPrune = 0, 0, 0, 0
+	local DAY = 86400
+	local total, done, expired = 0, 0, 0
 	local noStatusTs, noUpdatedAt, noDate = 0, 0, 0
 	local updatedAtString, dateString, statusTsString = 0, 0, 0
 	local statusCounts = {}
+	-- statusUpdatedAt age buckets: 0-7d, 7-14d, 14-21d, 21-30d, >30d, future
+	local ageBuckets = { [1]=0, [2]=0, [3]=0, [4]=0, [5]=0, [6]=0 }
 	local example  -- first done request, for raw field inspection
 
 	for _, req in pairs(self.Info.requests) do
@@ -1913,29 +1916,47 @@ function Guild:ReqScan()
 			if statusTs == 0 then noStatusTs = noStatusTs + 1 end
 			if updated  == 0 then noUpdatedAt = noUpdatedAt + 1 end
 			if dateTs   == 0 then noDate = noDate + 1 end
-			-- Track how many have string-typed timestamp fields (tonumber returns nil on them)
 			if type(req.updatedAt) == "string" and tonumber(req.updatedAt) == nil then updatedAtString = updatedAtString + 1 end
 			if type(req.date) == "string" and tonumber(req.date) == nil then dateString = dateString + 1 end
 			if type(req.statusUpdatedAt) == "string" and tonumber(req.statusUpdatedAt) == nil then statusTsString = statusTsString + 1 end
 
-			if (now - updated) > expiry then expired = expired + 1 end
-			if statusTs > 0 and (now - statusTs) > expiry then wouldPrune = wouldPrune + 1 end
+			local expiryAnchor = (statusTs > 0) and statusTs or updated
+			if (now - expiryAnchor) > expiry then expired = expired + 1 end
+
+			-- Age distribution by statusUpdatedAt
+			local ageDays = statusTs > 0 and ((now - statusTs) / DAY) or nil
+			if ageDays == nil then
+				ageBuckets[5] = ageBuckets[5] + 1  -- no statusTs, count as >30d
+			elseif ageDays < 0 then
+				ageBuckets[6] = ageBuckets[6] + 1  -- future timestamp
+			elseif ageDays < 7 then
+				ageBuckets[1] = ageBuckets[1] + 1
+			elseif ageDays < 14 then
+				ageBuckets[2] = ageBuckets[2] + 1
+			elseif ageDays < 21 then
+				ageBuckets[3] = ageBuckets[3] + 1
+			elseif ageDays < 30 then
+				ageBuckets[4] = ageBuckets[4] + 1
+			else
+				ageBuckets[5] = ageBuckets[5] + 1
+			end
 
 			if not example then example = req end
 		end
 	end
 
-	TOGBankClassic_Output:Response("ReqScan: %d total, %d done, %d done+expired (by updatedAt)", total, done, expired)
+	TOGBankClassic_Output:Response("ReqScan: %d total, %d done, %d done+expired (by statusUpdatedAt)", total, done, expired)
 	TOGBankClassic_Output:Response("  Status breakdown:")
 	for s, n in pairs(statusCounts) do
 		TOGBankClassic_Output:Response("    %s: %d", s, n)
 	end
+	TOGBankClassic_Output:Response("  Completed-at age (statusUpdatedAt):")
+	TOGBankClassic_Output:Response("    0-7d: %d  7-14d: %d  14-21d: %d  21-30d: %d  >30d: %d  future: %d",
+		ageBuckets[1], ageBuckets[2], ageBuckets[3], ageBuckets[4], ageBuckets[5], ageBuckets[6])
 	TOGBankClassic_Output:Response("  Done requests missing fields: statusUpdatedAt=%d, updatedAt=%d, date=%d", noStatusTs, noUpdatedAt, noDate)
 	TOGBankClassic_Output:Response("  Done requests with non-numeric timestamp strings: updatedAt=%d, date=%d, statusUpdatedAt=%d",
 		updatedAtString, dateString, statusTsString)
-	if wouldPrune > 0 then
-		TOGBankClassic_Output:Response("  %d done requests would prune if statusUpdatedAt was used", wouldPrune)
-	end
+
 	if example then
 		TOGBankClassic_Output:Response("  Example done request (raw fields):")
 		TOGBankClassic_Output:Response("    id=%s status=%s", tostring(example.id), tostring(example.status))
