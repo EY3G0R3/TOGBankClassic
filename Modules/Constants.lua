@@ -125,6 +125,7 @@ COMM_PREFIX_DESCRIPTIONS = {
 	["togbank-r"] = "(Query)",
 	["togbank-rr"] = "(Query Reply)",
 	["togbank-rq"] = "(Request Query)",
+	["togbank-ri"] = "(Request Index v1)",
 	["togbank-rd"] = "(Request Data: idx/by-id)",
 	["togbank-rm"] = "(Request Mutations)",
 	["togbank-state"] = "(State Summary)",

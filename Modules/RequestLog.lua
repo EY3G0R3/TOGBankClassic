@@ -238,6 +238,48 @@ local VALID_REQUEST_STATUS = {
 
 -- Expiry/prune settings are defined in Constants.lua (REQUEST_LOG table)
 
+-- togbank-ri: positional index wire format (version 1)
+-- {RI_VERSION, liveCount, id1, updatedAt1, ...[liveCount pairs]..., tombId1, tombTs1, ...}
+-- First liveCount stride-2 pairs are live entries; remaining stride-2 pairs are tombstones.
+local RI_VERSION = 1
+
+local function serializeIndexChunkV1(requestsSlice, tombstonesSlice)
+	local arr = { RI_VERSION, #requestsSlice }
+	for _, entry in ipairs(requestsSlice) do
+		arr[#arr+1] = entry.id
+		arr[#arr+1] = entry.updatedAt
+	end
+	for _, entry in ipairs(tombstonesSlice) do
+		arr[#arr+1] = entry.id
+		arr[#arr+1] = entry.deletedAt
+	end
+	return arr
+end
+
+local function deserializeIndexChunkV1(arr)
+	local liveCount = tonumber(arr[2]) or 0
+	local requests  = {}
+	local tombstones = {}
+	local pos = 3
+	for _ = 1, liveCount do
+		local id        = arr[pos]
+		local updatedAt = arr[pos + 1]
+		if id then
+			requests[#requests+1] = { id = id, updatedAt = tonumber(updatedAt) or 0 }
+		end
+		pos = pos + 2
+	end
+	while arr[pos] do
+		local id = arr[pos]
+		local ts = arr[pos + 1]
+		if id then
+			tombstones[#tombstones+1] = { id = id, deletedAt = tonumber(ts) or 0 }
+		end
+		pos = pos + 2
+	end
+	return requests, tombstones
+end
+
 local function generateRequestId()
 	local hi = math.random(0, 0xFFFFFF)
 	local lo = math.random(0, 0xFFFFFF)
@@ -1129,12 +1171,13 @@ local function drainIndexChunks()
 	end
 	local chunk = table.remove(pendingIndexChunks, 1)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(chunk.payload)
-	TOGBankClassic_Output:Debug("COMMS", "togbank-rd [idx] %d ids (+%d remaining chunks) to %s",
-		#(chunk.payload.requests or {}), #pendingIndexChunks, chunk.target or "guild")
+	local liveCount = chunk.payload[2] or 0
+	TOGBankClassic_Output:Debug("COMMS", "togbank-ri %d ids (+%d remaining chunks) to %s",
+		liveCount, #pendingIndexChunks, chunk.target or "guild")
 	if chunk.target then
-		TOGBankClassic_Core:SendWhisper("togbank-rd", data, chunk.target, "NORMAL")
+		TOGBankClassic_Core:SendWhisper("togbank-ri", data, chunk.target, "NORMAL")
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-rd", data, "Guild", nil, "NORMAL")
+		TOGBankClassic_Core:SendCommMessage("togbank-ri", data, "Guild", nil, "NORMAL")
 	end
 	if pendingIndexChunks[1] then
 		pendingIndexChunksDraining = true
@@ -1207,13 +1250,10 @@ function Guild:SendRequestsIndex(target)
 		return tostring(a.id) < tostring(b.id)
 	end)
 
-	-- SYNC-012: Use dedicated togbank-rd prefix -- own throttle bucket, not shared with alt data on togbank-d.
-	-- Split into small chunks so the receiver can start querying before all arrive (Option 2).
-	-- Tombstones go in the first chunk so the receiver can filter deleted IDs immediately.
-	local chunkSize = REQUESTS_SYNC.RESPOND_INDEX_CHUNK_SIZE
+	-- Send on togbank-ri (positional format v1). Chunked so the receiver can start
+	-- querying before all chunks arrive. Tombstones go in the first chunk only.
+	local chunkSize   = REQUESTS_SYNC.RESPOND_INDEX_CHUNK_SIZE
 	local totalChunks = math.max(1, math.ceil(#requestsIndex / chunkSize))
-	local version = self:GetRequestsVersion()
-	local hash    = self:GetRequestsHash()
 
 	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
 		"Queuing requests-index to %s: %d requests + %d tombstones -> %d chunk(s) of %d",
@@ -1226,15 +1266,8 @@ function Guild:SendRequestsIndex(target)
 		for i = startIdx, endIdx do
 			chunkRequests[#chunkRequests + 1] = requestsIndex[i]
 		end
-		-- Tombstones only in first chunk; subsequent chunks carry an empty table.
 		local chunkTombstones = chunkNum == 1 and tombstonesIndex or {}
-		local payload = {
-			type      = "requests-index",
-			version   = version,
-			hash      = hash,
-			requests  = chunkRequests,
-			tombstones = chunkTombstones,
-		}
+		local payload = serializeIndexChunkV1(chunkRequests, chunkTombstones)
 		table.insert(pendingIndexChunks, { payload = payload, target = target })
 	end
 
@@ -1317,6 +1350,13 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 		self:EndRequestsIndexSync()
 		self:RefreshRequestsUI()
 	end
+end
+
+-- Receive a togbank-ri positional index payload and dispatch to ReceiveRequestsIndex.
+function Guild:ReceiveRequestsIndexV1(arr, sender)
+	if not arr or type(arr) ~= "table" then return end
+	local requests, tombstones = deserializeIndexChunkV1(arr)
+	self:ReceiveRequestsIndex({ requests = requests, tombstones = tombstones }, sender)
 end
 
 function Guild:QueryRequestsById(target, ids, priority)
