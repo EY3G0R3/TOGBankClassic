@@ -287,7 +287,11 @@ function TOGBankClassic_Guild:Init(name)
 		self:EnsureRequestsInitialized()
 		-- Migrate any temporary errors to database
 		self:MigrateTempErrors()
-		
+		-- Prune expired done requests immediately on load so stale data doesn't linger
+		-- until the first share timer fires (~3 min). lastPruneTime is nil on login so
+		-- PruneIfNeeded's throttle guard is never hit — this always runs once.
+		self:PruneIfNeeded()
+
 		-- PERF-008: Defer expensive RebuildBankerRoster() to prevent login freeze
 		-- Loops through all guild members (500+) which blocks for 5+ seconds on large guilds
 		-- Delay by 1 second to allow UI to become responsive first
