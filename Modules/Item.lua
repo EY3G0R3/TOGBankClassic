@@ -225,83 +225,24 @@ function TOGBankClassic_Item:GetItems(items, callback)
 				processed = processed + 1
 				checkComplete()
 			else
-				-- BRANCH 1: Item has link.
-				-- Fast path: try GetItemInfo synchronously (works when item is in client cache).
-				-- Slow path: if not cached (e.g. synced gear never seen by receiver), fall back
-				--            to the same ContinueOnItemLoad async load as Branch 2.
+				-- BRANCH 1: Item has link - just use it directly, no GetItemInfo calls
 				if capturedItemLink then
 					TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Item %d has link, using directly", capturedItemID)
-					-- Only rebuild Info if it doesn't already exist
+					-- Only extract icon if Info doesn't already exist
 					if not capturedItem.Info then
-						local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemLink)
-						if name then
-							-- Item is cached — build full Info synchronously, including rarity.
-							local equip = C_Item.GetItemInventoryTypeByID(capturedItemID)
+						-- Extract icon using GetItemInfoInstant (no server query)
+						local _, _, _, _, iconID = GetItemInfoInstant(capturedItemLink)
+						if iconID then
 							capturedItem.Info = {
-								icon = icon,
-								name = name,
-								rarity = rarity,
-								level = level,
-								price = price,
-								class = itemClassId,
-								subClass = itemSubClassId,
-								equipId = equip,
+								icon = iconID,
+								name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID))
 							}
-							table.insert(list, capturedItem)
-							count = count + 1
-							processed = processed + 1
-							-- Don't call checkComplete here - will batch check after loop
-						else
-							-- Item not in client cache (e.g. gear synced from a remote banker the
-							-- receiver has never encountered). Async load via ContinueOnItemLoad so
-							-- we get full Info including rarity, same as Branch 2.
-							TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Item %d link not cached, async load", capturedItemID)
-							local asyncSuccess, itemData = pcall(Item.CreateFromItemID, Item, capturedItemID)
-							local validObj = asyncSuccess and itemData and type(itemData) == "table" and itemData.itemID == capturedItemID
-							if validObj then
-								pendingAsync = pendingAsync + 1
-								local cbSuccess, cbError = pcall(function()
-									itemData:ContinueOnItemLoad(function()
-										capturedItem.Info = self:GetInfo(capturedItemID, capturedItemLink)
-										table.insert(list, capturedItem)
-										count = count + 1
-										pendingAsync = pendingAsync - 1
-										checkComplete()
-									end)
-								end)
-								processed = processed + 1
-								if not cbSuccess then
-									-- ContinueOnItemLoad setup failed — add with minimal info (no rarity)
-									TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] ContinueOnItemLoad failed for linked item %d: %s", capturedItemID, tostring(cbError))
-									local _, _, _, _, iconID = GetItemInfoInstant(capturedItemLink)
-									capturedItem.Info = {
-										icon = iconID or 134400,
-										name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID))
-									}
-									table.insert(list, capturedItem)
-									count = count + 1
-									pendingAsync = pendingAsync - 1
-								end
-							else
-								-- CreateFromItemID failed — true last resort, icon+name only (no rarity)
-								local _, _, _, _, iconID = GetItemInfoInstant(capturedItemLink)
-								capturedItem.Info = {
-									icon = iconID or 134400,
-									name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID))
-								}
-								table.insert(list, capturedItem)
-								count = count + 1
-								processed = processed + 1
-								-- Don't call checkComplete here - will batch check after loop
-							end
 						end
-					else
-						-- Info already set (e.g. previously populated) — use as-is
-						table.insert(list, capturedItem)
-						count = count + 1
-						processed = processed + 1
-						-- Don't call checkComplete here - will batch check after loop
 					end
+					table.insert(list, capturedItem)
+					count = count + 1
+					processed = processed + 1
+					-- Don't call checkComplete here - will batch check after loop
 				-- BRANCH 2: No link - need to load item data
 				else
 					-- Check if item data is already cached (fast path)
