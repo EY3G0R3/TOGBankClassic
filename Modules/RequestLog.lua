@@ -433,6 +433,26 @@ local function mergeRequest(requests, tombstones, id, incoming)
 		return "tombstoned"
 	end
 
+	-- REQUEST-RETIRE-002: Reject and tombstone expired done requests on receive.
+	-- Peers with old clients never pruned their data and keep re-sending stale
+	-- fulfilled/cancelled requests.  Creating a tombstone here means we propagate
+	-- the deletion back to the sender on our next sync, self-healing the network.
+	local incomingIsDone = clean.status == "fulfilled"
+		or clean.status == "complete"
+		or clean.status == "cancelled"
+	if incomingIsDone and incomingTs > 0 then
+		local now = GetServerTime()
+		if (now - incomingTs) > REQUEST_LOG.EXPIRY_SECONDS then
+			-- Backdate the tombstone to when the request actually expired so it
+			-- doesn't linger for a full extra 30 days from now.
+			tombstones[id] = incomingTs + REQUEST_LOG.EXPIRY_SECONDS
+			TOGBankClassic_Output:Debug("SYNC",
+				"mergeRequest: EXPIRED-TOMBSTONED - id=%s (status=%s, age=%dd)",
+				id, clean.status, math.floor((now - incomingTs) / 86400))
+			return "tombstoned"
+		end
+	end
+
 	local existing = requests[id]
 	if existing then
 		local existingTs = tonumber(existing.updatedAt or existing.date or 0) or 0
