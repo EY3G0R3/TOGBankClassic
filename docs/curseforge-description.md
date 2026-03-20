@@ -261,7 +261,14 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.9.10 (Latest)
+v0.9.12 (Latest)
+• Stale banker tabs — banker tabs turn red with a tooltip when guild members have a newer hash for that alt, so you know at a glance when displayed inventory may be out of date
+• /togbank versioncheck — broadcast a version check to all guild members and see who is running which version (works with all addon versions via VersionCheck-1.0)
+• Fixed quality border colours on weapons and armour — gear now shows the correct rarity colour (green/blue/purple) rather than always white
+• Fixed mail item tooltips showing blank names
+• Performance: NormalizeRequestList now skips its full rebuild when nothing has changed
+
+v0.9.10
 • Request sync now uses ~60% less bandwidth — a new compact positional wire format replaces the verbose key-value protocol for both the requests index and individual records; guilds with 500+ requests will see the biggest improvement on initial sync and after being offline
 
 v0.9.8
