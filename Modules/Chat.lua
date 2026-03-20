@@ -88,7 +88,6 @@ function TOGBankClassic_Chat:Init()
 	end)
 
 	self.addon_outdated = false
-	self.guild_versions = {}  -- tracks addon versions of guild members
 	self.online_bankers = {}  -- v0.8.0: tracks online bankers for pull-based protocol
 
 	self.last_roster_sync = nil
@@ -380,15 +379,6 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 			end
 		end
 		if data.addon then
-			-- Track this user's addon version
-			if not self.guild_versions then
-				self.guild_versions = {}
-			end
-			self.guild_versions[sender] = {
-				version = data.addon,
-				seen = time(),
-			}
-
 			-- v0.8.0: Track online bankers for pull-based protocol
 			if data.isBanker then
 				if not self.online_bankers then
@@ -1061,14 +1051,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			)
 
 			if data.type == "requests-index" then
-				-- Track addon version (all clients broadcast this on login and periodically)
-				if data.addon then
-					if not self.guild_versions then self.guild_versions = {} end
-					self.guild_versions[sender] = {
-						version = data.addon,
-						seen    = time(),
-					}
-				end
 				local matches = (data.player == "*" or data.player == player)
 				if matches then
 					-- SYNC-011: Only respond if our hash differs from the querier's.
@@ -1818,15 +1800,6 @@ end
 			TOGBankClassic_Output:Debug("P2P", "HL broadcast from %s (alts=%d, isBanker=%s)",
 				tostring(sender), altCount, tostring(isSenderBanker))
 
-			-- Track addon version from hash-list-broadcast (version tracking channel)
-			if data.addon then
-				if not self.guild_versions then self.guild_versions = {} end
-				self.guild_versions[sender] = {
-					version = data.addon,
-					seen    = time(),
-				}
-			end
-			
 			-- Queue this broadcast for batched processing
 			table.insert(self.hashBroadcastQueue, {
 				sender = sender,
@@ -2507,14 +2480,6 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
-		name = "versions",
-		help = "show addon versions of online guild members",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Chat:PrintVersions()
-		end,
-	},
-	{
 		name = "versioncheck",
 		help = "broadcast version request to guild via VersionCheck-1.0 and print responses after collection window",
 		expert = true,
@@ -2837,63 +2802,6 @@ end
 
 function TOGBankClassic_Chat:OnTimer()
 	TOGBankClassic_Chat:ProcessQueue()
-end
-
-function TOGBankClassic_Chat:PrintVersions()
-	-- Get our own version
-	local myVersion = GetAddOnMetadata("TOGBankClassic", "Version") or "unknown"
-	local myPlayer = TOGBankClassic_Guild:GetPlayer()
-
-	-- Collect versions into a sortable list
-	local versions = {}
-
-	-- Add ourselves
-	table.insert(versions, {
-		name = myPlayer,
-		version = myVersion,
-		seen = time(),
-		isSelf = true,
-	})
-
-	-- Add tracked guild members
-	for name, info in pairs(self.guild_versions) do
-		table.insert(versions, {
-			name = name,
-			version = tostring(info.version),
-			seen = info.seen,
-			isSelf = false,
-		})
-	end
-
-	-- Sort by version (descending), then by name
-	table.sort(versions, function(a, b)
-		if a.version ~= b.version then
-			return a.version > b.version
-		end
-		return a.name < b.name
-	end)
-
-	-- Print header
-	local count = #versions
-	TOGBankClassic_Output:Response("Addon versions (%d members):", count)
-
-	-- Print each version
-	local now = time()
-	for _, entry in ipairs(versions) do
-		local age = ""
-		if not entry.isSelf then
-			local seconds = now - entry.seen
-			if seconds < 60 then
-				age = " (just now)"
-			elseif seconds < 3600 then
-				age = string.format(" (%dm ago)", math.floor(seconds / 60))
-			else
-				age = string.format(" (%dh ago)", math.floor(seconds / 3600))
-			end
-		end
-		local marker = entry.isSelf and " (you)" or ""
-		TOGBankClassic_Output:Response("  %s: %s%s%s", entry.name, entry.version, marker, age)
-	end
 end
 
 function TOGBankClassic_Chat:PrintDeltaStats()
