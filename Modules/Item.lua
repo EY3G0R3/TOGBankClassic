@@ -230,13 +230,31 @@ function TOGBankClassic_Item:GetItems(items, callback)
 					TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Item %d has link, using directly", capturedItemID)
 					-- Only extract icon if Info doesn't already exist
 					if not capturedItem.Info then
-						-- Extract icon using GetItemInfoInstant (no server query)
-						local _, _, _, _, iconID = GetItemInfoInstant(capturedItemLink)
-						if iconID then
+						-- Use GetItemInfo (not GetItemInfoInstant) so we get rarity and all fields.
+						-- Since the item link came from the client's own bank scan, data is already
+						-- in the WoW client cache — this is not a server query.
+						local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemLink)
+						if name then
+							local equip = C_Item.GetItemInventoryTypeByID(capturedItemID)
 							capturedItem.Info = {
-								icon = iconID,
-								name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID))
+								icon = icon,
+								name = name,
+								rarity = rarity,
+								level = level,
+								price = price,
+								class = itemClassId,
+								subClass = itemSubClassId,
+								equipId = equip,
 							}
+						else
+							-- Fallback: item somehow not in cache, extract what we can
+							local _, _, _, _, iconID = GetItemInfoInstant(capturedItemLink)
+							if iconID then
+								capturedItem.Info = {
+									icon = iconID,
+									name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID))
+								}
+							end
 						end
 					end
 					table.insert(list, capturedItem)
