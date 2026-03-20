@@ -2132,7 +2132,9 @@ local function ProcessItemQueue()
 									pendingAsyncLoads = pendingAsyncLoads - 1
 									local name = itemObj:GetItemName()
 									if name then
-										item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, name)
+										-- Strip "item:" prefix defensively (mail items may store ItemString with prefix)
+										local rawStr = item.ItemString:match("^item:(.+)$") or item.ItemString
+										item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", rawStr, name)
 										ThrottledUIRefresh()
 									end
 								end)
@@ -2224,7 +2226,9 @@ function TOGBankClassic_Guild:ReconstructItemLink(item)
 	if item.ItemString then
 		local itemName = GetItemInfo(item.ID)
 		if itemName then
-			item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, itemName)
+			-- Strip "item:" prefix defensively (mail items may store ItemString with prefix)
+			local rawStr = item.ItemString:match("^item:(.+)$") or item.ItemString
+			item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", rawStr, itemName)
 		end
 	else
 		local itemLink = select(2, GetItemInfo(item.ID))

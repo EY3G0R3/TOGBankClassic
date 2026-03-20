@@ -68,7 +68,11 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 					-- Gear (weapons/armor) needs FULL Link for suffix differentiation
 					-- Consumables/trade goods don't need Link (saves bandwidth in d3 sync)
 					local storageLink = nil
-					local storageItemString = itemString
+					-- Normalize: strip "item:" prefix so format matches StripItemLinks output.
+					-- GetItemString returns "item:4306:...", but ReconstructItemLink embeds as
+					-- |Hitem:%s, so storing with the prefix produces double "item:item:" which
+					-- makes SetHyperlink silently fail and shows no tooltip.
+					local storageItemString = itemString and (itemString:match("^item:(.+)$") or itemString) or nil
 					local storageForceLink = nil
 					if link and TOGBankClassic_Item:NeedsLink(link) then
 						storageLink = link
