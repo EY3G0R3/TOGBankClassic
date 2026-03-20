@@ -600,6 +600,7 @@ function Guild:EnsureRequestsInitialized()
 	if self.Info.requests[1] ~= nil then
 		TOGBankClassic_Output:Debug("[MIGRATE] Converting requests from array to map format")
 		self.Info.requests = requestsToMap(self.Info.requests)
+		self.requestsDirty = true
 	end
 
 	-- Initialize tombstones
@@ -618,6 +619,7 @@ function Guild:EnsureRequestsInitialized()
 		self.Info.requestsOps = nil
 		self.Info.requestsOpSeq = nil
 		self.Info.requestsOpApplied = nil
+		self.requestsDirty = true
 	end
 
 	-- Clear runtime log indices (no longer used)
@@ -632,6 +634,7 @@ function Guild:EnsureRequestsInitialized()
 	-- Calculate version from requests if not set
 	if not self.Info.requestsVersion or self.Info.requestsVersion == 0 then
 		self.Info.requestsVersion = calculateRequestsVersion(self.Info.requests)
+		self.requestsDirty = true  -- version was missing; treat as first load
 	end
 
 	self:NormalizeRequestList()
@@ -640,6 +643,11 @@ end
 -- Normalize stored requests and drop tombstoned entries.
 function Guild:NormalizeRequestList()
 	if not self.Info or not self.Info.requests then
+		return
+	end
+	-- Skip if data hasn't changed since the last normalization.
+	-- requestsDirty is nil on first call (treated as dirty); set to false after each run.
+	if self.requestsDirty == false then
 		return
 	end
 
@@ -688,6 +696,7 @@ function Guild:NormalizeRequestList()
 
 	self.Info.requests = normalized
 	self.Info.requestsVersion = latest
+	self.requestsDirty = false
 
 	local after = countRequests(normalized)
 	TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Finished with %d requests (calling PruneRequests)", after))
@@ -786,6 +795,7 @@ function Guild:ApplyRequestSnapshot(payload)
 	-- REQSYNC-004: NormalizeRequestList already calls PruneRequests internally;
 	-- the explicit PruneRequests() call that was here was redundant and has been removed.
 	self.Info.requestsVersion = calculateRequestsVersion(self.Info.requests)
+	self.requestsDirty = true  -- snapshot was merged; tombstone filtering must re-run
 	self:NormalizeRequestList()
 	self:PruneRequestTombstones()
 	self:RefreshRequestsUI()
@@ -1264,7 +1274,6 @@ function Guild:SendRequestsIndex(target)
 		return
 	end
 	self:EnsureRequestsInitialized()
-	self:NormalizeRequestList()
 
 	local requestsIndex = {}
 	for id, req in pairs(self.Info.requests or {}) do
