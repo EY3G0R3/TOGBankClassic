@@ -253,7 +253,7 @@ function P2P:OnSyncAccept(sessionId, sender)
 
 	s.state = STATE.ACTIVE
 	self.activeSessions = self.activeSessions + 1
-	Dbg("COMPLETE", "ACTIVE: %s <- %s (activeSessions=%d)", s.altName, sender, self.activeSessions)
+	Dbg("HANDSHAKE", "ACTIVE: %s <- %s (activeSessions=%d)", s.altName, sender, self.activeSessions)
 
 	-- Delivery watchdog in case peer accepts but never delivers.
 	s.timers.delivery = C_Timer.After(60, function()

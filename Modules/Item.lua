@@ -451,7 +451,9 @@ function TOGBankClassic_Item:Sort(items, mode)
 			item.Info.class = item.Info.class or 0
 			item.Info.subClass = item.Info.subClass or 0
 			item.Info.equipId = item.Info.equipId or 0
-			item.Info.rarity = item.Info.rarity or 1
+			-- Do NOT default rarity here — nil rarity means "not yet known from GetItemInfo".
+			-- DrawItem uses nil rarity to trigger its sync/async fallback lookups.
+			-- The sort comparator at line ~477 already handles nil via (a.Info.rarity or 0).
 			item.Info.level = item.Info.level or 1
 			item.Info.price = item.Info.price or 0
 			item.Info.name = item.Info.name or (item.Link and item.Link:match("%[(.-)%]")) or ("Item " .. tostring(item.ID or "?"))

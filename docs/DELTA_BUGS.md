@@ -1,12 +1,15 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** March 19, 2026
+**Last Updated:** March 20, 2026
 **Status:** Testing Phase - Core Protocol Operational
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
 - ⚠️ [UI-009] Non-bankers see 0/0 slots in status bar hover tooltip - Delta syncs don't include slot metadata (bank.slots, bags.slots), so non-bankers who receive only delta updates have missing slot counts. Fixed in delta protocol to include slots when changed, but existing data needs fresh sync to populate. See SLOTS-001 below.
+
+**Recent Fixes (2026-03-20):**
+- ✅ [UI-003] **LOW** Quality border color missing for all gear (weapons, armor) — three compounding issues: (1) After UI-011 switched Branch 1 to `GetItemInfo(link)`, remote-synced gear not yet in the client cache still had nil rarity at draw time — `DrawItem` needed its own fallback. (2) `Item:Sort` was mutating `item.Info.rarity = item.Info.rarity or 1` for any item whose rarity was nil, replacing nil with 1 (common/white) before `DrawItem` ever ran — the sort comparators already handled nil safely via `(a.Info.rarity or 0)` so the assignment was unnecessary and actively harmful. Because rarity was truthy (1) by the time `DrawItem` ran, `GetItemQualityColor(1)` was called and the border was explicitly set to white, and the fallback paths never fired. Fix: (a) Removed the `rarity = rarity or 1` default from `Item:Sort`; nil rarity now propagates to `DrawItem` correctly. (b) `DrawItem` adds two fallback levels: sync — `GetItemInfo(item.Link)` at draw time; async — `ContinueOnItemLoad` fires `GetItemInfo(item.Link)` when the item enters the client cache, then calls `border:SetVertexColor`. All lookups use `item.Link` only — ID-based lookup excluded because base item ID gives wrong rarity for suffixed gear. Locations: Item.lua `Sort` (~line 449); UI.lua `DrawItem` (~line 145).
 
 **Recent Fixes (2026-03-19):**
 - ✅ [UI-011] **MEDIUM** Item quality border color missing for all items in bank inventory — `GetItems` Branch 1 (items where `Link` is set) built `Info` using `GetItemInfoInstant`, which returns only `icon` and item type fields — no `rarity`. Every item scanned directly from the local bank has a link (from `GetContainerItemLink`), so ALL items on a local bank scan went through Branch 1. `DrawItem` guards border coloring with `if item.Info.rarity then`; since `rarity` was always nil, `SetVertexColor` was never called, leaving the border white/invisible for every item regardless of quality. Additionally, even after switching Branch 1 to `GetItemInfo(link)` (which does return rarity), gear items synced from a remote banker that the receiver has never encountered are not yet in the client cache — `GetItemInfo` returns nil, and the old fallback (`GetItemInfoInstant`) also has no rarity. Fix: Branch 1 now has two paths: (1) Cached — `GetItemInfo(capturedItemLink)` returns data → build full `Info` synchronously including rarity (same as Branch 2 cached path). (2) Not cached — `CreateFromItemID` + `ContinueOnItemLoad` async load, identical to Branch 2's uncached path; `GetInfo(id, link)` is called in the callback to populate full `Info` including rarity once loaded. Last resorts (create/callback failure) fall back to `GetItemInfoInstant` (icon+name only, no rarity). Local bank scans always hit path (1) since the bank is open = items in cache. Remote synced gear hits path (2) when the receiver hasn't cached that item yet. Location: Item.lua `GetItems` Branch 1 (~line 228-300).
@@ -35,7 +38,7 @@
 
 **Recent Fixes (2026-03-06):**
 - ✅ [REQSYNC-008] **CRITICAL** `SenderIsOfficer` crashed with "attempt to call global 'GuildControlGetRankFlags' (a nil value)" on every bank open — `GuildControlGetRankFlags` is a Retail-only WoW API that does not exist in Classic Era. It was introduced in the REQSYNC-001 fix as a way to check per-rank permissions at lookup time. Fix: Moved officer determination to `RefreshOnlineCache` (cache-build time). Classic Era has no per-rank permission API, but `CanViewOfficerNote()` returns whether the LOCAL player has officer-note access. Since Classic ranks are strictly ordered (lower rankIndex = more permissions), if the local player at rankIndex N has officer-note access, all members with rankIndex <= N also have it. `isOfficer` is now stored on each memberRoster entry at cache-build time; `SenderIsOfficer` is a pure O(1) cache read with zero WoW API calls. Regression introduced in commit 4e68f63. Locations: Guild.lua `RefreshOnlineCache`, `SenderIsOfficer`.
-- ⚠️ [UI-003] Item quality border color not showing for non-recipe gear (green/blue items show white border)
+- ✅ [UI-003] Item quality border color not showing for non-recipe gear — resolved by UI-011 (Item.lua Branch 1 rarity fix) + DrawItem sync/async link-based fallback for uncached remote gear. See Recent Fixes (2026-03-20).
 - ⚠️ [UI-004] Tooltips missing for some food items (Homemade Cherry Pie, Roasted Quail confirmed)
 
 **Recent Fixes (2026-03-12):**
@@ -10141,16 +10144,30 @@ Replaced both `GetCoinTextureString()` calls in `UI/Inventory.lua` (default stat
 ## [UI-003] Item quality border color missing for non-recipe gear
 
 **Severity:** LOW
-**Status:** Active
+**Status:** Fixed March 20, 2026
 **Reported:** March 12, 2026 (external user feedback)
 
 **Symptom:**
-Recipe items correctly display green quality borders. However, green- and blue-quality gear (weapons, armor, etc.) display a white border instead of the appropriate quality color.
+Recipe items correctly displayed green quality borders. Green- and blue-quality gear (weapons, armor) displayed a white border instead of the appropriate quality color.
 
-**Investigation Needed:**
-- Locate where item frame border color is set in `UI/Inventory.lua` or `ItemHighlight.lua`
-- Determine why the quality color lookup works for recipes but not for equippable items
-- Check whether `GetItemQualityColor` / `ITEM_QUALITY_COLORS` lookup is conditioned on item class in a way that excludes gear
+**Root Cause:**
+Three compounding issues:
+1. `GetItems` Branch 1 (items with a link, i.e. local bank scan) used `GetItemInfoInstant` → returns no `rarity` field → `item.Info.rarity` always nil for locally-scanned gear. Fixed in UI-011 by switching to `GetItemInfo(link)`.
+2. Even after the UI-011 fix, gear synced from other bankers that the local client has never cached is not yet in the WoW item cache when `DrawItem` runs. `GetItemInfo(item.Link)` returns nil at draw time → rarity still nil → sync/async fallbacks in `DrawItem` needed.
+3. **Root cause of gear-still-wrong after fallbacks were added:** `Item:Sort` ran before `DrawItem` and contained `item.Info.rarity = item.Info.rarity or 1` — defaulting nil rarity to 1 (common/white) for all items missing it. By the time `DrawItem` evaluated `item.Info.rarity`, the value was `1` (truthy), so `GetItemQualityColor(1)` was called and the border was explicitly painted white. The sync/async fallbacks were guarded by `if rarity then ... elseif item.Link then` — with rarity now truthy, the fallback branch was unreachable. The sort comparators already safely handled nil rarity via `(a.Info.rarity or 0)`, so the assignment served no functional purpose.
+
+Recipe items worked correctly because they are common consumables typically cached by the client from prior loot or AH browsing — `GetItemInfo` succeeded at `GetItems` time and rarity was populated before `Sort` ran, so the `or 1` default was never applied.
+
+**Fix:**
+- `Item.lua` Branch 1: switched from `GetItemInfoInstant` to `GetItemInfo(link)` so locally-scanned items always have rarity populated. Committed `251df33`.
+- `Item.lua Sort`: removed `item.Info.rarity = item.Info.rarity or 1`. Nil rarity now propagates intact to `DrawItem`, allowing the fallback paths to fire.
+- `UI.lua DrawItem`: added two fallback levels for items whose rarity is nil at draw time:
+  1. **Sync fallback** — `GetItemInfo(item.Link)` called immediately at draw time; succeeds if the client cached the item between `GetItems` and first render.
+  2. **Async fallback** — `Item:CreateFromItemID` + `ContinueOnItemLoad` fires `GetItemInfo(item.Link)` once the item enters the client cache, then calls `border:SetVertexColor`. Purely display-side; no data is stored or mutated.
+- **ID-based lookup deliberately excluded**: `GetItemInfo(item.ID)` returns the base item's rarity, which is wrong for suffixed gear — e.g. "Iron Sword" (grey) and "Iron Sword of the Tiger" (green) share the same base ID. All rarity queries use `item.Link` exclusively.
+- Gear items always have their full link preserved (`ForceLink=true`); there is no reconstruction path for gear links, so link-based queries are always safe and accurate.
+
+**Location:** UI.lua `DrawItem` (~line 145); Item.lua `GetItems` Branch 1 (~line 228); Item.lua `Sort` (~line 449).
 
 ---
 

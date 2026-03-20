@@ -149,10 +149,33 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 	border:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)
 	border:SetBlendMode("BLEND")
 	border:SetTexture("Interface\\Common\\WhiteIconFrame")
-	--fix issue where rarity doesn't return immediately
-	if item.Info.rarity then
-		local r, g, b = GetItemQualityColor(item.Info.rarity)
+	-- Use rarity from Info if available; otherwise try GetItemInfo at draw time (display only).
+	-- Gear always has its full link preserved (ForceLink=true), so query by link for accuracy.
+	-- Never fall back to ID for rarity — base item ID gives wrong rarity for suffixed gear
+	-- (e.g. "Iron Sword" is white but "Iron Sword of the Tiger" is green, same base ID).
+	local rarity = item.Info.rarity
+	if not rarity and item.Link then
+		local _, _, r = GetItemInfo(item.Link)
+		rarity = r
+	end
+	if rarity then
+		local r, g, b = GetItemQualityColor(rarity)
 		border:SetVertexColor(r, g, b)
+	elseif item.Link then
+		-- Link exists but item not in client cache yet — load async then set color (display only)
+		local borderRef = border
+		local capturedLink = item.Link
+		local capturedID = item.ID
+		local itemObj = Item.CreateFromItemID(Item, capturedID)
+		if itemObj then
+			itemObj:ContinueOnItemLoad(function()
+				local _, _, r = GetItemInfo(capturedLink)
+				if r and borderRef and borderRef.SetVertexColor then
+					local cr, cg, cb = GetItemQualityColor(r)
+					borderRef:SetVertexColor(cr, cg, cb)
+				end
+			end)
+		end
 	end
 
 	slot.border = border

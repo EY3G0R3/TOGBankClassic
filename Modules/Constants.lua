@@ -50,9 +50,9 @@ DEBUG_CATEGORY = {
 DEBUG_TAGS = {
 	P2P = {
 		OFFER     = "hash-offer send / receive",
-		DISPATCH  = "session creation and peer selection",
-		HANDSHAKE = "sync-request / sync-accept / sync-busy",
-		COMPLETE  = "ACTIVE / COMPLETE / FAILED state transitions",
+		DISPATCH  = "session creation, peer selection, collect-window fallbacks (no response after timeout)",
+		HANDSHAKE = "sync-accept/busy, state-summary exchange, RespondToStateSummary decisions, no-change replies",
+		COMPLETE  = "data delivered, session COMPLETE/FAILED/delivery-timeout, queue slot release",
 		["BROADCAST"] = "P2P hash-broadcast sent to guild channel (waiting for peers)",
 		["RESPOND"]   = "peer sending data in response to a P2P request (queue progress)",
 	},
@@ -67,7 +67,6 @@ DEBUG_TAGS = {
 	},
 	SYNC = {
 		["HASH-MATCH"]      = "hash comparison decisions",
-		["P2P-FALLBACK"]    = "P2P timeout / banker fallback events",
 		["HASH-CORRECTION"] = "hash field auto-correction",
 		["RECEIVE"]         = "full alt data receive / sanitize",
 		["MERGE"]           = "request log merge decisions",

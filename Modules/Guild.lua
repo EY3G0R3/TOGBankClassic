@@ -1081,9 +1081,9 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 			local banker = pending.banker
 			local bankerOnline = banker and self:IsPlayerOnline(banker)
 			if bankerOnline then
-				TOGBankClassic_Output:Debug("SYNC", "P2P-FALLBACK", "PERF-005: No P2P response for %s after %ds timeout, falling back to banker %s", altName, timeout, banker)
+				TOGBankClassic_Output:Debug("P2P", "DISPATCH", "PERF-005: No P2P response for %s after %ds timeout, falling back to banker %s", altName, timeout, banker)
 			else
-				TOGBankClassic_Output:Debug("SYNC", "P2P-FALLBACK", "PERF-005: No P2P response for %s after %ds timeout, broadcasting to GUILD (no banker online)", altName, timeout)
+				TOGBankClassic_Output:Debug("P2P", "DISPATCH", "PERF-005: No P2P response for %s after %ds timeout, broadcasting to GUILD (no banker online)", altName, timeout)
 			end
 			if self.Info and self.Info.name then
 				TOGBankClassic_Database:RecordP2PBankerFallback(self.Info.name)
@@ -1389,7 +1389,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	if not banker then
 		-- No banker found in roster - broadcast to GUILD hoping someone has data
 		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] QueryAltPullBased for %s: no banker found, broadcasting to GUILD", norm)
-		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST (no banker): togbank-r for alt %s", norm)
+		TOGBankClassic_Output:Debug("COMMS", "Sending GUILD BROADCAST (no banker): togbank-r for alt %s", norm)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", "guild", norm)
 		self.pendingAltRequests[norm] = now
@@ -1402,7 +1402,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	if not self:IsPlayerOnline(banker) then
 		-- Banker exists but offline - broadcast to GUILD hoping someone else has data
 		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] QueryAltPullBased for %s: banker %s offline, broadcasting to GUILD", norm, banker)
-		TOGBankClassic_Output:DebugComm("SENDING GUILD BROADCAST (banker offline): togbank-r for alt %s", norm)
+		TOGBankClassic_Output:Debug("COMMS", "Sending GUILD BROADCAST (banker offline): togbank-r for alt %s", norm)
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 		self:MarkPendingSync("alt", "guild", norm)
 		self.pendingAltRequests[norm] = now
@@ -1419,7 +1419,7 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	end
 
 	-- WHISPER banker as last resort (banker confirmed online)
-	TOGBankClassic_Output:DebugComm("SENDING WHISPER (last resort): togbank-r to %s for alt %s", banker, norm)
+	TOGBankClassic_Output:Debug("COMMS", "Sending WHISPER (last resort): togbank-r to %s for alt %s", banker, norm)
 	TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] WHISPER query for %s to banker %s (last resort after P2P timeout)", norm, banker)
 	
 	if not TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL") then
@@ -1790,16 +1790,15 @@ end
 
 -- v0.8.0: Send state summary to responder (Step 4 of pull-based flow)
 function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
-	TOGBankClassic_Output:DebugComm("SendStateSummary CALLED: name=%s, target=%s, forceFull=%s", tostring(name), tostring(target), tostring(forceFullParam))
+	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "SendStateSummary called: name=%s, target=%s, forceFull=%s", tostring(name), tostring(target), tostring(forceFullParam))
 	if not name or not target then
-		TOGBankClassic_Output:DebugComm("SendStateSummary EARLY RETURN: missing params")
+		TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "SendStateSummary early return: missing params")
 		return
 	end
 
 	local summary = self:ComputeStateSummary(name)
 	if not summary then
-		TOGBankClassic_Output:DebugComm("SendStateSummary: No summary for %s", tostring(name))
-		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Cannot send state summary for %s (no data)", name)
+		TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "SendStateSummary: No data for %s", tostring(name))
 		return
 	end
 
@@ -1812,12 +1811,7 @@ function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
 		-- If we set hash=nil and responder also has hash=nil (old code), they'll match and send NO-CHANGE
 		summary.hash = 0
 		summary.version = 0
-		TOGBankClassic_Output:DebugComm(
-			"SendStateSummary: forcing full data for %s (forceFull=%s, hasContent=%s)",
-			tostring(name),
-			tostring(forceFull and true or false),
-			tostring(hasContent)
-		)
+		TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "SendStateSummary: forcing full data for %s (forceFull=%s, hasContent=%s)", tostring(name), tostring(forceFull and true or false), tostring(hasContent))
 		if self.forceFullRequests and norm then
 			self.forceFullRequests[norm] = nil
 		end
@@ -1830,7 +1824,7 @@ function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
 	}
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(message)
-	TOGBankClassic_Output:DebugComm("SENDING STATE SUMMARY via WHISPER to %s for %s (%d bytes, hash=%s)", target, name, #data, tostring(summary.hash))
+	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending state summary via WHISPER to %s for %s (%d bytes, hash=%s)", target, name, #data, tostring(summary.hash))
 	if not TOGBankClassic_Core:SendWhisper("togbank-state", data, target, "NORMAL") then
 		return
 	end
@@ -1841,7 +1835,8 @@ function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
 	if summary.bags then itemCount = itemCount + #summary.bags end
 	if summary.mail then itemCount = itemCount + #summary.mail end
 	TOGBankClassic_Output:Debug(
-		"SYNC",
+		"P2P",
+		"HANDSHAKE",
 		"Sent state summary for %s to %s (%d total items: bank=%d, bags=%d, mail=%d, %d bytes)",
 		name,
 		target,
@@ -1856,16 +1851,15 @@ end
 -- v0.8.0: Respond to state summary (Step 5 & 6 of pull-based flow)
 -- Compare requester's state with our data and send appropriate response
 function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
-	TOGBankClassic_Output:DebugComm("RespondToStateSummary CALLED: name=%s, requester=%s", tostring(name), tostring(requester))
+	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "RespondToStateSummary called: name=%s, requester=%s", tostring(name), tostring(requester))
 	if not name or not summary or not requester then
-		TOGBankClassic_Output:DebugComm("RespondToStateSummary EARLY RETURN: missing params")
+		TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "RespondToStateSummary early return: missing params")
 		return
 	end
 
 	local norm = self:NormalizeName(name)
 	if not self.Info or not self.Info.alts or not self.Info.alts[norm] then
-		TOGBankClassic_Output:DebugComm("RespondToStateSummary: No data for %s", norm)
-		TOGBankClassic_Output:Debug("SYNC", "Cannot respond to state summary for %s (no data)", norm)
+		TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Cannot respond to state summary for %s (no data)", norm)
 		return
 	end
 
@@ -1892,14 +1886,13 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 		money = summary.money or 0
 	}
 	
-	TOGBankClassic_Output:DebugComm("RespondToStateSummary: %s requesterV=%d currentV=%d requesterHash=%s currentHash=%s requesterMailHash=%s currentMailHash=%s", norm, requesterVersion, currentVersion, tostring(requesterHash), tostring(currentHash), tostring(requesterMailHash), tostring(currentMailHash))
+	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "RespondToStateSummary: %s requesterV=%d currentV=%d requesterHash=%s currentHash=%s requesterMailHash=%s currentMailHash=%s", norm, requesterVersion, currentVersion, tostring(requesterHash), tostring(currentHash), tostring(requesterMailHash), tostring(currentMailHash))
 
 	-- v0.8.0: Delta mode - ONLY use hashes, no version fallback
 	if self:ShouldUseDelta() then
 		-- If current alt doesn't have a hash, send full data (might be from pre-hash version)
 		if not currentHash then
-			TOGBankClassic_Output:DebugComm("DELTA MODE: Current alt missing hash - sending full data for %s", norm)
-			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (responder has no hash)", requester, norm)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending full data to %s for %s (responder has no hash)", requester, norm)
 			-- DELTA-014: Pass zero hashes (requester baseline unknown, send everything)
 			self:SendAltData(norm, 0, 0, requester, nil)
 			return
@@ -1907,8 +1900,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 
 		-- If requester has no hash (nil), they have no data - send everything
 		if not requesterHash then
-			TOGBankClassic_Output:DebugComm("DELTA MODE: REQUESTER HAS NO DATA (hash=nil) - sending full data for %s", norm)
-			TOGBankClassic_Output:Debug("SYNC", "Sending full data to %s for %s (requester has no data)", requester, norm)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending full data to %s for %s (requester has no data)", requester, norm)
 			-- DELTA-014: Pass zero hashes (requester has no data, everything is new)
 			self:SendAltData(norm, 0, 0, requester, nil)
 			return
@@ -1919,13 +1911,13 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			-- Both hashes match - no changes needed
 			-- FIX: Clean up P2P resources before sending no-change (don't wait for 30s timeout)
 			if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
-				TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelling send timeout for %s (no changes)", norm)
+				TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Cancelling send timeout for %s (no changes)", norm)
 				self.pendingSendTimeouts[norm]:Cancel()
 				self.pendingSendTimeouts[norm] = nil
 				-- Decrement queue counter since we're not actually sending
 				if self.pendingSendCount > 0 then
 					self.pendingSendCount = self.pendingSendCount - 1
-					TOGBankClassic_Output:Debug("SYNC", "P2P no-change for %s - queue now: %d/%d", 
+					TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "P2P no-change for %s - queue now: %d/%d", 
 						norm, self.pendingSendCount, self.MAX_PENDING_SENDS)
 				end
 			end
@@ -1938,11 +1930,11 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 				mailHash = currentMailHash,
 			}
 			local data = TOGBankClassic_Core:SerializeWithChecksum(noChangeMsg)
-			TOGBankClassic_Output:DebugComm("DELTA MODE: SENDING NO-CHANGE to %s for %s (hash match: inv=%d, mail=%d)", requester, norm, currentHash, currentMailHash)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending no-change to %s for %s (hash match: inv=%d, mail=%d)", requester, norm, currentHash, currentMailHash)
 			if not TOGBankClassic_Core:SendWhisper("togbank-nochange", data, requester, "NORMAL") then
 				return
 			end
-			TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (hash=%08x, mailHash=%08x)", requester, norm, currentHash, currentMailHash)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sent no-change reply to %s for %s (hash=%08x, mailHash=%08x)", requester, norm, currentHash, currentMailHash)
 			if self.Info and self.Info.name then TOGBankClassic_Database:RecordNoChangeSent(self.Info.name) end
 			return
 		elseif requesterHash == currentHash and requesterMailHash ~= currentMailHash then
@@ -1951,15 +1943,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			-- The old hasSnapshot gate was a pre-DELTA-020 safety measure (snapshot held the
 			-- responder's data, not the requester's). ComputeDelta now uses requesterBaseline
 			-- directly, so no snapshot is needed.
-			TOGBankClassic_Output:DebugComm("DELTA MODE: MAIL-ONLY CHANGE - calling SendAltData for %s (mail: requester=%d, current=%d)", norm, requesterMailHash, currentMailHash)
-			TOGBankClassic_Output:Debug(
-				"SYNC",
-				"Sending data to %s for %s (mail-only change: requester=%d, current=%d)",
-				requester,
-				norm,
-				requesterMailHash,
-				currentMailHash
-			)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending data to %s for %s (mail-only change: requester=%d, current=%d)", requester, norm, requesterMailHash, currentMailHash)
 			-- DELTA-020: Pass requester baseline for accurate delta computation
 			self:SendAltData(norm, requesterHash, requesterMailHash, requester, requesterBaseline)
 			return
@@ -1970,17 +1954,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			-- responder's data, not the requester's). ComputeDelta now uses requesterBaseline
 			-- directly, so no snapshot is needed. requesterHash == 0 (new requester with no data)
 			-- is handled inside ComputeDelta by sending all items as additions.
-			TOGBankClassic_Output:DebugComm("DELTA MODE: INVENTORY CHANGE - calling SendAltData for %s (inv: requester=%d, current=%d, mail: requester=%d, current=%d)", norm, requesterHash, currentHash, requesterMailHash, currentMailHash)
-			TOGBankClassic_Output:Debug(
-				"SYNC",
-				"Sending data to %s for %s (hash mismatch: inv=%d->%d, mail=%d->%d)",
-				requester,
-				norm,
-				requesterHash,
-				currentHash,
-				requesterMailHash,
-				currentMailHash
-			)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending data to %s for %s (inv mismatch: %d->%d, mail: %d->%d)", requester, norm, requesterHash, currentHash, requesterMailHash, currentMailHash)
 			-- DELTA-020: Pass requester baseline for accurate delta computation
 			self:SendAltData(norm, requesterHash, requesterMailHash, requester, requesterBaseline)
 			return
@@ -1988,18 +1962,18 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	end
 
 	-- Legacy mode: Compare versions only
-	TOGBankClassic_Output:DebugComm("LEGACY MODE: Comparing versions")
+	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Legacy mode for %s - comparing versions", norm)
 	if requesterVersion == currentVersion then
 		-- No changes - send no-change message
 		-- FIX: Clean up P2P resources before sending no-change (don't wait for 30s timeout)
 		if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
-			TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelling send timeout for %s (no changes - legacy)", norm)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Cancelling send timeout for %s (no changes - legacy)", norm)
 			self.pendingSendTimeouts[norm]:Cancel()
 			self.pendingSendTimeouts[norm] = nil
 			-- Decrement queue counter since we're not actually sending
 			if self.pendingSendCount > 0 then
 				self.pendingSendCount = self.pendingSendCount - 1
-				TOGBankClassic_Output:Debug("SYNC", "P2P no-change (legacy) for %s - queue now: %d/%d", 
+				TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "P2P no-change (legacy) for %s - queue now: %d/%d", 
 					norm, self.pendingSendCount, self.MAX_PENDING_SENDS)
 			end
 		end
@@ -2010,17 +1984,17 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			version = currentVersion,
 		}
 		local data = TOGBankClassic_Core:SerializeWithChecksum(noChangeMsg)
-		TOGBankClassic_Output:DebugComm("SENDING NO-CHANGE to %s for %s (version match)", requester, norm)
+		TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending no-change to %s for %s (version match: v%d)", requester, norm, currentVersion)
 		if not TOGBankClassic_Core:SendWhisper("togbank-nochange", data, requester, "NORMAL") then
 			return
 		end
-		TOGBankClassic_Output:Debug("SYNC", "Sent no-change reply to %s for %s (v%d)", requester, norm, currentVersion)
+		TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sent no-change reply to %s for %s (v%d)", requester, norm, currentVersion)
 		if self.Info and self.Info.name then TOGBankClassic_Database:RecordNoChangeSent(self.Info.name) end
 		return
 	end
 
 	-- Version mismatch - send full data
-	TOGBankClassic_Output:Debug("SYNC", "Sending data to %s for %s (version mismatch: requester=%d, current=%d)", requester, norm, requesterVersion, currentVersion)
+	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending data to %s for %s (version mismatch: requester=%d, current=%d)", requester, norm, requesterVersion, currentVersion)
 	-- DELTA-014: Legacy mode doesn't use hashes, pass zeros (no baseline)
 	self:SendAltData(norm, 0, 0, requester, nil)
 end
@@ -2455,7 +2429,7 @@ local function CreateOnChunkSentCallback(altName)
 			-- Decrement P2P send queue counter
 			if TOGBankClassic_Guild.pendingSendCount > 0 then
 				TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
-				TOGBankClassic_Output:Debug("SYNC", "P2P send completed for %s - queue now: %d/%d", 
+				TOGBankClassic_Output:Debug("P2P", "COMPLETE", "P2P send completed for %s - queue now: %d/%d", 
 					altName, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 			end
 
@@ -2490,7 +2464,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 			end
 			if self.pendingSendCount and self.pendingSendCount > 0 then
 				self.pendingSendCount = self.pendingSendCount - 1
-				TOGBankClassic_Output:Debug("SYNC", "P2P: Released queue slot for %s (%s) - queue now: %d/%d",
+				TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Released queue slot for %s (%s) - queue now: %d/%d",
 					norm, reason, self.pendingSendCount, self.MAX_PENDING_SENDS)
 			end
 		end
@@ -2498,7 +2472,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 
 	-- Cancel pending send timeout since we're actually sending now
 	if self.pendingSendTimeouts and self.pendingSendTimeouts[norm] then
-		TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelling send timeout for %s (actually sending)", norm)
+		TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cancelling send timeout for %s (actually sending)", norm)
 		self.pendingSendTimeouts[norm]:Cancel()
 		self.pendingSendTimeouts[norm] = nil
 	end

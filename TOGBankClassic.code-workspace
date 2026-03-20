@@ -2,6 +2,9 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"path": "../VersionCheck-1.0"
 		}
 	],
 	"settings": {

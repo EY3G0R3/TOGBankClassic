@@ -745,7 +745,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 	-- WHISPER DEBUG
 	if distribution == "WHISPER" or prefix == "togbank-r" or prefix == "togbank-rr" then
-		TOGBankClassic_Output:DebugComm("RECEIVED: %s via %s from %s", prefix, distribution, sender)
+		TOGBankClassic_Output:Debug("COMMS", "Received: %s via %s from %s", prefix, distribution, sender)
 	end
 
 	if IsInRaid() then
@@ -810,7 +810,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	end
 
 	if prefix == "togbank-r" then
-		TOGBankClassic_Output:DebugComm("togbank-r DATA.TYPE = %s from %s", tostring(data.type), sender)
+		TOGBankClassic_Output:Debug("COMMS", "togbank-r DATA.TYPE = %s from %s", tostring(data.type), sender)
 
 		-- v0.8.0: Check if this is a pull-based request (has type == "alt-request")
 		if data.type == "alt-request" then
@@ -820,7 +820,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local hashOnly = data.hashOnly or false
 			local normAltName = TOGBankClassic_Guild:NormalizeName(altName)
 
-			TOGBankClassic_Output:DebugComm("RECEIVED PULL-BASED REQUEST from %s for alt %s (hashOnly=%s)", sender, altName, tostring(hashOnly))
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Received pull-based request from %s for alt %s (hashOnly=%s)", sender, altName, tostring(hashOnly))
 
 			TOGBankClassic_Output:Debug("QUERIES", "> %s %s %s",
 				ColorPlayerName(sender),
@@ -931,7 +931,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							local timer = C_Timer.After(30, function()
 								if TOGBankClassic_Guild.pendingSendCount > 0 then
 									TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
-									TOGBankClassic_Output:Debug("SYNC", "P2P-FALLBACK", "P2P: Send timeout for %s - decremented queue (now %d/%d)",
+									TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Send timeout for %s - decremented queue (now %d/%d)",
 										timeoutAlt, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 								end
 								TOGBankClassic_Guild.pendingSendTimeouts[timeoutAlt] = nil
@@ -950,7 +950,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 									expectedUpdatedAt = expectedUpdatedAt,
 								}
 								local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
-								TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)",
+								TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)",
 									sender, tostring(isBanker), tostring(hasData), tostring(expectedHash), tostring(expectedUpdatedAt))
 								TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
 								TOGBankClassic_Chat:Debug(
@@ -982,7 +982,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
 
 				-- Send acknowledgment via WHISPER to reduce guild channel spam
-				TOGBankClassic_Output:DebugComm("SENDING ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)",
+				TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending ACK: togbank-rr via WHISPER to %s (isBanker=%s, hasData=%s, hash=%s, updatedAt=%s)",
 					sender, tostring(isBanker), tostring(hasData), tostring(expectedHash), tostring(expectedUpdatedAt))
 				if TOGBankClassic_Core:SendWhisper("togbank-rr", ackData, sender, "NORMAL") then
 					self:Debug(
@@ -1174,7 +1174,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local expectedHash = data.expectedHash
 			local expectedUpdatedAt = data.expectedUpdatedAt
 
-			TOGBankClassic_Output:DebugComm("RECEIVED ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s, hashOnly=%s, hash=%s, updatedAt=%s)",
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Received ACK: togbank-rr from %s for alt %s (isBanker=%s, hasData=%s, hashOnly=%s, hash=%s, updatedAt=%s)",
 				sender, altName, tostring(isBanker), tostring(hasData), tostring(hashOnly), tostring(expectedHash), tostring(expectedUpdatedAt))
 
 			self:Debug(
@@ -1251,7 +1251,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
 							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
 						end
-						TOGBankClassic_Output:Debug("SYNC", "PERF-005: No P2P response for %s, requesting banker directly", altName)
+						TOGBankClassic_Output:Debug("P2P", "COMPLETE", "PERF-005: No P2P response for %s, requesting banker directly", altName)
 						if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
 							TOGBankClassic_Database:RecordP2PBankerFallback(TOGBankClassic_Guild.Info.name)
 						end
@@ -1292,10 +1292,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						-- Check if we still don't have content (peer never delivered)
 						local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
 						if not alt or not TOGBankClassic_Guild:HasAltContent(alt, norm) then
-							TOGBankClassic_Output:Debug("SYNC", "P2P: Peer %s ACKed %s but never delivered data - falling back to banker", sender, altName)
+							TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s ACKed %s but never delivered data - falling back to banker", sender, altName)
 							TOGBankClassic_Guild:QueryAltPullBased(altName, false)
 						else
-							TOGBankClassic_Output:Debug("SYNC", "P2P: Peer %s successfully delivered data for %s", sender, altName)
+							TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s successfully delivered data for %s", sender, altName)
 						end
 						-- Clean up timer reference
 						if TOGBankClassic_Guild.pendingP2PFallbackTimeouts then
@@ -1311,7 +1311,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 					-- Send state summary for delta comparison
 					if hasData and expectedHash then
-						TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
+						TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Calling SendStateSummary for %s to %s", altName, sender)
 						TOGBankClassic_Guild:SendStateSummary(altName, sender)
 					end
 				end
@@ -1321,11 +1321,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					TOGBankClassic_Output:Debug("PROTOCOL", "PERF-006: Responder has no hash support (old code) - forcing full data request for %s", altName)
 					TOGBankClassic_Guild:SendStateSummary(altName, sender, true) -- forceFull=true
 				else
-					TOGBankClassic_Output:DebugComm("CALLING SendStateSummary for %s to %s", altName, sender)
+					TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Calling SendStateSummary for %s to %s", altName, sender)
 					TOGBankClassic_Guild:SendStateSummary(altName, sender)
 				end
 			else
-				TOGBankClassic_Output:DebugComm("NOT sending state summary (hasData=false)")
+				TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Not sending state summary to %s (hasData=false)", sender)
 			end
 	end
 end
@@ -1336,7 +1336,7 @@ end
 			local altName = data.name
 			local summary = data.summary
 
-			TOGBankClassic_Output:DebugComm("RECEIVED STATE SUMMARY from %s for alt %s (hash=%s, version=%s)", sender, altName, tostring(summary and summary.hash), tostring(summary and summary.version))
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Received state summary from %s for alt %s (hash=%s, version=%s)", sender, altName, tostring(summary and summary.hash), tostring(summary and summary.version))
 
 			self:Debug(
 				"SYNC",
@@ -1347,7 +1347,7 @@ end
 			)
 
 			-- Compute and send response (full/delta/no-change)
-			TOGBankClassic_Output:DebugComm("CALLING RespondToStateSummary for %s from %s", altName, sender)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Calling RespondToStateSummary for %s from %s", altName, sender)
 			TOGBankClassic_Guild:RespondToStateSummary(altName, summary, sender)
 		end
 	end
@@ -1369,7 +1369,7 @@ end
 				if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
 					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
 					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
-					TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelled fallback timeout for %s (no-change received)", altName)
+					TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cancelled fallback timeout for %s (no-change received)", altName)
 				end
 			end
 
@@ -1378,7 +1378,7 @@ end
 				TOGBankClassic_P2PSession:OnAltCompleted(altName, sender)
 			end
 
-			TOGBankClassic_Output:DebugComm("RECEIVED NO-CHANGE from %s for alt %s (version=%d)", sender, altName, version)
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Received no-change from %s for alt %s (version=%d)", sender, altName, version)
 
 			self:Debug(
 				"SYNC",
@@ -1432,7 +1432,7 @@ end
 
 	if prefix == "togbank-d" or prefix == "togbank-rm" then
 		-- SYNC-003p: Debug all togbank-d messages to see what's arriving
-		TOGBankClassic_Output:DebugComm("[SYNC-003p] %s received from %s: type=%s", prefix, sender, tostring(data.type))
+		TOGBankClassic_Output:Debug("COMMS", "[SYNC-003p] %s received from %s: type=%s", prefix, sender, tostring(data.type))
 
 		-- SYNC-010: Critical debug for request mutations
 		if data.type == "requests-log" then
@@ -1519,7 +1519,7 @@ end
 			local claimed = data.name
 			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
 
-			TOGBankClassic_Output:DebugComm("RECEIVED DATA: togbank-d3 from %s for alt %s (%d bytes)", sender, claimedNorm, #message)
+			TOGBankClassic_Output:Debug("COMMS", "Received DATA: togbank-d3 from %s for alt %s (%d bytes)", sender, claimedNorm, #message)
 
 			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
 			local hadPendingRequest = TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm)
@@ -1585,7 +1585,7 @@ end
 					if status == ADOPTION_STATUS.ADOPTED then
 						TOGBankClassic_Output:Info("P2P: Successfully received data for %s from peer %s (bypassed banker)", claimedNorm, sender)
 					else
-						TOGBankClassic_Output:Debug("SYNC", "P2P: Cleared pending request for %s (status: %s)", claimedNorm, tostring(status))
+						TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cleared pending request for %s (status: %s)", claimedNorm, tostring(status))
 					end
 				end
 			else
@@ -1659,7 +1659,7 @@ end
 				if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
 					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
 					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
-					TOGBankClassic_Output:Debug("SYNC", "P2P: Cancelled fallback timeout for %s (data received)", claimedNorm)
+					TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cancelled fallback timeout for %s (data received)", claimedNorm)
 				end
 
 				-- P2P-006: Signal session completion to release the active-session slot.
@@ -1767,7 +1767,7 @@ end
 
 	-- v0.9.1+: Request-specific data handler (togbank-rd, legacy key-value format)
 	if prefix == "togbank-rd" then
-		TOGBankClassic_Output:DebugComm("[SYNC-003p] togbank-rd received from %s: type=%s", sender, tostring(data.type))
+		TOGBankClassic_Output:Debug("COMMS", "[SYNC-003p] togbank-rd received from %s: type=%s", sender, tostring(data.type))
 
 		if data.type == "requests-index" then
 			local reqCount = data.requests and #data.requests or 0
@@ -2510,6 +2510,52 @@ local COMMAND_REGISTRY = {
 		expert = true,
 		handler = function()
 			TOGBankClassic_Chat:PrintVersions()
+		end,
+	},
+	{
+		name = "versioncheck",
+		help = "broadcast version request to guild via VersionCheck-1.0 and print responses after collection window",
+		expert = true,
+		handler = function()
+			local VC = LibStub and LibStub:GetLibrary("VersionCheck-1.0", true)
+			if not VC then
+				TOGBankClassic_Output:Response("VersionCheck-1.0 library not available")
+				return
+			end
+			local hostEntry = VC.hosts and VC.hosts["TOGBankClassic"]
+			if not hostEntry then
+				TOGBankClassic_Output:Response("TOGBankClassic not registered with VersionCheck-1.0")
+				return
+			end
+			-- FireBatch resets VersionResponses and VersionCheckActive, then broadcasts VC10_REQ to guild.
+			-- Peers respond via whisper (VC10_RSP) with up to 8s jitter; VC collects for 12s.
+			-- We wait 21s to be sure we capture all responses before reading.
+			VC:FireBatch()
+			TOGBankClassic_Output:Response("Version check broadcast sent — waiting 21 seconds for responses...")
+			C_Timer.After(21, function()
+				local myVersion = GetAddOnMetadata("TOGBankClassic", "Version") or "dev"
+				local myPlayer = TOGBankClassic_Guild:GetNormalizedPlayer() or "unknown"
+				local responses = hostEntry.VersionResponses or {}
+
+				local list = {}
+				for sender, version in pairs(responses) do
+					table.insert(list, { name = sender, version = tostring(version) })
+				end
+				table.sort(list, function(a, b)
+					local cmp = VC:CompareVersion(b.version, a.version)
+					if cmp ~= 0 then return cmp > 0 end
+					return a.name < b.name
+				end)
+
+				TOGBankClassic_Output:Response("Version check: %d guild member(s) responded", #list)
+				TOGBankClassic_Output:Response("  %s: %s (you)", myPlayer, myVersion)
+				for _, entry in ipairs(list) do
+					TOGBankClassic_Output:Response("  %s: %s", entry.name, entry.version)
+				end
+				if #list == 0 then
+					TOGBankClassic_Output:Response("  No responses received.")
+				end
+			end)
 		end,
 	},
 	{

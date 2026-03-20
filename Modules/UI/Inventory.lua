@@ -71,7 +71,8 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	local window = TOGBankClassic_UI:Create("Frame")
 	window:Hide()
 	window:SetCallback("OnClose", OnClose)
-	window:SetTitle("TOGBankClassic")
+	local version = GetAddOnMetadata("TOGBankClassic", "Version") or "?"
+	window:SetTitle("TOGBankClassic v" .. version)
 	window:SetLayout("Flow")
 	window:SetWidth(550)
 	-- Persist window position/size across reloads
