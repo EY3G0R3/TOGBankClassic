@@ -105,31 +105,14 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 	slot:SetWidth(size)
 	slot:SetHeight(height)
 
-	-- Always register OnEnter/OnLeave so items without a link at draw time (e.g. mail
-	-- consumables whose link is still being reconstructed async) still show tooltips.
-	-- The callback attempts a lazy reconstruction at hover time; if that also fails it
-	-- falls back to a plain-text tooltip from item.Info.name.
-	if item.ID or item.Link then
+	if item.Link then
 		slot:SetCallback("OnEnter", function()
-			local link = item.Link
-			if not link and item.ID then
-				TOGBankClassic_Guild:ReconstructItemLink(item)
-				link = item.Link
-			end
-			if link then
-				TOGBankClassic_UI:ShowItemTooltip(link)
-			elseif item.Info and item.Info.name then
-				GameTooltip:SetOwner(WorldFrame, "ANCHOR_CURSOR")
-				GameTooltip:SetText(item.Info.name, 1, 1, 1)
-				GameTooltip:Show()
-			end
+			TOGBankClassic_UI:ShowItemTooltip(item.Link)
 		end)
 		slot:SetCallback("OnLeave", function()
 			TOGBankClassic_UI:HideTooltip()
 		end)
-	end
 
-	if item.Link then
 		--handle on click or drag
 		slot:SetCallback("OnClick", function(self, event)
 			TOGBankClassic_UI:EventHandler(self, event)
