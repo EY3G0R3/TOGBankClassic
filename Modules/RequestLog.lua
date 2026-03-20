@@ -1135,7 +1135,7 @@ function Guild:GetRequestsVersion()
 	-- Prevents integer overflow from corrupted data (DATA-003)
 	local MIN_TIMESTAMP = 946684800  -- Jan 1, 2000
 	local MAX_TIMESTAMP = 2147483647  -- Max 32-bit signed integer (Jan 19, 2038)
-	if version < MIN_TIMESTAMP or version > MAX_TIMESTAMP then
+	if version ~= 0 and (version < MIN_TIMESTAMP or version > MAX_TIMESTAMP) then
 		-- Only warn once per session to prevent spam
 		if not warnedAbout.invalidRequestVersion then
 			TOGBankClassic_Output:Warn("Invalid request version %s detected, resetting to 0", tostring(version))
