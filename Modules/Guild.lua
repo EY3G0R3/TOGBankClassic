@@ -1135,11 +1135,8 @@ function TOGBankClassic_Guild:GetVersion()
 		data.roster = self.Info.roster.version
 	end
 
-	-- Include request sync summary (version + hash) in version broadcasts.
-	data.requests = {
-		version = self:GetRequestsVersion(),
-		hash = self:GetRequestsHash(),
-	}
+	-- PERF-002: Do not include request version/hash here — NormalizeRequestList() is expensive.
+	-- Revisit once NormalizeRequestList has a dirty-flag guard (see Guild:NormalizeRequestList).
 
 	for k, v in pairs(self.Info.alts) do
 		---START CHANGES
