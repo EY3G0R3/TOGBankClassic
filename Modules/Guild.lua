@@ -790,6 +790,31 @@ function TOGBankClassic_Guild:BuildBankerHashList()
 	return list
 end
 
+-- Returns true if the given normalized alt name is sync-pending (matches the HLR pending
+-- definition used by /togbank hashdebug): hash mismatch, no local data, or hash matches
+-- but content is missing.  Returns false if fully in sync or not in the hash cache.
+function TOGBankClassic_Guild:IsAltSyncPending(norm)
+	local bankerList = self.latestBankerHashes
+	if not bankerList then return false end
+	local summary = bankerList[norm]
+	if not summary then return false end
+
+	local localAlts = self.Info and self.Info.alts or {}
+	local localAlt  = localAlts[norm]
+	local localHash     = localAlt and localAlt.inventoryHash or 0
+	local localMailHash = localAlt and localAlt.mailHash or 0
+
+	local inventoryHashMatches = (summary.hash ~= nil and summary.hash == localHash)
+	local mailHashMatches      = (summary.mailHash ~= nil and summary.mailHash == localMailHash)
+	local hashesMatch = inventoryHashMatches and mailHashMatches
+
+	if localAlt and localHash ~= 0 and hashesMatch then
+		-- Hashes match but content may still be missing
+		return not self:HasAltContent(localAlt, norm)
+	end
+	return true  -- hash mismatch or no local data
+end
+
 function TOGBankClassic_Guild:ReportHashListCoverage()
 	local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
 	

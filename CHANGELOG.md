@@ -1,5 +1,17 @@
 # TOGBankClassic Changelog
 
+## [v0.9.12] (2026-03-20) - Stale Banker Indicators & Version Check Command
+
+**Status:** Production Ready
+
+### Improvements
+
+- **Stale banker tab indicators** — Banker tabs in the inventory window now turn red when a peer has broadcast a newer hash for that banker (i.e. the alt is HLR-pending per the same definition as `/togbank hashdebug`). Hovering a red tab shows a tooltip explaining that other guild members have newer data and current availability may not be accurate. The staleness check (`Guild:IsAltSyncPending`) covers both inventory and mail hash mismatches, missing content, and is the single source of truth used by both the tab color and the tooltip — consistent with `/togbank hashdebug` output. Location: Guild.lua `IsAltSyncPending`; UI/Inventory.lua `DrawContent`.
+
+- **`/togbank versioncheck`** — Broadcasts a version check to all online guild members using VersionCheck-1.0 (`VC:FireBatch`), waits 21 seconds for responses, then prints a sorted list of who is running which version. Because it piggybacks on VersionCheck-1.0's own protocol (`VC10_REQ`/`VC10_RSP`), it reaches members running any version of the addon that had the library — including those running versions too old to receive newer custom protocols. Location: Chat.lua `versioncheck` command handler.
+
+---
+
 ## [v0.9.11] (2026-03-20) - Quality Border Colors & Version Display
 
 **Status:** Production Ready

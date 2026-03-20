@@ -199,6 +199,12 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 	table.sort(players)
 
+	-- Returns true if this alt is HLR-pending (same definition as /togbank hashdebug):
+	-- hash mismatch, no local data, or hash matches but content is missing.
+	local function IsAltSyncPending(norm)
+		return TOGBankClassic_Guild:IsAltSyncPending(norm)
+	end
+
 	local tabs = {}
 	local first_tab = nil
 	local i = 1
@@ -212,7 +218,8 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			if not first_tab then
 				first_tab = player
 			end
-			tabs[i] = { value = player, text = player }
+			local tabText = IsAltSyncPending(norm) and ("|cffff0000" .. player .. "|r") or player
+			tabs[i] = { value = player, text = tabText }
 			i = i + 1
 		end
 	end
@@ -225,6 +232,21 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	end
 
 	self.TabGroup:SetTabs(tabs)
+
+	-- Show a tooltip on stale banker tabs explaining that newer data exists.
+	self.TabGroup:SetCallback("OnTabEnter", function(_, _, value, tabBtn)
+		local norm = TOGBankClassic_Guild:NormalizeName(value)
+		if IsAltSyncPending(norm) then
+			GameTooltip:SetOwner(tabBtn, "ANCHOR_TOP")
+			GameTooltip:AddLine("|cffff0000Outdated Data|r")
+			GameTooltip:AddLine("Other guild members have newer data for this banker.", 1, 1, 1, true)
+			GameTooltip:AddLine("What you're seeing may not reflect current availability.", 0.8, 0.8, 0.8, true)
+			GameTooltip:Show()
+		end
+	end)
+	self.TabGroup:SetCallback("OnTabLeave", function()
+		GameTooltip:Hide()
+	end)
 
 	self.StatusBar:Draw(info, roster_alts, self.TabGroup)
 
