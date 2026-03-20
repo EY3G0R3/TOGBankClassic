@@ -87,6 +87,7 @@ DEBUG_TAGS = {
 		RECEIVE = "incoming request data",
 		SEND    = "outgoing request data",
 		INDEX   = "index sync operations",
+		PROTO2  = "togbank-ri / togbank-rd2 compact protocol (send + receive)",
 	},
 }
 

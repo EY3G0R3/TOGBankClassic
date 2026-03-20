@@ -135,7 +135,7 @@ local function drainQueriedRequests()
 		queriedRequestsMap[id] = nil
 	end
 	if sent > 0 then
-		TOGBankClassic_Output:Debug("REQUESTS", "SEND",
+		TOGBankClassic_Output:Debug("REQUESTS", "PROTO2",
 			"Drain: sent %d togbank-rd2 message(s) to %s", sent, dest)
 	end
 
@@ -143,7 +143,7 @@ local function drainQueriedRequests()
 		queriedRequestsDraining = true
 		C_Timer.After(REQUESTS_SYNC.RESPOND_BY_ID_DRAIN_INTERVAL, drainQueriedRequests)
 	else
-		TOGBankClassic_Output:Debug("REQUESTS", "SEND", "Queried requests map fully drained")
+		TOGBankClassic_Output:Debug("REQUESTS", "PROTO2", "Queried requests map fully drained")
 	end
 end
 
@@ -1215,7 +1215,7 @@ local function drainIndexChunks()
 	local chunk = table.remove(pendingIndexChunks, 1)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(chunk.payload)
 	local liveCount = chunk.payload[2] or 0
-	TOGBankClassic_Output:Debug("COMMS", "togbank-ri %d ids (+%d remaining chunks) to %s",
+	TOGBankClassic_Output:Debug("REQUESTS", "PROTO2", "togbank-ri %d ids (+%d remaining chunks) to %s",
 		liveCount, #pendingIndexChunks, chunk.target or "guild")
 	if chunk.target then
 		TOGBankClassic_Core:SendWhisper("togbank-ri", data, chunk.target, "NORMAL")
@@ -1298,7 +1298,7 @@ function Guild:SendRequestsIndex(target)
 	local chunkSize   = REQUESTS_SYNC.RESPOND_INDEX_CHUNK_SIZE
 	local totalChunks = math.max(1, math.ceil(#requestsIndex / chunkSize))
 
-	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+	TOGBankClassic_Output:Debug("REQUESTS", "PROTO2",
 		"Queuing requests-index to %s: %d requests + %d tombstones -> %d chunk(s) of %d",
 		tostring(target or "guild"), #requestsIndex, #tombstonesIndex, totalChunks, chunkSize)
 

@@ -1751,7 +1751,7 @@ end
 	if prefix == "togbank-ri" then
 		local liveCount  = tonumber(data[2]) or 0
 		local tombCount  = data[2] and math.max(0, math.floor((#data - 2 - liveCount * 2) / 2)) or 0
-		self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR,
+		self:Debug("REQUESTS", "PROTO2", ">", ColorPlayerName(sender), SHARES_COLOR,
 			string.format("requests index v1 (%d requests, %d tombstones).", liveCount, tombCount))
 		TOGBankClassic_Guild:ReceiveRequestsIndexV1(data, sender)
 	end
@@ -1759,7 +1759,7 @@ end
 	-- togbank-rd2: positional single-record request data (v1).
 	if prefix == "togbank-rd2" then
 		local isTombstone = data[3] == false
-		self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR,
+		self:Debug("REQUESTS", "PROTO2", ">", ColorPlayerName(sender), SHARES_COLOR,
 			isTombstone and "request tombstone v1." or "request record v1.")
 		TOGBankClassic_Guild:ReceiveRequestsByIdV1(data)
 	end
