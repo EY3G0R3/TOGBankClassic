@@ -1073,13 +1073,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if matches then
 					-- SYNC-011: Only respond if our hash differs from the querier's.
 					-- If hashes match, querier already has exactly what we have - stay silent.
+					-- If our hash is 0 we have nothing to offer - stay silent.
 					local myHash = TOGBankClassic_Guild:GetRequestsHash()
 					local querierHash = tonumber(data.hash) or 0
-					if querierHash == 0 or myHash ~= querierHash then
-						TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Responding to requests-index query (hash mismatch: mine=%08x theirs=%08x)", myHash, querierHash)
+					if myHash ~= 0 and myHash ~= querierHash then
+						TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "Responding to requests-index query from %s (mine=%08x theirs=%08x)", tostring(sender), myHash, querierHash)
 						TOGBankClassic_Guild:EnqueueIndexResponse(sender)
 					else
-						TOGBankClassic_Output:DebugComm("REQUEST INDEX HANDLER: Skipping (hash match %d, querier already in sync)", myHash)
+						TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "Skipping requests-index query from %s (mine=%08x theirs=%08x)", tostring(sender), myHash, querierHash)
 					end
 				end
 			end
