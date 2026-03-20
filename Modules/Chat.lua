@@ -1270,7 +1270,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				local wasPending = TOGBankClassic_Guild.pendingP2PRequests[norm] ~= nil
 				
 				if wasPending then
-					TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
+					if not TOGBankClassic_Options:IsSyncProgressMuted() then
+						TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
+					end
 					
 					-- Clear pending P2P request since peer is responding
 					TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
