@@ -1147,13 +1147,6 @@ function Guild:GetRequestsVersion()
 	return version
 end
 
-function Guild:QueryRequestsSnapshot(player, priority)
-	-- Deprecated: kept only so callers referencing this name don't crash on mixed-version guilds.
-	-- The modern flow uses QueryRequestsIndex (hash-based index/by-id protocol).
-	TOGBankClassic_Output:DebugComm("[SYNC-004] QueryRequestsSnapshot called - using QueryRequestsIndex instead")
-	self:QueryRequestsIndex(player, priority)
-end
-
 -- Request index query/response for hash-based sync.
 function Guild:QueryRequestsIndex(target, priority, force)
 	if not self:BeginRequestsIndexSync(target, force) then
