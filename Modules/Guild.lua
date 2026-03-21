@@ -3356,7 +3356,9 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 			}
 			local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 			TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
-			TOGBankClassic_Output:Info("Broadcasted hash for %s (invHash=%08x, mailHash=%08x)", normPlayer, singleAltHash[normPlayer].hash, singleAltHash[normPlayer].mailHash)
+			if not TOGBankClassic_Options:IsSyncProgressMuted() then
+				TOGBankClassic_Output:Info("Broadcasted hash for %s (invHash=%08x, mailHash=%08x)", normPlayer, singleAltHash[normPlayer].hash, singleAltHash[normPlayer].mailHash)
+			end
 		else
 			TOGBankClassic_Output:Response("No data available for %s", normPlayer)
 		end
