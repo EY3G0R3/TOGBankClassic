@@ -1236,6 +1236,17 @@ local function flushIndexQueue()
 	local target = pendingIndexSenders
 	if not target then return end
 
+	-- If a guild-broadcast index is already draining, the in-flight chunks will reach
+	-- all queriers. Sending again would repeat the full index (potentially 85+ chunks)
+	-- for every query that arrived during the drain window — the PERF-002 cascade in
+	-- a new form. Skip and let the existing drain complete.
+	if pendingIndexChunksDraining and pendingIndexChunks[1] and pendingIndexChunks[1].target == nil then
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"flushIndexQueue: skipping — guild index already in flight (%d chunks remaining)", #pendingIndexChunks)
+		pendingIndexSenders = nil
+		return
+	end
+
 	-- Defer if CTL is busy or we're draining by-id responses.
 	-- Reschedule and check again after the coalesce delay.
 	local ctlDepth = ctlDepthForDrain()
