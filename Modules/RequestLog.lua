@@ -1276,7 +1276,10 @@ function Guild:EnqueueIndexResponse(sender)
 	-- duplicate sender or already "*": no change
 	if not pendingIndexScheduled then
 		pendingIndexScheduled = true
-		C_Timer.After(REQUESTS_SYNC.RESPOND_INDEX_COALESCE_DELAY, flushIndexQueue)
+		-- Random jitter spreads peer responses over time so not all peers fire simultaneously.
+		-- The first-responder suppression in ReceiveRequestsIndex then cancels the rest.
+		local jitter = REQUESTS_SYNC.RESPOND_INDEX_COALESCE_DELAY + math.random(0, REQUESTS_SYNC.RESPOND_INDEX_COALESCE_DELAY)
+		C_Timer.After(jitter, flushIndexQueue)
 	end
 end
 
@@ -1340,6 +1343,16 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 	if not self.Info then
 		return
 	end
+
+	-- First-responder suppression: if another peer is already broadcasting their index
+	-- and we have a pending send of our own, cancel it — one responder is enough.
+	if pendingIndexScheduled and pendingIndexSenders == "*" then
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"ReceiveRequestsIndex: cancelling pending guild index send — %s already responding", tostring(sender))
+		pendingIndexScheduled = false
+		pendingIndexSenders = nil
+	end
+
 	self:EnsureRequestsInitialized()
 
 	local incomingRequests = payload.requests
