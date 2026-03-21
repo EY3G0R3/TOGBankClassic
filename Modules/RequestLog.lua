@@ -1207,6 +1207,12 @@ local pendingIndexScheduled = false
 local pendingIndexChunks = {}
 local pendingIndexChunksDraining = false
 
+-- Sliding suppression window: extended on every incoming chunk from another peer.
+-- EnqueueIndexResponse refuses to schedule while this is in the future, preventing
+-- starvation where a long drain (85+ chunks) keeps cancelling all other peers.
+-- Expires naturally a few seconds after the active sender goes quiet.
+local indexResponseSuppressedUntil = 0
+
 local function drainIndexChunks()
 	pendingIndexChunksDraining = false
 	if not pendingIndexChunks[1] then return end
@@ -1266,6 +1272,12 @@ local function flushIndexQueue()
 end
 
 function Guild:EnqueueIndexResponse(sender)
+	if GetTime() < indexResponseSuppressedUntil then
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"EnqueueIndexResponse: suppressed — another peer is actively draining index (%.0fs remaining)",
+			indexResponseSuppressedUntil - GetTime())
+		return
+	end
 	if pendingIndexSenders == nil then
 		pendingIndexSenders = sender
 	elseif pendingIndexSenders ~= sender and pendingIndexSenders ~= "*" then
@@ -1352,6 +1364,10 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 		pendingIndexScheduled = false
 		pendingIndexSenders = nil
 	end
+
+	-- Sliding suppression window: reset on every chunk so we stay quiet while a peer
+	-- is actively draining. Expires a few seconds after the last chunk arrives.
+	indexResponseSuppressedUntil = GetTime() + REQUESTS_SYNC.RESPOND_INDEX_CHUNK_INTERVAL * 3
 
 	self:EnsureRequestsInitialized()
 
