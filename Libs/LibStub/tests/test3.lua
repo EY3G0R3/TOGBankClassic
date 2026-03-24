@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global
 debugstack = debug.traceback
 strmatch = string.match
 

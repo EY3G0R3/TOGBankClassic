@@ -17,6 +17,7 @@ lib.objects = lib.objects or {}
 lib.callbackRegistered = lib.callbackRegistered or nil
 lib.callbacks = lib.callbacks or LibStub("CallbackHandler-1.0"):New(lib)
 lib.radius = lib.radius or 5
+---@diagnostic disable-next-line: undefined-global
 local next, Minimap, CreateFrame, AddonCompartmentFrame = next, Minimap, CreateFrame, AddonCompartmentFrame
 lib.tooltip = lib.tooltip or CreateFrame("GameTooltip", "LibDBIconTooltip", UIParent, "GameTooltipTemplate")
 local isDraggingButton = false

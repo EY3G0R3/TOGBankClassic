@@ -879,3 +879,118 @@ INDEX_INFLIGHT_TIMEOUT = 30  -- seconds before in-flight sync is considered stal
 
 These are currently the live production values. Decide the appropriate production numbers and
 remove or update the comment.
+
+---
+
+## Future Performance Improvements
+
+The following are documented for a future implementation pass. They are **not urgent** — the
+current checksum implementation is correct and functional — but they would meaningfully reduce
+CPU cost on every send and every receive.
+
+---
+
+### PERF-CHECKSUM-1 — Fixed-width suffix to eliminate receiver-side O(N) scan ❌ Not Implemented
+
+**Location:** `Core.lua` → `SerializeWithChecksum` / `DeserializeWithChecksum`
+
+**Background:**
+The current checksum format appends the separator byte (`\030`) followed by the decimal checksum
+integer, e.g. `"...serialized data...\030123456789"`. The receiver must scan the message to find
+the separator position. Although the current implementation already limits the scan to the last 12
+bytes (since the checksum is at most 10 decimal digits), even a 12-byte tail scan is a code
+complexity burden and fragile to any future checksum format change.
+
+**Proposed improvement:**
+Switch to a **fixed-width 8-character hex suffix** with no separator at all:
+
+```lua
+-- Send side: always append exactly 8 hex digits
+function TOGBankClassic_Core:SerializeWithChecksum(data)
+    local serialized = self:Serialize(data)
+    if not serialized then return nil end
+    return serialized .. string.format("%08x", ComputeChecksum(serialized))
+end
+
+-- Receive side: O(1) extraction — no scan, no search
+function TOGBankClassic_Core:DeserializeWithChecksum(message)
+    if not message or type(message) ~= "string" or #message < 9 then
+        return false, "invalid message"
+    end
+    local payload = string.sub(message, 1, -9)   -- everything except last 8 chars
+    local csHex   = string.sub(message, -8)       -- last 8 chars
+    local expected = tonumber(csHex, 16)
+    if expected and ComputeChecksum(payload) == expected then
+        return self:Deserialize(payload)
+    end
+    -- Backward compat: old separator format from pre-migration clients
+    -- (fall through to existing separator-scan logic)
+    ...
+end
+```
+
+**Gains:**
+- Receiver extraction is `O(1)` via `string.sub` — no byte loop at all.
+- Format is self-describing by fixed length; no sentinel byte required.
+- `tonumber(csHex, 16)` is a single C call.
+
+**Backward compatibility concern:** Old clients (sending the separator format) receiving a new
+fixed-width message will fail the separator scan and fall back to `self:Deserialize(message)` on
+the full 8-extra-char string — this will parse incorrectly. Coordinate a clean cutover or add a
+version gate (e.g. only apply when peer addon version ≥ target version).
+
+**Effort:** Low (~20 lines). Implement alongside PERF-CHECKSUM-2 for a single coordinated cutover.
+
+---
+
+### PERF-CHECKSUM-2 — Batch byte reads in `ComputeChecksum` to reduce C-boundary crossings ❌ Not Implemented
+
+**Location:** `Core.lua` → `ComputeChecksum` (local function)
+
+**Background:**
+`string.byte(str, i)` called with a single index performs **one Lua→C boundary crossing per byte**.
+For a 2,000-byte serialized message that means 2,000 individual C calls inside the tight arithmetic
+loop. The boundary crossing overhead (stack push/pop, argument marshalling) adds up across every
+send.
+
+**Proposed improvement:**
+Use the two-argument form `string.byte(str, i, j)`, which returns multiple values in a **single
+C call**. Process 4 bytes per iteration:
+
+```lua
+local function ComputeChecksum(str)
+    if not str or type(str) ~= "string" then return 0 end
+    local sum = 0
+    local len = #str
+    local i = 1
+    -- 4-byte batches: one C call per 4 bytes instead of one per byte
+    while i <= len - 3 do
+        local b1, b2, b3, b4 = string.byte(str, i, i + 3)
+        sum = (sum * 31 + b1) % 2147483647
+        sum = (sum * 31 + b2) % 2147483647
+        sum = (sum * 31 + b3) % 2147483647
+        sum = (sum * 31 + b4) % 2147483647
+        i = i + 4
+    end
+    -- Handle remaining 0–3 bytes
+    while i <= len do
+        sum = (sum * 31 + string.byte(str, i)) % 2147483647
+        i = i + 1
+    end
+    sum = (sum * 31 + len) % 2147483647
+    return sum
+end
+```
+
+**Gains:**
+- ~75% fewer Lua→C crossings for the byte-extraction step.
+- Arithmetic operations (multiply + modulo) are unchanged and identical in count — the hash value
+  produced is identical to the current implementation.
+- For a 2,000-byte message: 2,000 C calls → ~500 C calls.
+- Realistic total speedup ~30–40% depending on the C-call/arithmetic ratio on the target machine.
+
+**No risk:** The output is mathematically identical — same polynomial, same per-byte order, same
+length mixing at the end. Drop-in replacement; no protocol change required. Can be shipped
+independently of PERF-CHECKSUM-1.
+
+**Effort:** Low (~15 lines). Safe to implement at any time without coordination.
