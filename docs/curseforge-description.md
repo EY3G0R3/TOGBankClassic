@@ -261,7 +261,10 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.9.13 (Latest)
+v0.9.14 (Latest)
+• Two new inventory sort modes — the sort button now cycles through A-Z, By Type, By Rarity (epic first), and By Level (highest first)
+
+v0.9.13
 • Fixed request index flood on large guilds — guilds with 500+ requests could trigger a storm of duplicate index transmissions when multiple peers responded simultaneously; peers now coordinate so only one sends at a time, with the others standing down
 • "Syncing requests with guild…" and "Broadcasted hash for <alt>" chat messages now respect the Mute Sync Progress Messages setting
 

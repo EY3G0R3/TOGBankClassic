@@ -1,5 +1,15 @@
 # TOGBankClassic Changelog
 
+## [v0.9.14] (2026-03-24) - Inventory Sort Improvements
+
+**Status:** Production Ready
+
+### Improvements
+
+- **Sort by Rarity and Sort by Level added to inventory window** — The sort button now cycles through four modes: A-Z → By Type → By Rarity → By Level. Rarity sort orders highest rarity first (epic before rare before uncommon), with A-Z as a tiebreaker. Level sort orders by required level descending, also with A-Z as a tiebreaker. Location: `Item.lua Sort`; `UI/Inventory.lua`.
+
+---
+
 ## [v0.9.13] (2026-03-23) - Request Index Flood Fix & UI Polish
 
 **Status:** Production Ready
