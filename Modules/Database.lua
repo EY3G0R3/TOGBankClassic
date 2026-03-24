@@ -190,9 +190,7 @@ function TOGBankClassic_Database:Load(name)
 		}
 	end
 
-	-- PERF-010: Defer data migrations to prevent login freeze
-	-- Looping through 70+ alts with RecalculateAggregatedItems blocks UI for 3-5 seconds
-	-- Migrations don't need to be immediate - data already loaded from SavedVariables
+	-- Migrate old alt data structures from pre-v0.8 saves (no-ops for v0.9.6+ users)
 	C_Timer.After(0.5, function()
 		-- v0.8.0: Migrate old alt data to ensure slots fields exist
 		-- Characters scanned before v0.6.0 may have bank/bags without slots
@@ -219,69 +217,9 @@ function TOGBankClassic_Database:Load(name)
 						alt.inventoryUpdatedAt = alt.version or GetServerTime()
 						TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: backfilled inventoryUpdatedAt for %s (ts=%s)", name, tostring(alt.inventoryUpdatedAt))
 					end
-					-- Recalculate aggregated items from bank/bags/mail with corrected Aggregate function
-					-- This fixes item count duplication without requiring a full scan
-					-- AGGRESSIVE FIX: Clear and rebuild alt.items on every load to prevent accumulation
-					if (alt.bank and alt.bank.items) or (alt.bags and alt.bags.items) or (alt.mail and alt.mail.items) then
-						-- Banker alt with bank/bags - FORCE reconstruct from sources
-						-- DEBUG: Log sample counts BEFORE clearing
-						if alt.items and #alt.items > 0 then
-							local beforeSample = {}
-							for i = 1, math.min(5, #alt.items) do
-								local item = alt.items[i]
-								if item then
-									table.insert(beforeSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
-								end
-							end
-							TOGBankClassic_Output:Debug("DATABASE", "BEFORE clear - Banker %s alt.items: %s", name, table.concat(beforeSample, ", "))
-						end
-
-						alt.items = nil  -- Clear corrupted data
-						TOGBankClassic_Bank:RecalculateAggregatedItems(alt)
-
-						-- DEBUG: Log sample counts AFTER recalculation
-						if alt.items and #alt.items > 0 then
-							local afterSample = {}
-							for i = 1, math.min(5, #alt.items) do
-								local item = alt.items[i]
-								if item then
-									table.insert(afterSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
-								end
-							end
-							TOGBankClassic_Output:Debug("DATABASE", "AFTER recalc - Banker %s alt.items: %s", name, table.concat(afterSample, ", "))
-						end
-
-						-- Recompute inventory hash using SYNC-006 path (same as Bank:Scan) so
-						-- the stored hash matches what Bank:Scan() produces.  The old migration
-						-- path used pre-SYNC-006 (ComputeInventoryHash(bank, bags, money)) which
-						-- hashes bank.items+bags.items separately; Bank:Scan uses SYNC-006
-						-- (ComputeInventoryHash(items, nil, nil, money)) which hashes the
-						-- aggregated array.  Different inputs → different hash → false "inventory
-						-- changed" on every startup until the first real scan fixed it.
-						if alt.items then
-							local money = alt.money or 0
-							local syncHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, money)
-							if syncHash ~= alt.inventoryHash then
-								alt.inventoryHash = syncHash
-								TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: corrected inventory hash for %s to SYNC-006 format (hash=%08x)", name, syncHash)
-							end
-						end
-
-						TOGBankClassic_Output:Debug("DATABASE", "FORCED recalculation for banker %s from bank/bags/mail", name)
-					elseif alt.items then
-						-- Synced alt - FORCE deduplicate
-						-- NOTE: Do NOT merge mail here - alt.items from sync already includes mail from sender's scan
-						local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
-						alt.items = {}
-						for _, item in pairs(aggregated) do
-							table.insert(alt.items, item)
-						end
-						TOGBankClassic_Output:Debug("DATABASE", "FORCED deduplication for synced alt %s: %d items", name, #alt.items)
-					end
 				end
 			end
 		end
-		TOGBankClassic_Output:Debug("DATABASE", "Completed deferred data migrations")
 	end)
 	if not db.requestsTombstones then
 		db.requestsTombstones = {}
