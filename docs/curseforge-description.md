@@ -261,7 +261,11 @@ TIPS & BEST PRACTICES
 RECENT UPDATES
 ================================================================================
 
-v0.9.12 (Latest)
+v0.9.13 (Latest)
+• Fixed request index flood on large guilds — guilds with 500+ requests could trigger a storm of duplicate index transmissions when multiple peers responded simultaneously; peers now coordinate so only one sends at a time, with the others standing down
+• "Syncing requests with guild…" and "Broadcasted hash for <alt>" chat messages now respect the Mute Sync Progress Messages setting
+
+v0.9.12
 • Stale banker tabs — banker tabs turn red with a tooltip when guild members have a newer hash for that alt, so you know at a glance when displayed inventory may be out of date
 • /togbank versioncheck — broadcast a version check to all guild members and see who is running which version (works with all addon versions via VersionCheck-1.0)
 • Fixed quality border colours on weapons and armour — gear now shows the correct rarity colour (green/blue/purple) rather than always white
