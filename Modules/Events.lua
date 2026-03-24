@@ -255,13 +255,8 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK")
-	local altLines = {}
-	for altName, entry in pairs(list) do
-		table.insert(altLines, string.format("%s inv=%08x mail=%08x", altName, entry.hash or 0, entry.mailHash or 0))
-	end
-	table.sort(altLines)
-	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)\n  %s",
-		altCount, tostring(payload.isBanker), table.concat(altLines, "\n  "))
+	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
+		altCount, tostring(payload.isBanker))
 
 	-- Begin P2P collect window so incoming hash-offer responses are gathered.
 	if TOGBankClassic_P2PSession then
