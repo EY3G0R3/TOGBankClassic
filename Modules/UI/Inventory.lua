@@ -1,5 +1,15 @@
 TOGBankClassic_UI_Inventory = {}
 
+local SORT_CYCLE  = { "alpha", "type", "rarity", "level" }
+local SORT_LABELS = { alpha = "Sort: A-Z", type = "Sort: By Type", rarity = "Sort: By Rarity", level = "Sort: By Level" }
+local function GetSortLabel(m) return SORT_LABELS[m] or "Sort: A-Z" end
+local function NextSortMode(m)
+	for i, v in ipairs(SORT_CYCLE) do
+		if v == m then return SORT_CYCLE[(i % #SORT_CYCLE) + 1] end
+	end
+	return "alpha"
+end
+
 function TOGBankClassic_UI_Inventory:Init()
 	-- Frame creation deferred to first Open() call (PERF-015)
 end
@@ -129,9 +139,6 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	searchButton:SetHeight(24)
 	buttonContainer:AddChild(searchButton)
 
-	local function GetSortLabel(m)
-		return m == "type" and "Sort: By Type" or "Sort: A-Z"
-	end
 	local sortButton = TOGBankClassic_UI:Create("Button")
 	local initMode = (TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char.sortMode) or "alpha"
 	sortButton:SetText(GetSortLabel(initMode))
@@ -140,7 +147,7 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	sortButton:SetCallback("OnClick", function(_)
 		local db = TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char
 		if not db then return end
-		db.sortMode = (db.sortMode == "type") and "alpha" or "type"
+		db.sortMode = NextSortMode(db.sortMode or "alpha")
 		sortButton:SetText(GetSortLabel(db.sortMode))
 		-- Reload current tab with new sort order
 		local tab = self.TabGroup.localstatus and self.TabGroup.localstatus.selected
@@ -184,7 +191,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	-- Sync sort button label with persisted mode (db available by the time DrawContent runs)
 	if self.SortButton and TOGBankClassic_Options and TOGBankClassic_Options.db then
 		local m = TOGBankClassic_Options.db.char.sortMode or "alpha"
-		self.SortButton:SetText(m == "type" and "Sort: By Type" or "Sort: A-Z")
+		self.SortButton:SetText(GetSortLabel(m))
 	end
 
 	-- Clear search data built flag so search rebuilds on next open (PERF-004)
