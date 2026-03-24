@@ -564,9 +564,24 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 	
 	-- Build ID-only lookup for items without Links (from minimal baselines)
 	local oldByIDOnly = {}
+	-- PERF-024: Per-ID candidate list for O(1) deep fallback lookup (replaces O(N) full scan).
+	-- Each entry stores the item reference and its exact key in oldByKey for O(1) removal.
+	local oldByIDList = {}  -- [idStr] = { {item=item, key=fullKey}, ... }
 	for _, item in pairs(oldItems) do
-		if item and item.ID and not (item.Link or item.ItemString) then
-			oldByIDOnly[tostring(item.ID)] = item
+		if item and item.ID then
+			local idStr = tostring(item.ID)
+			local itemKey
+			if item.Link or item.ItemString then
+				local normalizedKey = TOGBankClassic_Item:GetItemKey(item.Link or item.ItemString)
+				itemKey = idStr .. normalizedKey
+			else
+				oldByIDOnly[idStr] = item
+				itemKey = idStr
+			end
+			if not oldByIDList[idStr] then
+				oldByIDList[idStr] = {}
+			end
+			table.insert(oldByIDList[idStr], { item = item, key = itemKey })
 		end
 	end
 
@@ -585,7 +600,6 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 			local key
 			local oldItem = nil
 			local usedFallback = false
-			local usedDeepFallback = false
 			
 			if newItem.Link or newItem.ItemString then
 				-- Full item with Link - use normalized key (strips character level)
@@ -603,21 +617,22 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 					end
 				end
 				
-				-- Fallback 2: search all oldItems by ID if normalized key lookup failed.
-				-- DUPLICATION-FIX-003: Skip items already matched by a previous deep fallback.
-				-- Without this guard, "Stone Hammer" (plain) and "Stone Hammer of Tiger" (suffix)
-				-- would BOTH match the same minimal baseline entry {ID=15260, Count=N}, causing
-				-- one to be treated as modified (correct) and the other to send a spurious
-				-- second "modified" for the same old item.
+				-- Fallback 2: search per-ID candidate list (O(k), k = items with same ID, usually 1-2).
+				-- PERF-024: Was O(N) linear scan of all oldItems; now O(1) hash lookup + O(k) iteration.
+				-- DUPLICATION-FIX-003: deepFallbackUsed prevents double-matching the same old entry
+				-- (e.g. "Stone Hammer" plain and "Stone Hammer of Tiger" both ID=15260).
+				-- candidate.key is the item's actual key in oldByKey, enabling O(1) removal below.
 				if not oldItem then
-					for _, item in pairs(oldItems) do
-						if item and item.ID == newItem.ID and not deepFallbackUsed[item] then
-							oldItem = item
-							key = tostring(newItem.ID)  -- Use ID as key for tracking
-							usedDeepFallback = true
-							deepFallbackUsed[item] = true  -- Mark so next item won't re-use it
-							deepFallbackMatches = deepFallbackMatches + 1
-							break
+					local candidates = oldByIDList[tostring(newItem.ID)]
+					if candidates then
+						for _, candidate in ipairs(candidates) do
+							if not deepFallbackUsed[candidate.item] then
+								oldItem = candidate.item
+								key = candidate.key  -- stored key for O(1) removal from oldByKey
+								deepFallbackUsed[candidate.item] = true
+								deepFallbackMatches = deepFallbackMatches + 1
+								break
+							end
 						end
 					end
 				end
@@ -635,27 +650,12 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 				table.insert(delta.modified, self:GetChangedFields(oldItem, newItem))
 			end
 
-			-- Mark as processed
+			-- Mark as processed.
+			-- PERF-024: key is now always the item's actual entry in oldByKey (Fallback 2 stores
+			-- candidate.key), so both removals are O(1) with no reverse scan needed.
 			if key then
 				oldByKey[key] = nil
 				oldByIDOnly[key] = nil
-			end
-			
-			-- If we used deep fallback, we need to remove the matched item from indices
-			-- since it was found under a different key than expected
-			if usedDeepFallback and oldItem then
-				-- Remove from oldByKey by searching for the item
-				for k, v in pairs(oldByKey) do
-					if v == oldItem then
-						oldByKey[k] = nil
-						break
-					end
-				end
-				-- Remove from oldByIDOnly as well
-				local idKey = tostring(oldItem.ID)
-				if oldByIDOnly[idKey] == oldItem then
-					oldByIDOnly[idKey] = nil
-				end
 			end
 		end
 	end
