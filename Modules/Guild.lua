@@ -3363,33 +3363,10 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 			share = "Nothing to share."
 		end
 	end
-	if self.Info.alts[normPlayer] and TOGBankClassic_Guild:IsBank(normPlayer) then
-		-- Banker running /togbank share: broadcast hash for CURRENT banker only
-		local alt = self.Info.alts[normPlayer]
-		if alt then
-			local singleAltHash = {
-				[normPlayer] = {
-					hash = alt.inventoryHash or 0,
-					updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
-					version = alt.version or 0,
-					mailHash = alt.mailHash or 0,
-					mailUpdatedAt = (alt.mail and alt.mail.version) or 0,
-				}
-			}
-			local payload = {
-				type = "hash-list-broadcast",
-				alts = singleAltHash,
-				banker = normPlayer,
-			}
-			local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-			TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
-			if not TOGBankClassic_Options:IsSyncProgressMuted() then
-				TOGBankClassic_Output:Info("Broadcasted hash for %s (invHash=%08x, mailHash=%08x)", normPlayer, singleAltHash[normPlayer].hash, singleAltHash[normPlayer].mailHash)
-			end
-		else
-			TOGBankClassic_Output:Response("No data available for %s", normPlayer)
-		end
-	end
+	-- NOTE: Single-alt pre-broadcast removed. SyncDeltaVersion() below already includes
+	-- the current banker in the full alt list. The pre-broadcast was redundant and caused
+	-- peers to receive isBanker=false (field was missing), making them treat the banker as
+	-- a non-banker peer and flood it with hash-offer whispers every 10 minutes.
 
 	-- v0.8.0: Broadcast delta version with hashes for pull-based protocol
 	-- Send BOTH legacy and delta version broadcasts (SYNC-001 fix)
