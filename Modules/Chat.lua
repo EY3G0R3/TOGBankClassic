@@ -2086,6 +2086,7 @@ local COMMAND_REGISTRY = {
 			end
 			TOGBankClassic_Bank:OnUpdateStart()
 			TOGBankClassic_Bank:OnUpdateStop()
+			TOGBankClassic_Output:Response("Broadcasting inventory hashes to guild...")
 			TOGBankClassic_Guild:Share()
 		end,
 	},
