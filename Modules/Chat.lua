@@ -203,7 +203,9 @@ function TOGBankClassic_Chat:PerformSync()
 	-- Pass force=true to bypass the 60s cooldown — this is an explicit user action, not a timer.
 	local sent = TOGBankClassic_Guild:QueryRequestsIndex(nil, "ALERT", true)
 	if sent then
-		TOGBankClassic_Output:Response("Syncing requests with guild...")
+		if not TOGBankClassic_Options:IsSyncProgressMuted() then
+			TOGBankClassic_Output:Response("Syncing requests with guild...")
+		end
 	else
 		TOGBankClassic_Output:Response("Request sync failed to send.")
 	end
