@@ -223,6 +223,12 @@ function TOGBankClassic_Guild:IsInCurrentGuildRoster(playerName)
 
 	local normPlayer = self:NormalizeName(playerName)
 
+	-- PERF: O(1) memberRoster lookup instead of scanning all 500 members
+	if self.memberRoster and next(self.memberRoster) then
+		return self.memberRoster[normPlayer] ~= nil
+	end
+
+	-- Fallback: memberRoster not yet populated (very early in login sequence)
 	for i = 1, GetNumGuildMembers() do
 		local rosterName = GetGuildRosterInfo(i)
 		if rosterName then
@@ -237,9 +243,17 @@ function TOGBankClassic_Guild:IsInCurrentGuildRoster(playerName)
 end
 
 function TOGBankClassic_Guild:GetPlayerInfo(name)
+	if not name then return nil end
+	-- PERF: O(1) memberRoster lookup instead of scanning all members
+	if self.memberRoster and next(self.memberRoster) then
+		local norm = self:NormalizeName(name)
+		local member = norm and self.memberRoster[norm]
+		return member and member.class or nil
+	end
+	-- Fallback: memberRoster not yet populated
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, _, _, _, _, _, _, _, _, class = GetGuildRosterInfo(i)
-		player, _ = string.match(playerRealm, "(.*)%-(.*)")
+		local player, _ = string.match(playerRealm, "(.*)%-(.*)")
 		---START CHANGES
 		--if player == name then
 		if playerRealm == name then
@@ -407,19 +421,24 @@ function TOGBankClassic_Guild:GetBanks()
 	if self.banksCache ~= nil then
 		return self.banksCache
 	end
-	-- Build banks list
+	-- PERF: Derive banker list from memberRoster (already built by RefreshOnlineCache)
+	-- instead of calling GetGuildRosterInfo() for every member again.
 	local banks = {}
-	for i = 1, GetNumGuildMembers() do
-		---START CHANGES
-		-- Allow use of either public or officer note, and allow the note to contain "gbank" instead of requiring it to be equal to "gbank" only (and no other characters)
-		--local name, _, _, _, _, _, _, officer_note, _, _, _ = GetGuildRosterInfo(i)
-		local name, _, _, _, _, _, publicNote, officer_note, _, _, _ = GetGuildRosterInfo(i)
-		--if officer_note == "gbank" then
-		if publicNote ~= nil or officer_note ~= nil then
-			if string.match(publicNote, "(.*)gbank(.*)") or string.match(officer_note, "(.*)gbank(.*)") then
-				--local player, _ = string.match(name, "(.*)%-(.*)")
-				table.insert(banks, name)
-				---END CHANGES
+	if self.memberRoster and next(self.memberRoster) then
+		for norm, member in pairs(self.memberRoster) do
+			if member.isBank then
+				table.insert(banks, member.name or norm)
+			end
+		end
+	else
+		-- Fallback: memberRoster not yet populated (very early in login sequence)
+		for i = 1, GetNumGuildMembers() do
+			local name, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
+			if name then
+				if (publicNote and publicNote:find("gbank", 1, true))
+				or (officer_note and officer_note:find("gbank", 1, true)) then
+					table.insert(banks, name)
+				end
 			end
 		end
 	end
@@ -447,10 +466,17 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 	local banks = {}
 	for i = 1, GetNumGuildMembers() do
 		local name, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
-		if name and (publicNote or officer_note) then
-			if (publicNote and string.match(publicNote, "(.*)gbank(.*)")) or
-			   (officer_note and string.match(officer_note, "(.*)gbank(.*)")) then
+		if name then
+			-- PERF: plain-text find is orders of magnitude faster than (.*)gbank(.*) pattern
+			local isBank = (publicNote and publicNote:find("gbank", 1, true) ~= nil)
+				or (officer_note and officer_note:find("gbank", 1, true) ~= nil)
+			if isBank then
 				table.insert(banks, name)
+			end
+			-- Keep memberRoster.isBank in sync if the entry already exists
+			local norm = self:NormalizeName(name)
+			if norm and self.memberRoster and self.memberRoster[norm] then
+				self.memberRoster[norm].isBank = isBank or false
 			end
 		end
 	end
@@ -728,21 +754,22 @@ function TOGBankClassic_Guild:IsBank(player)
 	if not player then
 		return false
 	end
+	local norm = self:NormalizeName(player) or player
+	-- PERF: O(1) memberRoster lookup instead of iterating banksCache
+	if self.memberRoster and self.memberRoster[norm] then
+		return self.memberRoster[norm].isBank == true
+	end
+	-- Fallback: memberRoster not yet populated — check banksCache or scan
 	local banks = TOGBankClassic_Guild:GetBanks()
-	if banks == nil then
+	if not banks then
 		return false
 	end
-
-	local normPlayer = self:NormalizeName(player) or player
-	local isBank = false
 	for _, v in pairs(banks) do
-		local norm = self:NormalizeName(v) or v
-		if norm == normPlayer then
-			isBank = true
+		if (self:NormalizeName(v) or v) == norm then
+			return true
 		end
 	end
-
-	return isBank
+	return false
 end
 
 function TOGBankClassic_Guild:GetAnyBanker()
@@ -1142,7 +1169,7 @@ function TOGBankClassic_Guild:GetVersion()
 	end
 
 	local versionRaw = GetAddOnMetadata("TOGBankClassic", "Version") or "dev"
-	local versionNumber = tonumber((versionRaw:gsub("%.", ""))) or 0  -- 0 for unpackaged/dev builds
+	local versionNumber = tonumber((string.gsub(versionRaw, "%.", ""))) or 0  -- 0 for unpackaged/dev builds
 	local data = {
 		addon = versionNumber,
 		addonDisplay = (versionNumber > 0) and versionRaw or "dev",
@@ -1359,18 +1386,14 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 				end
 			end
 		end
-		-- Fallback: scan live guild roster if cache is stale
+		-- Fallback: scan memberRoster for online bankers if onlineMembers cache was stale
 		if not banker then
 			GuildRoster()
-			for i = 1, GetNumGuildMembers() do
-				local rosterName, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
-				if rosterName and online then
-					local normRoster = self:NormalizeName(rosterName)
-					if self:IsBank(normRoster) and normRoster ~= myPlayer then
-						bankerCount = bankerCount + 1
-						banker = banker or normRoster
-						TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Online banker from live roster: %s, isOnline=true", normRoster)
-					end
+			for normRoster, member in pairs(self.memberRoster or {}) do
+				if member.isOnline and member.isBank and normRoster ~= myPlayer then
+					bankerCount = bankerCount + 1
+					banker = banker or normRoster
+					TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Online banker from memberRoster fallback: %s, isOnline=true", normRoster)
 				end
 			end
 		end
@@ -1609,6 +1632,9 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 				-- officer notes AND this member's rank is at or above the local player's rank.
 				local isOfficer = (rankIndex == 0) or
 					(localOfficerThreshold ~= nil and rankIndex <= localOfficerThreshold)
+				-- PERF: plain-text find is orders of magnitude faster than (.*)gbank(.*) pattern
+				local isBank = (note and note:find("gbank", 1, true) ~= nil)
+					or (officernote and officernote:find("gbank", 1, true) ~= nil)
 				-- Store full member data
 				self.memberRoster[normalized] = {
 					name = normalized,
@@ -1618,6 +1644,7 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 					rankName = rankName,
 					isOnline = isOnline or false,
 					isOfficer = isOfficer,
+					isBank = isBank or false,
 					lastUpdated = GetServerTime()
 				}
 				
@@ -3441,6 +3468,12 @@ function TOGBankClassic_Guild:SenderIsGM(player)
 	if not IsInGuild() then
 		return false
 	end
+	-- PERF: O(1) memberRoster lookup instead of scanning all members
+	if self.memberRoster and next(self.memberRoster) then
+		local member = self.memberRoster[player]
+		return member ~= nil and member.rankIndex == 0
+	end
+	-- Fallback: memberRoster not yet populated
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, rankIndex, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
 		if playerRealm then
