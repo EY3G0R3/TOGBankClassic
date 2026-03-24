@@ -3326,6 +3326,7 @@ function TOGBankClassic_Guild:HashUpdate()
 		type = "hash-list-broadcast",
 		alts = hashList,
 		banker = normPlayer,
+		isBanker = true,  -- command is banker-only (guarded above), so this is always true
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
