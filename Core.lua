@@ -121,14 +121,17 @@ function TOGBankClassic_Core:Checksum(str)
     return ComputeChecksum(str)
 end
 
--- Serialize data with appended checksum for integrity verification
+-- Serialize data. Checksum intentionally omitted: WoW uses TCP (transport integrity
+-- is guaranteed) and AceSerializer will fail to parse truncated/corrupted payloads
+-- on its own. The byte-by-byte Lua checksum loop over 15-50KB payloads was a
+-- measurable source of frame stutters on large guilds. DeserializeWithChecksum
+-- retains its checksum-verification path for backward compat with old messages.
 function TOGBankClassic_Core:SerializeWithChecksum(data)
     local serialized = self:Serialize(data)
     if not serialized then
         return nil
     end
-    local checksum = ComputeChecksum(serialized)
-    return serialized .. CHECKSUM_SEPARATOR .. tostring(checksum)
+    return serialized
 end
 
 -- Deserialize data and verify checksum; returns success, data (or nil, error)

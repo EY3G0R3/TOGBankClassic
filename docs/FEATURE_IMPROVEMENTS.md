@@ -35,6 +35,63 @@
 - [x] ~~**Request status visual differentiation**~~ **IMPLEMENTED: Fulfilled rows tinted green with checkmark icon; cancelled rows tinted red with X icon**
 - [ ] **Command alias** - Add `/bank` (or a user-configurable slash command) as an alias to open the addon window; reduces friction for new guild members accustomed to `/bank` opening a bank frame
 - [ ] **Scoreboard UI or deprecation** - The bank acceptance window contains an "add to scoreboard" checkbox but no scoreboard UI exists or is accessible; either implement scoreboard access or remove the checkbox to avoid confusion
+- [x] ~~**Guild roster cache lookups (PERF)**~~ **IMPLEMENTED: All GetGuildRosterInfo() scans in hot paths replaced with O(1) memberRoster cache lookups; isBank flag added to cache; greedy regex replaced with plain-text find()**
+- [x] ~~**Remove message integrity checksum from sends (PERF)**~~ **IMPLEMENTED: Eliminated byte-by-byte Lua checksum loop over 15-50KB comm payloads on every send; DeserializeWithChecksum retained for backward compat with old clients**
+
+---
+
+## ⚡ Guild Roster Cache Lookups - IMPLEMENTED
+
+**Added:** March 24, 2026  
+**Commit:** e4a072e  
+**Purpose:** Eliminate repeated 500-member `GetGuildRosterInfo()` scans in hot paths to reduce frame stutters during active guild comm traffic
+
+### Problem
+Several functions that run on every incoming comm message were doing live full-roster scans instead of using the existing `memberRoster` cache:
+- `IsInCurrentGuildRoster()` — called on every received comm message to validate the sender; scanned all 500 members every time
+- `IsBank()` — iterated `banksCache` array with `NormalizeName()` on each entry for every call
+- `GetBanks()` — re-scanned all guild members via `GetGuildRosterInfo()` whenever `banksCache` was nil
+- `SenderIsGM()`, `GetPlayerInfo()` — each did a full 500-member scan
+- `QueryAltPullBased()` fallback — live roster scan via `GetGuildRosterInfo()`
+- All `GetBanks()`/`RebuildBankerRoster()` banker detection used `(.*)gbank(.*)` greedy regex pattern, which causes backtracking on every member's notes
+
+With 50 members online all syncing near the 10-minute broadcast cycle, these scans could be called dozens of times per second, each costing thousands of string operations — enough to cause visible frame stutters.
+
+### Solution
+- Added `isBank` flag to each `memberRoster` entry in `RefreshOnlineCache()` and `RebuildBankerRoster()`, computed using plain-text `string.find(note, "gbank", 1, true)` (no regex)
+- `GetBanks()` now derives the banker list by iterating `memberRoster` instead of calling `GetGuildRosterInfo()` for every member again
+- `IsBank()` — O(1) `memberRoster[norm].isBank` lookup
+- `IsInCurrentGuildRoster()` — O(1) `memberRoster[norm] ~= nil` lookup
+- `SenderIsGM()` — O(1) `memberRoster[norm].rankIndex == 0` lookup
+- `GetPlayerInfo()` — O(1) `memberRoster[norm].class` lookup
+- `QueryAltPullBased()` fallback — iterates `memberRoster` instead of live API scan
+- All fallbacks fire only during the brief early-login window before `memberRoster` is populated; during normal gameplay every call is a single hash table lookup
+
+### Files Changed
+- `Modules/Guild.lua`
+
+---
+
+## ⚡ Remove Message Integrity Checksum from Sends - IMPLEMENTED
+
+**Added:** March 24, 2026  
+**Purpose:** Eliminate a byte-by-byte Lua loop over 15–50KB serialized payloads that ran on every comm message send and receive, reducing frame stutters during active guild sync traffic
+
+### Problem
+`SerializeWithChecksum()` appended a rolling polynomial checksum (computed by iterating every byte of the serialized payload in Lua) to every outgoing comm message. `DeserializeWithChecksum()` recomputed it on receipt to verify. For a large inventory delta this meant two passes over 30–50KB of data — potentially 5–15ms of Lua time per message pair.
+
+The checksum provided no meaningful protection:
+- WoW uses TCP: network transport has its own checksumming; in-transit bit corruption essentially never occurs
+- AceSerializer produces structured output that fails to parse on its own if truncated or corrupted — a deserialization error would be raised regardless
+- The checksum provides zero security against malicious messages — any sender can compute and attach a valid checksum
+
+### Solution
+`SerializeWithChecksum()` now returns the raw serialized string with no checksum appended — the expensive byte loop is eliminated entirely on the send path.
+
+`DeserializeWithChecksum()` is unchanged: it still searches for the separator and verifies the checksum if present, then falls back to plain `Deserialize()` if no checksum is found. This ensures backward compatibility with messages from older clients that still append checksums.
+
+### Files Changed
+- `Core.lua`
 
 ---
 
