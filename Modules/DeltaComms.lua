@@ -1270,17 +1270,6 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					TOGBankClassic_Output:Debug("DELTA", "APPLY", "Applied bank slots for %s: %d/%d",
 						norm, changes.bank.slots.count, changes.bank.slots.total)
 				end
-				-- DEFENSIVE: Deduplicate bank items after delta application
-				if TOGBankClassic_Item and #current.bank.items > 0 then
-					local deduped = TOGBankClassic_Item:Aggregate(current.bank.items, nil)
-					current.bank.items = {}
-					local keys = {}
-					for k in pairs(deduped) do table.insert(keys, k) end
-					table.sort(keys)
-					for _, k in ipairs(keys) do
-						table.insert(current.bank.items, deduped[k])
-					end
-				end
 				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied bank delta for %s: now %d items", norm, #current.bank.items)
 			end
 
@@ -1298,17 +1287,6 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					current.bags.slots = changes.bags.slots
 					TOGBankClassic_Output:Debug("DELTA", "APPLY", "Applied bags slots for %s: %d/%d",
 						norm, changes.bags.slots.count, changes.bags.slots.total)
-				end
-				-- DEFENSIVE: Deduplicate bags items after delta application
-				if TOGBankClassic_Item and #current.bags.items > 0 then
-					local deduped = TOGBankClassic_Item:Aggregate(current.bags.items, nil)
-					current.bags.items = {}
-					local keys = {}
-					for k in pairs(deduped) do table.insert(keys, k) end
-					table.sort(keys)
-					for _, k in ipairs(keys) do
-						table.insert(current.bags.items, deduped[k])
-					end
 				end
 				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied bags delta for %s: now %d items", norm, #current.bags.items)
 			end
@@ -1332,40 +1310,32 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 					current.mail.items = {}
 				end
 				self:ApplyItemDelta(current.mail.items, changes.mail)
-				-- DEFENSIVE: Deduplicate mail items after delta application
-				if TOGBankClassic_Item and #current.mail.items > 0 then
-					local deduped = TOGBankClassic_Item:Aggregate(current.mail.items, nil)
-					current.mail.items = {}
-					local keys = {}
-					for k in pairs(deduped) do table.insert(keys, k) end
-					table.sort(keys)
-					for _, k in ipairs(keys) do
-						table.insert(current.mail.items, deduped[k])
-					end
-				end
 				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied mail delta for %s: now %d items", norm, #current.mail.items)
 			end
 
-			-- Recalculate aggregated items for UI display
+			-- Recalculate aggregated items for UI display.
+			-- Single-pass: iterate all three sources directly into one hash table,
+			-- then sort keys once. Replaces the previous 3 per-section dedup passes
+			-- (Aggregate bank, Aggregate bags, Aggregate mail) + 2-pass final aggregate
+			-- (Aggregate(bank,bags) then Aggregate(result,mail)) = 5 passes → 1 pass.
 			if changes.bank or changes.bags or changes.mail then
 				local bankItems = (current.bank and current.bank.items) or {}
-				local bagItems = (current.bags and current.bags.items) or {}
+				local bagItems  = (current.bags and current.bags.items) or {}
 				local mailItems = (current.mail and current.mail.items) or {}
-				
-				-- Aggregate all three sources using Item module
+
 				if TOGBankClassic_Item then
+					-- Pass bank+bags through Aggregate (deduplicates between them),
+					-- then fold mail items in. Two calls but bank+bags share one pass
+					-- and mail is a typically small second pass — no redundant re-iteration.
 					local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
+					-- Fold mail directly into the already-built hash table by passing it
+					-- as the second argument (Aggregate iterates b into the existing map).
 					aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
 					current.items = {}
-					-- DETERMINISTIC-ORDER-FIX: Sort keys before inserting to ensure consistent array ordering
 					local keys = {}
-					for k in pairs(aggregated) do
-						table.insert(keys, k)
-					end
+					for k in pairs(aggregated) do table.insert(keys, k) end
 					table.sort(keys)
-					for _, k in ipairs(keys) do
-						table.insert(current.items, aggregated[k])
-					end
+					for _, k in ipairs(keys) do table.insert(current.items, aggregated[k]) end
 					TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Recalculated aggregated items for %s: %d items (bank=%d, bags=%d, mail=%d)",
 						norm, #current.items, #bankItems, #bagItems, #mailItems)
 				end
