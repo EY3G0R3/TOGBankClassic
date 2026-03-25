@@ -8,13 +8,13 @@ local FILTER_LAYOUT_TWO_HEADERS = "two-headers"
 local FILTER_LAYOUT = FILTER_LAYOUT_TOP -- switch to FILTER_LAYOUT_TWO_HEADERS for the two-row header layout
 
 local COLUMNS = {
-	{ key = "date", label = "Date", width = 140, align = "center" },
-	{ key = "requester", label = "Requester", width = 150, align = "center", flex = true, weight = 1 },
-	{ key = "bank", label = "Bank", width = 150, align = "center", flex = true, weight = 1 },
-	{ key = "quantity", label = "#", width = 50, align = "end" },
-	{ key = "item", label = "Item", width = 170, align = "start", flex = true, weight = 2 },
-	{ key = "fulfilled", label = "Sent", width = 70, align = "center" },
-	{ key = "actions", label = "Actions", width = 140, align = "center" },
+	{ key = "date",      label = "Date",      width = 140, align = "center",                       tooltipTitle = "Date Submitted",  tooltipDetail = "When the request was submitted. Click to sort." },
+	{ key = "requester", label = "Requester", width = 150, align = "center", flex = true, weight = 1, tooltipTitle = "Requester",        tooltipDetail = "The guild member who submitted the request. Click to sort." },
+	{ key = "bank",      label = "Bank",      width = 150, align = "center", flex = true, weight = 1, tooltipTitle = "Bank",            tooltipDetail = "The banker character this request is assigned to. Click to sort." },
+	{ key = "quantity",  label = "#",         width = 50,  align = "end",                              tooltipTitle = "Quantity",         tooltipDetail = "The number of items requested. Click to sort." },
+	{ key = "item",      label = "Item",      width = 170, align = "start",  flex = true, weight = 2, tooltipTitle = "Item",            tooltipDetail = "The item being requested. Click to sort." },
+	{ key = "fulfilled", label = "Sent",      width = 70,  align = "center",                           tooltipTitle = "Amount Sent",     tooltipDetail = "How many items have been sent to the requester so far. Click to sort." },
+	{ key = "actions",   label = "Actions",   width = 140, align = "center",                           tooltipTitle = "Actions",         tooltipDetail = "Fulfill, complete, cancel or delete the request." },
 }
 
 local function minContentWidth()
@@ -631,6 +631,44 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 	self.Window = window
 
+	-- Shrink status bar right edge to make room for the help icon
+	local statusbg = window.statustext:GetParent()
+	statusbg:ClearAllPoints()
+	statusbg:SetPoint("BOTTOMLEFT",  window.frame, "BOTTOMLEFT",  15, 15)
+	statusbg:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -163, 15)
+
+	-- Help "?" icon — sits in the gap between the status bar and the close button
+	local helpIcon = CreateFrame("Frame", nil, window.frame)
+	helpIcon:SetSize(24, 24)
+	helpIcon:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -133, 15)
+	helpIcon:EnableMouse(true)
+	local helpTex = helpIcon:CreateTexture(nil, "OVERLAY")
+	helpTex:SetAllPoints(helpIcon)
+	helpTex:SetTexture("Interface\\Common\\help-i")
+	helpIcon:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine("Guild Requests — Action Buttons")
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("Each request row has up to four action buttons on the right.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Fulfill:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("Sends the item by in-game mail. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; shovel = quantity must be split manually; question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Complete:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("Marks the request as done without mailing. Use this when the item was handed over directly.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Cancel:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("Cancels the request. It moves to the Archive tab.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Delete:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("Permanently removes the request from the database. This cannot be undone.", 0.9, 0.9, 0.9, true)
+		GameTooltip:Show()
+	end)
+	helpIcon:SetScript("OnLeave", function()
+		TOGBankClassic_UI:HideTooltip()
+	end)
+
 	self.HeaderWidgets = nil
 	self.FilterWidgets = nil
 	self.FilterRequester = nil
@@ -656,6 +694,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		self.currentTab = "active"
 		self:DrawContent()
 	end)
+	attachActionTooltip(activeTabBtn, "Active Requests", "Shows open requests waiting to be fulfilled.")
 	tabGroup:AddChild(activeTabBtn)
 	self.ActiveTabBtn = activeTabBtn
 
@@ -667,6 +706,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		self.currentTab = "archive"
 		self:DrawContent()
 	end)
+	attachActionTooltip(archiveTabBtn, "Archive", "Shows completed and cancelled requests.")
 	tabGroup:AddChild(archiveTabBtn)
 	self.ArchiveTabBtn = archiveTabBtn
 
@@ -726,6 +766,24 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 		local requesterFilter = TOGBankClassic_UI:Create("Dropdown")
 		requesterFilter:SetLabel("Requester")
+		requesterFilter.label:ClearAllPoints()
+		requesterFilter.label:SetPoint("TOPLEFT", requesterFilter.frame, "TOPLEFT", 3, 0)
+		requesterFilter.label:SetPoint("TOPRIGHT", requesterFilter.frame, "TOPRIGHT", 0, 0)
+		local requesterLabelHit = CreateFrame("Frame", nil, requesterFilter.frame)
+		requesterLabelHit:SetPoint("TOPLEFT", requesterFilter.frame, "TOPLEFT", 3, 0)
+		requesterLabelHit:SetPoint("TOPRIGHT", requesterFilter.frame, "TOPRIGHT", 0, 0)
+		requesterLabelHit:SetHeight(18)
+		requesterLabelHit:EnableMouse(true)
+		requesterLabelHit:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+			GameTooltip:ClearLines()
+			GameTooltip:AddLine("Filter by Requester")
+			GameTooltip:AddLine("Filter the request list to the guild member you select here, or all requesters (Any Requester).", 0.9, 0.9, 0.9, true)
+			GameTooltip:Show()
+		end)
+		requesterLabelHit:SetScript("OnLeave", function()
+			TOGBankClassic_UI:HideTooltip()
+		end)
 		requesterFilter:SetFullWidth(true)
 		requesterFilter:SetCallback("OnValueChanged", function(widget, _, value)
 			handleFilterChange(self, "requester", widget, value)
@@ -735,6 +793,24 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 		local bankFilter = TOGBankClassic_UI:Create("Dropdown")
 		bankFilter:SetLabel("Bank")
+		bankFilter.label:ClearAllPoints()
+		bankFilter.label:SetPoint("TOPLEFT", bankFilter.frame, "TOPLEFT", 3, 0)
+		bankFilter.label:SetPoint("TOPRIGHT", bankFilter.frame, "TOPRIGHT", 0, 0)
+		local bankLabelHit = CreateFrame("Frame", nil, bankFilter.frame)
+		bankLabelHit:SetPoint("TOPLEFT", bankFilter.frame, "TOPLEFT", 3, 0)
+		bankLabelHit:SetPoint("TOPRIGHT", bankFilter.frame, "TOPRIGHT", 0, 0)
+		bankLabelHit:SetHeight(18)
+		bankLabelHit:EnableMouse(true)
+		bankLabelHit:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+			GameTooltip:ClearLines()
+			GameTooltip:AddLine("Filter by Banker")
+			GameTooltip:AddLine("Filter the request list to the banker you select here, or all bankers (Any Banker).", 0.9, 0.9, 0.9, true)
+			GameTooltip:Show()
+		end)
+		bankLabelHit:SetScript("OnLeave", function()
+			TOGBankClassic_UI:HideTooltip()
+		end)
 		bankFilter:SetFullWidth(true)
 		bankFilter:SetCallback("OnValueChanged", function(widget, _, value)
 			handleFilterChange(self, "bank", widget, value)
@@ -759,6 +835,16 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 					if TOGBankClassic_ItemHighlight then
 						TOGBankClassic_ItemHighlight:SetEnabled(value)
 					end
+				end)
+				highlightCheckbox:SetCallback("OnEnter", function()
+					GameTooltip:SetOwner(highlightCheckbox.frame, "ANCHOR_RIGHT")
+					GameTooltip:ClearLines()
+					GameTooltip:AddLine("Highlight Needed Items")
+					GameTooltip:AddLine("Highlights items in your bank bags that match pending requests, making it easier to see what needs to be sent.", 0.9, 0.9, 0.9, true)
+					GameTooltip:Show()
+				end)
+				highlightCheckbox:SetCallback("OnLeave", function()
+					TOGBankClassic_UI:HideTooltip()
 				end)
 				filterGroup:AddChild(highlightCheckbox)
 				self.HighlightCheckbox = highlightCheckbox
@@ -1134,6 +1220,9 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 				end
 				self:DrawContent()
 			end)
+			if col.tooltipTitle then
+				attachActionTooltip(button, col.tooltipTitle, col.tooltipDetail)
+			end
 			self.HeaderGroup:AddChild(button)
 		end
 	end
@@ -1239,6 +1328,16 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 				if TOGBankClassic_ItemHighlight then
 					TOGBankClassic_ItemHighlight:SetEnabled(value)
 				end
+			end)
+			highlightCheckbox:SetCallback("OnEnter", function()
+				GameTooltip:SetOwner(highlightCheckbox.frame, "ANCHOR_RIGHT")
+				GameTooltip:ClearLines()
+				GameTooltip:AddLine("Highlight Needed Items")
+				GameTooltip:AddLine("Highlights items in your bank bags that match pending requests, making it easier to see what needs to be sent.", 0.9, 0.9, 0.9, true)
+				GameTooltip:Show()
+			end)
+			highlightCheckbox:SetCallback("OnLeave", function()
+				TOGBankClassic_UI:HideTooltip()
 			end)
 			self.FilterGroup:AddChild(highlightCheckbox)
 			self.HighlightCheckbox = highlightCheckbox

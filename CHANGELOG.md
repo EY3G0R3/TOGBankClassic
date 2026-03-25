@@ -1,5 +1,27 @@
 # TOGBankClassic Changelog
 
+## [Unreleased] - UI Tooltips & Help Icons
+
+### Improvements
+
+- **Help `?` icon on Inventory window** — A `?` icon (using `Interface\Common\help-i`) sits between the status bar and the close button. Hovering it shows a multi-paragraph tooltip explaining how the guild bank works: what each tab represents, how to donate items, and how to submit requests. Location: `Modules/UI/Inventory.lua`.
+
+- **Help `?` icon on Requests window** — Same icon and placement as the Inventory window. Tooltip explains all four action buttons (Fulfill, Complete, Cancel, Delete) including the meaning of each Fulfill icon state. Location: `Modules/UI/Requests.lua`.
+
+- **Tooltips on Inventory buttons** — Search, Sort, and Requests buttons in the main Inventory window now show descriptive tooltips on hover. Location: `Modules/UI/Inventory.lua`.
+
+- **Tooltips on Requests tab buttons** — The "Requests" and "Archive" tab buttons now show tooltips explaining what each tab shows. "Cancel Stale" already had a tooltip; it remains unchanged. Location: `Modules/UI/Requests.lua`.
+
+- **Tooltips on Requests column headers** — All seven sortable column headers (Date, Requester, Bank, #, Item, Sent, Actions) now show tooltips describing the column and noting they are clickable to sort. Location: `Modules/UI/Requests.lua`.
+
+- **Tooltips on Requests filter dropdowns** — The "Requester" and "Banker" dropdown labels now have hit-frame tooltips (since FontStrings cannot receive mouse events) explaining the filter. Labels are also nudged 3px right to align visually with the dropdown control edge. Location: `Modules/UI/Requests.lua`.
+
+- **Tooltip on "Highlight needed items" checkbox** — The banker-only checkbox now shows a tooltip explaining that it highlights bank bag items matching pending requests. Location: `Modules/UI/Requests.lua`.
+
+- **Tooltip on Search "Item Name" label** — The label above the search input now has a hit-frame tooltip explaining the 3-character minimum, drag-to-search, and click-to-request behaviours. Label nudged 3px right to align with the input box edge. Location: `Modules/UI/Search.lua`.
+
+---
+
 ## [Unreleased] - Requests Archive Tab & Stale Request Auto-Cancellation
 
 ### Improvements
