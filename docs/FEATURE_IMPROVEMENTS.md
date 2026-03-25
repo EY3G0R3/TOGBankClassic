@@ -3,7 +3,7 @@
 **Development Note:** Use GitKraken for pushing updates to repository.
 
 ## Features
-- [ ] Move filled/completed orders to an archive tab
+- [x] ~~Move filled/completed orders to an archive tab~~ **IMPLEMENTED: Requests window now has "Requests" and "Archive" tabs; requests older than the configured threshold (default 30 days, configurable in Options > TOGBankClassic > Requests) are automatically moved to the Archive tab; threshold saved to SavedVariables and persists through `/reload`**
 - [ ] Add mouseover tooltip for truncated item names to show full text
 - [ ] Single-click button to fulfill request and send mail with all/some items (bulk mail addon?), possibly a popup to select quantity then fill?
 - [x] ~~Optimize bank data sync communications for efficiency/speed~~ **v0.7.0: Snapshot-based delta sync implemented**

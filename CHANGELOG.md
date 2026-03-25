@@ -1,5 +1,15 @@
 # TOGBankClassic Changelog
 
+## [Unreleased] - Requests Archive Tab
+
+### Improvements
+
+- **Requests window now has tabbed layout** — A "Requests" tab (active/recent requests) and an "Archive" tab (older requests) sit at the top of the Requests window. Requests older than the configured threshold are automatically shown only in the Archive tab; everything within the threshold appears in the Requests tab as before. Location: `Modules/UI/Requests.lua`.
+
+- **Configurable archive threshold** — The number of days before a request is considered archived (default: 30) is now user-configurable via **Options → TOGBankClassic → Requests → Archive Threshold (days)**. Accepts any positive whole number, is validated on entry, and is persisted to `TOGBankClassicOptionDB` (SavedVariables) so it survives `/reload`. Location: `Modules/Options.lua`, `Modules/UI/Requests.lua`.
+
+---
+
 ## [v0.9.15] (2026-03-24) - Critical Sync Fixes & Performance Overhaul
 
 **Status:** Production Ready

@@ -191,6 +191,7 @@ function TOGBankClassic_Options:Init()
 			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, enableRosterSync = false },
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
+				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
 			},
 		},
 	}
@@ -219,6 +220,9 @@ function TOGBankClassic_Options:Init()
 	end
 	if self.db.global.bank["enableRosterSync"] == nil then
 		self.db.global.bank["enableRosterSync"] = false
+	end
+	if self.db.global.requests.archiveDays == nil then
+		self.db.global.requests.archiveDays = 30
 	end
 	-- Initialize logger with saved level
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
@@ -410,8 +414,32 @@ function TOGBankClassic_Options:Init()
 						type = "description",
 						name = "Configure how item requests work to help manage bank inventory fairly.",
 					},
-					["maxRequestPercent"] = {
-						order = 2,
+				["archiveDays"] = {
+					order = 2,
+					type = "input",
+					width = "full",
+					name = "Archive Threshold (days)",
+					desc = "Requests older than this many days are moved to the Archive tab in the Requests window. Default is 30. Enter a whole number greater than 0.",
+					validate = function(_, v)
+						local n = tonumber(v)
+						if not n or n < 1 or math.floor(n) ~= n then
+							return "Please enter a whole number greater than 0."
+						end
+						return true
+					end,
+					get = function()
+						return tostring(self.db.global.requests.archiveDays or 30)
+					end,
+					set = function(_, v)
+						local n = tonumber(v)
+						if n and n >= 1 then
+							self.db.global.requests.archiveDays = math.floor(n)
+							TOGBankClassic_Output:Info("Archive threshold set to %d days.", math.floor(n))
+						end
+					end,
+				},
+				["maxRequestPercent"] = {
+					order = 3,
 						type = "range",
 						width = "full",
 						name = "Maximum Request Amount",
@@ -434,7 +462,7 @@ function TOGBankClassic_Options:Init()
 						end,
 					},
 					["exampleGroup"] = {
-						order = 3,
+						order = 4,
 						type = "group",
 						inline = true,
 						name = "Example Calculations",

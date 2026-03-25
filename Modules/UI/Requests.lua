@@ -40,6 +40,7 @@ local FULFILL_ICON_NEED_SPLIT = "|TInterface\\Icons\\INV_Misc_Shovel_01:18:18:0:
 local FULFILL_ICON_NO_ITEMS = "|TInterface\\Icons\\INV_Misc_QuestionMark:18:18:0:0|t" -- Question mark: no items
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local FILTER_ANY = "__tog_any__"
+local ARCHIVE_DAYS = 30
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
 local FILTER_SEPARATOR_ANY_REST = "__tog_sep_any_rest__"
 local FILTER_SEPARATOR_HIST = "__tog_sep_hist__"
@@ -370,6 +371,7 @@ function TOGBankClassic_UI_Requests:Init()
 	self.requesterFilter = nil
 	self.bankFilter = nil
 	self.defaultFiltersApplied = false
+	self.currentTab = "active"
 	-- Frame creation deferred to first Open() call (PERF-015)
 end
 
@@ -548,6 +550,10 @@ function TOGBankClassic_UI_Requests:AdjustTableHeight()
 	local contentHeight = self.Window.content:GetHeight() or 0
 	local headerHeight = 0
 	local headerRows = 0
+	if self.TabGroup and self.TabGroup.frame then
+		headerHeight = headerHeight + (self.TabGroup.frame:GetHeight() or 0)
+		headerRows = headerRows + 1
+	end
 	if self.FilterGroup and self.FilterGroup.frame then
 		headerHeight = headerHeight + (self.FilterGroup.frame:GetHeight() or 0)
 		headerRows = headerRows + 1
@@ -598,6 +604,38 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	self.FilterWidgets = nil
 	self.FilterRequester = nil
 	self.FilterBank = nil
+	self.TabGroup = nil
+	self.ActiveTabBtn = nil
+	self.ArchiveTabBtn = nil
+
+	-- Tab strip
+	local tabGroup = TOGBankClassic_UI:Create("SimpleGroup")
+	tabGroup:SetLayout("Flow")
+	tabGroup:SetFullWidth(true)
+	window:AddChild(tabGroup)
+	self.TabGroup = tabGroup
+
+	local activeTabBtn = TOGBankClassic_UI:Create("Button")
+	activeTabBtn:SetText("Requests")
+	activeTabBtn:SetWidth(100)
+	activeTabBtn:SetHeight(24)
+	activeTabBtn:SetCallback("OnClick", function()
+		self.currentTab = "active"
+		self:DrawContent()
+	end)
+	tabGroup:AddChild(activeTabBtn)
+	self.ActiveTabBtn = activeTabBtn
+
+	local archiveTabBtn = TOGBankClassic_UI:Create("Button")
+	archiveTabBtn:SetText("Archive")
+	archiveTabBtn:SetWidth(100)
+	archiveTabBtn:SetHeight(24)
+	archiveTabBtn:SetCallback("OnClick", function()
+		self.currentTab = "archive"
+		self:DrawContent()
+	end)
+	tabGroup:AddChild(archiveTabBtn)
+	self.ArchiveTabBtn = archiveTabBtn
 
 	if not useTwoHeaderLayout() then
 		local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
@@ -1219,6 +1257,38 @@ function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 	return filtered
 end
 
+function TOGBankClassic_UI_Requests:ApplyTabFilter(requests)
+	local days = (TOGBankClassic_Options and TOGBankClassic_Options.db
+		and TOGBankClassic_Options.db.global.requests.archiveDays)
+		or ARCHIVE_DAYS
+	local now = time()
+	local cutoff = now - days * 86400
+	local isArchive = (self.currentTab == "archive")
+	local filtered = {}
+	for _, req in ipairs(requests) do
+		local ts = tonumber(req.date or 0) or 0
+		if isArchive then
+			if ts > 0 and ts < cutoff then
+				table.insert(filtered, req)
+			end
+		else
+			if ts <= 0 or ts >= cutoff then
+				table.insert(filtered, req)
+			end
+		end
+	end
+	return filtered
+end
+
+function TOGBankClassic_UI_Requests:UpdateTabButtons()
+	if not self.ActiveTabBtn or not self.ArchiveTabBtn then
+		return
+	end
+	local isArchive = (self.currentTab == "archive")
+	self.ActiveTabBtn:SetText(isArchive and "Requests" or "|cffffd100> Requests|r")
+	self.ArchiveTabBtn:SetText(isArchive and "|cffffd100> Archive|r" or "Archive")
+end
+
 function TOGBankClassic_UI_Requests:DrawContent()
 	if not self.Content or not self.Window then
 		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] DrawContent: No content or window")
@@ -1233,6 +1303,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	self.Window:SetStatusText("")
 
 	self:UpdateColumnLayout()
+	self:UpdateTabButtons()
 	self:DrawHeader()
 	self:UpdateFilters()
 	if self.HeaderGroup then
@@ -1247,6 +1318,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	end
 
 	local sorted = self:SortedRequests()
+	sorted = self:ApplyTabFilter(sorted)
 	local total = #sorted
 	sorted = self:ApplyFilters(sorted)
 	local count = #sorted
@@ -1258,6 +1330,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[1]) or COLUMNS[1].width
 		if empty then
 			empty:SetWidth(columnWidth)
+			empty:SetText(self.currentTab == "archive" and "No archived requests." or "No requests yet.")
 		end
 		setWidgetShown(empty, true)
 		if self.RowPool then
