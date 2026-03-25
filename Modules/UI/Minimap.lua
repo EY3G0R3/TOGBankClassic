@@ -5,7 +5,7 @@ function TOGBankClassic_UI_Minimap:Init()
 	local iconDB = LibStub("LibDataBroker-1.1"):NewDataObject("TOGBankClassicIcon", {
 		type = "data source",
 		text = "TOGBankClassic",
-		icon = "Interface/ICONS/INV_Box_04", --purplebox
+		icon = "Interface/AddOns/TOGBankClassic/Media/TOGBankClassic_MMB_Icon",
 		OnEnter = function()
 			self:ShowTooltip()
 		end,
