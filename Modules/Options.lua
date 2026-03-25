@@ -192,6 +192,7 @@ function TOGBankClassic_Options:Init()
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
+				autoTombstoneDays = 30,  -- Stale open requests older than this are auto-cancelled on receive
 			},
 		},
 	}
@@ -223,6 +224,9 @@ function TOGBankClassic_Options:Init()
 	end
 	if self.db.global.requests.archiveDays == nil then
 		self.db.global.requests.archiveDays = 30
+	end
+	if self.db.global.requests.autoTombstoneDays == nil then
+		self.db.global.requests.autoTombstoneDays = 30
 	end
 	-- Initialize logger with saved level
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
@@ -400,8 +404,10 @@ function TOGBankClassic_Options:Init()
 				type = "group",
 				name = "Requests",
 				hidden = function()
-					-- Only show to officers
-					return not CanViewOfficerNote()
+					-- Show to officers or bankers
+					if CanViewOfficerNote() then return false end
+					local player = TOGBankClassic_Guild:GetNormalizedPlayer()
+					return not (player and TOGBankClassic_Guild:IsBank(player))
 				end,
 				args = {
 					["requestsHeader"] = {
@@ -435,6 +441,35 @@ function TOGBankClassic_Options:Init()
 						if n and n >= 1 then
 							self.db.global.requests.archiveDays = math.floor(n)
 							TOGBankClassic_Output:Info("Archive threshold set to %d days.", math.floor(n))
+						end
+					end,
+				},
+				["autoTombstoneDays"] = {
+					order = 2.5,
+					type = "input",
+					width = "full",
+					name = "Auto-Cancel Stale Requests (days)",
+					desc = "Open requests older than this many days are automatically tombstoned (cancelled and rejected) when received during sync. The 'Cancel Stale' button in the Requests window uses this same threshold. Default is 30. Setting syncs guild-wide. Enter a whole number greater than 0.",
+					validate = function(_, v)
+						local n = tonumber(v)
+						if not n or n < 1 or math.floor(n) ~= n then
+							return "Please enter a whole number greater than 0."
+						end
+						return true
+					end,
+					get = function()
+						return tostring(TOGBankClassic_Options:GetAutoTombstoneDays())
+					end,
+					set = function(_, v)
+						local n = tonumber(v)
+						if n and n >= 1 then
+							n = math.floor(n)
+							-- Write to guild-synced settings so all clients apply the same threshold
+							if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
+								TOGBankClassic_Guild.Info.settings.autoTombstoneDays = n
+							end
+							self.db.global.requests.autoTombstoneDays = n
+							TOGBankClassic_Output:Info("Auto-cancel stale threshold set to %d days (syncing to guild...).", n)
 						end
 					end,
 				},
@@ -638,6 +673,18 @@ function TOGBankClassic_Options:GetMaxRequestPercent()
 		return 100
 	end
 	return self.db.global.requests.maxRequestPercent or 100
+end
+
+function TOGBankClassic_Options:GetAutoTombstoneDays()
+	-- Read from guild-synced settings first (officer/banker-configured, syncs to all clients)
+	if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
+		local v = TOGBankClassic_Guild.Info.settings.autoTombstoneDays
+		if v and v > 0 then return v end
+	end
+	if self.db and self.db.global and self.db.global.requests then
+		return self.db.global.requests.autoTombstoneDays or 30
+	end
+	return 30
 end
 
 function TOGBankClassic_Options:Open()

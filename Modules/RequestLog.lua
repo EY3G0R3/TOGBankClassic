@@ -539,6 +539,23 @@ local function mergeRequest(requests, tombstones, id, incoming)
 		end
 	end
 
+	-- REQUEST-RETIRE-003: Reject and tombstone stale open requests on receive.
+	-- When a peer rejoins after a long absence they may re-broadcast open requests
+	-- that are older than the guild-configured auto-tombstone threshold.  We
+	-- tombstone them here so the rejection propagates back to the sender.
+	if clean.status == "open" and incomingTs > 0 then
+		local now = GetServerTime()
+		local thresholdDays = TOGBankClassic_Options and TOGBankClassic_Options:GetAutoTombstoneDays() or 30
+		local thresholdSec = thresholdDays * 86400
+		if (now - incomingTs) > thresholdSec then
+			tombstones[id] = now
+			TOGBankClassic_Output:Debug("SYNC",
+				"mergeRequest: STALE-OPEN-TOMBSTONED - id=%s (age=%dd, threshold=%dd)",
+				id, math.floor((now - incomingTs) / 86400), thresholdDays)
+			return "tombstoned"
+		end
+	end
+
 	local existing = requests[id]
 	if existing then
 		local existingTs = tonumber(existing.updatedAt or existing.date or 0) or 0
@@ -1879,6 +1896,62 @@ function Guild:DeleteRequest(requestId, actor)
 	self:BroadcastRequestMutation({ type = "delete", requestId = requestId })
 	self:FinalizeMutation(now)
 	return true
+end
+
+-- REQUEST-RETIRE-003: Bulk-tombstone all locally-held open requests older than
+-- the configured autoTombstoneDays threshold.  Called by the "Cancel Stale"
+-- button (bankers/officers only).  Tombstones are broadcast so the expiry
+-- self-heals to all peers on next sync.
+-- Returns the number of requests expired.
+function Guild:ExpireStaleRequests(actor)
+	if not self.Info or not self.Info.requests then
+		return 0
+	end
+
+	local normActor = self:NormalizeName(actor or self:GetPlayer())
+	if not self:CanManageRequests(normActor) then
+		TOGBankClassic_Output:Debug("SYNC", "ExpireStaleRequests: Permission denied (actor=%s)", tostring(normActor))
+		return 0
+	end
+
+	local thresholdDays = TOGBankClassic_Options and TOGBankClassic_Options:GetAutoTombstoneDays() or 30
+	local thresholdSec = thresholdDays * 86400
+	local now = GetServerTime()
+
+	self.Info.requestsTombstones = self.Info.requestsTombstones or {}
+	local tombstones = self.Info.requestsTombstones
+
+	local expired = 0
+	local expiredIds = {}
+
+	for id, req in pairs(self.Info.requests) do
+		local ts = tonumber(req.updatedAt or req.date or 0) or 0
+		local isOpen = (req.status or "open") == "open"
+		local qty = tonumber(req.quantity or 0) or 0
+		local fulfilled = tonumber(req.fulfilled or 0) or 0
+		local isFullyFulfilled = qty > 0 and fulfilled >= qty
+		if isOpen and not isFullyFulfilled and ts > 0 and (now - ts) > thresholdSec then
+			tombstones[id] = now
+			self.Info.requests[id] = nil
+			table.insert(expiredIds, id)
+			expired = expired + 1
+			TOGBankClassic_Output:Debug("SYNC",
+				"ExpireStaleRequests: tombstoned id=%s (age=%dd)",
+				id, math.floor((now - ts) / 86400))
+		end
+	end
+
+	if expired > 0 then
+		-- Broadcast each tombstone so peers learn of the expiry on next sync
+		for _, id in ipairs(expiredIds) do
+			self:BroadcastRequestMutation({ type = "delete", requestId = id })
+		end
+		self:FinalizeMutation(now)
+		TOGBankClassic_Output:Info("Expired %d stale request%s older than %d days.",
+			expired, expired == 1 and "" or "s", thresholdDays)
+	end
+
+	return expired
 end
 
 -- Increment fulfillment for matching requests; returns amount applied.

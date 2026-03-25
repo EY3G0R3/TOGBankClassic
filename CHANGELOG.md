@@ -1,12 +1,18 @@
 # TOGBankClassic Changelog
 
-## [Unreleased] - Requests Archive Tab
+## [Unreleased] - Requests Archive Tab & Stale Request Auto-Cancellation
 
 ### Improvements
 
 - **Requests window now has tabbed layout** — A "Requests" tab (active/recent requests) and an "Archive" tab (older requests) sit at the top of the Requests window. Requests older than the configured threshold are automatically shown only in the Archive tab; everything within the threshold appears in the Requests tab as before. Location: `Modules/UI/Requests.lua`.
 
-- **Configurable archive threshold** — The number of days before a request is considered archived (default: 30) is now user-configurable via **Options → TOGBankClassic → Requests → Archive Threshold (days)**. Accepts any positive whole number, is validated on entry, and is persisted to `TOGBankClassicOptionDB` (SavedVariables) so it survives `/reload`. Location: `Modules/Options.lua`, `Modules/UI/Requests.lua`.
+- **Configurable archive threshold** — The number of days before a request is considered archived (default: 30) is now user-configurable via **Options → TOGBankClassic → Requests → Archive Threshold (days)**. Accepts any positive whole number, is validated on entry, and is persisted to `TOGBankClassicOptionDB` (SavedVariables) so it survives `/reload`. This threshold is per-user (local only). Location: `Modules/Options.lua`, `Modules/UI/Requests.lua`.
+
+- **Auto-tombstone for stale open requests** — Any open request older than the configured threshold is now automatically rejected and tombstoned the moment it is received from a peer. This prevents requests from long-offline players from re-syncing indefinitely across the guild. The check runs inside `mergeRequest()` (REQUEST-RETIRE-003), so it fires on every sync path: index receive, by-ID receive, snapshot, and mutation. Location: `Modules/RequestLog.lua`.
+
+- **Guild-synced `autoTombstoneDays` setting** — The stale-request threshold (default: 30 days) is set guild-wide via **Options → TOGBankClassic → Requests → Auto-cancel threshold (days)**. The value is written to `Guild.Info.settings.autoTombstoneDays` and propagates to all clients on the next share cycle, ensuring all members apply the same cutoff. Location: `Modules/Options.lua`, `Modules/Database.lua`.
+
+- **"Cancel Stale" bulk-tombstone button** — Officers and bankers see a "Cancel Stale" button in the Requests window tab strip. Clicking it shows a confirmation dialog stating how many days' worth of requests will be cancelled. On confirm, `Guild:ExpireStaleRequests()` tombstones all locally-known open requests older than the threshold and broadcasts a `delete` mutation for each, propagating cancellations to the whole guild. The button tooltip dynamically reflects the current threshold. Location: `Modules/UI/Requests.lua`, `Modules/RequestLog.lua`.
 
 ---
 

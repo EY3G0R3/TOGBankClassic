@@ -6,7 +6,54 @@
 
 ---
 
-## v0.8.0 Testing Plan - Pull-Based Protocol
+## ⏳ Pending Tests — Requires Live Guild Data
+
+The following features require another player to log on with "old" data (requests or requests sync older than the configured threshold) to verify fully.
+
+### Archive Tab
+
+**Feature:** Requests window shows a "Requests" tab (recent) and an "Archive" tab (older than `archiveDays`, default 30). The threshold is configured per-user in **Options > TOGBankClassic > Requests > Archive Threshold (days)**.
+
+| # | Test | How to verify | Expected |
+|---|------|--------------|----------|
+| A-1 | Tab strip renders | Open Requests window | Two tabs ("Requests" / "Archive") appear at the top |
+| A-2 | Recent requests go to Requests tab | Open Requests window | Requests submitted within the last N days appear only on the Requests tab |
+| A-3 | Old requests go to Archive tab | Need a player with requests timestamped >30 days ago; or temporarily set `archiveDays = 0` to force all into Archive | Archive tab shows those requests; Requests tab empty |
+| A-4 | Threshold persists through /reload | Set threshold to e.g. 14, `/reload` | Options field still shows 14; tab filter unchanged |
+| A-5 | Threshold updates filter live | Change threshold while window open, switch tabs | Requests redistribute between tabs accordingly |
+| A-6 | Empty-state label | Navigate to Archive tab with no old requests | Label reads "No archived requests." instead of generic empty text |
+
+**Shortcut for local testing (no old data needed):**
+Temporarily set `archiveDays = 0` in Options. All requests will appear in Archive tab, none in Requests tab.
+
+---
+
+### Auto-Tombstone: Stale Open Requests
+
+**Feature:** Any open request older than `autoTombstoneDays` (guild-synced, default 30) is automatically rejected and tombstoned the moment it arrives via any sync path (`mergeRequest()`, REQUEST-RETIRE-003). Officers/bankers can also bulk-cancel via the "Cancel Stale" button.
+
+**Prerequisite for full testing:** A player must log in who has an open request in their local SavedVariables that was submitted more than `autoTombstoneDays` days ago. That request will re-appear in the sync stream when their client broadcasts.
+
+| # | Test | How to verify | Expected |
+|---|------|--------------|----------|
+| B-1 | Cancel Stale button visible (officer/banker) | Log in as banker or officer; open Requests window | "Cancel Stale" button appears in tab strip |
+| B-2 | Cancel Stale button hidden (regular member) | Log in as non-officer, non-banker; open Requests window | Button does not appear |
+| B-3 | Cancel Stale confirm dialog | Click "Cancel Stale" button | Dialog appears: "Cancel all open requests older than X days? This cannot be undone and will propagate to the whole guild." |
+| B-4 | Cancel Stale no-op when none qualify | Click Cancel Stale when all requests are recent | Status bar shows "No stale requests found." |
+| B-5 | Cancel Stale tombstones qualifying requests | With at least one old open request present; click Cancel Stale + confirm | Status bar shows "Cancelled N stale request(s)."; request disappears from table; tombstone entry added |
+| B-6 | Cancellation propagates guild-wide | After B-5; another logged-in client checks their Requests window | Tombstoned request removed from their list too (on next sync) |
+| B-7 | Stale open request auto-rejected on receive | Another player with an old open request logs in / forces a share | Request never appears in the Requests window; tombstone entry created; debug log shows REQUEST-RETIRE-003 |
+| B-8 | `autoTombstoneDays` persists to guild settings | Officer sets threshold in Options; another client syncs | Second client applies same threshold without relogging |
+| B-9 | Tooltip reflects current threshold | Hover "Cancel Stale" button | Tooltip body mentions the current `autoTombstoneDays` value |
+| B-10 | REQUEST-RETIRE-003 not fired for recent open requests | Receive a request submitted today | Request added normally; no tombstone created |
+
+**Debug check for B-7:**
+Enable debug output with `/togbank debug` and watch for:
+```
+[RequestLog] REQUEST-RETIRE-003: tombstoning stale open request <id> (age=Xd, threshold=30d)
+```
+
+---
 
 ### Overview
 v0.8.0 replaces snapshot-based delta sync with a pull-based handshake protocol. Testing must validate the 7-step flow, message optimizations, and backwards compatibility.

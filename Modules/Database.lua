@@ -50,6 +50,7 @@ function TOGBankClassic_Database:Reset(name)
 		requestsTombstones = {},
 		settings = {
 			maxRequestPercent = 100,  -- Default to no limit
+			autoTombstoneDays = 30,   -- Stale open requests older than this are auto-tombstoned on receive
 		},
 		-- Delta sync fields
 		-- PERF-012: deltaSnapshots moved to in-memory deltaSnapshotsCache (not persisted)
@@ -223,6 +224,16 @@ function TOGBankClassic_Database:Load(name)
 	end)
 	if not db.requestsTombstones then
 		db.requestsTombstones = {}
+	end
+
+	if not db.settings then
+		db.settings = {}
+	end
+	if db.settings.maxRequestPercent == nil then
+		db.settings.maxRequestPercent = 100
+	end
+	if db.settings.autoTombstoneDays == nil then
+		db.settings.autoTombstoneDays = 30
 	end
 
 	-- Initialize delta sync fields if not present

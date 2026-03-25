@@ -39,6 +39,7 @@ local FULFILL_ICON_NOT_IN_BAGS = "|TInterface\\Icons\\INV_Misc_Bag_07:18:18:0:0|
 local FULFILL_ICON_NEED_SPLIT = "|TInterface\\Icons\\INV_Misc_Shovel_01:18:18:0:0|t" -- Shovel: manual work needed
 local FULFILL_ICON_NO_ITEMS = "|TInterface\\Icons\\INV_Misc_QuestionMark:18:18:0:0|t" -- Question mark: no items
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
+local CANCEL_STALE_DIALOG   = "TOGBankClassic_CancelStale"
 local FILTER_ANY = "__tog_any__"
 local ARCHIVE_DAYS = 30
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
@@ -271,6 +272,35 @@ local function ensureDeleteDialog()
 			if not TOGBankClassic_Guild:DeleteRequest(data.requestId, data.actor) then
 				if data.ui and data.ui.Window then
 					data.ui.Window:SetStatusText("Unable to delete request.")
+				end
+			end
+		end,
+	}
+end
+
+local function ensureCancelStaleDialog()
+	if not StaticPopupDialogs then
+		return
+	end
+	if StaticPopupDialogs[CANCEL_STALE_DIALOG] then
+		return
+	end
+	StaticPopupDialogs[CANCEL_STALE_DIALOG] = {
+		text = "%s",
+		button1 = YES,
+		button2 = CANCEL,
+		timeout = 0,
+		whileDead = true,
+		hideOnEscape = true,
+		OnAccept = function(_, data)
+			if not data then return end
+			local expired = TOGBankClassic_Guild:ExpireStaleRequests(data.actor)
+			if data.ui and data.ui.Window then
+				if expired > 0 then
+					data.ui.Window:SetStatusText(string.format("Cancelled %d stale request%s.", expired, expired == 1 and "" or "s"))
+					data.ui:DrawContent()
+				else
+					data.ui.Window:SetStatusText("No stale requests found.")
 				end
 			end
 		end,
@@ -636,6 +666,46 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	end)
 	tabGroup:AddChild(archiveTabBtn)
 	self.ArchiveTabBtn = archiveTabBtn
+
+	-- "Cancel Stale" button — only for bankers/officers
+	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local isOfficerOrBanker = (CanViewOfficerNote and CanViewOfficerNote())
+		or (actor and TOGBankClassic_Guild:IsBank(actor))
+	if isOfficerOrBanker then
+		local cancelStaleBtn = TOGBankClassic_UI:Create("Button")
+		cancelStaleBtn:SetText("Cancel Stale")
+		cancelStaleBtn:SetWidth(110)
+		cancelStaleBtn:SetHeight(24)
+		cancelStaleBtn:SetCallback("OnClick", function()
+			if not StaticPopup_Show then return end
+			ensureCancelStaleDialog()
+			local days = TOGBankClassic_Options and TOGBankClassic_Options:GetAutoTombstoneDays() or 30
+			local msg = string.format(
+				"Cancel all open requests older than %d days?\n\nThis cannot be undone and will propagate to the whole guild.",
+				days)
+			StaticPopup_Show(CANCEL_STALE_DIALOG, msg, nil, {
+				actor = actor,
+				ui = TOGBankClassic_UI_Requests,
+			})
+		end)
+		if cancelStaleBtn.frame then
+			cancelStaleBtn.frame:HookScript("OnEnter", function(btn)
+				local days = TOGBankClassic_Options and TOGBankClassic_Options:GetAutoTombstoneDays() or 30
+				GameTooltip:SetOwner(btn, "ANCHOR_BOTTOM")
+				GameTooltip:ClearLines()
+				GameTooltip:AddLine("Cancel Stale Requests")
+				GameTooltip:AddLine(string.format(
+					"Permanently cancels all open requests older than %d days and broadcasts the cancellation guild-wide.\n\nThe threshold is configured in Options > TOGBankClassic > Requests.",
+					days), 0.9, 0.9, 0.9, true)
+				GameTooltip:Show()
+			end)
+			cancelStaleBtn.frame:HookScript("OnLeave", function()
+				TOGBankClassic_UI:HideTooltip()
+			end)
+		end
+		tabGroup:AddChild(cancelStaleBtn)
+		self.CancelStaleBtn = cancelStaleBtn
+	end
 
 	if not useTwoHeaderLayout() then
 		local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
