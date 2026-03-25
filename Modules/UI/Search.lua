@@ -28,8 +28,8 @@ function TOGBankClassic_UI_Search:EnsureRequestDialog()
 	dialog:SetCallback("OnClose", function(widget)
 		widget:Hide()
 	end)
-	dialog.frame:SetBackdropColor(0, 0, 0, 1)
 	dialog.frame:SetAlpha(1)
+	TOGBankClassic_UI:ApplyThinBorder(dialog)
 	if dialog.frame and dialog.frame.GetChildren then
 		for _, child in ipairs({ dialog.frame:GetChildren() }) do
 			-- Hide the built-in close button so we only show Send/Cancel actions
@@ -334,6 +334,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	searchWindow:SetTitle("Search")
 	searchWindow:SetLayout("Flow")
 	searchWindow:EnableResize(false)
+	TOGBankClassic_UI:ApplyThinBorder(searchWindow)
 	-- Persist window position/size across reloads
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
 		searchWindow:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)

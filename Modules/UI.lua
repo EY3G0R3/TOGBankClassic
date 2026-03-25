@@ -5,6 +5,24 @@ TOGBankClassic_UI.tooltipThrottle = 0
 TOGBankClassic_UI.TOOLTIP_THROTTLE_MS = 50  -- 50ms between tooltip updates
 TOGBankClassic_UI.currentTooltipLink = nil
 
+-- Thinner backdrop used on all windows.
+local ThinFrameBackdrop = {
+	bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+	edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+	tile = true, tileSize = 32, edgeSize = 16,
+	insets = { left = 4, right = 4, top = 4, bottom = 4 },
+}
+
+--- Applies the thin tooltip-style border to an AceGUI Frame widget.
+--- Pass the AceGUI widget object (e.g. `window`), not its `.frame` child.
+function TOGBankClassic_UI:ApplyThinBorder(widget)
+	local frame = widget.frame or widget
+	if not frame.SetBackdrop then return end
+	frame:SetBackdrop(ThinFrameBackdrop)
+	frame:SetBackdropColor(0, 0, 0, 1)
+	frame:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+end
+
 function TOGBankClassic_UI:Init()
 	TOGBankClassic_UI_Minimap:Init()
 	TOGBankClassic_UI_Inventory:Init()

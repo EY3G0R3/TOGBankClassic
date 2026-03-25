@@ -607,6 +607,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	window:SetTitle("Requests")
 	window:SetLayout("Flow")
 	window:EnableResize(true)
+	TOGBankClassic_UI:ApplyThinBorder(window)
 	-- Persist window position/size across reloads
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
 		window:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
@@ -642,6 +643,8 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	local tabGroup = TOGBankClassic_UI:Create("SimpleGroup")
 	tabGroup:SetLayout("Flow")
 	tabGroup:SetFullWidth(true)
+	tabGroup.content:SetPoint("TOPLEFT", 0, 8)
+	tabGroup.content:SetPoint("BOTTOMRIGHT", 0, -5)
 	window:AddChild(tabGroup)
 	self.TabGroup = tabGroup
 

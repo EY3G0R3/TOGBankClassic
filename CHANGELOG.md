@@ -4,6 +4,10 @@
 
 ### Improvements
 
+- **Unified thin border across all windows** — The Inventory, Requests, and Search windows (including the Search request dialog) now share the same thin tooltip-style border (`UI-Tooltip-Border`, edgeSize=16) instead of the default thick dialog border (`UI-DialogBox-Border`, edgeSize=32). The ornate title banner is untouched. A shared `ApplyThinBorder()` helper in `UI.lua` is called from each `DrawWindow()` to keep the logic in one place. Location: `Modules/UI.lua`, `Modules/UI/Inventory.lua`, `Modules/UI/Requests.lua`, `Modules/UI/Search.lua`.
+
+- **Requests button row aligned with Inventory button row** — The Requests tab-strip buttons ("Requests", "Archive", "Cancel Stale") now sit at the same vertical baseline as the Inventory top-bar buttons ("Search", "Sort", "Requests"). The Requests `SimpleGroup` content was shifted up by 8px to compensate for both the Flow layout's built-in 3px gap and the 5px padding used on the Inventory side. Location: `Modules/UI/Requests.lua`.
+
 - **Requests window now has tabbed layout** — A "Requests" tab (active/recent requests) and an "Archive" tab (older requests) sit at the top of the Requests window. Requests older than the configured threshold are automatically shown only in the Archive tab; everything within the threshold appears in the Requests tab as before. Location: `Modules/UI/Requests.lua`.
 
 - **Configurable archive threshold** — The number of days before a request is considered archived (default: 30) is now user-configurable via **Options → TOGBankClassic → Requests → Archive Threshold (days)**. Accepts any positive whole number, is validated on entry, and is persisted to `TOGBankClassicOptionDB` (SavedVariables) so it survives `/reload`. This threshold is per-user (local only). Location: `Modules/Options.lua`, `Modules/UI/Requests.lua`.
