@@ -1400,6 +1400,27 @@ end
 				end
 			end
 
+			-- Apply slot counts from no-change (slots are not part of the item hash, so they
+			-- never trigger a new delta.  Sender piggybacks current slot data here so non-bankers
+			-- always see accurate free/total counts even when items haven't changed.)
+			if (data.bankSlots or data.bagsSlots) and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
+				local localAlt = TOGBankClassic_Guild.Info.alts[norm]
+				if localAlt then
+					if data.bankSlots then
+						if not localAlt.bank then localAlt.bank = { items = {} } end
+						localAlt.bank.slots = data.bankSlots
+						TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION: %s bankSlots %d/%d (from %s)",
+							norm, data.bankSlots.count or 0, data.bankSlots.total or 0, sender)
+					end
+					if data.bagsSlots then
+						if not localAlt.bags then localAlt.bags = { items = {} } end
+						localAlt.bags.slots = data.bagsSlots
+						TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION: %s bagsSlots %d/%d (from %s)",
+							norm, data.bagsSlots.count or 0, data.bagsSlots.total or 0, sender)
+					end
+				end
+			end
+
 			-- Mark sync as complete
 			TOGBankClassic_Guild:ConsumePendingSync("alt", sender, altName)
 			if TOGBankClassic_Guild.hasRequested then

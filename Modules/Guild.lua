@@ -1980,6 +1980,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 				version = currentVersion,
 				hash = currentHash,
 				mailHash = currentMailHash,
+				bankSlots = currentAlt.bank and currentAlt.bank.slots or nil,
+				bagsSlots = currentAlt.bags and currentAlt.bags.slots or nil,
 			}
 			local data = TOGBankClassic_Core:SerializeWithChecksum(noChangeMsg)
 			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending no-change to %s for %s (hash match: inv=%d, mail=%d)", requester, norm, currentHash, currentMailHash)
@@ -2034,6 +2036,8 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 			type = "no-change",
 			name = norm,
 			version = currentVersion,
+			bankSlots = currentAlt.bank and currentAlt.bank.slots or nil,
+			bagsSlots = currentAlt.bags and currentAlt.bags.slots or nil,
 		}
 		local data = TOGBankClassic_Core:SerializeWithChecksum(noChangeMsg)
 		TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Sending no-change to %s for %s (version match: v%d)", requester, norm, currentVersion)
@@ -2609,6 +2613,8 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 				version = currentAlt.version or 0,
 				hash = currentAlt.inventoryHash or 0,
 				mailHash = currentAlt.mailHash or 0,
+				bankSlots = currentAlt.bank and currentAlt.bank.slots or nil,
+				bagsSlots = currentAlt.bags and currentAlt.bags.slots or nil,
 			}
 			local ncData = TOGBankClassic_Core:SerializeWithChecksum(hashCorrMsg)
 			TOGBankClassic_Core:SendWhisper("togbank-nochange", ncData, target, "NORMAL")
