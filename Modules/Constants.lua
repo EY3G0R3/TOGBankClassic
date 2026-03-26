@@ -65,6 +65,7 @@ DEBUG_TAGS = {
 		["SETTINGS"]          = "guild settings broadcast / receive (maxRequestPercent, autoTombstoneDays)",
 		["MAIL-012"]          = "MAIL-012 diagnostic traces",
 		["DELTA-014"]         = "DELTA-014 diagnostic traces",
+		["INTEGRITY-MISMATCH"] = "stop-marker present but CRC failed (genuine bit-corruption, not truncation)",
 	},
 	SYNC = {
 		["HASH-MATCH"]      = "hash comparison decisions",
