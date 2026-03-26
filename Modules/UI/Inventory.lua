@@ -325,16 +325,16 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 		-- Prevent processing the same tab multiple times
 		if self.currentTab == tab and self.tabLoaded then
-			TOGBankClassic_Output:Debug("MAIL", "[RACE-CONDITION] BLOCKED duplicate OnGroupSelected for tab %s - something is triggering tab reload!", tab)
+			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[RACE-CONDITION] BLOCKED duplicate OnGroupSelected for tab %s - something is triggering tab reload!", tab)
 			-- Print stack trace to see what's calling this
 			local stack = debugstack(2)
-			TOGBankClassic_Output:Debug("MAIL", "[RACE-CONDITION] Stack trace:\n%s", stack)
+			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[RACE-CONDITION] Stack trace:\n%s", stack)
 			return
 		end
 		self.currentTab = tab
 		self.tabLoaded = false  -- Will be set to true after GetItems completes
 
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Loading tab %s", tab)
+		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Loading tab %s", tab)
 
 		self.TabGroup:ReleaseChildren()
 
@@ -366,7 +366,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			for _, item in pairs(alt.items) do
 				table.insert(items, item)
 			end
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: using alt.items (%d items)",
+			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: using alt.items (%d items)",
 				tab, #items)
 		else
 			-- Fallback: compute from sources (backward compatibility for very old data)
@@ -374,7 +374,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			local bagItems = (alt.bags and alt.bags.items) or {}
 			local mailItems = (alt.mail and alt.mail.items) or {}
 
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d",
+			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d",
 				tab, #bankItems, #bagItems, #mailItems)
 
 			-- Aggregate all sources (all are now in array format), then convert the key-value result to array
@@ -385,7 +385,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			end
 		end
 
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: aggregated to %d unique items",
+		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: aggregated to %d unique items",
 			tab, #items)
 
 		-- Show loading indicator immediately
@@ -407,9 +407,9 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			end
 			for itemID, entries in pairs(itemsByID) do
 				if #entries > 1 then
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] DUPLICATE ITEM ID %d found with %d different entries:", itemID, #entries)
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] DUPLICATE ITEM ID %d found with %d different entries:", itemID, #entries)
 					for i, entry in ipairs(entries) do
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002]   Entry %d: Count=%d, Link=%s", i, entry.Count, entry.Link or "nil")
+						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002]   Entry %d: Count=%d, Link=%s", i, entry.Count, entry.Link or "nil")
 					end
 				end
 			end
@@ -420,7 +420,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 				if item and item.ID and item.ID > 0 then
 					table.insert(validItems, item)
 				else
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] WARNING: Tab %s skipping invalid item at index %d (ID: %s, Link: %s)",
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] WARNING: Tab %s skipping invalid item at index %d (ID: %s, Link: %s)",
 						tab, i, tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
 				end
 			end
@@ -428,13 +428,13 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			TOGBankClassic_Item:GetItems(validItems, function(list)
 				-- Prevent callback from running twice on same scroll container
 				if scroll.callbackProcessed then
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Ignoring duplicate callback for tab %s", tab)
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Ignoring duplicate callback for tab %s", tab)
 					return
 				end
 				scroll.callbackProcessed = true
 				self.tabLoaded = true  -- Mark tab as fully loaded
 
-				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: GetItems callback received %d items",
+				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: GetItems callback received %d items",
 					tab, list and #list or 0)
 
 				-- Clear previous items before adding new ones
@@ -445,7 +445,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 				for _, item in pairs(list) do
 					if item and item.Info and item.Info.name then
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Inventory tab %s: displaying %s with count %d (ID: %d)",
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: displaying %s with count %d (ID: %d)",
 							tab, item.Info.name, item.Count or 0, item.ID)
 					end
 					local itemWidget = TOGBankClassic_UI:DrawItem(item, scroll)

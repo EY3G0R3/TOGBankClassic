@@ -806,6 +806,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 			delta.changes.mailHash = currentAlt.mailHash
 			TOGBankClassic_Output:Debug(
 				"DELTA",
+				"BUILD",
 				"[MAIL-012] Mail hash changed for %s: %s → %s",
 				altName,
 				tostring(previous.mailHash),
@@ -861,6 +862,7 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 		-- Debug: Log what's being sent
 		TOGBankClassic_Output:Debug(
 			"DELTA",
+			"BUILD",
 			"[SEPARATE-INV] Delta for %s: bank=%d→%d, bags=%d→%d, mail=%d→%d",
 			altName,
 			#previousBank, #currentBank,
@@ -1231,6 +1233,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			-- Delta chain replay (togbank-dr/dc) removed; fall back to full sync
 			TOGBankClassic_Output:Debug(
 				"DELTA",
+				"VALIDATE",
 				"Version mismatch for %s (have %d, delta expects %d), requesting full sync",
 				norm,
 				currentVersion,
@@ -1603,7 +1606,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 	local missing = {}
 	local missingDebug = {}
 	local missingInfo = {}
-	TOGBankClassic_Output:Debug("PROTOCOL", "FastFill: Starting check of %d roster alts", #rosterAlts)
+	TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "FastFill: Starting check of %d roster alts", #rosterAlts)
 	for _, altName in ipairs(rosterAlts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(altName)
 		local localAlt = guildInfo.alts and norm and guildInfo.alts[norm]
@@ -1629,7 +1632,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		end
 		
 		-- DEBUG: Log every alt to see what's happening
-		TOGBankClassic_Output:Debug("PROTOCOL", "FastFill check: %s hasEntry=%s hasContent=%s hashMismatch=%s", 
+		TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "FastFill check: %s hasEntry=%s hasContent=%s hashMismatch=%s", 
 			tostring(norm), tostring(hasEntry), tostring(hasContent), tostring(hashMismatch))
 		
 		-- Check if we need to request this alt: no entry, no content, OR hash mismatch

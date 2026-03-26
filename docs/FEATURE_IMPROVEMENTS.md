@@ -39,6 +39,47 @@
 - [ ] **Scoreboard UI or deprecation** - The bank acceptance window contains an "add to scoreboard" checkbox but no scoreboard UI exists or is accessible; either implement scoreboard access or remove the checkbox to avoid confusion
 - [x] ~~**Guild roster cache lookups (PERF)**~~ **IMPLEMENTED: All GetGuildRosterInfo() scans in hot paths replaced with O(1) memberRoster cache lookups; isBank flag added to cache; greedy regex replaced with plain-text find()**
 - [x] ~~**Remove message integrity checksum from sends (PERF)**~~ **IMPLEMENTED: Eliminated byte-by-byte Lua checksum loop over 15-50KB comm payloads on every send; DeserializeWithChecksum retained for backward compat with old clients**
+- [x] ~~**Debug tag audit**~~ **IMPLEMENTED: Every `Output:Debug()` call across all Modules now has both a category AND a tag; migrated ticket-based tags (e.g. MAIL-012) to canonical tag names; added SYNC/SEND and SYNC/VALIDATE tags to Constants.lua**
+
+---
+
+## 🏷️ Debug Tag Audit - IMPLEMENTED
+
+**Added:** March 26, 2026
+**Purpose:** Ensure every `Output:Debug()` call carries both a category and a tag so debug filtering works correctly across all log categories
+
+### Problem
+
+`Output:Debug("CATEGORY", "TAG", fmt, ...)` is the correct 3-argument form. Many calls across the codebase used the 2-argument form `Output:Debug("CATEGORY", fmt, ...)`, which is untagged and bypasses the category/tag filter system entirely. Untagged calls could not be selectively enabled or suppressed, defeating the purpose of the structured debug system.
+
+Additional issues:
+
+- Several tags used internal ticket numbers (e.g. `"MAIL-012"`) instead of canonical semantic names, making filters human-unfriendly
+- Constants.lua was missing two tags that were needed: `SYNC.SEND` and `SYNC.VALIDATE`
+
+### Solution
+
+Audited every `Output:Debug()` / `self:Debug()` / `TOGBankClassic_Output:Debug()` call across all Lua source files. For each untagged call, determined the appropriate existing tag (or added a new one) and inserted it as the second argument.
+
+### Files Changed
+
+- `Modules/Chat.lua` — largest file; fixed ~60 calls across SYNC, PROTOCOL, COMMS, QUERIES, P2P, DELTA, EVENTS, REQUESTS categories; renamed MAIL-012 ticket tags to `MAIL-SYNC`; fixed HASH-CORRECTION and SLOT-CORRECTION format strings that were being misread as the format argument
+- `Modules/Guild.lua` — fixed ~21 calls: COMMS/SEND, CACHE/REFRESH, ITEM/LOAD, ITEM/VALIDATE, SYNC/HASH-MATCH, MAIL/ADOPT
+- `Modules/RequestLog.lua` — fixed ~19 calls across SYNC/MERGE, SYNC/VALIDATE, SYNC/APPLY, SYNC/BROADCAST in `ReceiveRequestMutations`, `CancelRequest`, and `ExpireStaleRequests`
+- `Modules/DeltaComms.lua` — fixed 2 calls: PROTOCOL/HLR-COMPARE for the FastFill roster check
+- `Modules/Item.lua` — fixed 26 calls: ITEM/LOAD and ITEM/VALIDATE for all DEDUP, ITEM-FILTER, ITEM-DEBUG, and TRACE entries in `GetItems()`
+- `Modules/Core.lua` — fixed tagged calls in startup and version broadcast paths
+- `Modules/Database.lua` — fixed tagged calls in load/save paths
+- `Modules/Mail.lua` — fixed tagged calls in mail scan paths
+- `Modules/MailInventory.lua` — fixed tagged calls in inventory enumeration paths
+- `Modules/UI/Requests.lua` — fixed tagged calls in request list render paths
+- `Modules/UI/Search.lua` — fixed 1 call: MAIL/SCAN for `[SEARCH-004] Search complete`
+- `Modules/UI/Inventory.lua` — fixed tagged calls in inventory display paths
+- `Modules/Constants.lua` — added `SYNC.SEND = "outgoing sync data and acknowledgments"` and `SYNC.VALIDATE = "request mutation validation and rejection decisions"`
+
+### Result
+
+Zero untagged `Output:Debug()` calls remain across the entire codebase. All debug output is now fully filterable by category and tag.
 
 ---
 

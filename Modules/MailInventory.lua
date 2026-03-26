@@ -37,7 +37,7 @@ TOGBankClassic_MailInventory.hasUpdated = false
 function TOGBankClassic_MailInventory:ScanMailInventory()
 	-- Only scan if mail was accessed this session
 	if not self.hasUpdated then
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] ScanMailInventory called but hasUpdated=false, returning nil")
+		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] ScanMailInventory called but hasUpdated=false, returning nil")
 		return nil
 	end
 
@@ -45,7 +45,7 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 	local mailItemsTable = {}
 	local numItems, totalItems = GetInboxNumItems()
 
-	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Starting mailbox scan: %d mail messages", numItems)
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Starting mailbox scan: %d mail messages", numItems)
 
 	for i = 1, numItems do
 		local packageIcon, stationeryIcon, sender, subject, money, CODAmount,
@@ -94,7 +94,7 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 							ItemString = item.ItemString or storageItemString,
 							ForceLink = item.ForceLink or storageForceLink,
 						}
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] Item %s: MERGED (key=%s) added %d, total now %d",
+						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-003] Item %s: MERGED (key=%s) added %d, total now %d",
 							name, key, count, mailItemsTable[key].Count)
 					else
 						-- New item
@@ -105,13 +105,13 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 							ItemString = storageItemString,
 							ForceLink = storageForceLink,
 						}
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-003] New item in mailbox: %s (ID: %d, Count: %d, Link: %s, Key: %s)",
+						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-003] New item in mailbox: %s (ID: %d, Count: %d, Link: %s, Key: %s)",
 							name, itemID, count, storageLink and "preserved" or "stripped", key)
 					end
 				end
 			end
 		elseif hasItem and CODAmount > 0 then
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Skipping COD mail from %s (COD: %d copper)",
+			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Skipping COD mail from %s (COD: %d copper)",
 				sender or "Unknown", CODAmount)
 		end
 	end
@@ -123,10 +123,10 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 	end
 
 	-- Verify mailItems is a proper sequential array
-	TOGBankClassic_Output:Debug("MAIL", "Created mail items array with %d items", #mailItems)
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "Created mail items array with %d items", #mailItems)
 	for i = 1, math.min(3, #mailItems) do
 		if mailItems[i] then
-			TOGBankClassic_Output:Debug("MAIL", "  [%d] ID=%s, Count=%s", i, tostring(mailItems[i].ID), tostring(mailItems[i].Count))
+			TOGBankClassic_Output:Debug("MAIL", "SCAN", "  [%d] ID=%s, Count=%s", i, tostring(mailItems[i].ID), tostring(mailItems[i].Count))
 		end
 	end
 
@@ -139,10 +139,10 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 	}
 
 	-- Verify result structure
-	TOGBankClassic_Output:Debug("MAIL", "Mail result structure: items type=%s, length=%d", type(result.items), #result.items)
-	TOGBankClassic_Output:Debug("MAIL", "Mail result slots.count=%d", result.slots.count)
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "Mail result structure: items type=%s, length=%d", type(result.items), #result.items)
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "Mail result slots.count=%d", result.slots.count)
 
-	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Mail scan complete: %d unique items across %d mail messages",
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Mail scan complete: %d unique items across %d mail messages",
 		#mailItems, numItems)
 
 	return result

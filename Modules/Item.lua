@@ -135,7 +135,7 @@ function TOGBankClassic_Item:GetItemKey(link)
 			local result = "item:" .. table.concat(normalized, ":")
 			-- DEBUG: Log key normalization for items that might have level variations
 			if parts[9] and parts[9] ~= "" and parts[9] ~= "0" then
-				TOGBankClassic_Output:Debug("ITEM", "[DEDUP] GetItemKey: ID=%s level=%s -> key=%s", parts[1], parts[9], result)
+				TOGBankClassic_Output:Debug("ITEM", "LOAD", "[DEDUP] GetItemKey: ID=%s level=%s -> key=%s", parts[1], parts[9], result)
 			end
 			return result
 		else
@@ -158,16 +158,16 @@ function TOGBankClassic_Item:GetItems(items, callback)
 	for idx, item in pairs(items) do
 		-- Log every item we encounter to identify corrupted data
 		if not item then
-			TOGBankClassic_Output:Debug("ITEM", "[ITEM-FILTER] Skipping nil item at index %s", tostring(idx))
+			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping nil item at index %s", tostring(idx))
 		elseif type(item) ~= "table" then
-			TOGBankClassic_Output:Debug("ITEM", "[ITEM-FILTER] Skipping non-table item at index %s (type=%s)", tostring(idx), type(item))
+			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping non-table item at index %s (type=%s)", tostring(idx), type(item))
 		elseif not item.ID then
-			TOGBankClassic_Output:Debug("ITEM", "[ITEM-FILTER] Skipping item with nil ID at index %s", tostring(idx))
+			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping item with nil ID at index %s", tostring(idx))
 		elseif type(item.ID) ~= "number" then
-			TOGBankClassic_Output:Debug("ITEM", "[ITEM-FILTER] Skipping item with non-number ID at index %s (ID=%s, type=%s)",
+			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping item with non-number ID at index %s (ID=%s, type=%s)",
 				tostring(idx), tostring(item.ID), type(item.ID))
 		elseif item.ID <= 0 or item.ID < 100 then
-			TOGBankClassic_Output:Debug("ITEM", "[ITEM-FILTER] Skipping corrupted item with invalid ID at index %s (ID=%d)", tostring(idx), item.ID)
+			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping corrupted item with invalid ID at index %s (ID=%d)", tostring(idx), item.ID)
 		else
 			-- Valid item - add to processing list
 			total = total + 1
@@ -204,12 +204,12 @@ function TOGBankClassic_Item:GetItems(items, callback)
 		local item = wrapper.original
 
 		-- Debug: Log what we're about to process
-		TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Processing wrapper: id=%s, link=%s, original.ID=%s",
+		TOGBankClassic_Output:Debug("ITEM", "LOAD", "[ITEM-DEBUG] Processing wrapper: id=%s, link=%s, original.ID=%s",
 			tostring(itemID), tostring(itemLink), tostring(item and item.ID or "nil item"))
 
 		-- Final safety check before calling Blizzard API
 		if not itemID or type(itemID) ~= "number" or itemID <= 0 then
-			TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] SKIPPING INVALID: itemID=%s (type=%s)",
+			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-DEBUG] SKIPPING INVALID: itemID=%s (type=%s)",
 				tostring(itemID), type(itemID))
 			processed = processed + 1
 			checkComplete()
@@ -221,13 +221,13 @@ function TOGBankClassic_Item:GetItems(items, callback)
 
 			-- Double-check captured values
 			if not capturedItemID or type(capturedItemID) ~= "number" or capturedItemID <= 0 then
-				TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] CRITICAL: itemID validation failed after capture!")
+				TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-DEBUG] CRITICAL: itemID validation failed after capture!")
 				processed = processed + 1
 				checkComplete()
 			else
 				-- BRANCH 1: Item has link - just use it directly, no GetItemInfo calls
 				if capturedItemLink then
-					TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Item %d has link, using directly", capturedItemID)
+					TOGBankClassic_Output:Debug("ITEM", "LOAD", "[ITEM-DEBUG] Item %d has link, using directly", capturedItemID)
 					-- Only extract icon if Info doesn't already exist
 					if not capturedItem.Info then
 						-- Use GetItemInfo (not GetItemInfoInstant) so we get rarity and all fields.
@@ -267,7 +267,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 					local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemID)
 					if name then
 						-- Item data is cached, build Info directly without calling GetInfo (avoids redundant GetItemInfo call)
-						TOGBankClassic_Output:Debug("ITEM", "[ITEM-DEBUG] Item %d already cached", capturedItemID)
+						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[ITEM-DEBUG] Item %d already cached", capturedItemID)
 						local equip = C_Item.GetItemInventoryTypeByID(capturedItemID)
 						capturedItem.Info = {
 						class = itemClassId,
@@ -285,30 +285,30 @@ function TOGBankClassic_Item:GetItems(items, callback)
 					-- Don't call checkComplete here - will batch check after loop
 				else
 					-- Item not cached, need async load
-					TOGBankClassic_Output:Debug("ITEM", "[TRACE-1] Item %d not cached, calling CreateFromItemID", capturedItemID)
+					TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-1] Item %d not cached, calling CreateFromItemID", capturedItemID)
 					
 					pendingAsync = pendingAsync + 1  -- Track this async operation
 
 					local success, itemData = pcall(Item.CreateFromItemID, Item, capturedItemID)
 
-					TOGBankClassic_Output:Debug("ITEM", "[TRACE-2] CreateFromItemID result: success=%s, itemData=%s, type=%s",
+					TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-2] CreateFromItemID result: success=%s, itemData=%s, type=%s",
 						tostring(success), tostring(itemData), type(itemData))
 
 					if not success then
-						TOGBankClassic_Output:Debug("ITEM", "[TRACE-3] CreateFromItemID pcall failed: %s", tostring(itemData))
+						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-3] CreateFromItemID pcall failed: %s", tostring(itemData))
 						processed = processed + 1
 						checkComplete()
 					elseif not itemData then
-						TOGBankClassic_Output:Debug("ITEM", "[TRACE-4] CreateFromItemID returned nil")
+						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-4] CreateFromItemID returned nil")
 						processed = processed + 1
 						checkComplete()
 					elseif type(itemData) ~= "table" then
-						TOGBankClassic_Output:Debug("ITEM", "[TRACE-5] CreateFromItemID returned non-table: %s", type(itemData))
+						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-5] CreateFromItemID returned non-table: %s", type(itemData))
 						processed = processed + 1
 						checkComplete()
 					else
 						-- Got an Item object, now inspect its internal state
-						TOGBankClassic_Output:Debug("ITEM", "[TRACE-6] Inspecting Item object for ID %d", capturedItemID)
+						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-6] Inspecting Item object for ID %d", capturedItemID)
 
 						-- Try to access internal fields safely
 						local objectItemID = nil
@@ -316,33 +316,33 @@ function TOGBankClassic_Item:GetItems(items, callback)
 							objectItemID = itemData.itemID
 						end)
 
-						TOGBankClassic_Output:Debug("ITEM", "[TRACE-7] Internal field access: accessSuccess=%s, itemData.itemID=%s, type=%s",
+						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-7] Internal field access: accessSuccess=%s, itemData.itemID=%s, type=%s",
 							tostring(accessSuccess), tostring(objectItemID), type(objectItemID))
 
 						-- Check if itemID matches what we expect
 						if not accessSuccess then
-							TOGBankClassic_Output:Debug("ITEM", "[TRACE-8] Cannot access itemData.itemID (protected?)")
+							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-8] Cannot access itemData.itemID (protected?)")
 							processed = processed + 1
 							checkComplete()
 						elseif objectItemID == nil then
-							TOGBankClassic_Output:Debug("ITEM", "[TRACE-9] FOUND CORRUPTION: itemData.itemID is nil for requested ID %d - THIS IS THE BUG!", capturedItemID)
+							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-9] FOUND CORRUPTION: itemData.itemID is nil for requested ID %d - THIS IS THE BUG!", capturedItemID)
 							processed = processed + 1
 							checkComplete()
 						elseif type(objectItemID) ~= "number" then
-							TOGBankClassic_Output:Debug("ITEM", "[TRACE-10] itemData.itemID is not a number: %s", type(objectItemID))
+							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-10] itemData.itemID is not a number: %s", type(objectItemID))
 							processed = processed + 1
 							checkComplete()
 						elseif objectItemID ~= capturedItemID then
-							TOGBankClassic_Output:Debug("ITEM", "[TRACE-11] itemData.itemID mismatch: expected %d, got %d", capturedItemID, objectItemID)
+							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-11] itemData.itemID mismatch: expected %d, got %d", capturedItemID, objectItemID)
 							processed = processed + 1
 							checkComplete()
 						else
 							-- Everything looks good, try ContinueOnItemLoad
-							TOGBankClassic_Output:Debug("ITEM", "[TRACE-12] Item object valid (itemID=%d), calling ContinueOnItemLoad", objectItemID)
+							TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-12] Item object valid (itemID=%d), calling ContinueOnItemLoad", objectItemID)
 
 							local callbackSuccess, callbackError = pcall(function()
 								itemData:ContinueOnItemLoad(function()
-									TOGBankClassic_Output:Debug("ITEM", "[TRACE-13] ContinueOnItemLoad callback fired for ID %d", capturedItemID)
+										TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-13] ContinueOnItemLoad callback fired for ID %d", capturedItemID)
 									capturedItem.Info = self:GetInfo(capturedItemID, capturedItemLink)
 									table.insert(list, capturedItem)
 									count = count + 1
@@ -351,13 +351,13 @@ function TOGBankClassic_Item:GetItems(items, callback)
 								end)
 							end)
 
-							TOGBankClassic_Output:Debug("ITEM", "[TRACE-14] ContinueOnItemLoad pcall result: success=%s, error=%s",
+							TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-14] ContinueOnItemLoad pcall result: success=%s, error=%s",
 								tostring(callbackSuccess), tostring(callbackError))
 
 							processed = processed + 1
 
 							if not callbackSuccess then
-								TOGBankClassic_Output:Debug("ITEM", "[TRACE-15] ContinueOnItemLoad pcall FAILED for ID %d: %s",
+								TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-15] ContinueOnItemLoad pcall FAILED for ID %d: %s",
 									capturedItemID, tostring(callbackError))
 								pendingAsync = pendingAsync - 1  -- Async operation failed
 								checkComplete()

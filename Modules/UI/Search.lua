@@ -285,7 +285,7 @@ function TOGBankClassic_UI_Search:Open()
 	local needsRebuild = not self.searchDataBuilt or (self.lastRosterVersion ~= currentVersion)
 
 	if needsRebuild then
-		TOGBankClassic_Output:Debug("SEARCH", "Rebuilding search data (version changed: %s -> %s)",
+		TOGBankClassic_Output:Debug("UI", "FILTER", "Rebuilding search data (version changed: %s -> %s)",
 			tostring(self.lastRosterVersion or "nil"), tostring(currentVersion))
 		self:BuildSearchData()
 		self.searchDataBuilt = true
@@ -427,7 +427,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 end
 
 function TOGBankClassic_UI_Search:BuildSearchData()
-	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] BuildSearchData called - clearing and rebuilding search data")
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] BuildSearchData called - clearing and rebuilding search data")
 	self.SearchData = {
 		Corpus = {},
 		Lookup = {},
@@ -436,19 +436,19 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 	local info = TOGBankClassic_Guild.Info
 	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
 	if not info or not roster_alts then
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] BuildSearchData: no info or roster_alts, returning early")
+		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] BuildSearchData: no info or roster_alts, returning early")
 		return
 	end
 
 	local rosterCount = 0
 	for _ in pairs(roster_alts) do rosterCount = rosterCount + 1 end
-	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] BuildSearchData: processing %d roster alts", rosterCount)
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] BuildSearchData: processing %d roster alts", rosterCount)
 
 	local items = {}
 	for _, player in pairs(roster_alts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(player)
 		local alt = info.alts[norm]
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus loop: processing player=%s, norm=%s, has alt=%s",
+		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search corpus loop: processing player=%s, norm=%s, has alt=%s",
 			player, norm, tostring(alt ~= nil))
 		---START CHANGES
 		--if alt then
@@ -460,7 +460,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 				local beforeCount = #items
 				items = TOGBankClassic_Item:Aggregate(items, alt.items)
 				local afterCount = #items
-				TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search corpus: using alt.items for %s (%d items before, %d after aggregation)",
+				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search corpus: using alt.items for %s (%d items before, %d after aggregation)",
 					player, beforeCount, afterCount)
 			else
 				-- Fallback: aggregate from sources for backward compatibility
@@ -482,7 +482,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 	-- Count items in hash table (can't use # operator on hash tables)
 	local itemCount = 0
 	for _ in pairs(items) do itemCount = itemCount + 1 end
-	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] About to validate %d items before GetItems", itemCount)
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-DEBUG] About to validate %d items before GetItems", itemCount)
 
 	-- Validate and filter items before passing to GetItems
 	local validItems = {}
@@ -492,18 +492,18 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			table.insert(validItems, item)
 		else
 			invalidCount = invalidCount + 1
-			TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] WARNING: Skipping invalid item at key %s (ID: %s, Link: %s)",
+			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-DEBUG] WARNING: Skipping invalid item at key %s (ID: %s, Link: %s)",
 				tostring(key), tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
 		end
 	end
 
-	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-DEBUG] Passing %d valid items to GetItems (%d invalid skipped)",
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-DEBUG] Passing %d valid items to GetItems (%d invalid skipped)",
 		#validItems, invalidCount)
 
 	TOGBankClassic_Item:GetItems(validItems, function(list)
 		local listCount = 0
 		for _ in pairs(list) do listCount = listCount + 1 end
-		TOGBankClassic_Output:Debug("MAIL", "[SEARCH-006] GetItems callback fired with %d items", listCount)
+		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-006] GetItems callback fired with %d items", listCount)
 		for _, v in pairs(list) do
 			-- Skip malformed list entries
 			if v and v.ID and v.Info and v.Info.name then
@@ -515,9 +515,9 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 				if not corpusNamesSeen[v.Info.name] then
 					corpusNamesSeen[v.Info.name] = true
 					table.insert(self.SearchData.Corpus, v.Info.name)
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Corpus: added unique name '%s' (ID: %d)", v.Info.name, v.ID)
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Corpus: added unique name '%s' (ID: %d)", v.Info.name, v.ID)
 				else
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Corpus: skipping duplicate name '%s' (ID: %d already in corpus)", v.Info.name, v.ID)
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Corpus: skipping duplicate name '%s' (ID: %d already in corpus)", v.Info.name, v.ID)
 				end
 			end
 		end
@@ -526,7 +526,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			local altItems = {}
 			local norm = TOGBankClassic_Guild:NormalizeName(player)
 			local alt = info.alts[norm]
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results loop: processing player=%s, norm=%s, has alt=%s",
+			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search results loop: processing player=%s, norm=%s, has alt=%s",
 				player, norm, tostring(alt ~= nil))
 			---START CHANGES
 			--if alt then
@@ -538,7 +538,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 					for _, item in pairs(alt.items) do
 						table.insert(altItems, item)
 					end
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: using alt.items for %s", player)
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search results: using alt.items for %s", player)
 				else
 					-- Fallback: aggregate from sources for backward compatibility
 					if alt.bank then
@@ -555,7 +555,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			for _, itemEntry in pairs(altItems) do
 				local name = itemNames[itemEntry.ID]
 				if name then
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: adding %s with count %d for player %s to lookup",
+				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search results: adding %s with count %d for player %s to lookup",
 						name, itemEntry.Count or 0, player)
 					if not self.SearchData.Lookup[name] then
 						self.SearchData.Lookup[name] = {}
@@ -564,7 +564,7 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 					for _, existingEntry in pairs(self.SearchData.Lookup[name]) do
 						if existingEntry.alt == player and existingEntry.item.ID == itemEntry.ID then
 							found = true
-							TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search results: DUPLICATE FOUND - skipping %s (ID: %d) for %s",
+						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search results: DUPLICATE FOUND - skipping %s (ID: %d) for %s",
 								name, itemEntry.ID, player)
 							break
 						end
@@ -640,7 +640,7 @@ function TOGBankClassic_UI_Search:DrawContent()
 		return
 	end
 
-	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-004] Search for '%s': Corpus has %d entries", searchText, #searchData.Corpus)
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-004] Search for '%s': Corpus has %d entries", searchText, #searchData.Corpus)
 
 	local count = 0
 	local matchedNames = 0
@@ -651,20 +651,20 @@ function TOGBankClassic_UI_Search:DrawContent()
 			local result = string.find(v:lower(), searchText)
 			if result ~= nil then
 				matchedNames = matchedNames + 1
-				TOGBankClassic_Output:Debug("MAIL", "[SEARCH-004] Match #%d: '%s' contains '%s'", matchedNames, v, searchText)
+				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-004] Match #%d: '%s' contains '%s'", matchedNames, v, searchText)
 				local lookupList = searchData.Lookup[v]
 				if not lookupList then
 					-- No lookup for this name; skip
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search display: '%s' matched search but has NO lookup entries", v)
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search display: '%s' matched search but has NO lookup entries", v)
 				else
 					local lookupCount = 0
 					for _ in pairs(lookupList) do lookupCount = lookupCount + 1 end
-					TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search display: '%s' matched search, has %d lookup entries", v, lookupCount)
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search display: '%s' matched search, has %d lookup entries", v, lookupCount)
 					for _, vv in pairs(lookupList) do
 						--draw item larger to add pading - icon and label smaller by the same to get dimensions
 						local resultItem = vv.item
 						local bankAlt = vv.alt
-						TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Search display: showing %s with %d items for %s",
+						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search display: showing %s with %d items for %s",
 							resultItem.Info and resultItem.Info.name or "Unknown", resultItem.Count or 0, bankAlt)
 					
 					-- Draw item with tooltip support (tooltips automatically enabled by DrawItem)
@@ -688,7 +688,7 @@ function TOGBankClassic_UI_Search:DrawContent()
 		end
 	end
 
-	TOGBankClassic_Output:Debug("MAIL", "[SEARCH-004] Search complete: matched %d names, displayed %d result widgets", matchedNames, count)
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-004] Search complete: matched %d names, displayed %d result widgets", matchedNames, count)
 
 	local status = count .. " Result"
 	if count > 1 then

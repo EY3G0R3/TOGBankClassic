@@ -339,19 +339,19 @@ local function sanitizeRequest(req)
 	-- REJECT empty required fields (Phase 1 validation)
 	local item = req.item and tostring(req.item) or ""
 	if item == "" then
-		TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: empty item field")
+		TOGBankClassic_Output:Debug("REQUESTS", "VALIDATE", "Rejected request: empty item field")
 		return nil
 	end
 
 	local requesterRaw = req.requester and tostring(req.requester) or ""
 	if requesterRaw == "" or requesterRaw == "Unknown" then
-		TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: invalid requester '%s'", requesterRaw)
+		TOGBankClassic_Output:Debug("REQUESTS", "VALIDATE", "Rejected request: invalid requester '%s'", requesterRaw)
 		return nil
 	end
 
 	local bankRaw = req.bank and tostring(req.bank) or ""
 	if bankRaw == "" then
-		TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: empty bank field")
+		TOGBankClassic_Output:Debug("REQUESTS", "VALIDATE", "Rejected request: empty bank field")
 		return nil
 	end
 
@@ -359,7 +359,7 @@ local function sanitizeRequest(req)
 
 	local quantity = math.max(tonumber(req.quantity or 0) or 0, 0)
 	if quantity == 0 then
-		TOGBankClassic_Output:Debug("REQUESTS", "Rejected request: quantity is zero")
+		TOGBankClassic_Output:Debug("REQUESTS", "VALIDATE", "Rejected request: quantity is zero")
 		return nil
 	end
 
@@ -498,7 +498,7 @@ end
 -- Returns: "added", "updated", "kept", "tombstoned", or nil on error
 local function mergeRequest(requests, tombstones, id, incoming)
 	if not incoming or not id then
-		TOGBankClassic_Output:Debug("SYNC", "mergeRequest: Invalid input (id=%s, incoming=%s)",
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "mergeRequest: Invalid input (id=%s, incoming=%s)",
 			tostring(id), tostring(incoming ~= nil))
 		return nil
 	end
@@ -514,7 +514,7 @@ local function mergeRequest(requests, tombstones, id, incoming)
 
 	-- Check tombstone
 	if tombstoneTs > 0 and incomingTs <= tombstoneTs then
-		TOGBankClassic_Output:Debug("SYNC", "mergeRequest: TOMBSTONED - id=%s (tombstoneTs=%d, incomingTs=%d)",
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "mergeRequest: TOMBSTONED - id=%s (tombstoneTs=%d, incomingTs=%d)",
 			id, tombstoneTs, incomingTs)
 		return "tombstoned"
 	end
@@ -532,7 +532,7 @@ local function mergeRequest(requests, tombstones, id, incoming)
 			-- Backdate the tombstone to when the request actually expired so it
 			-- doesn't linger for a full extra 30 days from now.
 			tombstones[id] = incomingTs + REQUEST_LOG.EXPIRY_SECONDS
-			TOGBankClassic_Output:Debug("SYNC",
+			TOGBankClassic_Output:Debug("SYNC", "MERGE",
 				"mergeRequest: EXPIRED-TOMBSTONED - id=%s (status=%s, age=%dd)",
 				id, clean.status, math.floor((now - incomingTs) / 86400))
 			return "tombstoned"
@@ -549,7 +549,7 @@ local function mergeRequest(requests, tombstones, id, incoming)
 		local thresholdSec = thresholdDays * 86400
 		if (now - incomingTs) > thresholdSec then
 			tombstones[id] = now
-			TOGBankClassic_Output:Debug("SYNC",
+			TOGBankClassic_Output:Debug("SYNC", "MERGE",
 				"mergeRequest: STALE-OPEN-TOMBSTONED - id=%s (age=%dd, threshold=%dd)",
 				id, math.floor((now - incomingTs) / 86400), thresholdDays)
 			return "tombstoned"
@@ -615,7 +615,7 @@ function Guild:EnsureRequestsInitialized()
 
 	-- Migrate from array to map format if needed (detect by checking for numeric keys)
 	if self.Info.requests[1] ~= nil then
-		TOGBankClassic_Output:Debug("[MIGRATE] Converting requests from array to map format")
+		TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "[MIGRATE] Converting requests from array to map format")
 		self.Info.requests = requestsToMap(self.Info.requests)
 		self.requestsDirty = true
 	end
@@ -628,7 +628,7 @@ function Guild:EnsureRequestsInitialized()
 	-- Migrate away from log-based storage (v0.9.0+)
 	-- The log is no longer used - we now use simple delta-based sync
 	if self.Info.requestLog or self.Info.requestLogSeq or self.Info.requestLogApplied then
-		TOGBankClassic_Output:Debug("[MIGRATE] Removing deprecated request log data")
+		TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "[MIGRATE] Removing deprecated request log data")
 		self.Info.requestLog = nil
 		self.Info.requestLogSeq = nil
 		self.Info.requestLogApplied = nil
@@ -669,7 +669,7 @@ function Guild:NormalizeRequestList()
 	end
 
 	local before = countRequests(self.Info.requests)
-	TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Starting with %d requests", before))
+	TOGBankClassic_Output:Debug("DATABASE", "NORMALIZE", "NormalizeRequestList: Starting with %d requests", before)
 
 	local normalized = {}
 	local tombstones = self.Info.requestsTombstones or {}
@@ -681,7 +681,7 @@ function Guild:NormalizeRequestList()
 			local tombstoneTs = tonumber(tombstones[clean.id] or 0) or 0
 			if tombstoneTs > 0 and (tonumber(clean.updatedAt or 0) or 0) <= tombstoneTs then
 				-- Skip entries that were deleted after their last update.
-				TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Skipping tombstoned request id=%s", clean.id))
+				TOGBankClassic_Output:Debug("DATABASE", "NORMALIZE", "NormalizeRequestList: Skipping tombstoned request id=%s", clean.id)
 			else
 				local existing = normalized[clean.id]
 				if existing then
@@ -689,7 +689,7 @@ function Guild:NormalizeRequestList()
 					local incomingUpdated = tonumber(clean.updatedAt or clean.date or 0) or 0
 					if incomingUpdated > existingUpdated then
 						normalized[clean.id] = clean
-						TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Updated duplicate id=%s", clean.id))
+						TOGBankClassic_Output:Debug("DATABASE", "NORMALIZE", "NormalizeRequestList: Updated duplicate id=%s", clean.id)
 					end
 				else
 					normalized[clean.id] = clean
@@ -716,7 +716,7 @@ function Guild:NormalizeRequestList()
 	self.requestsDirty = false
 
 	local after = countRequests(normalized)
-	TOGBankClassic_Output:Debug(string.format("NormalizeRequestList: Finished with %d requests (calling PruneRequests)", after))
+	TOGBankClassic_Output:Debug("DATABASE", "NORMALIZE", "NormalizeRequestList: Finished with %d requests (calling PruneRequests)", after)
 
 	self:PruneRequests()
 end
@@ -764,18 +764,18 @@ end
 -- Each request is merged using last-writer-wins based on updatedAt.
 function Guild:ApplyRequestSnapshot(payload)
 	if not payload or type(payload) ~= "table" then
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Invalid payload")
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestSnapshot: Invalid payload")
 		return false
 	end
 	if not self.Info then
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: No Guild Info")
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestSnapshot: No Guild Info")
 		return false
 	end
 	self:EnsureRequestsInitialized()
 
 	local incomingList = payload.requests
 	if not incomingList or type(incomingList) ~= "table" then
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: No requests in payload")
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestSnapshot: No requests in payload")
 		return false
 	end
 
@@ -785,7 +785,7 @@ function Guild:ApplyRequestSnapshot(payload)
 		requestCount = requestCount + 1
 	end
 
-	TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Merging %d incoming requests", requestCount)
+	TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestSnapshot: Merging %d incoming requests", requestCount)
 
 	-- Merge incoming tombstones (keep most recent per ID)
 	local tombstones = self.Info.requestsTombstones or {}
@@ -817,7 +817,7 @@ function Guild:ApplyRequestSnapshot(payload)
 	self:PruneRequestTombstones()
 	self:RefreshRequestsUI()
 
-	TOGBankClassic_Output:Debug("SYNC", "ApplyRequestSnapshot: Complete - added=%d, updated=%d, kept=%d, tombstoned=%d",
+	TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestSnapshot: Complete - added=%d, updated=%d, kept=%d, tombstoned=%d",
 		stats.added, stats.updated, stats.kept, stats.tombstoned)
 	return true
 end
@@ -833,7 +833,7 @@ function Guild:PruneRequests()
 	local prunedCount = 0
 	local latest = tonumber(self.Info.requestsVersion or 0) or 0
 
-	TOGBankClassic_Output:Debug(string.format("PruneRequests: Starting with %d requests", before))
+	TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "PruneRequests: Starting with %d requests", before)
 
 	for id, req in pairs(self.Info.requests) do
 		local updated = tonumber(req.updatedAt or req.date or 0) or 0
@@ -847,8 +847,8 @@ function Guild:PruneRequests()
 		if tooOld then
 			self.Info.requests[id] = nil
 			prunedCount = prunedCount + 1
-			TOGBankClassic_Output:Debug(string.format("PruneRequests: Pruning request id=%s, status=%s, age=%d seconds",
-				req.id or "nil", req.status or "nil", now - updated))
+			TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "PruneRequests: Pruning request id=%s, status=%s, age=%d seconds",
+				req.id or "nil", req.status or "nil", now - updated)
 		else
 			if updated > latest then
 				latest = updated
@@ -857,13 +857,13 @@ function Guild:PruneRequests()
 	end
 
 	if prunedCount > 0 then
-		TOGBankClassic_Output:Debug(string.format("PruneRequests: Pruned %d old completed requests", prunedCount))
+		TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "PruneRequests: Pruned %d old completed requests", prunedCount)
 	end
 
 	self.Info.requestsVersion = latest
 	local after = countRequests(self.Info.requests)
 
-	TOGBankClassic_Output:Debug(string.format("PruneRequests: Finished with %d requests (%d pruned)", after, prunedCount))
+	TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "PruneRequests: Finished with %d requests (%d pruned)", after, prunedCount)
 
 	return prunedCount, before, after
 end
@@ -873,7 +873,7 @@ end
 -- Each mutation type is gated on the appropriate permission check.
 function Guild:ApplyRequestMutation(entry, sender)
 	if not entry or type(entry) ~= "table" or not self.Info then
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: Invalid entry or missing Guild Info")
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: Invalid entry or missing Guild Info")
 		return false
 	end
 	self:EnsureRequestsInitialized()
@@ -882,12 +882,12 @@ function Guild:ApplyRequestMutation(entry, sender)
 	local entryTs = tonumber(entry.ts or 0) or 0
 	local requestId = entry.requestId or (entry.request and entry.request.id)
 	if not entryType or not requestId then
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: Missing entryType or requestId (type=%s, id=%s)",
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: Missing entryType or requestId (type=%s, id=%s)",
 			tostring(entryType), tostring(requestId))
 		return false
 	end
 
-	TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: type=%s, requestId=%s, ts=%d, sender=%s",
+	TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: type=%s, requestId=%s, ts=%d, sender=%s",
 		entryType, requestId, entryTs, tostring(sender))
 
 	-- REQSYNC-001: Normalize sender once for all checks below.
@@ -902,7 +902,7 @@ function Guild:ApplyRequestMutation(entry, sender)
 		if normSender then
 			local fakeReq = {}  -- CanDeleteRequest only needs actor+GM check, not req fields
 			if not self:CanDeleteRequest(fakeReq, normSender) then
-				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: DELETE rejected - sender %s lacks permission", normSender)
+				TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: DELETE rejected - sender %s lacks permission", normSender)
 				return false
 			end
 		end
@@ -912,7 +912,7 @@ function Guild:ApplyRequestMutation(entry, sender)
 			tombstones[requestId] = entryTs
 			self.Info.requestsTombstones = tombstones
 		end
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: DELETE applied for id=%s", requestId)
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: DELETE applied for id=%s", requestId)
 		return true
 	end
 
@@ -921,13 +921,13 @@ function Guild:ApplyRequestMutation(entry, sender)
 	if entryType == "fulfill" then
 		if normSender then
 			if not (self:IsBank(normSender) or self:SenderIsGM(normSender)) then
-				TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: FULFILL rejected - sender %s is not a banker or GM", normSender)
+				TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: FULFILL rejected - sender %s is not a banker or GM", normSender)
 				return false
 			end
 		end
 		local req = self.Info.requests[requestId]
 		if not req or req.status == "cancelled" or req.status == "complete" then
-			TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: FULFILL rejected (request not found or terminal state) id=%s", requestId)
+			TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: FULFILL rejected (request not found or terminal state) id=%s", requestId)
 			return false
 		end
 		local targetFulfilled = entry.targetFulfilled
@@ -952,7 +952,7 @@ function Guild:ApplyRequestMutation(entry, sender)
 		if entryTs > 0 then
 			req.updatedAt = math.max(tonumber(req.updatedAt or 0) or 0, entryTs)
 		end
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: FULFILL applied for id=%s (fulfilled=%d)",
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: FULFILL applied for id=%s (fulfilled=%d)",
 			requestId, req.fulfilled)
 		return true
 	end
@@ -965,7 +965,7 @@ function Guild:ApplyRequestMutation(entry, sender)
 				-- Anyone can add, but the requester field must match the sender.
 				local claimedRequester = entry.request.requester and self:NormalizeName(entry.request.requester)
 				if claimedRequester and claimedRequester ~= normSender then
-					TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: ADD rejected - sender %s claimed requester %s",
+					TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: ADD rejected - sender %s claimed requester %s",
 						normSender, claimedRequester)
 					return false
 				end
@@ -974,7 +974,7 @@ function Guild:ApplyRequestMutation(entry, sender)
 				-- Use existing req if we have it; fall back to the embedded snapshot.
 				local reqForCheck = self.Info.requests[requestId] or entry.request
 				if not self:CanCancelRequest(reqForCheck, normSender) then
-					TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: CANCEL rejected - sender %s lacks permission for id=%s",
+					TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: CANCEL rejected - sender %s lacks permission for id=%s",
 						normSender, requestId)
 					return false
 				end
@@ -982,25 +982,25 @@ function Guild:ApplyRequestMutation(entry, sender)
 				-- Banker or GM only.
 				local reqForCheck = self.Info.requests[requestId] or entry.request
 				if not self:CanCompleteRequest(reqForCheck, normSender) then
-					TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: COMPLETE rejected - sender %s lacks permission for id=%s",
+					TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: COMPLETE rejected - sender %s lacks permission for id=%s",
 						normSender, requestId)
 					return false
 				end
 			end
 		end
 
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: Merging request snapshot type=%s, id=%s, status=%s, updatedAt=%s",
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: Merging request snapshot type=%s, id=%s, status=%s, updatedAt=%s",
 			entryType, requestId, tostring(entry.request.status), tostring(entry.request.updatedAt))
 
 		local result = mergeRequest(self.Info.requests, tombstones, requestId, entry.request)
 
-		TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: mergeRequest result=%s for type=%s, id=%s",
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: mergeRequest result=%s for type=%s, id=%s",
 			tostring(result), entryType, requestId)
 
 		return result == "added" or result == "updated"
 	end
 
-	TOGBankClassic_Output:Debug("SYNC", "ApplyRequestMutation: No action taken for type=%s, id=%s (no request data)",
+	TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: No action taken for type=%s, id=%s (no request data)",
 		entryType, requestId)
 	return false
 end
@@ -1009,7 +1009,7 @@ end
 -- mutation: { type, requestId, request (for add), delta/targetFulfilled (for fulfill) }
 function Guild:BroadcastRequestMutation(mutation)
 	if not mutation or type(mutation) ~= "table" then
-		TOGBankClassic_Output:Debug("SYNC", "BroadcastRequestMutation: Invalid mutation (nil or not table)")
+		TOGBankClassic_Output:Debug("SYNC", "BROADCAST", "BroadcastRequestMutation: Invalid mutation (nil or not table)")
 		return
 	end
 	local now = GetServerTime()
@@ -1031,18 +1031,18 @@ function Guild:BroadcastRequestMutation(mutation)
 		}}
 	}
 
-	TOGBankClassic_Output:Debug("SYNC", "BroadcastRequestMutation: Sending type=%s, requestId=%s, actor=%s, ts=%d, hasRequest=%s",
+	TOGBankClassic_Output:Debug("SYNC", "BROADCAST", "BroadcastRequestMutation: Sending type=%s, requestId=%s, actor=%s, ts=%d, hasRequest=%s",
 		tostring(mutation.type), tostring(mutation.requestId), actor, now, tostring(mutation.request ~= nil))
 
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 
-	TOGBankClassic_Output:Debug("SYNC", "BroadcastRequestMutation: Serialized payload, size=%d bytes, calling SendCommMessage", #data)
+	TOGBankClassic_Output:Debug("SYNC", "BROADCAST", "BroadcastRequestMutation: Serialized payload, size=%d bytes, calling SendCommMessage", #data)
 
 	-- SYNC-010: Use dedicated togbank-rm prefix for request mutations
 	-- Separate throttle bucket from togbank-d prevents BULK snapshot syncs from blocking ALERT mutations
 	local sendResult = TOGBankClassic_Core:SendCommMessage("togbank-rm", data, "Guild", nil, "ALERT")
 
-	TOGBankClassic_Output:Debug("SYNC", "BroadcastRequestMutation: SendCommMessage returned %s for type=%s", tostring(sendResult), tostring(mutation.type))
+	TOGBankClassic_Output:Debug("SYNC", "BROADCAST", "BroadcastRequestMutation: SendCommMessage returned %s for type=%s", tostring(sendResult), tostring(mutation.type))
 end
 
 -- After a local mutation, update version and refresh UI.
@@ -1600,21 +1600,21 @@ end
 -- Receive mutation entries from another player and apply them.
 function Guild:ReceiveRequestMutations(payload, sender)
 	if not payload or type(payload) ~= "table" then
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Invalid payload from %s", tostring(sender))
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Invalid payload from %s", tostring(sender))
 		return
 	end
 	local entries = payload.logEntries
 	if not entries or type(entries) ~= "table" then
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: No logEntries in payload from %s", tostring(sender))
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: No logEntries in payload from %s", tostring(sender))
 		return
 	end
 	if not self.Info then
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: No Guild Info, ignoring mutations from %s", tostring(sender))
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: No Guild Info, ignoring mutations from %s", tostring(sender))
 		return
 	end
 	self:EnsureRequestsInitialized()
 
-	TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Processing %d entries from %s", #entries, tostring(sender))
+	TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Processing %d entries from %s", #entries, tostring(sender))
 
 	local applied = 0
 	local fetchIds = {}  -- IDs of unknown requests referenced by fulfill mutations
@@ -1622,15 +1622,15 @@ function Guild:ReceiveRequestMutations(payload, sender)
 		if entry and type(entry) == "table" then
 			local entryType = entry.type or "unknown"
 			local requestId = entry.requestId or (entry.request and entry.request.id) or "?"
-			TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Entry %d/%d: type=%s, requestId=%s",
+			TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Entry %d/%d: type=%s, requestId=%s",
 				i, #entries, entryType, tostring(requestId))
 
 			if self:ApplyRequestMutation(entry, sender) then
 				applied = applied + 1
-				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Entry %d APPLIED (type=%s, id=%s)",
+				TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Entry %d APPLIED (type=%s, id=%s)",
 					i, entryType, tostring(requestId))
 			else
-				TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Entry %d REJECTED (type=%s, id=%s)",
+				TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Entry %d REJECTED (type=%s, id=%s)",
 					i, entryType, tostring(requestId))
 				-- SYNC-013: If a fulfill mutation is rejected because we don't have the request
 				-- locally, queue an immediate by-id fetch from the sender (the banker who just
@@ -1638,7 +1638,7 @@ function Guild:ReceiveRequestMutations(payload, sender)
 				-- serialised before the fill happened, so it arrived with status="open".
 				if entryType == "fulfill" and requestId and requestId ~= "?" then
 					if not self.Info.requests[requestId] then
-						TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Queuing on-demand fetch for unknown request id=%s from %s", tostring(requestId), tostring(sender))
+						TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Queuing on-demand fetch for unknown request id=%s from %s", tostring(requestId), tostring(sender))
 						table.insert(fetchIds, requestId)
 					end
 				end
@@ -1648,16 +1648,16 @@ function Guild:ReceiveRequestMutations(payload, sender)
 
 	-- Fire on-demand by-id fetch for any fulfill-referenced requests we don't have locally
 	if #fetchIds > 0 and sender and sender ~= "" then
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Fetching %d unknown request(s) from %s", #fetchIds, tostring(sender))
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Fetching %d unknown request(s) from %s", #fetchIds, tostring(sender))
 		self:QueryRequestsById(sender, fetchIds, "NORMAL")
 	end
 
 	if applied > 0 then
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: Applied %d/%d entries from %s",
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Applied %d/%d entries from %s",
 			applied, #entries, tostring(sender))
 		self:FinalizeMutation()
 	else
-		TOGBankClassic_Output:Debug("SYNC", "ReceiveRequestMutations: No entries applied from %s", tostring(sender))
+		TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: No entries applied from %s", tostring(sender))
 	end
 end
 
@@ -1788,14 +1788,14 @@ end
 
 function Guild:CancelRequest(requestId, actor)
 	if not self.Info or not self.Info.requests or not requestId then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Missing data (Info=%s, requests=%s, requestId=%s)",
+		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Missing data (Info=%s, requests=%s, requestId=%s)",
 			tostring(self.Info ~= nil), tostring(self.Info and self.Info.requests ~= nil), tostring(requestId))
 		return false
 	end
 
 	local req = self.Info.requests[requestId]
 	if not req then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Request not found (id=%s)", tostring(requestId))
+		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Request not found (id=%s)", tostring(requestId))
 		return false
 	end
 
@@ -1803,17 +1803,17 @@ function Guild:CancelRequest(requestId, actor)
 	local quantity = tonumber(req.quantity or 0) or 0
 	local fulfilled = tonumber(req.fulfilled or 0) or 0
 	if req.status == "cancelled" or req.status == "complete" then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Already in terminal state (status=%s)", req.status)
+		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Already in terminal state (status=%s)", req.status)
 		return false
 	end
 	if req.status == "fulfilled" or (quantity > 0 and fulfilled >= quantity) then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Already fulfilled (status=%s, fulfilled=%d, quantity=%d)",
+		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Already fulfilled (status=%s, fulfilled=%d, quantity=%d)",
 			req.status, fulfilled, quantity)
 		return false
 	end
 
 	if not self:CanCancelRequest(req, actor or self:GetPlayer()) then
-		TOGBankClassic_Output:Debug("SYNC", "CancelRequest FAILED: Permission denied (actor=%s, requester=%s)",
+		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Permission denied (actor=%s, requester=%s)",
 			tostring(actor or self:GetPlayer()), tostring(req.requester))
 		return false
 	end
@@ -1824,12 +1824,12 @@ function Guild:CancelRequest(requestId, actor)
 	req.status = "cancelled"
 	req.updatedAt = now
 
-	TOGBankClassic_Output:Debug("SYNC", "CancelRequest SUCCESS: id=%s, item=%s, requester=%s, oldStatus=%s, updatedAt=%d",
+	TOGBankClassic_Output:Debug("SYNC", "APPLY", "CancelRequest SUCCESS: id=%s, item=%s, requester=%s, oldStatus=%s, updatedAt=%d",
 		requestId, req.item or "?", req.requester or "?", oldStatus, now)
 
 	-- Broadcast and finalize
 	self:BroadcastRequestMutation({ type = "cancel", requestId = requestId, request = req })
-	TOGBankClassic_Output:Debug("SYNC", "CancelRequest: Broadcast sent for id=%s", requestId)
+	TOGBankClassic_Output:Debug("SYNC", "BROADCAST", "CancelRequest: Broadcast sent for id=%s", requestId)
 
 	self:FinalizeMutation(now)
 	return true
@@ -1910,7 +1910,7 @@ function Guild:ExpireStaleRequests(actor)
 
 	local normActor = self:NormalizeName(actor or self:GetPlayer())
 	if not self:CanManageRequests(normActor) then
-		TOGBankClassic_Output:Debug("SYNC", "ExpireStaleRequests: Permission denied (actor=%s)", tostring(normActor))
+		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "ExpireStaleRequests: Permission denied (actor=%s)", tostring(normActor))
 		return 0
 	end
 

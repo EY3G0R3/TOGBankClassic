@@ -166,11 +166,11 @@ function TOGBankClassic_Bank:Scan()
 	alt.money = money
 
 	-- Scan mail inventory if mail was accessed
-	TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Bank:Scan() for player '%s', hasUpdated=%s",
+	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Bank:Scan() for player '%s', hasUpdated=%s",
 		player, tostring(TOGBankClassic_MailInventory.hasUpdated))
 
 	if TOGBankClassic_MailInventory.hasUpdated then
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Starting mail scan for player '%s'", player)
+		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Starting mail scan for player '%s'", player)
 
 		local mailData = TOGBankClassic_MailInventory:ScanMailInventory()
 		if mailData then
@@ -187,22 +187,22 @@ function TOGBankClassic_Bank:Scan()
 				previousItemCount = #alt.mail.items
 			end
 
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Replacing mail data for '%s': old=%d items, new=%d items",
+			TOGBankClassic_Output:Debug("MAIL", "STORE", "[MAIL-002] Replacing mail data for '%s': old=%d items, new=%d items",
 				player, previousItemCount, itemCount)
 
 			alt.mail = mailData
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] ASSIGNED alt.mail with %d items, version=%s, lastScan=%s",
+			TOGBankClassic_Output:Debug("MAIL", "STORE", "[MAIL-002] ASSIGNED alt.mail with %d items, version=%s, lastScan=%s",
 				#mailData.items, tostring(mailData.version), tostring(mailData.lastScan))
 
 			-- Verify assignment worked
 			if alt.mail then
-				TOGBankClassic_Output:Debug("MAIL", "Confirmed: alt.mail exists with %d items", #alt.mail.items)
+				TOGBankClassic_Output:Debug("MAIL", "STORE", "Confirmed: alt.mail exists with %d items", #alt.mail.items)
 			else
-				TOGBankClassic_Output:Debug("MAIL", "ERROR: alt.mail is nil after assignment!")
+				TOGBankClassic_Output:Debug("MAIL", "STORE", "ERROR: alt.mail is nil after assignment!")
 			end
 		end
 
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-002] Clearing hasUpdated flag after scan")
+		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Clearing hasUpdated flag after scan")
 		TOGBankClassic_MailInventory.hasUpdated = false
 	end
 
@@ -220,7 +220,7 @@ function TOGBankClassic_Bank:Scan()
 				table.insert(bankSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("DATABASE", "SOURCES - bank.items (first 3): %s", table.concat(bankSample, ", "))
+		TOGBankClassic_Output:Debug("DATABASE", "STORE", "SOURCES - bank.items (first 3): %s", table.concat(bankSample, ", "))
 	end
 	if #bagItems > 0 then
 		local bagSample = {}
@@ -230,7 +230,7 @@ function TOGBankClassic_Bank:Scan()
 				table.insert(bagSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("DATABASE", "SOURCES - bags.items (first 3): %s", table.concat(bagSample, ", "))
+		TOGBankClassic_Output:Debug("DATABASE", "STORE", "SOURCES - bags.items (first 3): %s", table.concat(bagSample, ", "))
 	end
 	if #mailItems > 0 then
 		local mailSample = {}
@@ -240,7 +240,7 @@ function TOGBankClassic_Bank:Scan()
 				table.insert(mailSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("DATABASE", "SOURCES - mail.items (first 3): %s", table.concat(mailSample, ", "))
+		TOGBankClassic_Output:Debug("DATABASE", "STORE", "SOURCES - mail.items (first 3): %s", table.concat(mailSample, ", "))
 	end
 
 	-- Aggregate all three sources (returns table with composite keys, deduplicates by ID)
@@ -262,7 +262,7 @@ function TOGBankClassic_Bank:Scan()
 				table.insert(scanSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
 			end
 		end
-		TOGBankClassic_Output:Debug("DATABASE", "After Bank:Scan aggregation - First 5 items: %s", table.concat(scanSample, ", "))
+		TOGBankClassic_Output:Debug("DATABASE", "STORE", "After Bank:Scan aggregation - First 5 items: %s", table.concat(scanSample, ", "))
 	end
 
 	-- Also clean up source arrays to remove any duplicates (in case of corrupted data)
@@ -316,18 +316,18 @@ function TOGBankClassic_Bank:Scan()
 
 		if currentMailHash ~= previousMailHash then
 			alt.mailHash = currentMailHash
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail hash changed for %s: %s (was: %s, %d items)",
+			TOGBankClassic_Output:Debug("MAIL", "STORE", "[MAIL-012] Mail hash changed for %s: %s (was: %s, %d items)",
 				player, tostring(currentMailHash), tostring(previousMailHash), #alt.mail.items)
 		else
 			-- Ensure mailHash is set even if unchanged (in case it was missing before)
 			alt.mailHash = currentMailHash
-			TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail hash unchanged for %s: %s (%d items)",
+			TOGBankClassic_Output:Debug("MAIL", "STORE", "[MAIL-012] Mail hash unchanged for %s: %s (%d items)",
 				player, tostring(currentMailHash), #alt.mail.items)
 		end
 	else
 		-- No mail data structure (mail was never scanned this session)
 		-- Keep previous mailHash if it exists to preserve data across sessions
-		TOGBankClassic_Output:Debug("MAIL", "[MAIL-012] Mail not scanned this session for %s, preserving existing mailHash", player)
+		TOGBankClassic_Output:Debug("MAIL", "STORE", "[MAIL-012] Mail not scanned this session for %s, preserving existing mailHash", player)
 	end
 
 	-- Initialize tables if needed
@@ -337,17 +337,17 @@ function TOGBankClassic_Bank:Scan()
 
 	-- Log what we're about to save
 	if alt.mail then
-		TOGBankClassic_Output:Debug("MAIL", "alt.mail exists with %d items, type=%s", #alt.mail.items, type(alt.mail))
+		TOGBankClassic_Output:Debug("MAIL", "STORE", "alt.mail exists with %d items, type=%s", #alt.mail.items, type(alt.mail))
 		-- Handle both old format (number) and new format (table)
 		if type(alt.mail.slots) == "table" then
-			TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = table with count=%d", alt.mail.slots.count)
+			TOGBankClassic_Output:Debug("MAIL", "STORE", "alt.mail.slots = table with count=%d", alt.mail.slots.count)
 		elseif type(alt.mail.slots) == "number" then
-			TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = %d (old format, migrating)", alt.mail.slots)
+			TOGBankClassic_Output:Debug("MAIL", "STORE", "alt.mail.slots = %d (old format, migrating)", alt.mail.slots)
 			-- Migrate old format to new format
 			local oldSlots = alt.mail.slots
 			alt.mail.slots = { count = #alt.mail.items, total = oldSlots }
 		else
-			TOGBankClassic_Output:Debug("MAIL", "alt.mail.slots = nil")
+			TOGBankClassic_Output:Debug("MAIL", "STORE", "alt.mail.slots = nil")
 		end
 	end
 
@@ -355,9 +355,9 @@ function TOGBankClassic_Bank:Scan()
 	info.alts[player] = alt
 
 	if alt.mail then
-		TOGBankClassic_Output:Debug("MAIL", "Saved mail to info.alts[%s] (%d items)", player, #alt.mail.items)
+		TOGBankClassic_Output:Debug("MAIL", "STORE", "Saved mail to info.alts[%s] (%d items)", player, #alt.mail.items)
 	else
-		TOGBankClassic_Output:Debug("MAIL", "No mail data to save for %s", player)
+		TOGBankClassic_Output:Debug("MAIL", "STORE", "No mail data to save for %s", player)
 	end
 
 	-- DELTA-021: Save snapshot after scan so next broadcast can compute proper delta

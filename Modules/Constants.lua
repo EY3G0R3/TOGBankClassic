@@ -63,9 +63,14 @@ DEBUG_TAGS = {
 		["ALT-REQUEST"]       = "alt-request send / receive decisions",
 		["HASH-SKIP"]         = "hash comparison skip paths",
 		["SETTINGS"]          = "guild settings broadcast / receive (maxRequestPercent, autoTombstoneDays)",
-		["MAIL-012"]          = "MAIL-012 diagnostic traces",
-		["DELTA-014"]         = "DELTA-014 diagnostic traces",
+		["MAIL-SYNC"]         = "mail hash sync query decisions (when/why to query for mail updates)",
+		["PULL-HASH"]         = "requester hash data included in pull-based requests",
 		["INTEGRITY-MISMATCH"] = "stop-marker present but CRC failed (genuine bit-corruption, not truncation)",
+		["RECV"]    = "general incoming message dispatch and receipt",
+		["WHISPER"] = "whisper send routing and online-check decisions",
+		["INIT"]    = "addon and library initialization events",
+		["HELLO"]   = "hello / hello-reply protocol ping",
+		["HL"]      = "hash-list (HL) request send and receive",
 	},
 	SYNC = {
 		["HASH-MATCH"]      = "hash comparison decisions",
@@ -73,6 +78,11 @@ DEBUG_TAGS = {
 		["RECEIVE"]         = "full alt data receive / sanitize",
 		["MERGE"]           = "request log merge decisions",
 		["PROGRESS"]        = "banker data sync progress counters",
+		["SLOT-CORRECTION"] = "bank/bags slot count corrections applied from peer no-change messages",
+		["APPLY"]           = "applying request snapshots and mutations to local state",
+		["BROADCAST"]       = "broadcasting request mutations to guild channel",
+		["SEND"]            = "outgoing sync data and acknowledgments",
+		["VALIDATE"]        = "request mutation validation and rejection decisions",
 	},
 	DELTA = {
 		APPLY        = "applying deltas to local state",
@@ -88,7 +98,50 @@ DEBUG_TAGS = {
 		RECEIVE = "incoming request data",
 		SEND    = "outgoing request data",
 		INDEX   = "index sync operations",
-		PROTO2  = "togbank-ri / togbank-rd2 compact protocol (send + receive)",
+		PROTO2    = "togbank-ri / togbank-rd2 compact protocol (send + receive)",
+		VALIDATE  = "incoming request sanitization and rejection log",
+	},
+	COMMS = {
+		SEND    = "outbound addon messages (guild, whisper, broadcast)",
+		RECEIVE = "inbound addon messages",
+		SUPPRESS = "messages suppressed (in raid, offline target, etc.)",
+	},
+	CACHE = {
+		REFRESH = "guild roster cache rebuild and online-count update",
+	},
+	MAIL = {
+		SCAN   = "mail inbox scanning and slot enumeration",
+		STORE  = "saving / assigning mail data to alt records",
+		ADOPT  = "merge decisions when receiving remote mail data",
+		EVENTS = "WoW mail frame events (MAIL_SHOW, MAIL_CLOSED, etc.)",
+	},
+	DATABASE = {
+		MIGRATE   = "SavedVariables schema migrations",
+		PRUNE     = "stale entry cleanup (deltaHistory, tombstones)",
+		CLEAN     = "malformed or invalid entry removal",
+		STORE     = "data write operations during bank scan aggregation",
+		NORMALIZE = "request list normalization and deduplication",
+	},
+	EVENTS = {
+		TIMER = "periodic share timer, zone-in cooldown, deferred broadcasts",
+		SKIP  = "events ignored due to guard conditions (in raid, already in progress, etc.)",
+	},
+	ITEM = {
+		LOAD     = "item object creation and ContinueOnItemLoad callbacks",
+		VALIDATE = "item field validation before storage or display",
+	},
+	QUERIES = {
+		RECEIVE  = "incoming pull-based requests from peers",
+		RESPOND  = "outgoing responses to peer requests",
+		SKIP     = "requests ignored (no content, hash match, queue full, etc.)",
+		TIMEOUT  = "P2P response timeout fallback to banker",
+	},
+	WHISPER = {
+		SEND = "whisper send attempts and results",
+		SKIP = "whispers suppressed (player offline, in raid, etc.)",
+	},
+	UI = {
+		FILTER = "filter bar updates (requester dropdown, banker checkbox, etc.)",
 	},
 }
 

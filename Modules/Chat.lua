@@ -452,7 +452,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 				-- MAIL-012 DEBUG: Always log hash comparisons to PROTOCOL (not just SYNC)
 				if theirHash then
 					TOGBankClassic_Output:Debug(
-						"PROTOCOL", "MAIL-012",
+						"PROTOCOL", "MAIL-SYNC",
 						"[MAIL-012] Received %s from %s: theirVer=%d, theirHash=%d, theirUpdatedAt=%s, ourVer=%s, ourHash=%s",
 						kNorm,
 						sender,
@@ -499,7 +499,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 
 				-- MAIL-012 DEBUG: Log the sender check
 				TOGBankClassic_Output:Debug(
-					"PROTOCOL", "MAIL-012",
+					"PROTOCOL", "MAIL-SYNC",
 					"[MAIL-012] Sender check for %s: ourPlayer=%s, senderNorm=%s, weAreSender=%s",
 					kNorm,
 					ourPlayer,
@@ -521,14 +521,14 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 					if hasContent then
 					-- Skip querying for alts we already have content for
 					TOGBankClassic_Output:Debug(
-						"PROTOCOL", "MAIL-012",
+						"PROTOCOL", "MAIL-SYNC",
 						"[MAIL-012] Query decision for %s: SKIP (already have content)",
 						kNorm
 					)
 				else
 					-- MAIL-012 DEBUG: Log query decision path
 					TOGBankClassic_Output:Debug(
-						"PROTOCOL", "MAIL-012",
+						"PROTOCOL", "MAIL-SYNC",
 						"[MAIL-012] Query evaluation for %s: isDeltaVersion=%s, ShouldUseDelta=%s",
 						kNorm,
 						tostring(isDeltaVersion),
@@ -550,7 +550,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 										"has bank data for",
 										ColorPlayerName(kNorm) .. " (we have none), querying."
 									)
-									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Query decision for %s: NO_OUR_HASH", kNorm)
+									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: NO_OUR_HASH", kNorm)
 								elseif theirHash ~= ourHash or theirMailHash ~= ourMailHash then
 									-- Hashes differ (inventory or mail) - we need an update
 									shouldQuery = true
@@ -562,7 +562,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 										"has different " .. reason .. " for",
 										ColorPlayerName(kNorm) .. " (hash mismatch), querying."
 									)
-									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-SYNC] Query decision for %s: HASH_MISMATCH %s (ourInv=%d, theirInv=%d, ourMail=%d, theirMail=%d)", 
+									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: HASH_MISMATCH %s (ourInv=%d, theirInv=%d, ourMail=%d, theirMail=%d)", 
 										kNorm, reason, ourHash, theirHash, ourMailHash, theirMailHash)
 								elseif not hasContent then
 									-- Hash matches but we don't have content (stub entry) - need to fill it
@@ -574,9 +574,9 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 										"has matching hash for",
 										ColorPlayerName(kNorm) .. " but we need content (stub entry), querying."
 									)
-									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Query decision for %s: HASH_MATCH_NO_CONTENT (filling stub)", kNorm)
+									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: HASH_MATCH_NO_CONTENT (filling stub)", kNorm)
 								else
-									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Query decision for %s: HASH_MATCH_WITH_CONTENT (no query)", kNorm)
+									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: HASH_MATCH_WITH_CONTENT (no query)", kNorm)
 								end
 							elseif not ourVersion or theirVersion > ourVersion then
 								-- No hash available, fall back to version comparison
@@ -588,12 +588,12 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 									"has fresher bank data about",
 									ColorPlayerName(kNorm) .. ", querying (delta)."
 								)
-								TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Query decision for %s: VERSION_NEWER", kNorm)
+								TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: VERSION_NEWER", kNorm)
 							else
-								TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Query decision for %s: VERSION_SAME_OR_OLDER (no query)", kNorm)
+								TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: VERSION_SAME_OR_OLDER (no query)", kNorm)
 							end
 						else
-							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Query decision for %s: DELTA_DISABLED (no query)", kNorm)
+							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: DELTA_DISABLED (no query)", kNorm)
 						end
 					else
 						-- Legacy version: query as usual
@@ -606,16 +606,16 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 								"has fresher bank data about",
 								ColorPlayerName(kNorm) .. ", querying."
 							)
-							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Query decision for %s: LEGACY_VERSION_NEWER", kNorm)
+							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: LEGACY_VERSION_NEWER", kNorm)
 						else
-							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Query decision for %s: LEGACY_VERSION_SAME_OR_OLDER (no query)", kNorm)
+							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: LEGACY_VERSION_SAME_OR_OLDER (no query)", kNorm)
 						end
 					end
 				end -- Close hasContent else block
 
 				if shouldQuery then
 					-- v0.8.0: Use P2P broadcast when hash available, fallback to banker query
-					TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] QUERYING %s from %s (reason: version broadcast mismatch)", kNorm, sender)
+					TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "QUERYING %s from %s (reason: version broadcast mismatch)", kNorm, sender)
 					if theirHash and theirHash ~= 0 then
 						-- P2P: Broadcast to guild with hash, wait for peers, fallback to banker
 						TOGBankClassic_Guild:BroadcastP2PRequest(kNorm, theirHash, theirVersion, sender)
@@ -627,7 +627,7 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 			else
 					-- MAIL-012 DEBUG: Log when we skip because we are the sender
 					TOGBankClassic_Output:Debug(
-						"PROTOCOL", "MAIL-012",
+						"PROTOCOL", "MAIL-SYNC",
 						"[MAIL-012] Skipping %s: weAreSender=true (ourPlayer=%s, senderNorm=%s)",
 						kNorm,
 						ourPlayer,
@@ -690,7 +690,7 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 		if offerCount > 0 then
 			local offerData = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = offerAlts })
 			TOGBankClassic_Core:SendWhisper("togbank-hl", offerData, sender, "NORMAL")
-			TOGBankClassic_Output:Debug("P2P", "Sent hash-offer to %s for %d alts", sender, offerCount)
+			TOGBankClassic_Output:Debug("P2P", "OFFER", "Sent hash-offer to %s for %d alts", sender, offerCount)
 		end
 		
 		-- Banker-only legacy path: cache authoritative hashes and forward to togbank-hlr
@@ -732,12 +732,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 	-- Debug: Log ALL incoming messages before any filtering
 	if prefix == "togbank-dv" or prefix == "togbank-dv2" then
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] RAW RECEIVED: %s from %s (%d bytes)", prefix, sender, #message)
+		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "RAW RECEIVED: %s from %s (%d bytes)", prefix, sender, #message)
 	end
 
 	-- WHISPER DEBUG
 	if distribution == "WHISPER" or prefix == "togbank-r" or prefix == "togbank-rr" then
-		TOGBankClassic_Output:Debug("COMMS", "Received: %s via %s from %s", prefix, distribution, sender)
+		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "Received: %s via %s from %s", prefix, distribution, sender)
 	end
 
 	if IsInRaid() then
@@ -755,7 +755,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 	-- MAIL-012 DEBUG: Log the player check for delta version messages
 	if prefix == "togbank-dv2" or prefix == "togbank-dv" then
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-012", "[MAIL-012] Player check: player=%s, sender=%s, match=%s",
+		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Player check: player=%s, sender=%s, match=%s",
 			player, sender, tostring(player == sender))
 	end
 
@@ -767,7 +767,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	---@diagnostic disable-next-line: redundant-parameter
 	local success, data = TOGBankClassic_Core:DeserializeWithChecksum(message, { sender = sender, prefix = prefix, distribution = distribution })
 	if not success then
-		self:Debug("PROTOCOL", "> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender), "error:", tostring(data))
+		self:Debug("PROTOCOL", "RECV", "> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender), "error:", tostring(data))
 		if prefix == "togbank-hlr" then
 			TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR deserialize failed: %s", tostring(data))
 		end
@@ -793,7 +793,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 	if prefix ~= "togbank-r" and prefix ~= "togbank-d" then
 		-- togbank-r and togbank-d do their own output
-		self:Debug("PROTOCOL", ">", ColorPlayerName(sender), ">", prefix, prefixDesc)
+		self:Debug("PROTOCOL", "RECV", ">", ColorPlayerName(sender), ">", prefix, prefixDesc)
 	end
 
 	-- togbank-v and togbank-dv unregistered; only togbank-dv2 (SYNC-006) is active
@@ -803,7 +803,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	end
 
 	if prefix == "togbank-r" then
-		TOGBankClassic_Output:Debug("COMMS", "togbank-r DATA.TYPE = %s from %s", tostring(data.type), sender)
+		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "togbank-r DATA.TYPE = %s from %s", tostring(data.type), sender)
 
 		-- v0.8.0: Check if this is a pull-based request (has type == "alt-request")
 		if data.type == "alt-request" then
@@ -815,7 +815,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Received pull-based request from %s for alt %s (hashOnly=%s)", sender, altName, tostring(hashOnly))
 
-			TOGBankClassic_Output:Debug("QUERIES", "> %s %s %s",
+			TOGBankClassic_Output:Debug("QUERIES", "RECEIVE", "> %s %s %s",
 				ColorPlayerName(sender),
 				hashOnly and "queries hash query for" or "queries pull-based request for",
 				ColorPlayerName(altName)
@@ -866,7 +866,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						expectedHash = alt.inventoryHash or 0
 						expectedUpdatedAt = alt.inventoryUpdatedAt or alt.version or 0
 					else
-						TOGBankClassic_Output:Debug("QUERIES", "P2P-005: Banker skipping response for %s (no content - stub entry)", altName)
+						TOGBankClassic_Output:Debug("QUERIES", "SKIP", "P2P-005: Banker skipping response for %s (no content - stub entry)", altName)
 					end
 				elseif PEER_TO_PEER and PEER_TO_PEER.ENABLED and hasData then
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
@@ -882,18 +882,18 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					if data.expectedHash and myHash == data.expectedHash and hasContent and not sendQueueFull then
 						-- Normal P2P: hash match required
 						shouldRespondP2P = true
-						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Peer responding for %s (hash match: %d)", altName, myHash)
+						TOGBankClassic_Output:Debug("QUERIES", "RESPOND", "PERF-005: Peer responding for %s (hash match: %d)", altName, myHash)
 					elseif not data.expectedHash and requesterHash == 0 and hasContent and not sendQueueFull then
 						-- Post-wipe recovery: requester has no data, any peer can help
 						shouldRespondP2P = true
-						TOGBankClassic_Output:Debug("QUERIES", "WIPE-RECOVERY: Peer responding for %s (requester wiped, providing fresh data)", altName)
+						TOGBankClassic_Output:Debug("QUERIES", "RESPOND", "WIPE-RECOVERY: Peer responding for %s (requester wiped, providing fresh data)", altName)
 					elseif sendQueueFull then
-						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Skipping response (send queue full: %d/%d)",
+						TOGBankClassic_Output:Debug("QUERIES", "SKIP", "PERF-005: Skipping response (send queue full: %d/%d)",
 							TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 					elseif data.expectedHash and myHash == data.expectedHash and not hasContent then
-						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Skipping response for %s (hash matches but no content)", altName)
+						TOGBankClassic_Output:Debug("QUERIES", "SKIP", "PERF-005: Skipping response for %s (hash matches but no content)", altName)
 					elseif data.expectedHash and myHash ~= data.expectedHash then
-						TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Hash mismatch for %s (have %d, expected %d)", altName, myHash, data.expectedHash)
+						TOGBankClassic_Output:Debug("QUERIES", "SKIP", "PERF-005: Hash mismatch for %s (have %d, expected %d)", altName, myHash, data.expectedHash)
 					end
 					
 					if shouldRespondP2P then
@@ -902,7 +902,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						C_Timer.After(backoff, function()
 							-- Check if someone else already responded
 							if TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS then
-								TOGBankClassic_Output:Debug("QUERIES", "PERF-005: Another peer beat us to it, not responding for %s", altName)
+								TOGBankClassic_Output:Debug("QUERIES", "SKIP", "PERF-005: Another peer beat us to it, not responding for %s", altName)
 								return
 							end
 							
@@ -948,6 +948,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 								TOGBankClassic_Core:SendCommMessage("togbank-rr", ackData, "WHISPER", sender, "NORMAL")
 								TOGBankClassic_Chat:Debug(
 									"SYNC",
+									"SEND",
 									"<",
 									"Sent togbank-rr to",
 									ColorPlayerName(sender),
@@ -980,6 +981,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if TOGBankClassic_Core:SendWhisper("togbank-rr", ackData, sender, "NORMAL") then
 					self:Debug(
 						"SYNC",
+						"SEND",
 						"<",
 						"Sent togbank-rr to",
 						ColorPlayerName(sender),
@@ -992,6 +994,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if not hasData then
 					TOGBankClassic_Output:Debug(
 						"QUERIES",
+						"SKIP",
 						"Ignoring pull-based request for %s (no data): isBanker=%s, hasInfo=%s",
 						altName,
 						tostring(isBanker),
@@ -1025,7 +1028,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							end
 						end
 					end
-					TOGBankClassic_Output:Debug("QUERIES", "Ignoring pull-based request for %s (%s)", altName, reason)
+					TOGBankClassic_Output:Debug("QUERIES", "SKIP", "Ignoring pull-based request for %s (%s)", altName, reason)
 				end
 			end
 
@@ -1045,6 +1048,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			end
 			self:Debug(
 				category,
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -1097,6 +1101,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						if deltaChain and #deltaChain > 0 then
 							TOGBankClassic_Output:Debug(
 								"DELTA",
+								"BUILD",
 								"Query from %s for %s v%d (have v%d), sending %d-delta chain",
 								sender,
 								nameNorm,
@@ -1127,7 +1132,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			local sessionId = data.sessionId
 			local requester = data.requester or sender
 			local altName   = data.altName
-			TOGBankClassic_Output:Debug("P2P", "sync-request from %s for %s (sid=%s)",
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "sync-request from %s for %s (sid=%s)",
 				requester, tostring(altName), tostring(sessionId))
 			if TOGBankClassic_P2PSession and altName and sessionId then
 				TOGBankClassic_P2PSession:HandleSyncRequest(sessionId, requester, altName)
@@ -1137,7 +1142,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		-- P2P-006: sync-accept / sync-busy (we are the requester; peer answered our sync-request).
 		if data.type == "sync-accept" then
 			local sessionId = data.sessionId
-			TOGBankClassic_Output:Debug("P2P", "sync-accept from %s (sid=%s)", sender, tostring(sessionId))
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "sync-accept from %s (sid=%s)", sender, tostring(sessionId))
 			if TOGBankClassic_P2PSession and sessionId then
 				TOGBankClassic_P2PSession:OnSyncAccept(sessionId, sender)
 			end
@@ -1145,7 +1150,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		end
 		if data.type == "sync-busy" then
 			local sessionId = data.sessionId
-			TOGBankClassic_Output:Debug("P2P", "sync-busy from %s (sid=%s)", sender, tostring(sessionId))
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "sync-busy from %s (sid=%s)", sender, tostring(sessionId))
 			if TOGBankClassic_P2PSession and sessionId then
 				TOGBankClassic_P2PSession:OnSyncBusy(sessionId, sender)
 			end
@@ -1164,6 +1169,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 			self:Debug(
 				"SYNC",
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -1305,7 +1311,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			elseif hasData then
 				-- Banker (non-P2P path) or fallback - send state summary
 				if expectedHash == nil then
-					TOGBankClassic_Output:Debug("PROTOCOL", "PERF-006: Responder has no hash support (old code) - forcing full data request for %s", altName)
+					TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "PERF-006: Responder has no hash support (old code) - forcing full data request for %s", altName)
 					TOGBankClassic_Guild:SendStateSummary(altName, sender, true) -- forceFull=true
 				else
 					TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Calling SendStateSummary for %s to %s", altName, sender)
@@ -1327,6 +1333,7 @@ end
 
 			self:Debug(
 				"SYNC",
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -1369,6 +1376,7 @@ end
 
 			self:Debug(
 				"SYNC",
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				QUERIES_COLOR,
@@ -1390,12 +1398,12 @@ end
 					local oldMailHash = localAlt.mailHash
 					if oldInvHash ~= correctedHash then
 						localAlt.inventoryHash = correctedHash
-						TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION: %s inventoryHash %s→%d (from %s)",
+						TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION", "%s inventoryHash %s→%d (from %s)",
 							norm, tostring(oldInvHash), correctedHash, sender)
 					end
 					if correctedMailHash ~= nil and oldMailHash ~= correctedMailHash then
 						localAlt.mailHash = correctedMailHash
-						TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION: %s mailHash %s→%d (from %s)",
+						TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION", "%s mailHash %s→%d (from %s)",
 							norm, tostring(oldMailHash), correctedMailHash, sender)
 					end
 				end
@@ -1410,13 +1418,13 @@ end
 					if data.bankSlots then
 						if not localAlt.bank then localAlt.bank = { items = {} } end
 						localAlt.bank.slots = data.bankSlots
-						TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION: %s bankSlots %d/%d (from %s)",
+						TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION", "%s bankSlots %d/%d (from %s)",
 							norm, data.bankSlots.count or 0, data.bankSlots.total or 0, sender)
 					end
 					if data.bagsSlots then
 						if not localAlt.bags then localAlt.bags = { items = {} } end
 						localAlt.bags.slots = data.bagsSlots
-						TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION: %s bagsSlots %d/%d (from %s)",
+						TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION", "%s bagsSlots %d/%d (from %s)",
 							norm, data.bagsSlots.count or 0, data.bagsSlots.total or 0, sender)
 					end
 				end
@@ -1440,7 +1448,7 @@ end
 
 	if prefix == "togbank-d" or prefix == "togbank-rm" then
 		-- SYNC-003p: Debug all togbank-d messages to see what's arriving
-		TOGBankClassic_Output:Debug("COMMS", "[SYNC-003p] %s received from %s: type=%s", prefix, sender, tostring(data.type))
+		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "[SYNC-003p] %s received from %s: type=%s", prefix, sender, tostring(data.type))
 
 		-- SYNC-010: Critical debug for request mutations
 		if data.type == "requests-log" then
@@ -1459,6 +1467,7 @@ end
 			end
 			self:Debug(
 				"SYNC",
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -1476,6 +1485,7 @@ end
 			local status = TOGBankClassic_Guild:ReceiveRequestsById(data)
 			self:Debug(
 				"REQUESTS",
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -1500,6 +1510,7 @@ end
 				or ADOPTION_STATUS.UNAUTHORIZED
 			self:Debug(
 				"SYNC",
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -1527,7 +1538,7 @@ end
 			local claimed = data.name
 			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
 
-			TOGBankClassic_Output:Debug("COMMS", "Received DATA: togbank-d3 from %s for alt %s (%d bytes)", sender, claimedNorm, #message)
+			TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "Received DATA: togbank-d3 from %s for alt %s (%d bytes)", sender, claimedNorm, #message)
 
 			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
 			local hadPendingRequest = TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm)
@@ -1541,6 +1552,7 @@ end
 				or ADOPTION_STATUS.UNAUTHORIZED
 			self:Debug(
 				"SYNC",
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -1622,6 +1634,7 @@ end
 					local errorMsg = "Validation failed: " .. (err or "unknown error")
 					self:Debug(
 						"DELTA",
+						"VALIDATE",
 						">",
 						ColorPlayerName(sender),
 						SHARES_COLOR,
@@ -1677,6 +1690,7 @@ end
 
 				self:Debug(
 					"DELTA",
+					"APPLY",
 					">",
 					ColorPlayerName(sender),
 					SHARES_COLOR,
@@ -1687,6 +1701,7 @@ end
 			else
 				self:Debug(
 					"DELTA",
+					"APPLY",
 					">",
 					ColorPlayerName(sender),
 					SHARES_COLOR,
@@ -1715,6 +1730,7 @@ end
 					local errorMsg = "Validation failed: " .. (err or "unknown error")
 					self:Debug(
 						"DELTA",
+						"VALIDATE",
 						">",
 						ColorPlayerName(sender),
 						SHARES_COLOR,
@@ -1735,6 +1751,7 @@ end
 				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
 				self:Debug(
 					"DELTA",
+					"APPLY",
 					">",
 					ColorPlayerName(sender),
 					SHARES_COLOR,
@@ -1745,6 +1762,7 @@ end
 			else
 				self:Debug(
 					"DELTA",
+					"APPLY",
 					">",
 					ColorPlayerName(sender),
 					SHARES_COLOR,
@@ -1775,7 +1793,7 @@ end
 
 	-- v0.9.1+: Request-specific data handler (togbank-rd, legacy key-value format)
 	if prefix == "togbank-rd" then
-		TOGBankClassic_Output:Debug("COMMS", "[SYNC-003p] togbank-rd received from %s: type=%s", sender, tostring(data.type))
+		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "[SYNC-003p] togbank-rd received from %s: type=%s", sender, tostring(data.type))
 
 		if data.type == "requests-index" then
 			local reqCount = data.requests and #data.requests or 0
@@ -1788,6 +1806,7 @@ end
 			local status = TOGBankClassic_Guild:ReceiveRequestsById(data)
 			self:Debug(
 				"REQUESTS",
+				"RECEIVE",
 				">",
 				ColorPlayerName(sender),
 				SHARES_COLOR,
@@ -1806,12 +1825,12 @@ end
 	end
 	if prefix == "togbank-hr" then
 		-- hello-reply: log the text response from the remote side
-		TOGBankClassic_Output:Debug("PROTOCOL", "Hello reply from %s: %s", tostring(sender), tostring(data))
+		TOGBankClassic_Output:Debug("PROTOCOL", "HELLO", "Hello reply from %s: %s", tostring(sender), tostring(data))
 	end
 	if prefix == "togbank-hl" then
 		if data.type == "hash-list-request" then
 			local replyTarget = data.requester or sender
-			TOGBankClassic_Output:Debug("PROTOCOL", "HL request from %s (replyTarget=%s)", tostring(sender), tostring(replyTarget))
+			TOGBankClassic_Output:Debug("PROTOCOL", "HL", "HL request from %s (replyTarget=%s)", tostring(sender), tostring(replyTarget))
 			TOGBankClassic_Guild:SendHashList(replyTarget)
 		elseif data.type == "hash-list-broadcast" and data.alts then
 			-- PERF-020: Queue hash broadcasts for batched processing to prevent stuttering
@@ -1821,7 +1840,7 @@ end
 			local isSenderBanker = data.isBanker or false
 			local altCount = 0
 			for _ in pairs(data.alts) do altCount = altCount + 1 end
-			TOGBankClassic_Output:Debug("P2P", "HL broadcast from %s (alts=%d, isBanker=%s)",
+			TOGBankClassic_Output:Debug("P2P", "BROADCAST", "HL broadcast from %s (alts=%d, isBanker=%s)",
 				tostring(sender), altCount, tostring(isSenderBanker))
 
 			-- Queue this broadcast for batched processing
@@ -1851,7 +1870,7 @@ end
 		elseif data.type == "alt-request" then
 			-- PERF-006: P2P broadcast on togbank-hl channel (modern code only)
 			-- Process exactly the same as togbank-r alt-request, but only modern peers see this
-			TOGBankClassic_Output:Debug("PROTOCOL", "P2P alt-request from %s for %s (expectedHash=%s)",
+			TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "P2P alt-request from %s for %s (expectedHash=%s)",
 				tostring(sender), tostring(data.name), tostring(data.expectedHash))
 			-- Forward to togbank-r handler by recursively calling OnCommReceived
 			self:OnCommReceived("togbank-r", message, distribution, sender)
@@ -1860,7 +1879,7 @@ end
 		elseif data.type == "share-request" then
 			-- PERF-021: Defer share replies during zone-in cooldown
 			if TOGBankClassic_Events.zoningCooldown then
-				TOGBankClassic_Output:Debug("PERF", "Share reply deferred (zone-in cooldown active)")
+				TOGBankClassic_Output:Debug("EVENTS", "TIMER", "Share reply deferred (zone-in cooldown active)")
 				return
 			end
 			TOGBankClassic_Guild:Share("reply")
@@ -1924,7 +1943,7 @@ end
 								mailHash = summary.mailHash or 0,
 							}
 							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
-							TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Stored banker hash for new alt %s: hash=%08x, mailHash=%08x, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
+							TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR: Stored banker hash for new alt %s: hash=%08x, mailHash=%08x, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
 						elseif localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0) then
 							-- Hash mismatch detected - banker has different hash than our local data
 							-- DO NOT update local hash here - it will be updated when we receive and apply the delta
@@ -1951,7 +1970,7 @@ end
 					local hasContent = localAlt and TOGBankClassic_Guild and TOGBankClassic_Guild.HasAltContent
 						and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
 					-- DEBUG: Log every alt to see what's happening
-					TOGBankClassic_Output:Debug("PROTOCOL", "HLR check: %s hasContent=%s localHash=%s bankerHash=%s localMailHash=%s bankerMailHash=%s",
+					TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "HLR check: %s hasContent=%s localHash=%s bankerHash=%s localMailHash=%s bankerMailHash=%s",
 						tostring(norm), tostring(hasContent), tostring(localHash), tostring(summary and summary.hash), tostring(localMailHash), tostring(summary and summary.mailHash))
 					totalCount = totalCount + 1
 
@@ -2000,7 +2019,7 @@ end
 						)
 					end
 				else
-					TOGBankClassic_Output:Debug("PROTOCOL", "HLR: Skipping %s (current player)", tostring(norm))
+					TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR: Skipping %s (current player)", tostring(norm))
 				end
 			end
 
@@ -2010,6 +2029,7 @@ end
 			end
 			TOGBankClassic_Output:Debug(
 				"PROTOCOL",
+				"HLR-COMPARE",
 				"HLR compare complete: total=%d pending=%d",
 				totalCount,
 				pendingCount
@@ -2032,6 +2052,7 @@ end
 			for altName, summary in pairs(pending) do
 				TOGBankClassic_Output:Debug(
 					"PROTOCOL",
+					"HLR-COMPARE",
 					"HLR broadcast pending: %s (hash=%s, updatedAt=%s)",
 					tostring(altName),
 					tostring(summary and summary.hash),
@@ -2042,6 +2063,7 @@ end
 			for altName, summary in pairs(missingContent) do
 				TOGBankClassic_Output:Debug(
 					"PROTOCOL",
+					"HLR-COMPARE",
 					"HLR broadcast missingContent: %s (hash=%s, updatedAt=%s)",
 					tostring(altName),
 					tostring(summary and summary.hash),
@@ -2052,6 +2074,7 @@ end
 				else
 					TOGBankClassic_Output:Debug(
 						"PROTOCOL",
+						"HLR-COMPARE",
 						"HLR missingContent no hash: %s - querying banker directly",
 						tostring(altName)
 					)
@@ -2813,7 +2836,7 @@ function TOGBankClassic_Chat:ProcessQueue()
 		TOGBankClassic_Guild:SendAltData(name, 0, 0)
 	end
 	local duration = debugprofilestop() - startTime
-	TOGBankClassic_Output:Debug("EVENTS", "ProcessQueue took %.2fms (name=%s, queue=%d)", duration, tostring(name), #self.sync_queue)
+	TOGBankClassic_Output:Debug("EVENTS", "TIMER", "ProcessQueue took %.2fms (name=%s, queue=%d)", duration, tostring(name), #self.sync_queue)
 
 	if #self.sync_queue > 0 then
 		TOGBankClassic_Chat:ReprocessQueue()

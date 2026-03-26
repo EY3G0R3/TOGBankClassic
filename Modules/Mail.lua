@@ -213,13 +213,13 @@ function TOGBankClassic_Mail:InitSendHook()
 end
 
 function TOGBankClassic_Mail:OnSendMail(recipient)
-	TOGBankClassic_Output:Debug("MAIL", "OnSendMail: HOOK FIRED for recipient=%s", tostring(recipient))
+	TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: HOOK FIRED for recipient=%s", tostring(recipient))
 
 	-- If pendingSend was set recently by PrepareFulfillMail (within 10 seconds), keep it
 	-- Otherwise, read items from mail attachments (fallback for non-fulfill mails)
 	local now = GetTime()
 	if self.pendingSend and self.pendingSendAt and (now - self.pendingSendAt) < 10 then
-		TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Using pendingSend from PrepareFulfillMail")
+		TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: Using pendingSend from PrepareFulfillMail")
 		return
 	end
 
@@ -238,7 +238,8 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	end
 
 	TOGBankClassic_Output:Debug(
-		"UI",
+		"MAIL",
+		"STORE",
 		"OnSendMail: sender=%s, recipient=%s, items=%d",
 		tostring(sender),
 		tostring(recipient),
@@ -256,11 +257,11 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	end
 
 	if not sender or not TOGBankClassic_Guild:IsBank(sender) then
-		TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Sender %s is not a banker, skipping", tostring(sender))
+		TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: Sender %s is not a banker, skipping", tostring(sender))
 		return
 	end
 
-	TOGBankClassic_Output:Debug("MAIL", "OnSendMail: Sender %s IS a banker, setting pendingSend", tostring(sender))
+	TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: Sender %s IS a banker, setting pendingSend", tostring(sender))
 	local normRecipient = TOGBankClassic_Guild:NormalizeName(recipient)
 
 	self.pendingSend = {
@@ -293,6 +294,7 @@ function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
 
 	TOGBankClassic_Output:Debug(
 		"MAIL",
+		"STORE",
 		"SendMail error: %s | recipient=%s subject=%s items=%d total=%d",
 		tostring(contextMessage),
 		tostring(recipient),
@@ -304,6 +306,7 @@ function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
 	for i, item in ipairs(items) do
 		TOGBankClassic_Output:Debug(
 			"MAIL",
+			"STORE",
 			"  Attachment %d: %s (id=%s) x%d",
 			i,
 			tostring(item.name),
@@ -315,6 +318,7 @@ function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
 	if self.pendingSend then
 		TOGBankClassic_Output:Debug(
 			"MAIL",
+			"STORE",
 			"  pendingSend: sender=%s recipient=%s items=%d",
 			tostring(self.pendingSend.sender),
 			tostring(self.pendingSend.recipient),
@@ -324,10 +328,10 @@ function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
 end
 
 function TOGBankClassic_Mail:ApplyPendingSend()
-	TOGBankClassic_Output:Debug("MAIL", "ApplyPendingSend: Called, pendingSend=%s", tostring(self.pendingSend ~= nil))
+	TOGBankClassic_Output:Debug("MAIL", "STORE", "ApplyPendingSend: Called, pendingSend=%s", tostring(self.pendingSend ~= nil))
 	local pending = self.pendingSend
 	if not pending then
-		TOGBankClassic_Output:Debug("MAIL", "ApplyPendingSend: No pendingSend, returning")
+		TOGBankClassic_Output:Debug("MAIL", "STORE", "ApplyPendingSend: No pendingSend, returning")
 		return
 	end
 	self.pendingSend = nil
@@ -861,7 +865,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			items = {{ name = itemName, quantity = attached }}
 		}
 		self.pendingSendAt = GetTime()
-		TOGBankClassic_Output:Debug("MAIL", "PrepareFulfillMail: Set pendingSend for %s (%d %s) - requestId=%s",
+		TOGBankClassic_Output:Debug("MAIL", "STORE", "PrepareFulfillMail: Set pendingSend for %s (%d %s) - requestId=%s",
 			tostring(normRecipient), attached, itemName, tostring(request.id))
 	end
 

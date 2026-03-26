@@ -173,7 +173,7 @@ function TOGBankClassic_Events:OnShareTimer()
 	-- PERF-021: Defer periodic broadcasts during zone-in cooldown to give ChatThrottleLib
 	-- breathing room when processing backlogged message queues
 	if self.zoningCooldown then
-		TOGBankClassic_Output:Debug("PERF", "OnShareTimer deferred (zone-in cooldown active)")
+		TOGBankClassic_Output:Debug("EVENTS", "TIMER", "OnShareTimer deferred (zone-in cooldown active)")
 		self:SetShareTimer()
 		return
 	end
@@ -182,14 +182,14 @@ function TOGBankClassic_Events:OnShareTimer()
 	if self.lastShareTimerAt then
 		local delta = now - self.lastShareTimerAt
 		if delta < (TIMER_INTERVALS.VERSION_BROADCAST - 10) then
-			TOGBankClassic_Output:Debug("EVENTS", "OnShareTimer fired early (%.1fs since last)", delta)
+			TOGBankClassic_Output:Debug("EVENTS", "TIMER", "OnShareTimer fired early (%.1fs since last)", delta)
 		end
 	end
 	self.lastShareTimerAt = now
 	local startTime = debugprofilestop()
 	TOGBankClassic_Guild:Share("reply", "version")
 	local duration = debugprofilestop() - startTime
-	TOGBankClassic_Output:Debug("EVENTS", "OnShareTimer took %.2fms", duration)
+	TOGBankClassic_Output:Debug("EVENTS", "TIMER", "OnShareTimer took %.2fms", duration)
 
 -- P2P-006: New clients broadcast their hashes via SyncDeltaVersion (called above
 	-- inside Guild:Share).  Only fall back to the banker whisper for wipe-recovery:
@@ -217,7 +217,7 @@ function TOGBankClassic_Events:OnShareTimer()
 	if guild then
 		local removed = TOGBankClassic_Database:CleanupDeltaHistory(guild)
 		if removed and removed > 0 then
-			TOGBankClassic_Output:Debug("DATABASE", "Periodic deltaHistory prune: removed %d stale entries", removed)
+				TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "Periodic deltaHistory prune: removed %d stale entries", removed)
 		end
 	end
 
@@ -291,7 +291,7 @@ function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReload
 	self.zoningCooldown = true
 	C_Timer.After(2.5, function()
 		self.zoningCooldown = false
-		TOGBankClassic_Output:Debug("PERF", "Zone-in cooldown expired, resuming normal operations")
+		TOGBankClassic_Output:Debug("EVENTS", "TIMER", "Zone-in cooldown expired, resuming normal operations")
 	end)
 	
 	-- PERF-013: Only do full roster refresh + broadcasts on login/reload, not zone changes
@@ -367,7 +367,7 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 					-- without waiting for the 10-minute periodic timer to fire first.
 					TOGBankClassic_Events:SyncDeltaVersion("NORMAL")
 				else
-					TOGBankClassic_Output:Debug("PERF", "Login broadcasts deferred (zone-in cooldown active)")
+					TOGBankClassic_Output:Debug("EVENTS", "TIMER", "Login broadcasts deferred (zone-in cooldown active)")
 					-- Reschedule after cooldown expires
 					C_Timer.After(2.6, function()
 						if not self.zoningCooldown then
@@ -385,7 +385,7 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 		if self.needsFullRosterRefresh and self.refreshInProgress then
 			TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE skipped (refresh already in progress)")
 		else
-			TOGBankClassic_Output:Debug("EVENTS", "GUILD_ROSTER_UPDATE ignored (online/offline handled via system messages)")
+			TOGBankClassic_Output:Debug("EVENTS", "SKIP", "GUILD_ROSTER_UPDATE ignored (online/offline handled via system messages)")
 		end
 	end
 end
@@ -458,7 +458,7 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 	if TOGBankClassic_Guild:Init(guild) then
 		TOGBankClassic_Options:InitGuild()
 		if IsInRaid() then
-			TOGBankClassic_Output:Debug("EVENTS", "GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
+			TOGBankClassic_Output:Debug("EVENTS", "SKIP", "GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
 			return
 		end
 		local cleaned = TOGBankClassic_Guild:CleanupMalformedAlts()
@@ -473,7 +473,7 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 		C_Timer.After(2, function()
 			local removed = TOGBankClassic_Database:CleanupDeltaHistory(guild)
 			if removed and removed > 0 then
-				TOGBankClassic_Output:Debug("DATABASE", "Pruned %d stale deltaHistory entries on startup", removed)
+				TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "Pruned %d stale deltaHistory entries on startup", removed)
 			end
 		end)
 	end
@@ -488,10 +488,10 @@ function TOGBankClassic_Events:BANKFRAME_CLOSED(_)
 end
 
 function TOGBankClassic_Events:MAIL_SHOW(_)
-	TOGBankClassic_Output:Debug("MAIL", "MAIL_SHOW event fired")
+	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "MAIL_SHOW event fired")
 	TOGBankClassic_Bank:OnUpdateStart()
 	TOGBankClassic_MailInventory.hasUpdated = true  -- Flag that mail was accessed
-	TOGBankClassic_Output:Debug("MAIL", "Set MailInventory.hasUpdated = %s", tostring(TOGBankClassic_MailInventory.hasUpdated))
+	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Set MailInventory.hasUpdated = %s", tostring(TOGBankClassic_MailInventory.hasUpdated))
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()
@@ -499,11 +499,11 @@ function TOGBankClassic_Events:MAIL_SHOW(_)
 	-- Hook MailFrame OnHide to detect when mail closes (MAIL_CLOSED event may not fire reliably)
 	if not MailFrame.TOGBankHooked then
 		MailFrame:HookScript("OnHide", function()
-			TOGBankClassic_Output:Debug("MAIL", "MailFrame OnHide fired (mailbox closed)")
+			TOGBankClassic_Output:Debug("MAIL", "EVENTS", "MailFrame OnHide fired (mailbox closed)")
 			TOGBankClassic_Events:MAIL_CLOSED()
 		end)
 		MailFrame.TOGBankHooked = true
-		TOGBankClassic_Output:Debug("MAIL", "Hooked MailFrame OnHide")
+		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Hooked MailFrame OnHide")
 	end
 end
 
@@ -512,12 +512,12 @@ function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
 end
 
 function TOGBankClassic_Events:MAIL_CLOSED(_)
-	TOGBankClassic_Output:Debug("MAIL", "MAIL_CLOSED event fired")
+	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "MAIL_CLOSED event fired")
 	TOGBankClassic_Mail.isOpen = false
 	TOGBankClassic_Mail.isScanning = false
-	TOGBankClassic_Output:Debug("MAIL", "Calling Bank:OnUpdateStop()")
+	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Calling Bank:OnUpdateStop()")
 	TOGBankClassic_Bank:OnUpdateStop()
-	TOGBankClassic_Output:Debug("MAIL", "Bank:OnUpdateStop() completed")
+	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Bank:OnUpdateStop() completed")
 	TOGBankClassic_UI_Mail:Close()
 	-- Refresh requests UI to update fulfill button states
 	-- Delay slightly to ensure MailFrame state is updated
@@ -529,7 +529,7 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
 end
 
 function TOGBankClassic_Events:MAIL_SEND_SUCCESS(_)
-	TOGBankClassic_Output:Debug("MAIL", "MAIL_SEND_SUCCESS event fired")
+	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "MAIL_SEND_SUCCESS event fired")
 	-- safety: ensure hook is registered when mail UI is opened
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:ApplyPendingSend()
@@ -542,7 +542,7 @@ function TOGBankClassic_Events:UI_ERROR_MESSAGE(_, message)
 
 	-- Capture mail send failures (includes "Internal mail database error")
 	if tostring(message):lower():find("mail") then
-		TOGBankClassic_Output:Debug("MAIL", "UI_ERROR_MESSAGE: %s", tostring(message))
+		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "UI_ERROR_MESSAGE: %s", tostring(message))
 		if TOGBankClassic_Mail and TOGBankClassic_Mail.DebugSendMailState then
 			TOGBankClassic_Mail:DebugSendMailState(message)
 		end

@@ -4,7 +4,7 @@ local AceComm_SendCommMessage = TOGBankClassic_Core.SendCommMessage
 function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target, prio, callbackFn, callbackArg)
     local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
     if IsInRaid() then
-        TOGBankClassic_Output:Debug("COMMS", "< (suppressing) %s %s (in raid)", prefix, prefixDesc)
+        TOGBankClassic_Output:Debug("COMMS", "SUPPRESS", "< (suppressing) %s %s (in raid)", prefix, prefixDesc)
         return
     end
     if not AceComm_SendCommMessage then
@@ -13,7 +13,7 @@ function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target,
 
     local bytes = text and #text or 0
     local dest = (target and target ~= "") and (distribution .. "/" .. target) or distribution
-    TOGBankClassic_Output:Debug("COMMS", "< %s %s to %s (%d bytes)", prefix, prefixDesc, dest, bytes)
+    TOGBankClassic_Output:Debug("COMMS", "SEND", "< %s %s to %s (%d bytes)", prefix, prefixDesc, dest, bytes)
 
     return AceComm_SendCommMessage(self, prefix, text, distribution, target, prio, callbackFn, callbackArg)
 end
@@ -23,11 +23,11 @@ end
 function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn, callbackArg)
     -- Check if target is online
     local isOnline = TOGBankClassic_Guild:IsPlayerOnline(target)
-    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendWhisper called: prefix=%s, target=%s, isOnline=%s",
+    TOGBankClassic_Output:Debug("PROTOCOL", "WHISPER", "[WHISPER-DEBUG] SendWhisper called: prefix=%s, target=%s, isOnline=%s",
         prefix, target, tostring(isOnline))
 
     if not isOnline then
-        TOGBankClassic_Output:Debug("WHISPER", "[WHISPER-DEBUG] Cannot send %s WHISPER to %s - player is offline", prefix, target)
+        TOGBankClassic_Output:Debug("WHISPER", "SKIP", "[WHISPER-DEBUG] Cannot send %s WHISPER to %s - player is offline", prefix, target)
         return false
     end
 
@@ -41,12 +41,12 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
         end
     end
 
-    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] Attempting SendCommMessage: prefix=%s, target=%s, nameOnly=%s", prefix, target, nameOnly)
+    TOGBankClassic_Output:Debug("PROTOCOL", "WHISPER", "[WHISPER-DEBUG] Attempting SendCommMessage: prefix=%s, target=%s, nameOnly=%s", prefix, target, nameOnly)
 
     -- Send the whisper (AceComm returns nil on success, which is truthy behavior we want)
     self:SendCommMessage(prefix, text, "WHISPER", nameOnly, prio, callbackFn, callbackArg)
 
-    TOGBankClassic_Output:Debug("PROTOCOL", "[WHISPER-DEBUG] SendCommMessage completed for %s to %s", prefix, nameOnly)
+    TOGBankClassic_Output:Debug("PROTOCOL", "WHISPER", "[WHISPER-DEBUG] SendCommMessage completed for %s to %s", prefix, nameOnly)
 
     -- If we got this far, player is online and whisper was sent
     return true
@@ -81,7 +81,7 @@ function TOGBankClassic_Core:OnInitialize()
                 Version = (C_AddOns and C_AddOns.GetAddOnMetadata("TOGBankClassic", "Version")) or GetAddOnMetadata("TOGBankClassic", "Version") or "@project-version@"
             }
             VC:Enable(hostAddon)
-            TOGBankClassic_Output:Debug("PROTOCOL", "VersionCheck-1.0 integration enabled (v%s)", hostAddon.Version)
+            TOGBankClassic_Output:Debug("PROTOCOL", "INIT", "VersionCheck-1.0 integration enabled (v%s)", hostAddon.Version)
         end
     end
 end

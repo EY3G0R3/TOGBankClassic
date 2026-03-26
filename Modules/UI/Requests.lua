@@ -823,10 +823,10 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		if GetNumGuildMembers() > 0 then
 			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 			local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
-			TOGBankClassic_Output:Debug("UI", "UpdateFilters: currentPlayer=%s, isBank=%s", tostring(currentPlayer), tostring(isBank))
+			TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: currentPlayer=%s, isBank=%s", tostring(currentPlayer), tostring(isBank))
 
 			if isBank then
-				TOGBankClassic_Output:Debug("UI", "UpdateFilters: Creating highlight checkbox")
+				TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Creating highlight checkbox")
 				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
 				highlightCheckbox:SetLabel("Highlight needed items")
 				highlightCheckbox:SetFullWidth(true)
@@ -848,12 +848,12 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 				end)
 				filterGroup:AddChild(highlightCheckbox)
 				self.HighlightCheckbox = highlightCheckbox
-				TOGBankClassic_Output:Debug("UI", "UpdateFilters: Highlight checkbox created and added to filterGroup")
+				TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Highlight checkbox created and added to filterGroup")
 			else
-				TOGBankClassic_Output:Debug("UI", "UpdateFilters: Not a banker, skipping checkbox")
+				TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Not a banker, skipping checkbox")
 			end
 		else
-			TOGBankClassic_Output:Debug("UI", "UpdateFilters: Guild roster not loaded yet, skipping banker check")
+			TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Guild roster not loaded yet, skipping banker check")
 		end
 	end
 
@@ -1319,7 +1319,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 	if not self.HighlightCheckbox and self.FilterGroup and GetNumGuildMembers() > 0 then
 		local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
 		if isBank then
-			TOGBankClassic_Output:Debug("UI", "UpdateFilters: Creating highlight checkbox (delayed)")
+			TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Creating highlight checkbox (delayed)")
 			local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
 			highlightCheckbox:SetLabel("Highlight needed items")
 			highlightCheckbox:SetFullWidth(true)
@@ -1345,7 +1345,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 			if self.FilterGroup.DoLayout then
 				self.FilterGroup:DoLayout()
 			end
-			TOGBankClassic_Output:Debug("UI", "UpdateFilters: Highlight checkbox created and added")
+			TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Highlight checkbox created and added")
 		end
 	end
 
@@ -1368,7 +1368,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 		self.FilterRequester:SetList(requesterList, requesterOrder)
 		self.cachedRequesterList = requesterList
 		self.cachedRequesterOrder = requesterOrder
-		TOGBankClassic_Output:Debug("UI", "UpdateFilters: Requester dropdown list updated")
+		TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Requester dropdown list updated")
 	end
 
 	local bankList, bankOrder = buildBankOptions(currentPlayer, bankOpen, bankTotal)
@@ -1390,7 +1390,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 		self.FilterBank:SetList(bankList, bankOrder)
 		self.cachedBankList = bankList
 		self.cachedBankOrder = bankOrder
-		TOGBankClassic_Output:Debug("UI", "UpdateFilters: Bank dropdown list updated")
+		TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Bank dropdown list updated")
 	end
 
 	local requesterValue = self.requesterFilter or FILTER_ANY

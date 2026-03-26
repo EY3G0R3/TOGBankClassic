@@ -200,23 +200,23 @@ function TOGBankClassic_Database:Load(name)
 				if type(alt) == "table" then
 					if alt.bank and not alt.bank.slots then
 						alt.bank.slots = { count = 0, total = 0 }
-					TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: initialized bank.slots for %s", name)
+					TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: initialized bank.slots for %s", name)
 					end
 					if alt.bags and not alt.bags.slots then
 						alt.bags.slots = { count = 0, total = 0 }
-					TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: initialized bags.slots for %s", name)
+					TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: initialized bags.slots for %s", name)
 					end
 					-- v0.8.0: Compute inventory hash for alts that don't have one
 					-- This enables pull-based protocol for existing alt data
 					if not alt.inventoryHash and alt.bank and alt.bags then
 						local money = alt.money or 0
 						alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
-					TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: computed inventory hash for %s (hash=%08x)", name, alt.inventoryHash)
+					TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: computed inventory hash for %s (hash=%08x)", name, alt.inventoryHash)
 					end
 					-- v0.8.7: Backfill inventoryUpdatedAt for alts that have hashes but no timestamp
 					if alt.inventoryHash and not alt.inventoryUpdatedAt then
 						alt.inventoryUpdatedAt = alt.version or GetServerTime()
-						TOGBankClassic_Output:Debug("DATABASE", "Migrated alt data: backfilled inventoryUpdatedAt for %s (ts=%s)", name, tostring(alt.inventoryUpdatedAt))
+						TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: backfilled inventoryUpdatedAt for %s (ts=%s)", name, tostring(alt.inventoryUpdatedAt))
 					end
 				end
 			end
