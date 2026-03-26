@@ -171,6 +171,24 @@ local function BuildDebugArgs()
 		end,
 	}
 
+	-- Integrity diagnostics section
+	args["spacer4"]         = { order = 400, type = "description", name = " " }
+	args["integrityHeader"] = { order = 401, type = "header", name = "Integrity Check Diagnostics" }
+	args["integrityDesc"]   = {
+		order = 402,
+		type  = "description",
+		name  = "When enabled, a chat alert is shown any time a message arrives complete (stop-marker present) but fails the CRC check. This indicates genuine bit-corruption rather than truncation, meaning the stop-marker check alone would not be sufficient. Off by default — enable only if you are a designated tester.",
+	}
+	args["integrityCheckDiagnostics"] = {
+		order = 403,
+		type  = "toggle",
+		width = "full",
+		name  = "Show Integrity Mismatch Alerts",
+		desc  = "Print a chat error when stop-marker says the message arrived complete but CRC disagrees. Leave disabled unless you are actively testing for non-truncation corruption.",
+		get   = function() return TOGBankClassic_Options.db.global.bank["integrityCheckDiagnostics"] end,
+		set   = function(_, v) TOGBankClassic_Options.db.global.bank["integrityCheckDiagnostics"] = v end,
+	}
+
 	return args
 end
 
@@ -188,7 +206,7 @@ function TOGBankClassic_Options:Init()
 			statusBarNetworkInfo = false,  -- Show sync activity in inventory status bar
 		},
 		global = {
-			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, enableRosterSync = false },
+			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, enableRosterSync = false, integrityCheckDiagnostics = false },
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
@@ -221,6 +239,9 @@ function TOGBankClassic_Options:Init()
 	end
 	if self.db.global.bank["enableRosterSync"] == nil then
 		self.db.global.bank["enableRosterSync"] = false
+	end
+	if self.db.global.bank["integrityCheckDiagnostics"] == nil then
+		self.db.global.bank["integrityCheckDiagnostics"] = false
 	end
 	if self.db.global.requests.archiveDays == nil then
 		self.db.global.requests.archiveDays = 30
@@ -655,6 +676,11 @@ end
 
 function TOGBankClassic_Options:IsWarningsMuted()
 	return self.db.global.bank["muteWarnings"] or false
+end
+
+function TOGBankClassic_Options:IsIntegrityCheckDiagnosticsEnabled()
+	if not self.db or not self.db.global or not self.db.global.bank then return false end
+	return self.db.global.bank["integrityCheckDiagnostics"] or false
 end
 
 function TOGBankClassic_Options:IsRosterSyncEnabled()

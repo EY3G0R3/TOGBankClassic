@@ -187,16 +187,18 @@ function TOGBankClassic_Core:DeserializeWithChecksum(message)
     -- === Parallel comparison (new-format messages only) ===
     -- Disagreement: stop-marker present (message arrived complete) but CRC fails
     -- (content was corrupted).  This is genuine bit-corruption, not truncation — the
-    -- O(N) CRC cannot be replaced by the stop-marker.  Alert the player so they can
-    -- report the incident.
+    -- O(N) CRC cannot be replaced by the stop-marker.  Always logged to the debug
+    -- output; the chat alert is shown only when the tester opt-in is enabled in Options.
     if stopPresent and not crcValid then
-        local msg = "|cFFFF0000[TOGBankClassic ERROR]|r Integrity check mismatch: " ..
-            "message arrived complete (stop-marker present) but CRC failed " ..
-            "(expected " .. expectedChecksum .. ", got " .. actualChecksum .. "). " ..
-            "This is NOT truncation — please report this to the developers!"
-        DEFAULT_CHAT_FRAME:AddMessage(msg)
         TOGBankClassic_Output:Debug("PROTOCOL", "INTEGRITY-MISMATCH",
             "stop=PASS crc=FAIL expected=%d got=%d", expectedChecksum, actualChecksum)
+        if TOGBankClassic_Options and TOGBankClassic_Options:IsIntegrityCheckDiagnosticsEnabled() then
+            local msg = "|cFFFF0000[TOGBankClassic ERROR]|r Integrity check mismatch: " ..
+                "message arrived complete (stop-marker present) but CRC failed " ..
+                "(expected " .. expectedChecksum .. ", got " .. actualChecksum .. "). " ..
+                "This is NOT truncation — please report this to the developers!"
+            DEFAULT_CHAT_FRAME:AddMessage(msg)
+        end
     end
 
     if not crcValid then
