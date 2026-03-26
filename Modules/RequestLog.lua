@@ -1243,7 +1243,7 @@ local function drainIndexChunks()
 	local liveCount = chunk.payload[2] or 0
 	TOGBankClassic_Output:Debug("REQUESTS", "PROTO2", "togbank-ri %d ids (+%d remaining chunks) to %s",
 		liveCount, #pendingIndexChunks, chunk.target or "guild")
-	if chunk.target then
+	if chunk.target and chunk.target ~= "*" then
 		TOGBankClassic_Core:SendWhisper("togbank-ri", data, chunk.target, "NORMAL")
 	else
 		TOGBankClassic_Core:SendCommMessage("togbank-ri", data, "Guild", nil, "NORMAL")
@@ -1263,7 +1263,7 @@ local function flushIndexQueue()
 	-- all queriers. Sending again would repeat the full index (potentially 85+ chunks)
 	-- for every query that arrived during the drain window — the PERF-002 cascade in
 	-- a new form. Skip and let the existing drain complete.
-	if pendingIndexChunksDraining and pendingIndexChunks[1] and pendingIndexChunks[1].target == nil then
+	if pendingIndexChunksDraining and pendingIndexChunks[1] and (pendingIndexChunks[1].target == nil or pendingIndexChunks[1].target == "*") then
 		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
 			"flushIndexQueue: skipping — guild index already in flight (%d chunks remaining)", #pendingIndexChunks)
 		pendingIndexSenders = nil
