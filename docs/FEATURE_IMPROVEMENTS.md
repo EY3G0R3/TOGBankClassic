@@ -39,7 +39,7 @@
 - [ ] **Scoreboard UI or deprecation** - The bank acceptance window contains an "add to scoreboard" checkbox but no scoreboard UI exists or is accessible; either implement scoreboard access or remove the checkbox to avoid confusion
 - [x] ~~**Guild roster cache lookups (PERF)**~~ **IMPLEMENTED: All GetGuildRosterInfo() scans in hot paths replaced with O(1) memberRoster cache lookups; isBank flag added to cache; greedy regex replaced with plain-text find()**
 - [x] ~~**Remove message integrity checksum from sends (PERF)**~~ **IMPLEMENTED: Eliminated byte-by-byte Lua checksum loop over 15-50KB comm payloads on every send; DeserializeWithChecksum retained for backward compat with old clients**
-- [x] ~~**Debug tag audit**~~ **IMPLEMENTED: Every `Output:Debug()` call across all Modules now has both a category AND a tag; migrated ticket-based tags (e.g. MAIL-012) to canonical tag names; added SYNC/SEND and SYNC/VALIDATE tags to Constants.lua**
+- [x] ~~**Debug tag audit**~~ **IMPLEMENTED: Every `Output:Debug()` call across all Modules now has both a category AND a tag; migrated ticket-based tags (e.g. MAIL-012) to canonical tag names; added SYNC/SEND, SYNC/VALIDATE, and REQUESTS/INIT tags to Constants.lua; ongoing follow-up passes fixing additional calls discovered via in-game log inspection**
 
 ---
 
@@ -64,9 +64,9 @@ Audited every `Output:Debug()` / `self:Debug()` / `TOGBankClassic_Output:Debug()
 ### Files Changed
 
 - `Modules/Chat.lua` — largest file; fixed ~60 calls across SYNC, PROTOCOL, COMMS, QUERIES, P2P, DELTA, EVENTS, REQUESTS categories; renamed MAIL-012 ticket tags to `MAIL-SYNC`; fixed HASH-CORRECTION and SLOT-CORRECTION format strings that were being misread as the format argument
-- `Modules/Guild.lua` — fixed ~21 calls: COMMS/SEND, CACHE/REFRESH, ITEM/LOAD, ITEM/VALIDATE, SYNC/HASH-MATCH, MAIL/ADOPT
-- `Modules/RequestLog.lua` — fixed ~19 calls across SYNC/MERGE, SYNC/VALIDATE, SYNC/APPLY, SYNC/BROADCAST in `ReceiveRequestMutations`, `CancelRequest`, and `ExpireStaleRequests`
-- `Modules/DeltaComms.lua` — fixed 2 calls: PROTOCOL/HLR-COMPARE for the FastFill roster check
+- `Modules/Guild.lua` — fixed ~21 calls: COMMS/SEND, CACHE/REFRESH, ITEM/LOAD, ITEM/VALIDATE, SYNC/HASH-MATCH, MAIL/ADOPT; follow-up: DATABASE/MIGRATE for delta error migration log
+- `Modules/RequestLog.lua` — fixed ~19 calls across SYNC/MERGE, SYNC/VALIDATE, SYNC/APPLY, SYNC/BROADCAST in `ReceiveRequestMutations`, `CancelRequest`, and `ExpireStaleRequests`; follow-up: SYNC/APPLY for `QueryRequestsIndex` 10s timeout cleanup
+- `Modules/DeltaComms.lua` — fixed 2 calls: PROTOCOL/HLR-COMPARE for the FastFill roster check; follow-up: PROTOCOL/HLR-COMPARE for `Fast-fill processing`, `Fast-fill P2P broadcast`, and `Fast-fill banker query` multiline calls; DELTA/APPLY for `✓ Applied delta for` success log
 - `Modules/Item.lua` — fixed 26 calls: ITEM/LOAD and ITEM/VALIDATE for all DEDUP, ITEM-FILTER, ITEM-DEBUG, and TRACE entries in `GetItems()`
 - `Modules/Core.lua` — fixed tagged calls in startup and version broadcast paths
 - `Modules/Database.lua` — fixed tagged calls in load/save paths
@@ -75,7 +75,9 @@ Audited every `Output:Debug()` / `self:Debug()` / `TOGBankClassic_Output:Debug()
 - `Modules/UI/Requests.lua` — fixed tagged calls in request list render paths
 - `Modules/UI/Search.lua` — fixed 1 call: MAIL/SCAN for `[SEARCH-004] Search complete`
 - `Modules/UI/Inventory.lua` — fixed tagged calls in inventory display paths
-- `Modules/Constants.lua` — added `SYNC.SEND = "outgoing sync data and acknowledgments"` and `SYNC.VALIDATE = "request mutation validation and rejection decisions"`
+- `Modules/ItemHighlight.lua` — follow-up: REQUESTS/INIT for module initialization log
+- `Modules/Bank.lua` — follow-up: MAIL/EVENTS for all 4 calls in `OnUpdateStop()` (called, calling Scan, completed, skipping Scan)
+- `Modules/Constants.lua` — added `SYNC.SEND = "outgoing sync data and acknowledgments"`, `SYNC.VALIDATE = "request mutation validation and rejection decisions"`, and `REQUESTS.INIT = "module initialization and event registration"`
 
 ### Result
 

@@ -84,7 +84,7 @@ function TOGBankClassic_Guild:MigrateTempErrors()
 	self.tempDeltaErrors.failureCounts = {}
 	self.tempDeltaErrors.notifiedAlts = {}
 
-	TOGBankClassic_Output:Debug("DATABASE", "Migrated temporary delta errors to database")
+	TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated temporary delta errors to database")
 end
 
 -- Record a delta error with details (persisted to database or temp storage)

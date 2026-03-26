@@ -426,13 +426,13 @@ function TOGBankClassic_Bank:OnUpdateStart()
 end
 
 function TOGBankClassic_Bank:OnUpdateStop()
-	TOGBankClassic_Output:Debug("MAIL", "OnUpdateStop called, hasUpdated=%s", tostring(self.hasUpdated))
+	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "OnUpdateStop called, hasUpdated=%s", tostring(self.hasUpdated))
 	if self.hasUpdated then
-		TOGBankClassic_Output:Debug("MAIL", "Calling Scan()")
+		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Calling Scan()")
 		self:Scan()
-		TOGBankClassic_Output:Debug("MAIL", "Scan() completed")
+		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Scan() completed")
 	else
-		TOGBankClassic_Output:Debug("MAIL", "Skipping Scan() because hasUpdated is false")
+		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Skipping Scan() because hasUpdated is false")
 	end
 	self.hasUpdated = false
 end

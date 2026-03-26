@@ -1205,7 +1205,7 @@ function Guild:QueryRequestsIndex(target, priority, force)
 		local syncStateAtBroadcast = self.requestsIndexSync
 		C_Timer.After(10, function()
 			if self.requestsIndexSync == syncStateAtBroadcast and self.requestsIndexSync.inFlight then
-				TOGBankClassic_Output:Debug("SYNC", "QueryRequestsIndex: No index response in 10s (guild in sync) - clearing inFlight")
+				TOGBankClassic_Output:Debug("SYNC", "APPLY", "QueryRequestsIndex: No index response in 10s (guild in sync) - clearing inFlight")
 				self:EndRequestsIndexSync()
 			end
 		end)

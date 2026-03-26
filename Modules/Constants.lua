@@ -100,6 +100,7 @@ DEBUG_TAGS = {
 		INDEX   = "index sync operations",
 		PROTO2    = "togbank-ri / togbank-rd2 compact protocol (send + receive)",
 		VALIDATE  = "incoming request sanitization and rejection log",
+		INIT      = "module initialization and event registration",
 	},
 	COMMS = {
 		SEND    = "outbound addon messages (guild, whisper, broadcast)",

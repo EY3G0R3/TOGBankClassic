@@ -80,7 +80,7 @@ function ItemHighlight:Initialize()
 	self.enabled = false
 	
 	-- No events registered at initialization - they'll be registered when highlighting is enabled
-	TOGBankClassic_Output:Debug("REQUESTS", "ItemHighlight: initialized (events will be registered when enabled)")
+	TOGBankClassic_Output:Debug("REQUESTS", "INIT", "ItemHighlight: initialized (events will be registered when enabled)")
 end
 
 -- Enable/disable highlighting

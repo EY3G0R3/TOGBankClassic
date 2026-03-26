@@ -1400,6 +1400,7 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 			TOGBankClassic_Database:RecordDeltaApplyTime(guildInfo.name, applyTime)
 			TOGBankClassic_Output:Debug(
 				"DELTA",
+				"APPLY",
 				"✓ Applied delta for %s (v%d→v%d) in %.2fms",
 				norm,
 				baseVersion,
@@ -1690,6 +1691,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		local info = missingInfo[norm]
 		TOGBankClassic_Output:Debug(
 			"PROTOCOL",
+			"HLR-COMPARE",
 			"Fast-fill processing: %s (info=%s, hash=%s, hasHash=%s, hashNotZero=%s)",
 			tostring(norm),
 			tostring(info ~= nil),
@@ -1702,6 +1704,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 			-- We have hash but no content - broadcast P2P request (GUILD → timeout → banker fallback)
 			TOGBankClassic_Output:Debug(
 				"PROTOCOL",
+				"HLR-COMPARE",
 				"Fast-fill P2P broadcast: requesting %s (expectedHash=%s, updatedAt=%s)",
 				tostring(norm),
 				tostring(info.hash),
@@ -1712,6 +1715,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 			-- No hash available - go straight to banker whisper as last resort
 			TOGBankClassic_Output:Debug(
 				"PROTOCOL",
+				"HLR-COMPARE",
 				"Fast-fill banker query: requesting %s (no hash or hash=0)",
 				tostring(norm)
 			)
