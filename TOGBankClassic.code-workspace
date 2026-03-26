@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../VersionCheck-1.0"
+		},
+		{
+			"path": "../Ace3"
 		}
 	],
 	"settings": {
@@ -562,7 +565,10 @@
 			"CallErrorHandler",
 			"EventTrace",
 			"SecondsToTime",
-			"SendMailSubjectEditBox"
+			"SendMailSubjectEditBox",
+			"ChatFrameUtil",
+			"IsSecureCmd",
+			"ChatEdit_GetActiveWindow"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

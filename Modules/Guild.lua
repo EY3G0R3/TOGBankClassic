@@ -1563,6 +1563,47 @@ function TOGBankClassic_Guild:ReceiveRosterData(sender, roster)
 	end
 end
 
+-- SETTINGS-001: Broadcast guild-wide settings to all online members.
+-- Only authorized senders (banker/officer/GM) may broadcast. Called after any settings change
+-- and piggybacked onto the 3-minute SyncDeltaVersion cycle so new joiners also receive values.
+function TOGBankClassic_Guild:BroadcastSettings(priority)
+	if not self.Info or not self.Info.settings then return end
+	local myPlayer = self:GetNormalizedPlayer()
+	if not myPlayer then return end
+	if not self:IsBank(myPlayer) and not self:SenderIsOfficer(myPlayer) and not self:SenderIsGM(myPlayer) then return end
+	local payload = {
+		type = "guild-settings",
+		settings = {
+			maxRequestPercent = self.Info.settings.maxRequestPercent,
+			autoTombstoneDays = self.Info.settings.autoTombstoneDays,
+		},
+	}
+	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "NORMAL")
+	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "BroadcastSettings: maxRequestPercent=%s autoTombstoneDays=%s",
+		tostring(payload.settings.maxRequestPercent), tostring(payload.settings.autoTombstoneDays))
+end
+
+-- SETTINGS-001: Apply settings received from a remote authorized sender.
+-- Validates sender auth and bounds-checks values before writing to Guild.Info.settings.
+function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
+	if not settings or type(settings) ~= "table" then return end
+	if not self:SenderHasGbankNote(sender) and not self:SenderIsGM(sender) and not self:SenderIsOfficer(sender) then
+		TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings: sender %s not authorized, ignoring", tostring(sender))
+		return
+	end
+	if not self.Info then return end
+	if not self.Info.settings then self.Info.settings = {} end
+	if type(settings.maxRequestPercent) == "number" and settings.maxRequestPercent >= 1 and settings.maxRequestPercent <= 100 then
+		self.Info.settings.maxRequestPercent = math.floor(settings.maxRequestPercent)
+	end
+	if type(settings.autoTombstoneDays) == "number" and settings.autoTombstoneDays >= 1 then
+		self.Info.settings.autoTombstoneDays = math.floor(settings.autoTombstoneDays)
+	end
+	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from %s: maxRequestPercent=%s autoTombstoneDays=%s",
+		tostring(sender), tostring(self.Info.settings.maxRequestPercent), tostring(self.Info.settings.autoTombstoneDays))
+end
+
 -- returns true if the given normalized sender has a public or officer note containing 'gbank'
 function TOGBankClassic_Guild:SenderHasGbankNote(sender)
 	if not sender then

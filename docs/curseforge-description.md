@@ -85,7 +85,7 @@ We're grateful to the GBankClassic-Revived team for the foundation, and we conti
 
 • Request Limits: Set max request percentage (e.g., 50% = members can request up to half of available stock)
 • Protects Unique Items: Always allows requesting at least 1 if available (gear, BoE epics, etc.)
-• Syncs Guild-Wide: Limit setting automatically syncs to all guild members
+• Syncs Guild-Wide: Limit setting broadcasts immediately (ALERT priority) to all online members, and is re-broadcast on the 3-minute sync cycle so members who were offline receive it automatically on login
 • Debug Tools: Access advanced diagnostics via slash commands for troubleshooting
 
 ### Developer & Performance
@@ -204,14 +204,16 @@ Found a bug or have a suggestion?
 • GitHub: [github.com/EY3G0R3/TOGBankClassic](https://github.com/EY3G0R3/TOGBankClassic)
 • In-Game: Use /togbank debug to capture logs, then export from SavedVariables
 
+If you have any questions, comments or anything else, please feel free to reach out on Discord!
+
 ## Credits
 
 Developed by:
-• Dominion-Myzrael - Lead Developer
-• GrumpyPlayers (SG Soul) - Core Systems
-• Lothsahn - Architecture & Optimization
-• Huntmehuntme-Myzrael - Testing & QA
-• Pimptasty - UI/UX Design
+• Dominion-Myzrael - Original Developer
+• GrumpyPlayers (SG Soul) - Developer that Revived the addon
+• Lothsahn - Original Developer
+• Huntmehuntme-Myzrael - TOGBankClassic Fork Developer
+• Pimptasty - TOGBankClassic Fork Developer
 
 **Special Thanks:**
 • The Old Gods guild community for extensive beta testing

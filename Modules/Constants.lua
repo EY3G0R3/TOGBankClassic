@@ -62,6 +62,7 @@ DEBUG_TAGS = {
 		["VERSION-BROADCAST"] = "version broadcast processing",
 		["ALT-REQUEST"]       = "alt-request send / receive decisions",
 		["HASH-SKIP"]         = "hash comparison skip paths",
+		["SETTINGS"]          = "guild settings broadcast / receive (maxRequestPercent, autoTombstoneDays)",
 		["MAIL-012"]          = "MAIL-012 diagnostic traces",
 		["DELTA-014"]         = "DELTA-014 diagnostic traces",
 	},

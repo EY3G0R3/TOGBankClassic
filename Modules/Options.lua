@@ -469,6 +469,8 @@ function TOGBankClassic_Options:Init()
 								TOGBankClassic_Guild.Info.settings.autoTombstoneDays = n
 							end
 							self.db.global.requests.autoTombstoneDays = n
+							-- SETTINGS-001: Broadcast to all guild members so everyone enforces the same value
+							TOGBankClassic_Guild:BroadcastSettings("ALERT")
 							TOGBankClassic_Output:Info("Auto-cancel stale threshold set to %d days (syncing to guild...).", n)
 						end
 					end,
@@ -489,10 +491,11 @@ function TOGBankClassic_Options:Init()
 							-- Write to guild-synced settings (propagates to all clients)
 							if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
 								TOGBankClassic_Guild.Info.settings.maxRequestPercent = v
-								-- Settings propagate on next regular guild share
 							end
 							-- Also write to local settings as backup
 							self.db.global.requests.maxRequestPercent = v
+							-- SETTINGS-001: Broadcast to all guild members so everyone enforces the same value
+							TOGBankClassic_Guild:BroadcastSettings("ALERT")
 							TOGBankClassic_Output:Info("Maximum request amount set to %d%% (syncing to guild...)", v)
 						end,
 					},

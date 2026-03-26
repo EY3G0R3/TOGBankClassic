@@ -258,6 +258,13 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
 		altCount, tostring(payload.isBanker))
 
+	-- SETTINGS-001: Piggyback settings broadcast for authorized senders so new joiners
+	-- and members who missed the immediate broadcast still receive guild-configured values.
+	local myPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	if myPlayer and (TOGBankClassic_Guild:IsBank(myPlayer) or TOGBankClassic_Guild:SenderIsOfficer(myPlayer) or TOGBankClassic_Guild:SenderIsGM(myPlayer)) then
+		TOGBankClassic_Guild:BroadcastSettings()
+	end
+
 	-- Begin P2P collect window so incoming hash-offer responses are gathered.
 	if TOGBankClassic_P2PSession then
 		TOGBankClassic_P2PSession:BeginCollectWindow(list)

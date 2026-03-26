@@ -1873,6 +1873,11 @@ end
 			if data.roster then
 				TOGBankClassic_Guild:ReceiveRosterData(sender, data.roster)
 			end
+		-- SETTINGS-001: Receive and apply guild-wide settings broadcast from an authorized sender
+		elseif data.type == "guild-settings" then
+			if data.settings then
+				TOGBankClassic_Guild:ApplyRemoteSettings(sender, data.settings)
+			end
 		end
 	end
 	if prefix == "togbank-hlr" then
