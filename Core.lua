@@ -99,6 +99,10 @@ end
 -- Checksum implementation for message integrity
 -- Uses a simple but effective hash that detects corruption
 local CHECKSUM_SEPARATOR = "\030" -- ASCII Record Separator, not used by AceSerializer
+-- Stop-marker appended after checksum; its presence (O(4) check) confirms message was not
+-- truncated mid-flight.  Used in parallel with the O(N) CRC to distinguish truncation from
+-- genuine bit-corruption.  \031 (Unit Separator) is not emitted by AceSerializer.
+local STOP_MARKER = "\031END"
 
 local function ComputeChecksum(str)
     if not str or type(str) ~= "string" then
@@ -121,38 +125,56 @@ function TOGBankClassic_Core:Checksum(str)
     return ComputeChecksum(str)
 end
 
--- Serialize data with appended checksum for integrity verification
+-- Serialize data with appended checksum and stop-marker for integrity verification.
+-- Wire format:  <AceSerialized> \030 <checksum> \031END
 function TOGBankClassic_Core:SerializeWithChecksum(data)
     local serialized = self:Serialize(data)
     if not serialized then
         return nil
     end
     local checksum = ComputeChecksum(serialized)
-    return serialized .. CHECKSUM_SEPARATOR .. tostring(checksum)
+    return serialized .. CHECKSUM_SEPARATOR .. tostring(checksum) .. STOP_MARKER
 end
 
--- Deserialize data and verify checksum; returns success, data (or nil, error)
+-- Deserialize data and verify integrity; returns success, data (or nil, error).
+--
+-- Two independent checks are run in parallel:
+--   1. Stop-marker check (O(k)): was the message fully delivered?
+--   2. CRC check (O(N)):         was the message content uncorrupted?
+--
+-- When both are available and they disagree (stop present but CRC fails) an error is
+-- printed to chat — this contradicts the truncation-only hypothesis and means the O(N)
+-- CRC cannot safely be replaced by the stop-marker alone.
 function TOGBankClassic_Core:DeserializeWithChecksum(message)
     if not message or type(message) ~= "string" then
         return false, "invalid message"
     end
 
-    -- Find the checksum separator from the end (payload may contain separator)
+    -- === Stop-marker check (O(k)) ===
+    -- A new-format message ends with STOP_MARKER; old-format messages do not.
+    local stopMarkerLen = #STOP_MARKER
+    local stopPresent = (string.sub(message, -stopMarkerLen) == STOP_MARKER)
+
+    -- Strip stop-marker before CRC parsing so it doesn't interfere
+    local body = stopPresent and string.sub(message, 1, #message - stopMarkerLen) or message
+
+    -- === CRC check (O(N)) ===
+    -- Find the checksum separator from the end of body (payload itself may contain the byte)
     local sepPos = nil
     local sepByte = string.byte(CHECKSUM_SEPARATOR)
-    for i = #message, 1, -1 do
-        if string.byte(message, i) == sepByte then
+    for i = #body, 1, -1 do
+        if string.byte(body, i) == sepByte then
             sepPos = i
             break
         end
     end
     if not sepPos then
-        -- No checksum found - fall back to regular deserialize for backwards compatibility
+        -- No checksum found — old client or pre-checksum message; fall back gracefully
         return self:Deserialize(message)
     end
 
-    local serialized = string.sub(message, 1, sepPos - 1)
-    local checksumStr = string.sub(message, sepPos + 1)
+    local serialized    = string.sub(body, 1, sepPos - 1)
+    local checksumStr   = string.sub(body, sepPos + 1)
     local expectedChecksum = tonumber(checksumStr)
 
     if not expectedChecksum then
@@ -160,7 +182,24 @@ function TOGBankClassic_Core:DeserializeWithChecksum(message)
     end
 
     local actualChecksum = ComputeChecksum(serialized)
-    if actualChecksum ~= expectedChecksum then
+    local crcValid       = (actualChecksum == expectedChecksum)
+
+    -- === Parallel comparison (new-format messages only) ===
+    -- Disagreement: stop-marker present (message arrived complete) but CRC fails
+    -- (content was corrupted).  This is genuine bit-corruption, not truncation — the
+    -- O(N) CRC cannot be replaced by the stop-marker.  Alert the player so they can
+    -- report the incident.
+    if stopPresent and not crcValid then
+        local msg = "|cFFFF0000[TOGBankClassic ERROR]|r Integrity check mismatch: " ..
+            "message arrived complete (stop-marker present) but CRC failed " ..
+            "(expected " .. expectedChecksum .. ", got " .. actualChecksum .. "). " ..
+            "This is NOT truncation — please report this to the developers!"
+        DEFAULT_CHAT_FRAME:AddMessage(msg)
+        TOGBankClassic_Output:Debug("PROTOCOL", "INTEGRITY-MISMATCH",
+            "stop=PASS crc=FAIL expected=%d got=%d", expectedChecksum, actualChecksum)
+    end
+
+    if not crcValid then
         return false, "checksum mismatch (expected " .. expectedChecksum .. ", got " .. actualChecksum .. ")"
     end
 
