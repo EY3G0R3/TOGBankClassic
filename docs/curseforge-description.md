@@ -245,7 +245,20 @@ TOGBankClassic is open-source software. See LICENSE file for details.
 
 ## Recent Updates
 
-v0.9.14 (Latest)
+v0.9.17 (Latest)
+• Requests Archive tab — requests older than a configurable threshold (default 30 days) move to an Archive tab automatically, keeping the main view focused on active requests
+• Auto-cancel stale requests — open requests older than the threshold are tombstoned on sync; officers can also bulk-cancel via the new "Cancel Stale" button
+• Help icons and tooltips on all windows — hover the ? icon or any button/column header/dropdown for guidance
+• Unified thin border and improved button alignment across all windows
+• Fixed: guild-wide settings (request limits, auto-cancel threshold) now reliably broadcast to all online members on change
+• Fixed: slot counts included in no-change whispers, preventing missed syncs in some cases
+
+v0.9.15
+• Fixed banker broadcast marking isBanker=false on every 10-minute sync, causing peers to skip hash updates and send unnecessary whispers back to the banker (up to 50 members × 36 alts per cycle)
+• Fixed /togbank hashupdate also missing isBanker field in its broadcast
+• Performance: guild roster lookups replaced with O(1) cache — eliminates full-roster scans on every incoming message that were causing visible frame stutters on busy guild channels
+
+v0.9.14
 • Two new inventory sort modes — the sort button now cycles through A-Z, By Type, By Rarity (epic first), and By Level (highest first)
 
 v0.9.13
@@ -261,34 +274,6 @@ v0.9.12
 
 v0.9.10
 • Request sync now uses ~60% less bandwidth — a new compact positional wire format replaces the verbose key-value protocol for both the requests index and individual records; guilds with 500+ requests will see the biggest improvement on initial sync and after being offline
-
-v0.9.8
-• Fixed expired requests never being pruned — fulfilled/cancelled requests from 30+ days ago were accumulating indefinitely; pruning now runs automatically every ~3 minutes
-• Network status bar labels renamed: Tx: (outgoing), Rx: (P2P fetches), Bcast: (broadcast queue) — clearer than the old send:/P2P:/q: labels
-• Status bar now drops the right section first when the window is narrow, keeping the more useful left + centre visible longer
-
-v0.9.6
-• Request sync throttle overhaul: deduplicating response drain, coalesced index responses, chunked 20-ID sending — eliminates multi-minute CTL backlogs on large guilds
-• Network status bar (opt-in, Options -> General): live CTL activity with left/centre/right alignment; hides sections automatically when window is narrow
-• /togbank netq: new command showing full CTL queue breakdown by message type and recipient
-• Request window now shows total count alongside filtered count (e.g. "3 / 47")
-• Fixed self-query loop where a lone banker would whisper themselves on login
-
-v0.9.5
-• Request status colours: fulfilled = green, cancelled = red
-• Item sort toggle: A-Z or By Type in inventory view
-• Fixed request sync stalling on login for players offline 1+ days
-• Fixed options window crash on open
-• Fixed /togbank sync being silently blocked by cooldown
-• Fixed /togbank hello crash on unpackaged builds
-• Fixed slot counts showing 0/0 for non-banker characters
-• Removed broken /togbank requestlog command (superseded by Requests UI)
-
-v0.9.0
-• Event-sourced request log with merge-based conflict resolution
-• Request fulfillment tracking with partial fulfillment support
-• Officer permission controls for request management
-• P2P session manager for faster data distribution
 
 ---
 

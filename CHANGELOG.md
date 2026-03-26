@@ -1,44 +1,38 @@
 # TOGBankClassic Changelog
 
-## [Unreleased] - UI Tooltips & Help Icons
+## [v0.9.17] (2026-03-26) - Requests Archive, UI Tooltips & Integrity Diagnostics
+
+### New Features
+
+- **Requests Archive tab** — A second "Archive" tab in the Requests window shows requests older than the configured threshold (default: 30 days), keeping the main tab focused on active/recent requests. Location: `Modules/UI/Requests.lua`.
+
+- **Configurable archive threshold** — Days-before-archive is user-configurable via **Options → Requests → Archive Threshold (days)**. Validated, persisted per-user to SavedVariables. Location: `Modules/Options.lua`, `Modules/UI/Requests.lua`.
+
+- **Auto-tombstone for stale open requests** — Open requests older than the threshold are automatically rejected and tombstoned on receipt, preventing indefinitely-re-syncing requests from long-offline players. Fires on every sync path via `mergeRequest()` (REQUEST-RETIRE-003). Location: `Modules/RequestLog.lua`.
+
+- **Guild-synced `autoTombstoneDays`** — The stale-request cutoff is officer-configurable via **Options → Requests → Auto-cancel threshold (days)**, written to `Guild.Info.settings.autoTombstoneDays` and broadcast to all clients. Location: `Modules/Options.lua`, `Modules/Database.lua`.
+
+- **"Cancel Stale" bulk-tombstone button** — Officers and bankers get a "Cancel Stale" button in the Requests tab strip. Confirmation dialog shows how many requests will be cancelled; on confirm, tombstones all matching open requests and broadcasts `delete` mutations guild-wide. Location: `Modules/UI/Requests.lua`, `Modules/RequestLog.lua`.
+
+- **Help icons and tooltips across all windows** — `?` icons on the Inventory and Requests windows; descriptive tooltips on all buttons, tab buttons, column headers, filter dropdowns, the highlight checkbox, and the Search label. Location: `Modules/UI/Inventory.lua`, `Modules/UI/Requests.lua`, `Modules/UI/Search.lua`.
 
 ### Improvements
 
-- **Help `?` icon on Inventory window** — A `?` icon (using `Interface\Common\help-i`) sits between the status bar and the close button. Hovering it shows a multi-paragraph tooltip explaining how the guild bank works: what each tab represents, how to donate items, and how to submit requests. Location: `Modules/UI/Inventory.lua`.
+- **Unified thin border** — Inventory, Requests, and Search windows now use the thin tooltip-style border (`UI-Tooltip-Border`, edgeSize=16) via a shared `ApplyThinBorder()` helper. Location: `Modules/UI.lua` and each window file.
 
-- **Help `?` icon on Requests window** — Same icon and placement as the Inventory window. Tooltip explains all four action buttons (Fulfill, Complete, Cancel, Delete) including the meaning of each Fulfill icon state. Location: `Modules/UI/Requests.lua`.
+- **Requests button row alignment** — Tab-strip buttons now sit at the same vertical baseline as the Inventory top-bar buttons. Location: `Modules/UI/Requests.lua`.
 
-- **Tooltips on Inventory buttons** — Search, Sort, and Requests buttons in the main Inventory window now show descriptive tooltips on hover. Location: `Modules/UI/Inventory.lua`.
+- **Custom minimap button icon.** (v0.9.16)
 
-- **Tooltips on Requests tab buttons** — The "Requests" and "Archive" tab buttons now show tooltips explaining what each tab shows. "Cancel Stale" already had a tooltip; it remains unchanged. Location: `Modules/UI/Requests.lua`.
+### Bug Fixes
 
-- **Tooltips on Requests column headers** — All seven sortable column headers (Date, Requester, Bank, #, Item, Sent, Actions) now show tooltips describing the column and noting they are clickable to sort. Location: `Modules/UI/Requests.lua`.
+- **Guild settings not broadcast to all members** — Officer-configured settings (max request %, auto-cancel days) were not reliably reaching all online members. Fix: settings are now broadcast at ALERT priority immediately on change. (SETTINGS-001) Location: `Modules/Guild.lua`.
 
-- **Tooltips on Requests filter dropdowns** — The "Requester" and "Banker" dropdown labels now have hit-frame tooltips (since FontStrings cannot receive mouse events) explaining the filter. Labels are also nudged 3px right to align visually with the dropdown control edge. Location: `Modules/UI/Requests.lua`.
+- **No-change whispers missing slot counts** — Slot counts were omitted from no-change whispers, causing the receiver to incorrectly skip a needed sync in some cases. (SLOTS-002) Location: `Modules/Guild.lua`.
 
-- **Tooltip on "Highlight needed items" checkbox** — The banker-only checkbox now shows a tooltip explaining that it highlights bank bag items matching pending requests. Location: `Modules/UI/Requests.lua`.
+### Internal / For Testers
 
-- **Tooltip on Search "Item Name" label** — The label above the search input now has a hit-frame tooltip explaining the 3-character minimum, drag-to-search, and click-to-request behaviours. Label nudged 3px right to align with the input box edge. Location: `Modules/UI/Search.lua`.
-
----
-
-## [Unreleased] - Requests Archive Tab & Stale Request Auto-Cancellation
-
-### Improvements
-
-- **Unified thin border across all windows** — The Inventory, Requests, and Search windows (including the Search request dialog) now share the same thin tooltip-style border (`UI-Tooltip-Border`, edgeSize=16) instead of the default thick dialog border (`UI-DialogBox-Border`, edgeSize=32). The ornate title banner is untouched. A shared `ApplyThinBorder()` helper in `UI.lua` is called from each `DrawWindow()` to keep the logic in one place. Location: `Modules/UI.lua`, `Modules/UI/Inventory.lua`, `Modules/UI/Requests.lua`, `Modules/UI/Search.lua`.
-
-- **Requests button row aligned with Inventory button row** — The Requests tab-strip buttons ("Requests", "Archive", "Cancel Stale") now sit at the same vertical baseline as the Inventory top-bar buttons ("Search", "Sort", "Requests"). The Requests `SimpleGroup` content was shifted up by 8px to compensate for both the Flow layout's built-in 3px gap and the 5px padding used on the Inventory side. Location: `Modules/UI/Requests.lua`.
-
-- **Requests window now has tabbed layout** — A "Requests" tab (active/recent requests) and an "Archive" tab (older requests) sit at the top of the Requests window. Requests older than the configured threshold are automatically shown only in the Archive tab; everything within the threshold appears in the Requests tab as before. Location: `Modules/UI/Requests.lua`.
-
-- **Configurable archive threshold** — The number of days before a request is considered archived (default: 30) is now user-configurable via **Options → TOGBankClassic → Requests → Archive Threshold (days)**. Accepts any positive whole number, is validated on entry, and is persisted to `TOGBankClassicOptionDB` (SavedVariables) so it survives `/reload`. This threshold is per-user (local only). Location: `Modules/Options.lua`, `Modules/UI/Requests.lua`.
-
-- **Auto-tombstone for stale open requests** — Any open request older than the configured threshold is now automatically rejected and tombstoned the moment it is received from a peer. This prevents requests from long-offline players from re-syncing indefinitely across the guild. The check runs inside `mergeRequest()` (REQUEST-RETIRE-003), so it fires on every sync path: index receive, by-ID receive, snapshot, and mutation. Location: `Modules/RequestLog.lua`.
-
-- **Guild-synced `autoTombstoneDays` setting** — The stale-request threshold (default: 30 days) is set guild-wide via **Options → TOGBankClassic → Requests → Auto-cancel threshold (days)**. The value is written to `Guild.Info.settings.autoTombstoneDays` and propagates to all clients on the next share cycle, ensuring all members apply the same cutoff. Location: `Modules/Options.lua`, `Modules/Database.lua`.
-
-- **"Cancel Stale" bulk-tombstone button** — Officers and bankers see a "Cancel Stale" button in the Requests window tab strip. Clicking it shows a confirmation dialog stating how many days' worth of requests will be cancelled. On confirm, `Guild:ExpireStaleRequests()` tombstones all locally-known open requests older than the threshold and broadcasts a `delete` mutation for each, propagating cancellations to the whole guild. The button tooltip dynamically reflects the current threshold. Location: `Modules/UI/Requests.lua`, `Modules/RequestLog.lua`.
+- **Stop-marker integrity diagnostic** — A `\031END` stop-marker is now appended to every outgoing message. On receive, it is checked (O(4)) in parallel with the existing O(N) CRC. If the stop-marker is present but CRC fails — indicating genuine bit-corruption rather than truncation — a debug log entry is written. A new opt-in toggle in **Options → Debug → Show Integrity Mismatch Alerts** (off by default) also prints a visible chat error, allowing designated testers to monitor for non-truncation corruption and determine whether the cheaper stop-marker check can eventually replace the full CRC. Location: `Core.lua`, `Modules/Options.lua`.
 
 ---
 
