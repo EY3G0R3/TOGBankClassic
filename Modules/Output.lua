@@ -179,6 +179,8 @@ function TOGBankClassic_Output:CreateDebugTab()
 
 			self.debugFrame:Show()
 			FCF_DockFrame(self.debugFrame)
+			-- Restore General as the active tab so the debug frame isn't selected on the next reload
+			FCF_SelectDockFrame(ChatFrame1)
 
 			-- Initial draw of buffered messages
 			self:RedrawDebugMessages()
@@ -233,6 +235,8 @@ function TOGBankClassic_Output:CreateDebugTab()
 	-- Make visible and dock it
 	frame:Show()
 	FCF_DockFrame(frame)
+	-- Restore General as the active tab so the debug frame isn't selected on the next reload
+	FCF_SelectDockFrame(ChatFrame1)
 
 	-- Hook OnShow to redraw messages when tab becomes visible
 	if not frame.togbankHooked then
