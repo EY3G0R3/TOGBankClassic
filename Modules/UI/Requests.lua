@@ -608,12 +608,12 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	window:SetLayout("Flow")
 	window:EnableResize(true)
 	TOGBankClassic_UI:ApplyThinBorder(window)
-	-- Persist window position/size across reloads
+	-- Persist window position/size across reloads (each window gets its own sub-table)
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
-		window:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
+		local positions = TOGBankClassic_Options.db.char.framePositions
+		positions.requests = positions.requests or { width = MIN_WIDTH, height = 500 }
+		window:SetStatusTable(positions.requests)
 	end
-	-- Set width AFTER SetStatusTable to ensure minimum size is enforced
-	window:SetWidth(MIN_WIDTH)
 	if window.frame.SetResizeBounds then
 		window.frame:SetResizeBounds(MIN_WIDTH, 200)
 	else

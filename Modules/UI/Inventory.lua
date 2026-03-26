@@ -84,11 +84,12 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	local version = GetAddOnMetadata("TOGBankClassic", "Version") or "?"
 	window:SetTitle("TOGBankClassic v" .. version)
 	window:SetLayout("Flow")
-	window:SetWidth(550)
 	TOGBankClassic_UI:ApplyThinBorder(window)
-	-- Persist window position/size across reloads
+	-- Persist window position/size across reloads (each window gets its own sub-table)
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
-		window:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
+		local positions = TOGBankClassic_Options.db.char.framePositions
+		positions.inventory = positions.inventory or { width = 550, height = 500 }
+		window:SetStatusTable(positions.inventory)
 	end
 	--handle keyboard events
 	---START CHANGES

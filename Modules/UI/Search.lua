@@ -333,14 +333,17 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	searchWindow:SetCallback("OnClose", OnClose)
 	searchWindow:SetTitle("Search")
 	searchWindow:SetLayout("Flow")
-	searchWindow:EnableResize(false)
+	searchWindow:EnableResize(true)
 	TOGBankClassic_UI:ApplyThinBorder(searchWindow)
-	-- Persist window position/size across reloads
+	-- Persist window size across reloads (position is always snapped to the main UI in Open())
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
-		searchWindow:SetStatusTable(TOGBankClassic_Options.db.char.framePositions)
+		local positions = TOGBankClassic_Options.db.char.framePositions
+		positions.search = positions.search or { width = 250, height = 400 }
+		searchWindow:SetStatusTable(positions.search)
 	end
-	-- Set width AFTER SetStatusTable to override any saved width
-	searchWindow:SetWidth(250)
+	if searchWindow.frame.SetResizeBounds then
+		searchWindow.frame:SetResizeBounds(200, 200)
+	end
 
 	self.Window = searchWindow
 
@@ -666,22 +669,25 @@ function TOGBankClassic_UI_Search:DrawContent()
 						local bankAlt = vv.alt
 						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search display: showing %s with %d items for %s",
 							resultItem.Info and resultItem.Info.name or "Unknown", resultItem.Count or 0, bankAlt)
-					
-					-- Draw item with tooltip support (tooltips automatically enabled by DrawItem)
-					local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
-					if itemWidget then
-						itemWidget:SetCallback("OnClick", function(widget, event)
-							if IsShiftKeyDown() or IsControlKeyDown() then
-								TOGBankClassic_UI:EventHandler(widget, event)
-								return
-							end
-							TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)
-						end)
-					end
-					
-					-- Add label showing which bank alt has this item
-					local label = TOGBankClassic_UI:Create("Label")
-					label:SetText(bankAlt)
+
+						-- Draw item with tooltip support (tooltips automatically enabled by DrawItem)
+						local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
+						if itemWidget then
+							itemWidget:SetCallback("OnClick", function(widget, event)
+								if IsShiftKeyDown() or IsControlKeyDown() then
+									TOGBankClassic_UI:EventHandler(widget, event)
+									return
+								end
+								TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)
+							end)
+							count = count + 1
+
+							-- Add label showing which banker has this item
+							local label = TOGBankClassic_UI:Create("Label")
+							label:SetHeight(35)
+							label:SetText("|cFFAAAAAA" .. bankAlt .. "|r")
+							self.Results:AddChild(label)
+						end
 					end
 				end
 			end
