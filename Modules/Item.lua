@@ -248,11 +248,14 @@ function TOGBankClassic_Item:GetItems(items, callback)
 							}
 						else
 							-- Fallback: item somehow not in cache, extract what we can
-							local _, _, _, _, iconID = GetItemInfoInstant(capturedItemLink)
+							-- GetItemInfoInstant works without cache and returns class/subclass too
+							local _, _, _, _, iconID, itemClassId, itemSubClassId = GetItemInfoInstant(capturedItemLink)
 							if iconID then
 								capturedItem.Info = {
 									icon = iconID,
-									name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID))
+									name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID)),
+									class = itemClassId,
+									subClass = itemSubClassId,
 								}
 							end
 						end
@@ -468,8 +471,8 @@ function TOGBankClassic_Item:Sort(items, mode)
 			if a.Info.class ~= b.Info.class then
 				return (a.Info.class or 99) < (b.Info.class or 99)
 			end
-			local aEquip = a.Info.equip or ""
-			local bEquip = b.Info.equip or ""
+			local aEquip = a.Info.equipId or 0
+			local bEquip = b.Info.equipId or 0
 			if aEquip ~= bEquip then
 				return aEquip < bEquip
 			end
