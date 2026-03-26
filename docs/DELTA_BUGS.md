@@ -28,7 +28,6 @@
 - ✅ [REQ-001] **HIGH** `drainQueriedRequests` crashed with "attempt to call global 'serializeRequestV1' (a nil value)" — `serializeRequestV1` and `serializeTombstoneV1` were declared as `local function` at line ~253 but called at lines 83 and 94 inside `drainQueriedRequests` (defined at line ~49). In Lua, `local` names are only visible after their declaration point, so the functions were nil at call time. Triggered whenever the responder drain fired to send `togbank-rd2` records to a querier. Fix: Moved `RI_VERSION`, `RD2_VERSION`, `serializeRequestV1`, and `serializeTombstoneV1` to before `ctlDepthForDrain` (above `drainQueriedRequests`) so they are in scope when the drain executes. `deserializeRequestV1` and `serializeIndexChunkV1` are not called before their definition and were left in place. Location: RequestLog.lua (moved locals/functions from line ~253 to line ~33).
 - ✅ [UI-010] **HIGH** Mail items (consumables) show no tooltip on hover in bank inventory — `ItemString` format mismatch between mail and bank items caused `SetHyperlink` to silently fail. `GetItemString()` returns `"item:4306:0:0:0:0:0:0:0:0"` (WITH `item:` prefix). `MailInventory.lua` stored this directly as `ItemString`. `ReconstructItemLink` and `ProcessItemQueue` both embed `ItemString` via `|Hitem:%s`, producing `|Hitem:item:4306:...|h` — a double `item:` prefix. `GameTooltip:SetHyperlink` on this malformed link fails silently — no tooltip. Bank items don't have this problem because `StripItemLinks` stores `ItemString` via `string.match(link, "item:([^|]+)")` which captures WITHOUT the `item:` prefix, producing a valid `|Hitem:4306:...|h`. Fixes: (1) `MailInventory.lua` now strips the `item:` prefix when storing `storageItemString`, so future scans store in the correct format. (2) `ReconstructItemLink` and the `ProcessItemQueue` `ContinueOnItemLoad` callback both defensively strip the prefix (`item.ItemString:match("^item:(.+)$") or item.ItemString`) to handle existing persisted data. Additionally, `DrawItem` `OnEnter`/`OnLeave` callbacks were moved outside the `if item.Link then` guard so items without a pre-built link still register hover handlers. Locations: MailInventory.lua (~66), Guild.lua `ReconstructItemLink` (~2231) and `ProcessItemQueue` ContinueOnItemLoad callback (~2138), UI.lua `DrawItem` (~108-130).
 
-
 **Recent Fixes (2026-03-14):**
 - ✅ [SLOTS-001] **HIGH** Delta syncs missing slot metadata causing 0/0 slots display for non-bankers — Delta protocol only transmitted item changes (`ComputeItemDelta` on bank/bags/mail items) but never included `bank.slots` or `bags.slots` metadata (count/total capacity). When `ApplyDelta` created missing structures, it initialized them as `{ items = {} }` without slots. Non-bankers who never received a full sync or only received delta updates after initial sync had valid items but missing slot counts. Status bar displayed "0/0" in both default view and hover tooltip. Fix: (1) `BuildDelta` now includes `bank.slots` and `bags.slots` in delta when they differ from previous state, (2) `ApplyDelta` now applies these slots when present in delta, (3) Added defensive checks in UI hover callback to handle missing data gracefully (shows "No data available" or "Waiting for sync..." for stub/unsynced alts). Forward-looking fix; existing incomplete data requires fresh sync to populate slots. Locations: DeltaComms.lua `BuildDelta` (~822-845), `ApplyDelta` (~1247-1308); UI/Inventory.lua `OnEnterStatusBar` (~212-227).
 - ✅ [SYNC-015] **HIGH** `ReportBankerDataProgress` crashed with nil `self.Info` during HLR processing — Function accessed `self.Info.alts` at line 658 without checking if `self.Info` exists first. Can occur during race conditions when HLR processing happens before guild data initialization completes (e.g., fast-fill triggered during addon load). Stack trace: `OnCommReceived` (Chat.lua:2011) → `ReportBankerDataProgress` (Guild.lua:658) during hash-list-reply processing in context "fast-fill". Fix: Added defensive nil check at function entry; early returns with debug log if `self.Info` doesn't exist. Location: Guild.lua `ReportBankerDataProgress` (~629-637).
@@ -142,7 +141,7 @@ WoW's AceComm-3.0 (via ChatThrottleLib) enforces a hard limit of **16 `RegisterC
 At the time of discovery, `Chat.lua` had grown to **24 active `RegisterComm` calls** (plus 1 legacy `togbank-v`), placing slots 17-25 permanently in the dead zone:
 
 | Slot | Prefix | Status |
-|------|--------|--------|
+| ------ | -------- | -------- |
 | 1 | `togbank-d` | ✅ Active |
 | 2 | `togbank-hl` | ✅ Active |
 | 3 | `togbank-hlr` | ✅ Active |
@@ -548,7 +547,7 @@ This seeds Raideronly into `latestBankerHashes` on every login/reload, even thou
 ## Bug Severity Levels
 
 | Severity | Description | Response Time |
-|----------|-------------|---------------|
+| ---------- | ------------- | --------------- |
 | 🔴 **CRITICAL** | Crashes, data loss, or complete feature failure | Immediate fix required |
 | 🟠 **HIGH** | Major functionality broken, workaround exists | Fix within 24-48 hours |
 | 🟡 **MEDIUM** | Minor functionality issue, doesn't block usage | Fix within 1 week |
@@ -614,6 +613,7 @@ Display: 7 ✓
 ### Root Causes Identified
 
 #### 1. Missing Existing Item Check in ApplyItemDelta
+
 **File:** `DeltaComms.lua` Lines ~938-972  
 **Severity:** CRITICAL
 
@@ -654,6 +654,7 @@ end
 **Impact:** Defense-in-depth - even if ComputeItemDelta generates incorrect deltas due to link normalization failures, ApplyItemDelta still handles them correctly.
 
 #### 2. Wrong Baseline in Delta Computation
+
 **File:** `DeltaComms.lua`, `Guild.lua`  
 **Severity:** CRITICAL
 
@@ -674,6 +675,7 @@ local delta = self:ComputeItemDelta(previous.bank.items, current.bank.items)
 **Fix:** Modified `ComputeStateSummary` to send minimal item structures {ID, Count} from requester's current data, used as baseline.
 
 #### 3. Link Normalization Failures
+
 **File:** `DeltaComms.lua` Lines ~568-645  
 **Severity:** HIGH
 
@@ -703,6 +705,7 @@ end
 ```
 
 #### 4. Using Aggregated Items Instead of Separate Inventories
+
 **File:** `DeltaComms.lua`  
 **Severity:** CRITICAL
 
@@ -882,7 +885,7 @@ for _, mailItem in ipairs(alt.mail.items) do
   -- mailItem.link → mailItem.Link
 ```
 
-**Current Status:** 
+**Current Status:**
 🔍 **ON HOLD** - Awaiting clear bug definition and reproduction steps from user before proceeding with any code changes.
 
 ---
@@ -2053,7 +2056,7 @@ for _, entry in ipairs(list) do
 end
 ```
 
-**Key improvement:** 
+**Key improvement:**
 - Removed `break` statement
 - Still queries for missing entries when gaps detected
 - But processes ALL received entries
@@ -2127,6 +2130,7 @@ See [REQUEST_COMMS.md](REQUEST_COMMS.md) section "Priority-Based Conflict Resolu
 ---
 
 #### [REPLAY-001] Empty requestLogApplied causes all requests to disappear from UI
+
 **Reporter:** User (Production - Galdof character)
 **Date Reported:** 2026-01-27
 **Status:** ✅ RESOLVED (2026-01-27)
@@ -2398,7 +2402,7 @@ This ensures exact-fit stacks are always preferred over splitting.
 - ✅ Click envelope button - items attach to mail (no split popup!) ✅
 - ✅ Request fulfilled successfully
 
-**Files Modified:** 
+**Files Modified:**
 - `Modules/Mail.lua` (lines 591, 608-633) - Fixed greedy algorithm and minimum stack size
 - `Modules/Mail.lua` (multiple) - Migrated debug output to proper system
 
@@ -2441,7 +2445,7 @@ Result: User clicks expecting split, but items attach directly → confusion
 
 **Root Causes:**
 
-1. **Algorithm Divergence**: 
+1. **Algorithm Divergence**:
    - CanFulfillRequest: Simple greedy (accumulate if count ≤ remaining)
    - PrepareFulfillMail: Two-stage greedy with "useful stacks" filtering
 
@@ -2868,7 +2872,7 @@ end
 After a `/wipe` command, user expected to manually trigger request data sync using `/togbank sync` to repopulate request data from other guild members. However, the command does not appear to initiate request data synchronization as expected.
 
 **Resolution:**
-This is working as designed. Request data synchronization was intentionally decoupled from inventory sync to fix PERF-002 (NormalizeRequestList broadcast storm). 
+This is working as designed. Request data synchronization was intentionally decoupled from inventory sync to fix PERF-002 (NormalizeRequestList broadcast storm).
 
 **Current Behavior (By Design):**
 - `/togbank sync` triggers inventory data sync only
@@ -3905,6 +3909,7 @@ Eliminates unnecessary delta sync failures when senders are offline. System now 
 ### 🟠 HIGH - All Resolved
 
 #### ✅ [SYNC-001] Cross-Guild Data Bleed After /wipe
+
 **Reported:** 2026-01-22
 **Severity:** HIGH
 **Category:** Database / Synchronization
@@ -7122,7 +7127,7 @@ These are documented limitations of v0.7.0, not bugs to be fixed:
 Track which test suites have been executed and results:
 
 | Test Suite | Status | Date Tested | Tester | Result | Notes |
-|------------|--------|-------------|--------|--------|-------|
+| ------------ | -------- | ------------- | -------- | -------- | ------- |
 | 1. Basic Delta Sync | 🔄 In Progress | 2026-01-20 | Team | ⚠️ Issues | Threshold lowered to 10%. Debug: Delta computed but full sync sent via togbank-d instead of togbank-d2 |
 | 2. Error Handling | ⏳ Pending | - | - | - | - |
 | 3. Protocol Negotiation | ⏳ Pending | - | - | - | - |
@@ -7269,16 +7274,19 @@ When a new bug is reported:
 ## Communication
 
 ### Reporting Bugs
+
 - Add bugs directly to this document
 - Notify team in guild chat or Discord
 - For critical bugs, contact lead developer immediately
 
 ### Status Updates
+
 - Update bug status as work progresses
 - Comment on bugs with new findings
 - Move resolved bugs to "Resolved" section
 
 ### Reviews
+
 - Team reviews bug list weekly
 - Triage new bugs together
 - Reprioritize as needed
@@ -7297,6 +7305,7 @@ When a new bug is reported:
 ## Notes for Testers
 
 ### Automated Tests
+
 Run automated test suite first:
 ```
 /togbank test
@@ -7304,12 +7313,14 @@ Run automated test suite first:
 Expected: 26/26 tests passing ✓
 
 ### Enable Debug Output
+
 For detailed logging during manual tests:
 ```
 /togbank debug
 ```
 
 ### Key Commands for Testing
+
 ```
 /togbank deltastats     - View metrics
 /togbank protocol       - Check protocol distribution
@@ -7319,6 +7330,7 @@ For detailed logging during manual tests:
 ```
 
 ### What to Watch For
+
 - ❌ Lua errors (enable with `/console scriptErrors 1`)
 - ⚠️ Version mismatch messages
 - ⚠️ Delta application failures
@@ -7327,6 +7339,7 @@ For detailed logging during manual tests:
 - ⚠️ Missing or incorrect inventory after sync
 
 ### Reporting Tips
+
 - Include `/togbank deltastats` output
 - Include `/togbank protocol` output
 - Copy debug messages (from `/togbank debug`)
@@ -7342,6 +7355,7 @@ For detailed logging during manual tests:
 **Impact:** Delta sync failures when items removed from bags/bank
 
 ### Problem
+
 Delta validation was rejecting removed items that didn't have a `Link` property, causing repeated VALIDATION_FAILED errors like:
 ```
 TOGBankClassic: [WARN] Repeated delta sync failures for Togherbs-Azuresong. Falling back to full sync.
@@ -7349,6 +7363,7 @@ TOGBankClassic: Validation failed: invalid bags delta: removed item missing or i
 ```
 
 ### Root Cause
+
 **Mismatch between delta creation and validation:**
 
 1. **Delta creation** (DeltaComms.lua:459) - Creates minimal removed items:
@@ -7380,6 +7395,7 @@ TOGBankClassic: Validation failed: invalid bags delta: removed item missing or i
 **Why this happened:** The v0.8.0 bandwidth optimization removed Link from transmitted removed items (saves ~60 bytes per item), but validation wasn't updated to accept this minimal format.
 
 ### Solution
+
 **File:** `Modules/DeltaComms.lua:110-125`
 
 Updated validation to accept removed items without Link:
@@ -7408,12 +7424,14 @@ end
 - Keeps the 4-byte bandwidth savings per removed item
 
 ### Testing
+
 1. Have two clients online (e.g., Togherbs and Galdof)
 2. Remove items from bags/bank on Togherbs
 3. Verify Galdof receives delta without VALIDATION_FAILED errors
 4. Check `/togbank deltaerrors` shows no new errors
 
 ### Related Issues
+
 - Works with delta application logic that matches by ID only (line 592)
 - Maintains backwards compatibility (still handles old format with Link if present)
 - Preserves v0.8.0 bandwidth optimization
@@ -7640,6 +7658,7 @@ Future improvement: Consider separate logging for "rejections" vs "failures" to 
 **Impact:** Lua error when hovering over status bar in Inventory window
 
 ### Problem
+
 Lua error when hovering over the Inventory window status bar:
 ```
 attempt to index field 'slots' (a nil value)
@@ -7647,6 +7666,7 @@ attempt to index field 'slots' (a nil value)
 ```
 
 ### Root Cause
+
 Code assumed `alt.bank.slots` and `alt.bags.slots` always exist, but older alt data or incomplete sync data may not have these fields:
 
 ```lua
@@ -7657,6 +7677,7 @@ end
 ```
 
 ### Solution
+
 **File:** `Modules/UI/Inventory.lua:217-226`
 
 Added nil checks before accessing slots:
@@ -7672,6 +7693,7 @@ end
 ```
 
 ### Testing
+
 1. Open Inventory window (`/togbank`)
 2. Hover over status bar at bottom
 3. Verify no Lua errors appear
@@ -7799,7 +7821,7 @@ The flow:
 
 **Phase 2 (2026-02-20):** Added delayed checkbox creation logic to `UpdateFilters()` function.
 
-**Files:** 
+**Files:**
 - `Modules/Events.lua:~307` (Phase 1)
 - `Modules/UI/Requests.lua:~1095-1117` (Phase 2)
 
@@ -8368,7 +8390,6 @@ TOGBankClassic_Output:Debug("SYNC", "Sending %s: alt.items=%d, alt.bank.items=%d
 
 ### ✅ [SYNC-006] Mail quantities appearing additive during syncs
 
-
 **Severity:** 🔴 CRITICAL  
 **Category:** Delta Sync / Data Integrity / Inventory Aggregation
 **Reporter:** User (Production)
@@ -8432,7 +8453,7 @@ When aggregated: 4 + 5 + 8 + 16 + ... = 325 total bags instead of 33.
 **1. Architecture Changes (prevent future corruption):**
 - **Modules/Bank.lua (lines 200-217):** Create `alt.items` aggregate from bank + bags + mail after each scan
 - **Modules/Item.lua (lines 103-146):** Fixed `Aggregate()` to use ID-only as key (not ID+Link)
-- **Modules/DeltaComms.lua:** 
+- **Modules/DeltaComms.lua:**
   - Lines 526-543: `ComputeDelta()` uses `alt.items`
   - Lines 575-587: `DeltaHasChanges()` checks `alt.items`
   - Lines 743-753: `ApplyDelta()` applies to `alt.items`
@@ -9044,7 +9065,7 @@ Blizzard_ObjectAPI/Classic/Item.lua:320: table index is nil
 1. **Item ID Validation** (Guild.lua, Item.lua):
    - Added `if itemObj and itemObj.itemID and itemObj.itemID == item.ID` check before ContinueOnItemLoad
    - Filters out corrupted items with ID < 100 (not valid WoW items)
-   
+
 2. **Error Protection** (Guild.lua lines 1025-1040, 1070-1085):
    - Wrapped ContinueOnItemLoad calls in `pcall` to catch race condition errors
    - Properly decrements pendingAsyncLoads counter on failure

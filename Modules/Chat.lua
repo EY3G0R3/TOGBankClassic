@@ -764,6 +764,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		return
 	end
 
+	---@diagnostic disable-next-line: redundant-parameter
 	local success, data = TOGBankClassic_Core:DeserializeWithChecksum(message, { sender = sender, prefix = prefix, distribution = distribution })
 	if not success then
 		self:Debug("PROTOCOL", "> failed to deserialize", prefix, prefixDesc, "from", ColorPlayerName(sender), "error:", tostring(data))

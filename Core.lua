@@ -147,6 +147,8 @@ end
 -- CRC cannot safely be replaced by the stop-marker alone.
 --
 -- Optional ctx table for richer diagnostics: { sender, prefix, distribution }
+---@param message string
+---@param ctx? table
 function TOGBankClassic_Core:DeserializeWithChecksum(message, ctx)
     if not message or type(message) ~= "string" then
         return false, "invalid message"

@@ -1,8 +1,9 @@
-# TOGBankClassic - Feature Improvements
+﻿# TOGBankClassic - Feature Improvements
 
 **Development Note:** Use GitKraken for pushing updates to repository.
 
 ## Features
+
 - [x] ~~Move filled/completed orders to an archive tab~~ **IMPLEMENTED: Requests window now has "Requests" and "Archive" tabs; requests older than the configured threshold (default 30 days, configurable per-user in Options > TOGBankClassic > Requests) are automatically moved to the Archive tab; threshold saved to SavedVariables and persists through `/reload`**
 - [x] ~~Auto-tombstone stale open requests~~ **IMPLEMENTED: Any open request older than `autoTombstoneDays` (default 30, guild-synced via `Guild.Info.settings.autoTombstoneDays`) is tombstoned on receive inside `mergeRequest()` (REQUEST-RETIRE-003); `Guild:ExpireStaleRequests(actor)` performs a bulk cancellation and broadcasts `delete` mutations guild-wide; officers/bankers have a "Cancel Stale" button in the Requests window tab strip with confirmation dialog and dynamic tooltip**
 - [ ] Add mouseover tooltip for truncated item names to show full text
@@ -48,7 +49,9 @@
 **Purpose:** Eliminate repeated 500-member `GetGuildRosterInfo()` scans in hot paths to reduce frame stutters during active guild comm traffic
 
 ### Problem
+
 Several functions that run on every incoming comm message were doing live full-roster scans instead of using the existing `memberRoster` cache:
+
 - `IsInCurrentGuildRoster()` — called on every received comm message to validate the sender; scanned all 500 members every time
 - `IsBank()` — iterated `banksCache` array with `NormalizeName()` on each entry for every call
 - `GetBanks()` — re-scanned all guild members via `GetGuildRosterInfo()` whenever `banksCache` was nil
@@ -59,6 +62,7 @@ Several functions that run on every incoming comm message were doing live full-r
 With 50 members online all syncing near the 10-minute broadcast cycle, these scans could be called dozens of times per second, each costing thousands of string operations — enough to cause visible frame stutters.
 
 ### Solution
+
 - Added `isBank` flag to each `memberRoster` entry in `RefreshOnlineCache()` and `RebuildBankerRoster()`, computed using plain-text `string.find(note, "gbank", 1, true)` (no regex)
 - `GetBanks()` now derives the banker list by iterating `memberRoster` instead of calling `GetGuildRosterInfo()` for every member again
 - `IsBank()` — O(1) `memberRoster[norm].isBank` lookup
@@ -69,6 +73,7 @@ With 50 members online all syncing near the 10-minute broadcast cycle, these sca
 - All fallbacks fire only during the brief early-login window before `memberRoster` is populated; during normal gameplay every call is a single hash table lookup
 
 ### Files Changed
+
 - `Modules/Guild.lua`
 
 ---
@@ -79,19 +84,23 @@ With 50 members online all syncing near the 10-minute broadcast cycle, these sca
 **Purpose:** Eliminate a byte-by-byte Lua loop over 15–50KB serialized payloads that ran on every comm message send and receive, reducing frame stutters during active guild sync traffic
 
 ### Problem
+
 `SerializeWithChecksum()` appended a rolling polynomial checksum (computed by iterating every byte of the serialized payload in Lua) to every outgoing comm message. `DeserializeWithChecksum()` recomputed it on receipt to verify. For a large inventory delta this meant two passes over 30–50KB of data — potentially 5–15ms of Lua time per message pair.
 
 The checksum provided no meaningful protection:
+
 - WoW uses TCP: network transport has its own checksumming; in-transit bit corruption essentially never occurs
 - AceSerializer produces structured output that fails to parse on its own if truncated or corrupted — a deserialization error would be raised regardless
 - The checksum provides zero security against malicious messages — any sender can compute and attach a valid checksum
 
 ### Solution
+
 `SerializeWithChecksum()` now returns the raw serialized string with no checksum appended — the expensive byte loop is eliminated entirely on the send path.
 
 `DeserializeWithChecksum()` is unchanged: it still searches for the separator and verifies the checksum if present, then falls back to plain `Deserialize()` if no checksum is found. This ensures backward compatibility with messages from older clients that still append checksums.
 
 ### Files Changed
+
 - `Core.lua`
 
 ---
@@ -102,13 +111,16 @@ The checksum provided no meaningful protection:
 **Purpose:** Provide easy recovery when addon windows become positioned off-screen or incorrectly placed
 
 ### Problem
+
 - Window positions are persisted in SavedVariables per-character
 - Windows can become stuck off-screen after resolution changes, monitor disconnection, or UI bugs
 - No easy way to reset positions without manually editing SavedVariables files
 - Users have to delete SavedVariables or manually edit TOGBankClassicOptionDB to recover
 
 ### Solution
+
 New `/togbank wipeframes` command:
+
 - Clears all saved window positions from `TOGBankClassicOptionDB`
 - Preserves all other addon data (inventory, requests, settings)
 - Reports how many positions were cleared
@@ -116,12 +128,14 @@ New `/togbank wipeframes` command:
 - Windows return to default positions after reload
 
 ### Implementation Details
+
 - **Storage:** Window positions stored in `TOGBankClassic_Options.db.char.framePositions`
 - **Scope:** Per-character data (each character maintains own window positions)
 - **Not affected by:** `/togbank wipe` or `/togbank wipeall` (those only reset guild bank data)
 - **Command location:** Expert commands section (alphabetically between wipeall and debug commands)
 
 ### Usage
+
 ```lua
 /togbank wipeframes
 -- Output: "Cleared 3 saved window position(s). Type /reload to reset window positions."
@@ -130,6 +144,7 @@ New `/togbank wipeframes` command:
 ```
 
 ### Technical Notes
+
 - Counts existing positions before clearing for user feedback
 - Handles missing or uninitialized framePositions table gracefully
 - Uses AceGUI-3.0 `SetStatusTable()` system for position persistence
@@ -143,13 +158,16 @@ New `/togbank wipeframes` command:
 **Purpose:** Eliminate manual stack splitting when fulfilling guild bank orders with oversized stacks
 
 ### Problem
+
 - Bankers must manually split stacks when order quantity doesn't match stack sizes
 - Example: Request for 2 Felcloth, but only have 5-stack requires manual right-click split
 - Complex scenarios (175 Runecloth from mixed stacks) require multiple manual splits
 - Time-consuming and error-prone process
 
 ### Solution
+
 Automatic stack splitting with confirmation popup:
+
 - **Split Detection:** Detects when stacks are too large for requested quantity
 - **Confirmation Dialog:** Shows popup with exact split amount (e.g., "Split 2 from stack of 5 Felcloth?")
 - **Icon Indication:** Fulfill button shows shovel icon (🛠️) when split needed, envelope (✉️) when ready to mail
@@ -159,11 +177,13 @@ Automatic stack splitting with confirmation popup:
 ### Implementation Details
 
 **Visual Indicators:**
+
 - 🛠️ Shovel icon = Split needed before mailing
 - ✉️ Envelope icon = Ready to attach items
 - Button stays enabled during split workflow
 
 **Algorithm:**
+
 1. **First Pass (Greedy):** Try smallest-first stack selection
 2. **Optimization Pass:** If not exact match, try skipping individual stacks to find optimal fit
 3. **Split Decision:** Show popup if no exact combination found
@@ -172,17 +192,20 @@ Automatic stack splitting with confirmation popup:
 **Example Scenarios:**
 
 *Simple Split:*
+
 - Request: 2 Felcloth
 - Inventory: 1×5 stack
 - Action: Split 2 from 5-stack → Attach 2
 
 *Complex Partial Fulfillment:*
+
 - Request: 175 Runecloth
 - Inventory: 1×2, 1×7, 1×13, 8×20 (total 262)
 - Greedy would give: 2+7+13+7×20 = 162 (needs another split)
 - Optimized: Skip 7-stack → 2+13+8×20 = 175 exactly!
 
 ### User Experience
+
 1. Click fulfill button (shovel icon appears if split needed)
 2. Popup asks: "Split 13 from stack of 20 Runecloth?"
 3. Click "Split" → items split to empty bag slot
@@ -191,6 +214,7 @@ Automatic stack splitting with confirmation popup:
 6. Click Send → order complete
 
 ### Technical Notes
+
 - Uses `C_Container.SplitContainerItem()` with empty bag slot commitment
 - Bin-packing tries up to 5 skip combinations for optimal fit
 - Sorts stacks smallest-first for greedy baseline
@@ -204,15 +228,18 @@ Automatic stack splitting with confirmation popup:
 **Purpose:** Capture complete debug history across sessions for troubleshooting intermittent issues
 
 ### Problem
+
 - Chat frame debug logs are limited and lost on `/reload`
 - Can only see current session snapshot (~1000 messages)
 - Intermittent issues (like UI-003) require tracking 10,000s of messages over time
 - No way to review complete debug history when issues manifest
 
 ### Solution
+
 All DEBUG-level messages are captured to memory with timestamps and persisted to SavedVariables on logout.
 
 ### Configuration
+
 - **Max Entries:** 50,000 (circular buffer)
 - **Max Age:** 7 days (auto-cleanup)
 - **Storage:** `TOGBankClassicDB_DebugLog` SavedVariable
@@ -223,10 +250,12 @@ All DEBUG-level messages are captured to memory with timestamps and persisted to
 ### Slash Commands
 
 #### `/togbank debuglog [N] [filter]`
+
 Export last N entries (default 500), optionally filtered by keyword.
 
 **Examples:**
-```
+
+```text
 /togbank debuglog 50000                   # ALL entries (up to max)
 /togbank debuglog 10000 anumbnutz         # Last 10k mentioning player
 /togbank debuglog 5000 cancel             # Last 5k with "cancel"
@@ -234,16 +263,18 @@ Export last N entries (default 500), optionally filtered by keyword.
 ```
 
 Output format (compact for large logs):
-```
+
+```text
 14:20:15 TOGBankClassic: [DEBUG] < togbank-d Share: delta from Anumbnutz
 14:21:42 TOGBankClassic: [DEBUG] > Anumbnutz shares delta (567 bytes)
 14:22:18 TOGBankClassic: [DEBUG] Delta applied: v1234 -> v1235
 ```
 
 #### `/togbank debuglogstats`
+
 Show log statistics: entry count, oldest/newest timestamps, time span, configuration.
 
-```
+```text
 Debug log: 23,847 entries
 Oldest: 2026-01-23 08:15:32
 Newest: 2026-01-23 14:22:18
@@ -253,9 +284,11 @@ Max age: 7 days
 ```
 
 #### `/togbank debuglogsave`
+
 Manually save to SavedVariables (normally automatic on logout).
 
 #### `/togbank debuglogclear`
+
 Clear all persistent log entries.
 
 ### Workflow
@@ -268,13 +301,16 @@ Clear all persistent log entries.
 **Purpose:** Allow officers to centrally configure request limits that automatically sync to all guild members
 
 ### Problem
+
 - Requests exceeding available inventory create unfillable orders
 - No way to distribute limited resources fairly among multiple requesters
 - Bankers forced to manually adjust requests or explain limitations via whisper
 - Officers need centralized control over request behavior guild-wide
 
 ### Solution
+
 Officers can configure maximum request amount as percentage of available inventory (1-100%):
+
 - **Guild-Wide Sync:** Setting stored in guild data structure, automatically propagates to all clients
 - **Officer-Only Configuration:** "Requests" tab in options visible only to officers (CanViewOfficerNote)
 - **Percentage-Based Clamping:** `maxAllowed = floor(available × percentage ÷ 100)`
@@ -284,12 +320,14 @@ Officers can configure maximum request amount as percentage of available invento
 ### Implementation Details
 
 **Storage & Sync:**
+
 - Settings stored in `Guild.Info.settings.maxRequestPercent` (default: 100%)
 - Syncs via existing request protocol (`togbank-d` / `SendRequestsData()`)
 - Falls back to local setting if guild data not yet loaded
 - Persists across `/reload`, logout, and client sessions
 
 **User Experience:**
+
 - **For Officers:**
   - Open Options → Requests tab
   - Slider: 1% to 100% (default: 100%)
@@ -305,12 +343,14 @@ Officers can configure maximum request amount as percentage of available invento
 **Example Scenarios:**
 
 *Fair Resource Distribution:*
+
 - Guild has 100 Mooncloth, 3 members want some
 - Officer sets 50% limit
 - Each member can request max 50 (or less if stock depletes)
 - Prevents one person claiming entire stock
 
 *Single Item Protection:*
+
 - Guild has 1 Thunderfury (yes, really)
 - Officer has 25% limit configured
 - Calculation: floor(1 × 25 ÷ 100) = 0
@@ -318,12 +358,14 @@ Officers can configure maximum request amount as percentage of available invento
 - Member can still request the legendary weapon
 
 *Dynamic Updates:*
+
 - Officer changes 100% → 50% during raid prep
 - All online members' request dialogs update immediately
 - Existing requests unaffected, new requests use new limit
 - Setting persists for offline members when they log in
 
 ### Technical Notes
+
 - Reads from `Guild.Info.settings.maxRequestPercent` first, local DB as fallback
 - Slider set function writes to both guild structure and local DB (backup)
 - Calls `SendRequestsData()` to broadcast via existing request sync protocol
@@ -331,7 +373,9 @@ Officers can configure maximum request amount as percentage of available invento
 - Access control via `hidden = function() return not CanViewOfficerNote() end`
 
 ### Configuration
-**Options → Requests (Officers Only)**
+
+#### Options → Requests (Officers Only)
+
 - Maximum Request Amount: 1% - 100% slider
 - Example Calculations group shows gear vs stackable examples
 - Real-time preview of how percentage affects different item quantities
@@ -369,6 +413,7 @@ Officers can configure maximum request amount as percentage of available invento
 **Purpose:** Consolidate all WHISPER communication with automatic online checking
 
 ### Problem
+
 - WHISPER sends scattered across 7+ locations in codebase
 - Manual online checks required before each send (easy to forget)
 - Inconsistent error handling and logging
@@ -376,11 +421,13 @@ Officers can configure maximum request amount as percentage of available invento
 - High maintenance burden - every WHISPER location needs identical logic
 
 ### Solution
+
 Created centralized `SendWhisper()` wrapper in Core.lua with built-in online checking.
 
 ### Implementation
 
 **Core.lua - New Function:**
+
 ```lua
 function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn, callbackArg)
     -- Check if target is online
@@ -400,6 +447,7 @@ end
 Replaced all direct WHISPER sends (7 locations):
 
 **Before:**
+
 ```lua
 -- Manual check required (easy to forget)
 if not TOGBankClassic_Guild:IsPlayerOnline(sender) then
@@ -410,6 +458,7 @@ TOGBankClassic_Core:SendCommMessage("togbank-rr", data, "WHISPER", sender, "NORM
 ```
 
 **After:**
+
 ```lua
 -- Automatic online checking
 if not TOGBankClassic_Core:SendWhisper("togbank-rr", data, sender, "NORMAL") then
@@ -418,6 +467,7 @@ end
 ```
 
 **Locations Updated:**
+
 1. Chat.lua: togbank-rr ACK replies
 2. Chat.lua: togbank-dc delta chain responses
 3. Guild.lua: togbank-state state summaries
@@ -445,9 +495,11 @@ end
 ---
 
 ## 🔄 Request Data Sync (v0.7.11) - IMPLEMENTED
+
 **Fixed:** [SYNC-002] - Pass player name to queries, remove player check for guild-wide data
 
 ## 🎨 Persistent Tab Selection (v0.7.11) - IMPLEMENTED
+
 **Fixed:** [UI-004] - Preserve selected tab across syncs and redraws
 
 ---
@@ -455,9 +507,11 @@ end
 ## �🔄 Pull-Based Delta Protocol (v0.8.0) - PLANNED
 
 ### Overview
+
 Replace v0.7.0's snapshot-based delta sync with a pull-based handshake protocol for greater simplicity and efficiency.
 
 **Key Improvements over v0.7.0:**
+
 - No snapshots to maintain (eliminates deltaSnapshots table)
 - No version mismatch errors (receiver explicitly states what they have)
 - No chain replay complexity (sender computes custom delta)
@@ -465,6 +519,7 @@ Replace v0.7.0's snapshot-based delta sync with a pull-based handshake protocol 
 - Simpler logic (7-step flow, clear rules)
 
 ### Core Philosophy
+
 - Receiver states what they have, sender computes the diff
 - If receiver has NO data → send everything
 - If receiver has SOME data → ALWAYS send delta
@@ -513,19 +568,23 @@ Replace v0.7.0's snapshot-based delta sync with a pull-based handshake protocol 
 ### Message Optimizations
 
 #### 1. Remove Links from Transmission (5-7KB savings)
+
 **Problem:** v0.7.0 sends full Link strings with every item
+
 ```lua
 -- v0.7.0 (HEAVY):
 { ID = 12345, Count = 5, Link = "|cff9d9d9d|Hitem:2589:0:0:0:0:0:0:0:20:0:0|h[Linen Cloth]|h|r" }
 ```
 
 **Solution:** Send only ID/Count, receiver reconstructs
+
 ```lua
 -- v0.8.0 (LIGHT):
 { ID = 12345, Count = 5 }  -- Receiver calls GetItemInfo(12345)
 ```
 
 **Reconstruction:**
+
 ```lua
 function ReconstructItemLinks(items)
   for _, item in ipairs(items) do
@@ -539,28 +598,35 @@ end
 **Result:** 5-7KB bandwidth savings per sync (typical 100-item alt)
 
 #### 2. Remove baseVersion (8 bytes saved)
+
 **v0.7.0:** Delta includes `baseVersion` to identify what it's built against
+
 ```lua
 { type = "alt-delta", version = 110, baseVersion = 100, changes = {...} }
 ```
 
 **v0.8.0:** Receiver explicitly stated what they have in step 4, baseVersion is redundant
+
 ```lua
 { type = "alt-delta", version = 110, changes = {...} }  -- No baseVersion needed
 ```
 
 #### 3. Minimal Remove Format (4 bytes/item saved)
+
 **v0.7.0:** Remove items include Count and Link
+
 ```lua
 remove = { { ID = 12345, Count = 5, Link = "|cff..." }, ... }
 ```
 
 **v0.8.0:** Only send ID (count/link irrelevant for deletion)
+
 ```lua
 remove = { { ID = 12345 }, { ID = 67890 }, ... }
 ```
 
 #### 4. State Summary Format
+
 **Purpose:** Receiver tells sender what they have for delta computation
 **Format:** `{[itemID] = quantity}` - ID to quantity mapping only
 **Size:** ~8 bytes per item = ~800 bytes for 100 items
@@ -569,6 +635,7 @@ remove = { { ID = 12345 }, { ID = 67890 }, ... }
 ### Channel Assignment
 
 **GUILD Channel (High Volume):**
+
 - togbank-v (version broadcasts)
 - togbank-dv (banker announcements)
 - togbank-d (full sync data)
@@ -576,6 +643,7 @@ remove = { { ID = 12345 }, { ID = 67890 }, ... }
 - togbank-r (query fallback when banker unknown)
 
 **WHISPER Channel (Handshakes Only):**
+
 - togbank-r (query to specific banker)
 - togbank-rr (query reply - NEW)
 - togbank-state (state summary - NEW)
@@ -586,12 +654,14 @@ remove = { { ID = 12345 }, { ID = 67890 }, ... }
 ### Version Management (CRITICAL FIX)
 
 **v0.7.0 Problem:** Versions created on logout regardless of changes
+
 ```lua
 -- Guild.lua:679 (WRONG)
 self.Info.alts[norm].version = GetServerTime()  -- Always updates!
 ```
 
 **v0.8.0 Solution:** Versions ONLY created when inventory actually changes
+
 ```lua
 -- Only update version if items/money changed
 if inventoryChanged then
@@ -600,6 +670,7 @@ end
 ```
 
 **Version Creation Rules:**
+
 - ✅ Create new version when: Items added/removed/modified, money changed
 - ❌ NEVER create version on: Queries, responses, no-change replies, failed requests
 
@@ -619,12 +690,14 @@ When multiple guild members respond to a query:
 ### Startup Optimization
 
 **Discovery Phase:**
+
 - On addon init: Broadcast "is any banker online?"
 - Listen for togbank-dv responses
 - Build list of online bankers
 - Update list as members log in/out
 
 **Smart Routing:**
+
 ```lua
 if bankerKnownOnline then
   SendCommMessage("togbank-r", data, "WHISPER", bankerName)
@@ -636,6 +709,7 @@ end
 ### Implementation Checklist
 
 #### Config Flags (User-Selectable)
+
 - [ ] Add protocol selection option to addon config menu
 - [ ] `FORCE_LEGACY_PROTOCOL` - Force use of togbank-d/d2 with Links (v0.6.x compatible)
 - [ ] `FORCE_NEW_PROTOCOL` - Force use of togbank-d3/d4 without Links (v0.8.0 only)
@@ -644,31 +718,37 @@ end
 - [ ] Show bandwidth savings in config UI when using new protocol
 
 #### New Messages
+
 - [ ] `togbank-rr` - Query reply with `{ isBanker = bool, version = timestamp }`
 - [ ] `togbank-state` - State summary `{ items = {[itemID] = count} }`
 - [ ] `togbank-nochange` - Explicit no-change response
 
 #### Modified Messages
+
 - [ ] `togbank-d` - Remove Link fields from all items
 - [ ] `togbank-d2` - Remove Link fields, remove baseVersion, minimal removes
 
 #### Link Reconstruction
+
 - [ ] `ReconstructItemLinks(items)` - Call GetItemInfo for each item
 - [ ] Store reconstructed Links in database after applying delta
 - [ ] Handle async loading with `Item:CreateFromItemID()` if needed
 
 #### Version Management
+
 - [ ] Fix version creation to only happen on actual changes
 - [ ] Remove version updates from logout event (Guild.lua:679)
 - [ ] Track inventory state to detect changes
 
 #### Banker Discovery
+
 - [ ] Implement banker discovery on init
 - [ ] Maintain `onlineBankers = {}` table
 - [ ] Update from togbank-dv broadcasts
 - [ ] Smart routing based on banker availability
 
 #### Remove Old Code
+
 - [ ] Delete deltaSnapshots table and snapshot functions
 - [ ] Delete chain replay logic (RequestDeltaChain, ApplyDeltaChain)
 - [ ] Delete SEND_FULL_THRESHOLD and size comparison
@@ -684,6 +764,7 @@ end
 The addon uses WoW's guild chat communication system (AceComm-3.0) to synchronize bank inventory data between guild members. Data is serialized, checksummed, and transmitted in chunks through multiple communication prefixes.
 
 **Communication Prefixes:**
+
 - `togbank-v` - Version broadcasts (lightweight pings every 3 minutes)
 - `togbank-d` - Data transfers (alt inventory, roster, requests)
 - `togbank-r` - Query requests (asking for specific data)
@@ -692,11 +773,13 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 - `togbank-w` / `togbank-wr` - Wipe/Wipe Reply (reset commands)
 
 **Sync Timers:**
+
 - Full roster/alt data sync: Every 10 minutes (600s)
 - Lightweight version broadcast: Every 3 minutes (180s)
 - Queue retry delay: 5 seconds
 
 **Data Serialization Process:**
+
 1. **Serialization** (Core.lua):
    - Uses AceSerializer-3.0 to convert Lua tables to strings
    - Computes simple additive checksum (31-bit hash) on serialized data
@@ -719,6 +802,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 **Sync Flow:**
 
 *Bank Character Shares Data:*
+
 1. Timer triggers or manual `/bank share` command
 2. Checks if player is marked as bank alt (guild note contains specific marker)
 3. Serializes full inventory data:
@@ -732,6 +816,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 5. ChatThrottleLib chunks and sends data
 
 *Receiving Client:*
+
 1. `OnCommReceived()` intercepts message by prefix
 2. Deserializes and validates checksum
 3. Authenticates sender:
@@ -746,12 +831,14 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 5. If adopted: updates local database, triggers UI refresh
 
 **Version Comparison System:**
+
 - Each alt's data has a `version` field (server timestamp)
 - Receiving client checks: `if remote_version > local_version then adopt`
 - Conflicts resolved by newest timestamp wins
 - Missing version treated as very old (0)
 
 **Query/Response Pattern:**
+
 - Clients send lightweight version broadcasts every 3 minutes
 - Includes: player name, addon version, list of known alts with their versions
 - Recipients compare versions, send queries for fresher data
@@ -796,6 +883,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
    - No parallel processing of independent alts
 
 **Potential Optimizations:**
+
 - Implement delta updates (only send changed items)
 - Strip redundant item metadata (send only ID/Count/Link)
 - Add LZ compression layer before serialization
@@ -832,21 +920,21 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 
 **Medium Impact, Lower Effort:**
 
-4. **Targeted Whispers for Query Responses**
+1. **Targeted Whispers for Query Responses**
    - Current: All data broadcast to entire guild
    - Optimize: Query responses whispered directly to requester
    - Only broadcast: Initial version pings, roster updates
    - Reduces network spam for all guild members
    - Implementation: Change distribution parameter from "GUILD" to "WHISPER"
 
-5. **Batch Item Updates**
+2. **Batch Item Updates**
    - Current: Immediate sync on every item change
    - Optimize: Accumulate changes for 2-5 seconds, send batch
    - Reduces multiple small transmissions to one larger
    - Especially useful during bank/mail organization
    - Use timer to flush pending changes
 
-6. **Shared Item Metadata Cache**
+3. **Shared Item Metadata Cache**
    - Build local cache: `ItemInfoCache[itemID] = {icon, level, rarity, ...}`
    - First encounter: Retrieve via API, cache permanently
    - Never transmit cached metadata
@@ -855,21 +943,21 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 
 **Lower Impact, Good Optimizations:**
 
-7. **Better Checksum Algorithm**
+1. **Better Checksum Algorithm**
    - Replace simple additive hash with CRC32
    - Available in LibCompress or LibDeflate
    - Smaller output, faster computation, better collision resistance
    - Per-chunk checksums for early error detection
    - Reduces retransmissions due to detected corruption
 
-8. **Incremental Sync Protocol**
+2. **Incremental Sync Protocol**
    - Add sequence number to each update: `{sequence: 12345, changes: [...]}`
    - Clients track last-seen sequence per alt
    - Query: "Send all changes since sequence X"
    - Eliminates full inventory retransmission on reconnect
    - Requires persistent sequence number storage
 
-9. **Optimized Version Broadcasts**
+3. **Optimized Version Broadcasts**
    - Current: Full table of all alts with timestamps
    - Optimize: Only include alts modified since last broadcast
    - Use bit-packed format for flags (has_bags, has_bank, etc.)
@@ -878,7 +966,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 
 **Radical Redesign (High Effort, High Reward):**
 
-10. **Event-Driven Updates Only**
+1. **Event-Driven Updates Only**
     - Remove periodic 10-minute full sync timer
     - Trigger updates only on actual changes:
       - `BANKFRAME_OPENED` / `BANKFRAME_CLOSED`
@@ -887,14 +975,14 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
     - Fallback: Manual `/bank share` or login sync
     - Reduces network traffic by 90%+ during idle periods
 
-11. **Subscription Model**
+2. **Subscription Model**
     - Clients specify which bank alts they care about
     - Bank alts only send to subscribers
     - Reduces broadcasts for large guilds with many banks
     - Protocol: `{type: "subscribe", alts: ["BankAlt1", "BankAlt2"]}`
     - Timeout: Auto-unsubscribe after 30 minutes offline
 
-12. **Progressive Update Strategy**
+3. **Progressive Update Strategy**
     - Priority 1: Send item counts and IDs (fast, small)
     - Priority 2: Send full item links (slower, larger)
     - Priority 3: Send metadata for uncached items (slowest)
@@ -902,6 +990,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
     - User sees "Loading..." indicators for incomplete data
 
 **Implementation Priority Recommendation:**
+
 1. Start with #2 (Strip Metadata) - Easy win, big impact
 2. Add #6 (Item Cache) - Complements #2
 3. Implement #3 (Compression) - Mature library, proven
@@ -918,20 +1007,23 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 
 ### Architecture Overview
 
-**Phase 1: Add New Delta Protocol (v0.7.0)**
+#### Phase 1: Add New Delta Protocol (v0.7.0)
+
 - Introduce new comm prefix `togbank-d2` for delta updates
 - Maintain existing `togbank-d` for full data transfers (backwards compatibility)
 - Add protocol version negotiation in version broadcasts
 - Implement automatic protocol selection based on peer capabilities
 
-**Phase 2: Coexistence Period (v0.7.x - v0.8.x)**
+#### Phase 2: Coexistence Period (v0.7.x - v0.8.x)
+
 - Both protocols operate simultaneously
 - New clients speak both protocols (send delta to v0.7+ clients, full to older)
 - Old clients ignore `togbank-d2` messages, continue using `togbank-d`
 - Monitor adoption rates via version broadcasts
 - Gather metrics on bandwidth savings
 
-**Phase 3: Deprecation (v0.9.0+, Optional)**
+#### Phase 3: Deprecation (v0.9.0+, Optional)
+
 - After sufficient adoption (>80% of guild online users)
 - Add deprecation warnings for old protocol in UI
 - Remove `togbank-d` full sync in v1.0.0 (breaking change)
@@ -939,6 +1031,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 ### Technical Implementation
 
 #### 1. Protocol Version Constants
+
 ```lua
 -- Modules/Constants.lua
 PROTOCOL_VERSION = 2  -- Bump for breaking changes
@@ -947,6 +1040,7 @@ MIN_DELTA_SIZE_RATIO = 0.3  -- Only use delta if <30% of full size
 ```
 
 #### 2. Enhanced Version Broadcast
+
 ```lua
 -- togbank-v message structure
 {
@@ -961,6 +1055,7 @@ MIN_DELTA_SIZE_RATIO = 0.3  -- Only use delta if <30% of full size
 ```
 
 #### 3. Delta Data Structure
+
 ```lua
 -- v0.8.0 togbank-d4 message format (link-less)
 {
@@ -1007,6 +1102,7 @@ MIN_DELTA_SIZE_RATIO = 0.3  -- Only use delta if <30% of full size
 ```
 
 #### 4. Peer Capability Detection
+
 ```lua
 -- Track guild member protocol versions
 guild_protocol_versions = {
@@ -1029,6 +1125,7 @@ end
 ```
 
 #### 5. Smart Send Logic with Fallback
+
 ```lua
 function SendAltData(name, force)
     local norm = NormalizeName(name)
@@ -1057,6 +1154,7 @@ end
 ```
 
 #### 6. Delta Computation Algorithm
+
 ```lua
 function ComputeDelta(name, currentAlt)
     local previous = GetSnapshot(name)
@@ -1114,6 +1212,7 @@ end
 ```
 
 #### 7. Delta Application with Validation
+
 ```lua
 function ApplyDelta(name, deltaData)
     local norm = NormalizeName(name)
@@ -1210,9 +1309,11 @@ end
 ## 📋 Request Communication System Architecture
 
 ### Overview
+
 The request system uses a **full snapshot + operation log** architecture for synchronizing guild bank requests across all players. Unlike the delta-based inventory system, requests use complete snapshots with operation replay for conflict resolution.
 
 **Key Design Principles:**
+
 - **Snapshot-based sync**: Full request list transmitted on sync
 - **Operation log**: All changes recorded as discrete log entries
 - **Last-writer-wins**: Conflicts resolved by timestamp
@@ -1222,11 +1323,13 @@ The request system uses a **full snapshot + operation log** architecture for syn
 ### Communication Channels
 
 #### Primary Channels
+
 - **`togbank-r`** (Request): Query for request data (GUILD broadcast)
 - **`togbank-rr`** (Request Reply): Acknowledgment of request (WHISPER response)
 - **`togbank-d`** (Data): Full snapshots and log entries (GUILD broadcast)
 
 #### Message Types
+
 1. **`requests`** - Full snapshot of all requests
 2. **`requests-log`** - Individual log entries for incremental updates
 
@@ -1286,7 +1389,9 @@ requestsTombstones = {
 ### Request Lifecycle
 
 #### 1. Creating a Request
+
 **Flow:**
+
 1. Player calls `Guild:AddRequest(request)`
 2. Request sanitized and assigned unique ID
 3. Log entry created with type "add"
@@ -1296,7 +1401,8 @@ requestsTombstones = {
 7. UI refreshed
 
 **Code Path:**
-```
+
+```text
 UI/Requests.lua:OnAddButtonClick()
   → Guild:AddRequest()
     → sanitizeRequest()
@@ -1310,7 +1416,9 @@ UI/Requests.lua:OnAddButtonClick()
 ```
 
 #### 2. Fulfilling a Request
+
 **Flow:**
+
 1. Banker calls `Guild:FulfillRequest(requestId, quantity)`
 2. Validates request exists and is fulfillable
 3. Log entry created with type "fulfill" and delta
@@ -1318,22 +1426,28 @@ UI/Requests.lua:OnAddButtonClick()
 5. If quantity >= request.quantity, status → "fulfilled"
 
 **Conflict Resolution:**
+
 - Multiple fulfillments are **additive** (clamped to quantity)
 - Example: Banker A fulfills 2, Banker B fulfills 3 → total 5 (clamped to quantity)
 
 #### 3. Cancelling/Completing
+
 **Flow:**
+
 1. Player calls `Guild:CancelRequest()` or `Guild:CompleteRequest()`
 2. Permission checked (requester can cancel, bankers can complete)
 3. Log entry created with type "cancel" or "complete"
 4. Entry broadcast and applied locally
 
 **Conflict Resolution:**
+
 - Last-writer-wins by statusUpdatedAt
 - Cancel beats fulfill if cancel.statusUpdatedAt > fulfill.statusUpdatedAt
 
 #### 4. Deleting (Pruning)
+
 **Flow:**
+
 1. Completed/cancelled requests older than 7 days automatically pruned
 2. Tombstone created with delete timestamp
 3. Tombstone prevents deleted requests from reappearing in snapshots
@@ -1341,9 +1455,11 @@ UI/Requests.lua:OnAddButtonClick()
 ### Synchronization Protocol
 
 #### Snapshot Sync (Full State)
+
 **When:** Initial sync, catch-up after being offline, or gap detection
 
 **Flow:**
+
 1. Player A broadcasts: `togbank-r` with type "requests" query
 2. Player B (has data) sends: `togbank-d` with type "requests"
 3. Player A receives snapshot via `ReceiveRequestsData()`
@@ -1356,6 +1472,7 @@ UI/Requests.lua:OnAddButtonClick()
 6. UI refreshed
 
 **Payload Structure:**
+
 ```lua
 {
     type = "requests",
@@ -1367,9 +1484,11 @@ UI/Requests.lua:OnAddButtonClick()
 ```
 
 #### Log Entry Sync (Incremental)
+
 **When:** Real-time updates, gap filling
 
 **Flow:**
+
 1. Player creates/modifies request → log entry broadcast
 2. Other players receive via `ReceiveRequestLogEntries()`
 3. Entry validated against expected sequence (must be seq = last + 1)
@@ -1377,6 +1496,7 @@ UI/Requests.lua:OnAddButtonClick()
 5. Entry applied via `ApplyRequestLogEntry()`
 
 **Payload Structure:**
+
 ```lua
 {
     type = "requests-log",
@@ -1397,9 +1517,11 @@ UI/Requests.lua:OnAddButtonClick()
 ```
 
 #### Gap Detection & Recovery
+
 **Problem:** Player offline, misses log entries 3-10
 
 **Solution:**
+
 1. Player receives entry with seq=11
 2. Detects gap (expected seq=3, got seq=11)
 3. Calls `QueryRequestLog(sender, { [actor] = 3 })`
@@ -1413,6 +1535,7 @@ UI/Requests.lua:OnAddButtonClick()
 **Problem:** ApplyRequestSnapshot was **replacing** local requests with incoming snapshot, causing data loss.
 
 **Solution (v0.7.7):** Merge incoming with local
+
 ```lua
 -- Build index of incoming requests
 local incomingById = {}
@@ -1443,6 +1566,7 @@ self.Info.requests = merged
 ```
 
 **Why This Matters:**
+
 - Player A creates request locally
 - Player B (who hasn't seen it) sends their snapshot
 - Without merge: Player A's request gets deleted
@@ -1451,10 +1575,12 @@ self.Info.requests = merged
 ### Conflict Resolution Rules
 
 #### Add (Create)
+
 - **Rule:** Last-writer-wins by updatedAt
 - **Example:** If request with same ID arrives from two sources, keep the one with newer updatedAt
 
 #### Fulfill
+
 - **Rule:** Additive, clamped to quantity
 - **Example:**
   - Request for 10 items
@@ -1463,6 +1589,7 @@ self.Info.requests = merged
   - Result: fulfilled = 10 (4+6)
 
 #### Cancel/Complete
+
 - **Rule:** Last-writer-wins by statusUpdatedAt
 - **Example:**
   - Player cancels at timestamp 100
@@ -1470,6 +1597,7 @@ self.Info.requests = merged
   - Result: Request is cancelled (100 > 90)
 
 #### Delete
+
 - **Rule:** Tombstone wins over older updates
 - **Example:**
   - Request deleted at timestamp 200
@@ -1479,16 +1607,19 @@ self.Info.requests = merged
 ### Retention & Pruning
 
 #### Request Pruning
+
 - **When:** Completed/cancelled requests older than 7 days
 - **How:** `PruneRequests()` called after sync operations
 - **Result:** Request removed, tombstone created
 
 #### Log Pruning
+
 - **When:** Log entries older than 30 days OR log exceeds 500 entries
 - **How:** `PruneRequestLog()` sorts by timestamp, keeps newest
 - **Result:** Old entries discarded (already applied to snapshots)
 
 #### Tombstone Pruning
+
 - **When:** Tombstones older than 30 days
 - **How:** `PruneRequestTombstones()` removes aged tombstones
 - **Result:** Very old deleted requests can theoretically resurrect (acceptable)
@@ -1496,26 +1627,31 @@ self.Info.requests = merged
 ### Known Issues & Fixes
 
 #### UI-003: Request Data Loss (CRITICAL)
+
 **Status:** Partially Fixed (v0.7.7), but still occurring
 
 **Root Cause:** Multiple potential causes identified:
+
 1. ✅ **Fixed:** ApplyRequestSnapshot was replacing instead of merging
 2. ❓ **Investigating:** Possible race conditions in log replay
 3. ❓ **Investigating:** Tombstone logic may be too aggressive
 4. ❓ **Investigating:** requestLogApplied tracking may have bugs
 
 **Current Symptoms:**
+
 - Requests created by users sometimes don't appear in UI
 - Requests visible, then disappear after reload
 - No entry in requestLog or requestLogSeq for missing requests
 
 **Debug Logging Added:**
+
 - All request sync operations tagged with `[UI-003]`
 - RefreshRequestsUI logs request count
 - ApplyRequestSnapshot logs preserved local requests
 - PruneRequests logs pruned requests
 
 **Next Steps:**
+
 1. Monitor debug logs for pattern detection
 2. Verify requestLog entries are created for all requests
 3. Check if tombstones are being created incorrectly
@@ -1524,7 +1660,7 @@ self.Info.requests = merged
 ### Comparison: Request Sync vs. Delta Protocol
 
 | Aspect | Request System | Inventory Delta System |
-|--------|---------------|------------------------|
+| -------- | --------------- | ------------------------ |
 | **Architecture** | Snapshot + Operation Log | Hash-based Delta |
 | **Sync Method** | Full state + log replay | Compute diff on-demand |
 | **Bandwidth** | High (full snapshots) | Low (only changes) |
@@ -1562,6 +1698,7 @@ end
 ```
 
 **The Race Condition:**
+
 1. Player logs out
 2. 5 minutes pass (roster data becomes very stale)
 3. Addon calls `IsPlayerOnline()` → `GuildRoster()` → `GetGuildRosterInfo()`
@@ -1576,13 +1713,15 @@ Maintain real-time cache that updates ONLY when Blizzard sends fresh data via `G
 
 ### Implementation Plan
 
-**Step 1: Add Cache Table (Guild.lua)**
+#### Step 1: Add Cache Table (Guild.lua)
+
 ```lua
 -- At module initialization
 TOGBankClassic_Guild.onlineMembers = {}  -- {normalizedName = true}
 ```
 
-**Step 2: Cache Refresh Function (Guild.lua)**
+#### Step 2: Cache Refresh Function (Guild.lua)
+
 ```lua
 function TOGBankClassic_Guild:RefreshOnlineCache()
     wipe(self.onlineMembers)
@@ -1600,7 +1739,8 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 end
 ```
 
-**Step 3: Event Registration (Events.lua)**
+#### Step 3: Event Registration (Events.lua)
+
 ```lua
 Events:RegisterEvent("GUILD_ROSTER_UPDATE", function()
     TOGBankClassic_Guild:RefreshOnlineCache()
@@ -1612,7 +1752,8 @@ Events:RegisterEvent("PLAYER_ENTERING_WORLD", function()
 end)
 ```
 
-**Step 4: Update IsPlayerOnline() (Guild.lua)**
+#### Step 4: Update IsPlayerOnline() (Guild.lua)
+
 ```lua
 function TOGBankClassic_Guild:IsPlayerOnline(playerName)
     if not playerName then
@@ -1627,7 +1768,7 @@ end
 ### Benefits
 
 | Metric | Current (GuildRoster) | With Cache |
-|--------|----------------------|------------|
+| -------- | ---------------------- | ------------ |
 | **Data Freshness** | Stale (minutes old) | Fresh (event-driven) |
 | **API Calls** | 1 per check + loop | 0 (table lookup) |
 | **Lookup Speed** | O(n) scan | O(1) hash lookup |
@@ -1710,12 +1851,14 @@ A: Negligible - ~10 bytes per member, rebuild takes <1ms for typical guild sizes
 **Purpose:** Reduce debug log spam by filtering messages into categories
 
 ### Problem
+
 - Enabling `/togbank debug` creates miles of spam
 - Hard to focus on specific issues when all debug output is mixed together
 - Need to troubleshoot one subsystem at a time (e.g., just roster updates, just comms)
 - Wading through thousands of messages to find relevant ones is inefficient
 
 ### Solution
+
 Add category-based filtering to the debug output system. Each debug message gets tagged with a category, and users can enable/disable specific categories via the options UI.
 
 ### Debug Categories
@@ -1736,11 +1879,13 @@ Add category-based filtering to the debug output system. Each debug message gets
 
 **Options Panel Redesign** - Split into two tabs:
 
-**Tab 1: "General"**
+#### Tab 1: "General"
+
 - Existing options (log level, sync messages mute, etc.)
 - Keeps main config clean and uncluttered
 
-**Tab 2: "Debug"**
+#### Tab 2: "Debug"
+
 - Checkbox for each debug category (11 checkboxes total)
 - "Enable All" / "Disable All" buttons
 - Categories default to OFF (opt-in to reduce spam)
@@ -1815,6 +1960,7 @@ TOGBankClassic_Output:Debug("COMMS", "Received message from %s", sender)
 **Purpose:** Ensure smooth migration from pre-SYNC-006 to SYNC-006+ protocol during dual-broadcast period
 
 ### Problem
+
 - Bankers broadcast on both `togbank-dv` (pre-SYNC-006) and `togbank-dv2` (SYNC-006+) for backward compatibility
 - SYNC-006+ clients received both messages, potentially causing:
   - Duplicate processing of same alt data
@@ -1822,14 +1968,17 @@ TOGBankClassic_Output:Debug("COMMS", "Received message from %s", sender)
   - Wasted bandwidth processing obsolete protocol data
 
 ### Solution
+
 Implemented message prioritization with delayed processing:
 
 **Protocol Filtering:**
+
 - SYNC-006+ clients: Only listen to `togbank-dv2`, delay `togbank-dv` by 5 seconds
 - Pre-SYNC-006 clients: Only listen to `togbank-dv`, ignore `togbank-dv2`
 - Bankers: Broadcast on BOTH channels during migration period
 
 **Delay/Cancel Mechanism:**
+
 1. When `togbank-dv` arrives on SYNC-006+ client:
    - Store message in pending queue with 5-second timer
    - Log: "Delaying dv message from {sender} for 5 seconds (waiting for dv2)"
@@ -1844,6 +1993,7 @@ Implemented message prioritization with delayed processing:
 ### Implementation Details
 
 **Chat.lua Changes:**
+
 - `pending_dv_messages[sender][altName]` - Tracks delayed messages by sender and alt name
 - `DV_DELAY = 5` - Configurable delay in seconds
 - `CancelPendingDvMessages()` - Cancels timers when dv2 arrives
@@ -1851,10 +2001,12 @@ Implemented message prioritization with delayed processing:
 - `ProcessVersionBroadcast()` - Extracted common processing logic
 
 **Guild.lua Changes:**
+
 - `UsesSYNC006()` - Returns `true` for current clients, enables protocol filtering
 
 **Flow Diagram:**
-```
+
+```text
 Banker broadcasts:
   ├─ togbank-dv2 → SYNC-006+ clients (immediate)
   └─ togbank-dv → Pre-SYNC-006 clients (immediate)
@@ -1863,22 +2015,26 @@ Banker broadcasts:
 
 ### Migration Strategy
 
-**Phase 1: Dual Broadcasting (Current)**
+#### Phase 1: Dual Broadcasting (Current)
+
 - All bankers send both dv and dv2
 - New clients prioritize dv2, fallback to dv after 5s
 - Old clients ignore dv2, process dv normally
 
-**Phase 2: Monitor Adoption (3-6 months)**
+#### Phase 2: Monitor Adoption (3-6 months)
+
 - Track client versions in guild
 - Wait until 95%+ on SYNC-006+
 
-**Phase 3: Remove Legacy (Future)**
+#### Phase 3: Remove Legacy (Future)
+
 - Stop broadcasting `togbank-dv`
 - Remove 5-second delay logic
 - Remove `togbank-v` legacy support
 - Clean up `alt.bank.items` and `alt.bags.items` structures
 
 ### Technical Notes
+
 - Uses `C_Timer.After()` for 5-second delay
 - Timer references stored in pending queue for cancellation
 - Pending messages keyed by `sender` → `altName` for granular control
@@ -1886,12 +2042,14 @@ Banker broadcasts:
 - Graceful fallback: if banker only sends dv (old version), still processes after 5s
 
 ### User Experience
+
 - **New clients with new bankers:** Instant sync (dv2 only), no delay
 - **New clients with old bankers:** 5s delay for dv fallback (rare case)
 - **Old clients:** No change, immediate sync on dv
 - **Migration period:** Both client types work simultaneously
 
 ### Success Criteria
+
 - ✅ SYNC-006+ clients never process togbank-dv when dv2 available
 - ✅ SYNC-006+ clients fall back to dv if banker only sends dv
 - ✅ Pre-SYNC-006 clients continue working during migration
@@ -1908,6 +2066,7 @@ Banker broadcasts:
 ### Current Validation (in `sanitizeRequest()`)
 
 **What We Validate:**
+
 1. ✅ **Type Checking** - Rejects non-table data
 2. ✅ **Numeric Fields** - Forces non-negative values, clamps fulfilled ≤ quantity
 3. ✅ **Timestamp Validation** - Rejects timestamps > 2147483647 (32-bit limit, DATA-003 fix)
@@ -1917,6 +2076,7 @@ Banker broadcasts:
 7. ✅ **Auto-Status Correction** - Sets status="fulfilled" when fulfilled ≥ quantity
 
 **Where Applied:**
+
 - `mergeRequest()` - On receiving snapshots
 - `NormalizeRequestList()` - On load
 - `AddRequest()` - On creation
@@ -1925,6 +2085,7 @@ Banker broadcasts:
 ### Weaknesses Identified
 
 ❌ **Not Validated:**
+
 - **ID length** - No max length check (could be exploited)
 - **Empty strings** - `item = ""` or `requester = "Unknown"` are allowed
 - **Future timestamps** - Only checks for overflow, not logical validity (e.g., year 2050)
@@ -1934,6 +2095,7 @@ Banker broadcasts:
 - **Malicious field injection** - Extra fields are silently kept
 
 **Current Behavior:**
+
 - Bad data is **corrected** rather than **rejected**
 - No rejection tracking or logging
 - No broadcast filtering (bad data could spread before being sanitized)
@@ -1948,6 +2110,7 @@ Banker broadcasts:
 **Goal:** Reject obviously invalid requests instead of accepting with defaults
 
 **Implementation:**
+
 ```lua
 local function sanitizeRequest(req)
     if not req or type(req) ~= "table" then
@@ -1986,6 +2149,7 @@ end
 **Where Applied (Multi-Layer Defense):**
 
 1. **Layer 1: Receiving Snapshots** - `RequestLog.lua:219`
+
    ```lua
    local function mergeRequest(requests, tombstones, id, incoming)
        local clean = sanitizeRequest(incoming)
@@ -1995,10 +2159,12 @@ end
        -- ... merge logic
    end
    ```
+
    - **Effect:** Invalid requests from other players are rejected before merging into local database
    - **Protection:** Prevents corrupted data from spreading through guild
 
 2. **Layer 2: Loading from SavedVariables** - `RequestLog.lua:313`
+
    ```lua
    function Guild:NormalizeRequestList()
        for id, req in pairs(self.Info.requests) do
@@ -2010,10 +2176,12 @@ end
        end
    end
    ```
+
    - **Effect:** Corrupted requests in saved data are stripped out on addon load
    - **Protection:** Auto-healing of existing database corruption
 
 3. **Layer 3: Creating New Requests** - `RequestLog.lua:1064`
+
    ```lua
    function Guild:AddRequest(request)
        local clean = sanitizeRequest(request)
@@ -2023,10 +2191,12 @@ end
        -- ... store and broadcast
    end
    ```
+
    - **Effect:** Prevents creation of invalid requests via UI or commands
    - **Protection:** Stops bad data at the source
 
 4. **Layer 4: UI Display** - `Guild.lua:2041`
+
    ```lua
    for _, req in pairs(current_data.requests or {}) do
        local clean = TOGBankClassic_Guild:SanitizeRequest(req)
@@ -2035,10 +2205,12 @@ end
        end
    end
    ```
+
    - **Effect:** Corrupted requests filtered out of UI
    - **Protection:** Prevents crashes or display issues from bad data
 
 **What Happens to Rejected Requests:**
+
 - **Snapshots:** Request not merged, silently dropped
 - **Load:** Request removed from database during normalization
 - **Creation:** `AddRequest()` returns `false`, user sees failure
@@ -2046,18 +2218,22 @@ end
 - **Debug Log:** All rejections logged with reason
 
 **Validation Rules Enforced:**
+
 - ✅ `item` - Must not be empty or missing
 - ✅ `requester` - Must not be empty, missing, or "Unknown"
 - ✅ `bank` - Must not be empty or missing
 - ✅ `quantity` - Must be > 0
 
 **Files Modified:**
+
 - `Modules/RequestLog.lua` (lines 55-85): Added Phase 1 validation
 
 **See Also:**
+
 - Bug ticket: [DATA-008] in DELTA_BUGS.md
 
 **Duplicate ID Handling (Not Yet Implemented):**
+
 ```lua
 -- In mergeRequest() or ApplyRequestSnapshot()
 local seenIds = {}
@@ -2114,6 +2290,7 @@ end
 #### Phase 3: Broadcast Filtering
 
 **Prevent spreading bad data:**
+
 ```lua
 function Guild:BroadcastRequestMutation(mutation)
     if not mutation or type(mutation) ~= "table" then
@@ -2138,6 +2315,7 @@ end
 #### Phase 4: Periodic Cleanup
 
 **Auto-heal corrupted data on load:**
+
 ```lua
 function Guild:ValidateAndCleanRequests()
     if not self.Info or not self.Info.requests then
@@ -2243,6 +2421,7 @@ end
 ### Testing Strategy
 
 **Test Cases:**
+
 - Empty item name
 - Empty requester name
 - Duplicate request IDs in snapshot
@@ -2254,6 +2433,7 @@ end
 - Requests without required fields
 
 **Success Metrics:**
+
 - Zero corrupted requests after cleanup
 - No rejected valid requests (false positives)
 - Debug logs show rejection reasons
@@ -2268,16 +2448,20 @@ end
 **Source:** External user feedback
 
 ### Problem
+
 Items are currently displayed in alphabetical order only. Guild members who want to browse by gear slot (all cloaks, all helms, all wands) or item category (all consumables, all reagents) have no way to do so. This is the most-cited behavioral difference compared to GBank Classic - Revived and is the single biggest barrier to pushing the addon to the full guild.
 
 ### Proposed Solution
+
 Add a sort mode selector (dropdown or cycle button) to the inventory window offering at minimum:
+
 - **Alphabetical** (current default) — items sorted A→Z by name
 - **By Type** — items grouped by item class/subclass (armor by slot, weapons by type, consumables, recipes, reagents, etc.), then sorted alphabetically within each group
 
 The existing `TOGBankClassic_Item:Sort()` in `Modules/Item.lua` already sorts by rarity → class → equip slot → name. A "by type" mode would re-order the primary sort key to group by `Info.class` + `Info.subClass` first, with alphabetical as the tiebreaker.
 
 ### Implementation Notes
+
 - Sort mode should persist per-character in `TOGBankClassic_Options`
 - The sort is applied in `UI/Inventory.lua` just before rendering (`TOGBankClassic_Item:Sort(list)` call)
 - No changes needed to the data layer; all required fields (`Info.class`, `Info.subClass`, `Info.equip`) are already populated during item display
@@ -2290,9 +2474,11 @@ The existing `TOGBankClassic_Item:Sort()` in `Modules/Item.lua` already sorts by
 **Source:** External user feedback
 
 ### Problem
+
 Officers can cancel any guild member's request with no configuration option to restrict or disable this. Some guild setups want only the bank manager role (not all officers) to have cancellation rights.
 
 ### Proposed Solution
+
 Add a guild-officer permission setting (configurable by the bank manager) that enables or disables officers' ability to cancel requests. The setting should sync guild-wide via the existing options sync mechanism.
 
 ---
@@ -2303,9 +2489,11 @@ Add a guild-officer permission setting (configurable by the bank manager) that e
 **Source:** External user feedback
 
 ### Problem
+
 Guild members cannot remove their own open requests. Only officers can cancel requests. If a member no longer wants an item they requested, they have no self-service option.
 
 ### Proposed Solution
+
 Add a "Delete" button (or context menu option) on open requests that is visible to the requestor on their own requests. This permanently removes the request (distinct from officer "cancel" which marks status as cancelled and keeps the record). The delete action should broadcast a mutation to all online clients.
 
 ---
@@ -2316,10 +2504,13 @@ Add a "Delete" button (or context menu option) on open requests that is visible 
 **Source:** External user feedback
 
 ### Problem
+
 Fulfilled and cancelled requests are both "terminal" states but look visually identical in the request list. Users cannot tell at a glance whether a request was completed successfully or cancelled.
 
 ### Proposed Solution
+
 Apply distinct visual styling to the two states in the request list UI:
+
 - **Fulfilled** — green tint or checkmark icon to indicate successful completion
 - **Cancelled** — red tint or X icon to indicate the request was not filled
 
@@ -2331,12 +2522,15 @@ Apply distinct visual styling to the two states in the request list UI:
 **Source:** External user feedback
 
 ### Problem
+
 The addon opens with `/togbank`. New guild members accustomed to other bank addons expect `/bank` to open a bank window, creating a friction point for adoption.
 
 ### Proposed Solution
+
 Register `/bank` as an additional slash command alias that opens the TOGBankClassic inventory window, alongside the existing `/togbank`. Optionally make the alias user-configurable in Options so guilds that use a different addon for `/bank` can change or disable it.
 
 ### Considerations
+
 - `/bank` may conflict with other addons; the registration should be conditional or opt-in
 - WoW's default `/bank` command does not exist, so registration is safe in a vanilla addon environment
 - Location: `Chat.lua` slash command registration block
@@ -2349,9 +2543,11 @@ Register `/bank` as an additional slash command alias that opens the TOGBankClas
 **Source:** External user feedback
 
 ### Problem
+
 The bank acceptance window contains an "Add to scoreboard" checkbox, implying a donation scoring feature exists. However, no scoreboard UI is accessible anywhere in the addon. This creates confusion for users who find the checkbox and cannot locate the corresponding feature.
 
 ### Options
+
 1. **Implement scoreboard access** — add a scoreboard panel (likely in the Donations UI or as a tab) that displays per-member donation totals and exposes the existing scoring data
 2. **Deprecate the checkbox** — remove or hide "Add to scoreboard" from the acceptance window until the feature is fully implemented
 

@@ -106,7 +106,8 @@
         "GetRealmName",
         "getmetatable",
         "SendMailSubjectEditBox",
-        "SecondsToTime"
+        "SecondsToTime",
+        "DEFAULT_CHAT_FRAME"
     ],
     "runtime.version": "Lua 5.1",
     "workspace.library": [
