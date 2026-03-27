@@ -61,16 +61,19 @@ The existing mismatch log line (`stop=PASS crc=FAIL | from=X prefix=togbank-hl d
 Three layers of new diagnostics, all gated behind existing category/tag toggles in the Options UI:
 
 #### 1. `PROTOCOL / SERIAL` — Outgoing send tracing (`Core.lua: SerializeWithChecksum`)
+
 - Logs `bytes=N checksum=X t=T` for every serialized outgoing message
 - Lets you cross-reference the sender's `expected=X` against what the receiver sees — if they differ, corruption happened in transit; if they match and the receiver still fails, the receiver's `DeserializeWithChecksum` separator scan is finding the wrong `\030` position
 
 #### 2. `PROTOCOL / INTEGRITY-MISMATCH` — Enriched receiver mismatch block (`Core.lua: DeserializeWithChecksum`)
+
 Three log lines now fire on every mismatch:
 - **Line 1** (existing, enhanced): `stop=PASS crc=FAIL | from=X prefix=Y dist=Z bytes=N | expected=E got=A | t=T` — added `GetTime()` timestamp
 - **Line 2** (new DETAIL): `DETAIL sepPos=N bodyLen=N serializedLen=N checksumField='...' (len=N)` — raw framing internals; if `checksumField` is not a clean integer string, `\030` was found at the wrong position (encoding/splice bug, not bit flip)
 - **Line 3** (new PAYLOAD-TYPE): `PAYLOAD-TYPE 'X'` — best-effort `Deserialize()` of the corrupt `serialized` slice to read `payload.type`; tells you whether it was a `hash-list-broadcast`, `alt-request`, `share-request`, `wipe-request`, etc. If the slice deserializes cleanly despite the CRC mismatch, only the checksum suffix was corrupted — strong evidence of truncation-then-collision rather than mid-payload splice
 
 #### 3. `UI / SEARCH` — Search UI timing (`UI/Search.lua`)
+
 - `OnTextChanged`: logs `text='...' t=T` on every keystroke
 - `DrawContent`: logs `start text='...' corpus=N t=T` and `done items=N t=T`
 - Timestamps allow direct correlation with SERIAL send times — if a `DrawContent: start` and a `SERIAL SEND` share the same second, Lua was doing both on the same frame tick
