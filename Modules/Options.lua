@@ -10,12 +10,12 @@ local CATEGORY_META = {
 	ITEM     = { order = 15, desc = "Item loading, validation, and processing" },
 	MAIL     = { order = 16, desc = "Mail inventory scanning and tracking" },
 	P2P      = { order = 17, desc = "Session manager: collect window, dispatch, handshake" },
-	PROTOCOL = { order = 18, desc = "Protocol version negotiation" },
+	PROTOCOL = { order = 18, desc = "Protocol version negotiation (includes INTEGRITY-MISMATCH CRC errors and SERIAL outgoing checksum tracing)" },
 	QUERIES  = { order = 19, desc = "P2P query/response decisions and hash matching" },
 	REQUESTS = { order = 20, desc = "Request system activity and updates" },
 	ROSTER   = { order = 21, desc = "Guild roster updates, online/offline tracking" },
 	SYNC     = { order = 22, desc = "Data synchronization operations" },
-	UI       = { order = 23, desc = "UI operations, window opens/closes" },
+	UI       = { order = 23, desc = "UI operations, window opens/closes (includes SEARCH keystroke and DrawContent timing)" },
 	WHISPER  = { order = 24, desc = "Whisper sends, skips, and online checks" },
 }
 

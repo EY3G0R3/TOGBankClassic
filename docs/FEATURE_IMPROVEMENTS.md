@@ -40,6 +40,56 @@
 - [x] ~~**Guild roster cache lookups (PERF)**~~ **IMPLEMENTED: All GetGuildRosterInfo() scans in hot paths replaced with O(1) memberRoster cache lookups; isBank flag added to cache; greedy regex replaced with plain-text find()**
 - [x] ~~**Remove message integrity checksum from sends (PERF)**~~ **IMPLEMENTED: Eliminated byte-by-byte Lua checksum loop over 15-50KB comm payloads on every send; DeserializeWithChecksum retained for backward compat with old clients**
 - [x] ~~**Debug tag audit**~~ **IMPLEMENTED: Every `Output:Debug()` call across all Modules now has both a category AND a tag; migrated ticket-based tags (e.g. MAIL-012) to canonical tag names; added SYNC/SEND, SYNC/VALIDATE, and REQUESTS/INIT tags to Constants.lua; ongoing follow-up passes fixing additional calls discovered via in-game log inspection**
+- [x] ~~**INTEGRITY-MISMATCH enriched diagnostics**~~ **IMPLEMENTED: Added `PROTOCOL/SERIAL` tag logging outgoing checksum+size on every `SerializeWithChecksum` call; enriched mismatch block with timestamp, framing detail (sepPos, checksumField raw value, body/serialized lengths), and best-effort payload-type decode of the corrupt message (tells you inventory vs request vs hash-broadcast); added `UI/SEARCH` tag logging `OnTextChanged` events and `DrawContent` entry/exit with `GetTime()` timestamps for correlation; all three new tags wired into Options checkboxes automatically via the data-driven `DEBUG_TAGS` system**
+
+---
+
+## 🔍 INTEGRITY-MISMATCH Enriched Diagnostics - IMPLEMENTED
+
+**Added:** March 26, 2026  
+**Purpose:** Gather enough structured data to pinpoint the root cause of `PROTOCOL.INTEGRITY-MISMATCH` (stop=PASS, crc=FAIL) errors observed when guild members have the Search UI open and are actively typing
+
+### Problem
+
+The existing mismatch log line (`stop=PASS crc=FAIL | from=X prefix=togbank-hl dist=GUILD bytes=N | expected=X got=Y`) confirms corruption arrived but gives no information about:
+- **When** the message was sent relative to search UI activity
+- **What** was being sent (inventory sync, request mutation, hash broadcast, etc.)
+- **Whether** the corruption is in the payload or in the checksum suffix framing (a framing bug would produce a clean-looking integer in `checksumField` but at the wrong offset; a payload splice would produce a non-integer or too-long `checksumField`)
+
+### Solution
+
+Three layers of new diagnostics, all gated behind existing category/tag toggles in the Options UI:
+
+#### 1. `PROTOCOL / SERIAL` — Outgoing send tracing (`Core.lua: SerializeWithChecksum`)
+- Logs `bytes=N checksum=X t=T` for every serialized outgoing message
+- Lets you cross-reference the sender's `expected=X` against what the receiver sees — if they differ, corruption happened in transit; if they match and the receiver still fails, the receiver's `DeserializeWithChecksum` separator scan is finding the wrong `\030` position
+
+#### 2. `PROTOCOL / INTEGRITY-MISMATCH` — Enriched receiver mismatch block (`Core.lua: DeserializeWithChecksum`)
+Three log lines now fire on every mismatch:
+- **Line 1** (existing, enhanced): `stop=PASS crc=FAIL | from=X prefix=Y dist=Z bytes=N | expected=E got=A | t=T` — added `GetTime()` timestamp
+- **Line 2** (new DETAIL): `DETAIL sepPos=N bodyLen=N serializedLen=N checksumField='...' (len=N)` — raw framing internals; if `checksumField` is not a clean integer string, `\030` was found at the wrong position (encoding/splice bug, not bit flip)
+- **Line 3** (new PAYLOAD-TYPE): `PAYLOAD-TYPE 'X'` — best-effort `Deserialize()` of the corrupt `serialized` slice to read `payload.type`; tells you whether it was a `hash-list-broadcast`, `alt-request`, `share-request`, `wipe-request`, etc. If the slice deserializes cleanly despite the CRC mismatch, only the checksum suffix was corrupted — strong evidence of truncation-then-collision rather than mid-payload splice
+
+#### 3. `UI / SEARCH` — Search UI timing (`UI/Search.lua`)
+- `OnTextChanged`: logs `text='...' t=T` on every keystroke
+- `DrawContent`: logs `start text='...' corpus=N t=T` and `done items=N t=T`
+- Timestamps allow direct correlation with SERIAL send times — if a `DrawContent: start` and a `SERIAL SEND` share the same second, Lua was doing both on the same frame tick
+
+### Files Changed
+
+- `Core.lua` — `SerializeWithChecksum`: added SERIAL log line; `DeserializeWithChecksum` mismatch block: added timestamp, DETAIL line, PAYLOAD-TYPE line
+- `Modules/UI/Search.lua` — `OnTextChanged`: added SEARCH log line; `DrawContent`: added start/done SEARCH log lines
+- `Modules/Constants.lua` — added `PROTOCOL.SERIAL` and `UI.SEARCH` tag entries
+- `Modules/Options.lua` — updated `CATEGORY_META` descriptions for `PROTOCOL` and `UI` to mention the new tags; checkboxes appear automatically via the data-driven `BuildCategoryGroup` system
+
+### How to Use
+
+1. Enable log level: **Debug** in Options > TOGBankClassic > General
+2. Enable categories: **PROTOCOL** and **UI**
+3. Enable tags: **PROTOCOL > INTEGRITY-MISMATCH**, **PROTOCOL > SERIAL**, **UI > SEARCH**
+4. Reproduce: have the search window open and type; have a banker performing a sync simultaneously
+5. In the persistent debug log, look for `SERIAL SEND` lines followed closely (same `t=` second) by `DrawContent: start` lines — that overlap window is when corruption is most likely
+6. On the receiver side, `PAYLOAD-TYPE` tells you what message type was corrupt; `DETAIL checksumField` tells you whether framing or payload is the issue
 
 ---
 

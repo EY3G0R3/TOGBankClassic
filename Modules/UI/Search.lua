@@ -375,6 +375,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	end)
 	searchInput:SetCallback("OnTextChanged", function(input)
 		self.SearchText = input:GetText()
+		TOGBankClassic_Output:Debug("UI", "SEARCH", "OnTextChanged: text='%s' t=%.3f", self.SearchText or "", GetTime())
 		self:DrawContent()
 	end)
 	searchInput:SetCallback("OnEnterPressed", function(input)
@@ -644,6 +645,7 @@ function TOGBankClassic_UI_Search:DrawContent()
 	end
 
 	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-004] Search for '%s': Corpus has %d entries", searchText, #searchData.Corpus)
+	TOGBankClassic_Output:Debug("UI", "SEARCH", "DrawContent: start text='%s' corpus=%d t=%.3f", searchText, #searchData.Corpus, GetTime())
 
 	local count = 0
 	local matchedNames = 0
@@ -695,6 +697,7 @@ function TOGBankClassic_UI_Search:DrawContent()
 	end
 
 	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-004] Search complete: matched %d names, displayed %d result widgets", matchedNames, count)
+	TOGBankClassic_Output:Debug("UI", "SEARCH", "DrawContent: done items=%d t=%.3f", count, GetTime())
 
 	local status = count .. " Result"
 	if count > 1 then

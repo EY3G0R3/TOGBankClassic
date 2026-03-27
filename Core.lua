@@ -133,6 +133,8 @@ function TOGBankClassic_Core:SerializeWithChecksum(data)
         return nil
     end
     local checksum = ComputeChecksum(serialized)
+    TOGBankClassic_Output:Debug("PROTOCOL", "SERIAL",
+        "SEND bytes=%d checksum=%d t=%.3f", #serialized, checksum, GetTime())
     return serialized .. CHECKSUM_SEPARATOR .. tostring(checksum) .. STOP_MARKER
 end
 
@@ -199,8 +201,21 @@ function TOGBankClassic_Core:DeserializeWithChecksum(message, ctx)
         local distribution = ctx and ctx.distribution or "?"
         local byteCount    = #message
         TOGBankClassic_Output:Debug("PROTOCOL", "INTEGRITY-MISMATCH",
-            "stop=PASS crc=FAIL | from=%s prefix=%s dist=%s bytes=%d | expected=%d got=%d",
-            sender, prefix, distribution, byteCount, expectedChecksum, actualChecksum)
+            "stop=PASS crc=FAIL | from=%s prefix=%s dist=%s bytes=%d | expected=%d got=%d | t=%.3f",
+            sender, prefix, distribution, byteCount, expectedChecksum, actualChecksum, GetTime())
+        -- Additional framing detail: helps distinguish payload corruption from separator mis-parse.
+        -- checksumField is the raw string between \030 and \031END; sepPos counts from body start.
+        -- If checksumField is not a clean integer string, the separator was found at the wrong position.
+        TOGBankClassic_Output:Debug("PROTOCOL", "INTEGRITY-MISMATCH",
+            "DETAIL sepPos=%s bodyLen=%d serializedLen=%d checksumField='%s' (len=%d)",
+            tostring(sepPos), #body, #serialized, checksumStr, #checksumStr)
+        -- Best-effort: try to deserialize the corrupt payload anyway just to read the type field.
+        -- This tells us whether it was an inventory sync, request, hash broadcast, etc.
+        -- We deliberately ignore the return value on failure — this is diagnostic only.
+        local _ok, _decoded = self:Deserialize(serialized)
+        local msgType = (_ok and type(_decoded) == "table" and _decoded.type) or "unknown"
+        TOGBankClassic_Output:Debug("PROTOCOL", "INTEGRITY-MISMATCH",
+            "PAYLOAD-TYPE '%s'", tostring(msgType))
         if TOGBankClassic_Options and TOGBankClassic_Options:IsIntegrityCheckDiagnosticsEnabled() then
             local msg = "|cFFFF0000[TOGBankClassic ERROR]|r Integrity mismatch: " ..
                 "message complete (stop-marker present) but CRC failed. " ..
