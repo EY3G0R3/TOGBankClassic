@@ -568,7 +568,9 @@
 			"SendMailSubjectEditBox",
 			"ChatFrameUtil",
 			"IsSecureCmd",
-			"ChatEdit_GetActiveWindow"
+			"ChatEdit_GetActiveWindow",
+			"FCF_SelectDockFrame",
+			"ChatFrame1"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

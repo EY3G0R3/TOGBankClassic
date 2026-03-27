@@ -81,6 +81,8 @@
         "ChatFrame_RemoveAllMessageGroups",
         "ChatFrame_RemoveAllChannels",
         "FCF_DockFrame",
+        "FCF_SelectDockFrame",
+        "ChatFrame1",
         "GetChatWindowInfo",
         "GameFontNormal",
         "FCF_ResetChatWindows",
