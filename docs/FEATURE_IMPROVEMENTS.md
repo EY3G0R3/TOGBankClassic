@@ -196,6 +196,7 @@ All filters work simultaneously with the name search input. Changing any filter/
 - Fixed `GetItemInfo()` return value positions (icon at position 10, not 9)
 - Fixed duplicate item deduplication in Lookup table (now sums counts when same alt has multiple stacks)
 - Restored original callback architecture after attempted lazy loading broke rendering
+- Fixed dropdown alignment in Inventory UI by anchoring internal dropdown element to frame edges
 
 ### Files Changed
 

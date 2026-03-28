@@ -191,6 +191,12 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	sortDropdown:SetList(SORT_LIST, SORT_ORDER)
 	sortDropdown:SetValue(initMode)
 	sortDropdown:SetWidth(160)
+	-- Adjust internal dropdown structure to align with buttons
+	if sortDropdown.dropdown then
+		sortDropdown.dropdown:ClearAllPoints()
+		sortDropdown.dropdown:SetPoint("TOPLEFT", sortDropdown.frame, "TOPLEFT", 0, 0)
+		sortDropdown.dropdown:SetPoint("BOTTOMRIGHT", sortDropdown.frame, "BOTTOMRIGHT", 0, 0)
+	end
 	sortDropdown:SetCallback("OnValueChanged", function(widget, _, value)
 		local db = TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char
 		if not db then return end
