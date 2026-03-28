@@ -190,7 +190,7 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	local initMode = (TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char.sortMode) or "alpha"
 	sortDropdown:SetList(SORT_LIST, SORT_ORDER)
 	sortDropdown:SetValue(initMode)
-	sortDropdown:SetWidth(160)
+	sortDropdown:SetWidth(200)
 	-- Adjust internal dropdown structure to align with buttons
 	if sortDropdown.dropdown then
 		sortDropdown.dropdown:ClearAllPoints()
@@ -357,6 +357,15 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		scroll:SetLayout("Flow")
 		scroll:SetFullHeight(true)
 		scroll:SetFullWidth(true)
+		
+		-- Apply thin scrollbar style to match dropdown scrollbars
+		if scroll.scrollbar then
+			scroll.scrollbar:ClearAllPoints()
+			scroll.scrollbar:SetPoint("TOPRIGHT", scroll.scrollframe, "TOPRIGHT", 0, -20)
+			scroll.scrollbar:SetPoint("BOTTOMRIGHT", scroll.scrollframe, "BOTTOMRIGHT", 0, 20)
+			scroll.scrollbar:SetWidth(8)
+			scroll.scrollbar:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Vertical")
+		end
 		g:AddChild(scroll)
 
 		-- Track scroll container to prevent race conditions

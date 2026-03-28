@@ -33,6 +33,7 @@
 - [x] ~~**/togbank deltastats redesign**~~ **IMPLEMENTED: Meaningful P2P telemetry with outbound/inbound/P2P/health/savings sections (STATS-001/002/003)**
 - [x] ~~**Item type sort grouping**~~ **IMPLEMENTED: Inventory and Search UIs now have sort dropdowns with 7 options (A-Z, Z-A, By Type, Level Low/High, Rarity High/Low); replaces cycle button with full dropdown for better discoverability; sort mode persists per-character**
 - [x] ~~**Search filters and sort**~~ **IMPLEMENTED: Search UI now has Type/Quality/Subclass cascading filters, "Usable by my level" checkbox, and sort dropdown with 6 modes (A-Z, Z-A, Level Low/High, Rarity High/Low); pagination prevents freeze with 180+ items; all filters work simultaneously with name search; Classic Era accurate class/subclass data**
+- [x] ~~**Sort dropdown width increased**~~ **IMPLEMENTED: Main inventory window sort dropdown width increased from 160 to 200 pixels to ensure all text options are fully visible (March 28, 2026)**
 - [ ] **Officer cancel permission toggle** - Add a configurable permission to enable/disable officers' ability to cancel requests; currently all officers can cancel any request with no restriction
 - [ ] **Requestor self-delete** - Allow requestors to permanently delete their own open requests (distinct from cancel, which is an officer action); gives requestors autonomy to clean up their own entries
 - [x] ~~**Request status visual differentiation**~~ **IMPLEMENTED: Fulfilled rows tinted green with checkmark icon; cancelled rows tinted red with X icon**
@@ -198,12 +199,14 @@ All filters work simultaneously with the name search input. Changing any filter/
 - Restored original callback architecture after attempted lazy loading broke rendering
 - Fixed dropdown alignment in Inventory UI by anchoring internal dropdown element to frame edges
 - Added dropdown close-on-click-outside behavior for Requests UI filter dropdowns using invisible click-catcher frame
+- Applied thin scrollbar styling across all UIs (removed SetBackdrop calls for Classic Era compatibility; positioned scrollbars with proper padding to avoid overlapping buttons)
 
 ### Files Changed
 
 - `Modules/Item.lua` — Added `alpha_desc`, `level_asc`, `rarity_asc` sort modes
-- `Modules/UI/Search.lua` — Added filter/sort UI controls, Classic Era type/subclass data, three-phase DrawContent with sorting
-- `Modules/UI/Inventory.lua` — Replaced cycle button with dropdown, added reverse sort modes
+- `Modules/UI/Search.lua` — Added filter/sort UI controls, Classic Era type/subclass data, three-phase DrawContent with sorting; applied thin 8px scrollbar style
+- `Modules/UI/Inventory.lua` — Replaced cycle button with dropdown, added reverse sort modes; applied thin 8px scrollbar style
+- `Modules/UI/Requests.lua` — Added click-catcher frame for dropdown close behavior; applied thin 8px scrollbar style
 
 ### User Experience
 
@@ -225,6 +228,12 @@ All filters work simultaneously with the name search input. Changing any filter/
 - Esc closes open dropdown first, then window on subsequent press
 - Invisible click-catcher frame detects outside clicks at lower frame level
 - Uses keyboard input propagation control for proper event handling
+- Thin 8px scrollbars match dropdown pullout menu style (UI-SliderBar-Button-Vertical texture)
+
+**Visual Consistency:**
+- All ScrollFrame scrollbars (Search results, Inventory tabs, Requests table) use thin 8px style
+- Scrollbars positioned at right edge with 20px top/bottom padding to avoid overlapping surrounding buttons
+- Matches dropdown pullout menu scrollbar appearance for consistent visual language
 
 ---
 

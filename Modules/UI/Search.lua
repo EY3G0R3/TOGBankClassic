@@ -740,6 +740,11 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	scrollGroup:SetFullWidth(true)
 	scrollGroup:SetFullHeight(true)
 	searchWindow:AddChild(scrollGroup)
+	
+	-- Extend scrollGroup right edge to window edge (Frame content has 17px right padding)
+	scrollGroup.content:ClearAllPoints()
+	scrollGroup.content:SetPoint("TOPLEFT", scrollGroup.frame, "TOPLEFT", 0, 0)
+	scrollGroup.content:SetPoint("BOTTOMRIGHT", scrollGroup.frame, "BOTTOMRIGHT", 17, 0)
 
 	local resultGroup = TOGBankClassic_UI:Create("ScrollFrame")
 	resultGroup:SetLayout("Table")
@@ -756,12 +761,17 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		spaceH = 30,
 	})
 
-	resultGroup.scrollframe:ClearAllPoints()
-	resultGroup.scrollframe:SetPoint("TOPLEFT", 10, -10)
+	resultGroup.scrollframe:SetPoint("TOPLEFT")
+	resultGroup.scrollframe:SetPoint("BOTTOMRIGHT")
 
-	resultGroup.scrollbar:ClearAllPoints()
-	resultGroup.scrollbar:SetPoint("TOPLEFT", resultGroup.scrollframe, "TOPRIGHT", -6, -12)
-	resultGroup.scrollbar:SetPoint("BOTTOMLEFT", resultGroup.scrollframe, "BOTTOMRIGHT", -6, 22)
+	-- Apply thin scrollbar style to match dropdown scrollbars
+	if resultGroup.scrollbar then
+		resultGroup.scrollbar:ClearAllPoints()
+		resultGroup.scrollbar:SetPoint("TOPRIGHT", resultGroup.scrollframe, "TOPRIGHT", 0, -20)
+		resultGroup.scrollbar:SetPoint("BOTTOMRIGHT", resultGroup.scrollframe, "BOTTOMRIGHT", 0, 20)
+		resultGroup.scrollbar:SetWidth(8)
+		resultGroup.scrollbar:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Vertical")
+	end
 	scrollGroup:AddChild(resultGroup)
 
 	self.Results = resultGroup

@@ -950,11 +950,14 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	})
 	tableFrame:SetFullWidth(true)
 
-	tableFrame.scrollframe:ClearAllPoints()
-	tableFrame.scrollframe:SetPoint("TOPLEFT", 8, -8)
-	tableFrame.scrollbar:ClearAllPoints()
-	tableFrame.scrollbar:SetPoint("TOPLEFT", tableFrame.scrollframe, "TOPRIGHT", -6, -12)
-	tableFrame.scrollbar:SetPoint("BOTTOMLEFT", tableFrame.scrollframe, "BOTTOMRIGHT", -6, 22)
+	-- Apply thin scrollbar style to match dropdown scrollbars
+	if tableFrame.scrollbar then
+		tableFrame.scrollbar:ClearAllPoints()
+		tableFrame.scrollbar:SetPoint("TOPRIGHT", tableFrame.scrollframe, "TOPRIGHT", 0, -20)
+		tableFrame.scrollbar:SetPoint("BOTTOMRIGHT", tableFrame.scrollframe, "BOTTOMRIGHT", 0, 20)
+		tableFrame.scrollbar:SetWidth(8)
+		tableFrame.scrollbar:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Vertical")
+	end
 
 	window:AddChild(tableFrame)
 	self.Content = tableFrame
