@@ -45,7 +45,9 @@ local ARCHIVE_DAYS = 30
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
 local FILTER_SEPARATOR_ANY_REST = "__tog_sep_any_rest__"
 local FILTER_SEPARATOR_HIST = "__tog_sep_hist__"
-local FILTER_SEPARATOR_LABEL = "----------"
+local FILTER_SEPARATOR_LABEL = "|cFFFFCC55------------------------------|r"
+local FILTER_SECTION_OPEN    = "|cFFFFCC55---------- Open requests ----------|r"
+local FILTER_SECTION_HIST    = "|cFFFFCC55-------------- History --------------|r"
 
 local function useTwoHeaderLayout()
 	return FILTER_LAYOUT == FILTER_LAYOUT_TWO_HEADERS
@@ -997,7 +999,7 @@ local function buildNameOptions(anyLabel, currentPlayer, openCounts, totalCounts
 	end)
 
 	if #openNames > 0 then
-		list[FILTER_SEPARATOR_ANY_REST] = "-- Open requests --"
+		list[FILTER_SEPARATOR_ANY_REST] = FILTER_SECTION_OPEN
 		table.insert(order, FILTER_SEPARATOR_ANY_REST)
 		for _, name in ipairs(openNames) do
 			list[name] = string.format("(%d) %s", openCounts[name], name)
@@ -1006,7 +1008,7 @@ local function buildNameOptions(anyLabel, currentPlayer, openCounts, totalCounts
 	end
 
 	if #histNames > 0 then
-		list[FILTER_SEPARATOR_HIST] = "-- History --"
+		list[FILTER_SEPARATOR_HIST] = FILTER_SECTION_HIST
 		table.insert(order, FILTER_SEPARATOR_HIST)
 		for _, name in ipairs(histNames) do
 			list[name] = string.format("(%d) %s", totalCounts[name], name)
