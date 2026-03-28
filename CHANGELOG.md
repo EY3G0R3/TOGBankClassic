@@ -321,15 +321,16 @@
 ### 🐛 Bug Fixes
 
 #### [PERF-021] Eliminated ChatThrottleLib Errors During Zone Transitions (CRITICAL)
+
 - **FIXED**: Added 2.5s zone-in cooldown period to defer expensive operations and give ChatThrottleLib breathing room
 - **PROBLEM**: Despite PERF-019 (guard overlapping roster refreshes) and PERF-020 (batch hash broadcasts), users still got "script ran too long" errors when zoning. ChatThrottleLib itself (Despool function) + Bagnon + other addons exceeded cumulative execution budget during zone transitions
 - **ROOT CAUSE**: When zoning with large message backlog (180+ queued messages from ongoing delta sends taking 26+ seconds), ChatThrottleLib's Despool() must process queue during zone transition (execution-budget-constrained window). If addon operations compete for budget (GUILD_ROSTER_UPDATE, periodic timer broadcasts, hash processing, Bagnon UI updates), cumulative execution exceeds limit
-- **IMPACT**: 
+- **IMPACT**:
   - Intermittent "script ran too long" errors in ChatThrottleLib.lua:415 (Despool) when zoning mid-send
   - Bagnon execution errors (`Script from "Bagnon" has exceeded its execution time limit`)
   - Stuttering/freezing during zone transitions from budget exhaustion
   - Errors persisted even after PERF-019/020 because ChatThrottleLib needed isolation to drain queue
-- **BEHAVIOR**: 
+- **BEHAVIOR**:
   - User zones while 65-chunk send in progress (26+ seconds total) → 30-40 chunks still queued in CTL → 180+ pipe entries
   - PLAYER_ENTERING_WORLD fires → GUILD_ROSTER_UPDATE (even with PERF-019 guard) → other addons process events
   - Periodic OnShareTimer fires during zone window (3-minute cycle can coincide) → broadcasts compete with CTL
@@ -343,7 +344,7 @@
   5. Guard GUILD_ROSTER_UPDATE login broadcasts: if cooldown active when roster init completes, reschedule QueryRequestsIndex + SyncDeltaVersion for 2.6s
   6. Guard share-request handler: return early if zoningCooldown active
   7. Guard /togbank share command: defer 2.6s and warn user if zoningCooldown active
-- **RESULT**: 
+- **RESULT**:
   - **ChatThrottleLib gets 2.5s breathing room** after ANY world entry to drain queue without competition
   - **Periodic broadcasts deferred** until cooldown expires (timer reschedules normally)
   - **Login broadcasts still execute** but deferred by 2.6s if cooldown hasn't expired yet
@@ -360,11 +361,12 @@
   - Chat.lua share command (~2086-2104): defer with warning + 2.6s reschedule
 
 #### [PERF-020] Eliminated Stuttering from Synchronous Hash Broadcast Processing (CRITICAL)
+
 - **FIXED**: Hash-list broadcasts now batched with 0.15s timer to prevent main thread blocking during sync storms
 - **PROBLEM**: Hash-list broadcasts from guild members processed immediately and synchronously when received
 - **ROOT CAUSE**: When 4+ broadcasts arrived within seconds (common during login waves, zone changes, raids), each triggered 36 hash comparisons (timestamp lookups + HasAltContent checks + hash building). 4 broadcasts = 144 hash comparisons blocking main thread for 100-300ms = visible stuttering during gameplay
 - **IMPACT**: Stuttering compounded when player simultaneously sending data (ChatThrottleLib chunk callbacks processing) or handling other sync operations. Game visibly froze during hash broadcast storms
-- **BEHAVIOR**: 
+- **BEHAVIOR**:
   - Player zones/logs in → guild members broadcast hashes
   - 4 broadcasts arrive within 2 seconds
   - Each processed immediately: 36 hash comparisons synchronously
@@ -376,7 +378,7 @@
   3. When timer fires, process all queued broadcasts in one deferred operation
   4. Automatic sender deduplication (if same sender broadcasts twice, process most recent)
   5. ProcessQueuedHashBroadcasts() handles batch processing with performance timing
-- **RESULT**: 
+- **RESULT**:
   - **Spreads work across multiple frames** (~6 frames at 60 FPS with 0.15s delay)
   - **Prevents overlapping hash comparison operations** (no more synchronous storms)
   - **Adds only 0.25% latency** to 60s P2P collect window (150ms / 60,000ms = negligible)
@@ -388,11 +390,12 @@
   - Chat.lua OnCommReceived() hash-list-broadcast handler (~1820-1847): Replaced synchronous processing with queueing logic
 
 #### [PERF-019] Prevented Overlapping Roster Refresh Operations During Zone Changes (CRITICAL)
+
 - **FIXED**: GUILD_ROSTER_UPDATE handler now guards against concurrent execution to prevent cascading expensive operations
 - **PROBLEM**: When player zoned while sending data (65-chunk ChatThrottleLib queue processing) or during roster refresh retries, WoW fires GUILD_ROSTER_UPDATE automatically during zone transition
 - **ROOT CAUSE**: No guard flag preventing concurrent roster refresh operations. If `needsFullRosterRefresh=true` from previous retry attempt (roster API returned 0 members), GUILD_ROSTER_UPDATE would start another 0.5s deferred operation even if previous one still in progress
 - **IMPACT**: Explained intermittent "execution limit exceeded" errors (1 in 5 login/reload/zone) - only occurred when multiple expensive operations overlapped during critical init/zone window
-- **BEHAVIOR**: 
+- **BEHAVIOR**:
   - Zone while sending → GUILD_ROSTER_UPDATE fires → starts InvalidateBanksCache + RefreshOnlineCache (loops all members) + RebuildBankerRoster (scans all notes)
   - If roster API slow, retry flag = true → next GUILD_ROSTER_UPDATE starts ANOTHER 0.5s timer
   - Multiple overlapping timers + ChatThrottleLib chunk callbacks (30 failures × callback overhead) = cumulative execution limit exceeded
@@ -402,7 +405,7 @@
   3. Set `refreshInProgress = true` when starting 0.5s deferred work
   4. Clear `refreshInProgress = false` at end of deferred function (after retry check, broadcasts)
   5. Log skip message when GUILD_ROSTER_UPDATE arrives while refresh in progress
-- **RESULT**: 
+- **RESULT**:
   - **Maximum one roster refresh operation in-flight at any time**
   - **Prevents cascading retries** when GUILD_ROSTER_UPDATE fires during zone transitions
   - **Eliminates overlap with ChatThrottleLib** chunk processing during sends
@@ -411,6 +414,7 @@
   - Events.lua GUILD_ROSTER_UPDATE() (~305-360): Added refreshInProgress guard check at start, set flag before deferral, clear flag in deferred completion
 
 #### [PERF-018] Deferred Debug Options UI Creation Until Needed (MEDIUM)
+
 - **FIXED**: Debug options UI no longer built at addon load - created lazily on first access
 - **PROBLEM**: BuildDebugArgs() created ~55 AceConfig entries (15 categories, 28 sub-tags, 12 headers/buttons) during Options:Init() at addon load
 - **ROOT CAUSE**: Debug tab args field called BuildDebugArgs() directly in options table definition, executing at addon start regardless of whether user ever opens Debug tab
@@ -420,7 +424,7 @@
   1. Change debug tab args from direct BuildDebugArgs() call to lazy function
   2. Function checks TOGBankClassic_Options.debugArgsBuilt flag
   3. First access builds UI and caches result; subsequent accesses return cached table
-- **RESULT**: 
+- **RESULT**:
   - **Default (never open Debug tab):** Zero options UI creation overhead at addon load
   - **First time opening Debug tab:** Builds ~55 entries and caches
   - **Subsequent opens:** Instant (reuses cache)
@@ -429,6 +433,7 @@
   - Options.lua Init() debug tab definition (~372-384): Changed args from BuildDebugArgs() call to lazy function with caching
 
 #### [PERF-017] Cleaned Up Unnecessary SavedVariables Persistence (LOW)
+
 - **FIXED**: Removed unnecessary SavedVariables from being persisted to disk
 - **PROBLEM 1**: TOGBankClassicIcon was declared in SavedVariables but always nil (never used)
 - **PROBLEM 2**: TOGBankClassic_PerfMetrics persisted ~400 lines per session even when TOGBankClassic_PerfEnabled = false
@@ -439,7 +444,7 @@
   1. Removed TOGBankClassicIcon from .toc SavedVariables declaration
   2. Set TOGBankClassic_PerfMetrics = nil when performance tracking is disabled (similar to PERF-014/016 pattern)
   3. Removed TOGBankClassic_MailDebugLog entirely - deleted from .toc and removed entire debug block from PLAYER_LOGOUT
-- **RESULT**: 
+- **RESULT**:
   - **TOGBankClassicIcon:** No longer persisted (was always nil anyway)
   - **PerfMetrics:** Only persists when explicitly enabled; cleared to nil when disabled
   - **MailDebugLog:** Completely removed (was dev debugging, not production feature)
@@ -450,6 +455,7 @@
   - Events.lua PLAYER_LOGOUT (~278-345): Removed entire MailDebugLog collection block
 
 #### [PERF-016] Fixed Performance Tracking Initialization Overhead (LOW)
+
 - **FIXED**: Performance tracking now skips all initialization when disabled (default)
 - **PROBLEM**: Performance:Initialize() always created sessions, ran GC, initialized data structures even when TOGBankClassic_PerfEnabled = false (default)
 - **ROOT CAUSE**: Initialize() didn't check enabled flag before expensive operations
@@ -459,7 +465,7 @@
   1. Move TOGBankClassic_PerfEnabled nil check to top of Initialize()
   2. Early return if TOGBankClassic_PerfEnabled is false
   3. Only create tables, run GC, and initialize session when explicitly enabled
-- **RESULT**: 
+- **RESULT**:
   - **Default (disabled):** Zero overhead - no tables created, no GC, no session initialization
   - **When enabled:** Normal behavior - creates sessions, tracks metrics, runs GC
   - **Load time savings:** Skip all performance tracking initialization for 99% of users
@@ -467,6 +473,7 @@
   - Performance.lua Initialize() (~33-48): Reordered to check flag first, early return if disabled
 
 #### [PERF-015] Fixed UI Frame Creation During Addon Load (MEDIUM)
+
 - **FIXED**: Inventory, Donations, Mail, Search, and Requests windows now defer frame creation until first Open()
 - **PROBLEM**: All 5 UI modules called DrawWindow() during Init() at addon load, creating AceGUI frames (windows, buttons, scrollframes, etc.) that may never be opened
 - **ROOT CAUSE**: Init() unconditionally called DrawWindow() instead of deferring to first use
@@ -477,7 +484,7 @@
   1. Remove DrawWindow() call from Init() in Inventory, Donations, Mail, Search, Requests
   2. Rely on existing lazy initialization check in Open() function: `if not self.Window then self:DrawWindow() end`
   3. Frame creation only happens when user actually opens the window
-- **RESULT**: 
+- **RESULT**:
   - **On load:** Init() does nothing (or just initializes state variables), zero frame creation
   - **First Open():** Checks `if not self.Window`, calls DrawWindow(), caches frame
   - **Subsequent opens:** Reuses cached frame
@@ -491,6 +498,7 @@
   - UI/Requests.lua Init() (~365-371): Removed DrawWindow() call, added PERF-015 comment
 
 #### [PERF-014] Fixed Persistent Debug Log Loading Unconditionally (HIGH)
+
 - **FIXED**: Persistent debug log (SavedVariables) now only loads/saves when explicitly enabled by user (OFF by default)
 - **PROBLEM**: Output:Init() always loaded TOGBankClassicDB_DebugLog from SavedVariables (up to 50,000 entries) even though persistent logging was disabled by default
 - **ROOT CAUSE**: Load/save logic didn't check TOGBankClassic_DebugLogEnabled flag before accessing SavedVariables
@@ -502,7 +510,7 @@
   2. Check TOGBankClassic_DebugLogEnabled in SavePersistentLog() - only save if true
   3. Check TOGBankClassic_DebugLogEnabled in AddToPersistentLog() - only add if true
   4. Updated option description to clarify persistent logging is separate from regular debug message display
-- **RESULT**: 
+- **RESULT**:
   - **Default (disabled):** Debug messages still show in chat but NOT saved to SavedVariables. Zero parsing overhead, zero GC, empty log array
   - **When enabled:** Debug messages shown in chat AND saved to SavedVariables for later review via /togbank debuglog
   - **Load time savings:** Skip parsing 1-5 MB of text and GC loop on every reload for 99% of users
@@ -514,6 +522,7 @@
   - Options.lua debugLogEnabled (~302-324): Updated to clarify persistent logging vs regular debug messages
 
 #### [PERF-013] Fixed ChatThrottleLib Timeout from Zone Change Message Spam (CRITICAL)
+
 - **FIXED**: PLAYER_ENTERING_WORLD now only triggers roster refresh + broadcasts on login/reload, NOT on zone changes
 - **PROBLEM**: "Script ran too long" in ChatThrottleLib.lua:389 during zone changes
 - **ROOT CAUSE**: PLAYER_ENTERING_WORLD fires on EVERY zone change, triggering 2 GUILD broadcasts per player (togbank-r + togbank-hl)
@@ -525,7 +534,7 @@
   2. Only set `needsFullRosterRefresh = true` on login/reload (not zone changes)
   3. Zone changes skip roster refresh entirely (no broadcasts)
   4. OnShareTimer still broadcasts every 10 minutes (periodic sync unaffected)
-- **RESULT**: 
+- **RESULT**:
   - **Login/Reload**: Normal behavior (2 GUILD broadcasts per player)
   - **Zone Change**: Zero broadcasts (no ChatThrottleLib queue spam)
   - **Raid Entry**: No more timeout errors when 40 players zone together
@@ -535,6 +544,7 @@
   - Events.lua GUILD_ROSTER_UPDATE (~362-413): Only fires deferred block when needsFullRosterRefresh=true
 
 #### [PERF-008] Fixed Bagnon Execution Timeout from BAG_UPDATE Spam (CRITICAL)
+
 - **FIXED**: ItemHighlight now registers BAG_UPDATE events ONLY when highlighting is actively enabled by a banker (on-demand registration)
 - **PROBLEM**: Bagnon exceeded execution time limit during zone changes, affecting even non-banker characters
 - **ROOT CAUSE 1**: BAG_UPDATE events were processed by ALL players during zone changes (50+ events in 0.2 seconds)
@@ -549,7 +559,7 @@
   4. **Result**: Zero overhead for everyone until feature is actively used
   5. Events include throttling (500ms) and search string caching when registered
   6. Prevents rapid-fire Bagnon UI rebuilds during zone transitions
-- **RESULT**: 
+- **RESULT**:
   - **Non-bankers:** NEVER register BAG_UPDATE events (zero overhead forever)
   - **Bankers with highlighting disabled:** Zero overhead (same as non-bankers)
   - **Bankers with highlighting enabled:** Events registered on-demand with throttling + caching
@@ -568,6 +578,7 @@
   - ItemHighlight.lua SetEnabled (~87-136): Check banker status, register/unregister events based on enabled state
 
 #### [HASH-001] Fixed Hash Broadcast Not Triggering P2P Requests (CRITICAL)
+
 - **FIXED**: hash-list-broadcast handler now triggers P2P requests for changed data
 - **PROBLEM**: `/togbank share` only updated latestBankerHashes cache without triggering any data requests
 - **IMPACT**: Complete sync failure - receivers saw "Updated banker hashes" but never requested changed data
@@ -585,6 +596,7 @@
 - **NOW**: Hash broadcasts work identically whether from `/togbank share` (broadcast) or `/togbank sync` (reply)
 
 #### [COMM-003] Fixed Offline Player Detection from Whisper Errors
+
 - **FIXED**: CHAT_MSG_SYSTEM now detects "No player named X is currently playing" errors
 - **PROBLEM**: Addon repeatedly attempted whispers to offline players causing error spam
 - **ROOT CAUSE**: CHAT_MSG_SYSTEM handler only detected "has gone offline" but not whisper failure errors
@@ -595,11 +607,12 @@
   - Updated UpdateOnlineMember() to clear recentlySeen cache when marking offline
   - Added debug logging for all online/offline state changes
 - **RESULT**: Player marked offline immediately when whisper fails, preventing repeat attempts
-- **LOCATION**: 
+- **LOCATION**:
   - Events.lua CHAT_MSG_SYSTEM (~334-375): Added error pattern detection
   - Guild.lua UpdateOnlineMember (~1425-1443): Clear recentlySeen on offline
 
 #### [COMM-003b] Fixed Whisper Error Pattern Not Matching Single-Quoted Names
+
 - **FIXED**: CHAT_MSG_SYSTEM now detects both single-quoted and unquoted variants of whisper failure messages
 - **PROBLEM**: Pattern only matched `No player named Axkva is currently playing.` but Classic Era can also send `No player named 'Axkva' is currently playing.` (with single quotes around name)
 - **ROOT CAUSE**: COMM-003 documentation incorrectly stated "Classic Era does NOT use quotes" but testing showed single quotes are sometimes used around player names
@@ -608,11 +621,12 @@
   - Added dual pattern matching: tries single-quoted pattern `'(.+)'` first, falls back to unquoted `(.+)` if no match
   - Updated documentation to reflect both formats are possible
 - **RESULT**: All whisper failure formats now detected, player marked offline immediately
-- **LOCATION**: 
+- **LOCATION**:
   - Events.lua CHAT_MSG_SYSTEM (~353-361): Dual pattern matching
   - DELTA_BUGS.md (~2521-2527): Updated pattern documentation
 
 #### [COMM-003c] Fixed Whisper Error Messages Still Appearing in Chat
+
 - **FIXED**: Added chat message filter to suppress "No player named X is currently playing" errors from appearing in chat
 - **PROBLEM**: While COMM-003/COMM-003b fixed offline detection, the error messages still appeared in chat window
 - **ROOT CAUSE**: Event handler detected and processed errors but didn't suppress chat display
@@ -622,10 +636,11 @@
   - Filter returns true to suppress any message matching "No player named .+ is currently playing."
   - Works for both single-quoted and unquoted name variants
 - **RESULT**: Error messages silently handled - player marked offline without chat spam
-- **LOCATION**: 
+- **LOCATION**:
   - Events.lua RegisterEvents (~59-66): Added chat message filter
 
 #### [PERF-009] Fixed ChatFrame_AddMessageEventFilter Performance Issue
+
 - **FIXED**: Optimized chat filter to use fast plain-text check before pattern matching
 - **PROBLEM**: Stuttering during gameplay immediately after adding chat filter in COMM-003c
 - **ROOT CAUSE**: Pattern match ran on EVERY CHAT_MSG_SYSTEM event (guild achievements, player online/offline, etc)
@@ -635,10 +650,11 @@
   - Pattern match only runs if prefix found (rare - only actual whisper errors)
   - 99%+ of events skip expensive pattern matching
 - **RESULT**: 50x performance improvement, stuttering eliminated while maintaining error suppression
-- **LOCATION**: 
+- **LOCATION**:
   - Events.lua Initialize (~59-68): Added plain-text prefix check before pattern match
 
 #### [PERF-010] Fixed Login Freeze from Synchronous Data Migrations
+
 - **FIXED**: Deferred Database:Load() migrations and hash cache initialization to eliminate 3-5 second freeze on login/reload
 - **PROBLEM**: Game completely froze for 3-5 seconds when logging in or reloading UI with large SavedVariables (70+ alts)
 - **ROOT CAUSE**: Database:Load() synchronously looped through ALL alts performing migrations on EVERY login - most expensive was RecalculateAggregatedItems() for each banker alt (~30-50ms per alt)
@@ -650,13 +666,14 @@
   - Migrations run in background after UI becomes responsive
   - Still complete before first UI interaction or sync
 - **RESULT**: Instant login, no freeze, migrations ready before first use
-- **LOCATION**: 
+- **LOCATION**:
   - Database.lua Load (~175-243): Deferred migration block
   - Guild.lua Init (~295-313): Deferred latestBankerHashes initialization
-- **LOCATION**: 
+- **LOCATION**:
   - Events.lua Initialize (~59-68): Added plain-text prefix check before pattern match
 
 #### [COMM-003d] Fixed recentlySeen Cache Undermining Guild Roster Cache (CRITICAL)
+
 - **FIXED**: Removed recentlySeen cache, IsPlayerOnline now uses only guild roster cache
 - **PROBLEM**: Addon still tried to whisper players for 5 minutes after they logged off
 - **ROOT CAUSE**: IsPlayerOnline checked both onlineMembers (accurate) and recentlySeen (5-minute stale cache)
@@ -668,17 +685,18 @@
   - Removed MarkPlayerSeen call in Chat.lua
   - MarkPlayerSeen() kept as no-op for backwards compatibility
 - **RESULT**: IsPlayerOnline returns false immediately when player logs off, no stale 5-minute window
-- **LOCATION**: 
+- **LOCATION**:
   - Guild.lua IsPlayerOnline (~1542-1547): Removed recentlySeen logic, only check onlineMembers
   - Guild.lua MarkPlayerSeen (~1533-1537): Made no-op
   - Chat.lua OnCommReceived (~617-619): Removed MarkPlayerSeen call
 
 #### [DELTA-020] Fixed Delta Computation Using Wrong Baseline (CRITICAL)
+
 - **FIXED**: ComputeDelta now uses requester's actual item structures from state summary instead of responder's snapshot
 - **PROBLEM**: When responder broadcast multiple times (hash 461905621 → 317352773), GetSnapshot returned responder's NEW snapshot (317352773) instead of requester's OLD baseline (461905621)
 - **IMPACT**: Item count duplication/corruption - delta computed as (317352773 - 317352773) = empty/minimal instead of (317352773 - 461905621) = proper changes
 - **BEHAVIOR**: Requester with hash 461905621 applied incorrect delta to their old data, causing items to double instead of updating
-- **ROOT CAUSE**: 
+- **ROOT CAUSE**:
   - Snapshot system stores ONE snapshot per alt (keyed only by altName, not hash)
   - When responder broadcasts twice, old snapshot overwritten (461905621 deleted, only 317352773 remains)
   - State summary previously sent aggregated items `{[itemID] = count}` (useless for delta computation)
@@ -704,6 +722,7 @@
 - **RELATED**: Completes DELTA-019 fix - hash stays at local value until correct delta (computed from actual baseline) received and applied
 
 #### [DELTA-019] Fixed Premature Hash Update Before Data Received (CRITICAL)
+
 - **FIXED**: Removed HLR first pass branch that updated hash when `localHash == 0`
 - **PROBLEM**: Hash updated from banker's broadcast before delta data arrived and was applied
 - **IMPACT**: Data/hash desynchronization - old data stored with new hash value
@@ -725,6 +744,7 @@
 - **RELATED**: Works with DELTA-018 fix - latestBankerHashes cache tracks "what banker says", local inventoryHash tracks "what data we have", only ApplyDelta updates local hash
 
 #### [DELTA-018] Fixed Hash Broadcast Circular Comparison (CRITICAL)
+
 - **FIXED**: Hash sync protocol now maintains separate in-memory cache from local storage
 - **PROBLEM**: hash-list-broadcast immediately updated local alt.inventoryHash, then comparison read from same local storage
 - **IMPACT**: Complete sync failure - /togbank share broadcasts updated hash without triggering sync requests
@@ -740,7 +760,7 @@
 - **CACHE STRUCTURE**: `{hash, updatedAt, version, mailHash, mailUpdatedAt}` per alt
 - **COMPARISON LOGIC**: cache.hash ("what banker says") vs localAlt.inventoryHash ("what we have")
 - **RESULT**: Proper mismatch detection - cache updated by broadcasts, local unchanged until delta received, comparison detects staleness
-- **LOCATION**: 
+- **LOCATION**:
   - Guild.lua Init (~276-290): Initialize latestBankerHashes from SavedVariables
   - Guild.lua ReportHashListCoverage (~693-710): Use cache directly for comparison
   - Chat.lua hash-list-broadcast (~1773-1795): Update cache only
@@ -748,13 +768,14 @@
 - **VERIFICATION**: Tested with manual hash revert - broadcast updated cache, local stayed stale, hashdebug showed pending, sync requested delta
 
 #### [DELTA-016] Fixed Delta Protocol Sending Aggregated Items (CRITICAL)
+
 - **FIXED**: ComputeDelta now sends separate bank/bags/mail inventories instead of aggregated items
 - **PROBLEM**: Used `alt.items` (UI display field) which was often empty on sender side despite non-zero hash
 - **IMPACT**: Complete data sync failure - deltas contained only money updates, no item data
 - **BEHAVIOR**: Debug showed "hasChanges.items=false, itemCount=0" with non-zero inventoryHash (contradiction)
 - **ROOT CAUSE**: `alt.items` computed during Bank:Scan() for UI aggregation, not guaranteed during delta computation
 - **PROTOCOL DESIGN**: Should send bank/bags/mail separately so receiver populates individual inventories
-- **SOLUTION**: 
+- **SOLUTION**:
   - ComputeDelta: Source from `currentAlt.bank.items`, `bags.items`, `mail.items` separately
   - ApplyDelta: Apply to `current.bank.items`, `bags.items`, `mail.items` individually
   - Recalculate aggregated `current.items` after delta application (UI display only)
@@ -767,12 +788,13 @@
 - **NOW**: Full inventory synchronization working - items populate correctly on receiver side
 
 #### [DELTA-017] Fixed Empty Baseline Missing Bank/Bags/Mail Structures (CRITICAL)
+
 - **FIXED**: ComputeDelta empty baseline now includes bank/bags/mail structures
 - **PROBLEM**: Empty baseline fallback only had `{ items = {}, money = 0, mailHash = 0 }` without bank/bags/mail
 - **IMPACT**: First-time sync sent empty deltas despite sender having inventory data
 - **BEHAVIOR**: ComputeDelta compared empty baseline to sender's current but both appeared empty
 - **ROOT CAUSE**: When accessing `previous.bank.items`, defaulted to `{}` but didn't distinguish between incomplete baseline vs empty inventory
-- **SOLUTION**: 
+- **SOLUTION**:
   - Changed empty baseline to include complete structures:
     `{ items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }`
   - Fixed in 3 locations: mail-only change without snapshot, hash mismatch without snapshot, requester has no data
@@ -781,6 +803,7 @@
 - **NOW**: All sync scenarios populate receiver correctly with sender's inventory data
 
 #### [MAIL-010] Fixed Mail-Only Change Sync Abort (CRITICAL)
+
 - **FIXED**: ComputeDelta now uses empty baseline fallback instead of returning nil
 - **PROBLEM**: When mail changed but inventory matched, and no snapshot existed, returned nil (line 567)
 - **IMPACT**: Complete sync failure - requesters with matching inventory but outdated mail never received updates
@@ -792,6 +815,7 @@
 - **NOTE**: Still pure delta protocol - empty baseline causes delta to include all items, but transmitted as delta message
 
 #### [P2P-010] Fixed P2P Broadcast Never Sent (CRITICAL)
+
 - **FIXED**: togbank-rr handler now actually sends P2P broadcast to guild
 - **PROBLEM**: Handler built P2P request but never serialized or sent it
 - **IMPACT**: P2P only worked when no banker online initially; failed when banker responded with hash (common case)
@@ -801,18 +825,20 @@
 - **NOW**: Full P2P flow works - peers receive broadcasts and respond with matching hashes
 
 #### [P2P-011] Fixed pendingSendCount Leak
+
 - **FIXED**: Added 30-second timeout to auto-decrement counter when requester never sends state summary
 - **PROBLEM**: Peer ACKs request and increments counter, but if requester goes offline before sending state summary, counter never decrements
 - **IMPACT**: After 3 stuck sends, peer permanently blocks all P2P responses with "send queue full" until `/reload`
 - **BEHAVIOR**: Now auto-decrements counter after 30 seconds if SendAltData never called
 - **RESULT**: Peers self-recover from stuck sends, preventing permanent P2P queue blocking
-- **LOCATIONS**: 
+- **LOCATIONS**:
   - `Guild.lua` (~22): Added pendingSendTimeouts tracking table
   - `Chat.lua` (~829-838): Added 30-second safety timeout after incrementing counter
   - `Guild.lua` (~1997-2000): Cancel timeout when SendAltData actually called
 - **NOW**: Robust P2P send queue management with automatic recovery from edge cases
 
 #### [P2P-012] Added Peer-Side Fallback Timeout
+
 - **FIXED**: Added 15-second timeout on requester side after peer ACK
 - **PROBLEM**: If peer ACKs but never sends data (disconnect/crash), requester waits indefinitely
 - **IMPACT**: User must manually retry with `/togbank sync`
@@ -822,6 +848,7 @@
 - **NOW**: Full fallback chain works - peer timeout → banker fallback → data arrives
 
 #### [P2P-013] Fixed expectedHashUpdatedAt Memory Leak
+
 - **FIXED**: Added cleanup for expectedHashUpdatedAt after successful hash validation
 - **PROBLEM**: Timestamps stored but never cleared, accumulating indefinitely
 - **IMPACT**: Minor memory leak (just timestamps), no functional impact
@@ -829,6 +856,7 @@
 - **LOCATION**: `Guild.lua` (~2250-2252): Clear expectedHashUpdatedAt after validation
 
 #### [PERF-007] Fixed GUILD_ROSTER_UPDATE Stuttering
+
 - **FIXED**: Changed OR to AND logic in initialization condition to stop repeated full roster refreshes
 - **PROBLEM**: Used `fullRosterInitAttempts < 2 OR (roster incomplete)` which kept triggering after initialization
 - **IMPACT**: Every online/offline event triggered full guild roster scan (1000+ members), causing 5-10ms+ stuttering
@@ -842,16 +870,18 @@
 - **DOCUMENTATION**: See `docs/DELTA_BUGS.md` for comprehensive analysis (PERF-005, PERF-007)
 
 #### [DELTA-015] Fixed Delta Duplication Bug (Complete)
+
 - **FIXED**: Added snapshot validation for inventory changes to prevent item duplication
 - **PROBLEM**: When inventory changed but no snapshot existed, delta computed against empty baseline
 - **IMPACT**: Requester would receive delta additions on top of existing stale data, causing duplicates
 - **BEHAVIOR**: Now checks for snapshot before computing delta for both mail-only AND inventory changes
 - **RESULT**: Forces full data (hash=0) when no snapshot available, preventing duplication
-- **LOCATIONS**: 
+- **LOCATIONS**:
   - `Guild.lua` (~1568-1594): Mail-only change validation (previously fixed)
   - `Guild.lua` (~1596-1624): Inventory change validation (newly fixed)
 
 #### [SYNC-009] Fixed Non-Banker Hash Sync
+
 - **FIXED**: HLR handler now checks hash equality BEFORE skipping alts
 - **PROBLEM**: Previously skipped any alt with hasContent=true without comparing hashes
 - **IMPACT**: Non-banker updates never propagated to peers with stale data
@@ -859,6 +889,7 @@
 - **RESULT**: Non-banker-to-non-banker sync working correctly
 
 #### [MAIL-009] Fixed mailHash Storage When Hashes Differ
+
 - **FIXED**: HLR and HL-broadcast handlers now update mailHash when it differs from banker
 - **PROBLEM**: Only stored mailHash when localHash=0, not when hashes differed
 - **IMPACT**: Mail-only changes never cached banker's new mailHash
@@ -899,18 +930,21 @@ end
 ### 🔄 Hash Broadcasting Overhaul
 
 #### Changes to `/togbank share`
+
 - **CHANGED**: Now broadcasts hash for ONLY the current banker character (single alt)
 - **CHANGED**: Uses togbank-hl channel for hash announcement (P2P discovery)
 - **CHANGED**: No longer pushes full data - clients pull data via sync cycle
 - **IMPACT**: Reduces spam when banker shares (1 hash vs 35+ data packets)
 
 #### New Command: `/togbank hashupdate`
+
 - **NEW**: Banker-only command to broadcast ALL bank alt hashes (the "nuke")
 - **USE CASE**: Force guild-wide hash refresh after bulk inventory changes
 - **BEHAVIOR**: Broadcasts hash-list for all bank alts on togbank-hl
 - **OUTPUT**: "Broadcasted hash-list for N bank alts"
 
 #### Hash Broadcast Enhancements
+
 - **ENHANCED**: `BuildBankerHashList()` now includes `mailHash` and `mailUpdatedAt`
 - **ENHANCED**: Hash-list-broadcast handler stores both inventory and mail hashes
 - **ENHANCED**: Handler tracks what changed: "Updated AltName: inv: 123->456, mail: 789->999"
@@ -918,6 +952,7 @@ end
 - **BEHAVIOR**: No automatic requests triggered - users must run `/togbank sync` or wait for automatic sync cycle
 
 #### Technical Details
+
 - Hash broadcasts contain: `inventoryHash`, `inventoryUpdatedAt`, `version`, `mailHash`, `mailUpdatedAt`
 - Clients update local hash stubs when received
 - Actual data requests happen during next sync cycle (manual, UI open, or 3-minute timer)
@@ -942,6 +977,7 @@ end
 ### 🎯 P2P Hash Backfill Implementation
 
 #### Core Features Implemented
+
 - **NEW**: Banker HLR (hash list reply) stores authoritative hashes for all roster alts
 - **NEW**: Version broadcasts store peer hashes when local hash is missing
 - **NEW**: 3-minute rebroadcast timer requests hash list and rebroadcasts P2P for missing alts
@@ -1011,6 +1047,7 @@ end
 ### 🐛 Critical Bug Fix
 
 #### [MAIL-012] Mail Hash Never Set - Fixed Mail Synchronization
+
 - **FIXED**: `mailHash` field was referenced but never assigned, breaking mail synchronization
 - **ROOT CAUSE**: Mail scan created mail data but never computed hash for change detection
 - **IMPACT**: Mail items never synchronized between clients via `/togbank share` or `/togbank sync`
@@ -1049,6 +1086,7 @@ end
 ### 🚀 Major Features
 
 #### Pull-Based Protocol with Inventory Hashing
+
 - **NEW**: Hash-based inventory comparison replaces version timestamps
 - **NEW**: Automatic pull sync when inventory hashes differ
 - **NEW**: Dual broadcast system (`togbank-v` + `togbank-dv`) for compatibility
@@ -1060,6 +1098,7 @@ end
 - **NEW**: Communication debug filtering - Optional "(comm)" prefixed debug messages with separate toggle
 
 #### Inventory Hashing System
+
 - `ComputeInventoryHash()` generates numeric hash from bank + bags + money
 - Hash computed automatically on bank scan (BANKFRAME_CLOSED event)
 - Stored alongside version timestamp in `alt.inventoryHash` field
@@ -1067,18 +1106,21 @@ end
 - Minimal overhead (single number vs full data comparison)
 
 #### Protocol Simplification
+
 - **REMOVED**: Guild support threshold requirement (was 5% minimum)
 - **NEW**: Delta protocol always enabled if `PROTOCOL.SUPPORTS_DELTA = true`
 - **NEW**: Works immediately without waiting for guild adoption
 - **SIMPLIFIED**: `ShouldUseDelta()` now only checks feature flags
 
 #### Broadcast Enhancements
+
 - **Version Broadcast (`togbank-v`)**: Legacy format with version timestamps only
 - **Delta Version Broadcast (`togbank-dv`)**: New format with version + hash
 - **Format**: `data.alts[name] = {version = X, hash = Y}`
 - **Share Command**: Now sends BOTH broadcasts for maximum compatibility
 
 #### Hash Comparison Logic
+
 - Compares inventory hashes to detect changes
 - **We have no data**: Query for everything
 - **Hashes differ**: Query for update
@@ -1089,6 +1131,7 @@ end
 ### 🐛 Bug Fixes
 
 #### [SEARCH-003] Search Returning 0 Results
+
 - **Fixed**: Search now correctly processes all aggregated items
 - **Root Cause**: BuildSearchData was using `ipairs()` on hash table returned by `Aggregate()`
 - **Solution**: Changed to `pairs()` for proper hash table iteration, fixed item counting
@@ -1096,12 +1139,14 @@ end
 - Location: Search.lua lines 405-410
 
 #### Mail Data Persistence
+
 - **Removed**: Unused `IsMailDataStale()` function and 1-hour staleness threshold
 - **Change**: Mail data now persists indefinitely like bank/bags data
 - **Impact**: Mail inventory remains visible regardless of age, with timestamp displayed for information
 - Location: MailInventory.lua
 
 #### [UI-002] Item Links Not Appearing After Integration
+
 - **Fixed**: Items now display immediately after async item link reconstruction
 - **Root Cause**: `ReconstructItemLinks()` was using async `Item:ContinueOnItemLoad()` callbacks without triggering UI refresh
 - **Solution**: Added UI refresh calls after successful link reconstruction (both immediate and async)
@@ -1109,30 +1154,35 @@ end
 - Location: Guild.lua lines 970-995
 
 #### [PROTO-001] Delta Validation
+
 - **Fixed**: Delta validation now accepts link-less deltas without `baseVersion`
 - Made `baseVersion` field optional in `ValidateDeltaStructure()`
 - Maintains backwards compatibility with old protocol deltas
 - Location: Core.lua line 118-122
 
 #### [UI-001] Inventory UI Crash
+
 - **Fixed**: UI handles missing `bank.slots` and `bags.slots` data
 - Added defensive nil checks in Inventory.lua lines 177-187
 - Data migration initializes missing slots fields with `{count = 0, total = 0}`
 - Prevents crashes when opening UI with incomplete alt data
 
 #### [DATA-001] Missing Inventory Hashes
+
 - **Fixed**: Existing alt data migrated to include inventory hashes
 - Migration runs once on addon load via `Database:InitializeDatabase()`
 - Computes hashes from saved bank/bags/money data
 - Successfully migrated 60+ existing alts in testing
 
 #### Hash Comparison Edge Cases
+
 - **Fixed**: Handles `nil` hash values after database wipe
 - **Fixed**: Pull decision logic checks for missing data
 - **Fixed**: Broadcasts send even when no alt data exists locally
 - Debug output shows "has bank data for X (we have none), querying"
 
 ### 📝 Documentation Updates
+
 - Updated DELTA_IMPLEMENTATION_TODO.md with current architecture
 - Documented inventory hashing system and pull protocol flow
 - Removed outdated guild support threshold documentation
@@ -1140,6 +1190,7 @@ end
 - Updated bug tracker (DELTA_BUGS.md) with resolved issues
 
 ### 🔧 Technical Changes
+
 - Guild.lua: Added dual broadcast to `Share()` function
 - Guild.lua: `FastFillMissingAlts()` auto-requests missing banker alts (lines 458-498)
 - Guild.lua: `ReconstructItemLinks()` now refreshes UI after async link loading (lines 970-1008)
@@ -1156,6 +1207,7 @@ end
 - Options.lua: Added `commDebug` toggle in config UI below log level
 
 ### 🎯 Performance Improvements
+
 - Message priority optimization: Changed queries and delta broadcasts from BULK to NORMAL
 - Improved responsiveness of pull-based protocol handshake
 - Faster UI updates with async item link reconstruction
@@ -1163,6 +1215,7 @@ end
 - Communication debug filtering: Separate toggle for comm debug messages with "(comm)" prefix
 
 ### ⚠️ Breaking Changes
+
 None - Full backwards compatibility maintained with v0.7.0 clients
 
 ---
@@ -1174,6 +1227,7 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 ### 🐛 Bug Fixes (2026-01-20)
 
 #### Error Tracking System
+
 - **Fixed**: Error tracking now works even when Guild.Info is not initialized
   - Implemented temporary in-memory storage for errors occurring before guild initialization
   - Automatic migration to database when guild data loads
@@ -1196,6 +1250,7 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 ### 🚀 Major Features
 
 #### Delta Sync Protocol
+
 - **NEW**: Intelligent delta synchronization protocol reduces bandwidth by 90-99%
 - **NEW**: Automatic protocol version negotiation between v0.6.8 and v0.7.0+ clients
 - **NEW**: Smart snapshot management with automatic corruption recovery
@@ -1203,12 +1258,14 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 - **NEW**: Backward compatible with v0.6.8 clients (seamless mixed-guild support)
 
 #### Bandwidth Optimization
+
 - Only transmits changed items instead of entire inventories
 - Automatic size comparison (uses delta only if <30% of full sync size)
 - Estimated bandwidth savings: 90-99% for typical inventory updates
 - Guild-wide adoption threshold (50%) ensures efficient operation
 
 #### Performance Metrics
+
 - Real-time bandwidth tracking (delta vs full sync)
 - Performance monitoring (computation and application times)
 - Success rate tracking with automatic failure detection
@@ -1248,6 +1305,7 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 ### 🔧 Technical Improvements
 
 #### Database Layer
+
 - Added `deltaSnapshots` table for efficient snapshot storage (1-hour expiration)
 - Added `guildProtocolVersions` table for peer protocol tracking
 - Added `deltaMetrics` table for bandwidth and performance tracking
@@ -1255,6 +1313,7 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 - Added 23 new database functions for delta operations
 
 #### Guild Module
+
 - Rewrote `SendAltData()` with intelligent protocol selection
 - Implemented `ComputeDelta()` for efficient change detection
 - Implemented `ApplyDelta()` with robust error handling
@@ -1262,12 +1321,14 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 - Enhanced debug output with detailed size and timing information
 
 #### Communication Layer
+
 - Registered new `togbank-d2` prefix for delta protocol
 - Enhanced version broadcast to include protocol capabilities
 - Added delta structure validation before application
 - Implemented automatic QueryAlt on all failure paths
 
 #### Error Handling & Recovery
+
 - 6 error detection points covering all failure scenarios
 - Automatic full sync fallback on any delta failure
 - Per-alt failure tracking with user notification (after 3 consecutive failures)
@@ -1277,12 +1338,14 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 ### 📊 Monitoring & Visibility
 
 #### Enhanced Debug Output
+
 - Delta selection logging with size comparisons and savings calculations
 - Performance timing for all delta operations
 - Color-coded status indicators (✓/✗) for quick visual parsing
 - Detailed error messages with context for troubleshooting
 
 #### Statistics Display
+
 - Bandwidth metrics with color-coded percentages
 - Success rate with threshold-based coloring (green ≥95%, yellow ≥80%, red <80%)
 - Performance averages for computation and application
@@ -1307,6 +1370,7 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 ### 🔄 Protocol Specifications
 
 #### Version 2 Features
+
 - Protocol version: 2
 - Supports delta updates: Yes
 - Delta size threshold: 30% of full sync
@@ -1314,6 +1378,7 @@ None - Full backwards compatibility maintained with v0.7.0 clients
 - Guild adoption threshold: 50%
 
 #### Backwards Compatibility
+
 - v0.7.0+ ↔ v0.7.0+: Delta sync via `togbank-d2` (when threshold met)
 - v0.7.0+ ↔ v0.6.8: Full sync via `togbank-d` (automatic fallback)
 - v0.6.8 ↔ v0.6.8: Full sync via `togbank-d` (unchanged)
@@ -1361,6 +1426,7 @@ FEATURES = {
 ---
 
 ## [v2.3.0](https://github.com/GrumpyPlayer/GBankClassic/tree/v2.3.0) (2025-10-27)
+
 [Full Changelog](https://github.com/GrumpyPlayer/GBankClassic/compare/v2.2.0...v2.3.0) [Previous Releases](https://github.com/GrumpyPlayer/GBankClassic/releases)
 
 - Merge pull request #3 from GrumpyPlayer/merge/fix-search-normalization-into-handle-malformed-data
@@ -1369,14 +1435,14 @@ FEATURES = {
 - Merge PR #1 (fix-search-normalization) into integration branch
 - Perform cleanup of malformed data on addon initialization and handle malformed data better
 - Fix nil version comparison in ReceiveAltData
-    - Added nil check for existing alt data version before comparison
-    - Prevents 'attempt to compare number with nil' error
-    - Fixes crash when receiving data for alts without version field
+  - Added nil check for existing alt data version before comparison
+  - Prevents 'attempt to compare number with nil' error
+  - Fixes crash when receiving data for alts without version field
 - Fix Search.lua crash and implement name normalization with security improvements
-    - Fixed nil table index crash in Search.lua duplicate detection
-    - Added NormalizePlayerName helper for consistent 'Name-Realm' format
-    - Implemented sender authentication to prevent communication spoofing
-    - Added debug tools: /bank debug toggle and /bank debugdump command
-    - Auto-enable bank reporting for detected bank characters
-    - Relaxed delegation policy for multi-bank account support
-    - Normalized player keys across all modules for data consistency
+  - Fixed nil table index crash in Search.lua duplicate detection
+  - Added NormalizePlayerName helper for consistent 'Name-Realm' format
+  - Implemented sender authentication to prevent communication spoofing
+  - Added debug tools: /bank debug toggle and /bank debugdump command
+  - Auto-enable bank reporting for detected bank characters
+  - Relaxed delegation policy for multi-bank account support
+  - Normalized player keys across all modules for data consistency
