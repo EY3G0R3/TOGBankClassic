@@ -2965,6 +2965,16 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 		if successRate < 80 then rateColor = "|cffff0000" end
 		TOGBankClassic_Output:Response("  Success rate:        %s%.1f%%|r", rateColor, successRate)
 	end
+	
+	-- P2P-023: Hash-list broadcast collision prevention statistics
+	if TOGBankClassic_Events then
+		local totalBroadcasts = TOGBankClassic_Events.hashBroadcastCount or 0
+		local blockedBroadcasts = TOGBankClassic_Events.hashBroadcastBlocked or 0
+		if totalBroadcasts > 0 then
+			TOGBankClassic_Output:Response("  Hash broadcasts:     %d sent, %d blocked (%.1f%% collision rate)",
+				totalBroadcasts, blockedBroadcasts, (blockedBroadcasts / (totalBroadcasts + blockedBroadcasts)) * 100)
+		end
+	end
 
 	-- Performance (only show if populated)
 	local computeCount = metrics.computeCount or 0

@@ -66,6 +66,7 @@ DEBUG_TAGS = {
 		["MAIL-SYNC"]         = "mail hash sync query decisions (when/why to query for mail updates)",
 		["PULL-HASH"]         = "requester hash data included in pull-based requests",
 		["INTEGRITY-MISMATCH"] = "stop-marker present but CRC failed (genuine bit-corruption, not truncation)",
+		["COLLISION-GUARD"]   = "hash-list broadcast collision prevention (skip/defer/retry decisions, P2P-023 fix)",
 		["SERIAL"]           = "SerializeWithChecksum call tracing (outgoing checksum + payload size)",
 		["RECV"]    = "general incoming message dispatch and receipt",
 		["WHISPER"] = "whisper send routing and online-check decisions",

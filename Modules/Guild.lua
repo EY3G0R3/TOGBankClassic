@@ -3370,9 +3370,29 @@ function TOGBankClassic_Guild:HashUpdate()
 		return
 	end
 	
+	-- P2P-023: Check collision guard - defer manual command if broadcast already in progress
+	if TOGBankClassic_Events and TOGBankClassic_Events.hashBroadcastInProgress then
+		TOGBankClassic_Events.hashBroadcastBlocked = (TOGBankClassic_Events.hashBroadcastBlocked or 0) + 1
+		TOGBankClassic_Output:Info("Hash broadcast already in progress - deferring command for 16 seconds...")
+		C_Timer.After(16, function()
+			self:HashUpdate()  -- Retry once
+		end)
+		return
+	end
+	
 	-- Broadcast hash-list for ALL bank alts
 	TOGBankClassic_Output:Info("Broadcasting hash-list for ALL bank alts...")
 	local hashList = self:BuildBankerHashList()
+	
+	-- P2P-023: Set flag before sending (shared with Events:SyncDeltaVersion)
+	if TOGBankClassic_Events then
+		TOGBankClassic_Events.hashBroadcastInProgress = true
+		TOGBankClassic_Events.hashBroadcastCount = (TOGBankClassic_Events.hashBroadcastCount or 0) + 1
+		C_Timer.After(15, function()
+			TOGBankClassic_Events.hashBroadcastInProgress = false
+		end)
+	end
+	
 	local payload = {
 		type = "hash-list-broadcast",
 		alts = hashList,

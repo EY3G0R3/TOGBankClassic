@@ -234,9 +234,40 @@ end
 -- v0.8.0 SYNC-006: Bankers send BOTH togbank-dv (old) and togbank-dv2 (new) during migration
 -- P2P-006: Broadcast our hash list to the guild so peers can offer newer data.
 -- Called on the 3-minute timer (via Guild:Share) and after every bank scan.
-function TOGBankClassic_Events:SyncDeltaVersion(priority)
+function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then return end
+
+	-- P2P-023: Prevent concurrent broadcasts from colliding in AceComm multipart_spool
+	-- Spool key is "prefix\tdistribution\tsender" - when same sender broadcasts twice
+	-- before first completes, second FIRST chunk overwrites partial spool data, causing
+	-- message corruption (FIRST from msg2 + NEXT/LAST from msg1 = CRC fail).
+	retryCount = retryCount or 0
+	if self.hashBroadcastInProgress then
+		self.hashBroadcastBlocked = (self.hashBroadcastBlocked or 0) + 1
+		if priority == "BULK" then
+			-- Periodic timer broadcasts: skip if collision, next timer will catch it
+			TOGBankClassic_Output:Debug("PROTOCOL", "COLLISION-GUARD",
+				"Skipped BULK hash-list broadcast (previous broadcast in progress)")
+			return
+		else
+			-- NORMAL/ALERT (login, manual commands): defer with retry
+			if retryCount < 3 then
+				TOGBankClassic_Output:Debug("PROTOCOL", "COLLISION-GUARD",
+					"Deferring %s hash-list broadcast (retry %d/3) - will retry in 16s",
+					priority or "NORMAL", retryCount + 1)
+				C_Timer.After(16, function()
+					self:SyncDeltaVersion(priority, retryCount + 1)
+				end)
+				return
+			else
+				-- After 3 retries (48s), force through to prevent indefinite blocking
+				TOGBankClassic_Output:Debug("PROTOCOL", "COLLISION-GUARD",
+					"Forcing %s hash-list broadcast after %d retries", priority or "NORMAL", retryCount)
+				-- Fall through to send
+			end
+		end
+	end
 
 	local list = TOGBankClassic_Guild:BuildBankerHashList()
 	if not list then return end
@@ -244,6 +275,10 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	local altCount = 0
 	for _ in pairs(list) do altCount = altCount + 1 end
 	if altCount == 0 then return end
+
+	-- P2P-023: Set broadcast-in-progress flag before sending to prevent concurrent collisions
+	self.hashBroadcastInProgress = true
+	self.hashBroadcastCount = (self.hashBroadcastCount or 0) + 1
 
 	local myPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local payload = {
@@ -257,6 +292,11 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority)
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK")
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
 		altCount, tostring(payload.isBanker))
+
+	-- P2P-023: Clear flag after transmission window (15s covers largest messages + safety margin)
+	C_Timer.After(15, function()
+		self.hashBroadcastInProgress = false
+	end)
 
 	-- SETTINGS-001: Piggyback settings broadcast for authorized senders so new joiners
 	-- and members who missed the immediate broadcast still receive guild-configured values.
