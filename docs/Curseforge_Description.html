@@ -39,6 +39,8 @@
 <ul>
 <li>Guild-Wide Search: Search across all bank characters simultaneously—find any item instantly</li>
 <li>Live Filtering: Results update as you type, showing exact quantities and locations</li>
+<li>Sort Dropdowns: Visual dropdown menus with 6-7 sort modes (A-Z, By Type, By Rarity, By Level, By Bank, By Quantity, By Slot) and reverse order toggle</li>
+<li>Banker Labels: See which banker character has each item in search results</li>
 <li>Click to Request: Click any search result to open a request dialog with smart quantity suggestions</li>
 <li>Availability Info: See max requestable amounts based on officer-configured limits</li>
 </ul>
@@ -86,6 +88,8 @@
 <li>Bagnon Integration: Automatic item highlighting in bags when fulfilling orders (requires Bagnon addon)</li>
 <li>Request History: View your past requests with fulfillment status</li>
 <li>Fair Distribution: Officer-configured limits ensure equitable access to guild resources</li>
+<li>Window Persistence: All window sizes and positions save automatically across reloads</li>
+<li>Visual Consistency: Thin 8px scrollbars and unified borders across all windows</li>
 <li>Mute Warnings: Checkbox to hide low-priority warnings for cleaner chat</li>
 </ul>
 
@@ -307,7 +311,18 @@
 
 <h2>Recent Updates</h2>
 
-<p><strong>v0.9.17 (Latest)</strong></p>
+<p><strong>v0.9.18 (In Development)</strong></p>
+<ul>
+<li>Visual sort dropdowns in Search and Inventory windows with 6-7 modes (A-Z, By Type, By Rarity, By Level, By Bank/Slot, By Quantity) and reverse order toggle</li>
+<li>Thin 8px scrollbars across all windows matching dropdown pullout menu style, positioned at right edge with proper spacing</li>
+<li>Banker name shown in search results for easier identification</li>
+<li>Window sizes persist across reloads for all three windows</li>
+<li>Fixed: Requests dropdowns closing immediately when clicked (now stay open for selection)</li>
+<li>Fixed: Sort by Type equipment now groups properly by equip slot with uncached items handled gracefully</li>
+<li>Fixed: Debug frame now restores previously active chat tab when closed</li>
+</ul>
+
+<p><strong>v0.9.17 (Latest Release)</strong></p>
 <ul>
 <li>Requests Archive tab — requests older than a configurable threshold (default 30 days) move to an Archive tab automatically, keeping the main view focused on active requests</li>
 <li>Auto-cancel stale requests — open requests older than the threshold are tombstoned on sync; officers can also bulk-cancel via the new "Cancel Stale" button</li>
@@ -322,26 +337,20 @@
 <li>Fixed banker broadcast marking isBanker=false on every 10-minute sync, causing peers to skip hash updates and send unnecessary whispers back to the banker (up to 50 members × 36 alts per cycle)</li>
 <li>Fixed /togbank hashupdate also missing isBanker field in its broadcast</li>
 <li>Performance: guild roster lookups replaced with O(1) cache — eliminates full-roster scans on every incoming message that were causing visible frame stutters on busy guild channels</li>
+<li>Performance: byte-by-byte checksum removed from outgoing messages (saved up to 15ms per large delta)</li>
+<li>Performance: ApplyDelta reduced from 5 item passes to 2, eliminating unnecessary dedup and sorting</li>
+<li>Performance: per-login RecalculateAggregatedItems migration removed (was papering over old duplication bugs)</li>
 </ul>
 
 <p><strong>v0.9.14</strong></p>
 <ul>
-<li>Two new inventory sort modes — the sort button now cycles through A-Z, By Type, By Rarity (epic first), and By Level (highest first)</li>
+<li>Sort by Rarity and Sort by Level added to inventory window — the sort button now cycles through four modes: A-Z, By Type, By Rarity (epic first), and By Level (highest first)</li>
 </ul>
 
 <p><strong>v0.9.13</strong></p>
 <ul>
 <li>Fixed request index flood on large guilds — guilds with 500+ requests could trigger a storm of duplicate index transmissions when multiple peers responded simultaneously; peers now coordinate so only one sends at a time, with the others standing down</li>
 <li>"Syncing requests with guild…" and "Broadcasted hash for &lt;alt&gt;" chat messages now respect the Mute Sync Progress Messages setting</li>
-</ul>
-
-<p><strong>v0.9.12</strong></p>
-<ul>
-<li>Stale banker tabs — banker tabs turn red with a tooltip when guild members have a newer hash for that alt, so you know at a glance when displayed inventory may be out of date</li>
-<li>/togbank versioncheck — broadcast a version check to all guild members and see who is running which version (works with all addon versions via VersionCheck-1.0)</li>
-<li>Fixed quality border colours on weapons and armour — gear now shows the correct rarity colour (green/blue/purple) rather than always white</li>
-<li>Fixed mail item tooltips showing blank names</li>
-<li>Performance: NormalizeRequestList now skips its full rebuild when nothing has changed</li>
 </ul>
 
 <p><strong>v0.9.10</strong></p>
