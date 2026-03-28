@@ -45,9 +45,9 @@ local ARCHIVE_DAYS = 30
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
 local FILTER_SEPARATOR_ANY_REST = "__tog_sep_any_rest__"
 local FILTER_SEPARATOR_HIST = "__tog_sep_hist__"
-local FILTER_SEPARATOR_LABEL = "|cFFFFCC55------------------------------|r"
-local FILTER_SECTION_OPEN    = "|cFFFFCC55---------- Open requests ----------|r"
-local FILTER_SECTION_HIST    = "|cFFFFCC55-------------- History --------------|r"
+local FILTER_SEPARATOR_LABEL = "|cFFFFCC55-----------------------------------------|r"
+local FILTER_SECTION_OPEN    = "|cFFFFCC55----------- Open requests -----------|r"
+local FILTER_SECTION_HIST    = "|cFFFFCC55--------------- History ---------------|r"
 
 local function useTwoHeaderLayout()
 	return FILTER_LAYOUT == FILTER_LAYOUT_TWO_HEADERS
@@ -602,6 +602,44 @@ function TOGBankClassic_UI_Requests:AdjustTableHeight()
 	self.Content:SetHeight(height)
 end
 
+-- Helper to set up click-outside-to-close behavior for dropdowns
+local function SetupClickOutsideHandler(dropdown)
+	if not dropdown or not dropdown.pullout then return end
+	
+	local pullout = dropdown.pullout
+	local originalOpen = pullout.Open
+	local clickCatcher = nil
+	
+	pullout.Open = function(self, ...)
+		originalOpen(self, ...)
+		
+		-- Create invisible frame to catch clicks outside the pullout
+		if not clickCatcher then
+			---@diagnostic disable-next-line: undefined-global
+			clickCatcher = CreateFrame("Frame", nil, UIParent)
+			clickCatcher:SetFrameStrata("FULLSCREEN_DIALOG")
+			clickCatcher:SetFrameLevel(self.frame:GetFrameLevel() - 1)
+			clickCatcher:EnableMouse(true)
+			clickCatcher:SetScript("OnMouseDown", function()
+				if self.frame:IsShown() then
+					self:Close()
+				end
+			end)
+		end
+		
+		clickCatcher:SetAllPoints()
+		clickCatcher:Show()
+	end
+	
+	local originalClose = pullout.Close
+	pullout.Close = function(self)
+		if clickCatcher then
+			clickCatcher:Hide()
+		end
+		originalClose(self)
+	end
+end
+
 function TOGBankClassic_UI_Requests:DrawWindow()
 	local window = TOGBankClassic_UI:Create("Frame")
 	window:Hide()
@@ -630,7 +668,33 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 	-- Register frame for ESC key handling
 	-- AceGUI frames handle ESC automatically, no manual registration needed
-
+	
+	-- Handle Esc key to close dropdowns before closing window
+	window.frame:EnableKeyboard(true)
+	window.frame:SetPropagateKeyboardInput(true)
+	window.frame:SetScript("OnKeyDown", function(frame, key)
+		if key == "ESCAPE" then
+			-- Check if any dropdown pullout is open
+			local closedAny = false
+			if self.FilterRequester and self.FilterRequester.pullout and self.FilterRequester.pullout.frame:IsShown() then
+				self.FilterRequester.pullout:Close()
+				closedAny = true
+			end
+			if self.FilterBank and self.FilterBank.pullout and self.FilterBank.pullout.frame:IsShown() then
+				self.FilterBank.pullout:Close()
+				closedAny = true
+			end
+			-- If we closed a dropdown, consume the Esc key
+			if closedAny then
+				frame:SetPropagateKeyboardInput(false)
+			else
+				frame:SetPropagateKeyboardInput(true)
+			end
+		else
+			frame:SetPropagateKeyboardInput(true)
+		end
+	end)
+	
 	self.Window = window
 
 	-- Shrink status bar right edge to make room for the help icon
@@ -792,6 +856,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		end)
 		filterGroup:AddChild(requesterFilter)
 		self.FilterRequester = requesterFilter
+		SetupClickOutsideHandler(requesterFilter)
 
 		local bankFilter = TOGBankClassic_UI:Create("Dropdown")
 		bankFilter:SetLabel("Bank")
@@ -819,6 +884,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		end)
 		filterGroup:AddChild(bankFilter)
 		self.FilterBank = bankFilter
+		SetupClickOutsideHandler(bankFilter)
 
 		-- Add highlighting checkbox (only for bankers)
 		-- Check if guild roster is loaded before checking banker status
@@ -1243,6 +1309,7 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 				end)
 				widget = requesterFilter
 				self.FilterRequester = requesterFilter
+				SetupClickOutsideHandler(requesterFilter)
 			elseif col.key == "bank" then
 				local bankFilter = TOGBankClassic_UI:Create("Dropdown")
 				bankFilter:SetCallback("OnValueChanged", function(widget, _, value)
@@ -1250,6 +1317,7 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 				end)
 				widget = bankFilter
 				self.FilterBank = bankFilter
+				SetupClickOutsideHandler(bankFilter)
 			else
 				local spacer = TOGBankClassic_UI:Create("Label")
 				spacer:SetText("")

@@ -197,6 +197,7 @@ All filters work simultaneously with the name search input. Changing any filter/
 - Fixed duplicate item deduplication in Lookup table (now sums counts when same alt has multiple stacks)
 - Restored original callback architecture after attempted lazy loading broke rendering
 - Fixed dropdown alignment in Inventory UI by anchoring internal dropdown element to frame edges
+- Added dropdown close-on-click-outside behavior for Requests UI filter dropdowns using invisible click-catcher frame
 
 ### Files Changed
 
@@ -218,6 +219,12 @@ All filters work simultaneously with the name search input. Changing any filter/
 - 7 sort options (A-Z, Z-A, By Type, Level Low/High, Rarity High/Low)
 - Selection persists per-character in SavedVariables
 - Tooltip explains sort behavior on hover
+
+**Requests Window:**
+- Filter dropdowns (Requester, Bank) close on Esc key or click outside
+- Esc closes open dropdown first, then window on subsequent press
+- Invisible click-catcher frame detects outside clicks at lower frame level
+- Uses keyboard input propagation control for proper event handling
 
 ---
 
