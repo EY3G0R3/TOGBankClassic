@@ -494,6 +494,16 @@ function TOGBankClassic_Item:Sort(items, mode)
 			end
 			return (a.Info.name or "") < (b.Info.name or "")
 		end)
+	elseif mode == "rarity_asc" then
+		-- By Rarity (ascending): lowest rarity first (poor before common before uncommon etc.), then A-Z
+		table.sort(items, function(a, b)
+			local aRarity = a.Info.rarity or 0
+			local bRarity = b.Info.rarity or 0
+			if aRarity ~= bRarity then
+				return aRarity < bRarity
+			end
+			return (a.Info.name or "") < (b.Info.name or "")
+		end)
 	elseif mode == "level" then
 		-- By Level: highest required level first, then A-Z
 		table.sort(items, function(a, b)
@@ -503,6 +513,21 @@ function TOGBankClassic_Item:Sort(items, mode)
 				return aLevel > bLevel
 			end
 			return (a.Info.name or "") < (b.Info.name or "")
+		end)
+	elseif mode == "level_asc" then
+		-- By Level (ascending): lowest required level first, then A-Z
+		table.sort(items, function(a, b)
+			local aLevel = a.Info.level or 0
+			local bLevel = b.Info.level or 0
+			if aLevel ~= bLevel then
+				return aLevel < bLevel
+			end
+			return (a.Info.name or "") < (b.Info.name or "")
+		end)
+	elseif mode == "alpha_desc" then
+		-- Alphabetical descending: pure Z-A by name
+		table.sort(items, function(a, b)
+			return (a.Info.name or "") > (b.Info.name or "")
 		end)
 	else
 		-- Alphabetical (default): pure A-Z by name

@@ -1,14 +1,15 @@
 TOGBankClassic_UI_Inventory = {}
 
-local SORT_CYCLE  = { "alpha", "type", "rarity", "level" }
-local SORT_LABELS = { alpha = "Sort: A-Z", type = "Sort: By Type", rarity = "Sort: By Rarity", level = "Sort: By Level" }
-local function GetSortLabel(m) return SORT_LABELS[m] or "Sort: A-Z" end
-local function NextSortMode(m)
-	for i, v in ipairs(SORT_CYCLE) do
-		if v == m then return SORT_CYCLE[(i % #SORT_CYCLE) + 1] end
-	end
-	return "alpha"
-end
+local SORT_LIST = {
+	alpha       = "A-Z",
+	alpha_desc  = "Z-A",
+	type        = "By Type",
+	level_asc   = "Level (Low to High)",
+	level       = "Level (High to Low)",
+	rarity      = "Rarity (High to Low)",
+	rarity_asc  = "Rarity (Low to High)",
+}
+local SORT_ORDER = { "alpha", "alpha_desc", "type", "level_asc", "level", "rarity", "rarity_asc" }
 
 function TOGBankClassic_UI_Inventory:Init()
 	-- Frame creation deferred to first Open() call (PERF-015)
@@ -183,16 +184,17 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	searchButton:SetHeight(24)
 	buttonContainer:AddChild(searchButton)
 
-	local sortButton = TOGBankClassic_UI:Create("Button")
+	local sortDropdown = TOGBankClassic_UI:Create("Dropdown")
+	sortDropdown:SetLabel("")
+	sortDropdown.label:Hide()  -- Hide the label completely
 	local initMode = (TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char.sortMode) or "alpha"
-	sortButton:SetText(GetSortLabel(initMode))
-	sortButton:SetWidth(160)
-	sortButton:SetHeight(24)
-	sortButton:SetCallback("OnClick", function(_)
+	sortDropdown:SetList(SORT_LIST, SORT_ORDER)
+	sortDropdown:SetValue(initMode)
+	sortDropdown:SetWidth(160)
+	sortDropdown:SetCallback("OnValueChanged", function(widget, _, value)
 		local db = TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char
 		if not db then return end
-		db.sortMode = NextSortMode(db.sortMode or "alpha")
-		sortButton:SetText(GetSortLabel(db.sortMode))
+		db.sortMode = value
 		-- Reload current tab with new sort order
 		local tab = self.TabGroup.localstatus and self.TabGroup.localstatus.selected
 		if tab then
@@ -201,18 +203,18 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 			self.TabGroup:SelectTab(tab)
 		end
 	end)
-	self.SortButton = sortButton
-	sortButton:SetCallback("OnEnter", function()
-		GameTooltip:SetOwner(sortButton.frame, "ANCHOR_BOTTOM")
+	sortDropdown:SetCallback("OnEnter", function()
+		GameTooltip:SetOwner(sortDropdown.frame, "ANCHOR_BOTTOM")
 		GameTooltip:ClearLines()
 		GameTooltip:AddLine("Sort Order")
-		GameTooltip:AddLine("Click to cycle through sort modes: Alphabetical -> By Type -> By Rarity -> By Level.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("Choose how to sort items in this character's inventory.", 0.9, 0.9, 0.9, true)
 		GameTooltip:Show()
 	end)
-	sortButton:SetCallback("OnLeave", function()
+	sortDropdown:SetCallback("OnLeave", function()
 		TOGBankClassic_UI:HideTooltip()
 	end)
-	buttonContainer:AddChild(sortButton)
+	self.SortDropdown = sortDropdown
+	buttonContainer:AddChild(sortDropdown)
 
 	local requestsButton = TOGBankClassic_UI:Create("Button")
 	requestsButton:SetText("Requests")
@@ -252,10 +254,10 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		return
 	end
 
-	-- Sync sort button label with persisted mode (db available by the time DrawContent runs)
-	if self.SortButton and TOGBankClassic_Options and TOGBankClassic_Options.db then
+	-- Sync sort dropdown value with persisted mode (db available by the time DrawContent runs)
+	if self.SortDropdown and TOGBankClassic_Options and TOGBankClassic_Options.db then
 		local m = TOGBankClassic_Options.db.char.sortMode or "alpha"
-		self.SortButton:SetText(GetSortLabel(m))
+		self.SortDropdown:SetValue(m)
 	end
 
 	-- Clear search data built flag so search rebuilds on next open (PERF-004)

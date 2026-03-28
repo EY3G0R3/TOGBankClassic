@@ -145,6 +145,7 @@ DEBUG_TAGS = {
 	UI = {
 		FILTER = "filter bar updates (requester dropdown, banker checkbox, etc.)",
 		SEARCH = "search field OnTextChanged events and DrawContent entry/exit timing",
+		DRAW   = "item rendering (DrawItem), border color lookups, async fallback triggers",
 	},
 }
 

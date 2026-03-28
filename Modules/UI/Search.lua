@@ -1,5 +1,125 @@
 TOGBankClassic_UI_Search = {}
 
+local FILTER_ANY = "any"
+local RESULTS_PER_PAGE = 50
+local SUBFILTER_LIST  = {
+	any     = "Any",
+	type    = "Type",
+	quality = "Quality",
+}
+local SUBFILTER_ORDER = { "any", "type", "quality" }
+
+-- Parse item rarity from the colour prefix embedded in every item link.
+-- e.g. |cFF0070DD|Hitem:...|h[Sword]|h|r -> Rare (3)
+-- No API call needed -- the colour is part of the link string stored in SV.
+local LINK_COLOR_RARITY = {
+	["9D9D9D"] = 0,  -- Poor
+	["FFFFFF"] = 1,  -- Common
+	["1EFF00"] = 2,  -- Uncommon
+	["0070DD"] = 3,  -- Rare
+	["A335EE"] = 4,  -- Epic
+	["FF8000"] = 5,  -- Legendary
+}
+local function RarityFromLink(link)
+	if not link then return nil end
+	-- WoW item links use lowercase |cff + 6 hex colour digits (e.g. |cff0070dd)
+	-- |c%x%x matches the opaque alpha byte (always ff) in either case
+	local hex = link:match("|c%x%x(%x%x%x%x%x%x)")
+	return hex and LINK_COLOR_RARITY[hex:upper()] or nil
+end
+
+-- Second cascade dropdown lists; keys are tostring(classId) / tostring(rarityId)
+local TYPE_LIST = {
+	any   = "Any Type",
+	["0"]  = "Consumable",
+	["1"]  = "Container",
+	["2"]  = "Weapon",
+	["4"]  = "Armor",
+	["5"]  = "Reagent",
+	["6"]  = "Projectile",
+	["7"]  = "Trade Goods",
+	["9"]  = "Recipe",
+	["11"] = "Quiver",
+	["12"] = "Quest",
+	["13"] = "Key",
+	["15"] = "Miscellaneous",
+}
+local TYPE_ORDER  = { "any", "0", "1", "2", "4", "5", "6", "7", "9", "11", "12", "13", "15" }
+local QUALITY_LIST = {
+	any   = "Any Quality",
+	["0"] = "Poor",
+	["1"] = "Common",
+	["2"] = "Uncommon",
+	["3"] = "Rare",
+	["4"] = "Epic",
+	["5"] = "Legendary",
+}
+local QUALITY_ORDER = { "any", "0", "1", "2", "3", "4", "5" }
+
+-- Third cascade: subclass lists keyed by string class ID.
+-- IDs match GetItemInfo() return values for Classic Era (Vanilla).
+local SUBCLASS_LISTS = {
+	["0"] = {  -- Consumable
+		list  = { any="Any", ["0"]="Consumable", ["1"]="Potion", ["2"]="Elixir", ["3"]="Flask", ["4"]="Scroll", ["5"]="Food & Drink", ["6"]="Item Enhancement", ["7"]="Bandage", ["8"]="Other" },
+		order = { "any","0","1","2","3","4","5","6","7","8" },
+	},
+	["1"] = {  -- Container
+		list  = { any="Any", ["0"]="Bag", ["1"]="Soul Bag", ["2"]="Herb Bag", ["3"]="Enchanting Bag", ["4"]="Engineering Bag", ["5"]="Gem Bag", ["6"]="Mining Bag", ["7"]="Leatherworking Bag" },
+		order = { "any","0","1","2","3","4","5","6","7" },
+	},
+	["2"] = {  -- Weapon
+		list  = { any="Any", ["0"]="Axe (1H)", ["1"]="Axe (2H)", ["2"]="Bow", ["3"]="Gun", ["4"]="Mace (1H)", ["5"]="Mace (2H)", ["6"]="Polearm", ["7"]="Sword (1H)", ["8"]="Sword (2H)", ["10"]="Staff", ["13"]="Fist Weapon", ["14"]="Misc", ["15"]="Dagger", ["16"]="Thrown", ["18"]="Crossbow", ["19"]="Wand", ["20"]="Fishing Pole" },
+		order = { "any","0","1","2","3","4","5","6","7","8","10","13","14","15","16","18","19","20" },
+	},
+	["4"] = {  -- Armor
+		list  = { any="Any", ["0"]="Miscellaneous", ["1"]="Cloth", ["2"]="Leather", ["3"]="Mail", ["4"]="Plate", ["6"]="Shield", ["7"]="Libram", ["8"]="Idol", ["9"]="Totem" },
+		order = { "any","0","1","2","3","4","6","7","8","9" },
+	},
+	["5"] = {  -- Reagent
+		list  = { any="Any", ["0"]="Reagent" },
+		order = { "any","0" },
+	},
+	["6"] = {  -- Projectile
+		list  = { any="Any", ["2"]="Arrow", ["3"]="Bullet" },
+		order = { "any","2","3" },
+	},
+	["7"] = {  -- Trade Goods
+		list  = { any="Any", ["0"]="Trade Goods", ["1"]="Parts", ["2"]="Explosives", ["3"]="Devices" },
+		order = { "any","0","1","2","3" },
+	},
+	["9"] = {  -- Recipe
+		list  = { any="Any", ["0"]="Book", ["1"]="Leatherworking", ["2"]="Tailoring", ["3"]="Engineering", ["4"]="Blacksmithing", ["5"]="Cooking", ["6"]="Alchemy", ["7"]="First Aid", ["8"]="Enchanting", ["9"]="Fishing" },
+		order = { "any","0","1","2","3","4","5","6","7","8","9" },
+	},
+	["11"] = {  -- Quiver
+		list  = { any="Any", ["2"]="Quiver", ["3"]="Ammo Pouch" },
+		order = { "any","2","3" },
+	},
+	["12"] = {  -- Quest
+		list  = { any="Any", ["0"]="Quest" },
+		order = { "any","0" },
+	},
+	["13"] = {  -- Key
+		list  = { any="Any", ["0"]="Key", ["1"]="Lockpick" },
+		order = { "any","0","1" },
+	},
+	["15"] = {  -- Miscellaneous
+		list  = { any="Any", ["0"]="Junk", ["1"]="Reagent", ["2"]="Companion Pet", ["3"]="Holiday", ["4"]="Other", ["5"]="Mount" },
+		order = { "any","0","1","2","3","4","5" },
+	},
+}
+
+-- Sort modes for search results
+local SORT_LIST = {
+	alpha       = "A -> Z",
+	alpha_desc  = "Z -> A",
+	level_asc   = "Level (Low to High)",
+	level       = "Level (High to Low)",
+	rarity      = "Rarity (High to Low)",
+	rarity_asc  = "Rarity (Low to High)",
+}
+local SORT_ORDER = { "alpha", "alpha_desc", "level_asc", "level", "rarity", "rarity_asc" }
+
 function TOGBankClassic_UI_Search:Init()
 	-- Frame creation deferred to first Open() call (PERF-015)
 end
@@ -290,6 +410,7 @@ function TOGBankClassic_UI_Search:Open()
 		self:BuildSearchData()
 		self.searchDataBuilt = true
 		self.lastRosterVersion = currentVersion
+		self.currentPage = 1  -- reset pagination on data rebuild
 	end
 
 	self.Window:Show()
@@ -376,6 +497,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	searchInput:SetCallback("OnTextChanged", function(input)
 		self.SearchText = input:GetText()
 		TOGBankClassic_Output:Debug("UI", "SEARCH", "OnTextChanged: text='%s' t=%.3f", self.SearchText or "", GetTime())
+		self.currentPage = 1  -- reset to first page on search text change
 		self:DrawContent()
 	end)
 	searchInput:SetCallback("OnEnterPressed", function(input)
@@ -397,6 +519,221 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	self.searchField = searchInput
 
 	searchWindow:AddChild(searchInput)
+
+	-- Sub-filter: three cascading Requests-style dropdowns
+	-- subValueDropdown and subSubValueDropdown forward-declared so callbacks can reference them
+	local subValueDropdown, subSubValueDropdown
+
+	local function resetSubclass()
+		self.SubFilterSubValue = FILTER_ANY
+		subSubValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
+		subSubValueDropdown:SetValue(FILTER_ANY)
+		subSubValueDropdown:SetDisabled(true)
+	end
+
+	local subFilterDropdown = TOGBankClassic_UI:Create("Dropdown")
+	subFilterDropdown:SetLabel("Filter")
+	subFilterDropdown.label:ClearAllPoints()
+	subFilterDropdown.label:SetPoint("TOPLEFT", subFilterDropdown.frame, "TOPLEFT", 3, 0)
+	subFilterDropdown.label:SetPoint("TOPRIGHT", subFilterDropdown.frame, "TOPRIGHT", 0, 0)
+	-- Hit frame for tooltip: only spans left portion, stops before the checkbox
+	local subFilterLabelHit = CreateFrame("Frame", nil, subFilterDropdown.frame)
+	subFilterLabelHit:SetPoint("TOPLEFT", subFilterDropdown.frame, "TOPLEFT", 3, 0)
+	subFilterLabelHit:SetPoint("TOPRIGHT", subFilterDropdown.frame, "TOPRIGHT", -165, 0)
+	subFilterLabelHit:SetHeight(18)
+	subFilterLabelHit:EnableMouse(true)
+	subFilterLabelHit:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine("Secondary Filter")
+		GameTooltip:AddLine("Narrows results alongside the name search.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cFFFFFFFFType|r: pick a type then a subtype (e.g. Weapon > Sword).", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("|cFFFFFFFFQuality|r: pick a quality tier.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("|cFFFFFFFFUsable by my level|r: tick the checkbox to hide items your character cannot yet equip.", 0.9, 0.9, 0.9, true)
+		GameTooltip:Show()
+	end)
+	subFilterLabelHit:SetScript("OnLeave", function()
+		TOGBankClassic_UI:HideTooltip()
+	end)
+	-- Native CheckButton: sits at far right of the Filter label row, text to its left
+	local usableCBFrame = CreateFrame("CheckButton", nil, subFilterDropdown.frame)
+	usableCBFrame:SetSize(16, 16)
+	usableCBFrame:SetPoint("TOPRIGHT", subFilterDropdown.frame, "TOPRIGHT", 0, -1)
+	usableCBFrame:SetNormalTexture(130755)   -- UI-CheckBox-Up
+	usableCBFrame:SetCheckedTexture(130751)  -- UI-CheckBox-Check
+	usableCBFrame:SetHighlightTexture(130753, "ADD")
+	local usableCBText = usableCBFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	usableCBText:SetText("Usable by my level")
+	usableCBText:SetJustifyH("RIGHT")
+	usableCBText:SetPoint("RIGHT", usableCBFrame, "LEFT", -3, 0)
+	usableCBFrame:SetScript("OnClick", function(btn)
+		self.FilterUsableLevel = btn:GetChecked()
+		self.currentPage = 1  -- reset to first page on filter change
+		self:DrawContent()
+	end)
+	usableCBFrame:SetFrameLevel(subFilterDropdown.frame:GetFrameLevel() + 10)
+	self.usableCBFrame = usableCBFrame
+	-- Enable/disable the checkbox; always unchecks+clears state when disabling
+	local function updateUsableCB(enabled)
+		if enabled then
+			usableCBFrame:Enable()
+			usableCBText:SetTextColor(1, 1, 1)
+		else
+			usableCBFrame:SetChecked(false)
+			usableCBFrame:Disable()
+			usableCBText:SetTextColor(0.5, 0.5, 0.5)
+			self.FilterUsableLevel = false
+		end
+	end
+	updateUsableCB(false)  -- disabled until a specific filter value is chosen
+	usableCBFrame:SetScript("OnEnter", function(btn)
+		GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine("Usable by my level")
+		GameTooltip:AddLine("Hides items whose required level exceeds your current level.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("Requires a specific Type or Quality to be selected first —", 1, 0.5, 0.5, true)
+		GameTooltip:AddLine("scanning all items without a filter causes severe lag.", 1, 0.5, 0.5, true)
+		GameTooltip:Show()
+	end)
+	usableCBFrame:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+	subFilterDropdown:SetList(SUBFILTER_LIST, SUBFILTER_ORDER)
+	subFilterDropdown:SetValue(FILTER_ANY)
+	subFilterDropdown:SetFullWidth(true)
+	subFilterDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+		self.SubFilterMode  = value
+		self.SubFilterValue = FILTER_ANY
+		resetSubclass()
+		updateUsableCB(false)  -- second dropdown reset, so disable checkbox again
+		if value == "type" then
+			subValueDropdown:SetList(TYPE_LIST, TYPE_ORDER)
+			subValueDropdown:SetValue(FILTER_ANY)
+			subValueDropdown:SetDisabled(false)
+		elseif value == "quality" then
+			subValueDropdown:SetList(QUALITY_LIST, QUALITY_ORDER)
+			subValueDropdown:SetValue(FILTER_ANY)
+			subValueDropdown:SetDisabled(false)
+		else
+			subValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
+			subValueDropdown:SetValue(FILTER_ANY)
+			subValueDropdown:SetDisabled(true)
+		end
+		self.currentPage = 1  -- reset to first page on filter change
+		self:DrawContent()
+	end)
+	searchWindow:AddChild(subFilterDropdown)
+	self.subFilterDropdown = subFilterDropdown
+
+	subValueDropdown = TOGBankClassic_UI:Create("Dropdown")
+	subValueDropdown:SetLabel("")
+	subValueDropdown.label:ClearAllPoints()
+	subValueDropdown.label:SetPoint("TOPLEFT", subValueDropdown.frame, "TOPLEFT", 3, 0)
+	subValueDropdown.label:SetPoint("TOPRIGHT", subValueDropdown.frame, "TOPRIGHT", 0, 0)
+	subValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
+	subValueDropdown:SetValue(FILTER_ANY)
+	subValueDropdown:SetDisabled(true)
+	subValueDropdown:SetFullWidth(true)
+	subValueDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+		self.SubFilterValue = value
+		updateUsableCB(value ~= FILTER_ANY)  -- enable checkbox once a specific value is picked
+		resetSubclass()
+		-- Populate 3rd dropdown if this type has subclasses
+		if self.SubFilterMode == "type" and SUBCLASS_LISTS[value] then
+			local sc = SUBCLASS_LISTS[value]
+			subSubValueDropdown:SetList(sc.list, sc.order)
+			subSubValueDropdown:SetValue(FILTER_ANY)
+			subSubValueDropdown:SetDisabled(false)
+		else
+			subSubValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
+			subSubValueDropdown:SetValue(FILTER_ANY)
+			subSubValueDropdown:SetDisabled(true)
+		end
+		self.currentPage = 1  -- reset to first page on filter change
+		self:DrawContent()
+	end)
+	searchWindow:AddChild(subValueDropdown)
+	self.subValueDropdown = subValueDropdown
+
+	subSubValueDropdown = TOGBankClassic_UI:Create("Dropdown")
+	subSubValueDropdown:SetLabel("")
+	subSubValueDropdown.label:ClearAllPoints()
+	subSubValueDropdown.label:SetPoint("TOPLEFT", subSubValueDropdown.frame, "TOPLEFT", 3, 0)
+	subSubValueDropdown.label:SetPoint("TOPRIGHT", subSubValueDropdown.frame, "TOPRIGHT", 0, 0)
+	subSubValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
+	subSubValueDropdown:SetValue(FILTER_ANY)
+	subSubValueDropdown:SetDisabled(true)
+	subSubValueDropdown:SetFullWidth(true)
+	subSubValueDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+		self.SubFilterSubValue = value
+		self.currentPage = 1  -- reset to first page on filter change
+		self:DrawContent()
+	end)
+	searchWindow:AddChild(subSubValueDropdown)
+	self.subSubValueDropdown = subSubValueDropdown
+
+	-- Sort dropdown
+	local sortDropdown = TOGBankClassic_UI:Create("Dropdown")
+	sortDropdown:SetLabel("Sort")
+	sortDropdown.label:ClearAllPoints()
+	sortDropdown.label:SetPoint("TOPLEFT", sortDropdown.frame, "TOPLEFT", 3, 0)
+	sortDropdown.label:SetPoint("TOPRIGHT", sortDropdown.frame, "TOPRIGHT", 0, 0)
+	sortDropdown:SetList(SORT_LIST, SORT_ORDER)
+	sortDropdown:SetValue("alpha")  -- Default to A-Z
+	sortDropdown:SetFullWidth(true)
+	sortDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+		self.SortMode = value
+		self:DrawContent()
+	end)
+	sortDropdown:SetCallback("OnEnter", function()
+		GameTooltip:SetOwner(sortDropdown.frame, "ANCHOR_BOTTOM")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine("Sort Order")
+		GameTooltip:AddLine("Choose how to sort search results.", 0.9, 0.9, 0.9, true)
+		GameTooltip:Show()
+	end)
+	sortDropdown:SetCallback("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+	searchWindow:AddChild(sortDropdown)
+	self.sortDropdown = sortDropdown
+	self.SortMode = "alpha"  -- Initialize default sort mode
+
+	-- Pagination controls
+	local paginationGroup = TOGBankClassic_UI:Create("SimpleGroup")
+	paginationGroup:SetFullWidth(true)
+	paginationGroup:SetLayout("Flow")
+	paginationGroup:SetHeight(30)
+
+	local prevButton = TOGBankClassic_UI:Create("Button")
+	prevButton:SetText("< Previous")
+	prevButton:SetWidth(100)
+	prevButton:SetDisabled(true)
+	prevButton:SetCallback("OnClick", function()
+		if self.currentPage > 1 then
+			self.currentPage = self.currentPage - 1
+			self:DrawContent()
+		end
+	end)
+	paginationGroup:AddChild(prevButton)
+	self.prevButton = prevButton
+
+	local nextButton = TOGBankClassic_UI:Create("Button")
+	nextButton:SetText("Next >")
+	nextButton:SetWidth(100)
+	nextButton:SetDisabled(true)
+	nextButton:SetCallback("OnClick", function()
+		local totalPages = math.ceil(self.totalMatches / RESULTS_PER_PAGE)
+		if self.currentPage < totalPages then
+			self.currentPage = self.currentPage + 1
+			self:DrawContent()
+		end
+	end)
+	paginationGroup:AddChild(nextButton)
+	self.nextButton = nextButton
+
+	searchWindow:AddChild(paginationGroup)
 
 	local scrollGroup = TOGBankClassic_UI:Create("SimpleGroup")
 	scrollGroup:SetLayout("Fill")
@@ -431,167 +768,137 @@ function TOGBankClassic_UI_Search:DrawWindow()
 end
 
 function TOGBankClassic_UI_Search:BuildSearchData()
-	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] BuildSearchData called - clearing and rebuilding search data")
-	self.SearchData = {
-		Corpus = {},
-		Lookup = {},
-	}
+	self.SearchData = { Corpus = {}, Lookup = {} }
 
-	local info = TOGBankClassic_Guild.Info
+	local guildInfo = TOGBankClassic_Guild.Info
 	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
-	if not info or not roster_alts then
-		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] BuildSearchData: no info or roster_alts, returning early")
-		return
-	end
+	if not guildInfo or not roster_alts then return end
 
-	local rosterCount = 0
-	for _ in pairs(roster_alts) do rosterCount = rosterCount + 1 end
-	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] BuildSearchData: processing %d roster alts", rosterCount)
-
+	-- First pass: aggregate all items from all alts
 	local items = {}
 	for _, player in pairs(roster_alts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(player)
-		local alt = info.alts[norm]
-		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search corpus loop: processing player=%s, norm=%s, has alt=%s",
-			player, norm, tostring(alt ~= nil))
-		---START CHANGES
-		--if alt then
+		local alt = guildInfo.alts[norm]
 		if alt and type(alt) == "table" then
-			---END CHANGES
-			-- Use alt.items if available (SYNC-006 aggregated format)
+			-- Use alt.items if available (aggregated format)
 			if alt.items and next(alt.items) ~= nil then
-				-- alt.items already includes bank+bags+mail, use it directly
-				local beforeCount = #items
 				items = TOGBankClassic_Item:Aggregate(items, alt.items)
-				local afterCount = #items
-				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search corpus: using alt.items for %s (%d items before, %d after aggregation)",
-					player, beforeCount, afterCount)
 			else
-				-- Fallback: aggregate from sources for backward compatibility
-				if alt.bank then
-					items = TOGBankClassic_Item:Aggregate(items, alt.bank.items)
-				end
-				if alt.bags then
-					items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)
-				end
-				-- MAIL-SYNC: Don't aggregate mail separately - it's already in alt.items
-				-- (Mail is aggregated during Bank:Scan into alt.items)
+				-- Fallback: aggregate from sources
+				if alt.bank then items = TOGBankClassic_Item:Aggregate(items, alt.bank.items) end
+				if alt.bags  then items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)  end
 			end
 		end
 	end
 
-	local itemNames = {}
-	local corpusNamesSeen = {}
-
-	-- Count items in hash table (can't use # operator on hash tables)
-	local itemCount = 0
-	for _ in pairs(items) do itemCount = itemCount + 1 end
-	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-DEBUG] About to validate %d items before GetItems", itemCount)
-
-	-- Validate and filter items before passing to GetItems
-	local validItems = {}
-	local invalidCount = 0
-	for key, item in pairs(items) do  -- Use pairs() not ipairs() - items is a hash table
-		if item and item.ID and item.ID > 0 then
-			table.insert(validItems, item)
-		else
-			invalidCount = invalidCount + 1
-			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-DEBUG] WARNING: Skipping invalid item at key %s (ID: %s, Link: %s)",
-				tostring(key), tostring(item and item.ID or "nil item"), tostring(item and item.Link or "nil"))
-		end
-	end
-
-	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-DEBUG] Passing %d valid items to GetItems (%d invalid skipped)",
-		#validItems, invalidCount)
-
-	TOGBankClassic_Item:GetItems(validItems, function(list)
-		local listCount = 0
-		for _ in pairs(list) do listCount = listCount + 1 end
-		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-006] GetItems callback fired with %d items", listCount)
-		for _, v in pairs(list) do
-			-- Skip malformed list entries
+	-- Use GetItems to enrich all items with Info (handles caching properly)
+	TOGBankClassic_Item:GetItems(items, function(enrichedList)
+		-- Build Corpus: unique item names
+		local itemNames = {}
+		local corpusSeen = {}
+		for _, v in pairs(enrichedList) do
 			if v and v.ID and v.Info and v.Info.name then
-				-- Map item ID to name (for lookup table building later)
 				if not itemNames[v.ID] then
 					itemNames[v.ID] = v.Info.name
 				end
-				-- Only add each unique name to Corpus once
-				if not corpusNamesSeen[v.Info.name] then
-					corpusNamesSeen[v.Info.name] = true
+				if not corpusSeen[v.Info.name] then
+					corpusSeen[v.Info.name] = true
 					table.insert(self.SearchData.Corpus, v.Info.name)
-					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Corpus: added unique name '%s' (ID: %d)", v.Info.name, v.ID)
-				else
-					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Corpus: skipping duplicate name '%s' (ID: %d already in corpus)", v.Info.name, v.ID)
 				end
 			end
 		end
 
+		-- Build Lookup: name -> [{alt, item}]
 		for _, player in pairs(roster_alts) do
-			local altItems = {}
 			local norm = TOGBankClassic_Guild:NormalizeName(player)
-			local alt = info.alts[norm]
-			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search results loop: processing player=%s, norm=%s, has alt=%s",
-				player, norm, tostring(alt ~= nil))
-			---START CHANGES
-			--if alt then
+			local alt = guildInfo.alts[norm]
 			if alt and type(alt) == "table" then
-				---END CHANGES
-				-- Use alt.items if available (SYNC-006 aggregated format)
+				local altItems = {}
 				if alt.items and next(alt.items) ~= nil then
-					-- alt.items already includes bank+bags+mail, use it directly
 					for _, item in pairs(alt.items) do
 						table.insert(altItems, item)
 					end
-					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search results: using alt.items for %s", player)
 				else
-					-- Fallback: aggregate from sources for backward compatibility
-					if alt.bank then
-						altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bank.items)
-					end
-					if alt.bags then
-						altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)
-					end
-				-- MAIL-SYNC: Don't aggregate mail separately - it's already in alt.items
-				-- (Mail is aggregated during Bank:Scan into alt.items)
+					if alt.bank then altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bank.items) end
+					if alt.bags  then altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)  end
 				end
-			end
 
-			for _, itemEntry in pairs(altItems) do
-				local name = itemNames[itemEntry.ID]
-				if name then
-				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search results: adding %s with count %d for player %s to lookup",
-						name, itemEntry.Count or 0, player)
-					if not self.SearchData.Lookup[name] then
-						self.SearchData.Lookup[name] = {}
-					end
-					local found = false
-					for _, existingEntry in pairs(self.SearchData.Lookup[name]) do
-						if existingEntry.alt == player and existingEntry.item.ID == itemEntry.ID then
-							found = true
-						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search results: DUPLICATE FOUND - skipping %s (ID: %d) for %s",
-								name, itemEntry.ID, player)
-							break
+				for _, itemEntry in pairs(altItems) do
+					local name = itemNames[itemEntry.ID]
+					if name then
+						if not self.SearchData.Lookup[name] then
+							self.SearchData.Lookup[name] = {}
 						end
-					end
-					if not found then
-						local info = TOGBankClassic_Item:GetInfo(itemEntry.ID, itemEntry.Link)
-						table.insert(
-							self.SearchData.Lookup[name],
-							{
-								alt = player,
+						local found = false
+						local existingEntry = nil
+						for _, existing in pairs(self.SearchData.Lookup[name]) do
+							if existing.alt == player and existing.item.ID == itemEntry.ID then
+								found = true
+								existingEntry = existing
+								break
+							end
+						end
+						if found and existingEntry then
+							-- Same alt has this item already - sum the counts
+							existingEntry.item.Count = (existingEntry.item.Count or 1) + (itemEntry.Count or 1)
+						else
+							-- New entry for this alt/item combo
+							local info = TOGBankClassic_Item:GetInfo(itemEntry.ID, itemEntry.Link)
+							table.insert(self.SearchData.Lookup[name], {
+								alt  = player,
 								item = {
-									ID = itemEntry.ID,
+									ID    = itemEntry.ID,
 									Count = itemEntry.Count,
-									Link = itemEntry.Link,
-									Info = info,
+									Link  = itemEntry.Link,
+									Info  = info,
 								},
-							}
-						)
+							})
+						end
 					end
 				end
 			end
 		end
 	end)
+end
+
+function TOGBankClassic_UI_Search:SubFilterMatches(item)
+	if not item then return true end
+	
+	-- No filters active? Always match
+	local mode = self.SubFilterMode
+	if not self.FilterUsableLevel and (not mode or mode == FILTER_ANY) then
+		return true
+	end
+	
+	-- Info should already be populated in BuildSearchData
+	local info = item.Info
+	if not info then return false end
+	
+	-- Usable-level check
+	if self.FilterUsableLevel then
+		---@diagnostic disable-next-line: undefined-global
+		local playerLevel = UnitLevel("player") or 1
+		if (info.level or 0) > playerLevel then return false end
+	end
+	
+	-- Type/subtype filter
+	if mode == "type" then
+		local val = self.SubFilterValue
+		if not val or val == FILTER_ANY then return true end
+		if tostring(info.class) ~= val then return false end
+		local sub = self.SubFilterSubValue
+		if sub and sub ~= FILTER_ANY then
+			return tostring(info.subClass) == sub
+		end
+		return true
+	-- Quality filter
+	elseif mode == "quality" then
+		local val = self.SubFilterValue
+		if not val or val == FILTER_ANY then return true end
+		return tostring(info.rarity) == val
+	end
+	
+	return true
 end
 
 function TOGBankClassic_UI_Search:DrawContent()
@@ -603,7 +910,11 @@ function TOGBankClassic_UI_Search:DrawContent()
 	self.Window:SetStatusText("")
 	self.Results:DoLayout()
 
-	if not self.SearchText then
+	local hasSubFilter = self.FilterUsableLevel
+		or (self.SubFilterMode and self.SubFilterMode ~= FILTER_ANY
+			and (self.SubFilterValue and self.SubFilterValue ~= FILTER_ANY
+				or (self.SubFilterSubValue and self.SubFilterSubValue ~= FILTER_ANY)))
+	if not self.SearchText and not hasSubFilter then
 		return
 	end
 
@@ -614,8 +925,8 @@ function TOGBankClassic_UI_Search:DrawContent()
 		self.searchField.editbox:SetCursorPosition(searchLength)
 	end
 
-	local search = self.SearchText
-	if search and string.sub(search, 0, 2) == "|c" then
+	local search = self.SearchText or ""
+	if search ~= "" and string.sub(search, 0, 2) == "|c" then
 		self.searchField:SetText("")
 		local item = Item:CreateFromItemLink(search)
 		if item and item.itemID then
@@ -635,7 +946,7 @@ function TOGBankClassic_UI_Search:DrawContent()
 
 	local searchText = search:lower()
 
-	if string.len(searchText) < 3 then
+	if string.len(searchText) < 3 and not hasSubFilter then
 		return
 	end
 
@@ -647,61 +958,135 @@ function TOGBankClassic_UI_Search:DrawContent()
 	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-004] Search for '%s': Corpus has %d entries", searchText, #searchData.Corpus)
 	TOGBankClassic_Output:Debug("UI", "SEARCH", "DrawContent: start text='%s' corpus=%d t=%.3f", searchText, #searchData.Corpus, GetTime())
 
-	local count = 0
-	local matchedNames = 0
+	-- Initialize pagination state
+	self.currentPage = self.currentPage or 1
+	
+	-- PASS 1: Collect all matching items
+	local matchedItems = {}
 	for _, v in pairs(searchData.Corpus) do
-		if not v then
-			-- Skip malformed corpus entries
-		else
-			local result = string.find(v:lower(), searchText)
-			if result ~= nil then
-				matchedNames = matchedNames + 1
-				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-004] Match #%d: '%s' contains '%s'", matchedNames, v, searchText)
+		if v then
+			local nameMatches = string.len(searchText) < 3 or string.find(v:lower(), searchText) ~= nil
+			if nameMatches then
 				local lookupList = searchData.Lookup[v]
-				if not lookupList then
-					-- No lookup for this name; skip
-					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search display: '%s' matched search but has NO lookup entries", v)
-				else
-					local lookupCount = 0
-					for _ in pairs(lookupList) do lookupCount = lookupCount + 1 end
-					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search display: '%s' matched search, has %d lookup entries", v, lookupCount)
+				if lookupList then
 					for _, vv in pairs(lookupList) do
-						--draw item larger to add pading - icon and label smaller by the same to get dimensions
-						local resultItem = vv.item
-						local bankAlt = vv.alt
-						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Search display: showing %s with %d items for %s",
-							resultItem.Info and resultItem.Info.name or "Unknown", resultItem.Count or 0, bankAlt)
-
-						-- Draw item with tooltip support (tooltips automatically enabled by DrawItem)
-						local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
-						if itemWidget then
-							itemWidget:SetCallback("OnClick", function(widget, event)
-								if IsShiftKeyDown() or IsControlKeyDown() then
-									TOGBankClassic_UI:EventHandler(widget, event)
-									return
-								end
-								TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)
-							end)
-							count = count + 1
-
-							-- Add label showing which banker has this item
-							local label = TOGBankClassic_UI:Create("Label")
-							label:SetHeight(35)
-							label:SetText("|cFFAAAAAA" .. bankAlt .. "|r")
-							self.Results:AddChild(label)
+						if self:SubFilterMatches(vv.item) then
+							table.insert(matchedItems, { item = vv.item, alt = vv.alt })
 						end
 					end
 				end
 			end
 		end
 	end
+	
+	local totalMatches = #matchedItems
+	self.totalMatches = totalMatches
+	TOGBankClassic_Output:Debug("UI", "SEARCH", "Total matches: %d", totalMatches)
+	
+	-- Sort the matched items based on selected sort mode
+	local sortMode = self.SortMode or "alpha"
+	if sortMode == "alpha" then
+		table.sort(matchedItems, function(a, b)
+			return (a.item.Info.name or "") < (b.item.Info.name or "")
+		end)
+	elseif sortMode == "alpha_desc" then
+		table.sort(matchedItems, function(a, b)
+			return (a.item.Info.name or "") > (b.item.Info.name or "")
+		end)
+	elseif sortMode == "level" then
+		table.sort(matchedItems, function(a, b)
+			local aLevel = a.item.Info.level or 0
+			local bLevel = b.item.Info.level or 0
+			if aLevel ~= bLevel then
+				return aLevel > bLevel
+			end
+			return (a.item.Info.name or "") < (b.item.Info.name or "")
+		end)
+	elseif sortMode == "level_asc" then
+		table.sort(matchedItems, function(a, b)
+			local aLevel = a.item.Info.level or 0
+			local bLevel = b.item.Info.level or 0
+			if aLevel ~= bLevel then
+				return aLevel < bLevel
+			end
+			return (a.item.Info.name or "") < (b.item.Info.name or "")
+		end)
+	elseif sortMode == "rarity" then
+		table.sort(matchedItems, function(a, b)
+			local aRarity = a.item.Info.rarity or 0
+			local bRarity = b.item.Info.rarity or 0
+			if aRarity ~= bRarity then
+				return aRarity > bRarity
+			end
+			return (a.item.Info.name or "") < (b.item.Info.name or "")
+		end)
+	elseif sortMode == "rarity_asc" then
+		table.sort(matchedItems, function(a, b)
+			local aRarity = a.item.Info.rarity or 0
+			local bRarity = b.item.Info.rarity or 0
+			if aRarity ~= bRarity then
+				return aRarity < bRarity
+			end
+			return (a.item.Info.name or "") < (b.item.Info.name or "")
+		end)
+	end
+	
+	-- Calculate page range
+	local startIdx = (self.currentPage - 1) * RESULTS_PER_PAGE
+	local endIdx = startIdx + RESULTS_PER_PAGE
+	
+	-- PASS 2: Render only items in current page range
+	local renderedCount = 0
+	for i = startIdx + 1, math.min(endIdx, totalMatches) do
+		local matched = matchedItems[i]
+		local resultItem = matched.item
+		local bankAlt = matched.alt
+		
+		local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
+		if itemWidget then
+			itemWidget:SetCallback("OnClick", function(widget, event)
+				if IsShiftKeyDown() or IsControlKeyDown() then
+					TOGBankClassic_UI:EventHandler(widget, event)
+					return
+				end
+				TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)
+			end)
+			
+			-- Add label showing which banker has this item
+			local label = TOGBankClassic_UI:Create("Label")
+			label:SetHeight(35)
+			label:SetText("|cFFAAAAAA" .. bankAlt .. "|r")
+			self.Results:AddChild(label)
+			renderedCount = renderedCount + 1
+		end
+	end
 
-	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[SEARCH-004] Search complete: matched %d names, displayed %d result widgets", matchedNames, count)
-	TOGBankClassic_Output:Debug("UI", "SEARCH", "DrawContent: done items=%d t=%.3f", count, GetTime())
+	TOGBankClassic_Output:Debug("UI", "SEARCH", "DrawContent: rendered %d/%d items (page %d) t=%.3f", renderedCount, totalMatches, self.currentPage, GetTime())
 
-	local status = count .. " Result"
-	if count > 1 then
-		status = status .. "s"
+	-- Update pagination button states
+	local totalPages = math.max(1, math.ceil(totalMatches / RESULTS_PER_PAGE))
+	if self.prevButton then
+		self.prevButton:SetDisabled(self.currentPage <= 1)
+	end
+	if self.nextButton then
+		self.nextButton:SetDisabled(self.currentPage >= totalPages)
+	end
+
+	-- Update status text with pagination info
+	local status
+	if totalMatches == 0 then
+		status = "No Results"
+	elseif totalMatches <= RESULTS_PER_PAGE then
+		-- Only one page, show simple count
+		status = totalMatches .. " Result"
+		if totalMatches > 1 then
+			status = status .. "s"
+		end
+	else
+		-- Multiple pages, show range and page number
+		local showStart = startIdx + 1
+		local showEnd = math.min(endIdx, totalMatches)
+		status = string.format("Showing %d-%d of %d (Page %d/%d)", showStart, showEnd, totalMatches, self.currentPage, totalPages)
 	end
 	self.Window:SetStatusText(status)
 

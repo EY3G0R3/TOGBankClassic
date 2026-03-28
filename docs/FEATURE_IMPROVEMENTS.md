@@ -31,7 +31,8 @@
 - [ ] **Deprecate legacy protocols** - Phase out togbank-v (non-delta), togbank-dv (pre-SYNC-006), and separate bank/bags structures in favor of unified togbank-dv2 (SYNC-006+) with `alt.items` aggregate; includes removing 5-second dv/dv2 prioritization delay once all clients upgraded; currently maintained for backward compatibility with pre-SYNC-006 clients; plan 3-phase deprecation after 3-6 months of adoption
 - [x] ~~**Window position reset command**~~ **IMPLEMENTED: /togbank wipeframes to clear saved positions**
 - [x] ~~**/togbank deltastats redesign**~~ **IMPLEMENTED: Meaningful P2P telemetry with outbound/inbound/P2P/health/savings sections (STATS-001/002/003)**
-- [ ] **Item type sort grouping** - Offer sort modes beyond alphabetical: group items by type (armor, weapons, consumables, recipes, reagents, etc.) so guild members can browse all cloaks, helms, wands, etc. together; currently highest-priority adoption blocker (this is the primary behavioral difference vs GBank Classic - Revived that is blocking guild-wide rollout)
+- [x] ~~**Item type sort grouping**~~ **IMPLEMENTED: Inventory and Search UIs now have sort dropdowns with 7 options (A-Z, Z-A, By Type, Level Low/High, Rarity High/Low); replaces cycle button with full dropdown for better discoverability; sort mode persists per-character**
+- [x] ~~**Search filters and sort**~~ **IMPLEMENTED: Search UI now has Type/Quality/Subclass cascading filters, "Usable by my level" checkbox, and sort dropdown with 6 modes (A-Z, Z-A, Level Low/High, Rarity High/Low); pagination prevents freeze with 180+ items; all filters work simultaneously with name search; Classic Era accurate class/subclass data**
 - [ ] **Officer cancel permission toggle** - Add a configurable permission to enable/disable officers' ability to cancel requests; currently all officers can cancel any request with no restriction
 - [ ] **Requestor self-delete** - Allow requestors to permanently delete their own open requests (distinct from cancel, which is an officer action); gives requestors autonomy to clean up their own entries
 - [x] ~~**Request status visual differentiation**~~ **IMPLEMENTED: Fulfilled rows tinted green with checkmark icon; cancelled rows tinted red with X icon**
@@ -135,6 +136,87 @@ Audited every `Output:Debug()` / `self:Debug()` / `TOGBankClassic_Output:Debug()
 ### Result
 
 Zero untagged `Output:Debug()` calls remain across the entire codebase. All debug output is now fully filterable by category and tag.
+
+---
+
+## 🔍 Search Filters and Sort Options - IMPLEMENTED
+
+**Added:** March 27, 2026  
+**Purpose:** Enable advanced filtering and sorting of search results beyond name-only text search
+
+### Problem
+
+The Search UI only supported name-based text search (minimum 3 characters). Guild members had no way to:
+- Browse all items of a specific type (armor, weapons, consumables)
+- Filter by quality (show only epic/rare items)
+- Filter by subclass (show only plate armor, two-handed swords, etc.)
+- Filter by level requirements (hide items they can't use yet)
+- Sort results by rarity, level, or reverse alphabetical order
+
+This made the Search UI less useful for exploratory browsing compared to the main Inventory tabs.
+
+### Solution
+
+Added four new UI controls to the Search window:
+
+1. **Filter dropdown** — Choose filter category: Any, Type, or Quality
+2. **Type/Quality dropdown** — Select specific type or quality value (disabled until filter chosen)
+3. **Subclass dropdown** — Filter by subclass when applicable (e.g., plate/mail/leather for armor)
+4. **"Usable by my level" checkbox** — Hide items above player's current level (disabled until specific filter chosen to prevent lag)
+5. **Sort dropdown** — Choose sort order: A-Z, Z-A, Level (Low to High), Level (High to Low), Rarity (High to Low), Rarity (Low to High)
+
+All filters work simultaneously with the name search input. Changing any filter/sort resets pagination to page 1.
+
+### Implementation Details
+
+**Filter Data Structures (Classic Era Accurate):**
+- `TYPE_LIST`: Maps GetItemInfo classID to display names (Container, Weapon, Armor, etc.)
+- `QUALITY_LIST`: 0-5 (Poor through Legendary)
+- `SUBCLASS_LISTS`: Nested lookup tables keyed by classID with subclass names
+  - Verified against Classic Era (1.12) — no TBC+ or retail item types
+  - Trade Goods: Only 4 subclasses (0-3: Trade Goods, Parts, Explosives, Devices)
+  - Container: Includes Gem Bag, Mining Bag, Leatherworking Bag
+  - Weapon: Includes Misc subclass
+  - No Gem class (doesn't exist in Classic Era)
+
+**Architecture:**
+- `BuildSearchData()`: Uses `TOGBankClassic_Item:GetItems(items, callback)` to enrich items with Info (handles WoW cache timing properly via callback pattern)
+- `SubFilterMatches(item)`: Applies all active filters to an item using pre-populated `item.Info` object
+- `DrawContent()`: Three-phase rendering:
+  1. Collect all matching items into `matchedItems` array
+  2. Sort array based on `self.SortMode` (6 sort comparators)
+  3. Paginate and render current page only (50 items per page)
+
+**Performance:**
+- Pagination prevents freeze with 180+ items (AceGUI has O(n²) AddChild behavior)
+- `RESULTS_PER_PAGE = 50` keeps rendering under ~50ms even on low-end hardware
+- Sort happens on filtered results only (not full inventory database)
+
+**Bug Fixes During Implementation:**
+- Fixed `GetItemInfo()` return value positions (icon at position 10, not 9)
+- Fixed duplicate item deduplication in Lookup table (now sums counts when same alt has multiple stacks)
+- Restored original callback architecture after attempted lazy loading broke rendering
+
+### Files Changed
+
+- `Modules/Item.lua` — Added `alpha_desc`, `level_asc`, `rarity_asc` sort modes
+- `Modules/UI/Search.lua` — Added filter/sort UI controls, Classic Era type/subclass data, three-phase DrawContent with sorting
+- `Modules/UI/Inventory.lua` — Replaced cycle button with dropdown, added reverse sort modes
+
+### User Experience
+
+**Search Window:**
+- Filter dropdowns cascade (Filter → Type/Quality → Subclass)
+- "Usable by my level" checkbox only enabled when specific type/quality selected
+- Sort dropdown immediately re-sorts visible results
+- Pagination controls show "Showing 1-50 of 180 (Page 1/4)"
+- All filters combine (e.g., "Type: Armor" + "Subclass: Plate" + "Rarity: High to Low" + "Usable by my level")
+
+**Inventory Window:**
+- Sort dropdown replaced cycle button
+- 7 sort options (A-Z, Z-A, By Type, Level Low/High, Rarity High/Low)
+- Selection persists per-character in SavedVariables
+- Tooltip explains sort behavior on hover
 
 ---
 
