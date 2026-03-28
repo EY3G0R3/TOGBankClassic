@@ -1,6 +1,6 @@
 # TOGBankClassic Changelog
 
-## [Unreleased - v0.9.18] - Sort Dropdowns, UI Consistency & Search Enhancements
+## [v0.10.0] (2026-03-28) - Sort Dropdowns, UI Consistency & Search Enhancements
 
 ### New Features
 
