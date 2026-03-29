@@ -28,6 +28,7 @@ Modules/P2PSession.lua
 Modules/RequestLog.lua
 Modules/Item.lua
 Modules/ItemHighlight.lua
+Modules/TooltipBankerInfo.lua
 Modules/Mail.lua
 Modules/MailInventory.lua
 Modules/Options.lua

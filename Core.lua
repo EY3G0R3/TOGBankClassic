@@ -66,6 +66,11 @@ function TOGBankClassic_Core:OnInitialize()
         TOGBankClassic_ItemHighlight:Initialize()
     end
 
+    -- Initialize banker tooltip info module
+    if TOGBankClassic_TooltipBankerInfo and TOGBankClassic_TooltipBankerInfo.Initialize then
+        TOGBankClassic_TooltipBankerInfo:Initialize()
+    end
+
     -- Setup periodic memory snapshots (every 5 minutes)
     self:ScheduleRepeatingTimer(function()
         TOGBankClassic_Performance:RecordMemory("periodic")
