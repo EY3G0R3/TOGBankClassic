@@ -1597,6 +1597,16 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		return
 	end
 
+	-- HASH-REFORM: Do not fast-fill while the P2PSession collect window is open.
+	-- Fast-fill uses whatever hashes are in latestBankerHashes right now, which may
+	-- only reflect the first peer to respond. The collect window gathers ALL peer offers
+	-- and picks the best (newest updatedAt) before dispatching. Firing early locks us
+	-- into stale hashes and causes same-timestamp/different-hash mismatches.
+	if TOGBankClassic_P2PSession and TOGBankClassic_P2PSession.isCollecting then
+		TOGBankClassic_Output:Debug("DELTA", "FAST-FILL", "Fast-fill suppressed: P2PSession collect window is open (waiting for all peer offers)")
+		return
+	end
+
 	-- SYNC-001 fix: Get live banker roster from current guild instead of using
 	-- cached roster.alts which may contain stale cross-guild data
 	local rosterAlts = TOGBankClassic_Guild:GetBanks()

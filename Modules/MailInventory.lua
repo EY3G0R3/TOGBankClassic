@@ -64,20 +64,18 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 					end
 					local itemString = link and TOGBankClassic_Item:GetItemString(link) or nil
 
-					-- Conditionally include Link based on item class
-					-- Gear (weapons/armor) needs FULL Link for suffix differentiation
-					-- Consumables/trade goods don't need Link (saves bandwidth in d3 sync)
-					local storageLink = nil
+					-- Always store the full link, exactly like Bank.lua's ScanBag().
+					-- Link-stripping (for bandwidth) happens at transmission time in
+					-- StripItemLinks / StripDeltaLinks, where NeedsLink() is called with
+					-- the item already guaranteed to be in the client cache.
+					-- Pre-stripping here caused gear links to be permanently lost when
+					-- the item wasn't cached yet at scan time.
+					local storageLink = link
 					-- Normalize: strip "item:" prefix so format matches StripItemLinks output.
 					-- GetItemString returns "item:4306:...", but ReconstructItemLink embeds as
 					-- |Hitem:%s, so storing with the prefix produces double "item:item:" which
 					-- makes SetHyperlink silently fail and shows no tooltip.
 					local storageItemString = itemString and (itemString:match("^item:(.+)$") or itemString) or nil
-					local storageForceLink = nil
-					if link and TOGBankClassic_Item:NeedsLink(link) then
-						storageLink = link
-						storageForceLink = true
-					end
 
 					-- Use NORMALIZED key for deduplication (strips unique instance ID)
 					-- This allows identical items to merge even if they have different instance IDs
@@ -92,7 +90,6 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 							Count = item.Count + count,
 							Link = item.Link or storageLink,
 							ItemString = item.ItemString or storageItemString,
-							ForceLink = item.ForceLink or storageForceLink,
 						}
 						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-003] Item %s: MERGED (key=%s) added %d, total now %d",
 							name, key, count, mailItemsTable[key].Count)
@@ -103,10 +100,9 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 							Count = count,
 							Link = storageLink,
 							ItemString = storageItemString,
-							ForceLink = storageForceLink,
 						}
 						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-003] New item in mailbox: %s (ID: %d, Count: %d, Link: %s, Key: %s)",
-							name, itemID, count, storageLink and "preserved" or "stripped", key)
+							name, itemID, count, storageLink and "yes" or "no", key)
 					end
 				end
 			end

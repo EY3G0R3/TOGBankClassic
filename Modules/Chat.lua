@@ -234,6 +234,27 @@ local function ColorPlayerName(name)
 	return string.format("|cff80bfff%s|r", name)
 end
 
+-- After adopting full alt data, sync latestBankerHashes to match so IsAltSyncPending resolves.
+-- Without this, tabs stay red when the hash-list broadcaster had different SV data than
+-- the peer who actually delivered the full alt payload.
+local function SyncBankerHashAfterAdopt(norm)
+	if not TOGBankClassic_Guild.latestBankerHashes then return end
+	local existing = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
+	if not existing then return end
+	local entry = TOGBankClassic_Guild.latestBankerHashes[norm]
+	if not entry then return end
+	local newHash     = existing.inventoryHash or 0
+	local newMailHash = existing.mailHash or 0
+	local newUpdatedAt = existing.inventoryUpdatedAt or existing.version or 0
+	-- Only update if the adopted data is at least as new as what we advertised
+	if newUpdatedAt >= (entry.updatedAt or 0) then
+		entry.hash     = newHash
+		entry.mailHash = newMailHash
+		entry.updatedAt = newUpdatedAt
+		TOGBankClassic_Output:Debug("SYNC", "HASH-ADOPT", "Updated latestBankerHashes[%s] to match adopted data (hash=%08x)", norm, newHash)
+	end
+end
+
 local function FormatSyncStatus(status)
 	if status == ADOPTION_STATUS.ADOPTED then
 		return "(newer, integrating)"
@@ -692,33 +713,19 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 			TOGBankClassic_Core:SendWhisper("togbank-hl", offerData, sender, "NORMAL")
 			TOGBankClassic_Output:Debug("P2P", "OFFER", "Sent hash-offer to %s for %d alts", sender, offerCount)
 		end
-		
-		-- Banker-only legacy path: cache authoritative hashes and forward to togbank-hlr
-		if isSenderBanker then
-			if not TOGBankClassic_Guild.latestBankerHashes then
-				TOGBankClassic_Guild.latestBankerHashes = {}
-			end
-			for altName, summary in pairs(data.alts) do
-				local norm = TOGBankClassic_Guild:NormalizeName(altName)
-				if norm and summary then
-					TOGBankClassic_Guild.latestBankerHashes[norm] = summary
-				end
-			end
-			local hlrPayload = {
-				type     = "hash-list-reply",
-				alts     = data.alts,
-				banker   = data.banker or sender,
-				isBanker = true,
-			}
-			local hlrData = TOGBankClassic_Core:SerializeWithChecksum(hlrPayload)
-			self:OnCommReceived("togbank-hlr", hlrData, entry.distribution, sender)
-		end
+		-- HASH-REFORM: Banker-only legacy path removed. latestBankerHashes is now updated
+		-- by P2PSession:OnOffer as peers respond with newer hashes (newest-updatedAt wins).
 	end
 	
 	-- Clear queue and timer
 	self.hashBroadcastQueue = {}
 	self.hashBroadcastTimer = nil
-	
+
+	-- Refresh inventory tab colors now that latestBankerHashes has been updated
+	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+		TOGBankClassic_UI_Inventory:DrawContent()
+	end
+
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Output:Debug("P2P", "OFFER", "Batch processed %d broadcasts in %.2fms", queueSize, duration)
 end
@@ -1522,6 +1529,7 @@ end
 			if allowed then
 				-- ReceiveAltData already applied/rejected; refresh UI if open
 				if status == ADOPTION_STATUS.ADOPTED and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+					SyncBankerHashAfterAdopt(claimedNorm)
 					TOGBankClassic_UI_Inventory:DrawContent()
 				end
 			else
@@ -1595,6 +1603,7 @@ end
 
 				-- ReceiveAltData already applied/rejected; refresh UI if open
 				if status == ADOPTION_STATUS.ADOPTED and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+					SyncBankerHashAfterAdopt(claimedNorm)
 					TOGBankClassic_UI_Inventory:DrawContent()
 				end
 
@@ -2728,6 +2737,46 @@ local COMMAND_REGISTRY = {
 		handler = function()
 			if TOGBankClassic_Guild and TOGBankClassic_Guild.ReportHashListCoverage then
 				TOGBankClassic_Guild:ReportHashListCoverage()
+			end
+		end,
+	},
+	{
+		name = "hashdump",
+		help = "dump raw latestBankerHashes table used for sync comparison",
+		expert = true,
+		handler = function()
+			local lbh = TOGBankClassic_Guild and TOGBankClassic_Guild.latestBankerHashes
+			if not lbh then
+				TOGBankClassic_Output:Response("latestBankerHashes is nil (not initialized yet)")
+				return
+			end
+			local count = 0
+			for _ in pairs(lbh) do count = count + 1 end
+			TOGBankClassic_Output:Response(string.format("latestBankerHashes: %d entries", count))
+			local localAlts = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
+			local rows = {}
+			for norm, summary in pairs(lbh) do
+				local localAlt = localAlts[norm]
+				local localHash = localAlt and localAlt.inventoryHash or 0
+				local localUpdatedAt = localAlt and (localAlt.inventoryUpdatedAt or localAlt.version) or 0
+				table.insert(rows, {
+					norm = norm,
+					knownHash = summary.hash or 0,
+					knownUpdatedAt = summary.updatedAt or 0,
+					localHash = localHash,
+					localUpdatedAt = localUpdatedAt,
+					match = (summary.hash == localHash),
+				})
+			end
+			table.sort(rows, function(a, b) return a.norm < b.norm end)
+			for _, r in ipairs(rows) do
+				local matchStr = r.match and "|cff00ff00OK|r" or "|cffff4444MISMATCH|r"
+				TOGBankClassic_Output:Response(string.format(
+					"  %s %s known=(%08x @%d) local=(%08x @%d)",
+					matchStr, r.norm,
+					r.knownHash, r.knownUpdatedAt,
+					r.localHash, r.localUpdatedAt
+				))
 			end
 		end,
 	},

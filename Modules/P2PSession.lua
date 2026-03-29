@@ -121,7 +121,23 @@ function P2P:OnOffer(peerName, alts)
 			if not inserted then
 				table.insert(self.offers[norm], entry)
 			end
-				Dbg("OFFER", "  offer: %s from %s (updatedAt=%s)", norm, peerName, tostring(summary.updatedAt))
+			Dbg("OFFER", "  offer: %s from %s (updatedAt=%s)", norm, peerName, tostring(summary.updatedAt))
+			-- HASH-REFORM: Update latestBankerHashes with newest-wins so IsAltSyncPending
+			-- drives tab colors correctly while the collect window is open.
+			if TOGBankClassic_Guild then
+				if not TOGBankClassic_Guild.latestBankerHashes then
+					TOGBankClassic_Guild.latestBankerHashes = {}
+				end
+				local lbh = TOGBankClassic_Guild.latestBankerHashes[norm]
+				if not lbh or entry.updatedAt > (lbh.updatedAt or 0) then
+					TOGBankClassic_Guild.latestBankerHashes[norm] = {
+						hash      = entry.hash,
+						mailHash  = entry.mailHash,
+						updatedAt = entry.updatedAt,
+					}
+					Dbg("OFFER", "  latestBankerHashes[%s] = hash=%08x updatedAt=%s", norm, entry.hash, tostring(entry.updatedAt))
+				end
+			end
 		end
 	end
 end
@@ -165,6 +181,10 @@ function P2P:Dispatch()
 
 	Dbg("DISPATCH", "Dispatch: %d alts with offers", #altList)
 	self:DispatchList(altList)
+	-- Refresh tab colors now that latestBankerHashes reflects the newest peer hashes
+	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
+		TOGBankClassic_UI_Inventory:DrawContent()
+	end
 end
 
 --- Schedule sessions from a list, respecting the active-session cap.

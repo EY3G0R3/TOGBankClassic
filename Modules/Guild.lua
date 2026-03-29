@@ -908,21 +908,26 @@ function TOGBankClassic_Guild:ReportHashListCoverage()
 	end
 
 	local haveContent = 0
+	local missingContent = {}
 	for _, altName in ipairs(rosterAlts) do
 		local norm = self:NormalizeName(altName)
 		local localAlt = localAlts and norm and localAlts[norm]
 		if norm and self:HasAltContent(localAlt, norm) then
 			haveContent = haveContent + 1
+		elseif norm and norm ~= currentPlayer then
+			table.insert(missingContent, norm)
 		end
 	end
+	table.sort(missingContent)
 
 	TOGBankClassic_Output:Response(
-		"Hash list coverage: banker=%d, matched=%d, pending=%d, rosterMissing=%d, haveContent=%d",
+		"Hash list coverage: banker=%d, matched=%d, pending=%d, rosterMissing=%d, haveContent=%d, missingContent=%d",
 		bankerCount,
 		matched,
 		#pending,
 		#rosterMissing,
-		haveContent
+		haveContent,
+		#missingContent
 	)
 
 	local function printList(title, list)
@@ -946,6 +951,7 @@ function TOGBankClassic_Guild:ReportHashListCoverage()
 	printList("HLR pending", pending)
 	printList("Hash matched but no content", matchedNoContent)
 	printList("Missing from banker list", rosterMissing)
+	printList("Missing content (no data)", missingContent)
 end
 
 function TOGBankClassic_Guild:SendHashList(target)
