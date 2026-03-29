@@ -793,25 +793,16 @@ function TOGBankClassic_Guild:BuildBankerHashList()
 			local version = (alt and alt.version) or 0
 			local mailHash = (alt and alt.mailHash) or 0
 			local mailUpdatedAt = (alt and alt.mail and alt.mail.version) or 0
-			-- ROSTER-002: Skip zero-data stubs — alts with no real data have nothing
-			-- useful to broadcast and would seed phantom HLR-pending entries on receivers.
-			-- Include mailHash and mail items: a banker might have mail data but no bank
-			-- data yet (never opened bank), so mailHash alone qualifies as real data.
-			local hasAnyData = (version ~= 0) or (hash ~= 0) or (mailHash ~= 0)
-				or (alt and alt.items and #alt.items > 0)
-				or (alt and alt.bank and alt.bank.items and #alt.bank.items > 0)
-				or (alt and alt.mail and alt.mail.items and #alt.mail.items > 0)
-			if not hasAnyData then
-				TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ROSTER-002: Skipping zero-stub %s from hash list broadcast", norm)
-			else
-				list[norm] = {
-					hash = hash,
-					updatedAt = updatedAt,
-					version = version,
-					mailHash = mailHash,
-					mailUpdatedAt = mailUpdatedAt,
-				}
-			end
+			-- Always include roster alts even with hash=0 — this is the correct wipe-recovery
+			-- signal. Peers compare their stored hash vs our hash=0 and send offers for alts
+			-- we're missing. Peers who also have hash=0 for an alt won't offer. Safe.
+			list[norm] = {
+				hash = hash,
+				updatedAt = updatedAt,
+				version = version,
+				mailHash = mailHash,
+				mailUpdatedAt = mailUpdatedAt,
+			}
 		end
 	end
 	return list
@@ -840,6 +831,39 @@ function TOGBankClassic_Guild:IsAltSyncPending(norm)
 		return not self:HasAltContent(localAlt, norm)
 	end
 	return true  -- hash mismatch or no local data
+end
+
+-- Returns true if any alt still needs content: hash mismatch, missing data, or
+-- roster alt with no content at all (covers the wipe-recovery case where
+-- latestBankerHashes is empty because no hashes have been received yet).
+function TOGBankClassic_Guild:HasMissingContent()
+	local currentPlayer = self:GetNormalizedPlayer()
+
+	-- Check 1: any alt in latestBankerHashes that is still pending (hash mismatch / no data)
+	local bankerList = self.latestBankerHashes
+	if bankerList then
+		for altName in pairs(bankerList) do
+			if altName ~= currentPlayer and self:IsAltSyncPending(altName) then
+				return true
+			end
+		end
+	end
+
+	-- Check 2: any roster alt with no content at all (wipe / blank DB case where
+	-- latestBankerHashes may be empty because no hash-offers have arrived yet)
+	local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
+	local localAlts  = self.Info and self.Info.alts or {}
+	for _, altName in ipairs(rosterAlts) do
+		local norm = self:NormalizeName(altName)
+		if norm and norm ~= currentPlayer then
+			local localAlt = localAlts[norm]
+			if not self:HasAltContent(localAlt, norm) then
+				return true
+			end
+		end
+	end
+
+	return false
 end
 
 function TOGBankClassic_Guild:ReportHashListCoverage()
@@ -1031,14 +1055,13 @@ function TOGBankClassic_Guild:RequestHashListFromBanker()
 							)
 						self:BroadcastP2PRequest(norm, localHash, updatedAt, nil)
 					else
-						-- No hash at all - need to request from peers
+						-- No hash: let ScheduleCatchUp handle via next SyncDeltaVersion
 						TOGBankClassic_Output:Debug(
 							"PROTOCOL",
-							"HLR fallback: no banker online, broadcasting query for %s (no local hash, wipeRecovery=%s)",
-							tostring(norm),
-							tostring(isWipeRecovery)
+							"HLR fallback: no banker online, no hash for %s - scheduling catch-up",
+							tostring(norm)
 						)
-						self:QueryAltPullBased(norm, false, nil, nil)
+						TOGBankClassic_P2PSession:ScheduleCatchUp("no_hash_no_banker")
 					end
 				end
 			end
@@ -1142,14 +1165,22 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 			local banker = pending.banker
 			local bankerOnline = banker and self:IsPlayerOnline(banker)
 			if bankerOnline then
-				TOGBankClassic_Output:Debug("P2P", "DISPATCH", "PERF-005: No P2P response for %s after %ds timeout, falling back to banker %s", altName, timeout, banker)
+				TOGBankClassic_Output:Debug("P2P", "DISPATCH", "PERF-005: No P2P response for %s after %ds timeout", altName, timeout)
 			else
-				TOGBankClassic_Output:Debug("P2P", "DISPATCH", "PERF-005: No P2P response for %s after %ds timeout, broadcasting to GUILD (no banker online)", altName, timeout)
+				TOGBankClassic_Output:Debug("P2P", "DISPATCH", "PERF-005: No P2P response for %s after %ds timeout (no banker online)", altName, timeout)
 			end
 			if self.Info and self.Info.name then
 				TOGBankClassic_Database:RecordP2PBankerFallback(self.Info.name)
 			end
-			self:QueryAltPullBased(altName, false)
+			-- Schedule a catch-up broadcast rather than whispering a banker.
+			if TOGBankClassic_P2PSession then
+				local sid = TOGBankClassic_P2PSession.sessionsByAlt[norm]
+				if sid then
+					TOGBankClassic_P2PSession:AdvanceCandidate(sid, "hlr_timeout")
+				else
+					TOGBankClassic_P2PSession:ScheduleCatchUp("hlr_timeout")
+				end
+			end
 		end
 	end)
 	

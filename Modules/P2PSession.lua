@@ -34,6 +34,10 @@ local MAX_ACTIVE_SENDS    = 3  -- max concurrent outbound sends (sender side)
 local COLLECT_WINDOW      = 60 -- seconds to accumulate hash-offer responses (large guild congestion)
 local DISPATCH_TIMEOUT    = 15 -- seconds to wait for sync-accept before next candidate (whisper congestion)
 local SEND_TIMEOUT        = 90 -- seconds before auto-releasing an outbound send slot
+local MAX_RETRY_CYCLES    = 5  -- how many times to restart the candidate list when all peers are busy
+local RETRY_CYCLE_DELAY   = 20 -- seconds to wait between retry cycles (allows busy peers to free up)
+local CATCH_UP_DELAY      = 45 -- seconds before retrying a full broadcast when all offers are exhausted
+local MAX_CATCH_UP_CYCLES = 5  -- max catch-up broadcast rounds before giving up
 
 -- ─── State ────────────────────────────────────────────────────────────────────
 P2P.sessions       = {} -- sessionId → session table
@@ -44,6 +48,8 @@ P2P.activeSends    = {} -- requesterName → number of concurrent outbound sends
 P2P.collectTimer   = nil
 P2P.isCollecting   = false
 P2P.pendingDispatch = {}
+P2P.catchUpTimer   = nil -- scheduled catch-up broadcast timer
+P2P.catchUpCycles  = 0   -- how many catch-up rounds have fired since last full sync
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 local function Norm(name)
@@ -61,6 +67,44 @@ end
 
 local function Dbg(...)
 	TOGBankClassic_Output:Debug("P2P", ...)
+end
+
+-- ─── Catch-up Logic ──────────────────────────────────────────────────────────
+
+--- Schedule a full broadcast/collect/dispatch cycle after CATCH_UP_DELAY seconds.
+-- Called when Dispatch finds no offers, or a session fails, and we still have
+-- alts with missing content.  Guards against double-scheduling and runaway loops.
+function P2P:ScheduleCatchUp(reason)
+	if self.catchUpTimer then return end  -- already scheduled
+
+	self.catchUpCycles = (self.catchUpCycles or 0) + 1
+	if self.catchUpCycles > MAX_CATCH_UP_CYCLES then
+		Dbg("CATCHUP", "Max catch-up cycles (%d) reached (%s) - giving up", MAX_CATCH_UP_CYCLES, reason)
+		self.catchUpCycles = 0
+		return
+	end
+
+	if not (TOGBankClassic_Guild and TOGBankClassic_Guild:HasMissingContent()) then
+		Dbg("CATCHUP", "No missing content (%s) - catch-up not needed", reason)
+		self.catchUpCycles = 0
+		return
+	end
+
+	Dbg("CATCHUP", "Scheduling catch-up broadcast in %ds (%s, cycle %d/%d)",
+		CATCH_UP_DELAY, reason, self.catchUpCycles, MAX_CATCH_UP_CYCLES)
+	self.catchUpTimer = true  -- set before C_Timer.After in case it returns nil
+	C_Timer.After(CATCH_UP_DELAY, function()
+		P2P.catchUpTimer = nil
+		if TOGBankClassic_Guild and TOGBankClassic_Guild:HasMissingContent() then
+			Dbg("CATCHUP", "Catch-up cycle %d: firing SyncDeltaVersion", P2P.catchUpCycles)
+			if TOGBankClassic_Events then
+				TOGBankClassic_Events:SyncDeltaVersion("NORMAL")
+			end
+		else
+			Dbg("CATCHUP", "Catch-up cycle %d: all content received, done", P2P.catchUpCycles)
+			P2P.catchUpCycles = 0
+		end
+	end)
 end
 
 -- ─── Collect Window ───────────────────────────────────────────────────────────
@@ -176,6 +220,7 @@ function P2P:Dispatch()
 
 	if #altList == 0 then
 		Dbg("DISPATCH", "Dispatch: no offers to dispatch")
+		self:ScheduleCatchUp("no_offers")
 		return
 	end
 
@@ -221,6 +266,8 @@ function P2P:DispatchList(altList)
 					timers     = {},
 				}
 				self.sessionsByAlt[item.altName] = sid
+				-- Reserve the slot immediately so concurrent flushes see the correct count.
+				self.activeSessions = self.activeSessions + 1
 				self:SendSyncRequest(sid)
 				dispatched = dispatched + 1
 				Dbg("DISPATCH", "  → %s to %s (sid=%s)", item.altName, peer, sid)
@@ -272,7 +319,7 @@ function P2P:OnSyncAccept(sessionId, sender)
 	end
 
 	s.state = STATE.ACTIVE
-	self.activeSessions = self.activeSessions + 1
+	-- activeSessions was already counted at dispatch time; no increment here.
 	Dbg("HANDSHAKE", "ACTIVE: %s <- %s (activeSessions=%d)", s.altName, sender, self.activeSessions)
 
 	-- Delivery watchdog in case peer accepts but never delivers.
@@ -317,8 +364,31 @@ function P2P:AdvanceCandidate(sessionId, reason)
 	end
 
 	if not nextPeer then
-		Dbg("HANDSHAKE", "All candidates exhausted for %s (%s)", s.altName, reason)
-		self:OnFailed(sessionId, "no_candidates")
+		s.retryCount = (s.retryCount or 0) + 1
+		if s.retryCount <= MAX_RETRY_CYCLES then
+			-- All candidates are currently busy or timed out. Reset and retry after a
+			-- delay so peers have time to finish their current sends and free up slots.
+			Dbg("HANDSHAKE", "All candidates busy for %s (%s), retry %d/%d in %ds",
+				s.altName, reason, s.retryCount, MAX_RETRY_CYCLES, RETRY_CYCLE_DELAY)
+			s.triedPeers = {}  -- reset: allow all candidates to be tried again
+			s.state = STATE.DISPATCHED
+			s.timers.retry = C_Timer.After(RETRY_CYCLE_DELAY, function()
+				local live = P2P.sessions[sessionId]
+				if not live or live.state ~= STATE.DISPATCHED then return end
+				local peer = PickPeer(live.candidates, live.triedPeers, {})
+				if peer then
+					live.peer = peer
+					live.triedPeers[peer] = true
+					P2P:SendSyncRequest(sessionId)
+				else
+					P2P:OnFailed(sessionId, "no_candidates_on_retry")
+				end
+			end)
+		else
+			Dbg("HANDSHAKE", "All candidates exhausted for %s (%s) after %d retry cycles",
+				s.altName, reason, s.retryCount)
+			self:OnFailed(sessionId, "no_candidates")
+		end
 		return
 	end
 
@@ -346,9 +416,8 @@ function P2P:OnAltCompleted(altName, sender)
 
 	self:CancelTimers(s)
 
-	if s.state == STATE.ACTIVE then
-		self.activeSessions = math.max(0, self.activeSessions - 1)
-	end
+	-- Decrement regardless of state: slot was reserved at dispatch time.
+	self.activeSessions = math.max(0, self.activeSessions - 1)
 
 	s.state                  = STATE.COMPLETE
 	self.sessions[sessionId] = nil
@@ -365,17 +434,18 @@ function P2P:OnFailed(sessionId, reason)
 
 	self:CancelTimers(s)
 
-	if s.state == STATE.ACTIVE then
-		self.activeSessions = math.max(0, self.activeSessions - 1)
-	end
+	-- Decrement regardless of state: slot was reserved at dispatch time.
+	self.activeSessions = math.max(0, self.activeSessions - 1)
 
 	local altName            = s.altName
 	s.state                  = STATE.FAILED
 	self.sessions[sessionId] = nil
 	self.sessionsByAlt[altName] = nil
-	Dbg("COMPLETE", "FAILED (%s): %s - banker fallback (activeSessions=%d)", reason, altName, self.activeSessions)
+	Dbg("COMPLETE", "FAILED (%s): %s (activeSessions=%d)", reason, altName, self.activeSessions)
 
-	TOGBankClassic_Guild:QueryAltPullBased(altName, false)
+	-- Schedule a catch-up broadcast if we still have alts with missing content.
+	-- Using a delay lets peers that were busy free up their send slots first.
+	self:ScheduleCatchUp("session_failed")
 	self:FlushPendingDispatch()
 end
 

@@ -1721,15 +1721,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 				tostring(info.updatedAt)
 			)
 			TOGBankClassic_Guild:BroadcastP2PRequest(norm, info.hash, info.updatedAt, nil)
-		else
-			-- No hash available - go straight to banker whisper as last resort
-			TOGBankClassic_Output:Debug(
-				"PROTOCOL",
-				"HLR-COMPARE",
-				"Fast-fill banker query: requesting %s (no hash or hash=0)",
-				tostring(norm)
-			)
-			TOGBankClassic_Guild:QueryAltPullBased(norm, false)
+		-- No hash: skip; will be acquired in next SyncDeltaVersion cycle
 		end
 	end
 end

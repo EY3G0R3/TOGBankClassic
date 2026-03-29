@@ -641,8 +641,8 @@ function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, messa
 						-- P2P: Broadcast to guild with hash, wait for peers, fallback to banker
 						TOGBankClassic_Guild:BroadcastP2PRequest(kNorm, theirHash, theirVersion, sender)
 					else
-						-- No hash available, go straight to banker as last resort
-						TOGBankClassic_Guild:QueryAltPullBased(kNorm, false, false, sender)
+						-- No hash: System 2 catch-up cycle will acquire this alt
+						TOGBankClassic_P2PSession:ScheduleCatchUp("version_no_hash")
 					end
 				end
 			else
@@ -688,9 +688,12 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 		local myAlts     = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
 		local myPlayer   = TOGBankClassic_Guild:GetNormalizedPlayer()
 		
+		-- Build a lookup of what alts the sender advertised
+		local senderAlts = {}
 		for altName, peerSummary in pairs(data.alts) do
 			local norm = TOGBankClassic_Guild:NormalizeName(altName)
 			if norm and norm ~= myPlayer then
+				senderAlts[norm] = peerSummary
 				local myAlt = myAlts[norm]
 				if myAlt and TOGBankClassic_Guild:HasAltContent(myAlt, norm) then
 					local myUpdatedAt   = myAlt.inventoryUpdatedAt or myAlt.version or 0
@@ -702,6 +705,20 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 							mailHash  = myAlt.mailHash or 0,
 						}
 					end
+				end
+			end
+		end
+
+		-- Also offer alts we have that the sender didn't mention at all (e.g. after a wipe
+		-- the sender's list is empty, so we proactively advertise everything we have).
+		for norm, myAlt in pairs(myAlts) do
+			if norm ~= myPlayer and not senderAlts[norm] then
+				if myAlt and TOGBankClassic_Guild:HasAltContent(myAlt, norm) then
+					offerAlts[norm] = {
+						hash      = myAlt.inventoryHash or 0,
+						updatedAt = myAlt.inventoryUpdatedAt or myAlt.version or 0,
+						mailHash  = myAlt.mailHash or 0,
+					}
 				end
 			end
 		end
@@ -1249,11 +1266,11 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
 							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
 						end
-						TOGBankClassic_Output:Debug("P2P", "COMPLETE", "PERF-005: No P2P response for %s, requesting banker directly", altName)
+						TOGBankClassic_Output:Debug("P2P", "COMPLETE", "PERF-005: No P2P response for %s, scheduling catch-up", altName)
 						if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
 							TOGBankClassic_Database:RecordP2PBankerFallback(TOGBankClassic_Guild.Info.name)
 						end
-						TOGBankClassic_Guild:QueryAltPullBased(altName, false)
+						TOGBankClassic_P2PSession:ScheduleCatchUp("p2p_no_response")
 					end
 				end)
 				
@@ -1287,13 +1304,22 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					end
 
 					-- Secondary timeout: if peer ACKs but never sends data (disconnect/crash),
-					-- fallback to banker after 15 seconds
+					-- advance to next candidate (or schedule catch-up) after 15 seconds.
 					local fallbackTimer = C_Timer.After(15, function()
 						-- Check if we still don't have content (peer never delivered)
 						local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
 						if not alt or not TOGBankClassic_Guild:HasAltContent(alt, norm) then
-							TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s ACKed %s but never delivered data - falling back to banker", sender, altName)
-							TOGBankClassic_Guild:QueryAltPullBased(altName, false)
+							TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s ACKed %s but never delivered data - advancing session", sender, altName)
+							-- Advance to next candidate via P2PSession; fall back to ScheduleCatchUp
+							-- if the session has already been cleaned up.
+							if TOGBankClassic_P2PSession then
+								local sid = TOGBankClassic_P2PSession.sessionsByAlt[norm]
+								if sid then
+									TOGBankClassic_P2PSession:AdvanceCandidate(sid, "ack_no_data")
+								else
+									TOGBankClassic_P2PSession:ScheduleCatchUp("ack_no_data")
+								end
+							end
 						else
 							TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s successfully delivered data for %s", sender, altName)
 						end
@@ -2084,10 +2110,10 @@ end
 					TOGBankClassic_Output:Debug(
 						"PROTOCOL",
 						"HLR-COMPARE",
-						"HLR missingContent no hash: %s - querying banker directly",
+						"HLR missingContent no hash: %s - scheduling catch-up",
 						tostring(altName)
 					)
-					TOGBankClassic_Guild:QueryAltPullBased(altName, false)
+					TOGBankClassic_P2PSession:ScheduleCatchUp("hlr_missing_hash")
 				end
 			end
 		end

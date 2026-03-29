@@ -53,6 +53,7 @@ DEBUG_TAGS = {
 		DISPATCH  = "session creation, peer selection, collect-window fallbacks (no response after timeout)",
 		HANDSHAKE = "sync-accept/busy, state-summary exchange, RespondToStateSummary decisions, no-change replies",
 		COMPLETE  = "data delivered, session COMPLETE/FAILED/delivery-timeout, queue slot release",
+		CATCHUP   = "catch-up broadcast scheduling (fires when data is still missing after dispatch)",
 		["BROADCAST"] = "P2P hash-broadcast sent to guild channel (waiting for peers)",
 		["RESPOND"]   = "peer sending data in response to a P2P request (queue progress)",
 	},
