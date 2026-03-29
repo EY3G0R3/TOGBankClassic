@@ -211,11 +211,21 @@ function TOGBankClassic_Core:DeserializeWithChecksum(message, ctx)
             tostring(sepPos), #body, #serialized, checksumStr, #checksumStr)
         -- Best-effort: try to deserialize the corrupt payload anyway just to read the type field.
         -- This tells us whether it was an inventory sync, request, hash broadcast, etc.
-        -- We deliberately ignore the return value on failure — this is diagnostic only.
         local _ok, _decoded = self:Deserialize(serialized)
-        local msgType = (_ok and type(_decoded) == "table" and _decoded.type) or "unknown"
-        TOGBankClassic_Output:Debug("PROTOCOL", "INTEGRITY-MISMATCH",
-            "PAYLOAD-TYPE '%s'", tostring(msgType))
+        local msgType, deserErr
+        if _ok then
+            msgType = (type(_decoded) == "table" and _decoded.type) or "unknown"
+        else
+            msgType = "unknown"
+            deserErr = tostring(_decoded)  -- AceSerializer error string (e.g. "trailing garbage at pos N")
+        end
+        if deserErr then
+            TOGBankClassic_Output:Debug("PROTOCOL", "INTEGRITY-MISMATCH",
+                "PAYLOAD-TYPE '%s' deser-err='%s'", tostring(msgType), deserErr)
+        else
+            TOGBankClassic_Output:Debug("PROTOCOL", "INTEGRITY-MISMATCH",
+                "PAYLOAD-TYPE '%s'", tostring(msgType))
+        end
         if TOGBankClassic_Options and TOGBankClassic_Options:IsIntegrityCheckDiagnosticsEnabled() then
             local msg = "|cFFFF0000[TOGBankClassic ERROR]|r Integrity mismatch: " ..
                 "message complete (stop-marker present) but CRC failed. " ..
