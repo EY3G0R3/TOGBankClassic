@@ -40,6 +40,15 @@ local FULFILL_ICON_NEED_SPLIT = "|TInterface\\Icons\\INV_Misc_Shovel_01:18:18:0:
 local FULFILL_ICON_NO_ITEMS = "|TInterface\\Icons\\INV_Misc_QuestionMark:18:18:0:0|t" -- Question mark: no items
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local CANCEL_STALE_DIALOG   = "TOGBankClassic_CancelStale"
+
+-- Cancel reason dialog state (persistent reusable frame)
+local cancelReasonFrame    = nil
+local cancelReasonDropdown = nil
+local cancelReasonMap      = {}
+local cancelSelectedKey    = "unavailable"
+local pendingCancelReq     = nil
+local pendingCancelActor   = nil
+local pendingCancelUI      = nil
 local FILTER_ANY = "__tog_any__"
 local ARCHIVE_DAYS = 30
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
@@ -251,6 +260,110 @@ local function updateFulfillButtonTooltip(button, title, detail)
 	end
 	button.frame.togTooltipTitle = title or "Fulfill request"
 	button.frame.togTooltipDetail = detail or ""
+end
+
+local function closeCancelReasonDialog()
+	pendingCancelReq   = nil
+	pendingCancelActor = nil
+	pendingCancelUI    = nil
+	if cancelReasonFrame then
+		cancelReasonFrame.frame:Hide()
+	end
+end
+
+local function showCancelReasonDialog(req, actor, ui)
+	if cancelReasonFrame and cancelReasonFrame.frame:IsShown() then
+		return  -- don't stack dialogs
+	end
+
+	pendingCancelReq   = req
+	pendingCancelActor = actor
+	pendingCancelUI    = ui
+	cancelSelectedKey  = "unavailable"
+
+	local pct = (TOGBankClassic_Options and TOGBankClassic_Options:GetMaxRequestPercent()) or 100
+	local reasons = {
+		{ key = "unavailable", label = "Item no longer available on this banker" },
+		{ key = "policy",      label = string.format("Too many requested — guild policy allows %d%% of stock", pct) },
+		{ key = "wrong_bank",  label = "Item is stocked on a different banker" },
+	}
+	wipe(cancelReasonMap)
+	local reasonOrder = {}
+	for _, r in ipairs(reasons) do
+		cancelReasonMap[r.key] = r.label
+		table.insert(reasonOrder, r.key)
+	end
+
+	if not cancelReasonFrame then
+		local frame = TOGBankClassic_UI:Create("Frame")
+		frame:SetTitle("Cancel Request")
+		frame:SetWidth(440)
+		frame:SetHeight(200)
+		frame:SetLayout("Flow")
+		frame:EnableResize(false)
+
+		local infoLabel = TOGBankClassic_UI:Create("Label")
+		infoLabel:SetText("Select a reason for cancelling this request:")
+		infoLabel:SetFullWidth(true)
+		infoLabel:SetHeight(28)
+		frame:AddChild(infoLabel)
+
+		local dd = TOGBankClassic_UI:Create("Dropdown")
+		dd:SetFullWidth(true)
+		dd:SetCallback("OnValueChanged", function(_, _, value)
+			cancelSelectedKey = value
+		end)
+		frame:AddChild(dd)
+		cancelReasonDropdown = dd
+
+		local spacer = TOGBankClassic_UI:Create("Label")
+		spacer:SetText("")
+		spacer:SetFullWidth(true)
+		spacer:SetHeight(8)
+		frame:AddChild(spacer)
+
+		local confirmBtn = TOGBankClassic_UI:Create("Button")
+		confirmBtn:SetText("Cancel Request")
+		confirmBtn:SetWidth(160)
+		confirmBtn:SetCallback("OnClick", function()
+			if not pendingCancelReq then return end
+			local reasonText = cancelReasonMap[cancelSelectedKey] or ""
+			local cReq   = pendingCancelReq
+			local cActor = pendingCancelActor
+			local cUI    = pendingCancelUI
+			closeCancelReasonDialog()
+			local success = TOGBankClassic_Guild:CancelRequest(cReq.id, cActor, reasonText)
+			if not success and cUI and cUI.Window then
+				cUI.Window:SetStatusText("Unable to cancel request.")
+			end
+		end)
+		frame:AddChild(confirmBtn)
+
+		local gapLabel = TOGBankClassic_UI:Create("Label")
+		gapLabel:SetText("")
+		gapLabel:SetWidth(10)
+		frame:AddChild(gapLabel)
+
+		local dismissBtn = TOGBankClassic_UI:Create("Button")
+		dismissBtn:SetText("Keep Request")
+		dismissBtn:SetWidth(140)
+		dismissBtn:SetCallback("OnClick", function()
+			closeCancelReasonDialog()
+		end)
+		frame:AddChild(dismissBtn)
+
+		frame:SetCallback("OnClose", function()
+			closeCancelReasonDialog()
+		end)
+
+		cancelReasonFrame = frame
+	end
+
+	cancelReasonDropdown:SetList(cancelReasonMap, reasonOrder)
+	cancelReasonDropdown:SetValue("unavailable")
+	cancelReasonFrame.frame:ClearAllPoints()
+	cancelReasonFrame.frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+	cancelReasonFrame.frame:Show()
 end
 
 local function ensureDeleteDialog()
@@ -1760,9 +1873,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 							if not requestId then
 								return
 							end
-							if not TOGBankClassic_Guild:CancelRequest(requestId, actor) then
-								self.Window:SetStatusText("Unable to cancel request.")
-							end
+							showCancelReasonDialog(req, actor, self)
 						end)
 					end
 
@@ -1798,6 +1909,41 @@ function TOGBankClassic_UI_Requests:DrawContent()
 						label:SetText(colorize(cellText(col.key), reqStatus))
 						label:SetWidth(columnWidth)
 						setWidgetShown(label, true)
+
+						if col.key == "date" then
+							local capturedDate      = req.date
+							local capturedUpdatedAt = req.updatedAt
+							local capturedStatus    = reqStatus
+							local capturedNotes     = req.notes
+							label.frame:SetScript("OnEnter", function()
+								GameTooltip:SetOwner(label.frame, "ANCHOR_RIGHT")
+								GameTooltip:ClearLines()
+								GameTooltip:AddLine("Request Timeline", 1, 1, 1)
+								local subTs = tonumber(capturedDate or 0) or 0
+								if subTs > 0 then
+									GameTooltip:AddLine("Submitted:  " .. date("%Y-%m-%d %H:%M", subTs), 0.9, 0.9, 0.9)
+								else
+									GameTooltip:AddLine("Submitted:  Unknown", 0.9, 0.9, 0.9)
+								end
+								local updTs = tonumber(capturedUpdatedAt or 0) or 0
+								if capturedStatus == "fulfilled" or capturedStatus == "complete" then
+									if updTs > 0 then
+										GameTooltip:AddLine("Filled:  " .. date("%Y-%m-%d %H:%M", updTs), 0.4, 1, 0.4)
+									end
+								elseif capturedStatus == "cancelled" then
+									if updTs > 0 then
+										GameTooltip:AddLine("Cancelled:  " .. date("%Y-%m-%d %H:%M", updTs), 1, 0.4, 0.4)
+									end
+									if capturedNotes and capturedNotes ~= "" then
+										GameTooltip:AddLine("Reason:  " .. capturedNotes, 1, 0.65, 0.65, true)
+									end
+								end
+								GameTooltip:Show()
+							end)
+							label.frame:SetScript("OnLeave", function()
+								GameTooltip:Hide()
+							end)
+						end
 					end
 				end
 			end

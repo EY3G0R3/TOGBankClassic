@@ -1786,7 +1786,7 @@ function Guild:CanDeleteRequest(req, actor, actorIsGM)
 	return false
 end
 
-function Guild:CancelRequest(requestId, actor)
+function Guild:CancelRequest(requestId, actor, reason)
 	if not self.Info or not self.Info.requests or not requestId then
 		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Missing data (Info=%s, requests=%s, requestId=%s)",
 			tostring(self.Info ~= nil), tostring(self.Info and self.Info.requests ~= nil), tostring(requestId))
@@ -1823,6 +1823,9 @@ function Guild:CancelRequest(requestId, actor)
 	local oldStatus = req.status
 	req.status = "cancelled"
 	req.updatedAt = now
+	if reason and reason ~= "" then
+		req.notes = reason
+	end
 
 	TOGBankClassic_Output:Debug("SYNC", "APPLY", "CancelRequest SUCCESS: id=%s, item=%s, requester=%s, oldStatus=%s, updatedAt=%d",
 		requestId, req.item or "?", req.requester or "?", oldStatus, now)
