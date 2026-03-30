@@ -1332,6 +1332,39 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			label.label:SetJustifyH(justifyForAlign(col.align))
 			tagColumnWidget(label, i, false)
 			self.Content:AddChild(label)
+			if col.key == "date" then
+				label.frame:SetScript("OnEnter", function(f)
+					local d = f._tipData
+					if not d then return end
+					GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
+					GameTooltip:ClearLines()
+					GameTooltip:AddLine("Request Timeline", 1, 1, 1)
+					local subTs = tonumber(d.date or 0) or 0
+					if subTs > 0 then
+						GameTooltip:AddLine("Submitted:  " .. date("%Y-%m-%d %H:%M", subTs), 0.9, 0.9, 0.9)
+					else
+						GameTooltip:AddLine("Submitted:  Unknown", 0.9, 0.9, 0.9)
+					end
+					local updTs = tonumber(d.updatedAt or 0) or 0
+					if d.status == "fulfilled" or d.status == "complete" then
+						if updTs > 0 then
+							GameTooltip:AddLine("Filled:  " .. date("%Y-%m-%d %H:%M", updTs), 0.4, 1, 0.4)
+							GameTooltip:AddLine("Item arrives approx. 1 hour after sending.", 0.6, 0.8, 0.6)
+						end
+					elseif d.status == "cancelled" then
+						if updTs > 0 then
+							GameTooltip:AddLine("Cancelled:  " .. date("%Y-%m-%d %H:%M", updTs), 1, 0.4, 0.4)
+						end
+						if d.notes and d.notes ~= "" then
+							GameTooltip:AddLine("Reason:  " .. d.notes, 1, 0.65, 0.65, true)
+						end
+					end
+					GameTooltip:Show()
+				end)
+				label.frame:SetScript("OnLeave", function()
+					GameTooltip:Hide()
+				end)
+			end
 			row.cells[i] = label
 		end
 	end
@@ -1913,39 +1946,13 @@ function TOGBankClassic_UI_Requests:DrawContent()
 						setWidgetShown(label, true)
 
 						if col.key == "date" then
-							local capturedDate      = req.date
-							local capturedUpdatedAt = req.updatedAt
-							local capturedStatus    = reqStatus
-							local capturedNotes     = req.notes
-							label.frame:SetScript("OnEnter", function()
-								GameTooltip:SetOwner(label.frame, "ANCHOR_RIGHT")
-								GameTooltip:ClearLines()
-								GameTooltip:AddLine("Request Timeline", 1, 1, 1)
-								local subTs = tonumber(capturedDate or 0) or 0
-								if subTs > 0 then
-									GameTooltip:AddLine("Submitted:  " .. date("%Y-%m-%d %H:%M", subTs), 0.9, 0.9, 0.9)
-								else
-									GameTooltip:AddLine("Submitted:  Unknown", 0.9, 0.9, 0.9)
-								end
-								local updTs = tonumber(capturedUpdatedAt or 0) or 0
-								if capturedStatus == "fulfilled" or capturedStatus == "complete" then
-									if updTs > 0 then
-										GameTooltip:AddLine("Filled:  " .. date("%Y-%m-%d %H:%M", updTs), 0.4, 1, 0.4)
-										GameTooltip:AddLine("Item arrives approx. 1 hour after sending.", 0.6, 0.8, 0.6)
-									end
-								elseif capturedStatus == "cancelled" then
-									if updTs > 0 then
-										GameTooltip:AddLine("Cancelled:  " .. date("%Y-%m-%d %H:%M", updTs), 1, 0.4, 0.4)
-									end
-									if capturedNotes and capturedNotes ~= "" then
-										GameTooltip:AddLine("Reason:  " .. capturedNotes, 1, 0.65, 0.65, true)
-									end
-								end
-								GameTooltip:Show()
-							end)
-							label.frame:SetScript("OnLeave", function()
-								GameTooltip:Hide()
-							end)
+							-- Update the data table in-place; OnEnter/OnLeave are registered once at row creation
+							label.frame._tipData = {
+								date      = req.date,
+								updatedAt = req.updatedAt,
+								status    = reqStatus,
+								notes     = req.notes,
+							}
 						end
 					end
 				end
