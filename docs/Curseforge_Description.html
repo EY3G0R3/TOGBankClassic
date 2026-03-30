@@ -15,6 +15,7 @@
 <li>Smart item highlighting for bankers (Bagnon integration)</li>
 <li>Automated order fulfillment with intelligent stack splitting</li>
 <li>Auto-marking of fulfilled requests when mail is sent</li>
+<li>Item tooltip banker stock display — hover any item to see which bankers have it</li>
 <li>Enhanced debug logging and performance metrics</li>
 <li>Delta-based sync protocol (90-99% bandwidth reduction)</li>
 <li>Advanced P2P communication for faster data population</li>
@@ -32,6 +33,7 @@
 <li>No Alt-Hopping: Never log out to check what's in stock—see everything at a glance</li>
 <li>Real-Time Updates: Inventory automatically syncs across all guild members using the addon</li>
 <li>Mail Integration: Track items in transit—see what's in the mailbox as part of total inventory</li>
+<li>Item Tooltip: Hover any item anywhere in-game to see which bankers have it and their exact stock levels—no addon window needed</li>
 </ul>
 
 <h3>Powerful Search System</h3>
@@ -50,6 +52,10 @@
 <ul>
 <li>In-Game Requests: Guild members request items directly through the addon—no whispers needed</li>
 <li>Request Tracking: View all pending, fulfilled, and completed orders in the Requests window</li>
+<li>Timeline Tooltips: Hover any request's date to see when it was submitted, filled, or cancelled (with reason)</li>
+<li>Cancel Reasons: Bankers select a reason before cancelling; reason is stored and shown to the requester</li>
+<li>Requests Archive: Requests older than a configurable threshold automatically move to an Archive tab, keeping the main view focused</li>
+<li>Stale Request Management: Officers can auto-tombstone stale open requests and bulk-cancel them via the "Cancel Stale" button</li>
 <li>Priority System: Mark requests as Rush, High, Normal, or Low priority for better organization</li>
 <li>Officer Controls: Officers can configure guild-wide request percentage limits (1-100% of inventory)</li>
 </ul>
@@ -74,6 +80,7 @@
 <li>Delta Sync Protocol: Only syncs what changed—achieves 90-99% bandwidth reduction</li>
 <li>Link-Less Optimization: Removes redundant item links for additional bandwidth savings (v0.8.0+)</li>
 <li>Pull-Based Handshake: Clients request only the data they need, when they need it</li>
+<li>P2P Collect/Offer Pipeline: Hash syncs run through a coordinated collect/offer/dispatch cycle with broadcast collision prevention—no more corrupt message errors on busy guild channels</li>
 <li>Compact Request Protocol: Request index and records sync in a compact positional format — ~60% less bandwidth than the previous key-value format</li>
 <li>Event-Sourced Requests: Append-only request log prevents conflicts and data loss</li>
 <li>Offline Resilience: Players who were offline automatically catch up when they log in</li>
@@ -108,6 +115,8 @@
 <li>Request Limits: Set max request percentage (e.g., 50% = members can request up to half of available stock)</li>
 <li>Protects Unique Items: Always allows requesting at least 1 if available (gear, BoE epics, etc.)</li>
 <li>Syncs Guild-Wide: Limit setting broadcasts immediately (ALERT priority) to all online members, and is re-broadcast on the 3-minute sync cycle so members who were offline receive it automatically on login</li>
+<li>Auto-Cancel Threshold: Configure how many days before open requests are automatically tombstoned as stale</li>
+<li>Sync Diagnostics: /togbank hashdebug shows banker hash freshness and flags alts with missing content</li>
 <li>Debug Tools: Access advanced diagnostics via slash commands for troubleshooting</li>
 </ul>
 
@@ -311,7 +320,28 @@
 
 <h2>Recent Updates</h2>
 
-<p><strong>v0.10.0 (Latest Release)</strong></p>
+<p><strong>v0.10.3 (Latest Release)</strong></p>
+<ul>
+<li>New: Cancel reason dialog — cancelling a request now opens a dialog to select a reason before confirming; three preset reasons including one that reflects the current officer-configured request limit percentage</li>
+<li>New: Request timeline tooltip — hover any row’s date in the Requests window to see when it was submitted, filled, or cancelled (includes reason and a note that mailed items take ~1 hour to arrive)</li>
+<li>Improved: ? help tooltip on the Requests window updated to document the date tooltip and cancel dialog; obsolete Delete section removed</li>
+<li>Fixed (P2P-030): hash-list broadcast collision guard — the guard flag was cleared on a fixed 15-second timer; under ChatThrottleLib congestion the drain could exceed 15 seconds, causing a second broadcast to start and producing INTEGRITY-MISMATCH errors on recipients; flag is now cleared via the AceComm callback instead</li>
+</ul>
+
+<p><strong>v0.10.2</strong></p>
+<ul>
+<li>New: item tooltip banker info — mousing over any item in-game now shows which bankers have it in stock and how many, sorted by quantity; no addon window needed</li>
+</ul>
+
+<p><strong>v0.10.1</strong></p>
+<ul>
+<li>Fixed (P2P-023): hash-list broadcast collision — concurrent broadcasts on the same AceComm spool key produced CRC-fail INTEGRITY-MISMATCH errors; a guard flag now blocks BULK collisions and defers NORMAL/ALERT sends with up to 3 retries</li>
+<li>P2P reform: periodic hash sync now runs exclusively through the collect/offer/dispatch pipeline; fast-fill suppressed during collect window; /togbank hashdebug reports missing-content alts</li>
+<li>Removed redundant dual-sync path; fixed first-run session start; corrected activeSessions cap</li>
+<li>Diagnostics: AceSerializer error text now included in PAYLOAD-TYPE log lines, showing exact splice point in corrupt messages</li>
+</ul>
+
+<p><strong>v0.10.0</strong></p>
 <ul>
 <li>Visual sort dropdowns in Search and Inventory windows with 6-7 modes (A-Z, By Type, By Rarity, By Level, By Bank/Slot, By Quantity) and reverse order toggle</li>
 <li>Thin 8px scrollbars across all windows matching dropdown pullout menu style, positioned at right edge with proper spacing</li>
@@ -330,32 +360,6 @@
 <li>Unified thin border and improved button alignment across all windows</li>
 <li>Fixed: guild-wide settings (request limits, auto-cancel threshold) now reliably broadcast to all online members on change</li>
 <li>Fixed: slot counts included in no-change whispers, preventing missed syncs in some cases</li>
-</ul>
-
-<p><strong>v0.9.15</strong></p>
-<ul>
-<li>Fixed banker broadcast marking isBanker=false on every 10-minute sync, causing peers to skip hash updates and send unnecessary whispers back to the banker (up to 50 members × 36 alts per cycle)</li>
-<li>Fixed /togbank hashupdate also missing isBanker field in its broadcast</li>
-<li>Performance: guild roster lookups replaced with O(1) cache — eliminates full-roster scans on every incoming message that were causing visible frame stutters on busy guild channels</li>
-<li>Performance: byte-by-byte checksum removed from outgoing messages (saved up to 15ms per large delta)</li>
-<li>Performance: ApplyDelta reduced from 5 item passes to 2, eliminating unnecessary dedup and sorting</li>
-<li>Performance: per-login RecalculateAggregatedItems migration removed (was papering over old duplication bugs)</li>
-</ul>
-
-<p><strong>v0.9.14</strong></p>
-<ul>
-<li>Sort by Rarity and Sort by Level added to inventory window — the sort button now cycles through four modes: A-Z, By Type, By Rarity (epic first), and By Level (highest first)</li>
-</ul>
-
-<p><strong>v0.9.13</strong></p>
-<ul>
-<li>Fixed request index flood on large guilds — guilds with 500+ requests could trigger a storm of duplicate index transmissions when multiple peers responded simultaneously; peers now coordinate so only one sends at a time, with the others standing down</li>
-<li>"Syncing requests with guild…" and "Broadcasted hash for &lt;alt&gt;" chat messages now respect the Mute Sync Progress Messages setting</li>
-</ul>
-
-<p><strong>v0.9.10</strong></p>
-<ul>
-<li>Request sync now uses ~60% less bandwidth — a new compact positional wire format replaces the verbose key-value protocol for both the requests index and individual records; guilds with 500+ requests will see the biggest improvement on initial sync and after being offline</li>
 </ul>
 
 <hr>

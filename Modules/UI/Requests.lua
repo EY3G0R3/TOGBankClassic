@@ -14,7 +14,7 @@ local COLUMNS = {
 	{ key = "quantity",  label = "#",         width = 50,  align = "end",                              tooltipTitle = "Quantity",         tooltipDetail = "The number of items requested. Click to sort." },
 	{ key = "item",      label = "Item",      width = 170, align = "start",  flex = true, weight = 2, tooltipTitle = "Item",            tooltipDetail = "The item being requested. Click to sort." },
 	{ key = "fulfilled", label = "Sent",      width = 70,  align = "center",                           tooltipTitle = "Amount Sent",     tooltipDetail = "How many items have been sent to the requester so far. Click to sort." },
-	{ key = "actions",   label = "Actions",   width = 140, align = "center",                           tooltipTitle = "Actions",         tooltipDetail = "Fulfill, complete, cancel or delete the request." },
+	{ key = "actions",   label = "Actions",   width = 140, align = "center",                           tooltipTitle = "Actions",         tooltipDetail = "Fulfill, complete, or cancel the request. Click to sort." },
 }
 
 local function minContentWidth()
@@ -359,7 +359,9 @@ local function showCancelReasonDialog(req, actor, ui)
 		cancelReasonFrame = frame
 	end
 
+	---@diagnostic disable-next-line: undefined-field
 	cancelReasonDropdown:SetList(cancelReasonMap, reasonOrder)
+	---@diagnostic disable-next-line: undefined-field
 	cancelReasonDropdown:SetValue("unavailable")
 	cancelReasonFrame.frame:ClearAllPoints()
 	cancelReasonFrame.frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -827,9 +829,12 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	helpIcon:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:ClearLines()
-		GameTooltip:AddLine("Guild Requests — Action Buttons")
+		GameTooltip:AddLine("Guild Requests — How to Use")
 		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("Each request row has up to four action buttons on the right.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("|cffffd100Date column:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("Mouseover any row's date to see a timeline tooltip showing when the request was submitted and, if applicable, when it was filled or cancelled (including the cancellation reason).", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Action buttons (right side of each row):|r", 1, 1, 1, false)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100Fulfill:|r", 1, 1, 1, false)
 		GameTooltip:AddLine("Sends the item by in-game mail. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; shovel = quantity must be split manually; question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
@@ -838,10 +843,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		GameTooltip:AddLine("Marks the request as done without mailing. Use this when the item was handed over directly.", 0.9, 0.9, 0.9, true)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100Cancel:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Cancels the request. It moves to the Archive tab.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100Delete:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Permanently removes the request from the database. This cannot be undone.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("Opens a dialog to select a cancellation reason before cancelling. The reason is stored with the request and shown in the date tooltip. Cancelled requests move to the Archive tab.", 0.9, 0.9, 0.9, true)
 		GameTooltip:Show()
 	end)
 	helpIcon:SetScript("OnLeave", function()
@@ -1929,6 +1931,7 @@ function TOGBankClassic_UI_Requests:DrawContent()
 								if capturedStatus == "fulfilled" or capturedStatus == "complete" then
 									if updTs > 0 then
 										GameTooltip:AddLine("Filled:  " .. date("%Y-%m-%d %H:%M", updTs), 0.4, 1, 0.4)
+										GameTooltip:AddLine("Item arrives approx. 1 hour after sending.", 0.6, 0.8, 0.6)
 									end
 								elseif capturedStatus == "cancelled" then
 									if updTs > 0 then

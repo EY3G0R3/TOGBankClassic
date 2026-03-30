@@ -1,5 +1,49 @@
 # TOGBankClassic Changelog
 
+## [v0.10.3] (2026-03-30) - Cancel Reasons, Request Timeline Tooltips & P2P Stability
+
+### New Features
+
+- **Cancel reason dialog** — Cancelling a request now opens a dialog to select a reason before confirming. Three preset reasons are available, including one that dynamically reflects the current officer-configured request limit percentage. Location: `Modules/UI/Requests.lua`, `Modules/RequestLog.lua`.
+
+- **Request timeline tooltip** — Hovering any row's date in the Requests window shows a "Request Timeline" tooltip with the submission timestamp, and (where applicable) the fill or cancellation timestamp. Cancelled rows also show the selected cancellation reason. Filled/completed rows include a note that mailed items take approximately 1 hour to arrive. Location: `Modules/UI/Requests.lua`.
+
+### Improvements
+
+- **Help tooltip updated** — The `?` icon on the Requests window now documents the date column mouseover tooltip and the cancel reason dialog. The obsolete "Delete" section has been removed. Location: `Modules/UI/Requests.lua`.
+
+### Bug Fixes
+
+- **P2P-030: Hash-list broadcast collision guard** — The `hashBroadcastInProgress` flag was previously cleared on a fixed 15-second timer. Under ChatThrottleLib congestion the drain could exceed 15 seconds, allowing a second broadcast to begin before the first finished draining, producing `INTEGRITY-MISMATCH` (`stop=PASS crc=FAIL`) errors on recipients. Fix: flag is now cleared via the AceComm `callbackFn`, which fires when ChatThrottleLib has finished queuing the last chunk — not on a timer guess. Location: `Modules/Events.lua`, `Modules/Guild.lua`.
+
+---
+
+## [v0.10.2] (2026-03-29) - Banker Tooltip Integration
+
+### New Features
+
+- **Item tooltip banker info** — Mousing over any item in-game now appends a "TOGBankClassic" section to the game tooltip listing every banker that stocks that item and their total quantity. Bankers are sorted by quantity descending, then alphabetically. Realm suffix is stripped for clean display. Location: `Modules/TooltipBankerInfo.lua`, `Core.lua`, `TOGBankClassic.toc`.
+
+---
+
+## [v0.10.1] (2026-03-29) - P2P Hash Reform & Integrity Diagnostics
+
+### New Features
+
+- **HASH-REFORM: P2P collect/offer as sole hash path** — The periodic hash sync now runs exclusively through the P2P collect/offer/dispatch pipeline. Fast-fill is suppressed during the collect window to prevent premature dispatch before all peers have responded. `/togbank hashdebug` now also reports alts with missing content. Location: `Modules/Events.lua`, `Modules/P2PSession.lua`, `Modules/Chat.lua`.
+
+### Bug Fixes
+
+- **P2P-023: Hash-list broadcast collision prevention** — Concurrent hash-list broadcasts on `togbank-hl` collided in the AceComm multipart spool (same spool key = second FIRST chunk overwrites partial data from the first, producing `CRC fail`). Fix: a `hashBroadcastInProgress` guard flag blocks new BULK broadcasts while one is in flight, and defers NORMAL/ALERT broadcasts with up to 3 retries (16s apart) before forcing through. Location: `Modules/Events.lua`.
+
+- **P2P-REFORM: Dual-sync removed, first-run fixed, activeSessions cap corrected** — Removed a redundant second sync path that fired alongside the primary collect/offer cycle. Fixed a first-run edge case where no session was started. Corrected the `activeSessions` counter cap that could prevent new sessions from opening after prior ones closed. Location: `Modules/P2PSession.lua`.
+
+### Internal
+
+- **AceSerializer error captured in PAYLOAD-TYPE log line** — When a corrupt payload cannot be deserialized, the error string (e.g. `"Invalid serialized number: '136ation-Azuresong'"`) is now emitted alongside the `PAYLOAD-TYPE` diagnostic, making the exact splice point visible in the debug log. Location: `Core.lua`.
+
+---
+
 ## [v0.10.0] (2026-03-28) - Sort Dropdowns, UI Consistency & Search Enhancements
 
 ### New Features
