@@ -3425,9 +3425,6 @@ function TOGBankClassic_Guild:HashUpdate()
 	if TOGBankClassic_Events then
 		TOGBankClassic_Events.hashBroadcastInProgress = true
 		TOGBankClassic_Events.hashBroadcastCount = (TOGBankClassic_Events.hashBroadcastCount or 0) + 1
-		C_Timer.After(15, function()
-			TOGBankClassic_Events.hashBroadcastInProgress = false
-		end)
 	end
 	
 	local payload = {
@@ -3437,7 +3434,12 @@ function TOGBankClassic_Guild:HashUpdate()
 		isBanker = true,  -- command is banker-only (guarded above), so this is always true
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL", function()
+		-- P2P-023: Clear flag once CTL finishes queuing the last chunk (replaces fixed 15s timer)
+		if TOGBankClassic_Events then
+			TOGBankClassic_Events.hashBroadcastInProgress = false
+		end
+	end)
 	
 	local count = 0
 	for _ in pairs(hashList) do

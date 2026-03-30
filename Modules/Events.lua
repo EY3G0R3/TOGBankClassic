@@ -289,14 +289,13 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 		addon    = GetAddOnMetadata("TOGBankClassic", "Version") or "dev",
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK")
+	local selfRef = self
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK", function()
+		-- P2P-023: Clear flag once CTL finishes queuing the last chunk (replaces fixed 15s timer)
+		selfRef.hashBroadcastInProgress = false
+	end)
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
 		altCount, tostring(payload.isBanker))
-
-	-- P2P-023: Clear flag after transmission window (15s covers largest messages + safety margin)
-	C_Timer.After(15, function()
-		self.hashBroadcastInProgress = false
-	end)
 
 	-- SETTINGS-001: Piggyback settings broadcast for authorized senders so new joiners
 	-- and members who missed the immediate broadcast still receive guild-configured values.
