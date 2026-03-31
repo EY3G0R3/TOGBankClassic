@@ -8,6 +8,9 @@
 		},
 		{
 			"path": "../Ace3"
+		},
+		{
+			"path": "../ProfessionMaster"
 		}
 	],
 	"settings": {
@@ -570,7 +573,15 @@
 			"IsSecureCmd",
 			"ChatEdit_GetActiveWindow",
 			"FCF_SelectDockFrame",
-			"ChatFrame1"
+			"ChatFrame1",
+			"ChatFrame_AddMessageEventFilter",
+			"GetUnitName",
+			"ItemRefTooltip",
+			"ShoppingTooltip1",
+			"ShoppingTooltip2",
+			"SPELL_REAGENTS",
+			"ChatFrame_OpenChat",
+			"DropDownList1"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

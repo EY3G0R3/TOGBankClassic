@@ -100,7 +100,7 @@ end
 
 -- Normalize the queue key so case variants ("Guild" vs "GUILD") share the same slot.
 local function makeKey(prefix, dist, target)
-	local d = dist and dist:upper() or "GUILD"
+	local d = dist and dist:upper() or ""
 	local t = target and target:lower() or ""
 	return prefix .. "\031" .. d .. "\031" .. t
 end
@@ -203,12 +203,10 @@ function AceCommQueue:Embed(target)
 
 		if not ACQ.queues[key] then
 			ACQ.queues[key] = {
-				inFlight     = false,
-				ALERT        = {},
-				NORMAL       = {},
-				BULK         = {},
-				originalSend = originalSend,
-				commObj      = commObj,
+				inFlight = false,
+				ALERT    = {},
+				NORMAL   = {},
+				BULK     = {},
 			}
 		end
 
