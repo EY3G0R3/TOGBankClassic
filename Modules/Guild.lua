@@ -3435,7 +3435,7 @@ function TOGBankClassic_Guild:HashUpdate()
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL", function()
-		-- P2P-023: Clear flag once CTL finishes queuing the last chunk (replaces fixed 15s timer)
+		-- P2P-023: Clear flag once the final chunk is confirmed sent by CTL.
 		if TOGBankClassic_Events then
 			TOGBankClassic_Events.hashBroadcastInProgress = false
 		end

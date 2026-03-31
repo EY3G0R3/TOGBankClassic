@@ -1,0 +1,14 @@
+## Interface: 11508
+## Interface-BCC: 20505
+## Interface-Wrath: 30403
+## Title: AceCommQueue-1.0
+## Notes: Serializes AceComm-3.0 sends on a per-prefix queue to prevent chunk interleaving caused by ChatThrottleLib priority ordering.
+## Author: ianjplamondon-cyber
+## Version: @project-version@
+## Dependencies: Ace3
+## X-Curse-Project-ID:
+
+# Libraries
+Libs\LibStub\LibStub.lua
+
+AceCommQueue-1.0.lua

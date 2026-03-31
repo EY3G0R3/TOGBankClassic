@@ -291,7 +291,7 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	local selfRef = self
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK", function()
-		-- P2P-023: Clear flag once CTL finishes queuing the last chunk (replaces fixed 15s timer)
+		-- P2P-023: Clear flag once the final chunk is confirmed sent by CTL.
 		selfRef.hashBroadcastInProgress = false
 	end)
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",

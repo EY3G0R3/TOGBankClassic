@@ -5,9 +5,12 @@ function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target,
     local prefixDesc = COMM_PREFIX_DESCRIPTIONS[prefix] or "(Unknown)"
     if IsInRaid() then
         TOGBankClassic_Output:Debug("COMMS", "SUPPRESS", "< (suppressing) %s %s (in raid)", prefix, prefixDesc)
+        -- Unblock the AceCommQueue waiting on this send (0 >= 0 triggers last-chunk detection).
+        if callbackFn then callbackFn(callbackArg, 0, 0, nil) end
         return
     end
     if not AceComm_SendCommMessage then
+        if callbackFn then callbackFn(callbackArg, 0, 0, nil) end
         return
     end
 
@@ -17,6 +20,11 @@ function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target,
 
     return AceComm_SendCommMessage(self, prefix, text, distribution, target, prio, callbackFn, callbackArg)
 end
+-- AceCommQueue-1.0 must be embedded AFTER the SendCommMessage wrapper above so the queue
+-- wraps the complete chain (raid guard + debug logging) rather than raw AceComm.
+local ACQ = LibStub("AceCommQueue-1.0")
+ACQ:Embed(TOGBankClassic_Core)
+ACQ:RegisterSlashCommand("/acq")
 
 -- Centralized WHISPER send with automatic online check
 -- Returns true if sent, false if target offline or send failed
