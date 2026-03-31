@@ -81,6 +81,7 @@
 <li>Link-Less Optimization: Removes redundant item links for additional bandwidth savings (v0.8.0+)</li>
 <li>Pull-Based Handshake: Clients request only the data they need, when they need it</li>
 <li>P2P Collect/Offer Pipeline: Hash syncs run through a coordinated collect/offer/dispatch cycle with broadcast collision prevention—no more corrupt message errors on busy guild channels</li>
+<li>AceCommQueue-1.0: Embedded send-queue library ensures no two messages on the same prefix ever interleave chunks in transit — fully transparent, no call site changes required</li>
 <li>Compact Request Protocol: Request index and records sync in a compact positional format — ~60% less bandwidth than the previous key-value format</li>
 <li>Event-Sourced Requests: Append-only request log prevents conflicts and data loss</li>
 <li>Offline Resilience: Players who were offline automatically catch up when they log in</li>
@@ -320,7 +321,12 @@
 
 <h2>Recent Updates</h2>
 
-<p><strong>v0.10.3 (Latest Release)</strong></p>
+<p><strong>v0.10.4 (Latest Release)</strong></p>
+<ul>
+<li>New: AceCommQueue-1.0 — embedded transparent send-queue library that prevents multipart AceComm message chunk interleaving; a second message on the same prefix now waits until the current message's last chunk is confirmed handed off to ChatThrottleLib, eliminating CRC-fail INTEGRITY-MISMATCH errors caused by priority-bucket reordering; fully transparent to existing call sites; includes /acq debug commands</li>
+</ul>
+
+<p><strong>v0.10.3</strong></p>
 <ul>
 <li>New: Cancel reason dialog — cancelling a request now opens a dialog to select a reason before confirming; three preset reasons including one that reflects the current officer-configured request limit percentage</li>
 <li>New: Request timeline tooltip — hover any row’s date in the Requests window to see when it was submitted, filled, or cancelled (includes reason and a note that mailed items take ~1 hour to arrive)</li>
