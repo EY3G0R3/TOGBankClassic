@@ -16,7 +16,6 @@ TOGBankClassic_Guild.onlineMembers = {}
 -- Tracks players who have sent messages recently (5 minute expiry)
 -- Format: {[normalizedName] = lastSeenTimestamp}
 TOGBankClassic_Guild.recentlySeen = {}
-TOGBankClassic_Guild.RECENTLY_SEEN_EXPIRY = 300  -- 5 minutes
 
 -- Cache of guild bankers (updated via GUILD_ROSTER_UPDATE)
 -- Prevents iterating through entire guild roster on every IsBank() call
@@ -108,7 +107,6 @@ function TOGBankClassic_Guild:GetDeltaFailureCount(altName)
 	return TOGBankClassic_DeltaComms:GetDeltaFailureCount(self.Info and self.Info.name, altName)
 end
 
----START CHANGES
 function GetPlayerWithNormalizedRealm(name)
 	if string.match(name, "(.*)%-(.*)") then
 		return name
@@ -172,7 +170,6 @@ function TOGBankClassic_Guild:GetNormalizedPlayer(name)
 	return self:NormalizeName(name or self:GetPlayer())
 end
 
----END CHANGES
 function TOGBankClassic_Guild:GetPlayer()
 	if TOGBankClassic_Bank.player then
 		return TOGBankClassic_Bank.player
@@ -201,7 +198,6 @@ function TOGBankClassic_Guild:GetPlayer()
 	end)
 
 	return nil
-	---END CHANGES
 end
 
 function TOGBankClassic_Guild:GetGuild()
@@ -482,6 +478,7 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 
 	if oldRoster ~= newRoster then
 		self.Info.roster.alts = banks
+		self.Info.roster.version = GetServerTime()
 		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Rebuilt banker roster from guild notes: %d bankers", #banks)
 	end
 	
@@ -1186,18 +1183,6 @@ function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expecte
 	self.pendingP2PTimeouts[norm] = timeoutTimer
 end
 
-function TOGBankClassic_Guild:CheckVersion(version)
-	if self.Info then
-		return false
-	end
-
-	if version > self.Info.roster.version then
-		return false
-	end
-
-	return true
-end
-
 function TOGBankClassic_Guild:GetVersion()
 	if not self.Info then
 		return nil
@@ -1210,7 +1195,6 @@ function TOGBankClassic_Guild:GetVersion()
 		addonDisplay = (versionNumber > 0) and versionRaw or "dev",
 		protocol_version = PROTOCOL.VERSION,
 		supports_delta = PROTOCOL.SUPPORTS_DELTA,
-		roster = nil,
 		alts = {},
 	}
 
@@ -1218,15 +1202,10 @@ function TOGBankClassic_Guild:GetVersion()
 		data.name = self.Info.name
 	end
 
-	if self.Info.roster.version then
-		data.roster = self.Info.roster.version
-	end
-
 	-- PERF-002: Do not include request version/hash here — NormalizeRequestList() is expensive.
 	-- Revisit once NormalizeRequestList has a dirty-flag guard (see Guild:NormalizeRequestList).
 
 	for k, v in pairs(self.Info.alts) do
-		---START CHANGES
 		-- Only broadcast bankers from the CURRENT guild (cross-guild data leak fix)
 		if self:IsBank(k) then
 			-- P2P-007: Don't broadcast stub entries (hash but no content) - causes others to send empty deltas
@@ -1254,7 +1233,6 @@ function TOGBankClassic_Guild:GetVersion()
 		else
 			TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: excluding %s from local version data (not a banker in current guild)", k)
 		end
-		---END CHANGES
 	end
 
 	return data
@@ -1269,21 +1247,13 @@ function TOGBankClassic_Guild:MarkPendingSync(syncType, sender, name)
 	local now = GetServerTime()
 	local normSender = self:NormalizeName(sender)
 	if not self.pending_sync then
-		self.pending_sync = { roster = {}, alts = {} }
-	end
-	if not self.pending_sync.roster then
-		self.pending_sync.roster = {}
+		self.pending_sync = { alts = {} }
 	end
 	if not self.pending_sync.alts then
 		self.pending_sync.alts = {}
 	end
 
-	if syncType == "roster" then
-		if self.pending_sync.roster then
-			---@diagnostic disable-next-line: need-check-nil
-			self.pending_sync.roster[normSender] = now
-		end
-	elseif syncType == "alt" and name then
+	if syncType == "alt" and name then
 		local normName = self:NormalizeName(name)
 		if self.pending_sync.alts and not self.pending_sync.alts[normName] then
 			---@diagnostic disable-next-line: need-check-nil
@@ -1305,20 +1275,6 @@ function TOGBankClassic_Guild:ConsumePendingSync(syncType, sender, name)
 	end
 	local now = GetServerTime()
 	local normSender = self:NormalizeName(sender)
-	if syncType == "roster" then
-		local roster = self.pending_sync.roster
-		local ts = roster and roster[normSender]
-		if ts and now - ts <= PENDING_SYNC_TTL_SECONDS then
-			---@diagnostic disable-next-line: need-check-nil
-			roster[normSender] = nil
-			return true
-		end
-		if ts then
-			---@diagnostic disable-next-line: need-check-nil
-			roster[normSender] = nil
-		end
-		return false
-	end
 	if syncType == "alt" and name then
 		local normName = self:NormalizeName(name)
 		local alts = self.pending_sync.alts and self.pending_sync.alts[normName]
@@ -1342,13 +1298,6 @@ function TOGBankClassic_Guild:ConsumePendingSync(syncType, sender, name)
 		end
 	end
 	return false
-end
-
--- DEPRECATED: Roster sync no longer uses network communication
--- Each player rebuilds roster locally from guild notes on GUILD_ROSTER_UPDATE
-function TOGBankClassic_Guild:QueryRoster(player, version)
-	-- No-op: Roster is now local-only
-	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "QueryRoster called but roster sync is now local-only")
 end
 
 function TOGBankClassic_Guild:QueryAlt(player, name, version)
@@ -1510,90 +1459,6 @@ function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targe
 	
 	self:MarkPendingSync("alt", banker, norm)
 	self.pendingAltRequests[norm] = now
-end
-
--- DEPRECATED: Roster sync no longer uses network communication
--- Each player rebuilds roster locally from guild notes on GUILD_ROSTER_UPDATE
-function TOGBankClassic_Guild:SendRosterData()
-	-- Only send roster if config option is enabled (for guilds with officer-note-only gbank identification)
-	if not TOGBankClassic_Options or not TOGBankClassic_Options:IsRosterSyncEnabled() then
-		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "SendRosterData skipped - roster sync disabled in config")
-		return
-	end
-
-	if not self.Info or not self.Info.roster or not self.Info.roster.alts then
-		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "SendRosterData skipped - no roster data available")
-		return
-	end
-
-	-- SYNC-013: Fixed serialization (was EncodeJSON, receiver uses DeserializeWithChecksum)
-	-- SYNC-013: Migrated from dead togbank-roster prefix onto togbank-hl type dispatch
-	local data = TOGBankClassic_Core:SerializeWithChecksum({
-		type = "roster-broadcast",
-		roster = {
-			alts = self.Info.roster.alts,
-			version = self.Info.roster.version or GetServerTime()
-		}
-	})
-
-	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Broadcasting roster with %d bankers", #self.Info.roster.alts)
-	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL")
-end
-
--- Receive roster broadcast from banker/officer (only if roster sync enabled)
-function TOGBankClassic_Guild:ReceiveRosterData(sender, roster)
-	-- Only accept roster if config option is enabled
-	if not TOGBankClassic_Options or not TOGBankClassic_Options:IsRosterSyncEnabled() then
-		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ReceiveRosterData ignored - roster sync disabled in config")
-		return
-	end
-
-	if not roster or not roster.alts then
-		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ReceiveRosterData ignored - invalid roster data")
-		return
-	end
-
-	-- Verify sender has gbank note or can view officer notes
-	if not self:SenderHasGbankNote(sender) and not CanViewOfficerNote() then
-		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "ReceiveRosterData ignored - sender %s not authorized", sender or "unknown")
-		return
-	end
-
-	-- Only accept if we don't have a roster or received roster is newer
-	local currentVersion = (self.Info and self.Info.roster and self.Info.roster.version) or 0
-	local receivedVersion = roster.version or 0
-
-	if receivedVersion > currentVersion then
-		if not self.Info.roster then
-			self.Info.roster = {}
-		end
-		self.Info.roster.alts = roster.alts
-		self.Info.roster.version = receivedVersion
-		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Received roster update from %s with %d bankers", sender, #roster.alts)
-
-		-- Ensure local alt data exists for all roster bankers
-		if not self.Info.alts then
-			self.Info.alts = {}
-		end
-		for _, name in ipairs(roster.alts) do
-			local norm = self:NormalizeName(name)
-			if norm and not self.Info.alts[norm] then
-				self.Info.alts[norm] = {
-					name = norm,
-					version = 0,
-					money = 0,
-					inventoryHash = 0,
-					items = {},
-					mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
-					mailHash = 0,
-				}
-				self:EnsureLegacyFields(self.Info.alts[norm])
-			end
-		end
-	else
-		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Ignored roster from %s - not newer than current (received: %d, current: %d)",
-			sender, receivedVersion, currentVersion)
-	end
 end
 
 -- SETTINGS-001: Broadcast guild-wide settings to all online members.
@@ -1825,13 +1690,6 @@ function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline, source)
 				normalized, baseName, source)
 		end
 	end
-end
-
--- Check if a player is currently online in the guild
--- Uses cached roster data updated via GUILD_ROSTER_UPDATE event
-function TOGBankClassic_Guild:MarkPlayerSeen(playerName)
-	-- DEPRECATED: No longer needed - guild roster cache is authoritative
-	-- Kept for backwards compatibility
 end
 
 function TOGBankClassic_Guild:IsPlayerOnline(playerName)
@@ -2471,7 +2329,6 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	return alt
 end
 
----START CHANGES
 -- SendAddonMessageResult enum values from ChatThrottleLib
 local SEND_RESULT = {
 	Success = 0,
@@ -2570,7 +2427,6 @@ local function CreateOnChunkSentCallback(altName)
 		end
 	end
 end
----END CHANGES
 
 function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requesterMailHash, target, requesterBaseline)
 	if not name then
@@ -3193,7 +3049,6 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 	end)
 end
 
----START CHANGES
 function s(a)
 	local b = 0
 	for c, d in pairs(a) do
@@ -3215,11 +3070,6 @@ function TOGBankClassic_Guild:UsesSYNC006()
 	-- SYNC-006 introduced aggregated items structure (alt.items)
 	-- All current clients use SYNC-006
 	return true
-end
-
--- Get peer protocol capabilities
-function TOGBankClassic_Guild:GetPeerCapabilities(sender)
-	return TOGBankClassic_DeltaComms:GetPeerCapabilities(self.Info and self.Info.name, sender)
 end
 
 -- Delta Computation Functions delegated to DeltaComms module (v0.7.0+)
@@ -3387,55 +3237,6 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 	end
 end
 
-function TOGBankClassic_Guild:AuthorRosterData()
-	if not self.Info then
-		return
-	end
-	local info = self.Info
-	local isBank = false
-	local banks = TOGBankClassic_Guild:GetBanks()
-	local player = TOGBankClassic_Guild:GetPlayer()
-	if banks then
-		for _, v in pairs(banks) do
-			if v == player then
-				isBank = true
-				break
-			end
-		end
-	end
-	if isBank or CanViewOfficerNote() then
-		if info and not info.roster then
-			info.roster = {}
-		end
-		if info and info.roster then
-			info.roster.alts = banks
-			info.roster.version = GetServerTime()
-			if not banks then
-				info.roster.version = nil
-			end
-		end
-		TOGBankClassic_Guild:SendRosterData()
-		if banks then
-			local characterNames = {}
-			for _, bankChar in pairs(banks) do
-				table.insert(characterNames, bankChar)
-			end
-			if #characterNames > 0 then
-				TOGBankClassic_Output:Info(
-					"Sent updated roster containing the follow banks: " .. table.concat(characterNames, ", ")
-				)
-			else
-				TOGBankClassic_Output:Info("Sent empty roster.")
-			end
-		else
-			TOGBankClassic_Output:Info("Sent empty roster.")
-		end
-	else
-		TOGBankClassic_Output:Warn("You lack permissions to share the roster.")
-		return
-	end
-end
-
 function TOGBankClassic_Guild:SenderIsGM(player)
 	if not player then
 		return false
@@ -3479,5 +3280,4 @@ function TOGBankClassic_Guild:SenderIsOfficer(player)
 	end
 	return member.isOfficer == true
 end
----END CHANGES
 

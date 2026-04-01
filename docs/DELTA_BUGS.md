@@ -1,8 +1,11 @@
 # Delta Implementation Bug Tracker
 
 **Project:** TOGBankClassic v0.8.0 Pull-Based Delta Protocol
-**Last Updated:** March 30, 2026
+**Last Updated:** April 1, 2026
 **Status:** Testing Phase - Core Protocol Operational
+
+**Recent Fixes (2026-04-01):**
+- ✅ [MAINT-001] **LOW** Dead code removal campaign — systematic audit expelled ~350 lines of unreachable code across 9 files. (1) **Delta history cluster**: `SaveDeltaHistory` was a stub that wrote nothing (db field never populated), `GetDeltaHistory` always returned nil, `CleanupDeltaHistory` always returned 0 (early-exited on nil db field) — all three removed along with two call sites in Events.lua (periodic 3-minute cleanup + 2s startup timer added by PERF-011) and a 30-line dead block in Chat.lua's `togbank-q` handler that called the nonexistent `Guild:SendDeltaChain()` (would have been a runtime error if reached). (2) **DeltaComms dead functions**: `SanitizeDelta` (zero callers in production), `SanitizeItemDelta` (only called from `SanitizeDelta`), `GetPeerCapabilities` (Tests.lua only) removed from DeltaComms.lua; `Guild:GetPeerCapabilities` wrapper (~4 lines) removed from Guild.lua. (3) **Guild.lua dead declarations**: `RECENTLY_SEEN_EXPIRY = 300` constant (never read anywhere; expiry logic was designed but never implemented), `MarkPlayerSeen()` (empty function body, explicitly marked DEPRECATED, no callers). (4) **Constants.lua orphaned fields**: `DELTA_HISTORY_MAX_COUNT`, `DELTA_HISTORY_MAX_AGE`, `DELTA_CHAIN_MAX_HOPS`, `DELTA_CHAIN_MAX_SIZE` from `PROTOCOL` table (became orphaned when delta history functions were deleted); `sendLegacy` and `sendNew` boolean fields from all three `PROTOCOL_MODES` entries (AUTO, LEGACY_ONLY, NEW_ONLY) — only `.name` and `.desc` are ever read, by Options.lua — `sendLegacy`/`sendNew` were never referenced from any code path. (5) **ItemHighlight.lua dead locals**: `OVERLAY_ALPHA = 0.7` and `OVERLAY_COLOR = {0.2, 0.2, 0.2}` — `ApplyOverlay()` hardcodes these values inline in the `SetVertexColor` call, so the named constants were never read. (6) **UI/Requests.lua layout dead code**: `FILTER_LAYOUT_TOP`, `FILTER_LAYOUT_TWO_HEADERS`, `FILTER_LAYOUT` locals; `useTwoHeaderLayout()` function (always returned false — `FILTER_LAYOUT` was initialized to `FILTER_LAYOUT_TOP` and never changed); always-true `if not useTwoHeaderLayout() then` guard in `DrawFilterRow` replaced with `do...end` to preserve local variable scoping for `filterGroup`, `requesterFilter`, `bankFilter`; dead two-header widget loop in `EnsureHeaderRows` (~40 lines — duplicate Dropdown creation for requester/bank filters that was structurally unreachable since the layout constant never flipped). Also covered in earlier passes: (7) **Network roster sync layer** (prior session) — 5 send functions, 3 receive handlers, 2 serializers, 2 call sites, `PLAYER_ENTERING_WORLD` broadcast trigger removed across 5 files; `/togbank roster` restored as local-only display; (8) **General dead code audit** (prior session) — 13 dead functions across 7 files, 4 stale `COMM_PREFIX_DESCRIPTIONS` entries, all `---START/END CHANGES` fork markers. Locations: Database.lua (delta history section, ~90 lines); Events.lua (CleanupDeltaHistory calls ×2); Chat.lua (SendDeltaChain dead block, ~30 lines); DeltaComms.lua (SanitizeDelta, SanitizeItemDelta, GetPeerCapabilities); Guild.lua (MarkPlayerSeen, RECENTLY_SEEN_EXPIRY, GetPeerCapabilities wrapper, roster-sync layer); Constants.lua (PROTOCOL + PROTOCOL_MODES fields); ItemHighlight.lua (OVERLAY_ALPHA, OVERLAY_COLOR); UI/Requests.lua (layout constants, useTwoHeaderLayout, EnsureHeaderRows dead loop).
 
 **Active Issues:**
 - ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
@@ -97,6 +100,52 @@
 - ✅ [DELTA-022] **CRITICAL** Every delta sync was effectively a full sync — `ItemsEqual` compared `item1.Link ~= item2.Link` where `item1` was a minimal baseline item (Link=nil, from `expandMinimalItems` in `ComputeDelta`) and `item2` was a current inventory item (always has Link). `nil ~= "item:12345:..."` is always true, so every unchanged item landed in `modified[]` regardless of actual changes. The resulting delta contained the entire inventory as modified entries — same size as a full sync — defeating the point of delta protocol entirely. Fix: Only compare Links when both items have them. A nil Link on either side means the field is simply absent/unknown (minimal baseline), not a meaningful difference. Locations: DeltaComms.lua `ItemsEqual` (~446-490).
 - ✅ [DELTA-023] **HIGH** Stale `hasSnapshot` gate in `RespondToStateSummary` caused unnecessary full syncs after any reload — Both the mail-only-change and inventory-change branches in `RespondToStateSummary` checked `GetSnapshot()` before computing a delta, falling back to `SendAltData(norm, 0, 0, ...)` (full sync) when no snapshot existed. Since snapshots are in-memory only (PERF-012), they are lost on every reload. After DELTA-020 landed, `ComputeDelta` uses `requesterBaseline` from the state summary directly and no longer uses `GetSnapshot` at all — but the gate in `RespondToStateSummary` was never removed. Result: The first sync after any reload always sent a full "everything as additions" delta even though the requester sent their exact baseline in the state summary. Fix: Removed both `hasSnapshot` gates entirely. `ComputeDelta` handles `requesterHash == 0` (no prior data) internally; `requesterBaseline` covers all other cases. Locations: Guild.lua `RespondToStateSummary` mail-only branch (~1829) and inventory-change branch (~1847).
 - ✅ [DELTA-024] **LOW** Migration computes inventory hash using a different algorithm than `Bank:Scan()`, causing a false "inventory changed" event on every startup — The `Database.lua` migration block (post-load, deferred 0.5s) called `ComputeInventoryHash(alt.bank, alt.bags, money)` which routes through the pre-SYNC-006 code path and hashes `"B:bank.items|G:bags.items"` separately. `Bank:Scan()` always calls `ComputeInventoryHash(alt.items, nil, nil, money)` which is the SYNC-006 path and hashes `"I:aggregated_items"`. Same hash algorithm but different string input → different numeric output for identical inventory data. On startup the migration wrote the pre-SYNC-006 hash; then on first `Bank:Scan()` the SYNC-006 hash differed → `currentHash ~= previousHash` → version bumped, snapshot saved, and `dv2` broadcast triggered as if inventory had changed. Transient (self-healed after first scan), but caused one spurious version bump and broadcast per session. Fix: After `RecalculateAggregatedItems` populates `alt.items`, recompute hash using SYNC-006 calling convention to match `Bank:Scan()` format. Locations: Database.lua deferred migration block (~220).
+
+---
+
+## [MAINT-001] Dead code removal campaign
+
+**Severity:** LOW
+**Status:** Fixed 2026-04-01
+**Reported:** April 1, 2026
+
+**Symptom:**
+No user-visible bug. A full dead-code audit identified ~350 lines of unreachable or unused Lua spread across 9 files. The code ranged from harmless dead locals to a call to a function (`Guild:SendDeltaChain`) that was never defined anywhere in the codebase — a latent runtime error if that path had ever become reachable.
+
+**Root Causes (by cluster):**
+
+**(1) Delta history cluster** — `SaveDeltaHistory` was a no-op stub added as a placeholder; the database field it was meant to write was never populated. As a consequence, `GetDeltaHistory` always returned nil (checking that same field), and `CleanupDeltaHistory` always returned 0 via an early-exit on the nil field. PERF-011 added call sites for `CleanupDeltaHistory` (2s startup timer + 3-minute periodic), and Chat.lua's `togbank-q` handler had a 30-line block that called `GetDeltaHistory` and then `Guild:SendDeltaChain()` — a function with no definition anywhere in production code.
+
+**(2) DeltaComms dead functions** — `SanitizeDelta` and `SanitizeItemDelta` were written for a sanitization pass that was never wired into the send path; zero call sites existed outside the functions themselves. `GetPeerCapabilities` was only referenced from Tests.lua (not production), and its `Guild` wrapper had the same single caller.
+
+**(3) Guild.lua dead declarations** — `RECENTLY_SEEN_EXPIRY = 300` was defined as a module-level constant but never read; the "recently seen" expiry logic was designed but never implemented (only the `recentlySeen` table itself is still active, in `UpdateOnlineMember`). `MarkPlayerSeen()` had an empty function body and was explicitly annotated `DEPRECATED` with no callers.
+
+**(4) Constants.lua orphaned fields** — After the delta history functions were deleted, `DELTA_HISTORY_MAX_COUNT`, `DELTA_HISTORY_MAX_AGE`, `DELTA_CHAIN_MAX_HOPS`, and `DELTA_CHAIN_MAX_SIZE` became orphaned entries in the `PROTOCOL` table. Separately, `PROTOCOL_MODES` carried `sendLegacy` and `sendNew` boolean fields on all three entries (AUTO, LEGACY_ONLY, NEW_ONLY); Options.lua only ever reads `.name` and `.desc`, so these booleans were never consumed by any code path.
+
+**(5) ItemHighlight.lua dead locals** — `OVERLAY_ALPHA = 0.7` and `OVERLAY_COLOR = {0.2, 0.2, 0.2}` were declared as named constants but the `ApplyOverlay()` function hardcoded the same numbers inline in its `SetVertexColor` call. The constants were never referenced.
+
+**(6) UI/Requests.lua layout dead code** — A multi-layout system (`FILTER_LAYOUT_TOP` / `FILTER_LAYOUT_TWO_HEADERS`) was scaffolded but `FILTER_LAYOUT` was initialized to `FILTER_LAYOUT_TOP` and never changed. `useTwoHeaderLayout()` therefore always returned `false`. The `if not useTwoHeaderLayout() then` guard in `DrawFilterRow` was always true; its `else` branch (building a two-header layout) was never reachable. `EnsureHeaderRows` had a symmetric guard (`if not useTwoHeaderLayout() then return end`) followed by ~40 lines of dead two-header widget construction.
+
+**(7) Network roster sync layer** (prior session) — A full guild-roster broadcast/receive layer existed alongside the live P2P systems; none of its 5 send functions, 3 receive handlers, or 2 serializers had reachable production triggers.
+
+**(8) General dead code** (prior session) — 13 dead functions across 7 files, 4 stale `COMM_PREFIX_DESCRIPTIONS` entries for prefixes already removed by COMM-004/005, and all surviving `---START/END CHANGES` fork-merge markers.
+
+**Fix:**
+Removed all identified dead code. Notable decisions:
+- `MIN_DELTA_SIZE_RATIO = 0.3` was intentionally kept — referenced in Tests.lua and serves as meaningful protocol documentation.
+- `FEATURES.FORCE_DELTA_SYNC` / `FEATURES.FORCE_FULL_SYNC` kept — developer-togglable debug flags with live conditional checks.
+- `recentlySeen` table kept — still actively written by `UpdateOnlineMember`.
+- The always-true `if not useTwoHeaderLayout() then` guard was replaced with `do...end` (not removed outright) to preserve local variable scoping for `filterGroup`, `requesterFilter`, `bankFilter`, and related locals declared inside the block.
+
+**Locations:**
+- Database.lua: delta history section removed (~90 lines: `SaveDeltaHistory`, `GetDeltaHistory`, `CleanupDeltaHistory`)
+- Events.lua: two `CleanupDeltaHistory` call sites removed (`GUILD_RANKS_UPDATE` startup timer + `OnShareTimer` periodic)
+- Chat.lua: dead `SendDeltaChain` block in `togbank-q` `data.type == "alt"` handler removed (~30 lines)
+- DeltaComms.lua: `SanitizeDelta` (~50 lines), `SanitizeItemDelta` (~35 lines), `GetPeerCapabilities` (~7 lines) removed
+- Guild.lua: `GetPeerCapabilities` wrapper, `RECENTLY_SEEN_EXPIRY`, `MarkPlayerSeen`, roster-sync layer removed
+- Constants.lua: `DELTA_HISTORY_*` / `DELTA_CHAIN_*` PROTOCOL fields + `sendLegacy`/`sendNew` PROTOCOL_MODES fields removed
+- ItemHighlight.lua: `OVERLAY_ALPHA`, `OVERLAY_COLOR` removed
+- UI/Requests.lua: layout constants, `useTwoHeaderLayout()`, dead `EnsureHeaderRows` two-header loop removed
 
 ---
 

@@ -11,9 +11,6 @@ ItemHighlight.overlays = {} -- Texture overlays for dimming items
 ItemHighlight.lastBagnonSearch = nil -- Cache last Bagnon search string to avoid redundant signals
 
 -- Settings
-local OVERLAY_ALPHA = 0.7 -- Alpha for grey overlay (0=transparent, 1=opaque)
-local OVERLAY_COLOR = {0.2, 0.2, 0.2} -- RGB grey color
-
 -- Throttling to prevent Bagnon execution timeout
 local REFRESH_THROTTLE = 0.5 -- seconds
 local lastRefresh = 0

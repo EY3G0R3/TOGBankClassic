@@ -145,63 +145,6 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 end
 
 --[[
-	GetItemsInMail(itemID)
-	Returns list of alts that have the specified item in their mail
-
-	Parameters:
-		itemID - numeric item ID to search for
-
-	Returns:
-		array of { name, count, lastScan }
-]]
-function TOGBankClassic_MailInventory:GetItemsInMail(itemID)
-	local alts = {}
-
-	if not TOGBankClassic_Guild.Info or not TOGBankClassic_Guild.Info.alts then
-		return alts
-	end
-
-	for name, alt in pairs(TOGBankClassic_Guild.Info.alts) do
-		if alt.mail and alt.mail.items then
-			-- mail.items is an array, search for matching ID
-			for _, item in ipairs(alt.mail.items) do
-				if item.ID == itemID then
-					table.insert(alts, {
-						name = name,
-						count = item.Count,
-						lastScan = alt.mail.lastScan or 0
-					})
-					break  -- Found the item, no need to continue
-				end
-			end
-		end
-	end
-
-	return alts
-end
-
---[[
-	GetTotalInMail(itemID)
-	Returns total count of item across all alts' mail
-
-	Parameters:
-		itemID - numeric item ID to search for
-
-	Returns:
-		number - total count
-]]
-function TOGBankClassic_MailInventory:GetTotalInMail(itemID)
-	local total = 0
-	local alts = self:GetItemsInMail(itemID)
-
-	for _, alt in ipairs(alts) do
-		total = total + alt.count
-	end
-
-	return total
-end
-
---[[
 	GetMailDataAge(alt)
 	Returns age of mail scan data in seconds
 
@@ -217,23 +160,4 @@ function TOGBankClassic_MailInventory:GetMailDataAge(alt)
 	end
 
 	return time() - alt.mail.lastScan
-end
-
---[[
-	HasMailInventory(alt)
-	Checks if alt has mail inventory data
-
-	Parameters:
-		alt - alt data structure
-
-	Returns:
-		boolean - true if has mail data with items
-]]
-function TOGBankClassic_MailInventory:HasMailInventory(alt)
-	if not alt or not alt.mail or not alt.mail.items then
-		return false
-	end
-
-	-- Check if there are any items (mail.items is array format)
-	return #alt.mail.items > 0
 end

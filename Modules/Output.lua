@@ -100,10 +100,6 @@ function TOGBankClassic_Output:SetCommDebug(enabled)
 	self.commDebug = enabled
 end
 
-function TOGBankClassic_Output:GetCommDebug()
-	return self.commDebug
-end
-
 -- Store message in buffer
 function TOGBankClassic_Output:BufferDebugMessage(message)
 	table.insert(self.debugMessageBuffer, message)
@@ -383,19 +379,6 @@ function TOGBankClassic_Output:Debug(fmt, ...)
 	return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG]|r", fmt, ...)
 end
 
--- DebugComm: protocol communication details (controlled by COMMS category)
-function TOGBankClassic_Output:DebugComm(fmt, ...)
-	-- Only show if debug level is active AND COMMS category is enabled
-	if TOGBankClassic_Output.level < LOG_LEVEL.DEBUG then
-		return false
-	end
-	-- Check if COMMS category is enabled
-	if not self:IsCategoryEnabled("COMMS") then
-		return false
-	end
-	return Log(LOG_LEVEL.DEBUG, "|cff888888[DEBUG] (comm)|r", fmt, ...)
-end
-
 -- Info: sync status, normal operations
 function TOGBankClassic_Output:Info(fmt, ...)
 	return Log(LOG_LEVEL.INFO, nil, fmt, ...)
@@ -474,21 +457,6 @@ function TOGBankClassic_Output:SavePersistentLog()
 	TOGBankClassicDB_DebugLog = self.persistentLog
 
 	TOGBankClassic_Output:Debug("SYSTEM", "Saved %d persistent debug log entries to SavedVariables", #self.persistentLog)
-end
-
--- Export persistent log to formatted string for viewing
-function TOGBankClassic_Output:ExportPersistentLog(maxEntries)
-	maxEntries = maxEntries or 100
-	local output = {}
-	local startIdx = math.max(1, #self.persistentLog - maxEntries + 1)
-
-	for i = startIdx, #self.persistentLog do
-		local entry = self.persistentLog[i]
-		local timeStr = date("%Y-%m-%d %H:%M:%S", entry.timestamp)
-		table.insert(output, string.format("[%s] %s", timeStr, entry.message))
-	end
-
-	return table.concat(output, "\n")
 end
 
 -- Export persistent log in compact format (no formatting overhead)

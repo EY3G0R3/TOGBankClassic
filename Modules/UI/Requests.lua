@@ -3,10 +3,6 @@ TOGBankClassic_UI_Requests = {}
 local COLUMN_SPACING_H = 5
 local COLUMN_SPACING_V = 2
 local CONTENT_WIDTH_PADDING = 60
-local FILTER_LAYOUT_TOP = "top"
-local FILTER_LAYOUT_TWO_HEADERS = "two-headers"
-local FILTER_LAYOUT = FILTER_LAYOUT_TOP -- switch to FILTER_LAYOUT_TWO_HEADERS for the two-row header layout
-
 local COLUMNS = {
 	{ key = "date",      label = "Date",      width = 140, align = "center",                       tooltipTitle = "Date Submitted",  tooltipDetail = "When the request was submitted. Click to sort." },
 	{ key = "requester", label = "Requester", width = 150, align = "center", flex = true, weight = 1, tooltipTitle = "Requester",        tooltipDetail = "The guild member who submitted the request. Click to sort." },
@@ -57,10 +53,6 @@ local FILTER_SEPARATOR_HIST = "__tog_sep_hist__"
 local FILTER_SEPARATOR_LABEL = "|cFFFFCC55-----------------------------------------|r"
 local FILTER_SECTION_OPEN    = "|cFFFFCC55----------- Open requests -----------|r"
 local FILTER_SECTION_HIST    = "|cFFFFCC55--------------- History ---------------|r"
-
-local function useTwoHeaderLayout()
-	return FILTER_LAYOUT == FILTER_LAYOUT_TWO_HEADERS
-end
 
 local function isFilterSeparator(value)
 	return value == FILTER_SEPARATOR_ME_ANY
@@ -931,7 +923,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		self.CancelStaleBtn = cancelStaleBtn
 	end
 
-	if not useTwoHeaderLayout() then
+	do
 		local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
 		filterGroup:SetLayout("Table")
 		filterGroup:SetUserData("table", {
@@ -1446,40 +1438,6 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 		end
 	end
 
-	if not useTwoHeaderLayout() then
-		return
-	end
-
-	for i, col in ipairs(COLUMNS) do
-		local widget = self.FilterWidgets[i]
-		if not widget then
-			if col.key == "requester" then
-				local requesterFilter = TOGBankClassic_UI:Create("Dropdown")
-				requesterFilter:SetCallback("OnValueChanged", function(widget, _, value)
-					handleFilterChange(self, "requester", widget, value)
-				end)
-				widget = requesterFilter
-				self.FilterRequester = requesterFilter
-				SetupClickOutsideHandler(requesterFilter)
-			elseif col.key == "bank" then
-				local bankFilter = TOGBankClassic_UI:Create("Dropdown")
-				bankFilter:SetCallback("OnValueChanged", function(widget, _, value)
-					handleFilterChange(self, "bank", widget, value)
-				end)
-				widget = bankFilter
-				self.FilterBank = bankFilter
-				SetupClickOutsideHandler(bankFilter)
-			else
-				local spacer = TOGBankClassic_UI:Create("Label")
-				spacer:SetText("")
-				widget = spacer
-			end
-
-			tagColumnWidget(widget, i, false)
-			self.FilterWidgets[i] = widget
-			self.HeaderGroup:AddChild(widget)
-		end
-	end
 end
 
 function TOGBankClassic_UI_Requests:DrawHeader()

@@ -2,9 +2,7 @@
 TOGBankClassic_Bank = { ... }
 
 local function IsBankAvailable()
-	---START CHANGES
 	local _, bagType = C_Container.GetContainerNumFreeSlots(BANK_CONTAINER)
-	---END CHANGES
 	return bagType ~= nil
 end
 
@@ -16,13 +14,11 @@ local function ScanBag(bag, slots)
 	local count = 0
 	local items = {}
 	for slot = 1, slots do
-		---START CHANGES
 		local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
 		if itemInfo then
 			local itemCount = itemInfo.stackCount
 			local itemLink = itemInfo.hyperlink
 			local itemID = itemInfo.itemID
-			---END CHANGES
 			if itemLink then
 				local key = itemID .. itemLink
 				if items[key] then
@@ -43,9 +39,7 @@ local function ScanBags(bag_info)
 	local numslots = 0
 	local bagItems = nil
 	for bag = 0, 4 do
-		---START CHANGES
 		local slots = C_Container.GetContainerNumSlots(bag)
-		---END CHANGES
 		local count, items = ScanBag(bag, slots)
 		if bagItems == nil then
 			bagItems = items
@@ -74,9 +68,7 @@ local function ScanBank(bank_info)
 	local numslots = NUM_BANKGENERIC_SLOTS
 	local total, bankItems = ScanBag(BANK_CONTAINER, NUM_BANKGENERIC_SLOTS)
 	for bag = 5, 11 do
-		---START CHANGES
 		local slots = C_Container.GetContainerNumSlots(bag)
-		---END CHANGES
 		local count, items = ScanBag(bag, slots)
 		for k, v in pairs(items) do
 			if bankItems[k] then
@@ -371,9 +363,7 @@ end
 function TOGBankClassic_Bank:HasInventorySpace()
 	local total = 0
 	for bag = 0, 4 do
-		---START CHANGES
 		local slots, _ = C_Container.GetContainerNumFreeSlots(bag)
-		---END CHANGES
 		total = total + slots
 	end
 	return total > 0

@@ -66,9 +66,7 @@ function TOGBankClassic_UI_Donations:DrawWindow()
 	donations:SetCallback("OnClose", OnClose)
 	donations:SetTitle("Donations")
 	donations:SetLayout("Flow")
-	---START CHANGES
 	donations:SetWidth(350)
-	---END CHANGES
 	donations:EnableResize(false)
 	--handle keyboard events
 	donations.frame:EnableKeyboard(true)

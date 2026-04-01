@@ -383,11 +383,9 @@ function TOGBankClassic_Mail:Open(mailId)
 	end
 
 	local info = TOGBankClassic_Guild.Info
-	---START CHANGES
 	if not info then
 		return
 	end
-	---END CHANGES
 	local player = TOGBankClassic_Guild:GetPlayer()
 	local norm = TOGBankClassic_Guild:GetNormalizedPlayer(player)
 

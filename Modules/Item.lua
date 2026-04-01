@@ -12,15 +12,6 @@ local ITEM_CLASSES_NEEDING_LINK = {
 	[4] = true,  -- Armor (chest, legs, trinkets, rings, necks, etc)
 }
 
--- Helper to count items in aggregated table
-function TOGBankClassic_Item:CountItems(items)
-	local count = 0
-	for _ in pairs(items) do
-		count = count + 1
-	end
-	return count
-end
-
 -- Check if an item needs its Link preserved based on item class
 -- Gear (weapons/armor) can have random suffixes, so Link is required
 -- Consumables and trade goods don't vary, so Link can be stripped

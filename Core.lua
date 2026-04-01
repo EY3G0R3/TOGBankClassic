@@ -262,18 +262,6 @@ function TOGBankClassic_Core:ValidateDeltaStructure(delta)
 	return TOGBankClassic_DeltaComms:ValidateDeltaStructure(delta)
 end
 
-function TOGBankClassic_Core:ValidateItemDelta(itemDelta)
-	return TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
-end
-
-function TOGBankClassic_Core:SanitizeDelta(delta)
-	return TOGBankClassic_DeltaComms:SanitizeDelta(delta)
-end
-
-function TOGBankClassic_Core:SanitizeItemDelta(itemDelta)
-	return TOGBankClassic_DeltaComms:SanitizeItemDelta(itemDelta)
-end
-
 function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, mail, money)
 	return TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mail, money)
 end

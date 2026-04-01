@@ -164,17 +164,6 @@ function Performance:RecordMemory(label)
 	end
 end
 
--- Helper to wrap a function with timing
-function Performance:WrapFunction(operationName, func)
-	return function(...)
-		local startTime = debugprofilestop()
-		local results = {func(...)}
-		local duration = debugprofilestop() - startTime
-		self:RecordOperation(operationName, duration)
-		return unpack(results)
-	end
-end
-
 -- Track a function execution with timing (returns the function's return values)
 function Performance:Track(operationName, func)
 	if not TOGBankClassic_PerfEnabled then

@@ -114,10 +114,7 @@ function TOGBankClassic_Events:RegisterEvents()
 		end)
 	end
 
-	self:SetTimer()
-	---START CHANGES
 	self:SetShareTimer()
-	---END CHANGES
 	TOGBankClassic_Bank.eventsRegistered = true
 end
 
@@ -146,17 +143,6 @@ function TOGBankClassic_Events:UnregisterEvents()
 	self:UnregisterEvent("PLAYER_REGEN_DISABLED") --player entered combat
 end
 
-function TOGBankClassic_Events:SetTimer()
-	TOGBankClassic_Core:ScheduleTimer(function(...)
-		TOGBankClassic_Events:OnTimer()
-	end, TIMER_INTERVALS.ROSTER_AND_ALT_SYNC)
-end
-
-function TOGBankClassic_Events:OnTimer()
-	self:SetTimer()
-end
-
----START CHANGES
 function TOGBankClassic_Events:SetShareTimer()
 	if self.shareTimer then
 		TOGBankClassic_Core:CancelTimer(self.shareTimer)
@@ -209,16 +195,6 @@ function TOGBankClassic_Events:OnShareTimer()
 	-- REQUEST-001: Automatic index-based request sync on periodic timer
 	TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
 
-	-- PERF-011: Periodically prune stale delta history so SavedVariables stays small.
-	-- Runs every VERSION_BROADCAST interval (3 min); cheap when already clean.
-	local guild = TOGBankClassic_Guild:GetGuild()
-	if guild then
-		local removed = TOGBankClassic_Database:CleanupDeltaHistory(guild)
-		if removed and removed > 0 then
-				TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "Periodic deltaHistory prune: removed %d stale entries", removed)
-		end
-	end
-
 	-- REQUEST-RETIRE-001: Prune expired done requests on the periodic timer so fulfilled/
 	-- cancelled requests don't accumulate indefinitely.  PruneIfNeeded is throttled
 	-- internally (5-min guard) so calling it here every ~3 min is safe.
@@ -226,7 +202,6 @@ function TOGBankClassic_Events:OnShareTimer()
 
 	self:SetShareTimer()
 end
----END CHANGES
 
 -- Delta-specific version broadcast (SYNC-001 fix)
 -- P2P-006: Broadcast our hash list to the guild so peers can offer newer data.
@@ -501,17 +476,6 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 		if cleaned and cleaned > 0 then
 			TOGBankClassic_Output:Info("Cleaned %d malformed alt entries from saved database", cleaned)
 		end
-		-- PERF-011: Prune stale delta history entries (>1 hour old) on startup.
-		-- CleanupDeltaHistory exists but was never called, allowing deltaHistory to grow
-		-- to 30,000+ lines in SavedVariables, causing a 3-5 second freeze on load.
-		-- Defer slightly so init work completes first; the cleanup itself is fast (table
-		-- iteration), and the trimmed data is written to disk on the next logout/reload.
-		C_Timer.After(2, function()
-			local removed = TOGBankClassic_Database:CleanupDeltaHistory(guild)
-			if removed and removed > 0 then
-				TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "Pruned %d stale deltaHistory entries on startup", removed)
-			end
-		end)
 	end
 end
 

@@ -171,9 +171,7 @@ function TOGBankClassic_UI_Mail:DrawContent()
 					table.insert(items, { ID = id, Link = link, Count = quantity })
 				end
 			else
-				---START CHANGES
 				self:RedrawContent()
-				---END CHANGES
 				return
 			end
 		end

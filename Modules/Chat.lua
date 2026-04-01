@@ -62,7 +62,6 @@ function TOGBankClassic_Chat:Init()
 	self.addon_outdated = false
 	self.online_bankers = {}  -- v0.8.0: tracks online bankers for pull-based protocol
 
-	self.last_roster_sync = nil
 	self.last_alt_sync = {}
 	self.sync_queue = {}
 	self.is_syncing = false
@@ -216,46 +215,6 @@ local function FormatSyncStatus(status)
 		return "(ignored)"
 	end
 	return ""
-end
-
-function TOGBankClassic_Chat:IsAltDataAllowed_Restrictive(sender, claimedNorm)
-	-- 'sender' was normalized near the top of OnCommReceived
-	local hasExistingAlt = false
-	if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
-		local existingAlt = TOGBankClassic_Guild.Info.alts[claimedNorm]
-		hasExistingAlt = existingAlt ~= nil and type(existingAlt) == "table"
-	end
-	local allowed = false
-	-- If the sender is the claimed owner, always accept
-	if sender == claimedNorm then
-		allowed = true
-	else
-		-- If the claimed owner is a registered bank toon, only accept from bank-marked senders
-		local claimedIsBank = TOGBankClassic_Guild:IsBank(claimedNorm)
-		if claimedIsBank then
-			if
-				TOGBankClassic_Guild
-				and TOGBankClassic_Guild.SenderHasGbankNote
-				and TOGBankClassic_Guild:SenderHasGbankNote(sender)
-			then
-				allowed = true
-			else
-				allowed = false
-				-- Allow relayed data only when we have no entry yet
-				if not hasExistingAlt then
-					allowed = true
-				end
-			end
-		else
-			-- claimed owner is not a bank toon: accept delegated shares from anyone
-			allowed = true
-		end
-	end
-	return allowed
-end
-
-function TOGBankClassic_Chat:IsAltDataAllowed_Permissive(_, _)
-	return true
 end
 
 -- SYNC-001 fix: Roster-based validation to prevent cross-guild data bleed
@@ -709,32 +668,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			if data.type == "alt" then
 				local nameNorm = TOGBankClassic_Guild:NormalizeName(data.name)
 
-				-- Check if query includes version and we can send delta chain
-				if data.version and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts[nameNorm] then
-					local currentVersion = TOGBankClassic_Guild.Info.alts[nameNorm].version
-					local requestedVersion = data.version
-
-					-- If requester has old version, try to send delta chain immediately
-					if type(requestedVersion) == "number" and type(currentVersion) == "number" and requestedVersion < currentVersion then
-						local deltaChain = TOGBankClassic_Database:GetDeltaHistory(TOGBankClassic_Guild.Info.name, nameNorm, requestedVersion, currentVersion)
-						if deltaChain and #deltaChain > 0 then
-							TOGBankClassic_Output:Debug(
-								"DELTA",
-								"BUILD",
-								"Query from %s for %s v%d (have v%d), sending %d-delta chain",
-								sender,
-								nameNorm,
-								requestedVersion,
-								currentVersion,
-								#deltaChain
-							)
-							TOGBankClassic_Guild:SendDeltaChain(nameNorm, deltaChain, sender)
-							return
-						end
-					end
-				end
-
-				-- Fall back to normal query response
 				table.insert(self.sync_queue, nameNorm)
 				if not self.is_syncing then
 					TOGBankClassic_Chat:ProcessQueue()
@@ -1082,28 +1015,6 @@ end
 			TOGBankClassic_Output:Debug("SYNC", "MERGE", "[SYNC-010] togbank-rm requests-log received from %s, about to call ReceiveRequestMutations", sender)
 		end
 
-		if data.type == "roster" then
-			-- only accept roster updates from a sender that is marked as a bank in guild notes, or from the guild master
-			local allowed = (
-				TOGBankClassic_Guild
-				and TOGBankClassic_Guild.SenderHasGbankNote
-				and TOGBankClassic_Guild:SenderHasGbankNote(sender)
-			) or TOGBankClassic_Guild:SenderIsGM(sender)
-			if TOGBankClassic_Guild:ConsumePendingSync("roster", sender) then
-				allowed = true
-			end
-			self:Debug(
-				"SYNC",
-				"RECEIVE",
-				">",
-				ColorPlayerName(sender),
-				SHARES_COLOR,
-				"roster data. We",
-				allowed and "accept it." or "do not accept it."
-			)
-			-- Roster sync removed: Roster is now rebuilt locally from guild notes
-		end
-
 		if data.type == "requests-index" then
 			self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR, "requests index. We accept it by default.")
 			TOGBankClassic_Guild:ReceiveRequestsIndex(data, sender)
@@ -1365,10 +1276,6 @@ end
 			end
 		elseif data.type == "wipe-command" then
 			TOGBankClassic_Guild:Wipe("reply")
-		elseif data.type == "roster-broadcast" then
-			if data.roster then
-				TOGBankClassic_Guild:ReceiveRosterData(sender, data.roster)
-			end
 		-- SETTINGS-001: Receive and apply guild-wide settings broadcast from an authorized sender
 		elseif data.type == "guild-settings" then
 			if data.settings then
@@ -1969,10 +1876,17 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "roster",
-		help = "guild banks and members that can read the officer note can use this command to share updated roster data with online guild members",
-		expert = true,
+		help = "print the list of known guild bank characters from your local guild notes",
 		handler = function()
-			TOGBankClassic_Guild:AuthorRosterData()
+			local banks = TOGBankClassic_Guild:GetBanks()
+			if not banks or #banks == 0 then
+				TOGBankClassic_Output:Response("No guild bank characters found (no 'gbank' in public or officer notes).")
+				return
+			end
+			TOGBankClassic_Output:Response("Guild bank characters (%d):", #banks)
+			for _, name in ipairs(banks) do
+				TOGBankClassic_Output:Response("  %s", name)
+			end
 		end,
 	},
 	{

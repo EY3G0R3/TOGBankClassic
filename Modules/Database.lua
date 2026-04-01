@@ -39,7 +39,6 @@ function TOGBankClassic_Database:Reset(name)
 	deltaSnapshotsCache[name] = nil
 
 	self.db.faction[name] = {
-		---END CHANGES
 		name = name,
 		roster = {},
 		alts = {},
@@ -350,58 +349,6 @@ function TOGBankClassic_Database:ValidateSnapshot(snapshot)
 	return true
 end
 
--- Get the age of a snapshot in seconds
--- PERF-012: Uses in-memory cache only
-function TOGBankClassic_Database:GetSnapshotAge(name, altName)
-	if not name or not altName then
-		return nil
-	end
-
-	local cache = deltaSnapshotsCache[name]
-	if not cache then
-		return nil
-	end
-
-	local snapshot = cache[altName]
-	if not snapshot or not snapshot.timestamp then
-		return nil
-	end
-
-	return GetServerTime() - snapshot.timestamp
-end
-
--- Clean up old snapshots (older than DELTA_SNAPSHOT_MAX_AGE)
--- PERF-012: Uses in-memory cache only
-function TOGBankClassic_Database:CleanupOldSnapshots(name)
-	if not name then
-		return 0
-	end
-
-	local cache = deltaSnapshotsCache[name]
-	if not cache then
-		return 0
-	end
-
-	local currentTime = GetServerTime()
-	local removed = 0
-
-	for altName, snapshot in pairs(cache) do
-		if snapshot and snapshot.timestamp then
-			local age = currentTime - snapshot.timestamp
-			if age > PROTOCOL.DELTA_SNAPSHOT_MAX_AGE then
-				cache[altName] = nil
-				removed = removed + 1
-			end
-		else
-			-- Malformed snapshot, remove it
-			cache[altName] = nil
-			removed = removed + 1
-		end
-	end
-
-	return removed
-end
-
 -- Deep copy function for snapshot creation
 function TOGBankClassic_Database:DeepCopy(obj)
 	if type(obj) ~= "table" then
@@ -416,99 +363,6 @@ function TOGBankClassic_Database:DeepCopy(obj)
 	return copy
 end
 
--- Delta History Management (DELTA-006: Delta Chain Replay)
-
--- PERF-012: SaveDeltaHistory is a no-op. Delta chain replay was only triggered by
--- deltaData.baseVersion which v0.8.0 stopped sending. GetDeltaHistory/togbank-dr/togbank-dc
--- callers are all dead code. Keeping the function stub so Chat.lua compile-time refs are safe.
-function TOGBankClassic_Database:SaveDeltaHistory(name, altName, baseVersion, version, delta)
-	-- No-op: delta chain replay is dead code since v0.8.0
-	return false
-end
-
--- Get delta history for an alt within a version range
-function TOGBankClassic_Database:GetDeltaHistory(name, altName, fromVersion, toVersion)
-	if not name or not altName then
-		return nil
-	end
-
-	local db = self.db.faction[name]
-	if not db or not db.deltaHistory or not db.deltaHistory[altName] then
-		return nil
-	end
-
-	-- Build chain of deltas from fromVersion to toVersion
-	local chain = {}
-	local currentVersion = fromVersion
-
-	for _, deltaEntry in ipairs(db.deltaHistory[altName]) do
-		if deltaEntry.baseVersion == currentVersion and deltaEntry.version <= toVersion then
-			table.insert(chain, {
-				baseVersion = deltaEntry.baseVersion,
-				version = deltaEntry.version,
-				delta = deltaEntry.delta
-			})
-			currentVersion = deltaEntry.version
-
-			-- Stop if we've reached the target
-			if currentVersion == toVersion then
-				break
-			end
-		end
-	end
-
-	-- Return nil if we couldn't build a complete chain
-	if currentVersion ~= toVersion then
-		return nil
-	end
-
-	return chain
-end
-
--- Clean up old delta history (older than DELTA_HISTORY_MAX_AGE)
-function TOGBankClassic_Database:CleanupDeltaHistory(name)
-	if not name then
-		return 0
-	end
-
-	local db = self.db.faction[name]
-	if not db or not db.deltaHistory then
-		return 0
-	end
-
-	local currentTime = GetServerTime()
-	local maxAge = PROTOCOL.DELTA_HISTORY_MAX_AGE or 3600
-	local totalRemoved = 0
-
-	for altName, history in pairs(db.deltaHistory) do
-		if type(history) == "table" then
-			-- Remove old entries
-			local i = 1
-			while i <= #history do
-				if history[i] and history[i].timestamp then
-					local age = currentTime - history[i].timestamp
-					if age > maxAge then
-						table.remove(history, i)
-						totalRemoved = totalRemoved + 1
-					else
-						i = i + 1
-					end
-				else
-					-- Malformed entry
-					table.remove(history, i)
-					totalRemoved = totalRemoved + 1
-				end
-			end
-
-			-- Remove empty histories
-			if #history == 0 then
-				db.deltaHistory[altName] = nil
-			end
-		end
-	end
-
-	return totalRemoved
-end
 
 -- Protocol Version Tracking
 

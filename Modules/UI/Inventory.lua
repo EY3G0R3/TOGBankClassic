@@ -93,9 +93,7 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 		window:SetStatusTable(positions.inventory)
 	end
 	--handle keyboard events
-	---START CHANGES
 	window.frame:SetResizeBounds(500, 500)
-	---END CHANGES
 	window.frame:EnableKeyboard(true)
 	window.frame:SetPropagateKeyboardInput(true)
 	window.frame:SetScript("OnKeyDown", function(self, event)
@@ -156,10 +154,6 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 		},
 	})
 	buttonContainer:SetFullWidth(true)
-	---START CHANGES
-	--buttonContainer.frame:SetBackdropColor(0, 0, 0, 0)
-	--buttonContainer.frame:SetBackdropBorderColor(0, 0, 0, 0)
-	---END CHANGES
 	buttonContainer.frame:ClearAllPoints()
 	buttonContainer.content:SetPoint("TOPLEFT", 0, 5)
 	buttonContainer.content:SetPoint("BOTTOMRIGHT", 0, -5)
@@ -290,10 +284,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	for _, player in pairs(players) do
 		local norm = TOGBankClassic_Guild:NormalizeName(player)
 		local alt = info.alts[norm]
-		---START CHANGES
-		--if alt then
 		if alt and type(alt) == "table" then
-			---END CHANGES
 			if not first_tab then
 				first_tab = player
 			end

@@ -206,7 +206,7 @@ function TOGBankClassic_Options:Init()
 			statusBarNetworkInfo = false,  -- Show sync activity in inventory status bar
 		},
 		global = {
-			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, enableRosterSync = false, integrityCheckDiagnostics = false },
+			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, integrityCheckDiagnostics = false },
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
@@ -236,9 +236,6 @@ function TOGBankClassic_Options:Init()
 	end
 	if self.db.global.bank["muteWarnings"] == nil then
 		self.db.global.bank["muteWarnings"] = false
-	end
-	if self.db.global.bank["enableRosterSync"] == nil then
-		self.db.global.bank["enableRosterSync"] = false
 	end
 	if self.db.global.bank["integrityCheckDiagnostics"] == nil then
 		self.db.global.bank["integrityCheckDiagnostics"] = false
@@ -354,19 +351,6 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return self.db.global.bank["muteWarnings"]
-						end,
-					},
-					["enableRosterSync"] = {
-						order = 2.8,
-						type = "toggle",
-						width = "full",
-						name = "Enable Roster Sync (Officer Notes)",
-						desc = "Enable if your guild uses officer notes for 'gbank' identification and regular members can't see them. Allows bankers/officers to broadcast the roster list to guild members.",
-						set = function(_, v)
-							self.db.global.bank["enableRosterSync"] = v
-						end,
-						get = function()
-							return self.db.global.bank["enableRosterSync"]
 						end,
 					},
 					["protocolMode"] = {
@@ -670,9 +654,6 @@ function TOGBankClassic_Options:IsIntegrityCheckDiagnosticsEnabled()
 	return self.db.global.bank["integrityCheckDiagnostics"] or false
 end
 
-function TOGBankClassic_Options:IsRosterSyncEnabled()
-	return self.db.global.bank["enableRosterSync"] or false
-end
 function TOGBankClassic_Options:IsStatusBarNetworkInfoEnabled()
 	if not self.db or not self.db.char then return true end
 	local v = self.db.char.statusBarNetworkInfo
@@ -705,7 +686,5 @@ end
 
 function TOGBankClassic_Options:Open()
 	-- NOTE: WoW API bug, requires call twice to open to specific category
-	---START CHANGES
 	Settings.OpenToCategory("TOGBankClassic")
-	---END CHANGES
 end
