@@ -379,6 +379,14 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		if prefix == "togbank-hlr" then
 			TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR deserialize failed: %s", tostring(data))
 		end
+		-- A corrupt togbank-ri chunk means we may have missed request IDs from that range.
+		-- The receiver would never know to query for those records, so re-request the full
+		-- index from the sender. force=true bypasses the per-sender cooldown since this
+		-- is a genuine data loss event, not a speculative re-query.
+		if prefix == "togbank-ri" then
+			TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "togbank-ri CRC failure from %s — re-requesting index", sender)
+			TOGBankClassic_Guild:QueryRequestsIndex(sender, "NORMAL", true)
+		end
 		return
 	end
 
