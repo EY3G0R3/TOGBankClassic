@@ -38,8 +38,6 @@ function TOGBankClassic_Database:Reset(name)
 	-- PERF-012: Clear in-memory snapshot cache for this guild on reset
 	deltaSnapshotsCache[name] = nil
 
-	---START CHANGES
-	--self.db.factionrealm[name] = {
 	self.db.faction[name] = {
 		---END CHANGES
 		name = name,
@@ -93,15 +91,11 @@ function TOGBankClassic_Database:ResetPlayer(name, player)
 		return
 	end
 
-	---START CHANGES
-	--if not self.db.factionrealm[name].alts[player] then return end
 	if not self.db.faction[name].alts[player] then
 		return
 	end
 
-	--self.db.factionrealm[name].alts[player] = {}
 	self.db.faction[name].alts[player] = {}
-	---END CHANGES
 
 	TOGBankClassic_Output:Response("Reset Player Database")
 end
@@ -111,19 +105,13 @@ function TOGBankClassic_Database:Load(name)
 		return
 	end
 
-	---START CHANGES
-	--local db = self.db.factionrealm[name]
 	local db = self.db.faction[name]
-	---END CHANGES
 
 	-- Only reset if there's truly no data (nil). Otherwise initialize missing fields.
 	-- This prevents data loss when some fields are missing but others (like requests) exist.
 	if db == nil then
 		TOGBankClassic_Database:Reset(name)
-		---START CHANGES
-		--db = self.db.factionrealm[name]
 		db = self.db.faction[name]
-		---END CHANGES
 	else
 		-- Initialize missing fields without wiping existing data
 		if db.name == nil then

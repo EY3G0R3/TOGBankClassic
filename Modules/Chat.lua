@@ -4,84 +4,49 @@ TOGBankClassic_Chat = {}
 local preDebugLogLevel = nil
 
 --[[
-Comms system breakdown as of 2026-03-18:
+Comms system breakdown as of 2026-04-01:
 
   Active Protocol Messages
 
-  ┌──────────────────┬──────────────────────────────────────────────────────┐
-  │      Prefix      │                       Purpose                        │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-d        │ Legacy full alt sync                                 │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-hl       │ Hash broadcasts + P2P offers ← overloaded            │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-hlr      │ Hash list replies from banker                        │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-d4       │ Delta sync v2 (linkless)                             │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-rm       │ Request mutations (separate throttle bucket)         │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-rd       │ Request data responses (key-value)                   │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-dv2      │ Version/capability broadcast                         │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-r        │ Pull-based alt requests + legacy                     │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-rr       │ Pull-based handshake replies + P2P session handshake │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-state    │ State summary exchange                               │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-nochange │ No-change + hash-correction replies                  │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-h        │ Hello broadcast                                      │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-hr       │ Hello reply                                          │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-ri       │ Request index v1 (positional)                        │
-  ├──────────────────┼──────────────────────────────────────────────────────┤
-  │ togbank-rd2      │ Request data v2 (positional)                         │
-  └──────────────────┴──────────────────────────────────────────────────────┘
+  ┌──────────────────┬────────────────┬─────────────┬───────────────────────────────────────────────────────────────────────────────────┐
+  │      Prefix      │    Channel     │  Priority   │                                      Purpose                                      │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-d4       │ GUILD or       │ BULK        │ Delta inventory data (no item links, bandwidth-optimized) — current standard      │
+  │                  │ WHISPER        │             │                                                                                   │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-hl       │ GUILD          │ NORMAL/BULK │ Multi-purpose hash protocol: hash-list-broadcast (banker→all), share-request,     │
+  │                  │                │             │ wipe-command                                                                      │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-hlr      │ WHISPER        │ ALERT       │ Hash list reply — peer responds to banker's broadcast with their matching alts    │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-r        │ GUILD or       │ NORMAL/BULK │ Universal query — requests alt data, requests-index, or requests-by-id            │
+  │                  │ WHISPER        │             │                                                                                   │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rr       │ WHISPER        │ NORMAL      │ P2P handshake control: sync-request / sync-accept / sync-busy                     │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-state    │ WHISPER        │ NORMAL      │ Requester sends minimal state summary to responder; responder decides delta vs.   │
+  │                  │                │             │ full                                                                              │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-nochange │ WHISPER        │ NORMAL      │ Responder tells requester "your data is already current, nothing to send"         │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rd       │ GUILD or       │ NORMAL      │ Request log data: chunked requests-index, requests-by-id responses, mutations     │
+  │                  │ WHISPER        │             │                                                                                   │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rm       │ GUILD          │ ALERT       │ Request log mutations (add/cancel/complete) — ALERT priority so it isn't blocked  │
+  │                  │                │             │ by BULK sends                                                                     │
+  └──────────────────┴────────────────┴─────────────┴───────────────────────────────────────────────────────────────────────────────────┘
 
-  ---
-  togbank-hl subtypes
-
-  GUILD sends:
-
-  ┌─────────────────────┬─────────────────┬──────────┬───────────────────────────────┐
-  │       Subtype       │      Size       │ Priority │          Where sent           │
-  ├─────────────────────┼─────────────────┼──────────┼───────────────────────────────┤
-  │ hash-list-broadcast │ large (4–6KB)   │ BULK     │ Events.lua:293                │
-  ├─────────────────────┼─────────────────┼──────────┼───────────────────────────────┤
-  │ roster-broadcast    │ medium (varies) │ NORMAL   │ Guild.lua:1547                │
-  ├─────────────────────┼─────────────────┼──────────┼───────────────────────────────┤
-  │ guild-settings      │ small           │ NORMAL   │ Guild.lua:1622                │
-  ├─────────────────────┼─────────────────┼──────────┼───────────────────────────────┤
-  │ alt-request         │ small           │ NORMAL   │ Chat.lua:1238, Guild.lua:1144 │
-  ├─────────────────────┼─────────────────┼──────────┼───────────────────────────────┤
-  │ wipe-command        │ small           │ BULK     │ Guild.lua:3391                │
-  ├─────────────────────┼─────────────────┼──────────┼───────────────────────────────┤
-  │ share-request       │ small           │ NORMAL   │ Guild.lua:3437, 3499          │
-  └─────────────────────┴─────────────────┴──────────┴───────────────────────────────┘
-
-  WHISPER sends:
-
-  ┌───────────────────┬───────┬────────────────┐
-  │      Subtype      │ Size  │   Where sent   │
-  ├───────────────────┼───────┼────────────────┤
-  │ hash-offer        │ small │ Chat.lua:730   │
-  ├───────────────────┼───────┼────────────────┤
-  │ hash-list-request │ small │ Guild.lua:1080 │
-  └───────────────────┴───────┴────────────────┘
+  Dead Code / Unregistered — Never Sent: none remaining — cleanup complete.
 
 
  A typical sync looks like this:
 
-  1. Banker scans bank → broadcasts togbank-dv2 (hash) to guild
-  2. Peer receives hash, compares to local — if stale, initiates P2P session via togbank-rr handshake
+  1. Banker scans bank → broadcasts togbank-hl (hash-list-broadcast) to guild
+  2. Peer receives hashes, compares to local — if stale, initiates P2P session via togbank-rr handshake
   3. Peer sends togbank-state (minimal summary) to banker
   4. Banker compares hashes:
     - Same → togbank-nochange
-    - Different → togbank-d4 (delta) or togbank-d (full, legacy)
+    - Different → togbank-d4 (delta)
   5. Separately, togbank-r (requests-index query) → togbank-rd (chunked index response) → togbank-r (requests-by-id) → togbank-rd (request
   data)
   6. New/changed requests propagate immediately via togbank-rm (ALERT priority)
@@ -103,20 +68,12 @@ function TOGBankClassic_Chat:Init()
 	self.is_syncing = false
 	self.last_share_sync = nil
 
-	-- Protocol prioritization: delay dv processing to allow dv2 to arrive first
-	self.pending_dv_messages = {}  -- {sender = {altName = {timer, data, ...}}}
-	self.DV_DELAY = 5  -- seconds to wait before processing dv messages
-
 	-- PERF-020: Batch hash broadcast processing to prevent stuttering from sync storms
 	self.hashBroadcastQueue = {}  -- {sender, data, distribution, isSenderBanker, altCount}
 	self.hashBroadcastTimer = nil
 	self.HASH_BROADCAST_BATCH_DELAY = 0.15  -- seconds to batch incoming broadcasts
 
-	TOGBankClassic_Core:RegisterComm("togbank-d", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	-- togbank-d2, togbank-d3 removed: never sent in code (legacy docs only)
+	-- togbank-d, togbank-d2, togbank-d3 removed: never sent in current code (use togbank-d4)
 	TOGBankClassic_Core:RegisterComm("togbank-hl", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -130,7 +87,7 @@ function TOGBankClassic_Chat:Init()
 	end)
 
 	-- SYNC-010: Dedicated prefix for request mutations (add/cancel/complete)
-	-- Uses separate throttle bucket from togbank-d to prevent BULK messages from blocking ALERT mutations
+	-- Uses separate throttle bucket from togbank-d4 to prevent BULK snapshot syncs from blocking ALERT mutations
 	TOGBankClassic_Core:RegisterComm("togbank-rm", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -139,17 +96,7 @@ function TOGBankClassic_Chat:Init()
 	-- togbank-dr was only triggered by deltaData.baseVersion which v0.8+ stopped sending.
 	-- togbank-dc was the paired response; both are dead code paths. Slots freed for future use.
 
-	-- togbank-v registration REMOVED: never sent (all sends commented out), ignored on receive by delta clients
-	-- Slot freed for togbank-rd (request data) which was previously at slot #25, over WoW's 16-prefix limit
 	TOGBankClassic_Core:RegisterComm("togbank-rd", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	-- togbank-dv removed: all clients now use togbank-dv2 (SYNC-006+); slot freed
-	-- SYNC-006: New protocol for aggregated items structure
-	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[INIT] Registering togbank-dv2 handler")
-	TOGBankClassic_Core:RegisterComm("togbank-dv2", function(prefix, message, distribution, sender)
-		TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[HANDLER] togbank-dv2 called: %s from %s (%d bytes)", prefix, sender, #message)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
@@ -169,14 +116,6 @@ function TOGBankClassic_Chat:Init()
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
 
-	-- togbank-h / togbank-hr: hello/hello-reply handshake (now slots 14/15 after legacy removals)
-	TOGBankClassic_Core:RegisterComm("togbank-h", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-hr", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
 	TOGBankClassic_Core:RegisterComm("togbank-ri", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -198,8 +137,6 @@ function TOGBankClassic_Chat:PerformSync()
 	-- v0.8.0: Use delta version broadcast instead of legacy sync
 	-- SYNC-008 fix: Use ALERT priority for manual sync so it happens immediately
 	TOGBankClassic_Events:SyncDeltaVersion("ALERT")
-	-- SYNC-008 fix: Also send legacy version broadcast like the automatic timer does
-	--TOGBankClassic_Events:Sync("ALERT")  -- COMMENTED OUT: togbank-v ignored by delta clients
 	local hashListRequested = false
 	if PEER_TO_PEER and PEER_TO_PEER.ENABLED then
 		hashListRequested = TOGBankClassic_Guild:RequestHashListFromBanker()
@@ -352,321 +289,7 @@ function TOGBankClassic_Chat:IsAltDataAllowed(sender, claimedNorm)
 	return self:IsAltDataAllowed_RosterBased(sender, claimedNorm)
 end
 
--- Cancel pending dv messages for specific alts (called when dv2 arrives)
-function TOGBankClassic_Chat:CancelPendingDvMessages(sender, altNames)
-	if not self.pending_dv_messages[sender] then
-		return
-	end
-
-	for _, altName in ipairs(altNames) do
-		local pending = self.pending_dv_messages[sender][altName]
-		if pending and pending.timer then
-			TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Canceling pending dv message for %s (dv2 arrived)", altName)
-			pending.timer:Cancel()
-			self.pending_dv_messages[sender][altName] = nil
-		end
-	end
-end
-
--- Process delayed dv message after timer expires
-function TOGBankClassic_Chat:ProcessDelayedDvMessage(sender, data, prefix, message, distribution)
-	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Processing delayed dv message from %s (no dv2 received)", sender)
-	-- Remove from pending queue
-	if self.pending_dv_messages[sender] then
-		self.pending_dv_messages[sender] = nil
-	end
-	-- Process the message normally
-	self:ProcessVersionBroadcast(prefix, data, sender, message, distribution)
-end
-
--- Process version broadcast message (togbank-v, togbank-dv, togbank-dv2)
-function TOGBankClassic_Chat:ProcessVersionBroadcast(prefix, data, sender, message, distribution)
-	local isDeltaVersion = (prefix == "togbank-dv" or prefix == "togbank-dv2")
-	local isSYNC006 = (prefix == "togbank-dv2")
-
-	-- Debug: Show what data we received
-	if isDeltaVersion then
-		local altCount = 0
-		if data.alts then
-			for _ in pairs(data.alts) do
-				altCount = altCount + 1
-			end
-		end
-		TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "togbank-dv/dv2 from %s: has data.alts=%s, alts count=%d, isSYNC006=%s",
-			sender,
-			tostring(data.alts ~= nil),
-			altCount,
-			tostring(isSYNC006)
-		)
-	end
-
-	local current_data = TOGBankClassic_Guild:GetVersion()
-	if current_data then
-		if data.name then
-			if current_data.name ~= data.name then
-				TOGBankClassic_Output:Warn("A non-guild version!")
-				return
-			end
-		end
-		if data.addon then
-			-- v0.8.0: Track online bankers for pull-based protocol
-			if data.isBanker then
-				if not self.online_bankers then
-					self.online_bankers = {}
-				end
-				self.online_bankers[sender] = {
-					seen = time(),
-					version = data.addon,
-				}
-				TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "Tracked online banker: %s", sender)
-			end
-
-			-- Track protocol capabilities
-			local protocolVersion = data.protocol_version or 1
-			local supportsDelta = data.supports_delta or false
-			TOGBankClassic_Database:UpdatePeerProtocol(
-				current_data.name,
-				sender,
-				protocolVersion,
-				supportsDelta
-			)
-
-			if current_data.addon and data.addon > current_data.addon then
-				if not self.addon_outdated then
-					-- only make the callout once
-					self.addon_outdated = true
-					TOGBankClassic_Output:Info(
-						"A newer version is available! Download it from https://www.curseforge.com/wow/addons/togbankclassic/"
-					)
-				end
-			end
-		end
-		if data.roster then
-			if current_data.roster == nil or data.roster > current_data.roster then
-				self:Debug("SYNC", "HASH-MATCH", ">", ColorPlayerName(sender), "has fresher roster data, querying.")
-				TOGBankClassic_Guild:QueryRoster(sender, data.roster)
-			end
-		end
-		-- PERF-002 fix: Request sync decoupled from inventory sync (togbank-dv)
-		-- Request syncs now handled independently via SendRequestsVersionPing()
-		
-		-- P2P-005: Ignore unsolicited version broadcasts - use HL/HLR hash comparison instead
-		-- Keep handler active for banker tracking, protocol capabilities, and roster sync above
-		if data.alts then
-			TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[VERSION-BROADCAST] Ignoring unsolicited version broadcast from %s (alts=%d) - use HL/HLR for sync",
-				sender, data.alts and (function() local c=0; for _ in pairs(data.alts) do c=c+1 end return c end)() or 0)
-			return
-		end
-		--[[
-		if data.alts then
-			local altCount = 0
-			for _ in pairs(data.alts) do
-				altCount = altCount + 1
-			end
-			TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[PROCESS] Processing %d alts from %s (isDeltaVersion=%s)",
-				altCount, sender, tostring(isDeltaVersion))
-			for k, v in pairs(data.alts) do
-				local kNorm = TOGBankClassic_Guild:NormalizeName(k)
-				local ourAlt = (TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[kNorm])
-					or current_data.alts[kNorm]
-
-				-- v0.8.0: Handle both old format (number) and new format (table with version+hash)
-				local theirVersion = type(v) == "table" and v.version or v
-				local theirHash = type(v) == "table" and v.hash or nil
-				local theirUpdatedAt = type(v) == "table" and v.updatedAt or nil
-				local ourVersion = type(ourAlt) == "table" and ourAlt.version or nil
-				local ourHash = type(ourAlt) == "table" and ourAlt.inventoryHash or nil
-
-				-- MAIL-012 DEBUG: Always log hash comparisons to PROTOCOL (not just SYNC)
-				if theirHash then
-					TOGBankClassic_Output:Debug(
-						"PROTOCOL", "MAIL-SYNC",
-						"[MAIL-012] Received %s from %s: theirVer=%d, theirHash=%d, theirUpdatedAt=%s, ourVer=%s, ourHash=%s",
-						kNorm,
-						sender,
-						theirVersion,
-						theirHash,
-						theirUpdatedAt and tostring(theirUpdatedAt) or "nil",
-						ourVersion and tostring(ourVersion) or "nil",
-						ourHash and tostring(ourHash) or "nil"
-					)
-
-					-- Store peer's hash locally ONLY if we don't have one
-					if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
-						if not ourAlt then
-							-- Create stub entry for this alt
-							TOGBankClassic_Guild.Info.alts[kNorm] = {
-								name = kNorm,
-								version = theirVersion,
-								money = 0,
-								inventoryHash = theirHash,
-								inventoryUpdatedAt = theirUpdatedAt,
-								items = {},
-								mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
-								mailHash = 0,
-							}
-							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[kNorm])
-							TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Stored hash for new alt %s: hash=%08x, updatedAt=%s", kNorm, theirHash, tostring(theirUpdatedAt))
-						elseif not ourHash or ourHash == 0 then
-							-- Store hash if we don't have one
-							ourAlt.inventoryHash = theirHash
-							if theirUpdatedAt then
-								ourAlt.inventoryUpdatedAt = theirUpdatedAt
-							end
-							TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "Stored missing hash for %s: hash=%08x, updatedAt=%s", kNorm, theirHash, tostring(theirUpdatedAt))
-						end
-					end
-				end
-
-				-- MAIL-012 fix: Don't query if WE are the sender (prevents self-queries)
-				-- Previous logic (kNorm ~= senderNorm) incorrectly prevented OTHER players
-				-- from querying the sender's own data (e.g., Pickyminer couldn't query Togammo-Azuresong)
-				local ourPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
-				local senderNorm = TOGBankClassic_Guild:NormalizeName(sender)
-				local weAreSender = (ourPlayer == senderNorm)
-
-				-- MAIL-012 DEBUG: Log the sender check
-				TOGBankClassic_Output:Debug(
-					"PROTOCOL", "MAIL-SYNC",
-					"[MAIL-012] Sender check for %s: ourPlayer=%s, senderNorm=%s, weAreSender=%s",
-					kNorm,
-					ourPlayer,
-					senderNorm,
-					tostring(weAreSender)
-				)
-
-				if not weAreSender then
-					-- We're not the sender, so we can query about any alt including the sender
-					-- For delta version broadcasts, only query if we support delta
-					-- For legacy version broadcasts, query as normal
-					local shouldQuery = false
-
-					-- Check if we already have content for this alt - skip if we do
-					local localAlt = current_data.alts and kNorm and current_data.alts[kNorm]
-					local hasContent = localAlt and TOGBankClassic_Guild and TOGBankClassic_Guild.HasAltContent
-						and TOGBankClassic_Guild:HasAltContent(localAlt)
-
-					if hasContent then
-					-- Skip querying for alts we already have content for
-					TOGBankClassic_Output:Debug(
-						"PROTOCOL", "MAIL-SYNC",
-						"[MAIL-012] Query decision for %s: SKIP (already have content)",
-						kNorm
-					)
-				else
-					-- MAIL-012 DEBUG: Log query decision path
-					TOGBankClassic_Output:Debug(
-						"PROTOCOL", "MAIL-SYNC",
-						"[MAIL-012] Query evaluation for %s: isDeltaVersion=%s, ShouldUseDelta=%s",
-						kNorm,
-						tostring(isDeltaVersion),
-						tostring(TOGBankClassic_Guild:ShouldUseDelta())
-					)
-
-					if isDeltaVersion then
-						-- Delta version: check hash first (most accurate), then version
-						if TOGBankClassic_Guild:ShouldUseDelta() then
-							-- Hash-based comparison (most accurate)
-							if theirHash then
-								if not ourHash then
-									-- They have data, we don't - query
-									shouldQuery = true
-									self:Debug(
-										"SYNC",
-										">",
-										ColorPlayerName(sender),
-										"has bank data for",
-										ColorPlayerName(kNorm) .. " (we have none), querying."
-									)
-									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: NO_OUR_HASH", kNorm)
-								elseif theirHash ~= ourHash or theirMailHash ~= ourMailHash then
-									-- Hashes differ (inventory or mail) - we need an update
-									shouldQuery = true
-									local reason = (theirHash ~= ourHash) and "inventory" or "mail"
-									self:Debug(
-										"SYNC",
-										">",
-										ColorPlayerName(sender),
-										"has different " .. reason .. " for",
-										ColorPlayerName(kNorm) .. " (hash mismatch), querying."
-									)
-									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: HASH_MISMATCH %s (ourInv=%d, theirInv=%d, ourMail=%d, theirMail=%d)", 
-										kNorm, reason, ourHash, theirHash, ourMailHash, theirMailHash)
-								elseif not hasContent then
-									-- Hash matches but we don't have content (stub entry) - need to fill it
-									shouldQuery = true
-									self:Debug(
-										"SYNC",
-										">",
-										ColorPlayerName(sender),
-										"has matching hash for",
-										ColorPlayerName(kNorm) .. " but we need content (stub entry), querying."
-									)
-									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: HASH_MATCH_NO_CONTENT (filling stub)", kNorm)
-								else
-									TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: HASH_MATCH_WITH_CONTENT (no query)", kNorm)
-								end
-							elseif not ourVersion or theirVersion > ourVersion then
-								-- No hash available, fall back to version comparison
-								shouldQuery = true
-								self:Debug(
-									"SYNC",
-									">",
-									ColorPlayerName(sender),
-									"has fresher bank data about",
-									ColorPlayerName(kNorm) .. ", querying (delta)."
-								)
-								TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: VERSION_NEWER", kNorm)
-							else
-								TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: VERSION_SAME_OR_OLDER (no query)", kNorm)
-							end
-						else
-							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: DELTA_DISABLED (no query)", kNorm)
-						end
-					else
-						-- Legacy version: query as usual
-						if not ourVersion or theirVersion > ourVersion then
-							shouldQuery = true
-							self:Debug(
-								"SYNC",
-								">",
-								ColorPlayerName(sender),
-								"has fresher bank data about",
-								ColorPlayerName(kNorm) .. ", querying."
-							)
-							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: LEGACY_VERSION_NEWER", kNorm)
-						else
-							TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Query decision for %s: LEGACY_VERSION_SAME_OR_OLDER (no query)", kNorm)
-						end
-					end
-				end -- Close hasContent else block
-
-				if shouldQuery then
-					-- v0.8.0: Use P2P broadcast when hash available, fallback to banker query
-					TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "QUERYING %s from %s (reason: version broadcast mismatch)", kNorm, sender)
-					if theirHash and theirHash ~= 0 then
-						-- P2P: Broadcast to guild with hash, wait for peers, fallback to banker
-						TOGBankClassic_Guild:BroadcastP2PRequest(kNorm, theirHash, theirVersion, sender)
-					else
-						-- No hash: System 2 catch-up cycle will acquire this alt
-						TOGBankClassic_P2PSession:ScheduleCatchUp("version_no_hash")
-					end
-				end
-			else
-					-- MAIL-012 DEBUG: Log when we skip because we are the sender
-					TOGBankClassic_Output:Debug(
-						"PROTOCOL", "MAIL-SYNC",
-						"[MAIL-012] Skipping %s: weAreSender=true (ourPlayer=%s, senderNorm=%s)",
-						kNorm,
-						ourPlayer,
-						senderNorm
-					)
-				end
-			end
-		end
-		--]]
-	end
-end
+-- togbank-v, togbank-dv, togbank-dv2 removed 2026-04-01: all dead prefixes, handlers deleted.
 
 -- PERF-020: Process queued hash broadcasts in batch to prevent stuttering
 function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
@@ -761,11 +384,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR incoming: from=%s via=%s (%d bytes)", tostring(sender), tostring(distribution), message and #message or 0)
 	end
 
-	-- Debug: Log ALL incoming messages before any filtering
-	if prefix == "togbank-dv" or prefix == "togbank-dv2" then
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "RAW RECEIVED: %s from %s (%d bytes)", prefix, sender, #message)
-	end
-
 	-- WHISPER DEBUG
 	if distribution == "WHISPER" or prefix == "togbank-r" or prefix == "togbank-rr" then
 		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "Received: %s via %s from %s", prefix, distribution, sender)
@@ -784,12 +402,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	-- Source tracking helps debug where online status updates come from
 	TOGBankClassic_Guild:UpdateOnlineMember(sender, true, "addon-message-received")
 
-	-- MAIL-012 DEBUG: Log the player check for delta version messages
-	if prefix == "togbank-dv2" or prefix == "togbank-dv" then
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Player check: player=%s, sender=%s, match=%s",
-			player, sender, tostring(player == sender))
-	end
-
 	if player == sender then
 		self:Debug("PROTOCOL", "HASH-SKIP", "> (ignoring)", prefix, prefixDesc, "(our own)")
 		return
@@ -805,32 +417,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		return
 	end
 
-	-- Debug: Log what we deserialized for togbank-dv
-	if prefix == "togbank-dv" then
-		local altCount = 0
-		if data and data.alts then
-			for _ in pairs(data.alts) do
-				altCount = altCount + 1
-			end
-		end
-		TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[DESERIALIZE] togbank-dv from %s: success=%s, has data=%s, has data.alts=%s, altCount=%d",
-			sender,
-			tostring(success),
-			tostring(data ~= nil),
-			tostring(data and data.alts ~= nil),
-			altCount
-		)
-	end
-
-	if prefix ~= "togbank-r" and prefix ~= "togbank-d" then
-		-- togbank-r and togbank-d do their own output
+	if prefix ~= "togbank-r" then
 		self:Debug("PROTOCOL", "RECV", ">", ColorPlayerName(sender), ">", prefix, prefixDesc)
-	end
-
-	-- togbank-v and togbank-dv unregistered; only togbank-dv2 (SYNC-006) is active
-	if prefix == "togbank-dv2" then
-		self:ProcessVersionBroadcast(prefix, data, sender, message, distribution)
-		return
 	end
 
 	if prefix == "togbank-r" then
@@ -1486,13 +1074,12 @@ end
 		end
 	end
 
-	if prefix == "togbank-d" or prefix == "togbank-rm" then
-		-- SYNC-003p: Debug all togbank-d messages to see what's arriving
-		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "[SYNC-003p] %s received from %s: type=%s", prefix, sender, tostring(data.type))
+	if prefix == "togbank-rm" then
+		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "[SYNC-003p] togbank-rm received from %s: type=%s", sender, tostring(data.type))
 
 		-- SYNC-010: Critical debug for request mutations
 		if data.type == "requests-log" then
-			TOGBankClassic_Output:Debug("SYNC", "MERGE", "[SYNC-010] %s requests-log received from %s, about to call ReceiveRequestMutations", prefix, sender)
+			TOGBankClassic_Output:Debug("SYNC", "MERGE", "[SYNC-010] togbank-rm requests-log received from %s, about to call ReceiveRequestMutations", sender)
 		end
 
 		if data.type == "roster" then
@@ -1564,91 +1151,6 @@ end
 				if status == ADOPTION_STATUS.ADOPTED and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
 					SyncBankerHashAfterAdopt(claimedNorm)
 					TOGBankClassic_UI_Inventory:DrawContent()
-				end
-			else
-				-- ignore spoofed alt data
-				return
-			end
-		end
-	end
-
-	-- togbank-d3: v0.8.0 Link-less full sync (same as togbank-d but without Links)
-	if prefix == "togbank-d3" then
-		if data.type == "alt" then
-			-- only accept alt data if the sender matches the claimed alt name
-			local claimed = data.name
-			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
-
-			TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "Received DATA: togbank-d3 from %s for alt %s (%d bytes)", sender, claimedNorm, #message)
-
-			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
-			local hadPendingRequest = TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm)
-			if hadPendingRequest then
-				allowed = true
-				TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "[RECEIVE] Receiving %s from %s (REQUESTED - had pending sync)", claimedNorm, sender)
-			else
-				TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "[RECEIVE] Receiving %s from %s (UNSOLICITED - no pending sync)", claimedNorm, sender)
-			end
-			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt, sender)
-				or ADOPTION_STATUS.UNAUTHORIZED
-			self:Debug(
-				"SYNC",
-				"RECEIVE",
-				">",
-				ColorPlayerName(sender),
-				SHARES_COLOR,
-				"bank data (v0.8.0 Link-less) about",
-				ColorPlayerName(claimedNorm) .. ". We",
-				allowed and "accept it." or "do not accept it.",
-				FormatSyncStatus(status)
-			)
-
-			-- Show receive message when data arrives
-			local estimatedChunks = math.ceil(#message / 254)
-			if not TOGBankClassic_Options:IsSyncProgressMuted() then
-				TOGBankClassic_Output:Info("Receiving guild bank data for %s: %d bytes in ~%d chunks...", claimedNorm, #message, estimatedChunks)
-			end
-
-			if allowed then
-				-- Show completion message based on status
-				if status == ADOPTION_STATUS.ADOPTED then
-					if not TOGBankClassic_Options:IsSyncProgressMuted() then
-						TOGBankClassic_Output:Info("Received complete: %s (%d bytes) - data written", claimedNorm, #message)
-					end
-
-					-- Report progress update after successful data write
-					if TOGBankClassic_Guild and TOGBankClassic_Guild.ReportBankerDataProgress then
-						TOGBankClassic_Guild:ReportBankerDataProgress("received " .. claimedNorm, true)
-					end
-				elseif status == ADOPTION_STATUS.STALE then
-					if not TOGBankClassic_Options:IsSyncProgressMuted() then
-						TOGBankClassic_Output:Info("Received complete: %s (%d bytes) - STALE (older than current data, discarded)", claimedNorm, #message)
-					end
-				elseif status == ADOPTION_STATUS.INVALID then
-					if not TOGBankClassic_Options:IsSyncProgressMuted() then
-						TOGBankClassic_Output:Warn("Received complete: %s (%d bytes) - INVALID (malformed data, discarded)", claimedNorm, #message)
-					end
-				elseif status == ADOPTION_STATUS.IGNORED then
-					if not TOGBankClassic_Options:IsSyncProgressMuted() then
-						TOGBankClassic_Output:Info("Received complete: %s (%d bytes) - IGNORED", claimedNorm, #message)
-					end
-				end
-
-				-- ReceiveAltData already applied/rejected; refresh UI if open
-				if status == ADOPTION_STATUS.ADOPTED and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-					SyncBankerHashAfterAdopt(claimedNorm)
-					TOGBankClassic_UI_Inventory:DrawContent()
-				end
-
-				-- Clear P2P pending request for any response (not just ADOPTED)
-				-- This prevents duplicate responses from being processed
-				if TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[claimedNorm] then
-					TOGBankClassic_Guild.pendingP2PRequests[claimedNorm] = nil
-					if status == ADOPTION_STATUS.ADOPTED then
-						TOGBankClassic_Output:Info("P2P: Successfully received data for %s from peer %s (bypassed banker)", claimedNorm, sender)
-					else
-						TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cleared pending request for %s (status: %s)", claimedNorm, tostring(status))
-					end
 				end
 			else
 				-- ignore spoofed alt data
@@ -1755,67 +1257,6 @@ end
 		end
 	end
 
-	if prefix == "togbank-d2" then
-		if data.type == "alt-delta" then
-			-- only accept delta data if the sender matches the claimed alt name
-			local claimed = data.name
-			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
-			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
-			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
-				allowed = true
-			end
-
-			if allowed then
-				-- Validate and sanitize delta structure
-				local valid, err = TOGBankClassic_Core:ValidateDeltaStructure(data)
-				if not valid then
-					local errorMsg = "Validation failed: " .. (err or "unknown error")
-					self:Debug(
-						"DELTA",
-						"VALIDATE",
-						">",
-						ColorPlayerName(sender),
-						SHARES_COLOR,
-						"delta for",
-						ColorPlayerName(claimedNorm),
-						"- validation failed:",
-						err
-					)
-					-- Record error and request full sync
-					TOGBankClassic_Guild:RecordDeltaError(claimedNorm, "VALIDATION_FAILED", errorMsg)
-					TOGBankClassic_Guild:QueryAlt(sender, claimedNorm, nil)
-					if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
-						TOGBankClassic_Database:RecordDeltaFailed(TOGBankClassic_Guild.Info.name)
-					end
-					return
-				end
-
-				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
-				self:Debug(
-					"DELTA",
-					"APPLY",
-					">",
-					ColorPlayerName(sender),
-					SHARES_COLOR,
-					"delta for",
-					ColorPlayerName(claimedNorm) .. ".",
-					FormatSyncStatus(status)
-				)
-			else
-				self:Debug(
-					"DELTA",
-					"APPLY",
-					">",
-					ColorPlayerName(sender),
-					SHARES_COLOR,
-					"delta for",
-					ColorPlayerName(claimedNorm) .. ". We do not accept it.",
-					FormatSyncStatus(ADOPTION_STATUS.UNAUTHORIZED)
-				)
-			end
-		end
-	end
-
 	-- togbank-ri: positional request index (v1). Separate prefix from togbank-rd.
 	if prefix == "togbank-ri" then
 		local liveCount  = tonumber(data[2]) or 0
@@ -1862,13 +1303,6 @@ end
 		end
 	end
 
-	if prefix == "togbank-h" then
-		TOGBankClassic_Guild:Hello("reply")
-	end
-	if prefix == "togbank-hr" then
-		-- hello-reply: log the text response from the remote side
-		TOGBankClassic_Output:Debug("PROTOCOL", "HELLO", "Hello reply from %s: %s", tostring(sender), tostring(data))
-	end
 	if prefix == "togbank-hl" then
 		if data.type == "hash-list-request" then
 			local replyTarget = data.requester or sender
@@ -2445,14 +1879,6 @@ local COMMAND_REGISTRY = {
 				TOGBankClassic_Output:Response("Force full sync: %s", status)
 				TOGBankClassic_Output:Response("Usage: /togbank forcefull [on|off]")
 			end
-		end,
-	},
-	{
-		name = "hello",
-		help = "understand which online guild members use which addon version and know what guild bank data; needs corresponding weakaura to print deserialized addon communication",
-		expert = true,
-		handler = function()
-			TOGBankClassic_Guild:Hello()
 		end,
 	},
 	{

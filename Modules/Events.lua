@@ -153,8 +153,6 @@ function TOGBankClassic_Events:SetTimer()
 end
 
 function TOGBankClassic_Events:OnTimer()
-	--TOGBankClassic_Events:Sync()  -- COMMENTED OUT: togbank-v ignored by delta clients
-
 	self:SetTimer()
 end
 
@@ -231,7 +229,6 @@ end
 ---END CHANGES
 
 -- Delta-specific version broadcast (SYNC-001 fix)
--- v0.8.0 SYNC-006: Bankers send BOTH togbank-dv (old) and togbank-dv2 (new) during migration
 -- P2P-006: Broadcast our hash list to the guild so peers can offer newer data.
 -- Called on the 3-minute timer (via Guild:Share) and after every bank scan.
 function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)

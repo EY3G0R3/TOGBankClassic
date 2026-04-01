@@ -174,8 +174,6 @@ end
 
 ---END CHANGES
 function TOGBankClassic_Guild:GetPlayer()
-	---START CHANGES
-	--return UnitName("player")
 	if TOGBankClassic_Bank.player then
 		return TOGBankClassic_Bank.player
 	end
@@ -254,10 +252,7 @@ function TOGBankClassic_Guild:GetPlayerInfo(name)
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, _, _, _, _, _, _, _, _, class = GetGuildRosterInfo(i)
 		local player, _ = string.match(playerRealm, "(.*)%-(.*)")
-		---START CHANGES
-		--if player == name then
 		if playerRealm == name then
-			---END CHANGES
 			return class
 		end
 	end
@@ -1239,8 +1234,6 @@ function TOGBankClassic_Guild:GetVersion()
 			if not hasContent then
 				TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: excluding %s from version broadcast (stub entry - no content)", k)
 			else
-				-- Only store bank alt data if the sender is a bank alt
-				--data.alts[k] = v.version
 				-- v0.8.0: Include inventory hash for pull-based protocol
 				if type(v) == "table" and v.version then
 					-- Send hash only in delta-enabled mode (backwards compatibility)
@@ -3276,106 +3269,6 @@ function TOGBankClassic_Guild:ApplyDelta(name, deltaData, sender)
 	return TOGBankClassic_DeltaComms:ApplyDelta(self.Info, name, deltaData, sender)
 end
 
-function TOGBankClassic_Guild:Hello(type)
-	local addon_data = TOGBankClassic_Guild:GetVersion()
-	local current_data = TOGBankClassic_Guild.Info
-	if addon_data and current_data then
-		local roster_alts = ""
-		local guild_bank_alts = ""
-		local hello = "Hi! " .. TOGBankClassic_Guild:GetPlayer() .. " is using version " .. (addon_data.addonDisplay or tostring(addon_data.addon)) .. "."
-		if s(current_data.roster) > 0 and s(current_data.alts) > 0 then
-			for _, v in pairs(current_data.roster.alts) do
-				if roster_alts ~= "" then
-					roster_alts = roster_alts .. ", "
-				end
-				roster_alts = roster_alts .. v
-			end
-			if roster_alts ~= "" then
-				roster_alts = " (" .. roster_alts .. ")"
-			end
-			for k, _ in pairs(current_data.alts) do
-				if guild_bank_alts ~= "" then
-					guild_bank_alts = guild_bank_alts .. ", "
-				end
-				guild_bank_alts = guild_bank_alts .. k
-			end
-			if guild_bank_alts ~= "" then
-				guild_bank_alts = " (" .. guild_bank_alts .. ")"
-			end
-			if current_data.roster.alts then
-				hello = hello .. "\n"
-				hello = hello
-					.. "I know about "
-					.. #current_data.roster.alts
-					.. " guild bank alts"
-					.. roster_alts
-					.. " on the roster."
-				hello = hello .. "\n"
-				hello = hello
-					.. "I have guild bank data from "
-					.. s(current_data.alts)
-					.. " alts"
-					.. guild_bank_alts
-					.. "."
-			end
-		else
-			hello = hello .. " I know about 0 guild bank alts on the roster, and have guild bank data from 0 alts."
-		end
-
-		local pending_count = 0
-		local fulfilled_count = 0
-		local pending_banks = {}
-		for _, req in pairs(current_data.requests or {}) do
-			local clean = TOGBankClassic_Guild:SanitizeRequest(req)
-			if clean and clean.item and clean.item ~= "" then
-				local qty = tonumber(clean.quantity or 0) or 0
-				local fulfilled = tonumber(clean.fulfilled or 0) or 0
-				if qty > 0 then
-					local is_fulfilled = clean.status == "fulfilled" or clean.status == "complete" or fulfilled >= qty
-					local is_pending = clean.status == "open" and fulfilled < qty
-					if is_fulfilled then
-						fulfilled_count = fulfilled_count + 1
-					elseif is_pending then
-						pending_count = pending_count + 1
-						if clean.bank and clean.bank ~= "" then
-							pending_banks[clean.bank] = true
-						end
-					end
-				end
-			end
-		end
-
-		local pending_bank_list = {}
-		for name in pairs(pending_banks) do
-			table.insert(pending_bank_list, name)
-		end
-		table.sort(pending_bank_list)
-
-		hello = hello
-			.. "\n"
-			.. string.format(
-				"I have %d pending item requests and %d fulfilled item requests.",
-				pending_count,
-				fulfilled_count
-			)
-		if #pending_bank_list > 0 then
-			hello = hello .. "\n" .. "Pending requests for bank alts: " .. table.concat(pending_bank_list, ", ") .. "."
-		else
-			hello = hello .. "\n" .. "Pending requests for bank alts: none."
-		end
-
-		if type ~= "reply" then
-			TOGBankClassic_Output:Info(hello)
-		end
-		local data = TOGBankClassic_Core:SerializeWithChecksum(hello)
-		if type ~= "reply" then
-			TOGBankClassic_Core:SendCommMessage("togbank-h", data, "Guild", nil, "BULK")
-		else
-			TOGBankClassic_Core:SendCommMessage("togbank-hr", data, "Guild", nil, "BULK")
-		end
-	end
-end
-
 function TOGBankClassic_Guild:Wipe(type)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild and not CanViewOfficerNote() then
@@ -3480,12 +3373,6 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 	-- a non-banker peer and flood it with hash-offer whispers every 10 minutes.
 
 	-- v0.8.0: Broadcast delta version with hashes for pull-based protocol
-	-- Send BOTH legacy and delta version broadcasts (SYNC-001 fix)
-	--[[ COMMENTED OUT: togbank-v ignored by delta clients
-	if TOGBankClassic_Events and TOGBankClassic_Events.Sync then
-		TOGBankClassic_Events:Sync()
-	end
-	--]]
 	TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "About to call SyncDeltaVersion (exists=%s)", tostring(TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion ~= nil))
 	if TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion then
 		TOGBankClassic_Events:SyncDeltaVersion()

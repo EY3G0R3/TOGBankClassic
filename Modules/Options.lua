@@ -555,20 +555,11 @@ function TOGBankClassic_Options:Init()
 		},
 	}
 
-	---START CHANGES
-	--LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic", options)
-	--LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic", "TOGBankClassic")
 	LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic", options)
 	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic", "TOGBankClassic")
-	---END CHANGES
 end
 
 function TOGBankClassic_Options:InitGuild()
-	---START CHANGES
-	-- Guild banks shouldn't be required to read the officer note, perhaps we want to use public note
-	--if not CanViewOfficerNote() then return end
-	---END CHANGES
-
 	local player = TOGBankClassic_Guild:GetPlayer()
 	if not TOGBankClassic_Guild:IsBank(player) then
 		return
@@ -638,12 +629,8 @@ function TOGBankClassic_Options:InitGuild()
 		},
 	}
 
-	---START CHANGES
-	--LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic/Bank", bankOptions)
-	--LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic/Bank", "Bank", "TOGBankClassic")
 	LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic/Bank", bankOptions)
 	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic/Bank", "Bank", "TOGBankClassic")
-	---END CHANGES
 end
 
 function TOGBankClassic_Options:GetBankEnabled()

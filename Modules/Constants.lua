@@ -177,23 +177,16 @@ REQUESTS_SYNC = {
 
 -- Communication prefix descriptions for debug logging
 COMM_PREFIX_DESCRIPTIONS = {
-	["togbank-v"] = "(Version)",
-	["togbank-dv"] = "(Delta Version)",
-	["togbank-d"] = "(Data)",
-	["togbank-d2"] = "(Delta Data)",
-	["togbank-d3"] = "(Data v2 - No Links)",
+
 	["togbank-d4"] = "(Delta Data v2 - No Links)",
 	["togbank-r"] = "(Query)",
 	["togbank-rr"] = "(Query Reply)",
-	["togbank-rq"] = "(Request Query)",
 	["togbank-ri"]  = "(Request Index v1)",
 	["togbank-rd2"] = "(Request Data v2: single record/tombstone)",
 	["togbank-rd"]  = "(Request Data: idx/by-id)",
 	["togbank-rm"] = "(Request Mutations)",
 	["togbank-state"] = "(State Summary)",
 	["togbank-nochange"] = "(No Change)",
-	["togbank-h"] = "(Hello)",
-	["togbank-hr"] = "(Hello Reply)",
 	["togbank-hl"] = "(Hash List Request)",
 	["togbank-hlr"] = "(Hash List Reply)",
 	["togbank-s"] = "(Share)",
