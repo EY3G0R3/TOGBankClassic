@@ -14,8 +14,8 @@ Comms system breakdown as of 2026-04-01:
   │ togbank-d4       │ GUILD or       │ BULK        │ Delta inventory data (no item links, bandwidth-optimized) — current standard      │
   │                  │ WHISPER        │             │                                                                                   │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
-  │ togbank-hl       │ GUILD          │ NORMAL/BULK │ Multi-purpose hash protocol: hash-list-broadcast (banker→all), share-request,     │
-  │                  │                │             │ wipe-command                                                                      │
+  │ togbank-hl       │ GUILD or       │ NORMAL/BULK │ Multi-purpose: hash-list-broadcast (banker→GUILD, BULK), share-request,          │
+  │                  │ WHISPER        │             │ wipe-command, hash-offer (peer→banker WHISPER), hash-list-request (WHISPER)      │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
   │ togbank-hlr      │ WHISPER        │ ALERT       │ Hash list reply — peer responds to banker's broadcast with their matching alts    │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
@@ -29,14 +29,20 @@ Comms system breakdown as of 2026-04-01:
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
   │ togbank-nochange │ WHISPER        │ NORMAL      │ Responder tells requester "your data is already current, nothing to send"         │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
-  │ togbank-rd       │ GUILD or       │ NORMAL      │ Request log data: chunked requests-index, requests-by-id responses, mutations     │
-  │                  │ WHISPER        │             │                                                                                   │
+  │ togbank-ri       │ GUILD or       │ NORMAL      │ Request index (compact positional v1): chunked list of request IDs sent to       │
+  │                  │ WHISPER        │             │ queriers; supersedes togbank-rd for index delivery                                │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rd2      │ GUILD or       │ NORMAL      │ Request records (compact positional v1): one message per record or tombstone;    │
+  │                  │ WHISPER        │             │ supersedes togbank-rd for record delivery                                         │
+  ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ togbank-rd       │ GUILD or       │ NORMAL      │ LEGACY receive-only: key-value request index / records / mutations from pre-v0.9 │
+  │                  │ WHISPER        │             │ clients; never sent by current code; registered for backward compatibility only   │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
   │ togbank-rm       │ GUILD          │ ALERT       │ Request log mutations (add/cancel/complete) — ALERT priority so it isn't blocked  │
   │                  │                │             │ by BULK sends                                                                     │
   └──────────────────┴────────────────┴─────────────┴───────────────────────────────────────────────────────────────────────────────────┘
 
-  Dead Code / Unregistered — Never Sent: none remaining — cleanup complete.
+  Never Sent (receive-only for backward compat): togbank-rd
 
 
  A typical sync looks like this:
