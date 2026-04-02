@@ -64,9 +64,7 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Core:RegisterChatCommand("togbank", function(input)
 		return TOGBankClassic_Chat:ChatCommand(input)
 	end)
-	TOGBankClassic_Core:RegisterChatCommand("bank", function()
-		TOGBankClassic_UI_Inventory:Toggle()
-	end)
+	-- /bank and /gbank are registered after Options init via RegisterAliasCommands()
 
 	self.addon_outdated = false
 	self.online_bankers = {}  -- tracks online bankers for pull-based protocol
