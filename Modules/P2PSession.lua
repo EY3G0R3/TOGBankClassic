@@ -470,6 +470,35 @@ end
 
 -- ─── Sender Side ──────────────────────────────────────────────────────────────
 
+--- Try to acquire an outbound send slot for a given requester.
+-- Returns true (slot incremented + safety timer set) if under cap; false if at cap.
+-- Call ReleaseSendSlot on send completion; the safety timer is a no-op fallback.
+function P2P:TryAcquireSendSlot(requester)
+	local total = 0
+	for _, count in pairs(self.activeSends) do
+		total = total + count
+	end
+	if total >= MAX_ACTIVE_SENDS then
+		return false
+	end
+	self.activeSends[requester] = (self.activeSends[requester] or 0) + 1
+	Dbg("HANDSHAKE", "TryAcquireSendSlot: acquired for %s (total=%d)", requester, total + 1)
+	C_Timer.After(SEND_TIMEOUT, function()
+		P2P:ReleaseSendSlot(requester, "timeout")
+	end)
+	return true
+end
+
+--- Release an outbound send slot for a given requester.
+-- Safe to call redundantly — the > 0 guard prevents underflow.
+function P2P:ReleaseSendSlot(requester, reason)
+	if (self.activeSends[requester] or 0) > 0 then
+		self.activeSends[requester] = self.activeSends[requester] - 1
+		Dbg("HANDSHAKE", "ReleaseSendSlot: %s (%s, remaining=%d)",
+			requester, reason or "complete", self.activeSends[requester])
+	end
+end
+
 --- Handle an incoming sync-request (we are the data provider).
 -- Sends sync-accept if we have capacity and content; sync-busy otherwise.
 -- Returns true if accepted.
@@ -489,12 +518,10 @@ function P2P:HandleSyncRequest(sessionId, requester, altName)
 		return false
 	end
 
-	-- Check outbound capacity.
-	local total = 0
-	for _, count in pairs(self.activeSends) do
-		total = total + count
-	end
-	if total >= MAX_ACTIVE_SENDS then
+	-- Acquire unified send slot (shared cap with old pull-based path via TryAcquireSendSlot).
+	if not self:TryAcquireSendSlot(requester) then
+		local total = 0
+		for _, c in pairs(self.activeSends) do total = total + c end
 		Dbg("HANDSHAKE", "HandleSyncRequest: at send cap (%d) - busy to %s for %s", total, requester, norm)
 		local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-busy", sessionId = sessionId })
 		TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "NORMAL")
@@ -504,17 +531,7 @@ function P2P:HandleSyncRequest(sessionId, requester, altName)
 	-- Accept.
 	local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-accept", sessionId = sessionId })
 	TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "NORMAL")
-	self.activeSends[requester] = (self.activeSends[requester] or 0) + 1
-	Dbg("HANDSHAKE", "HandleSyncRequest: accepted %s for %s (sends=%d)", norm, requester, total + 1)
-
-	-- Safety release: decrement activeSends after SEND_TIMEOUT regardless of
-	-- whether we receive a completion signal.  Prevents permanent slot leaks.
-	C_Timer.After(SEND_TIMEOUT, function()
-		if (P2P.activeSends[requester] or 0) > 0 then
-			P2P.activeSends[requester] = P2P.activeSends[requester] - 1
-			Dbg("HANDSHAKE", "Send slot auto-released (timeout) for %s/%s", norm, requester)
-		end
-	end)
+	Dbg("HANDSHAKE", "HandleSyncRequest: accepted %s for %s", norm, requester)
 
 	-- The requester will now send a togbank-state message to us, which the
 	-- existing RespondToStateSummary pipeline handles automatically.

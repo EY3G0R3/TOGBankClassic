@@ -265,29 +265,29 @@ end
 function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 	local startTime = debugprofilestop()
 	local queueSize = #self.hashBroadcastQueue
-	
+
 	if queueSize == 0 then
 		return
 	end
-	
+
 	TOGBankClassic_Output:Debug("P2P", "OFFER", "Processing %d queued hash broadcasts", queueSize)
-	
+
 	-- Deduplicate by sender (if same sender broadcasted multiple times, process most recent)
 	local uniqueBroadcasts = {}
 	for _, entry in ipairs(self.hashBroadcastQueue) do
 		uniqueBroadcasts[entry.sender] = entry  -- Later entries overwrite earlier ones
 	end
-	
+
 	-- Process each unique broadcast
 	for sender, entry in pairs(uniqueBroadcasts) do
 		local data = entry.data
 		local isSenderBanker = entry.isSenderBanker
-		
+
 		-- Build hash-offer: alts where WE have newer data than what the sender advertised
 		local offerAlts  = {}
 		local myAlts     = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
 		local myPlayer   = TOGBankClassic_Guild:GetNormalizedPlayer()
-		
+
 		-- Build a lookup of what alts the sender advertised
 		local senderAlts = {}
 		for altName, peerSummary in pairs(data.alts) do
@@ -324,7 +324,7 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 				end
 			end
 		end
-		
+
 		local offerCount = 0
 		for _ in pairs(offerAlts) do offerCount = offerCount + 1 end
 		if offerCount > 0 then
@@ -333,7 +333,7 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 			TOGBankClassic_Output:Debug("P2P", "OFFER", "Sent hash-offer to %s for %d alts", sender, offerCount)
 		end
 	end
-	
+
 	-- Clear queue and timer
 	self.hashBroadcastQueue = {}
 	self.hashBroadcastTimer = nil
@@ -468,9 +468,13 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					local myHash = alt.inventoryHash or 0
 					local hasContent = TOGBankClassic_Guild:HasAltContent(alt, altName)
-					local sendQueueFull = TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS
+					local p2pSendTotal = 0
+					if TOGBankClassic_P2PSession then
+						for _, c in pairs(TOGBankClassic_P2PSession.activeSends) do p2pSendTotal = p2pSendTotal + c end
+					end
+					local sendQueueFull = p2pSendTotal >= TOGBankClassic_Guild.MAX_PENDING_SENDS
 					local requesterHash = data.requesterInventoryHash or 0
-					
+
 					-- Allow response in two scenarios:
 					-- 1. P2P with expectedHash: hash must match (normal P2P operation)
 					-- 2. No expectedHash but requesterHash=0: post-wipe recovery, any peer can help
@@ -485,48 +489,32 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						TOGBankClassic_Output:Debug("QUERIES", "RESPOND", "WIPE-RECOVERY: Peer responding for %s (requester wiped, providing fresh data)", altName)
 					elseif sendQueueFull then
 						TOGBankClassic_Output:Debug("QUERIES", "SKIP", "PERF-005: Skipping response (send queue full: %d/%d)",
-							TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+							p2pSendTotal, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 					elseif data.expectedHash and myHash == data.expectedHash and not hasContent then
 						TOGBankClassic_Output:Debug("QUERIES", "SKIP", "PERF-005: Skipping response for %s (hash matches but no content)", altName)
 					elseif data.expectedHash and myHash ~= data.expectedHash then
 						TOGBankClassic_Output:Debug("QUERIES", "SKIP", "PERF-005: Hash mismatch for %s (have %d, expected %d)", altName, myHash, data.expectedHash)
 					end
-					
+
 					if shouldRespondP2P then
 						-- FIX: Add random backoff to prevent multiple peers responding simultaneously
 						local backoff = math.random() * 0.5  -- 0-500ms random delay
 						C_Timer.After(backoff, function()
-							-- Check if someone else already responded
-							if TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS then
+							-- Acquire unified P2P send slot (same cap as sync-request path).
+							-- TryAcquireSendSlot atomically checks capacity and increments.
+							if not TOGBankClassic_P2PSession or not TOGBankClassic_P2PSession:TryAcquireSendSlot(sender) then
 								TOGBankClassic_Output:Debug("QUERIES", "SKIP", "PERF-005: Another peer beat us to it, not responding for %s", altName)
 								return
 							end
-							
+
 							shouldRespond = true
 							expectedHash = myHash
-							TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount + 1
-							TOGBankClassic_Output:Debug("P2P", "RESPOND", "P2P: Responding to %s with data for %s (hash=%08x) - queue now: %d/%d",
-								sender, altName, myHash, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+							TOGBankClassic_Output:Debug("P2P", "RESPOND", "P2P: Responding to %s with data for %s (hash=%08x)",
+								sender, altName, myHash)
 							if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
 								TOGBankClassic_Database:RecordP2POffered(TOGBankClassic_Guild.Info.name)
 							end
-							
-							-- Safety timeout: if requester never sends state summary (disconnect/crash),
-							-- auto-decrement counter after 30 seconds to prevent permanent queue blocking
-							local timeoutAlt = normAltName
-							if not TOGBankClassic_Guild.pendingSendTimeouts then
-								TOGBankClassic_Guild.pendingSendTimeouts = {}
-							end
-							local timer = C_Timer.After(30, function()
-								if TOGBankClassic_Guild.pendingSendCount > 0 then
-									TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
-									TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Send timeout for %s - decremented queue (now %d/%d)",
-										timeoutAlt, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
-								end
-								TOGBankClassic_Guild.pendingSendTimeouts[timeoutAlt] = nil
-							end)
-							TOGBankClassic_Guild.pendingSendTimeouts[normAltName] = timer
-							
+
 							-- Actually send the ACK now
 							if shouldRespond then
 								local ack = {
@@ -608,11 +596,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 							local myHash = alt and alt.inventoryHash or 0
 							local hasContent = alt and TOGBankClassic_Guild:HasAltContent(alt, altName) or false
-							local sendQueueFull = TOGBankClassic_Guild.pendingSendCount >= TOGBankClassic_Guild.MAX_PENDING_SENDS
+							local p2pTotal = 0
+							if TOGBankClassic_P2PSession then
+								for _, c in pairs(TOGBankClassic_P2PSession.activeSends) do p2pTotal = p2pTotal + c end
+							end
+							local sendQueueFull = p2pTotal >= TOGBankClassic_Guild.MAX_PENDING_SENDS
 							local requesterHash = data.requesterInventoryHash or 0
-							
+
 							if sendQueueFull then
-								reason = string.format("send queue full (%d/%d)", TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
+								reason = string.format("send queue full (%d/%d)", p2pTotal, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 							elseif not hasContent then
 								reason = "no content (stub entry)"
 							elseif data.expectedHash and myHash ~= data.expectedHash then
@@ -818,7 +810,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						TOGBankClassic_P2PSession:ScheduleCatchUp("p2p_no_response")
 					end
 				end)
-				
+
 				-- Store timeout timer for cancellation if peer responds
 				if not TOGBankClassic_Guild.pendingP2PTimeouts then
 					TOGBankClassic_Guild.pendingP2PTimeouts = {}
@@ -828,21 +820,21 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				-- P2P: Non-banker (peer) acknowledged - continue with delta sync
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
 				local wasPending = TOGBankClassic_Guild.pendingP2PRequests[norm] ~= nil
-				
+
 				if wasPending then
 					if not TOGBankClassic_Options:IsSyncProgressMuted() then
 						TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
 					end
-					
+
 					-- Clear pending P2P request since peer is responding
 					TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
-					
+
 					-- FIX: Cancel the first timeout timer since peer responded
 					if TOGBankClassic_Guild.pendingP2PTimeouts and TOGBankClassic_Guild.pendingP2PTimeouts[norm] then
 						TOGBankClassic_Guild.pendingP2PTimeouts[norm]:Cancel()
 						TOGBankClassic_Guild.pendingP2PTimeouts[norm] = nil
 					end
-					
+
 					-- Also clear pendingAltRequests to prevent banker fallback
 					if TOGBankClassic_Guild.pendingAltRequests then
 						TOGBankClassic_Guild.pendingAltRequests[norm] = nil
@@ -934,7 +926,7 @@ end
 			if TOGBankClassic_Guild.pendingP2PRequests then
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
 				TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
-				
+
 				-- Cancel 15s fallback timeout since peer confirmed no changes
 				if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
 					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
@@ -1147,7 +1139,7 @@ end
 					TOGBankClassic_Database:RecordDeltaReceived(TOGBankClassic_Guild.Info.name, #message, isFromBanker)
 				end
 				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
-				
+
 				-- Cancel 15s fallback timeout since peer delivered data
 				local norm = TOGBankClassic_Guild:NormalizeName(claimedNorm)
 				if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
@@ -1255,7 +1247,7 @@ end
 				isSenderBanker = isSenderBanker,
 				altCount = altCount,
 			})
-			
+
 			-- Start batch timer if not already running
 			if not self.hashBroadcastTimer then
 				self.hashBroadcastTimer = C_Timer.After(self.HASH_BROADCAST_BATCH_DELAY, function()
@@ -1363,7 +1355,7 @@ end
 		local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 		for altName, summary in pairs(data.alts) do
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
-				
+
 				-- Skip current player and alts not in the current guild banker roster.
 				-- Prevents stale ex-banker entries from triggering sync requests.
 				if norm ~= currentPlayer and TOGBankClassic_Guild:IsBank(norm) then
@@ -1386,7 +1378,7 @@ end
 					local inventoryHashMatches = (summary.hash ~= nil and summary.hash == localHash)
 					local mailHashMatches = (summary.mailHash ~= nil and summary.mailHash == localMailHash)
 					local hashesMatch = inventoryHashMatches and mailHashMatches
-					
+
 					-- Skip alts we already have content for AND hashes match - no need to request
 					if hasContent and hashesMatch then
 						TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE",
@@ -2405,7 +2397,7 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 		if successRate < 80 then rateColor = "|cffff0000" end
 		TOGBankClassic_Output:Response("  Success rate:        %s%.1f%%|r", rateColor, successRate)
 	end
-	
+
 	-- P2P-023: Hash-list broadcast collision prevention statistics
 	if TOGBankClassic_Events then
 		local totalBroadcasts = TOGBankClassic_Events.hashBroadcastCount or 0

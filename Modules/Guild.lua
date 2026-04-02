@@ -2353,7 +2353,7 @@ end
 -- FIX: Prevents stats corruption when multiple P2P sends happen concurrently
 -- NOTE: AceCommQueue delivers only the final callback (when bytesSent >= totalBytes),
 -- so startTime is captured at closure creation and chunk count is estimated from byte count.
-local function CreateOnChunkSentCallback(altName)
+local function CreateOnChunkSentCallback(altName, requester)
 	-- Per-send stats (closure captures these)
 	-- startTime is recorded NOW so elapsed is measured from just before SendCommMessage.
 	local sendStats = {
@@ -2397,10 +2397,13 @@ local function CreateOnChunkSentCallback(altName)
 				TOGBankClassic_Output:Info(summary)
 			end
 
-			-- Decrement P2P send queue counter
-			if TOGBankClassic_Guild.pendingSendCount > 0 then
+			-- Release the unified P2P send slot so the cap allows new sends.
+			if requester and TOGBankClassic_P2PSession then
+				TOGBankClassic_P2PSession:ReleaseSendSlot(requester, "send_complete")
+			elseif TOGBankClassic_Guild.pendingSendCount > 0 then
+				-- Legacy: GUILD-broadcast sends have no requester; decrement old counter.
 				TOGBankClassic_Guild.pendingSendCount = TOGBankClassic_Guild.pendingSendCount - 1
-				TOGBankClassic_Output:Debug("P2P", "COMPLETE", "P2P send completed for %s - queue now: %d/%d", 
+				TOGBankClassic_Output:Debug("P2P", "COMPLETE", "P2P send completed for %s - queue now: %d/%d",
 					altName, TOGBankClassic_Guild.pendingSendCount, TOGBankClassic_Guild.MAX_PENDING_SENDS)
 			end
 
@@ -2571,7 +2574,7 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	local strippedDelta = self:StripDeltaLinks(deltaData)
 	local deltaNoLinks = TOGBankClassic_Core:SerializeWithChecksum(strippedDelta)
 	-- Create per-send callback to prevent stats corruption with concurrent sends
-	local onChunkSent = CreateOnChunkSentCallback(norm)
+	local onChunkSent = CreateOnChunkSentCallback(norm, distTarget)
 	-- Show progress before sending (AceCommQueue delivers the callback at completion, not per-chunk)
 	if not TOGBankClassic_Options:IsSyncProgressMuted() then
 		local totalChunks = math.ceil(string.len(deltaNoLinks) / 254)
