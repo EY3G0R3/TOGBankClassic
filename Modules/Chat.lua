@@ -132,6 +132,20 @@ function TOGBankClassic_Chat:Init()
 	-- sr and wr had no handler; rq was never sent
 end
 
+-- Called from Core after Options is initialized — registers /bank and /gbank if enabled.
+function TOGBankClassic_Chat:RegisterAliasCommands()
+	if TOGBankClassic_Options:IsRegisterBankCommandEnabled() then
+		TOGBankClassic_Core:RegisterChatCommand("bank", function(input)
+			return TOGBankClassic_Chat:ChatCommand(input)
+		end)
+	end
+	if TOGBankClassic_Options:IsRegisterGbankCommandEnabled() then
+		TOGBankClassic_Core:RegisterChatCommand("gbank", function(input)
+			return TOGBankClassic_Chat:ChatCommand(input)
+		end)
+	end
+end
+
 -- Wrapper for debug logging (delegates to centralized logger)
 function TOGBankClassic_Chat:Debug(...)
 	return TOGBankClassic_Output:Debug(...)

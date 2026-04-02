@@ -206,7 +206,7 @@ function TOGBankClassic_Options:Init()
 			statusBarNetworkInfo = false,  -- Show sync activity in inventory status bar
 		},
 		global = {
-			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, integrityCheckDiagnostics = false },
+			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true },
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
@@ -239,6 +239,12 @@ function TOGBankClassic_Options:Init()
 	end
 	if self.db.global.bank["integrityCheckDiagnostics"] == nil then
 		self.db.global.bank["integrityCheckDiagnostics"] = false
+	end
+	if self.db.global.bank["registerBankCommand"] == nil then
+		self.db.global.bank["registerBankCommand"] = true
+	end
+	if self.db.global.bank["registerGbankCommand"] == nil then
+		self.db.global.bank["registerGbankCommand"] = true
 	end
 	if self.db.global.requests.archiveDays == nil then
 		self.db.global.requests.archiveDays = 30
@@ -351,6 +357,34 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return self.db.global.bank["muteWarnings"]
+						end,
+					},
+					["registerBankCommand"] = {
+						order = 2.92,
+						type  = "toggle",
+						width = "full",
+						name  = "Register /bank command",
+						desc  = "When enabled, typing /bank opens the TOGBankClassic window. Disable if another addon uses /bank. Requires /reload to take effect.",
+						set   = function(_, v)
+							self.db.global.bank["registerBankCommand"] = v
+							TOGBankClassic_Output:Info("/bank command %s. Requires /reload to take effect.", v and "enabled" or "disabled")
+						end,
+						get   = function()
+							return self.db.global.bank["registerBankCommand"]
+						end,
+					},
+					["registerGbankCommand"] = {
+						order = 2.93,
+						type  = "toggle",
+						width = "full",
+						name  = "Register /gbank command",
+						desc  = "When enabled, typing /gbank opens the TOGBankClassic window. Disable if another addon uses /gbank. Requires /reload to take effect.",
+						set   = function(_, v)
+							self.db.global.bank["registerGbankCommand"] = v
+							TOGBankClassic_Output:Info("/gbank command %s. Requires /reload to take effect.", v and "enabled" or "disabled")
+						end,
+						get   = function()
+							return self.db.global.bank["registerGbankCommand"]
 						end,
 					},
 					["protocolMode"] = {
@@ -682,6 +716,18 @@ function TOGBankClassic_Options:GetAutoTombstoneDays()
 		return self.db.global.requests.autoTombstoneDays or 30
 	end
 	return 30
+end
+
+function TOGBankClassic_Options:IsRegisterBankCommandEnabled()
+	if not self.db or not self.db.global or not self.db.global.bank then return true end
+	local v = self.db.global.bank["registerBankCommand"]
+	return v ~= false
+end
+
+function TOGBankClassic_Options:IsRegisterGbankCommandEnabled()
+	if not self.db or not self.db.global or not self.db.global.bank then return true end
+	local v = self.db.global.bank["registerGbankCommand"]
+	return v ~= false
 end
 
 function TOGBankClassic_Options:Open()

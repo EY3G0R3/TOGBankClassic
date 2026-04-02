@@ -67,6 +67,7 @@ function TOGBankClassic_Core:OnInitialize()
     TOGBankClassic_Database:Init()
     TOGBankClassic_Chat:Init()
     TOGBankClassic_Options:Init()
+    TOGBankClassic_Chat:RegisterAliasCommands()
     TOGBankClassic_UI:Init()
 
     -- Initialize ItemHighlight module
