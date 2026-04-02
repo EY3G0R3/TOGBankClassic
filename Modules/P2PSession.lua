@@ -145,7 +145,10 @@ function P2P:OnOffer(peerName, alts)
 	for altName, summary in pairs(alts) do
 		local norm = Norm(altName)
 		-- Skip alts for which we already have a dispatched/active session.
-		if not self.sessionsByAlt[norm] then
+		-- Skip alts not in our current guild's banker roster (prevents cross-guild bleed-in
+		-- when a player's account SV contains data from another guild's bankers).
+		if not self.sessionsByAlt[norm]
+				and TOGBankClassic_Guild and TOGBankClassic_Guild:IsBank(norm) then
 			self.offers[norm] = self.offers[norm] or {}
 			local entry = {
 				peer      = peerName,

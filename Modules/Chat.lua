@@ -311,9 +311,11 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 
 		-- Also offer alts we have that the sender didn't mention at all (e.g. after a wipe
 		-- the sender's list is empty, so we proactively advertise everything we have).
+		-- IsBank() guard prevents account-wide SV alts from other guilds bleeding in.
 		for norm, myAlt in pairs(myAlts) do
 			if norm ~= myPlayer and not senderAlts[norm] then
-				if myAlt and TOGBankClassic_Guild:HasAltContent(myAlt, norm) then
+				if myAlt and TOGBankClassic_Guild:HasAltContent(myAlt, norm)
+						and TOGBankClassic_Guild:IsBank(norm) then
 					offerAlts[norm] = {
 						hash      = myAlt.inventoryHash or 0,
 						updatedAt = myAlt.inventoryUpdatedAt or myAlt.version or 0,
