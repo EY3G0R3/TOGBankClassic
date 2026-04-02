@@ -158,7 +158,6 @@ REQUEST_LOG = {
 
 -- Request sync throttling settings
 REQUESTS_SYNC = {
-	-- NOTE: Short values for quick testing; production values should be higher.
 	INDEX_QUERY_COOLDOWN = 60,         -- seconds between index queries (global and per-sender)
 	INDEX_INFLIGHT_TIMEOUT = 180,      -- seconds before in-flight index sync is considered stale (must exceed max batch sequence: ceil(requests/BATCH_SIZE) * BATCH_DELAY)
 	REQUESTS_BY_ID_BATCH_SIZE = 50,    -- max IDs per by-id query (prevents throttle on large syncs)

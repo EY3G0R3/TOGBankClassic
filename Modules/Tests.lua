@@ -102,10 +102,6 @@ local function createTestAltData(name)
     }
 end
 
---============================================================================
--- Phase 5.1: Delta Computation Tests
---============================================================================
-
 -- Test setup: Initialize guild context for delta tests
 local function setupDeltaTest(guildName)
     guildName = guildName or "TestGuild"
@@ -168,7 +164,6 @@ local function testDeltaComputationNoChanges()
     assertEquals("alt-delta", delta.type, "Delta type should be alt-delta")
     assertEquals("TestAlt1", delta.name, "Delta name should match")
     assertNotNil(delta.version, "Delta should have version")
-    -- baseVersion is optional in v0.8.0 (removed for bandwidth savings)
     assert(not Guild:DeltaHasChanges(delta), "Delta should have no changes")
 end
 
@@ -773,8 +768,7 @@ local function testFallbackToFullSync()
     Guild.Info = Guild.Info or {}
     Guild.Info.name = "TestGuild"
 
-    -- v0.8.0: Guild support threshold removed - delta always enabled if feature flag is on
-    -- This test now validates that delta is enabled regardless of guild support percentage
+    -- This test validates that delta is enabled regardless of guild support percentage
     local oldGetGuildDeltaSupport = Database.GetGuildDeltaSupport
     Database.GetGuildDeltaSupport = function(name)
         return 0  -- 0% support
@@ -782,7 +776,7 @@ local function testFallbackToFullSync()
 
     -- Should still use delta in v0.8.0 (threshold check removed)
     local shouldUse = Guild:ShouldUseDelta()
-    assert(shouldUse, "v0.8.0: Should use delta even with 0% guild support (threshold removed)")
+    assert(shouldUse, "Should use delta even with 0% guild support (threshold removed)")
 
     -- Restore
     Database.GetGuildDeltaSupport = oldGetGuildDeltaSupport

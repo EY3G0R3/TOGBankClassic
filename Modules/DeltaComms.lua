@@ -32,8 +32,6 @@ function TOGBankClassic_DeltaComms:ValidateDeltaStructure(delta)
 		return false, "invalid updatedAt"
 	end
 
-	-- v0.8.0: baseVersion is optional (removed from new protocol)
-	-- Old protocol deltas will still have it, new protocol won't
 	if delta.baseVersion and type(delta.baseVersion) ~= "number" then
 		return false, "invalid baseVersion"
 	end
@@ -95,7 +93,6 @@ function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
 			if not item.ID or type(item.ID) ~= "number" then
 				return false, "added item missing or invalid ID"
 			end
-			-- v0.8.0: Link is optional (bandwidth optimization - receiver reconstructs)
 			if item.Link and type(item.Link) ~= "string" then
 				return false, "added item has invalid Link"
 			end
@@ -118,7 +115,6 @@ function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
 			if not item.ID or type(item.ID) ~= "number" then
 				return false, "modified item missing or invalid ID"
 			end
-			-- v0.8.0: Link is optional (bandwidth optimization - receiver reconstructs)
 			if item.Link and type(item.Link) ~= "string" then
 				return false, "modified item has invalid Link"
 			end
@@ -141,7 +137,6 @@ function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
 			if not item.ID or type(item.ID) ~= "number" then
 				return false, "removed item missing or invalid ID"
 			end
-			-- v0.8.0: Link is optional in removed items (bandwidth optimization)
 			-- Only ID is required; Link is backfilled during application if needed
 		end
 	end
@@ -255,7 +250,6 @@ function TOGBankClassic_DeltaComms:ShouldUseDelta()
 		return false
 	end
 
-	-- v0.8.0: Delta protocol always enabled if feature flag is on
 	-- No guild support threshold - clients will use delta if both sides support it
 	return PROTOCOL.SUPPORTS_DELTA
 end
@@ -304,7 +298,6 @@ function TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
 		version = delta.version,
 		updatedAt = delta.updatedAt,
 		inventoryHash = delta.inventoryHash,
-		-- v0.8.0: baseVersion no longer included (8 bytes saved)
 		changes = {}
 	}
 
@@ -689,16 +682,13 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 			return nil
 		end
 
-		-- Build delta structure
-		-- v0.8.0: baseVersion removed (8 bytes saved)
-		-- In pull-based protocol, receiver states what they have, making baseVersion redundant
 		local delta = {
 			type = "alt-delta",
 			name = altName,
 			version = currentAlt.version or GetServerTime(),
 			updatedAt = currentAlt.inventoryUpdatedAt or currentAlt.version or GetServerTime(),
 			inventoryHash = currentAlt.inventoryHash or 0,
-			-- baseVersion removed for v0.8.0 (still accepted when receiving for backwards compatibility)
+			-- baseVersion removed; still accepted when receiving for backwards compatibility
 			changes = {},
 		}
 
@@ -864,11 +854,9 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 	-- This prevents indexes from becoming invalid when Aggregate() clears the array
 	
 	-- STEP 1: Remove items
-	-- v0.8.0: Removed items now only have ID (Link removed for bandwidth savings)
 	if delta.removed then
 		for _, removedItem in ipairs(delta.removed) do
 			if removedItem and removedItem.ID then
-				-- v0.8.0: Match by ID only (Link field removed)
 				-- Still support old format with Link for backwards compatibility
 				if removedItem.Link then
 					-- Has Link (new format with link-preserved remove, OR old v0.7.0 format):
@@ -1125,19 +1113,17 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 		end
 
 		local currentVersion = current.version or 0
-		-- v0.8.0: baseVersion no longer sent, but accept it for backwards compatibility
+		-- baseVersion no longer sent, but accept it for backwards compatibility
 		local baseVersion = deltaData.baseVersion or currentVersion
 
 		-- Only check version mismatch if delta included baseVersion (v0.7.0 and earlier)
 		if deltaData.baseVersion and currentVersion ~= baseVersion then
-			-- Version mismatch - try delta chain replay (DELTA-006)
 			local errorMsg = string.format(
 				"Version mismatch: have %d, delta expects %d",
 				currentVersion,
 				baseVersion
 			)
 
-			-- Delta chain replay (togbank-dr/dc) removed; fall back to full sync
 			TOGBankClassic_Output:Debug(
 				"DELTA",
 				"VALIDATE",
@@ -1276,7 +1262,6 @@ function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sen
 				norm, recomputedInvHash, deltaData.inventoryHash or 0)
 
 			-- HASH-RECOMPUTE: Also recompute mailHash from actual mail items after delta application.
-			-- Previously stamped from changes.mailHash before items were applied (wrong order).
 			if current.mail and current.mail.items then
 				local recomputedMailHash = self:ComputeInventoryHash(current.mail.items, nil, nil, nil)
 				current.mailHash = recomputedMailHash

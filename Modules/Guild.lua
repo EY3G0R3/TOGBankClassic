@@ -87,7 +87,7 @@ function TOGBankClassic_Guild:MigrateTempErrors()
 end
 
 -- Record a delta error with details (persisted to database or temp storage)
--- Delta error tracking delegated to DeltaComms module (v0.7.0+)
+-- Delta error tracking delegated to DeltaComms module
 function TOGBankClassic_Guild:RecordDeltaError(altName, errorType, errorMessage)
 	return TOGBankClassic_DeltaComms:RecordDeltaError(self.Info and self.Info.name, altName, errorType, errorMessage)
 end
@@ -733,11 +733,10 @@ function TOGBankClassic_Guild:ReportBankerDataProgress(context, force)
 	end
 end
 
--- v0.8.0: Fast-fill - Request missing banker alts on UI open
+-- Fast-fill - Request missing banker alts on UI open
 -- Compares roster bankers against local alt data and queries for missing alts
 -- SYNC-001 fix: Use current guild roster instead of cached roster to prevent
 -- requesting data for bankers from other guilds
--- Fast-fill delegated to DeltaComms module (v0.8.0)
 function TOGBankClassic_Guild:FastFillMissingAlts()
 	return TOGBankClassic_DeltaComms:FastFillMissingAlts(self.Info)
 end
@@ -775,7 +774,9 @@ end
 
 function TOGBankClassic_Guild:BuildBankerHashList()
 	local list = {}
-	local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
+	-- Prefer live GetBanks() (derived from current memberRoster) over persisted GetRosterAlts(),
+	-- which reads Info.roster.alts from SavedVariables and may contain stale ex-bankers.
+	local rosterAlts = self:GetBanks() or self:GetRosterAlts() or {}
 	for _, altName in ipairs(rosterAlts) do
 		local norm = self:NormalizeName(altName)
 		if norm then
@@ -1213,7 +1214,6 @@ function TOGBankClassic_Guild:GetVersion()
 			if not hasContent then
 				TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "GetVersion: excluding %s from version broadcast (stub entry - no content)", k)
 			else
-				-- v0.8.0: Include inventory hash for pull-based protocol
 				if type(v) == "table" and v.version then
 					-- Send hash only in delta-enabled mode (backwards compatibility)
 					if PROTOCOL.SUPPORTS_DELTA and v.inventoryHash then
@@ -1312,7 +1312,7 @@ function TOGBankClassic_Guild:QueryAlt(player, name, version)
 	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "NORMAL")
 end
 
--- v0.8.0: Pull-based query - WHISPER to banker if known, GUILD if unknown
+-- Query - WHISPER to banker if known, GUILD if unknown
 function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, forceFull, targetPlayer)
 	if not name then
 		return
@@ -1708,7 +1708,7 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	return self.onlineMembers and self.onlineMembers[norm] == true
 end
 
--- v0.8.0: Compute minimal state summary for pull-based protocol
+-- Compute minimal state summary for pull-based protocol
 -- Returns {[itemID] = quantity} - no Links, bags, slots, or metadata
 -- ~800 bytes for 100 items vs 5-7KB for full data
 function TOGBankClassic_Guild:ComputeStateSummary(name)
@@ -1733,7 +1733,7 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 	local alt = self.Info.alts[norm]
 	local summary = {
 		version = alt.version or 0,
-		hash = alt.inventoryHash or nil,  -- v0.8.0: Include inventory hash for delta comparison
+		hash = alt.inventoryHash or nil,
 		updatedAt = alt.inventoryUpdatedAt or alt.version or 0,
 		mailHash = alt.mailHash or 0,  -- MAIL-SYNC: Include mail hash for mail change detection
 		money = alt.money or 0,
@@ -1772,7 +1772,7 @@ function TOGBankClassic_Guild:ComputeStateSummary(name)
 	return summary
 end
 
--- v0.8.0: Send state summary to responder (Step 4 of pull-based flow)
+-- Send state summary to responder (Step 4 of pull-based flow)
 function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
 	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "SendStateSummary called: name=%s, target=%s, forceFull=%s", tostring(name), tostring(target), tostring(forceFullParam))
 	if not name or not target then
@@ -1832,7 +1832,7 @@ function TOGBankClassic_Guild:SendStateSummary(name, target, forceFullParam)
 	)
 end
 
--- v0.8.0: Respond to state summary (Step 5 & 6 of pull-based flow)
+-- Respond to state summary (Step 5 & 6 of pull-based flow)
 -- Compare requester's state with our data and send appropriate response
 function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "RespondToStateSummary called: name=%s, requester=%s", tostring(name), tostring(requester))
@@ -1854,7 +1854,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	local requesterVersion = summary.version or 0
 	local currentVersion = currentAlt.version or 0
 
-	-- v0.8.0: In delta mode, compare HASHES not versions
+	-- In delta mode, compare HASHES not versions
 	local requesterHash = summary.hash or nil
 	local currentHash = currentAlt.inventoryHash or nil
 
@@ -1872,7 +1872,7 @@ function TOGBankClassic_Guild:RespondToStateSummary(name, summary, requester)
 	
 	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "RespondToStateSummary: %s requesterV=%d currentV=%d requesterHash=%s currentHash=%s requesterMailHash=%s currentMailHash=%s", norm, requesterVersion, currentVersion, tostring(requesterHash), tostring(currentHash), tostring(requesterMailHash), tostring(currentMailHash))
 
-	-- v0.8.0: Delta mode - ONLY use hashes, no version fallback
+	-- Delta mode - ONLY use hashes, no version fallback
 	if self:ShouldUseDelta() then
 		-- If current alt doesn't have a hash, send full data (might be from pre-hash version)
 		if not currentHash then
@@ -2478,7 +2478,6 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "[RESPONSE] Sending %s data via GUILD broadcast (manual share)", norm)
 	end
 
-	-- v0.8.0: Version is ONLY set by Bank:Scan() when inventory actually changes
 	-- No longer bump version here - that caused version drift from communication
 
 	local currentAlt = self.Info.alts[norm]
@@ -2603,9 +2602,6 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 			TOGBankClassic_Database:RecordP2PSent(self.Info.name)
 		end
 	end
-
-	-- PERF-012: SaveDeltaHistory call removed. Delta chain replay is dead code since v0.8.0
-	-- (togbank-dr handler only triggered when deltaData.baseVersion is set, which v0.8.0 stopped sending).
 
 	-- Save snapshot for next delta
 	if self.Info and self.Info.name then
@@ -3060,7 +3056,7 @@ end
 -- Protocol version helper functions
 
 -- Check if delta sync should be used
--- Delta protocol delegated to DeltaComms module (v0.7.0+)
+-- Delta protocol delegated to DeltaComms module
 function TOGBankClassic_Guild:ShouldUseDelta()
 	return TOGBankClassic_DeltaComms:ShouldUseDelta()
 end
@@ -3072,7 +3068,7 @@ function TOGBankClassic_Guild:UsesSYNC006()
 	return true
 end
 
--- Delta Computation Functions delegated to DeltaComms module (v0.7.0+)
+-- Delta Computation Functions delegated to DeltaComms module
 
 -- Compare two items for equality
 function TOGBankClassic_Guild:ItemsEqual(item1, item2)
@@ -3128,7 +3124,6 @@ function TOGBankClassic_Guild:Wipe(type)
 	TOGBankClassic_Guild:Reset(guild)
 
 	-- SYNC-013: Migrated from dead togbank-w/wr prefixes onto togbank-hl type dispatch
-	-- togbank-wr (reply) had no handler so the reply direction is simply dropped
 	if type ~= "reply" then
 		local hlData = TOGBankClassic_Core:SerializeWithChecksum({ type = "wipe-command", message = wipe })
 		TOGBankClassic_Core:SendCommMessage("togbank-hl", hlData, "Guild", nil, "BULK")
@@ -3217,19 +3212,13 @@ function TOGBankClassic_Guild:Share(type, requestsMode)
 			share = "Nothing to share."
 		end
 	end
-	-- NOTE: Single-alt pre-broadcast removed. SyncDeltaVersion() below already includes
-	-- the current banker in the full alt list. The pre-broadcast was redundant and caused
-	-- peers to receive isBanker=false (field was missing), making them treat the banker as
-	-- a non-banker peer and flood it with hash-offer whispers every 10 minutes.
-
-	-- v0.8.0: Broadcast delta version with hashes for pull-based protocol
+	-- Broadcast delta version with hashes for pull-based protocol
 	TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "About to call SyncDeltaVersion (exists=%s)", tostring(TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion ~= nil))
 	if TOGBankClassic_Events and TOGBankClassic_Events.SyncDeltaVersion then
 		TOGBankClassic_Events:SyncDeltaVersion()
 	end
 
 	-- SYNC-013: Migrated from dead togbank-s/sr prefixes onto togbank-hl type dispatch
-	-- togbank-sr (reply) had no handler so the reply direction is simply dropped
 	if type ~= "reply" then
 		local hlData = TOGBankClassic_Core:SerializeWithChecksum({ type = "share-request", message = share })
 		-- Use NORMAL priority for share announcement so users are notified quickly

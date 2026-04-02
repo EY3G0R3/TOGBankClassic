@@ -2,15 +2,6 @@
 	"folders": [
 		{
 			"path": "."
-		},
-		{
-			"path": "../VersionCheck-1.0"
-		},
-		{
-			"path": "../Ace3"
-		},
-		{
-			"path": "../ProfessionMaster"
 		}
 	],
 	"settings": {
@@ -581,7 +572,8 @@
 			"ShoppingTooltip2",
 			"SPELL_REAGENTS",
 			"ChatFrame_OpenChat",
-			"DropDownList1"
+			"DropDownList1",
+			"getglobal"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

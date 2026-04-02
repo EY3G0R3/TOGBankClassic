@@ -265,7 +265,7 @@ end
 
 local function showCancelReasonDialog(req, actor, ui)
 	if cancelReasonFrame and cancelReasonFrame.frame:IsShown() then
-		return  -- don't stack dialogs
+		return
 	end
 
 	pendingCancelReq   = req

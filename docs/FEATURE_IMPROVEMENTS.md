@@ -39,7 +39,7 @@
 - [ ] **Officer cancel permission toggle** - Add a configurable permission to enable/disable officers' ability to cancel requests; currently all officers can cancel any request with no restriction
 - [ ] **Requestor self-delete** - Allow requestors to permanently delete their own open requests (distinct from cancel, which is an officer action); gives requestors autonomy to clean up their own entries
 - [x] ~~**Request status visual differentiation**~~ **IMPLEMENTED: Fulfilled rows tinted green with checkmark icon; cancelled rows tinted red with X icon**
-- [ ] **Command alias** - Add `/bank` (or a user-configurable slash command) as an alias to open the addon window; reduces friction for new guild members accustomed to `/bank` opening a bank frame
+- [x] ~~**Command alias**~~ **IMPLEMENTED (April 1, 2026): `/bank` registered as an alias that toggles the main inventory window; equivalent to `/togbank` with no arguments. Location: Chat.lua `Init` (~line 67).**
 - [ ] **Scoreboard UI or deprecation** - The bank acceptance window contains an "add to scoreboard" checkbox but no scoreboard UI exists or is accessible; either implement scoreboard access or remove the checkbox to avoid confusion
 - [x] ~~**Guild roster cache lookups (PERF)**~~ **IMPLEMENTED: All GetGuildRosterInfo() scans in hot paths replaced with O(1) memberRoster cache lookups; isBank flag added to cache; greedy regex replaced with plain-text find()**
 - [x] ~~**Remove message integrity checksum from sends (PERF)**~~ **IMPLEMENTED: Eliminated byte-by-byte Lua checksum loop over 15-50KB comm payloads on every send; DeserializeWithChecksum retained for backward compat with old clients**

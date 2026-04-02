@@ -21,7 +21,7 @@ local eventsRegistered = false -- Track if BAG_UPDATE events are registered
 -- Register BAG_UPDATE events (called when highlighting is enabled)
 local function registerBagEvents()
 	if eventsRegistered then
-		return -- Already registered
+		return
 	end
 	
 	eventFrame = CreateFrame("Frame")
@@ -58,7 +58,7 @@ end
 -- Unregister BAG_UPDATE events (called when highlighting is disabled)
 local function unregisterBagEvents()
 	if not eventsRegistered then
-		return -- Already unregistered
+		return
 	end
 	
 	if eventFrame then

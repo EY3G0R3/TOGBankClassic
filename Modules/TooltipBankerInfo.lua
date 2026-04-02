@@ -22,7 +22,6 @@ local function OnTooltipSetItem(tooltip)
 	local itemID = GetItemIDFromLink(link)
 	if not itemID then return end
 
-	-- Collect bankers that have at least 1 of this item
 	wipe(found)
 	for altName, alt in pairs(info.alts) do
 		if alt.items then

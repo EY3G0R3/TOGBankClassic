@@ -33,7 +33,6 @@ function TOGBankClassic_UI:Init()
 end
 
 function TOGBankClassic_UI:Controller()
-	--this is used to process escape to exit events
 	local controller = CreateFrame("Frame", "TOGBankClassic", UIParent)
 	controller:SetScript("OnHide", function()
 		TOGBankClassic_UI_Inventory:Close()
@@ -42,7 +41,6 @@ function TOGBankClassic_UI:Controller()
 	table.insert(UISpecialFrames, "TOGBankClassic")
 end
 
---handle all events
 function TOGBankClassic_UI:EventHandler(self, event, ...)
 	if event == "OnClick" then
 		if IsShiftKeyDown() then
@@ -166,10 +164,30 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 	border:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)
 	border:SetBlendMode("BLEND")
 	border:SetTexture("Interface\\Common\\WhiteIconFrame")
-	-- Set border color based on rarity (should already be in item.Info)
-	if item.Info and item.Info.rarity and item.Info.rarity >= 1 then
-		local r, g, b = GetItemQualityColor(item.Info.rarity)
+	-- Set border color based on rarity. item.Info.rarity may be nil for uncached remote gear.
+	local rarity = item.Info and item.Info.rarity
+	if not rarity and item.Link then
+		-- Sync fallback: item may have entered the cache between GetItems and draw time.
+		local _, _, r2 = GetItemInfo(item.Link)
+		rarity = r2
+	end
+	if rarity and rarity >= 1 then
+		local r, g, b = GetItemQualityColor(rarity)
 		border:SetVertexColor(r, g, b)
+	elseif item.Link then
+		-- Async fallback: not cached yet — update border once WoW loads the item.
+		local itemObj = Item:CreateFromItemID(item.ID)
+		if itemObj then
+			pcall(function()
+				itemObj:ContinueOnItemLoad(function()
+					local _, _, asyncRarity = GetItemInfo(item.Link)
+					if asyncRarity and asyncRarity >= 1 and border:IsObjectType("Texture") then
+						local r, g, b = GetItemQualityColor(asyncRarity)
+						border:SetVertexColor(r, g, b)
+					end
+				end)
+			end)
+		end
 	end
 
 	slot.border = border

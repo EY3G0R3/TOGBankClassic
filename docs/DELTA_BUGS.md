@@ -5,11 +5,14 @@
 **Status:** Testing Phase - Core Protocol Operational
 
 **Recent Fixes (2026-04-01):**
+- ✅ [UI-015] **MEDIUM** Item quality border (green/blue/etc.) not rendering for mail items received via delta, and not rendering for uncached gear on any sync path — Two separate root causes: (1) The delta receive handler in `Chat.lua` called `ReconstructItemLinks` for `data.changes.bank` and `data.changes.bags` sub-tables but had no equivalent block for `data.changes.mail`. Mail item links are stripped by `StripDeltaLinks` on the sender side (to `ItemString` for non-gear, or preserved as `Link` for gear); the receiver never queued them for reconstruction, so `item.Link` stayed nil → `GetItems` Branch 1 was never reached → `item.Info.rarity` stayed nil → border remained white. (2) For gear items whose link IS preserved but whose rarity is nil at draw time (item not yet in WoW's client cache when `DrawItem` runs), `DrawItem` had no fallback — it evaluated `item.Info.rarity`, found it nil, and skipped `SetVertexColor` entirely. The UI-003 fix notes described a sync/async fallback being added to `DrawItem` but it was never actually implemented in the code. Fix: (A) Added `data.changes.mail` block to the delta receive handler in `Chat.lua` — `ReconstructItemLinks` now called for `mail.added`, `mail.modified`, and `mail.removed` identically to the bank/bags blocks. (B) Added sync-then-async rarity fallback to `DrawItem` in `UI.lua`: if `item.Info.rarity` is nil and `item.Link` is set, tries `GetItemInfo(item.Link)` immediately (succeeds if item entered cache between `GetItems` and first render); if still nil, calls `Item:CreateFromItemID` + `ContinueOnItemLoad` to repaint the border once WoW fetches the item data. All rarity queries use `item.Link` only (never `item.ID`) to ensure suffixed gear gets the correct rarity. Locations: Chat.lua delta receive handler mail block (~line 1118); UI.lua `DrawItem` border section (~line 161).
 - ✅ [REQSYNC-009] **MEDIUM** Silent data loss when `togbank-ri` chunk arrives with CRC mismatch — When `DeserializeWithChecksum` detected an INTEGRITY-MISMATCH on a received `togbank-ri` payload (stop-marker present but CRC failed), `OnCommReceived` logged it and returned with no further action. The receiver had no way to know which request IDs were contained in the corrupt chunk; it would never query for those records, leaving a silent gap in its request index until the next periodic sync cycle (up to 3 minutes). Observed symptom: `[TOGBankClassic ERROR] Integrity mismatch: message complete (stop-marker present) but CRC failed. from=Corpso-OldBlanchy prefix=togbank-ri dist=GUILD bytes=693 expected=521582629 got=875435176`. Investigation confirmed: (1) The CRC algorithm (polynomial hash mod 2^31−1 over 64-bit Lua doubles) is arithmetically correct with no precision loss at the intermediate values involved. (2) AceSerializer explicitly escapes byte 30 (`\030`, the checksum separator) to `~z` inside string values, and the entire `%c` class (bytes 0–31) elsewhere, so the separator search-from-end is unambiguous. (3) `tonumber(checksumStr)` successfully parsed (the logged `expected` value is a well-formed integer), confirming `sepPos` was correct. (4) AceCommQueue correctly serializes per-`(prefix, dist, target)` key, preventing chunk interleaving at the AceComm level. Conclusion: the error represents genuine bit corruption in the WoW Classic Era GUILD addon channel, which the diagnostic was designed to detect; the CRC framework itself has no bugs. The only actual defect was the absence of a recovery path — the corrupt chunk caused a permanent blind spot for the affected request IDs for the remainder of the sync window. Fix: Added a recovery branch in `OnCommReceived` immediately after the existing INTEGRITY-MISMATCH log: when `prefix == "togbank-ri"` and deserialization fails, call `TOGBankClassic_Guild:QueryRequestsIndex(sender, "NORMAL", true)` to re-request the full index from that sender immediately. `force=true` bypasses the per-sender cooldown since this is a genuine data-loss event, not a speculative re-query. The re-requested index arrives with a fresh CRC and covers all chunks, closing the blind spot. Location: Chat.lua `OnCommReceived` deserialization failure block (~line 378).
+- ✅ [MAIL-013] **HIGH** Ghost duplicate weapon rows in Aggregate from `GetItemInfo(itemID)` fallback in `MailInventory.lua` — When `GetInboxItemLink` returned nil at scan time (item not yet in the WoW client cache), `ScanMailInventory` fell back to `select(2, GetItemInfo(itemID))`. `GetItemInfo` with a plain integer ID returns the **base item** link: `|Hitem:XXXXX:0:0:0:0:0:0:0:0|h[Warlords' Axe]|h` — no random suffix. The suffixed gear already present in `alt.bank.items` (or `alt.bags.items`) was keyed by its suffixed `GetItemKey`: `tostring(ID) .. normalizedSuffix`. The base-item link produces a different `GetItemKey` (suffix=0), so `Aggregate` found no match and inserted a second row instead of merging. `NeedsLink` then returned true for the base-item entry, so `StripDeltaLinks` preserved the bad link for transmission. Peers received both the correct suffixed entry (from bank) and the ghost base-item entry (from mail), leaving them with e.g. `9x Warlords' Axe` (ghost) + `2x Warlords' Axe of the Wolf` (real) — two rows where one merged row was correct. Fix: Removed the `if not link and itemID then link = select(2, GetItemInfo(itemID)) end` fallback entirely. When `GetInboxItemLink` returns nil, `link` stays nil → `storageLink` is nil → `GetItemKey` produces an ID-only key → `Aggregate`'s linkless merge branch folds count into the existing suffixed entry instead of creating a ghost row. Items cached by the time of the next mail scan will have their links captured correctly by `GetInboxItemLink`. Note: existing `alt.mail.items` entries in SavedVariables that were stored with base-item links (no suffix) constitute corrupted data that cannot self-correct; a `/togbank wipe` is required to clear them. Location: MailInventory.lua `ScanMailInventory` (~line 62).
+- ✅ [ROSTER-004] **HIGH** Non-guild alts polluting `latestBankerHashes` and HLR processing — `latestBankerHashes` accumulated entries for alts that were not in the current guild's banker roster. Two independent root causes: (1) `BuildBankerHashList` sourced its alt list from `GetRosterAlts()` first, which reads persisted `Info.roster.alts` from SavedVariables. Since `Info.roster.alts` is only overwritten when `RebuildBankerRoster` detects a change and writes a new list, it can carry stale ex-banker names across sessions (particularly after a rename, guild transfer, or role change). The live `GetBanks()` (derived from `memberRoster`, rebuilt from `GetGuildRosterInfo` every `GUILD_ROSTER_UPDATE`) was only used as a fallback, meaning stale names could be broadcast out to the guild in every `hash-list-broadcast`. (2) The `togbank-hlr` handler had three write paths — inserting into `latestBankerHashes`, creating `Info.alts` stubs, and queuing second-pass P2P sync requests — none of them validated `IsBank(norm)` before acting. Any alt name that arrived inside another client's `hash-list-reply` payload was accepted unconditionally, regardless of whether that name existed in the current guild's banker roster. Symptom: `/togbank hashdump` showed 56 entries instead of the expected 36 live bankers, and sync requests were being dispatched for phantom alts. Fix: (A) In `BuildBankerHashList`, swapped priority to `GetBanks() or GetRosterAlts()` so the live cache is always preferred. (B) In the `togbank-hlr` handler, added `IsBank(norm)` guard to all three write paths: the `latestBankerHashes` insert loop, the first-pass stub creation check, and the second-pass sync-queue loop. Locations: Guild.lua `BuildBankerHashList` (~line 778); Chat.lua `togbank-hlr` handler — `latestBankerHashes` insert loop, first-pass stub check, second-pass loop guard.
 - ✅ [MAINT-001] **LOW** Dead code removal campaign — systematic audit expelled ~350 lines of unreachable code across 9 files. (1) **Delta history cluster**: `SaveDeltaHistory` was a stub that wrote nothing (db field never populated), `GetDeltaHistory` always returned nil, `CleanupDeltaHistory` always returned 0 (early-exited on nil db field) — all three removed along with two call sites in Events.lua (periodic 3-minute cleanup + 2s startup timer added by PERF-011) and a 30-line dead block in Chat.lua's `togbank-q` handler that called the nonexistent `Guild:SendDeltaChain()` (would have been a runtime error if reached). (2) **DeltaComms dead functions**: `SanitizeDelta` (zero callers in production), `SanitizeItemDelta` (only called from `SanitizeDelta`), `GetPeerCapabilities` (Tests.lua only) removed from DeltaComms.lua; `Guild:GetPeerCapabilities` wrapper (~4 lines) removed from Guild.lua. (3) **Guild.lua dead declarations**: `RECENTLY_SEEN_EXPIRY = 300` constant (never read anywhere; expiry logic was designed but never implemented), `MarkPlayerSeen()` (empty function body, explicitly marked DEPRECATED, no callers). (4) **Constants.lua orphaned fields**: `DELTA_HISTORY_MAX_COUNT`, `DELTA_HISTORY_MAX_AGE`, `DELTA_CHAIN_MAX_HOPS`, `DELTA_CHAIN_MAX_SIZE` from `PROTOCOL` table (became orphaned when delta history functions were deleted); `sendLegacy` and `sendNew` boolean fields from all three `PROTOCOL_MODES` entries (AUTO, LEGACY_ONLY, NEW_ONLY) — only `.name` and `.desc` are ever read, by Options.lua — `sendLegacy`/`sendNew` were never referenced from any code path. (5) **ItemHighlight.lua dead locals**: `OVERLAY_ALPHA = 0.7` and `OVERLAY_COLOR = {0.2, 0.2, 0.2}` — `ApplyOverlay()` hardcodes these values inline in the `SetVertexColor` call, so the named constants were never read. (6) **UI/Requests.lua layout dead code**: `FILTER_LAYOUT_TOP`, `FILTER_LAYOUT_TWO_HEADERS`, `FILTER_LAYOUT` locals; `useTwoHeaderLayout()` function (always returned false — `FILTER_LAYOUT` was initialized to `FILTER_LAYOUT_TOP` and never changed); always-true `if not useTwoHeaderLayout() then` guard in `DrawFilterRow` replaced with `do...end` to preserve local variable scoping for `filterGroup`, `requesterFilter`, `bankFilter`; dead two-header widget loop in `EnsureHeaderRows` (~40 lines — duplicate Dropdown creation for requester/bank filters that was structurally unreachable since the layout constant never flipped). Also covered in earlier passes: (7) **Network roster sync layer** (prior session) — 5 send functions, 3 receive handlers, 2 serializers, 2 call sites, `PLAYER_ENTERING_WORLD` broadcast trigger removed across 5 files; `/togbank roster` restored as local-only display; (8) **General dead code audit** (prior session) — 13 dead functions across 7 files, 4 stale `COMM_PREFIX_DESCRIPTIONS` entries, all `---START/END CHANGES` fork markers. Locations: Database.lua (delta history section, ~90 lines); Events.lua (CleanupDeltaHistory calls ×2); Chat.lua (SendDeltaChain dead block, ~30 lines); DeltaComms.lua (SanitizeDelta, SanitizeItemDelta, GetPeerCapabilities); Guild.lua (MarkPlayerSeen, RECENTLY_SEEN_EXPIRY, GetPeerCapabilities wrapper, roster-sync layer); Constants.lua (PROTOCOL + PROTOCOL_MODES fields); ItemHighlight.lua (OVERLAY_ALPHA, OVERLAY_COLOR); UI/Requests.lua (layout constants, useTwoHeaderLayout, EnsureHeaderRows dead loop).
 
 **Active Issues:**
-- ⚠️ [MAIL-006] Mail UI item display behavior unclear - Investigating contradictory symptoms (see below)
+- ⚠️ [ITEM-004] **HIGH** Gear/weapon item duplication from `EnsureLegacyFields` poisoning `alt.bank.items` with mail items — when alt data arrives from a peer (not the banker directly), only `alt.items` is present; `EnsureLegacyFields` copies the entire pre-aggregated array (bank + bags + mail combined) into `alt.bank.items`. Delta re-aggregation (`Aggregate(bank.items + bags.items + mail.items)`) then double-counts mail gear, producing duplicate rows. Root cause identified; fix not yet applied. Location: Guild.lua `EnsureLegacyFields` (~line 2300).
 
 **Recent Fixes (2026-03-30):**
 - ✅ [P2P-030] **HIGH** `hashBroadcastInProgress` guard could expire before transmission completed, re-opening the spool-collision window — P2P-023 introduced `hashBroadcastInProgress` to prevent concurrent `hash-list-broadcast` multipart messages from corrupting AceComm's reassembly spool (keyed by `prefix+distribution+sender`). The flag was cleared via `C_Timer.After(15, ...)` — a fixed 15-second estimate. ChatThrottleLib throttles GUILD addon messages at ~800 bytes/sec; a 9 KB hash-list (36 alts) requires ~36 chunks ≈ 11 seconds of drain time, with additional latency from queue depth and competing addon messages. Under load (login wave, zone change, other addons also sending) the actual drain could exceed 15 seconds, clearing the flag while chunks were still in flight. A subsequent trigger (periodic 3-minute timer, login event, manual `/togbank hashupdate`) would then see `hashBroadcastInProgress = false` and fire a second broadcast. The FIRST chunk of the second message overwrites the receiver's in-progress spool entry, producing a franken-message with a valid stop-marker but mismatched CRC (`stop=PASS crc=FAIL`). Observed symptom: `INTEGRITY-MISMATCH` log from `Saltydogg-Myzrael` on `togbank-hl`, 7377 bytes. Fix: Replaced `C_Timer.After(15, ...)` with the AceComm `callbackFn` argument (5th optional parameter to `SendCommMessage`). The callback fires locally on the sender once CTL finishes queuing the final chunk — accurate to the actual transmission, not a time estimate. `hashBroadcastInProgress` is now cleared inside this callback in both `Events:SyncDeltaVersion` and `Guild:HashUpdate`. No protocol change; receiver-side unaffected; backwards compatible. Locations: Events.lua `SyncDeltaVersion` (~line 292 `SendCommMessage` call + callback); Guild.lua `HashUpdate` (~line 3443 `SendCommMessage` call + callback).
@@ -71,7 +74,7 @@
 **Recent Fixes (2026-03-06):**
 - ✅ [REQSYNC-008] **CRITICAL** `SenderIsOfficer` crashed with "attempt to call global 'GuildControlGetRankFlags' (a nil value)" on every bank open — `GuildControlGetRankFlags` is a Retail-only WoW API that does not exist in Classic Era. It was introduced in the REQSYNC-001 fix as a way to check per-rank permissions at lookup time. Fix: Moved officer determination to `RefreshOnlineCache` (cache-build time). Classic Era has no per-rank permission API, but `CanViewOfficerNote()` returns whether the LOCAL player has officer-note access. Since Classic ranks are strictly ordered (lower rankIndex = more permissions), if the local player at rankIndex N has officer-note access, all members with rankIndex <= N also have it. `isOfficer` is now stored on each memberRoster entry at cache-build time; `SenderIsOfficer` is a pure O(1) cache read with zero WoW API calls. Regression introduced in commit 4e68f63. Locations: Guild.lua `RefreshOnlineCache`, `SenderIsOfficer`.
 - ✅ [UI-003] Item quality border color not showing for non-recipe gear — resolved by UI-011 (Item.lua Branch 1 rarity fix) + DrawItem sync/async link-based fallback for uncached remote gear. See Recent Fixes (2026-03-20).
-- ⚠️ [UI-004] Tooltips missing for some food items (Homemade Cherry Pie, Roasted Quail confirmed)
+- ✅ [UI-004] Tooltips missing for some food items (Homemade Cherry Pie, Roasted Quail confirmed) — resolved by UI-010 (double `item:` prefix fix for mail items; consumables stored with malformed hyperlinks produced silent `SetHyperlink` failures on hover)
 
 **Recent Fixes (2026-03-12):**
 - ✅ [UI-001] **MEDIUM** Inventory slot counts show 0/0 for non-bank members — delta protocol transmitted bank/bags item changes but never included `bank.slots`/`bags.slots`. Non-bank members received correct item lists after sync but the status bar always displayed 0/0 because slot totals were never part of the delta payload. Full snapshots (via `StripAltLinks`) did include slots, so bankers themselves always saw correct counts. Fix: `DeltaComms.lua` delta builder now appends `changes.bankSlots` and `changes.bagsSlots` to every delta; the applier writes them onto `current.bank.slots`/`current.bags.slots` after item changes are applied. Locations: DeltaComms.lua `ComputeDelta` (after mail delta computation), `ApplyDelta` (after bags item apply block).
@@ -101,6 +104,61 @@
 - ✅ [DELTA-022] **CRITICAL** Every delta sync was effectively a full sync — `ItemsEqual` compared `item1.Link ~= item2.Link` where `item1` was a minimal baseline item (Link=nil, from `expandMinimalItems` in `ComputeDelta`) and `item2` was a current inventory item (always has Link). `nil ~= "item:12345:..."` is always true, so every unchanged item landed in `modified[]` regardless of actual changes. The resulting delta contained the entire inventory as modified entries — same size as a full sync — defeating the point of delta protocol entirely. Fix: Only compare Links when both items have them. A nil Link on either side means the field is simply absent/unknown (minimal baseline), not a meaningful difference. Locations: DeltaComms.lua `ItemsEqual` (~446-490).
 - ✅ [DELTA-023] **HIGH** Stale `hasSnapshot` gate in `RespondToStateSummary` caused unnecessary full syncs after any reload — Both the mail-only-change and inventory-change branches in `RespondToStateSummary` checked `GetSnapshot()` before computing a delta, falling back to `SendAltData(norm, 0, 0, ...)` (full sync) when no snapshot existed. Since snapshots are in-memory only (PERF-012), they are lost on every reload. After DELTA-020 landed, `ComputeDelta` uses `requesterBaseline` from the state summary directly and no longer uses `GetSnapshot` at all — but the gate in `RespondToStateSummary` was never removed. Result: The first sync after any reload always sent a full "everything as additions" delta even though the requester sent their exact baseline in the state summary. Fix: Removed both `hasSnapshot` gates entirely. `ComputeDelta` handles `requesterHash == 0` (no prior data) internally; `requesterBaseline` covers all other cases. Locations: Guild.lua `RespondToStateSummary` mail-only branch (~1829) and inventory-change branch (~1847).
 - ✅ [DELTA-024] **LOW** Migration computes inventory hash using a different algorithm than `Bank:Scan()`, causing a false "inventory changed" event on every startup — The `Database.lua` migration block (post-load, deferred 0.5s) called `ComputeInventoryHash(alt.bank, alt.bags, money)` which routes through the pre-SYNC-006 code path and hashes `"B:bank.items|G:bags.items"` separately. `Bank:Scan()` always calls `ComputeInventoryHash(alt.items, nil, nil, money)` which is the SYNC-006 path and hashes `"I:aggregated_items"`. Same hash algorithm but different string input → different numeric output for identical inventory data. On startup the migration wrote the pre-SYNC-006 hash; then on first `Bank:Scan()` the SYNC-006 hash differed → `currentHash ~= previousHash` → version bumped, snapshot saved, and `dv2` broadcast triggered as if inventory had changed. Transient (self-healed after first scan), but caused one spurious version bump and broadcast per session. Fix: After `RecalculateAggregatedItems` populates `alt.items`, recompute hash using SYNC-006 calling convention to match `Bank:Scan()` format. Locations: Database.lua deferred migration block (~220).
+
+---
+
+## [MAIL-013] Ghost duplicate weapon rows from `GetItemInfo(itemID)` fallback in `ScanMailInventory`
+
+**Severity:** HIGH
+**Status:** Fixed 2026-04-01
+**Reported:** April 1, 2026
+
+**Symptom:**
+Suffixed weapons (and other gear with random suffixes) appeared as two separate rows in the Aggregate inventory: one correct suffixed entry (e.g. `2x Warlords' Axe of the Wolf`) sourced from the bank scan, and one ghost base-item entry (e.g. `9x Warlords' Axe`) sourced from a stale mail scan. The ghost entry had no suffix and incorrect count. Both rows were transmitted to all guild members via delta sync, so every client showed the duplicate until a data wipe.
+
+**Root Cause:**
+`MailInventory.lua:ScanMailInventory` called `GetInboxItemLink(mailIndex, attachIndex)` to obtain a full hyperlink for each mail attachment. When the WoW client had not yet cached the item (common for items on first-open or after a reload), `GetInboxItemLink` returned nil. The code had a fallback:
+
+```lua
+-- Old fallback (REMOVED):
+if not link and itemID then
+    link = select(2, GetItemInfo(itemID))
+end
+```
+
+`GetItemInfo` called with a plain integer ID always returns the **base item** regardless of suffix. For a suffixed weapon like `Warlords' Axe of the Wolf` (itemID 12345, suffixID -17), `GetItemInfo(12345)` returns `|Hitem:12345:0:0:0:0:0:0:0:0|h[Warlords' Axe]|h` — suffix zero, no random enchantment.
+
+This base-item link was stored as `storageLink` in `mail.items`. `GetItemKey` normalizes the 7-part itemString and produces a key of `"12345" .. normalizedKey(suffix=0)`. The existing bank entry was keyed by `"12345" .. normalizedKey(suffixID=-17)` — a **different key**.
+
+`Aggregate` received both:
+- `{ Link="...[Warlords' Axe of the Wolf]...", Count=2 }` from bank (correct)
+- `{ Link="...[Warlords' Axe]...", Count=9 }` from mail (ghost base-item)
+
+They did not match on key → two rows inserted → ghost stack appeared in UI.
+
+`NeedsLink` returned true for the base-item entry (weapon class), so `StripDeltaLinks` preserved its bad link. The ghost entry was transmitted to all guild members via delta, making the duplicate visible on all clients until a data wipe.
+
+**Why count was wrong:**
+The ghost entry accumulated mail item counts from every scan cycle where `GetInboxItemLink` returned nil. Multiple scans of the same mailbox created or incremented the ghost count independently.
+
+**Fix:**
+Removed the `GetItemInfo(itemID)` fallback entirely. When `GetInboxItemLink` returns nil, `link` stays nil:
+
+```lua
+-- storageLink will be nil when link is nil
+local storageLink = link and string.match(link, "item:([^|]+)") or nil
+```
+
+Nil `storageLink` → `GetItemKey` called with `(itemID, nil)` → produces an **ID-only key** (`tostring(itemID)`). `Aggregate`'s linkless merge branch (`if not item.Link then`) then finds the matching suffixed entry by ID and increments its count instead of inserting a new ghost row. The suffixed entry is authoritative; a linkless mail count folds into it correctly.
+
+Items that are in cache by the time of the next mail scan will have their full links captured by `GetInboxItemLink` normally.
+
+**Data Migration Note:**
+Existing `alt.mail.items` entries persisted in SavedVariables with base-item links (suffix=0) constitute corrupted data. The code fix prevents future corruption but does not retroactively correct already-persisted entries. A `/togbank wipe` is required to clear the stale ghost rows from all clients' SavedVariables.
+
+**Location:** MailInventory.lua `ScanMailInventory` (~line 62) — removed fallback block.
+
+**Related:** [ITEM-003b] Receive-side ghost weapon guard (complementary fix for delta-receive path), [UI-015] Mail item border colors (same scan session).
 
 ---
 
@@ -147,6 +205,70 @@ Removed all identified dead code. Notable decisions:
 - Constants.lua: `DELTA_HISTORY_*` / `DELTA_CHAIN_*` PROTOCOL fields + `sendLegacy`/`sendNew` PROTOCOL_MODES fields removed
 - ItemHighlight.lua: `OVERLAY_ALPHA`, `OVERLAY_COLOR` removed
 - UI/Requests.lua: layout constants, `useTwoHeaderLayout()`, dead `EnsureHeaderRows` two-header loop removed
+
+---
+
+## [ITEM-004] Gear/weapon item duplication from `EnsureLegacyFields` poisoning `alt.bank.items`
+
+**Severity:** HIGH
+**Status:** Open — root cause identified, fix pending
+**Reported:** April 1, 2026
+
+**Symptom:**
+Gear items (weapons, armor with random suffixes) appear as two separate rows in the inventory UI for alts whose data was received from a peer rather than directly from the banker. Example: `2x Warlords' Axe of the Wolf` (correct, from bank) and a second `2x Warlords' Axe of the Wolf` row (ghost, from mail). The duplication is specific to gear because `NeedsLink = true` for weapon/armor class, causing `Aggregate` to key them by their full normalized link rather than ID-only, which prevents silent merging of the duplicated entries.
+
+**Root Cause:**
+The data flow for peer-synced alt data differs from banker-direct data:
+
+- **Banker-direct**: `Bank:Scan()` populates `alt.bank.items`, `alt.bags.items`, and `alt.mail.items` separately, then aggregates them into `alt.items`. The receiver gets all four fields.
+- **Peer-synced**: The peer only stores and forwards `alt.items` (the pre-aggregated combined array). It does not transmit separate `alt.bank`, `alt.bags`, or `alt.mail` fields.
+
+When `ReceiveAltData` processes a peer-synced entry, it calls `EnsureLegacyFields(alt)`. Because `alt.bank` or `alt.bank.items` is absent, the function's guard fires and it "reconstructs" the legacy fields by copying ALL of `alt.items` into `alt.bank.items`:
+
+```lua
+-- EnsureLegacyFields (Guild.lua ~line 2300) — BUGGY:
+if not alt.bank or not alt.bank.items then
+    alt.bank = alt.bank or {}
+    alt.bank.items = {}
+    for _, item in ipairs(alt.items) do
+        table.insert(alt.bank.items, item)  -- includes mail items!
+    end
+end
+```
+
+`alt.items` is the bank + bags + **mail** aggregate. Mail gear items (preserved as full links by `StripDeltaLinks` because `NeedsLink = true`) are now present in BOTH `alt.bank.items` AND `alt.mail.items`.
+
+The next time any delta arrives, `ApplyDelta` rebuilds the aggregated view:
+
+```lua
+local aggregated = TOGBankClassic_Item:Aggregate(current.bank.items, current.bags.items)
+aggregated = TOGBankClassic_Item:Aggregate(aggregated, current.mail.items)
+current.items = aggregated
+```
+
+`current.bank.items` (poisoned) already contains the mail gear → `Aggregate` inserts it with key `"4306item:4306:0:0:0:0:0:-26"`. Then `current.mail.items` contains the same gear again → `Aggregate` tries to merge using the same key but finds an identical key already present → inserts a **second** entry. Two rows.
+
+**Why gear specifically:** Non-gear items (consumables, materials) have `NeedsLink = false`, so `StripDeltaLinks` stores them as `ItemString` (no link). `Aggregate` keys linkless items by ID-only and folds duplicates through the `itemsByID` merge branch. Gear items keep their full links, so `Aggregate` uses the full `ID+GetItemKey(link)` key path, which cannot merge two structurally identical entries that are separate table references.
+
+**Affected path:** Any client that received alt data from a peer (second-hand relay) rather than in a direct banker whisper. This includes: the initial sync on a fresh install/wipe (P2P hash-offer from an online peer, not the banker), any client that was offline when the banker shared and received data from a peer who was online. The poisoned `alt.bank.items` persists in SavedVariables across sessions.
+
+**Fix:**
+Do not copy `alt.items` into `alt.bank.items` in `EnsureLegacyFields`. The `alt.items` array is the authoritative aggregated view and is sufficient for all display paths (`DrawContent` in `UI/Inventory.lua` already uses `alt.items` directly when present). The legacy bank field reconstruction is only needed for old clients pre-SYNC-006 that never sent a combined `alt.items`; all current clients do. Leaving `alt.bank.items` empty when peer-synced data arrives is safe: the next direct delta or full sync from the banker will populate it correctly.
+
+```lua
+-- EnsureLegacyFields (Guild.lua ~line 2300) — FIXED:
+if not alt.bank or not alt.bank.items then
+    alt.bank = alt.bank or {}
+    alt.bank.items = {}  -- leave empty; do NOT copy alt.items (it includes mail)
+end
+```
+
+**Data Migration Note:**
+Existing SavedVariables with a poisoned `alt.bank.items` (received from a peer under the old behaviour) will continue showing duplicates until the entry is overwritten by a fresh full sync from the banker or a `/togbank wipe`. A wipe followed by a reload is the fastest recovery path for affected clients.
+
+**Location:** Guild.lua `EnsureLegacyFields` (~line 2300) — remove `for _, item in ipairs(alt.items)` copy loop.
+
+**Related:** [ITEM-003b] Receive-side ghost weapon guard (complementary per-item guard in `ApplyItemDelta`), [MAIL-013] Ghost duplicates from `GetItemInfo` fallback (separate mail-scan bug, fixed 2026-04-01).
 
 ---
 
@@ -329,6 +451,70 @@ Secondary issue: `QueryRequestsIndex` was only called from a timer that fired pe
 - `RequestLog.lua` `SendRequestsById` (~856): prefix `togbank-d` → `togbank-rd`
 - `Events.lua` GUILD_ROSTER_UPDATE deferred block (~428-438): added `QueryRequestsIndex()` call
 - `UI/Requests.lua` panel open handler: added `QueryRequestsIndex()` call
+
+---
+
+## [ROSTER-004] Non-guild alts polluting `latestBankerHashes` and HLR processing
+
+**Severity:** HIGH
+**Status:** Fixed 2026-04-01
+**Reported:** April 1, 2026
+
+**Symptom:**
+`/togbank hashdump` reported 56 entries in `latestBankerHashes` against a live banker roster of 36. Phantom alts were being dispatched to the P2P `ScheduleCatchUp` / `DispatchList` pipeline, triggering unnecessary sync sessions for names that did not correspond to any current guild banker. No data corruption resulted, but the inflated table caused false "HLR pending" counts, wasted session slots, and made the hash dump unreliable as a diagnostic tool.
+
+**Root Causes:**
+
+**(1) `BuildBankerHashList` using stale SavedVariables source first.**
+
+`BuildBankerHashList` is called by `SyncDeltaVersion` to build the `alts` payload for every `hash-list-broadcast`. Its alt source was:
+
+```lua
+-- BEFORE:
+local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
+```
+
+`GetRosterAlts()` reads `Info.roster.alts` from SavedVariables — the persisted banker list written by `RebuildBankerRoster` only when a change is detected. Between sessions (rename, guild transfer, demoted banker) this list can be out of date. `GetBanks()`, which derives its list from `memberRoster` (rebuilt from `GetGuildRosterInfo` on every `GUILD_ROSTER_UPDATE`), was only reached if `GetRosterAlts` returned a non-empty list, which it almost always did — making the live source permanently shadowed.
+
+**(2) `togbank-hlr` handler accepting every alt in the payload unconditionally.**
+
+When an HLR (`hash-list-reply`) arrived, three separate loops processed `data.alts` without any guild membership check:
+
+- **`latestBankerHashes` insert loop**: wrote every `norm → summary` pair into the local hash table without checking `IsBank(norm)`.
+- **First-pass stub creation**: created a new `Info.alts[norm]` entry for any alt with `hash > 0` and `data.isBanker == true`, again without `IsBank(norm)`.
+- **Second-pass sync queue**: evaluated every alt in `data.alts` for pending status and queued P2P requests, skipping only `currentPlayer` but not non-guild names.
+
+Because multiple peers may have divergent `roster.alts` in their SavedVariables (especially just after someone leaves or changes role), any peer that still carries old names in their SV would propagate them to every receiver via HLR.
+
+**Fix:**
+
+**(A) `BuildBankerHashList` — swap source priority (Guild.lua):**
+
+```lua
+-- AFTER:
+-- Prefer live GetBanks() (derived from memberRoster) over persisted GetRosterAlts(),
+-- which reads Info.roster.alts from SavedVariables and may contain stale ex-bankers.
+local rosterAlts = self:GetBanks() or self:GetRosterAlts() or {}
+```
+
+`GetBanks()` is an O(1) iteration of `memberRoster` (populated from the actual WoW guild API at every `GUILD_ROSTER_UPDATE`), so broadcasted hash lists now only ever contain current-guild bankers.
+
+**(B) `togbank-hlr` handler — add `IsBank(norm)` guard to all three write paths (Chat.lua):**
+
+1. `latestBankerHashes` insert loop: `if norm and summary and IsBank(norm) then` — rejects non-guild alts from entering the hash cache.
+2. First-pass stub creation: `if not localAlt and data.isBanker and IsBank(norm) then` — prevents phantom `Info.alts` stubs.
+3. Second-pass loop header: `if norm ~= currentPlayer and IsBank(norm) then` — prevents sync requests for non-roster names.
+
+`IsBank()` is an O(1) `memberRoster[norm].isBank` read (no guild API call), so the per-entry cost is negligible.
+
+**Why ROSTER-002 didn't fully cover this:**
+ROSTER-002 added stub cleanup in `RebuildBankerRoster` (removes zero-data stubs for ex-bankers) and filtered `latestBankerHashes` initialization at login. It did not guard the real-time HLR receive path, so stale names propagated by peers could re-enter `latestBankerHashes` between roster rebuilds.
+
+**Locations:**
+- Guild.lua `BuildBankerHashList` (~line 778): source priority swap
+- Chat.lua `togbank-hlr` handler: three `IsBank(norm)` guards — `latestBankerHashes` insert loop, first-pass stub check, second-pass sync loop
+
+**Related:** [ROSTER-002] Stale ex-banker stub cleanup, [P2P-028] BuildBankerHashList wipe-recovery.
 
 ---
 
@@ -838,13 +1024,13 @@ The fixes work together to ensure correct behavior even when individual componen
 
 #### [MAIL-006] Mail UI item display behavior unclear
 
-**Severity:** 🟡 MEDIUM (potentially LOW - needs clarification)
+**Severity:** 🟡 MEDIUM
 **Category:** Mail / UI / Data Integrity
 **Reporter:** User (Production)
 **Date Reported:** 2026-01-29
-**Date Resolved:** ⚠️ **INVESTIGATING** - Problem statement unclear
-**Status:** 🔍 **ON HOLD** - Awaiting reproduction steps and symptom clarification
-**Reproducibility:** Unknown
+**Date Resolved:** 2026-04-01
+**Status:** ✅ CLOSED — Not a distinct bug; underlying mail display issues resolved by UI-010, UI-015, and MAIL-013
+**Reproducibility:** N/A — no consistent repro steps were ever established
 **Related:** [DATA-004] Mail structure fixes, [MAIL-005] Deduplication
 
 **Problem:**
@@ -10274,15 +10460,15 @@ Recipe items worked correctly because they are common consumables typically cach
 ## [UI-004] Tooltips missing for some food items
 
 **Severity:** LOW
-**Status:** Active
+**Status:** ✅ RESOLVED — Fixed by UI-010 (2026-03-19)
 **Reported:** March 12, 2026 (external user feedback)
 
 **Symptom:**
-Certain food items show no tooltip on hover in the inventory window. Confirmed affected: Homemade Cherry Pie, Roasted Quail. Other food items may be affected.
+Certain food items (confirmed: Homemade Cherry Pie, Roasted Quail) showed no tooltip on hover in the inventory window when sourced from mail.
 
-**Investigation Needed:**
-- Determine whether the tooltip is never shown or shown with empty text
-- Check whether affected items share a common trait (e.g. item class/subclass, cache miss at tooltip time, specific item IDs)
-- Inspect the tooltip population path in `UI/Inventory.lua` for early-return conditions that would suppress display for food-class items
+**Root Cause:**
+Resolved as a side-effect of UI-010. Food/consumable items arrive via mail and are stored by `MailInventory.lua` as `ItemString`. Prior to UI-010, `storageItemString` retained the `item:` prefix from `GetItemString()` (e.g. `"item:4306:0:..."`). `ReconstructItemLink` embedded this directly into `|Hitem:%s` → produced `|Hitem:item:4306:...|h` — a double-prefixed hyperlink. `GameTooltip:SetHyperlink` on this malformed link fails silently, showing no tooltip. Bank items were unaffected because `StripItemLinks` always stripped the prefix correctly. Fix: UI-010 corrected `MailInventory.lua` to strip the `item:` prefix at storage time, and added defensive stripping in `ReconstructItemLink` and `ProcessItemQueue` to handle already-persisted data. All mail consumable tooltips now display correctly.
+
+**Related:** [UI-010] Mail item tooltip fix (root cause fix)
 
 ---

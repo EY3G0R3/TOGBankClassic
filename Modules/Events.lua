@@ -51,7 +51,7 @@ function TOGBankClassic_Events:RegisterEvents()
 	self:RegisterEvent("AUCTION_HOUSE_CLOSED")
 	self:RegisterEvent("MERCHANT_SHOW")
 	self:RegisterEvent("MERCHANT_CLOSED")
-	self:RegisterEvent("PLAYER_REGEN_DISABLED") --player entered combat
+	self:RegisterEvent("PLAYER_REGEN_DISABLED")
 	hooksecurefunc("ChatEdit_InsertLink", function(link)
 		TOGBankClassic_UI:OnInsertLink(link)
 	end)
@@ -140,7 +140,7 @@ function TOGBankClassic_Events:UnregisterEvents()
 	self:UnregisterEvent("AUCTION_HOUSE_CLOSED")
 	self:UnregisterEvent("MERCHANT_SHOW")
 	self:UnregisterEvent("MERCHANT_CLOSED")
-	self:UnregisterEvent("PLAYER_REGEN_DISABLED") --player entered combat
+	self:UnregisterEvent("PLAYER_REGEN_DISABLED")
 end
 
 function TOGBankClassic_Events:SetShareTimer()
@@ -557,7 +557,6 @@ function TOGBankClassic_Events:TRADE_SHOW(_)
 end
 
 function TOGBankClassic_Events:TRADE_CLOSED(_)
-	-- FIXME: Isn't rescanning?
 	TOGBankClassic_Bank:OnUpdateStop()
 end
 

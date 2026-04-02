@@ -215,7 +215,6 @@ function TOGBankClassic_Options:Init()
 		},
 	}
 	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicOptionDB", defaults)
-	-- Migrate from old shutup toggle to new logLevel
 	if self.db.global.bank["shutup"] ~= nil then
 		if self.db.global.bank["shutup"] == true then
 			self.db.global.bank["logLevel"] = LOG_LEVEL.RESPONSE

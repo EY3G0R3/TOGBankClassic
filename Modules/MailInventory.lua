@@ -59,9 +59,14 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 
 				if itemID and name then
 					local link = GetInboxItemLink(i, j)
-					if not link and itemID then
-						link = select(2, GetItemInfo(itemID))
-					end
+					-- DO NOT fall back to GetItemInfo(itemID) for the link.
+					-- GetItemInfo by numeric ID returns the BASE item link (no suffix/enchant),
+					-- which is wrong for suffixed weapons/armor (e.g. yields "Warlords' Axe"
+					-- instead of "Warlords' Axe of the Wolf"). Storing the wrong link creates
+					-- a distinct key that Aggregate cannot dedup against the correct suffixed
+					-- bank entry, producing a ghost plain-weapon duplicate row.
+					-- Leaving link=nil lets Aggregate's ID-based linkless merge fold the count
+					-- into the correct existing bank/bags entry instead.
 					local itemString = link and TOGBankClassic_Item:GetItemString(link) or nil
 
 					-- Always store the full link, exactly like Bank.lua's ScanBag().

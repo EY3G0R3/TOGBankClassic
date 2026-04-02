@@ -64,9 +64,12 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Core:RegisterChatCommand("togbank", function(input)
 		return TOGBankClassic_Chat:ChatCommand(input)
 	end)
+	TOGBankClassic_Core:RegisterChatCommand("bank", function()
+		TOGBankClassic_UI_Inventory:Toggle()
+	end)
 
 	self.addon_outdated = false
-	self.online_bankers = {}  -- v0.8.0: tracks online bankers for pull-based protocol
+	self.online_bankers = {}  -- tracks online bankers for pull-based protocol
 
 	self.last_alt_sync = {}
 	self.sync_queue = {}
@@ -78,7 +81,6 @@ function TOGBankClassic_Chat:Init()
 	self.hashBroadcastTimer = nil
 	self.HASH_BROADCAST_BATCH_DELAY = 0.15  -- seconds to batch incoming broadcasts
 
-	-- togbank-d, togbank-d2, togbank-d3 removed: never sent in current code (use togbank-d4)
 	TOGBankClassic_Core:RegisterComm("togbank-hl", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
@@ -96,10 +98,6 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Core:RegisterComm("togbank-rm", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
-
-	-- togbank-dr / togbank-dc (DELTA-006 delta chain replay) REMOVED:
-	-- togbank-dr was only triggered by deltaData.baseVersion which v0.8+ stopped sending.
-	-- togbank-dc was the paired response; both are dead code paths. Slots freed for future use.
 
 	TOGBankClassic_Core:RegisterComm("togbank-rd", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
@@ -127,9 +125,6 @@ function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Core:RegisterComm("togbank-rd2", function(prefix, message, distribution, sender)
 		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
 	end)
-	-- togbank-s/sr, togbank-w/wr, togbank-roster, togbank-rq removed:
-	-- share/wipe/roster traffic migrated onto togbank-hl type dispatch (SYNC-013)
-	-- sr and wr had no handler; rq was never sent
 end
 
 -- Called from Core after Options is initialized — registers /bank and /gbank if enabled.
@@ -153,7 +148,6 @@ end
 
 -- Centralized sync function for both /sync command and UI opening
 function TOGBankClassic_Chat:PerformSync()
-	-- v0.8.0: Use delta version broadcast instead of legacy sync
 	-- SYNC-008 fix: Use ALERT priority for manual sync so it happens immediately
 	TOGBankClassic_Events:SyncDeltaVersion("ALERT")
 	local hashListRequested = false
@@ -264,7 +258,6 @@ function TOGBankClassic_Chat:IsAltDataAllowed_RosterBased(sender, claimedNorm)
 end
 
 function TOGBankClassic_Chat:IsAltDataAllowed(sender, claimedNorm)
-	-- SYNC-001 fix: Use roster-based validation by default
 	return self:IsAltDataAllowed_RosterBased(sender, claimedNorm)
 end
 
@@ -339,8 +332,6 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 			TOGBankClassic_Core:SendWhisper("togbank-hl", offerData, sender, "NORMAL")
 			TOGBankClassic_Output:Debug("P2P", "OFFER", "Sent hash-offer to %s for %d alts", sender, offerCount)
 		end
-		-- HASH-REFORM: Banker-only legacy path removed. latestBankerHashes is now updated
-		-- by P2PSession:OnOffer as peers respond with newer hashes (newest-updatedAt wins).
 	end
 	
 	-- Clear queue and timer
@@ -411,7 +402,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	if prefix == "togbank-r" then
 		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "togbank-r DATA.TYPE = %s from %s", tostring(data.type), sender)
 
-		-- v0.8.0: Check if this is a pull-based request (has type == "alt-request")
+		-- Check if this is a pull-based request (has type == "alt-request")
 		if data.type == "alt-request" then
 			-- Pull-based request flow - respond with togbank-rr acknowledgment
 			local altName = data.name
@@ -468,7 +459,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					local hasContent = TOGBankClassic_Guild:HasAltContent(alt, altName)
 					if hasContent then
 						shouldRespond = true
-						-- PERF-005: Banker includes hash for P2P validation
 						expectedHash = alt.inventoryHash or 0
 						expectedUpdatedAt = alt.inventoryUpdatedAt or alt.version or 0
 					else
@@ -576,7 +566,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					isBanker = isBanker,
 					hasData = hasData,
 					hashOnly = hashOnly,
-					expectedHash = expectedHash,  -- PERF-005: Include hash for P2P validation
+					expectedHash = expectedHash,
 					expectedUpdatedAt = expectedUpdatedAt,
 				}
 				local ackData = TOGBankClassic_Core:SerializeWithChecksum(ack)
@@ -704,7 +694,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		end
 	end
 
-	-- v0.8.0: Pull-based request reply handler (togbank-rr)
 	if prefix == "togbank-rr" then
 		-- P2P-006: Session handshake — sync-request (we are the data provider).
 		-- Requester asks us to send data for one alt; we accept or reject based on capacity.
@@ -788,7 +777,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				requester = TOGBankClassic_Guild:GetNormalizedPlayer(),
 				hashOnly = false,
 				expectedHash = expectedHash,  -- Peers will validate against this
-				requesterMailHash = ourMailHash,  -- MAIL-SYNC: Mail change detection
+				requesterMailHash = ourMailHash,
 			}
 			local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
 			TOGBankClassic_Core:SendCommMessage("togbank-hl", p2pData, "GUILD", nil, "NORMAL")
@@ -912,7 +901,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	end
 end
 
--- v0.8.0: State summary handler (togbank-state) - Step 5 & 6 of pull-based flow
 	if prefix == "togbank-state" then
 		if data.type == "state-summary" then
 			local altName = data.name
@@ -935,7 +923,6 @@ end
 		end
 	end
 
-	-- v0.8.0: No-change handler (togbank-nochange)
 	if prefix == "togbank-nochange" then
 		if data.type == "no-change" then
 			local altName = data.name
@@ -1098,8 +1085,6 @@ end
 		end
 	end
 
-	-- togbank-d4: v0.8.0 Link-less delta (future - not yet implemented)
-	-- v0.8.0 Link-less delta handler (togbank-d4) - saves 60-80 bytes per item
 	if prefix == "togbank-d4" then
 		if data.type == "alt-delta" then
 			-- only accept delta data if the sender matches the claimed alt name
@@ -1148,6 +1133,11 @@ end
 						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.added)
 						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.modified)
 						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.removed)
+					end
+					if data.changes.mail then
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.mail.added)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.mail.modified)
+						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.mail.removed)
 					end
 				end
 
@@ -1213,7 +1203,6 @@ end
 		TOGBankClassic_Guild:ReceiveRequestsByIdV1(data)
 	end
 
-	-- v0.9.1+: Request-specific data handler (togbank-rd, legacy key-value format)
 	if prefix == "togbank-rd" then
 		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "[SYNC-003p] togbank-rd received from %s: type=%s", sender, tostring(data.type))
 
@@ -1324,7 +1313,9 @@ end
 			end
 			for altName, summary in pairs(data.alts) do
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
-				if norm and summary then
+				-- Only accept alts that are current bankers in this guild; rejects stale
+				-- ex-banker entries that senders may still carry in their roster.alts SV.
+				if norm and summary and TOGBankClassic_Guild:IsBank(norm) then
 					TOGBankClassic_Guild.latestBankerHashes[norm] = summary
 				end
 			end
@@ -1341,7 +1332,7 @@ end
 					local localHash = localAlt and localAlt.inventoryHash or 0
 
 					if summary and summary.hash and summary.hash > 0 then
-						if not localAlt and data.isBanker then
+						if not localAlt and data.isBanker and TOGBankClassic_Guild:IsBank(norm) then
 							-- Create stub entry with banker's authoritative hash (only trusted banker broadcasts)
 							TOGBankClassic_Guild.Info.alts[norm] = {
 								name = norm,
@@ -1373,8 +1364,9 @@ end
 		for altName, summary in pairs(data.alts) do
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
 				
-				-- Skip current player (can't request your own data)
-				if norm ~= currentPlayer then
+				-- Skip current player and alts not in the current guild banker roster.
+				-- Prevents stale ex-banker entries from triggering sync requests.
+				if norm ~= currentPlayer and TOGBankClassic_Guild:IsBank(norm) then
 					local localAlt = localAlts and localAlts[norm]
 					local localHash = localAlt and localAlt.inventoryHash or 0
 					local localMailHash = localAlt and localAlt.mailHash or 0
@@ -1386,7 +1378,6 @@ end
 					totalCount = totalCount + 1
 
 					-- SYNC-009: Check if hashes match BEFORE skipping (non-banker sync bug fix)
-					-- Previously, we skipped any alt with hasContent=true without checking hashes.
 					-- This broke non-banker sync: if we had OLD content for a non-banker alt,
 					-- we'd skip it even when the banker had a different (newer) hash.
 					-- Now we only skip if BOTH hasContent AND hashes match.
@@ -1494,7 +1485,6 @@ end
 			end
 		end
 	end
-	-- togbank-s and togbank-w handlers removed: migrated to togbank-hl type dispatch (SYNC-013)
 end
 
 -- Help text color codes

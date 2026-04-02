@@ -61,7 +61,6 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
 end
 
 function TOGBankClassic_Core:OnInitialize()
-    -- Called when the addon is loaded
     TOGBankClassic_Output:Init()
     TOGBankClassic_Performance:Initialize()
     TOGBankClassic_Database:Init()
@@ -70,17 +69,14 @@ function TOGBankClassic_Core:OnInitialize()
     TOGBankClassic_Chat:RegisterAliasCommands()
     TOGBankClassic_UI:Init()
 
-    -- Initialize ItemHighlight module
     if TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.Initialize then
         TOGBankClassic_ItemHighlight:Initialize()
     end
 
-    -- Initialize banker tooltip info module
     if TOGBankClassic_TooltipBankerInfo and TOGBankClassic_TooltipBankerInfo.Initialize then
         TOGBankClassic_TooltipBankerInfo:Initialize()
     end
 
-    -- Setup periodic memory snapshots (every 5 minutes)
     self:ScheduleRepeatingTimer(function()
         TOGBankClassic_Performance:RecordMemory("periodic")
     end, 300)
@@ -101,12 +97,10 @@ function TOGBankClassic_Core:OnInitialize()
 end
 
 function TOGBankClassic_Core:OnEnable()
-    -- Called when the addon is enabled
     TOGBankClassic_Events:RegisterEvents()
 end
 
 function TOGBankClassic_Core:OnDisable()
-    -- Called when the addon is disabled
     TOGBankClassic_Events:UnregisterEvents()
 end
 
@@ -258,7 +252,6 @@ function TOGBankClassic_Core:DeserializeWithChecksum(message, ctx)
     return self:Deserialize(serialized)
 end
 
--- Delta functions delegated to DeltaComms module (v0.7.0+)
 function TOGBankClassic_Core:ValidateDeltaStructure(delta)
 	return TOGBankClassic_DeltaComms:ValidateDeltaStructure(delta)
 end

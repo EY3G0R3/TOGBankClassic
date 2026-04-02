@@ -123,8 +123,6 @@ function TOGBankClassic_Bank:Scan()
 		return
 	end
 
-	-- Roster sync removed: Roster is now rebuilt locally from guild notes on GUILD_ROSTER_UPDATE
-
 	local alt = {}
 	-- Load from aggregate view (info.alts)
 	if info.alts and info.alts[player] then
@@ -276,7 +274,6 @@ function TOGBankClassic_Bank:Scan()
 		alt.bags.items = cleanBags
 	end
 
-	-- v0.8.0: Only update version if inventory actually changed
 	-- Compute a hash of the current inventory state (SYNC-006: use aggregated alt.items)
 	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, money)
 	local previousHash = alt.inventoryHash

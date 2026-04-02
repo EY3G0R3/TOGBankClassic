@@ -50,8 +50,6 @@ function TOGBankClassic_Database:Reset(name)
 			autoTombstoneDays = 30,   -- Stale open requests older than this are auto-tombstoned on receive
 		},
 		-- Delta sync fields
-		-- PERF-012: deltaSnapshots moved to in-memory deltaSnapshotsCache (not persisted)
-		-- PERF-012: deltaHistory removed — delta chain replay dead code since v0.8.0
 		guildProtocolVersions = {},
 		deltaMetrics = {
 			bytesSentDelta = 0,
@@ -180,8 +178,7 @@ function TOGBankClassic_Database:Load(name)
 
 	-- Migrate old alt data structures from pre-v0.8 saves (no-ops for v0.9.6+ users)
 	C_Timer.After(0.5, function()
-		-- v0.8.0: Migrate old alt data to ensure slots fields exist
-		-- Characters scanned before v0.6.0 may have bank/bags without slots
+					-- Characters scanned before v0.6.0 may have bank/bags without slots
 		if db.alts then
 			for name, alt in pairs(db.alts) do
 				if type(alt) == "table" then
@@ -193,14 +190,14 @@ function TOGBankClassic_Database:Load(name)
 						alt.bags.slots = { count = 0, total = 0 }
 					TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: initialized bags.slots for %s", name)
 					end
-					-- v0.8.0: Compute inventory hash for alts that don't have one
+
 					-- This enables pull-based protocol for existing alt data
 					if not alt.inventoryHash and alt.bank and alt.bags then
 						local money = alt.money or 0
 						alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
 					TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: computed inventory hash for %s (hash=%08x)", name, alt.inventoryHash)
 					end
-					-- v0.8.7: Backfill inventoryUpdatedAt for alts that have hashes but no timestamp
+
 					if alt.inventoryHash and not alt.inventoryUpdatedAt then
 						alt.inventoryUpdatedAt = alt.version or GetServerTime()
 						TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: backfilled inventoryUpdatedAt for %s (ts=%s)", name, tostring(alt.inventoryUpdatedAt))

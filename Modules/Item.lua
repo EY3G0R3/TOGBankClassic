@@ -1,10 +1,5 @@
 TOGBankClassic_Item = {}
 
--- FILE LOAD MARKER - Logged when this file is loaded
-if TOGBankClassic_Output then
-	TOGBankClassic_Output:Debug("ITEM", "Item.lua LOADED - Version with TRACE debugging - Timestamp: %s", date("%Y-%m-%d %H:%M:%S"))
-end
-
 -- Item classes that require Link to be preserved (for suffix differentiation)
 -- Class 2 = Weapons, Class 4 = Armor (includes all equippable gear)
 local ITEM_CLASSES_NEEDING_LINK = {
