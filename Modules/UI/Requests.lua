@@ -1378,23 +1378,29 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 				eb:SetAutoFocus(false)
 				eb:SetJustifyH(justifyForAlign(col.align))
 				eb:SetTextInsets(0, 0, 0, 0)
+				eb:SetAlpha(0)
+				eb:SetHighlightColor(0, 0, 0, 0)
 				eb:Show()
 				
-				-- Copyable text behavior (like MailLogger Discord URL)
+				-- Copyable text behavior: EditBox is a fully transparent (alpha 0) overlay.
+				-- Invisible but still receives mouse/keyboard events. On click, text is set
+				-- and highlighted so Ctrl+C copies it. Focus auto-clears after 5 seconds.
 				eb:SetScript("OnEditFocusGained", function(self)
+					self:SetText(self._itemName or "")
 					self:HighlightText()
+					C_Timer.After(5, function()
+						if self:HasFocus() then self:ClearFocus() end
+					end)
 				end)
 				eb:SetScript("OnEditFocusLost", function(self)
-					self:HighlightText(0, 0)
+					self:SetText("")
 				end)
 				eb:SetScript("OnChar", function(self)
-					self:SetText(self._originalText or "")
+					self:SetText(self._itemName or "")
 					self:HighlightText()
 				end)
 				eb:SetScript("OnKeyDown", function(self, key)
-					if key == "ESCAPE" then
-						self:ClearFocus()
-					end
+					if key == "ESCAPE" then self:ClearFocus() end
 				end)
 				
 				-- Item tooltip on hover
@@ -1424,11 +1430,14 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 					
 					-- Build hyperlink from link string, or fall back to bare item:ID
 					local hyperlink = itemLink or (itemID and ("item:" .. itemID))
+					GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 					if hyperlink then
-						GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 						GameTooltip:SetHyperlink(hyperlink)
-						GameTooltip:Show()
+					else
+						GameTooltip:ClearLines()
+						GameTooltip:AddLine(itemName, 1, 1, 1)
 					end
+					GameTooltip:Show()
 				end)
 				eb:SetScript("OnLeave", function()
 					GameTooltip:Hide()
@@ -1927,20 +1936,10 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 				
 				-- Item column has EditBox overlay for copyable text
 				if col.key == "item" and label.editbox then
-					-- Set both label AND editbox to show text (for debugging)
+					-- Label renders the visible (colorized) text
 					label:SetText(colorize(cellVal, reqStatus))
-					label.editbox:SetText(cellVal)
-					label.editbox._originalText = cellVal
+					-- Store item name on EditBox for use when clicked
 					label.editbox._itemName = cellVal
-					
-					-- Set color based on status (EditBox uses SetTextColor, not escape codes)
-					if reqStatus == "cancelled" then
-						label.editbox:SetTextColor(1, 0.4, 0.4)  -- Red
-					elseif reqStatus == "fulfilled" or reqStatus == "complete" then
-						label.editbox:SetTextColor(0.4, 1, 0.4)  -- Green
-					else
-						label.editbox:SetTextColor(1, 1, 1)  -- White
-					end
 				else
 					label:SetText(colorize(cellVal, reqStatus))
 				end

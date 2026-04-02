@@ -1,5 +1,59 @@
 # TOGBankClassic Changelog
 
+## [v0.10.8] (2026-04-02) - Requests UI Pagination & Copyable Item Text
+
+### New Features
+
+- **Requests UI pagination** — The Requests window now shows 50 rows per page with Previous/Next navigation buttons and a page status display ("Showing 1–50 of 127 (Page 1/3)"). Eliminates game freezes when switching from a specific banker filter to "Any Banker" with 100+ requests. Follows the same pattern as the existing Search UI pagination. Location: `Modules/UI/Requests.lua`.
+
+- **Copyable item text in Requests window** — Item name cells in the Requests window now have a transparent EditBox overlay. Click an item name to highlight the text, then Ctrl+C to copy it. Typing is blocked (original text is restored); Escape clears focus. Item coloring by status (red/cancelled, green/fulfilled, white/open) continues to render via the Label underneath. Location: `Modules/UI/Requests.lua`.
+
+- **Item link tooltip on hover** — Hovering any item name in the Requests window shows the full WoW item tooltip (stats, quality, level requirements). Uses `SetHyperlink` with the stored item link from guild inventory; falls back to `item:ID` if no link is cached. Anchors to the right of the item name row. Location: `Modules/UI/Requests.lua`.
+
+### Improvements
+
+- **"Requests synced." confirmation message** — A brief chat confirmation is now printed when a user-triggered `/togbank sync` completes, consistent with other command responses. Location: `Modules/Chat.lua`.
+
+---
+
+## [v0.10.7] (2026-04-02) - P2P Delivery Watchdog Tuning
+
+### Bug Fixes
+
+- **P2P-032: Delivery watchdog shorter than AceCommQueue drain time** — The `OnSyncAccept` delivery watchdog fired after 60 seconds, which is shorter than the observed 68–70 second worst-case drain time for a 9 KB payload through AceCommQueue under load. This caused premature `OnFailed` calls, unnecessary catch-up cycles, and the add-on repeating sync work that was already in flight. Fix: raised `DELIVERY_TIMEOUT` to 180s and `SEND_TIMEOUT` to 210s to comfortably exceed observed worst-case drain times. Location: `Modules/P2PSession.lua`.
+
+---
+
+## [v0.10.6] (2026-04-01) - Send Cap Unification & Cross-Guild Guard
+
+### Bug Fixes
+
+- **P2P-031: Pull-based responder bypassed P2P send-slot cap** — The legacy `togbank-r` alt-request responder and the new `HandleSyncRequest` P2P responder maintained completely independent counters (`pendingSendCount` vs `P2P.activeSends`), allowing up to 6+ simultaneous outbound data streams. Observed symptom: 20–30 concurrent "Sharing guild bank data…" messages, with some taking 60–150 seconds. Fix: extracted `TryAcquireSendSlot` / `ReleaseSendSlot` helpers into `P2PSession.lua`; both paths now compete for the single shared 3-slot cap in `P2P.activeSends`. Location: `Modules/P2PSession.lua`, `Modules/Guild.lua`, `Modules/Chat.lua`.
+
+- **ROSTER-004: Cross-guild alts polluting banker hash list** — `latestBankerHashes` accumulated entries for alts from other guilds or ex-bankers whose roster entries were stale in SavedVariables. The `togbank-hlr` handler accepted any alt name without validating `IsBank()`. Fix: (A) `BuildBankerHashList` now prefers the live `GetBanks()` cache over the persisted roster alts. (B) All three write paths in the `togbank-hlr` handler now guard on `IsBank(norm)` before writing. Location: `Modules/Guild.lua`, `Modules/Chat.lua`.
+
+- **SEND-001: Send progress always showed "1 chunks, 0.0s"** — The chunk callback fired only once (at completion, not per chunk), so `startTime` was captured and read in the same frame, and `chunksSent` was always 1. Fix: capture `startTime` at closure creation; show estimated chunk count via `math.ceil(totalBytes / 254)`; move the progress message to fire at send *start* rather than completion. Location: `Modules/Guild.lua`.
+
+---
+
+## [v0.10.5] (2026-04-01) - Slash Command Aliases, CRC Recovery & Dead Code Removal
+
+### New Features
+
+- **`/bank` and `/gbank` slash command aliases** — Two new configurable aliases toggle the main inventory window. Each alias can be individually enabled or disabled in Options → TOGBankClassic → Commands. The `/bank` shortcut is enabled by default; `/gbank` disabled by default (in case another addon uses it). Location: `Modules/Chat.lua`, `Modules/Options.lua`.
+
+### Bug Fixes
+
+- **REQSYNC-009: Silent data loss on `togbank-ri` CRC mismatch** — When a request index chunk arrived with a valid stop-marker but a failed CRC (genuine bit corruption), the receiver logged the error and returned with no further action — leaving a permanent blind spot for the affected request IDs until the next sync cycle. Fix: added a recovery branch immediately after the INTEGRITY-MISMATCH log that re-requests the full index from that sender with `force=true` to bypass the per-sender cooldown. Location: `Modules/Chat.lua`.
+
+- **ALIAS-001: Duplicate `/bank` registration in `Init()`** — A hardcoded `RegisterChatCommand("bank", ...)` in `Chat:Init()` predated the new alias system and overrode it on some load orderings. Removed; `/bank` is now exclusively owned by `RegisterAliasCommands()`. Location: `Modules/Chat.lua`.
+
+### Internal
+
+- **MAINT-001: Dead code removal campaign** — ~350 lines of unreachable code removed across 9 files, including: delta history cluster (`SaveDeltaHistory`, `GetDeltaHistory`, `CleanupDeltaHistory` + all call sites), `SanitizeDelta`, `SanitizeItemDelta`, `GetPeerCapabilities`, `MarkPlayerSeen`, orphaned Constants fields (`DELTA_HISTORY_*`, `DELTA_CHAIN_*`, `sendLegacy`/`sendNew`), dead `ItemHighlight` constants, and an unreachable two-header layout branch in `UI/Requests.lua`. Location: `Modules/Database.lua`, `Modules/Events.lua`, `Modules/Chat.lua`, `Modules/DeltaComms.lua`, `Modules/Guild.lua`, `Modules/Constants.lua`, `Modules/ItemHighlight.lua`, `Modules/UI/Requests.lua`.
+
+---
+
 ## [v0.10.4] (2026-03-31) - AceCommQueue-1.0 Send Queue Library
 
 ### New Features

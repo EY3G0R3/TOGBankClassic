@@ -4,7 +4,41 @@
 
 <p>TOGBankClassic is a powerful, feature-rich addon that transforms how your guild manages inventory across multiple bank characters. View, search, and request items from all your guild bank alts without ever logging out—all in one convenient interface.</p>
 
-<h2>Project History</h2>
+<h2>What's New</h2>
+
+<h3>v0.10.8 (2026-04-02) - Requests UI Pagination &amp; Copyable Item Text</h3>
+<ul>
+<li><strong>Pagination:</strong> Requests window now shows 50 rows per page — no more game freezes when switching to "Any Banker" with 100+ requests</li>
+<li><strong>Copyable item names:</strong> Click any item name in the Requests window to highlight it, then Ctrl+C to copy</li>
+<li><strong>Item tooltips on hover:</strong> Mouse over any item name in Requests to see the full WoW item tooltip with stats and quality</li>
+<li><strong>"Requests synced." confirmation</strong> printed after a user-triggered /togbank sync completes</li>
+</ul>
+
+<h3>v0.10.7 (2026-04-02) - P2P Delivery Watchdog Tuning</h3>
+<ul>
+<li><strong>P2P-032:</strong> Delivery watchdog raised from 60s to 180s — prevents premature sync failure during slow AceCommQueue drains (observed worst case: 68–70s for 9 KB payloads)</li>
+</ul>
+
+<h3>v0.10.6 (2026-04-01) - Send Cap Unification &amp; Cross-Guild Guard</h3>
+<ul>
+<li><strong>P2P-031:</strong> Legacy pull-based responder and P2P responder now share a single 3-slot send cap — fixes 20–30 simultaneous "Sharing guild bank data…" messages</li>
+<li><strong>ROSTER-004:</strong> Cross-guild alts and ex-bankers no longer pollute the banker hash list; all write paths now validate IsBank() before acting</li>
+<li><strong>SEND-001:</strong> Send progress display now shows accurate elapsed time and chunk count instead of always "1 chunks, 0.0s"</li>
+</ul>
+
+<h3>v0.10.5 (2026-04-01) - Slash Command Aliases, CRC Recovery &amp; Dead Code Removal</h3>
+<ul>
+<li><strong>/bank and /gbank aliases:</strong> New configurable slash command aliases to toggle the inventory window — enable/disable individually in Options</li>
+<li><strong>REQSYNC-009:</strong> CRC mismatch on request index now triggers automatic re-query instead of silently dropping affected request IDs</li>
+<li><strong>MAINT-001:</strong> ~350 lines of dead code removed across 9 files for cleaner, faster code</li>
+</ul>
+
+<h3>v0.10.4 (2026-03-31) - AceCommQueue-1.0 Send Queue Library</h3>
+<ul>
+<li><strong>AceCommQueue-1.0:</strong> New embedded send-queue library prevents multipart message chunk interleaving — eliminates a class of CRC failures on busy guild channels</li>
+</ul>
+
+
 
 <p>TOGBankClassic is The Old Gods guild's enhanced fork of GBankClassic-Revived, bringing significant improvements to guild bank management. Our team added extensive new functionality including:</p>
 
