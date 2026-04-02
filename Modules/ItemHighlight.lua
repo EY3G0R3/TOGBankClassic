@@ -23,7 +23,7 @@ local function registerBagEvents()
 	if eventsRegistered then
 		return
 	end
-	
+
 	eventFrame = CreateFrame("Frame")
 	eventFrame:RegisterEvent("BAG_UPDATE")
 	eventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
@@ -35,7 +35,7 @@ local function registerBagEvents()
 			-- Throttle refresh to prevent Bagnon execution timeout during rapid BAG_UPDATE spam
 			-- ALWAYS delay the refresh to ensure minimum time between Bagnon signal calls
 			local now = GetTime()
-			
+
 			-- Schedule delayed refresh if not already pending
 			if not pendingRefresh then
 				local delay = math.max(0, REFRESH_THROTTLE - (now - lastRefresh))
@@ -50,7 +50,7 @@ local function registerBagEvents()
 			end
 		end
 	end)
-	
+
 	eventsRegistered = true
 	TOGBankClassic_Output:Debug("REQUESTS", "ItemHighlight: BAG_UPDATE events registered")
 end
@@ -60,13 +60,13 @@ local function unregisterBagEvents()
 	if not eventsRegistered then
 		return
 	end
-	
+
 	if eventFrame then
 		eventFrame:UnregisterAllEvents()
 		eventFrame:SetScript("OnEvent", nil)
 		eventFrame = nil
 	end
-	
+
 	eventsRegistered = false
 	TOGBankClassic_Output:Debug("REQUESTS", "ItemHighlight: BAG_UPDATE events unregistered")
 end
@@ -75,7 +75,7 @@ end
 function ItemHighlight:Initialize()
 	-- Don't auto-enable from saved settings - let the checkbox control it
 	self.enabled = false
-	
+
 	-- No events registered at initialization - they'll be registered when highlighting is enabled
 	TOGBankClassic_Output:Debug("REQUESTS", "INIT", "ItemHighlight: initialized (events will be registered when enabled)")
 end
@@ -88,7 +88,7 @@ function ItemHighlight:SetEnabled(enabled)
 		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting unavailable: guild data not loaded")
 		return
 	end
-	
+
 	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local isBank = false
 	for _, bankName in ipairs(banks) do
@@ -98,7 +98,7 @@ function ItemHighlight:SetEnabled(enabled)
 			break
 		end
 	end
-	
+
 	if not isBank then
 		TOGBankClassic_Output:Debug("REQUESTS", "Highlighting disabled: not a banker")
 		return
@@ -281,14 +281,14 @@ function ItemHighlight:UpdateBagnonHighlighting()
 
 	-- Join with | (OR operator) so Bagnon matches items containing ANY of these names
 	local searchString = table.concat(searchTerms, "|")
-	
+
 	-- Only trigger SEARCH_CHANGED if the search string actually changed
 	-- This prevents redundant Bagnon UI rebuilds that can cause execution timeout
 	if self.lastBagnonSearch == searchString then
 		TOGBankClassic_Output:Debug("REQUESTS", "Search string unchanged, skipping SEARCH_CHANGED signal")
 		return true
 	end
-	
+
 	self.lastBagnonSearch = searchString
 	TOGBankClassic_Output:Debug("REQUESTS", "Setting Bagnon search (%d items): %s", #searchTerms, searchString)
 

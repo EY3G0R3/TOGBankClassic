@@ -348,7 +348,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		scroll:SetLayout("Flow")
 		scroll:SetFullHeight(true)
 		scroll:SetFullWidth(true)
-		
+
 		-- Apply thin scrollbar style to match dropdown scrollbars
 		if scroll.scrollbar then
 			scroll.scrollbar:ClearAllPoints()

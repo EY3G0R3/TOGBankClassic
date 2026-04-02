@@ -161,7 +161,7 @@ function TOGBankClassic_Events:OnShareTimer()
 		self:SetShareTimer()
 		return
 	end
-	
+
 	local now = GetTime()
 	if self.lastShareTimerAt then
 		local delta = now - self.lastShareTimerAt
@@ -191,7 +191,7 @@ function TOGBankClassic_Events:OnShareTimer()
 		-- Wipe-recovery: no local hashes at all → seed from banker so future P2P cycles work.
 		TOGBankClassic_Guild:RequestHashListFromBanker()
 	end
-	
+
 	-- REQUEST-001: Automatic index-based request sync on periodic timer
 	TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
 
@@ -294,7 +294,7 @@ end
 -- Request initial guild roster update on world enter
 function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
 	TOGBankClassic_Performance:RecordEvent("PLAYER_ENTERING_WORLD")
-	
+
 	-- PERF-021: Set zone-in cooldown for ALL world entries (login, reload, zone change)
 	-- When entering world with ChatThrottleLib backlog (e.g., 180+ queued messages from ongoing
 	-- delta sends), CTL's Despool() can exceed execution limits. Defer expensive operations
@@ -304,12 +304,12 @@ function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReload
 		self.zoningCooldown = false
 		TOGBankClassic_Output:Debug("EVENTS", "TIMER", "Zone-in cooldown expired, resuming normal operations")
 	end)
-	
+
 	-- PERF-013: Only do full roster refresh + broadcasts on login/reload, not zone changes
 	-- Every zone change was broadcasting 2 GUILD messages (togbank-r + togbank-hl), causing
 	-- ChatThrottleLib timeouts when 40+ players entered raids simultaneously
 	if isInitialLogin or isReloadingUi then
-		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] PLAYER_ENTERING_WORLD (login=%s, reload=%s) - Requesting guild roster", 
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] PLAYER_ENTERING_WORLD (login=%s, reload=%s) - Requesting guild roster",
 			tostring(isInitialLogin), tostring(isReloadingUi))
 		GuildRoster()
 		-- Don't try to cache before GUILD_ROSTER_UPDATE fires - GuildRoster() is async
@@ -331,25 +331,25 @@ function TOGBankClassic_Events:GUILD_ROSTER_UPDATE(_)
 	if self.needsFullRosterRefresh and not self.refreshInProgress then
 		self.fullRosterInitAttempts = (self.fullRosterInitAttempts or 0) + 1
 TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d - Full refresh starting", self.fullRosterInitAttempts)
-		
+
 		self.needsFullRosterRefresh = false
 		self.refreshInProgress = true
-		
+
 		-- PERF-008: Defer ALL expensive roster operations AND cache invalidation
 		-- Must invalidate cache INSIDE the deferred block, otherwise any IsBank() call
 		-- between invalidation and rebuild will synchronously rebuild cache, causing freeze
 		C_Timer.After(0.5, function()
 			-- Invalidate banks cache AFTER deferring, not before
 			TOGBankClassic_Guild:InvalidateBanksCache()
-			
+
 			local onlineCount, totalMembers = TOGBankClassic_Guild:RefreshOnlineCache()
 			TOGBankClassic_Guild:RebuildBankerRoster()
-			
+
 			-- Clear delta error counters for offline players (depends on RefreshOnlineCache)
 			TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
 			-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
 			TOGBankClassic_Guild:RefreshRequestsUI()
-			
+
 			-- Keep refreshing until we get actual online member data OR we've tried 5 times
 			-- If we have 0 online members after API returns data, roster API hasn't initialized yet
 			local needsRetry = false
@@ -363,7 +363,7 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 					needsRetry = true
 				end
 			end
-			
+
 			if needsRetry then
 				self.needsFullRosterRefresh = true
 					TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] Will retry on next GUILD_ROSTER_UPDATE")
@@ -388,7 +388,7 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 					end)
 				end
 			end
-			
+
 			-- PERF-019: Clear in-progress flag to allow next refresh cycle
 			self.refreshInProgress = false
 		end)

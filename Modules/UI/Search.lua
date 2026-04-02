@@ -740,7 +740,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	scrollGroup:SetFullWidth(true)
 	scrollGroup:SetFullHeight(true)
 	searchWindow:AddChild(scrollGroup)
-	
+
 	-- Extend scrollGroup right edge to window edge (Frame content has 17px right padding)
 	scrollGroup.content:ClearAllPoints()
 	scrollGroup.content:SetPoint("TOPLEFT", scrollGroup.frame, "TOPLEFT", 0, 0)
@@ -873,24 +873,24 @@ end
 
 function TOGBankClassic_UI_Search:SubFilterMatches(item)
 	if not item then return true end
-	
+
 	-- No filters active? Always match
 	local mode = self.SubFilterMode
 	if not self.FilterUsableLevel and (not mode or mode == FILTER_ANY) then
 		return true
 	end
-	
+
 	-- Info should already be populated in BuildSearchData
 	local info = item.Info
 	if not info then return false end
-	
+
 	-- Usable-level check
 	if self.FilterUsableLevel then
 		---@diagnostic disable-next-line: undefined-global
 		local playerLevel = UnitLevel("player") or 1
 		if (info.level or 0) > playerLevel then return false end
 	end
-	
+
 	-- Type/subtype filter
 	if mode == "type" then
 		local val = self.SubFilterValue
@@ -907,7 +907,7 @@ function TOGBankClassic_UI_Search:SubFilterMatches(item)
 		if not val or val == FILTER_ANY then return true end
 		return tostring(info.rarity) == val
 	end
-	
+
 	return true
 end
 
@@ -970,7 +970,7 @@ function TOGBankClassic_UI_Search:DrawContent()
 
 	-- Initialize pagination state
 	self.currentPage = self.currentPage or 1
-	
+
 	-- PASS 1: Collect all matching items
 	local matchedItems = {}
 	for _, v in pairs(searchData.Corpus) do
@@ -988,11 +988,11 @@ function TOGBankClassic_UI_Search:DrawContent()
 			end
 		end
 	end
-	
+
 	local totalMatches = #matchedItems
 	self.totalMatches = totalMatches
 	TOGBankClassic_Output:Debug("UI", "SEARCH", "Total matches: %d", totalMatches)
-	
+
 	-- Sort the matched items based on selected sort mode
 	local sortMode = self.SortMode or "alpha"
 	if sortMode == "alpha" then
@@ -1040,18 +1040,18 @@ function TOGBankClassic_UI_Search:DrawContent()
 			return (a.item.Info.name or "") < (b.item.Info.name or "")
 		end)
 	end
-	
+
 	-- Calculate page range
 	local startIdx = (self.currentPage - 1) * RESULTS_PER_PAGE
 	local endIdx = startIdx + RESULTS_PER_PAGE
-	
+
 	-- PASS 2: Render only items in current page range
 	local renderedCount = 0
 	for i = startIdx + 1, math.min(endIdx, totalMatches) do
 		local matched = matchedItems[i]
 		local resultItem = matched.item
 		local bankAlt = matched.alt
-		
+
 		local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
 		if itemWidget then
 			itemWidget:SetCallback("OnClick", function(widget, event)
@@ -1061,7 +1061,7 @@ function TOGBankClassic_UI_Search:DrawContent()
 				end
 				TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)
 			end)
-			
+
 			-- Add label showing which banker has this item
 			local label = TOGBankClassic_UI:Create("Label")
 			label:SetHeight(35)

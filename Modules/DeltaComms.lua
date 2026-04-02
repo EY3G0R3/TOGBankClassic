@@ -420,7 +420,7 @@ function TOGBankClassic_DeltaComms:BuildItemIndex(items)
 
 	local withLinks = 0
 	local withoutLinks = 0
-	
+
 	for _, item in pairs(items) do
 		if item and item.ID then
 			-- DUPLICATION-FIX: Handle items without Links (from minimal baselines)
@@ -443,7 +443,7 @@ function TOGBankClassic_DeltaComms:BuildItemIndex(items)
 			end
 		end
 	end
-	
+
 	if withoutLinks > 0 then
 		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] BuildItemIndex: indexed %d items (%d with links, %d without links)",
 			withLinks + withoutLinks, withLinks, withoutLinks)
@@ -461,7 +461,7 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 
 	-- Build item index for old items by itemID+Link key
 	local oldByKey = self:BuildItemIndex(oldItems)
-	
+
 	-- Build ID-only lookup for items without Links (from minimal baselines)
 	local oldByIDOnly = {}
 	-- PERF-024: Per-ID candidate list for O(1) deep fallback lookup (replaces O(N) full scan).
@@ -500,13 +500,13 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 			local key
 			local oldItem = nil
 			local usedFallback = false
-			
+
 			if newItem.Link or newItem.ItemString then
 				-- Full item with Link - use normalized key (strips character level)
 				local normalizedKey = TOGBankClassic_Item:GetItemKey(newItem.Link or newItem.ItemString)
 				key = tostring(newItem.ID) .. normalizedKey
 				oldItem = oldByKey[key]
-				
+
 				-- Fallback 1: check ID-only index if not found (handles minimal baseline items)
 				if not oldItem then
 					oldItem = oldByIDOnly[tostring(newItem.ID)]
@@ -516,7 +516,7 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 						fallbackMatches = fallbackMatches + 1
 					end
 				end
-				
+
 				-- Fallback 2: search per-ID candidate list (O(k), k = items with same ID, usually 1-2).
 				-- PERF-024: Was O(N) linear scan of all oldItems; now O(1) hash lookup + O(k) iteration.
 				-- DUPLICATION-FIX-003: deepFallbackUsed prevents double-matching the same old entry
@@ -541,7 +541,7 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 				key = tostring(newItem.ID)
 				oldItem = oldByKey[key] or oldByIDOnly[key]
 			end
-			
+
 			if not oldItem then
 				-- Item was added
 				table.insert(delta.added, newItem)
@@ -559,12 +559,12 @@ function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
 			end
 		end
 	end
-	
+
 	if fallbackMatches > 0 then
 		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] ComputeItemDelta: matched %d items using ID-only fallback (prevents duplication)",
 			fallbackMatches)
 	end
-	
+
 	if deepFallbackMatches > 0 then
 		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] ComputeItemDelta: matched %d items using deep ID fallback - link normalization mismatch detected",
 			deepFallbackMatches)
@@ -720,8 +720,8 @@ function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, 
 		-- Include bank slots metadata if changed
 		local previousBankSlots = previous.bank and previous.bank.slots
 		local currentBankSlots = currentAlt.bank and currentAlt.bank.slots
-		if currentBankSlots and (not previousBankSlots or 
-			currentBankSlots.count ~= previousBankSlots.count or 
+		if currentBankSlots and (not previousBankSlots or
+			currentBankSlots.count ~= previousBankSlots.count or
 			currentBankSlots.total ~= previousBankSlots.total) then
 			delta.changes.bank.slots = currentBankSlots
 			TOGBankClassic_Output:Debug("DELTA", "BUILD", "Including bank slots in delta: %d/%d",
@@ -841,7 +841,7 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 
 	-- Build current items index by itemKey
 	local itemsByKey = self:BuildItemIndex(items)
-	
+
 	-- Build ID-only lookup for items without Links
 	local itemsByIDOnly = {}
 	for _, item in pairs(items) do
@@ -852,7 +852,7 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 
 	-- STALE-INDEX-FIX: Process operations in order: removed → modified → added
 	-- This prevents indexes from becoming invalid when Aggregate() clears the array
-	
+
 	-- STEP 1: Remove items
 	if delta.removed then
 		for _, removedItem in ipairs(delta.removed) do
@@ -894,13 +894,13 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 			if changes and changes.ID then
 				-- DUPLICATION-FIX: Try full key first, then fallback to ID-only
 				local existingItem = nil
-				
+
 				if changes.Link or changes.ItemString then
 					-- Full item with Link - use normalized key
 					local normalizedKey = TOGBankClassic_Item:GetItemKey(changes.Link or changes.ItemString)
 					local key = tostring(changes.ID) .. normalizedKey
 					existingItem = itemsByKey[key]
-					
+
 					-- Fallback: check ID-only index if not found
 					if not existingItem then
 						existingItem = itemsByIDOnly[tostring(changes.ID)]
@@ -1515,7 +1515,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		local localAlt = guildInfo.alts and norm and guildInfo.alts[norm]
 		local hasEntry = localAlt ~= nil
 		local hasContent = hasEntry and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
-		
+
 		-- Check for hash mismatch (stale data)
 		local bankerCache = TOGBankClassic_Guild.latestBankerHashes and TOGBankClassic_Guild.latestBankerHashes[norm]
 		local hashMismatch = false
@@ -1533,11 +1533,11 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 				mismatchReason = string.format("mail hash mismatch (local=%s, banker=%s)", tostring(localMailHash), tostring(bankerMailHash))
 			end
 		end
-		
+
 		-- DEBUG: Log every alt to see what's happening
-		TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "FastFill check: %s hasEntry=%s hasContent=%s hashMismatch=%s", 
+		TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "FastFill check: %s hasEntry=%s hasContent=%s hashMismatch=%s",
 			tostring(norm), tostring(hasEntry), tostring(hasContent), tostring(hashMismatch))
-		
+
 		-- Check if we need to request this alt: no entry, no content, OR hash mismatch
 		if not hasEntry or not hasContent or hashMismatch then
 			table.insert(missing, norm)

@@ -97,9 +97,9 @@ function TOGBankClassic_Mail:CheckForFulfilledRequest(itemName, quantity, sender
 
 	-- Look for matching active request from current player
 	for _, req in pairs(info.requests) do
-		if req.requester == currentPlayer and 
+		if req.requester == currentPlayer and
 		   string.lower(req.item or "") == normItemName and
-		   req.status ~= "complete" and 
+		   req.status ~= "complete" and
 		   req.status ~= "cancelled" then
 			local fulfilled = tonumber(req.fulfilled or 0)
 			local requested = tonumber(req.quantity or 0)
@@ -537,7 +537,7 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 	-- PHASE 1: Try greedy exact match (accumulate stacks that fit without exceeding)
 	local accumulated = 0
 	local attachList = {}
-	
+
 	for i, item in ipairs(items) do
 		local remaining = qtyNeeded - accumulated
 		if item.count <= remaining then
@@ -572,7 +572,7 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 		for skipIndex = 1, math.min(5, #items) do
 			local testAccumulated = 0
 			local testAttachList = {}
-			
+
 			for i, item in ipairs(items) do
 				if i ~= skipIndex then
 					local remaining = qtyNeeded - testAccumulated
@@ -616,7 +616,7 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 	-- PHASE 3: Need to split to fulfill
 	if accumulated < qtyNeeded and totalInBags >= qtyNeeded then
 		local remaining = qtyNeeded - accumulated
-		
+
 		-- Find a stack large enough to split from
 		-- Prefer splitting from largest available stack
 		local splitCandidate = nil
@@ -630,7 +630,7 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 						break
 					end
 				end
-				
+
 				if not alreadyAttaching then
 					-- Prefer largest split candidate (first one found due to sorting)
 					if not splitCandidate then
@@ -799,7 +799,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- If plan requires split, show popup FIRST without attaching anything
 	if plan.splitStack then
 		local splitInfo = plan.splitStack
-		local popupText = string.format("Split %d from stack of %d %s?", 
+		local popupText = string.format("Split %d from stack of %d %s?",
 			splitInfo.amount, splitInfo.count, itemName)
 		local dialog = StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText)
 		if dialog then
@@ -813,7 +813,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			}
 		end
 
-		local message = string.format("Click Split to prepare %d %s for mailing.", 
+		local message = string.format("Click Split to prepare %d %s for mailing.",
 			splitInfo.amount, itemName)
 		return false, message, 0
 	end

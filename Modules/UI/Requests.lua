@@ -712,14 +712,14 @@ end
 -- Helper to set up click-outside-to-close behavior for dropdowns
 local function SetupClickOutsideHandler(dropdown)
 	if not dropdown or not dropdown.pullout then return end
-	
+
 	local pullout = dropdown.pullout
 	local originalOpen = pullout.Open
 	local clickCatcher = nil
-	
+
 	pullout.Open = function(self, ...)
 		originalOpen(self, ...)
-		
+
 		-- Create invisible frame to catch clicks outside the pullout
 		if not clickCatcher then
 			---@diagnostic disable-next-line: undefined-global
@@ -733,11 +733,11 @@ local function SetupClickOutsideHandler(dropdown)
 				end
 			end)
 		end
-		
+
 		clickCatcher:SetAllPoints()
 		clickCatcher:Show()
 	end
-	
+
 	local originalClose = pullout.Close
 	pullout.Close = function(self)
 		if clickCatcher then
@@ -775,7 +775,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 	-- Register frame for ESC key handling
 	-- AceGUI frames handle ESC automatically, no manual registration needed
-	
+
 	-- Handle Esc key to close dropdowns before closing window
 	window.frame:EnableKeyboard(true)
 	window.frame:SetPropagateKeyboardInput(true)
@@ -801,7 +801,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 			frame:SetPropagateKeyboardInput(true)
 		end
 	end)
-	
+
 	self.Window = window
 
 	-- Shrink status bar right edge to make room for the help icon

@@ -95,7 +95,7 @@ function TOGBankClassic_Item:GetItemKey(link)
 		-- Split into parts, PRESERVING empty parts between colons
 		-- Item format: itemID:enchant:gem1:gem2:gem3:gem4:suffixID:uniqueID:level:...
 		-- We want to keep parts 1-7 (itemID through suffixID), stripping uniqueID (part 8), level (part 9), etc.
-		
+
 		-- Use simpler approach: manually split by colons
 		local parts = {}
 		local current = ""
@@ -275,7 +275,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 				else
 					-- Item not cached, need async load
 					TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-1] Item %d not cached, calling CreateFromItemID", capturedItemID)
-					
+
 					pendingAsync = pendingAsync + 1  -- Track this async operation
 
 					local success, itemData = pcall(Item.CreateFromItemID, Item, capturedItemID)
@@ -358,7 +358,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 		end
 		end  -- close else from line 168
 	end  -- close for loop from line 153
-	
+
 	-- After processing all items, check if we can fire callback
 	-- (handles case where all items had links and were processed synchronously)
 	checkComplete()
