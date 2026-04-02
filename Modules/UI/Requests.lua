@@ -3,6 +3,7 @@ TOGBankClassic_UI_Requests = {}
 local COLUMN_SPACING_H = 5
 local COLUMN_SPACING_V = 2
 local CONTENT_WIDTH_PADDING = 60
+local REQUESTS_PER_PAGE = 50  -- Pagination: limit visible requests per page to prevent freezing
 local COLUMNS = {
 	{ key = "date",      label = "Date",      width = 140, align = "center",                       tooltipTitle = "Date Submitted",  tooltipDetail = "When the request was submitted. Click to sort." },
 	{ key = "requester", label = "Requester", width = 150, align = "center", flex = true, weight = 1, tooltipTitle = "Requester",        tooltipDetail = "The guild member who submitted the request. Click to sort." },
@@ -34,6 +35,10 @@ local FULFILL_ICON_NO_MAILBOX = "|TInterface\\Icons\\INV_Letter_02:18:18:0:0|t" 
 local FULFILL_ICON_NOT_IN_BAGS = "|TInterface\\Icons\\INV_Misc_Bag_07:18:18:0:0|t" -- Bag: pick up from bank
 local FULFILL_ICON_NEED_SPLIT = "|TInterface\\Icons\\INV_Misc_Shovel_01:18:18:0:0|t" -- Shovel: manual work needed
 local FULFILL_ICON_NO_ITEMS = "|TInterface\\Icons\\INV_Misc_QuestionMark:18:18:0:0|t" -- Question mark: no items
+-- Row status prefix icons (date column decorators)
+local CHECK_MARK_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
+local CANCELLED_ICON  = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:0|t "
+local PADDING_ICON    = "|TInterface\\AddOns\\TOGBankClassic\\Media\\blank:0|t "
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local CANCEL_STALE_DIALOG   = "TOGBankClassic_CancelStale"
 
@@ -88,7 +93,8 @@ local function handleFilterChange(self, key, widget, value)
 	else
 		setFilterValue(self, key, value)
 	end
-	self:DrawContent()
+	self.currentPage = 1  -- Reset to first page on filter change
+	self:DrawRows()
 end
 
 local function ColumnLayout(contentWidth)
@@ -478,7 +484,7 @@ local function OnBagUpdate()
 				pendingBagUpdate = false
 				if TOGBankClassic_UI_Requests.isOpen then
 					lastBagUpdate = GetTime()
-					TOGBankClassic_UI_Requests:DrawContent()
+					TOGBankClassic_UI_Requests:DrawRows()
 				end
 			end)
 		end
@@ -486,7 +492,7 @@ local function OnBagUpdate()
 	end
 
 	lastBagUpdate = now
-	TOGBankClassic_UI_Requests:DrawContent()
+	TOGBankClassic_UI_Requests:DrawRows()
 end
 
 local function RegisterBagEvents()
@@ -511,6 +517,14 @@ function TOGBankClassic_UI_Requests:Init()
 	self.bankFilter = nil
 	self.defaultFiltersApplied = false
 	self.currentTab = "active"
+	self.currentPage = 1  -- Pagination: current page number
+	-- Sort/data cache (invalidated by DrawContent, persists across DrawRows calls)
+	self._cachedSortedTabFiltered = nil
+	self._cachedTotal             = nil
+	self._cachedSortColumn        = nil
+	self._cachedSortDirection     = nil
+	self._cachedTabFilter         = nil
+	self._drawGeneration          = 0
 	-- Frame creation deferred to first Open() call (PERF-015)
 end
 
@@ -923,6 +937,40 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		self.CancelStaleBtn = cancelStaleBtn
 	end
 
+	-- Pagination buttons
+	local prevButton = TOGBankClassic_UI:Create("Button")
+	prevButton:SetText("< Prev")
+	prevButton:SetWidth(70)
+	prevButton:SetHeight(24)
+	prevButton:SetCallback("OnClick", function()
+		if self.currentPage > 1 then
+			self.currentPage = self.currentPage - 1
+			self:DrawRows()
+		end
+	end)
+	attachActionTooltip(prevButton, "Previous Page", "Show the previous page of requests.")
+	tabGroup:AddChild(prevButton)
+	self.prevButton = prevButton
+
+	local nextButton = TOGBankClassic_UI:Create("Button")
+	nextButton:SetText("Next >")
+	nextButton:SetWidth(70)
+	nextButton:SetHeight(24)
+	nextButton:SetCallback("OnClick", function()
+		local info = TOGBankClassic_Guild.Info
+		if not info or not info.requests then return end
+		local allSorted, total = self:GetSortedTabFiltered()
+		local allVisible = self:ApplyFilters(allSorted)
+		local totalPages = math.max(1, math.ceil(#allVisible / REQUESTS_PER_PAGE))
+		if self.currentPage < totalPages then
+			self.currentPage = self.currentPage + 1
+			self:DrawRows()
+		end
+	end)
+	attachActionTooltip(nextButton, "Next Page", "Show the next page of requests.")
+	tabGroup:AddChild(nextButton)
+	self.nextButton = nextButton
+
 	do
 		local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
 		filterGroup:SetLayout("Table")
@@ -1236,18 +1284,17 @@ function TOGBankClassic_UI_Requests:SortedRequests()
 	return list
 end
 
-function TOGBankClassic_UI_Requests:EnsureRow(index)
-	if not self.Content then
-		return nil
-	end
+-- Create one row of widgets permanently bound to a request ID.
+-- Rows are never reassigned to a different request; filter/sort changes
+-- show/hide and reorder existing rows rather than re-populating them.
+function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
+	if not self.Content then return nil end
 
 	self.RowPool = self.RowPool or {}
-	local row = self.RowPool[index]
-	if row then
-		return row
-	end
+	local row = self.RowPool[reqId]
+	if row then return row end
 
-	row = { cells = {} }
+	row = { cells = {}, reqId = reqId, dirty = true }
 	for i, col in ipairs(COLUMNS) do
 		if col.key == "actions" then
 			local actionGroup = TOGBankClassic_UI:Create("SimpleGroup")
@@ -1255,7 +1302,6 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			tagColumnWidget(actionGroup, i, false)
 			self.Content:AddChild(actionGroup)
 
-			-- Fulfill button (first)
 			local fulfillButton = TOGBankClassic_UI:Create("Button")
 			fulfillButton:SetText(FULFILL_ICON)
 			fulfillButton:SetWidth(24)
@@ -1264,13 +1310,11 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			setupFulfillButtonTooltip(fulfillButton)
 			actionGroup:AddChild(fulfillButton)
 
-			-- Spacer between fulfill and complete/cancel
 			local fulfillSpacer = TOGBankClassic_UI:Create("Label")
 			fulfillSpacer:SetText("")
 			fulfillSpacer:SetWidth(8)
 			actionGroup:AddChild(fulfillSpacer)
 
-			-- Complete button
 			local completeButton = TOGBankClassic_UI:Create("Button")
 			completeButton:SetText(COMPLETE_ICON)
 			completeButton:SetWidth(24)
@@ -1279,13 +1323,11 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			attachActionTooltip(completeButton, "Complete request", "Marks the request as completed by the bank.")
 			actionGroup:AddChild(completeButton)
 
-			-- Small spacer between complete and cancel
 			local actionSpacer = TOGBankClassic_UI:Create("Label")
 			actionSpacer:SetText("")
 			actionSpacer:SetWidth(4)
 			actionGroup:AddChild(actionSpacer)
 
-			-- Cancel button
 			local cancelButton = TOGBankClassic_UI:Create("Button")
 			cancelButton:SetText(CANCEL_ICON)
 			cancelButton:SetWidth(24)
@@ -1294,13 +1336,11 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			attachActionTooltip(cancelButton, "Cancel request", "Cancels the request without fulfilling it.")
 			actionGroup:AddChild(cancelButton)
 
-			-- Spacer between cancel and delete
 			local deleteSpacer = TOGBankClassic_UI:Create("Label")
 			deleteSpacer:SetText("")
 			deleteSpacer:SetWidth(8)
 			actionGroup:AddChild(deleteSpacer)
 
-			-- Delete button (last)
 			local deleteButton = TOGBankClassic_UI:Create("Button")
 			deleteButton:SetText(DELETE_ICON)
 			deleteButton:SetWidth(24)
@@ -1309,15 +1349,15 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 			attachActionTooltip(deleteButton, "Delete permanently", "Permanently removes the request.")
 			actionGroup:AddChild(deleteButton)
 
-			row.actionGroup = actionGroup
+			row.actionGroup   = actionGroup
 			row.fulfillButton = fulfillButton
 			row.fulfillSpacer = fulfillSpacer
 			row.completeButton = completeButton
-			row.actionSpacer = actionSpacer
-			row.cancelButton = cancelButton
-			row.deleteSpacer = deleteSpacer
-			row.deleteButton = deleteButton
-			row.cells[i] = actionGroup
+			row.actionSpacer  = actionSpacer
+			row.cancelButton  = cancelButton
+			row.deleteSpacer  = deleteSpacer
+			row.deleteButton  = deleteButton
+			row.cells[i]      = actionGroup
 		else
 			local label = TOGBankClassic_UI:Create("Label")
 			label.label:SetHeight(18)
@@ -1361,14 +1401,32 @@ function TOGBankClassic_UI_Requests:EnsureRow(index)
 		end
 	end
 
-	self.RowPool[index] = row
+	-- Tag first cell with its reqId for O(1) lookup in _ApplySortOrder
+	if row.cells[1] then
+		row.cells[1]:SetUserData("togRequestsReqId", reqId)
+	end
+	self.RowPool[reqId] = row
 	return row
 end
 
-function TOGBankClassic_UI_Requests:SetRowVisible(row, visible)
-	if not row or not row.cells then
-		return
+-- Mark a specific request's row as needing data refresh next DrawRows call.
+function TOGBankClassic_UI_Requests:InvalidateRow(reqId)
+	if self.RowPool and reqId then
+		local row = self.RowPool[reqId]
+		if row then row.dirty = true end
 	end
+end
+
+-- Mark all existing pool rows dirty (used after actor change, mailbox open/close).
+function TOGBankClassic_UI_Requests:InvalidateAllRows()
+	if not self.RowPool then return end
+	for _, row in pairs(self.RowPool) do
+		row.dirty = true
+	end
+end
+
+function TOGBankClassic_UI_Requests:SetRowVisible(row, visible)
+	if not row or not row.cells then return end
 	for _, cell in ipairs(row.cells) do
 		setWidgetShown(cell, visible)
 	end
@@ -1640,293 +1698,521 @@ function TOGBankClassic_UI_Requests:UpdateTabButtons()
 	self.ArchiveTabBtn:SetText(isArchive and "|cffffd100> Archive|r" or "Archive")
 end
 
-function TOGBankClassic_UI_Requests:DrawContent()
-	if not self.Content or not self.Window then
-		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] DrawContent: No content or window")
-		return
+-- Returns the tab-filtered sorted request list, caching the result so that
+-- bag-update and filter-selection redraws skip the expensive sort+tabfilter.
+-- Cache is invalidated at the top of DrawContent (called on structural changes).
+function TOGBankClassic_UI_Requests:GetSortedTabFiltered()
+	if self._cachedSortedTabFiltered
+		and self._cachedSortColumn    == self.sortColumn
+		and self._cachedSortDirection == self.sortDirection
+		and self._cachedTabFilter     == self.currentTab
+	then
+		return self._cachedSortedTabFiltered, self._cachedTotal
+	end
+	local sorted      = self:SortedRequests()
+	local tabFiltered = self:ApplyTabFilter(sorted)
+	self._cachedSortedTabFiltered = tabFiltered
+	self._cachedTotal             = #tabFiltered
+	self._cachedSortColumn        = self.sortColumn
+	self._cachedSortDirection     = self.sortDirection
+	self._cachedTabFilter         = self.currentTab
+	return tabFiltered, self._cachedTotal
+end
+
+-- Populate a row with data from req. Only called when row.dirty == true.
+-- SetCallback closures capture reqId from req.id, not the req table, so they
+-- stay correct if req data is updated in-place by guild comms.
+function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isActorBank, mailboxOpen)
+	row.dirty = false
+
+	local completed = isComplete(req)
+	local reqStatus = req.status or "open"
+	if completed and reqStatus == "open" then reqStatus = "fulfilled" end
+	local requestId = req.id
+
+	local canCancel   = not completed and requestId and TOGBankClassic_Guild:CanCancelRequest(req, actor)
+	local canComplete = not completed and requestId and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
+	local canDelete   = requestId and TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
+
+	local ts = tonumber(req.date or 0) or 0
+	local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
+	if reqStatus == "cancelled" then
+		dateText = CANCELLED_ICON .. dateText
+	elseif completed then
+		dateText = CHECK_MARK_ICON .. dateText
+	else
+		dateText = PADDING_ICON .. dateText
 	end
 
-	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] DrawContent: Starting UI refresh")
+	local canFulfill, fulfillReason, itemsInBags = false, nil, 0
+	if not completed and requestId and isActorBank then
+		canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
+	end
+	local showFulfill    = isActorBank and not completed and requestId
+	local fulfillEnabled = canFulfill and mailboxOpen
+
+	local qtyNeeded = 0
+	if req.quantity and req.fulfilled then
+		qtyNeeded = (tonumber(req.quantity) or 0) - (tonumber(req.fulfilled) or 0)
+	elseif req.quantity then
+		qtyNeeded = tonumber(req.quantity) or 0
+	end
+
+	for i, col in ipairs(COLUMNS) do
+		local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
+		if col.key == "actions" then
+			local showComplete = canComplete and true or false
+			local showCancel   = canCancel   and true or false
+			local showDelete   = canDelete   and true or false
+			if row.actionGroup   then row.actionGroup:SetWidth(columnWidth) end
+			if row.fulfillButton then setWidgetShown(row.fulfillButton, showFulfill) end
+			if row.fulfillSpacer then setWidgetShown(row.fulfillSpacer, showFulfill and (showComplete or showCancel)) end
+			if row.completeButton then setWidgetShown(row.completeButton, showComplete) end
+			if row.actionSpacer  then setWidgetShown(row.actionSpacer, showComplete and showCancel) end
+			if row.cancelButton  then setWidgetShown(row.cancelButton, showCancel) end
+			if row.deleteSpacer  then setWidgetShown(row.deleteSpacer, showDelete and (showComplete or showCancel or showFulfill)) end
+			if row.deleteButton  then setWidgetShown(row.deleteButton, showDelete) end
+
+			-- Fulfill button visual/icon/tooltip state
+			if row.fulfillButton and row.fulfillButton.frame then
+				local needsSplit    = fulfillReason and string.find(fulfillReason, "Split")
+				local isPartial     = fulfillReason and string.find(fulfillReason, "Partial")
+				local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and (needsSplit or isPartial))
+				row.fulfillButton.frame.togDisabled = not buttonEnabled
+				row.fulfillButton.frame:SetAlpha(buttonEnabled and 1.0 or 0.4)
+
+				local icon, tooltipDetail
+				if fulfillReason and string.find(fulfillReason, "Partial") then
+					icon = FULFILL_ICON_READY; tooltipDetail = fulfillReason
+				elseif fulfillReason and string.find(fulfillReason, "Split") then
+					icon = FULFILL_ICON_NEED_SPLIT; tooltipDetail = fulfillReason
+				elseif fulfillEnabled then
+					icon = FULFILL_ICON_READY
+					tooltipDetail = string.format("Attach %d %s to mail for %s.", math.min(itemsInBags, qtyNeeded), req.item or "items", req.requester or "requester")
+				elseif not mailboxOpen then
+					icon = FULFILL_ICON_NO_MAILBOX; tooltipDetail = "Open a mailbox to fulfill this request."
+				elseif fulfillReason and string.find(fulfillReason, "not in bags") then
+					icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = fulfillReason
+				elseif fulfillReason then
+					icon = FULFILL_ICON_NO_ITEMS; tooltipDetail = fulfillReason
+				else
+					icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = "Pick up items from bank first."
+				end
+				row.fulfillButton:SetText(icon)
+				updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", tooltipDetail)
+			end
+
+			-- Wire action button callbacks — closures capture requestId (value type, safe)
+			if row.completeButton then
+				row.completeButton:SetCallback("OnClick", function()
+					if not requestId then return end
+					if not TOGBankClassic_Guild:CompleteRequest(requestId, actor) then
+						self.Window:SetStatusText("Unable to complete request.")
+					end
+				end)
+			end
+			if row.cancelButton then
+				row.cancelButton:SetCallback("OnClick", function()
+					if not requestId then return end
+					showCancelReasonDialog(req, actor, self)
+				end)
+			end
+			if row.deleteButton then
+				row.deleteButton:SetCallback("OnClick", function()
+					if not requestId then return end
+					confirmDeleteRequest(req, actor)
+				end)
+			end
+			if row.fulfillButton then
+				row.fulfillButton:SetCallback("OnClick", function()
+					if not requestId then return end
+					if row.fulfillButton.frame and row.fulfillButton.frame.togDisabled then return end
+					local _, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
+					self.Window:SetStatusText(message or "")
+				end)
+			end
+		else
+			if row.cells then
+				local label = row.cells[i]
+				local cellVal
+				if col.key == "date" then
+					cellVal = dateText
+				elseif col.key == "requester" then
+					cellVal = req.requester or ""
+				elseif col.key == "bank" then
+					cellVal = req.bank or ""
+				elseif col.key == "quantity" then
+					local qty = req.quantity
+					cellVal = (qty == nil or qty == "") and "" or (tostring(qty) .. "x")
+				elseif col.key == "item" then
+					cellVal = req.item or ""
+				elseif col.key == "fulfilled" then
+					cellVal = tostring(req.fulfilled or "")
+				else
+					cellVal = tostring(req[col.key] or "")
+				end
+				label:SetText(colorize(cellVal, reqStatus))
+				label:SetWidth(columnWidth)
+
+				if col.key == "date" then
+					label.frame._tipData = {
+						date      = req.date,
+						updatedAt = req.updatedAt,
+						status    = reqStatus,
+						notes     = req.notes,
+					}
+				end
+			end
+		end
+	end
+end
+
+-- Only refresh the fulfill button on visible rows — used by bag-update events
+-- so the icon/state updates without touching text, permissions, or closures.
+function TOGBankClassic_UI_Requests:_RefreshFulfillButtons(actor, isActorBank, mailboxOpen)
+	if not self.RowPool or not self.Content then return end
+	local info = TOGBankClassic_Guild.Info
+	if not info or not info.requests then return end
+
+	for reqId, row in pairs(self.RowPool) do
+		if row._visible then
+			local req = info.requests[reqId]
+			if req then
+				local completed = isComplete(req)
+				if not completed and isActorBank then
+					local canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
+					local fulfillEnabled = canFulfill and mailboxOpen
+					local qtyNeeded = (tonumber(req.quantity) or 0) - (tonumber(req.fulfilled) or 0)
+					if row.fulfillButton and row.fulfillButton.frame then
+						local needsSplit    = fulfillReason and string.find(fulfillReason, "Split")
+						local isPartial     = fulfillReason and string.find(fulfillReason, "Partial")
+						local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and (needsSplit or isPartial))
+						row.fulfillButton.frame.togDisabled = not buttonEnabled
+						row.fulfillButton.frame:SetAlpha(buttonEnabled and 1.0 or 0.4)
+
+						local icon, tooltipDetail
+						if fulfillReason and string.find(fulfillReason, "Partial") then
+							icon = FULFILL_ICON_READY; tooltipDetail = fulfillReason
+						elseif fulfillReason and string.find(fulfillReason, "Split") then
+							icon = FULFILL_ICON_NEED_SPLIT; tooltipDetail = fulfillReason
+						elseif fulfillEnabled then
+							icon = FULFILL_ICON_READY
+							tooltipDetail = string.format("Attach %d %s to mail for %s.", math.min(itemsInBags, qtyNeeded), req.item or "items", req.requester or "requester")
+						elseif not mailboxOpen then
+							icon = FULFILL_ICON_NO_MAILBOX; tooltipDetail = "Open a mailbox to fulfill this request."
+						elseif fulfillReason and string.find(fulfillReason, "not in bags") then
+							icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = fulfillReason
+						elseif fulfillReason then
+							icon = FULFILL_ICON_NO_ITEMS; tooltipDetail = fulfillReason
+						else
+							icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = "Pick up items from bank first."
+						end
+						row.fulfillButton:SetText(icon)
+						updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", tooltipDetail)
+					end
+				end
+			end
+		end
+	end
+end
+
+-- Reorder self.Content.children to match the desired sort order.
+-- Each request occupies exactly #COLUMNS consecutive child slots.
+-- We sort those slot groups without touching the widgets themselves.
+function TOGBankClassic_UI_Requests:_ApplySortOrder(sortedReqs)
+	if not self.Content or not self.Content.children then return end
+
+	local children = self.Content.children
+	-- Build a map: reqId -> starting child index (1-based, step = #COLUMNS)
+	local step = #COLUMNS
+
+	-- O(N) linear scan: each row's first-cell widget carries its reqId via
+	-- SetUserData("togRequestsReqId"). EmptyRow and other non-row widgets
+	-- have no reqId and are safely skipped.
+	local idToStart = {}
+	for i, widget in ipairs(children) do
+		local reqId = widget:GetUserData("togRequestsReqId")
+		if reqId then
+			idToStart[reqId] = i
+		end
+	end
+
+	-- Build sorted children: all rows in allSorted order, then unsorted pool rows.
+	local newChildren = {}
+	local inSorted = {}
+	for _, req in ipairs(sortedReqs) do
+		inSorted[req.id] = true
+		local start = idToStart[req.id]
+		if start then
+			for j = 0, step - 1 do
+				newChildren[#newChildren + 1] = children[start + j]
+			end
+		end
+	end
+
+	-- Append pool rows not in sortedReqs (e.g. from a different archive tab).
+	for reqId, row in pairs(self.RowPool or {}) do
+		if not inSorted[reqId] and row.cells then
+			local start = idToStart[reqId]
+			if start then
+				for j = 0, step - 1 do
+					newChildren[#newChildren + 1] = children[start + j]
+				end
+			end
+		end
+	end
+
+	-- Preserve non-row widgets (e.g. EmptyRow) that were in children but not
+	-- placed by either loop above. Keep them at the end in their original order.
+	local inNew = {}
+	for _, w in ipairs(newChildren) do inNew[w] = true end
+	for _, w in ipairs(children) do
+		if not inNew[w] then
+			newChildren[#newChildren + 1] = w
+		end
+	end
+
+	-- Rebuild children in-place.
+	for i = 1, #newChildren do children[i] = newChildren[i] end
+	for i = #newChildren + 1, #children do children[i] = nil end
+end
+
+-- Main row-only redraw.
+-- Filter changes   → show/hide rows, reorder, one DoLayout.
+-- Data changes     → additionally re-populate dirty rows before layout.
+-- New requests     → create rows (batched across frames if many are new at once).
+function TOGBankClassic_UI_Requests:DrawRows()
+	if not self.Content or not self.Window then return end
+
+	local info    = TOGBankClassic_Guild.Info
+	local allReqs = info and info.requests or {}
+
+	local actor       = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local actorIsGM   = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
+	local isActorBank = TOGBankClassic_Guild:IsBank(actor)
+	local mailboxOpen = TOGBankClassic_Mail.isOpen or (MailFrame and MailFrame:IsShown()) or false
+
+	-- Get the full sorted+tab-filtered list (cached; invalidated by DrawContent)
+	local allSorted, total = self:GetSortedTabFiltered()
+
+	-- Apply requester/bank filter to get the visible subset
+	local allVisible = self:ApplyFilters(allSorted)
+	local totalVisible = #allVisible
+	
+	-- Apply pagination: only show rows for current page
+	self.currentPage = self.currentPage or 1
+	local startIdx = (self.currentPage - 1) * REQUESTS_PER_PAGE
+	local endIdx = startIdx + REQUESTS_PER_PAGE
+	local visible = {}
+	for i = startIdx + 1, math.min(endIdx, totalVisible) do
+		visible[#visible + 1] = allVisible[i]
+	end
+	local count = #visible
+
+	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] DrawRows: %d visible of %d total (page %d)", count, total, self.currentPage))
+
+	-- Cancel any in-progress batch from a prior call
+	self._drawGeneration = (self._drawGeneration or 0) + 1
+	local gen = self._drawGeneration
 
 	local content = self.Content
 	content:PauseLayout()
 
-	self.Window:SetStatusText("")
-
-	self:UpdateColumnLayout()
-	self:UpdateTabButtons()
-	self:DrawHeader()
-	self:UpdateFilters()
-	if self.HeaderGroup then
-		self.HeaderGroup:DoLayout()
-	end
-	if self.FilterGroup then
-		self.FilterGroup:DoLayout()
-	end
-	self:AdjustTableHeight()
-	if self.Window then
-		self.Window:DoLayout()
-	end
-
-	local sorted = self:SortedRequests()
-	sorted = self:ApplyTabFilter(sorted)
-	local total = #sorted
-	sorted = self:ApplyFilters(sorted)
-	local count = #sorted
-
-	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] DrawContent: Displaying %d requests", count))
-
+	-- Empty state
 	if count == 0 then
-		local empty = self:EnsureEmptyLabel()
+		local empty       = self:EnsureEmptyLabel()
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[1]) or COLUMNS[1].width
 		if empty then
 			empty:SetWidth(columnWidth)
 			empty:SetText(self.currentTab == "archive" and "No archived requests." or "No requests yet.")
 		end
 		setWidgetShown(empty, true)
+		-- Hide all pooled rows
 		if self.RowPool then
-			for _, row in ipairs(self.RowPool) do
+			for _, row in pairs(self.RowPool) do
+				if row._visible then
+					self:SetRowVisible(row, false)
+					row._visible = false
+				end
+			end
+		end
+		self.Window:SetStatusText(string.format("Showing 0 requests out of %d total", total))
+		content:ResumeLayout()
+		content:DoLayout()
+		return
+	end
+
+	if self.EmptyRow then setWidgetShown(self.EmptyRow, false) end
+
+	-- Build set of visible req IDs for fast lookup
+	local visibleIds = {}
+	for _, req in ipairs(visible) do visibleIds[req.id] = true end
+
+	-- Show/hide rows and populate dirty ones synchronously (pool hits only).
+	-- Collect requests that need NEW row creation (not yet in pool).
+	local needsNewRow = {}
+	for _, req in ipairs(visible) do
+		local reqId = req.id
+		local row   = self.RowPool and self.RowPool[reqId]
+		if row then
+			if not row._visible then
+				self:SetRowVisible(row, true)
+				row._visible = true
+			end
+			if row.dirty then
+				self:_PopulateRow(row, req, actor, actorIsGM, isActorBank, mailboxOpen)
+			end
+		else
+			needsNewRow[#needsNewRow + 1] = req
+		end
+	end
+
+	-- Hide rows that are no longer in the visible set
+	if self.RowPool then
+		for reqId, row in pairs(self.RowPool) do
+			if row._visible and not visibleIds[reqId] then
 				self:SetRowVisible(row, false)
-			end
-		end
-	else
-		if self.EmptyRow then
-			setWidgetShown(self.EmptyRow, false)
-		end
-
-		local CheckMarkIcon = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
-		local CancelledIcon = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:0|t "
-		local PaddingIcon   = "|TInterface\\AddOns\\TOGBankClassic\\Media\\blank:0|t "
-		local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
-		local actorIsGM = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
-
-		for index, req in ipairs(sorted) do
-			local row = self:EnsureRow(index)
-			self:SetRowVisible(row, true)
-
-			local completed = isComplete(req)
-			local reqStatus = req.status or "open"
-			if completed and reqStatus == "open" then
-				reqStatus = "fulfilled"
-			end
-			local requestId = req.id
-			local canCancel = not completed
-				and requestId
-				and TOGBankClassic_Guild:CanCancelRequest(req, actor)
-			local canComplete = not completed
-				and requestId
-				and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
-			local canDelete = requestId
-				and TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
-			local ts = tonumber(req.date or 0) or 0
-			local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
-			if reqStatus == "cancelled" then
-				dateText = CancelledIcon .. dateText
-			elseif completed then
-				dateText = CheckMarkIcon .. dateText
-			else
-				dateText = PaddingIcon .. dateText
-			end
-
-			local function cellText(colKey)
-				if colKey == "date" then
-					return dateText
-				elseif colKey == "requester" then
-					return req.requester or ""
-				elseif colKey == "bank" then
-					return req.bank or ""
-				elseif colKey == "quantity" then
-					local qty = req.quantity
-					if qty == nil or qty == "" then
-						return ""
-					end
-					return tostring(qty) .. "x"
-				elseif colKey == "item" then
-					return req.item or ""
-				elseif colKey == "fulfilled" then
-					return tostring(req.fulfilled or "")
-				elseif colKey == "notes" then
-					return req.notes or ""
-				end
-				return tostring(req[colKey] or "")
-			end
-
-			-- Check fulfill eligibility
-			local canFulfill, fulfillReason, itemsInBags = false, nil, 0
-			local isActorBank = TOGBankClassic_Guild:IsBank(actor)
-			if not completed and requestId and isActorBank then
-				canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
-			end
-			local showFulfill = isActorBank and not completed and requestId
-			-- Check mailbox state: flag is authoritative (set by events), frame is backup
-			local mailboxOpen = TOGBankClassic_Mail.isOpen or (MailFrame and MailFrame:IsShown()) or false
-			local fulfillEnabled = canFulfill and mailboxOpen
-
-			local qtyNeeded = 0
-			if req.quantity and req.fulfilled then
-				qtyNeeded = (tonumber(req.quantity) or 0) - (tonumber(req.fulfilled) or 0)
-			elseif req.quantity then
-				qtyNeeded = tonumber(req.quantity) or 0
-			end
-
-			for i, col in ipairs(COLUMNS) do
-				local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
-				if col.key == "actions" then
-					local showComplete = canComplete and true or false
-					local showCancel = canCancel and true or false
-					local showDelete = canDelete and true or false
-					if row and row.actionGroup then
-						row.actionGroup:SetWidth(columnWidth)
-					end
-					-- Layout: [Fulfill] [spacer] [Complete] [spacer] [Cancel] [spacer] [Delete]
-					if row and row.fulfillButton then
-						setWidgetShown(row.fulfillButton, showFulfill)
-					end
-					if row and row.fulfillSpacer then
-						setWidgetShown(row.fulfillSpacer, showFulfill and (showComplete or showCancel))
-					end
-					if row and row.completeButton then
-						setWidgetShown(row.completeButton, showComplete)
-					end
-					if row and row.actionSpacer then
-						setWidgetShown(row.actionSpacer, showComplete and showCancel)
-					end
-					if row and row.cancelButton then
-						setWidgetShown(row.cancelButton, showCancel)
-					end
-					if row and row.deleteSpacer then
-						setWidgetShown(row.deleteSpacer, showDelete and (showComplete or showCancel or showFulfill))
-					end
-					if row and row.deleteButton then
-						setWidgetShown(row.deleteButton, showDelete)
-					end
-
-					-- Update fulfill button state, icon, and tooltip
-					-- Don't use SetDisabled - it blocks mouse events including tooltips
-					-- Instead, store disabled state and check in OnClick, use alpha for visual
-					if row and row.fulfillButton and row.fulfillButton.frame then
-						-- Special case: if split is needed, keep button enabled (PrepareFulfillMail will handle it)
-						local needsSplit = fulfillReason and string.find(fulfillReason, "Split")
-						local isPartial = fulfillReason and string.find(fulfillReason, "Partial")
-						local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and (needsSplit or isPartial))
-						row.fulfillButton.frame.togDisabled = not buttonEnabled
-						row.fulfillButton.frame:SetAlpha(buttonEnabled and 1.0 or 0.4)
-
-						-- Determine icon and tooltip based on state
-						local icon, tooltipDetail
-						if fulfillReason and string.find(fulfillReason, "Partial") then
-							-- Partial fulfillment available - show envelope icon
-							icon = FULFILL_ICON_READY
-							tooltipDetail = fulfillReason
-						elseif fulfillReason and string.find(fulfillReason, "Split") then
-							-- Split needed - show special icon (shovel)
-							icon = FULFILL_ICON_NEED_SPLIT
-							tooltipDetail = fulfillReason
-						elseif fulfillEnabled then
-							icon = FULFILL_ICON_READY
-							local attachCount = math.min(itemsInBags, qtyNeeded)
-							tooltipDetail = string.format("Attach %d %s to mail for %s.", attachCount, req.item or "items", req.requester or "requester")
-						elseif not mailboxOpen then
-							icon = FULFILL_ICON_NO_MAILBOX
-							tooltipDetail = "Open a mailbox to fulfill this request."
-						elseif fulfillReason and string.find(fulfillReason, "Split") then
-							-- Stack size issue
-							icon = FULFILL_ICON_NEED_SPLIT
-							tooltipDetail = fulfillReason
-						elseif fulfillReason and string.find(fulfillReason, "not in bags") then
-							-- Items in bank but not picked up
-							icon = FULFILL_ICON_NOT_IN_BAGS
-							tooltipDetail = fulfillReason
-						elseif fulfillReason then
-							-- Other reason (no items at all, etc.)
-							icon = FULFILL_ICON_NO_ITEMS
-							tooltipDetail = fulfillReason
-						else
-							icon = FULFILL_ICON_NOT_IN_BAGS
-							tooltipDetail = "Pick up items from bank first."
-						end
-
-						row.fulfillButton:SetText(icon)
-						updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", tooltipDetail)
-					end
-
-					if row and row.completeButton then
-						row.completeButton:SetCallback("OnClick", function()
-							if not requestId then
-								return
-							end
-							if not TOGBankClassic_Guild:CompleteRequest(requestId, actor) then
-								self.Window:SetStatusText("Unable to complete request.")
-							end
-						end)
-					end
-
-					if row and row.cancelButton then
-						row.cancelButton:SetCallback("OnClick", function()
-							if not requestId then
-								return
-							end
-							showCancelReasonDialog(req, actor, self)
-						end)
-					end
-
-					if row and row.deleteButton then
-						row.deleteButton:SetCallback("OnClick", function()
-						if not requestId then
-							return
-						end
-							confirmDeleteRequest(req, actor)
-						end)
-					end
-
-					if row and row.fulfillButton then
-						row.fulfillButton:SetCallback("OnClick", function()
-							if not requestId then
-								return
-							end
-							-- Check manual disabled state (we don't use SetDisabled to keep tooltips working)
-							if row.fulfillButton and row.fulfillButton.frame and row.fulfillButton.frame.togDisabled then
-								return
-							end
-							local success, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
-							self.Window:SetStatusText(message or "")
-						end)
-					end
-
-					if row and row.actionGroup then
-						row.actionGroup:DoLayout()
-					end
-				else
-					if row and row.cells then
-						local label = row.cells[i]
-						label:SetText(colorize(cellText(col.key), reqStatus))
-						label:SetWidth(columnWidth)
-						setWidgetShown(label, true)
-
-						if col.key == "date" then
-							-- Update the data table in-place; OnEnter/OnLeave are registered once at row creation
-							label.frame._tipData = {
-								date      = req.date,
-								updatedAt = req.updatedAt,
-								status    = reqStatus,
-								notes     = req.notes,
-							}
-						end
-					end
-				end
-			end
-		end
-
-		if self.RowPool then
-			for i = count + 1, #self.RowPool do
-				self:SetRowVisible(self.RowPool[i], false)
+				row._visible = false
 			end
 		end
 	end
 
-	local status = string.format("Showing %d request%s out of %d total", count, count == 1 and "" or "s", total)
-	self.Window:SetStatusText(status)
+	-- Reorder Content.children to match current sort
+	self:_ApplySortOrder(allSorted)
 
-	content:ResumeLayout()
-	content:DoLayout()
+	if #needsNewRow == 0 then
+		-- All rows already existed (pool hits) and were populated above — one layout pass.
+		self._batchLayoutGen = nil
+		content:ResumeLayout()
+		content:DoLayout()
+		local totalPages = math.max(1, math.ceil(totalVisible / REQUESTS_PER_PAGE))
+		if self.prevButton then self.prevButton:SetDisabled(self.currentPage <= 1) end
+		if self.nextButton then self.nextButton:SetDisabled(self.currentPage >= totalPages) end
+		
+		-- Always calculate the range being shown on current page
+		local showStart = startIdx + 1
+		local showEnd = math.min(endIdx, totalVisible)
+		local pageCount = showEnd - showStart + 1
+		
+		if totalVisible <= REQUESTS_PER_PAGE then
+			self.Window:SetStatusText(string.format("Showing %d request%s out of %d total", pageCount, pageCount == 1 and "" or "s", total))
+		else
+			self.Window:SetStatusText(string.format("Showing %d-%d of %d (Page %d/%d)", showStart, showEnd, totalVisible, self.currentPage, totalPages))
+		end
+	else
+		-- Some rows are brand new. Batch their creation across frames.
+		-- Pool hits were already populated synchronously above, so one DoLayout
+		-- displays correct data immediately before any new-row batching starts.
+		self._batchLayoutGen = nil
+		content:ResumeLayout()
+		content:DoLayout()
+		self.Window:SetStatusText("Loading...")
+		C_Timer.After(0, function()
+			if self._drawGeneration == gen and self.isOpen then
+				self:_CreateNewRowsBatched(gen, needsNewRow, 1, count, total, allSorted, actor, actorIsGM, isActorBank, mailboxOpen)
+			end
+		end)
+	end
 end
+
+-- Create brand-new rows in batches of 20, yielding between batches so the
+-- game loop gets control. Layout stays paused across all batches; one
+-- ResumeLayout+DoLayout fires only on the final batch.
+function TOGBankClassic_UI_Requests:_CreateNewRowsBatched(gen, newReqs, startIndex, count, total, allSorted, actor, actorIsGM, isActorBank, mailboxOpen)
+	if not self.isOpen or self._drawGeneration ~= gen then
+		-- Superseded. Only resume layout if we are still the active pauser;
+		-- a newer DrawRows may have already taken ownership of the pause.
+		if self._batchLayoutGen == gen and self.Content then
+			self.Content:ResumeLayout()
+			self._batchLayoutGen = nil
+		end
+		return
+	end
+	if not self.Content then return end
+
+	local batchSize = 20
+	local endIndex  = math.min(startIndex + batchSize - 1, #newReqs)
+	local content   = self.Content
+
+	-- Pause layout and take ownership so superseded-batch cleanup knows not to interfere.
+	content:PauseLayout()
+	self._batchLayoutGen = gen
+	for i = startIndex, endIndex do
+		local req = newReqs[i]
+		local row = self:EnsureRowForRequest(req.id)
+		if row then
+			row._visible = true
+			self:SetRowVisible(row, true)
+			self:_PopulateRow(row, req, actor, actorIsGM, isActorBank, mailboxOpen)
+		end
+	end
+
+	local isLast = (endIndex >= #newReqs)
+	if isLast then
+		-- Final batch: sort order is now authoritative (all rows exist in children).
+		self._batchLayoutGen = nil
+		self:_ApplySortOrder(allSorted)
+		content:ResumeLayout()
+		content:DoLayout()
+		
+		-- Update pagination button states and status text
+		local info = TOGBankClassic_Guild.Info
+		if info and info.requests then
+			local allSorted2, total2 = self:GetSortedTabFiltered()
+			local allVisible2 = self:ApplyFilters(allSorted2)
+			local totalVisible2 = #allVisible2
+			local totalPages = math.max(1, math.ceil(totalVisible2 / REQUESTS_PER_PAGE))
+			if self.prevButton then self.prevButton:SetDisabled(self.currentPage <= 1) end
+			if self.nextButton then self.nextButton:SetDisabled(self.currentPage >= totalPages) end
+			
+			-- Calculate the range being shown on current page
+			local startIdx = (self.currentPage - 1) * REQUESTS_PER_PAGE
+			local endIdx = startIdx + REQUESTS_PER_PAGE
+			local showStart = startIdx + 1
+			local showEnd = math.min(endIdx, totalVisible2)
+			local pageCount = showEnd - showStart + 1
+			
+			if totalVisible2 <= REQUESTS_PER_PAGE then
+				self.Window:SetStatusText(string.format("Showing %d request%s out of %d total", pageCount, pageCount == 1 and "" or "s", total2))
+			else
+				self.Window:SetStatusText(string.format("Showing %d-%d of %d (Page %d/%d)", showStart, showEnd, totalVisible2, self.currentPage, totalPages))
+			end
+		else
+			self.Window:SetStatusText(string.format("Showing %d request%s out of %d total", count, count == 1 and "" or "s", total))
+		end
+	else
+		-- Layout stays paused across batches — no intermediate DoLayout.
+		self.Window:SetStatusText(string.format("Loading %d / %d...", endIndex, #newReqs))
+		C_Timer.After(0, function()
+			self:_CreateNewRowsBatched(gen, newReqs, endIndex + 1, count, total, allSorted, actor, actorIsGM, isActorBank, mailboxOpen)
+		end)
+	end
+end
+
+function TOGBankClassic_UI_Requests:DrawContent()
+	if not self.Content or not self.Window then
+		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] DrawContent: No content or window")
+		return
+	end
+
+	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] DrawContent: Starting structural refresh")
+
+	self.Window:SetStatusText("")
+	self.currentPage = 1  -- Reset to first page on tab change or full refresh
+
+	self:UpdateColumnLayout()
+	self:UpdateTabButtons()
+	self:DrawHeader()
+	self:UpdateFilters()
+	if self.HeaderGroup then self.HeaderGroup:DoLayout() end
+	if self.FilterGroup  then self.FilterGroup:DoLayout()  end
+	self:AdjustTableHeight()
+	if self.Window then self.Window:DoLayout() end
+
+	-- Invalidate sort/tab cache and mark all rows dirty so data is refreshed
+	self._cachedSortedTabFiltered = nil
+	self:InvalidateAllRows()
+	self:DrawRows()
+end
+
+

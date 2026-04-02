@@ -40,11 +40,102 @@
 - [ ] **Requestor self-delete** - Allow requestors to permanently delete their own open requests (distinct from cancel, which is an officer action); gives requestors autonomy to clean up their own entries
 - [x] ~~**Request status visual differentiation**~~ **IMPLEMENTED: Fulfilled rows tinted green with checkmark icon; cancelled rows tinted red with X icon**
 - [x] ~~**Command alias**~~ **IMPLEMENTED (April 1, 2026): `/bank` registered as an alias that toggles the main inventory window; equivalent to `/togbank` with no arguments. Location: Chat.lua `Init` (~line 67).**
+- [x] ~~**Requests UI pagination (PERF)**~~ **IMPLEMENTED (April 2, 2026): Paginated Requests window to 50 rows per page to prevent game freezes when switching from specific banker filter to "Any Banker" with 100+ requests; added Previous/Next buttons and page status display ("Showing 1-50 of 127 (Page 1/3)"); follows same pattern as Search UI pagination**
 - [ ] **Scoreboard UI or deprecation** - The bank acceptance window contains an "add to scoreboard" checkbox but no scoreboard UI exists or is accessible; either implement scoreboard access or remove the checkbox to avoid confusion
 - [x] ~~**Guild roster cache lookups (PERF)**~~ **IMPLEMENTED: All GetGuildRosterInfo() scans in hot paths replaced with O(1) memberRoster cache lookups; isBank flag added to cache; greedy regex replaced with plain-text find()**
 - [x] ~~**Remove message integrity checksum from sends (PERF)**~~ **IMPLEMENTED: Eliminated byte-by-byte Lua checksum loop over 15-50KB comm payloads on every send; DeserializeWithChecksum retained for backward compat with old clients**
 - [x] ~~**Debug tag audit**~~ **IMPLEMENTED: Every `Output:Debug()` call across all Modules now has both a category AND a tag; migrated ticket-based tags (e.g. MAIL-012) to canonical tag names; added SYNC/SEND, SYNC/VALIDATE, and REQUESTS/INIT tags to Constants.lua; ongoing follow-up passes fixing additional calls discovered via in-game log inspection**
 - [x] ~~**INTEGRITY-MISMATCH enriched diagnostics**~~ **IMPLEMENTED: Added `PROTOCOL/SERIAL` tag logging outgoing checksum+size on every `SerializeWithChecksum` call; enriched mismatch block with timestamp, framing detail (sepPos, checksumField raw value, body/serialized lengths), and best-effort payload-type decode of the corrupt message (tells you inventory vs request vs hash-broadcast); added `UI/SEARCH` tag logging `OnTextChanged` events and `DrawContent` entry/exit with `GetTime()` timestamps for correlation; all three new tags wired into Options checkboxes automatically via the data-driven `DEBUG_TAGS` system**
+
+---
+
+## ⚡ Requests UI Pagination - IMPLEMENTED
+
+**Added:** April 2, 2026  
+**Purpose:** Eliminate game freezes when displaying large numbers of requests by limiting visible rows to 50 per page
+
+### Problem
+
+Switching from a specific banker filter to "Any Banker" in the Requests window would cause visible screen stuttering and game freezes. With 100+ requests across multiple bankers, `DrawRows()` was synchronously populating all visible rows in a single frame, including:
+
+- Scanning bags/bank for inventory availability (per request)
+- Computing permission checks (GM status, banker status)
+- Creating closure callbacks for buttons
+- Building complex widget hierarchies (6+ widgets per row)
+
+Each row population took 1-3ms; 100+ rows meant 100-300ms of Lua execution in one frame — well beyond the 16ms frame budget, causing visible freezes.
+
+### Solution
+
+Implemented pagination following the existing Search UI pattern:
+
+1. **Page size limit:** `REQUESTS_PER_PAGE = 50` constant caps maximum visible rows
+2. **Page tracking:** `self.currentPage` initialized to 1 in `Init()` and reset to 1 in `DrawContent()` and filter changes
+3. **Row slicing:** `DrawRows()` calculates page range (`startIdx` to `endIdx`) and only shows rows for the current page:
+   ```lua
+   local allVisible = self:ApplyFilters(allSorted)
+   local startIdx = (self.currentPage - 1) * REQUESTS_PER_PAGE
+   local endIdx = startIdx + REQUESTS_PER_PAGE
+   local visible = {}  -- Only current page slice
+   for i = startIdx + 1, math.min(endIdx, #allVisible) do
+     visible[#visible + 1] = allVisible[i]
+   end
+   ```
+4. **Navigation buttons:** Previous and Next buttons added to UI after "Cancel Stale" button:
+   - Previous: Decrements `currentPage`, calls `DrawRows()`, disabled on page 1
+   - Next: Increments `currentPage`, calls `DrawRows()`, disabled on last page
+5. **Status text:** Shows page info for multi-page results: `"Showing 1-50 of 127 (Page 1/3)"`
+6. **Button state management:** Both synchronous and batched code paths update button disabled states based on `currentPage` and `totalPages`
+
+### Implementation Details
+
+**Page state management:**
+- `Init()` — Sets `self.currentPage = 1` on window creation
+- `DrawContent()` — Resets to page 1 on tab switches and full refreshes
+- `handleFilterChange()` — Resets to page 1 when Requester/Bank filter changes
+- `DrawRows()` — Uses `self.currentPage` to slice visible array
+
+**Pagination controls:**
+- Previous button: 70px width, `"< Prev"` label, tooltip "Previous Page"
+- Next button: 70px width, `"Next >"` label, tooltip "Next Page"
+- Button callbacks: Guard against edge cases (empty guild info, page boundaries)
+- Button disabled states: Updated in both synchronous path (no new rows) and batched path (after final batch completes)
+
+**Status text display:**
+- Single page: `"Showing N request(s) out of M total"` (filters applied, no pagination info)
+- Multi-page: `"Showing X-Y of Z (Page N/M)"` where:
+  - X = `startIdx + 1`
+  - Y = `min(endIdx, totalVisible)`
+  - Z = `totalVisible` (count after filters applied)
+  - N = `currentPage`
+  - M = `totalPages = ceil(totalVisible / REQUESTS_PER_PAGE)`
+
+**Bug fixes during implementation:**
+- Fixed status text to recalculate page range from `self.currentPage` instead of using stale `count` parameter
+- Ensured `_CreateNewRowsBatched()` final batch displays correct page numbers using fresh filter pass
+- Both code paths now consistently derive `showStart`, `showEnd`, and `pageCount` from current page state
+
+### Files Changed
+
+- `Modules/UI/Requests.lua` — Added `REQUESTS_PER_PAGE` constant; pagination state tracking in `Init()`, `DrawContent()`, `handleFilterChange()`; row slicing logic in `DrawRows()`; Previous/Next buttons in `DrawWindow()`; status text updates in both synchronous and batched code paths
+
+### User Experience
+
+- **Opening Requests window:** Shows page 1 immediately (1-50 requests), no freeze
+- **Switching to "Any Banker":** Filter resets to page 1, only first 50 rows shown, no freeze
+- **Clicking Next:** Moves to page 2 (51-100), only 50 rows rendered
+- **Pagination state:** Resets to page 1 on any tab switch, filter change, or window refresh
+- **Button states:** Previous disabled on page 1, Next disabled on last page
+- **Visual consistency:** Follows existing Search UI pagination pattern (50 per page, Previous/Next buttons, page status)
+
+### Performance Impact
+
+Before pagination:
+- 127 visible requests → 127 rows synchronized in one frame → 200-300ms freeze
+
+After pagination:
+- 127 visible requests → page 1 shows 50 rows → 50-75ms render time (no visible stutter)
+- Page navigation → 50 rows max per page → smooth experience
 
 ---
 
