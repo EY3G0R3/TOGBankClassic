@@ -83,7 +83,9 @@ function TOGBankClassic_Events:RegisterEvents()
 			TOGBankClassic_Mail.isOpen = true
 			C_Timer.After(0.1, function()
 				if TOGBankClassic_UI_Requests.isOpen then
-					TOGBankClassic_UI_Requests:DrawContent()
+					local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+					local isActorBank = actor and TOGBankClassic_Guild:IsBank(actor) or false
+					TOGBankClassic_UI_Requests:_RefreshFulfillButtons(actor, isActorBank, true)
 				end
 			end)
 		end)
@@ -91,7 +93,9 @@ function TOGBankClassic_Events:RegisterEvents()
 			TOGBankClassic_Mail.isOpen = false
 			C_Timer.After(0.1, function()
 				if TOGBankClassic_UI_Requests.isOpen then
-					TOGBankClassic_UI_Requests:DrawContent()
+					local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+					local isActorBank = actor and TOGBankClassic_Guild:IsBank(actor) or false
+					TOGBankClassic_UI_Requests:_RefreshFulfillButtons(actor, isActorBank, false)
 				end
 			end)
 		end)
@@ -519,11 +523,12 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
 	TOGBankClassic_Bank:OnUpdateStop()
 	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Bank:OnUpdateStop() completed")
 	TOGBankClassic_UI_Mail:Close()
-	-- Refresh requests UI to update fulfill button states
-	-- Delay slightly to ensure MailFrame state is updated
+	-- Refresh fulfill button states without a full structural rebuild
 	C_Timer.After(0.1, function()
 		if TOGBankClassic_UI_Requests.isOpen then
-			TOGBankClassic_UI_Requests:DrawContent()
+			local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+			local isActorBank = actor and TOGBankClassic_Guild:IsBank(actor) or false
+			TOGBankClassic_UI_Requests:_RefreshFulfillButtons(actor, isActorBank, false)
 		end
 	end)
 end

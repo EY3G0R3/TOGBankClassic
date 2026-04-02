@@ -1364,6 +1364,79 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 			label.label:SetJustifyH(justifyForAlign(col.align))
 			tagColumnWidget(label, i, false)
 			self.Content:AddChild(label)
+			
+			-- Item column: Add copyable EditBox overlay
+			if col.key == "item" then
+				local eb = CreateFrame("EditBox", nil, label.frame)
+				eb:SetFontObject("GameFontHighlight")
+				eb:SetMaxLetters(0)
+				eb:SetMultiLine(false)
+				eb:EnableMouse(true)
+				eb:SetHeight(18)
+				eb:SetPoint("TOPLEFT", label.frame, "TOPLEFT", 0, 0)
+				eb:SetPoint("BOTTOMRIGHT", label.frame, "BOTTOMRIGHT", 0, 0)
+				eb:SetAutoFocus(false)
+				eb:SetJustifyH(justifyForAlign(col.align))
+				eb:SetTextInsets(0, 0, 0, 0)
+				eb:Show()
+				
+				-- Copyable text behavior (like MailLogger Discord URL)
+				eb:SetScript("OnEditFocusGained", function(self)
+					self:HighlightText()
+				end)
+				eb:SetScript("OnEditFocusLost", function(self)
+					self:HighlightText(0, 0)
+				end)
+				eb:SetScript("OnChar", function(self)
+					self:SetText(self._originalText or "")
+					self:HighlightText()
+				end)
+				eb:SetScript("OnKeyDown", function(self, key)
+					if key == "ESCAPE" then
+						self:ClearFocus()
+					end
+				end)
+				
+				-- Item tooltip on hover
+				eb:SetScript("OnEnter", function(self)
+					local itemName = self._itemName
+					if not itemName or itemName == "" then return end
+					
+					-- Search guild inventory for a matching item link or ID
+					local itemLink, itemID
+					local info = TOGBankClassic_Guild.Info
+					if info and info.alts then
+						for _, alt in pairs(info.alts) do
+							if alt.items then
+								for _, item in ipairs(alt.items) do
+									local name = item.Info and item.Info.name
+									      or (item.Link and item.Link:match("%[(.-)%]"))
+									if name == itemName then
+										itemLink = item.Link
+										itemID   = item.ID
+										break
+									end
+								end
+							end
+							if itemLink or itemID then break end
+						end
+					end
+					
+					-- Build hyperlink from link string, or fall back to bare item:ID
+					local hyperlink = itemLink or (itemID and ("item:" .. itemID))
+					if hyperlink then
+						GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+						GameTooltip:SetHyperlink(hyperlink)
+						GameTooltip:Show()
+					end
+				end)
+				eb:SetScript("OnLeave", function()
+					GameTooltip:Hide()
+				end)
+				
+				label.editbox = eb
+			end
+			
 			if col.key == "date" then
 				label.frame:SetScript("OnEnter", function(f)
 					local d = f._tipData
@@ -1851,7 +1924,27 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 				else
 					cellVal = tostring(req[col.key] or "")
 				end
-				label:SetText(colorize(cellVal, reqStatus))
+				
+				-- Item column has EditBox overlay for copyable text
+				if col.key == "item" and label.editbox then
+					-- Set both label AND editbox to show text (for debugging)
+					label:SetText(colorize(cellVal, reqStatus))
+					label.editbox:SetText(cellVal)
+					label.editbox._originalText = cellVal
+					label.editbox._itemName = cellVal
+					
+					-- Set color based on status (EditBox uses SetTextColor, not escape codes)
+					if reqStatus == "cancelled" then
+						label.editbox:SetTextColor(1, 0.4, 0.4)  -- Red
+					elseif reqStatus == "fulfilled" or reqStatus == "complete" then
+						label.editbox:SetTextColor(0.4, 1, 0.4)  -- Green
+					else
+						label.editbox:SetTextColor(1, 1, 1)  -- White
+					end
+				else
+					label:SetText(colorize(cellVal, reqStatus))
+				end
+				
 				label:SetWidth(columnWidth)
 
 				if col.key == "date" then

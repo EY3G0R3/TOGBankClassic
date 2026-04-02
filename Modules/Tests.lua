@@ -31,13 +31,6 @@ end
 
 -- Test framework
 local testResults = {}
-local currentTest = nil
-
-local function assert(condition, message)
-    if not condition then
-        error("Assertion failed: " .. (message or "unknown"), 2)
-    end
-end
 
 local function assertEquals(expected, actual, message)
     if expected ~= actual then
@@ -59,7 +52,6 @@ local function assertNil(value, message)
 end
 
 local function runTest(testName, testFunc)
-    currentTest = testName
     local success, err = pcall(testFunc)
 
     if success then
@@ -69,8 +61,6 @@ local function runTest(testName, testFunc)
         table.insert(testResults, {name = testName, passed = false, error = err})
         addon:Print("|cffff0000✗|r " .. testName .. ": " .. tostring(err))
     end
-
-    currentTest = nil
 end
 
 -- Helper function to create test data (matches actual Bank.lua structure)
@@ -404,10 +394,11 @@ local function testProtocolVersionDetection()
         ["V1User-TestRealm"] = 1,
     }
 
-    -- GetPeerCapabilities returns the protocol version number (or nil)
-    local v2Protocol = Guild:GetPeerCapabilities("V2User-TestRealm")
-    local v1Protocol = Guild:GetPeerCapabilities("V1User-TestRealm")
-    local unknownProtocol = Guild:GetPeerCapabilities("Unknown-TestRealm")
+    -- Read protocol versions directly from database (GetPeerCapabilities removed in MAINT-001)
+    local versions = Database.db.faction[guildName].guildProtocolVersions
+    local v2Protocol = versions["V2User-TestRealm"]
+    local v1Protocol = versions["V1User-TestRealm"]
+    local unknownProtocol = versions["Unknown-TestRealm"]
 
     assertEquals(2, v2Protocol, "V2 user should have protocol version 2")
     assertEquals(1, v1Protocol, "V1 user should have protocol version 1")
@@ -426,7 +417,7 @@ local function testShouldUseDeltaLogic()
 
     -- Mock guild support at 60% (above 10% threshold)
     local oldGetGuildDeltaSupport = Database.GetGuildDeltaSupport
-    Database.GetGuildDeltaSupport = function(name)
+    Database.GetGuildDeltaSupport = function(_)
         return 0.6  -- 60% support
     end
 
@@ -479,8 +470,7 @@ end
 --============================================================================
 
 local function testApplyDeltaNoExistingData()
-    local guildName = setupDeltaTest()
-    if not guildName then
+    if not setupDeltaTest() then
         error("Test setup failed - database not initialized")
     end
 
@@ -503,8 +493,7 @@ local function testApplyDeltaNoExistingData()
 end
 
 local function testApplyDeltaVersionMismatch()
-    local guildName = setupDeltaTest()
-    if not guildName then
+    if not setupDeltaTest() then
         error("Test setup failed - database not initialized")
     end
 
@@ -594,7 +583,7 @@ local function testDeltaStructureValidation()
         baseVersion = 1,
         changes = {}
     }
-    valid, err = addon:ValidateDeltaStructure(invalidDelta1)
+    valid = addon:ValidateDeltaStructure(invalidDelta1)
     assert(not valid, "Missing type should fail")
 
     -- Invalid: wrong type
@@ -605,7 +594,7 @@ local function testDeltaStructureValidation()
         baseVersion = 1,
         changes = {}
     }
-    valid, err = addon:ValidateDeltaStructure(invalidDelta2)
+    valid = addon:ValidateDeltaStructure(invalidDelta2)
     assert(not valid, "Wrong type should fail")
 
     -- Invalid: missing name
@@ -615,7 +604,7 @@ local function testDeltaStructureValidation()
         baseVersion = 1,
         changes = {}
     }
-    valid, err = addon:ValidateDeltaStructure(invalidDelta3)
+    valid = addon:ValidateDeltaStructure(invalidDelta3)
     assert(not valid, "Missing name should fail")
 
     -- Invalid: non-numeric version
@@ -626,7 +615,7 @@ local function testDeltaStructureValidation()
         baseVersion = 1,
         changes = {}
     }
-    valid, err = addon:ValidateDeltaStructure(invalidDelta4)
+    valid = addon:ValidateDeltaStructure(invalidDelta4)
     assert(not valid, "Non-numeric version should fail")
 end
 
@@ -676,9 +665,7 @@ local function testFullDeltaRoundtrip()
     assertEquals(200000, delta.changes.money, "Delta should contain money change")
 
     -- Apply delta (modifies Guild.Info.alts[norm] in place)
-    local status = Guild:ApplyDelta(name, delta, "sender")
-    -- ApplyDelta returns ADOPTION_STATUS values, not boolean
-    -- Just check it didn't return INVALID
+    Guild:ApplyDelta(name, delta, "sender")
 
     -- Verify changes through Guild.Info.alts
     local appliedData = Guild.Info.alts[norm]
@@ -748,8 +735,8 @@ local function testV1ClientIgnoresDeltaPrefix()
         supportsDelta = false
     }
 
-    -- V1 clients should have protocol version 1
-    local peerInfo = Guild:GetPeerCapabilities("V1Client")
+    -- V1 clients should have protocol version 1 (read directly; GetPeerCapabilities removed in MAINT-001)
+    local peerInfo = db.guildProtocolVersions["V1Client"]
     assertNotNil(peerInfo, "Should have peer info")
     assertEquals(1, peerInfo.version, "V1 client should have protocol version 1")
     assert(peerInfo.version < 2, "V1 client should not support delta (version < 2)")
@@ -770,7 +757,7 @@ local function testFallbackToFullSync()
 
     -- This test validates that delta is enabled regardless of guild support percentage
     local oldGetGuildDeltaSupport = Database.GetGuildDeltaSupport
-    Database.GetGuildDeltaSupport = function(name)
+    Database.GetGuildDeltaSupport = function(_)
         return 0  -- 0% support
     end
 
