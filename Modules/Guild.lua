@@ -2351,24 +2351,18 @@ end
 
 -- Create a per-send callback with its own stats tracking
 -- FIX: Prevents stats corruption when multiple P2P sends happen concurrently
+-- NOTE: AceCommQueue delivers only the final callback (when bytesSent >= totalBytes),
+-- so startTime is captured at closure creation and chunk count is estimated from byte count.
 local function CreateOnChunkSentCallback(altName)
 	-- Per-send stats (closure captures these)
+	-- startTime is recorded NOW so elapsed is measured from just before SendCommMessage.
 	local sendStats = {
-		startTime = nil,
-		lastBytes = 0,
-		chunksSent = 0,
+		startTime = GetTime(),
 		failures = 0,
 		throttled = 0,
 	}
 	
 	return function(arg, bytesSent, totalBytes, sendResult)
-		-- Track chunk count (each callback = one chunk sent, ~254 bytes each)
-		local bytesThisChunk = bytesSent - sendStats.lastBytes
-		if bytesThisChunk > 0 then
-			sendStats.chunksSent = sendStats.chunksSent + 1
-		end
-		sendStats.lastBytes = bytesSent
-
 		-- Track failures
 		local isSuccess = (sendResult == SEND_RESULT.Success or sendResult == true or sendResult == nil)
 		local isThrottled = (sendResult == SEND_RESULT.AddonMessageThrottle or sendResult == SEND_RESULT.ChannelThrottle)
@@ -2378,32 +2372,22 @@ local function CreateOnChunkSentCallback(altName)
 			sendStats.failures = sendStats.failures + 1
 		end
 
-		-- Initialize start time on first chunk
-		if sendStats.startTime == nil then
-			sendStats.startTime = GetTime()
-		end
-
+		-- AceCommQueue only delivers the final callback (sent >= total), so
+		-- chunk count is estimated rather than tracked per-invocation.
 		local totalChunks = math.ceil(totalBytes / 254)
 
 		-- Print error on failed send
 		if not isSuccess then
 			local resultStr = GetSendResultName(sendResult)
-			TOGBankClassic_Output:Error("chunk %d/%d failed: %s", sendStats.chunksSent, totalChunks, resultStr)
-		end
-
-		-- Show progress at start
-		if sendStats.chunksSent == 1 then
-			if not TOGBankClassic_Options:IsSyncProgressMuted() then
-				TOGBankClassic_Output:Info("Sharing guild bank data: %d bytes in ~%d chunks...", totalBytes, totalChunks)
-			end
+			TOGBankClassic_Output:Error("send failed: %s", resultStr)
 		end
 
 		-- Completion summary
 		if bytesSent >= totalBytes then
-			local elapsed = GetTime() - (sendStats.startTime or GetTime())
+			local elapsed = GetTime() - sendStats.startTime
 			local summary = string.format(
-				"Send complete: %d chunks, %d bytes in %.1fs",
-				sendStats.chunksSent, totalBytes, elapsed
+				"Send complete: ~%d chunks, %d bytes in %.1fs",
+				totalChunks, totalBytes, elapsed
 			)
 			if sendStats.failures > 0 or sendStats.throttled > 0 then
 				summary = summary .. string.format(" | failures: %d, throttled: %d", sendStats.failures, sendStats.throttled)
@@ -2588,6 +2572,11 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	local deltaNoLinks = TOGBankClassic_Core:SerializeWithChecksum(strippedDelta)
 	-- Create per-send callback to prevent stats corruption with concurrent sends
 	local onChunkSent = CreateOnChunkSentCallback(norm)
+	-- Show progress before sending (AceCommQueue delivers the callback at completion, not per-chunk)
+	if not TOGBankClassic_Options:IsSyncProgressMuted() then
+		local totalChunks = math.ceil(string.len(deltaNoLinks) / 254)
+		TOGBankClassic_Output:Info("Sharing guild bank data: %d bytes in ~%d chunks...", string.len(deltaNoLinks), totalChunks)
+	end
 	TOGBankClassic_Core:SendCommMessage("togbank-d4", deltaNoLinks, distribution, distTarget, "BULK", onChunkSent)
 	TOGBankClassic_Output:Debug("DELTA", "BUILD", "Sent delta update for %s via togbank-d4 to %s (%d bytes)", norm, distribution, string.len(deltaNoLinks))
 
