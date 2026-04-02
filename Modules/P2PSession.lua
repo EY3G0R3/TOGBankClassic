@@ -33,7 +33,11 @@ local MAX_ACTIVE_SESSIONS = 3  -- max concurrent inbound data streams (requester
 local MAX_ACTIVE_SENDS    = 3  -- max concurrent outbound sends (sender side)
 local COLLECT_WINDOW      = 60 -- seconds to accumulate hash-offer responses (large guild congestion)
 local DISPATCH_TIMEOUT    = 15 -- seconds to wait for sync-accept before next candidate (whisper congestion)
-local SEND_TIMEOUT        = 90 -- seconds before auto-releasing an outbound send slot
+local DELIVERY_TIMEOUT    = 180 -- seconds before declaring a data delivery failed (must
+                               --   exceed worst-case AceCommQueue drain time under load)
+local SEND_TIMEOUT        = 210 -- seconds before auto-releasing an outbound send slot
+                                --   (must be > DELIVERY_TIMEOUT so the safety release
+                                --   never races with the delivery watchdog)
 local MAX_RETRY_CYCLES    = 5  -- how many times to restart the candidate list when all peers are busy
 local RETRY_CYCLE_DELAY   = 20 -- seconds to wait between retry cycles (allows busy peers to free up)
 local CATCH_UP_DELAY      = 45 -- seconds before retrying a full broadcast when all offers are exhausted
@@ -326,7 +330,9 @@ function P2P:OnSyncAccept(sessionId, sender)
 	Dbg("HANDSHAKE", "ACTIVE: %s <- %s (activeSessions=%d)", s.altName, sender, self.activeSessions)
 
 	-- Delivery watchdog in case peer accepts but never delivers.
-	s.timers.delivery = C_Timer.After(60, function()
+	-- 180s budget covers worst-case AceCommQueue drain (observed 68-70s under load
+	-- with 3 concurrent sends; 180s gives comfortable headroom for large payloads).
+	s.timers.delivery = C_Timer.After(DELIVERY_TIMEOUT, function()
 		local live = P2P.sessions[sessionId]
 		if live and live.state == STATE.ACTIVE then
 			Dbg("COMPLETE", "Delivery timeout for %s", live.altName)
