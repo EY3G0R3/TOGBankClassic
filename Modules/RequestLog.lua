@@ -1139,6 +1139,10 @@ end
 
 function Guild:EndRequestsIndexSync()
 	self:EnsureRequestsIndexSyncState()
+	if self.requestsIndexSync.notify and not TOGBankClassic_Options:IsSyncProgressMuted() then
+		TOGBankClassic_Output:Response("Requests synced.")
+		self.requestsIndexSync.notify = false
+	end
 	self.requestsIndexSync.inFlight = nil
 	self.requestsIndexSync.inFlightSince = 0
 	self.requestsIndexSync.awaitingById = false

@@ -161,6 +161,9 @@ function TOGBankClassic_Chat:PerformSync()
 		if not TOGBankClassic_Options:IsSyncProgressMuted() then
 			TOGBankClassic_Output:Response("Syncing requests with guild...")
 		end
+		-- Mark the sync as user-visible so EndRequestsIndexSync prints a completion message.
+		TOGBankClassic_Guild:EnsureRequestsIndexSyncState()
+		TOGBankClassic_Guild.requestsIndexSync.notify = true
 	else
 		TOGBankClassic_Output:Response("Request sync failed to send.")
 	end
