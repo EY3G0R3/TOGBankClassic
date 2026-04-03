@@ -875,7 +875,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 	local activeTabBtn = TOGBankClassic_UI:Create("Button")
 	activeTabBtn:SetText("Requests")
-	activeTabBtn:SetWidth(100)
+	activeTabBtn:SetWidth(120)
 	activeTabBtn:SetHeight(24)
 	activeTabBtn:SetCallback("OnClick", function()
 		self.currentTab = "active"
@@ -887,7 +887,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 	local archiveTabBtn = TOGBankClassic_UI:Create("Button")
 	archiveTabBtn:SetText("Archive")
-	archiveTabBtn:SetWidth(100)
+	archiveTabBtn:SetWidth(120)
 	archiveTabBtn:SetHeight(24)
 	archiveTabBtn:SetCallback("OnClick", function()
 		self.currentTab = "archive"
@@ -904,7 +904,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	if isOfficerOrBanker then
 		local cancelStaleBtn = TOGBankClassic_UI:Create("Button")
 		cancelStaleBtn:SetText("Cancel Stale")
-		cancelStaleBtn:SetWidth(110)
+		cancelStaleBtn:SetWidth(130)
 		cancelStaleBtn:SetHeight(24)
 		cancelStaleBtn:SetCallback("OnClick", function()
 			if not StaticPopup_Show then return end
@@ -940,7 +940,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	-- Pagination buttons
 	local prevButton = TOGBankClassic_UI:Create("Button")
 	prevButton:SetText("< Prev")
-	prevButton:SetWidth(70)
+	prevButton:SetWidth(90)
 	prevButton:SetHeight(24)
 	prevButton:SetCallback("OnClick", function()
 		if self.currentPage > 1 then
@@ -954,7 +954,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 
 	local nextButton = TOGBankClassic_UI:Create("Button")
 	nextButton:SetText("Next >")
-	nextButton:SetWidth(70)
+	nextButton:SetWidth(90)
 	nextButton:SetHeight(24)
 	nextButton:SetCallback("OnClick", function()
 		local info = TOGBankClassic_Guild.Info
