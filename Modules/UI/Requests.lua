@@ -1361,6 +1361,7 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 		else
 			local label = TOGBankClassic_UI:Create("Label")
 			label.label:SetHeight(18)
+			label.label:SetWordWrap(false)
 			label.label:SetJustifyH(justifyForAlign(col.align))
 			tagColumnWidget(label, i, false)
 			self.Content:AddChild(label)
