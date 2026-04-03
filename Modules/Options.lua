@@ -206,7 +206,7 @@ function TOGBankClassic_Options:Init()
 			statusBarNetworkInfo = false,  -- Show sync activity in inventory status bar
 		},
 		global = {
-			bank = { report = true, logLevel = LOG_LEVEL.INFO, protocolMode = "AUTO", commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true },
+				bank = { report = true, logLevel = LOG_LEVEL.INFO, commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true },
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
@@ -223,9 +223,6 @@ function TOGBankClassic_Options:Init()
 	end
 	if self.db.global.bank["logLevel"] == nil then
 		self.db.global.bank["logLevel"] = LOG_LEVEL.INFO
-	end
-	if self.db.global.bank["protocolMode"] == nil then
-		self.db.global.bank["protocolMode"] = "AUTO"
 	end
 	if self.db.global.bank["commDebug"] == nil then
 		self.db.global.bank["commDebug"] = false
@@ -255,8 +252,6 @@ function TOGBankClassic_Options:Init()
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
 	-- Initialize comm debug with saved setting
 	TOGBankClassic_Output:SetCommDebug(self.db.global.bank["commDebug"])
-	-- Initialize protocol mode with saved setting
-	FEATURES.PROTOCOL_MODE = self.db.global.bank["protocolMode"]
 
 	-- Main options container
 	local options = {
@@ -358,6 +353,20 @@ function TOGBankClassic_Options:Init()
 							return self.db.global.bank["muteWarnings"]
 						end,
 					},
+					["orderFulfillmentSound"] = {
+						order = 2.8,
+						type = "toggle",
+						width = "full",
+						name = "Play Sound on Order Fulfilled",
+						desc = "Plays a sound when mail arrives that fulfills one of your requests",
+						set = function(_, v)
+							self.db.global.bank["orderFulfillmentSound"] = v
+						end,
+						get = function()
+							local v = self.db.global.bank["orderFulfillmentSound"]
+							return v == nil and true or v
+						end,
+					},
 					["registerBankCommand"] = {
 						order = 2.92,
 						type  = "toggle",
@@ -386,40 +395,10 @@ function TOGBankClassic_Options:Init()
 							return self.db.global.bank["registerGbankCommand"]
 						end,
 					},
-					["protocolMode"] = {
-						order = 3,
-						type = "select",
-						style = "dropdown",
-						width = "full",
-						name = "Communication Protocol",
-						desc = "Choose which message format to use for syncing bank data",
-						values = {
-							AUTO = PROTOCOL_MODES.AUTO.name,
-							LEGACY_ONLY = PROTOCOL_MODES.LEGACY_ONLY.name,
-							NEW_ONLY = PROTOCOL_MODES.NEW_ONLY.name,
-						},
-						sorting = { "AUTO", "LEGACY_ONLY", "NEW_ONLY" },
-						set = function(_, v)
-							self.db.global.bank["protocolMode"] = v
-							FEATURES.PROTOCOL_MODE = v
-							TOGBankClassic_Output:Info("Protocol mode changed to: %s", PROTOCOL_MODES[v].name)
-						end,
-						get = function()
-							return self.db.global.bank["protocolMode"]
-						end,
-					},
-					["protocolModeDesc"] = {
-						order = 4,
-						type = "description",
-						width = "full",
-						name = function()
-							local mode = PROTOCOL_MODES[FEATURES.PROTOCOL_MODE] or PROTOCOL_MODES.AUTO
-							return "|cffFFFFFF" .. mode.desc .. "|r"
-						end,
-					},
 					["reset"] = {
 						order = -1,
 						name = "Reset Database",
+						desc = "Wipes all saved guild bank data for this guild, including inventory, requests, and sync state. Equivalent to /togbank wipe. Cannot be undone — all bankers will need to re-sync after.",
 						type = "execute",
 						func = function()
 							local guild = TOGBankClassic_Guild:GetGuild()
@@ -680,6 +659,12 @@ end
 
 function TOGBankClassic_Options:IsWarningsMuted()
 	return self.db.global.bank["muteWarnings"] or false
+end
+
+function TOGBankClassic_Options:IsOrderFulfillmentSoundEnabled()
+	if not self.db or not self.db.global or not self.db.global.bank then return true end
+	local v = self.db.global.bank["orderFulfillmentSound"]
+	return v == nil and true or v
 end
 
 function TOGBankClassic_Options:IsIntegrityCheckDiagnosticsEnabled()

@@ -6,6 +6,15 @@
 
 <h2>What's New</h2>
 
+<h3>v0.10.9 (2026-04-03) - Cancel Reason Overhaul, Fulfillment Sound Fix &amp; Options Cleanup</h3>
+<ul>
+<li><strong>Role-aware cancel reasons:</strong> Bankers see 6 flavour-text reasons when cancelling a member's request; members cancelling their own orders see 5 separate reasons — role detected automatically via IsBank()</li>
+<li><strong>MAIL-014:</strong> Order fulfillment sound now actually plays — the original PlaySound() call used a string name removed in Patch 7.3.0; fixed to use the correct numeric SoundKitID</li>
+<li><strong>Fulfillment sound toggle:</strong> New Options toggle "Play Sound on Order Fulfilled" (defaults on) for players who find the sound disruptive</li>
+<li><strong>Reset Database tooltip:</strong> The Reset Database button in Options now has a clear tooltip explaining what it does and that it cannot be undone</li>
+<li><strong>Removed dead Communication Protocol dropdown</strong> from Options — the setting was never read by any actual send/receive code</li>
+</ul>
+
 <h3>v0.10.8 (2026-04-02) - Requests UI Pagination &amp; Copyable Item Text</h3>
 <ul>
 <li><strong>Pagination:</strong> Requests window now shows 50 rows per page — no more game freezes when switching to "Any Banker" with 100+ requests</li>

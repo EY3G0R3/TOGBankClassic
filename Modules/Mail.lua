@@ -456,8 +456,10 @@ function TOGBankClassic_Mail:Open(mailId)
 					local isFulfillment, request = self:CheckForFulfilledRequest(name, quantity, sender)
 					if isFulfillment and request then
 						-- Play completion sound and show notification
-						---@diagnostic disable-next-line: undefined-global
-						PlaySound("AuctionWindowClose") -- Pleasant "ding" sound (Classic Era compatible)
+						if TOGBankClassic_Options:IsOrderFulfillmentSoundEnabled() then
+							---@diagnostic disable-next-line: undefined-global
+							PlaySound(SOUNDKIT and SOUNDKIT.AUCTION_WINDOW_CLOSE or 11561) -- Classic Era compatible numeric SoundKitID
+						end
 						local fulfilled = tonumber(request.fulfilled or 0) + quantity
 						local requested = tonumber(request.quantity or 0)
 						if fulfilled >= requested then

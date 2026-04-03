@@ -277,14 +277,30 @@ local function showCancelReasonDialog(req, actor, ui)
 	pendingCancelReq   = req
 	pendingCancelActor = actor
 	pendingCancelUI    = ui
-	cancelSelectedKey  = "unavailable"
-
-	local pct = (TOGBankClassic_Options and TOGBankClassic_Options:GetMaxRequestPercent()) or 100
-	local reasons = {
-		{ key = "unavailable", label = "Item no longer available on this banker" },
-		{ key = "policy",      label = string.format("Too many requested — guild policy allows %d%% of stock", pct) },
-		{ key = "wrong_bank",  label = "Item is stocked on a different banker" },
-	}
+	local isBanker = TOGBankClassic_Guild:IsBank(actor)
+	local defaultKey, reasons
+	if isBanker then
+		local pct = (TOGBankClassic_Options and TOGBankClassic_Options:GetMaxRequestPercent()) or 100
+		defaultKey = "unavailable"
+		reasons = {
+			{ key = "unavailable",  label = "Checked the vault, checked twice, even asked a goblin — it's gone. You no take candle." },
+			{ key = "policy",       label = string.format("Easy there, Hogger. Guild law says you can't hoard more than %d%% of the stock.", pct) },
+			{ key = "wrong_bank",   label = "That item lives in another banker's keep. Safe travels — it's a big Azeroth." },
+			{ key = "first_come",   label = "A faster adventurer already claimed it. The early bird gets the [item], as they say." },
+			{ key = "duplicate",    label = "You've already got this in the queue — one at a time, this isn't the Stormwind Auction House." },
+			{ key = "not_in_guild", label = "Checked the guild roster... we can't find you. Did you /gquit, or did Sylvanas raise you?" },
+		}
+	else
+		defaultKey = "changed_mind"
+		reasons = {
+			{ key = "changed_mind",   label = "Changed your mind? Understandable — even Arthas had second thoughts. Eventually." },
+			{ key = "found_ah",       label = "Found it on the AH? Bold move. We respect the hustle." },
+			{ key = "already_got",   label = "Already looted it elsewhere? Look at you, being all self-sufficient. We're proud." },
+			{ key = "mistake",        label = "Wrong item? Happens to the best of us. Even Khadgar misread a scroll once." },
+			{ key = "plans_changed", label = "Plans changed? Tell that to the Lich King... wait, he's dead. Never mind." },
+		}
+	end
+	cancelSelectedKey = defaultKey
 	wipe(cancelReasonMap)
 	local reasonOrder = {}
 	for _, r in ipairs(reasons) do
@@ -360,9 +376,12 @@ local function showCancelReasonDialog(req, actor, ui)
 	---@diagnostic disable-next-line: undefined-field
 	cancelReasonDropdown:SetList(cancelReasonMap, reasonOrder)
 	---@diagnostic disable-next-line: undefined-field
-	cancelReasonDropdown:SetValue("unavailable")
+	cancelReasonDropdown:SetValue(defaultKey)
+	---@diagnostic disable-next-line: undefined-field
 	cancelReasonFrame.frame:ClearAllPoints()
+	---@diagnostic disable-next-line: undefined-field
 	cancelReasonFrame.frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+	---@diagnostic disable-next-line: undefined-field
 	cancelReasonFrame.frame:Show()
 end
 
@@ -498,9 +517,11 @@ end
 local function RegisterBagEvents()
 	if not bagUpdateFrame then
 		bagUpdateFrame = CreateFrame("Frame")
+		---@diagnostic disable-next-line: undefined-field
 		bagUpdateFrame:SetScript("OnEvent", OnBagUpdate)
 	end
 	-- BAG_UPDATE_DELAYED fires once after all bag changes from a single action
+	---@diagnostic disable-next-line: undefined-field
 	bagUpdateFrame:RegisterEvent("BAG_UPDATE_DELAYED")
 end
 
@@ -738,9 +759,13 @@ local function SetupClickOutsideHandler(dropdown)
 		if not clickCatcher then
 			---@diagnostic disable-next-line: undefined-global
 			clickCatcher = CreateFrame("Frame", nil, UIParent)
+			---@diagnostic disable-next-line: undefined-field
 			clickCatcher:SetFrameStrata("FULLSCREEN_DIALOG")
+			---@diagnostic disable-next-line: undefined-field
 			clickCatcher:SetFrameLevel(self.frame:GetFrameLevel() - 1)
+			---@diagnostic disable-next-line: undefined-field
 			clickCatcher:EnableMouse(true)
+			---@diagnostic disable-next-line: undefined-field
 			clickCatcher:SetScript("OnMouseDown", function()
 				if self.frame:IsShown() then
 					self:Close()
@@ -748,7 +773,9 @@ local function SetupClickOutsideHandler(dropdown)
 			end)
 		end
 
+		---@diagnostic disable-next-line: undefined-field
 		clickCatcher:SetAllPoints()
+		---@diagnostic disable-next-line: undefined-field
 		clickCatcher:Show()
 	end
 

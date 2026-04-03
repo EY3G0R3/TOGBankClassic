@@ -212,23 +212,4 @@ FEATURES = {
 	DELTA_ENABLED = true,           -- Enable delta sync protocol
 	FORCE_DELTA_SYNC = false,       -- Force delta sync (bypass thresholds) for testing
 	FORCE_FULL_SYNC = false,        -- Force full sync (disable delta) for testing
-
-	-- Protocol selection for v0.8.0+ (user-configurable)
-	PROTOCOL_MODE = "AUTO",         -- "AUTO", "LEGACY_ONLY", "NEW_ONLY"
-}
-
--- Protocol mode descriptions
-PROTOCOL_MODES = {
-	AUTO = {
-		name = "Auto (Recommended)",
-		desc = "Sends both legacy (with Links) and new (without Links) formats. Compatible with all versions. Temporary bandwidth cost during migration.",
-	},
-	LEGACY_ONLY = {
-		name = "Legacy Only",
-		desc = "Only sends legacy format with Links. Maximum compatibility with v0.6.x/v0.7.0. Higher bandwidth always.",
-	},
-	NEW_ONLY = {
-		name = "New Protocol Only",
-		desc = "Only sends new format without Links. Requires all guild members on v0.8.0+. Maximum bandwidth savings (5-7KB per sync).",
-	},
 }
