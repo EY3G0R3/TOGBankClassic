@@ -53,9 +53,10 @@ local RI_VERSION  = 1
 local RD2_VERSION = 1
 
 -- togbank-rd2: positional single-record wire format (version 1)
--- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes}
+-- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID]}
 -- Tombstone:    {RD2_VERSION, id, false, tombstoneTs}
 -- Receiver distinguishes by type(arr[3]): number = record, false = tombstone.
+-- arr[12] (itemID) is optional; absent or false in messages from older clients.
 
 local function serializeRequestV1(req)
 	return {
@@ -70,6 +71,7 @@ local function serializeRequestV1(req)
 		req.fulfilled,
 		req.status,
 		req.notes or "",
+		req.itemID or false,  -- arr[12]: optional numeric item ID for same-name variant disambiguation
 	}
 end
 
@@ -272,6 +274,7 @@ local VALID_REQUEST_STATUS = {
 
 local function deserializeRequestV1(arr)
 	-- arr[3] is date (number) — caller must verify before calling this
+	-- arr[12] is optional itemID (absent in old messages → nil; false when no ID → nil)
 	return {
 		id        = arr[2],
 		date      = tonumber(arr[3]),
@@ -283,6 +286,7 @@ local function deserializeRequestV1(arr)
 		fulfilled = tonumber(arr[9]),
 		status    = arr[10],
 		notes     = tostring(arr[11] or ""),
+		itemID    = tonumber(arr[12]) or nil,
 	}
 end
 
@@ -411,6 +415,7 @@ local function sanitizeRequest(req)
 		requester = requester,
 		bank = bank,
 		item = item,
+		itemID = tonumber(req.itemID) or nil,  -- optional; nil for legacy requests
 		quantity = quantity,
 		fulfilled = fulfilled,
 		status = status,
@@ -1481,7 +1486,7 @@ function Guild:ReceiveRequestsByIdV1(arr)
 			self:ApplyRequestSnapshot({ requests = {}, tombstones = { [id] = ts } })
 		end
 	else
-		-- Full record: {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes}
+		-- Full record: {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID]}
 		local req = deserializeRequestV1(arr)
 		if req then
 			self:ApplyRequestSnapshot({ requests = { req }, tombstones = {} })
@@ -2150,25 +2155,28 @@ function Guild:CheckMailFulfillment(request)
 		return { inMail = 0, canFulfillFromMail = false, alts = {} }
 	end
 
-	-- Get item ID from item name
-	local itemID = nil
 	if not self.Info or not self.Info.alts then
 		return { inMail = 0, canFulfillFromMail = false, alts = {} }
 	end
 
-	-- Find item ID by searching through all alts (mail.items is an array)
-	for _, alt in pairs(self.Info.alts) do
-		if alt.mail and alt.mail.items then
-			for _, item in ipairs(alt.mail.items) do
-				-- Use item name from item Link if available, otherwise can't match by name
-				local itemName = item.Link and (GetItemInfo(item.Link))
-				if itemName == request.item or item.ID == tonumber(request.item) then
-					itemID = item.ID
-					break
+	-- Resolve the item ID to use for mail matching.
+	-- New requests carry itemID directly; legacy requests fall back to name lookup.
+	local itemID = tonumber(request.itemID) or nil
+
+	if not itemID then
+		-- Legacy: find item ID by name-matching across all alts' mail
+		for _, alt in pairs(self.Info.alts) do
+			if alt.mail and alt.mail.items then
+				for _, item in ipairs(alt.mail.items) do
+					local itemName = item.Link and (GetItemInfo(item.Link))
+					if itemName == request.item or item.ID == tonumber(request.item) then
+						itemID = item.ID
+						break
+					end
 				end
 			end
+			if itemID then break end
 		end
-		if itemID then break end
 	end
 
 	if not itemID then

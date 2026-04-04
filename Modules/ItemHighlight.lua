@@ -6,7 +6,8 @@ local ItemHighlight = TOGBankClassic_ItemHighlight
 
 -- State
 ItemHighlight.enabled = false
-ItemHighlight.neededItems = {} -- {itemName: quantityNeeded}
+ItemHighlight.neededItems = {}   -- {itemName: quantityNeeded} — legacy requests (no itemID) and Bagnon search
+ItemHighlight.neededItemIDs = {} -- {itemID: quantityNeeded} — new requests with explicit itemID
 ItemHighlight.overlays = {} -- Texture overlays for dimming items
 ItemHighlight.lastBagnonSearch = nil -- Cache last Bagnon search string to avoid redundant signals
 
@@ -25,10 +26,15 @@ local function registerBagEvents()
 	end
 
 	eventFrame = CreateFrame("Frame")
+	---@diagnostic disable-next-line: undefined-field
 	eventFrame:RegisterEvent("BAG_UPDATE")
+	---@diagnostic disable-next-line: undefined-field
 	eventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+	---@diagnostic disable-next-line: undefined-field
 	eventFrame:RegisterEvent("BANKFRAME_OPENED")
+	---@diagnostic disable-next-line: undefined-field
 	eventFrame:RegisterEvent("BANKFRAME_CLOSED")
+	---@diagnostic disable-next-line: undefined-field
 	eventFrame:SetScript("OnEvent", function(_, event, ...)
 		-- Only process if highlighting is enabled
 		if ItemHighlight.enabled then
@@ -140,6 +146,7 @@ function ItemHighlight:BuildNeededItemsList()
 
 	-- Clear and rebuild
 	self.neededItems = {}
+	self.neededItemIDs = {}
 
 	-- Get current banker from Requests UI filter
 	local currentBanker = TOGBankClassic_UI_Requests.bankFilter
@@ -163,10 +170,16 @@ function ItemHighlight:BuildNeededItemsList()
 			and request.status ~= "cancelled" then
 
 			local itemName = request.item
-			local qtyNeeded = (request.quantity or 0) - (request.quantityFulfilled or 0)
+			local qtyNeeded = (request.quantity or 0) - (request.fulfilled or 0)
 
 			if qtyNeeded > 0 then
-				self.neededItems[itemName] = (self.neededItems[itemName] or 0) + qtyNeeded
+				if request.itemID then
+					-- New request: key by numeric ID for precise variant matching
+					self.neededItemIDs[request.itemID] = (self.neededItemIDs[request.itemID] or 0) + qtyNeeded
+				else
+					-- Legacy request: key by name (existing behaviour)
+					self.neededItems[itemName] = (self.neededItems[itemName] or 0) + qtyNeeded
+				end
 			end
 		end
 	end
@@ -178,8 +191,16 @@ function ItemHighlight:BuildNeededItemsList()
 	return true
 end
 
--- Check if an item is needed
-function ItemHighlight:IsItemNeeded(itemName)
+-- Check if an item is needed.
+-- When itemID is provided, ID-based matching is used (precise; handles same-name variants).
+-- Falls back to name-based matching for legacy requests that lack an itemID.
+function ItemHighlight:IsItemNeeded(itemName, itemID)
+	if itemID then
+		if self.neededItemIDs[itemID] then return true end
+		-- ID not in the ID table; still check legacy name table in case an old
+		-- request for the same item exists without an ID.
+		return itemName and self.neededItems[itemName] ~= nil
+	end
 	if not itemName then return false end
 	return self.neededItems[itemName] ~= nil
 end
@@ -249,10 +270,9 @@ function ItemHighlight:UpdateBagnonHighlighting()
 	-- Bagnon search is case-insensitive and matches partial names
 	-- Use | as OR operator to match any of the item names
 	local searchTerms = {}
+	local seenNames = {}
 	for itemName, _ in pairs(self.neededItems) do
-		-- Strip common prefixes that don't match the actual item name
-		-- Formula: Enchant Bracer -> Enchant Bracer
-		-- Pattern: Robe of Power -> Robe of Power
+		seenNames[itemName] = true
 		local cleanName = itemName:gsub("^Formula: ", "")
 		cleanName = cleanName:gsub("^Pattern: ", "")
 		cleanName = cleanName:gsub("^Recipe: ", "")
@@ -261,6 +281,14 @@ function ItemHighlight:UpdateBagnonHighlighting()
 		cleanName = cleanName:gsub("^Design: ", "")
 		cleanName = cleanName:gsub("^Manual: ", "")
 		table.insert(searchTerms, cleanName)
+	end
+	-- Include names for ID-keyed entries (from new requests with itemID)
+	for itemID, _ in pairs(self.neededItemIDs) do
+		local name = C_Item.GetItemNameByID(itemID)
+		if name and not seenNames[name] then
+			seenNames[name] = true
+			table.insert(searchTerms, name)
+		end
 	end
 
 	if #searchTerms == 0 then
@@ -325,7 +353,7 @@ function ItemHighlight:UpdateDefaultBagHighlighting()
 				local itemInfo = C_Container.GetContainerItemInfo(bag, apiSlot)
 				if itemInfo then
 					local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
-					if not self:IsItemNeeded(itemName) then
+					if not self:IsItemNeeded(itemName, itemInfo.itemID) then
 						-- Item not needed - grey it out
 						self:ApplyOverlay(button)
 					end
@@ -346,7 +374,7 @@ function ItemHighlight:UpdateBankHighlighting()
 			local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
 			local button = self:GetBankSlotButton(slot)
 			if button then
-				if self:IsItemNeeded(itemName) then
+				if self:IsItemNeeded(itemName, itemInfo.itemID) then
 					self:RemoveOverlay(button)
 				else
 					self:ApplyOverlay(button)
@@ -363,7 +391,7 @@ function ItemHighlight:UpdateBankHighlighting()
 				local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
 				local button = self:GetBagSlotButton(bag, slot)
 				if button then
-					if self:IsItemNeeded(itemName) then
+					if self:IsItemNeeded(itemName, itemInfo.itemID) then
 						self:RemoveOverlay(button)
 					else
 						self:ApplyOverlay(button)

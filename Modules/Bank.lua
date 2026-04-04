@@ -366,23 +366,34 @@ function TOGBankClassic_Bank:HasInventorySpace()
 	return total > 0
 end
 
--- Find all slots containing an item by name (case-insensitive)
+-- Find all slots containing an item by name (case-insensitive), optionally filtered by item ID.
+-- When itemID is provided it takes precedence and the name is only used as a display fallback;
+-- this correctly distinguishes same-named variants (e.g. Punctured Voodoo Doll by class).
 -- Returns: table of {bag, slot, count, link}
-function TOGBankClassic_Bank:FindItemsByName(itemName)
+function TOGBankClassic_Bank:FindItemsByName(itemName, itemID)
 	local results = {}
 	if not itemName or itemName == "" then
 		return results
 	end
 
 	local targetName = string.lower(itemName)
+	local targetID = tonumber(itemID) or nil
 
 	for bag = 0, 4 do
 		local slots = C_Container.GetContainerNumSlots(bag)
 		for slot = 1, slots do
 			local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
 			if itemInfo and itemInfo.hyperlink then
-				local name = GetItemInfo(itemInfo.hyperlink)
-				if name and string.lower(name) == targetName then
+				local matched = false
+				if targetID then
+					-- ID-based match: precise, handles same-name variants
+					matched = (itemInfo.itemID == targetID)
+				else
+					-- Legacy name-based match
+					local name = GetItemInfo(itemInfo.hyperlink)
+					matched = name and string.lower(name) == targetName
+				end
+				if matched then
 					table.insert(results, {
 						bag = bag,
 						slot = slot,
@@ -397,10 +408,10 @@ function TOGBankClassic_Bank:FindItemsByName(itemName)
 	return results
 end
 
--- Count total of named item in bags (0-4)
+-- Count total of named item in bags (0-4), optionally filtered by item ID.
 -- Returns: totalCount, itemsTable
-function TOGBankClassic_Bank:CountItemInBags(itemName)
-	local items = self:FindItemsByName(itemName)
+function TOGBankClassic_Bank:CountItemInBags(itemName, itemID)
+	local items = self:FindItemsByName(itemName, itemID)
 	local total = 0
 	for _, item in ipairs(items) do
 		total = total + item.count

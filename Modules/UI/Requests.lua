@@ -1436,23 +1436,49 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 					local itemName = self._itemName
 					if not itemName or itemName == "" then return end
 					
-					-- Search guild inventory for a matching item link or ID
+					-- If the request carries an explicit itemID, use it directly so we
+					-- show the correct same-name variant (e.g. Druid vs Warrior Voodoo Doll).
+					local requestItemID = self._itemID
 					local itemLink, itemID
-					local info = TOGBankClassic_Guild.Info
-					if info and info.alts then
-						for _, alt in pairs(info.alts) do
-							if alt.items then
-								for _, item in ipairs(alt.items) do
-									local name = item.Info and item.Info.name
-									      or (item.Link and item.Link:match("%[(.-)%]"))
-									if name == itemName then
-										itemLink = item.Link
-										itemID   = item.ID
-										break
+					if requestItemID then
+						-- Search inventory for an entry with this exact ID to get its full link
+						local info = TOGBankClassic_Guild.Info
+						if info and info.alts then
+							for _, alt in pairs(info.alts) do
+								if alt.items then
+									for _, item in ipairs(alt.items) do
+										if item.ID == requestItemID then
+											itemLink = item.Link
+											itemID   = item.ID
+											break
+										end
 									end
 								end
+								if itemLink or itemID then break end
 							end
-							if itemLink or itemID then break end
+						end
+						-- Fall back to bare item:ID if no inventory entry found
+						if not itemLink and not itemID then
+							itemID = requestItemID
+						end
+					else
+						-- Legacy request (no itemID): search by name, take first match
+						local info = TOGBankClassic_Guild.Info
+						if info and info.alts then
+							for _, alt in pairs(info.alts) do
+								if alt.items then
+									for _, item in ipairs(alt.items) do
+										local name = item.Info and item.Info.name
+										      or (item.Link and item.Link:match("%[(.-)%]"))
+										if name == itemName then
+											itemLink = item.Link
+											itemID   = item.ID
+											break
+										end
+									end
+								end
+								if itemLink or itemID then break end
+							end
 						end
 					end
 					
@@ -1966,8 +1992,9 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 				if col.key == "item" and label.editbox then
 					-- Label renders the visible (colorized) text
 					label:SetText(colorize(cellVal, reqStatus))
-					-- Store item name on EditBox for use when clicked
+					-- Store item name and itemID on EditBox for tooltip lookup
 					label.editbox._itemName = cellVal
+					label.editbox._itemID   = req.itemID or nil  -- nil for legacy requests
 				else
 					label:SetText(colorize(cellVal, reqStatus))
 				end

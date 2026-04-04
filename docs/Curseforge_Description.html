@@ -6,6 +6,13 @@
 
 <h2>What's New</h2>
 
+<h3>v0.10.10 (2026-04-04) - Same-Name Item Variant Disambiguation</h3>
+<ul>
+<li><strong>REQ-001:</strong> Same-name item variants (e.g. Punctured Voodoo Doll Priest/Warrior/Druid) are now correctly distinguished — requests store the numeric item ID and all fulfillment, highlighting, and mail detection use it for exact matching; old clients fall back to name-matching automatically</li>
+<li><strong>REQ-002:</strong> Hovering a request's item name now shows the tooltip for the correct class variant, not whichever one happened to appear first in guild inventory</li>
+<li><strong>ItemHighlight fix:</strong> Needed-quantity calculation now correctly subtracts already-fulfilled amounts (was always showing full quantity due to wrong field name)</li>
+</ul>
+
 <h3>v0.10.9 (2026-04-03) - Cancel Reason Overhaul, Fulfillment Sound Fix &amp; Options Cleanup</h3>
 <ul>
 <li><strong>Role-aware cancel reasons:</strong> Bankers see 6 flavour-text reasons when cancelling a member's request; members cancelling their own orders see 5 separate reasons — role detected automatically via IsBank()</li>
@@ -33,18 +40,6 @@
 <li><strong>P2P-031:</strong> Legacy pull-based responder and P2P responder now share a single 3-slot send cap — fixes 20–30 simultaneous "Sharing guild bank data…" messages</li>
 <li><strong>ROSTER-004:</strong> Cross-guild alts and ex-bankers no longer pollute the banker hash list; all write paths now validate IsBank() before acting</li>
 <li><strong>SEND-001:</strong> Send progress display now shows accurate elapsed time and chunk count instead of always "1 chunks, 0.0s"</li>
-</ul>
-
-<h3>v0.10.5 (2026-04-01) - Slash Command Aliases, CRC Recovery &amp; Dead Code Removal</h3>
-<ul>
-<li><strong>/bank and /gbank aliases:</strong> New configurable slash command aliases to toggle the inventory window — enable/disable individually in Options</li>
-<li><strong>REQSYNC-009:</strong> CRC mismatch on request index now triggers automatic re-query instead of silently dropping affected request IDs</li>
-<li><strong>MAINT-001:</strong> ~350 lines of dead code removed across 9 files for cleaner, faster code</li>
-</ul>
-
-<h3>v0.10.4 (2026-03-31) - AceCommQueue-1.0 Send Queue Library</h3>
-<ul>
-<li><strong>AceCommQueue-1.0:</strong> New embedded send-queue library prevents multipart message chunk interleaving — eliminates a class of CRC failures on busy guild channels</li>
 </ul>
 
 

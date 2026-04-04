@@ -233,6 +233,7 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 		item = itemEntry,
 		bank = bankAlt,
 		itemName = itemName,
+		itemID = itemEntry.ID,  -- numeric ID; enables same-name variant disambiguation on fulfillment
 		available = tonumber(itemEntry.Count) or 0,
 	}
 
@@ -365,6 +366,7 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 		requester = requester or "Unknown",
 		bank = bank or self.requestContext.bank,
 		item = self.requestContext.itemName,
+		itemID = self.requestContext.itemID,  -- nil for legacy; set for same-name variant disambiguation
 		quantity = quantity,
 		fulfilled = 0,
 		notes = "",

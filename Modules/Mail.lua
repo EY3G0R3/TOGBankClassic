@@ -728,7 +728,7 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 	end
 
 	-- Check if items are in bags and find usable stacks
-	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(request.item)
+	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(request.item, request.itemID)
 
 	if totalInBags == 0 then
 		return false, "Items not in bags. Pick up from bank first.", 0, 0
@@ -775,7 +775,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	end
 
 	-- Find items in inventory
-	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(itemName)
+	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(itemName, request.itemID)
 
 	if totalInBags == 0 then
 		return false, "No " .. itemName .. " found in bags.", 0

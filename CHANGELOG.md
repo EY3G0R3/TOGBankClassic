@@ -1,5 +1,21 @@
 # TOGBankClassic Changelog
 
+## [v0.10.10] (2026-04-04) - Same-Name Item Variant Disambiguation
+
+### Bug Fixes
+
+- **REQ-001: Same-name item variants were indistinguishable in the request system** — All class-specific Punctured Voodoo Doll variants (Priest, Warrior, Druid, etc.) share an identical display name from `GetItemInfo`, but each has a unique numeric item ID. The request system stored only `request.item` (the name string), so every subsystem — bag scanning, mail fulfillment detection, item highlighting, and `CheckMailFulfillment` — matched solely by name and treated all class variants as identical. A banker holding only a Warrior doll would appear able to fulfill a Priest request, wrong bag slots were highlighted, and mail detection credited the wrong variant. Fixed by threading `request.itemID` (numeric Blizzard item ID) through the entire request lifecycle with full backward compatibility: old clients that never set `itemID` automatically fall back to name-based matching everywhere. Location: `Modules/RequestLog.lua`, `Modules/UI/Search.lua`, `Modules/Bank.lua`, `Modules/Mail.lua`, `Modules/ItemHighlight.lua`.
+
+- **REQ-002: Requests UI item tooltip showed wrong same-name variant** — The `OnEnter` handler on each item row searched guild inventory by display name and took the first match, so hovering a Druid doll request always showed whichever class variant `pairs()` iterated first (typically Warrior). Fixed by storing `request.itemID` on the EditBox frame and using it for exact ID matching in the tooltip lookup; falls back to name search for legacy requests. Location: `Modules/UI/Requests.lua`.
+
+- **ItemHighlight lint errors** — Five `undefined-field` warnings on `RegisterEvent` and `SetScript` calls after `CreateFrame` were suppressed with `---@diagnostic disable-next-line` comments, matching the established pattern in `Modules/UI/Requests.lua`. Location: `Modules/ItemHighlight.lua`.
+
+### Internal
+
+- **Pre-existing bug fixed (ItemHighlight)** — `BuildNeededItemsList` computed needed quantity as `request.quantity - request.quantityFulfilled`, but the schema field is `request.fulfilled` (`quantityFulfilled` never existed). The needed-quantity calculation therefore never subtracted already-fulfilled amounts. Fixed to use `request.fulfilled`. Location: `Modules/ItemHighlight.lua`.
+
+---
+
 ## [v0.10.9] (2026-04-03) - Cancel Reason Overhaul, Fulfillment Sound Fix & Options Cleanup
 
 ### New Features
