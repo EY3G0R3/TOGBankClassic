@@ -1,5 +1,26 @@
 # TOGBankClassic Changelog
 
+## [v1.0.0] (2026-04-11) - First Stable Release: Fulfill Location Awareness & Polish
+
+### New Features
+
+- **Fulfill button location awareness** — The fulfill button now shows distinct icons and contextual tooltips for three new states, making it clear why an item cannot be mailed immediately and where to find it:
+  - *Item in mail inbox* — wax letter icon (`INV_Letter_06`); tooltip: "Item is in your mail inbox. Retrieve it first, then fulfill the order."
+  - *Item split across bank and mail* — paired bag + letter icons; tooltip: "Item is split between your mail inbox and bank. Retrieve mail items first, then pick up the rest from the bank."
+  - *Shortage — more available in bank/mail* — contextual icon matching the location; tooltip shows exact current bag count and target quantity (e.g. "Have 125 in bags. More available in your bank and mail inbox — pick up or retrieve the rest to reach 150."). Three sub-states: bank only, mail only, or both.
+
+### Bug Fixes
+
+- **TOOLTIP-001: Item link tooltips showed banker data for ex-guild members** — The `OnTooltipSetItem` hook in `TooltipBankerInfo.lua` iterated all database entries with no guild membership check, surfacing data from characters who had left the guild. Fixed by adding an `IsInCurrentGuildRoster()` check as a combined guard — only alts currently in `memberRoster` (O(1) lookup) are shown. Location: `Modules/TooltipBankerInfo.lua`.
+
+- **FULFILL-001: Fulfill button icon stuck on shovel after a bag split** — After splitting a stack to fulfill an order, the bag-update event called `DrawRows()`, which skips non-dirty rows. The row was already drawn so `DrawRows()` was a no-op and the split icon never transitioned. Fixed by replacing the `DrawRows()` call in `OnBagUpdate` with `_RefreshFulfillButtons()`, which re-evaluates all visible rows regardless of dirty state. Location: `Modules/UI/Requests.lua`.
+
+- **FULFILL-003: "Item in bank and mail" showed a blank red button** — The combined icon used `INV_Misc_Chest_01`, which does not exist in Classic Era; the engine renders a blank red placeholder for any missing texture. Fixed by replacing it with two confirmed-working icons rendered side-by-side at 14px: `INV_Misc_Bag_07` (bag) and `INV_Letter_06` (wax letter). Location: `Modules/UI/Requests.lua`.
+
+- **HIGHLIGHT-001: Bagnon bag highlighting broken for recipe and pattern items** — `UpdateBagnonHighlighting` inserted raw item names into the Bagnon search string. Tradeskill items whose names include a colon prefix (`Pattern: Ironfeather Breastplate`, `Formula: Enchant Weapon`, etc.) caused Bagnon's search parser to silently discard the entire term. Fixed with a shared `stripRecipePrefix` helper that strips all known Blizzard craft prefixes before appending to the search string. Location: `Modules/ItemHighlight.lua`.
+
+---
+
 ## [v0.10.10] (2026-04-04) - Same-Name Item Variant Disambiguation
 
 ### Bug Fixes

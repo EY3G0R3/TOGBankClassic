@@ -730,7 +730,38 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 	-- Check if items are in bags and find usable stacks
 	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(request.item, request.itemID)
 
+	-- Helper: check synced alt inventory tables for a matching item
+	local altData = (function()
+		local info = TOGBankClassic_Guild.Info
+		return info and info.alts and info.alts[normActor]
+	end)()
+	local targetID   = tonumber(request.itemID) or nil
+	local targetName = request.item and string.lower(request.item) or nil
+	local function itemMatchesRequest(item)
+		if targetID then
+			return item.ID == targetID and (item.Count or 0) > 0
+		elseif targetName then
+			return item.Name and string.lower(item.Name) == targetName and (item.Count or 0) > 0
+		end
+		return false
+	end
+	local function hasMatchInTable(tbl)
+		if not tbl then return false end
+		for _, item in ipairs(tbl) do
+			if itemMatchesRequest(item) then return true end
+		end
+		return false
+	end
+
 	if totalInBags == 0 then
+		-- Nothing in bags — tell the player where to look
+		local inMail = hasMatchInTable(altData and altData.mail and altData.mail.items)
+		local inBank = hasMatchInTable(altData and altData.bank and altData.bank.items)
+		if inMail and inBank then
+			return false, "in mail and bank", 0, 0
+		elseif inMail then
+			return false, "in mail", 0, 0
+		end
 		return false, "Items not in bags. Pick up from bank first.", 0, 0
 	end
 
@@ -747,6 +778,19 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 	for _, item in ipairs(items) do
 		if not smallestStack or item.count < smallestStack then
 			smallestStack = item.count
+		end
+	end
+
+	-- Bags have items but not enough — check bank/mail for the shortfall
+	if not plan.canFulfill and totalInBags < qtyNeeded then
+		local inMail = hasMatchInTable(altData and altData.mail and altData.mail.items)
+		local inBank = hasMatchInTable(altData and altData.bank and altData.bank.items)
+		if inMail and inBank then
+			return false, "shortfall in bank and mail", totalInBags, smallestStack or 0
+		elseif inMail then
+			return false, "shortfall in mail", totalInBags, smallestStack or 0
+		elseif inBank then
+			return false, "shortfall in bank", totalInBags, smallestStack or 0
 		end
 	end
 

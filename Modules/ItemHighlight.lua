@@ -271,15 +271,21 @@ function ItemHighlight:UpdateBagnonHighlighting()
 	-- Use | as OR operator to match any of the item names
 	local searchTerms = {}
 	local seenNames = {}
+
+	local function stripRecipePrefix(name)
+		local cleaned = name:gsub("^Formula: ", "")
+		cleaned = cleaned:gsub("^Pattern: ", "")
+		cleaned = cleaned:gsub("^Recipe: ", "")
+		cleaned = cleaned:gsub("^Plans: ", "")
+		cleaned = cleaned:gsub("^Schematic: ", "")
+		cleaned = cleaned:gsub("^Design: ", "")
+		cleaned = cleaned:gsub("^Manual: ", "")
+		return cleaned
+	end
+
 	for itemName, _ in pairs(self.neededItems) do
 		seenNames[itemName] = true
-		local cleanName = itemName:gsub("^Formula: ", "")
-		cleanName = cleanName:gsub("^Pattern: ", "")
-		cleanName = cleanName:gsub("^Recipe: ", "")
-		cleanName = cleanName:gsub("^Plans: ", "")
-		cleanName = cleanName:gsub("^Schematic: ", "")
-		cleanName = cleanName:gsub("^Design: ", "")
-		cleanName = cleanName:gsub("^Manual: ", "")
+		local cleanName = stripRecipePrefix(itemName)
 		table.insert(searchTerms, cleanName)
 	end
 	-- Include names for ID-keyed entries (from new requests with itemID)
@@ -287,7 +293,8 @@ function ItemHighlight:UpdateBagnonHighlighting()
 		local name = C_Item.GetItemNameByID(itemID)
 		if name and not seenNames[name] then
 			seenNames[name] = true
-			table.insert(searchTerms, name)
+			local cleanName = stripRecipePrefix(name)
+			table.insert(searchTerms, cleanName)
 		end
 	end
 

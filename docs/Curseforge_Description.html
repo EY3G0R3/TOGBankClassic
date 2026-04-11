@@ -6,6 +6,15 @@
 
 <h2>What's New</h2>
 
+<h3>v1.0.0 (2026-04-11) - First Stable Release: Fulfill Location Awareness &amp; Polish</h3>
+<p>After months of active development and in-guild testing, we're shipping 1.0.0. This release rounds out the fulfillment workflow with location-aware button states and fixes the last rough edges found during real-world use.</p>
+<ul>
+<li><strong>Fulfill button location awareness:</strong> The fulfill button now shows distinct icons and contextual tooltips for items that can't be mailed immediately — wax letter icon when the item is in your mail inbox, paired bag+letter icons when it's split across bank and mail, and shortage icons (with exact counts) when you have some in bags but need to pick up more. No more guessing why the button isn't ready.</li>
+<li><strong>TOOLTIP-001:</strong> Item link "Bankers:" tooltip no longer shows stock data for characters who have left the guild — guild roster membership is now verified before displaying any banker's inventory</li>
+<li><strong>FULFILL-001:</strong> Fulfill button icon now correctly transitions away from the split (shovel) icon after a bag split completes — it was stuck because the bag-update event was calling the wrong draw function</li>
+<li><strong>HIGHLIGHT-001:</strong> Bagnon item highlighting now works for tradeskill recipes and patterns (Pattern:, Formula:, Plans:, Schematic:, Design:, Manual:) — the colon in these names was silently breaking Bagnon's search parser</li>
+</ul>
+
 <h3>v0.10.10 (2026-04-04) - Same-Name Item Variant Disambiguation</h3>
 <ul>
 <li><strong>REQ-001:</strong> Same-name item variants (e.g. Punctured Voodoo Doll Priest/Warrior/Druid) are now correctly distinguished — requests store the numeric item ID and all fulfillment, highlighting, and mail detection use it for exact matching; old clients fall back to name-matching automatically</li>
@@ -33,13 +42,6 @@
 <h3>v0.10.7 (2026-04-02) - P2P Delivery Watchdog Tuning</h3>
 <ul>
 <li><strong>P2P-032:</strong> Delivery watchdog raised from 60s to 180s — prevents premature sync failure during slow AceCommQueue drains (observed worst case: 68–70s for 9 KB payloads)</li>
-</ul>
-
-<h3>v0.10.6 (2026-04-01) - Send Cap Unification &amp; Cross-Guild Guard</h3>
-<ul>
-<li><strong>P2P-031:</strong> Legacy pull-based responder and P2P responder now share a single 3-slot send cap — fixes 20–30 simultaneous "Sharing guild bank data…" messages</li>
-<li><strong>ROSTER-004:</strong> Cross-guild alts and ex-bankers no longer pollute the banker hash list; all write paths now validate IsBank() before acting</li>
-<li><strong>SEND-001:</strong> Send progress display now shows accurate elapsed time and chunk count instead of always "1 chunks, 0.0s"</li>
 </ul>
 
 

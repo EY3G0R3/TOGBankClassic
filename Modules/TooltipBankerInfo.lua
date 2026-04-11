@@ -24,7 +24,7 @@ local function OnTooltipSetItem(tooltip)
 
 	wipe(found)
 	for altName, alt in pairs(info.alts) do
-		if alt.items then
+		if TOGBankClassic_Guild:IsInCurrentGuildRoster(altName) and alt.items then
 			local total = 0
 			for _, item in ipairs(alt.items) do
 				if item.ID == itemID then

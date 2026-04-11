@@ -33,7 +33,9 @@ local FULFILL_ICON = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"
 local FULFILL_ICON_READY = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"        -- Envelope: ready to send
 local FULFILL_ICON_NO_MAILBOX = "|TInterface\\Icons\\INV_Letter_02:18:18:0:0|t"   -- Sealed letter: need mailbox
 local FULFILL_ICON_NOT_IN_BAGS = "|TInterface\\Icons\\INV_Misc_Bag_07:18:18:0:0|t" -- Bag: pick up from bank
-local FULFILL_ICON_NEED_SPLIT = "|TInterface\\Icons\\INV_Misc_Shovel_01:18:18:0:0|t" -- Shovel: manual work needed
+local FULFILL_ICON_IN_MAIL         = "|TInterface\\Icons\\INV_Letter_06:18:18:0:0|t"                                                  -- Wax-sealed letter: item is in your mail inbox
+local FULFILL_ICON_IN_MAIL_AND_BANK = "|TInterface\\Icons\\INV_Misc_Bag_07:14:14:0:0|t|TInterface\\Icons\\INV_Letter_06:14:14:0:0|t" -- Bag + wax letter: item is in both bank and mail
+local FULFILL_ICON_NEED_SPLIT      = "|TInterface\\Icons\\INV_Misc_Shovel_01:18:18:0:0|t"      -- Shovel: manual work needed
 local FULFILL_ICON_NO_ITEMS = "|TInterface\\Icons\\INV_Misc_QuestionMark:18:18:0:0|t" -- Question mark: no items
 -- Row status prefix icons (date column decorators)
 local CHECK_MARK_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
@@ -503,7 +505,10 @@ local function OnBagUpdate()
 				pendingBagUpdate = false
 				if TOGBankClassic_UI_Requests.isOpen then
 					lastBagUpdate = GetTime()
-					TOGBankClassic_UI_Requests:DrawRows()
+					local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+					local isActorBank = actor and TOGBankClassic_Guild:IsBank(actor) or false
+					local mailboxOpen = TOGBankClassic_Mail.isOpen or (MailFrame and MailFrame:IsShown()) or false
+					TOGBankClassic_UI_Requests:_RefreshFulfillButtons(actor, isActorBank, mailboxOpen)
 				end
 			end)
 		end
@@ -511,7 +516,10 @@ local function OnBagUpdate()
 	end
 
 	lastBagUpdate = now
-	TOGBankClassic_UI_Requests:DrawRows()
+	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
+	local isActorBank = actor and TOGBankClassic_Guild:IsBank(actor) or false
+	local mailboxOpen = TOGBankClassic_Mail.isOpen or (MailFrame and MailFrame:IsShown()) or false
+	TOGBankClassic_UI_Requests:_RefreshFulfillButtons(actor, isActorBank, mailboxOpen)
 end
 
 local function RegisterBagEvents()
@@ -870,7 +878,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		GameTooltip:AddLine("|cffffd100Action buttons (right side of each row):|r", 1, 1, 1, false)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100Fulfill:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Sends the item by in-game mail. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; shovel = quantity must be split manually; question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("Sends the item by in-game mail. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; wax-sealed letter = item is in your mail inbox, retrieve it first; chest = item is split between your mail and bank; shovel = quantity must be split manually; question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100Complete:|r", 1, 1, 1, false)
 		GameTooltip:AddLine("Marks the request as done without mailing. Use this when the item was handed over directly.", 0.9, 0.9, 0.9, true)
@@ -1925,8 +1933,18 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 				elseif fulfillEnabled then
 					icon = FULFILL_ICON_READY
 					tooltipDetail = string.format("Attach %d %s to mail for %s.", math.min(itemsInBags, qtyNeeded), req.item or "items", req.requester or "requester")
-				elseif not mailboxOpen then
+				elseif canFulfill and not mailboxOpen then
 					icon = FULFILL_ICON_NO_MAILBOX; tooltipDetail = "Open a mailbox to fulfill this request."
+				elseif fulfillReason == "in mail and bank" then
+					icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = "Item is split between your mail inbox and bank. Retrieve mail items first, then pick up the rest from the bank."
+				elseif fulfillReason == "in mail" then
+					icon = FULFILL_ICON_IN_MAIL; tooltipDetail = "Item is in your mail inbox. Open mailbox and retrieve it first."
+				elseif fulfillReason == "shortfall in bank and mail" then
+					icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = string.format("Have %d in bags. More available in your bank and mail inbox — pick up or retrieve the rest to reach %d.", itemsInBags, qtyNeeded)
+				elseif fulfillReason == "shortfall in mail" then
+					icon = FULFILL_ICON_IN_MAIL; tooltipDetail = string.format("Have %d in bags. More available in your mail inbox — retrieve items to reach %d.", itemsInBags, qtyNeeded)
+				elseif fulfillReason == "shortfall in bank" then
+					icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = string.format("Have %d in bags. More available in your bank — pick up the rest to reach %d.", itemsInBags, qtyNeeded)
 				elseif fulfillReason and string.find(fulfillReason, "not in bags") then
 					icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = fulfillReason
 				elseif fulfillReason then
@@ -2045,8 +2063,18 @@ function TOGBankClassic_UI_Requests:_RefreshFulfillButtons(actor, isActorBank, m
 						elseif fulfillEnabled then
 							icon = FULFILL_ICON_READY
 							tooltipDetail = string.format("Attach %d %s to mail for %s.", math.min(itemsInBags, qtyNeeded), req.item or "items", req.requester or "requester")
-						elseif not mailboxOpen then
+						elseif canFulfill and not mailboxOpen then
 							icon = FULFILL_ICON_NO_MAILBOX; tooltipDetail = "Open a mailbox to fulfill this request."
+						elseif fulfillReason == "in mail and bank" then
+							icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = "Item is split between your mail inbox and bank. Retrieve mail items first, then pick up the rest from the bank."
+						elseif fulfillReason == "in mail" then
+							icon = FULFILL_ICON_IN_MAIL; tooltipDetail = "Item is in your mail inbox. Open mailbox and retrieve it first."
+						elseif fulfillReason == "shortfall in bank and mail" then
+							icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = string.format("Have %d in bags. More available in your bank and mail inbox — pick up or retrieve the rest to reach %d.", itemsInBags, qtyNeeded)
+						elseif fulfillReason == "shortfall in mail" then
+							icon = FULFILL_ICON_IN_MAIL; tooltipDetail = string.format("Have %d in bags. More available in your mail inbox — retrieve items to reach %d.", itemsInBags, qtyNeeded)
+						elseif fulfillReason == "shortfall in bank" then
+							icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = string.format("Have %d in bags. More available in your bank — pick up the rest to reach %d.", itemsInBags, qtyNeeded)
 						elseif fulfillReason and string.find(fulfillReason, "not in bags") then
 							icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = fulfillReason
 						elseif fulfillReason then
