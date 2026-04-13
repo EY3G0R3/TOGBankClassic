@@ -1060,7 +1060,7 @@ function TOGBankClassic_Guild:RequestHashListFromBanker()
 			end
 		end
 		if pendingCount > 0 then
-			TOGBankClassic_Output:Info("Fast-fill: No banker online, broadcasting %d requests", pendingCount)
+			TOGBankClassic_Output:Debug("PROTOCOL", "Fast-fill: No banker online, broadcasting %d requests", pendingCount)
 		end
 		return false
 	end
