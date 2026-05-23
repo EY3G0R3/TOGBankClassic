@@ -417,6 +417,7 @@ local function testShouldUseDeltaLogic()
 
     -- Mock guild support at 60% (above 10% threshold)
     local oldGetGuildDeltaSupport = Database.GetGuildDeltaSupport
+    ---@diagnostic disable-next-line: duplicate-set-field
     Database.GetGuildDeltaSupport = function(_)
         return 0.6  -- 60% support
     end
@@ -757,6 +758,7 @@ local function testFallbackToFullSync()
 
     -- This test validates that delta is enabled regardless of guild support percentage
     local oldGetGuildDeltaSupport = Database.GetGuildDeltaSupport
+    ---@diagnostic disable-next-line: duplicate-set-field
     Database.GetGuildDeltaSupport = function(_)
         return 0  -- 0% support
     end

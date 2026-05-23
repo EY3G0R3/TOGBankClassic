@@ -28,6 +28,134 @@ function TOGBankClassic_Database:Init()
 			showUncategorizedDebug = true,  -- Show legacy debug messages by default
 		},
 	})
+
+	-- Schedule the linkless-gear-ghost purge after a short delay so the WoW item cache
+	-- has time to warm up. The purge identifies gear-class items (class 2/4) that lack
+	-- a Link field; these can only have been created by ApplyItemDelta accepting a
+	-- stripped delta (real bag scans always produce Links via C_Container). See
+	-- docs/DELTA_BUGS.md ITEM-004 and the ITEM-003 update-path analysis.
+	-- pcall-wrapped: a single malformed alt entry must not silently abort the migration
+	-- or break addon initialization.
+	if C_Timer and C_Timer.After then
+		C_Timer.After(30, function()
+			local ok, err = pcall(function()
+				TOGBankClassic_Database:PurgeLinklessGearGhosts()
+			end)
+			if not ok then
+				TOGBankClassic_Output:Error("Ghost purge migration failed: %s", tostring(err))
+			end
+		end)
+	end
+end
+
+-- Walk every alt's items / bank.items / bags.items and drop entries where the item is
+-- gear (class 2/4) AND has no Link. These cannot come from a local scan; they're
+-- artifacts of pre-fix stripped deltas that landed in SavedVariables. Removing them
+-- here recovers existing corruption without requiring users to /togbank wipe.
+--
+-- Safety: an entry whose class cannot be determined (Item:ItemClassNeedsLink returns
+-- nil) is LEFT ALONE. We don't delete data we can't classify. Subsequent runs (after
+-- TOGBankClassic_ItemDB is populated, or after the WoW cache warms further) will
+-- catch them.
+function TOGBankClassic_Database:PurgeLinklessGearGhosts()
+	if not self.db or not self.db.faction then return end
+	if not TOGBankClassic_Item or not TOGBankClassic_Item.ItemClassNeedsLink then return end
+
+	local totalPurged = 0
+	local totalScanned = 0
+
+	local function purgeArray(arr, label, altName)
+		if not arr then return 0 end
+		local removed = 0
+		for i = #arr, 1, -1 do
+			local item = arr[i]
+			totalScanned = totalScanned + 1
+			if item and item.ID and not item.Link
+			   and TOGBankClassic_Item:ItemClassNeedsLink(item.ID) == true then
+				table.remove(arr, i)
+				removed = removed + 1
+				TOGBankClassic_Output:Debug("DATABASE", "MIGRATION",
+					"[GHOST-PURGE] Removed linkless gear ID=%d from %s.%s",
+					item.ID, altName, label)
+			end
+		end
+		return removed
+	end
+
+	for guildName, guildData in pairs(self.db.faction) do
+		if guildData and guildData.alts then
+			for altName, alt in pairs(guildData.alts) do
+				if type(alt) == "table" then
+					totalPurged = totalPurged + purgeArray(alt.items, "items", altName)
+					if alt.bank then
+						totalPurged = totalPurged + purgeArray(alt.bank.items, "bank.items", altName)
+					end
+					if alt.bags then
+						totalPurged = totalPurged + purgeArray(alt.bags.items, "bags.items", altName)
+					end
+					if alt.mail then
+						totalPurged = totalPurged + purgeArray(alt.mail.items, "mail.items", altName)
+					end
+				end
+			end
+		end
+		-- guildName intentionally not used in log (kept available for future per-guild reporting)
+		_ = guildName
+	end
+
+	-- Count linkless-gear-suspect entries that we could NOT confidently classify
+	-- (Item:ItemClassNeedsLink returned nil — either uncached or no static DB yet).
+	-- These survive this pass and may be purged on a future run once the cache warms
+	-- or the static DB is populated.
+	local skippedSuspects = 0
+	local function countSkipped(arr)
+		if not arr then return end
+		for _, item in ipairs(arr) do
+			if item and item.ID and not item.Link
+			   and TOGBankClassic_Item:ItemClassNeedsLink(item.ID) == nil then
+				skippedSuspects = skippedSuspects + 1
+			end
+		end
+	end
+	for _, guildData in pairs(self.db.faction) do
+		if guildData and guildData.alts then
+			for _, alt in pairs(guildData.alts) do
+				if type(alt) == "table" then
+					countSkipped(alt.items)
+					if alt.bank then countSkipped(alt.bank.items) end
+					if alt.bags then countSkipped(alt.bags.items) end
+					if alt.mail then countSkipped(alt.mail.items) end
+				end
+			end
+		end
+	end
+
+	-- Always print a result so the user knows the migration actually ran.
+	-- Three states: purged some, found suspects but couldn't confirm, fully clean.
+	if totalPurged > 0 then
+		TOGBankClassic_Output:Info(
+			"Ghost purge: removed %d linkless gear ghost(s) from saved data (scanned %d entries). " ..
+			"This recovers corruption caused by pre-fix stripped deltas. Fresh syncs " ..
+			"from bankers will refill any missing data.",
+			totalPurged, totalScanned)
+		if skippedSuspects > 0 then
+			TOGBankClassic_Output:Info(
+				"Ghost purge: %d additional linkless entries skipped (item class unknown — " ..
+				"item not in shipped Modules/Static/ItemDB.lua AND not yet in WoW client cache). " ..
+				"Re-run /togbank dev purgeghosts after WoW has loaded the item to catch the rest.",
+				skippedSuspects)
+		end
+	elseif skippedSuspects > 0 then
+		TOGBankClassic_Output:Info(
+			"Ghost purge: scanned %d entries, found %d linkless entries that COULD be gear " ..
+			"ghosts but item class is unknown (not in shipped Modules/Static/ItemDB.lua and not " ..
+			"yet in WoW client cache). Open the inventory window so WoW loads the items, then " ..
+			"re-run /togbank dev purgeghosts.",
+			totalScanned, skippedSuspects)
+	else
+		TOGBankClassic_Output:Info("Ghost purge: scanned %d entries, no linkless gear ghosts found. Clean.",
+			totalScanned)
+	end
 end
 
 function TOGBankClassic_Database:Reset(name)

@@ -137,9 +137,6 @@ SHARING YOUR DATA:
     data during their next sync cycle. This happens automatically every
     3 minutes.
 
-    For bankers who want to broadcast ALL bank alt hashes at once (after
-    bulk inventory changes), use /togbank hashupdate instead.
-
 ================================================================================
 COMMAND REFERENCE
 ================================================================================
@@ -165,9 +162,6 @@ BASIC COMMANDS:
   sync cycle (manual /togbank sync, UI open, or automatic 3-minute timer).
   (Automatic hash broadcasting happens every 3 minutes)
 
-  NOTE: For bankers only. To broadcast ALL bank alt hashes, use
-  /togbank hashupdate (see Expert Commands).
-
 /togbank reset
   Resets your TOGBankClassic database (clears all stored data)
 
@@ -177,24 +171,8 @@ EXPERT COMMANDS:
 These commands are for advanced users and guild officers. Commands are
 listed alphabetically for easy reference.
 
-/togbank clearhistory
-  Clears delta chain history (removes saved deltas)
-
-/togbank clearsnapshots
-  Clears all delta snapshots (forces next sync to be full)
-
 /togbank compact
   Manually runs database compaction to prune old requests and log entries
-
-/togbank hashupdate
-  (BANKER ONLY) Broadcasts hash-list for ALL bank alts to force a
-  guild-wide hash refresh. This is useful after bulk inventory changes
-  or when you want to ensure all guild members have current hashes.
-  Users will pull updated data during their next sync cycle.
-  
-  NOTE: This is a "nuke" command - use after major inventory changes.
-  For normal sharing, use /togbank share to broadcast only your current
-  character's hash.
 
 /togbank debuglog [N] [filter]
   Exports last N debug log entries (default 500), optionally filtered by keyword
@@ -203,9 +181,6 @@ listed alphabetically for easy reference.
 
 /togbank debuglogclear
   Clears all persistent debug log entries
-
-/togbank debuglogsave
-  Manually saves debug log to SavedVariables (normally done on logout)
 
 /togbank debuglogstats
   Shows statistics about the persistent debug log including entry count,
@@ -220,59 +195,9 @@ listed alphabetically for easy reference.
 /togbank debugtabremove
   Removes the TOGBank Debug chat tab
 
-/togbank deltaerrors
-  Shows recent delta sync errors and failure counts
-
-/togbank deltahistory
-  Shows stored delta chain history for offline recovery
-
-/togbank deltastats
-  Shows delta sync statistics including:
-  - Bandwidth usage (delta vs full syncs)
-  - Estimated bandwidth saved
-  - Success rates and operation counts
-  - Average performance metrics
-
-/togbank forcedelta [on|off]
-  Forces delta sync mode (bypasses thresholds) for testing
-  Use 'on' to always use delta, 'off' to restore normal behavior
-
-/togbank forcefull [on|off]
-  Forces full sync mode (disables delta) for testing
-  Use 'on' to disable delta, 'off' to restore normal behavior
-
-/togbank hello
-  Shows which guild members are online with the addon and what data they have
-  (Requires compatible WeakAura to display deserialized data)
-
-/togbank hashdebug
-  Shows hash-list coverage and missing alts (expert debugging)
-
-/togbank perfstats
-  Shows performance metrics for current session
-
-/togbank persistcheck
-  Checks current request persistence state (for debugging SYNC-001)
-
-/togbank protocol
-  Displays protocol version distribution across guild members:
-  - Shows online member protocol versions (v1 vs v2)
-  - Displays delta sync adoption percentage
-  - Lists recently seen members with their protocol versions
-
-/togbank resetmetrics
-  Resets all delta sync statistics to zero
-
 /togbank roster
   Guild officers can use this to share updated roster data with the guild
   (Requires officer note viewing permissions)
-
-/togbank test [test-name|all|help]
-  Runs automated delta sync tests
-  Use 'help' to see available test options
-
-/togbank versions
-  Displays addon versions of all online guild members
 
 /togbank wipe
   Resets your own TOGBankClassic database
@@ -326,23 +251,11 @@ BENEFITS:
 
 MONITORING DELTA SYNC:
 ----------------------
-Use /togbank deltastats to see:
-- How much bandwidth you've saved
-- Success rate of delta operations
-- Average performance metrics
-
-Use /togbank protocol to check:
-- How many guild members support delta sync
-- Whether delta sync is enabled (requires 50% guild adoption)
-
-Use /togbank deltaerrors to see:
-- Recent delta sync failures
-- Error types (UNAUTHORIZED, VALIDATION_FAILED, etc.)
-- Failure counts for troubleshooting
-
-Use /togbank deltahistory to see:
-- Stored delta chain for offline recovery
-- Delta sequence numbers and timestamps
+Delta sync runs automatically in the background. If you suspect issues,
+enable debug logging with /togbank debug (optionally /togbank debugtab
+first to direct output to a separate chat tab) and watch for DELTA / SYNC
+category messages. Use /togbank debuglog to export a recent slice of the
+persistent log for bug reports.
 
 COMPATIBILITY:
 --------------
@@ -380,21 +293,17 @@ SOLUTION:
 
 PROBLEM: Delta sync not working
 SOLUTION:
-  - Check /togbank protocol to see guild adoption percentage
-  - Delta sync requires 50%+ of online guild to use v0.7.0+
-  - Use /togbank forcefull on to toggle full sync mode if needed
-  - Check /togbank deltastats to see if delta operations are failing
+  - Make sure other guild members are online with a recent version of the addon
+  - Try /togbank sync to manually request fresh data
+  - If issues persist, /togbank wipe and re-sync from scratch
 
 PROBLEM: Getting error messages about delta failures
 SOLUTION:
   - The addon automatically falls back to full sync on errors
-  - Use /togbank deltaerrors to see recent failure details
-  - If errors persist, try /togbank clearsnapshots to clear cached data
-  - Use /togbank resetmetrics to reset statistics
   - Enable debug mode with /togbank debug to see detailed error information
   - For easier debugging, use /togbank debugtab to create a separate chat tab
     for debug output (keeps your General tab clean)
-  - Use /togbank debuglog 500 DELTA to export recent delta-related logs
+  - Use /togbank debuglog 500 DELTA to export recent delta-related logs for a bug report
 
 PROBLEM: Debug output cluttering my chat
 SOLUTION:

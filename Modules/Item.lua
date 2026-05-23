@@ -7,47 +7,78 @@ local ITEM_CLASSES_NEEDING_LINK = {
 	[4] = true,  -- Armor (chest, legs, trinkets, rings, necks, etc)
 }
 
--- Check if an item needs its Link preserved based on item class
--- Gear (weapons/armor) can have random suffixes, so Link is required
--- Consumables and trade goods don't vary, so Link can be stripped
--- Weapons (class 2) and Armor (class 4) ALWAYS keep their Link regardless of suffix,
--- because plain and suffixed variants of the same item share the same base ID and must
--- be distinguished by their full link string to avoid deduplication collisions.
-function TOGBankClassic_Item:NeedsLink(itemLink)
-	if not itemLink then return false end
+-- Resolve an item's class via the most reliable source available.
+-- Tier 1: TOGBankClassic_ItemDB (static DB shipped with the addon, generated
+--         by tools/build-itemdb.py from wago.tools DB2 dumps). Authoritative,
+--         covers every item in Classic Era, never cold.
+-- Tier 2: GetItemInfo (WoW client cache). Reliable when warm; nil immediately after
+--         login while the cache hydrates. We do NOT trust nil as "non-gear" — see Tier 3.
+-- Tier 3: nil — caller's decision. Callers that drive wire-format decisions MUST
+--         treat nil as "preserve the link, do not strip" (default-deny stripping).
+--         This eliminates the cold-cache gear-stripping bug that caused linkless
+--         gear ghosts to land in peers' SavedVariables.
+function TOGBankClassic_Item:GetClass(itemID)
+	if not itemID then return nil end
 
-	-- Primary check: item class via GetItemInfo (synchronous cache lookup at send time).
-	-- ITEM_CLASSES_NEEDING_LINK = { [2]=Weapon, [4]=Armor } — these ALWAYS preserve Link.
-	local itemID = tonumber(itemLink:match("|Hitem:(%d+)"))
-	if itemID then
-		local _, _, _, _, _, _, _, _, _, _, _, itemClassId = GetItemInfo(itemID)
-		if itemClassId and ITEM_CLASSES_NEEDING_LINK[itemClassId] then
-			return true
-		end
+	-- Tier 1: static DB
+	if TOGBankClassic_ItemDB and TOGBankClassic_ItemDB[itemID] then
+		return TOGBankClassic_ItemDB[itemID].class
 	end
 
-	-- Fallback (uncached items or raw itemString input): preserve link if link has a
-	-- non-zero suffix field (part 7 of the itemString: enchant:gem1:gem2:gem3:gem4:suffixID).
-	local hasSuffix = itemLink:match("item:%d+:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:%-?%d+")
-	if hasSuffix then
+	-- Tier 2: WoW client cache
+	local _, _, _, _, _, _, _, _, _, _, _, itemClassId = GetItemInfo(itemID)
+	if itemClassId then
+		return itemClassId
+	end
+
+	-- Tier 3: unknown
+	return nil
+end
+
+-- Check if an item needs its Link preserved on the wire.
+-- Default-deny stripping: we only strip when we can POSITIVELY confirm the item is
+-- not gear (class 2/4). Any uncertainty (uncached, unparseable, missing ID) → preserve.
+-- This guarantees no gear link ever gets stripped, even during cold-cache windows.
+--
+-- Weapons (class 2) and Armor (class 4) ALWAYS keep their Link, because plain and
+-- suffixed variants of the same item share the same base ID and must be distinguished
+-- by their full link to avoid the linkless-ghost / count-divergence bug class.
+function TOGBankClassic_Item:NeedsLink(itemLink)
+	if not itemLink then
+		-- No link to preserve, but caller should not be stripping nothing — return true
+		-- defensively so callers don't accidentally strip something we can't classify.
 		return true
 	end
 
-	return false
+	local itemID = tonumber(itemLink:match("|Hitem:(%d+)") or itemLink:match("^(%d+)"))
+	if not itemID then
+		-- Couldn't extract an ID from the link — preserve to be safe.
+		return true
+	end
+
+	local classId = self:GetClass(itemID)
+	if classId == nil then
+		-- Unknown class (Tier 3) — preserve link. Caller cannot prove it's safe to strip.
+		return true
+	end
+
+	-- Class is known. Strip ONLY if class is NOT in the gear set.
+	return ITEM_CLASSES_NEEDING_LINK[classId] == true
 end
 
--- Check by item ID whether this item's class requires a Link to be preserved.
--- Returns true  = weapon/armor (class 2/4) — link required
--- Returns false = other class — link optional
--- Returns nil   = item not in client cache yet — caller must decide
--- Used by ApplyItemDelta to guard against accepting link-stripped items on the receive side.
+-- Receive-side variant: caller has an itemID (not a link) and wants to know whether
+-- this item REQUIRES a Link to be considered well-formed. Used by ITEM-003 guards in
+-- ApplyItemDelta to reject linkless gear payloads.
+--
+-- Returns true  = gear (link required; linkless payload is invalid)
+-- Returns false = non-gear (linkless payload is fine)
+-- Returns nil   = unknown (caller's choice; ITEM-003 currently treats nil as "block if
+--                 any linked entry exists for this ID, otherwise allow")
 function TOGBankClassic_Item:ItemClassNeedsLink(itemID)
 	if not itemID then return nil end
-	local _, _, _, _, _, _, _, _, _, _, _, itemClassId = GetItemInfo(itemID)
-	if itemClassId then
-		return ITEM_CLASSES_NEEDING_LINK[itemClassId] == true
-	end
-	return nil  -- not cached
+	local classId = self:GetClass(itemID)
+	if classId == nil then return nil end
+	return ITEM_CLASSES_NEEDING_LINK[classId] == true
 end
 
 -- Extract ItemString from item link (full, unmodified)
@@ -405,20 +436,7 @@ function TOGBankClassic_Item:GetInfo(id, link)
 	}
 end
 
--- NOTE: Sort was adapted from ElvUI
-local function BasicSort(a, b)
-	if a.Info.level ~= b.Info.level and a.Info.level and b.Info.level then
-		return a.Info.level < b.Info.level
-	end
-	if a.Info.price ~= b.Info.price and a.Info.price and b.Info.price then
-		return a.Info.price < b.Info.price
-	end
-	if a.Info.name and b.Info.name then
-		return a.Info.name < b.Info.name
-	end
-end
-
--- NOTE: Sort was adapted from ElvUI
+-- NOTE: Sort was adapted from ElvUI.
 -- mode: "alpha" (default) = A-Z by name; "type" = grouped by item class/slot/subclass then name
 function TOGBankClassic_Item:Sort(items, mode)
 	-- Ensure all items have Info with required fields for sorting

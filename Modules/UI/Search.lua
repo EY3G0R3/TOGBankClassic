@@ -522,9 +522,19 @@ function TOGBankClassic_UI_Search:DrawWindow()
 
 	searchWindow:AddChild(searchInput)
 
-	-- Sub-filter: three cascading Requests-style dropdowns
-	-- subValueDropdown and subSubValueDropdown forward-declared so callbacks can reference them
+	-- Filter row — compact horizontal layout. Each widget has an explicit width sized
+	-- to its content; AceGUI's Flow layout auto-wraps based on the search window's
+	-- current width so a wide window keeps everything on one row and a narrow window
+	-- stacks them onto multiple rows. Sum of all widths is ~720px; user resizes the
+	-- search window to taste.
+	--
+	-- Order is: [Min lvl] [Max lvl] [Filter] [Subtype] [Sub-subtype] [Sort] [Usable]
+	-- The small numeric inputs lead so they don't get orphaned on their own row when
+	-- the window is narrow; gives a denser top-left filter cluster.
+	--
+	-- Forward declarations: callbacks below reference widgets/functions defined later.
 	local subValueDropdown, subSubValueDropdown
+	local usableCheck, updateUsableCB
 
 	local function resetSubclass()
 		self.SubFilterSubValue = FILTER_ANY
@@ -533,82 +543,88 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		subSubValueDropdown:SetDisabled(true)
 	end
 
+	-- Min level (numeric input, 3 digits max). No gating on other filters — cheap to compute.
+	-- Empty / non-numeric input is treated as 0 (no constraint).
+	local minLevelInput = TOGBankClassic_UI:Create("EditBox")
+	minLevelInput:SetLabel("Min lvl")
+	minLevelInput:SetMaxLetters(3)
+	minLevelInput:SetWidth(60)
+	-- Shift label +5px right and -2px down so it doesn't overhang the EditBox's left edge.
+	minLevelInput.label:ClearAllPoints()
+	minLevelInput.label:SetPoint("TOPLEFT",  minLevelInput.frame, "TOPLEFT",  5, -2)
+	minLevelInput.label:SetPoint("TOPRIGHT", minLevelInput.frame, "TOPRIGHT", 0, -2)
+	minLevelInput:SetCallback("OnTextChanged", function(_, _, text)
+		self.MinLevel = tonumber(text) or 0
+		self.currentPage = 1
+		self:DrawContent()
+	end)
+	-- Tooltip hit frame over the label (FontStrings can't fire mouse events).
+	local minLevelLabelHit = CreateFrame("Frame", nil, minLevelInput.frame)
+	minLevelLabelHit:SetPoint("TOPLEFT",  minLevelInput.frame, "TOPLEFT",  5, -2)
+	minLevelLabelHit:SetPoint("TOPRIGHT", minLevelInput.frame, "TOPRIGHT", 0, -2)
+	minLevelLabelHit:SetHeight(16)
+	minLevelLabelHit:EnableMouse(true)
+	TOGBankClassic_UI:AttachTooltip(minLevelLabelHit, "ANCHOR_TOP", "Minimum Required Level", {
+		"Hide items whose required level is below this number.",
+		"Leave empty (or 0) for no minimum.",
+		" ",
+		{"Items with no required level (trade goods, recipes, etc.) are hidden when a min is set.", 1, 0.8, 0.4, true},
+	})
+	searchWindow:AddChild(minLevelInput)
+	self.minLevelInput = minLevelInput
+
+	-- Max level
+	local maxLevelInput = TOGBankClassic_UI:Create("EditBox")
+	maxLevelInput:SetLabel("Max lvl")
+	maxLevelInput:SetMaxLetters(3)
+	maxLevelInput:SetWidth(60)
+	maxLevelInput.label:ClearAllPoints()
+	maxLevelInput.label:SetPoint("TOPLEFT",  maxLevelInput.frame, "TOPLEFT",  5, -2)
+	maxLevelInput.label:SetPoint("TOPRIGHT", maxLevelInput.frame, "TOPRIGHT", 0, -2)
+	maxLevelInput:SetCallback("OnTextChanged", function(_, _, text)
+		self.MaxLevel = tonumber(text) or 0
+		self.currentPage = 1
+		self:DrawContent()
+	end)
+	local maxLevelLabelHit = CreateFrame("Frame", nil, maxLevelInput.frame)
+	maxLevelLabelHit:SetPoint("TOPLEFT",  maxLevelInput.frame, "TOPLEFT",  5, -2)
+	maxLevelLabelHit:SetPoint("TOPRIGHT", maxLevelInput.frame, "TOPRIGHT", 0, -2)
+	maxLevelLabelHit:SetHeight(16)
+	maxLevelLabelHit:EnableMouse(true)
+	TOGBankClassic_UI:AttachTooltip(maxLevelLabelHit, "ANCHOR_TOP", "Maximum Required Level", {
+		"Hide items whose required level is above this number.",
+		"Leave empty (or 0) for no maximum.",
+	})
+	searchWindow:AddChild(maxLevelInput)
+	self.maxLevelInput = maxLevelInput
+
+	-- Filter selector (Type / Quality)
 	local subFilterDropdown = TOGBankClassic_UI:Create("Dropdown")
 	subFilterDropdown:SetLabel("Filter")
 	subFilterDropdown.label:ClearAllPoints()
 	subFilterDropdown.label:SetPoint("TOPLEFT", subFilterDropdown.frame, "TOPLEFT", 3, 0)
 	subFilterDropdown.label:SetPoint("TOPRIGHT", subFilterDropdown.frame, "TOPRIGHT", 0, 0)
-	-- Hit frame for tooltip: only spans left portion, stops before the checkbox
+	-- Hit frame over the "Filter" label for tooltip. Spans the full dropdown width
+	-- now that the inline Usable checkbox has been split out into its own widget.
 	local subFilterLabelHit = CreateFrame("Frame", nil, subFilterDropdown.frame)
 	subFilterLabelHit:SetPoint("TOPLEFT", subFilterDropdown.frame, "TOPLEFT", 3, 0)
-	subFilterLabelHit:SetPoint("TOPRIGHT", subFilterDropdown.frame, "TOPRIGHT", -165, 0)
+	subFilterLabelHit:SetPoint("TOPRIGHT", subFilterDropdown.frame, "TOPRIGHT", 0, 0)
 	subFilterLabelHit:SetHeight(18)
 	subFilterLabelHit:EnableMouse(true)
-	subFilterLabelHit:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine("Secondary Filter")
-		GameTooltip:AddLine("Narrows results alongside the name search.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cFFFFFFFFType|r: pick a type then a subtype (e.g. Weapon > Sword).", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine("|cFFFFFFFFQuality|r: pick a quality tier.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine("|cFFFFFFFFUsable by my level|r: tick the checkbox to hide items your character cannot yet equip.", 0.9, 0.9, 0.9, true)
-		GameTooltip:Show()
-	end)
-	subFilterLabelHit:SetScript("OnLeave", function()
-		TOGBankClassic_UI:HideTooltip()
-	end)
-	-- Native CheckButton: sits at far right of the Filter label row, text to its left
-	local usableCBFrame = CreateFrame("CheckButton", nil, subFilterDropdown.frame)
-	usableCBFrame:SetSize(16, 16)
-	usableCBFrame:SetPoint("TOPRIGHT", subFilterDropdown.frame, "TOPRIGHT", 0, -1)
-	usableCBFrame:SetNormalTexture(130755)   -- UI-CheckBox-Up
-	usableCBFrame:SetCheckedTexture(130751)  -- UI-CheckBox-Check
-	usableCBFrame:SetHighlightTexture(130753, "ADD")
-	local usableCBText = usableCBFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	usableCBText:SetText("Usable by my level")
-	usableCBText:SetJustifyH("RIGHT")
-	usableCBText:SetPoint("RIGHT", usableCBFrame, "LEFT", -3, 0)
-	usableCBFrame:SetScript("OnClick", function(btn)
-		self.FilterUsableLevel = btn:GetChecked()
-		self.currentPage = 1  -- reset to first page on filter change
-		self:DrawContent()
-	end)
-	usableCBFrame:SetFrameLevel(subFilterDropdown.frame:GetFrameLevel() + 10)
-	self.usableCBFrame = usableCBFrame
-	-- Enable/disable the checkbox; always unchecks+clears state when disabling
-	local function updateUsableCB(enabled)
-		if enabled then
-			usableCBFrame:Enable()
-			usableCBText:SetTextColor(1, 1, 1)
-		else
-			usableCBFrame:SetChecked(false)
-			usableCBFrame:Disable()
-			usableCBText:SetTextColor(0.5, 0.5, 0.5)
-			self.FilterUsableLevel = false
-		end
-	end
-	updateUsableCB(false)  -- disabled until a specific filter value is chosen
-	usableCBFrame:SetScript("OnEnter", function(btn)
-		GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine("Usable by my level")
-		GameTooltip:AddLine("Hides items whose required level exceeds your current level.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine("Requires a specific Type or Quality to be selected first —", 1, 0.5, 0.5, true)
-		GameTooltip:AddLine("scanning all items without a filter causes severe lag.", 1, 0.5, 0.5, true)
-		GameTooltip:Show()
-	end)
-	usableCBFrame:SetScript("OnLeave", function()
-		GameTooltip:Hide()
-	end)
+	TOGBankClassic_UI:AttachTooltip(subFilterLabelHit, "ANCHOR_RIGHT", "Filter", {
+		"Narrow the results by item Type or Quality.",
+		" ",
+		"|cFFFFFFFFType|r: pick a type (Weapon, Armor, etc.), then a subtype (Sword, Cloth, etc.).",
+		"|cFFFFFFFFQuality|r: pick a quality tier (Common, Uncommon, Rare, Epic).",
+	})
 	subFilterDropdown:SetList(SUBFILTER_LIST, SUBFILTER_ORDER)
 	subFilterDropdown:SetValue(FILTER_ANY)
-	subFilterDropdown:SetFullWidth(true)
-	subFilterDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+	subFilterDropdown:SetWidth(110)
+	subFilterDropdown:SetCallback("OnValueChanged", function(_, _, value)
 		self.SubFilterMode  = value
 		self.SubFilterValue = FILTER_ANY
 		resetSubclass()
-		updateUsableCB(false)  -- second dropdown reset, so disable checkbox again
+		updateUsableCB(false)  -- reset to disabled until a specific value is chosen
 		if value == "type" then
 			subValueDropdown:SetList(TYPE_LIST, TYPE_ORDER)
 			subValueDropdown:SetValue(FILTER_ANY)
@@ -622,12 +638,13 @@ function TOGBankClassic_UI_Search:DrawWindow()
 			subValueDropdown:SetValue(FILTER_ANY)
 			subValueDropdown:SetDisabled(true)
 		end
-		self.currentPage = 1  -- reset to first page on filter change
+		self.currentPage = 1
 		self:DrawContent()
 	end)
 	searchWindow:AddChild(subFilterDropdown)
 	self.subFilterDropdown = subFilterDropdown
 
+	-- Subtype dropdown (cascaded from Filter)
 	subValueDropdown = TOGBankClassic_UI:Create("Dropdown")
 	subValueDropdown:SetLabel("")
 	subValueDropdown.label:ClearAllPoints()
@@ -636,12 +653,11 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	subValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
 	subValueDropdown:SetValue(FILTER_ANY)
 	subValueDropdown:SetDisabled(true)
-	subValueDropdown:SetFullWidth(true)
-	subValueDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+	subValueDropdown:SetWidth(130)
+	subValueDropdown:SetCallback("OnValueChanged", function(_, _, value)
 		self.SubFilterValue = value
-		updateUsableCB(value ~= FILTER_ANY)  -- enable checkbox once a specific value is picked
+		updateUsableCB(value ~= FILTER_ANY)  -- enable Usable once a specific value is picked
 		resetSubclass()
-		-- Populate 3rd dropdown if this type has subclasses
 		if self.SubFilterMode == "type" and SUBCLASS_LISTS[value] then
 			local sc = SUBCLASS_LISTS[value]
 			subSubValueDropdown:SetList(sc.list, sc.order)
@@ -652,12 +668,13 @@ function TOGBankClassic_UI_Search:DrawWindow()
 			subSubValueDropdown:SetValue(FILTER_ANY)
 			subSubValueDropdown:SetDisabled(true)
 		end
-		self.currentPage = 1  -- reset to first page on filter change
+		self.currentPage = 1
 		self:DrawContent()
 	end)
 	searchWindow:AddChild(subValueDropdown)
 	self.subValueDropdown = subValueDropdown
 
+	-- Sub-subtype dropdown (third cascading level)
 	subSubValueDropdown = TOGBankClassic_UI:Create("Dropdown")
 	subSubValueDropdown:SetLabel("")
 	subSubValueDropdown.label:ClearAllPoints()
@@ -666,16 +683,17 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	subSubValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
 	subSubValueDropdown:SetValue(FILTER_ANY)
 	subSubValueDropdown:SetDisabled(true)
-	subSubValueDropdown:SetFullWidth(true)
-	subSubValueDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+	subSubValueDropdown:SetWidth(130)
+	subSubValueDropdown:SetCallback("OnValueChanged", function(_, _, value)
 		self.SubFilterSubValue = value
-		self.currentPage = 1  -- reset to first page on filter change
+		self.currentPage = 1
 		self:DrawContent()
 	end)
 	searchWindow:AddChild(subSubValueDropdown)
 	self.subSubValueDropdown = subSubValueDropdown
 
-	-- Sort dropdown
+	-- Sort dropdown — tooltip is now on a label hit frame (was on the dropdown control
+	-- itself, which made it pop up while clicking the dropdown — confusing).
 	local sortDropdown = TOGBankClassic_UI:Create("Dropdown")
 	sortDropdown:SetLabel("Sort")
 	sortDropdown.label:ClearAllPoints()
@@ -683,59 +701,61 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	sortDropdown.label:SetPoint("TOPRIGHT", sortDropdown.frame, "TOPRIGHT", 0, 0)
 	sortDropdown:SetList(SORT_LIST, SORT_ORDER)
 	sortDropdown:SetValue("alpha")  -- Default to A-Z
-	sortDropdown:SetFullWidth(true)
-	sortDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+	sortDropdown:SetWidth(150)
+	sortDropdown:SetCallback("OnValueChanged", function(_, _, value)
 		self.SortMode = value
 		self:DrawContent()
 	end)
-	sortDropdown:SetCallback("OnEnter", function()
-		GameTooltip:SetOwner(sortDropdown.frame, "ANCHOR_BOTTOM")
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine("Sort Order")
-		GameTooltip:AddLine("Choose how to sort search results.", 0.9, 0.9, 0.9, true)
-		GameTooltip:Show()
-	end)
-	sortDropdown:SetCallback("OnLeave", function()
-		GameTooltip:Hide()
-	end)
+	local sortLabelHit = CreateFrame("Frame", nil, sortDropdown.frame)
+	sortLabelHit:SetPoint("TOPLEFT", sortDropdown.frame, "TOPLEFT", 3, 0)
+	sortLabelHit:SetPoint("TOPRIGHT", sortDropdown.frame, "TOPRIGHT", 0, 0)
+	sortLabelHit:SetHeight(18)
+	sortLabelHit:EnableMouse(true)
+	TOGBankClassic_UI:AttachTooltip(sortLabelHit, "ANCHOR_RIGHT", "Sort Order", {
+		"Choose how to sort the search results.",
+		"Options include alphabetical, by quality tier, and by required level.",
+	})
 	searchWindow:AddChild(sortDropdown)
 	self.sortDropdown = sortDropdown
 	self.SortMode = "alpha"  -- Initialize default sort mode
 
-	-- Pagination controls
-	local paginationGroup = TOGBankClassic_UI:Create("SimpleGroup")
-	paginationGroup:SetFullWidth(true)
-	paginationGroup:SetLayout("Flow")
-	paginationGroup:SetHeight(30)
-
-	local prevButton = TOGBankClassic_UI:Create("Button")
-	prevButton:SetText("< Previous")
-	prevButton:SetWidth(100)
-	prevButton:SetDisabled(true)
-	prevButton:SetCallback("OnClick", function()
-		if self.currentPage > 1 then
-			self.currentPage = self.currentPage - 1
-			self:DrawContent()
-		end
+	-- Usable-by-my-level checkbox (standalone AceGUI widget; previously glued to the
+	-- Filter dropdown's right edge). Disabled until a specific Type or Quality is
+	-- selected — scanning every item against player level without a pre-filter is too
+	-- slow on large guild banks.
+	usableCheck = TOGBankClassic_UI:Create("CheckBox")
+	usableCheck:SetLabel("Usable")
+	usableCheck:SetWidth(80)
+	usableCheck:SetCallback("OnValueChanged", function(_, _, value)
+		self.FilterUsableLevel = value
+		self.currentPage = 1
+		self:DrawContent()
 	end)
-	paginationGroup:AddChild(prevButton)
-	self.prevButton = prevButton
+	TOGBankClassic_UI:AttachTooltip(usableCheck, "ANCHOR_TOP", "Usable by my level", {
+		"Hide items whose required level is above your character's current level.",
+		" ",
+		{"Disabled until you pick a Type or Quality first —", 1, 0.5, 0.5, true},
+		{"scanning every item against player level on a large guild bank is too slow.", 1, 0.5, 0.5, true},
+	})
+	searchWindow:AddChild(usableCheck)
+	self.usableCheck = usableCheck
 
-	local nextButton = TOGBankClassic_UI:Create("Button")
-	nextButton:SetText("Next >")
-	nextButton:SetWidth(100)
-	nextButton:SetDisabled(true)
-	nextButton:SetCallback("OnClick", function()
-		local totalPages = math.ceil(self.totalMatches / RESULTS_PER_PAGE)
-		if self.currentPage < totalPages then
-			self.currentPage = self.currentPage + 1
-			self:DrawContent()
+	-- Enable / disable the Usable checkbox; always clears state when disabling so the
+	-- filter doesn't silently persist after the user changes the parent filter.
+	updateUsableCB = function(enabled)
+		if enabled then
+			usableCheck:SetDisabled(false)
+		else
+			usableCheck:SetValue(false)
+			usableCheck:SetDisabled(true)
+			self.FilterUsableLevel = false
 		end
-	end)
-	paginationGroup:AddChild(nextButton)
-	self.nextButton = nextButton
+	end
+	updateUsableCB(false)  -- initial state: disabled until a Type/Quality is picked
 
-	searchWindow:AddChild(paginationGroup)
+	-- Pagination buttons (Prev / Next) live at the bottom-right of the window next
+	-- to the close button — see the "Bottom-right control row" block at the end of
+	-- DrawWindow. They're created AFTER scrollGroup so they layer on top of nothing.
 
 	local scrollGroup = TOGBankClassic_UI:Create("SimpleGroup")
 	scrollGroup:SetLayout("Fill")
@@ -777,6 +797,105 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	scrollGroup:AddChild(resultGroup)
 
 	self.Results = resultGroup
+
+	-- ─── Bottom-right control row ──────────────────────────────────────────────
+	-- Mirrors the inventory window's bottom-right layout: status bar shrunk to
+	-- leave room for icon-sized controls before the AceGUI close button.
+	-- Order right-to-left from close: [Next ">"] [Prev "<"] [Help "i"] [...status bar...]
+	-- All controls are raw frames parented to searchWindow.frame so they live
+	-- outside AceGUI's child layout and don't get re-flowed on resize.
+
+	-- Shrink the status bar to leave ~95px of room on the right for the three icons
+	-- (help 24px + 8px gap + prev 20px + 4px gap + next 20px + ~10px gap to close ≈ 95px).
+	local statusbg = searchWindow.statustext:GetParent()
+	statusbg:ClearAllPoints()
+	statusbg:SetPoint("BOTTOMLEFT",  searchWindow.frame, "BOTTOMLEFT",  15, 15)
+	statusbg:SetPoint("BOTTOMRIGHT", searchWindow.frame, "BOTTOMRIGHT", -210, 15)
+
+	-- Help "i" icon — opens a tooltip explaining the Search window.
+	local helpIcon = CreateFrame("Frame", nil, searchWindow.frame)
+	helpIcon:SetSize(24, 24)
+	helpIcon:SetPoint("BOTTOMRIGHT", searchWindow.frame, "BOTTOMRIGHT", -133, 15)
+	helpIcon:EnableMouse(true)
+	local helpTex = helpIcon:CreateTexture(nil, "OVERLAY")
+	helpTex:SetAllPoints(helpIcon)
+	helpTex:SetTexture("Interface\\Common\\help-i")
+	TOGBankClassic_UI:AttachTooltip(helpIcon, "ANCHOR_TOP", "Search Window — How It Works", {
+		"Type at least 3 characters in |cFFFFFFFFItem Name|r to find items across all banker alts.",
+		"You can also drag an item from your bags into the field to search by ID.",
+		" ",
+		"|cffffd100Filters|r (compact row, auto-wraps based on window width):",
+		"  • Min lvl / Max lvl — required-level range",
+		"  • Filter — pick a Type (then Subtype) or a Quality tier",
+		"  • Sort — how to order results",
+		"  • Usable — hide items above your level (needs a Type or Quality first)",
+		" ",
+		"Click any result to open the request popup. Use |cFFFFFFFF<|r and |cFFFFFFFF>|r at the bottom-right to page through results.",
+	})
+
+	-- Helper that creates one of the small bottom-right pagination buttons.
+	-- Returns a raw frame Button with a SetDisabled(bool) method bolted on so the
+	-- existing DrawContent path (self.prevButton:SetDisabled(...) / self.nextButton:...)
+	-- keeps working without changes. Pattern mirrors the gear icon in Inventory.lua.
+	local function createPaginationButton(label, anchorXOffset, tooltipTitle, tooltipLines, onClick)
+		local btn = CreateFrame("Button", nil, searchWindow.frame)
+		btn:SetSize(20, 20)
+		btn:SetPoint("BOTTOMRIGHT", searchWindow.frame, "BOTTOMRIGHT", anchorXOffset, 17)
+		btn:EnableMouse(true)
+
+		local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+		fs:SetPoint("CENTER", btn, "CENTER", 0, 0)
+		fs:SetText(label)
+		btn.text = fs
+
+		btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+		btn:SetScript("OnClick", onClick)
+
+		-- Disabled visual: grey out the text. Raw frame buttons don't auto-do this.
+		btn:SetScript("OnDisable", function(self_)
+			if self_.text then self_.text:SetTextColor(0.5, 0.5, 0.5) end
+		end)
+		btn:SetScript("OnEnable", function(self_)
+			if self_.text then self_.text:SetTextColor(1, 1, 1) end
+		end)
+
+		-- AceGUI-compatible alias so DrawContent's existing :SetDisabled() calls work.
+		function btn:SetDisabled(disabled)
+			if disabled then self:Disable() else self:Enable() end
+		end
+
+		TOGBankClassic_UI:AttachTooltip(btn, "ANCHOR_TOP", tooltipTitle, tooltipLines)
+		return btn
+	end
+
+	-- Prev "<" button: at -163 (8px gap from help icon's -133 + 24px width).
+	self.prevButton = createPaginationButton(
+		"<", -163,
+		"Previous page",
+		{ "Show the previous page of results.", "Disabled when you're on the first page." },
+		function()
+			if self.currentPage > 1 then
+				self.currentPage = self.currentPage - 1
+				self:DrawContent()
+			end
+		end
+	)
+	self.prevButton:SetDisabled(true)
+
+	-- Next ">" button: at -187 (4px gap from prev's -163 + 20px width — tight paired grouping).
+	self.nextButton = createPaginationButton(
+		">", -187,
+		"Next page",
+		{ "Show the next page of results.", "Disabled when you're on the last page." },
+		function()
+			local totalPages = math.ceil(self.totalMatches / RESULTS_PER_PAGE)
+			if self.currentPage < totalPages then
+				self.currentPage = self.currentPage + 1
+				self:DrawContent()
+			end
+		end
+	)
+	self.nextButton:SetDisabled(true)
 end
 
 function TOGBankClassic_UI_Search:BuildSearchData()
@@ -877,8 +996,12 @@ function TOGBankClassic_UI_Search:SubFilterMatches(item)
 	if not item then return true end
 
 	-- No filters active? Always match
-	local mode = self.SubFilterMode
-	if not self.FilterUsableLevel and (not mode or mode == FILTER_ANY) then
+	local mode    = self.SubFilterMode
+	local minLvl  = self.MinLevel or 0
+	local maxLvl  = self.MaxLevel or 0  -- 0 means "no max"
+	local hasLvlFilter = (minLvl > 0) or (maxLvl > 0)
+	if not self.FilterUsableLevel and not hasLvlFilter
+	   and (not mode or mode == FILTER_ANY) then
 		return true
 	end
 
@@ -891,6 +1014,15 @@ function TOGBankClassic_UI_Search:SubFilterMatches(item)
 		---@diagnostic disable-next-line: undefined-global
 		local playerLevel = UnitLevel("player") or 1
 		if (info.level or 0) > playerLevel then return false end
+	end
+
+	-- Min/Max required-level range check.
+	-- info.level is the item's required level. Items with no level (trade goods, etc.)
+	-- are treated as level 0: they pass when no min is set, fail any positive min.
+	if hasLvlFilter then
+		local lvl = info.level or 0
+		if minLvl > 0 and lvl < minLvl then return false end
+		if maxLvl > 0 and lvl > maxLvl then return false end
 	end
 
 	-- Type/subtype filter
@@ -923,6 +1055,8 @@ function TOGBankClassic_UI_Search:DrawContent()
 	self.Results:DoLayout()
 
 	local hasSubFilter = self.FilterUsableLevel
+		or ((self.MinLevel or 0) > 0)
+		or ((self.MaxLevel or 0) > 0)
 		or (self.SubFilterMode and self.SubFilterMode ~= FILTER_ANY
 			and (self.SubFilterValue and self.SubFilterValue ~= FILTER_ANY
 				or (self.SubFilterSubValue and self.SubFilterSubValue ~= FILTER_ANY)))

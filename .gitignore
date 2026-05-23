@@ -2,5 +2,12 @@
 tmpclaude-*
 .claude/*
 
-# Build artifacts
+# Build artifacts (no local build script anymore; BigWigs CurseForge packager
+# produces all release zips. Ignore kept defensively in case a future local
+# script reintroduces a dist/ folder.)
 dist/
+
+# Python tooling caches and bulky wago.tools CSV dumps (regenerable by
+# re-running tools/build-itemdb.py — no point checking them in).
+tools/__pycache__/
+tools/wago_cache/

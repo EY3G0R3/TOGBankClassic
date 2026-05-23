@@ -226,6 +226,61 @@ function TOGBankClassic_UI:HideTooltip()
 	GameTooltip_SetDefaultAnchor(GameTooltip, UIParent)
 end
 
+-- AttachTooltip(target, anchor, title, lines)
+--   target: AceGUI widget (has SetCallback + .frame) OR raw frame (CreateFrame).
+--   anchor: GameTooltip anchor string, e.g. "ANCHOR_RIGHT", "ANCHOR_TOP", "ANCHOR_BOTTOM".
+--           Defaults to "ANCHOR_RIGHT".
+--   title:  string shown as the first line in default-yellow tooltip title style.
+--   lines:  optional array of body lines (each shown gray, wrapped). Each entry is
+--           either a plain string OR a {text, r, g, b, wrap} table for custom colour.
+--
+-- Behaviour:
+--   - Auto-detects AceGUI vs raw frame and wires OnEnter/OnLeave via the right API.
+--   - GameTooltip:SetOwner is called on the trigger's .frame (AceGUI) or the trigger
+--     itself (raw frame) so the tooltip anchors visually where the cursor is.
+--   - OnLeave delegates to TOGBankClassic_UI:HideTooltip() so the default-anchor reset
+--     matches the rest of the addon.
+--
+-- Use this for ALL non-item tooltips. The pattern of manually calling
+-- GameTooltip:SetOwner / AddLine / Show is being phased out — prefer this helper
+-- so adding new tooltips is one call instead of a 5-line scriptlet.
+function TOGBankClassic_UI:AttachTooltip(target, anchor, title, lines)
+	if not target then return end
+	local anchorFrame = target.frame or target
+	local resolvedAnchor = anchor or "ANCHOR_RIGHT"
+
+	local function onEnter()
+		GameTooltip:SetOwner(anchorFrame, resolvedAnchor)
+		GameTooltip:ClearLines()
+		if title then GameTooltip:AddLine(title) end
+		if lines then
+			for _, line in ipairs(lines) do
+				if type(line) == "string" then
+					GameTooltip:AddLine(line, 0.9, 0.9, 0.9, true)
+				elseif type(line) == "table" then
+					GameTooltip:AddLine(
+						line[1] or "",
+						line[2] or 0.9, line[3] or 0.9, line[4] or 0.9,
+						line[5] ~= false
+					)
+				end
+			end
+		end
+		GameTooltip:Show()
+	end
+	local function onLeave()
+		TOGBankClassic_UI:HideTooltip()
+	end
+
+	if type(target.SetCallback) == "function" then
+		target:SetCallback("OnEnter", onEnter)
+		target:SetCallback("OnLeave", onLeave)
+	else
+		target:SetScript("OnEnter", onEnter)
+		target:SetScript("OnLeave", onLeave)
+	end
+end
+
 function TOGBankClassic_UI:OnInsertLink(link)
 	if TOGBankClassic_UI_Search.searchField and TOGBankClassic_UI_Search.searchField.editbox:HasFocus() then
 		TOGBankClassic_UI_Search.SearchText = link

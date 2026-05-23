@@ -103,11 +103,12 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	self.Window = window
 	self.StatusBar = TOGBankClassic_StatusBar:Attach(window)
 
-	-- Shrink status bar right edge to make room for the help icon
+	-- Shrink status bar right edge to make room for the help and settings icons.
+	-- Layout (right to left): [Close button] [Help "?" icon @ -133] [Gear icon @ -165] [Status bar ending at -195]
 	local statusbg = window.statustext:GetParent()
 	statusbg:ClearAllPoints()
 	statusbg:SetPoint("BOTTOMLEFT",  window.frame, "BOTTOMLEFT",  15, 15)
-	statusbg:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -163, 15)
+	statusbg:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -195, 15)
 
 	-- Help "?" icon — sits in the gap between the status bar and the close button
 	local helpIcon = CreateFrame("Frame", nil, window.frame)
@@ -132,6 +133,60 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 		GameTooltip:Show()
 	end)
 	helpIcon:SetScript("OnLeave", function()
+		TOGBankClassic_UI:HideTooltip()
+	end)
+
+	-- Gear icon — opens TOGBankClassic settings (Escape → Options → AddOns → TOGBankClassic).
+	-- 20x20 to match FastGuildInvite's settings gear (same project author, same visual feel).
+	-- Bottom-anchor offset +17 (vs help icon's +15) so the gear's vertical centre lines up with
+	-- the help icon's (help is 24x24 → centre y=27; gear is 20x20 → bottom 17 + 10 = centre 27).
+	-- Texture pattern matches FGI: the Trade_Engineering icon looks like a gear, but Blizzard's
+	-- icon files ship with ~8% transparent padding on each edge; cropping the TexCoord to
+	-- (0.08-0.92) makes the visible gear fill the button instead of looking floaty in the middle.
+	local settingsIcon = CreateFrame("Button", nil, window.frame)
+	settingsIcon:SetSize(20, 20)
+	settingsIcon:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -165, 17)
+	settingsIcon:EnableMouse(true)
+	settingsIcon:SetNormalTexture("Interface\\Icons\\Trade_Engineering")
+	settingsIcon:SetPushedTexture("Interface\\Icons\\Trade_Engineering")
+	local gearNormal = settingsIcon:GetNormalTexture()
+	if gearNormal then gearNormal:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+	local gearPushed = settingsIcon:GetPushedTexture()
+	if gearPushed then
+		gearPushed:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+		gearPushed:SetVertexColor(0.7, 0.7, 0.7)
+	end
+	-- Expand the click hit-rect 2px beyond the visible button so the click target
+	-- matches the larger feel a player expects from a 24px-wide icon.
+	settingsIcon:SetHitRectInsets(-2, -2, -2, -2)
+	settingsIcon:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	settingsIcon:SetScript("OnClick", function()
+		if not (TOGBankClassic_Options and TOGBankClassic_Options.Open) then return end
+		-- Blizzard's Settings panel takes focus when it opens and (depending on WoW
+		-- version) can hide other top-level frames. Our inventory is registered in
+		-- UISpecialFrames, so a focus-grab can propagate through the controller's
+		-- OnHide and close it. We don't want that — the user wants to return to the
+		-- inventory after closing Settings. So: remember whether the inventory was
+		-- open BEFORE opening Settings, and if it got closed by the focus change,
+		-- restore it on the next frame. If Settings doesn't close it, this is a no-op.
+		local wasOpen = TOGBankClassic_UI_Inventory.isOpen
+		TOGBankClassic_Options:Open()
+		if wasOpen then
+			C_Timer.After(0, function()
+				if not TOGBankClassic_UI_Inventory.isOpen then
+					TOGBankClassic_UI_Inventory:Open()
+				end
+			end)
+		end
+	end)
+	settingsIcon:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine("TOGBankClassic Settings")
+		GameTooltip:AddLine("Open the addon options panel (banker/scan configuration, debug logging, minimap button, etc.).", 0.9, 0.9, 0.9, true)
+		GameTooltip:Show()
+	end)
+	settingsIcon:SetScript("OnLeave", function()
 		TOGBankClassic_UI:HideTooltip()
 	end)
 

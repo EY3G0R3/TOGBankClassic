@@ -2127,6 +2127,17 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		name = "purgeghosts",
+		help = "manually re-run the linkless-gear-ghost purge migration (normally fires 30s after login)",
+		handler = function()
+			if TOGBankClassic_Database and TOGBankClassic_Database.PurgeLinklessGearGhosts then
+				TOGBankClassic_Database:PurgeLinklessGearGhosts()
+			else
+				TOGBankClassic_Output:Response("|cFFFF0000Database:PurgeLinklessGearGhosts not available.|r")
+			end
+		end,
+	},
+	{
 		name = "hashdump",
 		help = "dump raw latestBankerHashes table used for sync comparison",
 		expert = true,
@@ -2168,10 +2179,74 @@ local COMMAND_REGISTRY = {
 	},
 }
 
--- Build lookup table for fast command dispatch
+-- Developer-only commands: hidden from /togbank help, only dispatched via /togbank dev <name>.
+-- Catalogued in docs/DEV_COMMANDS.md (not shipped to players; docs/ is ignored in .pkgmeta).
+-- Add a name here to flip a command from top-level user-facing to dev-only without touching the
+-- COMMAND_REGISTRY entry itself.
+local DEV_COMMAND_NAMES = {
+	["clear-delta-errors"] = true,
+	clearhistory           = true,
+	clearsnapshots         = true,
+	debugdump              = true,
+	debuglogsave           = true,
+	deltaerrors            = true,
+	deltahistory           = true,
+	deltastats             = true,
+	forcedelta             = true,
+	forcefull              = true,
+	hashdebug              = true,
+	hashdump               = true,
+	hashupdate             = true,
+	netq                   = true,
+	perfstats              = true,
+	persistcheck           = true,
+	protocol               = true,
+	purgeghosts            = true,
+	reqscan                = true,
+	resetmetrics           = true,
+	test                   = true,
+	versioncheck           = true,
+}
+
+-- Build lookup tables for fast command dispatch.
+-- Top-level COMMAND_HANDLERS excludes dev commands; DEV_COMMAND_HANDLERS holds only those.
 local COMMAND_HANDLERS = {}
+local DEV_COMMAND_HANDLERS = {}
 for _, cmd in ipairs(COMMAND_REGISTRY) do
-	COMMAND_HANDLERS[cmd.name] = cmd.handler
+	if DEV_COMMAND_NAMES[cmd.name] then
+		DEV_COMMAND_HANDLERS[cmd.name] = cmd.handler
+	else
+		COMMAND_HANDLERS[cmd.name] = cmd.handler
+	end
+end
+
+-- /togbank dev <subcommand> [args] — dispatcher for developer-only commands.
+-- Top-level command, no help text → hidden from /togbank help output.
+COMMAND_HANDLERS["dev"] = function(arg1)
+	local rest = tostring(arg1 or ""):trim()
+	if rest == "" or rest == "help" then
+		TOGBankClassic_Chat:ShowDevHelp()
+		return
+	end
+
+	-- Split first token from remainder so dev commands can take their own args.
+	local subcommand, subArgs
+	local space = rest:find(" ")
+	if space then
+		subcommand = rest:sub(1, space - 1)
+		subArgs    = rest:sub(space + 1):trim()
+	else
+		subcommand = rest
+		subArgs    = nil
+	end
+
+	local devHandler = DEV_COMMAND_HANDLERS[subcommand]
+	if devHandler then
+		devHandler(subArgs)
+	else
+		TOGBankClassic_Output:Response("Unknown dev subcommand: %s", subcommand)
+		TOGBankClassic_Chat:ShowDevHelp()
+	end
 end
 
 -- Instructions as multiline strings for readability
@@ -2223,9 +2298,9 @@ function TOGBankClassic_Chat:ShowHelp()
 	TOGBankClassic_Output:Response("\n%sCommands:%s", H, R)
 	TOGBankClassic_Output:Response("%s/togbank%s - display the TOGBankClassic interface", C, R)
 
-	-- Print basic commands
+	-- Print basic commands (skip dev commands)
 	for _, cmd in ipairs(COMMAND_REGISTRY) do
-		if cmd.help and not cmd.expert then
+		if cmd.help and not cmd.expert and not DEV_COMMAND_NAMES[cmd.name] then
 			local usage = cmd.usage and (" " .. cmd.usage) or ""
 			TOGBankClassic_Output:Response("%s/togbank %s%s%s - %s", C, cmd.name, usage, R, cmd.help)
 		end
@@ -2234,9 +2309,9 @@ function TOGBankClassic_Chat:ShowHelp()
 	-- Expert commands header
 	TOGBankClassic_Output:Response("\n%sExpert commands:%s", H, R)
 
-	-- Print expert commands
+	-- Print expert commands (skip dev commands)
 	for _, cmd in ipairs(COMMAND_REGISTRY) do
-		if cmd.help and cmd.expert then
+		if cmd.help and cmd.expert and not DEV_COMMAND_NAMES[cmd.name] then
 			local usage = cmd.usage and (" " .. cmd.usage) or ""
 			TOGBankClassic_Output:Response("%s/togbank %s%s%s - %s", C, cmd.name, usage, R, cmd.help)
 		end
@@ -2247,6 +2322,34 @@ function TOGBankClassic_Chat:ShowHelp()
 		TOGBankClassic_Output:Response("\n%s%s%s", H, instruction.title, R)
 		TOGBankClassic_Output:Response(instruction.text)
 	end
+end
+
+-- Show dev commands. Only invoked via /togbank dev help; not advertised to players.
+-- Full documentation lives in docs/DEV_COMMANDS.md (not shipped to users).
+function TOGBankClassic_Chat:ShowDevHelp()
+	local H = HELP_COLOR.HEADER
+	local C = HELP_COLOR.COMMAND
+	local R = HELP_COLOR.RESET
+
+	TOGBankClassic_Output:Response("\n%sDeveloper commands (not user-facing):%s", H, R)
+	TOGBankClassic_Output:Response("%s/togbank dev help%s - this list", C, R)
+
+	-- Collect and alphabetize dev command entries
+	local entries = {}
+	for _, cmd in ipairs(COMMAND_REGISTRY) do
+		if DEV_COMMAND_NAMES[cmd.name] then
+			table.insert(entries, cmd)
+		end
+	end
+	table.sort(entries, function(a, b) return a.name < b.name end)
+
+	for _, cmd in ipairs(entries) do
+		local usage = cmd.usage and (" " .. cmd.usage) or ""
+		local helpText = cmd.help or "(no description)"
+		TOGBankClassic_Output:Response("%s/togbank dev %s%s%s - %s", C, cmd.name, usage, R, helpText)
+	end
+
+	TOGBankClassic_Output:Response("\n%sSee docs/DEV_COMMANDS.md for detailed usage and workflows.%s", H, R)
 end
 
 function TOGBankClassic_Chat:ProcessQueue()
@@ -2282,7 +2385,7 @@ function TOGBankClassic_Chat:ReprocessQueue()
 	if self.reprocessTimer then
 		return
 	end
-	self.reprocessTimer = TOGBankClassic_Core:ScheduleTimer(function(...)
+	self.reprocessTimer = TOGBankClassic_Core:ScheduleTimer(function()
 		TOGBankClassic_Chat.reprocessTimer = nil
 		TOGBankClassic_Chat:OnTimer()
 	end, TIMER_INTERVALS.ALT_DATA_QUEUE_RETRY)
@@ -2519,7 +2622,7 @@ function TOGBankClassic_Chat:PrintDeltaHistory()
 	local altCount = 0
 
 	-- Count total deltas and alts
-	for altName, deltas in pairs(db.deltaHistory) do
+	for _, deltas in pairs(db.deltaHistory) do
 		altCount = altCount + 1
 		if type(deltas) == "table" then
 			totalDeltas = totalDeltas + #deltas

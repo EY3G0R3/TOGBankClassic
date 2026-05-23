@@ -1,5 +1,74 @@
 # TOGBankClassic Changelog
 
+## [v1.1.0] (2026-05-23) - Data Corruption Fix: Linkless Gear Ghosts & Inflated Counts
+
+### Bug Fixes
+
+- **ITEM-004: `EnsureLegacyFields` was poisoning `alt.bank.items` with mail-item references** — When peer-relayed alt data arrived carrying only `alt.items` (the aggregated bank+bags+mail view) without the separate `bank/bags/mail` fields, `EnsureLegacyFields` "reconstructed" `alt.bank.items` by copying every entry from `alt.items` — including mail items. Subsequent re-aggregation in `ApplyDelta` then ran `Aggregate(bank, bags)` followed by `Aggregate(result, mail)`, summing mail items twice per delta application. Across many peer-relay cycles, gear item counts inflated monotonically — in real SavedVariables, "Battlefell Sabre of Power" (ID=15220) reached Count=6237 and base "Battlefell Sabre" reached Count=21 (both physically impossible for non-stacking weapons). Fix removes the copy loop entirely; the next direct delta from the actual banker repopulates `bank.items` cleanly. Location: `Modules/Guild.lua` `EnsureLegacyFields` (~line 2282). Root cause documented in `docs/DELTA_BUGS.md` ITEM-004.
+
+- **ITEM-003 guard holes on `ApplyItemDelta` update/fallback paths** — The receive-side guard against linkless weapons/armor only fired on the new-insert paths. The ID-only fallback paths in both STEP 2 (modified) at line 904 and STEP 3 (added) at line 1010 silently mutated linkless gear ghost entries into suffixed entries via `for field, value in pairs(changes) do existingItem[field] = value end` and `existingItem.Count = newItem.Count`. This propagated whatever Count the inbound delta carried into a ghost that should never have existed, causing count divergence across replicas. Fix detects ID-only-fallback matches against linkless gear and DROPS the ghost before falling through to the clean-add path, where the existing ITEM-003 new-insert guard catches subsequent linkless gear payloads. Location: `Modules/DeltaComms.lua` `ApplyItemDelta` STEP 2 and STEP 3.
+
+- **`NeedsLink` / `ItemClassNeedsLink` could strip gear links during cold-cache windows** — The fallback path in `NeedsLink` consulted the item's hyperlink suffix field when `GetItemInfo`'s class lookup returned nil (uncached). For base/no-suffix gear items the suffix is 0, so the fallback returned false and stripped the link, producing the linkless gear ghosts that ITEM-003 / ITEM-004 then propagated. Replaced both functions with a default-deny strip policy: a link is stripped ONLY when class can be positively confirmed as non-gear (class != 2 AND != 4). Uncached, unparseable, or unknown items now preserve the link. The "Weapons (class 2) and Armor (class 4) ALWAYS keep their Link" rule documented in the file finally actually holds. Location: `Modules/Item.lua` `NeedsLink`, `ItemClassNeedsLink`, plus new `Item:GetClass(itemID)` tiered-lookup helper.
+
+### New Features
+
+- **Generic tooltip helper `TOGBankClassic_UI:AttachTooltip(target, anchor, title, lines)`** — Single one-call API for non-item tooltips. Auto-detects AceGUI widget vs raw frame and wires `OnEnter`/`OnLeave` via the right API. Replaces the 5-line `GameTooltip:SetOwner` / `ClearLines` / `AddLine` / `Show` scriptlet pattern that was sprinkled across UI modules. New Search-window tooltips use it; existing call-sites kept as-is for now (gradual migration). Location: `Modules/UI.lua` (~line 230).
+
+- **Search window: info "i" icon + Prev/Next at bottom-right** — Mirrors the inventory window's bottom-right layout. The "?" help icon explains how the Search window works (input field, filters, pagination). Pagination buttons moved from a full-width "< Previous / Next >" row to compact `<` / `>` icon-sized buttons next to the close button — saves ~30px of vertical space, freeing the result list. Status bar shrunk by ~210px to leave room. Both pagination buttons keep the existing `:SetDisabled(bool)` API so `DrawContent`'s page-state logic works unchanged. Location: `Modules/UI/Search.lua` bottom-right control row.
+
+- **Search window: tooltips on Min lvl / Max lvl / Usable** — All three filter controls now have explanatory hover tooltips wired via the new `AttachTooltip` helper. Min/Max explain that empty/0 means "no constraint" and that items without a level are hidden when a min is set. Usable explains the gating (disabled until a Type/Quality is picked).
+
+- **Search window: Sort tooltip moved from dropdown control to label** — Previously the Sort tooltip fired when hovering the dropdown itself, which competed with the click-to-open-dropdown gesture (popped up while the user was trying to click). Now it lives on a hit frame over the "Sort" label, matching the Filter dropdown's pattern.
+
+- **Search window: filter row reordered (Min lvl, Max lvl, then the rest)** — The numeric inputs now lead the row so the small controls cluster densely in the top-left and don't get orphaned on their own row when the window is narrow.
+
+- **Search window: Min/Max EditBox labels repositioned** — Labels shifted 5px right (+5, -2) so they no longer overhang the EditBox's left edge.
+
+- **Min/Max level filter in the Search window** — Two new compact numeric inputs (`Min lvl` and `Max lvl`, 60px each) let players filter results by the item's required level. Empty or non-numeric input is treated as "no constraint" so partial ranges work (just a min, just a max, or both). Cheap to compute → no gating on other filters being set first. Combines with the existing Type/Quality/Usable filters. Location: `Modules/UI/Search.lua` `SubFilterMatches` and filter section.
+
+- **Compact, auto-wrapping filter row in the Search window** — The filters used to be four full-width-stacked dropdowns plus an inline checkbox glued to the Filter dropdown's right edge — five tall rows that ate half the window before the results even started. They're now a single Flow-laid-out row with each control sized to its content (Filter 110px, Subtype 130, Sub-subtype 130, Sort 150, Min lvl 60, Max lvl 60, Usable 80 — total ~720px). On a wide search window everything fits on one row; resize the window narrower and they wrap onto multiple rows automatically. The "Usable by my level" checkbox is now a standalone AceGUI CheckBox (previously a raw CheckButton anchored to the Filter dropdown's frame), so it participates in the wrap layout instead of forcing the Filter dropdown to stay 165px wider than it needs to be. Location: `Modules/UI/Search.lua` filter section.
+
+- **Settings gear icon on the main inventory window** — A new ⚙ button sits next to the existing help "?" icon at the bottom-right of the inventory window. Clicking it opens the TOGBankClassic options panel directly (equivalent to Escape → Options → AddOns → TOGBankClassic), so players don't have to navigate through the game menu to change banker/scan configuration, minimap button, debug settings, etc. Hover for a tooltip. Location: `Modules/UI/Inventory.lua` (~line 144).
+
+- **One-shot ghost-purge migration on `Database:Init`** — Scheduled 30 seconds after addon init (gives WoW's item cache time to warm). Walks every alt's `items`, `bank.items`, `bags.items`, and `mail.items` arrays; drops entries that have no `Link` field AND are confirmed by `ItemClassNeedsLink` to be class 2/4 gear. Recovers existing corruption in SavedVariables without requiring `/togbank wipe`. Always prints a result line so users know it ran (purged count + skipped-suspect count, even when zero). Can be manually re-run via `/togbank dev purgeghosts`. Location: `Modules/Database.lua` `PurgeLinklessGearGhosts`.
+
+- **Static item DB populated from wago.tools (`Modules/Static/ItemDB.lua` + `SuffixDB.lua`)** — Ships with ~24,000 item entries (every item in Classic Era 1.15.8) and ~2,000 random-suffix fragments. `NeedsLink` / `ItemClassNeedsLink` consult `TOGBankClassic_ItemDB` first via a tiered lookup (static DB → `GetItemInfo` → default-deny), so strip decisions no longer depend on the volatile WoW client cache. Regenerated by `tools/build-itemdb.py` which pulls Blizzard's actual DB2 dumps (ItemSparse + Item + ItemRandomProperties + ItemRandomSuffix). Wire schema unchanged in this release; bandwidth-reduction changes (Phase 3) will land in a follow-up release.
+
+- **`tools/build-itemdb.py` — wago.tools fetch + Lua generator** — Python script (no third-party deps, Python 3.9+) that fetches DB2 tables from wago.tools, joins, filters suffix junk (rejects fragments not starting with "of "), and emits `Modules/Static/{ItemDB,SuffixDB}.lua`. Caches downloaded CSVs under `tools/wago_cache/` (gitignored). Re-run when a new Classic patch ships new items. Pattern modelled on TOGProfessionMaster's `tools/wago_probe.py`. Excluded from packaged builds (`.pkgmeta` `tools/` entry).
+
+- **Developer-only command namespace `/togbank dev <subcommand>`** — Twenty-two dev/debug commands previously listed in `/togbank help` (clearhistory, clearsnapshots, deltaerrors, deltahistory, deltastats, forcedelta, forcefull, perfstats, persistcheck, protocol, resetmetrics, test, versioncheck, hashupdate, hashdebug, hashdump, netq, reqscan, debugdump, debuglogsave, clear-delta-errors, plus the new purgeghosts) are now hidden from the user-facing help output and dispatched only via the `dev` namespace. `/togbank dev help` lists them for developers. Reduces the top-level command list from ~30 to ~11 entries. New `DEV_COMMAND_NAMES` lookup in `Modules/Chat.lua` controls which commands route through the dev dispatcher — flipping a command between user-facing and dev-only is a one-line change. Full catalogue and developer workflows documented in `docs/DEV_COMMANDS.md` (not packaged to users — `docs/` is ignored in `.pkgmeta`).
+
+- **`/togbank dev purgeghosts` — manual ghost-purge trigger** — Re-runs the linkless-gear-ghost migration on demand. With the populated static `TOGBankClassic_ItemDB` shipping in this release, the purge can confidently classify almost any item without relying on the WoW client's session cache. Location: `Modules/Chat.lua` COMMAND_REGISTRY.
+
+### Internal
+
+- **Removed obsolete local-build pipeline** — Deleted `package.bat` (referenced a no-longer-existing `embeds.xml` and would have errored on run) and the stale `dist/` directory (contained one orphan `TOGBankClassic.@project-version@.zip` from before the move to the BigWigs CurseForge packager). All release builds now flow exclusively through `.pkgmeta` + the CurseForge auto-builder. Defensive `**/*.bat` ignore pattern kept in `.pkgmeta` to catch any future leftover scripts.
+
+- **Removed dead `function s(a)` at `Guild.lua:3030`** — Generic table-entry counter, defined as a global (lowercase), never called from anywhere in the codebase. Eliminating it removes one `lowercase-global` warning and two `unused-local` hints (`c`, `d` loop variables).
+
+- **CLAUDE.md updated** — Replaced the references to `package.bat`/`dist/` (now gone) with notes on the current packaging pipeline. The "scratch files use `tmpclaude-` prefix" rule is preserved but no longer mentions the obsolete robocopy exclusion.
+
+- **Documentation cleanup** — Removed duplicate `docs/CHANGELOG.md` (the canonical changelog has always been the repo-root `CHANGELOG.md`). Updated `.pkgmeta` ignore list: `docs/` directory now fully excluded from packaged builds (was: `*.md` only), `CLAUDE.md` explicitly excluded, `*.md` no longer blanket-ignored so root-level `CHANGELOG.md` ships to CurseForge as intended.
+
+- **README.txt cleanup** — Removed dev commands from the EXPERT COMMANDS section. Rewrote MONITORING DELTA SYNC and two TROUBLESHOOTING entries to direct players at debug logging instead of dev-only counters. Kept genuinely user-facing expert commands: `compact`, `debuglog`/`debuglogclear`/`debuglogstats`/`debugtab`/`debugtabremove`, `roster`, `wipe`, `wipeall`, `wipeframes`, `debug`.
+
+- **`Tests.lua` lint fixes** — Suppressed two `duplicate-set-field` warnings on the mocked `Database.GetGuildDeltaSupport` reassignments using the established `---@diagnostic disable-next-line` pattern.
+
+- **Minor lint cleanup in `Chat.lua`** — Removed an unused vararg and an unused loop-variable name in `ProcessQueue` and `PrintDeltaHistory` respectively (encountered while editing the dispatcher).
+
+- **`.luarc.json` global registration** — Added `TOGBankClassic_ItemDB`, `TOGBankClassic_SuffixDB` to `diagnostics.globals`.
+
+- **TOC additions** — new `Modules/Static/ItemDB.lua` and `Modules/Static/SuffixDB.lua` load entries (loaded early so anything that queries item class has them available).
+
+### Developer / Sync architecture follow-ups (planned, not in this release)
+
+- Bump `PROTOCOL.VERSION` to 3 once the static DB is populated and committed.
+- Peer-aware `StripDeltaLinks`: emit minimal `{ID, Count, suffixID?, randomProperty?}` payload to peers known to support the static DB; continue sending legacy `{ID, Count, Link/ItemString}` to old peers. Backwards-compatible per Option A in the design discussion.
+- Update `ApplyItemDelta` and `ReceiveAltData` to reconstruct items from minimal payloads using `TOGBankClassic_ItemDB` and `TOGBankClassic_SuffixDB`.
+- Expected wire bandwidth reduction: 4-5x for non-gear items, 5-7x for random-suffix gear, 8-10x for fixed-roll gear once everyone is on the new protocol.
+
+---
+
 ## [v1.0.0] (2026-04-11) - First Stable Release: Fulfill Location Awareness & Polish
 
 ### New Features

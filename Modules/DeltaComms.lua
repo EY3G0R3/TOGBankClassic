@@ -894,6 +894,7 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 			if changes and changes.ID then
 				-- DUPLICATION-FIX: Try full key first, then fallback to ID-only
 				local existingItem = nil
+				local matchedViaIDOnlyFallback = false
 
 				if changes.Link or changes.ItemString then
 					-- Full item with Link - use normalized key
@@ -904,11 +905,42 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 					-- Fallback: check ID-only index if not found
 					if not existingItem then
 						existingItem = itemsByIDOnly[tostring(changes.ID)]
+						if existingItem then
+							matchedViaIDOnlyFallback = true
+						end
 					end
 				else
 					-- Minimal item without Link - use ID-only key
 					local key = tostring(changes.ID)
 					existingItem = itemsByKey[key] or itemsByIDOnly[key]
+					if itemsByIDOnly[key] == existingItem then
+						matchedViaIDOnlyFallback = true
+					end
+				end
+
+				-- [ITEM-003 GUARD-HOLE FIX] If we matched a LINKLESS existing entry via the
+				-- ID-only fallback and the incoming changes describe a SUFFIXED gear item,
+				-- the existing entry is a stripped-gear GHOST (from a pre-fix delta or a
+				-- cold-cache scrape that bypassed NeedsLink). Mutating it in place would
+				-- propagate the ghost's potentially-inflated Count to a fresh suffixed
+				-- variant, corrupting display and replicating to peers. Drop the ghost
+				-- and let STEP 3 add the suffixed entry cleanly. See docs/DELTA_BUGS.md
+				-- ITEM-004 / ghost-mutation analysis for the full chain.
+				if existingItem and matchedViaIDOnlyFallback
+				   and not existingItem.Link and not existingItem.ItemString
+				   and TOGBankClassic_Item
+				   and TOGBankClassic_Item:ItemClassNeedsLink(changes.ID) == true then
+					for i = #items, 1, -1 do
+						if items[i] == existingItem then
+							table.remove(items, i)
+							break
+						end
+					end
+					itemsByIDOnly[tostring(changes.ID)] = nil
+					existingItem = nil  -- force the else branch below to ADD as new (with guard)
+					TOGBankClassic_Output:Debug("DELTA", "APPLY",
+						"[ITEM-003 GUARD] STEP2: dropped linkless gear ghost ID=%d before applying suffixed modification",
+						changes.ID)
 				end
 
 				if existingItem then
@@ -975,13 +1007,34 @@ function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
 
 				-- Fallback: ID-only match ONLY for linkless existing entries
 				-- (upgrades old-format {ID,Count} stubs to linked items)
+				local matchedViaLinklessFallback = false
 				if not existingItem then
 					for _, item in ipairs(items) do
 						if item and item.ID == newItem.ID and not item.Link and not item.ItemString then
 							existingItem = item
+							matchedViaLinklessFallback = true
 							break
 						end
 					end
+				end
+
+				-- [ITEM-003 GUARD-HOLE FIX] If we hit a linkless GEAR entry via the fallback,
+				-- that entry is a stripped-gear GHOST. Don't mutate it into a suffixed entry —
+				-- doing so propagates whatever Count divergence the ghost picked up from
+				-- prior cycles. Drop the ghost and ADD the new suffixed item cleanly.
+				if existingItem and matchedViaLinklessFallback
+				   and TOGBankClassic_Item
+				   and TOGBankClassic_Item:ItemClassNeedsLink(newItem.ID) == true then
+					for i = #items, 1, -1 do
+						if items[i] == existingItem then
+							table.remove(items, i)
+							break
+						end
+					end
+					existingItem = nil
+					TOGBankClassic_Output:Debug("DELTA", "APPLY",
+						"[ITEM-003 GUARD] STEP3: dropped linkless gear ghost ID=%d before adding suffixed entry",
+						newItem.ID)
 				end
 
 				if existingItem then

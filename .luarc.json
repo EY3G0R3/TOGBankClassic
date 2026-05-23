@@ -109,7 +109,9 @@
         "getmetatable",
         "SendMailSubjectEditBox",
         "SecondsToTime",
-        "DEFAULT_CHAT_FRAME"
+        "DEFAULT_CHAT_FRAME",
+        "TOGBankClassic_ItemDB",
+        "TOGBankClassic_SuffixDB"
     ],
     "runtime.version": "Lua 5.1",
     "workspace.library": [
@@ -117,6 +119,9 @@
         "${3rd}/busted/library"
     ],
     "diagnostics.disable": [
-        "need-check-nil"
+        "need-check-nil",
+        "unused-local",
+        "unused-vararg",
+        "redefined-local"
     ]
 }

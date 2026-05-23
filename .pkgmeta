@@ -18,15 +18,40 @@ required-dependencies:
 
 # External dependencies (Ace3, VersionCheck) are handled via required-dependencies above
 
-# Keep noise out of the zip
+# Keep noise out of the zip.
 ignore:
+  # Version control + IDE state
   - .git/
   - .github/
+  - .gitattributes
+  - .gitignore
   - .vscode/
-  # - "*.txt"
+  - "*.code-workspace"
+
+  # Dev-facing docs and design notes (not for end users)
+  - docs/
+  - CLAUDE.md
+
+  # Build tooling (Python scripts that pull from wago.tools to regenerate
+  # Modules/Static/*.lua — dev-side only, users don't need them).
+  - tools/
+
+  # Linter / language-server configs
+  - .luarc.json
+  - .markdownlint.json
+
+  # Build / packaging scripts (none currently exist — BigWigs CurseForge
+  # packager produces all builds — but pattern stays defensive in case a
+  # future local build script slips in).
   - "**/*.ps1"
   - "**/*.bat"
-  - "*.code-workspace"
-  - ".luarc.json"
-  - "*.md"
-  - "*.bat"
+
+  # Bundled library documentation (the libs themselves ship, their READMEs don't)
+  - "Libs/**/README.md"
+  - "Libs/**/README.textile"
+
+  # Scratch / OS / editor artifacts that should never ship
+  - "tmpclaude-*"
+  - "**/*.bak"
+  - "**/.DS_Store"
+  - "**/Thumbs.db"

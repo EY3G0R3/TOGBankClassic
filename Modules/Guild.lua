@@ -2279,46 +2279,36 @@ function TOGBankClassic_Guild:StripDeltaLinks(delta)
 	return TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
 end
 
--- Ensure legacy fields (bank.items, bags.items) exist for backward compatibility with old clients
--- New clients (v0.8.0+) use alt.items, but old clients need bank.items and bags.items
--- IMPORTANT: This also ensures mail items are included in legacy fields for old clients
+-- Ensure legacy fields (bank.items, bags.items) exist for backward compatibility with old clients.
+-- New clients (v0.8.0+) use alt.items as the canonical aggregate view; old clients need the
+-- bank.items / bags.items split.
+--
+-- [ITEM-004 FIX] When alt.bank.items is missing (peer-relayed data only carried alt.items),
+-- we previously COPIED all of alt.items into alt.bank.items as a "reconstruction". That was
+-- catastrophic: alt.items is the bank+bags+MAIL aggregate, so the copy poisoned bank.items
+-- with shared table references to mail items. Subsequent re-aggregation in ApplyDelta
+-- (Aggregate(bank, bags) → Aggregate(result, mail)) then summed those mail items twice
+-- on every delta apply, causing gear item Counts to inflate monotonically across peer
+-- relay cycles. The corruption presented as base-name "Battlefell Sabre" Count=21 and
+-- random-suffix variants like "of Power" Count=6237 in real SavedVariables.
+-- See docs/DELTA_BUGS.md ITEM-004 for the full root-cause analysis.
+--
+-- The fix: leave bank.items empty when missing. The next direct delta from the actual
+-- banker repopulates it correctly. Display code already prefers alt.items when present.
 function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	if not alt or not alt.items then
 		return alt
 	end
 
-	-- Check if we have mail items that need to be added to legacy fields
-	local hasMailItems = alt.mail and alt.mail.items and next(alt.mail.items)
-
-	-- If no legacy fields exist, reconstruct from alt.items
+	-- Ensure bank.items exists as an empty array if absent. Do NOT copy alt.items into it.
 	if not alt.bank or not alt.bank.items then
-		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Reconstructing legacy fields from alt.items for %s", alt.name or "unknown")
-
 		if not alt.bank then
 			alt.bank = {}
 		end
 		alt.bank.items = {}
-		-- Copy all items from alt.items to bank.items (includes mail)
-		for _, item in ipairs(alt.items) do
-			table.insert(alt.bank.items, item)
-		end
-
-		if not alt.bags then
-			alt.bags = {}
-		end
-		if not alt.bags.items then
-			alt.bags.items = {}
-		end
-
-		return alt
 	end
 
-	-- Legacy fields exist (from Bank.lua scan), but they don't include mail
-	-- MAIL-008: DO NOT modify alt.bank.items directly - it corrupts the data!
-	-- Old clients will see mail items via alt.mail field, or can aggregate themselves
-	-- If needed, create temporary copies with mail included only for transmission
-
-	-- Ensure bags.items exists (even if empty)
+	-- Ensure bags.items exists (even if empty) so legacy iteration code doesn't nil-error.
 	if not alt.bags then
 		alt.bags = {}
 	end
@@ -3035,14 +3025,6 @@ function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
 
 		return ADOPTION_STATUS.ADOPTED
 	end)
-end
-
-function s(a)
-	local b = 0
-	for c, d in pairs(a) do
-		b = b + 1
-	end
-	return b
 end
 
 -- Protocol version helper functions

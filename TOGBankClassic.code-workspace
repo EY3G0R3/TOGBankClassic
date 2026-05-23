@@ -573,7 +573,12 @@
 			"SPELL_REAGENTS",
 			"ChatFrame_OpenChat",
 			"DropDownList1",
-			"getglobal"
+			"getglobal",
+			"STANDARD_TEXT_FONT",
+			"ChatFrame_RemoveMessageEventFilter",
+			"ERR_GUILD_JOIN_S",
+			"ClubFinderGetCurrentClubListingInfo",
+			"GetClubFinderLink"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"
