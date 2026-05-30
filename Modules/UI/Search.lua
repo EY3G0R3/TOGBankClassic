@@ -109,6 +109,52 @@ local SUBCLASS_LISTS = {
 	},
 }
 
+-- Fourth cascade: armor equip-slot filter (only offered when Type = Armor).
+-- Keys are normalized slot names; INVTYPE_TO_SLOT maps GetItemInfo()'s equipLoc
+-- (#9) onto them so CHEST/ROBE collapse to one "chest" entry, etc.
+local SLOT_LIST = {
+	any      = "Any Slot",
+	head     = "Head",
+	neck     = "Neck",
+	shoulder = "Shoulder",
+	back     = "Back",
+	chest    = "Chest",
+	wrist    = "Wrist",
+	hands    = "Hands",
+	waist    = "Waist",
+	legs     = "Legs",
+	feet     = "Feet",
+	finger   = "Finger",
+	trinket  = "Trinket",
+	shield   = "Shield",
+	holdable = "Held In Off-hand",
+	relic    = "Relic",
+}
+local SLOT_ORDER = { "any", "head", "neck", "shoulder", "back", "chest", "wrist", "hands", "waist", "legs", "feet", "finger", "trinket", "shield", "holdable", "relic" }
+local INVTYPE_TO_SLOT = {
+	INVTYPE_HEAD = "head", INVTYPE_NECK = "neck", INVTYPE_SHOULDER = "shoulder",
+	INVTYPE_CLOAK = "back", INVTYPE_CHEST = "chest", INVTYPE_ROBE = "chest",
+	INVTYPE_WRIST = "wrist", INVTYPE_HAND = "hands", INVTYPE_WAIST = "waist",
+	INVTYPE_LEGS = "legs", INVTYPE_FEET = "feet", INVTYPE_FINGER = "finger",
+	INVTYPE_TRINKET = "trinket", INVTYPE_SHIELD = "shield",
+	INVTYPE_HOLDABLE = "holdable", INVTYPE_RELIC = "relic",
+}
+
+-- Resolve an item's normalized equip-slot key, caching info.equipSlot on first
+-- lookup (GetItemInfo #9 is warm by the time items are on screen). Returns nil
+-- when the slot is unknown/uncached.
+local function resolveSlotKey(info, item)
+	local loc = info.equipSlot
+	if not loc or loc == "" then
+		local src = item and (item.Link or (item.ID and ("item:" .. item.ID)))
+		if src then
+			loc = select(9, GetItemInfo(src))
+			if loc and loc ~= "" then info.equipSlot = loc end
+		end
+	end
+	return loc and INVTYPE_TO_SLOT[loc] or nil
+end
+
 -- Sort modes for search results
 local SORT_LIST = {
 	alpha       = "A -> Z",
@@ -223,6 +269,13 @@ end
 
 function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 	if not itemEntry or not itemEntry.Info or not bankAlt then
+		return
+	end
+
+	-- VIEWBANK-001: a view-only bank toon is visible but not requestable. Don't open
+	-- the request dialog; tell the user why instead.
+	if TOGBankClassic_Guild:IsViewOnlyBank(bankAlt) then
+		TOGBankClassic_Output:Warn("%s is a view-only bank — its items can be viewed but not requested.", bankAlt)
 		return
 	end
 
@@ -532,12 +585,13 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	-- stacks them onto multiple rows. Sum of all widths is ~720px; user resizes the
 	-- search window to taste.
 	--
-	-- Order is: [Min lvl] [Max lvl] [Filter] [Subtype] [Sub-subtype] [Sort] [Usable]
+	-- Order is: [Min lvl] [Max lvl] [Filter] [Subtype] [Sub-subtype] [Slot] [Sort] [Usable]
+	-- ([Slot] is the armor equip-slot dropdown, enabled only when Type = Armor.)
 	-- The small numeric inputs lead so they don't get orphaned on their own row when
 	-- the window is narrow; gives a denser top-left filter cluster.
 	--
 	-- Forward declarations: callbacks below reference widgets/functions defined later.
-	local subValueDropdown, subSubValueDropdown
+	local subValueDropdown, subSubValueDropdown, subSlotDropdown
 	local usableCheck, updateUsableCB
 
 	local function resetSubclass()
@@ -545,6 +599,17 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		subSubValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
 		subSubValueDropdown:SetValue(FILTER_ANY)
 		subSubValueDropdown:SetDisabled(true)
+	end
+
+	-- The armor equip-slot dropdown is only meaningful for Type = Armor; reset +
+	-- disable it whenever the Filter / Type selection changes away from Armor.
+	local function resetSlot()
+		self.SubFilterSlot = FILTER_ANY
+		if subSlotDropdown then
+			subSlotDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
+			subSlotDropdown:SetValue(FILTER_ANY)
+			subSlotDropdown:SetDisabled(true)
+		end
 	end
 
 	-- Min level (numeric input, 3 digits max). No gating on other filters — cheap to compute.
@@ -628,6 +693,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		self.SubFilterMode  = value
 		self.SubFilterValue = FILTER_ANY
 		resetSubclass()
+		resetSlot()
 		updateUsableCB(false)  -- reset to disabled until a specific value is chosen
 		if value == "type" then
 			subValueDropdown:SetList(TYPE_LIST, TYPE_ORDER)
@@ -662,6 +728,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		self.SubFilterValue = value
 		updateUsableCB(value ~= FILTER_ANY)  -- enable Usable once a specific value is picked
 		resetSubclass()
+		resetSlot()
 		if self.SubFilterMode == "type" and SUBCLASS_LISTS[value] then
 			local sc = SUBCLASS_LISTS[value]
 			subSubValueDropdown:SetList(sc.list, sc.order)
@@ -671,6 +738,12 @@ function TOGBankClassic_UI_Search:DrawWindow()
 			subSubValueDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
 			subSubValueDropdown:SetValue(FILTER_ANY)
 			subSubValueDropdown:SetDisabled(true)
+		end
+		-- Armor (class 4) gains an extra equip-slot dropdown.
+		if self.SubFilterMode == "type" and value == "4" then
+			subSlotDropdown:SetList(SLOT_LIST, SLOT_ORDER)
+			subSlotDropdown:SetValue(FILTER_ANY)
+			subSlotDropdown:SetDisabled(false)
 		end
 		self.currentPage = 1
 		self:DrawContent()
@@ -695,6 +768,24 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	end)
 	searchWindow:AddChild(subSubValueDropdown)
 	self.subSubValueDropdown = subSubValueDropdown
+
+	-- Armor equip-slot dropdown (fourth cascade; enabled only for Type = Armor)
+	subSlotDropdown = TOGBankClassic_UI:Create("Dropdown")
+	subSlotDropdown:SetLabel("")
+	subSlotDropdown.label:ClearAllPoints()
+	subSlotDropdown.label:SetPoint("TOPLEFT", subSlotDropdown.frame, "TOPLEFT", 3, 0)
+	subSlotDropdown.label:SetPoint("TOPRIGHT", subSlotDropdown.frame, "TOPRIGHT", 0, 0)
+	subSlotDropdown:SetList({ [FILTER_ANY] = "---" }, { FILTER_ANY })
+	subSlotDropdown:SetValue(FILTER_ANY)
+	subSlotDropdown:SetDisabled(true)
+	subSlotDropdown:SetWidth(130)
+	subSlotDropdown:SetCallback("OnValueChanged", function(_, _, value)
+		self.SubFilterSlot = value
+		self.currentPage = 1
+		self:DrawContent()
+	end)
+	searchWindow:AddChild(subSlotDropdown)
+	self.subSlotDropdown = subSlotDropdown
 
 	-- Sort dropdown — tooltip is now on a label hit frame (was on the dropdown control
 	-- itself, which made it pop up while clicking the dropdown — confusing).
@@ -821,6 +912,9 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	helpIcon:SetSize(24, 24)
 	helpIcon:SetPoint("BOTTOMRIGHT", searchWindow.frame, "BOTTOMRIGHT", -133, 15)
 	helpIcon:EnableMouse(true)
+	-- HITBOX-001: lift above AceGUI's mouse-enabled bottom resize strip (sizer_s,
+	-- level 101) so the whole icon takes clicks/hover instead of a center sliver.
+	helpIcon:SetFrameLevel(searchWindow.frame:GetFrameLevel() + 10)
 	local helpTex = helpIcon:CreateTexture(nil, "OVERLAY")
 	helpTex:SetAllPoints(helpIcon)
 	helpTex:SetTexture("Interface\\Common\\help-i")
@@ -835,7 +929,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		"  • Usable — hide items above your level (needs a Type or Quality first)",
 		" ",
 		"Click any result to open the request popup. Use |cFFFFFFFF<|r and |cFFFFFFFF>|r at the bottom-right to page through results.",
-	})
+	}, "search")  -- HELPNOTE-001: append the guild "search" note at the bottom
 
 	-- Helper that creates one of the small bottom-right pagination buttons.
 	-- Returns a raw frame Button with a SetDisabled(bool) method bolted on so the
@@ -846,6 +940,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		btn:SetSize(20, 20)
 		btn:SetPoint("BOTTOMRIGHT", searchWindow.frame, "BOTTOMRIGHT", anchorXOffset, 17)
 		btn:EnableMouse(true)
+		btn:SetFrameLevel(searchWindow.frame:GetFrameLevel() + 10)  -- HITBOX-001
 
 		local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 		fs:SetPoint("CENTER", btn, "CENTER", 0, 0)
@@ -1036,8 +1131,13 @@ function TOGBankClassic_UI_Search:SubFilterMatches(item)
 		if not val or val == FILTER_ANY then return true end
 		if tostring(info.class) ~= val then return false end
 		local sub = self.SubFilterSubValue
-		if sub and sub ~= FILTER_ANY then
-			return tostring(info.subClass) == sub
+		if sub and sub ~= FILTER_ANY and tostring(info.subClass) ~= sub then
+			return false
+		end
+		-- Armor equip-slot filter (only populated for Type = Armor).
+		local slot = self.SubFilterSlot
+		if slot and slot ~= FILTER_ANY then
+			if resolveSlotKey(info, item) ~= slot then return false end
 		end
 		return true
 	-- Quality filter
@@ -1064,7 +1164,8 @@ function TOGBankClassic_UI_Search:DrawContent()
 		or ((self.MaxLevel or 0) > 0)
 		or (self.SubFilterMode and self.SubFilterMode ~= FILTER_ANY
 			and (self.SubFilterValue and self.SubFilterValue ~= FILTER_ANY
-				or (self.SubFilterSubValue and self.SubFilterSubValue ~= FILTER_ANY)))
+				or (self.SubFilterSubValue and self.SubFilterSubValue ~= FILTER_ANY)
+				or (self.SubFilterSlot and self.SubFilterSlot ~= FILTER_ANY)))
 	if not self.SearchText and not hasSubFilter then
 		return
 	end
@@ -1248,10 +1349,15 @@ function TOGBankClassic_UI_Search:DrawContent()
 				TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)
 			end)
 
-			-- Add label showing which banker has this item
+			-- Add label showing which banker has this item. VIEWBANK-001: tag
+			-- view-only banks so users see they can't request before clicking.
 			local label = TOGBankClassic_UI:Create("Label")
 			label:SetHeight(35)
-			label:SetText("|cFFAAAAAA" .. bankAlt .. "|r")
+			local bankerText = "|cFFAAAAAA" .. bankAlt .. "|r"
+			if TOGBankClassic_Guild:IsViewOnlyBank(bankAlt) then
+				bankerText = bankerText .. " |cFFFFCC00(view only)|r"
+			end
+			label:SetText(bankerText)
 			self.Results:AddChild(label)
 			renderedCount = renderedCount + 1
 		end

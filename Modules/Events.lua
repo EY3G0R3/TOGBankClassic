@@ -519,6 +519,7 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
 	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "MAIL_CLOSED event fired")
 	TOGBankClassic_Mail.isOpen = false
 	TOGBankClassic_Mail.isScanning = false
+	TOGBankClassic_Mail:ResetFulfillStep()  -- FILLALL-001: drop any in-progress stepped fulfillment
 	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Calling Bank:OnUpdateStop()")
 	TOGBankClassic_Bank:OnUpdateStop()
 	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Bank:OnUpdateStop() completed")
@@ -547,6 +548,7 @@ function TOGBankClassic_Events:UI_ERROR_MESSAGE(_, message)
 
 	-- Capture mail send failures (includes "Internal mail database error")
 	if tostring(message):lower():find("mail") then
+		TOGBankClassic_Mail.batchInFlight = false  -- FILLALL-001: send failed; allow retry
 		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "UI_ERROR_MESSAGE: %s", tostring(message))
 		if TOGBankClassic_Mail and TOGBankClassic_Mail.DebugSendMailState then
 			TOGBankClassic_Mail:DebugSendMailState(message)

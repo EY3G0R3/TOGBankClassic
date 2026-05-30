@@ -407,6 +407,28 @@ function TOGBankClassic_Guild:CleanupMalformedAlts()
 	return cleaned
 end
 
+-- VIEWBANK-001: a bank toon can be flagged "view only" — its stock stays visible
+-- everywhere (inventory, search, tooltips), but guild members can't send requests
+-- for it (e.g. a raid bank). Officers flag it by adding a view-only marker to the
+-- toon's guild note alongside the usual "gbank" tag, e.g. "gbank viewonly" or the
+-- compact "gbankro". Accepted markers (case-insensitive) below.
+local VIEW_ONLY_MARKERS = { "viewonly", "view-only", "view only", "readonly", "read-only", "read only", "gbankro" }
+local function noteHasViewMarker(note)
+	if type(note) ~= "string" or note == "" then
+		return false
+	end
+	local lower = note:lower()
+	for _, marker in ipairs(VIEW_ONLY_MARKERS) do
+		if lower:find(marker, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+local function noteIsViewOnly(note1, note2)
+	return noteHasViewMarker(note1) or noteHasViewMarker(note2)
+end
+
 function TOGBankClassic_Guild:GetBanks()
 	-- Return cached banks list if available
 	if self.banksCache ~= nil then
@@ -464,10 +486,11 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 			if isBank then
 				table.insert(banks, name)
 			end
-			-- Keep memberRoster.isBank in sync if the entry already exists
+			-- Keep memberRoster.isBank / .viewOnly in sync if the entry already exists
 			local norm = self:NormalizeName(name)
 			if norm and self.memberRoster and self.memberRoster[norm] then
 				self.memberRoster[norm].isBank = isBank or false
+				self.memberRoster[norm].viewOnly = (isBank and noteIsViewOnly(publicNote, officer_note)) or false
 			end
 		end
 	end
@@ -758,6 +781,26 @@ function TOGBankClassic_Guild:IsBank(player)
 	for _, v in pairs(banks) do
 		if (self:NormalizeName(v) or v) == norm then
 			return true
+		end
+	end
+	return false
+end
+
+-- VIEWBANK-001: true if the banker is flagged view-only (visible but not
+-- requestable). Mirrors IsBank's O(1) memberRoster lookup with a roster-scan
+-- fallback for the brief window before memberRoster is built.
+function TOGBankClassic_Guild:IsViewOnlyBank(player)
+	if not player then
+		return false
+	end
+	local norm = self:NormalizeName(player) or player
+	if self.memberRoster and self.memberRoster[norm] then
+		return self.memberRoster[norm].viewOnly == true
+	end
+	for i = 1, GetNumGuildMembers() do
+		local name, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
+		if name and (self:NormalizeName(name) or name) == norm then
+			return noteIsViewOnly(publicNote, officer_note)
 		end
 	end
 	return false
@@ -1474,12 +1517,80 @@ function TOGBankClassic_Guild:BroadcastSettings(priority)
 		settings = {
 			maxRequestPercent = self.Info.settings.maxRequestPercent,
 			autoTombstoneDays = self.Info.settings.autoTombstoneDays,
+			-- CANCELREASON-001: officer-authored custom cancel reasons + preset disable-set
+			cancelReasons = self.Info.settings.cancelReasons,
+			-- HELPNOTE-001: officer-authored per-window help-tooltip notes
+			helpNotes = self.Info.settings.helpNotes,
 		},
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "NORMAL")
 	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "BroadcastSettings: maxRequestPercent=%s autoTombstoneDays=%s",
 		tostring(payload.settings.maxRequestPercent), tostring(payload.settings.autoTombstoneDays))
+end
+
+-- CANCELREASON-001: bounds for the synced cancel-reason config (keeps the
+-- guild-settings broadcast small even with a misbehaving/old sender).
+local CANCEL_REASON_MAX_CUSTOM = 20
+local CANCEL_REASON_MAX_LEN    = 160
+
+-- Sanitize an inbound cancelReasons table into the canonical shape, dropping
+-- malformed entries and clamping count/length. Returns a fresh table.
+local function sanitizeCancelReasons(cr)
+	local clean = { custom = {}, presetDisabled = { banker = {}, member = {} } }
+	if type(cr) ~= "table" then return clean end
+	if type(cr.custom) == "table" then
+		for _, r in ipairs(cr.custom) do
+			if type(r) == "table" and type(r.text) == "string" and r.text ~= ""
+				and #clean.custom < CANCEL_REASON_MAX_CUSTOM then
+				clean.custom[#clean.custom + 1] = {
+					text   = string.sub(r.text, 1, CANCEL_REASON_MAX_LEN),
+					member = r.member and true or false,
+					banker = r.banker and true or false,
+				}
+			end
+		end
+	end
+	if type(cr.presetDisabled) == "table" then
+		for _, role in ipairs({ "banker", "member" }) do
+			local src = cr.presetDisabled[role]
+			if type(src) == "table" then
+				for key, val in pairs(src) do
+					if type(key) == "string" and val then
+						clean.presetDisabled[role][key] = true
+					end
+				end
+			end
+		end
+	end
+	return clean
+end
+TOGBankClassic_Guild.SanitizeCancelReasons = sanitizeCancelReasons
+
+-- HELPNOTE-001: sanitize inbound per-window help notes (string, length-clamped,
+-- only the three known window keys). Returns a fresh table.
+local HELP_NOTE_MAX_LEN = 400
+local function sanitizeHelpNotes(hn)
+	local clean = { inventory = "", search = "", requests = "" }
+	if type(hn) ~= "table" then return clean end
+	for _, key in ipairs({ "inventory", "search", "requests" }) do
+		local v = hn[key]
+		if type(v) == "string" then
+			clean[key] = string.sub(v, 1, HELP_NOTE_MAX_LEN)
+		end
+	end
+	return clean
+end
+TOGBankClassic_Guild.SanitizeHelpNotes = sanitizeHelpNotes
+
+-- HELPNOTE-001: the officer-authored note for a given window's help "?" tooltip
+-- ("inventory" / "search" / "requests"). Returns "" when none set.
+function TOGBankClassic_Guild:GetHelpNote(windowKey)
+	local s = self.Info and self.Info.settings
+	local notes = s and s.helpNotes
+	if type(notes) ~= "table" then return "" end
+	local n = notes[windowKey]
+	return (type(n) == "string") and n or ""
 end
 
 -- SETTINGS-001: Apply settings received from a remote authorized sender.
@@ -1498,8 +1609,18 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 	if type(settings.autoTombstoneDays) == "number" and settings.autoTombstoneDays >= 1 then
 		self.Info.settings.autoTombstoneDays = math.floor(settings.autoTombstoneDays)
 	end
-	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from %s: maxRequestPercent=%s autoTombstoneDays=%s",
-		tostring(sender), tostring(self.Info.settings.maxRequestPercent), tostring(self.Info.settings.autoTombstoneDays))
+	-- CANCELREASON-001: apply synced cancel-reason config only when the sender
+	-- actually carried one (older clients omit the field — don't wipe local).
+	if settings.cancelReasons ~= nil then
+		self.Info.settings.cancelReasons = sanitizeCancelReasons(settings.cancelReasons)
+	end
+	-- HELPNOTE-001: apply synced help notes only when present (old clients omit it).
+	if settings.helpNotes ~= nil then
+		self.Info.settings.helpNotes = sanitizeHelpNotes(settings.helpNotes)
+	end
+	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from %s: maxRequestPercent=%s autoTombstoneDays=%s cancelCustom=%d",
+		tostring(sender), tostring(self.Info.settings.maxRequestPercent), tostring(self.Info.settings.autoTombstoneDays),
+		(self.Info.settings.cancelReasons and self.Info.settings.cancelReasons.custom and #self.Info.settings.cancelReasons.custom) or 0)
 end
 
 -- returns true if the given normalized sender has a public or officer note containing 'gbank'
@@ -1574,6 +1695,8 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 				-- PERF: plain-text find is orders of magnitude faster than (.*)gbank(.*) pattern
 				local isBank = (note and note:find("gbank", 1, true) ~= nil)
 					or (officernote and officernote:find("gbank", 1, true) ~= nil)
+				-- VIEWBANK-001: view-only flag only meaningful for bankers
+				local viewOnly = isBank and noteIsViewOnly(note, officernote)
 				-- Store full member data
 				self.memberRoster[normalized] = {
 					name = normalized,
@@ -1584,6 +1707,7 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 					isOnline = isOnline or false,
 					isOfficer = isOfficer,
 					isBank = isBank or false,
+					viewOnly = viewOnly or false,
 					lastUpdated = GetServerTime()
 				}
 

@@ -8,8 +8,8 @@ local COLUMNS = {
 	{ key = "date",      label = "Date",      width = 140, align = "center",                       tooltipTitle = "Date Submitted",  tooltipDetail = "When the request was submitted. Click to sort." },
 	{ key = "requester", label = "Requester", width = 150, align = "center", flex = true, weight = 1, tooltipTitle = "Requester",        tooltipDetail = "The guild member who submitted the request. Click to sort." },
 	{ key = "bank",      label = "Bank",      width = 150, align = "center", flex = true, weight = 1, tooltipTitle = "Bank",            tooltipDetail = "The banker character this request is assigned to. Click to sort." },
-	{ key = "quantity",  label = "#",         width = 50,  align = "end",                              tooltipTitle = "Quantity",         tooltipDetail = "The number of items requested. Click to sort." },
-	{ key = "item",      label = "Item",      width = 170, align = "start",  flex = true, weight = 2, tooltipTitle = "Item",            tooltipDetail = "The item being requested. Click to sort." },
+	{ key = "quantity",  label = "#",         width = 50,  align = "end",   headerSuffix = " ",         tooltipTitle = "Quantity",         tooltipDetail = "The number of items requested. Click to sort." },
+	{ key = "item",      label = "Item",      width = 170, align = "start", headerAlign = "center", flex = true, weight = 2, tooltipTitle = "Item",            tooltipDetail = "The item being requested. Click to sort." },
 	{ key = "fulfilled", label = "Sent",      width = 70,  align = "center",                           tooltipTitle = "Amount Sent",     tooltipDetail = "How many items have been sent to the requester so far. Click to sort." },
 	{ key = "actions",   label = "Actions",   width = 140, align = "center",                           tooltipTitle = "Actions",         tooltipDetail = "Fulfill, complete, or cancel the request. Click to sort." },
 }
@@ -43,6 +43,7 @@ local CANCELLED_ICON  = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:0|t "
 local PADDING_ICON    = "|TInterface\\AddOns\\TOGBankClassic\\Media\\blank:0|t "
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local CANCEL_STALE_DIALOG   = "TOGBankClassic_CancelStale"
+local COMPLETE_QTY_DIALOG   = "TOGBankClassic_CompleteQty"
 
 -- Cancel reason dialog state (persistent reusable frame)
 local cancelReasonFrame    = nil
@@ -204,6 +205,19 @@ local function setWidgetShown(widget, shown)
 	end
 end
 
+-- Enable/disable a raw Button frame (pagination icons), swapping to its disabled
+-- texture and suppressing clicks. Mirrors AceGUI Button:SetDisabled for our needs.
+local function setBtnEnabled(btn, enabled)
+	if not btn then
+		return
+	end
+	if enabled then
+		btn:Enable()
+	else
+		btn:Disable()
+	end
+end
+
 local function attachActionTooltip(button, title, detail)
 	if not button or not button.SetCallback then
 		return
@@ -271,6 +285,53 @@ local function closeCancelReasonDialog()
 	end
 end
 
+-- CANCELREASON-001: built-in flavor presets, keyed so officers can disable them
+-- individually. Banker presets are offered when a banker cancels someone's
+-- request; member presets when a member cancels their own. The Settings-tab
+-- editor lists these greyed-out (read-only text) with a tickbox per preset.
+-- The "policy" label embeds the live max-request percent, so this is a builder
+-- rather than a static table.
+local function buildPresetReasons(role)
+	if role == "banker" then
+		local pct = (TOGBankClassic_Options and TOGBankClassic_Options:GetMaxRequestPercent()) or 100
+		return {
+			{ key = "unavailable",  label = "Checked the vault, checked twice, even asked a goblin — it's gone. You no take candle." },
+			{ key = "policy",       label = string.format("Easy there, Hogger. Guild law says you can't hoard more than %d%% of the stock.", pct) },
+			{ key = "wrong_bank",   label = "That item lives in another banker's keep. Safe travels — it's a big Azeroth." },
+			{ key = "first_come",   label = "A faster adventurer already claimed it. The early bird gets the [item], as they say." },
+			{ key = "duplicate",    label = "You've already got this in the queue — one at a time, this isn't the Stormwind Auction House." },
+			{ key = "not_in_guild", label = "Checked the guild roster... we can't find you. Did you /gquit, or did Sylvanas raise you?" },
+		}
+	end
+	return {
+		{ key = "changed_mind",  label = "Changed your mind? Understandable — even Arthas had second thoughts. Eventually." },
+		{ key = "found_ah",      label = "Found it on the AH? Bold move. We respect the hustle." },
+		{ key = "already_got",   label = "Already looted it elsewhere? Look at you, being all self-sufficient. We're proud." },
+		{ key = "mistake",       label = "Wrong item? Happens to the best of us. Even Khadgar misread a scroll once." },
+		{ key = "plans_changed", label = "Plans changed? Tell that to the Lich King... wait, he's dead. Never mind." },
+	}
+end
+
+-- The synced cancel-reason config (officer-authored, guild-wide). Read-only
+-- accessors that tolerate a missing/old table so member clients still work.
+local function cancelReasonConfig()
+	local g = TOGBankClassic_Guild
+	local cr = g and g.Info and g.Info.settings and g.Info.settings.cancelReasons
+	return (type(cr) == "table") and cr or nil
+end
+
+local function presetDisabledSet(role)
+	local cr = cancelReasonConfig()
+	local pd = cr and cr.presetDisabled and cr.presetDisabled[role]
+	return (type(pd) == "table") and pd or {}
+end
+
+local function customReasonList()
+	local cr = cancelReasonConfig()
+	local c  = cr and cr.custom
+	return (type(c) == "table") and c or {}
+end
+
 local function showCancelReasonDialog(req, actor, ui)
 	if cancelReasonFrame and cancelReasonFrame.frame:IsShown() then
 		return
@@ -280,28 +341,39 @@ local function showCancelReasonDialog(req, actor, ui)
 	pendingCancelActor = actor
 	pendingCancelUI    = ui
 	local isBanker = TOGBankClassic_Guild:IsBank(actor)
-	local defaultKey, reasons
-	if isBanker then
-		local pct = (TOGBankClassic_Options and TOGBankClassic_Options:GetMaxRequestPercent()) or 100
-		defaultKey = "unavailable"
-		reasons = {
-			{ key = "unavailable",  label = "Checked the vault, checked twice, even asked a goblin — it's gone. You no take candle." },
-			{ key = "policy",       label = string.format("Easy there, Hogger. Guild law says you can't hoard more than %d%% of the stock.", pct) },
-			{ key = "wrong_bank",   label = "That item lives in another banker's keep. Safe travels — it's a big Azeroth." },
-			{ key = "first_come",   label = "A faster adventurer already claimed it. The early bird gets the [item], as they say." },
-			{ key = "duplicate",    label = "You've already got this in the queue — one at a time, this isn't the Stormwind Auction House." },
-			{ key = "not_in_guild", label = "Checked the guild roster... we can't find you. Did you /gquit, or did Sylvanas raise you?" },
-		}
-	else
-		defaultKey = "changed_mind"
-		reasons = {
-			{ key = "changed_mind",   label = "Changed your mind? Understandable — even Arthas had second thoughts. Eventually." },
-			{ key = "found_ah",       label = "Found it on the AH? Bold move. We respect the hustle." },
-			{ key = "already_got",   label = "Already looted it elsewhere? Look at you, being all self-sufficient. We're proud." },
-			{ key = "mistake",        label = "Wrong item? Happens to the best of us. Even Khadgar misread a scroll once." },
-			{ key = "plans_changed", label = "Plans changed? Tell that to the Lich King... wait, he's dead. Never mind." },
-		}
+	local role = isBanker and "banker" or "member"
+	local defaultKey = isBanker and "unavailable" or "changed_mind"
+
+	-- Built-in presets for this role, minus any the officers have disabled.
+	local reasons = {}
+	local disabled = presetDisabledSet(role)
+	for _, p in ipairs(buildPresetReasons(role)) do
+		if not disabled[p.key] then
+			reasons[#reasons + 1] = p
+		end
 	end
+	-- Append officer-authored custom reasons enabled for this role (CANCELREASON-001).
+	local customIdx = 0
+	for _, c in ipairs(customReasonList()) do
+		if type(c) == "table" and c[role] and type(c.text) == "string" and c.text ~= "" then
+			customIdx = customIdx + 1
+			reasons[#reasons + 1] = { key = "custom" .. customIdx, label = c.text }
+		end
+	end
+	-- Always offer at least one option, even if every preset was disabled and no
+	-- custom reasons target this role.
+	if #reasons == 0 then
+		reasons[1] = { key = "none", label = "Request cancelled." }
+	end
+	-- If the default was disabled/removed, fall back to the first available reason.
+	local haveDefault = false
+	for _, r in ipairs(reasons) do
+		if r.key == defaultKey then haveDefault = true break end
+	end
+	if not haveDefault then
+		defaultKey = reasons[1].key
+	end
+
 	cancelSelectedKey = defaultKey
 	wipe(cancelReasonMap)
 	local reasonOrder = {}
@@ -466,6 +538,78 @@ local function confirmDeleteRequest(request, actor)
 		requestId = request.id,
 		actor = actor,
 		ui = TOGBankClassic_UI_Requests,
+	})
+end
+
+-- COMPLETEQTY-001: the "Complete" (manual hand-off) button asks how many were
+-- given, and records that quantity into the Sent column via Guild:FulfillRequest
+-- (which marks the order fulfilled only when it reaches the requested amount).
+local function ensureCompleteQtyDialog()
+	if not StaticPopupDialogs then return end
+	if StaticPopupDialogs[COMPLETE_QTY_DIALOG] then return end
+	StaticPopupDialogs[COMPLETE_QTY_DIALOG] = {
+		text = "%s",
+		button1 = "Mark Sent",
+		button2 = CANCEL,
+		hasEditBox = true,
+		maxLetters = 6,
+		timeout = 0,
+		whileDead = true,
+		hideOnEscape = true,
+		OnShow = function(self)
+			local eb = self.editBox
+			if eb then
+				eb:SetNumeric(true)
+				eb:SetText(tostring((self.data and self.data.defaultQty) or ""))
+				eb:HighlightText()
+				eb:SetFocus()
+			end
+		end,
+		EditBoxOnEnterPressed = function(editBox)
+			local parent = editBox:GetParent()
+			if parent and parent.button1 then parent.button1:Click() end
+		end,
+		EditBoxOnEscapePressed = function(editBox)
+			local parent = editBox:GetParent()
+			if parent then parent:Hide() end
+		end,
+		OnAccept = function(self)
+			local data = self.data
+			if not data then return end
+			local n = tonumber(self.editBox and self.editBox:GetText())
+			local ui = TOGBankClassic_UI_Requests
+			if not n or n < 1 then
+				if ui.Window then ui.Window:SetStatusText("Enter a quantity of 1 or more.") end
+				return
+			end
+			n = math.floor(n)
+			if data.maxQty and n > data.maxQty then n = data.maxQty end
+			-- Apply against the request's own bank so it works regardless of who
+			-- clicked (the button is already gated by CanCompleteRequest).
+			local applied = TOGBankClassic_Guild:FulfillRequest(data.bank, data.requester, data.item, n, data.requestId)
+			if (applied or 0) <= 0 and ui.Window then
+				ui.Window:SetStatusText("Unable to record that quantity.")
+			end
+		end,
+	}
+end
+
+local function showCompleteQtyPrompt(request, actor)
+	if not request or not StaticPopup_Show then return end
+	ensureCompleteQtyDialog()
+	local qty = tonumber(request.quantity or 0) or 0
+	local fulfilled = tonumber(request.fulfilled or 0) or 0
+	local remaining = math.max(qty - fulfilled, 0)
+	local message = string.format(
+		"How many %s did you hand directly to %s?\n\nThis amount is recorded in the Sent column (up to %d remaining).",
+		request.item or "items", request.requester or "the requester", remaining)
+	StaticPopup_Show(COMPLETE_QTY_DIALOG, message, nil, {
+		requestId  = request.id,
+		bank       = request.bank,
+		requester  = request.requester,
+		item       = request.item,
+		defaultQty = remaining,
+		maxQty     = remaining,
 	})
 end
 
@@ -859,11 +1003,20 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	statusbg:SetPoint("BOTTOMLEFT",  window.frame, "BOTTOMLEFT",  15, 15)
 	statusbg:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -163, 15)
 
-	-- Help "?" icon — sits in the gap between the status bar and the close button
+	-- Help "?" icon — rightmost of the bottom-row cluster, in the gap between the
+	-- status bar and the AceGUI Close button (which spans x -127..-27). Must stay
+	-- left of -127 so it doesn't overlap Close. The status bar extends to meet the
+	-- cluster on its left.
 	local helpIcon = CreateFrame("Frame", nil, window.frame)
-	helpIcon:SetSize(24, 24)
+	helpIcon:SetSize(22, 22)
 	helpIcon:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -133, 15)
 	helpIcon:EnableMouse(true)
+	-- HITBOX-001: AceGUI's Frame lays a mouse-enabled resize strip (sizer_s, full
+	-- bottom width, 25px tall) + corner sizer across this row at the parent's default
+	-- child level (101). Any button we add here defaults to the same level, so the
+	-- sizer Z-fights and swallows clicks AND mouseover except a center sliver. Lift
+	-- every bottom-row frame above the sizers so the whole 22x22 is live.
+	helpIcon:SetFrameLevel(window.frame:GetFrameLevel() + 10)
 	local helpTex = helpIcon:CreateTexture(nil, "OVERLAY")
 	helpTex:SetAllPoints(helpIcon)
 	helpTex:SetTexture("Interface\\Common\\help-i")
@@ -880,68 +1033,94 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		GameTooltip:AddLine("|cffffd100Fulfill:|r", 1, 1, 1, false)
 		GameTooltip:AddLine("Sends the item by in-game mail. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; wax-sealed letter = item is in your mail inbox, retrieve it first; chest = item is split between your mail and bank; shovel = quantity must be split manually; question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
 		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100Complete:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Marks the request as done without mailing. Use this when the item was handed over directly.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("|cffffd100Mark hand-off (check):|r", 1, 1, 1, false)
+		GameTooltip:AddLine("For items handed over directly (not mailed). Asks how many you gave; that amount goes into the Sent column, and the order completes once Sent reaches the amount requested.", 0.9, 0.9, 0.9, true)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100Cancel:|r", 1, 1, 1, false)
 		GameTooltip:AddLine("Opens a dialog to select a cancellation reason before cancelling. The reason is stored with the request and shown in the date tooltip. Cancelled requests move to the Archive tab.", 0.9, 0.9, 0.9, true)
+		TOGBankClassic_UI:AppendGuildHelpNote("requests")  -- HELPNOTE-001
 		GameTooltip:Show()
 	end)
 	helpIcon:SetScript("OnLeave", function()
 		TOGBankClassic_UI:HideTooltip()
 	end)
 
-	self.HeaderWidgets = nil
-	self.FilterWidgets = nil
-	self.FilterRequester = nil
-	self.FilterBank = nil
-	self.TabGroup = nil
-	self.ActiveTabBtn = nil
-	self.ArchiveTabBtn = nil
-
-	-- Tab strip
-	local tabGroup = TOGBankClassic_UI:Create("SimpleGroup")
-	tabGroup:SetLayout("Flow")
-	tabGroup:SetFullWidth(true)
-	tabGroup.content:SetPoint("TOPLEFT", 0, 8)
-	tabGroup.content:SetPoint("BOTTOMRIGHT", 0, -5)
-	window:AddChild(tabGroup)
-	self.TabGroup = tabGroup
-
-	local activeTabBtn = TOGBankClassic_UI:Create("Button")
-	activeTabBtn:SetText("Requests")
-	activeTabBtn:SetWidth(120)
-	activeTabBtn:SetHeight(24)
-	activeTabBtn:SetCallback("OnClick", function()
-		self.currentTab = "active"
-		self:DrawContent()
-	end)
-	attachActionTooltip(activeTabBtn, "Active Requests", "Shows open requests waiting to be fulfilled.")
-	tabGroup:AddChild(activeTabBtn)
-	self.ActiveTabBtn = activeTabBtn
-
-	local archiveTabBtn = TOGBankClassic_UI:Create("Button")
-	archiveTabBtn:SetText("Archive")
-	archiveTabBtn:SetWidth(120)
-	archiveTabBtn:SetHeight(24)
-	archiveTabBtn:SetCallback("OnClick", function()
-		self.currentTab = "archive"
-		self:DrawContent()
-	end)
-	attachActionTooltip(archiveTabBtn, "Archive", "Shows completed and cancelled requests.")
-	tabGroup:AddChild(archiveTabBtn)
-	self.ArchiveTabBtn = archiveTabBtn
-
-	-- "Cancel Stale" button — only for bankers/officers
+	-- Bottom-row icon buttons on the window frame near the status bar, to the left
+	-- of the help "?" icon: pagination (prev/next) and Cancel Stale (broom).
+	-- These replace the buttons that used to crowd the top tab strip.
 	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
-	local isOfficerOrBanker = (CanViewOfficerNote and CanViewOfficerNote())
-		or (actor and TOGBankClassic_Guild:IsBank(actor))
+	local canOfficer = (CanViewOfficerNote and CanViewOfficerNote()) or false
+	local isOfficerOrBanker = canOfficer or (actor and TOGBankClassic_Guild:IsBank(actor)) or false
+
+	local function bottomIconTooltip(frame, titleText, detailText)
+		frame:SetScript("OnEnter", function(f)
+			GameTooltip:SetOwner(f, "ANCHOR_TOP")
+			GameTooltip:ClearLines()
+			GameTooltip:AddLine(titleText)
+			if detailText and detailText ~= "" then
+				GameTooltip:AddLine(detailText, 0.9, 0.9, 0.9, true)
+			end
+			GameTooltip:Show()
+		end)
+		frame:SetScript("OnLeave", function()
+			TOGBankClassic_UI:HideTooltip()
+		end)
+	end
+
+	-- Next page (rightmost; sits just left of the help icon)
+	local nextPageBtn = CreateFrame("Button", nil, window.frame)
+	nextPageBtn:SetSize(22, 22)
+	nextPageBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
+	nextPageBtn:SetPoint("RIGHT", helpIcon, "LEFT", -8, 0)
+	nextPageBtn:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Up")
+	nextPageBtn:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Down")
+	nextPageBtn:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Disabled")
+	nextPageBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+	nextPageBtn:SetScript("OnClick", function()
+		local info = TOGBankClassic_Guild.Info
+		if not info or not info.requests then return end
+		local allSorted = self:GetSortedTabFiltered()
+		local allVisible = self:ApplyFilters(allSorted)
+		local totalPages = math.max(1, math.ceil(#allVisible / REQUESTS_PER_PAGE))
+		if self.currentPage < totalPages then
+			self.currentPage = self.currentPage + 1
+			self:DrawRows()
+		end
+	end)
+	bottomIconTooltip(nextPageBtn, "Next Page", "Show the next page of requests.")
+	self.NextPageBtn = nextPageBtn
+
+	-- Previous page
+	local prevPageBtn = CreateFrame("Button", nil, window.frame)
+	prevPageBtn:SetSize(22, 22)
+	prevPageBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
+	prevPageBtn:SetPoint("RIGHT", nextPageBtn, "LEFT", -8, 0)
+	prevPageBtn:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Up")
+	prevPageBtn:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Down")
+	prevPageBtn:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Disabled")
+	prevPageBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+	prevPageBtn:SetScript("OnClick", function()
+		if self.currentPage > 1 then
+			self.currentPage = self.currentPage - 1
+			self:DrawRows()
+		end
+	end)
+	bottomIconTooltip(prevPageBtn, "Previous Page", "Show the previous page of requests.")
+	self.PrevPageBtn = prevPageBtn
+
+	-- Cancel Stale (broom) — officers/bankers only. INV_Broom_01 is the Hallow's End
+	-- Magic Broom icon, a stock Classic Era texture.
+	-- Clear any stale reference first: if banker status was lost since the previous
+	-- window, this block won't run and the status-bar inset below must see nil.
+	self.CancelStaleBtn = nil
 	if isOfficerOrBanker then
-		local cancelStaleBtn = TOGBankClassic_UI:Create("Button")
-		cancelStaleBtn:SetText("Cancel Stale")
-		cancelStaleBtn:SetWidth(130)
-		cancelStaleBtn:SetHeight(24)
-		cancelStaleBtn:SetCallback("OnClick", function()
+		local cancelStaleBtn = CreateFrame("Button", nil, window.frame)
+		cancelStaleBtn:SetSize(22, 22)
+		cancelStaleBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
+		cancelStaleBtn:SetPoint("RIGHT", prevPageBtn, "LEFT", -8, 0)
+		cancelStaleBtn:SetNormalTexture("Interface\\Icons\\INV_Broom_01")
+		cancelStaleBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+		cancelStaleBtn:SetScript("OnClick", function()
 			if not StaticPopup_Show then return end
 			ensureCancelStaleDialog()
 			local days = TOGBankClassic_Options and TOGBankClassic_Options:GetAutoTombstoneDays() or 30
@@ -953,58 +1132,124 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 				ui = TOGBankClassic_UI_Requests,
 			})
 		end)
-		if cancelStaleBtn.frame then
-			cancelStaleBtn.frame:HookScript("OnEnter", function(btn)
-				local days = TOGBankClassic_Options and TOGBankClassic_Options:GetAutoTombstoneDays() or 30
-				GameTooltip:SetOwner(btn, "ANCHOR_BOTTOM")
-				GameTooltip:ClearLines()
-				GameTooltip:AddLine("Cancel Stale Requests")
-				GameTooltip:AddLine(string.format(
-					"Permanently cancels all open requests older than %d days and broadcasts the cancellation guild-wide.\n\nThe threshold is configured in Options > TOGBankClassic > Requests.",
-					days), 0.9, 0.9, 0.9, true)
-				GameTooltip:Show()
-			end)
-			cancelStaleBtn.frame:HookScript("OnLeave", function()
-				TOGBankClassic_UI:HideTooltip()
-			end)
-		end
-		tabGroup:AddChild(cancelStaleBtn)
+		cancelStaleBtn:SetScript("OnEnter", function(f)
+			local days = TOGBankClassic_Options and TOGBankClassic_Options:GetAutoTombstoneDays() or 30
+			GameTooltip:SetOwner(f, "ANCHOR_TOP")
+			GameTooltip:ClearLines()
+			GameTooltip:AddLine("Cancel Stale Requests")
+			GameTooltip:AddLine(string.format(
+				"Permanently cancels all open requests older than %d days and broadcasts the cancellation guild-wide.\n\nThe threshold is configured in the Settings tab.",
+				days), 0.9, 0.9, 0.9, true)
+			GameTooltip:Show()
+		end)
+		cancelStaleBtn:SetScript("OnLeave", function()
+			TOGBankClassic_UI:HideTooltip()
+		end)
 		self.CancelStaleBtn = cancelStaleBtn
 	end
 
-	-- Pagination buttons
-	local prevButton = TOGBankClassic_UI:Create("Button")
-	prevButton:SetText("< Prev")
-	prevButton:SetWidth(90)
-	prevButton:SetHeight(24)
-	prevButton:SetCallback("OnClick", function()
-		if self.currentPage > 1 then
-			self.currentPage = self.currentPage - 1
-			self:DrawRows()
-		end
-	end)
-	attachActionTooltip(prevButton, "Previous Page", "Show the previous page of requests.")
-	tabGroup:AddChild(prevButton)
-	self.prevButton = prevButton
+	-- Fulfill Oldest Order (envelope) — bankers only. One click sends the oldest
+	-- order you can fully fill from bags to its requester (auto split + attach +
+	-- send); spam it to drain the queue oldest-first. FILLALL-001. Sits left of the
+	-- broom (a banker always also has the broom, since banker implies the cluster).
+	self.FulfillOldestBtn = nil
+	local isBanker = (actor and TOGBankClassic_Guild:IsBank(actor)) or false
+	if isBanker then
+		local fulfillBtn = CreateFrame("Button", nil, window.frame)
+		fulfillBtn:SetSize(22, 22)
+		fulfillBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
+		fulfillBtn:SetPoint("RIGHT", self.CancelStaleBtn or prevPageBtn, "LEFT", -8, 0)
+		fulfillBtn:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
+		fulfillBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+		fulfillBtn:SetScript("OnClick", function()
+			local _, message = TOGBankClassic_Mail:FulfillStep(actor)
+			if self.Window then self.Window:SetStatusText(message or "") end
+		end)
+		fulfillBtn:SetScript("OnEnter", function(f)
+			GameTooltip:SetOwner(f, "ANCHOR_TOP")
+			GameTooltip:ClearLines()
+			GameTooltip:AddLine("Fulfill Oldest Order")
+			GameTooltip:AddLine("Click to advance the oldest order you can fully fill, one step per click: select \226\134\146 split \226\134\146 attach \226\134\146 send, then the next-oldest. If the needed items are sitting in your mail, it pulls them into your bags first (one per click). Watch the status bar for the next step. Requires an open mailbox; orders you can't fully cover (from bags + mail) are skipped.", 0.9, 0.9, 0.9, true)
+			GameTooltip:Show()
+		end)
+		fulfillBtn:SetScript("OnLeave", function()
+			TOGBankClassic_UI:HideTooltip()
+		end)
+		self.FulfillOldestBtn = fulfillBtn
+	end
 
-	local nextButton = TOGBankClassic_UI:Create("Button")
-	nextButton:SetText("Next >")
-	nextButton:SetWidth(90)
-	nextButton:SetHeight(24)
-	nextButton:SetCallback("OnClick", function()
-		local info = TOGBankClassic_Guild.Info
-		if not info or not info.requests then return end
-		local allSorted, total = self:GetSortedTabFiltered()
-		local allVisible = self:ApplyFilters(allSorted)
-		local totalPages = math.max(1, math.ceil(#allVisible / REQUESTS_PER_PAGE))
-		if self.currentPage < totalPages then
-			self.currentPage = self.currentPage + 1
-			self:DrawRows()
-		end
+	-- Extend the status bar's right edge to just left of whichever icon is leftmost
+	-- (fulfill → broom → prev), anchored to the icon itself so the gap stays correct
+	-- no matter which icons are present. All icons are 22px at bottom y=15.
+	local leftmostBottomIcon = self.FulfillOldestBtn or self.CancelStaleBtn or prevPageBtn
+	statusbg:SetPoint("BOTTOMRIGHT", leftmostBottomIcon, "BOTTOMLEFT", -6, 0)
+
+	self.HeaderWidgets = nil
+	self.FilterWidgets = nil
+	self.FilterRequester = nil
+	self.FilterBank = nil
+	self.TabGroup = nil
+	-- Settings overlay is parented to this window; drop the stale reference so
+	-- BuildSettingsPanel rebuilds it against the freshly created window frame.
+	self.SettingsOverlay = nil
+	self.SettingsArchiveEB = nil
+	self.SettingsTombstoneEB = nil
+	self.SettingsMaxPctEB = nil
+	-- Cancel-reason editor widgets are children of the rebuilt overlay; drop the
+	-- stale refs (and the row pool) so RefreshReasonsList builds against the new one.
+	self.ReasonInput = nil
+	self.ReasonNewMember = nil
+	self.ReasonNewBanker = nil
+	self.ReasonSaveBtn = nil
+	self.ReasonScroll = nil
+	self.ReasonContent = nil
+	self.ReasonRows = nil
+	self.ReasonEditIndex = nil
+
+	-- Tab strip — AceGUI TabGroup for the proper WoW tab look (matches FGI). Used
+	-- purely as a tab bar: its content box is hidden and the request list /
+	-- settings panel render below it as separate window children. The "Settings"
+	-- tab is GM/officer-only (CanViewOfficerNote is true for GM and officers).
+	local TAB_TOOLTIPS = {
+		active   = { title = "Requests", body = "Open requests waiting to be fulfilled." },
+		archive  = { title = "Archive",  body = "Completed and cancelled requests." },
+		settings = { title = "Settings", body = "Configure request thresholds and custom cancel reasons. Officers only." },
+	}
+	local tabGroup = TOGBankClassic_UI:Create("TabGroup")
+	tabGroup:SetFullWidth(true)
+	-- Just tall enough to contain the tab row (anchored at y=-7, 24px tall);
+	-- keeps the gap to the filter dropdowns below tight.
+	tabGroup:SetHeight(30)
+	local tabList = {
+		{ text = "Requests", value = "active" },
+		{ text = "Archive",  value = "archive" },
+	}
+	if canOfficer then
+		tabList[#tabList + 1] = { text = "Settings", value = "settings" }
+	end
+	tabGroup:SetTabs(tabList)
+	-- Hide the empty content-area box; we only want the tabs themselves. The tab
+	-- buttons are anchored to the widget frame, so they stay visible.
+	if tabGroup.border then
+		tabGroup.border:SetBackdrop(nil)
+	end
+	tabGroup:SetCallback("OnGroupSelected", function(_, _, value)
+		if self.currentTab == value then return end
+		self.currentTab = value
+		self:DrawContent()
 	end)
-	attachActionTooltip(nextButton, "Next Page", "Show the next page of requests.")
-	tabGroup:AddChild(nextButton)
-	self.nextButton = nextButton
+	tabGroup:SetCallback("OnTabEnter", function(_, _, value, tabFrame)
+		local tip = TAB_TOOLTIPS[value]
+		if not tip or not tabFrame then return end
+		GameTooltip:SetOwner(tabFrame, "ANCHOR_BOTTOM")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine(tip.title)
+		GameTooltip:AddLine(tip.body, 0.9, 0.9, 0.9, true)
+		GameTooltip:Show()
+	end)
+	tabGroup:SetCallback("OnTabLeave", function() TOGBankClassic_UI:HideTooltip() end)
+	window:AddChild(tabGroup)
+	self.TabGroup = tabGroup
 
 	do
 		local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
@@ -1125,7 +1370,9 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	headerGroup:SetFullWidth(true)
 	if headerGroup.content and headerGroup.content.SetPoint then
 		headerGroup.content:ClearAllPoints()
-		headerGroup.content:SetPoint("TOPLEFT", 8, 0)
+		-- -3 y adds a little breathing room between the filter dropdowns and the
+		-- column headers.
+		headerGroup.content:SetPoint("TOPLEFT", 8, -3)
 		headerGroup.content:SetPoint("BOTTOMRIGHT", 0, 0)
 	end
 	window:AddChild(headerGroup)
@@ -1154,6 +1401,502 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	self.RowPool = nil
 	self.EmptyRow = nil
 	self:UpdateColumnLayout()
+
+	-- Officer-only Settings tab needs its overlay panel built once per window.
+	if canOfficer then
+		self:BuildSettingsPanel()
+	end
+
+	-- A persisted "settings" tab is meaningless for a non-officer; fall back.
+	if self.currentTab == "settings" and not canOfficer then
+		self.currentTab = "active"
+	end
+	-- Reflect the current tab in the TabGroup's visual selection. DrawContent
+	-- (the actual draw) runs from Open() after this; the OnGroupSelected guard
+	-- suppresses a redundant draw here.
+	self.TabGroup:SelectTab(self.currentTab or "active")
+end
+
+-- Attach a hover tooltip to a FontString (labels/headers don't take mouse
+-- events themselves) via an invisible hit frame matching its bounds, padded a
+-- little so small labels are easy to hover.
+local function attachLabelTooltip(parent, fs, title, body)
+	local hit = CreateFrame("Frame", nil, parent)
+	hit:SetPoint("TOPLEFT", fs, "TOPLEFT", -2, 2)
+	hit:SetPoint("BOTTOMRIGHT", fs, "BOTTOMRIGHT", 2, -2)
+	hit:EnableMouse(true)
+	hit:SetScript("OnEnter", function(f)
+		GameTooltip:SetOwner(f, "ANCHOR_BOTTOM")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine(title)
+		if body and body ~= "" then
+			GameTooltip:AddLine(body, 0.9, 0.9, 0.9, true)
+		end
+		GameTooltip:Show()
+	end)
+	hit:SetScript("OnLeave", function() TOGBankClassic_UI:HideTooltip() end)
+	return hit
+end
+
+-- Build the officer-only Settings panel: an opaque overlay covering the request
+-- list, with editable fields for the three request settings. The setters mirror
+-- the Blizzard options panel (Modules/Options.lua) so guild-wide sync still fires.
+function TOGBankClassic_UI_Requests:BuildSettingsPanel()
+	if self.SettingsOverlay or not self.Window or not self.TabGroup then
+		return
+	end
+	local window = self.Window
+
+	local overlay = CreateFrame("Frame", nil, window.frame, "BackdropTemplate")
+	overlay:SetFrameLevel(window.frame:GetFrameLevel() + 50)
+	overlay:SetPoint("TOPLEFT", self.TabGroup.frame, "BOTTOMLEFT", 4, -4)
+	overlay:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -16, 40)
+	overlay:SetBackdrop({
+		bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+		tile = true, tileSize = 16, edgeSize = 12,
+		insets = { left = 4, right = 4, top = 4, bottom = 4 },
+	})
+	overlay:EnableMouse(true)  -- swallow clicks so they don't reach the list behind
+	overlay:Hide()
+	self.SettingsOverlay = overlay
+
+	-- All three numeric settings sit on a single compact row; the full
+	-- descriptions live on each label's hover tooltip (not the edit box, so the
+	-- tooltip doesn't get in the way while typing). No "Request Settings" title —
+	-- the tab already says Settings.
+	local FIELD_Y = -20
+	local function compactField(prevEB, gap, labelText, tipTitle, tipBody, commit)
+		local lbl = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+		if prevEB then
+			lbl:SetPoint("LEFT", prevEB, "RIGHT", gap, 0)
+		else
+			lbl:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20, FIELD_Y)
+		end
+		lbl:SetText(labelText)
+		attachLabelTooltip(overlay, lbl, tipTitle, tipBody .. "\n\nPress Enter to apply.")
+
+		local eb = CreateFrame("EditBox", nil, overlay, "InputBoxTemplate")
+		eb:SetAutoFocus(false)
+		eb:SetNumeric(true)
+		eb:SetMaxLetters(4)
+		eb:SetSize(42, 20)
+		eb:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
+		eb:SetJustifyH("CENTER")
+		eb:SetScript("OnEnterPressed", function(box) commit(box) box:ClearFocus() end)
+		eb:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
+		eb:SetScript("OnEditFocusLost", function(box) commit(box) end)
+		return eb
+	end
+
+	self.SettingsArchiveEB = compactField(nil, 0,
+		"Archive (days):",
+		"Archive threshold (days)",
+		"Requests older than this many days move to the Archive tab.",
+		function(box)
+			local n = tonumber(box:GetText())
+			local opt = TOGBankClassic_Options
+			local current = (opt and opt.db and opt.db.global and opt.db.global.requests
+				and opt.db.global.requests.archiveDays) or 30
+			if n and n >= 1 then
+				n = math.floor(n)
+				if n ~= current and opt and opt.db then
+					opt.db.global.requests.archiveDays = n
+					TOGBankClassic_Output:Info("Archive threshold set to %d days.", n)
+				end
+			end
+			self:PopulateSettings()
+		end)
+
+	self.SettingsTombstoneEB = compactField(self.SettingsArchiveEB, 18,
+		"Auto-cancel (days):",
+		"Auto-cancel stale (days)",
+		"Open requests older than this are auto-cancelled on sync. Syncs guild-wide.",
+		function(box)
+			local n = tonumber(box:GetText())
+			local current = (TOGBankClassic_Options and TOGBankClassic_Options:GetAutoTombstoneDays()) or 30
+			if n and n >= 1 then
+				n = math.floor(n)
+				if n ~= current then
+					-- Write to guild-synced settings so every client applies the same threshold.
+					if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
+						TOGBankClassic_Guild.Info.settings.autoTombstoneDays = n
+					end
+					if TOGBankClassic_Options and TOGBankClassic_Options.db then
+						TOGBankClassic_Options.db.global.requests.autoTombstoneDays = n
+					end
+					TOGBankClassic_Guild:BroadcastSettings("ALERT")  -- SETTINGS-001
+					TOGBankClassic_Output:Info("Auto-cancel stale threshold set to %d days (syncing to guild...).", n)
+				end
+			end
+			self:PopulateSettings()
+		end)
+
+	self.SettingsMaxPctEB = compactField(self.SettingsTombstoneEB, 18,
+		"Max request (%):",
+		"Maximum request amount (%)",
+		"Caps how much of available inventory anyone can request at once (1-100). Syncs guild-wide.",
+		function(box)
+			local n = tonumber(box:GetText())
+			local current = (TOGBankClassic_Options and TOGBankClassic_Options:GetMaxRequestPercent()) or 100
+			if n then
+				n = math.floor(n)
+				if n < 1 then n = 1 elseif n > 100 then n = 100 end
+				if n ~= current then
+					if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
+						TOGBankClassic_Guild.Info.settings.maxRequestPercent = n
+					end
+					if TOGBankClassic_Options and TOGBankClassic_Options.db then
+						TOGBankClassic_Options.db.global.requests.maxRequestPercent = n
+					end
+					TOGBankClassic_Guild:BroadcastSettings("ALERT")  -- SETTINGS-001
+					TOGBankClassic_Output:Info("Maximum request amount set to %d%% (syncing to guild...).", n)
+				end
+			end
+			self:PopulateSettings()
+		end)
+
+	-- CANCELREASON-001: custom cancel-reason editor below the numeric settings.
+	self:BuildReasonsEditor(overlay)
+end
+
+-- ---------------------------------------------------------------------------
+-- CANCELREASON-001 — officer-only custom cancel-reason editor.
+-- Styled after the FGI Filters tab: a [Member][Banker][reason][Save] strip over
+-- a banded, scrolling list. Built-in presets appear greyed/read-only with a
+-- single native-role tick officers can clear; custom rows have both ticks + a
+-- delete X and are click-to-edit. All edits write to the guild-synced
+-- Info.settings.cancelReasons and re-broadcast.
+-- ---------------------------------------------------------------------------
+local REASON_ROW_H    = 18
+local REASON_MEMBER_X = 8    -- row-local x of the Member checkbox
+local REASON_BANKER_X = 42   -- row-local x of the Banker checkbox
+local REASON_TEXT_X   = 80   -- row-local x where the reason text starts
+local REASON_MAX_LEN  = 160  -- mirrors Guild.SanitizeCancelReasons clamp
+local REASON_MAX      = 20   -- mirrors Guild CANCEL_REASON_MAX_CUSTOM
+
+function TOGBankClassic_UI_Requests:_EnsureReasonConfig()
+	local g = TOGBankClassic_Guild
+	if not (g and g.Info and g.Info.settings) then return nil end
+	local s = g.Info.settings
+	if type(s.cancelReasons) ~= "table" then s.cancelReasons = {} end
+	local cr = s.cancelReasons
+	if type(cr.custom) ~= "table" then cr.custom = {} end
+	if type(cr.presetDisabled) ~= "table" then cr.presetDisabled = {} end
+	if type(cr.presetDisabled.banker) ~= "table" then cr.presetDisabled.banker = {} end
+	if type(cr.presetDisabled.member) ~= "table" then cr.presetDisabled.member = {} end
+	return cr
+end
+
+function TOGBankClassic_UI_Requests:BuildReasonsEditor(overlay)
+	local header = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	header:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20, -52)
+	header:SetText("Custom Cancel Reasons")
+	-- The how-to text lives on the header's hover tooltip rather than a visible line.
+	attachLabelTooltip(overlay, header, "Custom Cancel Reasons",
+		"Reasons offered when cancelling a request, on top of the built-in ones. Tick Member and/or Banker to choose where each reason appears. Type a reason and press Save (or Enter) to add it; click a custom row to edit it, or the X to delete it. Built-in reasons are locked (greyed) but can be un-ticked to stop offering them. Everything here syncs to the whole guild.")
+
+	-- Column headers
+	local colY = -78
+	local mHdr = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	mHdr:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_MEMBER_X - 2, colY)
+	mHdr:SetText("Mbr")
+	attachLabelTooltip(overlay, mHdr, "Member",
+		"Tick to offer this reason in the dropdown a member sees when cancelling their own request.")
+	local bHdr = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	bHdr:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_BANKER_X - 2, colY)
+	bHdr:SetText("Bnk")
+	attachLabelTooltip(overlay, bHdr, "Banker",
+		"Tick to offer this reason in the dropdown a banker sees when cancelling someone else's request.")
+	local rHdr = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	rHdr:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_TEXT_X, colY)
+	rHdr:SetText("Reason")
+	attachLabelTooltip(overlay, rHdr, "Reason",
+		"The cancellation message shown to the requester. Built-in reasons are greyed and can't be edited; your custom reasons can be clicked to edit or deleted with the X.")
+
+	-- Input strip
+	local inputY = -100
+	local newMember = CreateFrame("CheckButton", nil, overlay, "UICheckButtonTemplate")
+	newMember:SetSize(REASON_ROW_H, REASON_ROW_H)
+	newMember:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_MEMBER_X - 4, inputY)
+	newMember:SetChecked(true)
+	self.ReasonNewMember = newMember
+
+	local newBanker = CreateFrame("CheckButton", nil, overlay, "UICheckButtonTemplate")
+	newBanker:SetSize(REASON_ROW_H, REASON_ROW_H)
+	newBanker:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_BANKER_X - 4, inputY)
+	newBanker:SetChecked(true)
+	self.ReasonNewBanker = newBanker
+
+	local saveBtn = CreateFrame("Button", nil, overlay, "UIPanelButtonTemplate")
+	saveBtn:SetSize(54, 22)
+	saveBtn:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", -16, inputY + 1)
+	saveBtn:SetText("Save")
+	self.ReasonSaveBtn = saveBtn
+
+	local input = CreateFrame("EditBox", nil, overlay, "InputBoxTemplate")
+	input:SetAutoFocus(false)
+	input:SetMaxLetters(REASON_MAX_LEN)
+	input:SetHeight(20)
+	input:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_TEXT_X + 6, inputY)
+	input:SetPoint("RIGHT", saveBtn, "LEFT", -10, 0)
+	self.ReasonInput = input
+
+	local function doSaveReason()
+		local text = strtrim(input:GetText() or "")
+		if text == "" then return end
+		local cfg = self:_EnsureReasonConfig()
+		if not cfg then return end
+		local member = newMember:GetChecked() and true or false
+		local banker = newBanker:GetChecked() and true or false
+		if self.ReasonEditIndex and cfg.custom[self.ReasonEditIndex] then
+			local c = cfg.custom[self.ReasonEditIndex]
+			c.text, c.member, c.banker = text, member, banker
+		else
+			if #cfg.custom >= REASON_MAX then
+				self.Window:SetStatusText(string.format("Custom reason limit reached (%d).", REASON_MAX))
+				return
+			end
+			cfg.custom[#cfg.custom + 1] = { text = text, member = member, banker = banker }
+		end
+		self.ReasonEditIndex = nil
+		input:SetText("")
+		newMember:SetChecked(true)
+		newBanker:SetChecked(true)
+		input:ClearFocus()
+		TOGBankClassic_Guild:BroadcastSettings("ALERT")
+		self:RefreshReasonsList()
+	end
+	saveBtn:SetScript("OnClick", doSaveReason)
+	input:SetScript("OnEnterPressed", doSaveReason)
+	input:SetScript("OnEscapePressed", function(box)
+		self.ReasonEditIndex = nil
+		box:SetText("")
+		box:ClearFocus()
+	end)
+
+	-- Scrolling list
+	local scroll = CreateFrame("ScrollFrame", "TOGBankClassicReasonsScroll", overlay, "UIPanelScrollFrameTemplate")
+	scroll:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20, -126)
+	scroll:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", -28, 14)
+	scroll:EnableMouseWheel(true)
+	scroll:SetScript("OnMouseWheel", function(f, delta)
+		local newv = f:GetVerticalScroll() - delta * (REASON_ROW_H * 3)
+		local maxv = f:GetVerticalScrollRange()
+		if newv < 0 then newv = 0 elseif newv > maxv then newv = maxv end
+		f:SetVerticalScroll(newv)
+	end)
+	self.ReasonScroll = scroll
+
+	local content = CreateFrame("Frame", nil, scroll)
+	content:SetSize(10, 10)
+	scroll:SetScrollChild(content)
+	self.ReasonContent = content
+	self.ReasonRows = {}
+	self.ReasonEditIndex = nil
+end
+
+-- Create one reusable reason row (checkboxes + text + delete). Handlers read
+-- row._entry so the same frame can be rebound across refreshes.
+function TOGBankClassic_UI_Requests:_BuildReasonRow()
+	local row = CreateFrame("Button", nil, self.ReasonContent)
+	row:SetHeight(REASON_ROW_H)
+
+	local bg = row:CreateTexture(nil, "BACKGROUND")
+	bg:SetAllPoints(row)
+	bg:SetColorTexture(1, 1, 1, 0.04)
+	row.bg = bg
+
+	local mcb = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+	mcb:SetSize(REASON_ROW_H, REASON_ROW_H)
+	mcb:SetPoint("LEFT", row, "LEFT", REASON_MEMBER_X, 0)
+	row.memberCB = mcb
+
+	local bcb = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+	bcb:SetSize(REASON_ROW_H, REASON_ROW_H)
+	bcb:SetPoint("LEFT", row, "LEFT", REASON_BANKER_X, 0)
+	row.bankerCB = bcb
+
+	local del = CreateFrame("Button", nil, row)
+	del:SetSize(14, 14)
+	del:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+	del:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
+	del:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+	row.deleteBtn = del
+
+	local txt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	txt:SetPoint("LEFT", row, "LEFT", REASON_TEXT_X, 0)
+	txt:SetPoint("RIGHT", del, "LEFT", -6, 0)
+	txt:SetJustifyH("LEFT")
+	txt:SetWordWrap(false)
+	row.text = txt
+
+	mcb:SetScript("OnClick", function(cb)
+		if row._entry then self:_OnReasonToggle(row._entry, "member", cb:GetChecked() and true or false) end
+	end)
+	bcb:SetScript("OnClick", function(cb)
+		if row._entry then self:_OnReasonToggle(row._entry, "banker", cb:GetChecked() and true or false) end
+	end)
+	del:SetScript("OnClick", function()
+		local e = row._entry
+		if e and e.kind == "custom" then self:_OnReasonDelete(e.index) end
+	end)
+	del:SetScript("OnEnter", function(f)
+		GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
+		GameTooltip:SetText("Delete this reason", 1, 1, 1)
+		GameTooltip:Show()
+	end)
+	del:SetScript("OnLeave", function() TOGBankClassic_UI:HideTooltip() end)
+	row:SetScript("OnClick", function()
+		local e = row._entry
+		if e and e.kind == "custom" then self:_OnReasonEdit(e.index) end
+	end)
+
+	return row
+end
+
+function TOGBankClassic_UI_Requests:_ConfigureReasonRow(row, entry, idx)
+	row._entry = entry
+	row.bg:SetShown(idx % 2 == 0)
+	row.text:SetText(entry.text or "")
+	if entry.kind == "preset" then
+		row.text:SetTextColor(0.5, 0.5, 0.5)  -- greyed: locked text
+		row.deleteBtn:Hide()
+		local disabled = presetDisabledSet(entry.role)
+		local on = not disabled[entry.key]
+		if entry.role == "member" then
+			row.memberCB:Show(); row.memberCB:SetChecked(on)
+			row.bankerCB:Hide()
+		else
+			row.bankerCB:Show(); row.bankerCB:SetChecked(on)
+			row.memberCB:Hide()
+		end
+	else
+		row.text:SetTextColor(1, 1, 1)
+		row.deleteBtn:Show()
+		row.memberCB:Show(); row.memberCB:SetChecked(entry.member and true or false)
+		row.bankerCB:Show(); row.bankerCB:SetChecked(entry.banker and true or false)
+	end
+end
+
+function TOGBankClassic_UI_Requests:_OnReasonToggle(entry, column, checked)
+	local cfg = self:_EnsureReasonConfig()
+	if not cfg then return end
+	if entry.kind == "preset" then
+		-- Only the native-role checkbox is shown for presets; checked = offered.
+		local set = cfg.presetDisabled[entry.role]
+		if checked then set[entry.key] = nil else set[entry.key] = true end
+	else
+		local c = cfg.custom[entry.index]
+		if c then c[column] = checked end
+		entry[column] = checked
+	end
+	TOGBankClassic_Guild:BroadcastSettings("ALERT")
+end
+
+function TOGBankClassic_UI_Requests:_OnReasonDelete(index)
+	local cfg = self:_EnsureReasonConfig()
+	if not cfg or not cfg.custom[index] then return end
+	table.remove(cfg.custom, index)
+	if self.ReasonEditIndex == index then
+		self.ReasonEditIndex = nil
+		if self.ReasonInput then self.ReasonInput:SetText("") end
+	elseif self.ReasonEditIndex and self.ReasonEditIndex > index then
+		self.ReasonEditIndex = self.ReasonEditIndex - 1
+	end
+	TOGBankClassic_Guild:BroadcastSettings("ALERT")
+	self:RefreshReasonsList()
+end
+
+function TOGBankClassic_UI_Requests:_OnReasonEdit(index)
+	local cfg = self:_EnsureReasonConfig()
+	local c = cfg and cfg.custom[index]
+	if not c then return end
+	self.ReasonEditIndex = index
+	self.ReasonInput:SetText(c.text or "")
+	self.ReasonNewMember:SetChecked(c.member and true or false)
+	self.ReasonNewBanker:SetChecked(c.banker and true or false)
+	self.ReasonInput:SetFocus()
+end
+
+-- Rebuild the reason rows: banker presets, member presets, then custom reasons.
+function TOGBankClassic_UI_Requests:RefreshReasonsList()
+	if not self.ReasonContent or not self.ReasonScroll then return end
+	self.ReasonRows = self.ReasonRows or {}
+
+	local entries = {}
+	for _, p in ipairs(buildPresetReasons("banker")) do
+		entries[#entries + 1] = { kind = "preset", role = "banker", key = p.key, text = p.label }
+	end
+	for _, p in ipairs(buildPresetReasons("member")) do
+		entries[#entries + 1] = { kind = "preset", role = "member", key = p.key, text = p.label }
+	end
+	for i, c in ipairs(customReasonList()) do
+		if type(c) == "table" then
+			entries[#entries + 1] = { kind = "custom", index = i, text = c.text or "", member = c.member, banker = c.banker }
+		end
+	end
+
+	local width = self.ReasonScroll:GetWidth()
+	if not width or width < 10 then width = 200 end
+	self.ReasonContent:SetWidth(width)
+	self.ReasonContent:SetHeight(math.max(1, #entries * REASON_ROW_H))
+
+	for i, entry in ipairs(entries) do
+		local row = self.ReasonRows[i]
+		if not row then
+			row = self:_BuildReasonRow()
+			self.ReasonRows[i] = row
+		end
+		row:ClearAllPoints()
+		row:SetPoint("TOPLEFT", self.ReasonContent, "TOPLEFT", 0, -((i - 1) * REASON_ROW_H))
+		row:SetPoint("RIGHT", self.ReasonContent, "RIGHT", 0, 0)
+		self:_ConfigureReasonRow(row, entry, i)
+		row:Show()
+	end
+	for i = #entries + 1, #self.ReasonRows do
+		self.ReasonRows[i]:Hide()
+	end
+end
+
+-- Fill the Settings editboxes from current values (called when the tab opens
+-- and after each commit so clamped/normalised values are reflected).
+function TOGBankClassic_UI_Requests:PopulateSettings()
+	if not self.SettingsOverlay then
+		return
+	end
+	local opt = TOGBankClassic_Options
+	local archiveDays = 30
+	if opt and opt.db and opt.db.global and opt.db.global.requests then
+		archiveDays = opt.db.global.requests.archiveDays or 30
+	end
+	if self.SettingsArchiveEB then self.SettingsArchiveEB:SetText(tostring(archiveDays)) end
+	if self.SettingsTombstoneEB then
+		self.SettingsTombstoneEB:SetText(tostring(opt and opt:GetAutoTombstoneDays() or 30))
+	end
+	if self.SettingsMaxPctEB then
+		self.SettingsMaxPctEB:SetText(tostring(opt and opt:GetMaxRequestPercent() or 100))
+	end
+end
+
+-- Toggle between the Settings panel and the request list. The bottom-row
+-- pagination/Cancel-Stale icons are meaningless on the Settings tab, so hide them.
+function TOGBankClassic_UI_Requests:ShowSettings(show)
+	if show then
+		if not self.SettingsOverlay then return end
+		self:PopulateSettings()
+		self:RefreshReasonsList()
+		self.SettingsOverlay:Show()
+		if self.PrevPageBtn then self.PrevPageBtn:Hide() end
+		if self.NextPageBtn then self.NextPageBtn:Hide() end
+		if self.CancelStaleBtn then self.CancelStaleBtn:Hide() end
+		self.Window:SetStatusText("Officer settings — changes to the last two sync guild-wide.")
+	else
+		if self.SettingsOverlay then self.SettingsOverlay:Hide() end
+		if self.PrevPageBtn then self.PrevPageBtn:Show() end
+		if self.NextPageBtn then self.NextPageBtn:Show() end
+		if self.CancelStaleBtn then self.CancelStaleBtn:Show() end
+	end
 end
 
 local function valueForSort(request, key)
@@ -1355,7 +2098,7 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 			completeButton:SetWidth(24)
 			completeButton:SetHeight(20)
 			centerButtonText(completeButton)
-			attachActionTooltip(completeButton, "Complete request", "Marks the request as completed by the bank.")
+			attachActionTooltip(completeButton, "Mark hand-off", "Record how many you gave the requester directly (not by mail). Enter a quantity; it goes into the Sent column, and the order completes once Sent reaches the amount requested.")
 			actionGroup:AddChild(completeButton)
 
 			local actionSpacer = TOGBankClassic_UI:Create("Label")
@@ -1629,16 +2372,25 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 	self.FilterWidgets = self.FilterWidgets or {}
 
 	for i, col in ipairs(COLUMNS) do
-		local button = self.HeaderWidgets[i]
-		if not button then
-			button = TOGBankClassic_UI:Create("Button")
-			self.HeaderWidgets[i] = button
-			tagColumnWidget(button, i, false)
-			if button.text and button.text.SetJustifyH then
-				button.text:SetJustifyH(justifyForAlign(col.align))
+		local headerLabel = self.HeaderWidgets[i]
+		if not headerLabel then
+			-- Plain clickable sort header (no button background), justified to match
+			-- the column's data cells so headers and rows line up. Mirrors the FGI
+			-- RowList column headers. Gold text + hover glow signal click-to-sort.
+			headerLabel = TOGBankClassic_UI:Create("InteractiveLabel")
+			self.HeaderWidgets[i] = headerLabel
+			tagColumnWidget(headerLabel, i, false)
+			if headerLabel.label then
+				headerLabel.label:SetFontObject("GameFontNormal")
+				-- headerAlign overrides the data alignment for the header text only
+				-- (e.g. center the "#" / "Item" headers while their cells stay
+				-- right/left). Falls back to the column's data alignment.
+				headerLabel.label:SetJustifyH(justifyForAlign(col.headerAlign or col.align))
+				headerLabel.label:SetWordWrap(false)
 			end
+			headerLabel:SetHighlight("Interface\\QuestFrame\\UI-QuestTitleHighlight")
 			local colKey = col.key
-			button:SetCallback("OnClick", function()
+			headerLabel:SetCallback("OnClick", function()
 				if self.sortColumn == colKey then
 					self.sortDirection = (self.sortDirection == "asc") and "desc" or "asc"
 				else
@@ -1648,9 +2400,9 @@ function TOGBankClassic_UI_Requests:EnsureHeaderRows()
 				self:DrawContent()
 			end)
 			if col.tooltipTitle then
-				attachActionTooltip(button, col.tooltipTitle, col.tooltipDetail)
+				attachActionTooltip(headerLabel, col.tooltipTitle, col.tooltipDetail)
 			end
-			self.HeaderGroup:AddChild(button)
+			self.HeaderGroup:AddChild(headerLabel)
 		end
 	end
 
@@ -1670,12 +2422,17 @@ function TOGBankClassic_UI_Requests:DrawHeader()
 		if self.sortColumn == col.key then
 			label = label .. (self.sortDirection == "asc" and ArrowUpIcon or ArrowDownIcon)
 		end
-		local button = self.HeaderWidgets[i]
+		-- headerSuffix nudges a right-justified header in by ~1 char (e.g. "#" sits
+		-- over the first digit of the right-aligned quantity rather than the "x").
+		if col.headerSuffix then
+			label = label .. col.headerSuffix
+		end
+		local headerLabel = self.HeaderWidgets[i]
 
-		button:SetText(label)
+		headerLabel:SetText(label)
 		local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
-		button:SetWidth(columnWidth)
-		setWidgetShown(button, true)
+		headerLabel:SetWidth(columnWidth)
+		setWidgetShown(headerLabel, true)
 	end
 
 	for i, _ in ipairs(COLUMNS) do
@@ -1847,15 +2604,6 @@ function TOGBankClassic_UI_Requests:ApplyTabFilter(requests)
 	return filtered
 end
 
-function TOGBankClassic_UI_Requests:UpdateTabButtons()
-	if not self.ActiveTabBtn or not self.ArchiveTabBtn then
-		return
-	end
-	local isArchive = (self.currentTab == "archive")
-	self.ActiveTabBtn:SetText(isArchive and "Requests" or "|cffffd100> Requests|r")
-	self.ArchiveTabBtn:SetText(isArchive and "|cffffd100> Archive|r" or "Archive")
-end
-
 -- Returns the tab-filtered sorted request list, caching the result so that
 -- bag-update and filter-selection redraws skip the expensive sort+tabfilter.
 -- Cache is invalidated at the top of DrawContent (called on structural changes).
@@ -1972,11 +2720,11 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 
 			-- Wire action button callbacks — closures capture requestId (value type, safe)
 			if row.completeButton then
+				-- COMPLETEQTY-001: instead of silently marking complete, ask how many
+				-- were handed over directly; the amount goes into the Sent column.
 				row.completeButton:SetCallback("OnClick", function()
 					if not requestId then return end
-					if not TOGBankClassic_Guild:CompleteRequest(requestId, actor) then
-						self.Window:SetStatusText("Unable to complete request.")
-					end
+					showCompleteQtyPrompt(req, actor)
 				end)
 			end
 			if row.cancelButton then
@@ -2189,8 +2937,13 @@ function TOGBankClassic_UI_Requests:DrawRows()
 	local allVisible = self:ApplyFilters(allSorted)
 	local totalVisible = #allVisible
 	
-	-- Apply pagination: only show rows for current page
+	-- Apply pagination: only show rows for current page. Clamp the page to the
+	-- valid range so a background refresh after the data shrank can't strand the
+	-- view on an out-of-range (empty) page.
 	self.currentPage = self.currentPage or 1
+	local totalPages = math.max(1, math.ceil(totalVisible / REQUESTS_PER_PAGE))
+	if self.currentPage > totalPages then self.currentPage = totalPages end
+	if self.currentPage < 1 then self.currentPage = 1 end
 	local startIdx = (self.currentPage - 1) * REQUESTS_PER_PAGE
 	local endIdx = startIdx + REQUESTS_PER_PAGE
 	local visible = {}
@@ -2276,9 +3029,9 @@ function TOGBankClassic_UI_Requests:DrawRows()
 		content:ResumeLayout()
 		content:DoLayout()
 		local totalPages = math.max(1, math.ceil(totalVisible / REQUESTS_PER_PAGE))
-		if self.prevButton then self.prevButton:SetDisabled(self.currentPage <= 1) end
-		if self.nextButton then self.nextButton:SetDisabled(self.currentPage >= totalPages) end
-		
+		setBtnEnabled(self.PrevPageBtn, self.currentPage > 1)
+		setBtnEnabled(self.NextPageBtn, self.currentPage < totalPages)
+
 		-- Always calculate the range being shown on current page
 		local showStart = startIdx + 1
 		local showEnd = math.min(endIdx, totalVisible)
@@ -2352,9 +3105,9 @@ function TOGBankClassic_UI_Requests:_CreateNewRowsBatched(gen, newReqs, startInd
 			local allVisible2 = self:ApplyFilters(allSorted2)
 			local totalVisible2 = #allVisible2
 			local totalPages = math.max(1, math.ceil(totalVisible2 / REQUESTS_PER_PAGE))
-			if self.prevButton then self.prevButton:SetDisabled(self.currentPage <= 1) end
-			if self.nextButton then self.nextButton:SetDisabled(self.currentPage >= totalPages) end
-			
+			setBtnEnabled(self.PrevPageBtn, self.currentPage > 1)
+			setBtnEnabled(self.NextPageBtn, self.currentPage < totalPages)
+
 			-- Calculate the range being shown on current page
 			local startIdx = (self.currentPage - 1) * REQUESTS_PER_PAGE
 			local endIdx = startIdx + REQUESTS_PER_PAGE
@@ -2388,10 +3141,23 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] DrawContent: Starting structural refresh")
 
 	self.Window:SetStatusText("")
-	self.currentPage = 1  -- Reset to first page on tab change or full refresh
+	-- Reset to the first page only when the tab actually changed. Background
+	-- request syncs call DrawContent too (via RefreshRequestsUI); resetting the
+	-- page there would snap the user back to page 1 mid-browse (the "snap back"
+	-- bug). DrawRows clamps currentPage if the data shrank.
+	if self._lastDrawnTab ~= self.currentTab then
+		self.currentPage = 1
+		self._lastDrawnTab = self.currentTab
+	end
+
+	-- Settings tab shows the officer panel instead of the request list.
+	if self.currentTab == "settings" then
+		self:ShowSettings(true)
+		return
+	end
+	self:ShowSettings(false)
 
 	self:UpdateColumnLayout()
-	self:UpdateTabButtons()
 	self:DrawHeader()
 	self:UpdateFilters()
 	if self.HeaderGroup then self.HeaderGroup:DoLayout() end

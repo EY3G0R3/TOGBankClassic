@@ -176,6 +176,20 @@ function TOGBankClassic_Database:Reset(name)
 		settings = {
 			maxRequestPercent = 100,  -- Default to no limit
 			autoTombstoneDays = 30,   -- Stale open requests older than this are auto-tombstoned on receive
+			-- CANCELREASON-001: officer-authored, guild-synced cancel-reason config.
+			--   custom        = array of { text = string, member = bool, banker = bool }
+			--                   (a custom reason can be offered in the member self-cancel
+			--                    dropdown, the banker-cancel dropdown, both, or neither).
+			--   presetDisabled = { banker = { key=true }, member = { key=true } } — built-in
+			--                   flavor presets the officers have un-ticked so they stop being
+			--                   offered in that role's dropdown.
+			cancelReasons = {
+				custom = {},
+				presetDisabled = { banker = {}, member = {} },
+			},
+			-- HELPNOTE-001: officer-authored note appended to the bottom of each
+			-- window's help "?" tooltip (per window). Guild-synced.
+			helpNotes = { inventory = "", search = "", requests = "" },
 		},
 		-- Delta sync fields
 		guildProtocolVersions = {},
@@ -346,6 +360,31 @@ function TOGBankClassic_Database:Load(name)
 	end
 	if db.settings.autoTombstoneDays == nil then
 		db.settings.autoTombstoneDays = 30
+	end
+	-- CANCELREASON-001: custom guild cancel reasons + preset disable-set
+	if type(db.settings.cancelReasons) ~= "table" then
+		db.settings.cancelReasons = {}
+	end
+	if type(db.settings.cancelReasons.custom) ~= "table" then
+		db.settings.cancelReasons.custom = {}
+	end
+	if type(db.settings.cancelReasons.presetDisabled) ~= "table" then
+		db.settings.cancelReasons.presetDisabled = {}
+	end
+	if type(db.settings.cancelReasons.presetDisabled.banker) ~= "table" then
+		db.settings.cancelReasons.presetDisabled.banker = {}
+	end
+	if type(db.settings.cancelReasons.presetDisabled.member) ~= "table" then
+		db.settings.cancelReasons.presetDisabled.member = {}
+	end
+	-- HELPNOTE-001: per-window officer help notes appended to the help "?" tooltips
+	if type(db.settings.helpNotes) ~= "table" then
+		db.settings.helpNotes = {}
+	end
+	for _, key in ipairs({ "inventory", "search", "requests" }) do
+		if type(db.settings.helpNotes[key]) ~= "string" then
+			db.settings.helpNotes[key] = ""
+		end
 	end
 
 	-- Initialize delta sync fields if not present

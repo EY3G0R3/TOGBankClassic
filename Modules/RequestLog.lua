@@ -1667,6 +1667,13 @@ function Guild:AddRequest(request)
 		return false
 	end
 
+	-- VIEWBANK-001: never accept a request targeting a view-only bank toon. This is
+	-- the authoritative gate — the Search UI also blocks it earlier for friendlier UX.
+	if request.bank and self:IsViewOnlyBank(request.bank) then
+		TOGBankClassic_Output:Debug(string.format("AddRequest: rejected request for view-only bank %s", tostring(request.bank)))
+		return false
+	end
+
 	self:EnsureRequestsInitialized()
 
 	local now = GetServerTime()

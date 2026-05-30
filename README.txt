@@ -96,6 +96,15 @@ FOR GUILD BANK CHARACTERS:
 8. Open your bank to perform the initial scan
 9. The addon will now automatically share this character's inventory!
 
+VIEW-ONLY BANK CHARACTERS (e.g. a raid bank):
+---------------------------------------------
+To make a bank character visible to everyone but NOT requestable (its items
+show in inventory/search/tooltips, but guild members can't send requests for
+them), add a view-only marker to its note alongside "gbank". For example, set
+the Public/Officer Note to:  gbank viewonly
+Also accepted: "gbank readonly", "gbank read-only", or the compact "gbankro".
+Type /reload after changing the note.
+
 FOR REGULAR GUILD MEMBERS:
 ---------------------------
 1. Just install the addon - no configuration needed!

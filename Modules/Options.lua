@@ -419,12 +419,11 @@ function TOGBankClassic_Options:Init()
 			requests = {
 				order = 3,
 				type = "group",
-				name = "Requests",
+				name = "Officer",
+				-- GM/officers only (CanViewOfficerNote is true for the GM and officers).
+				-- Bankers and regular members no longer see or edit these settings.
 				hidden = function()
-					-- Show to officers or bankers
-					if CanViewOfficerNote() then return false end
-					local player = TOGBankClassic_Guild:GetNormalizedPlayer()
-					return not (player and TOGBankClassic_Guild:IsBank(player))
+					return not (CanViewOfficerNote and CanViewOfficerNote())
 				end,
 				args = {
 					["requestsHeader"] = {
@@ -515,6 +514,49 @@ function TOGBankClassic_Options:Init()
 							TOGBankClassic_Guild:BroadcastSettings("ALERT")
 							TOGBankClassic_Output:Info("Maximum request amount set to %d%% (syncing to guild...)", v)
 						end,
+					},
+					-- HELPNOTE-001: officer-only per-window help-tooltip notes (GM/officers).
+					["helpNotesHeader"] = {
+						order = 5,
+						type = "header",
+						name = "Guild Help Notes (officers only)",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+					},
+					["helpNotesDesc"] = {
+						order = 5.1,
+						type = "description",
+						name = "Optional notes appended to the bottom of the help (?) tooltip on each window — e.g. how to submit a request and the expected turnaround time. Leave blank for none. These sync to the whole guild.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+					},
+					["helpNoteRequests"] = {
+						order = 5.2,
+						type = "input",
+						multiline = 4,
+						width = "full",
+						name = "Requests window note",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						get = function() return TOGBankClassic_Guild:GetHelpNote("requests") end,
+						set = function(_, v) TOGBankClassic_Options:SetHelpNote("requests", v) end,
+					},
+					["helpNoteSearch"] = {
+						order = 5.3,
+						type = "input",
+						multiline = 4,
+						width = "full",
+						name = "Search window note",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						get = function() return TOGBankClassic_Guild:GetHelpNote("search") end,
+						set = function(_, v) TOGBankClassic_Options:SetHelpNote("search", v) end,
+					},
+					["helpNoteInventory"] = {
+						order = 5.4,
+						type = "input",
+						multiline = 4,
+						width = "full",
+						name = "Inventory (main) window note",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						get = function() return TOGBankClassic_Guild:GetHelpNote("inventory") end,
+						set = function(_, v) TOGBankClassic_Options:SetHelpNote("inventory", v) end,
 					},
 					["exampleGroup"] = {
 						order = 4,
@@ -700,6 +742,23 @@ function TOGBankClassic_Options:GetAutoTombstoneDays()
 		return self.db.global.requests.autoTombstoneDays or 30
 	end
 	return 30
+end
+
+-- HELPNOTE-001: write an officer help note for a window into the guild-synced
+-- settings and broadcast it. windowKey: "inventory" / "search" / "requests".
+function TOGBankClassic_Options:SetHelpNote(windowKey, value)
+	value = string.sub(tostring(value or ""), 1, 400)
+	local g = TOGBankClassic_Guild
+	if g and g.Info and g.Info.settings then
+		if type(g.Info.settings.helpNotes) ~= "table" then
+			g.Info.settings.helpNotes = { inventory = "", search = "", requests = "" }
+		end
+		g.Info.settings.helpNotes[windowKey] = value
+		if g.BroadcastSettings then
+			g:BroadcastSettings("ALERT")  -- SETTINGS-001: propagate to the guild
+		end
+		TOGBankClassic_Output:Info("Updated the %s window help note (syncing to guild...).", windowKey)
+	end
 end
 
 function TOGBankClassic_Options:IsRegisterBankCommandEnabled()

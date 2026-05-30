@@ -27,10 +27,12 @@
         "next",
         "GuildRoster",
         "debugprofilestop",
+        "debugstack",
         "pcall",
         "GetAddOnMetadata",
         "select",
         "strsplit",
+        "strtrim",
         "GetItemInfo",
         "Item",
         "wipe",
@@ -46,6 +48,7 @@
         "StaticPopup_Show",
         "MailFrame",
         "SendMailNameEditBox",
+        "SendMail",
         "CheckInbox",
         "GetInboxNumItems",
         "GetInboxHeaderInfo",
@@ -118,6 +121,11 @@
     "workspace.library": [
         "${3rd}/luassert/library",
         "${3rd}/busted/library"
+    ],
+    "workspace.ignoreDir": [
+        "Libs",
+        "**/Libs",
+        "**/Libs/**"
     ],
     "diagnostics.disable": [
         "need-check-nil",

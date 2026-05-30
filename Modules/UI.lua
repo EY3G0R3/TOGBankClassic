@@ -244,7 +244,22 @@ end
 -- Use this for ALL non-item tooltips. The pattern of manually calling
 -- GameTooltip:SetOwner / AddLine / Show is being phased out — prefer this helper
 -- so adding new tooltips is one call instead of a 5-line scriptlet.
-function TOGBankClassic_UI:AttachTooltip(target, anchor, title, lines)
+-- HELPNOTE-001: append the officer-authored note for a window to the bottom of the
+-- CURRENT GameTooltip, if one is set. windowKey: "inventory" / "search" / "requests".
+-- Read at hover time so it always reflects the latest synced value.
+function TOGBankClassic_UI:AppendGuildHelpNote(windowKey)
+	local note = TOGBankClassic_Guild and TOGBankClassic_Guild.GetHelpNote
+		and TOGBankClassic_Guild:GetHelpNote(windowKey)
+	if note and note ~= "" then
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Guild Note:|r", 1, 1, 1, false)
+		GameTooltip:AddLine(note, 0.9, 0.9, 0.9, true)
+	end
+end
+
+-- noteWindowKey (optional): when set, AppendGuildHelpNote(noteWindowKey) runs just
+-- before the tooltip is shown so the officer note is appended at the bottom.
+function TOGBankClassic_UI:AttachTooltip(target, anchor, title, lines, noteWindowKey)
 	if not target then return end
 	local anchorFrame = target.frame or target
 	local resolvedAnchor = anchor or "ANCHOR_RIGHT"
@@ -265,6 +280,9 @@ function TOGBankClassic_UI:AttachTooltip(target, anchor, title, lines)
 					)
 				end
 			end
+		end
+		if noteWindowKey then
+			TOGBankClassic_UI:AppendGuildHelpNote(noteWindowKey)
 		end
 		GameTooltip:Show()
 	end

@@ -123,6 +123,11 @@ function TOGBankClassic_Mail:Scan()
 	if self.isScanning then
 		return
 	end
+	-- FILLALL-001: while the Fulfill button is pulling a specific item for an order,
+	-- don't let the donation auto-collect grab the other copies out of the mail.
+	if self.collectInFlight then
+		return
+	end
 
 	local info = TOGBankClassic_Guild.Info
 	if not info then
@@ -328,6 +333,7 @@ function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
 end
 
 function TOGBankClassic_Mail:ApplyPendingSend()
+	self.batchInFlight = false  -- FILLALL-001: a send completed; allow the next batch fulfill
 	TOGBankClassic_Output:Debug("MAIL", "STORE", "ApplyPendingSend: Called, pendingSend=%s", tostring(self.pendingSend ~= nil))
 	local pending = self.pendingSend
 	if not pending then
@@ -923,4 +929,290 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	end
 
 	return true, message, attached
+end
+
+-- FILLALL-001: stepped batch fulfillment. One WoW action per click — split,
+-- attach and send each happen on a separate click (separate frame) so the cursor
+-- and bag state settle between actions; doing it all in one click raced the send
+-- ahead of the split. The banker spams the envelope icon to walk the oldest
+-- fully-fillable order through: select -> (split) -> attach -> send, then the next
+-- click selects the next-oldest. Decisions: oldest-first (FIFO by date); skip
+-- partials (only orders we can fully fill from bags). The split is attached
+-- directly off the cursor, so no free bag slot or async timers are needed.
+local function tog_copyItems(items)
+	local out = {}
+	for i, item in ipairs(items) do
+		out[i] = { bag = item.bag, slot = item.slot, count = item.count }
+	end
+	return out
+end
+
+local function tog_findEmptyBagSlot()
+	for bag = 0, 4 do
+		local numSlots = C_Container.GetContainerNumSlots(bag)
+		for slot = 1, numSlots do
+			if not C_Container.GetContainerItemInfo(bag, slot) then
+				return bag, slot
+			end
+		end
+	end
+	return nil
+end
+
+-- FILLALL-001 (mail collect): does an inbox item link match a request's item?
+-- Mirrors CanFulfillRequest's match: by itemID (+ suffix) when known, else by name.
+local function tog_linkMatchesReq(link, req)
+	if not link then return false end
+	local targetID = tonumber(req.itemID)
+	if targetID then
+		local lid = GetItemInfoInstant(link)
+		if lid ~= targetID then return false end
+		local targetSuffix = tonumber(req.suffixID)
+		if targetSuffix then
+			return TOGBankClassic_Item:GetSuffixID(link) == targetSuffix
+		end
+		return true
+	end
+	local name = GetItemInfo(link)
+	if name and req.item and string.lower(name) == string.lower(req.item) then
+		return true
+	end
+	return false
+end
+
+-- Total quantity of a request's item sitting in the player's mail inbox.
+local function tog_inboxQtyFor(req)
+	local total = 0
+	local num = GetInboxNumItems()
+	for mailId = 1, (num or 0) do
+		for a = 1, (ATTACHMENTS_MAX_RECEIVE or 12) do
+			local link = GetInboxItemLink(mailId, a)
+			if link and tog_linkMatchesReq(link, req) then
+				local _, _, _, qty = GetInboxItem(mailId, a)
+				total = total + (tonumber(qty) or 0)
+			end
+		end
+	end
+	return total
+end
+
+-- Take the first inbox attachment matching the request into bags.
+-- Returns (ok, name, quantityTaken) — quantity matters because one attachment can
+-- be a stack, so the collector counts items pulled, not attachments.
+function TOGBankClassic_Mail:TakeOneInboxItemFor(req)
+	local num = GetInboxNumItems()
+	for mailId = 1, (num or 0) do
+		for a = 1, (ATTACHMENTS_MAX_RECEIVE or 12) do
+			local link = GetInboxItemLink(mailId, a)
+			if link and tog_linkMatchesReq(link, req) then
+				local name = GetItemInfo(link) or req.item
+				local _, _, _, qty = GetInboxItem(mailId, a)
+				TakeInboxItem(mailId, a)
+				return true, name, (tonumber(qty) or 1)
+			end
+		end
+	end
+	return false
+end
+
+-- Oldest open order for normActor serviceable from bags, or from bags + the mail
+-- inbox. Returns (req, bagsReady, plan, qtyNeeded). bagsReady=true → can be fully
+-- attached from bags now (plan computed); false → some of its items are in the
+-- mail and need pulling into bags first.
+function TOGBankClassic_Mail:FindOldestServiceableOrder(normActor)
+	local info = TOGBankClassic_Guild.Info
+	local requests = info and info.requests
+	if not requests then return nil end
+	local best, bestBagsReady, bestPlan, bestQty
+	for _, req in pairs(requests) do
+		if (req.status or "open") == "open"
+			and req.bank and TOGBankClassic_Guild:NormalizeName(req.bank) == normActor then
+			local qtyNeeded = (tonumber(req.quantity) or 0) - (tonumber(req.fulfilled) or 0)
+			if qtyNeeded > 0 then
+				local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
+				local bagsReady, plan, serviceable = false, nil, false
+				if totalInBags >= qtyNeeded then
+					plan = self:CalculateFulfillmentPlan(tog_copyItems(items), qtyNeeded, totalInBags)
+					if plan.canFulfill then bagsReady, serviceable = true, true end
+				end
+				if not serviceable and totalInBags < qtyNeeded then
+					local inboxQty = tog_inboxQtyFor(req)
+					if inboxQty > 0 and (totalInBags + inboxQty) >= qtyNeeded then
+						serviceable = true  -- bags + mail can cover it; pull the mail items first
+					end
+				end
+				if serviceable then
+					-- Oldest = smallest date, with a stable id tiebreak so same-second
+					-- orders resolve deterministically (not jump around the list).
+					local d  = tonumber(req.date) or 0
+					local bd = best and (tonumber(best.date) or 0) or nil
+					if not best or d < bd or (d == bd and tostring(req.id) < tostring(best.id)) then
+						best, bestBagsReady, bestPlan, bestQty = req, bagsReady, plan, qtyNeeded
+					end
+				end
+			end
+		end
+	end
+	return best, bestBagsReady, bestPlan, bestQty
+end
+
+-- Clear any in-progress stepped fulfillment (e.g. when the mailbox closes).
+function TOGBankClassic_Mail:ResetFulfillStep()
+	self.batchState = nil
+	self.collectState = nil
+end
+
+-- Advance the stepped batch fulfillment one action. Returns (ok, message).
+-- States: nil(idle) -> "split"(if needed) -> "attach" -> "send" -> nil.
+function TOGBankClassic_Mail:FulfillStep(actor)
+	if not self:IsMailboxOpen() then
+		self.batchState = nil
+		return false, "Open a mailbox first."
+	end
+	local normActor = TOGBankClassic_Guild:NormalizeName(actor or TOGBankClassic_Guild:GetPlayer())
+	if not TOGBankClassic_Guild:IsBank(normActor) then
+		return false, "Only bank characters can fulfill orders."
+	end
+
+	local st = self.batchState
+
+	-- IDLE: select the oldest fully-fillable order and set the recipient.
+	if not st then
+		if self.batchInFlight then
+			return false, "Waiting for the last order to confirm — try again in a second."
+		end
+		if GetSendMailItem(1) then
+			return false, "The open mail already has items attached — send or clear it first."
+		end
+		local req, bagsReady, plan, qtyNeeded = self:FindOldestServiceableOrder(normActor)
+		if not req then
+			return false, "No orders you can fully fill from your bags or mail right now."
+		end
+
+		-- COLLECT: the oldest serviceable order's items are (partly) in the mail.
+		-- Pull one matching item from the inbox into bags per click; once enough is
+		-- in bags, the next click selects + fulfills it. Stay in IDLE meanwhile.
+		if not bagsReady then
+			-- Pull only as many as the order is short, then stop — never empty the
+			-- mail of an item just because there are several copies. Taking an inbox
+			-- item is async (it lands in bags a moment later), so we count what we've
+			-- already pulled (collectState.pulled) against the deficit rather than
+			-- relying on the live bag count, which lags.
+			local cs = self.collectState
+			if not cs or cs.reqId ~= req.id then
+				local inBagsNow = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
+				cs = { reqId = req.id, toPull = math.max(0, qtyNeeded - inBagsNow), pulled = 0 }
+				self.collectState = cs
+			end
+			if cs.pulled >= cs.toPull then
+				-- Already pulled what's needed; just wait for it to arrive in bags.
+				return false, string.format("Pulled the %d %s needed — waiting for it to reach your bags, then click to send.", cs.toPull, tostring(req.item))
+			end
+			if self.collectInFlight then
+				return false, "Pulling from your mail — give it a second, then click again."
+			end
+			if not TOGBankClassic_Bank:HasInventorySpace() then
+				return false, "Bags are full — make room to pull items from the mail."
+			end
+			-- Set the guard BEFORE taking so the donation auto-collect (Mail:Scan),
+			-- which fires on the resulting inbox update, is suppressed and can't grab
+			-- the other copies.
+			self.collectInFlight = true
+			C_Timer.After(1.5, function() self.collectInFlight = false end)
+			local took, name, qtyTaken = self:TakeOneInboxItemFor(req)
+			if took then
+				cs.pulled = cs.pulled + (qtyTaken or 1)  -- count items, not attachments (stacks)
+				return true, string.format("Pulled %d of %d %s for %s from your mail.", math.min(cs.pulled, cs.toPull), cs.toPull, tostring(name or req.item), tostring(req.requester))
+			end
+			self.collectInFlight = false
+			return false, "Couldn't pull from the mail just now — click again."
+		end
+		self.collectState = nil  -- bags can cover it now; collecting done
+
+		-- Make sure we're on the Send Mail tab so attaching works.
+		if MailFrameTab2 and MailFrameTab2.Click then MailFrameTab2:Click() end
+		if SendMailNameEditBox then SendMailNameEditBox:SetText(req.requester) end
+		self.batchState = {
+			req = req, plan = plan, requester = req.requester, qty = qtyNeeded,
+			phase = plan.splitStack and "split" or "attach",
+		}
+		if plan.splitStack then
+			return true, string.format("Order: %dx %s for %s. Click to SPLIT.", qtyNeeded, req.item, req.requester)
+		end
+		return true, string.format("Order: %dx %s for %s. Click to ATTACH.", qtyNeeded, req.item, req.requester)
+	end
+
+	-- SPLIT: split the needed amount into a free bag slot as its own stack (like
+	-- the manual split), so it sits in your bags rather than on the cursor. The
+	-- place into the slot is deferred a frame (matches the manual split timing);
+	-- ATTACH waits for it to land.
+	if st.phase == "split" then
+		local sp = st.plan.splitStack
+		local emptyBag, emptySlot = tog_findEmptyBagSlot()
+		if not emptyBag then
+			return false, "Need one free bag slot to split into — make room, then click again."
+		end
+		st.splitBag, st.splitSlot = emptyBag, emptySlot
+		ClearCursor()
+		C_Container.SplitContainerItem(sp.bag, sp.slot, sp.amount)        -- onto cursor
+		C_Timer.After(0.1, function()
+			C_Container.PickupContainerItem(emptyBag, emptySlot)         -- drop into the free slot
+		end)
+		st.phase = "attach"
+		return true, string.format("Split %d %s into your bags. Click to ATTACH.", sp.amount, st.req.item)
+	end
+
+	-- ATTACH: attach the freshly-split stack (now in the bag) then the whole stacks.
+	if st.phase == "attach" then
+		if st.splitBag and not C_Container.GetContainerItemInfo(st.splitBag, st.splitSlot) then
+			-- The split hasn't committed to the bag yet (clicked too fast).
+			return false, "Still placing the split — click ATTACH again."
+		end
+		local slot = 1
+		local maxSlots = ATTACHMENTS_MAX_SEND or 12
+		if st.splitBag then
+			ClearCursor()
+			C_Container.PickupContainerItem(st.splitBag, st.splitSlot)
+			ClickSendMailItemButton(slot)
+			slot = slot + 1
+			st.splitBag, st.splitSlot = nil, nil
+		end
+		for _, stack in ipairs(st.plan.stacksToAttach) do
+			if slot > maxSlots then break end
+			ClearCursor()
+			C_Container.PickupContainerItem(stack.bag, stack.slot)
+			ClickSendMailItemButton(slot)
+			slot = slot + 1
+		end
+		st.phase = "send"
+		return true, string.format("Attached %dx %s for %s. Click to SEND.", st.qty, st.req.item, st.requester)
+	end
+
+	-- SEND: mail it. pendingSend mirrors PrepareFulfillMail so MAIL_SEND_SUCCESS →
+	-- ApplyPendingSend → Guild:FulfillRequest marks THIS request (by id).
+	if st.phase == "send" then
+		local req = st.req
+		if not GetSendMailItem(1) then
+			-- Nothing actually attached (e.g. the cursor was disturbed mid-sequence).
+			-- Don't send an empty mail or falsely mark the order filled.
+			self.batchState = nil
+			return false, "Nothing is attached — start the order again."
+		end
+		self.pendingSend = {
+			sender    = normActor,
+			recipient = TOGBankClassic_Guild:NormalizeName(st.requester),
+			requestId = req.id,
+			items     = {{ name = req.item, quantity = st.qty }},
+		}
+		self.pendingSendAt = GetTime()
+		SendMail(st.requester, "Guild Bank Order", "")
+		-- Block re-selecting this order until the send confirms (or 5s safety).
+		self.batchInFlight = true
+		C_Timer.After(5, function() self.batchInFlight = false end)
+		self.batchState = nil
+		return true, string.format("Sent %dx %s to %s. Click for the next order.", st.qty, req.item, st.requester)
+	end
+
+	self.batchState = nil
+	return false, "Reset — click to start the next order."
 end
