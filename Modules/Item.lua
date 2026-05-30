@@ -163,6 +163,35 @@ function TOGBankClassic_Item:GetItemKey(link)
 	return link
 end
 
+-- REQ-003: Extract the random-suffix ID from an item link / item string.
+-- This is part 7 of the item string (itemID:enchant:gem1:gem2:gem3:gem4:suffixID), the same
+-- field GetItemKey preserves. Random-property gear ("Spiked Club of the Tiger" vs "...of the
+-- Monkey") shares one base itemID and differs ONLY by this suffix, so matching on itemID alone
+-- treats the variants as identical. Returns a signed number, or nil when there is no suffix
+-- (suffixID 0/absent) or the link can't be parsed.
+function TOGBankClassic_Item:GetSuffixID(link)
+	if not link or link == "" then
+		return nil
+	end
+	local itemString = link:match("|Hitem:([%d:%-]+)|h")
+	if not itemString then
+		itemString = link:match("item:([%d:%-]+)")
+	end
+	if not itemString and link:match("^%d+:") then
+		itemString = link
+	end
+	if not itemString then
+		return nil
+	end
+	-- 7th colon-delimited field of the prefix-stripped string is the suffixID.
+	local suffix = select(7, strsplit(":", itemString, 8))
+	local n = tonumber(suffix)
+	if n and n ~= 0 then
+		return n
+	end
+	return nil
+end
+
 function TOGBankClassic_Item:GetItems(items, callback)
 	if not items or type(items) ~= "table" then
 		callback({})
@@ -250,14 +279,15 @@ function TOGBankClassic_Item:GetItems(items, callback)
 						-- Use GetItemInfo (not GetItemInfoInstant) so we get rarity and all fields.
 						-- Since the item link came from the client's own bank scan, data is already
 						-- in the WoW client cache — this is not a server query.
-						local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemLink)
+						local name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemLink)
 						if name then
 							local equip = C_Item.GetItemInventoryTypeByID(capturedItemID)
 							capturedItem.Info = {
 								icon = icon,
 								name = name,
 								rarity = rarity,
-								level = level,
+								level = level,        -- item level
+								reqLevel = reqLevel,  -- SORT-002: required-to-use level (GetItemInfo #5); drives the Level sort
 								price = price,
 								class = itemClassId,
 								subClass = itemSubClassId,
@@ -277,6 +307,16 @@ function TOGBankClassic_Item:GetItems(items, callback)
 							end
 						end
 					end
+					-- SORT-002/003: backfill required level on Info tables that predate the reqLevel
+					-- field (item data synced from older clients or loaded from saved data). Retry
+					-- while unresolved (nil OR 0) and only write a positive value, so a 0 written
+					-- during a cold-cache window doesn't stick and break the Level / By-Type ordering.
+					if capturedItem.Info and (capturedItem.Info.reqLevel == nil or capturedItem.Info.reqLevel == 0) then
+						local _, _, _, _, reqLevel = GetItemInfo(capturedItemLink)
+						if reqLevel and reqLevel > 0 then
+							capturedItem.Info.reqLevel = reqLevel
+						end
+					end
 					table.insert(list, capturedItem)
 					count = count + 1
 					processed = processed + 1
@@ -284,7 +324,7 @@ function TOGBankClassic_Item:GetItems(items, callback)
 				-- BRANCH 2: No link - need to load item data
 				else
 					-- Check if item data is already cached (fast path)
-					local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemID)
+					local name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemID)
 					if name then
 						-- Item data is cached, build Info directly without calling GetInfo (avoids redundant GetItemInfo call)
 						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[ITEM-DEBUG] Item %d already cached", capturedItemID)
@@ -295,7 +335,8 @@ function TOGBankClassic_Item:GetItems(items, callback)
 						equipId = equip,
 						rarity = rarity,
 						name = name,
-						level = level,
+						level = level,        -- item level
+						reqLevel = reqLevel,  -- SORT-002: required-to-use level (GetItemInfo #5)
 						price = price,
 						icon = icon,
 					}
@@ -396,16 +437,16 @@ function TOGBankClassic_Item:GetItems(items, callback)
 end
 
 function TOGBankClassic_Item:GetInfo(id, link)
-	local name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId
+	local name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId
 
 	-- Try link first if available
 	if link and link ~= "" then
-		name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(link)
+		name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(link)
 	end
 
 	-- Fallback to ID if link didn't work
 	if not name and id and id > 0 then
-		name, _, rarity, level, _, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(id)
+		name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(id)
 	end
 
 	-- If still no data, return basic info with ID only
@@ -417,6 +458,7 @@ function TOGBankClassic_Item:GetInfo(id, link)
 			rarity = 1,
 			name = "Item " .. tostring(id or "?"),
 			level = 1,
+			reqLevel = 0,
 			price = 0,
 			icon = 134400, -- Default grey question mark icon
 		}
@@ -430,7 +472,8 @@ function TOGBankClassic_Item:GetInfo(id, link)
 		equipId = equip,
 		rarity = rarity,
 		name = name,
-		level = level,
+		level = level,        -- item level
+		reqLevel = reqLevel,  -- SORT-002: required-to-use level (GetItemInfo #5)
 		price = price,
 		icon = icon,
 	}
@@ -450,6 +493,7 @@ function TOGBankClassic_Item:Sort(items, mode)
 				rarity = 1,
 				name = item.Link and item.Link:match("%[(.-)%]") or ("Item " .. tostring(item.ID or "?")),
 				level = 1,
+				reqLevel = 0,
 				price = 0,
 				icon = 134400,
 			}
@@ -462,26 +506,49 @@ function TOGBankClassic_Item:Sort(items, mode)
 			-- DrawItem uses nil rarity to trigger its sync/async fallback lookups.
 			-- The sort comparator at line ~477 already handles nil via (a.Info.rarity or 0).
 			item.Info.level = item.Info.level or 1
+			item.Info.reqLevel = item.Info.reqLevel or 0
 			item.Info.price = item.Info.price or 0
 			item.Info.name = item.Info.name or (item.Link and item.Link:match("%[(.-)%]")) or ("Item " .. tostring(item.ID or "?"))
+		end
+
+		-- SORT-002/003: resolve required level from the live item cache at sort time (warm by the
+		-- time items are on screen). Retry whenever it's unresolved (nil OR 0) so a value written
+		-- during a cold-cache window doesn't stick at 0 and break the level ordering. Only a
+		-- positive result is written back; genuine no-requirement items stay 0 (cheaply re-checked).
+		if not item.Info.reqLevel or item.Info.reqLevel == 0 then
+			local src = item.Link or item.ID
+			if src then
+				local _, _, _, _, mreq = GetItemInfo(src)
+				if mreq and mreq > 0 then
+					item.Info.reqLevel = mreq
+				end
+			end
 		end
 	end
 
 	if mode == "type" then
-		-- By Type: group by item class (armor/weapon/consumable/etc.), then by equip slot
-		-- (all helms together, all cloaks together, all wands together), then by subclass,
-		-- then by rarity, then alphabetically within each group.
+		-- SORT-001: By Type groups by item class (armor/weapon/consumable/etc.), then by
+		-- subclass/material (all cloth together, all leather together, all swords together).
+		-- Subclass must outrank equip slot so same-material gear stays contiguous; ordering slot
+		-- first split a player's cloth across slot groups (6 cloth, 3 leather, 1 cloth).
+		-- SORT-003: within each material, order by required-to-use level high→low (so all plate
+		-- reads 50, 49, 48…), then equip slot, then rarity, then name as tie-breakers.
 		table.sort(items, function(a, b)
 			if a.Info.class ~= b.Info.class then
 				return (a.Info.class or 99) < (b.Info.class or 99)
+			end
+			if a.Info.subClass ~= b.Info.subClass then
+				return (a.Info.subClass or 99) < (b.Info.subClass or 99)
+			end
+			local aLevel = a.Info.reqLevel or 0
+			local bLevel = b.Info.reqLevel or 0
+			if aLevel ~= bLevel then
+				return aLevel > bLevel
 			end
 			local aEquip = a.Info.equipId or 0
 			local bEquip = b.Info.equipId or 0
 			if aEquip ~= bEquip then
 				return aEquip < bEquip
-			end
-			if a.Info.subClass ~= b.Info.subClass then
-				return (a.Info.subClass or 99) < (b.Info.subClass or 99)
 			end
 			if a.Info.rarity ~= b.Info.rarity then
 				return (a.Info.rarity or 0) < (b.Info.rarity or 0)
@@ -509,20 +576,22 @@ function TOGBankClassic_Item:Sort(items, mode)
 			return (a.Info.name or "") < (b.Info.name or "")
 		end)
 	elseif mode == "level" then
-		-- By Level: highest required level first, then A-Z
+		-- SORT-002: By Level (High to Low) = highest required-to-use level first, then A-Z.
+		-- Uses reqLevel (GetItemInfo #5), not item level (#4) — sorting by item level made the
+		-- order look scrambled/repeating because it diverges from the required level players read.
 		table.sort(items, function(a, b)
-			local aLevel = a.Info.level or 0
-			local bLevel = b.Info.level or 0
+			local aLevel = a.Info.reqLevel or 0
+			local bLevel = b.Info.reqLevel or 0
 			if aLevel ~= bLevel then
 				return aLevel > bLevel
 			end
 			return (a.Info.name or "") < (b.Info.name or "")
 		end)
 	elseif mode == "level_asc" then
-		-- By Level (ascending): lowest required level first, then A-Z
+		-- SORT-002: By Level (Low to High) = lowest required-to-use level first, then A-Z.
 		table.sort(items, function(a, b)
-			local aLevel = a.Info.level or 0
-			local bLevel = b.Info.level or 0
+			local aLevel = a.Info.reqLevel or 0
+			local bLevel = b.Info.reqLevel or 0
 			if aLevel ~= bLevel then
 				return aLevel < bLevel
 			end

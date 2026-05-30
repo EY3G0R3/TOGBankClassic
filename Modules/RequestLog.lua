@@ -53,10 +53,11 @@ local RI_VERSION  = 1
 local RD2_VERSION = 1
 
 -- togbank-rd2: positional single-record wire format (version 1)
--- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID]}
+-- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID][, suffixID]}
 -- Tombstone:    {RD2_VERSION, id, false, tombstoneTs}
 -- Receiver distinguishes by type(arr[3]): number = record, false = tombstone.
--- arr[12] (itemID) is optional; absent or false in messages from older clients.
+-- arr[12] (itemID) and arr[13] (suffixID) are optional; absent or false in messages from
+-- older clients. Append-only: new optional fields go on the end and tolerate false/absent.
 
 local function serializeRequestV1(req)
 	return {
@@ -71,7 +72,8 @@ local function serializeRequestV1(req)
 		req.fulfilled,
 		req.status,
 		req.notes or "",
-		req.itemID or false,  -- arr[12]: optional numeric item ID for same-name variant disambiguation
+		req.itemID or false,    -- arr[12]: optional numeric item ID for same-name variant disambiguation
+		req.suffixID or false,  -- arr[13]: REQ-003 optional random-suffix ID for variant disambiguation
 	}
 end
 
@@ -274,7 +276,7 @@ local VALID_REQUEST_STATUS = {
 
 local function deserializeRequestV1(arr)
 	-- arr[3] is date (number) — caller must verify before calling this
-	-- arr[12] is optional itemID (absent in old messages → nil; false when no ID → nil)
+	-- arr[12] is optional itemID, arr[13] optional suffixID (absent in old messages → nil; false → nil)
 	return {
 		id        = arr[2],
 		date      = tonumber(arr[3]),
@@ -287,6 +289,7 @@ local function deserializeRequestV1(arr)
 		status    = arr[10],
 		notes     = tostring(arr[11] or ""),
 		itemID    = tonumber(arr[12]) or nil,
+		suffixID  = tonumber(arr[13]) or nil,  -- REQ-003
 	}
 end
 
@@ -415,7 +418,8 @@ local function sanitizeRequest(req)
 		requester = requester,
 		bank = bank,
 		item = item,
-		itemID = tonumber(req.itemID) or nil,  -- optional; nil for legacy requests
+		itemID = tonumber(req.itemID) or nil,    -- optional; nil for legacy requests
+		suffixID = tonumber(req.suffixID) or nil,  -- REQ-003: optional random-suffix ID; nil for legacy/plain items
 		quantity = quantity,
 		fulfilled = fulfilled,
 		status = status,
@@ -1486,7 +1490,7 @@ function Guild:ReceiveRequestsByIdV1(arr)
 			self:ApplyRequestSnapshot({ requests = {}, tombstones = { [id] = ts } })
 		end
 	else
-		-- Full record: {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID]}
+		-- Full record: {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID][, suffixID]}
 		local req = deserializeRequestV1(arr)
 		if req then
 			self:ApplyRequestSnapshot({ requests = { req }, tombstones = {} })

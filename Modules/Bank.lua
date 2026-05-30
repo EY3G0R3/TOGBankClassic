@@ -366,11 +366,15 @@ function TOGBankClassic_Bank:HasInventorySpace()
 	return total > 0
 end
 
--- Find all slots containing an item by name (case-insensitive), optionally filtered by item ID.
+-- Find all slots containing an item by name (case-insensitive), optionally filtered by item ID
+-- and random-suffix ID.
 -- When itemID is provided it takes precedence and the name is only used as a display fallback;
 -- this correctly distinguishes same-named variants (e.g. Punctured Voodoo Doll by class).
+-- REQ-003: when suffixID is also provided, the slot's own suffix must match too, so random-suffix
+-- siblings that share a base itemID ("of the Tiger" vs "of the Monkey") are kept apart. suffixID
+-- is nil for plain items and legacy requests, in which case suffix is not considered.
 -- Returns: table of {bag, slot, count, link}
-function TOGBankClassic_Bank:FindItemsByName(itemName, itemID)
+function TOGBankClassic_Bank:FindItemsByName(itemName, itemID, suffixID)
 	local results = {}
 	if not itemName or itemName == "" then
 		return results
@@ -378,6 +382,7 @@ function TOGBankClassic_Bank:FindItemsByName(itemName, itemID)
 
 	local targetName = string.lower(itemName)
 	local targetID = tonumber(itemID) or nil
+	local targetSuffix = tonumber(suffixID) or nil
 
 	for bag = 0, 4 do
 		local slots = C_Container.GetContainerNumSlots(bag)
@@ -392,6 +397,10 @@ function TOGBankClassic_Bank:FindItemsByName(itemName, itemID)
 					-- Legacy name-based match
 					local name = GetItemInfo(itemInfo.hyperlink)
 					matched = name and string.lower(name) == targetName
+				end
+				-- REQ-003: enforce suffix equality when the request carries one.
+				if matched and targetSuffix then
+					matched = (TOGBankClassic_Item:GetSuffixID(itemInfo.hyperlink) == targetSuffix)
 				end
 				if matched then
 					table.insert(results, {
@@ -408,10 +417,10 @@ function TOGBankClassic_Bank:FindItemsByName(itemName, itemID)
 	return results
 end
 
--- Count total of named item in bags (0-4), optionally filtered by item ID.
+-- Count total of named item in bags (0-4), optionally filtered by item ID and random-suffix ID.
 -- Returns: totalCount, itemsTable
-function TOGBankClassic_Bank:CountItemInBags(itemName, itemID)
-	local items = self:FindItemsByName(itemName, itemID)
+function TOGBankClassic_Bank:CountItemInBags(itemName, itemID, suffixID)
+	local items = self:FindItemsByName(itemName, itemID, suffixID)
 	local total = 0
 	for _, item in ipairs(items) do
 		total = total + item.count

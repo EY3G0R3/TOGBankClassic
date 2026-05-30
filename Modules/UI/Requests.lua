@@ -1446,16 +1446,21 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 					
 					-- If the request carries an explicit itemID, use it directly so we
 					-- show the correct same-name variant (e.g. Druid vs Warrior Voodoo Doll).
+					-- REQ-003: when a suffixID is present, prefer the inventory entry whose suffix
+					-- matches so random-suffix siblings ("of the Tiger" vs "of the Monkey") resolve
+					-- to the requested one rather than the first item sharing the base ID.
 					local requestItemID = self._itemID
+					local requestSuffix = self._suffixID
 					local itemLink, itemID
 					if requestItemID then
-						-- Search inventory for an entry with this exact ID to get its full link
+						-- Search inventory for an entry with this exact ID (and suffix, when set) to get its full link
 						local info = TOGBankClassic_Guild.Info
 						if info and info.alts then
 							for _, alt in pairs(info.alts) do
 								if alt.items then
 									for _, item in ipairs(alt.items) do
-										if item.ID == requestItemID then
+										if item.ID == requestItemID
+										   and (not requestSuffix or TOGBankClassic_Item:GetSuffixID(item.Link) == requestSuffix) then
 											itemLink = item.Link
 											itemID   = item.ID
 											break
@@ -1465,7 +1470,7 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 								if itemLink or itemID then break end
 							end
 						end
-						-- Fall back to bare item:ID if no inventory entry found
+						-- Fall back to a bare/suffixed item string if no inventory entry found
 						if not itemLink and not itemID then
 							itemID = requestItemID
 						end
@@ -1490,8 +1495,17 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 						end
 					end
 					
-					-- Build hyperlink from link string, or fall back to bare item:ID
-					local hyperlink = itemLink or (itemID and ("item:" .. itemID))
+					-- Build hyperlink from link string, or fall back to an item:ID string.
+					-- REQ-003: when only the ID is known but a suffix was requested, encode the suffix
+					-- (item:ID:0:0:0:0:0:suffixID) so the tooltip shows the requested random-suffix variant.
+					local hyperlink = itemLink
+					if not hyperlink and itemID then
+						if requestSuffix then
+							hyperlink = string.format("item:%d:0:0:0:0:0:%d", itemID, requestSuffix)
+						else
+							hyperlink = "item:" .. itemID
+						end
+					end
 					GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 					if hyperlink then
 						GameTooltip:SetHyperlink(hyperlink)
@@ -2010,9 +2024,10 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 				if col.key == "item" and label.editbox then
 					-- Label renders the visible (colorized) text
 					label:SetText(colorize(cellVal, reqStatus))
-					-- Store item name and itemID on EditBox for tooltip lookup
+					-- Store item name, itemID and suffixID on EditBox for tooltip lookup
 					label.editbox._itemName = cellVal
-					label.editbox._itemID   = req.itemID or nil  -- nil for legacy requests
+					label.editbox._itemID   = req.itemID or nil    -- nil for legacy requests
+					label.editbox._suffixID = req.suffixID or nil  -- REQ-003: nil unless a random-suffix variant
 				else
 					label:SetText(colorize(cellVal, reqStatus))
 				end

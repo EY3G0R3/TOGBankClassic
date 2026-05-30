@@ -6,6 +6,15 @@
 
 <h2>What's New</h2>
 
+<h3>v1.1.1 (2026-05-29) - Sorting Fixes &amp; Random-Suffix Requests</h3>
+<p>This release fixes two inventory sorting problems and a mix-up where requests for items like "of the Tiger" vs "of the Monkey" could point at the wrong version.</p>
+<ul>
+<li><strong>"By Type" now keeps each material together and orders it by level.</strong> Sorting your inventory by type used to scatter the same kind of armor across the list (a run of cloth, then some leather, then more cloth). Now all cloth is grouped together, then all leather, then all mail/plate &mdash; and within each material the pieces are ordered by required level from highest to lowest (e.g. all plate: 50, 49, 48…), so each group reads in a clean, predictable order.</li>
+<li><strong>"Level" sorting now uses the item's required level.</strong> The Level (High to Low / Low to High) sort was ordering by an internal item-level value, which made the list look like it counted down and then started over. It now sorts by the level you need to use the item, so the order reads cleanly from high to low. The "Minimum/Maximum Required Level" search filters were affected by the same mix-up and are fixed too.</li>
+<li><strong>"By Type" now works in the Search window.</strong> Choosing "By Type" in the Search window previously did nothing; it now groups results the same way the main inventory does.</li>
+<li><strong>REQ-003: Requests for random-suffix gear show the right version.</strong> Items such as "Spiked Club of the Tiger" and "Spiked Club of the Monkey" are different items that share the same base. Before, a request for one could display the other's tooltip and be treated as fulfillable by the wrong one. Requests now remember exactly which version was asked for, so the tooltip and the bank/mail availability checks match the correct item. (Requests created before this update don't carry that detail and keep working as they did.)</li>
+</ul>
+
 <h3>v1.1.0 (2026-05-23) - Data Corruption Fix: Bogus Item Counts &amp; Cleaner Commands</h3>
 <p>This release fixes a data-corruption bug that could cause individual gear items in the inventory view to show wildly inflated quantities (thousands of a weapon that physically can only exist once), and trims the slash-command list down to only the commands real players actually use.</p>
 <ul>

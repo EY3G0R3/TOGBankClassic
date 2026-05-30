@@ -234,6 +234,9 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 		bank = bankAlt,
 		itemName = itemName,
 		itemID = itemEntry.ID,  -- numeric ID; enables same-name variant disambiguation on fulfillment
+		-- REQ-003: random-suffix ID (e.g. "of the Tiger" vs "of the Monkey"), which shares itemID
+		-- with its sibling variants. nil for plain items and items with no link available.
+		suffixID = TOGBankClassic_Item:GetSuffixID(itemEntry.Link),
 		available = tonumber(itemEntry.Count) or 0,
 	}
 
@@ -367,6 +370,7 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 		bank = bank or self.requestContext.bank,
 		item = self.requestContext.itemName,
 		itemID = self.requestContext.itemID,  -- nil for legacy; set for same-name variant disambiguation
+		suffixID = self.requestContext.suffixID,  -- REQ-003: nil unless a random-suffix variant
 		quantity = quantity,
 		fulfilled = 0,
 		notes = "",
@@ -1009,18 +1013,19 @@ function TOGBankClassic_UI_Search:SubFilterMatches(item)
 	local info = item.Info
 	if not info then return false end
 
-	-- Usable-level check
+	-- Usable-level check (SORT-002: use required-to-use level, not item level)
 	if self.FilterUsableLevel then
 		---@diagnostic disable-next-line: undefined-global
 		local playerLevel = UnitLevel("player") or 1
-		if (info.level or 0) > playerLevel then return false end
+		if (info.reqLevel or 0) > playerLevel then return false end
 	end
 
 	-- Min/Max required-level range check.
-	-- info.level is the item's required level. Items with no level (trade goods, etc.)
-	-- are treated as level 0: they pass when no min is set, fail any positive min.
+	-- SORT-002: info.reqLevel is the item's required-to-use level (GetItemInfo #5); these filters
+	-- are labelled "Required Level" and previously compared item level by mistake. Items with no
+	-- requirement (trade goods, etc.) are treated as level 0: pass when no min is set, fail any positive min.
 	if hasLvlFilter then
-		local lvl = info.level or 0
+		local lvl = info.reqLevel or 0
 		if minLvl > 0 and lvl < minLvl then return false end
 		if maxLvl > 0 and lvl > maxLvl then return false end
 	end
@@ -1129,6 +1134,22 @@ function TOGBankClassic_UI_Search:DrawContent()
 	self.totalMatches = totalMatches
 	TOGBankClassic_Output:Debug("UI", "SEARCH", "Total matches: %d", totalMatches)
 
+	-- SORT-002/003: resolve required level from the live cache before sorting/filtering, retrying
+	-- while unresolved (nil OR 0) so a cold-cache 0 doesn't stick. Mirrors Item:Sort's prep so the
+	-- Search tab orders and filters by required level as reliably as the inventory tab.
+	for _, entry in ipairs(matchedItems) do
+		local info = entry.item and entry.item.Info
+		if info and (not info.reqLevel or info.reqLevel == 0) then
+			local src = entry.item.Link or entry.item.ID
+			if src then
+				local _, _, _, _, mreq = GetItemInfo(src)
+				if mreq and mreq > 0 then
+					info.reqLevel = mreq
+				end
+			end
+		end
+	end
+
 	-- Sort the matched items based on selected sort mode
 	local sortMode = self.SortMode or "alpha"
 	if sortMode == "alpha" then
@@ -1139,19 +1160,48 @@ function TOGBankClassic_UI_Search:DrawContent()
 		table.sort(matchedItems, function(a, b)
 			return (a.item.Info.name or "") > (b.item.Info.name or "")
 		end)
-	elseif sortMode == "level" then
+	elseif sortMode == "type" then
+		-- SORT-001/SORT-003: mirror Item:Sort "type" — class, then subclass/material, then
+		-- required-to-use level high→low within the material, then equip slot, rarity, name.
+		-- (Previously Search had no "type" case, so selecting By Type left results in scan order.)
 		table.sort(matchedItems, function(a, b)
-			local aLevel = a.item.Info.level or 0
-			local bLevel = b.item.Info.level or 0
+			local ai, bi = a.item.Info, b.item.Info
+			if ai.class ~= bi.class then
+				return (ai.class or 99) < (bi.class or 99)
+			end
+			if ai.subClass ~= bi.subClass then
+				return (ai.subClass or 99) < (bi.subClass or 99)
+			end
+			local aLevel = ai.reqLevel or 0
+			local bLevel = bi.reqLevel or 0
+			if aLevel ~= bLevel then
+				return aLevel > bLevel
+			end
+			local aEquip = ai.equipId or 0
+			local bEquip = bi.equipId or 0
+			if aEquip ~= bEquip then
+				return aEquip < bEquip
+			end
+			if ai.rarity ~= bi.rarity then
+				return (ai.rarity or 0) < (bi.rarity or 0)
+			end
+			return (ai.name or "") < (bi.name or "")
+		end)
+	elseif sortMode == "level" then
+		-- SORT-002: required-to-use level, high to low (reqLevel = GetItemInfo #5)
+		table.sort(matchedItems, function(a, b)
+			local aLevel = a.item.Info.reqLevel or 0
+			local bLevel = b.item.Info.reqLevel or 0
 			if aLevel ~= bLevel then
 				return aLevel > bLevel
 			end
 			return (a.item.Info.name or "") < (b.item.Info.name or "")
 		end)
 	elseif sortMode == "level_asc" then
+		-- SORT-002: required-to-use level, low to high
 		table.sort(matchedItems, function(a, b)
-			local aLevel = a.item.Info.level or 0
-			local bLevel = b.item.Info.level or 0
+			local aLevel = a.item.Info.reqLevel or 0
+			local bLevel = b.item.Info.reqLevel or 0
 			if aLevel ~= bLevel then
 				return aLevel < bLevel
 			end

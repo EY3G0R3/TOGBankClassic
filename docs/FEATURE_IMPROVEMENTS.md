@@ -2746,9 +2746,9 @@ Items are currently displayed in alphabetical order only. Guild members who want
 Add a sort mode selector (dropdown or cycle button) to the inventory window offering at minimum:
 
 - **Alphabetical** (current default) — items sorted A→Z by name
-- **By Type** — items grouped by item class/subclass (armor by slot, weapons by type, consumables, recipes, reagents, etc.), then sorted alphabetically within each group
+- **By Type** — items grouped by item class, then by subclass/material (all cloth together, all leather, etc.), then ordered by required level high→low within each material, with equip slot, rarity, and name as tie-breakers
 
-The existing `TOGBankClassic_Item:Sort()` in `Modules/Item.lua` already sorts by rarity → class → equip slot → name. A "by type" mode would re-order the primary sort key to group by `Info.class` + `Info.subClass` first, with alphabetical as the tiebreaker.
+The "by type" mode in `TOGBankClassic_Item:Sort()` (`Modules/Item.lua`) groups by `Info.class` → `Info.subClass` → `Info.reqLevel` (descending) → `Info.equipId` → `Info.rarity` → `Info.name`. As shipped (SORT-001/SORT-003 in CHANGELOG.md), subclass outranks equip slot so same-material gear stays contiguous, and required level orders each material group; the Search window mirrors the same comparator.
 
 ### Implementation Notes
 

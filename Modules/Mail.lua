@@ -728,22 +728,31 @@ function TOGBankClassic_Mail:CanFulfillRequest(request, actor)
 	end
 
 	-- Check if items are in bags and find usable stacks
-	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(request.item, request.itemID)
+	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(request.item, request.itemID, request.suffixID)
 
 	-- Helper: check synced alt inventory tables for a matching item
 	local altData = (function()
 		local info = TOGBankClassic_Guild.Info
 		return info and info.alts and info.alts[normActor]
 	end)()
-	local targetID   = tonumber(request.itemID) or nil
-	local targetName = request.item and string.lower(request.item) or nil
+	local targetID     = tonumber(request.itemID) or nil
+	local targetName   = request.item and string.lower(request.item) or nil
+	local targetSuffix = tonumber(request.suffixID) or nil
 	local function itemMatchesRequest(item)
+		local matched
 		if targetID then
-			return item.ID == targetID and (item.Count or 0) > 0
+			matched = item.ID == targetID and (item.Count or 0) > 0
 		elseif targetName then
-			return item.Name and string.lower(item.Name) == targetName and (item.Count or 0) > 0
+			matched = item.Name and string.lower(item.Name) == targetName and (item.Count or 0) > 0
+		else
+			return false
 		end
-		return false
+		-- REQ-003: when the request carries a suffix and the synced entry has a link, the suffix
+		-- must match too. Entries without a link (older link-less data) keep the lenient match.
+		if matched and targetSuffix and item.Link then
+			matched = (TOGBankClassic_Item:GetSuffixID(item.Link) == targetSuffix)
+		end
+		return matched
 	end
 	local function hasMatchInTable(tbl)
 		if not tbl then return false end
@@ -818,8 +827,8 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 		return false, "Request is already fulfilled.", 0
 	end
 
-	-- Find items in inventory
-	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(itemName, request.itemID)
+	-- Find items in inventory (REQ-003: suffix-aware so we attach the requested variant only)
+	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(itemName, request.itemID, request.suffixID)
 
 	if totalInBags == 0 then
 		return false, "No " .. itemName .. " found in bags.", 0

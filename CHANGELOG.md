@@ -1,5 +1,23 @@
 # TOGBankClassic Changelog
 
+## [v1.1.1] (2026-05-29) - Sorting Fixes & Random-Suffix Request Variants
+
+### Bug Fixes
+
+- **SORT-001: "By Type" split same-material gear across equip slots** — The inventory "By Type" sort ordered items by item class → **equip slot** → subclass, so a player's cloth pieces were broken up by slot and interleaved with leather/mail (e.g. 6 cloth, 3 leather, then 1 more cloth) instead of grouping all cloth together. Reordered the comparator to class → **subclass/material** → required level (see SORT-003) → equip slot → rarity → name, so all cloth groups, then all leather, then all mail. Location: `Modules/Item.lua` `Sort` (`type` mode). The Search window had **no** `type` sort case at all (selecting "By Type" left results in scan order); added a matching comparator there. Location: `Modules/UI/Search.lua` `DrawContent` sort block.
+
+- **SORT-002: "Level" sort and the Min/Max level filters used item level, not required level** — `Info.level` was populated from `GetItemInfo`'s item-level return (#4) but was treated everywhere as the *required-to-use* level — in the "Level (High/Low)" sort, the Search window's "Minimum/Maximum Required Level" filters, and the "usable by my level" filter. Because item level and required level diverge non-monotonically, the "High to Low" sort looked like it descended, jumped back up, and repeated rather than producing a clean ordering. Now captures the required-level return (#5) into a new `Info.reqLevel` field and uses it for the level sort and all three level filters. Required level is resolved from the live item cache (`GetItemInfo`), which is warm by the time items are on screen. Items that arrive with a pre-existing `Info` table — item data synced from other players or loaded from saved data predates the field — are resolved at sort time, retrying whenever `reqLevel` is unresolved (nil **or** 0) and only writing a positive result. This avoids the bug where a 0 written during a cold-cache window stuck permanently and broke the ordering. Locations: `Modules/Item.lua` (Info captures, `Sort` prep + level comparators, `GetItems` backfill, `GetInfo`), `Modules/UI/Search.lua` (sort-prep resolution, level comparators, `SubFilterMatches`).
+
+- **REQ-003: Requests for random-suffix items matched the wrong variant** — Random-property gear such as "Spiked Club of the Tiger" and "Spiked Club of the Monkey" share a single base item ID and differ only by their random-suffix ID. Because a request stored only the numeric item ID, the requests screen tooltip and the mail fulfillment/availability checks matched the *first* item sharing that base ID — so a request for the Tiger variant showed (and would be fulfilled by) the Monkey variant. Requests now also capture the random-suffix ID and match on it: the tooltip resolves to the requested variant, and bag scanning / fulfillment only count the matching suffix. New optional `suffixID` field appended to the request record and the `togbank-rd2` wire format (slot 13, append-only); older clients and pre-existing requests have no suffix data and fall back to the previous item-ID matching, so there is no regression. New helper `TOGBankClassic_Item:GetSuffixID(link)`. Locations: `Modules/Item.lua`, `Modules/RequestLog.lua`, `Modules/UI/Search.lua` (request creation), `Modules/UI/Requests.lua` (tooltip), `Modules/Bank.lua` (`FindItemsByName`/`CountItemInBags`), `Modules/Mail.lua` (`CanFulfillRequest`/`PrepareFulfillMail`).
+
+### Improvements
+
+- **SORT-003: "By Type" now orders each material by level** — Within each material/subclass group, items are ordered by required-to-use level high→low (then equip slot, rarity, name as tie-breakers), so a type-sorted list reads cleanly within each group (all plate: 50, 49, 48…) instead of relying on slot/name alone. Applies to both the inventory and Search windows. Locations: `Modules/Item.lua` `Sort` (`type` mode), `Modules/UI/Search.lua` `DrawContent` sort block.
+
+### Internal
+
+- **`.luarc.json`** — Added `strsplit` to `diagnostics.globals` (used by the new `GetSuffixID` helper).
+
 ## [v1.1.0] (2026-05-23) - Data Corruption Fix: Linkless Gear Ghosts & Inflated Counts
 
 ### Bug Fixes

@@ -30,6 +30,7 @@
         "pcall",
         "GetAddOnMetadata",
         "select",
+        "strsplit",
         "GetItemInfo",
         "Item",
         "wipe",
