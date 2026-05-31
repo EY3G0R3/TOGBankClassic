@@ -1,5 +1,11 @@
 # TOGBankClassic Changelog
 
+## [v1.1.3] (2026-05-30) - Cancel-Stale Broom Icon Hotfix
+
+### Bug Fixes
+
+- **BROOM-001: Cancel-Stale button was invisible** — The broom icon shipped in v1.1.2 used `Interface\Icons\INV_Broom_01`, which does not exist in the Classic Era client (it rendered as the blue missing-texture box, so the bulk-cancel button appeared blank). `INV_Misc_Broom_01` and `INV_Pet_Broom` are likewise absent from the Era texture set — Classic Era ships no broom icon at all. Fixed by bundling a custom broom texture with the addon (`Textures/broom.tga`, a 64×64 32-bit TGA with alpha) and pointing the Cancel-Stale button at it via addon path (`Interface\AddOns\TOGBankClassic\Textures\broom`), so the icon renders regardless of which icons the client happens to include. The new `Textures/` folder ships in the build; its spec note (`Textures/README.md`) is excluded via `.pkgmeta`. Location: `Modules/UI/Requests.lua`, `Textures/broom.tga`, `.pkgmeta`.
+
 ## [v1.1.2] (2026-05-30) - Requests Tabs, Custom Cancel Reasons & Armor Slot Filter
 
 ### New Features

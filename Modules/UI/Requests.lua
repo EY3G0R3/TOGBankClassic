@@ -1108,8 +1108,10 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	bottomIconTooltip(prevPageBtn, "Previous Page", "Show the previous page of requests.")
 	self.PrevPageBtn = prevPageBtn
 
-	-- Cancel Stale (broom) — officers/bankers only. INV_Broom_01 is the Hallow's End
-	-- Magic Broom icon, a stock Classic Era texture.
+	-- Cancel Stale — officers/bankers only. BROOM-001: Classic Era ships NO broom icon
+	-- (INV_Broom_01 / INV_Misc_Broom_01 / INV_Pet_Broom all render as the blue
+	-- missing-texture box), so we bundle our own broom in Textures/broom.tga (64x64
+	-- 32-bit TGA) and reference it by addon path.
 	-- Clear any stale reference first: if banker status was lost since the previous
 	-- window, this block won't run and the status-bar inset below must see nil.
 	self.CancelStaleBtn = nil
@@ -1118,7 +1120,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		cancelStaleBtn:SetSize(22, 22)
 		cancelStaleBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
 		cancelStaleBtn:SetPoint("RIGHT", prevPageBtn, "LEFT", -8, 0)
-		cancelStaleBtn:SetNormalTexture("Interface\\Icons\\INV_Broom_01")
+		cancelStaleBtn:SetNormalTexture("Interface\\AddOns\\TOGBankClassic\\Textures\\broom")
 		cancelStaleBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 		cancelStaleBtn:SetScript("OnClick", function()
 			if not StaticPopup_Show then return end
