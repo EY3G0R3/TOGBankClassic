@@ -224,7 +224,35 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	-- Otherwise, read items from mail attachments (fallback for non-fulfill mails)
 	local now = GetTime()
 	if self.pendingSend and self.pendingSendAt and (now - self.pendingSendAt) < 10 then
-		TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: Using pendingSend from PrepareFulfillMail")
+		-- MULTIORDER-001: addon-generated send. KEEP pending.items exactly as PrepareFulfillMail
+		-- set it — it carries the request's own stored item name (the requester's locale, which
+		-- always compares equal to req.item) and the precise attached quantity, so the targeted
+		-- order is credited locale-safely. Additionally capture any items the banker added BY HAND
+		-- to "save a mail" (actual attachments MINUS what the addon attached, matched by name) so
+		-- ApplyPendingSend can spill them to that person's OTHER open orders. We do NOT overwrite
+		-- pending.items with GetSendMailItem names, which are in the banker's locale and would
+		-- break the targeted match in a mixed-locale guild.
+		local addonByName = {}
+		for _, it in ipairs(self.pendingSend.items or {}) do
+			addonByName[it.name] = (addonByName[it.name] or 0) + (it.quantity or 0)
+		end
+		local extras = {}
+		for attachmentIndex = 1, ATTACHMENTS_MAX_SEND do
+			local itemName, _, _, quantity = GetSendMailItem(attachmentIndex)
+			if itemName and quantity and quantity > 0 then
+				local accountedFor = addonByName[itemName] or 0
+				if accountedFor >= quantity then
+					addonByName[itemName] = accountedFor - quantity
+				else
+					table.insert(extras, { name = itemName, quantity = quantity - accountedFor })
+					addonByName[itemName] = 0
+				end
+			end
+		end
+		if #extras > 0 then
+			self.pendingSend.extraItems = extras
+			TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: addon send + %d hand-added extra stack(s) to spill", #extras)
+		end
 		return
 	end
 
@@ -346,16 +374,28 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 	TOGBankClassic_Output:Info("Applying fulfillment for mail sent to %s...", pending.recipient)
 
 	local totalApplied = 0
+
+	-- Targeted order from the fulfill button (addon mail) is credited via pending.items, which
+	-- carries the request's own stored item name (locale-safe) and exact quantity, against the
+	-- specific requestId. A fully manual mail has requestId = nil, so the same call spreads each
+	-- attachment across every matching open order for that banker (the pre-existing behaviour).
 	for _, item in ipairs(pending.items) do
 		local applied = TOGBankClassic_Guild:FulfillRequest(
-			pending.sender,
-			pending.recipient,
-			item.name,
-			item.quantity,
-			pending.requestId  -- Pass specific request ID to target
-		)
+			pending.sender, pending.recipient, item.name, item.quantity, pending.requestId)
 		if applied > 0 then
-			TOGBankClassic_Output:Info("  Applied %dx %s toward %s's request (ID: %s)", applied, item.name, pending.recipient, tostring(pending.requestId))
+			TOGBankClassic_Output:Info("  Applied %dx %s toward %s's order(s)", applied, item.name, pending.recipient)
+		end
+		totalApplied = totalApplied + applied
+	end
+
+	-- MULTIORDER-001: spill items the banker hand-added to an addon-generated mail (to "save a
+	-- mail") across the recipient's OTHER open orders for this banker. nil requestId = match any
+	-- of that banker's matching orders by name. Empty/absent for fully manual mails.
+	for _, item in ipairs(pending.extraItems or {}) do
+		local applied = TOGBankClassic_Guild:FulfillRequest(
+			pending.sender, pending.recipient, item.name, item.quantity, nil)
+		if applied > 0 then
+			TOGBankClassic_Output:Info("  Applied %dx %s toward %s's other order(s)", applied, item.name, pending.recipient)
 		end
 		totalApplied = totalApplied + applied
 	end

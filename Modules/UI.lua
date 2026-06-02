@@ -23,6 +23,67 @@ function TOGBankClassic_UI:ApplyThinBorder(widget)
 	frame:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
 end
 
+-- HITBOX-001: AceGUI Frame's bottom resize strip (sizer_s) and corner (sizer_se) are
+-- mouse-enabled children that sit at the parent frame level + 1. The Frame is a
+-- FULLSCREEN_DIALOG that gets raised to a high level when it is SHOWN, so a frame level
+-- captured at construction time (window.frame:GetFrameLevel() + N before :Show()) goes stale:
+-- once shown, the sizer rides up with the parent and wins the Z-fight over any bottom-row
+-- button in its overlap band — the dead "bottom half" players see on the Close/help/etc. icons.
+-- Re-assert the lift against the LIVE parent level on every show. `buttons` is a list of the
+-- bottom-row Frame/Button regions to keep above the sizers; AceGUI's own Close button (created
+-- by the library, located here by its label) is detected and lifted too.
+function TOGBankClassic_UI:KeepAboveResizeSizers(window, buttons)
+	local parent = window and window.frame
+	if not parent then return end
+
+	-- Locate AceGUI's own bottom Close button (same Z-fight, created by the library).
+	local closeButton
+	if parent.GetChildren then
+		for _, child in ipairs({ parent:GetChildren() }) do
+			if child.GetText and (child:GetText() == CLOSE or child:GetText() == "Close") then
+				closeButton = child
+				break
+			end
+		end
+	end
+
+	-- Store the current bottom-row set ON the frame, so the single OnShow hook below always
+	-- lifts the latest buttons. Requests releases/reacquires its window (banker-status change)
+	-- and AceGUI pools frames, so a per-call closure could capture recycled buttons and the hook
+	-- could stack across reuse; reading frame fields + a hook-once guard avoids both.
+	parent.togHitboxButtons = buttons
+	parent.togHitboxClose = closeButton
+
+	local function lift()
+		local level = parent:GetFrameLevel() + 10
+		-- pairs (not ipairs) so optional/conditional buttons stored as nil holes are skipped.
+		if parent.togHitboxButtons then
+			for _, b in pairs(parent.togHitboxButtons) do
+				if b.SetFrameLevel then
+					b:SetFrameLevel(level)
+				end
+			end
+		end
+		if parent.togHitboxClose then
+			parent.togHitboxClose:SetFrameLevel(level)
+		end
+	end
+
+	lift()
+	-- Fires on every Show() (windows are persistent: hidden on close, re-shown on open). Re-lift
+	-- immediately and again on the next frame tick, since the FULLSCREEN_DIALOG frame's final
+	-- level may not be assigned until just after OnShow runs. Hook once per frame.
+	if not parent.togHitboxHooked then
+		parent.togHitboxHooked = true
+		parent:HookScript("OnShow", function()
+			lift()
+			if C_Timer and C_Timer.After then
+				C_Timer.After(0, lift)
+			end
+		end)
+	end
+end
+
 function TOGBankClassic_UI:Init()
 	TOGBankClassic_UI_Minimap:Init()
 	TOGBankClassic_UI_Inventory:Init()

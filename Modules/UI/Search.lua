@@ -995,6 +995,11 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		end
 	)
 	self.nextButton:SetDisabled(true)
+
+	-- HITBOX-001: re-assert the bottom-row lift on every show so the help icon, both
+	-- pagination buttons, and the AceGUI Close button stay fully clickable. See
+	-- TOGBankClassic_UI:KeepAboveResizeSizers.
+	TOGBankClassic_UI:KeepAboveResizeSizers(searchWindow, { helpIcon, self.prevButton, self.nextButton })
 end
 
 function TOGBankClassic_UI_Search:BuildSearchData()

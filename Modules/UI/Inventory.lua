@@ -195,6 +195,10 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 		TOGBankClassic_UI:HideTooltip()
 	end)
 
+	-- HITBOX-001: re-assert the bottom-row lift on every show so the whole icon (and the
+	-- AceGUI Close button) stays clickable, not just its top half. See KeepAboveResizeSizers.
+	TOGBankClassic_UI:KeepAboveResizeSizers(window, { helpIcon, settingsIcon })
+
 	local buttonContainer = TOGBankClassic_UI:Create("SimpleGroup")
 	buttonContainer:SetLayout("Table")
 	buttonContainer:SetUserData("table", {

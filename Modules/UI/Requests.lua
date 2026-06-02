@@ -29,6 +29,9 @@ local CANCEL_ICON = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:18:18:0:0|t"
 local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
 local DELETE_ICON = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:18:18:0:0|t"
 local FULFILL_ICON = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"
+-- REOPEN-001: re-open icon. NOTE: Classic Era is missing many textures (see the broom saga,
+-- BROOM-001); if this renders blank in-game, swap the texture or bundle a TGA like Textures/broom.
+local REOPEN_ICON = "|TInterface\\Buttons\\UI-RefreshButton:18:18:0:0|t"
 -- Contextual fulfill button icons based on state
 local FULFILL_ICON_READY = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"        -- Envelope: ready to send
 local FULFILL_ICON_NO_MAILBOX = "|TInterface\\Icons\\INV_Letter_02:18:18:0:0|t"   -- Sealed letter: need mailbox
@@ -44,6 +47,7 @@ local PADDING_ICON    = "|TInterface\\AddOns\\TOGBankClassic\\Media\\blank:0|t "
 local DELETE_REQUEST_DIALOG = "TOGBankClassic_DeleteRequest"
 local CANCEL_STALE_DIALOG   = "TOGBankClassic_CancelStale"
 local COMPLETE_QTY_DIALOG   = "TOGBankClassic_CompleteQty"
+local REOPEN_REQUEST_DIALOG = "TOGBankClassic_ReopenRequest"
 
 -- Cancel reason dialog state (persistent reusable frame)
 local cancelReasonFrame    = nil
@@ -541,6 +545,56 @@ local function confirmDeleteRequest(request, actor)
 	})
 end
 
+local function ensureReopenDialog()
+	if not StaticPopupDialogs then
+		return
+	end
+	if StaticPopupDialogs[REOPEN_REQUEST_DIALOG] then
+		return
+	end
+	StaticPopupDialogs[REOPEN_REQUEST_DIALOG] = {
+		text = "%s",
+		button1 = YES,
+		button2 = CANCEL,
+		timeout = 0,
+		whileDead = true,
+		hideOnEscape = true,
+		OnAccept = function(_, data)
+			if not data or not data.requestId then
+				return
+			end
+			if not TOGBankClassic_Guild:ReopenRequest(data.requestId, data.actor) then
+				if data.ui and data.ui.Window then
+					data.ui.Window:SetStatusText("Unable to re-open request.")
+				end
+			end
+		end,
+	}
+end
+
+-- REOPEN-001: confirm re-opening a finished order (banker/officer/GM). Resets it to an open
+-- order and clears the Sent count, in case it was marked done by mistake.
+local function confirmReopenRequest(request, actor)
+	if not request or not StaticPopup_Show then
+		return
+	end
+
+	ensureReopenDialog()
+
+	local qty = tonumber(request.quantity or 0) or 0
+	local item = request.item or "Unknown"
+	local requester = request.requester or "Unknown"
+	local message = string.format(
+		"Re-open the request for %dx %s from %s?\n\nThis clears its Sent count and makes it an open order again.",
+		qty, item, requester)
+
+	StaticPopup_Show(REOPEN_REQUEST_DIALOG, message, nil, {
+		requestId = request.id,
+		actor = actor,
+		ui = TOGBankClassic_UI_Requests,
+	})
+end
+
 -- COMPLETEQTY-001: the "Complete" (manual hand-off) button asks how many were
 -- given, and records that quantity into the Sent column via Guild:FulfillRequest
 -- (which marks the order fulfilled only when it reaches the requested amount).
@@ -549,7 +603,7 @@ local function ensureCompleteQtyDialog()
 	if StaticPopupDialogs[COMPLETE_QTY_DIALOG] then return end
 	StaticPopupDialogs[COMPLETE_QTY_DIALOG] = {
 		text = "%s",
-		button1 = "Mark Sent",
+		button1 = "Mark Filled",
 		button2 = CANCEL,
 		hasEditBox = true,
 		maxLetters = 6,
@@ -584,9 +638,10 @@ local function ensureCompleteQtyDialog()
 			end
 			n = math.floor(n)
 			if data.maxQty and n > data.maxQty then n = data.maxQty end
-			-- Apply against the request's own bank so it works regardless of who
-			-- clicked (the button is already gated by CanCompleteRequest).
-			local applied = TOGBankClassic_Guild:FulfillRequest(data.bank, data.requester, data.item, n, data.requestId)
+			-- COMPLETEQTY-002: complete by request id directly (not by re-matching
+			-- bank+requester+item, which could silently no-op). Records the amount in
+			-- Sent and flips the order to fulfilled once Sent reaches the requested qty.
+			local applied = TOGBankClassic_Guild:FulfillRequestById(data.requestId, n, data.actor)
 			if (applied or 0) <= 0 and ui.Window then
 				ui.Window:SetStatusText("Unable to record that quantity.")
 			end
@@ -601,13 +656,14 @@ local function showCompleteQtyPrompt(request, actor)
 	local fulfilled = tonumber(request.fulfilled or 0) or 0
 	local remaining = math.max(qty - fulfilled, 0)
 	local message = string.format(
-		"How many %s did you hand directly to %s?\n\nThis amount is recorded in the Sent column (up to %d remaining).",
+		"How many %s did you fill for %s?\n\nUse this for items handed over in person or mailed yourself. Recorded in the Sent column (up to %d remaining).",
 		request.item or "items", request.requester or "the requester", remaining)
 	StaticPopup_Show(COMPLETE_QTY_DIALOG, message, nil, {
 		requestId  = request.id,
 		bank       = request.bank,
 		requester  = request.requester,
 		item       = request.item,
+		actor      = actor,
 		defaultQty = remaining,
 		maxQty     = remaining,
 	})
@@ -1185,6 +1241,13 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	-- no matter which icons are present. All icons are 22px at bottom y=15.
 	local leftmostBottomIcon = self.FulfillOldestBtn or self.CancelStaleBtn or prevPageBtn
 	statusbg:SetPoint("BOTTOMRIGHT", leftmostBottomIcon, "BOTTOMLEFT", -6, 0)
+
+	-- HITBOX-001: re-assert the bottom-row lift on every show so the whole of each icon (help,
+	-- pagination, Cancel-Stale, Fulfill) and the AceGUI Close button stay clickable, not just
+	-- their top half. Conditional icons may be nil; KeepAboveResizeSizers skips nil holes.
+	TOGBankClassic_UI:KeepAboveResizeSizers(window, {
+		helpIcon, self.NextPageBtn, self.PrevPageBtn, self.CancelStaleBtn, self.FulfillOldestBtn,
+	})
 
 	self.HeaderWidgets = nil
 	self.FilterWidgets = nil
@@ -2118,7 +2181,7 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 
 			local deleteSpacer = TOGBankClassic_UI:Create("Label")
 			deleteSpacer:SetText("")
-			deleteSpacer:SetWidth(8)
+			deleteSpacer:SetWidth(4)  -- REOPEN-001: trimmed 8->4 so the 5-button row fits the 140px Actions column (Flow lays out hidden widgets too)
 			actionGroup:AddChild(deleteSpacer)
 
 			local deleteButton = TOGBankClassic_UI:Create("Button")
@@ -2129,6 +2192,20 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 			attachActionTooltip(deleteButton, "Delete permanently", "Permanently removes the request.")
 			actionGroup:AddChild(deleteButton)
 
+			-- REOPEN-001: re-open a finished order (banker/officer/GM). Shown only on completed rows.
+			local reopenSpacer = TOGBankClassic_UI:Create("Label")
+			reopenSpacer:SetText("")
+			reopenSpacer:SetWidth(4)  -- REOPEN-001: keep the actionGroup content (now 5 buttons) within the 140px column
+			actionGroup:AddChild(reopenSpacer)
+
+			local reopenButton = TOGBankClassic_UI:Create("Button")
+			reopenButton:SetText(REOPEN_ICON)
+			reopenButton:SetWidth(24)
+			reopenButton:SetHeight(20)
+			centerButtonText(reopenButton)
+			attachActionTooltip(reopenButton, "Re-open order", "Re-open this finished order back to open (clears its Sent count), in case it was marked filled by mistake. Banker/officer/GM only.")
+			actionGroup:AddChild(reopenButton)
+
 			row.actionGroup   = actionGroup
 			row.fulfillButton = fulfillButton
 			row.fulfillSpacer = fulfillSpacer
@@ -2137,6 +2214,8 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 			row.cancelButton  = cancelButton
 			row.deleteSpacer  = deleteSpacer
 			row.deleteButton  = deleteButton
+			row.reopenSpacer  = reopenSpacer
+			row.reopenButton  = reopenButton
 			row.cells[i]      = actionGroup
 		else
 			local label = TOGBankClassic_UI:Create("Label")
@@ -2641,6 +2720,8 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 	local canCancel   = not completed and requestId and TOGBankClassic_Guild:CanCancelRequest(req, actor)
 	local canComplete = not completed and requestId and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
 	local canDelete   = requestId and TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
+	-- REOPEN-001: only a finished order, and only for banker/officer/GM.
+	local canReopen   = completed and requestId and TOGBankClassic_Guild:CanManageRequests(actor, actorIsGM)
 
 	local ts = tonumber(req.date or 0) or 0
 	local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
@@ -2672,6 +2753,7 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 			local showComplete = canComplete and true or false
 			local showCancel   = canCancel   and true or false
 			local showDelete   = canDelete   and true or false
+			local showReopen   = canReopen   and true or false
 			if row.actionGroup   then row.actionGroup:SetWidth(columnWidth) end
 			if row.fulfillButton then setWidgetShown(row.fulfillButton, showFulfill) end
 			if row.fulfillSpacer then setWidgetShown(row.fulfillSpacer, showFulfill and (showComplete or showCancel)) end
@@ -2680,6 +2762,8 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 			if row.cancelButton  then setWidgetShown(row.cancelButton, showCancel) end
 			if row.deleteSpacer  then setWidgetShown(row.deleteSpacer, showDelete and (showComplete or showCancel or showFulfill)) end
 			if row.deleteButton  then setWidgetShown(row.deleteButton, showDelete) end
+			if row.reopenSpacer  then setWidgetShown(row.reopenSpacer, showReopen and (showFulfill or showComplete or showCancel or showDelete)) end
+			if row.reopenButton  then setWidgetShown(row.reopenButton, showReopen) end
 
 			-- Fulfill button visual/icon/tooltip state
 			if row.fulfillButton and row.fulfillButton.frame then
@@ -2739,6 +2823,12 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 				row.deleteButton:SetCallback("OnClick", function()
 					if not requestId then return end
 					confirmDeleteRequest(req, actor)
+				end)
+			end
+			if row.reopenButton then
+				row.reopenButton:SetCallback("OnClick", function()
+					if not requestId then return end
+					confirmReopenRequest(req, actor)
 				end)
 			end
 			if row.fulfillButton then

@@ -53,11 +53,11 @@ local RI_VERSION  = 1
 local RD2_VERSION = 1
 
 -- togbank-rd2: positional single-record wire format (version 1)
--- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID][, suffixID]}
+-- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID][, suffixID][, reopenedAt]}
 -- Tombstone:    {RD2_VERSION, id, false, tombstoneTs}
 -- Receiver distinguishes by type(arr[3]): number = record, false = tombstone.
--- arr[12] (itemID) and arr[13] (suffixID) are optional; absent or false in messages from
--- older clients. Append-only: new optional fields go on the end and tolerate false/absent.
+-- arr[12] (itemID), arr[13] (suffixID) and arr[14] (reopenedAt) are optional; absent or false in
+-- messages from older clients. Append-only: new optional fields go on the end and tolerate false/absent.
 
 local function serializeRequestV1(req)
 	return {
@@ -72,8 +72,9 @@ local function serializeRequestV1(req)
 		req.fulfilled,
 		req.status,
 		req.notes or "",
-		req.itemID or false,    -- arr[12]: optional numeric item ID for same-name variant disambiguation
-		req.suffixID or false,  -- arr[13]: REQ-003 optional random-suffix ID for variant disambiguation
+		req.itemID or false,      -- arr[12]: optional numeric item ID for same-name variant disambiguation
+		req.suffixID or false,    -- arr[13]: REQ-003 optional random-suffix ID for variant disambiguation
+		req.reopenedAt or false,  -- arr[14]: REOPEN-001 timestamp of an authorized re-open (defeats the terminal ratchet)
 	}
 end
 
@@ -276,7 +277,7 @@ local VALID_REQUEST_STATUS = {
 
 local function deserializeRequestV1(arr)
 	-- arr[3] is date (number) — caller must verify before calling this
-	-- arr[12] is optional itemID, arr[13] optional suffixID (absent in old messages → nil; false → nil)
+	-- arr[12]=itemID, arr[13]=suffixID, arr[14]=reopenedAt (absent in old messages → nil; false → nil)
 	return {
 		id        = arr[2],
 		date      = tonumber(arr[3]),
@@ -290,6 +291,7 @@ local function deserializeRequestV1(arr)
 		notes     = tostring(arr[11] or ""),
 		itemID    = tonumber(arr[12]) or nil,
 		suffixID  = tonumber(arr[13]) or nil,  -- REQ-003
+		reopenedAt = tonumber(arr[14]) or nil,  -- REOPEN-001
 	}
 end
 
@@ -420,6 +422,7 @@ local function sanitizeRequest(req)
 		item = item,
 		itemID = tonumber(req.itemID) or nil,    -- optional; nil for legacy requests
 		suffixID = tonumber(req.suffixID) or nil,  -- REQ-003: optional random-suffix ID; nil for legacy/plain items
+		reopenedAt = tonumber(req.reopenedAt) or nil,  -- REOPEN-001: timestamp of last authorized re-open
 		quantity = quantity,
 		fulfilled = fulfilled,
 		status = status,
@@ -572,7 +575,15 @@ local function mergeRequest(requests, tombstones, id, incoming)
 		local incomingIsTerminal = (clean.status == "cancelled" or clean.status == "complete")
 
 		if incomingTs > existingTs then
-			if existingIsTerminal and not incomingIsTerminal then
+			-- REOPEN-001: a banker/officer/GM can intentionally re-open a finished order. That is
+			-- the one legitimate terminal→non-terminal transition, so it must defeat the ratchet —
+			-- but only when the incoming record carries a reopenedAt stamped AFTER the terminal we
+			-- hold (a stale fulfillment/open carries no reopenedAt, or an older one, and is still
+			-- ratcheted). The reopen mutation also applies directly, but this lets it survive the
+			-- snapshot-sync path for peers that were offline when the mutation went out.
+			local incomingReopen = tonumber(clean.reopenedAt or 0) or 0
+			local isAuthorizedReopen = (not incomingIsTerminal) and incomingReopen > existingTs
+			if existingIsTerminal and not incomingIsTerminal and not isAuthorizedReopen then
 				-- Ratchet: incoming has a higher updatedAt (e.g. a partial fulfillment that arrived
 				-- after a cancel on a stale peer) but we must never revert a terminal status.
 				-- Accept the incoming record's data fields but restore the terminal status and
@@ -992,6 +1003,13 @@ function Guild:ApplyRequestMutation(entry, sender)
 				local reqForCheck = self.Info.requests[requestId] or entry.request
 				if not self:CanCompleteRequest(reqForCheck, normSender) then
 					TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: COMPLETE rejected - sender %s lacks permission for id=%s",
+						normSender, requestId)
+					return false
+				end
+			elseif entryType == "reopen" then
+				-- REOPEN-001: banker, officer, or GM only.
+				if not self:CanManageRequests(normSender) then
+					TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: REOPEN rejected - sender %s lacks permission for id=%s",
 						normSender, requestId)
 					return false
 				end
@@ -1877,6 +1895,49 @@ function Guild:CompleteRequest(requestId, actor)
 	return true
 end
 
+-- REOPEN-001: re-open a finished order (filled, complete, or cancelled) back to open, in case it
+-- was marked done by mistake. Banker/officer/GM only (CanManageRequests). Clears the Sent count and
+-- any cancel reason, and stamps reopenedAt so the change defeats the terminal ratchet during sync
+-- (see mergeRequest). Broadcast as a "reopen" snapshot so peers replicate it. Returns true on success.
+function Guild:ReopenRequest(requestId, actor)
+	if not self.Info or not self.Info.requests or not requestId then
+		return false
+	end
+
+	local req = self.Info.requests[requestId]
+	if not req then
+		return false
+	end
+
+	-- Only a finished order can be re-opened; an order that's already open is a no-op.
+	local qty = tonumber(req.quantity or 0) or 0
+	local fulfilled = tonumber(req.fulfilled or 0) or 0
+	local isDone = req.status == "cancelled" or req.status == "complete" or req.status == "fulfilled"
+		or (qty > 0 and fulfilled >= qty)
+	if not isDone then
+		return false
+	end
+
+	if not self:CanManageRequests(self:NormalizeName(actor or self:GetPlayer())) then
+		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "ReopenRequest FAILED: permission denied (actor=%s, id=%s)",
+			tostring(actor or self:GetPlayer()), tostring(requestId))
+		return false
+	end
+
+	local now = GetServerTime()
+	req.status = "open"
+	req.fulfilled = 0
+	req.notes = ""        -- drop any cancel reason now that the order is live again
+	req.reopenedAt = now  -- defeats the terminal ratchet (mergeRequest) so the re-open survives sync
+	req.updatedAt = now
+
+	TOGBankClassic_Output:Debug("SYNC", "APPLY", "ReopenRequest SUCCESS: id=%s re-opened by %s", tostring(requestId), tostring(actor))
+
+	self:BroadcastRequestMutation({ type = "reopen", requestId = requestId, request = req })
+	self:FinalizeMutation(now)
+	return true
+end
+
 function Guild:DeleteRequest(requestId, actor)
 	if not self.Info or not self.Info.requests or not requestId then
 		return false
@@ -2038,6 +2099,74 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 	end
 
 	return applied
+end
+
+-- COMPLETEQTY-002: record a manual hand-off against a SPECIFIC request by id.
+-- The by-name FulfillRequest above re-matches on bank+requester+item, which silently no-ops if
+-- any of those don't compare equal; the manual-complete button already has the exact request id
+-- from the row, so target it directly and there's nothing to mismatch. Records `count` into the
+-- Sent total. When Sent reaches the requested quantity the order is closed as `complete` (a
+-- manual hand-off has nothing in transit) and broadcast as a full snapshot via the `complete`
+-- mutation so peers replicate both the Sent total and the terminal status; a partial amount
+-- records Sent and broadcasts the lean `fulfill` mutation, leaving the order open. Permission
+-- mirrors the button's gate (CanCompleteRequest). Returns the amount applied.
+function Guild:FulfillRequestById(requestId, count, actor)
+	if not self.Info or not self.Info.requests or not requestId then
+		return 0
+	end
+	local req = self.Info.requests[requestId]
+	if not req then
+		return 0
+	end
+
+	count = math.floor(tonumber(count) or 0)
+	if count <= 0 then
+		return 0
+	end
+
+	if not self:CanCompleteRequest(req, actor or self:GetPlayer()) then
+		return 0
+	end
+
+	if req.status == "cancelled" or req.status == "complete" then
+		return 0
+	end
+
+	local qty = tonumber(req.quantity or 0) or 0
+	local fulfilled = tonumber(req.fulfilled or 0) or 0
+	local remaining = qty - fulfilled
+	if remaining <= 0 then
+		return 0
+	end
+
+	local delta = math.min(remaining, count)
+	local now = GetServerTime()
+	local targetFulfilled = fulfilled + delta
+	req.fulfilled = targetFulfilled
+	req.updatedAt = now
+
+	if qty > 0 and targetFulfilled >= qty then
+		-- Fully filled by hand: close the order outright (manual hand-off / self-mailed, so
+		-- there's nothing in transit to wait on). Broadcast the full snapshot via the "complete"
+		-- mutation so peers replicate both the Sent total and the terminal status.
+		req.status = "complete"
+		TOGBankClassic_Output:Debug("FULFILL", "FulfillRequestById %s: COMPLETE (fulfilled=%d/%d)",
+			tostring(req.id), targetFulfilled, qty)
+		self:BroadcastRequestMutation({ type = "complete", requestId = req.id, request = req })
+	else
+		-- Partial hand-off: record the Sent amount, leave the order open for the rest.
+		TOGBankClassic_Output:Debug("FULFILL", "FulfillRequestById %s: partial fulfilled=%d->%d/%d",
+			tostring(req.id), fulfilled, targetFulfilled, qty)
+		self:BroadcastRequestMutation({
+			type = "fulfill",
+			requestId = req.id,
+			delta = delta,
+			targetFulfilled = targetFulfilled,
+		})
+	end
+
+	self:FinalizeMutation(now)
+	return delta
 end
 
 -- Manual compaction with stats output.
