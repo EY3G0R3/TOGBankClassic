@@ -321,8 +321,12 @@ function TOGBankClassic_StatusBar:Attach(window)
 	statusCenter:SetHeight(20)
 	statusCenter:SetJustifyH("CENTER")
 	statusCenter:SetText("")
+	-- FONT-001: "ITALIC" is not a valid SetFont flag (only OUTLINE/THICKOUTLINE/MONOCHROME/
+	-- etc. are). Older clients silently ignored the bad flag; the current client validates
+	-- strictly and errors. The text has always rendered non-italic anyway, so re-apply with no
+	-- flags to preserve appearance and stop the error. (True italic needs an italic font file.)
 	local scFont, scSize = statusCenter:GetFont()
-	statusCenter:SetFont(scFont, scSize, "ITALIC")
+	statusCenter:SetFont(scFont, scSize, "")
 	window.statusCenter = statusCenter
 
 	local statusRight = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormal")

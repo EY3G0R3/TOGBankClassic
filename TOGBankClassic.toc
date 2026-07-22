@@ -18,6 +18,9 @@ Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua
 Libs/AceCommQueue-1.0/AceCommQueue-1.0.lua
 
 # Modules
+# Compat re-establishes bare globals the client removed (C_* migration); load first
+# so the aliases exist before any other module's runtime calls.
+Modules/Compat.lua
 Modules/Constants.lua
 Modules/Output.lua
 Modules/Performance.lua

@@ -578,7 +578,8 @@
 			"ChatFrame_RemoveMessageEventFilter",
 			"ERR_GUILD_JOIN_S",
 			"ClubFinderGetCurrentClubListingInfo",
-			"GetClubFinderLink"
+			"GetClubFinderLink",
+			"APIDocumentation"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

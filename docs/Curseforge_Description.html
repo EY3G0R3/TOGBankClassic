@@ -6,6 +6,18 @@
 
 <h2>What's New</h2>
 
+<h3>v1.2.0 (2026-07-22) - Manual-Fill Fix, UI Fixes &amp; Recent-Update Error Hotfix</h3>
+<p>Fixes the manual "Mark Filled" prompt that wasn't recording quantities, a re-open button that could overlap the fulfill button on smaller windows, and a set of errors caused by recent WoW client updates &mdash; plus protection against the next round of changes.</p>
+<ul>
+<li><strong>STATICPOPUP-001: "Mark Filled" now records the quantity.</strong> When you clicked the check-mark to record items handed over in person, entered a quantity, and clicked Mark Filled, nothing happened &mdash; the amount wasn't saved and the order stayed open. A change to WoW's pop-up windows meant the number you typed was never read. The prompt now captures the quantity correctly and marks the order filled once the full amount is reached.</li>
+<li><strong>WRAP-001: Re-open button no longer overlaps the fulfill button.</strong> On smaller windows the re-open button in the Actions column could wrap onto the fulfill (mail) button. The column now has enough room so the buttons always stay on one line.</li>
+<li><strong>ROSTER-001: Fixed a "GuildRoster" error on login/reload.</strong> A recent client update changed how the game refreshes your guild roster, which caused an error message and stopped the roster from updating. Logins, reloads, and guild join/leave updates work again without the error.</li>
+<li><strong>METADATA-001: Fixed a "GetAddOnMetadata" error when opening a window.</strong> The update also changed how addons read their own version, which caused an error when opening the bank window from the minimap button. Windows open normally again.</li>
+<li><strong>OFFNOTE-001: Officer-only features work again.</strong> The update changed how the game checks whether you can see officer notes, which caused an error in one spot and quietly hid the officer tools everywhere else &mdash; the Requests Settings tab, the custom cancel-reason editor, help-note editing, and officer options. Officers and the guild leader can see and use all of these again.</li>
+<li><strong>FONT-001: Fixed a font error when opening a window.</strong> A change to how text styling is validated caused an error when opening the Inventory and Requests windows. Fixed, with no change to how the text looks.</li>
+<li><strong>Future-proofing.</strong> The addon now shields itself from the same kind of change to the game's item and money-display commands, so a future update in this series won't break item names, counts, or coin displays.</li>
+</ul>
+
 <h3>v1.1.4 (2026-05-30) - Re-open Orders, Multi-Order Mail &amp; Fulfillment Fixes</h3>
 <p>Bankers can now re-open an order that was finished by mistake, one mail can fill several of a member's orders, the "Mark Filled" button reliably completes orders, and the small buttons along the bottom of the windows are fully clickable again.</p>
 <ul>

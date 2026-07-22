@@ -88,7 +88,7 @@ function TOGBankClassic_Core:OnInitialize()
             -- Create a host addon object for VersionCheck
             local hostAddon = {
                 GetName = function() return "TOGBankClassic" end,
-                Version = (C_AddOns and C_AddOns.GetAddOnMetadata("TOGBankClassic", "Version")) or GetAddOnMetadata("TOGBankClassic", "Version") or "@project-version@"
+                Version = GetAddOnMetadata("TOGBankClassic", "Version") or "@project-version@"
             }
             VC:Enable(hostAddon)
             TOGBankClassic_Output:Debug("PROTOCOL", "INIT", "VersionCheck-1.0 integration enabled (v%s)", hostAddon.Version)

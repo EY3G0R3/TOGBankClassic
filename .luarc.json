@@ -26,6 +26,8 @@
         "type",
         "next",
         "GuildRoster",
+        "C_GuildInfo",
+        "C_CurrencyInfo",
         "debugprofilestop",
         "debugstack",
         "pcall",

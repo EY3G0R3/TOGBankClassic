@@ -11,7 +11,11 @@ local COLUMNS = {
 	{ key = "quantity",  label = "#",         width = 50,  align = "end",   headerSuffix = " ",         tooltipTitle = "Quantity",         tooltipDetail = "The number of items requested. Click to sort." },
 	{ key = "item",      label = "Item",      width = 170, align = "start", headerAlign = "center", flex = true, weight = 2, tooltipTitle = "Item",            tooltipDetail = "The item being requested. Click to sort." },
 	{ key = "fulfilled", label = "Sent",      width = 70,  align = "center",                           tooltipTitle = "Amount Sent",     tooltipDetail = "How many items have been sent to the requester so far. Click to sort." },
-	{ key = "actions",   label = "Actions",   width = 140, align = "center",                           tooltipTitle = "Actions",         tooltipDetail = "Fulfill, complete, or cancel the request. Click to sort." },
+	-- WRAP-001: width holds the 5-button actionGroup (fulfill+complete+cancel+delete+reopen =
+	-- 120px of buttons + 20px of spacers = 140px of Flow content, all reserved even when some
+	-- buttons are hidden). At exactly 140 the last button (reopen) sat on the content==column
+	-- boundary and wrapped onto the fulfill/mail button on smaller windows; 152 gives headroom.
+	{ key = "actions",   label = "Actions",   width = 152, align = "center",                           tooltipTitle = "Actions",         tooltipDetail = "Fulfill, complete, or cancel the request. Click to sort." },
 }
 
 local function minContentWidth()
@@ -595,6 +599,20 @@ local function confirmReopenRequest(request, actor)
 	})
 end
 
+-- STATICPOPUP-001: The Era StaticPopup refactor (Blizzard_StaticPopup mixins) replaced the
+-- dialog's `.editBox` / `.button1` fields with `:GetEditBox()` / `:GetButton1()` accessor
+-- methods. Reading the old fields returns nil, so the quantity typed into the Complete
+-- prompt was never captured and the order was silently never marked filled. Read through the
+-- methods (with a fallback to the legacy fields for safety) so the value is actually read.
+local function popupEditBox(dialog)
+	if dialog and dialog.GetEditBox then return dialog:GetEditBox() end
+	return dialog and dialog.editBox
+end
+local function popupButton1(dialog)
+	if dialog and dialog.GetButton1 then return dialog:GetButton1() end
+	return dialog and dialog.button1
+end
+
 -- COMPLETEQTY-001: the "Complete" (manual hand-off) button asks how many were
 -- given, and records that quantity into the Sent column via Guild:FulfillRequest
 -- (which marks the order fulfilled only when it reaches the requested amount).
@@ -611,7 +629,7 @@ local function ensureCompleteQtyDialog()
 		whileDead = true,
 		hideOnEscape = true,
 		OnShow = function(self)
-			local eb = self.editBox
+			local eb = popupEditBox(self)
 			if eb then
 				eb:SetNumeric(true)
 				eb:SetText(tostring((self.data and self.data.defaultQty) or ""))
@@ -620,8 +638,9 @@ local function ensureCompleteQtyDialog()
 			end
 		end,
 		EditBoxOnEnterPressed = function(editBox)
-			local parent = editBox:GetParent()
-			if parent and parent.button1 then parent.button1:Click() end
+			local dialog = editBox:GetParent()
+			local button1 = popupButton1(dialog)
+			if button1 then button1:Click() end
 		end,
 		EditBoxOnEscapePressed = function(editBox)
 			local parent = editBox:GetParent()
@@ -630,7 +649,8 @@ local function ensureCompleteQtyDialog()
 		OnAccept = function(self)
 			local data = self.data
 			if not data then return end
-			local n = tonumber(self.editBox and self.editBox:GetText())
+			local eb = popupEditBox(self)
+			local n = tonumber(eb and eb:GetText())
 			local ui = TOGBankClassic_UI_Requests
 			if not n or n < 1 then
 				if ui.Window then ui.Window:SetStatusText("Enter a quantity of 1 or more.") end
@@ -2181,7 +2201,7 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 
 			local deleteSpacer = TOGBankClassic_UI:Create("Label")
 			deleteSpacer:SetText("")
-			deleteSpacer:SetWidth(4)  -- REOPEN-001: trimmed 8->4 so the 5-button row fits the 140px Actions column (Flow lays out hidden widgets too)
+			deleteSpacer:SetWidth(4)  -- REOPEN-001: trimmed 8->4 to keep the 5-button row's Flow content at 140px (Flow lays out hidden widgets too); the Actions column carries headroom to 152 per WRAP-001
 			actionGroup:AddChild(deleteSpacer)
 
 			local deleteButton = TOGBankClassic_UI:Create("Button")
@@ -2195,7 +2215,7 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 			-- REOPEN-001: re-open a finished order (banker/officer/GM). Shown only on completed rows.
 			local reopenSpacer = TOGBankClassic_UI:Create("Label")
 			reopenSpacer:SetText("")
-			reopenSpacer:SetWidth(4)  -- REOPEN-001: keep the actionGroup content (now 5 buttons) within the 140px column
+			reopenSpacer:SetWidth(4)  -- REOPEN-001: keep the actionGroup content (5 buttons) at 140px; WRAP-001 widened the column to 152 so reopen can't wrap onto the fulfill button
 			actionGroup:AddChild(reopenSpacer)
 
 			local reopenButton = TOGBankClassic_UI:Create("Button")
