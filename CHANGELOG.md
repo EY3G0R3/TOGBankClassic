@@ -1,5 +1,11 @@
 # TOGBankClassic Changelog
 
+## [v1.2.1] (2026-07-30) - Settings Panel Open Fix
+
+### Bug Fixes
+
+- **SETTINGS-002: Opening the settings panel errored (`bad argument #1 to 'OpenSettingsPanel'`)** — Clicking the gear icon in the Inventory window or choosing Settings from the minimap button threw `Blizzard_Settings.lua:144: bad argument #1 to 'OpenSettingsPanel' (outside of expected range ...)` and the panel never opened. `Options:Open` called `Settings.OpenToCategory("TOGBankClassic")` — a *name*, which only ever worked because AceConfigDialog-3.0 overwrote the registered category's `ID` field with the category name. The current Ace3 build stops doing that override on any client exposing `C_SettingsUtil.OpenSettingsPanel` (which Classic Era now does), because `OpenSettingsPanel` requires a numeric category ID, so our name string reached it and was rejected. Fixed by capturing the real category ID from `AddToBlizOptions`' second return value at registration time and passing that to `Settings.OpenToCategory`. Added `Options:GetBlizCategoryID()`, which falls back to AceConfigDialog's `BlizOptionsIDMap` and finally to the bare name so older clients (where the ID *is* the name) keep working, plus a guard that reports an error instead of throwing if `Settings.OpenToCategory` is missing entirely. Also removed a stale comment claiming the call had to be made twice. Location: `Modules/Options.lua`.
+
 ## [v1.2.0] (2026-07-22) - API Compatibility Sweep, Manual-Fill & UI Fixes
 
 ### Bug Fixes

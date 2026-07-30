@@ -594,7 +594,12 @@ function TOGBankClassic_Options:Init()
 	}
 
 	LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic", options)
-	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic", "TOGBankClassic")
+	-- SETTINGS-002: AddToBlizOptions' second return is the registered category ID.
+	-- On builds that expose C_SettingsUtil.OpenSettingsPanel, Ace3 can no longer
+	-- override that ID to the category *name*, so it is a number and the name-based
+	-- Settings.OpenToCategory("TOGBankClassic") call errors. Keep the real ID for Open().
+	local _, categoryID = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic", "TOGBankClassic")
+	self.blizCategoryID = categoryID
 end
 
 function TOGBankClassic_Options:InitGuild()
@@ -773,7 +778,27 @@ function TOGBankClassic_Options:IsRegisterGbankCommandEnabled()
 	return v ~= false
 end
 
+-- SETTINGS-002: resolve the Blizzard Settings category ID for our panel. Prefer the
+-- ID captured at registration, then Ace3's name->ID map (covers a re-registration we
+-- didn't see), and finally the raw name for older builds where Ace3 forced the ID to
+-- equal the category name.
+function TOGBankClassic_Options:GetBlizCategoryID()
+	if self.blizCategoryID then
+		return self.blizCategoryID
+	end
+	local dialog = LibStub("AceConfigDialog-3.0", true)
+	local mapped = dialog and dialog.BlizOptionsIDMap and dialog.BlizOptionsIDMap["TOGBankClassic"]
+	if mapped then
+		self.blizCategoryID = mapped
+		return mapped
+	end
+	return "TOGBankClassic"
+end
+
 function TOGBankClassic_Options:Open()
-	-- NOTE: WoW API bug, requires call twice to open to specific category
-	Settings.OpenToCategory("TOGBankClassic")
+	if not (Settings and Settings.OpenToCategory) then
+		TOGBankClassic_Output:Error("Could not open the settings panel: the Settings API is unavailable.")
+		return
+	end
+	Settings.OpenToCategory(self:GetBlizCategoryID())
 end
