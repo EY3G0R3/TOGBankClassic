@@ -96,6 +96,10 @@ DEBUG_TAGS = {
 		ONLINE  = "member online / offline events",
 		REFRESH = "GuildRoster() refresh cycles",
 	},
+	BANK = {
+		GATE = "why Bank:Scan() returned early (not a banker, scanning disabled, roster not ready, ...)",
+		SCAN = "bank / bag slot enumeration and totals",
+	},
 	REQUESTS = {
 		RECEIVE = "incoming request data",
 		SEND    = "outgoing request data",

@@ -89,15 +89,20 @@ local function ScanBank(bank_info)
 	return total, numslots
 end
 
+-- SCAN-001: every early return below logs under BANK.GATE. These five gates used to fail
+-- silently, so a character that never scanned gave no signal at all -- the Inventory tab
+-- just sat on "Loading items..." with no way to tell which precondition was unmet.
 function TOGBankClassic_Bank:Scan()
 	if TOGBankClassic_Bank.eventsRegistered then
 		if not HasUpdated() then
+			TOGBankClassic_Output:Debug("BANK", "GATE", "Scan skipped: nothing marked dirty (hasUpdated=false)")
 			return
 		end
 	end
 
 	local info = TOGBankClassic_Guild.Info
 	if not info then
+		TOGBankClassic_Output:Debug("BANK", "GATE", "Scan skipped: Guild.Info is nil (guild data not loaded yet)")
 		return
 	end
 
@@ -107,6 +112,8 @@ function TOGBankClassic_Bank:Scan()
 	local isBank = false
 	local banks = TOGBankClassic_Guild:GetBanks()
 	if banks == nil then
+		TOGBankClassic_Output:Debug("BANK", "GATE",
+			"Scan skipped: no bankers found in guild notes (roster may not be loaded yet)")
 		return
 	end
 	for _, v in pairs(banks) do
@@ -117,9 +124,14 @@ function TOGBankClassic_Bank:Scan()
 		end
 	end
 	if not isBank then
+		TOGBankClassic_Output:Debug("BANK", "GATE",
+			"Scan skipped: '%s' is not in the banker list (%d banker(s) known) - check for 'gbank' in the guild/officer note",
+			tostring(player), #banks)
 		return
 	end
 	if not TOGBankClassic_Options:GetBankEnabled() then
+		TOGBankClassic_Output:Debug("BANK", "GATE",
+			"Scan skipped: bank scanning is disabled for '%s' (Options -> Bank -> Enable)", tostring(player))
 		return
 	end
 
@@ -132,7 +144,9 @@ function TOGBankClassic_Bank:Scan()
 	local total = 0
 	local numslots = 0
 
+	local scannedVault = false
 	if IsBankAvailable() then
+		scannedVault = true
 		alt.bank = {
 			items = {},
 			slots = {},
@@ -154,6 +168,13 @@ function TOGBankClassic_Bank:Scan()
 
 	local money = GetMoney()
 	alt.money = money
+
+	-- SCAN-001: counterpart to the BANK.GATE lines above -- confirms a scan actually ran
+	-- and shows whether the vault half was included (it is skipped away from a bank NPC).
+	TOGBankClassic_Output:Debug("BANK", "SCAN",
+		"Scanned '%s': %d item(s) across %d slot(s) (bank vault %s)",
+		tostring(player), total, numslots,
+		scannedVault and "included" or "skipped - not at a bank")
 
 	-- Scan mail inventory if mail was accessed
 	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Bank:Scan() for player '%s', hasUpdated=%s",

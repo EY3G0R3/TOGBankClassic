@@ -533,6 +533,24 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 					end
 				end
 			end)
+		else
+			-- SCAN-001: with no items there is no GetItems callback to release the loading
+			-- label, so it used to sit on "Loading items..." forever and read as a hang
+			-- rather than an empty record. Say what is actually true and how to fix it.
+			scroll:ReleaseChildren()
+			self.tabLoaded = true
+
+			local emptyLabel = TOGBankClassic_UI:Create("Label")
+			emptyLabel:SetFullWidth(true)
+			if TOGBankClassic_Guild:NormalizeName(tab) == TOGBankClassic_Guild:GetNormalizedPlayer() then
+				-- Own character: nothing has been scanned into the DB yet.
+				emptyLabel:SetText("|cff808080No items recorded yet. Open and close your bank, "
+					.. "or type |r|cffe6cc80/togbank share|r|cff808080 to scan your bags now.|r")
+			else
+				emptyLabel:SetText("|cff808080No items recorded for this character yet "
+					.. "- waiting for them to share their inventory.|r")
+			end
+			scroll:AddChild(emptyLabel)
 		end
 	end)
 

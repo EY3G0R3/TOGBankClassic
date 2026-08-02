@@ -349,6 +349,11 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 			local onlineCount, totalMembers = TOGBankClassic_Guild:RefreshOnlineCache()
 			TOGBankClassic_Guild:RebuildBankerRoster()
 
+			-- SCAN-001: this is the first moment IsBank() can answer correctly, so retry
+			-- the banker-gated options init here. GUILD_RANKS_UPDATE alone is not a
+			-- reliable retry hook -- it may not fire again after the roster loads.
+			TOGBankClassic_Options:InitGuild()
+
 			-- Clear delta error counters for offline players (depends on RefreshOnlineCache)
 			TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
 			-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
@@ -469,9 +474,15 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 		return
 	end
 
+	-- SCAN-001: InitGuild must run OUTSIDE the Guild:Init() gate. Init() returns false
+	-- once Info.name matches the guild, so nesting it here meant exactly one attempt per
+	-- session -- and that attempt happens before the roster carries guild notes, so
+	-- IsBank() is false and the per-character bank toggle never gets initialised.
+	-- InitGuild latches internally, so calling it on every event is cheap.
+	TOGBankClassic_Options:InitGuild()
+
 	-- Load guild data and perform a one-time cleanup of malformed alt entries
 	if TOGBankClassic_Guild:Init(guild) then
-		TOGBankClassic_Options:InitGuild()
 		if IsInRaid() then
 			TOGBankClassic_Output:Debug("EVENTS", "SKIP", "GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
 			return

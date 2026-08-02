@@ -2,6 +2,7 @@
 -- Controls display order and description text in the Options UI.
 -- Must stay in sync with DEBUG_CATEGORY in Constants.lua.
 local CATEGORY_META = {
+	BANK     = { order = 9,  desc = "Bank/bag inventory scanning, including why a scan was skipped" },
 	CACHE    = { order = 10, desc = "Cache operations (guild roster cache, etc.)" },
 	COMMS    = { order = 11, desc = "All addon communication traffic (high volume)" },
 	DATABASE = { order = 12, desc = "Database operations, SavedVariables" },
@@ -200,7 +201,13 @@ function TOGBankClassic_Options:Init()
 		char = {
 			minimap = { enabled = true },
 			combat = { hide = true },
-			bank = { donations = true },
+			-- SCAN-001: `enabled` MUST carry a default. It gates every Bank:Scan() and
+			-- Mail:Scan(), and its only other writer is InitGuild() below, which is
+			-- reachable just once per session behind an IsBank() check that loses a
+			-- login race on a fresh profile. Without a default it stays nil (falsy)
+			-- forever and the character never scans. Harmless for non-bankers, whose
+			-- scans are already gated on IsBank() independently.
+			bank = { enabled = true, donations = true },
 			framePositions = {},  -- Stores window positions/sizes
 			sortMode = "alpha",   -- Inventory sort mode: "alpha" (A->Z) or "type" (by item type)
 			statusBarNetworkInfo = false,  -- Show sync activity in inventory status bar
@@ -602,11 +609,26 @@ function TOGBankClassic_Options:Init()
 	self.blizCategoryID = categoryID
 end
 
+-- SCAN-001: safe to call repeatedly. Callers fire this on every GUILD_RANKS_UPDATE and
+-- again once RebuildBankerRoster() has run, because IsBank() is false on the first
+-- GUILD_RANKS_UPDATE of a session (memberRoster is still empty and guild notes usually
+-- aren't populated yet). Previously this ran at most once, behind Guild:Init()'s
+-- once-per-guild return, so losing that race left the Bank options panel unregistered
+-- for the whole session with no way for the user to reach the toggle.
 function TOGBankClassic_Options:InitGuild()
-	local player = TOGBankClassic_Guild:GetPlayer()
-	if not TOGBankClassic_Guild:IsBank(player) then
+	if self.guildInitialized then
 		return
 	end
+
+	local player = TOGBankClassic_Guild:GetPlayer()
+	if not TOGBankClassic_Guild:IsBank(player) then
+		-- Banker status not established yet; a later call retries.
+		return
+	end
+
+	-- Latch only on success, so AddToBlizOptions below runs exactly once and we don't
+	-- stack duplicate "Bank" panels in the Blizzard options tree.
+	self.guildInitialized = true
 
 	-- If this character is recognized as a bank and the per-character option
 	-- hasn't been set yet, enable bank reporting by default to avoid manual steps.

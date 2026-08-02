@@ -6,6 +6,14 @@
 
 <h2>What's New</h2>
 
+<h3>v1.3.1 (2026-08-02) - Banker Inventory Never Scanned</h3>
+<p>Fixes a bank character's own items never being recorded, leaving their tab permanently empty.</p>
+<ul>
+<li><strong>SCAN-001: Scanning can no longer switch itself off behind your back.</strong> Depending on timing at login, a bank character's "enable scanning" setting could end up unset &mdash; which silently stopped their bags and bank from being recorded &mdash; and the <em>Bank</em> section could be missing from the addon's options entirely, so the "Enable for &lt;character&gt;" tick box wasn't there to turn on. The setting now defaults to on and the options section is registered reliably. Affects Classic Era as well as TBC.</li>
+<li><strong>An empty tab no longer says "Loading items..." forever.</strong> A character with nothing recorded yet showed a loading message that never went away, so an empty record looked identical to the addon being stuck. Empty tabs now tell you what is actually going on &mdash; and, for your own character, what to do about it.</li>
+<li><strong>Easier to diagnose if scanning ever stops.</strong> When the addon decides not to scan, it can now tell you why (for example, the character isn't marked as a bank, or scanning is switched off for them) instead of doing nothing silently. Turn on the new <em>BANK</em> category in the debug options if you are troubleshooting.</li>
+</ul>
+
 <h3>v1.3.0 (2026-08-02) - TBC Client Support</h3>
 <p>TOGBankClassic now installs and runs on The Burning Crusade clients as well as Classic Era.</p>
 <ul>

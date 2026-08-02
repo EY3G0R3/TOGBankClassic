@@ -1,5 +1,25 @@
 # TOGBankClassic Changelog
 
+## [v1.3.1] (2026-08-02) - Banker Inventory Never Scanned
+
+### Bug Fixes
+
+- **SCAN-001: The per-character "enable scanning" flag could read as unset, silently disabling all scanning** — Found while investigating a report of a banker's Inventory tab staying empty. This is a real latent defect but it was **not** the cause of that report, and it is not TBC-specific.
+
+  `Bank:Scan()` and `Mail:Scan()` both gate on `Options:GetBankEnabled()`, which reads `db.char.bank.enabled`. That key was missing from the AceDB `char` defaults in `Options:Init()` (the table declared only `donations = true`), so on any profile where it had not been explicitly written it read `nil` — falsy — and every scan returned early. The single place that ever wrote it was `Options:InitGuild()`, which was reachable only from inside `if TOGBankClassic_Guild:Init(guild) then` in the `GUILD_RANKS_UPDATE` handler. `Guild:Init` returns `false` as soon as `Info.name` matches the current guild, so `InitGuild` got exactly **one** attempt per session — and that attempt fires before the guild roster carries public/officer notes. With `memberRoster` still empty (it is built by `RefreshOnlineCache` behind a `C_Timer.After(0.5)`), `IsBank()` fell through to `GetBanks()`, which found no `gbank` notes, returned `nil`, and made `InitGuild` bail at its own `IsBank` guard. Nothing retried it, so `enabled` would stay `nil` in SavedVariables for the life of that character. `InitGuild` is also what registers the **Bank** options panel, so losing that race additionally left the "Enable for `<character>`" tick box absent from the options tree.
+
+  Hardened in three parts: (1) `enabled = true` is now a declared default in the `char` scope, so the flag can never read `nil` — safe for non-bankers because both scan paths already gate on `IsBank()` independently; (2) `Options:InitGuild()` now latches on *success* via `self.guildInitialized` instead of relying on `Guild:Init`'s once-per-guild return, so it is safe to call repeatedly and retries until banker status is actually known — `AddToBlizOptions` still runs exactly once, so no duplicate Bank panels; (3) it is now called unconditionally on `GUILD_RANKS_UPDATE` *and* from the deferred block in `GUILD_ROSTER_UPDATE` immediately after `RebuildBankerRoster()`, which is the first moment `IsBank()` can answer correctly — `GUILD_RANKS_UPDATE` alone is not a reliable retry hook because it may not fire again after the roster loads. Locations: `Modules/Options.lua`, `Modules/Events.lua`.
+
+- **SCAN-001: An empty Inventory tab showed "Loading items..." forever** — When a character's aggregated item list was empty, `OnGroupSelected` added the loading label and then skipped the entire `if items and #items > 0` block, so the `scroll:ReleaseChildren()` that clears the label — which lives inside the `Item:GetItems` callback — never ran. An empty record was therefore indistinguishable from a stalled load, which is what disguised the scan bug above as a hang. Empty tabs now clear the label and state the real situation, with different wording for your own character (which tells you to open the bank or run `/togbank share`) versus another banker's (which is waiting on them to share). Location: `Modules/UI/Inventory.lua`.
+
+### Improvements
+
+- **SCAN-001: `Bank:Scan()` now logs why it declined to scan** — All five early returns (nothing marked dirty, `Guild.Info` not loaded, no bankers found in guild notes, this character not in the banker list, scanning disabled for this character) previously returned in silence, and the function's first debug line sat well past all of them. Diagnosing a non-scanning banker meant reading the source and guessing which precondition was unmet. Each gate now emits a `BANK.GATE` line naming the precondition and, where useful, the remedy; a matching `BANK.SCAN` line on the success path reports the item and slot totals and whether the bank vault was included (it is skipped away from a bank NPC, which is expected and previously invisible). Enable with the **BANK** category in the debug options. Location: `Modules/Bank.lua`.
+
+### Internal
+
+- **Wired up the `BANK` debug category, which was declared but unreachable** — `DEBUG_CATEGORY.BANK` had existed in `Modules/Constants.lua` since the category system was introduced, but it had no `CATEGORY_META` row (so no toggle appeared in the debug options), no entry in `Database:Init()`'s `debugCategories` defaults, and no `DEBUG_TAGS` block — and not one line of `Modules/Bank.lua` ever wrote to it. Added all three, with `GATE` and `SCAN` tags. `ITEM` was likewise missing from the `debugCategories` defaults (it did have an options row) and has been added alongside, restoring the invariant in `CLAUDE.md` that the category list, the defaults table, and `CATEGORY_META` stay in sync. Locations: `Modules/Constants.lua`, `Modules/Database.lua`, `Modules/Options.lua`.
+
 ## [v1.3.0] (2026-08-02) - TBC Client Support
 
 ### New Features

@@ -23,6 +23,8 @@ function TOGBankClassic_Database:Init()
 				MAIL = false,
 				QUERIES = false,
 				P2P = false,
+				BANK = false,
+				ITEM = false,
 			},
 			debugTags = {},  -- per-category tag overrides: debugTags["P2P"]["OFFER"] = false
 			showUncategorizedDebug = true,  -- Show legacy debug messages by default
