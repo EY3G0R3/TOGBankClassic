@@ -1,5 +1,23 @@
 # TOGBankClassic Changelog
 
+## [v1.3.0] (2026-08-02) - TBC Client Support
+
+### New Features
+
+- **TBC-001: Added a TBC TOC so the addon loads on Burning Crusade clients** — TOGBankClassic previously shipped a single `TOGBankClassic.toc` at Interface 11508, so a TBC client (2.5.x) treated it as out of date and the CurseForge listing offered no TBC build. Added `TOGBankClassic_BCC.toc` at Interface 20506, matching the file list of the Era TOC exactly (same libraries, same module load order, same SavedVariables, same `Ace3, VersionCheck-1.0` dependencies) and differing only in the `## Interface` value. The BigWigs packager reads every `*.toc` in the tree to decide which game versions to publish for, so the same source tree now produces both the Era and the TBC build. `.pkgmeta` keeps `enable-toc-creation: no` — both TOCs are checked in and maintained by hand. Location: `TOGBankClassic_BCC.toc`.
+
+### Improvements
+
+- **Bumped the Classic Era interface to 11509** — `TOGBankClassic.toc` still declared 11508 while the live Era client is 1.15.9, so the addon showed as out of date in the character-select AddOns list until "Load out of date AddOns" was ticked. Location: `TOGBankClassic.toc`.
+
+### Internal
+
+- **The two TOC files must be kept in lockstep.** Any new module, vendored library, SavedVariable, or metadata line has to be added to both `TOGBankClassic.toc` and `TOGBankClassic_BCC.toc` — a module added to only one silently fails to load on that flavour. Recorded in `CLAUDE.md`.
+
+- **Added the dev-sync watcher so both flavours can be tested from one working tree** — ported `wow-version-replication.ps1` from the FastGuildInvite repo and retargeted it at this addon. It mirrors the `_classic_era_` source tree into `_anniversary_\Interface\AddOns\TOGBankClassic` (the TBC install) on a 2-second poll. Two independent launchers start it: the developer's global Claude Code `SessionStart` hook (which scans the project dir for the script) and, for editor-only sessions, a `folderOpen` task in `.vscode/tasks.json`. A per-repo named mutex plus the hook's own process scan mean whichever fires second exits cleanly instead of racing the first — confirmed in practice, the first live run logged one `LAUNCH` followed a second later by one `SKIP already-running`. `$WowVersions` deliberately lists only `_classic_era_` and `_anniversary_` — `_classic_` (MoP) and `_retail_` are excluded because there is no TOC for them and a copy there would sit permanently "out of date". The skip list is built by parsing `.pkgmeta`'s `ignore:` block, so the synced install mirrors the shipped zip; the repo's flavour-specific `.git` *pointer file* is hard-skipped so it can never resolve the `_anniversary_` copy back at the Era git dir. Verified end to end on the first real run: 50 files landed in the TBC install, no `.git`, no dot-prefixed entries anywhere in the tree, no `docs/` or `tools/` — matching the `-DryRun` projection exactly. Locations: `wow-version-replication.ps1`, `.vscode/tasks.json`, `.pkgmeta`.
+
+- **`.pkgmeta` cleaned up to the documented ignore-syntax rules** — removed seven dot-prefixed entries (`.git`, `.github`, `.gitattributes`, `.gitignore`, `.vscode`, `.luarc.json`, `.markdownlint.json`) and the `"*.DS_Store"` glob. All eight matched nothing: the packager's `copy_directory_tree()` prunes dot-prefixed paths unconditionally, so listing them implied coverage the entries weren't providing. Rather than couple the packager config to the dev-sync script (the script had been reading those entries to build its skip list), `wow-version-replication.ps1` now mirrors the packager's prune directly in its own `$AlwaysSkip` — one dot-segment pattern replacing the `.gitignore`/`.gitattributes`/`.gitmodules`/`.pkgmeta` special cases. Verified equivalent with `-DryRun`: the same 50 files copy and the same 31 skip as before the change. Also documented the full ignore-syntax ruleset in a comment block (bare folder names, single-star quoted globs, no dot-prefixed entries, and the trailing-comment trap that ships empty zips), and corrected the stale `enable-toc-creation` comment which read "Enable …" above a `no`. Locations: `.pkgmeta`, `wow-version-replication.ps1`.
+
 ## [v1.2.1] (2026-07-30) - Settings Panel Open Fix
 
 ### Bug Fixes

@@ -1,8 +1,8 @@
 ================================================================================
-TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era
+TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era & TBC
 ================================================================================
 
-Version: 0.8.0
+Version: 1.3.0
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme
 Website: https://www.curseforge.com/wow/addons/togbankclassic
 
@@ -15,6 +15,14 @@ combined inventory of multiple guild bank characters without logging into
 each one. Perfect for guilds that use character banks instead of (or in
 addition to) the guild vault system.
 
+SUPPORTED GAME VERSIONS:
+- WoW Classic Era
+- WoW The Burning Crusade
+
+Both are published from the same source, so the features, commands and
+interface are identical on either version. CurseForge serves the correct
+build automatically for whichever version you install it under.
+
 KEY FEATURES:
 - View all guild bank inventories in one convenient interface
 - Search across all bank characters simultaneously
@@ -22,7 +30,7 @@ KEY FEATURES:
 - Guild-wide request limits for fair resource distribution (officers only)
 - Automatic synchronization with other guild members using the addon
 - Delta sync protocol for 90-99% bandwidth reduction
-- Link-less delta optimization for additional bandwidth savings (NEW in v0.8.0!)
+- Link-less delta optimization for additional bandwidth savings
 - Persistent debug logging system for troubleshooting
 - Works seamlessly with multiple bank alts
 
@@ -39,7 +47,8 @@ The easiest and most reliable way to install and keep TOGBankClassic updated:
 
 2. Open the CurseForge App and go to "World of Warcraft"
 
-3. Select "World of Warcraft Classic Era" from the game version dropdown
+3. Select your game version from the dropdown -- either
+   "World of Warcraft Classic Era" or "World of Warcraft Burning Crusade"
 
 4. Go to the "Get More Addons" section
 
@@ -47,7 +56,7 @@ The easiest and most reliable way to install and keep TOGBankClassic updated:
 
 6. Click "Install" on the TOGBankClassic addon
 
-7. Launch World of Warcraft Classic Era through the CurseForge App
+7. Launch the game through the CurseForge App
    (or type /reload if already in-game)
 
 8. The addon is now installed and will automatically update when new
@@ -71,7 +80,11 @@ Only use this method if you cannot use the CurseForge App:
 2. Extract the downloaded ZIP file
 
 3. Copy the TOGBankClassic folder to your WoW addons directory:
-   World of Warcraft\_classic_era_\Interface\AddOns\
+   Classic Era:      World of Warcraft\_classic_era_\Interface\AddOns\
+   Burning Crusade:  World of Warcraft\_anniversary_\Interface\AddOns\
+
+   Download the file matching your game version -- CurseForge lists a
+   separate Classic Era and Burning Crusade build on the Files page.
 
 4. Restart World of Warcraft (or type /reload if already in-game)
 
@@ -415,6 +428,14 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.3.0:
+--------------
+NEW FEATURES:
+- Burning Crusade support: a separate TBC build is now published alongside
+  Classic Era, with identical features and commands
+- Classic Era build updated to the current game patch, so it is no longer
+  flagged "out of date" in the AddOns list
 
 Version 0.8.0:
 --------------

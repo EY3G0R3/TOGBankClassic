@@ -3,7 +3,8 @@ package-as: TOGBankClassic
 
 curseforge-project-id: 1400244
 
-# Enable TOC file creation for multi-version support (Classic Era and BCC)
+# Both flavour TOCs (TOGBankClassic.toc @ 11509, TOGBankClassic_BCC.toc @ 20506)
+# are checked in and maintained by hand, so the packager must not generate them.
 enable-toc-creation: no
 enable-nolib-creation: yes
 
@@ -18,24 +19,33 @@ required-dependencies:
 
 # External dependencies (Ace3, VersionCheck) are handled via required-dependencies above
 
+# Ignore syntax is unforgiving and fails SILENTLY -- a malformed entry matches
+# nothing and the file ships anyway. Rules:
+#   * Folders: bare name, NEVER a trailing slash. parse_ignore() trims "/*", not
+#     "/", so "tools/" becomes "tools//*" and matches nothing. Use "tools".
+#   * Globs: quoted, repo-relative, ONE star. match_pattern() uses shell `case`
+#     globbing, which has no recursive "**". Unquoted "*.ps1" is a YAML alias
+#     indicator and a parse error.
+#   * Never list a dot-prefixed path. copy_directory_tree() prunes them all
+#     unconditionally, so .git / .github / .vscode / .luarc.json entries are
+#     no-ops that imply coverage they don't provide. wow-version-replication.ps1
+#     mirrors that same prune in its own $AlwaysSkip rather than reading it here.
+#   * NEVER put a trailing "# comment" on a list item. The parser strips one
+#     leading and one trailing quote but not the comment, leaving an unbalanced
+#     quote that breaks the eval in copy_directory_tree -- every file is copied
+#     to an empty destination and the packager uploads a ~108-byte empty zip,
+#     exit 0, CI green. Comments go on their own line.
 ignore:
-  - .git
-  - .github
-  - .gitattributes
-  - .gitignore
-  - .vscode
-  - "*.code-workspace"
   - docs
-  - CLAUDE.md
   - tools
-  - .luarc.json
-  - .markdownlint.json
+  - CLAUDE.md
+  - wow-version-replication.ps1
   - "*.ps1"
   - "*.bat"
+  - "*.code-workspace"
   - "Libs/*/README.md"
   - "Libs/*/README.textile"
   - "Textures/README.md"
   - "tmpclaude-*"
   - "*.bak"
-  - "*.DS_Store"
   - "Thumbs.db"

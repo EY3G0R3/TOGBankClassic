@@ -1,4 +1,4 @@
-## Interface: 11509
+## Interface: 20506
 ## Title: TOGBankClassic
 ## Notes: A simple way to aggregate, view and request items from the inventories of multiple guild bank alts.
 ## Author: Dominion-Myzrael, GrumpyPlayers (also known as <SG>Soul), Lothsahn, Huntmehuntme-Myzrael, Pimptasty

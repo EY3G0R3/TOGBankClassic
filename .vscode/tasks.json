@@ -1,0 +1,41 @@
+{
+    // Auto-starts the dev sync watcher (wow-version-replication.ps1) whenever
+    // this folder is opened in VS Code, so the _anniversary_ (TBC) install stays
+    // in sync with the _classic_era_ source without anyone having to remember
+    // to launch it. Bound to the EDITOR opening the repo — independent of any
+    // AI session / Claude Code hook.
+    //
+    // First time VS Code sees this file it will prompt "Allow Automatic Tasks
+    // in Folder" (or Manage Automatic Tasks). Choose Allow once; after that it
+    // runs silently on every folder open.
+    //
+    // Self-deduplicating PER REPO: the script itself holds a named mutex keyed
+    // on this repo's path, so a second launch on the same repo (window reload)
+    // exits cleanly, while watchers for other addons run unaffected. The task
+    // therefore just launches the script directly -- no fragile process scan.
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "TOGBankClassic dev sync watcher",
+            "type": "shell",
+            "options": {
+                "shell": {
+                    "executable": "powershell.exe",
+                    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+                }
+            },
+            "command": "${workspaceFolder}\\wow-version-replication.ps1",
+            "isBackground": true,
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        }
+    ]
+}
