@@ -6,6 +6,15 @@
 
 <h2>What's New</h2>
 
+<h3>v1.3.2 (2026-08-03) - ElvUI &amp; Baganator Item Highlighting</h3>
+<p>The "Highlight needed items" option now works for ElvUI and Baganator users.</p>
+<ul>
+<li><strong>BAGANATOR-001: "Highlight needed items" works with Baganator.</strong> If you use Baganator for your bags, ticking the box did nothing &mdash; the addon only knew how to mark items in Bagnon and in the default Blizzard bags. Items you need for open orders now get a gold marker in the top-left corner of the icon. Note this looks different to the Bagnon and default-bag versions, which instead dim everything you <em>don't</em> need: Baganator only lets addons add corner markers, so that is the form it takes there. You can move or remove the marker from Baganator's own customise window, where it appears as "TOGBank: needed for an order".</li>
+<li><strong>ELVUI-001: "Highlight needed items" works with ElvUI.</strong> If you use ElvUI's bags, ticking the box did nothing at all &mdash; the addon only knew how to dim items in Bagnon and in the default Blizzard bags. It now dims unneeded items directly in ElvUI's bag and bank windows, using ElvUI's own shading so it looks native and doesn't interfere with ElvUI's search box. Unticking the box restores everything to normal. Works the same on Classic Era and TBC.</li>
+<li><strong>Bagnon users are unaffected.</strong> If you run Bagnon underneath ElvUI with ElvUI's own bag replacement turned off, highlighting keeps using Bagnon exactly as before.</li>
+<li><strong>Please report anything odd with these two.</strong> The ElvUI and Baganator support was written against those addons' own published interfaces, but neither is installed on the development machine, so this release is the first time either has run for real. Both are built to fail quietly &mdash; if something is wrong they fall back to the previous behaviour rather than throwing errors &mdash; so if highlighting doesn't do what's described above, please report it with the ticket ID (ELVUI-001 or BAGANATOR-001) and it'll be fixed quickly. Bagnon and default-bag users are on the same code path as before and unaffected either way.</li>
+</ul>
+
 <h3>v1.3.1 (2026-08-02) - Banker Inventory Never Scanned</h3>
 <p>Fixes a bank character's own items never being recorded, leaving their tab permanently empty.</p>
 <ul>

@@ -1,0 +1,3 @@
+[submodule "Tests/wowapi"]
+	path = Tests/wowapi
+	url = https://github.com/Pimptasty/WoWAPITesting.git

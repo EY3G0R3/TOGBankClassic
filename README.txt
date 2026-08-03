@@ -243,6 +243,60 @@ DEBUG COMMANDS:
   TIP: Use /togbank debugtab first to create a dedicated debug chat tab
 
 ================================================================================
+BAG ADDON COMPATIBILITY (v1.3.2+)
+================================================================================
+
+The "Highlight needed items" option (available to bank characters in the
+Requests window) marks the items in your bags that are needed to fill open
+orders. It works with the default Blizzard bags and with the three most common
+bag replacements, but the VISUAL DIFFERS depending on which one you use --
+this is a limitation of what each addon lets other addons change, not a bug.
+
+SUPPORTED BAG ADDONS:
+---------------------
+
+  Default Blizzard bags
+      Items you do NOT need are dimmed. Needed items stay full colour.
+
+  Bagnon
+      Uses Bagnon's own search highlighting. Items you do not need are
+      dimmed; needed items stay lit.
+      NOTE: limited to the first 20 distinct items. With more open orders
+      than that, only the first 20 are highlighted.
+
+  ElvUI
+      Items you do NOT need are dimmed, using ElvUI's own shading so it
+      looks native. Covers both the bag and the bank window. Unticking the
+      box restores everything to normal, and ElvUI's own search box keeps
+      working normally while highlighting is on.
+
+  Baganator
+      Needed items get a GOLD MARKER in the top-left corner of the icon.
+      Nothing is dimmed. Baganator only allows other addons to add corner
+      markers, so this is the one form available there.
+      You can move or remove the marker from Baganator's own customise
+      window, where it is listed as "TOGBank: needed for an order".
+
+RUNNING MORE THAN ONE:
+----------------------
+Bag addons are checked in this order: ElvUI, Baganator, Bagnon, then the
+default bags. The first one actually drawing your bags wins.
+
+If you run Bagnon underneath ElvUI with ElvUI's own bag replacement turned
+OFF, highlighting correctly falls through to Bagnon -- ElvUI is only used
+when it is genuinely the addon drawing your bags.
+
+TROUBLESHOOTING:
+----------------
+If the checkbox does nothing:
+- Confirm your character is a bank character (its guild note contains
+  "gbank"); the option is only offered to bank characters.
+- Confirm there are open orders assigned to that bank character. With
+  nothing to fill, there is nothing to highlight.
+- Enable /togbank debug and look for REQUESTS category messages -- the
+  addon logs which bag addon it detected and chose.
+
+================================================================================
 DELTA SYNC FEATURE (v0.7.0+)
 ================================================================================
 

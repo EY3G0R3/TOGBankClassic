@@ -1,0 +1,7 @@
+-- Thin shim: defer to the shared TOG busted config in the WoWAPITesting submodule
+-- (Tests/wowapi/busted_config.lua), so the actual config lives in one place across the suite.
+-- busted only reads .busted from the run dir, so this file must exist here — but it's fixed
+-- boilerplate. This file is ONLY read by busted. To run the specs locally you do NOT need
+-- busted: `lua Tests/wowapi/run.lua` from the TOGBankClassic root (needs only Lua 5.1).
+package.path = package.path .. ";./Tests/wowapi/?.lua"
+return require("busted_config")

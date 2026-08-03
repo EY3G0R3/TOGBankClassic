@@ -38,6 +38,7 @@ required-dependencies:
 ignore:
   - docs
   - tools
+  - Tests
   - CLAUDE.md
   - wow-version-replication.ps1
   - "*.ps1"
