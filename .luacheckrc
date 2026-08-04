@@ -23,13 +23,17 @@ globals = {
 	"TOGBankClassic_Item", "TOGBankClassic_ItemHighlight", "TOGBankClassic_TooltipBankerInfo",
 	"TOGBankClassic_Mail", "TOGBankClassic_MailInventory", "TOGBankClassic_Options",
 	"TOGBankClassic_UI", "TOGBankClassic_Tests",
+	"TOGBankClassic_Switches",
+	"TOGBankClassic_Inventory_Record", "TOGBankClassic_Inventory_Resolve",
+	"TOGBankClassic_Inventory_Store", "TOGBankClassic_Inventory_Scan",
+	"TOGBankClassic_Inventory_Wire",
 	"TOGBankClassic_UI_Donations", "TOGBankClassic_UI_StatusBar", "TOGBankClassic_UI_Inventory",
 	"TOGBankClassic_UI_Mail", "TOGBankClassic_UI_Minimap", "TOGBankClassic_UI_Requests",
 	"TOGBankClassic_UI_Search",
 	-- Static data tables
 	"TOGBankClassic_ItemDB", "TOGBankClassic_SuffixDB",
 	-- SavedVariables (see .toc)
-	"TOGBankClassicDB", "TOGBankClassicIconDB", "TOGBankClassicOptionDB",
+	"TOGBankClassicDB", "TOGBankClassicInvDB", "TOGBankClassicIconDB", "TOGBankClassicOptionDB",
 	"TOGBankClassicDB_DebugLog", "TOGBankClassic_PerfMetrics", "TOGBankClassic_PerfEnabled",
 	"TOGBankClassic_DebugLogEnabled",
 	-- Bare globals declared by Modules/Constants.lua.

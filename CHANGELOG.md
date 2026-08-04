@@ -36,11 +36,28 @@
 
 ### Internal
 
+- **INV2: the tuple-inventory foundation is in place, and inert** — six new modules implementing the storage/wire rework designed in `docs/INVENTORY_V2.md`. **Nothing calls them.** `inventoryV2` defaults off, no existing code path routes through them, and no user behaviour changes in this release.
+
+  | Module | Responsibility |
+  | --- | --- |
+  | `Modules/Switches.lua` | Dev-switch registry; each switch declares what it gates and when it should be deleted |
+  | `Modules/Inventory/Record.lua` | The tuple `{id, count, suffix, enchant}`, its identity function, validation, aggregation |
+  | `Modules/Inventory/Resolve.lua` | LibItemDB lookup plus the three-step fallback chain |
+  | `Modules/Inventory/Store.lua` | The `TOGBankClassicInvDB` SavedVariable and the UI-compatibility view |
+  | `Modules/Inventory/Scan.lua` | Containers → tuples, emitting both shapes from one walk under `dualWrite` |
+  | `Modules/Inventory/Wire.lua` | Tuple encode/decode; send is switchable, receive always accepts both formats |
+
+  **142 specs, 445 executable lines, 100% line coverage on every module.** Greenfield is the one point at which that is achievable — retrofitting reached 18% on `Guild.lua`.
+
+  Three properties are asserted rather than assumed, because each is silent when it breaks. `Scan.parseLink` treats `item:10132::::::863` and `item:10132:0:0:0:0:0:863` as the same item — that equivalence is what makes the miscount class stop existing rather than be normalised around. Under `dualWrite` both shapes come from a **single** container walk, since a comparison across two walks could not distinguish an encoding bug from a stack that moved between passes. And an item arriving as a legacy link decodes to the same `Record.key` as the same item scanned locally, or a synced row and a scanned row would aggregate separately — the original bug reintroduced through the wire.
+
+  `Wire.estimateSize` exists to put real figures back on the CurseForge page: `INV2-DOC-001` removed the bandwidth claims because they were unverified, and this measures rather than asserts.
+
 - **33 new specs** in `Tests/guildroster_integration_spec.lua`, run against the **real** library rather than a stub. The harness gained `freshGuildRoster`, `readyGuildRoster` and `fireGuildRosterEvent`, plus two environment prerequisites now recorded in `Tests/HARNESS_CONTRACT.md` §4a/§4b: `securecallfunction` (a CallbackHandler file-scope upvalue) and the five localized `ERR_*` globals. The second is worth knowing — LibGuildRoster builds its chat patterns from those strings **at file scope**, so if they are missing when it loads it matches nothing at all, with no error. That failure looks exactly like a library defect and is not one; it cost two wrong diagnoses before the library's own spec settled it.
 
 - **`GetNormalizedRealmName()` takes no arguments** — three call sites passed `"player"`. Harmless (the argument was ignored) but wrong, and it was the only genuine defect in a large batch of language-server warnings. Locations: `Core.lua`, `Modules/Guild.lua`.
 
-- **Language-server diagnostics un-poisoned** — `Tests` is now in `.luarc.json`'s `workspace.ignoreDir`. The specs deliberately reassign addon globals to stub them (`env.stubOutput()` replaces `TOGBankClassic_Output` with a bare metatable), and the LS was merging those into the addon's own type view — which is why `redundant-parameter` fired on `Output:Debug` calls in files the tests never touch, and `duplicate-set-field` pointed at spec files. Specs are validated by being **run**, not by the LS, so excluding them costs nothing.
+- **`.luarc.json` brought in line with the other TOG addons** — added `redundant-parameter`, `undefined-field`, `missing-parameter`, `param-type-mismatch`, `duplicate-set-field` and `trailing-space` to `diagnostics.disable`, matching `GuildRoster/.luarc.json`. These are noise on dynamic WoW addon code: the language server cannot resolve a vararg method through a global module table, so it reported `Output:Debug(fmt, ...)` as taking zero arguments and flagged roughly a hundred correct call sites. `Tests` stays **analysed** — an earlier attempt at this excluded it via `workspace.ignoreDir`, which suppressed the symptom by giving up language-server support in the specs instead of configuring the rules that were wrong.
 
 - **Verified in-game** on a 981-member guild: library and WoW API agree in both directions, no cache divergence, no normalization disagreement across 981 real character names, 38 bankers detected, and a live transition recorded (`online=1`, `recent: online Fartcaptain-OldBlanchy`) — the first direct evidence that real-time presence works.
 

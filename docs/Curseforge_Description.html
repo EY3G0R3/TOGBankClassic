@@ -234,6 +234,7 @@
 <li><strong>Ace3</strong> &mdash; core framework</li>
 <li><strong>VersionCheck-1.0</strong> &mdash; tells you when a new version is out</li>
 <li><strong>LibGuildRoster</strong> &mdash; guild roster and online/offline tracking</li>
+<li><strong>AceCommQueue</strong> &mdash; keeps addon traffic orderly so nothing arrives garbled</li>
 </ul>
 
 <h3>Optional &mdash; bag addons</h3>
@@ -294,7 +295,7 @@
 <li><strong>Bank characters who leave the guild no longer linger.</strong> Removing a character from your bank list, or from the guild, could leave a ghost entry behind that showed as permanently waiting for data. Those cannot occur any more.</li>
 <li><strong>ITEM-005: the inventory window no longer gets stuck on "Loading items...".</strong> If any single item in your guild bank failed to load, the addon stopped waiting for the whole batch &mdash; so one bad item hid <em>everything</em> and the window sat on the loading message indefinitely. Now a problem item is skipped and the rest still appear, and if something never loads at all the addon gives up after a few seconds and shows you what it has rather than waiting forever.</li>
 <li><strong>ACQ-004: the addon notices when the game refuses to send something.</strong> Occasionally the client declines to send an addon message. Previously that was reported back as success, so the addon believed your guild had received an update they never got &mdash; most importantly changes to orders, which could leave different members seeing different lists with nothing to explain why. Failed sends are now retried, and if they still fail you are told, instead of the addon quietly assuming it worked.</li>
-<li><strong>New required addon: LibGuildRoster.</strong> The guild-roster handling moved into a shared library used across the TOG addons, so a fix there benefits all of them at once. It installs automatically through the CurseForge app like the other dependencies &mdash; you do not need to fetch it yourself.</li>
+<li><strong>Two addons are now installed alongside this one: LibGuildRoster and AceCommQueue.</strong> Guild-roster handling and message queueing moved into shared libraries used across the TOG addons, so a fix in either benefits all of them at once. AceCommQueue was previously bundled inside TOGBankClassic and had fallen behind its own newer releases; as a separate addon it stays current. Both install automatically through the CurseForge app &mdash; you do not need to fetch either yourself.</li>
 </ul>
 
 <h3>v1.3.2 (2026-08-03) - ElvUI &amp; Baganator Item Highlighting</h3>

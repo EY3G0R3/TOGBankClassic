@@ -136,7 +136,14 @@
         "SecondsToTime",
         "DEFAULT_CHAT_FRAME",
         "TOGBankClassic_ItemDB",
-        "TOGBankClassic_SuffixDB"
+        "TOGBankClassic_SuffixDB",
+        "TOGBankClassic_Switches",
+        "TOGBankClassic_Inventory_Record",
+        "TOGBankClassic_Inventory_Resolve",
+        "TOGBankClassic_Inventory_Store",
+        "TOGBankClassic_Inventory_Scan",
+        "TOGBankClassic_Inventory_Wire",
+        "TOGBankClassicInvDB"
     ],
     "runtime.version": "Lua 5.1",
     "workspace.library": [
@@ -144,7 +151,6 @@
         "${3rd}/busted/library"
     ],
     "workspace.ignoreDir": [
-        "Tests",
         ".vscode",
         "Libs"
     ],
@@ -152,6 +158,12 @@
         "need-check-nil",
         "unused-local",
         "unused-vararg",
-        "redefined-local"
+        "redefined-local",
+        "redundant-parameter",
+        "undefined-field",
+        "missing-parameter",
+        "param-type-mismatch",
+        "duplicate-set-field",
+        "trailing-space"
     ]
 }

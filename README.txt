@@ -540,11 +540,14 @@ NEW FEATURES:
 - 5 new commands for monitoring and management
 
 NEW COMMANDS:
-- /togbank deltastats - View sync statistics
-- /togbank protocol - Check protocol adoption
-- /togbank clearsnapshots - Clear delta cache
-- /togbank forcefull - Toggle full sync mode
-- /togbank resetmetrics - Reset statistics
+NOTE: these five moved under the "dev" prefix in a later release, because they are
+diagnostic tools rather than everyday commands. They are listed here in their
+current form; "/togbank dev help" lists everything available.
+- /togbank dev deltastats - View sync statistics
+- /togbank dev protocol - Check protocol adoption
+- /togbank dev clearsnapshots - Clear delta cache
+- /togbank dev forcefull - Toggle full sync mode
+- /togbank dev resetmetrics - Reset statistics
 
 IMPROVEMENTS:
 - Dramatically reduced network traffic for inventory updates
@@ -570,10 +573,19 @@ Special thanks to:
 - Users who provided feedback and suggestions
 
 Libraries Used:
+
+Installed automatically alongside TOGBankClassic (required):
 - Ace3 framework (AceAddon, AceComm, AceConfig, AceDB, AceEvent, AceGUI)
+- VersionCheck-1.0 - tells you when a newer version is available
+- LibGuildRoster - guild roster and online/offline tracking (v1.4.0+)
+- AceCommQueue-1.0 - orders outgoing addon traffic so messages arrive intact
+    (bundled inside the addon before v1.4.0; now a separate addon so it stays
+     current instead of quietly falling behind its own releases)
+
+Bundled with the addon:
 - LibDataBroker-1.1
 - LibDBIcon-1.0
-- ChatThrottleLib
+- ChatThrottleLib (ships with Ace3's AceComm)
 
 ================================================================================
 LICENSE
