@@ -4,166 +4,6 @@
 
 <p>TOGBankClassic is a powerful, feature-rich addon that transforms how your guild manages inventory across multiple bank characters. View, search, and request items from all your guild bank alts without ever logging out—all in one convenient interface.</p>
 
-<h2>What's New</h2>
-
-<h3>v1.3.2 (2026-08-03) - ElvUI &amp; Baganator Item Highlighting</h3>
-<p>The "Highlight needed items" option now works for ElvUI and Baganator users.</p>
-<ul>
-<li><strong>BAGANATOR-001: "Highlight needed items" works with Baganator.</strong> If you use Baganator for your bags, ticking the box did nothing &mdash; the addon only knew how to mark items in Bagnon and in the default Blizzard bags. Items you need for open orders now get a gold marker in the top-left corner of the icon. Note this looks different to the Bagnon and default-bag versions, which instead dim everything you <em>don't</em> need: Baganator only lets addons add corner markers, so that is the form it takes there. You can move or remove the marker from Baganator's own customise window, where it appears as "TOGBank: needed for an order".</li>
-<li><strong>ELVUI-001: "Highlight needed items" works with ElvUI.</strong> If you use ElvUI's bags, ticking the box did nothing at all &mdash; the addon only knew how to dim items in Bagnon and in the default Blizzard bags. It now dims unneeded items directly in ElvUI's bag and bank windows, using ElvUI's own shading so it looks native and doesn't interfere with ElvUI's search box. Unticking the box restores everything to normal. Works the same on Classic Era and TBC.</li>
-<li><strong>Bagnon users are unaffected.</strong> If you run Bagnon underneath ElvUI with ElvUI's own bag replacement turned off, highlighting keeps using Bagnon exactly as before.</li>
-<li><strong>Please report anything odd with these two.</strong> The ElvUI and Baganator support was written against those addons' own published interfaces, but neither is installed on the development machine, so this release is the first time either has run for real. Both are built to fail quietly &mdash; if something is wrong they fall back to the previous behaviour rather than throwing errors &mdash; so if highlighting doesn't do what's described above, please report it with the ticket ID (ELVUI-001 or BAGANATOR-001) and it'll be fixed quickly. Bagnon and default-bag users are on the same code path as before and unaffected either way.</li>
-</ul>
-
-<h3>v1.3.1 (2026-08-02) - Banker Inventory Never Scanned</h3>
-<p>Fixes a bank character's own items never being recorded, leaving their tab permanently empty.</p>
-<ul>
-<li><strong>SCAN-001: Scanning can no longer switch itself off behind your back.</strong> Depending on timing at login, a bank character's "enable scanning" setting could end up unset &mdash; which silently stopped their bags and bank from being recorded &mdash; and the <em>Bank</em> section could be missing from the addon's options entirely, so the "Enable for &lt;character&gt;" tick box wasn't there to turn on. The setting now defaults to on and the options section is registered reliably. Affects Classic Era as well as TBC.</li>
-<li><strong>An empty tab no longer says "Loading items..." forever.</strong> A character with nothing recorded yet showed a loading message that never went away, so an empty record looked identical to the addon being stuck. Empty tabs now tell you what is actually going on &mdash; and, for your own character, what to do about it.</li>
-<li><strong>Easier to diagnose if scanning ever stops.</strong> When the addon decides not to scan, it can now tell you why (for example, the character isn't marked as a bank, or scanning is switched off for them) instead of doing nothing silently. Turn on the new <em>BANK</em> category in the debug options if you are troubleshooting.</li>
-</ul>
-
-<h3>v1.3.0 (2026-08-02) - TBC Client Support</h3>
-<p>TOGBankClassic now installs and runs on The Burning Crusade clients as well as Classic Era.</p>
-<ul>
-<li><strong>TBC-001: The addon now loads on TBC.</strong> Previously only a Classic Era build was published, so TBC players saw the addon flagged as out of date and had to force-load it. There is now a proper TBC build with the same features, same commands and same interface &mdash; install it the usual way and it just works.</li>
-<li><strong>No longer flagged "out of date" on Classic Era.</strong> The Era build was still marked for the previous game patch, so it showed up greyed out in the AddOns list until you ticked "Load out of date AddOns". It now matches the current patch.</li>
-</ul>
-
-<h3>v1.2.1 (2026-07-30) - Settings Panel Open Fix</h3>
-<p>Fixes the settings panel refusing to open after a recent client update.</p>
-<ul>
-<li><strong>SETTINGS-002: The settings panel opens again.</strong> Clicking the gear icon in the bank window, or picking Settings from the minimap button, threw an error and nothing opened. A recent change to how the game's Settings window is addressed meant the addon was asking for its options page the old way. Both buttons now take you straight to the TOGBankClassic options page.</li>
-</ul>
-
-<h3>v1.2.0 (2026-07-22) - Manual-Fill Fix, UI Fixes &amp; Recent-Update Error Hotfix</h3>
-<p>Fixes the manual "Mark Filled" prompt that wasn't recording quantities, a re-open button that could overlap the fulfill button on smaller windows, and a set of errors caused by recent WoW client updates &mdash; plus protection against the next round of changes.</p>
-<ul>
-<li><strong>STATICPOPUP-001: "Mark Filled" now records the quantity.</strong> When you clicked the check-mark to record items handed over in person, entered a quantity, and clicked Mark Filled, nothing happened &mdash; the amount wasn't saved and the order stayed open. A change to WoW's pop-up windows meant the number you typed was never read. The prompt now captures the quantity correctly and marks the order filled once the full amount is reached.</li>
-<li><strong>WRAP-001: Re-open button no longer overlaps the fulfill button.</strong> On smaller windows the re-open button in the Actions column could wrap onto the fulfill (mail) button. The column now has enough room so the buttons always stay on one line.</li>
-<li><strong>ROSTER-001: Fixed a "GuildRoster" error on login/reload.</strong> A recent client update changed how the game refreshes your guild roster, which caused an error message and stopped the roster from updating. Logins, reloads, and guild join/leave updates work again without the error.</li>
-<li><strong>METADATA-001: Fixed a "GetAddOnMetadata" error when opening a window.</strong> The update also changed how addons read their own version, which caused an error when opening the bank window from the minimap button. Windows open normally again.</li>
-<li><strong>OFFNOTE-001: Officer-only features work again.</strong> The update changed how the game checks whether you can see officer notes, which caused an error in one spot and quietly hid the officer tools everywhere else &mdash; the Requests Settings tab, the custom cancel-reason editor, help-note editing, and officer options. Officers and the guild leader can see and use all of these again.</li>
-<li><strong>FONT-001: Fixed a font error when opening a window.</strong> A change to how text styling is validated caused an error when opening the Inventory and Requests windows. Fixed, with no change to how the text looks.</li>
-<li><strong>Future-proofing.</strong> The addon now shields itself from the same kind of change to the game's item and money-display commands, so a future update in this series won't break item names, counts, or coin displays.</li>
-</ul>
-
-<h3>v1.1.4 (2026-05-30) - Re-open Orders, Multi-Order Mail &amp; Fulfillment Fixes</h3>
-<p>Bankers can now re-open an order that was finished by mistake, one mail can fill several of a member's orders, the "Mark Filled" button reliably completes orders, and the small buttons along the bottom of the windows are fully clickable again.</p>
-<ul>
-<li><strong>Re-open a finished order.</strong> Bankers, officers, and the guild leader can now re-open an order that was marked filled, completed, or cancelled by mistake. A re-open button appears on finished orders in the Requests window; clicking it (and confirming) puts the order back to open and clears its filled count so it can be worked again.</li>
-<li><strong>"Mark Filled" actually completes the order now.</strong> The check-mark button on a request &mdash; for when you hand items over in person or mail them yourself &mdash; now reliably records how many you filled and closes the order once the full amount is reached. (It could previously do nothing at all.) The confirm button is now labelled <em>Mark Filled</em> instead of <em>Mark Sent</em>, since it covers both handing items over and mailing them yourself.</li>
-<li><strong>Bottom-row buttons are fully clickable again.</strong> The small icons along the bottom edge of the windows &mdash; Close, the help "i", the page arrows, the broom, the fulfill envelope &mdash; were only responding to clicks and hover in their top half; the bottom edge felt dead. They now take input across their whole surface, every time the window is opened.</li>
-<li><strong>One mail can fill several of someone's orders.</strong> If a guild member has more than one open order with you, you can pack everything into a single mail to them &mdash; the addon now marks all of their matching orders filled, not just one. This already worked for a fully hand-made mail; now it also works when you use the Fulfill button and then add a few more items to the same mail to save a trip. (Orders that belong to a different bank character aren't touched.)</li>
-</ul>
-
-<h3>v1.1.3 (2026-05-30) - Cancel-Stale Broom Icon Hotfix</h3>
-<p>A quick fix for the "Cancel Stale" button showing up blank.</p>
-<ul>
-<li><strong>BROOM-001: The broom icon is back.</strong> In v1.1.2 the bulk "Cancel Stale" button on the Requests window appeared as an empty/blank button &mdash; the broom artwork it tried to use simply isn't included in the Classic Era game client, so there was nothing to draw. The addon now ships its own broom image, so the button shows a proper broom for everyone.</li>
-</ul>
-
-<h3>v1.1.2 (2026-05-30) - Requests Tabs, Custom Cancel Reasons &amp; Armor Slot Filter</h3>
-<p>The Requests window gets a real tabbed layout (Requests / Archive / officer Settings), officers can write their own guild cancel reasons, and Search gains an armor-slot filter &mdash; plus a batch of layout polish and a pagination fix.</p>
-<ul>
-<li><strong>Tidier top of the window.</strong> The top of the Requests window is now proper tabs: <em>Requests</em>, <em>Archive</em>, and (for officers) <em>Settings</em>. The old "Cancel Stale" button and the wide "&lt; Prev" / "Next &gt;" buttons no longer take up space up there.</li>
-<li><strong>Cleaner, aligned column headers.</strong> The Date / Requester / Bank / Item / Sent / Actions headers in the request list are now clean clickable text (click any to sort, click again to reverse) that lines up with the rows beneath them, instead of the chunky buttons that didn't quite match.</li>
-<li><strong>Compact page arrows by the status bar.</strong> Paging through requests now uses small "&lt;" and "&gt;" arrow icons next to the "?" help icon at the bottom-right. They dim automatically when you're on the first or last page.</li>
-<li><strong>Cancel Stale is now a broom icon.</strong> The bulk "cancel old requests" action is now a small broom icon next to the page arrows, shown only to officers and bank characters. Hover it for a reminder of how many days counts as stale.</li>
-<li><strong>New officer Settings tab.</strong> Officers and the guild leader get a <em>Settings</em> tab right inside the Requests window. From there you can set how many days until a request is archived, how many days until an open request is auto-cancelled, and the maximum percentage of stock anyone can request at once &mdash; the same options that used to live only in the game's AddOns options panel. Press Enter to apply each value; the auto-cancel and maximum-amount settings sync to the whole guild.</li>
-<li><strong>"Fulfill Oldest Order" button for bankers.</strong> With a mailbox open, a new envelope icon at the bottom-right of the Requests window walks the oldest order you can fully cover through one step per click &mdash; select, split (if needed), attach, send &mdash; then moves to the next-oldest. If the items you need are sitting in your mail, it pulls them into your bags first (one per click, only items for your own orders). Just keep clicking the same button; the status bar tells you the next step. Working it oldest-first means whoever asked first gets served first, and orders you can't fully cover (from bags + mail) are skipped.</li>
-<li><strong>"Mark hand-off" asks how many you gave.</strong> The row's check-mark button (for items you handed over in person instead of mailing) now pops a small box asking how many you gave. That number goes into the <em>Sent</em> column, and the order only shows as complete once Sent reaches the amount requested &mdash; so partial hand-offs are tracked properly.</li>
-<li><strong>Officer notes on the help tooltips.</strong> Officers and the guild leader can add a custom note that shows at the bottom of the help "?" tooltip on each window (Inventory, Search, Requests) &mdash; great for telling guildies how to submit a request and how long fulfillment usually takes. Set them in the addon options (Esc &rarr; Options &rarr; AddOns &rarr; TOGBankClassic &rarr; Requests, under "Guild Help Notes"); each window gets its own note and they sync to the whole guild.</li>
-<li><strong>View-only bank toons.</strong> You can now mark a bank character as "view only" so everyone can <em>see</em> its items (in inventory, search, and tooltips) but <em>nobody can request from it</em> &mdash; perfect for a raid bank. To set it up, just add a marker to that toon's guild note next to the usual <code>gbank</code> tag: <code>gbank viewonly</code> (or <code>gbank readonly</code>, or the short <code>gbankro</code>). In Search, that bank shows a <em>(view only)</em> tag and clicking its items explains they can't be requested. Items also stored on a normal bank can still be requested from that one.</li>
-<li><strong>Filter armor by slot in Search.</strong> In the Search window, pick <em>Filter &rarr; Type &rarr; Armor</em> and a new <em>Slot</em> dropdown appears so you can narrow to a specific slot &mdash; Head, Chest, Legs, Hands, Shield, and so on. It works alongside the armor type (Cloth/Leather/Mail/Plate), so you can ask for things like "Plate Legs" or "any Chest".</li>
-<li><strong>Custom cancel reasons.</strong> The officer Settings tab now lets you write your own cancel reasons for the guild. For each reason, tick <em>Member</em> and/or <em>Banker</em> to choose where it shows up: in the list a member sees when cancelling their own request, in the list a banker sees when cancelling someone's request, or both. The built-in flavor reasons are listed too &mdash; you can't edit their wording, but you can un-tick any you don't want offered anymore. Your reasons sync to the whole guild automatically, so everyone picks from the same list when cancelling.</li>
-<li><strong>Paging no longer jumps back.</strong> Clicking the page arrows could snap you back to the first page a moment later whenever fresh request data arrived in the background. Your current page now stays put.</li>
-<li><strong>Bottom-row icons are fully clickable again.</strong> The small icons along the bottom of the Inventory, Search, and Requests windows (the gear, the "?" help icon, the page arrows, the broom, and the fulfill envelope) used to respond only if you clicked their exact center, and their hover tooltips were just as fussy. You can now click and hover anywhere on the icon.</li>
-<li><strong>Fulfilling stackable items no longer floods your bags.</strong> When the "Fulfill Oldest Order" button pulled needed items out of your mail, a stackable item could come in by the full stack and it would keep pulling more than the order needed. It now stops as soon as it has enough.</li>
-</ul>
-
-<h3>v1.1.1 (2026-05-29) - Sorting Fixes &amp; Random-Suffix Requests</h3>
-<p>This release fixes two inventory sorting problems and a mix-up where requests for items like "of the Tiger" vs "of the Monkey" could point at the wrong version.</p>
-<ul>
-<li><strong>"By Type" now keeps each material together and orders it by level.</strong> Sorting your inventory by type used to scatter the same kind of armor across the list (a run of cloth, then some leather, then more cloth). Now all cloth is grouped together, then all leather, then all mail/plate &mdash; and within each material the pieces are ordered by required level from highest to lowest (e.g. all plate: 50, 49, 48…), so each group reads in a clean, predictable order.</li>
-<li><strong>"Level" sorting now uses the item's required level.</strong> The Level (High to Low / Low to High) sort was ordering by an internal item-level value, which made the list look like it counted down and then started over. It now sorts by the level you need to use the item, so the order reads cleanly from high to low. The "Minimum/Maximum Required Level" search filters were affected by the same mix-up and are fixed too.</li>
-<li><strong>"By Type" now works in the Search window.</strong> Choosing "By Type" in the Search window previously did nothing; it now groups results the same way the main inventory does.</li>
-<li><strong>REQ-003: Requests for random-suffix gear show the right version.</strong> Items such as "Spiked Club of the Tiger" and "Spiked Club of the Monkey" are different items that share the same base. Before, a request for one could display the other's tooltip and be treated as fulfillable by the wrong one. Requests now remember exactly which version was asked for, so the tooltip and the bank/mail availability checks match the correct item. (Requests created before this update don't carry that detail and keep working as they did.)</li>
-</ul>
-
-<h3>v1.1.0 (2026-05-23) - Data Corruption Fix: Bogus Item Counts &amp; Cleaner Commands</h3>
-<p>This release fixes a data-corruption bug that could cause individual gear items in the inventory view to show wildly inflated quantities (thousands of a weapon that physically can only exist once), and trims the slash-command list down to only the commands real players actually use.</p>
-<ul>
-<li><strong>Filter gear by level.</strong> The Search window has two new compact inputs labelled "Min lvl" and "Max lvl". Type a number into either (or both) to hide items outside that required-level range. Leave one empty for an open-ended range. Combines with the existing Type/Quality/Usable filters.</li>
-<li><strong>Search window filters are more compact.</strong> The filter dropdowns no longer take a full row each &mdash; they're now sized to their content and arranged in a row that automatically wraps to multiple lines based on how wide you've made the Search window. Resize the window wider to see more filters per row; narrower to stack them. Frees up vertical space for results.</li>
-<li><strong>Help icon and bottom-right pagination on the Search window.</strong> A new "?" help icon at the bottom-right explains how Search works. The "&lt; Previous" / "Next &gt;" full-width buttons are gone &mdash; they're now compact "&lt;" and "&gt;" icons next to the close button, freeing another row of space for results.</li>
-<li><strong>More tooltips throughout the Search window.</strong> Hover the "Min lvl", "Max lvl", "Usable", "Filter", or "Sort" labels for an explanation of what each does. The Sort tooltip no longer pops up while you're trying to click the dropdown.</li>
-<li><strong>One-click access to settings.</strong> A new gear icon now sits next to the help "?" icon at the bottom-right of the main guild bank window. Click it to open the addon's options panel directly &mdash; no more navigating through Escape &rarr; Options &rarr; AddOns &rarr; TOGBankClassic.</li>
-<li><strong>ITEM-004: Inflated weapon and armor counts are fixed.</strong> Gear items could show counts in the hundreds or thousands due to a bug where mail items were being double-counted into the bank view across sync cycles. The bug is fixed and a one-time cleanup runs automatically within 30 seconds of logging in. You'll see a chat message like <em>"Ghost purge: removed X linkless gear ghost(s) from saved data"</em> if any corrupt entries were found and cleaned up. Fresh data from your bankers will refill anything that gets removed.</li>
-<li><strong>ITEM-003: Gear items showing as duplicated rows in the inventory are fixed.</strong> Plain "Battlefell Sabre" and "Battlefell Sabre of Power" can no longer collide in a way that corrupts each other's counts.</li>
-<li><strong>Slash-command list cleaned up.</strong> Type <code>/togbank help</code> and you'll see a much shorter list — only the commands that are actually useful for players (open the UI, sync, share, debug logging, reset). Internal developer/debugging commands like <code>deltastats</code>, <code>protocol</code>, <code>forcedelta</code>, <code>perfstats</code> etc. are no longer shown to players. Officers still have <code>wipeall</code>, <code>roster</code>, <code>compact</code>, and the <code>debuglog</code> family for reporting bugs.</li>
-<li><strong>Behind the scenes:</strong> groundwork is laid for a future release that will dramatically reduce the network bandwidth used by guild bank syncs (5x or more smaller). No user-visible change in this release; the heavy lifting will come in v1.2 once the foundation is fully populated.</li>
-</ul>
-<p><em>If you were previously seeing impossible numbers like "6237 Battlefell Sabre of Power" in your guild bank view, this release fixes the cause and cleans up the leftover bad data automatically. No action needed on your part.</em></p>
-
-<h3>v1.0.0 (2026-04-11) - First Stable Release: Fulfill Location Awareness &amp; Polish</h3>
-<p>After months of active development and in-guild testing, we're shipping 1.0.0. This release rounds out the fulfillment workflow with location-aware button states and fixes the last rough edges found during real-world use.</p>
-<ul>
-<li><strong>Fulfill button location awareness:</strong> The fulfill button now shows distinct icons and contextual tooltips for items that can't be mailed immediately — wax letter icon when the item is in your mail inbox, paired bag+letter icons when it's split across bank and mail, and shortage icons (with exact counts) when you have some in bags but need to pick up more. No more guessing why the button isn't ready.</li>
-<li><strong>TOOLTIP-001:</strong> Item link "Bankers:" tooltip no longer shows stock data for characters who have left the guild — guild roster membership is now verified before displaying any banker's inventory</li>
-<li><strong>FULFILL-001:</strong> Fulfill button icon now correctly transitions away from the split (shovel) icon after a bag split completes — it was stuck because the bag-update event was calling the wrong draw function</li>
-<li><strong>HIGHLIGHT-001:</strong> Bagnon item highlighting now works for tradeskill recipes and patterns (Pattern:, Formula:, Plans:, Schematic:, Design:, Manual:) — the colon in these names was silently breaking Bagnon's search parser</li>
-</ul>
-
-<h3>v0.10.10 (2026-04-04) - Same-Name Item Variant Disambiguation</h3>
-<ul>
-<li><strong>REQ-001:</strong> Same-name item variants (e.g. Punctured Voodoo Doll Priest/Warrior/Druid) are now correctly distinguished — requests store the numeric item ID and all fulfillment, highlighting, and mail detection use it for exact matching; old clients fall back to name-matching automatically</li>
-<li><strong>REQ-002:</strong> Hovering a request's item name now shows the tooltip for the correct class variant, not whichever one happened to appear first in guild inventory</li>
-<li><strong>ItemHighlight fix:</strong> Needed-quantity calculation now correctly subtracts already-fulfilled amounts (was always showing full quantity due to wrong field name)</li>
-</ul>
-
-<h3>v0.10.9 (2026-04-03) - Cancel Reason Overhaul, Fulfillment Sound Fix &amp; Options Cleanup</h3>
-<ul>
-<li><strong>Role-aware cancel reasons:</strong> Bankers see 6 flavour-text reasons when cancelling a member's request; members cancelling their own orders see 5 separate reasons — role detected automatically via IsBank()</li>
-<li><strong>MAIL-014:</strong> Order fulfillment sound now actually plays — the original PlaySound() call used a string name removed in Patch 7.3.0; fixed to use the correct numeric SoundKitID</li>
-<li><strong>Fulfillment sound toggle:</strong> New Options toggle "Play Sound on Order Fulfilled" (defaults on) for players who find the sound disruptive</li>
-<li><strong>Reset Database tooltip:</strong> The Reset Database button in Options now has a clear tooltip explaining what it does and that it cannot be undone</li>
-<li><strong>Removed dead Communication Protocol dropdown</strong> from Options — the setting was never read by any actual send/receive code</li>
-</ul>
-
-<h3>v0.10.8 (2026-04-02) - Requests UI Pagination &amp; Copyable Item Text</h3>
-<ul>
-<li><strong>Pagination:</strong> Requests window now shows 50 rows per page — no more game freezes when switching to "Any Banker" with 100+ requests</li>
-<li><strong>Copyable item names:</strong> Click any item name in the Requests window to highlight it, then Ctrl+C to copy</li>
-<li><strong>Item tooltips on hover:</strong> Mouse over any item name in Requests to see the full WoW item tooltip with stats and quality</li>
-<li><strong>"Requests synced." confirmation</strong> printed after a user-triggered /togbank sync completes</li>
-</ul>
-
-<h3>v0.10.7 (2026-04-02) - P2P Delivery Watchdog Tuning</h3>
-<ul>
-<li><strong>P2P-032:</strong> Delivery watchdog raised from 60s to 180s — prevents premature sync failure during slow AceCommQueue drains (observed worst case: 68–70s for 9 KB payloads)</li>
-</ul>
-
-
-
-<p>TOGBankClassic is The Old Gods guild's enhanced fork of GBankClassic-Revived, bringing significant improvements to guild bank management. Our team added extensive new functionality including:</p>
-
-<ul>
-<li>Mailbox inventory tracking and integration</li>
-<li>One-click item requests directly from search results</li>
-<li>Full request management system with fulfillment tracking</li>
-<li>Smart item highlighting for bankers (Bagnon integration)</li>
-<li>Automated order fulfillment with intelligent stack splitting</li>
-<li>Auto-marking of fulfilled requests when mail is sent</li>
-<li>Item tooltip banker stock display — hover any item to see which bankers have it</li>
-<li>Enhanced debug logging and performance metrics</li>
-<li>Delta-based sync protocol (90-99% bandwidth reduction)</li>
-<li>Advanced P2P communication for faster data population</li>
-<li>Officer-configurable percentage-based request limits</li>
-</ul>
-
-<p>We're grateful to the GBankClassic-Revived team for the foundation, and we continue to build on their excellent work with features tailored for active guild bank management in Classic Era.</p>
-
 <h2>Core Features</h2>
 
 <h3>Unified Inventory Management</h3>
@@ -195,7 +35,7 @@
 <li>Timeline Tooltips: Hover any request's date to see when it was submitted, filled, or cancelled (with reason)</li>
 <li>Cancel Reasons: Bankers select a reason before cancelling; reason is stored and shown to the requester</li>
 <li>Requests Archive: Requests older than a configurable threshold automatically move to an Archive tab, keeping the main view focused</li>
-<li>Stale Request Management: Officers can auto-tombstone stale open requests and bulk-cancel them via the "Cancel Stale" button</li>
+<li>Stale Request Management: orders left unfilled past your chosen age close automatically, and officers can clear them in one go with the "Cancel Stale" button</li>
 <li>Priority System: Mark requests as Rush, High, Normal, or Low priority for better organization</li>
 <li>Officer Controls: Officers can configure guild-wide request percentage limits (1-100% of inventory)</li>
 </ul>
@@ -217,14 +57,11 @@
 <h3>Blazing-Fast Synchronization</h3>
 
 <ul>
-<li>Delta Sync Protocol: Only syncs what changed—achieves 90-99% bandwidth reduction</li>
-<li>Link-Less Optimization: Removes redundant item links for additional bandwidth savings (v0.8.0+)</li>
-<li>Pull-Based Handshake: Clients request only the data they need, when they need it</li>
-<li>P2P Collect/Offer Pipeline: Hash syncs run through a coordinated collect/offer/dispatch cycle with broadcast collision prevention—no more corrupt message errors on busy guild channels</li>
-<li>AceCommQueue-1.0: Embedded send-queue library ensures no two messages on the same prefix ever interleave chunks in transit — fully transparent, no call site changes required</li>
-<li>Compact Request Protocol: Request index and records sync in a compact positional format — ~60% less bandwidth than the previous key-value format</li>
-<li>Event-Sourced Requests: Append-only request log prevents conflicts and data loss</li>
-<li>Offline Resilience: Players who were offline automatically catch up when they log in</li>
+<li><strong>Only what changed gets sent.</strong> After the first sync, the addon shares just the differences rather than whole inventories &mdash; a fraction of the traffic of a full re-send.</li>
+<li><strong>No single bottleneck.</strong> Data comes from whichever guild member has the freshest copy, not from one designated player who has to be online.</li>
+<li><strong>Log in and catch up.</strong> Anything you missed while offline arrives shortly after you log in, without you asking.</li>
+<li><strong>Built to stay quiet.</strong> Traffic is queued and paced so a busy guild chat doesn't get flooded and messages don't arrive garbled.</li>
+<li><strong>Nothing to configure.</strong> All of this runs on its own; there are no sync settings to tune.</li>
 </ul>
 
 <h2>Advanced Features</h2>
@@ -233,7 +70,7 @@
 
 <ul>
 <li>Minimap Button: Quick access to inventory—toggle visibility in options</li>
-<li>Bagnon Integration: Automatic item highlighting in bags when fulfilling orders (requires Bagnon addon)</li>
+<li>Bag Highlighting: items needed for open orders are marked in your bags &mdash; works with the default bags, Bagnon, ElvUI and Baganator</li>
 <li>Request History: View your past requests with fulfillment status</li>
 <li>Fair Distribution: Officer-configured limits ensure equitable access to guild resources</li>
 <li>Window Persistence: All window sizes and positions save automatically across reloads</li>
@@ -255,19 +92,18 @@
 <ul>
 <li>Request Limits: Set max request percentage (e.g., 50% = members can request up to half of available stock)</li>
 <li>Protects Unique Items: Always allows requesting at least 1 if available (gear, BoE epics, etc.)</li>
-<li>Syncs Guild-Wide: Limit setting broadcasts immediately (ALERT priority) to all online members, and is re-broadcast on the 3-minute sync cycle so members who were offline receive it automatically on login</li>
-<li>Auto-Cancel Threshold: Configure how many days before open requests are automatically tombstoned as stale</li>
-<li>Sync Diagnostics: /togbank hashdebug shows banker hash freshness and flags alts with missing content</li>
-<li>Debug Tools: Access advanced diagnostics via slash commands for troubleshooting</li>
+<li>Syncs Guild-Wide: your settings reach everyone online straight away, and anyone who was offline picks them up when they next log in &mdash; you only set them once</li>
+<li>Auto-Cancel Threshold: choose how many days an unfilled order stays open before it is closed as stale</li>
+<li>Custom Cancel Reasons: write your own reasons for cancelling an order, and choose which ones members and bankers each see</li>
+<li>Help Notes: add a note of your own to each window's help tooltip, so guild-specific rules are visible where people need them</li>
 </ul>
 
-<h3>Developer &amp; Performance</h3>
+<h3>If Something Goes Wrong</h3>
 
 <ul>
-<li>Persistent Debug Logging: 50,000-entry buffer with 7-day retention and category filtering</li>
-<li>Performance Metrics: Built-in telemetry tracks memory usage and bandwidth consumption</li>
-<li>Version Checking: Automatic notifications when new versions are available (VersionCheck-1.0)</li>
-<li>Ace3 Framework: Built on industry-standard Ace3 libraries for reliability and compatibility</li>
+<li><strong>Built-in logging.</strong> Turn it on with <code>/togbank debug</code>, send it to its own chat tab with <code>/togbank debugtab</code>, and grab a copy for a bug report with <code>/togbank debuglog</code>. Off by default, so it costs you nothing when you're not using it.</li>
+<li><strong>Update notifications.</strong> You're told when a newer version is out, so you're not silently running an old one while your guild has moved on.</li>
+<li><strong>Diagnostics on request.</strong> If a problem needs digging into, there are extra tools behind <code>/togbank dev</code> that support can walk you through on Discord.</li>
 </ul>
 
 <h2>How It Works</h2>
@@ -286,7 +122,7 @@
 <p><strong>For Guild Members:</strong></p>
 
 <ol>
-<li>Open TOGBankClassic (minimap button or /togbank show)</li>
+<li>Open TOGBankClassic (minimap button, or type <code>/togbank</code>)</li>
 <li>Click "Search" → type item name (e.g., "Felcloth")</li>
 <li>Click result → dialog shows available quantity</li>
 <li>Enter amount → click "Send Request"</li>
@@ -316,9 +152,9 @@
 <h3>Reliability</h3>
 
 <ul>
-<li>Event-Sourced Architecture: Request log prevents data corruption and conflicts</li>
-<li>Conflict-Free Merging: Multiple players can modify requests simultaneously without issues</li>
-<li>Data Recovery: Full history allows reconstruction if SavedVariables get corrupted</li>
+<li>No lost orders: every change to an order is tracked, so two people acting at once can't overwrite each other</li>
+<li>Self-correcting: if your data drifts out of step with the guild, the next sync repairs it &mdash; and if it ever gets badly out of shape, <code>/togbank wipe</code> re-fetches everything from your guild</li>
+<li>Fails safely: when something goes wrong you get a message explaining it rather than silence</li>
 </ul>
 
 <h3>User Experience</h3>
@@ -339,33 +175,44 @@
 
 <h2>Slash Commands</h2>
 
-<h3>Basic Commands</h3>
+<h3>Everyday Commands</h3>
 
 <ul>
-<li>/togbank or /togbank show - Open main inventory window</li>
-<li>/togbank sync - Manually trigger full guild sync</li>
-<li>/togbank share - Broadcast your inventory/requests to guild</li>
-<li>/togbank wipe - Reset your local database (keeps character data)</li>
-<li>/togbank wipeall - Reset entire database (fresh start)</li>
-<li>/togbank wipeframes - Reset window positions to defaults</li>
+<li><code>/togbank</code> &mdash; open or close the main inventory window</li>
+<li><code>/togbank help</code> &mdash; list every available command</li>
+<li><code>/togbank roster</code> &mdash; show the bank characters the addon knows about</li>
+<li><code>/togbank sync</code> &mdash; manually pull the latest data from your guild</li>
+<li><code>/togbank share</code> &mdash; push your own inventory and requests to the guild</li>
+<li><code>/togbank version</code> &mdash; show which version you are running</li>
+<li><code>/togbank wipeframes</code> &mdash; put all windows back to their default positions and sizes</li>
 </ul>
 
-<h3>Debug Commands (Advanced)</h3>
+<p><code>/bank</code> and <code>/gbank</code> can be enabled as shortcuts in the options, if nothing else has claimed them.</p>
+
+<h3>Resetting Data</h3>
 
 <ul>
-<li>/togbank debug - Toggle debug output in chat</li>
-<li>/togbank hashdebug - Show banker hash freshness (diagnose sync issues)</li>
-<li>/togbank deltastats - Display P2P synchronization telemetry</li>
-<li>/togbank perfmetrics - Show memory usage and performance stats</li>
+<li><code>/togbank wipe</code> &mdash; clear this guild's stored data (it re-syncs from your guild afterwards)</li>
+<li><code>/togbank wipeall</code> &mdash; clear everything and start fresh</li>
 </ul>
+
+<h3>Troubleshooting</h3>
+
+<ul>
+<li><code>/togbank debug</code> &mdash; turn debug messages on or off</li>
+<li><code>/togbank debugtab</code> &mdash; send debug messages to their own chat tab instead of cluttering yours</li>
+<li><code>/togbank debuglog</code> &mdash; print a recent slice of the log to paste into a bug report</li>
+</ul>
+
+<p>There are further diagnostic commands behind <code>/togbank dev</code>, intended for development and support. <code>/togbank dev help</code> lists them; you should not need them in normal play.</p>
 
 <h2>Configuration</h2>
 
 <h3>Access Options</h3>
 
 <ul>
-<li>Press ESC → Interface → AddOns → TOGBankClassic</li>
-<li>OR: /togbank options</li>
+<li>Press ESC → Options → AddOns → TOGBankClassic</li>
+<li>Or right-click the minimap button</li>
 </ul>
 
 <h3>Key Settings</h3>
@@ -381,15 +228,22 @@
 
 <h3>Required</h3>
 
+<p>All of these install automatically through the CurseForge app &mdash; you do not need to fetch them yourself.</p>
+
 <ul>
-<li>Ace3: Core framework (auto-installed via CurseForge)</li>
-<li>VersionCheck-1.0: Update notifications (auto-installed)</li>
+<li><strong>Ace3</strong> &mdash; core framework</li>
+<li><strong>VersionCheck-1.0</strong> &mdash; tells you when a new version is out</li>
+<li><strong>LibGuildRoster</strong> &mdash; guild roster and online/offline tracking</li>
 </ul>
 
-<h3>Optional</h3>
+<h3>Optional &mdash; bag addons</h3>
+
+<p>The "Highlight needed items" option works with the default Blizzard bags and with the bag addons below. <strong>The look differs depending on which one you use</strong> &mdash; that is a limit of what each addon lets others change, not a bug:</p>
 
 <ul>
-<li>Bagnon: Enhanced bag highlighting for order fulfillment</li>
+<li><strong>Bagnon</strong> &mdash; dims the items you don't need. Limited to the first 20 distinct items.</li>
+<li><strong>ElvUI</strong> &mdash; dims the items you don't need, in both the bag and bank windows, using ElvUI's own shading.</li>
+<li><strong>Baganator</strong> &mdash; puts a gold marker on the items you <em>do</em> need. Nothing is dimmed, because corner markers are the only thing Baganator lets other addons add.</li>
 </ul>
 
 <h3>Compatibility</h3>
@@ -397,21 +251,83 @@
 <ul>
 <li>World of Warcraft Classic Era (Interface 11509)</li>
 <li>World of Warcraft The Burning Crusade (Interface 20506)</li>
-<li>Tested with major bag addons (Bagnon, AdiBags, ArkInventory)</li>
 <li>Works alongside other guild management addons</li>
+<li>Other bag addons are not interfered with, but item highlighting only supports the four listed above &mdash; everything else in the addon works normally regardless of which bag addon you run</li>
 </ul>
 
-<h2>Bug Reports &amp; Feature Requests</h2>
+<h2>Works With the Rest of the TOG Addons</h2>
 
-<p>Found a bug or have a suggestion?</p>
+<h3>TOG Profession Master</h3>
+
+<p>If your guild also runs <a href="https://www.curseforge.com/wow/addons/togprofessionmaster">TOG Profession Master</a>, the two talk to each other automatically &mdash; there is nothing to set up on this side beyond having TOGBankClassic loaded.</p>
 
 <ul>
-<li>CurseForge Issues: <a href="https://www.curseforge.com/wow/addons/togbankclassic/issues">curseforge.com/wow/addons/togbankclassic/issues</a></li>
-<li>GitHub: <a href="https://github.com/EY3G0R3/TOGBankClassic">github.com/EY3G0R3/TOGBankClassic</a></li>
-<li>In-Game: Use /togbank debug to capture logs, then export from SavedVariables</li>
+<li><strong>Crafters can see guild bank stock without leaving the profession window.</strong> A <strong>[Bank]</strong> button appears next to any reagent your bankers actually hold &mdash; in the recipe breakdown, the cooldown panel, shopping lists and the Reagent Tracker. If nothing is in stock, no button.</li>
+<li><strong>They can request reagents from there too.</strong> Click <strong>[Bank]</strong>, pick which banker to ask, choose a quantity, and the order arrives in TOGBankClassic like any other request &mdash; including your officer-configured limits.</li>
+<li><strong>No duplicate bookkeeping.</strong> TOG Profession Master reads the same stock figures this addon already keeps, so there is only ever one set of numbers to trust.</li>
 </ul>
 
-<p>If you have any questions, comments or anything else, please feel free to reach out on <a href="https://discord.com/invite/bY2R5TmBSz" target="_blank" rel="noopener">Discord</a>!</p>
+<h3>TOG Tools &mdash; planned</h3>
+
+<p><strong>Not available yet.</strong> A bank log is planned, which will surface this addon's guild bank activity inside <a href="https://www.curseforge.com/wow/addons/togtools">TOG Tools</a> alongside the rest of its at-a-glance guild information. Listed here so you know it is coming, not as something you can use today &mdash; there is no date on it, and nothing in this addon depends on it.</p>
+
+<h3>Shared Foundations</h3>
+
+<p>The TOG addons are built on a common set of libraries rather than each reinventing the same plumbing:</p>
+
+<ul>
+<li><strong>DeltaSync</strong> &mdash; the guild-sync engine that keeps data current across members</li>
+<li><strong>LibGuildRoster</strong> &mdash; guild roster and online/offline tracking</li>
+<li><strong>AceCommQueue</strong> &mdash; keeps addon traffic orderly so nothing arrives garbled</li>
+<li><strong>ItemDB</strong> &mdash; an offline item database, so item names and details work without waiting on the game to load them</li>
+<li><strong>VersionCheck</strong> &mdash; tells you when a newer version is out</li>
+</ul>
+
+<p>In practice that means a fix to the shared sync layer benefits every TOG addon at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
+
+<h2>Recent Updates</h2>
+
+<h3>v1.4.0 (in development) - Guild Roster Overhaul</h3>
+<p><strong>Not released yet.</strong> Listed so you can see what is coming.</p>
+<ul>
+<li><strong>EVENT-001: the addon now notices when guild members come and go, as it happens.</strong> It was supposed to watch for the "X has come online" messages and keep its own list of who is around &mdash; but a fault meant that watcher never actually ran, in every version ever released. The addon only found out who was online when the game handed it a full guild refresh. In between, it could try to send an order to someone who had already logged off, and it was slower to notice a banker coming online with items you were waiting for. It now tracks this properly and immediately.</li>
+<li><strong>Bank characters who leave the guild no longer linger.</strong> Removing a character from your bank list, or from the guild, could leave a ghost entry behind that showed as permanently waiting for data. Those cannot occur any more.</li>
+<li><strong>ITEM-005: the inventory window no longer gets stuck on "Loading items...".</strong> If any single item in your guild bank failed to load, the addon stopped waiting for the whole batch &mdash; so one bad item hid <em>everything</em> and the window sat on the loading message indefinitely. Now a problem item is skipped and the rest still appear, and if something never loads at all the addon gives up after a few seconds and shows you what it has rather than waiting forever.</li>
+<li><strong>ACQ-004: the addon notices when the game refuses to send something.</strong> Occasionally the client declines to send an addon message. Previously that was reported back as success, so the addon believed your guild had received an update they never got &mdash; most importantly changes to orders, which could leave different members seeing different lists with nothing to explain why. Failed sends are now retried, and if they still fail you are told, instead of the addon quietly assuming it worked.</li>
+<li><strong>New required addon: LibGuildRoster.</strong> The guild-roster handling moved into a shared library used across the TOG addons, so a fix there benefits all of them at once. It installs automatically through the CurseForge app like the other dependencies &mdash; you do not need to fetch it yourself.</li>
+</ul>
+
+<h3>v1.3.2 (2026-08-03) - ElvUI &amp; Baganator Item Highlighting</h3>
+<p>The "Highlight needed items" option now works for ElvUI and Baganator users.</p>
+<ul>
+<li><strong>BAGANATOR-001: "Highlight needed items" works with Baganator.</strong> If you use Baganator for your bags, ticking the box did nothing &mdash; the addon only knew how to mark items in Bagnon and in the default Blizzard bags. Items you need for open orders now get a gold marker in the top-left corner of the icon. Note this looks different to the Bagnon and default-bag versions, which instead dim everything you <em>don't</em> need: Baganator only lets addons add corner markers, so that is the form it takes there. You can move or remove the marker from Baganator's own customise window, where it appears as "TOGBank: needed for an order".</li>
+<li><strong>ELVUI-001: "Highlight needed items" works with ElvUI.</strong> If you use ElvUI's bags, ticking the box did nothing at all &mdash; the addon only knew how to dim items in Bagnon and in the default Blizzard bags. It now dims unneeded items directly in ElvUI's bag and bank windows, using ElvUI's own shading so it looks native and doesn't interfere with ElvUI's search box. Unticking the box restores everything to normal. Works the same on Classic Era and TBC.</li>
+<li><strong>Bagnon users are unaffected.</strong> If you run Bagnon underneath ElvUI with ElvUI's own bag replacement turned off, highlighting keeps using Bagnon exactly as before.</li>
+<li><strong>Please report anything odd with these two.</strong> The ElvUI and Baganator support was written against those addons' own published interfaces, but neither is installed on the development machine, so this release is the first time either has run for real. Both are built to fail quietly &mdash; if something is wrong they fall back to the previous behaviour rather than throwing errors &mdash; so if highlighting doesn't do what's described above, please report it with the ticket ID (ELVUI-001 or BAGANATOR-001) and it'll be fixed quickly. Bagnon and default-bag users are on the same code path as before and unaffected either way.</li>
+</ul>
+
+<h3>v1.3.1 (2026-08-02) - Banker Inventory Never Scanned</h3>
+<p>Fixes a bank character's own items never being recorded, leaving their tab permanently empty.</p>
+<ul>
+<li><strong>SCAN-001: Scanning can no longer switch itself off behind your back.</strong> Depending on timing at login, a bank character's "enable scanning" setting could end up unset &mdash; which silently stopped their bags and bank from being recorded &mdash; and the <em>Bank</em> section could be missing from the addon's options entirely, so the "Enable for &lt;character&gt;" tick box wasn't there to turn on. The setting now defaults to on and the options section is registered reliably. Affects Classic Era as well as TBC.</li>
+<li><strong>An empty tab no longer says "Loading items..." forever.</strong> A character with nothing recorded yet showed a loading message that never went away, so an empty record looked identical to the addon being stuck. Empty tabs now tell you what is actually going on &mdash; and, for your own character, what to do about it.</li>
+<li><strong>Easier to diagnose if scanning ever stops.</strong> When the addon decides not to scan, it can now tell you why (for example, the character isn't marked as a bank, or scanning is switched off for them) instead of doing nothing silently. Turn on the new <em>BANK</em> category in the debug options if you are troubleshooting.</li>
+</ul>
+
+<h3>v1.3.0 (2026-08-02) - TBC Client Support</h3>
+<p>TOGBankClassic now installs and runs on The Burning Crusade clients as well as Classic Era.</p>
+<ul>
+<li><strong>TBC-001: The addon now loads on TBC.</strong> Previously only a Classic Era build was published, so TBC players saw the addon flagged as out of date and had to force-load it. There is now a proper TBC build with the same features, same commands and same interface &mdash; install it the usual way and it just works.</li>
+<li><strong>No longer flagged "out of date" on Classic Era.</strong> The Era build was still marked for the previous game patch, so it showed up greyed out in the AddOns list until you ticked "Load out of date AddOns". It now matches the current patch.</li>
+</ul>
+
+<h3>v1.2.1 (2026-07-30) - Settings Panel Open Fix</h3>
+<p>Fixes the settings panel refusing to open after a recent client update.</p>
+<ul>
+<li><strong>SETTINGS-002: The settings panel opens again.</strong> Clicking the gear icon in the bank window, or picking Settings from the minimap button, threw an error and nothing opened. A recent change to how the game's Settings window is addressed meant the addon was asking for its options page the old way. Both buttons now take you straight to the TOGBankClassic options page.</li>
+</ul>
+
+<p>Older patch notes are in the addon's <code>CHANGELOG.md</code> file (ships with the addon).</p>
 
 <h2>Credits</h2>
 
@@ -460,58 +376,23 @@
 <li>Mail Monitoring: Enable mail scanning to track items in transit</li>
 </ol>
 
-<h2>Recent Updates</h2>
-
-<p><strong>v0.10.4 (Latest Release)</strong></p>
-<ul>
-<li>New: AceCommQueue-1.0 — embedded transparent send-queue library that prevents multipart AceComm message chunk interleaving; a second message on the same prefix now waits until the current message's last chunk is confirmed handed off to ChatThrottleLib, eliminating CRC-fail INTEGRITY-MISMATCH errors caused by priority-bucket reordering; fully transparent to existing call sites; includes /acq debug commands</li>
-<li>AceCommQueue-1.0 is now also available as a standalone CurseForge addon for use in any AceComm-3.0 addon — see <a href="https://www.curseforge.com/wow/addons/acecommqueue">curseforge.com/wow/addons/acecommqueue</a></li>
-</ul>
-
-<p><strong>v0.10.3</strong></p>
-<ul>
-<li>New: Cancel reason dialog — cancelling a request now opens a dialog to select a reason before confirming; three preset reasons including one that reflects the current officer-configured request limit percentage</li>
-<li>New: Request timeline tooltip — hover any row’s date in the Requests window to see when it was submitted, filled, or cancelled (includes reason and a note that mailed items take ~1 hour to arrive)</li>
-<li>Improved: ? help tooltip on the Requests window updated to document the date tooltip and cancel dialog; obsolete Delete section removed</li>
-<li>Fixed (P2P-030): hash-list broadcast collision guard — the guard flag was cleared on a fixed 15-second timer; under ChatThrottleLib congestion the drain could exceed 15 seconds, causing a second broadcast to start and producing INTEGRITY-MISMATCH errors on recipients; flag is now cleared via the AceComm callback instead</li>
-</ul>
-
-<p><strong>v0.10.2</strong></p>
-<ul>
-<li>New: item tooltip banker info — mousing over any item in-game now shows which bankers have it in stock and how many, sorted by quantity; no addon window needed</li>
-</ul>
-
-<p><strong>v0.10.1</strong></p>
-<ul>
-<li>Fixed (P2P-023): hash-list broadcast collision — concurrent broadcasts on the same AceComm spool key produced CRC-fail INTEGRITY-MISMATCH errors; a guard flag now blocks BULK collisions and defers NORMAL/ALERT sends with up to 3 retries</li>
-<li>P2P reform: periodic hash sync now runs exclusively through the collect/offer/dispatch pipeline; fast-fill suppressed during collect window; /togbank hashdebug reports missing-content alts</li>
-<li>Removed redundant dual-sync path; fixed first-run session start; corrected activeSessions cap</li>
-<li>Diagnostics: AceSerializer error text now included in PAYLOAD-TYPE log lines, showing exact splice point in corrupt messages</li>
-</ul>
-
-<p><strong>v0.10.0</strong></p>
-<ul>
-<li>Visual sort dropdowns in Search and Inventory windows with 6-7 modes (A-Z, By Type, By Rarity, By Level, By Bank/Slot, By Quantity) and reverse order toggle</li>
-<li>Thin 8px scrollbars across all windows matching dropdown pullout menu style, positioned at right edge with proper spacing</li>
-<li>Banker name shown in search results for easier identification</li>
-<li>Window sizes persist across reloads for all three windows</li>
-<li>Fixed: Requests dropdowns closing immediately when clicked (now stay open for selection)</li>
-<li>Fixed: Sort by Type equipment now groups properly by equip slot with uncached items handled gracefully</li>
-<li>Fixed: Debug frame now restores previously active chat tab when closed</li>
-</ul>
-
-<p><strong>v0.9.17</strong></p>
-<ul>
-<li>Requests Archive tab — requests older than a configurable threshold (default 30 days) move to an Archive tab automatically, keeping the main view focused on active requests</li>
-<li>Auto-cancel stale requests — open requests older than the threshold are tombstoned on sync; officers can also bulk-cancel via the new "Cancel Stale" button</li>
-<li>Help icons and tooltips on all windows — hover the ? icon or any button/column header/dropdown for guidance</li>
-<li>Unified thin border and improved button alignment across all windows</li>
-<li>Fixed: guild-wide settings (request limits, auto-cancel threshold) now reliably broadcast to all online members on change</li>
-<li>Fixed: slot counts included in no-change whispers, preventing missed syncs in some cases</li>
-</ul>
-
 <hr>
 
 <p>Download TOGBankClassic today and revolutionize your guild's bank management!</p>
 
 <p>No more alt-hopping. No more whisper spam. Just efficient, organized guild banking.</p>
+
+
+<h2>Bug Reports &amp; Feature Requests</h2>
+
+<p><strong>Discord is the only place bug reports and feature requests are tracked.</strong> Reports left as CurseForge comments or elsewhere are likely to be missed.</p>
+
+<p><a href="https://discord.com/invite/bY2R5TmBSz" target="_blank" rel="noopener"><strong>Join the Discord</strong></a> &mdash; for bugs, feature requests, questions, or anything else.</p>
+
+<p><strong>Before reporting a bug, this makes it far easier to fix:</strong></p>
+
+<ul>
+<li>Type <code>/togbank debuglog</code> in-game and include the output.</li>
+<li>Mention which game version you are on (Classic Era or Burning Crusade).</li>
+<li>If the patch notes above gave the issue a code (like <code>ELVUI-001</code>), quote it.</li>
+</ul>

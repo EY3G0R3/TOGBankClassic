@@ -90,24 +90,20 @@ describe("Events:CHAT_MSG_SYSTEM", function()
 		TOGBankClassic_Events:RegisterEvent("CHAT_MSG_SYSTEM")
 	end)
 
-	-- The handler is declared `function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)` — with no
-	-- leading `_` to absorb the event name. So `message` receives the string "CHAT_MSG_SYSTEM"
-	-- and the real text is discarded. Every match below fails and the body does nothing.
-	it("marks a player online when the come-online message arrives", function()
-		fire(handlers, "CHAT_MSG_SYSTEM", "Bob has come online.")
-		assert.same({ "Bob" }, online,
-			"the come-online message was ignored. CHAT_MSG_SYSTEM's handler signature is " ..
-			"missing the leading event-name parameter, so it reads the event NAME as the " ..
-			"message and never matches anything (audit EVENT-001)")
-	end)
-
-	it("marks a player offline when the gone-offline message arrives", function()
-		fire(handlers, "CHAT_MSG_SYSTEM", "Bob has gone offline.")
-		assert.same({ "Bob" }, offline, "the gone-offline message was ignored (audit EVENT-001)")
-	end)
-
-	-- The addon calls this "the AUTHORITATIVE offline signal" and relies on it to stop whisper
-	-- spam at a player who is not logged in.
+	-- SCOPE CHANGE, deliberate — not a weakened assertion.
+	--
+	-- EVENT-001 was: the handler's signature omitted the leading event-name parameter, so
+	-- `message` received the string "CHAT_MSG_SYSTEM" and nothing ever matched. That is fixed
+	-- (the signature now takes `(_, message)`).
+	--
+	-- ROSTER-003 then moved online / offline / joined / left to LibGuildRoster, which owns its
+	-- own CHAT_MSG_SYSTEM registration and builds patterns from the localized ERR_* globals.
+	-- Those four are now asserted against the REAL library in guildroster_integration_spec.lua,
+	-- which is a stronger test than this was — so they are not lost, they moved.
+	--
+	-- What stays here is the case the library does NOT cover: ERR_CHAT_PLAYER_NOT_FOUND_S, the
+	-- bounced-whisper signal. The library matches only ONLINE_SS / OFFLINE_S / GUILD_JOIN_S /
+	-- GUILD_LEAVE_S / GUILD_REMOVE_SS.
 	it("marks a player offline on the 'no player named' whisper failure", function()
 		fire(handlers, "CHAT_MSG_SYSTEM", "No player named Bob is currently playing.")
 		assert.same({ "Bob" }, offline,
@@ -120,14 +116,35 @@ describe("Events:CHAT_MSG_SYSTEM", function()
 		assert.same({ "Bob" }, offline, "the quoted variant was ignored (audit EVENT-001)")
 	end)
 
-	it("requests a roster refresh when someone joins the guild", function()
-		fire(handlers, "CHAT_MSG_SYSTEM", "Bob has joined the guild.")
-		assert.equal(1, rosterRefreshes, "a guild join did not trigger a roster refresh (audit EVENT-001)")
+	it("handles the simplified 'Player not found' variant", function()
+		fire(handlers, "CHAT_MSG_SYSTEM", "Player not found: Bob")
+		assert.same({ "Bob" }, offline)
 	end)
 
-	it("requests a roster refresh when someone leaves the guild", function()
+	-- Guards the exact defect EVENT-001 was: if the leading parameter is ever dropped again,
+	-- `message` becomes the event name and this fails loudly instead of silently doing nothing.
+	it("reads the message, not the event name, as its payload", function()
+		fire(handlers, "CHAT_MSG_SYSTEM", "No player named Bob is currently playing.")
+		assert.truthy(#offline > 0,
+			"handler received the event name in place of the message — the leading event-name " ..
+			"parameter has been dropped again (audit EVENT-001)")
+	end)
+
+	-- These four are the library's job now. Asserting they DON'T happen here documents the
+	-- boundary, so a future change that re-adds them locally shows up as a double-update.
+	it("leaves online/offline transitions to LibGuildRoster", function()
+		fire(handlers, "CHAT_MSG_SYSTEM", "Bob has come online.")
+		fire(handlers, "CHAT_MSG_SYSTEM", "Bob has gone offline.")
+		assert.same({}, online, "this addon should no longer parse come-online itself (ROSTER-003)")
+		assert.same({}, offline, "this addon should no longer parse gone-offline itself (ROSTER-003)")
+	end)
+
+	it("leaves guild join/leave to LibGuildRoster", function()
+		fire(handlers, "CHAT_MSG_SYSTEM", "Bob has joined the guild.")
 		fire(handlers, "CHAT_MSG_SYSTEM", "Bob has left the guild.")
-		assert.equal(1, rosterRefreshes, "a guild leave did not trigger a roster refresh (audit EVENT-001)")
+		assert.equal(0, rosterRefreshes,
+			"this addon should no longer force a roster refresh on join/leave — the library " ..
+			"rebuilds its own roster and fires OnMemberJoined/OnMemberLeft (ROSTER-003)")
 	end)
 
 	it("ignores an unrelated system message", function()

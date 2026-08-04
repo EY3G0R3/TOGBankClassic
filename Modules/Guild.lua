@@ -107,11 +107,24 @@ function TOGBankClassic_Guild:GetDeltaFailureCount(altName)
 	return TOGBankClassic_DeltaComms:GetDeltaFailureCount(self.Info and self.Info.name, altName)
 end
 
+-- ROSTER-003: LibGuildRoster-1.0 is a required dependency (both TOCs + .pkgmeta) and owns the
+-- roster from v1.4.0. It registers PLAYER_LOGIN / GUILD_ROSTER_UPDATE / CHAT_MSG_SYSTEM on its
+-- own frame, so presence tracking no longer depends on this addon forwarding events correctly --
+-- which is what EVENT-001 was: a handler that silently never ran.
+--
+-- Resolved lazily rather than at file scope: load order puts the library first, but a user who
+-- disables it should degrade to the legacy roster scan rather than error on load. Every call
+-- site below falls back, so the addon still works (with EVENT-001's blind spot) without it.
+local function RosterLib()
+	return LibStub and LibStub("LibGuildRoster-1.0", true) or nil
+end
+TOGBankClassic_Guild.RosterLib = RosterLib
+
 function GetPlayerWithNormalizedRealm(name)
 	if string.match(name, "(.*)%-(.*)") then
 		return name
 	end
-	return name .. "-" .. GetNormalizedRealmName("player")
+	return name .. "-" .. GetNormalizedRealmName()
 end
 
 -- wrapper to ensure consistent normalization across the addon
@@ -150,7 +163,7 @@ local function NormalizePlayerName(name)
 		return GetPlayerWithNormalizedRealm(normalized)
 	end
 	-- Fallback: append current realm
-	return normalized .. "-" .. GetNormalizedRealmName("player")
+	return normalized .. "-" .. GetNormalizedRealmName()
 end
 -- expose for other modules
 TOGBankClassic_Guild.NormalizePlayerName = NormalizePlayerName
@@ -1648,10 +1661,159 @@ end
 -- Refresh the full guild roster cache from current guild roster
 -- Called automatically when GUILD_ROSTER_UPDATE event fires
 -- Builds comprehensive roster with ALL members and online/offline state
+-- ROSTER-003: subscribe to LibGuildRoster's presence and membership callbacks.
+--
+-- This REPLACES TOGBankClassic_Events:CHAT_MSG_SYSTEM, which never ran (EVENT-001): its handler
+-- signature omitted the leading event-name parameter, so it read the string "CHAT_MSG_SYSTEM" as
+-- the message and matched nothing, for every release the addon has ever shipped.
+--
+-- The library owns the event registration and its handling is covered by its own suite, so the
+-- failure mode that produced EVENT-001 -- a consumer wiring an event up incorrectly and nothing
+-- noticing -- is gone rather than fixed in place.
+--
+-- Idempotent: CallbackHandler would happily register the same handler twice and double-fire.
+function TOGBankClassic_Guild:InitRosterCallbacks()
+	if self._rosterCallbacksBound then
+		return true
+	end
+	local lib = RosterLib()
+	if not lib or not lib.RegisterCallback then
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH",
+			"LibGuildRoster-1.0 not available - falling back to the legacy roster scan")
+		return false
+	end
+
+	-- ROSTER-003: transition counters. A snapshot comparison cannot show that the presence
+	-- callbacks are actually LIVE -- both sides agreeing proves only that the copy is faithful.
+	-- These count real transitions since login so /togbank dev rostercheck can report direct
+	-- evidence the mechanism fires, which is the part of EVENT-001 a snapshot can't reach.
+	self.rosterStats = { online = 0, offline = 0, notFound = 0, recent = {} }
+
+	local function note(kind, name)
+		local s = TOGBankClassic_Guild.rosterStats
+		s[kind] = (s[kind] or 0) + 1
+		table.insert(s.recent, string.format("%s %s", kind, tostring(name)))
+		while #s.recent > 5 do table.remove(s.recent, 1) end
+	end
+	TOGBankClassic_Guild.NoteRosterEvent = function(_, kind, name) note(kind, name) end
+
+	lib.RegisterCallback(self, "OnMemberOnline", function(_, name)
+		note("online", name)
+		TOGBankClassic_Guild:UpdateOnlineMember(name, true, "libguildroster-online")
+	end)
+	lib.RegisterCallback(self, "OnMemberOffline", function(_, name)
+		note("offline", name)
+		TOGBankClassic_Guild:UpdateOnlineMember(name, false, "libguildroster-offline")
+	end)
+
+	-- Membership changes can add or remove a banker, so the note-derived caches must be dropped.
+	-- Invalidate only; RebuildBankerRoster is expensive and GUILD_ROSTER_UPDATE will drive it.
+	local function onMembershipChanged(_, name)
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH",
+			"Roster membership changed (%s) - invalidating banker cache", tostring(name))
+		TOGBankClassic_Guild:InvalidateBanksCache()
+	end
+	lib.RegisterCallback(self, "OnMemberJoined", onMembershipChanged)
+	lib.RegisterCallback(self, "OnMemberLeft",   onMembershipChanged)
+
+	self._rosterCallbacksBound = true
+	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "LibGuildRoster presence callbacks bound")
+	return true
+end
+
+-- ROSTER-003: build memberRoster from LibGuildRoster instead of scanning GetGuildRosterInfo.
+--
+-- Returns onlineCount, totalMembers on success, or nil when the library can't answer (absent,
+-- or not yet stabilized) so the caller falls back to the legacy scan below.
+--
+-- Why this matters beyond tidiness: the library wipes and rebuilds its roster on every update,
+-- so a member who has left the guild cannot survive in it. That is ROSTER-002's failure mode --
+-- stale ex-banker entries lingering as permanent "HLR pending" rows -- made structurally
+-- impossible rather than cleaned up after the fact.
+--
+-- The derived fields (isBank, viewOnly, isOfficer) stay HERE. Banker identification is this
+-- addon's domain logic; the library's job is to hand over the raw notes, and it does.
+function TOGBankClassic_Guild:_RefreshFromRosterLib()
+	local lib = RosterLib()
+	if not lib or not lib.GetAllMembers or not lib:IsReady() then
+		return nil
+	end
+
+	local names = lib:GetAllMembers()
+	if not names or #names == 0 then
+		return nil
+	end
+
+	-- REQSYNC-008: same officer-rank inference as the legacy path. Classic has no per-rank
+	-- permission API, but ranks are strictly ordered (lower rankIndex = more permissions), so
+	-- if the local player can read officer notes then so can everyone at or above their rank.
+	local localOfficerThreshold = nil
+	if CanViewOfficerNote and CanViewOfficerNote() then
+		local me = lib:GetNormalizedPlayer()
+		local meMember = me and lib:GetMember(me)
+		localOfficerThreshold = meMember and meMember.rankIndex or nil
+	end
+
+	wipe(self.memberRoster)
+	wipe(self.onlineMembers)
+
+	local onlineCount = 0
+	for _, name in ipairs(names) do
+		local m = lib:GetMember(name)
+		if m then
+			-- tostring guards a library that ever hands back a non-string note; the plain-text
+			-- find (not a pattern) is orders of magnitude faster than "(.*)gbank(.*)".
+			local note        = tostring(m.publicNote or "")
+			local officernote = tostring(m.officerNote or "")
+			local isBank = (string.find(note, "gbank", 1, true) ~= nil)
+				or (string.find(officernote, "gbank", 1, true) ~= nil)
+			local isOfficer = (m.rankIndex == 0)
+				or (localOfficerThreshold ~= nil and m.rankIndex ~= nil
+					and m.rankIndex <= localOfficerThreshold)
+
+			self.memberRoster[name] = {
+				name        = name,
+				class       = m.class,
+				level       = m.level or 1,
+				rankIndex   = m.rankIndex,
+				rankName    = m.rankName,
+				isOnline    = m.isOnline or false,
+				isOfficer   = isOfficer,
+				isBank      = isBank or false,
+				-- VIEWBANK-001: the view-only marker is only meaningful on a banker.
+				viewOnly    = (isBank and noteIsViewOnly(note, officernote)) or false,
+				lastUpdated = GetServerTime(),
+			}
+
+			if m.isOnline then
+				self.onlineMembers[name] = true
+				onlineCount = onlineCount + 1
+			end
+		end
+	end
+
+	return onlineCount, #names
+end
+
 function TOGBankClassic_Guild:RefreshOnlineCache()
 	local startTime = debugprofilestop()
 	self.memberRoster = self.memberRoster or {}
 	self.onlineMembers = self.onlineMembers or {}
+
+	-- ROSTER-003: prefer the library. Falls through to the legacy scan when it can't answer.
+	local libOnline, libTotal = self:_RefreshFromRosterLib()
+	if libOnline then
+		local libDuration = debugprofilestop() - startTime
+		TOGBankClassic_Performance:RecordOperation("RefreshOnlineCache", libDuration)
+		TOGBankClassic_Output:Debug("CACHE", "REFRESH",
+			"Refreshed roster from LibGuildRoster: %d total, %d online (%.1f ms)",
+			libTotal, libOnline, libDuration)
+		return libOnline, libTotal
+	end
+
+	TOGBankClassic_Output:Debug("ROSTER", "REFRESH",
+		"LibGuildRoster unavailable or not ready - using the legacy GetGuildRosterInfo scan")
+
 	wipe(self.memberRoster)
 	wipe(self.onlineMembers)
 
@@ -1822,8 +1984,16 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	end
 	local norm = self:NormalizeName(playerName)
 
-	-- Use full member roster cache as single source of truth
-	-- Falls back to legacy onlineMembers if memberRoster not populated yet
+	-- ROSTER-003: the library is authoritative once it has stabilized. It tracks presence from
+	-- CHAT_MSG_SYSTEM in real time, so its answer is fresher than memberRoster, which only moves
+	-- on a full GUILD_ROSTER_UPDATE sweep. Gated on IsReady() because before that the library is
+	-- still retrying the initial build and would report everyone offline.
+	local lib = RosterLib()
+	if lib and lib:IsReady() and lib:IsInGuild(norm) then
+		return lib:IsOnline(norm) == true
+	end
+
+	-- Fallback: our own cache (library absent, or not ready yet).
 	if self.memberRoster and self.memberRoster[norm] then
 		return self.memberRoster[norm].isOnline == true
 	end
@@ -2443,22 +2613,26 @@ function TOGBankClassic_Guild:EnsureLegacyFields(alt)
 	return alt
 end
 
--- SendAddonMessageResult enum values from ChatThrottleLib
-local SEND_RESULT = {
-	Success = 0,
-	AddonMessageThrottle = 3,
-	NotInGroup = 5,
-	ChannelThrottle = 8,
-	GeneralError = 9,
-}
-
-local function GetSendResultName(result)
-	if result == SEND_RESULT.Success or result == true then return "Success"
-	elseif result == SEND_RESULT.AddonMessageThrottle then return "AddonMessageThrottle"
-	elseif result == SEND_RESULT.NotInGroup then return "NotInGroup"
-	elseif result == SEND_RESULT.ChannelThrottle then return "ChannelThrottle"
-	elseif result == SEND_RESULT.GeneralError then return "GeneralError"
-	elseif result == false then return "Failed"
+-- ACQ-004: the send verdict is a BOOLEAN, never a SendAddonMessageResult enum member.
+--
+-- The enum is lost two layers below us and cannot be recovered here:
+--   1. ChatThrottleLib:Despool retries only AddonMessageThrottle; GeneralError, NotInGroup and
+--      ChannelThrottle are dequeued and destroyed with no retry.
+--   2. AceComm-3.0's ctlCallback declares two parameters, so CTL's (arg, didSend, sendResult)
+--      drops the enum and only the didSend boolean survives.
+--
+-- This module previously compared argument 4 against an enum table, so `isThrottled` could
+-- never be true and the throttled counter was permanently 0. Those comparisons are deleted
+-- rather than corrected: there is no value of argument 4 that could ever satisfy them.
+--
+-- The contract AceCommQueue-1.0 MINOR 5+ actually provides:
+--   true  — delivered (every chunk accepted; the verdict covers the WHOLE message)
+--   false — refused, after the library's own retry/backoff gave up
+--   nil   — not attempted (e.g. suppressed by our in-raid guard, which reports 0/0/nil)
+local function DescribeSendResult(result)
+	if result == true then return "delivered"
+	elseif result == false then return "refused"
+	elseif result == nil then return "not attempted"
 	else return tostring(result)
 	end
 end
@@ -2470,19 +2644,22 @@ end
 local function CreateOnChunkSentCallback(altName, requester)
 	-- Per-send stats (closure captures these)
 	-- startTime is recorded NOW so elapsed is measured from just before SendCommMessage.
+	-- ACQ-004: no `throttled` counter any more. It could only be incremented by the enum
+	-- comparison deleted above, so it was permanently 0 while still being printed in the
+	-- summary — a statistic that reads as "no throttling occurred" when it in fact measured
+	-- nothing. Throttling is now the library's business: it retries with backoff and only
+	-- reports `false` once it has given up, so a refusal reaching us is already terminal.
 	local sendStats = {
 		startTime = GetTime(),
 		failures = 0,
-		throttled = 0,
 	}
 
 	return function(arg, bytesSent, totalBytes, sendResult)
-		-- Track failures
-		local isSuccess = (sendResult == SEND_RESULT.Success or sendResult == true or sendResult == nil)
-		local isThrottled = (sendResult == SEND_RESULT.AddonMessageThrottle or sendResult == SEND_RESULT.ChannelThrottle)
-		if isThrottled then
-			sendStats.throttled = sendStats.throttled + 1
-		elseif not isSuccess then
+		-- ACQ-004: only `false` means the send was refused. `nil` is "not attempted" — our
+		-- in-raid guard reports (0, 0, nil) to unblock the queue — and must not be counted as
+		-- a failure, or every suppressed send would look like a delivery error.
+		local refused = (sendResult == false)
+		if refused then
 			sendStats.failures = sendStats.failures + 1
 		end
 
@@ -2490,10 +2667,13 @@ local function CreateOnChunkSentCallback(altName, requester)
 		-- chunk count is estimated rather than tracked per-invocation.
 		local totalChunks = math.ceil(totalBytes / 254)
 
-		-- Print error on failed send
-		if not isSuccess then
-			local resultStr = GetSendResultName(sendResult)
-			TOGBankClassic_Output:Error("send failed: %s", resultStr)
+		if refused then
+			-- Reaching here means the library already retried and gave up, so this is a real
+			-- lost message rather than a transient throttle. Loud on purpose: silent loss on
+			-- an inventory send is what leaves peers with stale data and no way to tell.
+			TOGBankClassic_Output:Error(
+				"send to %s for %s was refused by the client after retries (%s) - peers may hold stale data",
+				tostring(requester or "guild"), tostring(altName), DescribeSendResult(sendResult))
 		end
 
 		-- Completion summary
@@ -2503,8 +2683,8 @@ local function CreateOnChunkSentCallback(altName, requester)
 				"Send complete: ~%d chunks, %d bytes in %.1fs",
 				totalChunks, totalBytes, elapsed
 			)
-			if sendStats.failures > 0 or sendStats.throttled > 0 then
-				summary = summary .. string.format(" | failures: %d, throttled: %d", sendStats.failures, sendStats.throttled)
+			if sendStats.failures > 0 then
+				summary = summary .. string.format(" | REFUSED: %d", sendStats.failures)
 			end
 
 			if not TOGBankClassic_Options:IsSyncProgressMuted() then
@@ -3270,18 +3450,29 @@ function TOGBankClassic_Guild:HashUpdate()
 		isBanker = true,  -- command is banker-only (guarded above), so this is always true
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL", function()
-		-- P2P-023: Clear flag once the final chunk is confirmed sent by CTL.
-		if TOGBankClassic_Events then
-			TOGBankClassic_Events.hashBroadcastInProgress = false
-		end
-	end)
-
 	local count = 0
 	for _ in pairs(hashList) do
 		count = count + 1
 	end
-	TOGBankClassic_Output:Info("Broadcasted hash-list for %d bank alts", count)
+	-- ACQ-004 / DOC-001: same defect as Events:SyncDeltaVersion -- an argument-ignoring
+	-- callback released the collision guard on the first chunk, not on completion. This one is
+	-- user-invoked (/togbank dev hashdump), so the outcome is reported to the player rather
+	-- than only to the debug log: telling someone "broadcasted" when the client refused it is
+	-- the same lie the library just stopped telling us.
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, "NORMAL",
+		function(_, bytesSent, totalBytes, sendResult)
+			if TOGBankClassic_Events then
+				if sendResult == false or (bytesSent and totalBytes and bytesSent >= totalBytes) then
+					TOGBankClassic_Events.hashBroadcastInProgress = false
+				end
+			end
+			if sendResult == false then
+				TOGBankClassic_Output:Error(
+					"Hash-list broadcast was refused by the client - the %d bank alts were NOT sent", count)
+			elseif bytesSent and totalBytes and bytesSent >= totalBytes then
+				TOGBankClassic_Output:Info("Broadcasted hash-list for %d bank alts", count)
+			end
+		end)
 end
 
 function TOGBankClassic_Guild:WipeMine(type)

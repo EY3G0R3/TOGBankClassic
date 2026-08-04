@@ -603,7 +603,11 @@
 			"BIND_TRADE_TIME_REMAINING",
 			"ITEM_BIND_ON_USE",
 			"BattlePetToolTip_UnpackBattlePetLink",
-			"ITEM_BIND_ON_EQUIP"
+			"ITEM_BIND_ON_EQUIP",
+			"ERR_FRIEND_ONLINE_SS",
+			"ERR_FRIEND_OFFLINE_S",
+			"ERR_GUILD_LEAVE_S",
+			"ERR_GUILD_REMOVE_SS"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

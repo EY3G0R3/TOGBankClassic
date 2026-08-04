@@ -5,17 +5,20 @@
 ## Version: @project-version@
 
 ## SavedVariables: TOGBankClassicDB, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog, TOGBankClassic_PerfMetrics, TOGBankClassic_PerfEnabled, TOGBankClassic_DebugLogEnabled
-## Dependencies: Ace3, VersionCheck-1.0
+## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0
 ## OptionalDeps: Bagnon
 ## X-Curse-Project-ID: 1400244
 
-# Libraries (use external Ace3 - only load non-Ace3 libraries).
-# LibStub is bundled with Ace3 (which loads first via ## Dependencies), so we
-# don't ship a redundant copy. LibStub's built-in versioning handles any future
-# double-load gracefully if a vendored copy ever returns.
+# Libraries. Everything shared is a declared dependency rather than a vendored copy, so
+# there is exactly one resolved version per library and no chance of shipping a stale one.
+# LibStub comes with Ace3.
+#
+# ACQ-001: AceCommQueue-1.0 was vendored here until v1.4.0. The shipped copy had drifted to
+# MINOR 2 while the standalone reached 5 -- and MINOR 5 is where a refused send is finally
+# reported as failed rather than delivered (LIBREQ-ACQ-004). A vendored copy that silently
+# lags is exactly the failure the dependency declaration prevents.
 Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua
 Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua
-Libs/AceCommQueue-1.0/AceCommQueue-1.0.lua
 
 # Modules
 # Compat re-establishes bare globals the client removed (C_* migration); load first

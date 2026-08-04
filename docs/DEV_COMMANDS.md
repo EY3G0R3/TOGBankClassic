@@ -43,6 +43,42 @@ To promote a command back to user-facing, just remove its name from `DEV_COMMAND
 - **`/togbank dev forcedelta on|off`** — flip `FEATURES.FORCE_DELTA_SYNC`. Bypasses size-ratio thresholds, always uses delta. Off by default.
 - **`/togbank dev forcefull on|off`** — flip `FEATURES.FORCE_FULL_SYNC`. Disables delta entirely, always sends full snapshot. Off by default.
 
+### Roster
+
+- **`/togbank dev rostercheck`** — verify the `LibGuildRoster-1.0` migration against a live guild
+  (ROSTER-003). Three sections, each answering a different question.
+
+  **Library vs the WoW API** — the only genuinely independent check. Scans `GetGuildRosterInfo`
+  directly and compares the library's online set against it. Both lists should read *none*.
+
+  > Note the caveat printed in the source: `GetGuildRosterInfo` iteration is filtered by the
+  > guild panel's "Show Offline Members" toggle, so with it off the raw member *total* is much
+  > smaller than the library's. That is the filter, not a defect — the online *set* is still
+  > trustworthy either way.
+
+  **Our cache vs the library** — narrow by construction. `_RefreshFromRosterLib` copies
+  `isOnline` straight out of the library, so comparing them back compares the library against a
+  copy of itself; it can only catch a bug in the copy loop, never in the library's tracking. Two
+  lists, both should read *none*:
+  - *In library but not our cache* — a member was dropped during the rebuild.
+  - *Normalization disagreement* — **the one that matters.** Two independent implementations
+    compared. Every alt record, request and wire message is keyed by normalized name, so a
+    mismatch makes lookups miss silently rather than error.
+
+  **Presence transitions since login** — counts of `online` / `offline` / `whisper-not-found`
+  seen, plus the last five. This is the part a snapshot *cannot* show: both sides agreeing proves
+  the copy is faithful, not that the callbacks are firing at all. On a busy roster, zero
+  transitions after a while is itself the signal. `Callbacks were never bound` means
+  `Guild:InitRosterCallbacks` did not run, or the library was missing at login.
+
+  Also prints the banker count and, when the local rank cannot read officer notes, a warning that
+  bankers tagged only there are invisible — so "0 bankers" is never ambiguous between *none
+  tagged* and *cannot see the tags*.
+
+  Run after login once the roster has settled; if it reports "still stabilizing", re-run in a few
+  seconds. The `whisper-not-found` counter only moves when a whisper actually bounces, so it
+  stays at 0 in normal play.
+
 ### Protocol / network
 
 - **`/togbank dev protocol`** — protocol version distribution across guild members; delta-sync adoption %.

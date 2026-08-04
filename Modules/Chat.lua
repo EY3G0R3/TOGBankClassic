@@ -2127,6 +2127,124 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		-- ROSTER-003: in-game verification for the LibGuildRoster migration. The offline suite
+		-- proves the library works and that our derivations are right, but it cannot prove the
+		-- two agree against a REAL guild roster on a live client -- which is exactly where a
+		-- normalization or note-visibility mismatch would show up.
+		name = "rostercheck",
+		help = "compare our roster cache against LibGuildRoster (dev)",
+		handler = function()
+			local G   = TOGBankClassic_Guild
+			local Out = TOGBankClassic_Output
+			local lib = G and G.RosterLib and G:RosterLib()
+
+			Out:Response("|cffffff00=== Roster check ===|r")
+			if not lib then
+				Out:Response("LibGuildRoster-1.0: |cffff4444NOT LOADED|r - using the legacy scan.")
+				Out:Response("It is a required dependency; check it is installed and enabled.")
+				return
+			end
+			Out:Response("LibGuildRoster-1.0: loaded, ready=%s", tostring(lib:IsReady()))
+			if not lib:IsReady() then
+				Out:Response("|cffffcc00Roster still stabilizing - re-run in a few seconds.|r")
+				return
+			end
+
+			local libNames = lib:GetAllMembers() or {}
+			local ourCount = 0
+			for _ in pairs(G.memberRoster or {}) do ourCount = ourCount + 1 end
+			Out:Response("Members: library=%d, our cache=%d", #libNames, ourCount)
+
+			-- GROUND TRUTH. Comparing our cache's isOnline against lib:IsOnline is nearly
+			-- vacuous -- _RefreshFromRosterLib copies that value straight out of the library,
+			-- so it compares the library against a copy of itself and can only catch a bug in
+			-- the copy loop. The independent source is the WoW API itself, so scan it directly
+			-- and check the LIBRARY against that.
+			--
+			-- Caveat: GetGuildRosterInfo iteration is filtered by the guild panel's "Show
+			-- Offline Members" toggle. With it off the scan only returns online members, so
+			-- rawTotal below can legitimately be far smaller than the library's count -- that
+			-- is the filter, not a defect. The online SET is still trustworthy either way.
+			local rawOnline, rawTotal = {}, (GetNumGuildMembers() or 0)
+			for i = 1, rawTotal do
+				local rname, _, _, _, _, _, _, _, rOnline = GetGuildRosterInfo(i)
+				if rname and rOnline then
+					local n = G:NormalizeName(rname)
+					if n then rawOnline[n] = true end
+				end
+			end
+
+			local libSaysOffline, libSaysOnline = {}, {}
+			for _, name in ipairs(libNames) do
+				local libOn = (lib:IsOnline(name) == true)
+				if rawOnline[name] and not libOn then
+					libSaysOffline[#libSaysOffline + 1] = name
+				elseif libOn and not rawOnline[name] then
+					libSaysOnline[#libSaysOnline + 1] = name
+				end
+			end
+
+			-- Copy fidelity: our cache vs the library. Narrow by construction (see above), but
+			-- it does catch a member dropped during the rebuild.
+			local missing, nameMismatch = {}, {}
+			for _, name in ipairs(libNames) do
+				if not (G.memberRoster and G.memberRoster[name]) then
+					missing[#missing + 1] = name
+				end
+				-- Normalization must agree or every alt key, request and wire message misses.
+				-- This one IS independent: two separate implementations, compared.
+				if G.NormalizeName and lib:NormalizeName(name) ~= G:NormalizeName(name) then
+					nameMismatch[#nameMismatch + 1] = name
+				end
+			end
+
+			local function report(label, list, colour)
+				if #list == 0 then
+					Out:Response("%s: |cff44ff44none|r", label)
+					return
+				end
+				local shown = {}
+				for i = 1, math.min(#list, 10) do shown[i] = list[i] end
+				Out:Response("%s: %s%d|r - %s%s", label, colour, #list,
+					table.concat(shown, ", "), #list > 10 and " ..." or "")
+			end
+			Out:Response("|cffffff00-- Library vs the WoW API (independent) --|r")
+			report("API says online, library says offline", libSaysOffline, "|cffff4444")
+			report("Library says online, API says offline", libSaysOnline,  "|cffff4444")
+			Out:Response("|cffffff00-- Our cache vs the library --|r")
+			report("In library but not our cache", missing,      "|cffff4444")
+			report("Normalization disagreement",   nameMismatch, "|cffff4444")
+
+			-- The part a snapshot cannot show: are the presence callbacks actually firing?
+			-- Both sides agreeing proves the copy is faithful, not that the mechanism is live.
+			-- On a busy roster a zero count after a while is itself the signal.
+			local s = G.rosterStats
+			Out:Response("|cffffff00-- Presence transitions since login --|r")
+			if not s then
+				Out:Response("|cffff4444Callbacks were never bound|r - Guild:InitRosterCallbacks " ..
+					"did not run, or LibGuildRoster was missing at login.")
+			else
+				Out:Response("online=%d  offline=%d  whisper-not-found=%d",
+					s.online or 0, s.offline or 0, s.notFound or 0)
+				if #(s.recent or {}) > 0 then
+					Out:Response("recent: %s", table.concat(s.recent, ", "))
+				elseif (s.online or 0) + (s.offline or 0) == 0 then
+					Out:Response("|cffffcc00No transitions seen yet. Expected on a quiet roster; " ..
+						"on a busy one, re-run after someone logs on or off.|r")
+				end
+			end
+
+			-- Bankers are derived from notes; if officer notes are unreadable, bankers tagged
+			-- only there are invisible. Surface that rather than silently listing none.
+			local banks = G.GetBanks and G:GetBanks()
+			Out:Response("Bankers detected: %d", banks and #banks or 0)
+			if CanViewOfficerNote and not CanViewOfficerNote() then
+				Out:Response("|cffffcc00Note: you cannot read officer notes, so any banker " ..
+					"tagged only there will not appear.|r")
+			end
+		end,
+	},
+	{
 		name = "purgeghosts",
 		help = "manually re-run the linkless-gear-ghost purge migration (normally fires 30s after login)",
 		handler = function()
@@ -2204,6 +2322,7 @@ local DEV_COMMAND_NAMES = {
 	purgeghosts            = true,
 	reqscan                = true,
 	resetmetrics           = true,
+	rostercheck            = true,
 	test                   = true,
 	versioncheck           = true,
 }

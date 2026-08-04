@@ -244,6 +244,25 @@ function TOGBankClassic_Item:GetItems(items, callback)
 		end
 	end
 
+	-- ITEM-005: watchdog for the other way this stalls. Even with every abandon path now
+	-- releasing its slot, an item whose ContinueOnItemLoad is accepted but never fires -- an id
+	-- the server never resolves -- leaves pendingAsync above zero with nothing to decrement it.
+	-- There is no error and no timeout in the Blizzard API, so without this the window waits
+	-- forever.
+	--
+	-- Deliver what did load rather than nothing: a partial inventory is strictly better than a
+	-- permanent "Loading items...", and the missing rows reappear on the next refresh once the
+	-- client has cached them.
+	local ASYNC_TIMEOUT = 10
+	C_Timer.After(ASYNC_TIMEOUT, function()
+		if callbackFired then return end
+		TOGBankClassic_Output:Debug("ITEM", "LOAD",
+			"[ITEM-005] Async load timed out after %ds with %d item(s) still pending - " ..
+			"delivering %d of %d", ASYNC_TIMEOUT, pendingAsync, #list, total)
+		callbackFired = true
+		callback(list)
+	end)
+
 	for _, wrapper in ipairs(validItems) do
 		local itemID = wrapper.id
 		local itemLink = wrapper.link
@@ -350,6 +369,24 @@ function TOGBankClassic_Item:GetItems(items, callback)
 
 					pendingAsync = pendingAsync + 1  -- Track this async operation
 
+					-- ITEM-005: a single owner for giving up on an async slot.
+					--
+					-- Every branch below previously did `processed = processed + 1; checkComplete()`
+					-- and left `pendingAsync` incremented. Since checkComplete requires
+					-- `pendingAsync == 0`, ONE item taking any of those seven paths wedged the
+					-- counter above zero permanently and the callback never fired -- for the WHOLE
+					-- batch, not just that item. The symptom was the Inventory window sitting on
+					-- "Loading items..." forever with every healthy item in the batch discarded
+					-- alongside the bad one.
+					--
+					-- Routing every abandon through one function is the point: adding an eighth
+					-- failure branch can no longer reintroduce the leak by forgetting a line.
+					local function abandonAsync()
+						pendingAsync = pendingAsync - 1
+						processed = processed + 1
+						checkComplete()
+					end
+
 					local success, itemData = pcall(Item.CreateFromItemID, Item, capturedItemID)
 
 					TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-2] CreateFromItemID result: success=%s, itemData=%s, type=%s",
@@ -357,16 +394,13 @@ function TOGBankClassic_Item:GetItems(items, callback)
 
 					if not success then
 						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-3] CreateFromItemID pcall failed: %s", tostring(itemData))
-						processed = processed + 1
-						checkComplete()
+						abandonAsync()
 					elseif not itemData then
 						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-4] CreateFromItemID returned nil")
-						processed = processed + 1
-						checkComplete()
+						abandonAsync()
 					elseif type(itemData) ~= "table" then
 						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-5] CreateFromItemID returned non-table: %s", type(itemData))
-						processed = processed + 1
-						checkComplete()
+						abandonAsync()
 					else
 						-- Got an Item object, now inspect its internal state
 						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-6] Inspecting Item object for ID %d", capturedItemID)
@@ -383,20 +417,16 @@ function TOGBankClassic_Item:GetItems(items, callback)
 						-- Check if itemID matches what we expect
 						if not accessSuccess then
 							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-8] Cannot access itemData.itemID (protected?)")
-							processed = processed + 1
-							checkComplete()
+							abandonAsync()
 						elseif objectItemID == nil then
-							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-9] FOUND CORRUPTION: itemData.itemID is nil for requested ID %d - THIS IS THE BUG!", capturedItemID)
-							processed = processed + 1
-							checkComplete()
+							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-9] itemData.itemID is nil for requested ID %d - skipping this item", capturedItemID)
+							abandonAsync()
 						elseif type(objectItemID) ~= "number" then
 							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-10] itemData.itemID is not a number: %s", type(objectItemID))
-							processed = processed + 1
-							checkComplete()
+							abandonAsync()
 						elseif objectItemID ~= capturedItemID then
 							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-11] itemData.itemID mismatch: expected %d, got %d", capturedItemID, objectItemID)
-							processed = processed + 1
-							checkComplete()
+							abandonAsync()
 						else
 							-- Everything looks good, try ContinueOnItemLoad
 							TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-12] Item object valid (itemID=%d), calling ContinueOnItemLoad", objectItemID)

@@ -266,10 +266,24 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	local selfRef = self
-	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK", function()
-		-- P2P-023: Clear flag once the final chunk is confirmed sent by CTL.
-		selfRef.hashBroadcastInProgress = false
-	end)
+	-- ACQ-004 / DOC-001: this callback took no arguments, so it cleared the collision guard on
+	-- the FIRST chunk rather than on completion -- the comment claimed "once the final chunk is
+	-- confirmed sent by CTL" and the code could not tell. Supplying an argument-ignoring
+	-- callback is also how a caller tells AceCommQueue "I will handle the verdict myself", so
+	-- the library deliberately does not report refusals here on our behalf.
+	--
+	-- Now: release only when the whole message is accounted for, and treat a refusal as a
+	-- release too -- holding the guard after a failed send would block every later broadcast.
+	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK",
+		function(_, bytesSent, totalBytes, sendResult)
+			if sendResult == false then
+				selfRef.hashBroadcastInProgress = false
+				TOGBankClassic_Output:Debug("PROTOCOL", "COLLISION-GUARD",
+					"Hash-list broadcast refused by the client - guard released so later broadcasts are not blocked")
+			elseif bytesSent and totalBytes and bytesSent >= totalBytes then
+				selfRef.hashBroadcastInProgress = false
+			end
+		end)
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
 		altCount, tostring(payload.isBanker))
 
@@ -410,61 +424,47 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 	end
 end
 
--- Lightweight online/offline updates from system messages
--- PRIMARY method for tracking online/offline state changes in real-time
-function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)
+-- Whisper-failure offline detection.
+--
+-- EVENT-001: this handler's signature previously omitted the leading event-name parameter.
+-- AceEvent dispatches as fn(eventName, ...) -- verified in Ace3/AceEvent-3.0.lua:120 and
+-- CallbackHandler-1.0.lua:54 -- so `message` received the literal string "CHAT_MSG_SYSTEM",
+-- every match failed, and the whole handler silently did nothing in every shipped release.
+--
+-- ROSTER-003: online / offline / joined / left are now handled by LibGuildRoster, which owns
+-- its own CHAT_MSG_SYSTEM registration and builds its patterns from the localized ERR_* globals
+-- rather than hardcoded English. Those branches are gone from here; see Guild:InitRosterCallbacks.
+--
+-- What remains is the one case the library does NOT cover: "No player named X is currently
+-- playing", i.e. a whisper bounced because the target is offline. The library matches
+-- ERR_FRIEND_ONLINE_SS / OFFLINE_S / GUILD_JOIN_S / GUILD_LEAVE_S / GUILD_REMOVE_SS only --
+-- this message is ERR_CHAT_PLAYER_NOT_FOUND_S and is not in that set. It is the authoritative
+-- signal that stops the addon whispering at someone who is not logged in, so it stays here.
+function TOGBankClassic_Events:CHAT_MSG_SYSTEM(_, message)
 	if not message or message == "" then
 		return
 	end
 
-	-- Pattern 1: Player comes online
-	local onlineName = message:match("^%[?(.-)%]? has come online%.$")
-	if onlineName then
-		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player came online: %s", onlineName)
-		TOGBankClassic_Guild:UpdateOnlineMember(onlineName, true, "system-msg-online")
-		return
-	end
-
-	-- Pattern 2: Player goes offline
-	local offlineName = message:match("^%[?(.-)%]? has gone offline%.$")
-	if offlineName then
-		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player went offline: %s", offlineName)
-		TOGBankClassic_Guild:UpdateOnlineMember(offlineName, false, "system-msg-offline")
-		return
-	end
-
-	-- Pattern 3: CRITICAL - Failed whisper detection
-	-- "No player named X is currently playing" means player is OFFLINE
-	-- This is the AUTHORITATIVE offline signal - if WoW says they're not online, they're not
-	-- Classic can send multiple formats:
-	--   No player named 'Axkva' is currently playing.  (with single quotes around name)
-	--   No player named Axkva is currently playing.    (without quotes)
-	--   Player not found (retail pattern): Axkva       (alternate format - seen in some Classic versions)
-	--   Player not found: Axkva                        (simplified format)
+	-- Classic sends several shapes of this message:
+	--   No player named 'Axkva' is currently playing.  (single-quoted name)
+	--   No player named Axkva is currently playing.    (unquoted)
+	--   Player not found: Axkva                        (simplified)
 	local notFoundName = message:match("^No player named '(.+)' is currently playing%.$")
 		or message:match("^No player named (.+) is currently playing%.$")
 		or message:match("^Player not found %(retail pattern%): (.+)$")
 		or message:match("^Player not found: (.+)$")
 	if notFoundName then
-		-- CRITICAL: This marks player offline to prevent spam whispers
-		TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
-		TOGBankClassic_Output:Info("[WHISPER-SPAM-FIX] Player %s is not online (WoW error - marked offline to prevent spam)", notFoundName)
+		-- ROSTER-003: counted so /togbank dev rostercheck can show this path is live. It is the
+		-- one presence signal LibGuildRoster does not cover, so it has no other verification.
+		if TOGBankClassic_Guild.NoteRosterEvent then
+			TOGBankClassic_Guild:NoteRosterEvent("notFound", notFoundName)
+		end
+		TOGBankClassic_Output:Debug("ROSTER", "ONLINE",
+			"[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
+		TOGBankClassic_Output:Info(
+			"[WHISPER-SPAM-FIX] Player %s is not online (WoW error - marked offline to prevent spam)",
+			notFoundName)
 		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false, "wow-error-not-online")
-		return
-	end
-
-	local joinedName = message:match("^%[?(.-)%]? has joined the guild%.$")
-	if joinedName then
-		self.needsFullRosterRefresh = true
-		GuildRoster()
-		return
-	end
-
-	local leftName = message:match("^%[?(.-)%]? has left the guild%.$")
-	if leftName then
-		self.needsFullRosterRefresh = true
-		GuildRoster()
-		return
 	end
 end
 

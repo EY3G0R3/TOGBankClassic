@@ -1067,9 +1067,31 @@ function Guild:BroadcastRequestMutation(mutation)
 
 	-- SYNC-010: Use dedicated togbank-rm prefix for request mutations
 	-- Separate throttle bucket from togbank-d prevents BULK snapshot syncs from blocking ALERT mutations
-	local sendResult = TOGBankClassic_Core:SendCommMessage("togbank-rm", data, "Guild", nil, "ALERT")
-
-	TOGBankClassic_Output:Debug("SYNC", "BROADCAST", "BroadcastRequestMutation: SendCommMessage returned %s for type=%s", tostring(sendResult), tostring(mutation.type))
+	-- ACQ-004: SendCommMessage returns NOTHING -- neither AceComm nor AceCommQueue has a return
+	-- value. This previously did `local sendResult = ...SendCommMessage(...)` and logged it,
+	-- which had been printing `nil` since it was written while reading like a delivery result.
+	--
+	-- The delivery verdict arrives as the callback's 4th argument and nowhere else:
+	--   true = delivered, false = refused after the library's retries, nil = not attempted.
+	--
+	-- This matters more here than anywhere else in the addon: togbank-rm carries request-state
+	-- mutations at ALERT priority. A silently refused broadcast means other members' request
+	-- lists diverge from ours permanently, with nothing in any log to explain it.
+	local mutationType = tostring(mutation.type)
+	TOGBankClassic_Core:SendCommMessage("togbank-rm", data, "Guild", nil, "ALERT",
+		function(_, bytesSent, totalBytes, sendResult)
+			if sendResult == false then
+				TOGBankClassic_Output:Error(
+					"request update (%s) was refused by the client - other members will not see " ..
+					"this change until the next full sync", mutationType)
+				TOGBankClassic_Output:Debug("SYNC", "BROADCAST",
+					"BroadcastRequestMutation REFUSED type=%s bytes=%d/%d",
+					mutationType, bytesSent or 0, totalBytes or 0)
+			elseif bytesSent and totalBytes and bytesSent >= totalBytes then
+				TOGBankClassic_Output:Debug("SYNC", "BROADCAST",
+					"BroadcastRequestMutation delivered type=%s (%d bytes)", mutationType, totalBytes)
+			end
+		end)
 end
 
 -- After a local mutation, update version and refresh UI.
@@ -1274,10 +1296,29 @@ local function drainIndexChunks()
 	local liveCount = chunk.payload[2] or 0
 	TOGBankClassic_Output:Debug("REQUESTS", "PROTO2", "togbank-ri %d ids (+%d remaining chunks) to %s",
 		liveCount, #pendingIndexChunks, chunk.target or "guild")
-	if chunk.target and chunk.target ~= "*" then
-		TOGBankClassic_Core:SendWhisper("togbank-ri", data, chunk.target, "NORMAL")
+	-- ACQ-004: report a refused chunk. Observed in the wild as an AceCommQueue error naming
+	-- this exact queue (togbank-ri / WHISPER / <target>) with no callbackFn to report it.
+	--
+	-- This matters more than a single lost message: the index is CHUNKED, and the receiver has
+	-- no way to tell a short index from a complete one. A dropped chunk leaves them permanently
+	-- unaware of the request IDs it carried -- they will not re-query, because as far as they
+	-- know they received the whole thing.
+	local target = chunk.target
+	local onSent = function(_, bytesSent, totalBytes, sendResult)
+		if sendResult == false then
+			TOGBankClassic_Output:Warn(
+				"Request index chunk (%d ids) to %s was refused - they may be missing requests " ..
+				"until the next index sync", liveCount, tostring(target or "guild"))
+			TOGBankClassic_Output:Debug("REQUESTS", "PROTO2",
+				"togbank-ri chunk REFUSED target=%s ids=%d bytes=%d/%d",
+				tostring(target or "guild"), liveCount, bytesSent or 0, totalBytes or 0)
+		end
+	end
+
+	if target and target ~= "*" then
+		TOGBankClassic_Core:SendWhisper("togbank-ri", data, target, "NORMAL", onSent)
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-ri", data, "Guild", nil, "NORMAL")
+		TOGBankClassic_Core:SendCommMessage("togbank-ri", data, "Guild", nil, "NORMAL", onSent)
 	end
 	if pendingIndexChunks[1] then
 		pendingIndexChunksDraining = true

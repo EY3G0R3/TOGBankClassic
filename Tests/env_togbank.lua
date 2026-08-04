@@ -180,6 +180,11 @@ function M.install()
 		end
 		return unpack(out)
 	end
+	-- CallbackHandler-1.0 captures this as a file-scope upvalue and calls it for every
+	-- dispatch. Offline there is no secure context, so it is a plain forwarding call — but it
+	-- must EXIST before CallbackHandler loads or every callback dispatch errors.
+	_G.securecallfunction = function(fn, ...) return fn(...) end
+	_G.securecall         = _G.securecall or function(fn, ...) return fn(...) end
 	_G.hooksecurefunc = function(tbl, name, post)
 		-- Two-arg form hooks a global function.
 		if type(tbl) == "string" then tbl, name, post = _G, tbl, name end
@@ -303,6 +308,18 @@ function M.install()
 	_G.NUM_CHAT_WINDOWS   = 10
 	_G.GetChatWindowInfo  = function() return "" end
 	_G.ITEM_UNIQUE        = "Unique"
+
+	-- Localized system-message templates. LibGuildRoster derives its online/offline/join/leave
+	-- match patterns from these at FILE SCOPE (LibGuildRoster-1.0.lua:293-306), so they must
+	-- exist BEFORE the library is loaded — setting them afterwards is a silent no-op and the
+	-- library then matches nothing at all. Building patterns from the localized strings rather
+	-- than hardcoding English is the library's design, and it is why these are required.
+	-- The online form deliberately carries the player hyperlink the real message has.
+	_G.ERR_FRIEND_ONLINE_SS = "|Hplayer:%s|h[%s]|h has come online."
+	_G.ERR_FRIEND_OFFLINE_S = "%s has gone offline."
+	_G.ERR_GUILD_JOIN_S     = "%s has joined the guild."
+	_G.ERR_GUILD_LEAVE_S    = "%s has left the guild."
+	_G.ERR_GUILD_REMOVE_SS  = "%s has been kicked out of the guild by %s."
 	_G.UIParent           = wow.newFrame()
 
 	-- CreateFrame with a "GameTooltip" type must yield something that can actually be scanned:
@@ -482,6 +499,67 @@ function M.stubOutput()
 		end,
 	})
 	return TOGBankClassic_Output
+end
+
+-- ---------------------------------------------------------------------------
+-- LibGuildRoster-1.0 (a required dependency as of v1.4.0)
+-- ---------------------------------------------------------------------------
+
+-- LibGuildRoster does LibStub("CallbackHandler-1.0") at file scope and cannot load
+-- without it. Load the REAL one from the sibling Ace3 install rather than stubbing:
+-- that is the exact code that ships to players, and a stub would hide the very
+-- integration bugs this suite exists to catch. Mirrors GuildRoster's own env_guild.lua
+-- (see Tests/HARNESS_CONTRACT.md — env/CallbackHandler.lua is a proposed harness addition).
+local function ensureCallbackHandler()
+	if LibStub.libs and LibStub.libs["CallbackHandler-1.0"] then return end
+	-- CallbackHandler calls geterrorhandler() on every dispatch.
+	_G.geterrorhandler = _G.geterrorhandler or function() return function(err) error(err, 0) end end
+	local ACE3 = "../Ace3/CallbackHandler-1.0/CallbackHandler-1.0.lua"
+	local chunk = loadfile(ACE3)
+	if not chunk then
+		error("CallbackHandler-1.0 unavailable: " .. ACE3 .. " not found. LibGuildRoster " ..
+			"cannot load without it.", 2)
+	end
+	chunk("CallbackHandler-1.0", {})
+end
+
+--- Load a FRESH copy of LibGuildRoster-1.0, discarding any previously registered one.
+--- LibStub:NewLibrary returns nil for an already-registered version, so without the
+--- eviction a second call silently reuses the previous test's library and its state.
+function M.freshGuildRoster()
+	ensureCallbackHandler()
+	LibStub.libs["LibGuildRoster-1.0"], LibStub.minors["LibGuildRoster-1.0"] = nil, nil
+	M.loadFile("../GuildRoster/LibGuildRoster-1.0.lua")
+	local lib = LibStub("LibGuildRoster-1.0")
+	if not lib then error("LibGuildRoster-1.0 failed to register with LibStub", 2) end
+	return lib
+end
+
+--- Drive an event into the library's own event frame. LibGuildRoster owns its
+--- registration (PLAYER_LOGIN / GUILD_ROSTER_UPDATE / CHAT_MSG_SYSTEM) rather than
+--- taking forwarded events, so this is how a spec makes it react.
+function M.fireGuildRosterEvent(lib, event, ...)
+	local frame = lib and lib.frame
+	if not frame then error("LibGuildRoster has no event frame", 2) end
+	local handler = frame:GetScript("OnEvent")
+	if not handler then error("LibGuildRoster registered no OnEvent handler", 2) end
+	return handler(frame, event, ...)
+end
+
+--- Bring the roster to its READY state.
+---
+--- The library retries the initial build until the member count stops changing, because
+--- GetNumGuildMembers() returns 0 for a window after login. Presence transitions
+--- (OnMemberOnline / OnMemberOffline) are deliberately suppressed until then, so that a
+--- partial snapshot can't be misread as everyone logging in at once.
+---
+--- A single GUILD_ROSTER_UPDATE is therefore NOT enough to make the library react to chat
+--- presence messages — it takes STABLE_THRESHOLD + 1. This mirrors the `ready()` helper in
+--- GuildRoster's own Tests/chat_spec.lua.
+function M.readyGuildRoster(lib)
+	local n = (lib.STABLE_THRESHOLD or 2) + 1
+	for _ = 1, n do M.fireGuildRosterEvent(lib, "GUILD_ROSTER_UPDATE") end
+	return lib
 end
 
 -- ---------------------------------------------------------------------------

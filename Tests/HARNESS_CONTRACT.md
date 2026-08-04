@@ -81,6 +81,42 @@ live (see audit `ITEM-005`). A stub that resolves synchronously cannot exercise 
 - `ContinueOnItemLoad` must defer through the timer queue, so a spec has to `advance()` for the
   callback to land. Resolving inline would make async ordering bugs invisible.
 
+## 4a. CallbackHandler prerequisites → `env/CallbackHandler.lua`
+
+**What:** `securecallfunction` (and `securecall`), plus the loader that registers the real
+`CallbackHandler-1.0` from the sibling Ace3 install.
+
+**Why:** any library built on CallbackHandler — LibGuildRoster, DeltaSync, AceEvent — is unusable
+offline without these. GuildRoster already stages the loader half in its own `env_guild.lua`, and
+TOGBankClassic now stages the same thing; that is two consumers, which is the point at which it
+should move.
+
+**Contract:** `securecallfunction` is captured by CallbackHandler as a **file-scope upvalue**, so
+it must exist *before* CallbackHandler is loaded. Setting it afterwards is a silent no-op and
+every callback dispatch then fails with `attempt to call upvalue 'securecallfunction'`. Offline it
+is a plain forwarding call: `function(fn, ...) return fn(...) end`.
+
+## 4b. Localized system-message globals → `env/wow.lua`
+
+**What:** `ERR_FRIEND_ONLINE_SS`, `ERR_FRIEND_OFFLINE_S`, `ERR_GUILD_JOIN_S`, `ERR_GUILD_LEAVE_S`,
+`ERR_GUILD_REMOVE_SS`.
+
+**Why:** LibGuildRoster derives its online/offline/join/leave chat patterns **from these strings**
+rather than hardcoding English — the right design, and it makes the globals a hard prerequisite.
+
+**Contract — the part that cost real debugging time:** the patterns are built at **file scope**
+(`LibGuildRoster-1.0.lua:293-306`), so the globals must exist *before the library loads*. Set them
+afterwards and the library silently matches **nothing** — no error, no warning, presence tracking
+simply never fires. That failure looks exactly like a library bug and is not one.
+
+The online form must carry the player hyperlink the real message has:
+
+```lua
+ERR_FRIEND_ONLINE_SS = "|Hplayer:%s|h[%s]|h has come online."
+```
+
+A plain `"%s has come online."` would let a hyperlink-stripping regression pass unnoticed.
+
 ## 5. `assert.has_no_error` → `run.lua`
 
 **What:** the complement of the existing `assert.has_error`.

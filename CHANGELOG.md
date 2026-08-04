@@ -1,5 +1,49 @@
 # TOGBankClassic Changelog
 
+## [v1.4.0] (unreleased) - LibGuildRoster Adoption & Real-Time Presence
+
+*Dated at tag time. Recorded here as work in progress, not as a shipped release.*
+
+### Bug Fixes
+
+- **ITEM-005: one bad item wedged the entire inventory load** — `Item:GetItems` increments `pendingAsync` before `Item.CreateFromItemID`, but **seven** failure branches incremented `processed` and called `checkComplete()` without ever decrementing it. Since `checkComplete` requires `pendingAsync == 0`, a single item taking any of those paths left the counter stuck above zero and the callback never fired — for the **whole batch**, discarding every healthy item alongside the bad one. The symptom was the Inventory window sitting on "Loading items…" forever. All seven now route through one `abandonAsync()` helper, so an eighth branch cannot reintroduce the leak by forgetting a line. Added a 10s watchdog for the other stall: an item whose `ContinueOnItemLoad` is accepted but never fires (an id the server never resolves) has nothing to decrement the counter, and the Blizzard API provides no error or timeout — it now delivers what did load rather than nothing. Also reworded the `TRACE-9` diagnostic, which shipped reading `FOUND CORRUPTION … THIS IS THE BUG!` and pointed at the wrong thing: a nil `itemData.itemID` was never the bug, failing to release the slot afterwards was. Location: `Modules/Item.lua`.
+
+- **ACQ-004: a refused send was reported as delivered** — raised by AceCommQueue-1.0's owner after auditing this addon's call sites against v1.0.5, and confirmed here before changing anything. Three separate defects:
+
+  `Modules/Guild.lua` compared the callback's 4th argument against a `SendAddonMessageResult` enum table. That argument is a **boolean** — the enum is lost two layers down (ChatThrottleLib retries only `AddonMessageThrottle`; AceComm's `ctlCallback` declares two parameters and drops the enum) — so `isThrottled` could never be true and the throttled counter had always been `0`. The comparisons are **deleted** rather than corrected, because no value of argument 4 could ever satisfy them, and the counter is removed with them: a permanent `0` printed in the send summary read as "no throttling occurred" while measuring nothing.
+
+  `Modules/RequestLog.lua` assigned `SendCommMessage`'s return value and logged it. Neither AceComm nor AceCommQueue returns anything, so it had been printing `nil` since it was written while reading like a delivery result. This is the `togbank-rm` ALERT mutation broadcast, so a silent refusal diverges every member's request list permanently; it now passes a callback and surfaces a refusal as a player-visible error.
+
+  Two `togbank-hl` sends passed argument-ignoring callbacks, which is also how a caller tells AceCommQueue "I will handle the verdict myself" — so the library deliberately would not report those refusals on our behalf. Both now accept the arguments, release the collision guard on refusal as well as completion (holding it after a failure blocked every later broadcast), and this closes **DOC-001**: the comment claimed the guard cleared "once the final chunk is confirmed sent by CTL", which the code could not previously determine.
+
+  A fourth site was found by the library reporting a real loss in-game: `togbank-ri` request-index chunks passed no callback. That one matters disproportionately because the index is **chunked** — a receiver cannot tell a short index from a complete one, so a dropped chunk leaves them permanently unaware of those request ids and they never re-query. Locations: `Modules/Guild.lua`, `Modules/RequestLog.lua`, `Modules/Events.lua`.
+
+- **EVENT-001: real-time online/offline tracking has never worked** — `Events:CHAT_MSG_SYSTEM` was declared as `function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)`, with no leading parameter to absorb the event name. AceEvent dispatches as `fn(eventName, ...)` — verified in `Ace3/AceEvent-3.0/AceEvent-3.0.lua:120` and `CallbackHandler-1.0.lua:54` — so `message` received the literal string `"CHAT_MSG_SYSTEM"`, every pattern match failed, and the handler silently did nothing in **every release the addon has ever shipped**. The code above it called this "the PRIMARY method for tracking online/offline state changes in real-time". Consequently `onlineMembers` only refreshed on a full `GUILD_ROSTER_UPDATE` sweep, degrading `Core:SendWhisper`'s online gate, banker selection in `Guild:RequestHashListFromBanker` and `Guild:QueryAltPullBased`, and the anti-spam guard that stops repeated whispers to an offline player. Location: `Modules/Events.lua`.
+
+- **ROSTER-002: stale ex-banker entries are now structurally impossible** — zero-data stubs for characters who left the banker roster lingered as permanent "HLR pending" rows, swept up only by a bespoke pass in `RebuildBankerRoster`. LibGuildRoster wipes and rebuilds its roster on every update, so a departed member cannot survive it. Pinned by a spec that adds a member, removes them, rebuilds, and asserts they are gone. Location: `Modules/Guild.lua`.
+
+### New Features
+
+- **ROSTER-003: LibGuildRoster-1.0 is now a required dependency** — declared in both TOCs (folder name `GuildRoster`) and in `.pkgmeta` (CurseForge slug `libguildroster`). The two spellings differ deliberately and each fails silently in its own way — a wrong slug skips auto-install, a wrong folder name breaks load order — so both are asserted by spec. The library owns its own `PLAYER_LOGIN` / `GUILD_ROSTER_UPDATE` / `CHAT_MSG_SYSTEM` registration, which is what turns `EVENT-001` from a fixed instance into a fixed *class*: a consumer can no longer wire that event up incorrectly and have nothing notice.
+
+  `Guild:_RefreshFromRosterLib` builds `memberRoster` from `lib:GetAllMembers()` / `GetMember()`, falling back to the legacy `GetGuildRosterInfo` scan when the library is absent or has not yet stabilised. `Guild:InitRosterCallbacks` subscribes to `OnMemberOnline` / `OnMemberOffline` / `OnMemberJoined` / `OnMemberLeft`. Banker identification — the `gbank` tag and the `VIEWBANK-001` view-only markers — deliberately **stays in this addon**; the library's job is to hand over the raw note fields, which is the correct boundary. Locations: `Modules/Guild.lua`, `Modules/Events.lua`, `Core.lua`.
+
+  The whisper-failure signal (`"No player named X is currently playing"`) also stays here: it is `ERR_CHAT_PLAYER_NOT_FOUND_S`, which is **not** in the set LibGuildRoster matches. Deleting the handler outright would have fixed `EVENT-001` while silently dropping the one signal that stops the addon whispering someone who is not logged in.
+
+- **ACQ-001: AceCommQueue-1.0 is a declared dependency, no longer vendored** — `Libs/AceCommQueue-1.0/` is deleted; the library is declared in both TOCs and `.pkgmeta` (slug `acecommqueue`). The shipped copy had drifted to MINOR 2 while the standalone reached 5, and MINOR 5 is where a refused send is finally reported as failed rather than delivered — so the `ACQ-004` fixes above would have been trusting a signal the embedded copy does not send. Two specs guard against a vendored copy returning.
+
+- **`/togbank dev rostercheck`** — in-game verification for the migration. Compares the library against the WoW API directly (the only genuinely independent check of the three), then our cache against the library, then reports presence transitions seen since login. Documented in `docs/DEV_COMMANDS.md`.
+
+### Internal
+
+- **33 new specs** in `Tests/guildroster_integration_spec.lua`, run against the **real** library rather than a stub. The harness gained `freshGuildRoster`, `readyGuildRoster` and `fireGuildRosterEvent`, plus two environment prerequisites now recorded in `Tests/HARNESS_CONTRACT.md` §4a/§4b: `securecallfunction` (a CallbackHandler file-scope upvalue) and the five localized `ERR_*` globals. The second is worth knowing — LibGuildRoster builds its chat patterns from those strings **at file scope**, so if they are missing when it loads it matches nothing at all, with no error. That failure looks exactly like a library defect and is not one; it cost two wrong diagnoses before the library's own spec settled it.
+
+- **`GetNormalizedRealmName()` takes no arguments** — three call sites passed `"player"`. Harmless (the argument was ignored) but wrong, and it was the only genuine defect in a large batch of language-server warnings. Locations: `Core.lua`, `Modules/Guild.lua`.
+
+- **Language-server diagnostics un-poisoned** — `Tests` is now in `.luarc.json`'s `workspace.ignoreDir`. The specs deliberately reassign addon globals to stub them (`env.stubOutput()` replaces `TOGBankClassic_Output` with a bare metatable), and the LS was merging those into the addon's own type view — which is why `redundant-parameter` fired on `Output:Debug` calls in files the tests never touch, and `duplicate-set-field` pointed at spec files. Specs are validated by being **run**, not by the LS, so excluding them costs nothing.
+
+- **Verified in-game** on a 981-member guild: library and WoW API agree in both directions, no cache divergence, no normalization disagreement across 981 real character names, 38 bankers detected, and a live transition recorded (`online=1`, `recent: online Fartcaptain-OldBlanchy`) — the first direct evidence that real-time presence works.
+
 ## [v1.3.2] (2026-08-03) - ElvUI & Baganator Item Highlighting, Offline Test Suite
 
 ### Bug Fixes

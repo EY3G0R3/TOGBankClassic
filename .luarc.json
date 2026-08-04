@@ -144,9 +144,9 @@
         "${3rd}/busted/library"
     ],
     "workspace.ignoreDir": [
-        "Libs",
-        "**/Libs",
-        "**/Libs/**"
+        "Tests",
+        ".vscode",
+        "Libs"
     ],
     "diagnostics.disable": [
         "need-check-nil",

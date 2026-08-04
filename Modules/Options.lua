@@ -1,4 +1,4 @@
-﻿-- ─── Debug category metadata ────────────────────────────────────────────────
+-- ─── Debug category metadata ────────────────────────────────────────────────
 -- Controls display order and description text in the Options UI.
 -- Must stay in sync with DEBUG_CATEGORY in Constants.lua.
 local CATEGORY_META = {

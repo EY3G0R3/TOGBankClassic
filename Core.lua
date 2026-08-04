@@ -43,7 +43,7 @@ function TOGBankClassic_Core:SendWhisper(prefix, text, target, prio, callbackFn,
     local nameOnly = target
     if target and string.find(target, "-") then
         local left, right = string.match(target, "^(.-)%-(.+)$")
-        local currentRealm = GetNormalizedRealmName("player")
+        local currentRealm = GetNormalizedRealmName()
         if left and right and currentRealm and right == currentRealm then
             nameOnly = left
         end
@@ -67,6 +67,10 @@ function TOGBankClassic_Core:OnInitialize()
     TOGBankClassic_Chat:Init()
     TOGBankClassic_Options:Init()
     TOGBankClassic_Chat:RegisterAliasCommands()
+    -- ROSTER-003: bind LibGuildRoster's presence callbacks before events register, so no
+    -- online/offline transition is missed during login. Idempotent and safe if the library
+    -- is absent (falls back to the legacy roster scan).
+    TOGBankClassic_Guild:InitRosterCallbacks()
     TOGBankClassic_UI:Init()
 
     if TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.Initialize then

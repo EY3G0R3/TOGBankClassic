@@ -12,10 +12,18 @@ manual-changelog:
   filename: CHANGELOG.md
   markup-type: markdown
 
-# Required dependencies for CurseForge auto-installation
+# Required dependencies for CurseForge auto-installation.
+# NOTE: these are CurseForge SLUGS, which are not always the addon FOLDER name.
+# The TOC's `## Dependencies:` line takes folder names instead — LibGuildRoster
+# ships in a folder called `GuildRoster` but its slug is `libguildroster`
+# (curseforge.com/wow/addons/libguildroster, project 1550433), so the two files
+# spell it differently on purpose. Getting either wrong breaks silently: a bad
+# slug skips auto-install, a bad folder name breaks load order.
 required-dependencies:
   - versioncheck
   - ace3
+  - libguildroster
+  - acecommqueue
 
 # External dependencies (Ace3, VersionCheck) are handled via required-dependencies above
 
