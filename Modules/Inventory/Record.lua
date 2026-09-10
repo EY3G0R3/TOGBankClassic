@@ -101,14 +101,34 @@ end
 --- Aggregate an array of records into a key-indexed map, summing duplicates.
 --- Invalid entries are skipped rather than aborting the batch: one bad row from an old client
 --- must not discard the rest, which is the mistake ITEM-005 made in the legacy loader.
+---
+--- AUDIT FINDING 33: this walked with `ipairs`, and **`ipairs` stops at the first nil**. A nil hole
+--- was therefore not "skipped" as the line above promises -- it TRUNCATED, and `skipped` did not
+--- count it, so the return value reported nothing wrong. The guarantee in the docstring was false
+--- for exactly the input it names.
+---
+--- The asymmetry is what makes it worth fixing rather than documenting. A hole in `oldRecords`
+--- under-reports the old side, so rows re-appear as `added` -- wasteful and self-correcting. A hole
+--- in `newRecords` makes every row after it absent from the new map, so `ComputeTupleDelta` emits
+--- them all as **`removed`**: a delta instructing the receiver to DELETE ITEMS THE SENDER STILL
+--- HOLDS, silently, in a message that looks entirely legitimate.
+---
+--- The two paths also disagreed on the contract: legacy `ComputeItemDelta` and `BuildItemIndex` use
+--- `pairs` throughout and are hole-tolerant, while `ComputeTupleDelta` feeds this directly. The
+--- rework was quietly changing the iteration contract in the direction of LESS tolerance.
+---
+--- Numeric keys only, so this stays an array walk and a caller cannot smuggle a keyed map through
+--- it. Order does not matter: the result is a map keyed by identity, and callers sort afterwards.
 --- @return table map, number skipped
 function Record.aggregate(records)
 	local out, skipped = {}, 0
-	for _, rec in ipairs(records or {}) do
-		if Record.isValid(rec) then
-			local k = Record.key(rec)
-			local existing = out[k]
-			out[k] = existing and Record.merge(existing, rec) or rec
+	for k, rec in pairs(records or {}) do
+		if type(k) ~= "number" then
+			skipped = skipped + 1
+		elseif Record.isValid(rec) then
+			local key = Record.key(rec)
+			local existing = out[key]
+			out[key] = existing and Record.merge(existing, rec) or rec
 		else
 			skipped = skipped + 1
 		end

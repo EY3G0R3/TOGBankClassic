@@ -87,6 +87,24 @@ must be revisited before TBC — a socketed item stored in a bank would lose its
 
 ## 4. Resolution and the fallback chain
 
+**IDB is a REQUIRED dependency, and that is a consequence of this section rather than a
+preference.** Because rendering asks IDB and never the wire, the library is what the entire
+storage format rests on: with it absent there is no way to turn `{id, count, suffix, enchant}`
+back into an item. It is declared in both TOCs (folder name `ItemDB`) and in `.pkgmeta` (slug
+`libitemdb` -- the two spellings differ and each fails silently in its own way).
+
+**This was not true until 2026-09-08 and the gap was invisible.** `Resolve` asks for the library
+through `LibStub("LibItemDB-1.0", true)`, the optional form, which returns nil rather than
+raising -- and nothing declared the dependency. On any install without ItemDB, step 1 below never
+answered and every single row fell through to step 2 or 3, silently. `Resolve` now reports a
+missing library once, at a player-visible level, which is separate from the per-id logging noted
+at the end of this section.
+
+**Steps 2 and 3 are for ids the library does not CARRY. They are not a supported mode of
+operation for a missing library.** The distinction matters: "this item is not in the DB" and
+"there is no DB" are different facts, and collapsing them is precisely what let the second hide
+inside the first.
+
 Rendering asks IDB, never the wire. Order, first hit wins:
 
 1. **`IDB:GetSuffixLink(id, suffix)`** — authoritative. Validated: `(10132, 863)` yields
@@ -148,6 +166,42 @@ That is what removes the corruption class. `MIGRATE-001` is a live example of th
 a conversion that computed the wrong thing and silently gave every pre-v0.8 character a bogus
 hash, with the original already overwritten.
 
+### 5.2 Per-alt shape -- sources kept apart, aggregated on read (`INV2-VAULT-001`)
+
+```lua
+TOGBankClassicInvDB.faction[guild].alts[name] = {
+    sources = { bank = { <tuple>, ... }, bags = { ... }, mail = { ... } },
+    money   = <copper>,
+    updated = <server time>,
+    schema  = <Store.SCHEMA at write time>,
+}
+```
+
+**The split is not tidiness, it is the only shape that can express "I could not read this
+source".** The vault is readable only at a bank NPC; bags and mail are readable anywhere. A single
+flat record set forces a writer that is away from the vault to choose between overwriting the
+stored vault with nothing and skipping the write entirely -- and the first cut chose to skip,
+which also discarded the bags and mail it had just read. Since a mailbox is almost never opened at
+a banker, mail could never reach the store however many times a character rescanned.
+
+`Store:SetAltSources` replaces the sources it is handed and keeps the ones it is not.
+**Absent and empty are different on purpose:** absent means "keep what is stored", empty means
+"read, and genuinely empty". Conflating them turns mail into a ratchet that only grows, which a
+spec in `Tests/wiring_spec.lua` drives directly.
+
+**The legacy DB has always had this shape** -- `alt.bank.items` / `alt.bags.items` /
+`alt.mail.items`, aggregated into `alt.items` on the way out -- and that is exactly why it never
+had this defect. This is the "right idiom already exists and the new code did not use it" pattern
+from `docs/REVIEW.md`, found in production rather than in review.
+
+`Store.SCHEMA` records which **sources** a stored set covers. It is bumped when the scan gains a
+source, **not** when the tuple layout changes -- `Record.lua` owns that, and the two version
+independently because they fail differently: a layout change makes rows unreadable, a source
+change makes totals **short**. An absent stamp reads as `1` (bags + bank), never as "unknown",
+because the field was added with `2`. `Guild:GetAltItems` refuses a record below the current
+schema and falls back to the legacy store, which self-clears on that character's next scan
+(`INV2-STALE-001`).
+
 ### 5.1 Retirement
 
 The old DB needs a stated end or it rots: `TOGBankClassicOptionDB` is still declared in both
@@ -199,6 +253,25 @@ change between passes.
 
 `dualWrite` retires together with the legacy DB (`INV2-RETIRE-001`); it has no purpose after.
 
+**Deviation, deliberate and temporary (`INV2-WIRE-001`).** `Scan:ScanAll` implements the
+one-walk/two-shapes rule and is tested for it. The wiring in `Bank:Scan` does **not** use it that
+way yet: the legacy walk runs as it always has, and the V2 mirror re-walks the containers
+afterwards. That is a second walk, and it is the arrangement §6.1 argues against.
+
+It is correct for exactly as long as the legacy path is authoritative. Sharing the walk means
+editing the legacy scan, and the property being protected right now is that the legacy scan is
+untouched — a bug in the shared walk would hit every existing user, whereas a bug in a mirror
+that nothing reads costs a switch flip. The cost is one extra container walk on a banker with
+`inventoryV2` on, which is opt-in.
+
+The consequence to be honest about: `/togbank dev compare` is therefore comparing two walks, not
+one, so a divergence it reports *could* in principle be a stack that moved between them rather
+than an encoding bug. In practice the two walks are microseconds apart inside a single
+`Bank:Scan` call with no yield between them, so this is close to theoretical — but "close to
+theoretical" is not "impossible", and a divergence should be reproduced before it is believed.
+Once V2 becomes the writer, `Bank:Scan` calls `ScanAll` once and the legacy branch is deleted,
+which removes both the second walk and this caveat.
+
 ---
 
 ## 7. Module layout
@@ -228,16 +301,35 @@ lets the UI be simplified later, separately.
 
 ## 8. What this deletes once V2 is default
 
-Not "fixes" — deletes, because the conditions that made them necessary stop existing:
+**DONE 2026-09-09.** Not "fixes" -- deletes, because the conditions that made them necessary stop
+existing.
 
-| Going away | Why it existed |
+**THE ORIGINAL TABLE HERE WAS WRONG AND IS CORRECTED BELOW. Do not work from a copy of it.** It
+listed three categories as one list, with very different risk, and following it literally would have
+deleted live features.
+
+**Deleted -- the link-stripping decision, and the whole legacy link wire format:**
+
+| Gone | Why it existed |
 | --- | --- |
-| `Item:GetItemKey`, `GetItemString`, `GetSuffixID` | String identity |
-| `NeedsLink`, `ItemClassNeedsLink`, `ForceLink` | Deciding whether a link was safe to strip |
-| `StripItemLinks`, `StripDeltaLinks` | Stripping links for bandwidth |
-| `PurgeLinklessGearGhosts` | Cleaning up damage from the above |
-| Most of `Item:GetItems`' async fan-in (`ITEM-005`) | Cold client cache; IDB is never cold |
-| `Item:Sort`'s `reqLevel` retry loops (`SORT-002/003`) | Same — pending `INV2-IDB-002` |
+| `StripDeltaLinks`, `Guild:StripDeltaLinks` | Guessing whether a link was safe to drop before sending |
+| `Item:NeedsLink` | The send-side half of that guess; `StripDeltaLinks` was its only caller |
+| `ComputeDelta`, `ComputeItemDelta`, `BuildItemIndex`, `ItemsEqual`, `GetChangedFields`, `DeltaHasChanges` | Computing a link-keyed delta |
+| `ApplyDelta`, `ApplyItemDelta` | Applying one, with the `ITEM-003` ghost guards |
+| `ValidateDeltaStructure`, `ValidateItemDelta`, `Core:ValidateDeltaStructure` | Validating the `alt-delta` envelope |
+| Seven `Guild:` wrappers delegating to the above | -- |
+| `Modules/Tests.lua` and `/togbank test` | An in-game harness written entirely against those functions |
+
+**KEPT, and deleting these removes FEATURES rather than complexity:**
+
+| Kept | Why it is NOT wire code |
+| --- | --- |
+| `Item:GetSuffixID` | Four live consumers read **client** links: bank scanning, mail fulfilment matching, search, request matching |
+| `Item:GetItemString` | Backs `MailInventory` |
+| `Item:GetItemKey` | Still used by `Item:GetItems` aggregation for the legacy store |
+| `Item:ItemClassNeedsLink` | The **receive-side** check, still used by `PurgeLinklessGearGhosts` |
+| `Database:PurgeLinklessGearGhosts` | Repairs damage **already in players' SavedVariables**; runs at load |
+| `Item:GetItems`' async fan-in, `Item:Sort`'s `reqLevel` retries | Still reached; pending `INV2-IDB-002` |
 
 ---
 
@@ -250,7 +342,7 @@ Not "fixes" — deletes, because the conditions that made them necessary stop ex
 | Empty DB after flip | Accepted. Log bankers in to re-ingest |
 | Rollback lands on stale data | `dualWrite` keeps the legacy DB current (§6.1) |
 | Two writes diverge silently | Both written from one scan; `/togbank dev compare` diffs them. Divergence is a bug to investigate, never to paper over |
-| Mixed-version guild | Receive always accepts both formats; `sendV2Wire` gates emission |
+| Mixed-version guild | **SUPERSEDED 2026-09-09.** There is NO backwards compatibility on the wire, in either direction: an unmigrated peer can neither read us nor be read by us. An upgraded member sees nothing from un-upgraded bankers until they upgrade, and it heals by itself. `sendV2Wire` is no longer a rollback -- with it off there is no send path at all |
 | Enchants lost | Carried explicitly in the tuple. `IDB:BuildItemString` hardcodes fields 2–6 empty and needs an enchant parameter — library change |
 | TBC gems lost | **Unresolved.** Out of scope for Vanilla; must be decided before TBC |
 | View cache goes stale | Invalidate on write; spec the invalidation, don't assume it |
@@ -270,19 +362,57 @@ Not "fixes" — deletes, because the conditions that made them necessary stop ex
 
 *Resolved:* `dualWrite` — **in**, default on, see §6.1.
 
+*Resolved 2026-09-08:* **icons are NOT persisted to SavedVariables.** Raised after `RESOLVE-001`,
+when the icon lookup moved into `Resolve.describe`: should the resolved fileID be stored alongside
+the tuple instead of looked up?
+
+**No, and the reasoning is this document's own.** An icon is derivable from the item ID, which the
+tuple already carries, so persisting it keeps a second copy of a recomputable value -- exactly the
+practice section 8 deletes rather than a new case. It can also go **stale**: Blizzard changes icons
+in patches and nothing would invalidate a stored one, whereas a session memo is rebuilt from the
+current client every login. It costs the very thing the tuple format is shrinking, since
+SavedVariables are serialised Lua read at login and written at logout. And it would not help the
+case that motivates the question: whether the client knows an item's static data is a property of
+the **client build**, not of the session, so a fileID stored last session cannot rescue an id this
+client cannot resolve.
+
+The memo in `Resolve` is the right level -- session-scoped, derived, never stale, one lookup per
+distinct id, and a table read thereafter. **Anything else that is a pure function of item ID
+belongs there too, not in the store.**
+
 ---
 
 ## 11. Sequence
 
-1. Agree this document.
-2. `Modules/Switches.lua` + `Record.lua` + `Resolve.lua`, with specs. Pure logic, no I/O —
-   should reach near-100% coverage, unlike the 18% retrofit on `Guild.lua`.
-3. `Store.lua` + `Scan.lua` behind `inventoryV2`, off by default.
-4. `Wire.lua` + receive-side dual-format support, emission behind `sendV2Wire`.
-5. Fix `INV2-IDB-001` and `INV2-IDB-002` in ItemDB.
-6. Live test with switches on. Default them on only after that.
-7. Delete the superseded code (§8) as its own commit, once green.
-8. **Re-measure bandwidth and restore the figures to the CurseForge page.**
+1. ~~Agree this document.~~ **Done.**
+2. ~~`Modules/Switches.lua` + `Record.lua` + `Resolve.lua`, with specs.~~ **Done** — 100% line
+   coverage on each, verified with `lua Tests/wowapi/coverage.lua <file> Tests/*_spec.lua`.
+3. ~~`Store.lua` + `Scan.lua` behind `inventoryV2`, off by default.~~ **Done**, 100% each.
+4. ~~`Wire.lua` + receive-side dual-format support, emission behind `sendV2Wire`.~~ **Done**, 100%.
+5. **Wire it up — write side only (`INV2-WIRE-001`). Done.** `Bank:Scan` mirrors into the V2
+   store behind `inventoryV2`; `Core:OnInitialize` attaches `TOGBankClassicInvDB`;
+   `/togbank dev switches` and `/togbank dev compare` exist. Nothing *reads* V2 yet, so the
+   addon's behaviour is unchanged in both switch positions. See the deviation note in §6.1.
+6. ~~Live test on a banker: `inventoryV2` on, open bags + bank, `/togbank dev compare`.~~
+   **Done, 2026-09-08** -- *"Compared 1 character(s) present in both stores. No divergence. Every
+   item total agrees."* First evidence the two encodings agree on real data. Note the instruction
+   above was wrong and is corrected elsewhere: the scan fires when the bank **closes**
+   (`BANKFRAME_CLOSED`), not when it opens, and bags alone trigger nothing (`DOC-005`). What this
+   proves is bounded: **one** character, on **per-item-ID totals** rather than rows, so
+   suffix/enchant fidelity is not what was measured, and `sendV2Wire` was off throughout.
+
+7. **7a done, 2026-09-08.** The UI reads through `Guild:GetAltItems`, which is the single place
+   the `inventoryV2` switch chooses a source; the per-alt view cache and its invalidation are
+   specced rather than assumed. With `inventoryV2` on but an alt absent from V2, it falls back to
+   the legacy record -- required during `dualWrite`, when only the local character is in V2 and
+   the rest of the guild still arrives over the legacy wire. 7b (route sends through `Wire` behind
+   `sendV2Wire`) is next.
+7. Point the UI at `Store:GetAltView` behind the switch (§7.1), then route sends through `Wire`
+   behind `sendV2Wire`.
+8. Fix `INV2-IDB-001` and `INV2-IDB-002` in ItemDB.
+9. Default the switches on, only after 6 and 7 are green on a real guild.
+10. Delete the superseded code (§8) as its own commit, once green.
+11. **Re-measure bandwidth and restore the figures to the CurseForge page.**
 
 ### 11.1 `INV2-DOC-001` — bandwidth claims pulled pending measurement
 

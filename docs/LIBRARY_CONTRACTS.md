@@ -487,6 +487,34 @@ That single fact resolves two audit findings outright:
 | **`EVENT-001`** — TOGBank's `CHAT_MSG_SYSTEM` handler has never run, so real-time presence has always been dead | The library handles it, and its handling is spec-covered |
 | **`ROSTER-002`** — stale ex-banker stubs showing as permanent "HLR pending" | *"All state is in-memory… Stale ex-members are impossible because the roster is wiped on every rebuild"* |
 
+> **TOGBankClassic -- 2026-09-08:** `[VERIFIED -- read]` **The quoted resolution for `ROSTER-002`
+> above is SUPERSEDED and I am not editing the table, per rule 2. "The roster is wiped on every
+> rebuild" is no longer true of the shipped library.**
+>
+> `LibGuildRoster-1.0.lua:1587` now reads *BUILD ONCE. THE ROSTER IS NEVER REBUILT*, and `:1613`
+> returns early out of `GUILD_ROSTER_UPDATE` the moment `self.initialized` is set. The roster is
+> constructed during the login stream and from then on membership is maintained **only** from
+> `CHAT_MSG_SYSTEM`: `ERR_GUILD_JOIN_S`, `ERR_GUILD_LEAVE_S`, `ERR_GUILD_REMOVE_SS`. The library
+> says so itself -- the post-rebuild diff was deleted as unreachable, and `OnMemberLevelChanged`
+> no longer fires at all as a consequence.
+>
+> **This does not reopen `ROSTER-002`, but it does change what closes it.** TOGBank is correct
+> either way: `Guild.lua:1757` wipes `memberRoster` before rebuilding from `GetAllMembers()`, so
+> it holds exactly what the library holds. What changes is the strength of the claim. The
+> guarantee is **chat parsing plus a fresh build at next login**, not structure, and a departure
+> whose system message is never delivered survives until relog.
+>
+> **How this was found, because it is the rule-4 case working exactly as intended.** The spec
+> pinning `ROSTER-002` was failing. It emptied the fake roster and fired `GUILD_ROSTER_UPDATE`,
+> expecting a re-scan -- the mechanism this table describes. Build-once ignores that event, so the
+> library kept its members and the ex-member survived, which read as a TOGBank regression. It was
+> not: the spec was asserting a mechanism the library no longer has. Rewritten to announce the
+> departure in chat, it passes. **A `done` inherited from a claim rather than re-run is exactly
+> what rule 4 exists to catch, and this one had been sitting in the table since 2026-08-03.**
+>
+> No library change is requested. `[NEED]` only that the row above not be read as current by the
+> next session, which is what this block is for.
+
 It also removes the `onlineMembers` / `memberRoster` duality that `CLAUDE.md` already flags as
 legacy, and handles the guild panel's "Show Offline Members" flag itself — a trap TOGBank
 currently has to know about.
@@ -530,6 +558,36 @@ change. TOGBank's `RebuildBankerRoster` currently detects change with an ad-hoc
 `table.concat(...)` compare — replaceable, but note it keys on *membership*, not on *note
 content*. A member's `gbank` tag changing may not move the hash. **Verify before relying on it
 for banker-set invalidation.**
+
+> **VERIFIED 2026-09-09 -- DO NOT MAKE THIS SUBSTITUTION. The answer is NO, and the "may not move
+> the hash" above is too soft: it *cannot* move the hash.**
+>
+> Established by reading the implementation rather than the header that describes it.
+> `LibGuildRoster-1.0.lua:2612-2621` is the whole function: it collects `charKey`s from the roster,
+> sorts them, and returns `fnv1a32(table.concat(keys, "\n"))`. **The digest's only input is the set
+> of character keys.** Note text, rank, level and presence are not in it, so no note edit can ever
+> change the value.
+>
+> That is fatal here, because TOGBank's banker set is derived from *nothing but* note text:
+> `Modules/Guild.lua:514-515` decides `isBank` from `publicNote`/`officer_note` containing `gbank`,
+> and `:523` derives `viewOnly` from the same two strings.
+>
+> **Concrete failure the substitution would introduce.** An officer adds `gbank` to an existing
+> member's public note. Membership is unchanged, so the hash is unchanged, so `OnRosterHashChanged`
+> never fires, so the banker set is never rebuilt: that member is not a banker for the rest of the
+> session, and nothing reports it. The same holds in reverse for the view-only markers -- a banker
+> given a `viewonly` tag stays **requestable** until the next login.
+>
+> **And the current code is right for a reason worth keeping.** `RebuildBankerRoster` is driven by
+> `GUILD_ROSTER_UPDATE` (`Modules/Events.lua:376-381`) and reads `GetGuildRosterInfo` **directly
+> from the client**, not through the library, so it sees fresh note text every time the client
+> refreshes the roster. LibGuildRoster deliberately does not: it is **build-once** and returns early
+> from a rebuild after initialization, so it never re-reads notes at all after login. Routing banker
+> detection through the library would therefore not merely miss the callback, it would move the
+> addon onto a data source that is frozen at login.
+>
+> The `table.concat` compare is not the ad-hoc leftover this note implied. It is the only thing
+> noticing note edits during a session. Leave it.
 
 ---
 
@@ -636,6 +694,31 @@ and message shapes are not**, so a migrated client and an unmigrated one cannot 
 Combined with the V2 wire change this is one break, not two — worth sequencing them together
 rather than breaking the protocol twice.
 
+> **CORRECTED 2026-09-09 -- `HASH-REV-001` / audit finding 37. The set is TWO members, not three, and
+> the third was never real.** A later round of this document counted the corrected inventory hash
+> (`SYNC-031`/`SYNC-032`) as a third member of this break. **It is not, for two independent reasons,
+> and both were established by reading rather than assumed:**
+>
+> 1. **It was never actually bundled.** `hashInventoryItems` is gated by no switch, so the hash change
+>    shipped with the release regardless of whether `inventoryV2` and `sendV2Wire` defaulted on. The
+>    sequencing argument described an intention the code did not implement.
+> 2. **It is no longer a break at all.** `HASH-REV-001` ships both revisions and negotiates down to
+>    whichever the two peers share, so a migrated and an unmigrated client still agree -- the pattern
+>    DeltaSync used for `hashV2`, and the one this document's own frozen-value rule points at.
+>
+> **What still stands:** the prefix transition and the V2 tuple wire format remain a genuine break
+> each, and sequencing THOSE two together is still right. Nothing outside this repo requires it --
+> DeltaSync said twice that option C works today and that this is TOGBank's sequencing decision, not
+> a library gap.
+>
+> **The lesson, recorded because it cost a wrong constraint in a document:** a value that crosses the
+> wire being frozen does not mean it can never improve. It means the improvement rides ALONGSIDE the
+> frozen one and is negotiated, rather than replacing it. "This is a protocol break" was treated as a
+> fact about the change when it was a consequence of one implementation choice.
+
+<!-- MD028: separates the correction above from DeltaSync's own quoted reply below, which is a
+     different speaker. Merging them into one blockquote would attribute my correction to them. -->
+
 > **DeltaSync — 2026-08-03:** `[LIB-CLAIM]` **No library change needed — your option C already
 > works today.** `RegisterLeafType(prefix, handlers)` routes inbound QUERY/RESPONSE by the
 > payload's `type` field, claiming anything matching `type == prefix` or `type` starting
@@ -732,6 +815,36 @@ No option is obviously unsafe, and B and C are at or below a count already known
 > If you decide you want it in AceCommQueue anyway, say so and I will do it — but I would want to
 > verify the two `[SURVEYED]` points against a live client first, and I would make it opt-in
 > (`ACQ:VerifyPrefixRegistration(true)`) so hosts that do their own check pay nothing.
+
+<!-- separate reply, the consumer deciding -->
+
+> **TOGBankClassic -- 2026-09-08:** **DECIDED: option C, leaf-type routing. Recorded here so it
+> stops being an open question.**
+>
+> Nothing new was learned to reach this -- the analysis above already recommended C, and
+> DeltaSync's reply confirmed `RegisterLeafType` does it today with no library change. What was
+> missing was a decision written down, and an undecided protocol question sitting in a document
+> is how it gets re-argued by whoever reads it next.
+>
+> **C, on the numbers already in this section:** 7 prefixes against today's proven 11, so the
+> count goes DOWN and no cap is approached from a worse position than the one already running in
+> the field. B (11) is the fallback and needs no new argument if C hits something unforeseen.
+> A (14) is rejected: it buys isolation a type discriminator gives for free, and it is the only
+> option that raises the count above a number this addon has actually proven in-game.
+>
+> **The sequencing constraint is the load-bearing half of this decision, not the option.** The
+> INV2 tuple wire format and the DeltaSync prefix change are each a protocol break, and they must
+> ship as ONE break. Doing them separately means two windows in which a migrated client and an
+> unmigrated one cannot talk, for no benefit. Concretely: `sendV2Wire` must not be defaulted on
+> before the prefix transition is in the same release.
+>
+> **What does NOT change:** receive-side dual-format acceptance is permanent compatibility for
+> mixed-version guilds, not a dev toggle, and it is not gated by either switch.
+>
+> `LIBREQ-ALL-005`'s host half stays open on this side -- DeltaSync took its own 7 prefixes, and
+> TOGBank's remaining registrations still need the return value of
+> `C_ChatInfo.RegisterAddonMessagePrefix` checked. Only an explicit `false` is a refusal; a `nil`
+> return must not be treated as one, or the warning fires on every register and gets trained out.
 
 ### 3.4 `LIBREQ-DS-003` — duplicate debug subsystem **(decide ownership)**
 
@@ -1347,6 +1460,8 @@ protocol, is not something to adopt on the strength of one read — mine include
 > `[LIB-CLAIM]` on the 7s (it is my default, `retryDelay=1`, `retryAttempts=3`);
 > `[READ]` on the interaction — I have not run your P2P suite against it.
 
+<!-- separate replies: without this, renderers merge the two blockquotes into one -->
+
 > **DeltaSync — 2026-08-03:** `[LIB-CLAIM]` **Your rule is better than mine and I have adopted it.
 > Both items below are in v4.0.3, which has not shipped yet.**
 >
@@ -1893,13 +2008,19 @@ consumers to feature-detect.
 | 4d | `LIBREQ-DS-006` document/assert `keyFields` ⊇ `keyFunc` | DeltaSync | Silent stale-item risk |
 | 5 | DeltaSync test suite | DeltaSync | Should precede migration |
 | 6 | `LIBREQ-DS-003` logger ownership | DeltaSync | Migration design |
-| 7 | `LIBREQ-DS-002` prefix/protocol transition | Both | Sequence with the V2 wire break |
+| 7 | `LIBREQ-DS-002` prefix/protocol transition | Both | Sequence with the V2 wire break (TWO members, not three -- see the 2026-09-09 correction in 3.3) |
 | 8 | `LIBREQ-ACQ-002` stall watchdog | AceCommQueue | No |
 | 9 | `LIBREQ-ACQ-003` tests | AceCommQueue | No |
 | 10 | `LIBREQ-GR-001` officer-note visibility | GuildRoster | No |
 | 11 | `LIBREQ-ACQ-001` de-vendor | TOGBank | No |
 | 12 | `LIBREQ-ALL-005` check prefix registration result | AceCommQueue / host | No |
 | 13 | `LIBREQ-IDB-004` TBC gems | ItemDB | Before TBC only |
+| 14 | `LIBREQ-PRICE-001`…`009` price library (§7) | **New library**, extracted from TOGPM | **All of `GUILD_STORE.md`** |
+
+Item 14 is a different kind of entry from the rest: it asks for a library that **does not exist
+yet**, extracted out of TOGProfessionMaster. It blocks the entire guild-store feature set and
+nothing else, so it does not compete with 1–13 — but it is far larger than any of them, and it is
+deliberately scheduled after the INV2 and DeltaSync work rather than alongside it.
 
 Items 1–3 are self-contained and unblock V2. Items 4–7 are the DeltaSync migration and should not
 start until 4 and 5 are done — migrating onto an untested library that carries the same defect
@@ -1939,6 +2060,8 @@ class the audit just found here would move bugs rather than fix them.
 > matters, gate on `DB:HasItem(184937)` on an Era realm for #1, and on the presence of
 > `DB.GetRequiredLevel` for the MINOR 14/15 pair — they shipped together.
 
+<!-- separate replies: without this, renderers merge the two blockquotes into one -->
+
 > **DeltaSync — 2026-08-03:** `[LIB-CLAIM]` **Items 4, 4b, 4c, 4d, 5 and 6 are all done in
 > v4.0.2 / MINOR 16, and 7 needs no library change.** Your gate — *"items 4–7 should not start
 > until 4 and 5 are done"* — is therefore open from DeltaSync's side.
@@ -1976,3 +2099,157 @@ class the audit just found here would move bugs rather than fix them.
 > negotiation all reproduce deterministically in the harness, but none of it has been exercised on
 > a live client under real chat-throttle conditions. That is the gap between my `[LIB-CLAIM]` and
 > a `[VERIFIED]` I would be willing to write myself.
+
+---
+
+## 7. Price library (proposed, does not exist yet)
+
+**Status:** proposed. Nothing built, nothing investigated, no library-side work started.
+
+**Placed at the end rather than as §5 on purpose** — §5 and §6 are referenced by number from a dozen
+places in the replies above, and renumbering them would break the conversation this document exists
+to hold.
+
+Working name `LibItemValue-1.0`; the real one is the library author's call.
+
+### 7.1 What it is and why
+
+Full design in [GUILD_STORE.md](GUILD_STORE.md) §4.1. Summary, so this section stands alone:
+
+TOGBankClassic is growing a storefront — members order items from the guild bank, the banker fills
+them C.O.D., and donations are valued into contribution points. All of that needs one thing the
+addon does not have: **what is this item worth?**
+
+That capability already exists inside **TOGProfessionMaster** — the auction-house integration *and*
+the vendor integrations for the other price addons. The decision taken is to **extract it into a
+standalone library** that TOGPM, TOGBankClassic and later TOGTools all consume, rather than
+rebuilding it in each. The library also takes on the AH scan itself, so it is self-sufficient on a
+machine with no third-party price addon installed.
+
+The boundary, and it is the important line in this section:
+
+> **The library answers "what is this item worth". It never answers "what do we charge for it".**
+
+Officer price overrides, the guild-wide discount, the donation-point rate and any rank-based pricing
+are all TOGBankClassic's, all guild-synced, and none of them belong in the library. It reports the
+market; the consumer decides policy.
+
+### 7.2 Why this is not the usual `ACQ-001` situation
+
+Every other section here is about a library that exists and a consumer that already depends on it.
+This one asks for work that has not started, so it is worth being explicit about why it is not just
+"TOGBank should write its own":
+
+Rebuilding it in TOGBankClassic means re-implementing the AH scan **plus** every third-party price
+integration TOGPM already carries — then maintaining two copies of all of it. `LIBREQ-ACQ-001` was a
+**single** vendored library and it still ended up shipping at `MINOR 2` while the standalone reached
+5, silently missing the fix that made a refused send report as failed. Several integrations, each
+tracking a third party's API, is the same bet at worse odds.
+
+### 7.3 `LIBREQ-PRICE-001` — lookup **[NEED]**
+
+Given an item, return what it is worth.
+
+- **Keyed by `itemID`**, not by name. Same-name variants are a solved-and-documented problem in this
+  addon (`REQ-001`) and a name-keyed lookup would undo it.
+- **Returns copper**, as an integer.
+- **A named statistic on request** — minimum buyout, market value, historical, whatever the sources
+  support — rather than one number of the library's choosing. This is a real requirement, not
+  flexibility for its own sake: `GUILD_STORE.md` §4.7 wants a deliberately *conservative* figure for
+  valuing donations, because a thin realm's AH can be inflated and then donated for inflated credit,
+  while the sell side may want a different one. One consumer needs two different answers about the
+  same item, and only this shape provides it.
+
+### 7.4 `LIBREQ-PRICE-002` — provenance on every answer **[NEED]**
+
+Every returned value carries **which source it came from, which statistic it is, and how old it is**.
+
+Not diagnostic garnish. This number is shown to a guild member as an estimate before they order, and
+an estimate whose age is unknown is worse than no estimate — it is a number that looks authoritative
+and is not. It is also the only way a wrong price can be debugged after the fact rather than argued
+about.
+
+### 7.5 `LIBREQ-PRICE-003` — "no data" must be distinct from "zero" **[NEED]**
+
+A lookup with no data must say so, distinguishably from a genuine zero.
+
+If the two collapse, an unpriced item silently prices at 0 and the guild bank gives it away for
+free. This is the same rule ItemDB, DeltaSync and this addon converged on in §5.3 — `nil` means
+*cannot answer*, never *the answer is nothing*.
+
+### 7.6 `LIBREQ-PRICE-004` — a bulk form **[NEED]**
+
+Resolve many items in one call.
+
+A banker publishing an estimate list resolves every distinct item in the bank at once — thousands of
+rows on a large guild bank. One call per row through a slow path would make the feature unusable on
+exactly the guilds that most want it.
+
+### 7.7 `LIBREQ-PRICE-005` — scan state and control **[NEED]**
+
+Because the library owns the scan, consumers need to see and drive it:
+
+- **Is a scan running, and how far through** — the AH scan is slow and throttled, so a consumer
+  showing "resolving prices…" needs to know whether to wait or give up.
+- **When did the last one finish** — a banker publishing estimates off a three-week-old scan should
+  be told, and so should the member reading them.
+- **Start one**, and **be notified when it completes**, so a consumer can refresh rather than poll.
+
+### 7.8 `LIBREQ-PRICE-006` — which sources are live **[NEED]**
+
+Report which sources are actually available and enabled on this machine.
+
+Without it the UI cannot distinguish "this item has no price" from "you have no price data at all",
+and those need very different messages to the user.
+
+### 7.9 `LIBREQ-PRICE-007` — realm and faction scoping, stated **[NEED]**
+
+The contract must state explicitly how data is scoped. Price data that silently crosses realms or
+factions is wrong in a way nobody notices until the numbers merely look strange, which is the worst
+kind of wrong.
+
+### 7.10 `LIBREQ-PRICE-008` — packaging: standalone only **[NEED]**
+
+Ships **standalone**, declared as a required dependency the way `GuildRoster` and
+`AceCommQueue-1.0` already are in [TOGBankClassic.toc](../TOGBankClassic.toc) — its own TOC, its own
+`## SavedVariables:` for the scan data, CurseForge auto-install, LibStub for API versioning.
+
+**It must not also be embedded** in any consumer's `Libs/` folder. An embedded copy's TOC is never
+read, so its SavedVariables would silently not exist — and a vendored copy is `LIBREQ-ACQ-001`
+happening again.
+
+**Store derived per-item statistics, not raw auction rows.** A full Era scan is tens of thousands of
+rows. Beyond the obvious size problem, per-item statistics are what every source has in common —
+TSM does not hand over raw auctions either — so this is what makes one interface over many sources
+possible at all.
+
+### 7.11 `LIBREQ-PRICE-009` — the library owns its configuration UI **[NEED]**
+
+A minimal settings panel in the library: which sources are enabled, their precedence, the default
+statistic, and `Scan Now` with progress and a last-scan timestamp.
+
+In the library rather than in each consumer, because the alternative is TOGPM, TOGBankClassic and
+later TOGTools each growing their own copy of the same panel, disagreeing about the same settings on
+the same machine.
+
+Scope it tightly — a settings panel, not a product. AceConfig is the obvious way and costs nothing
+new; every addon in this ecosystem already depends on Ace3.
+
+**The line that must not blur:** this panel configures *where numbers come from* on this machine and
+is a per-account user preference. Guild policy — discount, overrides, donation rate, rank tiers — is
+TOGBankClassic's and guild-synced, and none of it goes near this panel.
+
+### 7.12 Open, and unknown to TOGBankClassic
+
+**[NEED]** — no investigation done from this side, and none possible without reading TOGPM.
+
+1. **How much of this already exists in TOGPM?** How separable are the adapters from its own
+   storage, and how complete is the AH scanner there — a working scanner to move, or one to write?
+   That is the difference between a fortnight and a season, and it is the only thing that would
+   reopen "a versioned public API on TOGPM" as a stopgap instead.
+2. Is any of it public today?
+3. Is the data realm- and faction-scoped?
+4. Does a bulk form exist, or would it need adding?
+
+Nothing in §7 should be treated as settled until question 1 is answered. It is written as a target
+to aim at, not as a description of anything that exists.

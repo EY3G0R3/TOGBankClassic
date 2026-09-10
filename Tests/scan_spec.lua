@@ -171,7 +171,11 @@ describe("Scan:ScanAll", function()
 		assert.equal(987654, Scan:ScanAll().money)
 	end)
 
+	-- dualWrite is turned off explicitly. It is inert while inventoryV2 is off, and INV2 step 9 made
+	-- inventoryV2 default ON -- so this example was previously passing because of the PARENT's
+	-- default rather than because of anything it set.
 	it("omits the legacy shape while dualWrite is off", function()
+		TOGBankClassic_Switches:Set("dualWrite", false)
 		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
 		assert.is_nil(Scan:ScanAll().legacy)
 	end)

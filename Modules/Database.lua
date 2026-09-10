@@ -25,6 +25,11 @@ function TOGBankClassic_Database:Init()
 				P2P = false,
 				BANK = false,
 				ITEM = false,
+				-- DEBUG-001: must match DEBUG_CATEGORY in Constants.lua and CATEGORY_META in
+				-- Options.lua. All three are maintained by hand and nothing else asserts they
+				-- agree, so a category added to one and not the others is invisible.
+				SYSTEM = false,
+				FULFILL = false,
 			},
 			debugTags = {},  -- per-category tag overrides: debugTags["P2P"]["OFFER"] = false
 			showUncategorizedDebug = true,  -- Show legacy debug messages by default
@@ -76,7 +81,10 @@ function TOGBankClassic_Database:PurgeLinklessGearGhosts()
 			   and TOGBankClassic_Item:ItemClassNeedsLink(item.ID) == true then
 				table.remove(arr, i)
 				removed = removed + 1
-				TOGBankClassic_Output:Debug("DATABASE", "MIGRATION",
+				-- DEBUG-001: the registered tag is MIGRATE, not MIGRATION. An unrecognised tag is
+				-- treated as the format string, so this printed "[GHOST-PURGE] Removed linkless
+				-- gear ID=%d from %s.%s" followed by the real arguments as data.
+				TOGBankClassic_Output:Debug("DATABASE", "MIGRATE",
 					"[GHOST-PURGE] Removed linkless gear ID=%d from %s.%s",
 					item.ID, altName, label)
 			end
@@ -84,7 +92,7 @@ function TOGBankClassic_Database:PurgeLinklessGearGhosts()
 		return removed
 	end
 
-	for guildName, guildData in pairs(self.db.faction) do
+	for _, guildData in pairs(self.db.faction) do
 		if guildData and guildData.alts then
 			for altName, alt in pairs(guildData.alts) do
 				if type(alt) == "table" then
@@ -101,8 +109,9 @@ function TOGBankClassic_Database:PurgeLinklessGearGhosts()
 				end
 			end
 		end
-		-- guildName intentionally not used in log (kept available for future per-guild reporting)
-		_ = guildName
+		-- NS-001: this used to read `_ = guildName`, which writes a bare GLOBAL `_` on every
+		-- iteration purely to mark the value as deliberately unused. The loop variable already
+		-- carries that intent, so the write bought nothing and leaked a global.
 	end
 
 	-- Count linkless-gear-suspect entries that we could NOT confidently classify
@@ -232,11 +241,16 @@ function TOGBankClassic_Database:ResetPlayer(name, player)
 		return
 	end
 
-	if not self.db.faction[name].alts[player] then
+	-- DB-002: guard the GUILD record, not just the alt. `faction[name]` is nil for any guild the
+	-- addon has never stored, and indexing `.alts` on it raised
+	-- "attempt to index field '?' (a nil value)" -- a Lua error where the correct answer is
+	-- "nothing to reset".
+	local guild = self.db.faction[name]
+	if not guild or not guild.alts or not guild.alts[player] then
 		return
 	end
 
-	self.db.faction[name].alts[player] = {}
+	guild.alts[player] = {}
 
 	TOGBankClassic_Output:Response("Reset Player Database")
 end
@@ -324,27 +338,43 @@ function TOGBankClassic_Database:Load(name)
 	C_Timer.After(0.5, function()
 					-- Characters scanned before v0.6.0 may have bank/bags without slots
 		if db.alts then
-			for name, alt in pairs(db.alts) do
+			for altName, alt in pairs(db.alts) do
 				if type(alt) == "table" then
 					if alt.bank and not alt.bank.slots then
 						alt.bank.slots = { count = 0, total = 0 }
-					TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: initialized bank.slots for %s", name)
+						TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: initialized bank.slots for %s", altName)
 					end
 					if alt.bags and not alt.bags.slots then
 						alt.bags.slots = { count = 0, total = 0 }
-					TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: initialized bags.slots for %s", name)
+						TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: initialized bags.slots for %s", altName)
 					end
 
-					-- This enables pull-based protocol for existing alt data
-					if not alt.inventoryHash and alt.bank and alt.bags then
-						local money = alt.money or 0
-						alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.bank, alt.bags, money)
-					TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: computed inventory hash for %s (hash=%08x)", name, alt.inventoryHash)
-					end
+					-- HASH-CANON-003: THE MIGRATION NO LONGER MINTS AN INVENTORY HASH, and the whole
+					-- block that did -- the aggregation, the money read, the stamp -- is deleted
+					-- rather than left unreached.
+					--
+					-- It existed so "a migrated record advertises the same pair a scanned one does",
+					-- and the argument was sound while a hash was treated as a digest of content.
+					-- It is wrong once a hash is the IDENTITY OF A VERSION: this migration runs over
+					-- SavedVariables that mostly describe OTHER PEOPLE'S bank characters, received
+					-- over the wire. Minting one for those is this client inventing an identity for
+					-- data it never read -- the same class as the two mutation sites deleted in
+					-- HASH-CANON-002, and it travels the same way, because we then advertise our
+					-- invented number and peers adopt it.
+					--
+					-- WHAT HAPPENS INSTEAD: nothing, deliberately. A record with no canon advertises
+					-- no canon and is re-requested from the client that can author one; for our own
+					-- characters that is the next bank scan, now the only place a canon is born.
+					-- Self-correcting, and it cannot go quiet while wrong -- an invented hash is
+					-- indistinguishable from a real one and never heals.
+					--
+					-- MIGRATE-001 / AUDIT finding 3 and finding 25 were both about WHICH ARGUMENTS
+					-- this call site passed. The call site is gone, so those are moot here rather
+					-- than resolved -- do not read this deletion as agreeing with either.
 
 					if alt.inventoryHash and not alt.inventoryUpdatedAt then
 						alt.inventoryUpdatedAt = alt.version or GetServerTime()
-						TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: backfilled inventoryUpdatedAt for %s (ts=%s)", name, tostring(alt.inventoryUpdatedAt))
+						TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: backfilled inventoryUpdatedAt for %s (ts=%s)", altName, tostring(alt.inventoryUpdatedAt))
 					end
 				end
 			end
@@ -582,7 +612,7 @@ function TOGBankClassic_Database:GetGuildDeltaSupport(name)
 	local currentTime = GetServerTime()
 
 	-- Only count members seen in last 10 minutes (considered online)
-	for sender, info in pairs(db.guildProtocolVersions) do
+	for _, info in pairs(db.guildProtocolVersions) do
 		if info and info.lastSeen and (currentTime - info.lastSeen) < 600 then
 			total = total + 1
 			if info.supportsDelta then

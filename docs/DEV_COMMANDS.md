@@ -79,6 +79,42 @@ To promote a command back to user-facing, just remove its name from `DEV_COMMAND
   seconds. The `whisper-not-found` counter only moves when a whisper actually bounces, so it
   stays at 0 in normal play.
 
+### Tuple inventory (INV2)
+
+See [INVENTORY_V2.md](INVENTORY_V2.md) for the design these two operate on.
+
+- **`/togbank dev switches [<name> on|off]`** — with no argument, list every switch in
+  `TOGBankClassic_Switches.registry` with its live state, description, and whether the value is
+  the default or was explicitly set. With arguments, set one.
+
+  The state shown is the **live** answer, not the stored value: `dualWrite` reads OFF while
+  `inventoryV2` is off, whatever its own stored value says, because that is what the code
+  actually does. Showing the stored value would claim the legacy DB is being kept current when
+  V2 is not even running.
+
+  Switches are per-account (`db.global.switches`) and survive a reload. A half-migrated account —
+  V2 on for one character, off for another — would write both storage formats from one machine,
+  which is why they are not per-character.
+
+- **`/togbank dev compare`** — diff the V2 tuple store against the legacy inventory, on live data.
+  Run it on a banker with `inventoryV2` on, after opening the bank **and closing it** -- the scan
+  fires on `BANKFRAME_CLOSED`, not on open, and bags alone trigger nothing (DOC-005). Leaving the
+  bank open scans nothing and this command then reports an empty V2 store.
+
+  Comparison is on **per-item-ID totals**, not rows. Random-suffix variants split into separate V2
+  rows that a legacy link key may have merged, so comparing row counts would flag every
+  suffixed item in the game as a divergence. Per-ID totals are the only thing the two encodings
+  actually promise to agree on.
+
+  It reports one of: `No divergence` (every total agrees), a list of mismatches in the form
+  `<alt> item <id>: legacy=<n> v2=<n>` (capped at 15), or a reason it could not compare —
+  `inventoryV2 is OFF`, an empty V2 store, or no character present in both. It never reports
+  agreement it did not check; a green result from a diagnostic that compared nothing is exactly
+  what a switch-to-default-on would be wrongly justified by.
+
+  Both stores are written inside a single `Bank:Scan` call, so a divergence here is a real
+  encoding bug, not a stack that moved between passes.
+
 ### Protocol / network
 
 - **`/togbank dev protocol`** — protocol version distribution across guild members; delta-sync adoption %.
@@ -96,7 +132,21 @@ To promote a command back to user-facing, just remove its name from `DEV_COMMAND
 
 ### Testing
 
-- **`/togbank dev test [test-name|all|help]`** — run the test suite in [Modules/Tests.lua](../Modules/Tests.lua). `/togbank dev test help` lists individual test names.
+- **`/togbank dev test` no longer exists**, and neither does `Modules/Tests.lua`. Both were deleted
+  in the INV2 step 10 sweep: that harness was written almost entirely against `ComputeDelta` /
+  `ApplyDelta` / `ApplyItemDelta`, which went with the legacy link-format wire path under the
+  no-backwards-compatibility directive, so most of it was testing functions that no longer exist.
+  The offline suite replaces it and is the better tool anyway: it runs without a client, without a
+  guild, and without waiting for a sync. From the addon root:
+
+  ```sh
+  lua Tests/wowapi/run.lua
+  ```
+
+  Do **not** re-add an in-game test command to stand in for it. The one thing an in-game harness can
+  do that the offline suite cannot is exercise real client APIs against real data, and that is what
+  the diagnostic commands above are for: `dev compare`, `dev hashdebug` and `dev rostercheck` each
+  answer a specific question about live state rather than re-running assertions.
 
 ### Logging
 

@@ -76,6 +76,7 @@ function TOGBankClassic_UI_Donations:DrawWindow()
 	end)
 
 	self.Window = donations
+	TOGBankClassic_UI:ApplyWindowAlpha("donations", donations)
 
 	local content = TOGBankClassic_UI:Create("SimpleGroup")
 	content:SetLayout("Table")

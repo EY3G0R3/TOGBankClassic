@@ -40,7 +40,9 @@ local function registerBagEvents()
 	---@diagnostic disable-next-line: undefined-field
 	eventFrame:RegisterEvent("BANKFRAME_CLOSED")
 	---@diagnostic disable-next-line: undefined-field
-	eventFrame:SetScript("OnEvent", function(_, event, ...)
+	-- The handler refreshes everything regardless of which event fired, so neither the event name
+	-- nor its payload is read. Named `_` so that is explicit rather than looking like an oversight.
+	eventFrame:SetScript("OnEvent", function()
 		-- Only process if highlighting is enabled
 		if ItemHighlight.enabled then
 			-- Throttle refresh to prevent Bagnon execution timeout during rapid BAG_UPDATE spam
@@ -218,18 +220,35 @@ function ItemHighlight:IsItemNeeded(itemName, itemID)
 	return self.neededItems[itemName] ~= nil
 end
 
+--- Resolve a button's icon texture without assuming the button has a NAME.
+---
+--- AUDIT FINDING 10 (HIGHLIGHT-002), first half. The old spelling was
+--- `button.icon or button.Icon or _G[button:GetName().."IconTexture"]`, which raises when
+--- `GetName()` returns nil -- and several bag addons create anonymous buttons.
+---
+--- The finding said Lua "evaluates the concatenation even as the third `or` operand". IT DOES NOT:
+--- `or` short-circuits, so the concatenation is reached ONLY when a button carries neither `.icon`
+--- nor `.Icon`. That is why the crash is the RARER branch -- an anonymous button with `.icon`, the
+--- near-universal convention, never evaluates it. The branch that actually fires is in
+--- ClearAllOverlays below.
+local function iconOf(button, name)
+	return button.icon or button.Icon or (name and _G[name .. "IconTexture"])
+end
+
 -- Apply grey desaturation to a button
 function ItemHighlight:ApplyOverlay(button)
 	if not button or not button:IsVisible() then
 		return
 	end
+	local name = button:GetName()
 	-- Get the icon texture (works for both default and Bagnon buttons)
-	local icon = button.icon or button.Icon or _G[button:GetName().."IconTexture"]
+	local icon = iconOf(button, name)
 	if icon then
 		-- Grey out by reducing color saturation (use very dark grey)
 		icon:SetVertexColor(0.2, 0.2, 0.2)
 	end
-	self.overlays[button:GetName() or tostring(button)] = true
+	-- Store the BUTTON ITSELF, not `true`. See ClearAllOverlays for why the key alone is not enough.
+	self.overlays[name or tostring(button)] = button
 end
 
 -- Remove grey desaturation from a button
@@ -237,20 +256,37 @@ function ItemHighlight:RemoveOverlay(button)
 	if not button then return end
 	local buttonName = button:GetName()
 	-- Reset texture color to normal (FULL COLOR)
-	local icon = button.icon or button.Icon or _G[buttonName.."IconTexture"]
+	local icon = iconOf(button, buttonName)
 	if icon then
 		icon:SetVertexColor(1, 1, 1)
 	end
 	self.overlays[buttonName or tostring(button)] = nil
 end
 
--- Clear all overlays
+--- Clear all overlays.
+---
+--- AUDIT FINDING 10 (HIGHLIGHT-002), second half -- and this is the branch that ACTUALLY FIRES,
+--- where the crash above is the rare one.
+---
+--- This used to recover the button from its key: `_G[buttonKey] or buttonKey`, then skip the result
+--- if it was still a string. For a NAMED button that works. For an anonymous one the key is
+--- `tostring(button)` -- "table: 0x...", which is not a global -- so the lookup returned nil, the
+--- fallback handed back the key string, the type test skipped it, and **the item stayed dimmed for
+--- the rest of the session with no way to undo it.** Every entry point that clears highlighting
+--- (RefreshHighlighting, disabling the feature, a request being filled) silently did nothing for
+--- those buttons.
+---
+--- The fix is to stop round-tripping an object through a string. `ApplyOverlay` stores the button,
+--- so this hands the real object straight to RemoveOverlay and the name is never needed. Note the
+--- author had ALREADY anticipated a nil name one line further down -- `[button:GetName() or
+--- tostring(button)]` -- so the guard existed; it was just placed downstream of the thing it was
+--- written for.
+---
+--- Assigning nil to the current key inside `pairs` is explicitly permitted in Lua 5.1, which is what
+--- RemoveOverlay does as it goes.
 function ItemHighlight:ClearAllOverlays()
-	for buttonKey, _ in pairs(self.overlays) do
-		local button = _G[buttonKey] or buttonKey
-		if type(button) ~= "string" then
-			self:RemoveOverlay(button)
-		end
+	for _, button in pairs(self.overlays) do
+		self:RemoveOverlay(button)
 	end
 	self.overlays = {}
 end
@@ -589,20 +625,64 @@ function ItemHighlight:UpdateBagnonHighlighting()
 	return true
 end
 
+--- Find the ContainerFrame currently RENDERING a bag, the way Blizzard does.
+---
+--- AUDIT FINDING 29 (HIGH). Both call sites used to derive the name arithmetically --
+--- `containerID = (bag == 0) and 1 or (bag + 1)` -- which assumes a fixed bag-to-frame mapping.
+--- CLASSIC ERA HAS NO SUCH MAPPING. A bag is rendered into the first frame that is not currently
+--- shown, verified in Blizzard's own source for this flavour:
+---
+---     -- Blizzard_UIPanels_Game/Classic/ContainerFrame_Shared.lua:476-481
+---     function ContainerFrame_GetOpenFrame()
+---         for i=1, NUM_CONTAINER_FRAMES, 1 do
+---             local frame = _G["ContainerFrame"..i];
+---             if ( not frame:IsShown() ) then return frame; end
+---
+--- and Blizzard NEVER derives the name anywhere: `ToggleBag` (:126-138), `OpenBag` (:331-341),
+--- `CloseBag` (:351-358) and `IsBagOpen` (:361-369) all SEARCH, comparing
+--- `frame:IsShown() and frame:GetID() == id`. The arithmetic only holds when bags happen to have
+--- been opened in ascending order starting from the backpack.
+---
+--- FAILURE THIS PRODUCED: open bag 1 with the backpack closed and bag 1 renders into
+--- ContainerFrame1, while the addon looks up ContainerFrame2 -- not shown, so ApplyOverlay bails on
+--- its IsVisible guard and NOTHING IS HIGHLIGHTED, with no error. Open bag 2 then bag 1 and it is
+--- worse: the lookups cross, so one bag is highlighted using another bag's slot count.
+---
+--- AND THE SYMPTOM WAS ALREADY ON RECORD, ATTRIBUTED ELSEWHERE. The ELVUI-001 note above describes
+--- "the checkbox ticks and nothing happens" -- the identical silent signature, because both failures
+--- end at the same IsVisible guard. ElvUI is a real cause of that; it was not the only one, and
+--- reports from stock-UI users would have stayed unexplained.
+---
+--- `frame.size` is set by ContainerFrame_GenerateFrame (:713-714), so the frame carries the slot
+--- count it was actually built with -- which is the count the button numbering below is relative to.
+--- @return table|nil frame, number numSlots
+local function findContainerFrame(bag)
+	local n = NUM_CONTAINER_FRAMES or 13
+	for i = 1, n do
+		local frame = _G["ContainerFrame" .. i]
+		if frame and frame:IsShown() and frame:GetID() == bag then
+			return frame, frame.size or C_Container.GetContainerNumSlots(bag) or 0
+		end
+	end
+	return nil, 0
+end
+
 -- Update highlighting for default WoW bags
 function ItemHighlight:UpdateDefaultBagHighlighting()
 	-- Iterate through all bags
 	for bag = 0, 4 do
-		local containerID = (bag == 0) and 1 or (bag + 1)
-		local numSlots = C_Container.GetContainerNumSlots(bag)
+		-- Slot count comes from the FRAME, not the bag: the button numbering below is relative to
+		-- the frame that is actually rendering this bag, and taking the two from different places
+		-- is how a reversal lands on the wrong button.
+		local frame, numSlots = findContainerFrame(bag)
+		local frameName = frame and frame:GetName()
 
 		-- Iterate through API slot numbers (1 to numSlots)
 		for apiSlot = 1, numSlots do
 			-- WoW bag buttons are ordered OPPOSITE of API slots
 			-- API slot 1 = button slot numSlots, API slot 2 = button slot numSlots-1, etc.
 			local buttonSlot = numSlots - apiSlot + 1
-			local buttonName = string.format("ContainerFrame%dItem%d", containerID, buttonSlot)
-			local button = _G[buttonName]
+			local button = frameName and _G[frameName .. "Item" .. buttonSlot]
 			if button then
 				local itemInfo = C_Container.GetContainerItemInfo(bag, apiSlot)
 				if itemInfo then
@@ -621,8 +701,33 @@ end
 function ItemHighlight:UpdateBankHighlighting()
 	if not BankFrame or not BankFrame:IsVisible() then return end
 
-	-- Bank slots (1-28)
-	for slot = 1, 28 do
+	-- BANKSLOT-001: ASK THE CLIENT. Both loops in this function hardcoded numbers, and MEASUREMENT
+	-- ON A LIVE CLASSIC ERA CLIENT (2026-09-09) proved both wrong:
+	--
+	--   NUM_BANKGENERIC_SLOTS = 24   (this loop said 28 -- four slots too many)
+	--   NUM_BAG_SLOTS         = 4
+	--   NUM_BANKBAGSLOTS      = 6    (the bag loop below said 5..11, i.e. seven -- one too many)
+	--
+	-- Neither overran harmfully: GetContainerItemInfo returns nil for a slot that does not exist and
+	-- GetBankSlotButton finds no BankFrameItem25. So this was wasted work and a false statement in a
+	-- comment rather than a visible defect -- but "the numbers are wrong and nothing notices" is the
+	-- state a real defect hides in, and the SHAPE was wrong regardless of the values because this
+	-- addon ships Era and TBC from one source and the two need not agree.
+	--
+	-- Blizzard's own BankFrame.lua does exactly this: `for i = 1, NUM_BANKGENERIC_SLOTS`, and
+	-- `self.size = NUM_BANKGENERIC_SLOTS`. Taking a count from anywhere but the thing being iterated
+	-- is the same mistake findContainerFrame above exists to prevent.
+	--
+	-- THE CONSTANTS ARE ENGINE-SIDE and cannot be read from Blizzard's source at all: Constants.lua
+	-- has `NUM_BANKGENERIC_SLOTS = Constants.InventoryConstants.NumGenericBankSlots`, and the
+	-- generated documentation defines THAT as `Value = BANK_NUM_GENERIC_SLOTS` -- a symbol the client
+	-- supplies. The docs point at the constant and the constant points at the docs, which is why this
+	-- needed a live client and why the harness refused to guess it (contract section 9).
+	--
+	-- The fallbacks are the MEASURED Era values, used only if this somehow runs before
+	-- Blizzard_FrameXMLBase sets the globals. TBC may differ and that costs nothing: each client
+	-- reads its own constant, so the fallback is never the cross-flavour answer.
+	for slot = 1, (NUM_BANKGENERIC_SLOTS or 24) do
 		local itemInfo = C_Container.GetContainerItemInfo(-1, slot)
 		if itemInfo then
 			local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
@@ -636,8 +741,14 @@ function ItemHighlight:UpdateBankHighlighting()
 			end
 		end
 	end
-	-- Bank bag slots (5-11)
-	for bag = 5, 11 do
+	-- BANKSLOT-001: bank bags are the containers AFTER the carried bags, and both ends come from the
+	-- client. Blizzard's BankFrame.lua:245 is the same expression:
+	--   for i = NUM_BAG_SLOTS+1, (NUM_BAG_SLOTS + NUM_BANKBAGSLOTS)
+	-- On Classic Era that is 5..10. This said `5, 11` -- a hardcoded start that happened to be right
+	-- and a hardcoded end that was one too many, with a comment stating the wrong range as fact.
+	local firstBankBag = (NUM_BAG_SLOTS or 4) + 1
+	local lastBankBag  = (NUM_BAG_SLOTS or 4) + (NUM_BANKBAGSLOTS or 6)
+	for bag = firstBankBag, lastBankBag do
 		local numSlots = C_Container.GetContainerNumSlots(bag)
 		for slot = 1, numSlots do
 			local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
@@ -657,12 +768,21 @@ function ItemHighlight:UpdateBankHighlighting()
 end
 
 -- Get button frame for a bag slot
+--
+-- AUDIT FINDING 29: this derived the frame name from the bag id, which Classic Era does not
+-- guarantee -- see findContainerFrame above for the Blizzard source. Now resolved by search.
+--
+-- AUDIT FINDING 9 (HIGHLIGHT-001) is subsumed here rather than fixed separately. That finding was
+-- that bank bags dim the wrong slots because this path applied NO button-order reversal while
+-- UpdateDefaultBagHighlighting applied one, and the two could not both be right. They are now one
+-- resolution and one reversal, so the divergence has nowhere left to live: `slot` arrives as an API
+-- slot and is converted here exactly as the bag path converts it.
 function ItemHighlight:GetBagSlotButton(bag, slot)
-	-- Classic Era uses direct frame names
-	-- Bag 0 = ContainerFrame1, Bag 1-4 = ContainerFrame2-5
-	local containerID = (bag == 0) and 1 or (bag + 1)
-	local frameName = string.format("ContainerFrame%dItem%d", containerID, slot)
-	return _G[frameName]
+	local frame, numSlots = findContainerFrame(bag)
+	if not frame or numSlots <= 0 then return nil end
+	-- Button numbering runs opposite to API slot numbering, and is relative to THIS frame's size.
+	local buttonSlot = numSlots - slot + 1
+	return _G[frame:GetName() .. "Item" .. buttonSlot]
 end
 
 -- Get button frame for a bank slot

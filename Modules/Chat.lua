@@ -59,6 +59,120 @@ Comms system breakdown as of 2026-04-01:
 
 ]]
 
+--- Every comm prefix this addon RECEIVES on. One list, iterated to register and again to verify.
+---
+--- Deliberately a local list rather than derived from `COMM_PREFIX_DESCRIPTIONS`: that is a bare
+--- global, and NS-001 is a confirmed live case of another addon clobbering one of ours. Deriving
+--- registration from a table a third party can overwrite would mean silently receiving nothing.
+--- `chatcommand_spec` asserts this list and that table hold the same set, so the two cannot drift.
+---
+--- SYNC-010: `togbank-rm` is a dedicated prefix for request mutations (add/cancel/complete) so it
+--- gets its own throttle bucket -- BULK snapshot syncs must not block ALERT mutations.
+TOGBankClassic_Chat.COMM_PREFIXES = {
+	"togbank-hl",
+	"togbank-hlr",
+	"togbank-d4",
+	"togbank-rm",
+	"togbank-rd",
+	"togbank-r",
+	"togbank-rr",
+	"togbank-state",
+	"togbank-nochange",
+	"togbank-ri",
+	"togbank-rd2",
+}
+
+--- Documented values of `Enum.RegisterAddonMessagePrefixResult`, used only if the client does not
+--- expose the enum. Blizzard's generated docs for the classic_era tree give these in
+--- `ChatConstantsDocumentation.lua`.
+local PREFIX_RESULT_FALLBACK = { Success = 0, DuplicatePrefix = 1, InvalidPrefix = 2, MaxPrefixes = 3 }
+
+--- LIBREQ-ALL-005. Report a comm prefix the client refused to register.
+---
+--- AceComm registers each prefix on our behalf inside `RegisterComm` and throws the result away, so
+--- re-registering here is the only way to read the verdict. That is not a side effect: the client's
+--- prefix set is already what it is, and `DuplicatePrefix` is the expected answer.
+---
+--- THE RETURN IS AN ENUM -- never a boolean, never nil (`ChatInfoDocumentation.lua` declares the
+--- result `Nilable = false`). So `if not C_ChatInfo.RegisterAddonMessagePrefix(p)` can NEVER fire,
+--- because `Success` is `0` and `0` is truthy in Lua, and `result == false` never matches because no
+--- boolean is ever returned. Both read as guards and are dead code. This names the values instead.
+---
+--- `DuplicatePrefix` IS NOT A FAILURE and must never be loud: AceComm always registers first, so we
+--- get it for every prefix on every login, forever. Warning on it would cry wolf eleven times a
+--- session and be trained out -- which is how a real refusal would then go unnoticed. Only
+--- `InvalidPrefix` (our own constant is malformed) and `MaxPrefixes` (a client-wide cap a player
+--- running many addons can genuinely hit) mean anything.
+function TOGBankClassic_Chat:VerifyCommPrefixes()
+	local register = C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix
+	if type(register) ~= "function" then
+		TOGBankClassic_Output:Debug("PROTOCOL", "PREFIX",
+			"C_ChatInfo.RegisterAddonMessagePrefix is unavailable - prefix registration cannot be verified")
+		return
+	end
+
+	local RESULT = (Enum and Enum.RegisterAddonMessagePrefixResult) or PREFIX_RESULT_FALLBACK
+	local invalid, capped = {}, {}
+
+	for _, prefix in ipairs(self.COMM_PREFIXES) do
+		local result = register(prefix)
+		if result == RESULT.InvalidPrefix then
+			invalid[#invalid + 1] = prefix
+		elseif result == RESULT.MaxPrefixes then
+			capped[#capped + 1] = prefix
+		end
+	end
+
+	-- MaxPrefixes first: it is the one a player can act on, and the one that silently breaks sync.
+	if #capped > 0 then
+		TOGBankClassic_Output:Error(
+			"This client has hit its limit on addon message prefixes, so TOGBank cannot receive: %s. " ..
+			"Guild bank data will not sync until you disable another addon and reload.",
+			table.concat(capped, ", "))
+	end
+	if #invalid > 0 then
+		TOGBankClassic_Output:Error(
+			"TOGBank tried to register a malformed comm prefix and the client refused it: %s. " ..
+			"This is an addon bug - please report it.",
+			table.concat(invalid, ", "))
+	end
+	if #capped == 0 and #invalid == 0 then
+		TOGBankClassic_Output:Debug("PROTOCOL", "PREFIX", "All %d comm prefixes registered", #self.COMM_PREFIXES)
+	end
+end
+
+--- HASH-CANON-001 rule 7: ORDERING, DECIDED IN ONE PLACE. Should an arriving tuple payload for
+--- `altName`, authored at `wireUpdatedAt`, replace what we already hold?
+---
+--- THIS GUARD DID NOT EXIST AND ITS ABSENCE IS A DATA-LOSS BUG, reported from a live guild: a V2
+--- record replaced by older data. The legacy receive path has always had the equivalent check
+--- (`Guild.lua:3327` and `:3362` refuse a record that is not newer), but the tuple path applied
+--- EVERY payload unconditionally. With several peers relaying the same alt, whichever snapshot
+--- arrived LAST won regardless of when it was authored, so a peer holding a days-old copy could
+--- overwrite a fresh one and nothing anywhere said so.
+---
+--- It could not have been written before the wire carried the author's time, which is why the two
+--- ship together: the receiver used to stamp its own arrival time, so there was no honest number to
+--- compare -- every record looked like it had been published the instant we heard about it.
+---
+--- A NIL `wireUpdatedAt` IS ACCEPTED, deliberately. It means the author published no time: a client
+--- between builds, or a record predating the field. Refusing those would freeze that alt
+--- permanently rather than merely leaving it unordered, and unordered is what we already had.
+--- @param altName string normalized alt name
+--- @param wireUpdatedAt number|nil the AUTHOR'S publish time, from the payload
+--- @return boolean
+function TOGBankClassic_Chat:ShouldApplyTuplePayload(altName, wireUpdatedAt)
+	if not wireUpdatedAt then return true end
+	local info = TOGBankClassic_Guild and TOGBankClassic_Guild.Info
+	local existing = info and info.alts and info.alts[altName]
+	if not existing then return true end
+	local held = existing.inventoryUpdatedAt or existing.version
+	if not held then return true end
+	-- `>=` rather than `>`: a re-send of the version we already hold is harmless and re-applying it
+	-- costs nothing, while treating equal as stale would drop a legitimate retry after a lost chunk.
+	return wireUpdatedAt >= held
+end
+
 function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[INIT] TOGBankClassic_Chat:Init() starting")
 	TOGBankClassic_Core:RegisterChatCommand("togbank", function(input)
@@ -79,50 +193,13 @@ function TOGBankClassic_Chat:Init()
 	self.hashBroadcastTimer = nil
 	self.HASH_BROADCAST_BATCH_DELAY = 0.15  -- seconds to batch incoming broadcasts
 
-	TOGBankClassic_Core:RegisterComm("togbank-hl", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
+	for _, prefix in ipairs(TOGBankClassic_Chat.COMM_PREFIXES) do
+		TOGBankClassic_Core:RegisterComm(prefix, function(p, message, distribution, sender)
+			TOGBankClassic_Chat:OnCommReceived(p, message, distribution, sender)
+		end)
+	end
 
-	TOGBankClassic_Core:RegisterComm("togbank-hlr", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-d4", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	-- SYNC-010: Dedicated prefix for request mutations (add/cancel/complete)
-	-- Uses separate throttle bucket from togbank-d4 to prevent BULK snapshot syncs from blocking ALERT mutations
-	TOGBankClassic_Core:RegisterComm("togbank-rm", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-rd", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-r", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-rr", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-state", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-nochange", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-
-	TOGBankClassic_Core:RegisterComm("togbank-ri", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
-	TOGBankClassic_Core:RegisterComm("togbank-rd2", function(prefix, message, distribution, sender)
-		TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
-	end)
+	self:VerifyCommPrefixes()
 end
 
 -- Called from Core after Options is initialized — registers /bank and /gbank if enabled.
@@ -148,9 +225,12 @@ end
 function TOGBankClassic_Chat:PerformSync()
 	-- SYNC-008 fix: Use ALERT priority for manual sync so it happens immediately
 	TOGBankClassic_Events:SyncDeltaVersion("ALERT")
-	local hashListRequested = false
+	-- RequestHashListFromBanker's return was captured into `hashListRequested` and never read, so
+	-- a refusal (no banker online, collision guard held) was invisible here. Called for its effect
+	-- only; if the caller ever needs to report "no banker to ask", read the return rather than
+	-- reinstating the unused local.
 	if PEER_TO_PEER and PEER_TO_PEER.ENABLED then
-		hashListRequested = TOGBankClassic_Guild:RequestHashListFromBanker()
+		TOGBankClassic_Guild:RequestHashListFromBanker()
 	end
 	TOGBankClassic_Guild:FastFillMissingAlts()
 	TOGBankClassic_Guild:ReportBankerDataProgress("sync", true)
@@ -284,7 +364,6 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 	-- Process each unique broadcast
 	for sender, entry in pairs(uniqueBroadcasts) do
 		local data = entry.data
-		local isSenderBanker = entry.isSenderBanker
 
 		-- Build hash-offer: alts where WE have newer data than what the sender advertised
 		local offerAlts  = {}
@@ -302,8 +381,10 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 					local myUpdatedAt   = myAlt.inventoryUpdatedAt or myAlt.version or 0
 					local peerUpdatedAt = peerSummary.updatedAt or 0
 					if myUpdatedAt > peerUpdatedAt then
+						-- HASH-REV-001 shape 2 of 5 (hash offers).
 						offerAlts[norm] = {
 							hash      = myAlt.inventoryHash or 0,
+							hashV2    = myAlt.inventoryHashV2 or nil,
 							updatedAt = myUpdatedAt,
 							mailHash  = myAlt.mailHash or 0,
 						}
@@ -319,8 +400,10 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 			if norm ~= myPlayer and not senderAlts[norm] then
 				if myAlt and TOGBankClassic_Guild:HasAltContent(myAlt, norm)
 						and TOGBankClassic_Guild:IsBank(norm) then
+					-- HASH-REV-001 shape 2 of 5, second emitter (proactive advertisement).
 					offerAlts[norm] = {
 						hash      = myAlt.inventoryHash or 0,
+						hashV2    = myAlt.inventoryHashV2 or nil,
 						updatedAt = myAlt.inventoryUpdatedAt or myAlt.version or 0,
 						mailHash  = myAlt.mailHash or 0,
 					}
@@ -409,7 +492,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		if data.type == "alt-request" then
 			-- Pull-based request flow - respond with togbank-rr acknowledgment
 			local altName = data.name
-			local requester = data.requester or sender
 			local hashOnly = data.hashOnly or false
 			local normAltName = TOGBankClassic_Guild:NormalizeName(altName)
 
@@ -422,24 +504,31 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			)
 
 			-- Check if we have this alt
-			local player = TOGBankClassic_Guild:GetNormalizedPlayer()
-			local isBanker = player and TOGBankClassic_Guild:IsBank(player) or false
+			local localPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+			local isBanker = localPlayer and TOGBankClassic_Guild:IsBank(localPlayer) or false
 			local hasData = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and normAltName and TOGBankClassic_Guild.Info.alts[normAltName] ~= nil
 
-			-- PERF-005: Compute hash on-demand if missing (for alts that haven't rescanned since hash was added)
-			if hasData and isBanker then
-				local alt = TOGBankClassic_Guild.Info.alts[normAltName]
-				if not alt.inventoryHash and alt.items then
-					-- Compute hash from existing items data
-					alt.inventoryHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, alt.money or 0)
-					TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION", "PERF-005: Computed missing inventoryHash for %s: %d", altName, alt.inventoryHash or 0)
-				end
-				-- Compute missing mailHash if we have mail data
-				if not alt.mailHash and alt.mail and alt.mail.items and #alt.mail.items > 0 then
-					alt.mailHash = TOGBankClassic_Core:ComputeInventoryHash(alt.mail.items, nil, nil, nil)
-					TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION", "PERF-005: Computed missing mailHash for %s: %d", altName, alt.mailHash or 0)
-				end
-			end
+			-- HASH-CANON-002: PERF-005's "compute hash on-demand if missing" WAS HERE, and it is
+			-- deleted rather than narrowed.
+			--
+			-- It ran on the QUERY path -- every time any peer asked about an alt -- and stamped a
+			-- freshly computed hash onto the record whenever one was absent. That is the defect the
+			-- operator described from a live guild, in their words: "the hash gets recomputed
+			-- anytime anyone looks at the bank", and "V1 has a broadcast STORM because the hashes
+			-- are ALWAYS updating".
+			--
+			-- WHY A RECOMPUTE HERE IS NEVER CORRECT, even when the field is genuinely missing: a
+			-- hash is the IDENTITY OF A VERSION, produced once by the client that authored that
+			-- version. This code runs on a client that did NOT author the record -- it is answering
+			-- a question about someone else's alt -- so whatever it computes is its own opinion of
+			-- someone else's data, minted from whatever `alt.items` happens to hold locally. Two
+			-- peers doing this from slightly different local views produce two different numbers for
+			-- the same version, every comparison then disagrees, and each disagreement provokes
+			-- another sync. That is the storm.
+			--
+			-- WHAT REPLACES IT: nothing. A record with no canon advertises no canon and is
+			-- re-requested from its author, which is self-correcting and cannot go quiet while
+			-- wrong. The author stamps at scan (Bank.lua) and that is the only place a hash is born.
 
 			-- PERF-005: For hashOnly queries, only bankers respond (authoritative hash source)
 			-- For regular queries, anyone with matching hash can respond (if P2P enabled)
@@ -471,10 +560,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 					local myHash = alt.inventoryHash or 0
 					local hasContent = TOGBankClassic_Guild:HasAltContent(alt, altName)
-					local p2pSendTotal = 0
-					if TOGBankClassic_P2PSession then
-						for _, c in pairs(TOGBankClassic_P2PSession.activeSends) do p2pSendTotal = p2pSendTotal + c end
-					end
+					local p2pSendTotal = TOGBankClassic_P2PSession
+						and TOGBankClassic_P2PSession:GetActiveSendTotal() or 0
 					local sendQueueFull = p2pSendTotal >= TOGBankClassic_Guild.MAX_PENDING_SENDS
 					local requesterHash = data.requesterInventoryHash or 0
 
@@ -599,10 +686,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							local alt = TOGBankClassic_Guild.Info.alts[normAltName]
 							local myHash = alt and alt.inventoryHash or 0
 							local hasContent = alt and TOGBankClassic_Guild:HasAltContent(alt, altName) or false
-							local p2pTotal = 0
-							if TOGBankClassic_P2PSession then
-								for _, c in pairs(TOGBankClassic_P2PSession.activeSends) do p2pTotal = p2pTotal + c end
-							end
+							local p2pTotal = TOGBankClassic_P2PSession
+								and TOGBankClassic_P2PSession:GetActiveSendTotal() or 0
 							local sendQueueFull = p2pTotal >= TOGBankClassic_Guild.MAX_PENDING_SENDS
 							local requesterHash = data.requesterInventoryHash or 0
 
@@ -781,8 +866,20 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				end
 
 				-- Fallback: if no peer responds, request from banker directly
-				local timeoutTimer = C_Timer.After(5, function()
-					local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				-- TIMER-001 / AUDIT finding 24: NewTimer, so the handle stored by ArmAltTimeout is
+				-- real. With After it assigned nil, the key was never created (a Lua table cannot
+				-- hold nil), so every `if pendingP2PTimeouts[norm] then` guard was false and no
+				-- cancel ever ran. The harm is ACROSS requests: BroadcastP2PRequest has no
+				-- in-flight guard, so a second request for the same alt inside this window
+				-- re-populates the key, and an orphaned timer then tears down the NEW request and
+				-- blames a timeout belonging to a request that already succeeded.
+				-- P2P-026: arming through ArmAltTimeout cancels this alt's previous timer, which is
+				-- what closes that second path -- making the cancels work only covered the case
+				-- where a peer actually ACKed.
+				TOGBankClassic_Guild:ArmAltTimeout("pendingP2PTimeouts", norm, 5, function()
+					-- Closes over the `norm` computed above rather than recomputing it: identical
+					-- expression over the same `altName` upvalue, so this is the same value, and
+					-- shadowing it here only made the two look like they could differ.
 					local pending = TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[norm]
 					if pending then
 						TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
@@ -813,12 +910,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						TOGBankClassic_P2PSession:ScheduleCatchUp("p2p_no_response")
 					end
 				end)
-
-				-- Store timeout timer for cancellation if peer responds
-				if not TOGBankClassic_Guild.pendingP2PTimeouts then
-					TOGBankClassic_Guild.pendingP2PTimeouts = {}
-				end
-				TOGBankClassic_Guild.pendingP2PTimeouts[norm] = timeoutTimer
 			elseif not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
 				-- P2P: Non-banker (peer) acknowledged - continue with delta sync
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
@@ -845,7 +936,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 					-- Secondary timeout: if peer ACKs but never sends data (disconnect/crash),
 					-- advance to next candidate (or schedule catch-up) after 15 seconds.
-					local fallbackTimer = C_Timer.After(15, function()
+					-- TIMER-001 / AUDIT finding 24. The worse of the two: 15s is a long window and
+					-- this callback calls AdvanceCandidate on whatever session owns the alt when it
+					-- fires, which need not be the session it was armed for. P2P-026: armed through
+					-- ArmAltTimeout so a re-ACK inside those 15s cancels the previous one instead of
+					-- leaving two live timers racing to advance the same session.
+					TOGBankClassic_Guild:ArmAltTimeout("pendingP2PFallbackTimeouts", norm, 15, function()
 						-- Check if we still don't have content (peer never delivered)
 						local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
 						if not alt or not TOGBankClassic_Guild:HasAltContent(alt, norm) then
@@ -868,12 +964,6 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
 						end
 					end)
-
-					-- Store timer for cancellation
-					if not TOGBankClassic_Guild.pendingP2PFallbackTimeouts then
-						TOGBankClassic_Guild.pendingP2PFallbackTimeouts = {}
-					end
-					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = fallbackTimer
 
 					-- Send state summary for delta comparison
 					if hasData and expectedHash then
@@ -954,35 +1044,41 @@ end
 				string.format("no changes for %s (v%d)", ColorPlayerName(altName), version)
 			)
 
-			-- HASH-CORRECTION: If the responder sends corrected hash values, apply them.
-			-- This fixes stale inventoryHash/mailHash left by the pre-DELTA-025 bug
-			-- (hash was blindly stamped from the delta instead of recomputed from items).
-			-- The sender only reaches this no-change path if our item baseline matched
-			-- their current items exactly, so their hash IS correct for our data.
-			local norm = TOGBankClassic_Guild:NormalizeName(altName)
-			local correctedHash = data.hash
-			local correctedMailHash = data.mailHash
-			if correctedHash and correctedHash ~= 0 and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
-				local localAlt = TOGBankClassic_Guild.Info.alts[norm]
-				if localAlt then
-					local oldInvHash = localAlt.inventoryHash
-					local oldMailHash = localAlt.mailHash
-					if oldInvHash ~= correctedHash then
-						localAlt.inventoryHash = correctedHash
-						TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION", "%s inventoryHash %s→%d (from %s)",
-							norm, tostring(oldInvHash), correctedHash, sender)
-					end
-					if correctedMailHash ~= nil and oldMailHash ~= correctedMailHash then
-						localAlt.mailHash = correctedMailHash
-						TOGBankClassic_Output:Debug("SYNC", "HASH-CORRECTION", "%s mailHash %s→%d (from %s)",
-							norm, tostring(oldMailHash), correctedMailHash, sender)
-					end
-				end
-			end
+			-- HASH-CANON-002: THE "HASH-CORRECTION" BLOCK WAS HERE AND IS DELETED. It read
+			-- `data.hash` / `data.hashV2` / `data.mailHash` off a no-change message and wrote them
+			-- over this client's stored canon for that alt.
+			--
+			-- IT ADOPTED FROM ANY SENDER, NOT FROM THE AUTHOR, and that is what made a bad hash
+			-- travel. Any peer holding a copy answers a state summary with a no-change
+			-- (`Guild:RespondToStateSummary`), carrying whatever number IT holds. So peer A minted a
+			-- hash, sent it here, this client stored it as its own, and then sent it onward to peer
+			-- C the same way. The operator's report is exactly this shape: the banker went offline
+			-- and a mutated revision-1 hash arrived from somebody else and replaced good data.
+			--
+			-- ITS OWN COMMENT RECORDED THE ORIGIN and should have been the warning: it existed to
+			-- "fix stale inventoryHash/mailHash left by the pre-DELTA-025 bug (hash was blindly
+			-- stamped from the delta instead of recomputed from items)". A repair for one client
+			-- mis-stamping became a channel by which every client restamps every other.
+			--
+			-- ITS JUSTIFICATION WAS ALSO UNSOUND: "the sender only reaches this no-change path if
+			-- our item baseline matched their current items exactly, so their hash IS correct for
+			-- our data." That argues the DATA matches; it says nothing about how the sender's NUMBER
+			-- was produced. A number computed by a peer from its own view is that peer's opinion,
+			-- and adopting it is precisely how "nobody is authoritative" begins.
+			--
+			-- THE MESSAGE ITSELF IS KEPT: no-change still completes the P2P session above, which is
+			-- its real job. What is gone is its ability to rewrite canon. A hash is written ONCE, by
+			-- the client that scanned the bank, and every other client carries it unchanged.
 
 			-- Apply slot counts from no-change (slots are not part of the item hash, so they
 			-- never trigger a new delta.  Sender piggybacks current slot data here so non-bankers
 			-- always see accurate free/total counts even when items haven't changed.)
+			--
+			-- HASH-CANON-002 kept this while deleting the hash correction above, and the difference
+			-- is the whole point: a slot count is DISPLAY data with no bearing on version identity,
+			-- so a peer passing one along cannot make two clients disagree about which version they
+			-- hold. A hash can, which is why only the author may write one.
+			local norm = TOGBankClassic_Guild:NormalizeName(altName)
 			if (data.bankSlots or data.bagsSlots) and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
 				local localAlt = TOGBankClassic_Guild.Info.alts[norm]
 				if localAlt then
@@ -1081,104 +1177,206 @@ end
 	end
 
 	if prefix == "togbank-d4" then
-		if data.type == "alt-delta" then
-			-- only accept delta data if the sender matches the claimed alt name
-			local claimed = data.name
-			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
-			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
-			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
+		-- INV2 step 7b: a V2 tuple payload arrives on the SAME prefix and is recognised by SHAPE,
+		-- not by a flag -- it is a positional array whose first element is the wire version, while
+		-- a legacy delta is a map with named fields. Sniffing the shape is what lets a client that
+		-- never learned to set a marker still be classified correctly.
+		--
+		-- RECEIVE IS NEVER GATED BY `sendV2Wire`. That switch governs emission only.
+		--
+		-- This used to say accepting BOTH formats was permanent mixed-version compatibility. That is
+		-- superseded by the 2026-09-09 directive: the legacy link format is deleted in both
+		-- directions and tuples are the only thing spoken here. The shape sniff below is therefore no
+		-- longer a fork between two formats -- it is a guard that drops anything which is not a tuple
+		-- payload, including an old client's delta.
+		if TOGBankClassic_Inventory_Wire and TOGBankClassic_Inventory_Wire.isV2(data) then
+			local Wire = TOGBankClassic_Inventory_Wire
+			local altName, records, money, _, wireHash, wireHashV2, wireDropped, wireUpdatedAt =
+				Wire.decode(data)
+			local claimedNorm = altName and TOGBankClassic_Guild:NormalizeName(altName)
+			-- Same authorisation as the legacy branch below: a peer may only speak for an alt it
+			-- is entitled to. Dropping this for the new format would make V2 the easy way to spoof.
+			local allowed = claimedNorm and self:IsAltDataAllowed(sender, claimedNorm)
+			if claimedNorm and TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
 				allowed = true
 			end
+			if not (claimedNorm and allowed) then
+				TOGBankClassic_Output:Debug("DELTA", "VALIDATE",
+					"[INV2] rejected tuple payload for %s from %s (not allowed)",
+					tostring(altName), tostring(sender))
+				return
+			end
 
-			if allowed then
-				-- Validate and sanitize delta structure
-				local valid, err = TOGBankClassic_Core:ValidateDeltaStructure(data)
-				if not valid then
-					local errorMsg = "Validation failed: " .. (err or "unknown error")
-					self:Debug(
-						"DELTA",
-						"VALIDATE",
-						">",
-						ColorPlayerName(sender),
-						SHARES_COLOR,
-						"delta (v0.8.0 Link-less) for",
-						ColorPlayerName(claimedNorm),
-						"- validation failed:",
-						err
-					)
-					-- Record error and request full sync
-					TOGBankClassic_Guild:RecordDeltaError(claimedNorm, "VALIDATION_FAILED", errorMsg)
-					TOGBankClassic_Guild:QueryAlt(sender, claimedNorm, nil)
-					-- Only count as failure if validation actually failed (not just missing optional fields)
-					if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
-						TOGBankClassic_Database:RecordDeltaFailed(TOGBankClassic_Guild.Info.name)
+			-- HASH-CANON-001 rule 7: ORDERING, DECIDED HERE AND ONLY HERE.
+			--
+			-- THIS GUARD DID NOT EXIST AND ITS ABSENCE IS A DATA-LOSS BUG, reported from a live
+			-- guild: a V2 record replaced by older data. The legacy path has always had it
+			-- (`Guild.lua:3327` and `:3362` refuse an incoming record that is not newer), but the
+			-- tuple path applied EVERY payload unconditionally -- so with several peers relaying the
+			-- same alt, whichever snapshot arrived LAST won regardless of when it was authored, and
+			-- a peer holding a days-old copy could overwrite a fresh one.
+			--
+			-- It could not have been written before this change, which is why the two halves ship
+			-- together: the author's publish time was not on the wire at all, and the receiver
+			-- stamped its own arrival time, so there was no honest number to compare.
+			--
+			-- A NIL `wireUpdatedAt` IS ACCEPTED, deliberately. It means the author published no time
+			-- -- a client between builds, or a record that predates this field. Refusing those would
+			-- freeze that alt permanently instead of merely ordering it, and an unordered write is
+			-- the behaviour we already had. Ordering improves the moment both ends carry the field.
+			if not self:ShouldApplyTuplePayload(claimedNorm, wireUpdatedAt) then
+				TOGBankClassic_Output:Debug("DELTA", "APPLY",
+					"[INV2] discarded a STALE tuple payload for %s from %s (authored %s)",
+					tostring(claimedNorm), tostring(sender), tostring(wireUpdatedAt))
+				return
+			end
+
+			local guild = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name
+			if guild and TOGBankClassic_Inventory_Store then
+				TOGBankClassic_Inventory_Store:SetAltRecords(guild, claimedNorm, records, money)
+
+				-- STAMP THE SYNC METADATA, which is not bookkeeping -- it is what stops the client
+				-- re-syncing forever. The negotiation layer compares `inventoryHash` and
+				-- `inventoryUpdatedAt` to decide whether it is stale, and both live on the legacy
+				-- alt record. Storing tuples without stamping these leaves the receiver believing
+				-- it never got the data: it re-requests on every hash-list broadcast and never
+				-- offers the alt onward.
+				--
+				-- HASH-CANON-001: THE AUTHOR'S HASH IS STORED VERBATIM. This used to recompute both
+				-- revisions from the received tuples, and that is the one move DeltaSync's
+				-- canonical-hash rules single out: "recompute on receipt -- you overwrite the
+				-- author's statement with your own opinion of their data. Now nobody is
+				-- authoritative and every client can disagree with every other." A hash is not a
+				-- checksum you recalculate when convenient; it is the IDENTITY OF A VERSION, and
+				-- identity only works if every client holding that version reports the same number.
+				--
+				-- It matters beyond reporting: the hash is what decides WHAT OVERWRITES WHAT. A
+				-- recomputed hash means that decision rests on a number the author never published.
+				--
+				-- THE OLD COMMENT'S OBJECTION WAS REAL AND IS ANSWERED, NOT IGNORED. It argued the
+				-- payload hash must be distrusted because "a sender-supplied hash that disagrees
+				-- with the stored rows produces a false in-sync state that silences future syncs
+				-- while the data is wrong". True -- but that disagreement can only arise when the
+				-- decode DISCARDED something, and the remedy for a lossy decode is to report the
+				-- loss, not to mint a different number that hides it. `Wire.decode` now returns
+				-- `dropped`, and a payload that lost rows does NOT get to claim the author's canon:
+				-- we hold something other than the author's version, so we publish no version at
+				-- all and get re-requested. Self-correcting, and it cannot go quiet while wrong.
+				--
+				-- NO CANON MEANS NO CANON. When the sender published none -- an author that has not
+				-- scanned since upgrading -- we store nil rather than keeping a stale local value of
+				-- unknown authorship. DeltaSync's own example does the same on the advertise side
+				-- (`if not r.contentHash then return {} end`). KNOWN COST, accepted: such an alt
+				-- advertises nothing and is re-requested until its owner scans and publishes, which
+				-- is noisier during the rollout while 3 of 38 bankers are on V2.
+				local alts = TOGBankClassic_Guild.Info.alts
+				if alts then
+					local alt = alts[claimedNorm]
+					if not alt then
+						alt = { name = claimedNorm, items = {}, money = 0 }
+						alts[claimedNorm] = alt
 					end
-					return
+					alt.money = money or alt.money or 0
+					if wireDropped and wireDropped > 0 then
+						alt.inventoryHash   = nil
+						alt.inventoryHashV2 = nil
+						TOGBankClassic_Output:Warn(
+							"Discarded %d malformed item row(s) in a bank update from %s for %s. " ..
+							"That data will be re-requested.", wireDropped, tostring(sender),
+							tostring(claimedNorm))
+					else
+						-- Both revisions together, or neither. HASH-REV-001: revision 2 is what two
+						-- migrated clients negotiate on and revision 1 is what an unmigrated peer
+						-- reads, so taking one from the author and leaving the other stale would
+						-- make the record disagree with itself.
+						alt.inventoryHash   = wireHash
+						alt.inventoryHashV2 = wireHashV2
+					end
+					-- THE AUTHOR'S PUBLISH TIME, STORED VERBATIM -- not our arrival time. This used
+					-- to be `GetServerTime()`, which made the stamp mean "when THIS client heard
+					-- about it". Every receiver re-advertises what it holds (`Guild.lua:358`,
+					-- `:1033`, `:1582`) and P2PSession sorts candidates by `updatedAt` descending to
+					-- pick the freshest (`P2PSession.lua:184-190`), so a receive-time stamp made a
+					-- relayed third-hand copy advertise a NEWER time than the author's own record --
+					-- the later a copy propagated, the fresher it claimed to be.
+					--
+					-- Falls back to our clock only when the author published no time, which is the
+					-- same case the staleness guard above lets through.
+					alt.inventoryUpdatedAt = wireUpdatedAt or GetServerTime()
+					alt.version            = alt.inventoryUpdatedAt
 				end
 
-				-- Reconstruct item links in background using batched queue system
-				-- Processes 5 items every 0.1s to prevent stuttering
-				if data.changes then
-					if data.changes.bank then
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.added)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.modified)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bank.removed)
-					end
-					if data.changes.bags then
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.added)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.modified)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.bags.removed)
-					end
-					if data.changes.mail then
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.mail.added)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.mail.modified)
-						TOGBankClassic_Guild:ReconstructItemLinks(data.changes.mail.removed)
-					end
-				end
+				TOGBankClassic_Output:Debug("DELTA", "APPLY",
+					"[INV2] stored %d tuple(s) for %s from %s", #records, claimedNorm, sender)
 
-				-- Track inbound receive metrics
+				-- INV2-SESSION-001: CLOSE THE SYNC OFF. Storing the rows is not the end of a
+				-- delivery -- three things did that, and this branch did none of them, because it
+				-- `return`ed before reaching the legacy branch that carried them. So a V2 delivery
+				-- has NEVER released its session slot: `activeSessions` leaked on every one, the
+				-- 15s ACK fallback stayed armed and then fired `AdvanceCandidate("ack_no_data")` on
+				-- a sync that had already succeeded, and inbound bytes went unrecorded.
+				--
+				-- Found by deleting the legacy branch: it was doing this work for a payload shape
+				-- that never reached it. Sitting behind an early return is why it looked covered.
 				if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
 					local isFromBanker = TOGBankClassic_Guild:IsBank(sender) or false
-					TOGBankClassic_Database:RecordDeltaReceived(TOGBankClassic_Guild.Info.name, #message, isFromBanker)
-				end
-				local status = TOGBankClassic_Guild:ApplyDelta(claimedNorm, data, sender)
-
-				-- Cancel 15s fallback timeout since peer delivered data
-				local norm = TOGBankClassic_Guild:NormalizeName(claimedNorm)
-				if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
-					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
-					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
-					TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cancelled fallback timeout for %s (data received)", claimedNorm)
+					TOGBankClassic_Database:RecordDeltaReceived(
+						TOGBankClassic_Guild.Info.name, #message, isFromBanker)
 				end
 
-				-- P2P-006: Signal session completion to release the active-session slot.
+				local fallbacks = TOGBankClassic_Guild.pendingP2PFallbackTimeouts
+				if fallbacks and fallbacks[claimedNorm] then
+					fallbacks[claimedNorm]:Cancel()
+					fallbacks[claimedNorm] = nil
+					TOGBankClassic_Output:Debug("P2P", "COMPLETE",
+						"Cancelled fallback timeout for %s (tuples received)", claimedNorm)
+				end
+
 				if TOGBankClassic_P2PSession then
 					TOGBankClassic_P2PSession:OnAltCompleted(claimedNorm, sender)
 				end
-
-				self:Debug(
-					"DELTA",
-					"APPLY",
-					">",
-					ColorPlayerName(sender),
-					SHARES_COLOR,
-					"delta (v0.8.0 Link-less) for",
-					ColorPlayerName(claimedNorm) .. ".",
-					FormatSyncStatus(status)
-				)
-			else
-				self:Debug(
-					"DELTA",
-					"APPLY",
-					">",
-					ColorPlayerName(sender),
-					SHARES_COLOR,
-					"delta (v0.8.0 Link-less) for",
-					ColorPlayerName(claimedNorm) .. ". We do not accept it.",
-					FormatSyncStatus(ADOPTION_STATUS.UNAUTHORIZED)
-				)
 			end
+			return
 		end
+
+		-- A payload we no longer speak. THIS LINE IS THE WHOLE DIAGNOSTIC for the commonest support
+		-- question a mixed-version guild will produce -- "why can't I see their bank?" -- so it says
+		-- WHO sent it and WHAT it was, and it says it at WARN rather than debug when the sender is a
+		-- banker, because that is the case a player actually needs to act on.
+		--
+		-- Without this the old format is dropped in total silence, which is indistinguishable from
+		-- the banker having no items, from the sync never being requested, and from a bug in the new
+		-- path. Deleting a protocol is not a reason to stop reporting that someone is still speaking
+		-- it.
+		local staleType = type(data) == "table" and data.type or nil
+		if staleType == "alt-delta" or staleType == "alt" then
+			TOGBankClassic_Output:Debug("DELTA", "VALIDATE",
+				"[INV2] discarded a legacy '%s' payload from %s for %s -- that client predates the " ..
+				"tuple wire format and its data cannot be read. It will sync once they update.",
+				tostring(staleType), tostring(sender), tostring(data.name))
+			if TOGBankClassic_Guild:IsBank(TOGBankClassic_Guild:NormalizeName(sender)) then
+				TOGBankClassic_Output:Warn(
+					"%s is running an older TOGBank and its bank contents cannot be read. " ..
+					"Ask them to update.", tostring(sender))
+			end
+			return
+		end
+
+		-- INV2 step 10 / the 2026-09-09 directive: the `alt-delta` RECEIVE branch was deleted here.
+		--
+		-- It accepted the legacy LINK format -- validate, ReconstructItemLinks over every added,
+		-- modified and removed row, then ApplyDelta with its link-keyed identity and ITEM-003 ghost
+		-- guards. That is the machinery the rework exists to remove, and keeping it to read
+		-- unmigrated peers meant keeping all of it: the identity functions, the ghost guards and the
+		-- reconstruction queue.
+		--
+		-- KNOWN COST, decided rather than discovered: an unmigrated peer's data is now IGNORED, not
+		-- misread. A payload in the old format reaches this point, matches no branch, and is dropped
+		-- silently -- which is the correct outcome for a format we no longer speak. Mixed-version
+		-- guilds see nothing from un-upgraded bankers until they upgrade, and it heals by itself.
+		--
+		-- The tuple branch above is the only receive path. It has its own authorisation
+		-- (IsAltDataAllowed, SEC-001), its own session completion and its own hash stamping.
 	end
 
 	-- togbank-ri: positional request index (v1). Separate prefix from togbank-rd.
@@ -1252,8 +1450,22 @@ end
 			})
 
 			-- Start batch timer if not already running
+			--
+			-- TIMER-002: this handle is a LATCH ("is a batch already scheduled?"), not a
+			-- cancellation handle, and that makes the C_Timer.After bug bite the opposite way.
+			-- After returns nothing, so the latch was always nil, so `if not ...` was always
+			-- TRUE -- and every queued broadcast started ANOTHER batch timer. The batching did
+			-- not batch: N queued broadcasts armed N timers and logged "Started batch timer" N
+			-- times, which is precisely the coalescing this code exists to do.
+			--
+			-- CLEARING IT IN THE CALLBACK IS REQUIRED, not tidiness. Nothing else resets it
+			-- between batches (only Init and the module reset do), so with a real handle the
+			-- latch would stay set after the first fire and no further batch would EVER be
+			-- scheduled -- turning a broken batcher into a silently stalled one. Swapping to
+			-- NewTimer without this line is worse than leaving the bug.
 			if not self.hashBroadcastTimer then
-				self.hashBroadcastTimer = C_Timer.After(self.HASH_BROADCAST_BATCH_DELAY, function()
+				self.hashBroadcastTimer = C_Timer.NewTimer(self.HASH_BROADCAST_BATCH_DELAY, function()
+					TOGBankClassic_Chat.hashBroadcastTimer = nil
 					TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 				end)
 				TOGBankClassic_Output:Debug("P2P", "OFFER", "Started batch timer (%ds) for hash broadcasts", self.HASH_BROADCAST_BATCH_DELAY)
@@ -1363,8 +1575,10 @@ end
 				-- Prevents stale ex-banker entries from triggering sync requests.
 				if norm ~= currentPlayer and TOGBankClassic_Guild:IsBank(norm) then
 					local localAlt = localAlts and localAlts[norm]
-					local localHash = localAlt and localAlt.inventoryHash or 0
-					local localMailHash = localAlt and localAlt.mailHash or 0
+					-- HASH-REV-002: one comparison, shared with Guild:IsAltSyncPending and
+					-- Guild:ReportHashListCoverage, which each carried their own copy of it.
+					local hashesMatch, localHash, localMailHash =
+						TOGBankClassic_Guild:HashesAgreeWith(localAlt, summary)
 					local hasContent = localAlt and TOGBankClassic_Guild and TOGBankClassic_Guild.HasAltContent
 						and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
 					-- DEBUG: Log every alt to see what's happening
@@ -1372,15 +1586,13 @@ end
 						tostring(norm), tostring(hasContent), tostring(localHash), tostring(summary and summary.hash), tostring(localMailHash), tostring(summary and summary.mailHash))
 					totalCount = totalCount + 1
 
-					-- SYNC-009: Check if hashes match BEFORE skipping (non-banker sync bug fix)
+					-- SYNC-009: hashes are checked BEFORE skipping (non-banker sync bug fix).
 					-- This broke non-banker sync: if we had OLD content for a non-banker alt,
 					-- we'd skip it even when the banker had a different (newer) hash.
-					-- Now we only skip if BOTH hasContent AND hashes match.
-					-- BUGFIX: Hash=0 should NOT be treated as a wildcard match - it means "empty inventory"
-					-- and should only match another hash=0, not any hash value.
-					local inventoryHashMatches = (summary.hash ~= nil and summary.hash == localHash)
-					local mailHashMatches = (summary.mailHash ~= nil and summary.mailHash == localMailHash)
-					local hashesMatch = inventoryHashMatches and mailHashMatches
+					-- We only skip if BOTH hasContent AND hashes match. The hash=0 / absent-field
+					-- rule that makes that correct now lives in Guild:HashesAgreeWith, computed
+					-- above -- it is documented there rather than restated here, because restating
+					-- it in three places is what HASH-REV-002 removed.
 
 					-- Skip alts we already have content for AND hashes match - no need to request
 					if hasContent and hashesMatch then
@@ -1436,8 +1648,8 @@ end
 				missingCount = missingCount + 1
 			end
 			if pendingCount > 0 then
-				local haveCount, totalCount = TOGBankClassic_Guild:GetBankerDataProgress()
-				TOGBankClassic_Output:Debug("DELTA", "FAST-FILL", "Fast-fill: Requesting %d missing alts (have %d/%d)", pendingCount, haveCount, totalCount)
+				local haveCount, bankerTotal = TOGBankClassic_Guild:GetBankerDataProgress()
+				TOGBankClassic_Output:Debug("DELTA", "FAST-FILL", "Fast-fill: Requesting %d missing alts (have %d/%d)", pendingCount, haveCount, bankerTotal)
 				TOGBankClassic_Guild:ReportBankerDataProgress("fast-fill", true)
 			end
 			if missingCount > 0 then
@@ -1902,31 +2114,15 @@ local COMMAND_REGISTRY = {
 			end
 		end,
 	},
-	{
-		name = "test",
-		help = "run automated delta sync tests (use 'test help' for options)",
-		expert = true,
-		handler = function(arg)
-			if not TOGBankClassic_Tests then
-				TOGBankClassic_Output:Response("Test module not loaded")
-				return
-			end
-
-			arg = arg and arg:trim():lower() or ""
-
-			if arg == "" or arg == "all" then
-				TOGBankClassic_Tests:RunAllTests()
-			elseif arg == "help" then
-				TOGBankClassic_Output:Response("TOGBank Test Commands:")
-				TOGBankClassic_Output:Response("  /togbank test - Run all tests")
-				TOGBankClassic_Output:Response("  /togbank test all - Run all tests")
-				TOGBankClassic_Output:Response("  /togbank test <test-name> - Run specific test")
-				TOGBankClassic_Output:Response("  /togbank test help - Show this help")
-			else
-				TOGBankClassic_Tests:RunTest(arg)
-			end
-		end,
-	},
+	-- INV2 step 10: the `/togbank test` command and `Modules/Tests.lua` behind it were deleted. That
+	-- harness ran ComputeDelta, ApplyDelta, ComputeItemDelta, ItemsEqual, GetChangedFields and
+	-- ValidateDeltaStructure against hand-built fixtures -- every one of which is now gone with the
+	-- link protocol, so the file would have been a shell of setup around nothing.
+	--
+	-- The offline busted suite replaced it and is not a like-for-like substitute but a better one:
+	-- it runs on every change rather than when someone remembers to type a slash command, it drives
+	-- the REAL Ace libraries and the real serialiser, and it is what found the defects this rework
+	-- is built on. Run it from the addon root with `busted`, or through writ's `test`.
 	{
 		name = "versioncheck",
 		help = "broadcast version request to guild via VersionCheck-1.0 and print responses after collection window",
@@ -2021,7 +2217,7 @@ local COMMAND_REGISTRY = {
 			local buckets = {}
 			local grandTotal = 0
 
-			local function walkRing(ring, prioName)
+			local function walkRing(ring, _)
 				if not ring or not ring.pos then return end
 				local pipe = ring.pos
 				repeat
@@ -2068,7 +2264,119 @@ local COMMAND_REGISTRY = {
 	-- Hidden commands (no help text)
 	{
 		name = "debug",
-		handler = function()
+		-- DEV-UX-001: bare `/togbank debug` toggles the LOG LEVEL only. That is necessary and not
+		-- sufficient: categories are opt-in and default false, so on its own it produces no debug
+		-- output at all, and the only way to enable one was the options panel. On an active guild
+		-- "Enable All" is unusable -- thousands of lines a second -- so the category system is the
+		-- right design and what was missing is a SURGICAL way to drive it. Hence the arguments
+		-- below; `only` is the one that matters, because isolating one subsystem in a single
+		-- command is the actual task. This could not have existed before CMD-001: no argument
+		-- reached a handler at all.
+		handler = function(arg1, tail)
+			local Out = TOGBankClassic_Output
+			local sub = arg1 and tostring(arg1):upper() or nil
+
+			if sub then
+				local function categories()
+					local names = {}
+					for name in pairs(DEBUG_CATEGORY) do names[#names + 1] = name end
+					table.sort(names)
+					return names
+				end
+
+				if sub == "LIST" then
+					Out:Response("|cffffff00Debug categories|r (log level is %s)",
+						TOGBankClassic_Output:GetLevel() == LOG_LEVEL.DEBUG and "Debug" or "NOT Debug - run /togbank debug")
+					for _, name in ipairs(categories()) do
+						Out:Response("  %s %s", Out:IsCategoryEnabled(name) and "|cff00ff00ON |r" or "|cff888888OFF|r", name)
+					end
+					return
+				end
+
+				if sub == "NONE" then
+					Out:DisableAllCategories()
+					Out:Response("All debug categories off.")
+					return
+				end
+
+				-- `only <CATEGORY>`: everything off, then one on. The escape hatch for a live guild.
+				if sub == "ONLY" then
+					local target = tail and tostring(tail):match("^(%S+)") or nil
+					target = target and target:upper() or nil
+					if not target or not DEBUG_CATEGORY[target] then
+						Out:Error("Usage: /togbank debug only <CATEGORY>")
+						Out:Response("Categories: %s", table.concat(categories(), ", "))
+						return
+					end
+					Out:DisableAllCategories()
+					Out:SetCategoryEnabled(target, true)
+					Out:Response("Debug category |cffffff00%s|r ON, every other category off.", target)
+					return
+				end
+
+				if not DEBUG_CATEGORY[sub] then
+					Out:Error("Unknown debug category: %s", tostring(arg1))
+					Out:Response("Categories: %s", table.concat(categories(), ", "))
+					Out:Response("Usage: /togbank debug <CATEGORY> [on|off] | only <CATEGORY> | none | list")
+					return
+				end
+
+				-- `<CATEGORY> [on|off]` and `<CATEGORY> <TAG> on|off`.
+				--
+				-- The pattern is anchored with no trailing remainder on purpose: an earlier version
+				-- used `^(%S+)%s*(%S*)$`, which matched only the first two words of a longer line,
+				-- so `/togbank debug BANK on extra` parsed as tag "ON" state "extra" -- it set a
+				-- tag that does not exist, to false, and reported success. A confident confirmation
+				-- for a typo is the exact class DEV-UX-001 was filed against.
+				local first, second, extra = nil, nil, nil
+				if tail then
+					first, second, extra = tostring(tail):match("^(%S+)%s*(%S*)%s*(.*)$")
+				end
+				local function truthy(v) return v == "on" or v == "true" or v == "1" end
+				local function stateWord(v) return truthy(v) or v == "off" or v == "false" or v == "0" end
+
+				if extra and extra ~= "" then
+					Out:Error("Too many arguments: /togbank debug %s [on|off]  or  %s <TAG> on|off", sub, sub)
+					return
+				end
+
+				if first and second and second ~= "" then
+					local tag = first:upper()
+					-- A tag must be one the category actually declares. Tags are opt-out at READ
+					-- time (an unknown tag shows by default), but accepting an unknown one at WRITE
+					-- time stores a setting that can never affect any output.
+					local known = DEBUG_TAGS and DEBUG_TAGS[sub]
+					if not (known and known[tag]) then
+						Out:Error("Unknown tag %s for category %s", tag, sub)
+						if known then
+							local names = {}
+							for name in pairs(known) do names[#names + 1] = name end
+							table.sort(names)
+							Out:Response("Tags: %s", table.concat(names, ", "))
+						end
+						return
+					end
+					if not stateWord(second:lower()) then
+						Out:Error("Usage: /togbank debug %s %s on|off", sub, tag)
+						return
+					end
+					Out:SetTagEnabled(sub, tag, truthy(second:lower()))
+					Out:Response("Debug %s / %s: %s", sub, tag, truthy(second:lower()) and "ON" or "OFF")
+					return
+				end
+
+				local enable = first and truthy(first:lower()) or (first == nil)
+				if first and not (truthy(first:lower()) or first:lower() == "off") then
+					-- A single unrecognised word is a tag with no state, which is a usage error
+					-- rather than something to guess at.
+					Out:Error("Usage: /togbank debug %s [on|off]  or  /togbank debug %s <TAG> on|off", sub, sub)
+					return
+				end
+				Out:SetCategoryEnabled(sub, enable)
+				Out:Response("Debug category |cffffff00%s|r: %s", sub, enable and "ON" or "OFF")
+				return
+			end
+
 			local currentLevel = TOGBankClassic_Output:GetLevel()
 			if currentLevel == LOG_LEVEL.DEBUG then
 				-- Restore to pre-debug level
@@ -2123,6 +2431,138 @@ local COMMAND_REGISTRY = {
 		handler = function()
 			if TOGBankClassic_Guild and TOGBankClassic_Guild.ReportHashListCoverage then
 				TOGBankClassic_Guild:ReportHashListCoverage()
+			end
+		end,
+	},
+	{
+		-- INV2: list the dev switches and their live state.
+		name  = "switches",
+		usage = "[<name> on|off]",
+		help = "list or set the INV2 dev switches",
+		handler = function(arg)
+			local S, Out = TOGBankClassic_Switches, TOGBankClassic_Output
+			if not S then Out:Error("Switches module not loaded"); return end
+
+			local name, value = tostring(arg or ""):match("^(%S+)%s+(%S+)$")
+			if name then
+				local on = (value == "on" or value == "true" or value == "1")
+				if S:Set(name, on) then
+					Out:Response("Switch |cffffff00%s|r set to %s", name, on and "ON" or "OFF")
+				elseif not S.registry[name] then
+					Out:Error("Unknown switch: %s", name)
+				else
+					-- Set() also returns false when db.global is not attached yet. Reporting that
+					-- as "unknown switch" would send someone hunting for a typo that isn't there.
+					Out:Error("Cannot set %s yet - the database is not loaded.", name)
+				end
+				return
+			end
+
+			Out:Response("|cffffff00=== INV2 dev switches ===|r")
+			for _, e in ipairs(S:GetAll()) do
+				-- `enabled` is the LIVE answer, so a dependent switch shows OFF while its
+				-- parent is off even though its own stored value says otherwise. Showing the
+				-- stored value here would claim dualWrite is maintaining the legacy DB when
+				-- V2 is not even running.
+				local state = e.enabled and "|cff44ff44ON|r " or "|cffff4444OFF|r"
+				local note  = e.overridden and "" or " |cff888888(default)|r"
+				Out:Response("  %s %s%s", state, e.name, note)
+				Out:Response("      |cff888888%s|r", e.description)
+				if e.requires then
+					Out:Response("      |cff888888requires: %s|r", e.requires)
+				end
+				-- A staged switch must say so where the state is read, not only in the source.
+				-- Without this the listing shows `ON dualWrite` and nothing contradicts it.
+				if e.pending then
+					Out:Response("      |cffff8800NOT YET ACTIVE: %s|r", e.pending)
+				end
+			end
+			Out:Response("Usage: /togbank dev switches <name> on|off")
+		end,
+	},
+	{
+		-- INV2: prove the V2 store agrees with the legacy one, on live data.
+		--
+		-- This is the whole reason the V2 scan mirrors rather than replaces: two independent
+		-- encodings of the same containers, compared. A divergence here is a real encoding
+		-- bug, not a timing artifact -- both are written inside a single Bank:Scan() call.
+		name = "compare",
+		help = "compare the V2 tuple store against the legacy inventory",
+		handler = function()
+			local Out   = TOGBankClassic_Output
+			local Store = TOGBankClassic_Inventory_Store
+			local Record = TOGBankClassic_Inventory_Record
+			local info  = TOGBankClassic_Guild and TOGBankClassic_Guild.Info
+
+			Out:Response("|cffffff00=== V2 vs legacy inventory ===|r")
+			if not (Store and Record) then Out:Error("INV2 modules not loaded"); return end
+			if not (info and info.name) then Out:Error("No guild data loaded"); return end
+			if not (TOGBankClassic_Switches and TOGBankClassic_Switches:IsEnabled("inventoryV2")) then
+				Out:Response("|cffffcc00inventoryV2 is OFF - the V2 store is not being written.|r")
+				Out:Response("Enable it with /togbank dev switches inventoryV2 on, then open and CLOSE your bank.")
+				return
+			end
+
+			local alts = Store:GetAltNames(info.name)
+			if #alts == 0 then
+				-- DOC-005: this said "open your bank/bags", which is the one instruction that
+				-- cannot work. The scan runs on BANKFRAME_CLOSED (Events.lua:518-520);
+				-- BANKFRAME_OPENED only sets hasUpdated. Bags alone trigger nothing at all -- no
+				-- BAG_UPDATE is registered for scanning. Following the old wording literally
+				-- leaves the store empty and this message repeating, which cost a live debugging
+				-- session on 2026-09-08.
+				Out:Response("|cffffcc00V2 store is empty - no scan has run yet.|r")
+				Out:Response("Open your bank and then CLOSE it (the scan runs on close), or use /togbank share.")
+				return
+			end
+
+			local mismatches, checked = {}, 0
+			for _, altName in ipairs(alts) do
+				local legacy = info.alts and info.alts[altName]
+				if legacy and legacy.items then
+					checked = checked + 1
+					-- Compare per item id rather than per row: the two encodings legitimately
+					-- differ in ROW count, because V2 splits suffix variants that the legacy
+					-- link key may have merged. Totals per id must still agree exactly.
+					local legacyTotals = {}
+					for _, item in ipairs(legacy.items) do
+						if item.ID then
+							legacyTotals[item.ID] = (legacyTotals[item.ID] or 0) + (item.Count or 0)
+						end
+					end
+					local v2Totals = {}
+					for _, rec in ipairs(Store:GetAltRecords(info.name, altName)) do
+						local id = Record.id(rec)
+						v2Totals[id] = (v2Totals[id] or 0) + Record.count(rec)
+					end
+					for id, n in pairs(legacyTotals) do
+						if (v2Totals[id] or 0) ~= n then
+							mismatches[#mismatches + 1] = string.format(
+								"%s item %d: legacy=%d v2=%d", altName, id, n, v2Totals[id] or 0)
+						end
+					end
+					for id, n in pairs(v2Totals) do
+						if legacyTotals[id] == nil then
+							mismatches[#mismatches + 1] = string.format(
+								"%s item %d: legacy=absent v2=%d", altName, id, n)
+						end
+					end
+				end
+			end
+
+			Out:Response("Compared %d character(s) present in both stores.", checked)
+			if checked == 0 then
+				Out:Response("|cffffcc00Nothing to compare - no character appears in both.|r")
+			elseif #mismatches == 0 then
+				Out:Response("|cff44ff44No divergence. Every item total agrees.|r")
+			else
+				Out:Response("|cffff4444%d divergence(s):|r", #mismatches)
+				for i = 1, math.min(#mismatches, 15) do
+					Out:Response("  %s", mismatches[i])
+				end
+				if #mismatches > 15 then
+					Out:Response("  ... and %d more", #mismatches - 15)
+				end
 			end
 		end,
 	},
@@ -2272,25 +2712,36 @@ local COMMAND_REGISTRY = {
 			local rows = {}
 			for norm, summary in pairs(lbh) do
 				local localAlt = localAlts[norm]
-				local localHash = localAlt and localAlt.inventoryHash or 0
+				-- HASH-REV-002: this was a FOURTH copy of the comparison and it was WRONG --
+				-- `match = (summary.hash == localHash)`, ignoring mailHash entirely. So an alt whose
+				-- mail hash differed printed OK here while IsAltSyncPending called it pending, and
+				-- Guild.lua's own docstring claims this command and that function share one
+				-- definition. A diagnostic that disagrees with the thing it diagnoses sends whoever
+				-- reads it in the wrong direction, which this addon has paid for before (DOC-005).
+				local matches, localHash, localMailHash =
+					TOGBankClassic_Guild:HashesAgreeWith(localAlt, summary)
 				local localUpdatedAt = localAlt and (localAlt.inventoryUpdatedAt or localAlt.version) or 0
 				table.insert(rows, {
 					norm = norm,
 					knownHash = summary.hash or 0,
 					knownUpdatedAt = summary.updatedAt or 0,
+					knownMailHash = summary.mailHash or 0,
 					localHash = localHash,
 					localUpdatedAt = localUpdatedAt,
-					match = (summary.hash == localHash),
+					localMailHash = localMailHash,
+					match = matches,
 				})
 			end
 			table.sort(rows, function(a, b) return a.norm < b.norm end)
 			for _, r in ipairs(rows) do
 				local matchStr = r.match and "|cff00ff00OK|r" or "|cffff4444MISMATCH|r"
+				-- Mail hashes are printed because they now decide the verdict. Reporting MISMATCH
+				-- on two identical inventory hashes with nothing else on the line is unreadable.
 				TOGBankClassic_Output:Response(string.format(
-					"  %s %s known=(%08x @%d) local=(%08x @%d)",
+					"  %s %s known=(%08x @%d mail=%08x) local=(%08x @%d mail=%08x)",
 					matchStr, r.norm,
-					r.knownHash, r.knownUpdatedAt,
-					r.localHash, r.localUpdatedAt
+					r.knownHash, r.knownUpdatedAt, r.knownMailHash,
+					r.localHash, r.localUpdatedAt, r.localMailHash
 				))
 			end
 		end,
@@ -2320,9 +2771,11 @@ local DEV_COMMAND_NAMES = {
 	persistcheck           = true,
 	protocol               = true,
 	purgeghosts            = true,
+	compare                = true,
 	reqscan                = true,
 	resetmetrics           = true,
 	rostercheck            = true,
+	switches               = true,
 	test                   = true,
 	versioncheck           = true,
 }
@@ -2341,22 +2794,17 @@ end
 
 -- /togbank dev <subcommand> [args] — dispatcher for developer-only commands.
 -- Top-level command, no help text → hidden from /togbank help output.
-COMMAND_HANDLERS["dev"] = function(arg1)
-	local rest = tostring(arg1 or ""):trim()
-	if rest == "" or rest == "help" then
+COMMAND_HANDLERS["dev"] = function(arg1, tail)
+	-- CMD-001: `arg1` is the subcommand token and `tail` is everything after it. This used to take
+	-- a single string and split it on the first space, which could not work: ChatCommand had
+	-- already tokenized the input, so arg1 never contained a space and subArgs was always nil.
+	local subcommand = tostring(arg1 or ""):trim()
+	local subArgs    = tail and tostring(tail):trim() or nil
+	if subArgs == "" then subArgs = nil end
+
+	if subcommand == "" or subcommand == "help" then
 		TOGBankClassic_Chat:ShowDevHelp()
 		return
-	end
-
-	-- Split first token from remainder so dev commands can take their own args.
-	local subcommand, subArgs
-	local space = rest:find(" ")
-	if space then
-		subcommand = rest:sub(1, space - 1)
-		subArgs    = rest:sub(space + 1):trim()
-	else
-		subcommand = rest
-		subArgs    = nil
 	end
 
 	local devHandler = DEV_COMMAND_HANDLERS[subcommand]
@@ -2395,10 +2843,25 @@ function TOGBankClassic_Chat:ChatCommand(input)
 	if input == nil or input == "" then
 		TOGBankClassic_UI_Inventory:Toggle()
 	else
-		local prefix, arg1 = TOGBankClassic_Core:GetArgs(input, 2)
+		-- CMD-001: GetArgs TOKENIZES; it does not hand back a remainder. Its contract is
+		-- `arg1, ..., argN, nextposition` (AceConsole-3.0.lua:138-139), with nextposition = 1e9 at
+		-- end of string -- so `GetArgs(input, 2)` gave us "dev" and "switches" and silently DROPPED
+		-- "inventoryV2 on". Every `/togbank dev <sub> <args>` command was therefore unable to
+		-- receive its arguments in game: `dev switches inventoryV2 on` fell through to the
+		-- no-argument branch and printed the list, which looks exactly like a command that ran.
+		-- The offline specs missed it because they call the handlers directly.
+		--
+		-- `rest` is passed as a SECOND parameter rather than replacing arg1, so every existing
+		-- single-token handler keeps receiving exactly what it received before.
+		local prefix, arg1, nextpos = TOGBankClassic_Core:GetArgs(input, 2)
+		local rest = nil
+		if nextpos and nextpos < 1e9 then
+			rest = tostring(input):sub(nextpos):trim()
+			if rest == "" then rest = nil end
+		end
 		local handler = COMMAND_HANDLERS[prefix]
 		if handler then
-			handler(arg1)
+			handler(arg1, rest)
 		else
 			TOGBankClassic_Output:Response("Unknown command: ", prefix)
 			TOGBankClassic_Chat:ShowHelp()
@@ -2893,7 +3356,7 @@ function TOGBankClassic_Chat:PrintProtocolInfo()
 				break
 			end
 
-			local age = ""
+			local age
 			local seconds = now - member.lastSeen
 			if seconds < 60 then
 				age = "now"

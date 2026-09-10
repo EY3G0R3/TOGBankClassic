@@ -24,6 +24,8 @@ required-dependencies:
   - ace3
   - libguildroster
   - acecommqueue
+  - libitemdb
+  - deltasync
 
 # External dependencies (Ace3, VersionCheck) are handled via required-dependencies above
 

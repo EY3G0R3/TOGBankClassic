@@ -162,50 +162,21 @@ describe("Item:Aggregate", function()
 	end)
 end)
 
-describe("Item:NeedsLink", function()
-	local Item
-	before_each(function()
-		env.reset(); env.stubOutput(); env.loadFile("Modules/Item.lua"); Item = TOGBankClassic_Item
-		TOGBankClassic_ItemDB = nil
-	end)
-
-	-- Default-deny stripping: the addon may only strip a link when it can POSITIVELY prove the
-	-- item is not gear. Every uncertain case must preserve. This is what stops cold-cache
-	-- windows from producing linkless gear ghosts in peers' saved data.
-	it("preserves the link for a weapon (class 2)", function()
-		env.defineItem(10132, { class = 2 })
-		assert.is_true(Item:NeedsLink(link("10132")))
-	end)
-
-	it("preserves the link for armor (class 4)", function()
-		env.defineItem(10132, { class = 4 })
-		assert.is_true(Item:NeedsLink(link("10132")))
-	end)
-
-	it("allows stripping a confirmed non-gear item", function()
-		env.defineItem(858, { class = 0 })
-		assert.is_false(Item:NeedsLink(link("858")))
-	end)
-
-	it("preserves the link when the item class is unknown", function()
-		assert.is_true(Item:NeedsLink(link("99999")),
-			"an unclassifiable item was marked strippable — this is the cold-cache ghost bug")
-	end)
-
-	it("preserves when there is no link at all", function()
-		assert.is_true(Item:NeedsLink(nil))
-	end)
-
-	it("preserves when no ID can be parsed from the link", function()
-		assert.is_true(Item:NeedsLink("not a link"))
-	end)
-
-	it("prefers the shipped static DB over the client cache", function()
-		TOGBankClassic_ItemDB = { [858] = { class = 2 } }
-		env.defineItem(858, { class = 0 })   -- cache disagrees
-		assert.is_true(Item:NeedsLink(link("858")))
-	end)
-end)
+-- writ-cannot: Item:NeedsLink was DELETED on purpose (INV2 step 10, the standing operator directive
+-- "V2 sends tuples only -- DELETE the link-stripping machinery, do not branch around it"). These
+-- seven examples pinned the default-deny rule for a decision the addon no longer makes: whether a
+-- link was safe to strip before sending. Nothing strips links now -- V2 sends {id,count,suffix,
+-- enchant} and the receiver rebuilds the link from LibItemDB -- so the function has no caller and no
+-- meaning. Keeping specs for a deleted function either breaks the run or invites someone to
+-- reinstate the function to satisfy them, which is the corruption this directive removes.
+--
+-- The behaviour is NOT now unguarded, which is why this is a deletion and not a coverage loss:
+-- syncwire_spec asserts a serialised V2 payload contains NO link markup and NO item-string at all,
+-- which fails if stripping (or any link on the wire) ever returns.
+--
+-- The block below is a DIFFERENT function despite the near-identical name. `ItemClassNeedsLink` is
+-- the RECEIVE-side check that keeps linkless gear arriving from an unmigrated peer out of the store,
+-- and it deliberately survives -- deleting it would break backwards compatibility.
 
 describe("Item:ItemClassNeedsLink", function()
 	local Item

@@ -29,17 +29,63 @@ local Record = TOGBankClassic_Inventory_Record
 -- not breaking: older receivers ignore it, newer ones tolerate its absence.
 Wire.VERSION = 1
 
-local F_VERSION, F_ALT, F_MONEY, F_RECORDS = 1, 2, 3, 4
+local F_VERSION, F_ALT, F_MONEY, F_RECORDS, F_HASH, F_HASHV2, F_UPDATEDAT = 1, 2, 3, 4, 5, 6, 7
 
 --- Build a V2 payload. Returns nil when there is nothing sendable, so callers never transmit an
 --- empty envelope that a receiver would apply as "this alt has no items".
-function Wire.encode(altName, records, money)
+---
+--- HASH-CANON-001. `hash` and `hashV2` are THE AUTHOR'S CANON travelling with the data they
+--- describe, and carrying them is the whole point rather than an optimisation.
+---
+--- Before this the payload was { version, alt, money, records } and NOTHING ELSE -- no hash on the
+--- wire at all. A receiver therefore had nothing to store and recomputed one from its own
+--- materialised view. DeltaSync's canonical-hash rules (its README, "compute once, at save, and
+--- never again") name that exact move and its cost: "recompute on receipt -- you overwrite the
+--- author's statement with your own opinion of their data. Now nobody is authoritative and every
+--- client can disagree with every other." The symptom it warns of is the one this guild has:
+--- content present for every banker and hashes agreeing with almost none.
+---
+--- It matters beyond reporting, and this is the operator's point: THE HASH IS WHAT DECIDES WHAT
+--- OVERWRITES WHAT. A recomputed hash means that decision rests on a number the author never
+--- published.
+---
+--- Both revisions ride together for the reason HASH-REV-001 gives: revision 2 is what two migrated
+--- clients compare on, revision 1 is what an unmigrated peer can still read, and splitting them
+--- across messages is how they drift apart.
+---
+--- TRAILING AND OPTIONAL, which the header above already licenses -- "adding a trailing optional
+--- field is not breaking: older receivers ignore it, newer ones tolerate its absence." So this does
+--- not bump Wire.VERSION.
+--- HASH-CANON-001 rule 7. `updatedAt` IS THE AUTHOR'S PUBLISH TIME and travels with the record for
+--- the same reason the hashes do. Before this the payload carried no timestamp at all and the
+--- receiver stamped its own `GetServerTime()` on arrival, which is the failure rule 7 names:
+--- "ordering is a different question from identity... decide that at apply time, from the timestamp
+--- INSIDE THE RECORD THAT ARRIVED".
+---
+--- WHAT THE MINTED TIMESTAMP ACTUALLY BROKE, which is worse than a reporting problem: every
+--- receiver re-advertises what it holds (`Guild.lua:358`, `:1033`, `:1582`), and P2PSession sorts
+--- candidate holders by `updatedAt` DESCENDING to pick the freshest (`P2PSession.lua:184-190`). With
+--- a receive-time stamp, the peer who received a snapshot MOST RECENTLY advertises the NEWEST
+--- timestamp -- so a relayed third-hand copy outranks the author's own record, and the later a copy
+--- propagates the fresher it claims to be. That decides what overwrites what.
+---
+--- This is also why rule 6 ("do not send the datestamp as a separate field") cannot mean "never
+--- transmit a timestamp": rule 7 needs it at apply time and a hash is one-way, so it could not be
+--- recovered. Rule 6 forbids a SECOND INDEPENDENT identity that can drift. This one cannot drift --
+--- `Bank.lua:417-420` stamps the timestamp and both hashes in one block from one scan, and they
+--- travel together in one payload.
+---
+--- @param hash number|nil the author's revision-1 hash for this record set
+--- @param hashV2 number|nil the author's revision-2 hash
+--- @param updatedAt number|nil the author's publish time, from the scan that produced these records
+function Wire.encode(altName, records, money, hash, hashV2, updatedAt)
 	if type(altName) ~= "string" or altName == "" then return nil end
 	local out = {}
 	for _, rec in ipairs(records or {}) do
 		if Record.isValid(rec) then out[#out + 1] = rec end
 	end
-	return { Wire.VERSION, altName, tonumber(money) or 0, out }
+	return { Wire.VERSION, altName, tonumber(money) or 0, out,
+		tonumber(hash) or nil, tonumber(hashV2) or nil, tonumber(updatedAt) or nil }
 end
 
 --- True if `payload` looks like a V2 tuple payload rather than a legacy link payload.
@@ -53,21 +99,49 @@ function Wire.isV2(payload)
 end
 
 --- Decode a V2 payload.
---- @return string|nil altName, table records, number money
+---
+--- HASH-CANON-001: the author's hashes come back as the 4th and 5th returns, NOT re-derived. They
+--- are nil when the sender did not supply them, and nil is meaningful -- it means "this author
+--- published no canon", which a receiver must be able to tell apart from "the author published
+--- zero". Do not coerce them to 0.
+--- @return string|nil altName, table records, number money, number|nil hash, number|nil hashV2, number dropped
 local function decodeV2(payload)
 	local version = payload[F_VERSION]
 	-- A newer major layout cannot be read positionally, and guessing would apply wrong values
 	-- silently. Refusing is the safe failure: the sender retries as the receiver upgrades.
-	if version > Wire.VERSION then return nil, {}, 0 end
+	if version > Wire.VERSION then return nil, {}, 0, nil, nil, 0 end
 
-	local records = {}
+	local records, dropped = {}, 0
 	for _, rec in ipairs(payload[F_RECORDS] or {}) do
 		-- Rebuild through Record.new rather than trusting the wire: a malformed tuple from a
 		-- buggy or hostile peer must not reach the store.
 		local clean = Record.new(rec[1], rec[2], rec[3], rec[4])
-		if clean then records[#records + 1] = clean end
+		if clean then
+			records[#records + 1] = clean
+		else
+			dropped = dropped + 1
+		end
 	end
-	return payload[F_ALT], records, tonumber(payload[F_MONEY]) or 0
+	-- The RECORDS are rebuilt through Record.new because a malformed tuple must not reach the
+	-- store. The HASHES are not "rebuilt" -- there is nothing to validate them against, and
+	-- computing one here would be the very recompute-on-receipt this change exists to remove.
+	-- tonumber() only rejects a non-numeric; it does not invent a value.
+	--
+	-- `dropped` EXISTS BECAUSE OF THE HASH, and it is the answer to the objection the old receive
+	-- path was built on. That code recomputed rather than storing the sender's hash, arguing that
+	-- "a sender-supplied hash that disagrees with the stored rows produces a false in-sync state
+	-- that silences future syncs while the data is wrong". The concern is REAL; the remedy was
+	-- aimed at the wrong thing. The disagreement it feared can only arise when THIS LOOP SILENTLY
+	-- DISCARDED SOMETHING -- and the fix for a lossy decode is to REPORT THE LOSS, not to paper
+	-- over it by inventing a different number. A caller that hears dropped > 0 knows it does not
+	-- hold the author's version and must not claim the author's hash.
+	--
+	-- `updatedAt` is returned as nil when absent, NOT defaulted to 0 or to now. nil means "this
+	-- author published no time", which the caller must be able to tell from a real one -- the same
+	-- reasoning as the hashes directly above.
+	return payload[F_ALT], records, tonumber(payload[F_MONEY]) or 0,
+		tonumber(payload[F_HASH]), tonumber(payload[F_HASHV2]), dropped,
+		tonumber(payload[F_UPDATEDAT])
 end
 
 --- Decode a legacy link payload into tuples.
@@ -93,15 +167,22 @@ local function decodeLegacy(payload)
 end
 
 --- Decode either format. Callers do not need to know which arrived.
---- @return string|nil altName, table records, number money, string format
+---
+--- HASH-CANON-001: `hash` and `hashV2` are the AUTHOR'S, forwarded verbatim, and are nil when the
+--- sender published none. A legacy payload never carries them, which is correct rather than a gap
+--- -- an author that did not publish a canon has not made a statement for anyone to store.
+--- HASH-CANON-001 rule 7: `updatedAt` is the AUTHOR'S publish time, forwarded the same way, and is
+--- nil when the sender published none. A caller must order by this rather than by its own receive
+--- time -- see the note on `Wire.encode` for what the receive-time stamp broke.
+--- @return string|nil altName, table records, number money, string format, number|nil hash, number|nil hashV2, number dropped, number|nil updatedAt
 function Wire.decode(payload)
-	if type(payload) ~= "table" then return nil, {}, 0, "invalid" end
+	if type(payload) ~= "table" then return nil, {}, 0, "invalid", nil, nil, 0, nil end
 	if Wire.isV2(payload) then
-		local alt, records, money = decodeV2(payload)
-		return alt, records, money, "v2"
+		local alt, records, money, hash, hashV2, dropped, updatedAt = decodeV2(payload)
+		return alt, records, money, "v2", hash, hashV2, dropped, updatedAt
 	end
 	local alt, records, money = decodeLegacy(payload)
-	return alt, records, money, "legacy"
+	return alt, records, money, "legacy", nil, nil, 0, nil
 end
 
 --- Should this client emit tuples? Send is switchable; receive never is.

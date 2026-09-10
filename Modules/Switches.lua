@@ -18,17 +18,31 @@ local Switches = TOGBankClassic_Switches
 
 --- Registry. `default` applies until the user (or a later release) changes it.
 --- `requires` names another switch that must be on for this one to have any effect.
+--- `pending` marks a switch NOTHING READS YET -- see the note on `dualWrite`. A switch carrying it
+--- is reported as not-yet-active in the listing, and `switches_spec` requires it of any switch with
+--- no reader in the shipped source. That pairing is the point: a switch may be staged ahead of the
+--- code that uses it, but it may not silently claim an effect it does not have.
 Switches.registry = {
+	-- INV2 step 9. BOTH DEFAULT ON, and they are no longer optional in the way the word "switch"
+	-- suggests: the legacy link wire format is DELETED in both directions (the 2026-09-09 directive),
+	-- so with these off the addon has no send path and no receive path at all. Turning them off is a
+	-- diagnostic, not a rollback -- there is nothing left to roll back TO.
 	inventoryV2 = {
-		default     = false,
+		default     = true,
 		description = "Read from and write to the V2 tuple store instead of the legacy inventory DB",
 		retire      = "when V2 is the only storage format (INV2-RETIRE-001)",
 	},
 	sendV2Wire = {
-		default     = false,
-		description = "Emit tuple payloads on the wire instead of link payloads (receiving always accepts both)",
-		retire      = "when every supported client understands tuples",
+		default     = true,
+		description = "Emit tuple payloads on the wire. The legacy link format is gone, so off means send nothing",
+		retire      = "together with the switch machinery, once V2 has been default for three releases",
 	},
+	-- Read by `Scan:ScanAll`, which is reached from `Bank:Scan`. That chain was broken for one
+	-- session: INV2-VAULT-001 replaced the ScanAll call with per-source ScanBags/ScanBank calls,
+	-- orphaning ScanAll and leaving this switch read only by unreachable code -- a switch the
+	-- listing still reported as ON, with a description promising it was maintaining the legacy DB.
+	-- ScanAll now returns the per-source shape itself, so there is one scan entry point again.
+	-- `switches_spec`'s wiring guard is what caught it and is what stops it recurring.
 	dualWrite = {
 		default     = true,
 		requires    = "inventoryV2",
@@ -86,6 +100,7 @@ function Switches:GetAll()
 			description = entry.description,
 			requires    = entry.requires,
 			retire      = entry.retire,
+			pending     = entry.pending,
 			-- Distinguishes "explicitly set to the default" from "never touched", which matters
 			-- when diagnosing whether a user changed something or inherited it.
 			overridden  = (store() or {})[name] ~= nil,

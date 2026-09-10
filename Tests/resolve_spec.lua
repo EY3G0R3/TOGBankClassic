@@ -59,6 +59,61 @@ describe("Resolve via LibItemDB", function()
 		loadResolve()
 	end)
 
+	-- RESOLVE-001. The itemdb branch hardcoded the placeholder icon, so every item that resolved
+	-- SUCCESSFULLY drew as a question mark while its name, link, quality and stack count were all
+	-- correct beside it -- which is why it read as an icon-cache problem rather than a missing
+	-- field. The pre-existing guard asserted only `d.icon ~= nil`, which the placeholder satisfies:
+	-- a check that cannot distinguish the right answer from the fallback cannot catch this.
+	it("uses the item's real icon, not the unknown-item placeholder", function()
+		env.defineItem(858, { name = "Minor Healing Potion", icon = 132948 })
+		local d = Resolve.describe(Record.new(858, 1))
+		assert.equal("itemdb", d.resolved)
+		assert.equal(132948, d.icon,
+			"a successfully resolved item drew the unknown-item placeholder. LibItemDB ships no " ..
+			"icon (there is no GetIcon), so the icon must come from GetItemInfoInstant, which is " ..
+			"cache-independent and answers on a cold client (RESOLVE-001)")
+	end)
+
+	-- The icon is a pure function of item id, so it is looked up once per DISTINCT id rather than
+	-- once per row. Asserted by counting calls, because "it is cached" is otherwise a claim about
+	-- code that no test exercises.
+	it("looks the icon up once per distinct item id, not once per row", function()
+		Resolve.ClearIconCache()
+		env.defineItem(858, { name = "Minor Healing Potion", icon = 132948 })
+		local calls = 0
+		local real = GetItemInfoInstant
+		GetItemInfoInstant = function(...) calls = calls + 1; return real(...) end
+
+		for _ = 1, 25 do Resolve.describe(Record.new(858, 1)) end
+		assert.equal(1, calls,
+			"the icon was looked up per row. A bank holding hundreds of stacks of the same item " ..
+			"would pay for every one of them (RESOLVE-001)")
+
+		GetItemInfoInstant = real
+	end)
+
+	it("remembers a MISS too, so a failing id is not retried on every rebuild", function()
+		Resolve.ClearIconCache()
+		local calls = 0
+		local real = GetItemInfoInstant
+		GetItemInfoInstant = function(...) calls = calls + 1; return real(...) end
+
+		-- 10132 is in the stubbed LibItemDB but has no defined client item, so it has no icon.
+		for _ = 1, 10 do Resolve.describe(Record.new(10132, 1)) end
+		assert.equal(1, calls,
+			"an id with no icon was looked up repeatedly -- caching only hits means exactly the " ..
+			"ids that fail are the ones retried forever, which is backwards")
+
+		GetItemInfoInstant = real
+	end)
+
+	-- The placeholder must still be there when the client genuinely has nothing.
+	it("falls back to the placeholder icon when the client has no icon for the id", function()
+		local d = Resolve.describe(Record.new(10132, 1))
+		assert.equal("itemdb", d.resolved)
+		assert.is_not_nil(d.icon, "an unknown icon must never come back nil -- the UI draws it directly")
+	end)
+
 	it("resolves a plain item", function()
 		local d = Resolve.describe(Record.new(858, 20))
 		assert.equal("Minor Healing Potion", d.name)
@@ -150,6 +205,54 @@ describe("Resolve fallback chain", function()
 		env.defineItem(858, { name = "Client Only", class = 0 })
 		local d = Resolve.describe(Record.new(858, 1))
 		assert.equal("client", d.resolved)
+	end)
+end)
+
+-- ItemDB became a REQUIRED dependency when INV2 landed (declared in both TOCs, slug `libitemdb`
+-- in .pkgmeta). A required dependency that did not load has to be LOUD, and this one is
+-- especially easy to miss: V2 stores integer tuples and rebuilds the link at render time, so
+-- with no library there is nothing to rebuild from and every row quietly becomes a placeholder.
+-- Resolve asks for it through LibStub's optional form, which returns nil rather than raising, so
+-- without this nothing anywhere would say a word.
+describe("Resolve missing-library reporting", function()
+	local function errors()
+		local out = {}
+		for _, c in ipairs(TOGBankClassic_Output.calls or {}) do
+			if c.level == "Error" then out[#out + 1] = tostring(c[1]) end
+		end
+		return out
+	end
+
+	before_each(function()
+		env.reset()
+		LibStub.libs["LibItemDB-1.0"] = nil
+		loadResolve()
+		env.defineItem(858, { name = "Client Only", class = 0 })
+	end)
+
+	it("reports the missing library at a level the player sees", function()
+		Resolve.describe(Record.new(858, 1))
+		local e = errors()
+		assert.equal(1, #e, "expected exactly one Error, got " .. #e)
+		assert.is_not_nil(e[1]:find("LibItemDB", 1, true),
+			"the error must name the library so the player knows what to reinstall: " .. e[1])
+	end)
+
+	-- Keyed on the LIBRARY, not per item id the way noteUnresolved is. Routing this through the
+	-- per-id tracker would report once per distinct item -- thousands of identical lines, in a
+	-- debug category that is off by default, which is indistinguishable from silence.
+	it("reports it once, however many items are resolved", function()
+		for _ = 1, 20 do Resolve.describe(Record.new(858, 1)) end
+		assert.equal(1, #errors(), "the missing-library error is not deduped")
+	end)
+
+	it("says nothing when the library is present", function()
+		env.reset()
+		stubItemDB({ [858] = { name = "Known", quality = 1, class = 0, subClass = 0,
+		                       equipLoc = "", itemLevel = 1, reqLevel = 0 } })
+		loadResolve()
+		Resolve.describe(Record.new(858, 1))
+		assert.equal(0, #errors(), "a healthy install must not report a missing dependency")
 	end)
 end)
 

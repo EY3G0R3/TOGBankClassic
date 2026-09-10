@@ -1,14 +1,40 @@
 ---@class TOGBankClassic_Bank
-TOGBankClassic_Bank = { ... }
+-- BANK-002: `{ ... }` at file scope captures the addon varargs the client passes in, so the
+-- module table was born holding [1]="TOGBankClassic" and [2]=<addon namespace table>, with
+-- #TOGBankClassic_Bank == 2. Harmless while nothing iterated it, and a trap for the first
+-- ipairs or `#` over the module table -- which would have failed far from this line.
+TOGBankClassic_Bank = {}
+
+local function HasUpdated()
+	return TOGBankClassic_Bank.hasUpdated
+end
 
 local function IsBankAvailable()
 	local _, bagType = C_Container.GetContainerNumFreeSlots(BANK_CONTAINER)
 	return bagType ~= nil
 end
 
-local function HasUpdated()
-	return TOGBankClassic_Bank.hasUpdated
-end
+-- INV2-WIRE-001 WAS TRIED HERE AND REVERTED, 2026-09-09. Read this before attempting it again.
+--
+-- The plan was: delete this second container walk and build the legacy shape from Scan:ScanAll's
+-- output, so `/togbank dev compare` diffs ONE walk instead of two taken microseconds apart. It was
+-- implemented, and `wiring_spec`'s "still completes the legacy scan when the V2 mirror throws"
+-- turned red -- correctly.
+--
+-- WHAT THE COLLAPSE COSTS: one walk means one point of failure. With the legacy shape derived from
+-- Scan:ScanAll, any fault in the V2 scanner stops the legacy scan too -- and the legacy store is
+-- what every character without a V2 record still reads. A bug in new code would freeze the whole
+-- guild's inventory rather than just the new path. Two independent walks is what makes that
+-- impossible, and that spec was written deliberately to hold the property.
+--
+-- WHAT IT BUYS, measured against that: the todo's own words are that a divergence caused by a stack
+-- moving between the two walks is "close to theoretical" -- they are microseconds apart inside one
+-- Bank:Scan call with no yield. So the trade is a real robustness guarantee for a theoretical
+-- consistency gain. Not worth it.
+--
+-- If it is ever revisited, the thing to solve first is: what should happen to the legacy store when
+-- the shared scan throws? "Leave it as it was" silently freezes inventory; "clear it" loses data.
+-- Until there is a good answer, two walks is the right shape.
 
 local function ScanBag(bag, slots)
 	local count = 0
@@ -141,6 +167,9 @@ function TOGBankClassic_Bank:Scan()
 		alt = info.alts[player]
 	end
 
+	-- TWO WALKS, DELIBERATELY. See the INV2-WIRE-001 note at the top of this file: collapsing this
+	-- into Scan:ScanAll was tried and reverted, because it makes a fault in the V2 scanner stop the
+	-- legacy scan that every character without a V2 record still reads.
 	local total = 0
 	local numslots = 0
 
@@ -168,6 +197,14 @@ function TOGBankClassic_Bank:Scan()
 
 	local money = GetMoney()
 	alt.money = money
+
+	-- INV2-MAIL-001: the V2 mirror used to run HERE, and it fed the store from Scan:ScanAll alone
+	-- -- which walks bags and bank and contains no mail at all. So the V2 store was missing a
+	-- source the legacy aggregate has had since MAIL-002, and with inventoryV2 on a banker's mail
+	-- silently stopped being counted. It surfaced as ONE tooltip line showing two different
+	-- numbers for the same item: 68 on the banker, where V2 was populated, and 71 on a non-banker,
+	-- where V2 has no record for that alt so the legacy fallback ran. The mirror now runs after
+	-- the mail scan, below, so it can include it.
 
 	-- SCAN-001: counterpart to the BANK.GATE lines above -- confirms a scan actually ran
 	-- and shows whether the vault half was included (it is skipped away from a bank NPC).
@@ -264,6 +301,76 @@ function TOGBankClassic_Bank:Scan()
 		table.insert(alt.items, item)
 	end
 
+	-- INV2: mirror this scan into the V2 tuple store.
+	--
+	-- Additive on purpose. The legacy path above is untouched and still authoritative; this writes
+	-- into a SEPARATE SavedVariable so the two can be compared on live data
+	-- (/togbank dev compare) before anything reads from V2. Nothing here feeds back into `alt`, so
+	-- a fault cannot corrupt the legacy record.
+	--
+	-- It runs HERE, after the aggregate, rather than beside the container walk -- INV2-MAIL-001.
+	-- Mail can only be read while the mailbox is open, so it arrives through MailInventory rather
+	-- than a container scan, and a mirror placed next to the bag walk cannot see it. Running after
+	-- the aggregate means the V2 store gets the same three sources the legacy record has.
+	--
+	-- NOTE this is deliberately NOT the "one walk, two writes" arrangement from INVENTORY_V2.md
+	-- §6.1 -- that applies once V2 is the writer and dualWrite maintains the legacy DB. Here the
+	-- legacy path is still the writer, so V2 re-walks the containers (INV2-WIRE-001). The cost is
+	-- one extra container pass while inventoryV2 is off-by-default and opt-in.
+	if TOGBankClassic_Switches and TOGBankClassic_Switches:IsEnabled("inventoryV2") then
+		local ok, err = pcall(function()
+			local Store  = TOGBankClassic_Inventory_Store
+			local Scan   = TOGBankClassic_Inventory_Scan
+			local Record = TOGBankClassic_Inventory_Record
+			if not (Store and Scan and Record) then return end
+
+			-- Per source, not one flat set -- INV2-VAULT-001. Bags and mail are readable
+			-- anywhere; the vault is readable only at a banker. Writing them as separate
+			-- sources lets the store keep the stored vault while still taking today's bags
+			-- and mail. The previous arrangement skipped the ENTIRE write to protect the
+			-- vault, so a mailbox opened away from a bank NPC updated the legacy record and
+			-- never reached V2: 71 on a character reading the legacy fallback, 68 on the
+			-- banker reading its own frozen V2 record, for the same item.
+			-- ONE call, so `dualWrite` keeps a reader and the legacy shape still comes from the
+			-- same walk. Splitting this into ScanBags + ScanBank orphaned ScanAll and left the
+			-- switch read only by dead code -- caught by switches_spec's wiring guard.
+			local result = Scan:ScanAll()
+
+			-- Mail, as tuples. MailInventory stores linkless {ID, Count} rows, which is exactly
+			-- what a tuple wants -- no link to parse, and suffix/enchant are unknowable for a mail
+			-- attachment because GetInboxItem does not report them.
+			local mailRecords, mailSkipped = {}, 0
+			for _, item in ipairs(mailItems) do
+				local rec = Record.new(item.ID, item.Count or 1)
+				if rec then
+					mailRecords[#mailRecords + 1] = rec
+				else
+					mailSkipped = mailSkipped + 1
+				end
+			end
+
+			-- `mail` is always supplied, even when empty: an emptied mailbox must clear the
+			-- source rather than leave yesterday's attachments counted. Same for bags. Only
+			-- `bank` is conditional -- ScanAll omits it when the vault was unreadable, and an
+			-- omitted source is KEPT by the store rather than cleared.
+			local sources = { bags = result.sources.bags, mail = mailRecords }
+			if result.sources.bank then sources.bank = result.sources.bank end
+
+			local stored, skipped = Store:SetAltSources(info.name, player, sources, result.money)
+			TOGBankClassic_Output:Debug("BANK", "SCAN",
+				"[INV2] stored %d record(s) for %s (%d skipped, vault %s, mail %d/%d bad)",
+				stored, player, skipped,
+				result.bankScanned and "rescanned" or "kept - out of reach",
+				#mailRecords, mailSkipped)
+		end)
+		if not ok then
+			-- Loud, but non-fatal: V2 is not authoritative yet, so a fault here must not stop the
+			-- legacy scan from completing and syncing.
+			TOGBankClassic_Output:Error("[INV2] scan mirror failed (legacy scan unaffected): %s",
+				tostring(err))
+		end
+	end
+
 	-- DEBUG: Log sample counts after aggregation
 	if alt.items and #alt.items > 0 then
 		local scanSample = {}
@@ -296,16 +403,35 @@ function TOGBankClassic_Bank:Scan()
 	end
 
 	-- Compute a hash of the current inventory state (SYNC-006: use aggregated alt.items)
+	--
+	-- HASH-REV-001: change detection runs on REVISION 2, the accurate identity. Revision 1 cannot
+	-- see suffix or enchant, so gating on it would reproduce audit finding 31 exactly -- a banker
+	-- swapping one suffix variant for another at the same count would not bump the version and no
+	-- delta would ever be computed. Revision 1 is still STAMPED, because it is what unmigrated peers
+	-- compare against, but it must never be the gate.
+	-- HASH-CANON-003: THE CHANGE DETECTOR IS THE CONTENT HASH, WHICH CARRIES NO DATESTAMP, and the
+	-- distinction is what makes a DTS-bearing canon possible at all. A canon differs on every call by
+	-- construction, so comparing against it would make every scan look like a change and republish to
+	-- the whole guild -- the broadcast storm this work exists to end. Compare content against content;
+	-- advance the datestamp only when content moved; then mint the canon over both.
+	--
+	-- `alt.inventoryContentHash` is absent on records written before this, so the first scan after
+	-- upgrading bumps the version once for every character. That is a single self-correcting blip,
+	-- not a loop: the second scan has a content hash to compare against and goes quiet.
 	local currentHash = TOGBankClassic_Core:ComputeInventoryHash(alt.items, nil, nil, money)
-	local previousHash = alt.inventoryHash
+	local previousHash = alt.inventoryContentHash
 
 	if currentHash ~= previousHash then
 		-- Inventory changed, update version timestamp
 		local updatedAt = GetServerTime()
 		alt.version = updatedAt
 		alt.inventoryUpdatedAt = updatedAt
-		alt.inventoryHash = currentHash
-		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Inventory changed for %s, version updated to %d (hash: %s)", player, alt.version, tostring(currentHash))
+		-- THE ONE AND ONLY PLACE A CANON IS BORN. Every other site that used to stamp a hash has been
+		-- deleted (HASH-CANON-002): the query-path recompute and the no-change adoption. A hash is
+		-- written once, here, by the client that actually read the bank, and carried unchanged by
+		-- everyone else.
+		TOGBankClassic_Core:StampInventoryHashes(alt, alt.items, nil, nil, money, updatedAt)
+		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Inventory changed for %s, version updated to %d (content: %s, canon: %s)", player, alt.version, tostring(currentHash), tostring(alt.inventoryHashV2))
 	else
 		-- No changes detected, preserve existing version
 		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "No inventory changes for %s, version unchanged (hash: %s)", player, tostring(currentHash))
@@ -397,20 +523,26 @@ end
 -- Returns: table of {bag, slot, count, link}
 function TOGBankClassic_Bank:FindItemsByName(itemName, itemID, suffixID)
 	local results = {}
-	if not itemName or itemName == "" then
+	local targetID = tonumber(itemID) or nil
+	local targetSuffix = tonumber(suffixID) or nil
+	local hasName = itemName ~= nil and itemName ~= ""
+
+	-- REQ-004: bail only when there is NOTHING to match on. This used to return empty whenever
+	-- the name was nil or empty, even with a perfectly good itemID -- which contradicts the
+	-- ID-primacy rule REQ-001 established, and silently broke the exact path REQ-001 was added
+	-- for: an ID-only lookup for a same-name variant reported the item as not banked at all.
+	if not hasName and not targetID then
 		return results
 	end
 
-	local targetName = string.lower(itemName)
-	local targetID = tonumber(itemID) or nil
-	local targetSuffix = tonumber(suffixID) or nil
+	local targetName = hasName and string.lower(itemName) or nil
 
 	for bag = 0, 4 do
 		local slots = C_Container.GetContainerNumSlots(bag)
 		for slot = 1, slots do
 			local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
 			if itemInfo and itemInfo.hyperlink then
-				local matched = false
+				local matched
 				if targetID then
 					-- ID-based match: precise, handles same-name variants
 					matched = (itemInfo.itemID == targetID)
@@ -453,14 +585,21 @@ function TOGBankClassic_Bank:OnUpdateStart()
 	self.hasUpdated = true
 end
 
+-- DEBUG-002: these four lines were logged under MAIL/EVENTS. This is the ONLY caller of
+-- Bank:Scan on the bag/bank path, so "was a scan attempted at all?" was invisible to the BANK
+-- category -- whose own description is "Bank/bag inventory scanning, including why a scan was
+-- skipped". Someone enabling exactly the category the question belongs to got silence, which
+-- reads as "no event fired" when it may equally be "the trigger fired and hasUpdated was false".
+-- Found 2026-09-08 while diagnosing an empty V2 store: the operator had BANK on, correctly, and
+-- saw nothing. The mail scan this function also triggers keeps its own MAIL logging inside Scan.
 function TOGBankClassic_Bank:OnUpdateStop()
-	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "OnUpdateStop called, hasUpdated=%s", tostring(self.hasUpdated))
+	TOGBankClassic_Output:Debug("BANK", "GATE", "OnUpdateStop called, hasUpdated=%s", tostring(self.hasUpdated))
 	if self.hasUpdated then
-		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Calling Scan()")
+		TOGBankClassic_Output:Debug("BANK", "GATE", "Calling Scan()")
 		self:Scan()
-		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Scan() completed")
+		TOGBankClassic_Output:Debug("BANK", "GATE", "Scan() completed")
 	else
-		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Skipping Scan() because hasUpdated is false")
+		TOGBankClassic_Output:Debug("BANK", "GATE", "Skipping Scan() because hasUpdated is false")
 	end
 	self.hasUpdated = false
 end

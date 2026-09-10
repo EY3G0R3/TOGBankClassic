@@ -113,7 +113,7 @@
 <ol>
 <li>Bank Characters: Add "gbank" to character's Public Note or Officer Note</li>
 <li>Enable Reporting: In AddOns settings, enable "Report bank contents" and "Scan bank on open"</li>
-<li>Scan Inventory: Open your bank/bags/mail—addon scans and shares with guild</li>
+<li>Scan Inventory: Open your bank and then close it &mdash; the scan runs on close, then shares with your guild</li>
 <li>Done! Inventory is now visible to all guild members using TOGBankClassic</li>
 </ol>
 
@@ -218,10 +218,10 @@
 <h3>Key Settings</h3>
 
 <ul>
-<li>Bank Section: Enable reporting, auto-scan on bank open, mail scan settings</li>
-<li>Request Section: Configure request limits, priority display, mute warnings</li>
-<li>UI Section: Minimap button visibility, window opacity</li>
-<li>Debug Section: Enable persistent logging, toggle debug categories</li>
+<li>General: Minimap button, hide in combat, chat message volume, sounds</li>
+<li>Appearance: A transparency slider for each window</li>
+<li>Officer: Request limits and how long requests stay open</li>
+<li>Debug: Persistent logging and debug categories</li>
 </ul>
 
 <h2>Dependencies &amp; Compatibility</h2>
@@ -290,42 +290,90 @@
 
 <h3>v1.4.0 (in development) - Guild Roster Overhaul</h3>
 <p><strong>Not released yet.</strong> Listed so you can see what is coming.</p>
+
+<p><strong>New</strong></p>
 <ul>
-<li><strong>EVENT-001: the addon now notices when guild members come and go, as it happens.</strong> It was supposed to watch for the "X has come online" messages and keep its own list of who is around &mdash; but a fault meant that watcher never actually ran, in every version ever released. The addon only found out who was online when the game handed it a full guild refresh. In between, it could try to send an order to someone who had already logged off, and it was slower to notice a banker coming online with items you were waiting for. It now tracks this properly and immediately.</li>
-<li><strong>Bank characters who leave the guild no longer linger.</strong> Removing a character from your bank list, or from the guild, could leave a ghost entry behind that showed as permanently waiting for data. Those cannot occur any more.</li>
-<li><strong>ITEM-005: the inventory window no longer gets stuck on "Loading items...".</strong> If any single item in your guild bank failed to load, the addon stopped waiting for the whole batch &mdash; so one bad item hid <em>everything</em> and the window sat on the loading message indefinitely. Now a problem item is skipped and the rest still appear, and if something never loads at all the addon gives up after a few seconds and shows you what it has rather than waiting forever.</li>
-<li><strong>ACQ-004: the addon notices when the game refuses to send something.</strong> Occasionally the client declines to send an addon message. Previously that was reported back as success, so the addon believed your guild had received an update they never got &mdash; most importantly changes to orders, which could leave different members seeing different lists with nothing to explain why. Failed sends are now retried, and if they still fail you are told, instead of the addon quietly assuming it worked.</li>
+<li><strong>You can now set how see-through each window is.</strong> A new <strong>Appearance</strong> tab in the options has a slider for every window &mdash; Inventory, Search, Requests, Donations and the Mail viewer &mdash; so you can make the ones you leave open fade into the background and keep the rest solid. Only the window frame fades: item icons, stack counts and text stay perfectly readable at any setting, and a window you drag transparent still moves and closes normally. Changes take effect straight away on a window that is already open, and there is a "Reset All Windows to Solid" button if you overdo it. Note that 100% is now properly solid &mdash; the window art was always slightly see-through before and could not be made fully opaque; if you liked that lighter look, nudge the slider down a little. Thanks to Vishiswaz for the request.</li>
+</ul>
+
+<p><strong>Changed</strong></p>
+<ul>
+<li><strong>Removed: the old way of sharing bank contents is gone entirely, and with it the bug that kept corrupting item data.</strong> To save bandwidth, the addon used to strip the item links out of an update and let the receiving player rebuild them &mdash; guessing, item by item, whether the person on the other end would be able to. That guess is about somebody else's game client, and when it was wrong the item came back wrong. Bank contents now travel as plain numbers and the item is rebuilt from a shipped item database, so there is no link to strip and nothing to guess. <strong>Everyone in your guild needs this version.</strong> Until a bank character updates, players on the new version will not see their contents, and vice versa &mdash; it sorts itself out as people update, and nothing is lost in the meantime. If someone in your guild is still on an older version, you will now be told so plainly rather than simply seeing nothing from them.</li>
 <li><strong>Two addons are now installed alongside this one: LibGuildRoster and AceCommQueue.</strong> Guild-roster handling and message queueing moved into shared libraries used across the TOG addons, so a fix in either benefits all of them at once. AceCommQueue was previously bundled inside TOGBankClassic and had fallen behind its own newer releases; as a separate addon it stays current. Both install automatically through the CurseForge app &mdash; you do not need to fetch either yourself.</li>
+<li><strong>The setup steps told you to open your bank, when what actually starts a scan is closing it.</strong> Your bank contents are read when you shut the bank window, not when you open it &mdash; and opening your bags on their own has never started a scan. The instructions in several places said otherwise, so anyone following them exactly could sit with the bank open wondering why nothing had been shared. The wording is corrected everywhere, and the in-game message you get when there is nothing to compare now tells you to open <em>and close</em> the bank.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li><strong>Updating the addon no longer cuts you off from guildmates who have not updated yet.</strong> We corrected how the addon fingerprints a bank character's contents, so that swapping one random-suffix item for another is actually noticed. That fingerprint is compared between players, so changing it would have meant an updated client and an out-of-date one could never agree again &mdash; each convinced the other was stale, re-syncing endlessly, and the whole guild would have had to update together on the same day. The addon now carries both the old and the new fingerprint and uses whichever the two of you share.</li>
+<li><strong>A completed update could be reported as a failure fifteen seconds later.</strong> When bank contents arrived successfully, the addon stored them and stopped &mdash; without ever marking the transfer as finished. The countdown that watches for a stalled transfer kept running, and when it ran out it declared the transfer dead and moved on to somebody else, even though it had worked perfectly. It also meant each completed transfer used up one of the addon's limited transfer slots permanently, so syncing got slower the longer you played.</li>
+<li><strong>An update could be given up on while it was actually working.</strong> When everyone holding a bank character's contents was busy, the addon waited and planned to try again. If somebody freed up in the meantime it went ahead with them &mdash; but the old plan to try again was still running, and when it came around it declared the whole thing a failure, even though the update in progress was fine. This also meant the same request could be sent twice. Superseded attempts are now dropped properly, while a genuine retry still happens as before.</li>
+<li><strong>An update for a bank character could be cancelled part-way through by an earlier attempt for the same character.</strong> When the addon asked for a bank character's contents and then asked again a few seconds later &mdash; which happens on its own when you open your bank, or when it catches up after you log in &mdash; the first attempt was still counting down in the background. When it ran out of time it cancelled whatever was happening at that moment, which by then was the second attempt, and reported it as having timed out. The result was an update that stopped for no visible reason and had to be retried. Only one countdown is now kept per character.</li>
+<li><strong>"Highlight needed items" did nothing at all if you opened your bags in the wrong order.</strong> The addon worked out which bag window to dim by counting, which only matched reality when you opened your backpack first and then each bag in order. Open a bag on its own, or open them out of order, and it was looking at the wrong window entirely &mdash; so the tick box turned on and absolutely nothing happened, with no error to explain it. Worse, with two bags open the wrong way round it could dim slots in one bag using the size of another. It now asks the game which window is showing which bag, the same way the game itself does, so the order you open things in no longer matters. This also fixes bank bags dimming the slot at the opposite end of the bag from the one actually holding the item.</li>
+<li><strong>Items sitting in a bank character's mailbox could go missing for everyone else.</strong> If the game could not give the addon a full item link for a mail attachment &mdash; which happens routinely &mdash; that item was quietly thrown away by everyone who received the update, and rescanning never fixed it because the same thing happened every time. Those items now arrive. This is a second, separate cause of "the banker's mail is missing" from the one fixed earlier in this version; that one was about recording mail, this one was about sending it.</li>
+<li><strong>A bank character's own tooltip could show a smaller count than everybody else saw.</strong> Hovering the same item on the bank character and on a normal character gave two different numbers &mdash; for example 68 against 71 &mdash; and the bank character was always the one that was short. The cause was mail. Your bank vault can only be read while you are standing at a banker, so to avoid wiping a stored vault the addon skipped saving anything at all when you were away from one &mdash; which also threw away the mail and bag counts it had just read. Since you almost never open your mailbox standing at a banker, mail could never make it in. The vault and your bags and mail are now stored separately, so being away from a banker simply leaves the vault untouched instead of cancelling the whole update.</li>
+<li><strong>Counts saved before the mail fix are no longer trusted over complete ones.</strong> Records saved by an older version hold your bags and vault but no mail, so they read low. The addon now marks each saved record with what it covers, and falls back to the older complete figure until that character is scanned again &mdash; which happens by itself the next time they open and close their bank. Nothing to run and nothing to reset.</li>
+<li><strong>The addon now notices when guild members come and go, as it happens.</strong> It was supposed to watch for the "X has come online" messages and keep its own list of who is around &mdash; but a fault meant that watcher never actually ran, in every version ever released. The addon only found out who was online when the game handed it a full guild refresh. In between, it could try to send an order to someone who had already logged off, and it was slower to notice a banker coming online with items you were waiting for. It now tracks this properly and immediately.</li>
+<li><strong>Bank characters who leave the guild no longer linger.</strong> Removing a character from your bank list, or from the guild, could leave a ghost entry behind that showed as permanently waiting for data. Those cannot occur any more.</li>
+<li><strong>The inventory window no longer gets stuck on "Loading items...".</strong> If any single item in your guild bank failed to load, the addon stopped waiting for the whole batch &mdash; so one bad item hid <em>everything</em> and the window sat on the loading message indefinitely. Now a problem item is skipped and the rest still appear, and if something never loads at all the addon gives up after a few seconds and shows you what it has rather than waiting forever.</li>
+<li><strong>The status bar now shows when your character is sending inventory to someone.</strong> The bar along the bottom of the Inventory window has a "Tx" readout meant to show sends in progress &mdash; it counted the wrong thing and was stuck on zero, so it stayed blank no matter how busy the addon was. There was no way to tell the difference between "nothing is happening" and "the indicator is broken". It now shows the real number, turning amber while sends are in flight and red when you are at the limit. Sending itself was never affected &mdash; only your view of it.</li>
+<li><strong>Bank contents were being constantly re-checked and re-sent between guild members, for no reason.</strong> Each bank character's contents carry a short fingerprint, used to tell at a glance whether two players are holding the same thing. That fingerprint was supposed to be written once, by the bank character itself. Instead almost every player recalculated it &mdash; whenever anyone asked about a bank, whenever certain replies arrived, and when older saved data was upgraded. Because each player worked it out slightly differently, players who held identical contents kept concluding they disagreed, and asked each other for the data again. On a busy guild that is a lot of chatter with nothing behind it. The fingerprint is now written once, by the bank character whose bank it is, and everyone else passes it along untouched.</li>
+<li><strong>A bad fingerprint could spread from player to player and replace good data.</strong> The same recalculation meant a fingerprint invented by one player was sent on to the next, stored as if it were genuine, and passed on again &mdash; so a wrong value could travel the guild and overwrite correct bank contents, most visibly after the bank character had logged off and was no longer around to correct it. Players no longer accept a fingerprint from anyone except the bank character it belongs to.</li>
+<li><strong>Two different bank contents that happened to look identical are no longer mistaken for each other.</strong> The fingerprint now includes when the contents were recorded, so a genuine change is never mistaken for "nothing happened". This is also what lets the addon tell which of two copies is actually the newer one.</li>
+<li><strong>A bank character's contents could be replaced by an older copy, so items that were really there stopped showing.</strong> When several guild members each hold a copy of the same bank character, they pass it around between them. The addon applied whichever copy arrived last and never checked how old it was &mdash; so somebody logging in with a days-old copy could overwrite the up-to-date one for everyone, and there was nothing to say it had happened. It could not check, because a bank character's contents were sent without any record of when they were taken; each player stamped them with the time <em>they</em> received them, which meant a copy passed along third-hand looked <em>newer</em> than the original the further it travelled. Contents now carry the time they were actually scanned, and an older copy is ignored rather than applied.</li>
+<li><strong>The addon now tells you if the game has no room left for it to talk to your guild.</strong> WoW allows only a limited number of addon conversations at once, and once that limit is reached any further ones are simply refused. TOGBank could be one of the refused ones &mdash; and when that happened nothing was said. No error, no warning, just a guild bank that never updated, with nothing anywhere to explain why. It now checks, and if it has been shut out it says so plainly and tells you that disabling another addon and reloading will fix it. If everything is fine, as it will be for almost everyone, you will never see this.</li>
+<li><strong>The addon notices when the game refuses to send something.</strong> Occasionally the client declines to send an addon message. Previously that was reported back as success, so the addon believed your guild had received an update they never got &mdash; most importantly changes to orders, which could leave different members seeing different lists with nothing to explain why. Failed sends are now retried, and if they still fail you are told, instead of the addon quietly assuming it worked.</li>
 </ul>
 
 <h3>v1.3.2 (2026-08-03) - ElvUI &amp; Baganator Item Highlighting</h3>
 <p>The "Highlight needed items" option now works for ElvUI and Baganator users.</p>
+
+<p><strong>New</strong></p>
 <ul>
-<li><strong>BAGANATOR-001: "Highlight needed items" works with Baganator.</strong> If you use Baganator for your bags, ticking the box did nothing &mdash; the addon only knew how to mark items in Bagnon and in the default Blizzard bags. Items you need for open orders now get a gold marker in the top-left corner of the icon. Note this looks different to the Bagnon and default-bag versions, which instead dim everything you <em>don't</em> need: Baganator only lets addons add corner markers, so that is the form it takes there. You can move or remove the marker from Baganator's own customise window, where it appears as "TOGBank: needed for an order".</li>
-<li><strong>ELVUI-001: "Highlight needed items" works with ElvUI.</strong> If you use ElvUI's bags, ticking the box did nothing at all &mdash; the addon only knew how to dim items in Bagnon and in the default Blizzard bags. It now dims unneeded items directly in ElvUI's bag and bank windows, using ElvUI's own shading so it looks native and doesn't interfere with ElvUI's search box. Unticking the box restores everything to normal. Works the same on Classic Era and TBC.</li>
-<li><strong>Bagnon users are unaffected.</strong> If you run Bagnon underneath ElvUI with ElvUI's own bag replacement turned off, highlighting keeps using Bagnon exactly as before.</li>
-<li><strong>Please report anything odd with these two.</strong> The ElvUI and Baganator support was written against those addons' own published interfaces, but neither is installed on the development machine, so this release is the first time either has run for real. Both are built to fail quietly &mdash; if something is wrong they fall back to the previous behaviour rather than throwing errors &mdash; so if highlighting doesn't do what's described above, please report it with the ticket ID (ELVUI-001 or BAGANATOR-001) and it'll be fixed quickly. Bagnon and default-bag users are on the same code path as before and unaffected either way.</li>
+<li><strong>"Highlight needed items" works with ElvUI.</strong> If you use ElvUI's bags, ticking the box did nothing at all &mdash; the addon only knew how to dim items in Bagnon and in the default Blizzard bags. It now dims unneeded items directly in ElvUI's bag and bank windows, using ElvUI's own shading so it looks native and doesn't interfere with ElvUI's search box. Unticking the box restores everything to normal. Works the same on Classic Era and TBC.</li>
+<li><strong>"Highlight needed items" works with Baganator.</strong> If you use Baganator for your bags, ticking the box did nothing &mdash; the addon only knew how to mark items in Bagnon and in the default Blizzard bags. Items you need for open orders now get a gold marker in the top-left corner of the icon. Note this looks different to the Bagnon and default-bag versions, which instead dim everything you <em>don't</em> need: Baganator only lets addons add corner markers, so that is the form it takes there. You can move or remove the marker from Baganator's own customise window, where it appears as "TOGBank: needed for an order".</li>
 </ul>
+
+<p><strong>Changed</strong></p>
+<ul>
+<li><strong>Bagnon users are unaffected.</strong> If you run Bagnon underneath ElvUI with ElvUI's own bag replacement turned off, highlighting keeps using Bagnon exactly as before.</li>
+</ul>
+
+<p><strong>Please report anything odd with ElvUI or Baganator.</strong> Support for both was written against those addons' own published interfaces, but neither is installed on the development machine, so this release is the first time either has run for real. Both are built to fail quietly &mdash; if something is wrong they fall back to the previous behaviour rather than throwing errors &mdash; so if highlighting doesn't do what's described above, please report it and say which bag addon you use. Bagnon and default-bag users are on the same code path as before and unaffected either way.</p>
 
 <h3>v1.3.1 (2026-08-02) - Banker Inventory Never Scanned</h3>
 <p>Fixes a bank character's own items never being recorded, leaving their tab permanently empty.</p>
+
+<p><strong>Changed</strong></p>
 <ul>
-<li><strong>SCAN-001: Scanning can no longer switch itself off behind your back.</strong> Depending on timing at login, a bank character's "enable scanning" setting could end up unset &mdash; which silently stopped their bags and bank from being recorded &mdash; and the <em>Bank</em> section could be missing from the addon's options entirely, so the "Enable for &lt;character&gt;" tick box wasn't there to turn on. The setting now defaults to on and the options section is registered reliably. Affects Classic Era as well as TBC.</li>
-<li><strong>An empty tab no longer says "Loading items..." forever.</strong> A character with nothing recorded yet showed a loading message that never went away, so an empty record looked identical to the addon being stuck. Empty tabs now tell you what is actually going on &mdash; and, for your own character, what to do about it.</li>
 <li><strong>Easier to diagnose if scanning ever stops.</strong> When the addon decides not to scan, it can now tell you why (for example, the character isn't marked as a bank, or scanning is switched off for them) instead of doing nothing silently. Turn on the new <em>BANK</em> category in the debug options if you are troubleshooting.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li><strong>Scanning can no longer switch itself off behind your back.</strong> Depending on timing at login, a bank character's "enable scanning" setting could end up unset &mdash; which silently stopped their bags and bank from being recorded &mdash; and the <em>Bank</em> section could be missing from the addon's options entirely, so the "Enable for &lt;character&gt;" tick box wasn't there to turn on. The setting now defaults to on and the options section is registered reliably. Affects Classic Era as well as TBC.</li>
+<li><strong>An empty tab no longer says "Loading items..." forever.</strong> A character with nothing recorded yet showed a loading message that never went away, so an empty record looked identical to the addon being stuck. Empty tabs now tell you what is actually going on &mdash; and, for your own character, what to do about it.</li>
 </ul>
 
 <h3>v1.3.0 (2026-08-02) - TBC Client Support</h3>
 <p>TOGBankClassic now installs and runs on The Burning Crusade clients as well as Classic Era.</p>
+
+<p><strong>New</strong></p>
 <ul>
-<li><strong>TBC-001: The addon now loads on TBC.</strong> Previously only a Classic Era build was published, so TBC players saw the addon flagged as out of date and had to force-load it. There is now a proper TBC build with the same features, same commands and same interface &mdash; install it the usual way and it just works.</li>
+<li><strong>The addon now loads on TBC.</strong> Previously only a Classic Era build was published, so TBC players saw the addon flagged as out of date and had to force-load it. There is now a proper TBC build with the same features, same commands and same interface &mdash; install it the usual way and it just works.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
 <li><strong>No longer flagged "out of date" on Classic Era.</strong> The Era build was still marked for the previous game patch, so it showed up greyed out in the AddOns list until you ticked "Load out of date AddOns". It now matches the current patch.</li>
 </ul>
 
 <h3>v1.2.1 (2026-07-30) - Settings Panel Open Fix</h3>
 <p>Fixes the settings panel refusing to open after a recent client update.</p>
+
+<p><strong>Fixed</strong></p>
 <ul>
-<li><strong>SETTINGS-002: The settings panel opens again.</strong> Clicking the gear icon in the bank window, or picking Settings from the minimap button, threw an error and nothing opened. A recent change to how the game's Settings window is addressed meant the addon was asking for its options page the old way. Both buttons now take you straight to the TOGBankClassic options page.</li>
+<li><strong>The settings panel opens again.</strong> Clicking the gear icon in the bank window, or picking Settings from the minimap button, threw an error and nothing opened. A recent change to how the game's Settings window is addressed meant the addon was asking for its options page the old way. Both buttons now take you straight to the TOGBankClassic options page.</li>
 </ul>
 
 <p>Older patch notes are in the addon's <code>CHANGELOG.md</code> file (ships with the addon).</p>
@@ -395,5 +443,6 @@
 <ul>
 <li>Type <code>/togbank debuglog</code> in-game and include the output.</li>
 <li>Mention which game version you are on (Classic Era or Burning Crusade).</li>
-<li>If the patch notes above gave the issue a code (like <code>ELVUI-001</code>), quote it.</li>
+<li>Say which bag addon you use, if any &mdash; Bagnon, Baganator, ElvUI or the default bags.</li>
+<li>Quote the wording from the patch notes above, if one of them describes what you are seeing.</li>
 </ul>

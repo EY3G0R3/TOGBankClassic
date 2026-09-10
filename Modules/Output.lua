@@ -352,11 +352,23 @@ function TOGBankClassic_Output:Debug(fmt, ...)
 			return false
 		end
 		local firstArg = select(1, ...)
-		-- Detect optional tag: must be a known key in DEBUG_TAGS for this category
-		if type(firstArg) == "string"
-				and DEBUG_TAGS
-				and DEBUG_TAGS[category]
-				and DEBUG_TAGS[category][firstArg] ~= nil then
+		-- DEBUG-001: detect a tag by its SHAPE, not by registry membership.
+		--
+		-- This used to require DEBUG_TAGS[category][firstArg] ~= nil, which contradicted the
+		-- opt-out model documented in Constants.lua ("new tags auto-show"): an UNREGISTERED tag
+		-- fell through to the no-tag branch, where the tag itself became the format string and
+		-- the real format string was appended as an argument. The user saw a raw "%d" and the
+		-- format string printed as data -- and because it only affects tags nobody registered,
+		-- it appeared exactly where a new feature was being added.
+		--
+		-- A tag is a bare SCREAMING_CASE token (letters, digits, hyphen, underscore) with at
+		-- least one argument after it. A format string is anything else: it has lowercase, or
+		-- spaces, or specifiers. "GATE" and "HASH-ADOPT" are tags; "scanned %d items",
+		-- "%s has %d" and "Refreshed roster" are not.
+		local looksLikeTag = type(firstArg) == "string"
+			and select("#", ...) > 1
+			and firstArg:match("^[%u%d%-_]+$") ~= nil
+		if looksLikeTag then
 			local tag = firstArg
 			if not self:IsTagEnabled(category, tag) then
 				return false

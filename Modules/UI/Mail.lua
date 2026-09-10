@@ -53,6 +53,7 @@ function TOGBankClassic_UI_Mail:DrawWindow()
 	window.statustext:GetParent():Hide()
 
 	self.Window = window
+	TOGBankClassic_UI:ApplyWindowAlpha("mail", window)
 
 	local openButton = TOGBankClassic_UI:Create("Button")
 	openButton:SetText("Open")

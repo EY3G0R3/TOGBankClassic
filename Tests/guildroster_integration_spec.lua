@@ -229,19 +229,36 @@ describe("Guild roster build via LibGuildRoster", function()
 		assert.is_false(Guild:IsViewOnlyBank("Banker-Testrealm"))
 	end)
 
-	-- ROSTER-002: the library wipes and rebuilds, so someone who leaves cannot survive in the
-	-- cache. This is the finding being made structurally impossible rather than cleaned up.
-	it("drops a member who has left the guild", function()
+	-- ROSTER-002: an ex-member must not survive in TOGBank's cache.
+	--
+	-- THIS DRIVES CHAT, NOT A ROSTER RE-SCAN, AND THAT IS THE WHOLE POINT.
+	--
+	-- This spec used to set `env.roster = {}`, re-add one member and fire GUILD_ROSTER_UPDATE,
+	-- on the belief that "the library wipes and rebuilds on every update". It does not.
+	-- LibGuildRoster-1.0.lua:1587 states BUILD ONCE, THE ROSTER IS NEVER REBUILT, and :1613
+	-- returns early the moment it is `initialized`. So the old spec drove a mechanism the
+	-- library does not have: the event was ignored, the library kept all three members, and the
+	-- ex-member survived.
+	--
+	-- That failure looked like a TOGBank bug and was not one. Guild.lua:1757 wipes memberRoster
+	-- before rebuilding from lib:GetAllMembers(), so TOGBank faithfully mirrors whatever the
+	-- library holds; the stale entry was in the library, put there by this spec.
+	--
+	-- After login, membership is maintained ONLY from CHAT_MSG_SYSTEM (ERR_GUILD_JOIN_S /
+	-- ERR_GUILD_LEAVE_S / ERR_GUILD_REMOVE_SS), so a departure has to arrive on that path.
+	-- Note the consequence, which is weaker than "structurally impossible": a departure whose
+	-- system message is never delivered persists until the next login build.
+	it("drops a member whose departure was announced in chat", function()
 		Guild:RefreshOnlineCache()
 		assert.is_not_nil(Guild.memberRoster["Regular-Testrealm"])
 
-		env.roster = {}
-		env.addGuildMember("Banker-Testrealm", { note = "gbank", online = true, rankIndex = 1 })
-		env.readyGuildRoster(lib)
+		-- ERR_GUILD_LEAVE_S is "%s has left the guild." and the library normalizes the bare
+		-- name onto the realm, so this is the same key TOGBank stores.
+		env.fireGuildRosterEvent(lib, "CHAT_MSG_SYSTEM", "Regular has left the guild.")
 		Guild:RefreshOnlineCache()
 
 		assert.is_nil(Guild.memberRoster["Regular-Testrealm"],
-			"an ex-member survived the rebuild (audit ROSTER-002)")
+			"an ex-member survived after the departure was announced (audit ROSTER-002)")
 	end)
 
 	it("falls back to the legacy scan when the library is not ready", function()
@@ -360,5 +377,114 @@ describe("LibGuildRoster packaging", function()
 		local a = read("TOGBankClassic.toc"):match("## Dependencies:([^\n]*)")
 		local b = read("TOGBankClassic_BCC.toc"):match("## Dependencies:([^\n]*)")
 		assert.equal(a, b, "the TOC lockstep rule requires both flavours declare the same deps")
+	end)
+end)
+
+-- ROSTER-004: "no bankers" and "bankers I am not allowed to see" look identical.
+--
+-- GetGuildRosterInfo returns officerNote as "" both when the note is empty and when the player's
+-- rank cannot read officer notes. So a guild that tags its bankers ONLY in the officer note shows
+-- a member without that permission an empty window and no reason for it.
+--
+-- These load the REAL library, because the whole point is that lib:IsOfficer() answers from
+-- C_GuildInfo.CanViewOfficerNote (LibGuildRoster-1.0.lua:2361-2363). Against a stub they would be
+-- asserting about the stub -- and LIBREQ-GR-001 was filed BECAUSE nobody noticed IsOfficer already
+-- answers this question under a name that sounds like it is about rank.
+describe("ROSTER-004: explaining an empty banker list", function()
+	local Guild
+
+	local function loadGuildWithRoster()
+		env.reset()
+		env.stubOutput()
+		env.loadFile("Modules/Constants.lua")
+		env.loadFile("Modules/Guild.lua")
+		env.freshGuildRoster()
+		Guild = TOGBankClassic_Guild
+		Guild.memberRoster, Guild.banksCache = {}, nil
+		Guild.Info = { name = "Testguild", roster = { alts = {} }, alts = {} }
+		return Guild
+	end
+
+	--- Did a user-visible warning naming officer notes go out?
+	local function warnedAboutOfficerNotes()
+		for _, call in ipairs(TOGBankClassic_Output.calls) do
+			if call.level == "Warn" and type(call[1]) == "string"
+				and call[1]:find("officer notes", 1, true) then
+				return true
+			end
+		end
+		return false
+	end
+
+	before_each(function()
+		loadGuildWithRoster()
+		-- A member with no banker tag at all, so the list is legitimately empty in every example
+		-- below and the ONLY thing that varies is whether we can read officer notes.
+		env.addGuildMember("Someone-Testrealm", {})
+	end)
+
+	it("says why the list is empty when the player cannot read officer notes", function()
+		C_GuildInfo.CanViewOfficerNote = function() return false end
+
+		Guild:RebuildBankerRoster()
+
+		assert.is_true(warnedAboutOfficerNotes(),
+			"a player whose rank cannot read officer notes was shown an empty banker list with " ..
+			"no explanation -- indistinguishable from a guild that has no bankers")
+	end)
+
+	it("stays quiet when the player CAN read officer notes, because then empty means empty", function()
+		C_GuildInfo.CanViewOfficerNote = function() return true end
+
+		Guild:RebuildBankerRoster()
+
+		assert.is_false(warnedAboutOfficerNotes(),
+			"the addon blamed officer-note permissions for an empty list it could see the whole of")
+	end)
+
+	it("warns once, not on every GUILD_ROSTER_UPDATE", function()
+		C_GuildInfo.CanViewOfficerNote = function() return false end
+
+		Guild:RebuildBankerRoster()
+		Guild:RebuildBankerRoster()
+		Guild:RebuildBankerRoster()
+
+		local warnings = 0
+		for _, call in ipairs(TOGBankClassic_Output.calls) do
+			if call.level == "Warn" and type(call[1]) == "string"
+				and call[1]:find("officer notes", 1, true) then
+				warnings = warnings + 1
+			end
+		end
+		assert.equal(1, warnings,
+			"RebuildBankerRoster runs on every roster update, so an unguarded warning becomes a " ..
+			"chat spam loop for the whole session")
+	end)
+
+	it("stays quiet once a banker IS visible, whatever the permission says", function()
+		C_GuildInfo.CanViewOfficerNote = function() return false end
+		env.addGuildMember("Banker-Testrealm", { note = "gbank" })
+
+		Guild:RebuildBankerRoster()
+
+		assert.same({ "Banker-Testrealm" }, Guild.Info.roster.alts,
+			"precondition: the banker was not picked up, so the assertion below proves nothing")
+		assert.is_false(warnedAboutOfficerNotes(),
+			"the addon warned about invisible bankers while displaying one")
+	end)
+
+	-- The library's own header requires feature detection: IsOfficer arrived in MINOR 12 and an
+	-- older installed copy will not have it. Guessing in its absence would fire this warning for
+	-- every guild that genuinely has no bankers.
+	it("stays quiet when the installed library is too old to answer", function()
+		C_GuildInfo.CanViewOfficerNote = function() return false end
+		local lib = LibStub("LibGuildRoster-1.0", true)
+		assert.is_not_nil(lib, "precondition: the library did not load, so this proves nothing")
+		lib.IsOfficer = nil
+
+		Guild:RebuildBankerRoster()
+
+		assert.is_false(warnedAboutOfficerNotes(),
+			"the addon asserted a permission problem against a library that cannot report one")
 	end)
 end)

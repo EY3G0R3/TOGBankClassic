@@ -459,6 +459,11 @@ local function showCancelReasonDialog(req, actor, ui)
 	cancelReasonDropdown:SetList(cancelReasonMap, reasonOrder)
 	---@diagnostic disable-next-line: undefined-field
 	cancelReasonDropdown:SetValue(defaultKey)
+	-- ALPHA-001: inherits the Requests window's transparency rather than carrying its own slider —
+	-- it is a transient child of that window. Applied on every show, not at creation, because
+	-- `cancelReasonFrame` is built once and reused for the rest of the session; setting it only at
+	-- creation would leave it on whatever the slider read the first time it opened.
+	TOGBankClassic_UI:ApplyWindowAlpha("requests", cancelReasonFrame)
 	---@diagnostic disable-next-line: undefined-field
 	cancelReasonFrame.frame:ClearAllPoints()
 	---@diagnostic disable-next-line: undefined-field
@@ -798,6 +803,9 @@ function TOGBankClassic_UI_Requests:Open()
 
 	-- Recreate window if banker status changed (to add/remove highlight checkbox)
 	if bankerStatusChanged and self.Window then
+		-- ALPHA-001: hand the frame back to AceGUI's shared pool with opaque chrome. The pool is
+		-- library-wide, so a faded frame released here can turn up as another addon's window.
+		TOGBankClassic_UI:ClearWindowAlpha(self.Window)
 		self.Window:Release()
 		self.Window = nil
 	end
@@ -1023,7 +1031,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	window:SetTitle("Requests")
 	window:SetLayout("Flow")
 	window:EnableResize(true)
-	TOGBankClassic_UI:ApplyThinBorder(window)
+	TOGBankClassic_UI:ApplyThinBorder(window, "requests")
 	-- Persist window position/size across reloads (each window gets its own sub-table)
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
 		local positions = TOGBankClassic_Options.db.char.framePositions
@@ -1419,7 +1427,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 				highlightCheckbox:SetLabel("Highlight needed items")
 				highlightCheckbox:SetFullWidth(true)
 				highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
-				highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
+				highlightCheckbox:SetCallback("OnValueChanged", function(_, _, value)
 					if TOGBankClassic_ItemHighlight then
 						TOGBankClassic_ItemHighlight:SetEnabled(value)
 					end
@@ -2244,7 +2252,7 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 			label.label:SetJustifyH(justifyForAlign(col.align))
 			tagColumnWidget(label, i, false)
 			self.Content:AddChild(label)
-			
+
 			-- Item column: Add copyable EditBox overlay
 			if col.key == "item" then
 				local eb = CreateFrame("EditBox", nil, label.frame)
@@ -2261,7 +2269,7 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 				eb:SetAlpha(0)
 				eb:SetHighlightColor(0, 0, 0, 0)
 				eb:Show()
-				
+
 				-- Copyable text behavior: EditBox is a fully transparent (alpha 0) overlay.
 				-- Invisible but still receives mouse/keyboard events. On click, text is set
 				-- and highlighted so Ctrl+C copies it. Focus auto-clears after 5 seconds.
@@ -2282,12 +2290,12 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 				eb:SetScript("OnKeyDown", function(self, key)
 					if key == "ESCAPE" then self:ClearFocus() end
 				end)
-				
+
 				-- Item tooltip on hover
 				eb:SetScript("OnEnter", function(self)
 					local itemName = self._itemName
 					if not itemName or itemName == "" then return end
-					
+
 					-- If the request carries an explicit itemID, use it directly so we
 					-- show the correct same-name variant (e.g. Druid vs Warrior Voodoo Doll).
 					-- REQ-003: when a suffixID is present, prefer the inventory entry whose suffix
@@ -2300,15 +2308,16 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 						-- Search inventory for an entry with this exact ID (and suffix, when set) to get its full link
 						local info = TOGBankClassic_Guild.Info
 						if info and info.alts then
-							for _, alt in pairs(info.alts) do
-								if alt.items then
-									for _, item in ipairs(alt.items) do
-										if item.ID == requestItemID
-										   and (not requestSuffix or TOGBankClassic_Item:GetSuffixID(item.Link) == requestSuffix) then
-											itemLink = item.Link
-											itemID   = item.ID
-											break
-										end
+							-- INV2 step 7a: keyed by name so the rows come from GetAltItems, which
+							-- honours the inventoryV2 switch. Reading alt.items directly here
+							-- would have kept this lookup on the legacy store after the switch.
+							for altName in pairs(info.alts) do
+								for _, item in ipairs(TOGBankClassic_Guild:GetAltItems(altName)) do
+									if item.ID == requestItemID
+									   and (not requestSuffix or TOGBankClassic_Item:GetSuffixID(item.Link) == requestSuffix) then
+										itemLink = item.Link
+										itemID   = item.ID
+										break
 									end
 								end
 								if itemLink or itemID then break end
@@ -2322,23 +2331,21 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 						-- Legacy request (no itemID): search by name, take first match
 						local info = TOGBankClassic_Guild.Info
 						if info and info.alts then
-							for _, alt in pairs(info.alts) do
-								if alt.items then
-									for _, item in ipairs(alt.items) do
-										local name = item.Info and item.Info.name
-										      or (item.Link and item.Link:match("%[(.-)%]"))
-										if name == itemName then
-											itemLink = item.Link
-											itemID   = item.ID
-											break
-										end
+							for altName in pairs(info.alts) do
+								for _, item in ipairs(TOGBankClassic_Guild:GetAltItems(altName)) do
+									local name = item.Info and item.Info.name
+									      or (item.Link and item.Link:match("%[(.-)%]"))
+									if name == itemName then
+										itemLink = item.Link
+										itemID   = item.ID
+										break
 									end
 								end
 								if itemLink or itemID then break end
 							end
 						end
 					end
-					
+
 					-- Build hyperlink from link string, or fall back to an item:ID string.
 					-- REQ-003: when only the ID is known but a suffix was requested, encode the suffix
 					-- (item:ID:0:0:0:0:0:suffixID) so the tooltip shows the requested random-suffix variant.
@@ -2362,10 +2369,10 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 				eb:SetScript("OnLeave", function()
 					GameTooltip:Hide()
 				end)
-				
+
 				label.editbox = eb
 			end
-			
+
 			if col.key == "date" then
 				label.frame:SetScript("OnEnter", function(f)
 					local d = f._tipData
@@ -2577,7 +2584,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 			highlightCheckbox:SetLabel("Highlight needed items")
 			highlightCheckbox:SetFullWidth(true)
 			highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
-			highlightCheckbox:SetCallback("OnValueChanged", function(widget, _, value)
+			highlightCheckbox:SetCallback("OnValueChanged", function(_, _, value)
 				if TOGBankClassic_ItemHighlight then
 					TOGBankClassic_ItemHighlight:SetEnabled(value)
 				end
@@ -2879,7 +2886,7 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 				else
 					cellVal = tostring(req[col.key] or "")
 				end
-				
+
 				-- Item column has EditBox overlay for copyable text
 				if col.key == "item" and label.editbox then
 					-- Label renders the visible (colorized) text
@@ -2891,7 +2898,7 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isA
 				else
 					label:SetText(colorize(cellVal, reqStatus))
 				end
-				
+
 				label:SetWidth(columnWidth)
 
 				if col.key == "date" then
@@ -3034,9 +3041,6 @@ end
 function TOGBankClassic_UI_Requests:DrawRows()
 	if not self.Content or not self.Window then return end
 
-	local info    = TOGBankClassic_Guild.Info
-	local allReqs = info and info.requests or {}
-
 	local actor       = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local actorIsGM   = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
 	local isActorBank = TOGBankClassic_Guild:IsBank(actor)
@@ -3048,7 +3052,7 @@ function TOGBankClassic_UI_Requests:DrawRows()
 	-- Apply requester/bank filter to get the visible subset
 	local allVisible = self:ApplyFilters(allSorted)
 	local totalVisible = #allVisible
-	
+
 	-- Apply pagination: only show rows for current page. Clamp the page to the
 	-- valid range so a background refresh after the data shrank can't strand the
 	-- view on an out-of-range (empty) page.
@@ -3140,7 +3144,8 @@ function TOGBankClassic_UI_Requests:DrawRows()
 		self._batchLayoutGen = nil
 		content:ResumeLayout()
 		content:DoLayout()
-		local totalPages = math.max(1, math.ceil(totalVisible / REQUESTS_PER_PAGE))
+		-- totalPages is already computed from the same totalVisible at the top of this function;
+		-- recomputing it here shadowed that one with an identical value.
 		setBtnEnabled(self.PrevPageBtn, self.currentPage > 1)
 		setBtnEnabled(self.NextPageBtn, self.currentPage < totalPages)
 
@@ -3148,7 +3153,7 @@ function TOGBankClassic_UI_Requests:DrawRows()
 		local showStart = startIdx + 1
 		local showEnd = math.min(endIdx, totalVisible)
 		local pageCount = showEnd - showStart + 1
-		
+
 		if totalVisible <= REQUESTS_PER_PAGE then
 			self.Window:SetStatusText(string.format("Showing %d request%s out of %d total", pageCount, pageCount == 1 and "" or "s", total))
 		else
@@ -3209,7 +3214,7 @@ function TOGBankClassic_UI_Requests:_CreateNewRowsBatched(gen, newReqs, startInd
 		self:_ApplySortOrder(allSorted)
 		content:ResumeLayout()
 		content:DoLayout()
-		
+
 		-- Update pagination button states and status text
 		local info = TOGBankClassic_Guild.Info
 		if info and info.requests then
@@ -3226,7 +3231,7 @@ function TOGBankClassic_UI_Requests:_CreateNewRowsBatched(gen, newReqs, startInd
 			local showStart = startIdx + 1
 			local showEnd = math.min(endIdx, totalVisible2)
 			local pageCount = showEnd - showStart + 1
-			
+
 			if totalVisible2 <= REQUESTS_PER_PAGE then
 				self.Window:SetStatusText(string.format("Showing %d request%s out of %d total", pageCount, pageCount == 1 and "" or "s", total2))
 			else
@@ -3282,5 +3287,6 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	self:InvalidateAllRows()
 	self:DrawRows()
 end
+
 
 

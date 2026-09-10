@@ -8,8 +8,31 @@ local warnedAbout = {
 }
 
 -- Queue for staggered by-id batch sends (requester side).
--- byIdQueueGen is bumped when sender changes; stale C_Timer callbacks check it and
--- exit silently (C_Timer has no cancel API in Classic Era).
+--
+-- byIdQueueGen is bumped when sender changes; stale C_Timer callbacks check it and exit silently.
+--
+-- AUDIT FINDING 35. This used to justify the counter with "(C_Timer has no cancel API in Classic
+-- Era)", and that is FALSE ON TWO INDEPENDENT GROUNDS:
+--
+--   1. Blizzard's generated documentation for THIS FLAVOUR declares both cancellable forms --
+--      `C_Timer.NewTicker` and `C_Timer.NewTimer` (UITimerDocumentation.lua:21, :37) -- and the Era
+--      client's own UI cancels them routinely, including from its Classic tree
+--      (Blizzard_AuctionUI/Classic:2263, Blizzard_Console:316).
+--   2. More to the point, THIS ADDON ALREADY HAS ONE. Core.lua:1 embeds AceTimer-3.0, so
+--      Core:ScheduleTimer / Core:CancelTimer have been available to every module all along, and
+--      Events.lua:163-171 is exactly the stored-handle-cancel-and-replace pattern this comment
+--      claimed was unavailable.
+--
+-- The narrow true statement is about `After`, not about `C_Timer`: `C_Timer.After` returns no
+-- handle, so a callback scheduled with it cannot be cancelled, and every site in this file uses
+-- `After`. The generation counter is therefore a correct solution to a real problem -- but the
+-- reason it is still here is a TRADE-OFF, not a constraint, and recording the false constraint is
+-- what would stop anyone reconsidering:
+--
+--   the drain is fire-and-forget and several batches can be in flight for different senders at
+--   once, so cancel-by-handle costs a handle per in-flight batch and the bookkeeping to retire it,
+--   against one integer that makes a stale callback self-identify. The counter wins on state, not
+--   on availability.
 -- byIdDraining is true while a timer is pending; EnqueueByIdBatches skips re-firing
 -- the drain when the same sender sends multiple index chunks.
 -- byIdCurrentSender tracks who we are querying so we can accumulate across chunks.
@@ -437,16 +460,13 @@ end
 
 -- Request map helpers: internal storage is now a map keyed by request ID.
 -- Wire format remains an array for backwards compatibility.
-local function requestsToArray(map)
-	local arr = {}
-	for _, req in pairs(map or {}) do
-		if req and req.id then
-			table.insert(arr, req)
-		end
-	end
-	return arr
-end
-
+--
+-- The map->array direction had a `requestsToArray` helper here and nothing called it: the two
+-- places that serialise requests (the rd2 record encoder and the index builder) each walk the map
+-- directly because they filter and project while they go, so neither wants a plain array of whole
+-- records. Deleted rather than kept "in case" -- an uncalled helper next to a called one reads as
+-- half a pair, and the next person to need the direction should look at what the callers actually
+-- do rather than adopt a shape nothing chose.
 local function requestsToMap(arr)
 	local map = {}
 	for _, req in ipairs(arr or {}) do
@@ -695,7 +715,9 @@ function Guild:NormalizeRequestList()
 	local tombstones = self.Info.requestsTombstones or {}
 	local latest = tonumber(self.Info.requestsVersion or 0) or 0
 
-	for id, req in pairs(self.Info.requests) do
+	-- The map key is ignored deliberately: sanitizeRequest re-reads the id off the record, and
+	-- rebuilding from clean.id below is what stops a corrupted key surviving normalisation.
+	for _, req in pairs(self.Info.requests) do
 		local clean = sanitizeRequest(req)
 		if clean and clean.id then
 			local tombstoneTs = tonumber(tombstones[clean.id] or 0) or 0
@@ -1251,7 +1273,7 @@ function Guild:QueryRequestsIndex(target, priority, force)
 		-- REQSYNC-003: Optimistic inFlight clear for wildcard broadcasts.
 		-- SYNC-011 causes peers that already match our hash to stay silent, so
 		-- EndRequestsIndexSync() is never called on a fully-synced guild, leaving
-		-- inFlight set for the full INDEX_INFLIGHT_TIMEOUT (30s) and blocking any
+		-- inFlight set for the full REQUESTS_SYNC.INDEX_INFLIGHT_TIMEOUT and blocking any
 		-- reactive re-query triggered by external events in that window.
 		-- The timer fires after 10s; if a real response already cleared inFlight it
 		-- is a no-op, so no explicit cancellation is needed.
@@ -1494,9 +1516,8 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 		if entry and entry.id then
 			local incomingUpdated = tonumber(entry.updatedAt or entry.date or 0) or 0
 			local tombstoneTs = tombstonesMap[entry.id] or tonumber((self.Info.requestsTombstones or {})[entry.id] or 0) or 0
-			if tombstoneTs > 0 and incomingUpdated <= tombstoneTs then
-				-- Deleted entry, skip fetching
-			else
+			-- Skip anything deleted after its last update; the rest may be worth fetching.
+			if not (tombstoneTs > 0 and incomingUpdated <= tombstoneTs) then
 				local localReq = self.Info.requests[entry.id]
 				local localUpdated = localReq and (tonumber(localReq.updatedAt or localReq.date or 0) or 0) or 0
 				if not localReq or localUpdated < incomingUpdated then

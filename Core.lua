@@ -71,6 +71,12 @@ function TOGBankClassic_Core:OnInitialize()
     -- online/offline transition is missed during login. Idempotent and safe if the library
     -- is absent (falls back to the legacy roster scan).
     TOGBankClassic_Guild:InitRosterCallbacks()
+    -- INV2: attach the V2 SavedVariable. Cheap and side-effect free -- it only ensures the
+    -- table exists. Done unconditionally rather than behind the switch so that turning
+    -- inventoryV2 on mid-session does not need a reload to start collecting.
+    if TOGBankClassic_Inventory_Store then
+        TOGBankClassic_Inventory_Store:Init()
+    end
     TOGBankClassic_UI:Init()
 
     if TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.Initialize then
@@ -256,10 +262,25 @@ function TOGBankClassic_Core:DeserializeWithChecksum(message, ctx)
     return self:Deserialize(serialized)
 end
 
-function TOGBankClassic_Core:ValidateDeltaStructure(delta)
-	return TOGBankClassic_DeltaComms:ValidateDeltaStructure(delta)
-end
+-- INV2 step 10: `Core:ValidateDeltaStructure` was deleted here. It delegated to the DeltaComms
+-- validator for the `alt-delta` envelope, and both went with the legacy link wire format. Its only
+-- caller was the `alt-delta` receive branch in Chat.lua, which is also gone. A tuple payload is
+-- validated by shape in `Wire.isV2` / `Wire.decode` instead.
 
 function TOGBankClassic_Core:ComputeInventoryHash(bank, bags, mail, money)
 	return TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mail, money)
+end
+
+--- HASH-REV-001: the frozen revision-1 hash. See DeltaComms' `hashInventoryItemsV1` before touching.
+function TOGBankClassic_Core:ComputeLegacyInventoryHash(bank, bags, mail, money)
+	return TOGBankClassic_DeltaComms:ComputeLegacyInventoryHash(bank, bags, mail, money)
+end
+
+--- HASH-REV-001: stamp both revisions onto an alt from one item set. Every site that writes
+--- `alt.inventoryHash` goes through this, so the two revisions cannot come from different scans.
+--- HASH-CANON-003: `updatedAt` is forwarded so `inventoryHashV2` is the DTS-bearing CANON. Omitting
+--- it does not error -- it produces a canon stamped `@0`, which is a real value that simply never
+--- matches an author's -- so the parameter is not optional in practice even though Lua allows it.
+function TOGBankClassic_Core:StampInventoryHashes(alt, bank, bags, mail, money, updatedAt)
+	return TOGBankClassic_DeltaComms:StampInventoryHashes(alt, bank, bags, mail, money, updatedAt)
 end

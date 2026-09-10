@@ -187,22 +187,29 @@ describe("Output persistent log", function()
 		assert.is_true(has("FRESH-ENTRY"), "the fresh entry was collected")
 	end)
 
-	-- GarbageCollectPersistentLog ends with a Debug() call, and Log() appends every DEBUG-level
-	-- message to the persistent log — so collection writes a new entry into the log it just
-	-- collected. Harmless at this scale, but it means the log can never drain to empty and each
-	-- collection pass seeds the next one. Recorded as behaviour, not asserted as correct.
-	it("writes its own summary back into the persistent log", function()
+	-- LOG-001, now FIXED, and this spec is the inversion of the one that recorded it.
+	--
+	-- GarbageCollectPersistentLog ends with a Debug() call and Log() appends every DEBUG-level
+	-- message to the persistent log, so collection used to write a new entry into the log it had
+	-- just collected: the log could never drain to empty and every pass seeded the next one. The
+	-- old spec asserted that self-logging happened, and said in its own failure message that the
+	-- note should be removed if it ever stopped being true.
+	--
+	-- It stopped being true as a CONSEQUENCE OF FIXING DEBUG-001 rather than by direct repair.
+	-- That call passes "SYSTEM" as its category. SYSTEM was not in DEBUG_CATEGORY, so it fell
+	-- through to the uncategorised branch, which logs unconditionally. Registering SYSTEM as a
+	-- real category (which DEBUG-001 required, because the same absence was mangling other
+	-- messages) puts it behind IsCategoryEnabled, and it defaults to off -- so the collector's
+	-- own summary is no longer written into the log it collects.
+	it("does not write its own summary back into the persistent log", function()
 		Output:AddToPersistentLog("old")
 		env.advance(Output.persistentLogMaxAge + 1)
-		local before = #Output.persistentLog
 		Output:GarbageCollectPersistentLog()
-		local selfLogged = false
 		for _, e in ipairs(Output.persistentLog) do
-			if e.message:find("Garbage collected", 1, true) then selfLogged = true end
+			assert.is_nil(e.message:find("Garbage collected", 1, true),
+				"the collector logged its own summary into the log it just collected, so the log " ..
+				"can never drain to empty and each pass seeds the next (audit LOG-001)")
 		end
-		assert.is_true(selfLogged,
-			"expected the collector to log its own summary (before=" .. before .. "); if this " ..
-			"ever stops being true the self-logging note in the spec should be removed")
 	end)
 
 	it("filters the compact export by substring, case-insensitively", function()

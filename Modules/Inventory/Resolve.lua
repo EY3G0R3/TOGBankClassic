@@ -3,10 +3,20 @@
 -- See docs/INVENTORY_V2.md §4. V2 stores integers; links and item metadata are DERIVED here at
 -- render time and thrown away. Nothing persists what this returns.
 --
+-- LibItemDB-1.0 is a REQUIRED dependency, declared in both TOCs and as the slug `libitemdb` in
+-- .pkgmeta. That is not a preference: V2 stores integer tuples and rebuilds the link here, so
+-- with no library there is nothing to rebuild from. It is still requested through LibStub's
+-- optional form below, because a nil handle has to be REPORTED rather than raised in the middle
+-- of a draw -- see reportLibraryMissing.
+--
 -- The chain, first hit wins:
 --   1. LibItemDB-1.0        authoritative, ships the data, never cold
 --   2. GetItemInfoInstant   cache-independent, so it still answers on a cold client
 --   3. Placeholder          "Item #12345" and a question-mark icon
+--
+-- Steps 2 and 3 are for ids the library does not CARRY. They are not a supported mode of
+-- operation for a missing library: with ItemDB absent every row degrades to step 2 or 3 at once,
+-- which is the cold-cache dependence this rework exists to delete, wearing a different hat.
 --
 -- Step 3 exists because the addon must NEVER assume 100% resolution. IDB is complete below item
 -- id 25000 and carries the Era-available high-id items (LIBREQ-IDB-001), but 330 ids above
@@ -23,12 +33,53 @@ local Record = TOGBankClassic_Inventory_Record
 
 local UNKNOWN_ICON = 134400  -- the standard grey question mark
 
+--- itemID -> icon fileID, memoised for the session.
+---
+--- RESOLVE-001: an icon is a PURE FUNCTION OF ITEM ID -- it does not vary by suffix, enchant,
+--- stack size, owner or locale, and it cannot change while the client is running. So the lookup is
+--- done once per distinct id rather than once per row: a bank holding 1,200 stacks across 400
+--- distinct items costs 400 calls, not 1,200, and every later alt holding the same items costs
+--- none. Combined with the per-alt view cache in Store, the steady-state cost of drawing the
+--- inventory is zero icon lookups.
+---
+--- `false` is stored for an id the client has no icon for, so a miss is remembered too --
+--- otherwise exactly the ids that fail would be retried on every rebuild, which is backwards.
+local iconCache = {}
+
+--- The client's icon for an item id, or nil.
+---
+--- GetItemInfoInstant is used rather than GetItemInfo deliberately: it reads the client's STATIC
+--- item data, needs no warm cache and never defers, so it answers immediately after login. It is
+--- also strictly cheaper than the GetItemInfo + ContinueOnItemLoad pair the legacy loader used per
+--- item (audit ITEM-005), which this replaces rather than adds to.
+local function iconFor(id)
+	local hit = iconCache[id]
+	if hit ~= nil then return hit or nil end
+	local icon
+	if GetItemInfoInstant then
+		icon = select(5, GetItemInfoInstant(id))
+	end
+	iconCache[id] = icon or false
+	return icon
+end
+
+--- Drop the memo. Only needed if the client's item data could change under us, which in practice
+--- means a reload -- exposed so a spec can prove the memo is a cache and not a leak.
+function Resolve.ClearIconCache()
+	iconCache = {}
+end
+
 -- Resolved ids seen this session, so the debug log reports each unknown once rather than on
 -- every draw. Purely a noise guard; it holds no data anything depends on.
 Resolve.unresolved = {}
 
---- The library, or nil. Resolved per call rather than cached at load: the addon must keep
---- working if the user disables ItemDB, and a cached nil from an early call would outlive it.
+--- The library, or nil. Resolved per call rather than cached at load: a cached nil from an early
+--- call would outlive the condition, and ItemDB can legitimately arrive after this file does.
+---
+--- A nil here means a REQUIRED dependency did not load. The addon still renders rather than
+--- erroring, but it says so once through reportLibraryMissing -- degrading quietly is what this
+--- returning nil used to do, and it is the bug that hid the missing declaration for as long as
+--- it did.
 ---
 --- Feature-detects the METHODS it uses, not a version number. LibStub resolves the highest
 --- registered minor, so an older copy embedded by some other addon can win — and then the handle
@@ -46,6 +97,32 @@ local function noteUnresolved(id, stage)
 	Resolve.unresolved[id] = stage
 	TOGBankClassic_Output:Debug("ITEM", "LOAD",
 		"[INV2] item %d not resolvable by %s - falling back", id, stage)
+end
+
+--- Whether the missing-library error has already been shown this session.
+---
+--- ItemDB is a REQUIRED dependency (declared in both TOCs, slug `libitemdb` in .pkgmeta). The
+--- V2 store holds integer tuples and rebuilds the link at render time, so with no library there
+--- is nothing to rebuild from and EVERY row degrades to a placeholder.
+---
+--- This is reported at a level the player actually sees, once, and deliberately NOT through
+--- noteUnresolved: that is keyed per item id, so a missing library would report itself once per
+--- distinct item -- thousands of lines saying the same thing, in a debug category that is off by
+--- default. A required dependency that did not load is not a debug detail.
+---
+--- It stays SEPARATE from the three-step fallback rather than replacing it. The fallback exists
+--- for ids the library genuinely does not carry (330 above id 120000 -- see
+--- docs/LIBRARY_CONTRACTS.md section 1.7), and "this item is not in the DB" is a different fact
+--- from "there is no DB". Collapsing the two is what let the second hide inside the first.
+Resolve.libraryReported = false
+
+local function reportLibraryMissing()
+	if Resolve.libraryReported then return end
+	Resolve.libraryReported = true
+	TOGBankClassic_Output:Error(
+		"LibItemDB-1.0 did not load. It is a required dependency: without it, item names and " ..
+		"links cannot be rebuilt, so the inventory will show placeholders instead of items. " ..
+		"Reinstall the ItemDB addon.")
 end
 
 --- Full descriptor for a record. Always returns a table; never nil, never errors.
@@ -72,6 +149,7 @@ function Resolve.describe(rec)
 
 	-- Step 1: LibItemDB.
 	local lib = itemDB()
+	if not lib then reportLibraryMissing() end
 	if lib and lib:HasItem(id) then
 		local name, quality, class, subClass, equipLoc, itemLevel = lib:GetInfo(id)
 		-- Suffixed items get their full display name and the correctly-scaled tooltip from the
@@ -81,8 +159,17 @@ function Resolve.describe(rec)
 		-- LIBREQ-IDB-002. Feature-detected because it landed later than the rest of the API:
 		-- an older resolved copy has the item data but not this method.
 		local reqLevel = lib.GetRequiredLevel and lib:GetRequiredLevel(id) or 0
+		-- RESOLVE-001: this hardcoded UNKNOWN_ICON, so every item that resolved SUCCESSFULLY
+		-- rendered as a question mark -- name, link, quality and level all correct beside it,
+		-- which is what made it read as an icon-cache problem rather than a missing field.
+		--
+		-- LibItemDB carries no icon (there is no GetIcon; it ships names, quality, stats, prices
+		-- and levels). The client does, and GetItemInfoInstant is the right source for exactly the
+		-- reason step 2 below uses it: it is CACHE-INDEPENDENT, so it answers on a cold client
+		-- where GetItemInfo returns nil. An icon is a fixed per-item fileID, so there is nothing
+		-- for the library to add here and no contract to raise.
 		return {
-			name = name, link = link, icon = UNKNOWN_ICON, quality = quality or 1,
+			name = name, link = link, icon = iconFor(id) or UNKNOWN_ICON, quality = quality or 1,
 			itemLevel = itemLevel or 0, reqLevel = reqLevel or 0,
 			class = class or 0, subClass = subClass or 0, equipLoc = equipLoc or "",
 			resolved = "itemdb",

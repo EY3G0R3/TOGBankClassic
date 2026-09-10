@@ -173,11 +173,19 @@ end)
 describe("Wire send gating", function()
 	before_each(function() env.reset(); loadWire() end)
 
-	it("does not emit tuples by default", function()
+	-- INV2 step 9 flipped the default. The gate itself is what these two examine, so each now sets
+	-- the switch explicitly and neither depends on which way the default happens to point.
+	it("emits tuples by default", function()
+		assert.is_true(Wire.shouldSendV2())
+	end)
+
+	it("stops emitting once sendV2Wire is turned off", function()
+		TOGBankClassic_Switches:Set("sendV2Wire", false)
 		assert.is_false(Wire.shouldSendV2())
 	end)
 
-	it("emits tuples once sendV2Wire is on", function()
+	it("emits again when it is turned back on", function()
+		TOGBankClassic_Switches:Set("sendV2Wire", false)
 		TOGBankClassic_Switches:Set("sendV2Wire", true)
 		assert.is_true(Wire.shouldSendV2())
 	end)

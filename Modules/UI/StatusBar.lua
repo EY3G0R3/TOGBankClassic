@@ -31,7 +31,7 @@
 --       string. Returns "", "" when network info is disabled in options.
 --
 -- INSTANCE
---   TOGBankClassic_StatusBar:Attach(window) -> sb
+--   TOGBankClassic_UI_StatusBar:Attach(window) -> sb
 --       Wires up the tri-part FontStrings on an AceGUI Frame's status bar
 --       and returns a controller. Call once in DrawWindow.
 --
@@ -46,7 +46,7 @@
 --   sb:StartTicker(interval, fn)      low-level ticker control (used by Draw)
 --   sb:StopTicker()                   cancel the ticker (called automatically on Hide)
 
-TOGBankClassic_StatusBar = {}
+TOGBankClassic_UI_StatusBar = {}
 
 -- ---------------------------------------------------------------------------
 -- FORMATTERS
@@ -54,7 +54,7 @@ TOGBankClassic_StatusBar = {}
 
 -- Formats a copper amount as colored text (gold/silver/copper).
 -- Replaces GetCoinTextureString() which renders broken square icons in AceGUI status bars.
-function TOGBankClassic_StatusBar.FormatMoney(copper)
+function TOGBankClassic_UI_StatusBar.FormatMoney(copper)
 	copper = copper or 0
 	if copper <= 0 then
 		return "|cff7f7f7f0c|r"
@@ -76,7 +76,7 @@ function TOGBankClassic_StatusBar.FormatMoney(copper)
 end
 
 -- Returns a color hex string for a slot-fill percentage.
-function TOGBankClassic_StatusBar.GetSlotColor(percent)
+function TOGBankClassic_UI_StatusBar.GetSlotColor(percent)
 	if percent <= 0.25 then
 		return "ffffffff"
 	elseif percent <= 0.5 then
@@ -91,9 +91,9 @@ function TOGBankClassic_StatusBar.GetSlotColor(percent)
 end
 
 -- Returns a colored "|cXXXXXXXXused/total|r" slot string.
-function TOGBankClassic_StatusBar.FormatSlots(used, total)
+function TOGBankClassic_UI_StatusBar.FormatSlots(used, total)
 	local percent = total > 0 and (used / total) or 0
-	local color = TOGBankClassic_StatusBar.GetSlotColor(percent)
+	local color = TOGBankClassic_UI_StatusBar.GetSlotColor(percent)
 	return string.format("|c%s%d/%d|r", color, used, total)
 end
 
@@ -102,7 +102,7 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Builds the normal left-section text: total money and slots across all banker alts.
-function TOGBankClassic_StatusBar.BuildInventorySummary(info, roster_alts)
+function TOGBankClassic_UI_StatusBar.BuildInventorySummary(info, roster_alts)
 	local total_gold = 0
 	local slots, total_slots = 0, 0
 	for _, player in pairs(roster_alts) do
@@ -120,14 +120,14 @@ function TOGBankClassic_StatusBar.BuildInventorySummary(info, roster_alts)
 			end
 		end
 	end
-	return TOGBankClassic_StatusBar.FormatMoney(total_gold)
+	return TOGBankClassic_UI_StatusBar.FormatMoney(total_gold)
 		.. "    "
-		.. TOGBankClassic_StatusBar.FormatSlots(slots, total_slots)
+		.. TOGBankClassic_UI_StatusBar.FormatSlots(slots, total_slots)
 end
 
 -- Builds the hover detail string for a single alt.
 -- Returns a plain fallback string if the alt is missing or not yet synced.
-function TOGBankClassic_StatusBar.BuildAltDetail(alt)
+function TOGBankClassic_UI_StatusBar.BuildAltDetail(alt)
 	if not alt or type(alt) ~= "table" then
 		return "No data available"
 	end
@@ -160,8 +160,8 @@ function TOGBankClassic_StatusBar.BuildAltDetail(alt)
 
 	return string.format("As of %s    %s    %s%s",
 		date("%Y-%m-%d %H:%M:%S", alt.version),
-		TOGBankClassic_StatusBar.FormatMoney(alt.money or 0),
-		TOGBankClassic_StatusBar.FormatSlots(slot_count, slot_total),
+		TOGBankClassic_UI_StatusBar.FormatMoney(alt.money or 0),
+		TOGBankClassic_UI_StatusBar.FormatSlots(slot_count, slot_total),
 		mailText)
 end
 
@@ -171,8 +171,13 @@ end
 -- ---------------------------------------------------------------------------
 
 -- P2P sends in flight: "Tx:1/3"
-function TOGBankClassic_StatusBar.NetTxText()
-	local sends = TOGBankClassic_Guild.pendingSendCount or 0
+-- P2P-025: this read TOGBankClassic_Guild.pendingSendCount, a legacy counter that four sites
+-- DECREMENT and nothing increments -- so it was pinned at 0 and the `sends == 0` early return
+-- meant this indicator could never render, at any load. The live count is P2PSession's, which is
+-- also the one the cap is actually enforced against.
+function TOGBankClassic_UI_StatusBar.NetTxText()
+	local sends = TOGBankClassic_P2PSession
+		and TOGBankClassic_P2PSession:GetActiveSendTotal() or 0
 	if sends == 0 then return "" end
 	local max = TOGBankClassic_Guild.MAX_PENDING_SENDS or 3
 	local c = (sends >= max) and "ffff4444" or "ffff9900"
@@ -180,14 +185,14 @@ function TOGBankClassic_StatusBar.NetTxText()
 end
 
 -- Broadcast queue depth: "Bcast:2"
-function TOGBankClassic_StatusBar.NetBcastText()
+function TOGBankClassic_UI_StatusBar.NetBcastText()
 	local syncQ = TOGBankClassic_Chat and TOGBankClassic_Chat.sync_queue and #TOGBankClassic_Chat.sync_queue or 0
 	if syncQ == 0 then return "" end
 	return string.format("|cffffff00Bcast:%d|r", syncQ)
 end
 
 -- Request-index handshake: "r:3/10" or "r:ids"
-function TOGBankClassic_StatusBar.NetReqSyncText()
+function TOGBankClassic_UI_StatusBar.NetReqSyncText()
 	local rSync = TOGBankClassic_Guild.requestsIndexSync
 	if not rSync or not rSync.awaitingById then return "" end
 	local bTotal = rSync.batchTotal
@@ -198,7 +203,7 @@ function TOGBankClassic_StatusBar.NetReqSyncText()
 end
 
 -- P2P fetches in flight: "Rx:2"
-function TOGBankClassic_StatusBar.NetRxText()
+function TOGBankClassic_UI_StatusBar.NetRxText()
 	local fetches = 0
 	if TOGBankClassic_Guild.pendingP2PRequests then
 		for _ in pairs(TOGBankClassic_Guild.pendingP2PRequests) do fetches = fetches + 1 end
@@ -208,7 +213,7 @@ function TOGBankClassic_StatusBar.NetRxText()
 end
 
 -- Queried requests pending reply: "Req:5"
-function TOGBankClassic_StatusBar.NetQueriedReqText()
+function TOGBankClassic_UI_StatusBar.NetQueriedReqText()
 	local count = TOGBankClassic_Guild:GetQueriedRequestsCount()
 	if count == 0 then return "" end
 	return string.format("|cff98fb98Req:%d|r", count)
@@ -218,7 +223,7 @@ end
 -- Returns centerText ("Sending X to Y"), rightText ("CTL:42").
 -- Both are "" when the CTL queue is empty.
 local CTL_PRIO_ORDER = {"ALERT", "NORMAL", "BULK"}
-function TOGBankClassic_StatusBar.NetCTLParts()
+function TOGBankClassic_UI_StatusBar.NetCTLParts()
 	local ctl = _G.ChatThrottleLib
 	if not ctl or not ctl.Prio then return "", "" end
 
@@ -279,7 +284,7 @@ end
 -- Builds the center and right network sections from all active parts.
 -- Returns centerText, rightText.
 -- Returns "", "" if network info is disabled in options.
-function TOGBankClassic_StatusBar.BuildNetworkParts()
+function TOGBankClassic_UI_StatusBar.BuildNetworkParts()
 	if TOGBankClassic_Options and not TOGBankClassic_Options:IsStatusBarNetworkInfoEnabled() then
 		return "", ""
 	end
@@ -287,13 +292,13 @@ function TOGBankClassic_StatusBar.BuildNetworkParts()
 	local rightParts = {}
 	local function add(s) if s ~= "" then table.insert(rightParts, s) end end
 
-	add(TOGBankClassic_StatusBar.NetTxText())
-	add(TOGBankClassic_StatusBar.NetBcastText())
-	add(TOGBankClassic_StatusBar.NetReqSyncText())
-	add(TOGBankClassic_StatusBar.NetRxText())
-	add(TOGBankClassic_StatusBar.NetQueriedReqText())
+	add(TOGBankClassic_UI_StatusBar.NetTxText())
+	add(TOGBankClassic_UI_StatusBar.NetBcastText())
+	add(TOGBankClassic_UI_StatusBar.NetReqSyncText())
+	add(TOGBankClassic_UI_StatusBar.NetRxText())
+	add(TOGBankClassic_UI_StatusBar.NetQueriedReqText())
 
-	local ctlCenter, ctlRight = TOGBankClassic_StatusBar.NetCTLParts()
+	local ctlCenter, ctlRight = TOGBankClassic_UI_StatusBar.NetCTLParts()
 	add(ctlRight)
 
 	local right = #rightParts > 0 and ("Network: " .. table.concat(rightParts, "  ")) or ""
@@ -310,7 +315,7 @@ Instance.__index = Instance
 -- Attaches a StatusBar controller to an AceGUI Frame window.
 -- Creates center and right FontStrings for tri-part layout.
 -- Returns an instance with Refresh/SetLeft/SetHovered/StartTicker/StopTicker methods.
-function TOGBankClassic_StatusBar:Attach(window)
+function TOGBankClassic_UI_StatusBar:Attach(window)
 	local sb = setmetatable({ window = window, hovered = false }, Instance)
 
 	local statusbg = window.statustext:GetParent()
@@ -348,13 +353,13 @@ end
 -- and registers OnEnter/OnLeave hover callbacks on the window.
 -- tabGroup is used by the hover handler to identify the currently viewed alt.
 function Instance:Draw(info, roster_alts, tabGroup)
-	self.baseStatusText = TOGBankClassic_StatusBar.BuildInventorySummary(info, roster_alts)
+	self.baseStatusText = TOGBankClassic_UI_StatusBar.BuildInventorySummary(info, roster_alts)
 
-	local center, right = TOGBankClassic_StatusBar.BuildNetworkParts()
+	local center, right = TOGBankClassic_UI_StatusBar.BuildNetworkParts()
 	self:Refresh(self.baseStatusText, center, right)
 
 	self:StartTicker(0.5, function()
-		local c, r = TOGBankClassic_StatusBar.BuildNetworkParts()
+		local c, r = TOGBankClassic_UI_StatusBar.BuildNetworkParts()
 		self:Refresh(self.baseStatusText or "", c, r)
 	end)
 
@@ -362,11 +367,11 @@ function Instance:Draw(info, roster_alts, tabGroup)
 		local tab     = tabGroup.localstatus.selected
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
 		self:SetHovered(true)
-		self:SetLeft(TOGBankClassic_StatusBar.BuildAltDetail(info.alts[normTab]))
+		self:SetLeft(TOGBankClassic_UI_StatusBar.BuildAltDetail(info.alts[normTab]))
 	end)
 	self.window:SetCallback("OnLeaveStatusBar", function(_)
 		self:SetHovered(false)
-		local c, r = TOGBankClassic_StatusBar.BuildNetworkParts()
+		local c, r = TOGBankClassic_UI_StatusBar.BuildNetworkParts()
 		self:Refresh(self.baseStatusText or "", c, r)
 	end)
 end

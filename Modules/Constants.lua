@@ -39,6 +39,14 @@ DEBUG_CATEGORY = {
 	ITEM = "ITEM",               -- Item loading, validation, and processing
 	QUERIES = "QUERIES",         -- P2P query/response decisions and hash matching
 	P2P = "P2P",                 -- P2P session manager: collect window, dispatch, handshake
+	-- DEBUG-001: both were already being PASSED as categories by real call sites while not
+	-- existing here, so Output:Debug treated the category as the format string and shifted every
+	-- argument along -- printing a raw %d and the real format string as data, in the chat frame.
+	-- Adding them (rather than retagging the call sites) keeps the messages where their authors
+	-- put them. All three registries must agree: here, Database:Init's debugCategories defaults,
+	-- and Options.CATEGORY_META.
+	SYSTEM = "SYSTEM",           -- Output's own internals: persistent log rotation and GC
+	FULFILL = "FULFILL",         -- request fulfillment: mail matching and completion detection
 }
 
 -- Debug sub-tags: optional second argument to Output:Debug() for per-feature filtering.
@@ -55,6 +63,7 @@ DEBUG_TAGS = {
 		CATCHUP   = "catch-up broadcast scheduling (fires when data is still missing after dispatch)",
 		["BROADCAST"] = "P2P hash-broadcast sent to guild channel (waiting for peers)",
 		["RESPOND"]   = "peer sending data in response to a P2P request (queue progress)",
+		["TIMEOUT"]   = "per-alt timeout timers armed, and an in-flight one being replaced (P2P-026)",
 	},
 	PROTOCOL = {
 		["HLR"]               = "hash-list-reply processing",
@@ -68,6 +77,7 @@ DEBUG_TAGS = {
 		["INTEGRITY-MISMATCH"] = "stop-marker present but CRC failed (genuine bit-corruption, not truncation)",
 		["COLLISION-GUARD"]   = "hash-list broadcast collision prevention (skip/defer/retry decisions, P2P-023 fix)",
 		["SERIAL"]           = "SerializeWithChecksum call tracing (outgoing checksum + payload size)",
+		["PREFIX"]  = "comm prefix registration verdicts from the client (LIBREQ-ALL-005)",
 		["RECV"]    = "general incoming message dispatch and receipt",
 		["WHISPER"] = "whisper send routing and online-check decisions",
 		["INIT"]    = "addon and library initialization events",
@@ -85,6 +95,7 @@ DEBUG_TAGS = {
 		["BROADCAST"]       = "broadcasting request mutations to guild channel",
 		["SEND"]            = "outgoing sync data and acknowledgments",
 		["VALIDATE"]        = "request mutation validation and rejection decisions",
+		["HASH-ADOPT"]      = "adopting a peer's hash for an alt we have no newer data for",
 	},
 	DELTA = {
 		APPLY        = "applying deltas to local state",

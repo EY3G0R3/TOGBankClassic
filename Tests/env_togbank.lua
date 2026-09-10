@@ -166,6 +166,14 @@ function M.install()
 
 	-- Lua-ish WoW helpers ----------------------------------------------------
 	_G.wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
+	-- WoW adds strtrim() AND installs it on the string metatable, so addon code writes
+	-- `s:trim()`. Stock Lua 5.1 has neither, and a missing method is a hard error rather
+	-- than a wrong answer -- so any spec touching a trimming code path dies without this.
+	_G.strtrim = function(s, chars)
+		local set = "[" .. (chars or " \t\r\n") .. "]*"
+		return (tostring(s):gsub("^" .. set, ""):gsub(set .. "$", ""))
+	end
+	string.trim = _G.strtrim
 	_G.strsplit = function(sep, str, limit)
 		local out, start = {}, 1
 		while true do
@@ -204,6 +212,27 @@ function M.install()
 	_G.IsInRaid                = function() return M.inRaid end
 	_G.IsInGuild               = function() return M.inGuild end
 	_G.GetGuildInfo            = function() return M.inGuild and M.guildName or nil end
+
+	--- GetClassColor(classFilename) -> r, g, b, colourString.
+	---
+	--- Four returns, and the FOURTH is the one this addon uses: `Chat.lua`'s ColorPlayerName reads
+	--- `local _, _, _, color = GetClassColor(class)` and builds `|c<color><name>|r`, so the string
+	--- is the hex WITHOUT the `|c` prefix. Returning three values, or the string in slot 1, would
+	--- make every coloured name silently fall through to the default blue -- a stub that is wrong
+	--- in a way nothing asserts.
+	---
+	--- Absent entirely until 2026-09-09, which is why no spec had ever driven ColorPlayerName: the
+	--- first one to reach it died with "attempt to call global 'GetClassColor'". Colours here are
+	--- the client's real class colours for the two classes fixtures use, and any unknown class
+	--- falls back to white rather than nil, because a nil fourth return silently disables colouring.
+	_G.GetClassColor = function(classFilename)
+		local COLOURS = {
+			WARRIOR = { 0.78, 0.61, 0.43, "ffc79c6e" },
+			MAGE    = { 0.41, 0.80, 0.94, "ff69ccf0" },
+		}
+		local c = COLOURS[classFilename] or { 1, 1, 1, "ffffffff" }
+		return c[1], c[2], c[3], c[4]
+	end
 
 	-- Guild roster -----------------------------------------------------------
 	-- Faithful positional contract:
@@ -497,6 +526,35 @@ end
 
 --- Install a silent Output so a spec exercising a non-logging module isn't
 --- forced to load Constants. Every level is a no-op that records the call.
+--- The Core inventory-hash surface, stubbed as ONE consistent set.
+---
+--- CMD-001's class, and it bit immediately: HASH-REV-001 gave Core two more hash functions
+--- (`ComputeLegacyInventoryHash`, `StampInventoryHashes`), and every spec that had hand-rolled
+--- `TOGBankClassic_Core = { ComputeInventoryHash = function() return 12345 end }` was suddenly a stub
+--- with a LOOSER contract than the real thing -- twenty-two examples failed on a nil method call.
+--- They were the lucky ones: a stub that is merely incomplete rather than absent makes broken code
+--- pass indefinitely, which is what CMD-001 and MIGRATE-001 both were.
+---
+--- Take this rather than writing the three by hand, so adding a fourth is one edit here.
+---@param fixed number|nil the value both revisions return (default 12345)
+---@param extra table|nil a table to install onto, so a spec can keep its own Core members
+function M.coreHashStub(fixed, extra)
+	local value = fixed or 12345
+	local t = extra or {}
+	t.ComputeInventoryHash       = t.ComputeInventoryHash       or function() return value end
+	t.ComputeLegacyInventoryHash = t.ComputeLegacyInventoryHash or function() return value end
+	t.StampInventoryHashes = t.StampInventoryHashes or function(self, alt, ...)
+		local legacy  = t.ComputeLegacyInventoryHash(self, ...)
+		local current = t.ComputeInventoryHash(self, ...)
+		if alt then
+			alt.inventoryHash   = legacy
+			alt.inventoryHashV2 = current
+		end
+		return legacy, current
+	end
+	return t
+end
+
 function M.stubOutput()
 	local calls = {}
 	TOGBankClassic_Output = setmetatable({ calls = calls }, {
@@ -505,6 +563,83 @@ function M.stubOutput()
 		end,
 	})
 	return TOGBankClassic_Output
+end
+
+-- ---------------------------------------------------------------------------
+-- AceGUI-3.0
+-- ---------------------------------------------------------------------------
+
+--- Load Modules/UI.lua, which is `TOGBankClassic_UI = LibStub("AceGUI-3.0")` at line 1 and so
+--- cannot load without the library present.
+---
+--- The REAL AceGUI is loaded from the sibling Ace3 install, not a stub. Its core file loads
+--- clean against this env — the widget files are not needed, because nothing here creates
+--- widgets. A stubbed AceGUI would be a table we wrote, so a spec asserting against it would
+--- only be asserting about our own stub.
+function M.loadUI()
+	if not (LibStub.libs and LibStub.libs["AceGUI-3.0"]) then
+		local ACE3 = "../Ace3/AceGUI-3.0/AceGUI-3.0.lua"
+		local chunk = loadfile(ACE3)
+		if not chunk then
+			error("AceGUI-3.0 unavailable: " .. ACE3 .. " not found. Modules/UI.lua cannot " ..
+				"load without it.", 2)
+		end
+		chunk("AceGUI-3.0", {})
+	end
+	M.loadFile("Modules/UI.lua")
+	return TOGBankClassic_UI
+end
+
+--- A frame double faithful enough to assert window-chrome painting against.
+---
+--- The harness's catch-all frame swallows every call and reports nothing, so a spec using it
+--- would pass whether or not the code under test did anything at all. This one records what was
+--- painted and models the two structural facts ALPHA-001 depends on: `GetRegions` returns only
+--- regions of THIS frame (AceGUI's title art), and textures carry a draw layer.
+--- @param layers table|nil  draw layer per created texture, in creation order (default OVERLAY)
+function M.newBackdropFrame(layers)
+	local frame = { regions = {}, painted = {}, nextLayer = 1 }
+	layers = layers or {}
+
+	function frame:SetBackdropColor(r, g, b, a) self.painted.backdrop = { r, g, b, a } end
+	function frame:SetBackdropBorderColor(r, g, b, a) self.painted.border = { r, g, b, a } end
+	function frame:GetRegions() return unpack(self.regions) end
+	function frame:CreateTexture(_, layer, _, sublevel)
+		local tex = {
+			layer = layer or "ARTWORK", sublevel = sublevel,
+			GetObjectType = function() return "Texture" end,
+		}
+		function tex:GetDrawLayer() return self.layer, self.sublevel end
+		function tex:SetAlpha(a) self.alpha = a end
+		function tex:SetAllPoints() self.allPoints = true end
+		function tex:SetColorTexture(r, g, b, a) self.color = { r, g, b, a } end
+		self.regions[#self.regions + 1] = tex
+		return tex
+	end
+
+	-- Stand in for AceGUI's three title-bar header textures.
+	for i = 1, 3 do
+		local tex = frame:CreateTexture(nil, layers[i] or "OVERLAY")
+		frame["title" .. i] = tex
+	end
+	frame.nextLayer = nil
+	return frame
+end
+
+--- An AceGUI-Frame-shaped widget wrapping newBackdropFrame, with the status background reachable
+--- the way the real widget exposes it: only via `statustext:GetParent()`.
+function M.newWindowWidget(layers)
+	local frame = M.newBackdropFrame(layers)
+	local statusbg = {
+		painted = {},
+		SetBackdropColor = function(s, r, g, b, a) s.painted.backdrop = { r, g, b, a } end,
+		SetBackdropBorderColor = function(s, r, g, b, a) s.painted.border = { r, g, b, a } end,
+	}
+	return {
+		frame = frame,
+		statusbg = statusbg,
+		statustext = { GetParent = function() return statusbg end },
+	}
 end
 
 -- ---------------------------------------------------------------------------
@@ -527,6 +662,32 @@ local function ensureCallbackHandler()
 			"cannot load without it.", 2)
 	end
 	chunk("CallbackHandler-1.0", {})
+end
+
+-- ---------------------------------------------------------------------------
+-- AceSerializer-3.0
+-- ---------------------------------------------------------------------------
+
+--- The REAL AceSerializer, mixed into a table carrying `:Serialize()` / `:Deserialize()`.
+---
+--- Loaded through the HARNESS's own `env.ace` rather than a `loadfile` here. That registry already
+--- knows where each Ace library lives and what it depends on, and it is what `env.libs` uses to
+--- satisfy the `ace` requirements of the libraries this addon actually ships beside -- DeltaSync-1.0
+--- declares `ace = { "AceSerializer-3.0" }` for exactly this reason. A second, addon-local loader
+--- would be a private copy of that knowledge, drifting the moment a path changes upstream, which is
+--- the duplication the harness exists to remove.
+---
+--- Stubbing the serialiser is not an option for the spec that needs this: an end-to-end test exists
+--- to prove a payload SURVIVES the round trip, and a fake that returns its input passes by
+--- construction -- including for payloads the real library cannot encode. Same reasoning as CMD-001,
+--- where a stub with a looser contract than the library hid a defect indefinitely.
+function M.aceSerializer()
+	require("env.ace").load("AceSerializer-3.0")
+	local lib = LibStub("AceSerializer-3.0")
+	if not lib then error("AceSerializer-3.0 failed to register with LibStub", 2) end
+	local holder = {}
+	lib:Embed(holder)
+	return holder
 end
 
 --- Load a FRESH copy of LibGuildRoster-1.0, discarding any previously registered one.
@@ -585,17 +746,32 @@ function M.defineItem(id, def)
 end
 
 --- Fill a bag with items. `contents` is an array of {id, count} or plain ids.
+---
+--- `suffix` and `enchant` build a link carrying them, because that is the ONLY way a spec can
+--- express a random-suffix item: `Scan.parseLink` reads the enchant from link field 2 and the
+--- suffix from field 7, so a spec that merely sets `suffix = 863` on the fixture and expects the
+--- scanner to see it is driving nothing. That cost a green-looking end-to-end test its whole point
+--- -- two suffix variants of one base ID were written as two identical suffix-0 links and
+--- correctly aggregated into one row, which reads exactly like the collapse bug being tested for.
+--- @param contents table array of ids, or of { id=, count=, suffix=, enchant=, link= }
 function M.setBag(bagID, size, contents)
 	local bag = { size = size, bagType = 0 }
 	for slot, entry in ipairs(contents or {}) do
-		local id    = type(entry) == "table" and entry.id or entry
-		local count = type(entry) == "table" and (entry.count or 1) or 1
-		local def   = M.items[id] or M.defineItem(id, {})
-		bag[slot] = {
-			itemID     = id,
-			stackCount = count,
-			hyperlink  = (type(entry) == "table" and entry.link) or def.link,
-		}
+		local tbl     = type(entry) == "table"
+		local id      = tbl and entry.id or entry
+		local count   = tbl and (entry.count or 1) or 1
+		local suffix  = tbl and entry.suffix or 0
+		local enchant = tbl and entry.enchant or 0
+		local def     = M.items[id] or M.defineItem(id, {})
+
+		local link = tbl and entry.link or def.link
+		if (suffix ~= 0 or enchant ~= 0) and not (tbl and entry.link) then
+			-- Field order after the itemID: enchant, four gem slots, suffix, uniqueID, level.
+			link = string.format("|cffffffff|Hitem:%d:%d:0:0:0:0:%d:0:60|h[%s]|h|r",
+				id, enchant, suffix, def.name)
+		end
+
+		bag[slot] = { itemID = id, stackCount = count, hyperlink = link }
 	end
 	M.bags[bagID] = bag
 	return bag
@@ -614,6 +790,100 @@ function M.addGuildMember(name, opts)
 		rankIndex   = opts.rankIndex or 4,
 	}
 	return M.roster[#M.roster]
+end
+
+--- AceConsole-3.0's `GetArgs`, faithful to the contract that matters.
+---
+--- CMD-001: a spec previously stubbed this as `(prefix, remainder)` -- a LOOSER contract than the
+--- real library -- and that is what hid the defect. AceConsole **tokenizes**: it returns
+--- `arg1, ..., argN, nextposition`, with `nextposition = 1e9` at end of string
+--- (`Ace3/AceConsole-3.0/AceConsole-3.0.lua:138-139`). So `GetArgs(input, 2)` on
+--- `"dev switches inventoryV2 on"` yields `"dev", "switches", <pos of 'inventoryV2'>` and the
+--- caller must use the position to reach the rest. Under the old fake, code that discarded the
+--- remainder still passed, while in game every `/togbank dev <sub> <args>` silently lost its
+--- arguments.
+---
+--- Quoted strings and item links are deliberately NOT modelled -- the real function treats them as
+--- non-spaced, and no TOGBank command takes either. If one ever does, this needs the real pattern.
+--- @param str string  the raw argument string
+--- @param numargs number  how many arguments to take (default 1)
+--- @return ... the arguments, then the next scan position
+function M.aceGetArgs(str, numargs)
+	numargs = numargs or 1
+	str = tostring(str or "")
+	local out = {}
+	-- NILABLE ON PURPOSE, and :824 depends on it: nil means "the input ran out before we had
+	-- numargs of them", which is a different answer from "position 1". Declared rather than left
+	-- to inference, which reads the initialiser and concludes integer.
+	---@type integer|nil
+	local pos = 1
+	for i = 1, numargs do
+		local s, e = str:find("%S+", pos)
+		if not s then
+			pos = nil
+			break
+		end
+		out[i] = str:sub(s, e)
+		pos = e + 1
+	end
+	out[numargs + 1] = (pos and str:find("%S", pos)) or 1e9
+	-- Explicit bounds so missing arguments come back as real nils, exactly as `nils()` does there.
+	return unpack(out, 1, numargs + 1)
+end
+
+--- A minimal TOGBankClassic_Core carrying the AceConsole methods the chat path needs.
+--- Specs that drive `Chat:ChatCommand` should use this rather than hand-rolling a stub, because
+--- hand-rolled ones are how CMD-001 stayed invisible.
+--- MERGES rather than replaces. In game, TOGBankClassic_Core is ONE object carrying several Ace
+--- mixins at once (AceConsole's GetArgs, AceEvent, plus the addon's own Print, SendCommMessage,
+--- SerializeWithChecksum). A stub that assigns a fresh table silently deletes whatever another
+--- helper already installed -- env.loadOutput puts Core:Print there, and calling stubCore
+--- afterwards made every Output call fail with "attempt to call method 'Print' (a nil value)".
+--- Merging also means the order of the two calls stops mattering, which is one less thing for a
+--- spec author to get right.
+function M.stubCore(extra)
+	local core = TOGBankClassic_Core or {}
+	core.GetArgs = function(_, str, numargs) return M.aceGetArgs(str, numargs) end
+	for k, v in pairs(extra or {}) do core[k] = v end
+	TOGBankClassic_Core = core
+	return core
+end
+
+--- Every first-party Lua file the addon SHIPS, in load order, read from the .toc.
+---
+--- Lives here because more than one class-guard spec needs it (timers_spec's TIMER-001 sweep and
+--- constantprose_spec's DOC-004 sweep), and two copies of "which files does this addon ship" is
+--- exactly the drift those guards exist to prevent -- one copy would be updated and the other would
+--- keep passing over a smaller set.
+---
+--- THE .toc IS THE ONE LIST THAT CANNOT SILENTLY OMIT A MODULE: a file missing from it does not load
+--- in game. timers_spec's first version listed schedulers by hand and missed two, because the list
+--- was compiled from the files an audit happened to name -- a check whose coverage looks complete
+--- and is not.
+---
+--- Libs/ is excluded: vendored upstream code we do not author and could only fix by forking, so a
+--- hit there would have no remedy but to weaken the guard. Everything we write is in scope,
+--- including generated data under Modules/Static -- "that file obviously has no <x>" is precisely
+--- the reasoning that produced the hole above.
+--- @param toc string|nil defaults to TOGBankClassic.toc
+--- @return table array of repo-relative paths, in load order
+function M.shippedModules(toc)
+	local path = toc or "TOGBankClassic.toc"
+	local fh = assert(io.open(path, "rb"), "cannot read " .. path)
+	local src = fh:read("*a")
+	fh:close()
+
+	local paths = {}
+	for line in (src .. "\n"):gmatch("([^\r\n]*)[\r\n]") do
+		local entry = line:match("^%s*([^#%s][^\r\n]-%.lua)%s*$")
+		if entry then
+			entry = entry:gsub("\\", "/")
+			if not entry:match("^Libs/") then
+				paths[#paths + 1] = entry
+			end
+		end
+	end
+	return paths
 end
 
 M.install()

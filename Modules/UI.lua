@@ -13,14 +13,161 @@ local ThinFrameBackdrop = {
 	insets = { left = 4, right = 4, top = 4, bottom = 4 },
 }
 
+-- ALPHA-001: per-window transparency.
+--
+-- What fades is the window CHROME -- backdrop, border, title-bar art, status-bar background --
+-- and not its contents. `frame:SetAlpha()` would have been one line, but it cascades to every
+-- child: at 50% the item icons, counts and labels fade too, which is the opposite of what a
+-- see-through window is for. Fading only the chrome means you can see the game through the
+-- window while the items stay perfectly readable.
+--
+-- `module` names the global holding the live window as `.Window`. Resolving through it rather
+-- than caching frames is deliberate: AceGUI pools frames across ALL addons using the library, so
+-- a cached reference to a released window can later be a different addon's frame, and moving our
+-- slider would repaint theirs. `Requests` genuinely does release and recreate its window (banker
+-- status change), so this is a live case, not a hypothetical.
+TOGBankClassic_UI.ALPHA_WINDOWS = {
+	{ key = "inventory", label = "Inventory",   module = "TOGBankClassic_UI_Inventory" },
+	{ key = "search",    label = "Search",      module = "TOGBankClassic_UI_Search"    },
+	{ key = "requests",  label = "Requests",    module = "TOGBankClassic_UI_Requests"  },
+	{ key = "donations", label = "Donations",   module = "TOGBankClassic_UI_Donations" },
+	{ key = "mail",      label = "Mail Viewer", module = "TOGBankClassic_UI_Mail"      },
+}
+
+-- Blizzard's BackdropTemplate mixin draws the backdrop with textures parented to the frame under
+-- these names. They must NOT be faded here: SetBackdropColor already carries the alpha, and
+-- multiplying a second SetAlpha on top would square it (0.5 rendering as 0.25). They are excluded
+-- by name as well as by draw layer because the layer they sit on is a client-side detail this
+-- addon cannot check from source.
+local BACKDROP_PIECES = {
+	"Center", "TopEdge", "BottomEdge", "LeftEdge", "RightEdge",
+	"TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner",
+}
+
 --- Applies the thin tooltip-style border to an AceGUI Frame widget.
 --- Pass the AceGUI widget object (e.g. `window`), not its `.frame` child.
-function TOGBankClassic_UI:ApplyThinBorder(widget)
+--- `alphaKey`, when given, also applies that window's stored transparency (ALPHA-001).
+function TOGBankClassic_UI:ApplyThinBorder(widget, alphaKey)
 	local frame = widget.frame or widget
 	if not frame.SetBackdrop then return end
 	frame:SetBackdrop(ThinFrameBackdrop)
 	frame:SetBackdropColor(0, 0, 0, 1)
 	frame:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+	if alphaKey then
+		self:ApplyWindowAlpha(alphaKey, widget)
+	end
+end
+
+--- Stored transparency for a window, 0 (invisible chrome) to 1 (opaque). Always a number in
+--- range: an out-of-range or non-numeric saved value reads as fully opaque rather than making
+--- a window disappear with no obvious cause.
+function TOGBankClassic_UI:GetWindowAlpha(key)
+	local db = TOGBankClassic_Options and TOGBankClassic_Options.db
+	local stored = db and db.global and db.global.windowAlpha and db.global.windowAlpha[key]
+	if type(stored) ~= "number" or stored ~= stored then return 1 end
+	if stored < 0 then return 0 end
+	if stored > 1 then return 1 end
+	return stored
+end
+
+--- Store a window's transparency and apply it immediately if that window exists.
+function TOGBankClassic_UI:SetWindowAlpha(key, value)
+	local db = TOGBankClassic_Options and TOGBankClassic_Options.db
+	if not (db and db.global) then return false end
+	db.global.windowAlpha = db.global.windowAlpha or {}
+	db.global.windowAlpha[key] = value
+	self:ApplyWindowAlpha(key)
+	return true
+end
+
+--- Resolve the live window for `key`, or nil. Only used by ApplyWindowAlpha.
+local function liveWindow(key)
+	for _, entry in ipairs(TOGBankClassic_UI.ALPHA_WINDOWS) do
+		if entry.key == key then
+			local module = _G[entry.module]
+			return module and module.Window
+		end
+	end
+	return nil
+end
+
+--- Paint a resolved alpha onto a window's chrome. Split out from ApplyWindowAlpha so the release
+--- path can reset a frame to opaque without going through a stored setting.
+local function paintChrome(widget, alpha)
+	local frame = widget and (widget.frame or widget)
+	if not (frame and frame.SetBackdropColor) then return false end
+
+	-- SetBackdropColor alone cannot reach genuinely opaque, even at 1.0. The backdrop's bgFile
+	-- (UI-DialogBox-Background, the parchment) carries its own per-pixel alpha channel, and
+	-- SetBackdropColor MULTIPLIES over it -- so a half-transparent parchment pixel stays half
+	-- transparent whatever alpha is passed. The fix, taken from the same feature in FGI: a solid
+	-- black texture behind the backdrop at BACKGROUND sublevel -8, scaled by the same slider. Both
+	-- layers move together, so 1.0 is really solid and lower values still let the scene through.
+	if not frame.togOpaqueFill and frame.CreateTexture then
+		local fill = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+		fill:SetAllPoints(frame)
+		frame.togOpaqueFill = fill
+	end
+	if frame.togOpaqueFill then
+		frame.togOpaqueFill:SetColorTexture(0, 0, 0, alpha)
+	end
+
+	frame:SetBackdropColor(0, 0, 0, alpha)
+	frame:SetBackdropBorderColor(0.4, 0.4, 0.4, alpha)
+
+	-- The title-bar header art: three OVERLAY textures created directly on the frame by AceGUI's
+	-- Frame widget. The title TEXT is a FontString on a separate child frame and is untouched, so
+	-- a near-transparent window still shows its name and stays draggable by the title.
+	local skip = {}
+	for _, piece in ipairs(BACKDROP_PIECES) do
+		if frame[piece] then skip[frame[piece]] = true end
+	end
+	if frame.GetRegions then
+		for _, region in ipairs({ frame:GetRegions() }) do
+			if not skip[region] and region ~= frame.togOpaqueFill
+				and region.GetDrawLayer and region.SetAlpha
+				and region:GetObjectType() == "Texture" and region:GetDrawLayer() == "OVERLAY" then
+				region:SetAlpha(alpha)
+			end
+		end
+	end
+
+	-- The status bar along the bottom. `statustext` is created ON the status background, so its
+	-- parent is that background exactly -- AceGUI does not expose the background itself. Only its
+	-- backdrop fades; the text is a child FontString and stays readable.
+	local statusbg = widget.statustext and widget.statustext:GetParent()
+	if statusbg and statusbg.SetBackdropColor then
+		statusbg:SetBackdropColor(0.1, 0.1, 0.1, alpha)
+		statusbg:SetBackdropBorderColor(0.4, 0.4, 0.4, alpha)
+	end
+
+	return true
+end
+
+--- Paint `key`'s stored transparency onto a window. `widget` is optional and exists for the
+--- construction-time call, which happens before the module has stored `self.Window`.
+--- @return boolean applied
+function TOGBankClassic_UI:ApplyWindowAlpha(key, widget)
+	widget = widget or liveWindow(key)
+	return paintChrome(widget, self:GetWindowAlpha(key))
+end
+
+--- Reset a window's chrome to opaque immediately before releasing it back to AceGUI.
+---
+--- Not optional housekeeping. AceGUI's widget pool is shared by EVERY addon using the library, so
+--- a released frame can be handed to someone else's `Create("Frame")` -- carrying our black
+--- backing texture and our faded title art with it. `Requests` really does release and recreate
+--- its window when banker status changes, so without this a guild officer toggling ranks could
+--- leave a black slab across an unrelated addon's window.
+function TOGBankClassic_UI:ClearWindowAlpha(widget)
+	return paintChrome(widget, 1)
+end
+
+--- Re-apply every window's stored transparency to whichever windows currently exist.
+function TOGBankClassic_UI:RefreshWindowAlpha()
+	for _, entry in ipairs(self.ALPHA_WINDOWS) do
+		self:ApplyWindowAlpha(entry.key)
+	end
 end
 
 -- HITBOX-001: AceGUI Frame's bottom resize strip (sizer_s) and corner (sizer_se) are

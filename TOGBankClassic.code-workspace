@@ -607,7 +607,13 @@
 			"ERR_FRIEND_ONLINE_SS",
 			"ERR_FRIEND_OFFLINE_S",
 			"ERR_GUILD_LEAVE_S",
-			"ERR_GUILD_REMOVE_SS"
+			"ERR_GUILD_REMOVE_SS",
+			"FCF_OpenTemporaryWindow",
+			"ERR_GUILD_PROMOTE_SSS",
+			"ERR_GUILD_DEMOTE_SSS",
+			"GameTooltip_HideShoppingTooltips",
+			"GameTooltip_ShowCompareItem",
+			"assertsafe"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

@@ -19,7 +19,9 @@ local function captureSend()
 	local sent = { calls = {} }
 	TOGBankClassic_Core = TOGBankClassic_Core or {}
 	TOGBankClassic_Core.SerializeWithChecksum = function(_, t) return "ser:" .. tostring(t and t.type) end
-	TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, dist, target, prio, cb)
+	-- Only prefix, prio and the callback are observed; the middle arguments are named `_` rather
+	-- than kept for documentation, so an unused-argument warning stays a real signal in this file.
+	TOGBankClassic_Core.SendCommMessage = function(_, prefix, _, _, _, prio, cb)
 		sent.calls[#sent.calls + 1] = { prefix = prefix, prio = prio }
 		sent.cb = cb
 		return nil   -- faithful: neither AceComm nor AceCommQueue returns anything
@@ -42,15 +44,15 @@ describe("SendCommMessage return value", function()
 end)
 
 describe("Guild send-result handling", function()
-	local Guild, sent
-
+	-- No locals for the module or the capture: every guard in this block reads Guild.lua's SOURCE,
+	-- because CreateOnChunkSentCallback is a `local function` no spec can invoke. The loads and the
+	-- stubs still run, so the file is exercised rather than merely read.
 	before_each(function()
 		env.reset()
 		env.stubOutput()
 		env.loadFile("Modules/Constants.lua")
 		env.loadFile("Modules/Guild.lua")
-		Guild = TOGBankClassic_Guild
-		sent = captureSend()
+		captureSend()
 		TOGBankClassic_Options = { IsSyncProgressMuted = function() return true end }
 		TOGBankClassic_P2PSession = { ReleaseSendSlot = function() end }
 	end)
@@ -79,6 +81,27 @@ describe("Guild send-result handling", function()
 			"suppressed send as a delivery error (audit ACQ-004)")
 	end)
 
+	-- FINDING 28. ReleaseSendSlot's token-less branch retires the OLDEST outstanding token for a
+	-- requester. With two sends in flight for them that token belongs to the OTHER send, so a
+	-- duplicated completion callback decrements a slot still held -- the over-release P2P-024
+	-- closed for the timer path, returning through the completion path. The guard is here rather
+	-- than in P2PSession because only the caller knows which send completed.
+	--
+	-- THIS IS A SOURCE-TEXT ASSERTION AND ITS LIMITS ARE WORTH STATING, because this board keeps
+	-- finding guards that cannot fail for the reason their name gives. CreateOnChunkSentCallback
+	-- is a `local function`, so no spec can invoke it; every guard in this describe block reads
+	-- the source for the same reason. It WILL fail if the guard is deleted, which is the
+	-- regression it exists to catch. It CANNOT tell a correct guard from a broken one.
+	it("releases the send slot at most once per send", function()
+		local src = io.open("Modules/Guild.lua", "rb"):read("*a")
+		local body = src:match("local function CreateOnChunkSentCallback.-\nend\n")
+		assert.is_not_nil(body, "could not find CreateOnChunkSentCallback")
+		assert.truthy(body:find("sendStats.slotReleased", 1, true),
+			"the completion path releases the send slot with no once-per-send guard. A duplicated " ..
+			"completion retires a DIFFERENT send's token and decrements a slot that send still " ..
+			"holds, so the cap admits an extra concurrent send (audit FINDING 28)")
+	end)
+
 	it("no longer reports a throttled counter it cannot increment", function()
 		local src = io.open("Modules/Guild.lua", "rb"):read("*a")
 		local body = src:match("local function CreateOnChunkSentCallback.-\nend\n")
@@ -89,13 +112,13 @@ describe("Guild send-result handling", function()
 end)
 
 describe("RequestLog mutation broadcast", function()
-	local sent
-
+	-- Same shape as the block above: the assertion reads RequestLog.lua's source, so the capture is
+	-- installed for its stubbing side effect and its handle is never needed.
 	before_each(function()
 		env.reset()
 		env.stubOutput()
 		env.loadFile("Modules/Constants.lua")
-		sent = captureSend()
+		captureSend()
 	end)
 
 	-- togbank-rm carries request-state mutations at ALERT priority. A silent refusal here means

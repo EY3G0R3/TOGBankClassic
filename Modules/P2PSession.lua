@@ -3,11 +3,19 @@
 --
 -- Replaces the banker-gated pull model with a broadcast/collect/dispatch loop:
 --
+-- DOC-003: the phase timings below name COLLECT_WINDOW rather than restating its value. They
+-- said "10s" while the constant was 60 -- six times the documented window, in the comment a
+-- reader consults before touching the dispatch logic. Three sites said it (here twice and
+-- BeginCollectWindow's docstring), which is why none of them is a number any more.
+--
 --   Phase 1 (T+0):      Every player sends hash-list-broadcast to GUILD via SyncDeltaVersion.
---   Phase 2 (T+0..10s): Peers with NEWER data for any listed alt respond with a
+--   Phase 2 (T+0..W):   Peers with NEWER data for any listed alt respond with a
 --                        hash-offer whisper containing those alts' hashes + timestamps.
---   Phase 3 (T+10s):    Dispatch: for each stale alt, pick the peer with the highest
---                        updatedAt, send a sync-request whisper.
+--                        W is COLLECT_WINDOW, below.
+--   Phase 3 (T+W):      Dispatch: for each stale alt, pick the peer with the highest
+--                        updatedAt, send a sync-request whisper. Note the window is
+--                        EXTENDED by a later broadcast, so T+W is measured from the last
+--                        one, not the first.
 --   Phase 4 (handshake): Peer replies sync-accept (has capacity → sends data via
 --                        existing togbank-state/togbank-d4 pipeline) or sync-busy
 --                        (at cap → try next candidate).
@@ -52,7 +60,13 @@ P2P.activeSends    = {} -- requesterName → number of concurrent outbound sends
 P2P.collectTimer   = nil
 P2P.isCollecting   = false
 P2P.pendingDispatch = {}
-P2P.catchUpTimer   = nil -- scheduled catch-up broadcast timer
+-- TIMER-001, adjacent: this is a LATCH, not a timer handle, despite the name. It is only ever
+-- tested for truthiness (ScheduleCatchUp returns early if set) and cleared by the callback --
+-- nothing calls :Cancel() on it, which is why C_Timer.After is correct at its one arm site where
+-- it was wrong in BeginCollectWindow. DO NOT "fix" that After into a NewTimer expecting a handle
+-- here, and do not add a :Cancel() call: the value is the boolean `true`, deliberately, and the
+-- assignment happens BEFORE the After so a re-entry during scheduling cannot double-arm it.
+P2P.catchUpTimer   = nil -- boolean latch: is a catch-up broadcast already scheduled?
 P2P.catchUpCycles  = 0   -- how many catch-up rounds have fired since last full sync
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -113,15 +127,22 @@ end
 
 -- ─── Collect Window ───────────────────────────────────────────────────────────
 
---- Start (or extend) the 10-second collect window after broadcasting our hashes.
+--- Start (or extend) the COLLECT_WINDOW-second collect window after broadcasting our hashes.
 -- @param myHashes table: altName → {hash, updatedAt, ...}  (from BuildBankerHashList)
 function P2P:BeginCollectWindow(myHashes) -- luacheck: ignore myHashes
+	-- TIMER-001: NewTimer, not After. C_Timer.After returns NOTHING, so `self.collectTimer` was
+	-- always nil, the `if self.collectTimer` guard was always false, and the cancel below never
+	-- ran -- while looking exactly like a cancel that did. Extending the window therefore STACKED
+	-- a second timer instead of replacing the first: Dispatch fired at the ORIGINAL deadline,
+	-- discarding every offer that arrived during the extension, and then fired again later with
+	-- the window already closed. On a busy login, where hash-list broadcasts arrive in bursts and
+	-- re-open the window repeatedly, that cost real offers every time.
 	if self.isCollecting then
 		-- Already open: just reset the deadline so late offers still count.
 		if self.collectTimer then
 			self.collectTimer:Cancel()
 		end
-		self.collectTimer = C_Timer.After(COLLECT_WINDOW, function()
+		self.collectTimer = C_Timer.NewTimer(COLLECT_WINDOW, function()
 			P2P:Dispatch()
 		end)
 		Dbg("OFFER", "Collect window extended (%ds)", COLLECT_WINDOW)
@@ -130,7 +151,7 @@ function P2P:BeginCollectWindow(myHashes) -- luacheck: ignore myHashes
 
 	self.isCollecting = true
 	self.offers = {}
-	self.collectTimer = C_Timer.After(COLLECT_WINDOW, function()
+	self.collectTimer = C_Timer.NewTimer(COLLECT_WINDOW, function()
 		P2P:Dispatch()
 	end)
 	Dbg("OFFER", "Collect window started (%ds)", COLLECT_WINDOW)
@@ -254,30 +275,33 @@ function P2P:DispatchList(altList)
 	local dispatched = 0
 
 	for _, item in ipairs(altList) do
-		if self.sessionsByAlt[item.altName] then
-			-- A session was created for this alt by the time we process the list.
-		elseif dispatched >= slots then
-			table.insert(self.pendingDispatch, item)
-		else
-			local peer = PickPeer(item.candidates, {}, peerLoad)
-			if peer then
-				peerLoad[peer] = (peerLoad[peer] or 0) + 1
-				local sid = MakeSessionId(item.altName)
-				self.sessions[sid] = {
-					sessionId  = sid,
-					altName    = item.altName,
-					state      = STATE.DISPATCHED,
-					peer       = peer,
-					candidates = item.candidates,
-					triedPeers = { [peer] = true },
-					timers     = {},
-				}
-				self.sessionsByAlt[item.altName] = sid
-				-- Reserve the slot immediately so concurrent flushes see the correct count.
-				self.activeSessions = self.activeSessions + 1
-				self:SendSyncRequest(sid)
-				dispatched = dispatched + 1
-				Dbg("DISPATCH", "  → %s to %s (sid=%s)", item.altName, peer, sid)
+		-- Skip an alt that already gained a session while we were working through the list.
+		-- Written as a negated guard rather than an empty `if ... then -- comment` branch, which
+		-- reads as an unfinished thought and is what luacheck reports.
+		if not self.sessionsByAlt[item.altName] then
+			if dispatched >= slots then
+				table.insert(self.pendingDispatch, item)
+			else
+				local peer = PickPeer(item.candidates, {}, peerLoad)
+				if peer then
+					peerLoad[peer] = (peerLoad[peer] or 0) + 1
+					local sid = MakeSessionId(item.altName)
+					self.sessions[sid] = {
+						sessionId  = sid,
+						altName    = item.altName,
+						state      = STATE.DISPATCHED,
+						peer       = peer,
+						candidates = item.candidates,
+						triedPeers = { [peer] = true },
+						timers     = {},
+					}
+					self.sessionsByAlt[item.altName] = sid
+					-- Reserve the slot immediately so concurrent flushes see the correct count.
+					self.activeSessions = self.activeSessions + 1
+					self:SendSyncRequest(sid)
+					dispatched = dispatched + 1
+					Dbg("DISPATCH", "  → %s to %s (sid=%s)", item.altName, peer, sid)
+				end
 			end
 		end
 	end
@@ -297,7 +321,14 @@ function P2P:SendSyncRequest(sessionId)
 	TOGBankClassic_Core:SendWhisper("togbank-rr", data, s.peer, "NORMAL")
 
 	-- Timeout: if no ACK, advance to next candidate.
-	s.timers.dispatch = C_Timer.After(DISPATCH_TIMEOUT, function()
+	-- TIMER-001: NewTimer, so the :Cancel() calls on this handle actually cancel.
+	-- P2P-027: armed through ArmSessionTimer, because this function has TWO callers and only one of
+	-- them cancels first. AdvanceCandidate cancels `dispatch` before calling us; the retry callback
+	-- does not, and by then AdvanceCandidate may have armed a fresh dispatch timer for a new peer
+	-- (its `triedPeers` reset makes a candidate available again). The retry's call would then
+	-- overwrite that handle, and the orphan -- whose guard still sees STATE.DISPATCHED -- would fire
+	-- AdvanceCandidate against the peer currently being waited on.
+	self:ArmSessionTimer(s, "dispatch", DISPATCH_TIMEOUT, function()
 		local live = P2P.sessions[sessionId]
 		if live and live.state == STATE.DISPATCHED then
 			Dbg("HANDSHAKE", "Dispatch timeout for %s/%s - next candidate", live.altName, live.peer)
@@ -332,7 +363,11 @@ function P2P:OnSyncAccept(sessionId, sender)
 	-- Delivery watchdog in case peer accepts but never delivers.
 	-- 180s budget covers worst-case AceCommQueue drain (observed 68-70s under load
 	-- with 3 concurrent sends; 180s gives comfortable headroom for large payloads).
-	s.timers.delivery = C_Timer.After(DELIVERY_TIMEOUT, function()
+	-- P2P-027: through the helper for the invariant, though the state machine already protects this
+	-- one -- OnSyncAccept returns early unless the session is DISPATCHED and sets ACTIVE below, so a
+	-- second accept cannot reach here. Armed the same way as the others so the rule is the file's,
+	-- not this call site's.
+	self:ArmSessionTimer(s, "delivery", DELIVERY_TIMEOUT, function()
 		local live = P2P.sessions[sessionId]
 		if live and live.state == STATE.ACTIVE then
 			Dbg("COMPLETE", "Delivery timeout for %s", live.altName)
@@ -363,6 +398,14 @@ function P2P:AdvanceCandidate(sessionId, reason)
 		s.timers.dispatch:Cancel()
 		s.timers.dispatch = nil
 	end
+	-- P2P-027: the retry timer was NOT cancelled here, and that is the live half. Advancing means
+	-- this session is taking a different path now, so a retry cycle scheduled by an earlier advance
+	-- must not still fire -- it calls SendSyncRequest for the same session, whispering a second
+	-- sync-request and re-arming the dispatch timeout underneath whichever peer we just chose.
+	if s.timers.retry then
+		s.timers.retry:Cancel()
+		s.timers.retry = nil
+	end
 
 	local nextPeer = nil
 	for _, candidate in ipairs(s.candidates) do
@@ -381,7 +424,7 @@ function P2P:AdvanceCandidate(sessionId, reason)
 				s.altName, reason, s.retryCount, MAX_RETRY_CYCLES, RETRY_CYCLE_DELAY)
 			s.triedPeers = {}  -- reset: allow all candidates to be tried again
 			s.state = STATE.DISPATCHED
-			s.timers.retry = C_Timer.After(RETRY_CYCLE_DELAY, function()
+			self:ArmSessionTimer(s, "retry", RETRY_CYCLE_DELAY, function()
 				local live = P2P.sessions[sessionId]
 				if not live or live.state ~= STATE.DISPATCHED then return end
 				local peer = PickPeer(live.candidates, live.triedPeers, {})
@@ -458,6 +501,26 @@ function P2P:OnFailed(sessionId, reason)
 	self:FlushPendingDispatch()
 end
 
+--- Arm one of a session's named timers, cancelling whatever was in that slot.
+---
+--- P2P-027, the same class as P2P-026 one module over: not `After` versus `NewTimer` (this file was
+--- corrected on that axis by audit finding 24) but a live handle being ASSIGNED OVER. `BeginCollectWindow`
+--- already got this right and its comment says why; the session timers did not.
+---@param s table the session
+---@param name string slot in `s.timers`
+---@param delay number seconds
+---@param callback function
+function P2P:ArmSessionTimer(s, name, delay, callback)
+	s.timers = s.timers or {}
+	local existing = s.timers[name]
+	if existing and type(existing) == "table" and existing.Cancel then
+		existing:Cancel()
+		Dbg("HANDSHAKE", "[P2P-027] Replaced in-flight %s timer for %s", name, tostring(s.altName))
+	end
+	s.timers[name] = C_Timer.NewTimer(delay, callback)
+	return s.timers[name]
+end
+
 function P2P:CancelTimers(s)
 	for _, timer in pairs(s.timers or {}) do
 		if timer and type(timer) == "table" and timer.Cancel then
@@ -476,28 +539,84 @@ end
 
 -- ─── Sender Side ──────────────────────────────────────────────────────────────
 
---- Try to acquire an outbound send slot for a given requester.
--- Returns true (slot incremented + safety timer set) if under cap; false if at cap.
--- Call ReleaseSendSlot on send completion; the safety timer is a no-op fallback.
-function P2P:TryAcquireSendSlot(requester)
+--- Total outbound sends in flight, across every requester.
+-- P2P-025: this sum was hand-written at four call sites and the status bar read a fifth,
+-- unrelated counter that nothing incremented -- so the one number the cap is enforced on had
+-- five spellings and one of them was always zero. Everything that needs the total calls this.
+function P2P:GetActiveSendTotal()
 	local total = 0
 	for _, count in pairs(self.activeSends) do
 		total = total + count
 	end
-	if total >= MAX_ACTIVE_SENDS then
+	return total
+end
+
+--- Try to acquire an outbound send slot for a given requester.
+-- Returns true (slot incremented + safety timer set) if under cap; false if at cap.
+-- Call ReleaseSendSlot on send completion; the safety timer is a no-op fallback.
+function P2P:TryAcquireSendSlot(requester)
+	if self:GetActiveSendTotal() >= MAX_ACTIVE_SENDS then
 		return false
 	end
 	self.activeSends[requester] = (self.activeSends[requester] or 0) + 1
-	Dbg("HANDSHAKE", "TryAcquireSendSlot: acquired for %s (total=%d)", requester, total + 1)
+
+	-- P2P-024: the safety release is tied to THIS acquisition by a generation token.
+	--
+	-- It used to release unconditionally on a 210s timer. A send that finished normally released
+	-- at completion AND again when its stale safety timer fired -- and by then the slot it
+	-- decremented belonged to a DIFFERENT, later send from the same requester. The `> 0` guard
+	-- prevents underflow but says nothing about over-release, so MAX_ACTIVE_SENDS was quietly
+	-- exceeded under sustained load: send #1's timer frees send #2's slot and a fourth
+	-- concurrent send is admitted.
+	--
+	-- Each acquisition gets a token; the real release consumes it, and the safety timer only
+	-- acts if its own token is still outstanding.
+	self.sendGeneration = (self.sendGeneration or 0) + 1
+	local token = self.sendGeneration
+	self.pendingSendTokens = self.pendingSendTokens or {}
+	self.pendingSendTokens[token] = requester
+
+	Dbg("HANDSHAKE", "TryAcquireSendSlot: acquired for %s (total=%d, token=%d)",
+		requester, self:GetActiveSendTotal(), token)
 	C_Timer.After(SEND_TIMEOUT, function()
-		P2P:ReleaseSendSlot(requester, "timeout")
+		-- Absent means the real release already consumed it: this timer has nothing to free.
+		if P2P.pendingSendTokens and P2P.pendingSendTokens[token] then
+			P2P:ReleaseSendSlot(requester, "timeout", token)
+		end
 	end)
 	return true
 end
 
 --- Release an outbound send slot for a given requester.
--- Safe to call redundantly — the > 0 guard prevents underflow.
-function P2P:ReleaseSendSlot(requester, reason)
+--
+-- WITH a token (the safety timer) this is exactly once: the token is consumed, and a second call
+-- carrying the same token returns immediately.
+--
+-- WITHOUT one (a completion) it retires the OLDEST outstanding token for this requester, and that
+-- is a GUESS. FINDING 28: it is correct while one send is outstanding for that requester and wrong
+-- when two are -- the second token-less call retires the other send's token and decrements its
+-- slot, which is over-release, the same fault P2P-024 fixed for the timer path. The `> 0` guard
+-- prevents underflow and says nothing about over-release.
+--
+-- So "safe to call redundantly" is NOT a property of this function, and the previous docstring
+-- claimed it was. It is a property the single production caller provides: `Guild.lua` guards the
+-- release with `sendStats.slotReleased`, so one send releases once. A NEW caller does not inherit
+-- that -- either carry the token, or guard your own completion the same way.
+function P2P:ReleaseSendSlot(requester, reason, token)
+	self.pendingSendTokens = self.pendingSendTokens or {}
+	if token then
+		if not self.pendingSendTokens[token] then return end
+		self.pendingSendTokens[token] = nil
+	else
+		-- A completion release with no token retires the OLDEST outstanding token for this
+		-- requester, so the safety timer that was scheduled alongside it becomes inert.
+		local oldest
+		for t, who in pairs(self.pendingSendTokens) do
+			if who == requester and (not oldest or t < oldest) then oldest = t end
+		end
+		if oldest then self.pendingSendTokens[oldest] = nil end
+	end
+
 	if (self.activeSends[requester] or 0) > 0 then
 		self.activeSends[requester] = self.activeSends[requester] - 1
 		Dbg("HANDSHAKE", "ReleaseSendSlot: %s (%s, remaining=%d)",
@@ -526,9 +645,8 @@ function P2P:HandleSyncRequest(sessionId, requester, altName)
 
 	-- Acquire unified send slot (shared cap with old pull-based path via TryAcquireSendSlot).
 	if not self:TryAcquireSendSlot(requester) then
-		local total = 0
-		for _, c in pairs(self.activeSends) do total = total + c end
-		Dbg("HANDSHAKE", "HandleSyncRequest: at send cap (%d) - busy to %s for %s", total, requester, norm)
+		Dbg("HANDSHAKE", "HandleSyncRequest: at send cap (%d) - busy to %s for %s",
+			self:GetActiveSendTotal(), requester, norm)
 		local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-busy", sessionId = sessionId })
 		TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "NORMAL")
 		return false

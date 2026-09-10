@@ -35,36 +35,15 @@ function TOGBankClassic_Item:GetClass(itemID)
 	return nil
 end
 
--- Check if an item needs its Link preserved on the wire.
--- Default-deny stripping: we only strip when we can POSITIVELY confirm the item is
--- not gear (class 2/4). Any uncertainty (uncached, unparseable, missing ID) → preserve.
--- This guarantees no gear link ever gets stripped, even during cold-cache windows.
+-- INV2 step 10: `Item:NeedsLink` was deleted here. It answered the SEND-side question "is this
+-- link safe to strip?", and `StripDeltaLinks` was its only caller. Nothing strips links any more --
+-- V2 sends integers and the receiver rebuilds the link from LibItemDB -- so the question no longer
+-- has a caller or a meaning.
 --
--- Weapons (class 2) and Armor (class 4) ALWAYS keep their Link, because plain and
--- suffixed variants of the same item share the same base ID and must be distinguished
--- by their full link to avoid the linkless-ghost / count-divergence bug class.
-function TOGBankClassic_Item:NeedsLink(itemLink)
-	if not itemLink then
-		-- No link to preserve, but caller should not be stripping nothing — return true
-		-- defensively so callers don't accidentally strip something we can't classify.
-		return true
-	end
-
-	local itemID = tonumber(itemLink:match("|Hitem:(%d+)") or itemLink:match("^(%d+)"))
-	if not itemID then
-		-- Couldn't extract an ID from the link — preserve to be safe.
-		return true
-	end
-
-	local classId = self:GetClass(itemID)
-	if classId == nil then
-		-- Unknown class (Tier 3) — preserve link. Caller cannot prove it's safe to strip.
-		return true
-	end
-
-	-- Class is known. Strip ONLY if class is NOT in the gear set.
-	return ITEM_CLASSES_NEEDING_LINK[classId] == true
-end
+-- `ItemClassNeedsLink` below is NOT the same function and deliberately survives: it is the
+-- RECEIVE-side check, and it is what stops a linkless gear row arriving from an unmigrated peer
+-- being stored as a ghost. Deleting it would break exactly the backwards compatibility this rework
+-- is careful to keep.
 
 -- Receive-side variant: caller has an itemID (not a link) and wants to know whether
 -- this item REQUIRES a Link to be considered well-formed. Used by ITEM-003 guards in
@@ -315,13 +294,20 @@ function TOGBankClassic_Item:GetItems(items, callback)
 						else
 							-- Fallback: item somehow not in cache, extract what we can
 							-- GetItemInfoInstant works without cache and returns class/subclass too
-							local _, _, _, _, iconID, itemClassId, itemSubClassId = GetItemInfoInstant(capturedItemLink)
+							-- ITEM-007: these MUST be the values GetItemInfoInstant just returned. They
+							-- used to be named `itemClassId`/`itemSubClassId`, shadowing the outer pair
+							-- from GetItemInfo -- which are nil here BY DEFINITION, because a nil `name`
+							-- from that call is what put us in this branch. So the fallback threw away
+							-- the class and subclass it had just successfully fetched and stored nils,
+							-- and every item that reached it lost its type. Silent: the row still
+							-- rendered, it just sorted and filtered as untyped.
+							local _, _, _, _, iconID, instantClassId, instantSubClassId = GetItemInfoInstant(capturedItemLink)
 							if iconID then
 								capturedItem.Info = {
 									icon = iconID,
 									name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID)),
-									class = itemClassId,
-									subClass = itemSubClassId,
+									class = instantClassId,
+									subClass = instantSubClassId,
 								}
 							end
 						end
@@ -647,10 +633,10 @@ function TOGBankClassic_Item:Aggregate(a, b)
 
 	if a then
 		for _, v in pairs(a) do
-			-- Only require ID field (Link is optional for v0.8.0 link-less data)
-			if not v or not v.ID then
-				-- Skip malformed entries (missing required ID field)
-			else
+			-- Only require ID field (Link is optional for v0.8.0 link-less data); a malformed
+			-- entry with no ID is skipped. Written as a positive test rather than an empty
+			-- `if ... then -- skip` branch, which reads as an unfinished thought.
+			if v and v.ID then
 				-- Use NORMALIZED key (strips unique instance ID) for deduplication
 				-- This allows identical items with different instance IDs to merge
 				local itemKey = self:GetItemKey(v.Link or v.ItemString)
@@ -700,10 +686,10 @@ function TOGBankClassic_Item:Aggregate(a, b)
 
 	if b then
 		for _, v in pairs(b) do
-			-- Only require ID field (Link is optional for v0.8.0 link-less data)
-			if not v or not v.ID then
-				-- Skip malformed entries (missing required ID field)
-			else
+			-- Only require ID field (Link is optional for v0.8.0 link-less data); a malformed
+			-- entry with no ID is skipped. Written as a positive test rather than an empty
+			-- `if ... then -- skip` branch, which reads as an unfinished thought.
+			if v and v.ID then
 				-- Use NORMALIZED key (strips unique instance ID) for deduplication
 				-- This allows identical items with different instance IDs to merge
 				local itemKey = self:GetItemKey(v.Link or v.ItemString)
@@ -759,15 +745,28 @@ function TOGBankClassic_Item:IsUnique(link)
 		return false
 	end
 
-	local tip = CreateFrame("GameTooltip", "scanTip", UIParent, "GameTooltipTemplate")
+	-- ITEM-006: created ONCE and reused. This used to run CreateFrame per call, and WoW frames
+	-- cannot be destroyed -- so every IsUnique leaked a frame, and each one clobbered the shared
+	-- global name `scanTip`, handing any other addon reading it whichever frame we made last.
+	-- Scanning a large bank calls this per item, so the leak scaled with the thing the addon is
+	-- for.
+	local tip = TOGBankClassic_Item._scanTip
+	if not tip then
+		tip = CreateFrame("GameTooltip", "TOGBankClassicScanTooltip", UIParent, "GameTooltipTemplate")
+		TOGBankClassic_Item._scanTip = tip
+	end
+
 	tip:ClearLines()
 	tip:SetOwner(UIParent, "ANCHOR_NONE")
 	tip:SetHyperlink(link)
 	for i = 1, tip:NumLines() do
-		local line = _G["scanTipTextLeft" .. i]
+		local line = _G["TOGBankClassicScanTooltipTextLeft" .. i]
 		if line and line:IsVisible() then
 			local l = line:GetText()
-			if l and l:find(ITEM_UNIQUE) then
+			-- ITEM_UNIQUE is a LOCALIZED string, so it must be matched plainly. As a Lua pattern
+			-- any magic character in a locale's wording (a "%" or a "-") would silently stop it
+			-- matching, and the item would just never be reported as unique.
+			if l and l:find(ITEM_UNIQUE, 1, true) then
 				return true
 			end
 		end

@@ -106,14 +106,32 @@ end
 --- `legacy` is populated only when dualWrite is on, and comes from the SAME container walk --
 --- see the header. When the bank is out of reach the result carries `bankScanned = false` so the
 --- caller can preserve previously-stored vault contents instead of replacing them with nothing.
+---
+--- `sources` is the per-source view the store writes through (INV2-VAULT-001): `sources.bags` is
+--- always present, `sources.bank` is ABSENT when the vault was unreachable. That absence is the
+--- whole signal -- `Store:SetAltSources` keeps a source it is not given, so an unreadable vault
+--- leaves the stored one alone instead of cancelling the write.
+---
+--- `records` stays the flat combined array it always was. Both are derived from the one walk, so
+--- they cannot disagree, and keeping it means no caller or spec had to change to gain `sources`.
 function Scan:ScanAll()
 	local dual = TOGBankClassic_Switches
 		and TOGBankClassic_Switches:IsEnabled("dualWrite")
 		or false
 
-	local records, legacy, bagsUsed, bagsTotal = self:ScanBags(dual)
+	local bagRecords, legacy, bagsUsed, bagsTotal = self:ScanBags(dual)
 	local bankRecords, bankLegacy, bankUsed, bankTotal = self:ScanBank(dual)
 
+	-- Per source, before they are combined. `bank` stays nil when unreachable.
+	local sources = { bags = bagRecords }
+	if bankRecords then sources.bank = bankRecords end
+
+	-- INV2-WIRE-001 was tried and reverted (2026-09-09). A `legacySources` split was added here so
+	-- `Bank:Scan` could drop its own container walk and take the legacy shape from this one -- see
+	-- the note at the top of `Modules/Bank.lua` for why that trade is wrong. Bank:Scan keeps its
+	-- own walk, so this returns the flat `legacy` array it always did.
+	local records = {}
+	for _, rec in ipairs(bagRecords) do records[#records + 1] = rec end
 	if bankRecords then
 		for _, rec in ipairs(bankRecords) do records[#records + 1] = rec end
 		if legacy and bankLegacy then
@@ -123,6 +141,7 @@ function Scan:ScanAll()
 
 	return {
 		records     = records,
+		sources     = sources,
 		legacy      = legacy,
 		money       = GetMoney and GetMoney() or 0,
 		bankScanned = bankRecords ~= nil,

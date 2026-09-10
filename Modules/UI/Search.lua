@@ -9,24 +9,12 @@ local SUBFILTER_LIST  = {
 }
 local SUBFILTER_ORDER = { "any", "type", "quality" }
 
--- Parse item rarity from the colour prefix embedded in every item link.
--- e.g. |cFF0070DD|Hitem:...|h[Sword]|h|r -> Rare (3)
--- No API call needed -- the colour is part of the link string stored in SV.
-local LINK_COLOR_RARITY = {
-	["9D9D9D"] = 0,  -- Poor
-	["FFFFFF"] = 1,  -- Common
-	["1EFF00"] = 2,  -- Uncommon
-	["0070DD"] = 3,  -- Rare
-	["A335EE"] = 4,  -- Epic
-	["FF8000"] = 5,  -- Legendary
-}
-local function RarityFromLink(link)
-	if not link then return nil end
-	-- WoW item links use lowercase |cff + 6 hex colour digits (e.g. |cff0070dd)
-	-- |c%x%x matches the opaque alpha byte (always ff) in either case
-	local hex = link:match("|c%x%x(%x%x%x%x%x%x)")
-	return hex and LINK_COLOR_RARITY[hex:upper()] or nil
-end
+-- A LINK_COLOR_RARITY table and a RarityFromLink() that read an item's quality out of the colour
+-- prefix of its link stood here, called by nothing. Quality comes from Info.quality, which is
+-- resolved data rather than a string parsed back out of a display string -- and deriving identity
+-- or attributes from link text is precisely the practice INVENTORY_V2.md section 8 exists to
+-- delete. Removed rather than kept: an uncalled link parser is the thing a future reader reaches
+-- for when V2's resolved fields are what they actually want.
 
 -- Second cascade dropdown lists; keys are tostring(classId) / tostring(rarityId)
 local TYPE_LIST = {
@@ -195,7 +183,10 @@ function TOGBankClassic_UI_Search:EnsureRequestDialog()
 		widget:Hide()
 	end)
 	dialog.frame:SetAlpha(1)
-	TOGBankClassic_UI:ApplyThinBorder(dialog)
+	-- ALPHA-001: this popup follows the Search window's transparency rather than carrying its own
+	-- slider. It is a transient child of that window, so a separate setting would be one more
+	-- control for a frame most people see for two seconds.
+	TOGBankClassic_UI:ApplyThinBorder(dialog, "search")
 	if dialog.frame and dialog.frame.GetChildren then
 		for _, child in ipairs({ dialog.frame:GetChildren() }) do
 			-- Hide the built-in close button so we only show Send/Cancel actions
@@ -514,7 +505,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	searchWindow:SetTitle("Search")
 	searchWindow:SetLayout("Flow")
 	searchWindow:EnableResize(true)
-	TOGBankClassic_UI:ApplyThinBorder(searchWindow)
+	TOGBankClassic_UI:ApplyThinBorder(searchWindow, "search")
 	-- Persist window size across reloads (position is always snapped to the main UI in Open())
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
 		local positions = TOGBankClassic_Options.db.char.framePositions
@@ -565,7 +556,7 @@ function TOGBankClassic_UI_Search:DrawWindow()
 		self.searchField:ClearFocus()
 	end)
 	searchInput:SetFullWidth(true)
-	searchInput.editbox:SetScript("OnReceiveDrag", function(input)
+	searchInput.editbox:SetScript("OnReceiveDrag", function(_)
 		local type, _, info = GetCursorInfo()
 		if type == "item" then
 			self.SearchText = info
@@ -1013,17 +1004,12 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 	local items = {}
 	for _, player in pairs(roster_alts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(player)
-		local alt = guildInfo.alts[norm]
-		if alt and type(alt) == "table" then
-			-- Use alt.items if available (aggregated format)
-			if alt.items and next(alt.items) ~= nil then
-				items = TOGBankClassic_Item:Aggregate(items, alt.items)
-			else
-				-- Fallback: aggregate from sources
-				if alt.bank then items = TOGBankClassic_Item:Aggregate(items, alt.bank.items) end
-				if alt.bags  then items = TOGBankClassic_Item:Aggregate(items, alt.bags.items)  end
-			end
-		end
+		-- INV2 step 7a: one accessor, which also honours the inventoryV2 switch.
+		-- SEARCH-002: this fallback aggregated bank + bags and OMITTED mail, while the Inventory
+		-- tab's equivalent included it -- so an item sitting in a banker's mailbox was visible in
+		-- the inventory tab and invisible to search, for the same character, from the same data.
+		-- GetAltItems includes mail, which makes the two views agree.
+		items = TOGBankClassic_Item:Aggregate(items, TOGBankClassic_Guild:GetAltItems(norm))
 	end
 
 	-- Use GetItems to enrich all items with Info (handles caching properly)
@@ -1048,15 +1034,9 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 			local norm = TOGBankClassic_Guild:NormalizeName(player)
 			local alt = guildInfo.alts[norm]
 			if alt and type(alt) == "table" then
-				local altItems = {}
-				if alt.items and next(alt.items) ~= nil then
-					for _, item in pairs(alt.items) do
-						table.insert(altItems, item)
-					end
-				else
-					if alt.bank then altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bank.items) end
-					if alt.bags  then altItems = TOGBankClassic_Item:Aggregate(altItems, alt.bags.items)  end
-				end
+				-- Same accessor as the corpus pass above, so the lookup cannot be built from a
+				-- different set of items than the corpus was.
+				local altItems = TOGBankClassic_Guild:GetAltItems(norm)
 
 				for _, itemEntry in pairs(altItems) do
 					local name = itemNames[itemEntry.ID]

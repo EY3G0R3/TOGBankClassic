@@ -4,149 +4,119 @@
 
 TOGBankClassic_DeltaComms = {}
 
--- VALIDATION FUNCTIONS --
+-- INV2 step 10: `ValidateDeltaStructure` and `ValidateItemDelta` were deleted here. They validated
+-- the `alt-delta` envelope and its added/modified/removed arrays -- a message shape this addon no
+-- longer sends or accepts. The tuple payload is validated by `Wire.isV2`/`Wire.decode` on the
+-- receive side, which checks the positional shape rather than a named-field contract.
 
--- Validate that a delta structure is well-formed
-function TOGBankClassic_DeltaComms:ValidateDeltaStructure(delta)
-	if not delta or type(delta) ~= "table" then
-		return false, "delta is not a table"
+--- Hash one items array into a stable, order-independent string.
+---
+--- ONE implementation. ComputeInventoryHash carried two byte-identical copies of this, one per
+--- calling convention, so a correction had to be made twice or the two conventions would hash the
+--- same inventory differently -- the "same behaviour implemented more than once" finding with a
+--- live cost rather than a stylistic one.
+---
+--- AUDIT FINDING 31 (HIGH): the old body was `string.format("%d:%d", item.ID, item.Count or 0)`.
+--- Suffix and enchant were absent, so an inventory holding a Spiked Club of the Tiger hashed
+--- IDENTICALLY to one holding a Spiked Club of the Monkey. A banker swapping one suffix variant for
+--- another at the same stack count produced an unchanged hash, Bank:Scan never bumped the version,
+--- and NO DELTA WAS EVER COMPUTED -- peers kept showing the old variant not until the next scan but
+--- until some unrelated change happened to move the hash. Improving the delta's identity resolution
+--- could not help, because the better delta was never reached.
+---
+--- AUDIT FINDING 32 (HIGH): the guard was `if item and item.ID then`. A tuple record is positional
+--- and has no `.ID`, so once records become tuples EVERY row fails that guard, `sorted` stays empty,
+--- and the hash collapses to money-only -- every inventory change hashing the same as no change,
+--- silently. Accepting both shapes here is what stops that arriving with the switch.
+---
+--- Identity comes from Record.keyFor, so the hash and the delta agree on what "the same item" is by
+--- construction rather than by two functions being kept in step.
+local function hashInventoryItems(itemsArray)
+	if not itemsArray or type(itemsArray) ~= "table" then
+		return ""
 	end
+	local Record = TOGBankClassic_Inventory_Record
+	local Scan   = TOGBankClassic_Inventory_Scan
 
-	-- Check required fields
-	if delta.type ~= "alt-delta" then
-		return false, "invalid delta type"
-	end
+	local sorted = {}
+	for _, item in ipairs(itemsArray) do
+		if type(item) == "table" then
+			local id, count, suffix, enchant
 
-	if not delta.name or type(delta.name) ~= "string" then
-		return false, "missing or invalid name"
-	end
+			if item.ID then
+				-- Legacy row. Suffix and enchant live in the link, the only place a pre-tuple row
+				-- records them; a linkless row (mail) reads 0/0, which is exactly the tuple a
+				-- linkless row produces, so the two shapes agree rather than merely coexisting.
+				id, count = tonumber(item.ID), tonumber(item.Count) or 0
+				local link = item.Link or item.ItemString
+				if link and Scan and Scan.parseLink then
+					enchant, suffix = Scan.parseLink(link)
+				end
+			elseif type(item[1]) == "number" then
+				-- Tuple record {id, count, suffix, enchant}.
+				id, count, suffix, enchant = item[1], item[2] or 0, item[3], item[4]
+			end
 
-	if not delta.version or type(delta.version) ~= "number" then
-		return false, "missing or invalid version"
-	end
-
-	if delta.inventoryHash and type(delta.inventoryHash) ~= "number" then
-		return false, "invalid inventoryHash"
-	end
-	if delta.updatedAt and type(delta.updatedAt) ~= "number" then
-		return false, "invalid updatedAt"
-	end
-
-	if delta.baseVersion and type(delta.baseVersion) ~= "number" then
-		return false, "invalid baseVersion"
-	end
-
-	if not delta.changes or type(delta.changes) ~= "table" then
-		return false, "missing or invalid changes"
-	end
-
-	-- Validate changes structure
-	local changes = delta.changes
-
-	-- Money is optional but must be number if present
-	if changes.money and type(changes.money) ~= "number" then
-		return false, "invalid money in changes"
-	end
-
-	-- Validate bank delta if present
-	if changes.bank then
-		local valid, err = self:ValidateItemDelta(changes.bank)
-		if not valid then
-			return false, "invalid bank delta: " .. err
+			if id then
+				-- AUDIT FINDING 36: this had an `or string.format("%d:%d:%d", ...)` fallback for a
+				-- missing Record, which re-implemented Record.keyFor's body inline. The two agreed
+				-- byte-for-byte, so there was no live defect -- but NOTHING COULD KEEP THEM
+				-- AGREEING: add a field to the key, change the separator or widen the format and
+				-- keyFor moves while that string does not. The failure would be a hash that depends
+				-- on whether Record happened to be loaded, and the divergent path is the one nobody
+				-- exercises. That is the same "one constant in two places" class the consolidation
+				-- above just removed, reintroduced by the same change.
+				--
+				-- Dropped rather than asserted-equal: Record is declared in both TOCs and loads
+				-- before this module, so its absence is a LOAD-ORDER DEFECT and a hard error is the
+				-- right outcome. A fallback papers over exactly the failure worth seeing.
+				local key = Record.keyFor(id, suffix or 0, enchant or 0)
+				if key then
+					table.insert(sorted, key .. ":" .. tostring(count))
+				end
+			end
 		end
 	end
-
-	-- Validate bags delta if present
-	if changes.bags then
-		local valid, err = self:ValidateItemDelta(changes.bags)
-		if not valid then
-			return false, "invalid bags delta: " .. err
-		end
-	end
-
-	-- Validate mail delta if present
-	if changes.mail then
-		local valid, err = self:ValidateItemDelta(changes.mail)
-		if not valid then
-			return false, "invalid mail delta: " .. err
-		end
-	end
-
-	return true
+	table.sort(sorted)
+	return table.concat(sorted, ",")
 end
 
--- Validate an item delta structure (added/modified/removed)
-function TOGBankClassic_DeltaComms:ValidateItemDelta(itemDelta)
-	if not itemDelta or type(itemDelta) ~= "table" then
-		return false, "itemDelta is not a table"
+--- HASH-REV-001 -- revision 1. **FROZEN. DO NOT FIX THIS FUNCTION.**
+---
+--- This is the pre-finding-31 identity, bugs included: `ID:Count` only, so it cannot see suffix or
+--- enchant, and a positional tuple has no `.ID` so it contributes nothing. Both of those are real
+--- defects and both are the point -- **this is what every unmigrated client in the wild computes**,
+--- and its value crosses the wire to be compared against theirs.
+---
+--- `docs/LIBRARY_CONTRACTS.md` records the rule, in DeltaSync's words after they hit this exactly:
+--- _"a value that crosses the wire is frozen the moment a second implementation computes it, and
+--- neither a MINOR bump nor a changelog entry makes it safe to change."_ Audit finding 37 is that we
+--- broke that rule by fixing findings 31/32 in place. The remedy is not to un-fix them -- it is for
+--- the corrected hash to ride ALONGSIDE this one as revision 2 and be used only when both peers
+--- advertise it, so a mixed-version guild needs no coordinated release.
+---
+--- "Keep the two in step" does NOT apply here and is the one case where duplication is correct: this
+--- function is frozen by definition. It retires when no unmigrated client remains, not before, and
+--- improving it would break the interop it exists to preserve.
+local function hashInventoryItemsV1(itemsArray)
+	if not itemsArray or type(itemsArray) ~= "table" then
+		return ""
 	end
-
-	-- Check added array
-	if itemDelta.added then
-		if type(itemDelta.added) ~= "table" then
-			return false, "added is not a table"
-		end
-		for _, item in pairs(itemDelta.added) do
-			if type(item) ~= "table" then
-				return false, "added item is not a table"
-			end
-			if not item.ID or type(item.ID) ~= "number" then
-				return false, "added item missing or invalid ID"
-			end
-			if item.Link and type(item.Link) ~= "string" then
-				return false, "added item has invalid Link"
-			end
-			if item.ItemString and type(item.ItemString) ~= "string" then
-				return false, "added item has invalid ItemString"
-			end
-			-- slot is optional (merged items don't have slots)
-		end
-	end
-
-	-- Check modified array
-	if itemDelta.modified then
-		if type(itemDelta.modified) ~= "table" then
-			return false, "modified is not a table"
-		end
-		for _, item in pairs(itemDelta.modified) do
-			if type(item) ~= "table" then
-				return false, "modified item is not a table"
-			end
-			if not item.ID or type(item.ID) ~= "number" then
-				return false, "modified item missing or invalid ID"
-			end
-			if item.Link and type(item.Link) ~= "string" then
-				return false, "modified item has invalid Link"
-			end
-			if item.ItemString and type(item.ItemString) ~= "string" then
-				return false, "modified item has invalid ItemString"
-			end
-			-- slot is optional (merged items don't have slots)
+	local sorted = {}
+	for _, item in ipairs(itemsArray) do
+		if type(item) == "table" and item.ID then
+			table.insert(sorted, string.format("%d:%d",
+				tonumber(item.ID) or 0, tonumber(item.Count) or 0))
 		end
 	end
-
-	-- Check removed array
-	if itemDelta.removed then
-		if type(itemDelta.removed) ~= "table" then
-			return false, "removed is not a table"
-		end
-		for _, item in pairs(itemDelta.removed) do
-			if type(item) ~= "table" then
-				return false, "removed item is not a table"
-			end
-			if not item.ID or type(item.ID) ~= "number" then
-				return false, "removed item missing or invalid ID"
-			end
-			-- Only ID is required; Link is backfilled during application if needed
-		end
-	end
-
-	return true
+	table.sort(sorted)
+	return table.concat(sorted, ",")
 end
 
--- Compute a hash of inventory state to detect actual changes (v0.8.0)
--- Only updates version timestamps when this hash changes
-function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney, money)
+--- The argument handling shared by both revisions. Extracted so the two hashes cannot disagree about
+--- anything EXCEPT the item identity -- the calling-convention detection, the money type guard from
+--- finding 26 and the checksum are one implementation, and only `hashItems` differs.
+local function computeInventoryHashWith(hashItems, bank, bags, mailOrMoney, money)
 	-- Handle multiple calling conventions:
 	-- SYNC-006 (aggregated): ComputeInventoryHash(items, nil, nil, money) - items is direct array
 	-- Pre-SYNC-006: ComputeInventoryHash(bank, bags, money) - bank/bags have .items, no mail
@@ -160,21 +130,6 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney,
 		local parts = {}
 		table.insert(parts, tostring(actualMoney))
 
-		-- Hash aggregated items directly
-		local function hashItems(itemsArray)
-			if not itemsArray or type(itemsArray) ~= "table" then
-				return ""
-			end
-			local sorted = {}
-			for _, item in ipairs(itemsArray) do
-				if item and item.ID then
-					table.insert(sorted, string.format("%d:%d", item.ID, item.Count or 0))
-				end
-			end
-			table.sort(sorted)
-			return table.concat(sorted, ",")
-		end
-
 		table.insert(parts, "I:" .. hashItems(items))
 		local combined = table.concat(parts, "|")
 		return TOGBankClassic_Core:Checksum(combined)
@@ -182,29 +137,22 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney,
 
 	-- Pre-SYNC-006 calling convention: ComputeInventoryHash(bank, bags, money)
 	-- mailOrMoney is actually money (number), no mail parameter exists
-	local actualMoney = mailOrMoney or 0
+	--
+	-- TYPE-GUARDED, and this is a real defence rather than tidiness (AUDIT finding 26). This slot
+	-- is positional and overloaded, so a caller passing a table here is a live hazard: `or 0`
+	-- accepted it without complaint, and line 190's tostring() then baked a TABLE ADDRESS into the
+	-- hash. An address differs between sessions, so the hash matched nothing -- including itself an
+	-- hour earlier -- and re-drove every sync comparison forever. That is exactly what
+	-- MIGRATE-001's "fix" did before it was reverted.
+	--
+	-- Reverting the one call site worked around it; this removes the class. A non-number in the
+	-- money slot now hashes as 0, so the value can never depend on a table's IDENTITY.
+	local actualMoney = (type(mailOrMoney) == "number") and mailOrMoney or 0
 
 	local parts = {}
 
 	-- Include money
 	table.insert(parts, tostring(actualMoney))
-
-	-- Helper to hash an items array
-	local function hashItems(items)
-		if not items or type(items) ~= "table" then
-			return ""
-		end
-
-		-- Sort items by ID+Count to get consistent order
-		local sorted = {}
-		for _, item in ipairs(items) do
-			if item and item.ID then
-				table.insert(sorted, string.format("%d:%d", item.ID, item.Count or 0))
-			end
-		end
-		table.sort(sorted)
-		return table.concat(sorted, ",")
-	end
 
 	-- Include bank items (pre-SYNC-006 structure: bank.items)
 	if bank and bank.items then
@@ -233,6 +181,78 @@ function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney,
 	return sum
 end
 
+--- Revision 2: the corrected identity (suffix- and enchant-aware, tuple-aware). This is the hash the
+--- addon reasons with; it is only COMPARED against a peer that also advertises it.
+-- Compute a hash of inventory state to detect actual changes (v0.8.0)
+-- Only updates version timestamps when this hash changes
+function TOGBankClassic_DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney, money)
+	return computeInventoryHashWith(hashInventoryItems, bank, bags, mailOrMoney, money)
+end
+
+--- Revision 1: FROZEN. See `hashInventoryItemsV1`. This is what an unmigrated peer computes, so it
+--- is what we must send them and what we must compare against theirs.
+function TOGBankClassic_DeltaComms:ComputeLegacyInventoryHash(bank, bags, mailOrMoney, money)
+	return computeInventoryHashWith(hashInventoryItemsV1, bank, bags, mailOrMoney, money)
+end
+
+--- HASH-CANON-003: THE CANON. Content PLUS the publish datestamp, hashed together.
+---
+--- This is the number that identifies a VERSION of a bank, and the operator's requirement in their
+--- own words: "I NEED CANON hashes written ONCE by the banker, then passed around. NEVER mutated.
+--- The hash HAS to have the DTS in it and the NEWER V2 Hash wins."
+---
+--- WHY THE DATESTAMP BELONGS INSIDE IT. Without it the hash identifies a PAYLOAD, not a publish, so
+--- two scans of coincidentally identical contents collide as one version and the guild reports
+--- itself converged across a change that really happened. With it, every publish is distinguishable
+--- from every other, which is what lets "newer wins" mean anything.
+---
+--- THE CIRCULARITY THIS AVOIDS, and it is why `ComputeInventoryHash` still exists unchanged: you
+--- cannot use a DTS-bearing hash as the change detector, because it differs on every call by
+--- construction, so every scan would look like a change and republish to the whole guild. The
+--- CONTENT hash (`ComputeInventoryHash`, no datestamp) stays the detector and is never sent; the
+--- DTS only advances when the content hash moves; the canon is then computed over both. So an
+--- unchanged bank produces the same canon it did before and generates no traffic.
+---
+--- `updatedAt` is folded in with the same 31-multiply the checksum uses, over the content hash
+--- rather than the item list, so this costs one extra arithmetic step and not a second walk.
+---@param updatedAt number the publish time stamped by the scan that produced these items
+---@return number
+function TOGBankClassic_DeltaComms:ComputeCanonHash(bank, bags, mailOrMoney, money, updatedAt)
+	local content = self:ComputeInventoryHash(bank, bags, mailOrMoney, money)
+	local stamp = tonumber(updatedAt) or 0
+	return TOGBankClassic_Core:Checksum(tostring(content) .. "@" .. tostring(stamp))
+end
+
+--- Stamp BOTH revisions onto an alt record from one item set.
+---
+--- HASH-REV-001. Every site that used to write `alt.inventoryHash` calls this instead, so the two
+--- revisions cannot drift apart by one stamp site being missed -- which is the failure mode that
+--- would make a client advertise a revision-2 hash computed from one scan beside a revision-1 hash
+--- computed from another, and disagree with everybody including itself.
+---@param alt table the alt record to stamp
+---@return number legacy revision-1 hash, also stored as alt.inventoryHash
+---@return number canon the DTS-bearing revision-2 hash, also stored as alt.inventoryHashV2
+---@return number content the datestamp-free change detector, stored as alt.inventoryContentHash
+--- HASH-CANON-003: `updatedAt` makes `inventoryHashV2` the CANON rather than a content digest.
+--- Revision 1 stays content-only and FROZEN -- it is what an unmigrated peer computes, and folding a
+--- datestamp into it would change a number we do not own.
+---
+--- `inventoryContentHash` is stored alongside and is the CHANGE DETECTOR: it is what the next scan
+--- compares against to decide whether anything actually moved. It is deliberately never sent -- it
+--- is this client's private bookkeeping, not a statement about a version, and putting it on the wire
+--- would give peers a second identity to disagree about.
+function TOGBankClassic_DeltaComms:StampInventoryHashes(alt, bank, bags, mailOrMoney, money, updatedAt)
+	local legacy  = self:ComputeLegacyInventoryHash(bank, bags, mailOrMoney, money)
+	local content = self:ComputeInventoryHash(bank, bags, mailOrMoney, money)
+	local canon   = self:ComputeCanonHash(bank, bags, mailOrMoney, money, updatedAt)
+	if alt then
+		alt.inventoryHash        = legacy
+		alt.inventoryHashV2      = canon
+		alt.inventoryContentHash = content
+	end
+	return legacy, canon, content
+end
+
 -- DELTA PROTOCOL FUNCTIONS --
 
 -- Check if delta sync should be used
@@ -254,522 +274,127 @@ function TOGBankClassic_DeltaComms:ShouldUseDelta()
 	return PROTOCOL.SUPPORTS_DELTA
 end
 
--- Strip Links from delta for bandwidth savings (v0.8.0)
-function TOGBankClassic_DeltaComms:StripDeltaLinks(delta)
-	if not delta or not delta.changes then
-		return nil
-	end
-
-	local function stripItemArray(items)
-		if not items then return nil end
-		local stripped = {}
-		for _, item in ipairs(items) do
-			local strippedItem = {
-				ID = item.ID,
-				Count = item.Count
-				-- Link removed - receiver will reconstruct
-			}
-			local forceLink = item.ForceLink == true
-			-- Preserve full link for gear/uncached/forced items, otherwise store ItemString
-			if item.Link then
-				if forceLink or (TOGBankClassic_Item and TOGBankClassic_Item.NeedsLink and TOGBankClassic_Item:NeedsLink(item.Link)) then
-					strippedItem.Link = item.Link
-				else
-					local itemString = string.match(item.Link, "item:([^|]+)")
-					if itemString then
-						strippedItem.ItemString = itemString
-					end
-				end
-			elseif item.ItemString then
-				strippedItem.ItemString = item.ItemString
-			end
-			-- Preserve Info if present (for modified items)
-			if item.Info then
-				strippedItem.Info = item.Info
-			end
-			table.insert(stripped, strippedItem)
-		end
-		return stripped
-	end
-
-	local strippedDelta = {
-		type = delta.type,
-		name = delta.name,
-		version = delta.version,
-		updatedAt = delta.updatedAt,
-		inventoryHash = delta.inventoryHash,
-		changes = {}
-	}
-
-	-- Copy money change (no Link to strip)
-	if delta.changes.money then
-		strippedDelta.changes.money = delta.changes.money
-	end
-
-	-- Copy mailHash change
-	if delta.changes.mailHash then
-		strippedDelta.changes.mailHash = delta.changes.mailHash
-	end
-
-	-- Strip Links from bank changes
-	if delta.changes.bank then
-		strippedDelta.changes.bank = {
-			added = stripItemArray(delta.changes.bank.added),
-			modified = stripItemArray(delta.changes.bank.modified),
-			removed = stripItemArray(delta.changes.bank.removed)
-		}
-	end
-
-	-- Strip Links from bags changes
-	if delta.changes.bags then
-		strippedDelta.changes.bags = {
-			added = stripItemArray(delta.changes.bags.added),
-			modified = stripItemArray(delta.changes.bags.modified),
-			removed = stripItemArray(delta.changes.bags.removed)
-		}
-	end
-
-	-- Strip Links from mail changes
-	if delta.changes.mail then
-		strippedDelta.changes.mail = {
-			added = stripItemArray(delta.changes.mail.added),
-			modified = stripItemArray(delta.changes.mail.modified),
-			removed = stripItemArray(delta.changes.mail.removed)
-		}
-	end
-
-	return strippedDelta
-end
+-- INV2 step 10: `StripDeltaLinks` WAS HERE, and it is deleted rather than bypassed, per the
+-- standing directive.
+--
+-- What it did: for every item on the wire it guessed whether the RECEIVER could rebuild the link
+-- from its own client cache -- keeping the full link for gear, uncached and `ForceLink` rows, and
+-- substituting a bare `item:...` string otherwise. That is a decision made on one machine about a
+-- different machine's cache, and getting it wrong is how link-bearing rows go bad. It is the
+-- corruption the V2 rework exists to remove, so removing the guess is the fix; leaving the function
+-- present but unreached would keep the next person from understanding why.
+--
+-- What replaces it: nothing on the V2 path, which sends `{id, count, suffix, enchant}` and rebuilds
+-- the link from LibItemDB on arrival (Modules/Inventory/Resolve.lua) -- no link crosses the wire, so
+-- there is no link to decide about. On the legacy fallback path the delta is now sent UNSTRIPPED,
+-- which is strictly safer: the link that arrives is the one we hold.
+--
+-- It also silently dropped fields. It rebuilt the envelope by listing members, so anything added
+-- later that nobody remembered to list was discarded -- which is exactly what happened to
+-- HASH-REV-001's `inventoryHashV2`.
+--
+-- `Item:NeedsLink` went with it: this was its only caller.
 
 -- DELTA COMPUTATION FUNCTIONS --
 
--- Compare two items for equality
-function TOGBankClassic_DeltaComms:ItemsEqual(item1, item2)
-	if not item1 and not item2 then
-		return true
-	end
-	if not item1 or not item2 then
-		return false
-	end
+-- INV2 step 10: `ItemsEqual`, `GetChangedFields` and `BuildItemIndex` were deleted here with the
+-- link protocol they served. All three existed to decide, for a row that might carry a full link, an
+-- ItemString, or neither, which stored row it "really" was -- and BuildItemIndex's two key schemes
+-- (normalised link key, then an ID-only fallback) are the ambiguity in its plainest form. Tuples
+-- have one spelling, so there is nothing to reconcile.
 
-	-- Compare key fields
-	if item1.ID ~= item2.ID then
-		return false
-	end
-	if item1.Count ~= item2.Count then
-		return false
-	end
-	-- Only compare Links when both items have them.
-	-- Minimal baseline items (from state-summary expandMinimalItems) have no Link.
-	-- Comparing nil vs an actual link would always return false, causing every
-	-- unchanged item to land in modified[] and producing full-sized deltas.
-	if item1.Link ~= nil and item2.Link ~= nil then
-		if item1.Link ~= item2.Link then
-			return false
-		end
-	end
-
-	-- Compare Info table if present (deep comparison)
-	if item1.Info or item2.Info then
-		if not item1.Info or not item2.Info then
-			return false
-		end
-		for k, v in pairs(item1.Info) do
-			if item2.Info[k] ~= v then
-				return false
-			end
-		end
-		for k, v in pairs(item2.Info) do
-			if item1.Info[k] ~= v then
-				return false
-			end
-		end
-	end
-
-	return true
-end
-
--- Extract only the fields that changed between two items
-function TOGBankClassic_DeltaComms:GetChangedFields(oldItem, newItem)
-	-- Always include ID and Link for identification (merged items use these as keys)
-	local changes = {
-		ID = newItem.ID,
-		Link = newItem.Link,
-		ItemString = newItem.ItemString,
-	}
-
-	-- Include changed fields
-	if oldItem.Count ~= newItem.Count then
-		changes.Count = newItem.Count
-	end
-	if oldItem.Info or newItem.Info then
-		if not oldItem.Info or not newItem.Info or not self:ItemsEqual(oldItem, newItem) then
-			changes.Info = newItem.Info
-		end
-	end
-
-	return changes
-end
-
--- Build a slot-indexed lookup table from items array
-function TOGBankClassic_DeltaComms:BuildItemIndex(items)
-	local index = {}
-	if not items then
-		return index
-	end
-
-	local withLinks = 0
-	local withoutLinks = 0
-
-	for _, item in pairs(items) do
-		if item and item.ID then
-			-- DUPLICATION-FIX: Handle items without Links (from minimal baselines)
-			-- Items without Links use ID-only key for deduplication
-			if item.Link or item.ItemString then
-				-- Full item with Link - use normalized key (strips character level)
-				local normalizedKey = TOGBankClassic_Item:GetItemKey(item.Link or item.ItemString)
-				local key = tostring(item.ID) .. normalizedKey
-				index[key] = item
-				withLinks = withLinks + 1
-			else
-				-- Minimal item without Link - use ID-only key as fallback
-				-- This allows baseline items (ID+Count only) to be matched during delta computation
-				local key = tostring(item.ID)
-				-- Only add if not already present (prefer items with Links)
-				if not index[key] then
-					index[key] = item
-					withoutLinks = withoutLinks + 1
-				end
-			end
-		end
-	end
-
-	if withoutLinks > 0 then
-		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] BuildItemIndex: indexed %d items (%d with links, %d without links)",
-			withLinks + withoutLinks, withLinks, withoutLinks)
-	end
-
-	return index
-end
-
--- Compute delta between old and new item sets
-function TOGBankClassic_DeltaComms:ComputeItemDelta(oldItems, newItems)
+--- INV2: the tuple delta. Replaces ComputeItemDelta's identity machinery outright.
+---
+--- WHY THIS IS TWENTY LINES WHERE ComputeItemDelta IS TWO HUNDRED, because the difference is the
+--- whole argument for the rework rather than a tidier implementation:
+---
+--- ComputeItemDelta derives an item's identity from its LINK -- `Item:GetItemKey(item.Link or
+--- item.ItemString)`. A row may arrive carrying a full link, an ItemString, or neither (a minimal
+--- baseline), and the same logical item keys DIFFERENTLY in each case. Everything built on top of
+--- that is compensation for it: BuildItemIndex, a second ID-only index, a per-ID deep-fallback
+--- candidate list, and `deepFallbackUsed` to stop two suffix variants of one base ID collapsing
+--- onto the same old row. Each layer is a guess about which old row a new row "really" is.
+---
+--- A tuple has ONE spelling. `Record.key` is `id:suffix:enchant`, computed from integers that are
+--- always present, so identity is a hash lookup and there is nothing to fall back to. The
+--- ambiguity does not get handled better -- it stops existing.
+---
+--- Shape: `added` and `modified` carry whole tuples; `removed` carries KEYS only, because the key
+--- is sufficient to find the row and a tuple would be three integers of waste per removal.
+--- @return table delta { added = {rec,...}, modified = {rec,...}, removed = {key,...} }
+function TOGBankClassic_DeltaComms:ComputeTupleDelta(oldRecords, newRecords)
+	local Record = TOGBankClassic_Inventory_Record
 	local delta = { added = {}, modified = {}, removed = {} }
+	if not Record then return delta end
 
-	oldItems = oldItems or {}
-	newItems = newItems or {}
+	-- Aggregate both sides first: two rows of the same item in one input must not read as a
+	-- change. Record.aggregate also drops malformed rows rather than aborting the batch.
+	local oldByKey = Record.aggregate(oldRecords or {})
+	local newByKey = Record.aggregate(newRecords or {})
 
-	-- Build item index for old items by itemID+Link key
-	local oldByKey = self:BuildItemIndex(oldItems)
-
-	-- Build ID-only lookup for items without Links (from minimal baselines)
-	local oldByIDOnly = {}
-	-- PERF-024: Per-ID candidate list for O(1) deep fallback lookup (replaces O(N) full scan).
-	-- Each entry stores the item reference and its exact key in oldByKey for O(1) removal.
-	local oldByIDList = {}  -- [idStr] = { {item=item, key=fullKey}, ... }
-	for _, item in pairs(oldItems) do
-		if item and item.ID then
-			local idStr = tostring(item.ID)
-			local itemKey
-			if item.Link or item.ItemString then
-				local normalizedKey = TOGBankClassic_Item:GetItemKey(item.Link or item.ItemString)
-				itemKey = idStr .. normalizedKey
-			else
-				oldByIDOnly[idStr] = item
-				itemKey = idStr
-			end
-			if not oldByIDList[idStr] then
-				oldByIDList[idStr] = {}
-			end
-			table.insert(oldByIDList[idStr], { item = item, key = itemKey })
+	for key, rec in pairs(newByKey) do
+		local old = oldByKey[key]
+		if not old then
+			delta.added[#delta.added + 1] = rec
+		elseif Record.count(old) ~= Record.count(rec) then
+			-- Count is the only mutable field: id, suffix and enchant are the identity, so a
+			-- change in any of them is a different item and shows up as an add plus a remove.
+			delta.modified[#delta.modified + 1] = rec
 		end
 	end
 
-	-- DUPLICATION-FIX-003: Track which oldItems entries have been matched by deep fallback.
-	-- Without this, multiple new items with the same base ID (e.g. "Stone Hammer" plain and
-	-- "Stone Hammer of Tiger" suffix, both ID=15260) would both deep-fallback to the same
-	-- old item, marking both as "modified" rather than one matched + one new.
-	local deepFallbackUsed = {}  -- keyed by item identity (the table itself)
-
-	-- Find added and modified items
-	local fallbackMatches = 0
-	local deepFallbackMatches = 0
-	for _, newItem in pairs(newItems) do
-		if newItem and newItem.ID then
-			-- DUPLICATION-FIX: Try full key first, then fallback to ID-only
-			local key
-			local oldItem = nil
-			local usedFallback = false
-
-			if newItem.Link or newItem.ItemString then
-				-- Full item with Link - use normalized key (strips character level)
-				local normalizedKey = TOGBankClassic_Item:GetItemKey(newItem.Link or newItem.ItemString)
-				key = tostring(newItem.ID) .. normalizedKey
-				oldItem = oldByKey[key]
-
-				-- Fallback 1: check ID-only index if not found (handles minimal baseline items)
-				if not oldItem then
-					oldItem = oldByIDOnly[tostring(newItem.ID)]
-					if oldItem then
-						key = tostring(newItem.ID)  -- Use ID-only key for marking processed
-						usedFallback = true
-						fallbackMatches = fallbackMatches + 1
-					end
-				end
-
-				-- Fallback 2: search per-ID candidate list (O(k), k = items with same ID, usually 1-2).
-				-- PERF-024: Was O(N) linear scan of all oldItems; now O(1) hash lookup + O(k) iteration.
-				-- DUPLICATION-FIX-003: deepFallbackUsed prevents double-matching the same old entry
-				-- (e.g. "Stone Hammer" plain and "Stone Hammer of Tiger" both ID=15260).
-				-- candidate.key is the item's actual key in oldByKey, enabling O(1) removal below.
-				if not oldItem then
-					local candidates = oldByIDList[tostring(newItem.ID)]
-					if candidates then
-						for _, candidate in ipairs(candidates) do
-							if not deepFallbackUsed[candidate.item] then
-								oldItem = candidate.item
-								key = candidate.key  -- stored key for O(1) removal from oldByKey
-								deepFallbackUsed[candidate.item] = true
-								deepFallbackMatches = deepFallbackMatches + 1
-								break
-							end
-						end
-					end
-				end
-			else
-				-- Minimal item without Link - use ID-only key
-				key = tostring(newItem.ID)
-				oldItem = oldByKey[key] or oldByIDOnly[key]
-			end
-
-			if not oldItem then
-				-- Item was added
-				table.insert(delta.added, newItem)
-			elseif not self:ItemsEqual(oldItem, newItem) then
-				-- Item was modified (quantity or other field changed)
-				table.insert(delta.modified, self:GetChangedFields(oldItem, newItem))
-			end
-
-			-- Mark as processed.
-			-- PERF-024: key is now always the item's actual entry in oldByKey (Fallback 2 stores
-			-- candidate.key), so both removals are O(1) with no reverse scan needed.
-			if key then
-				oldByKey[key] = nil
-				oldByIDOnly[key] = nil
-			end
-		end
+	for key in pairs(oldByKey) do
+		if not newByKey[key] then delta.removed[#delta.removed + 1] = key end
 	end
 
-	if fallbackMatches > 0 then
-		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] ComputeItemDelta: matched %d items using ID-only fallback (prevents duplication)",
-			fallbackMatches)
-	end
-
-	if deepFallbackMatches > 0 then
-		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DEDUP-FIX] ComputeItemDelta: matched %d items using deep ID fallback - link normalization mismatch detected",
-			deepFallbackMatches)
-	end
-
-	-- Remaining old items were removed
-	-- DUPLICATION-FIX-003: Preserve Link/ItemString in removes for items that have them.
-	-- ID-only removes can't distinguish "Stone Hammer" from "Stone Hammer of Tiger" when
-	-- both variants of ID=15260 exist on the receiver — the wrong one gets removed.
-	for _, item in pairs(oldByKey) do
-		local removed = { ID = item.ID }
-		if item.Link then
-			removed.Link = item.Link
-		elseif item.ItemString then
-			removed.ItemString = item.ItemString
-		end
-		table.insert(delta.removed, removed)
-	end
-	for _, item in pairs(oldByIDOnly) do
-		-- Also check ID-only items that weren't processed
-		table.insert(delta.removed, { ID = item.ID })
-	end
-
+	-- Stable order so an unchanged inventory serialises identically twice running, which is what
+	-- lets a receiver's checksum mean anything.
+	table.sort(delta.added,    function(a, b) return Record.key(a) < Record.key(b) end)
+	table.sort(delta.modified, function(a, b) return Record.key(a) < Record.key(b) end)
+	table.sort(delta.removed)
 	return delta
 end
 
--- Compute full delta for an alt
-function TOGBankClassic_DeltaComms:ComputeDelta(guildName, altName, currentAlt, requesterInventoryHash, requesterMailHash, requesterBaseline)
-	return TOGBankClassic_Performance:Track("ComputeDelta", function()
-		if not guildName or not altName or not currentAlt then
-			return nil
-		end
+--- Apply a tuple delta to a stored record array, returning the new array.
+--- Mirrors ComputeTupleDelta exactly: same key, same three lists, no fallbacks.
+function TOGBankClassic_DeltaComms:ApplyTupleDelta(records, delta)
+	local Record = TOGBankClassic_Inventory_Record
+	if not Record or type(delta) ~= "table" then return records or {} end
 
-		-- DELTA-020: Compute delta using requester's actual baseline from state summary
-		-- requesterBaseline = { bank = {}, bags = {}, mail = {}, money = 0 } with minimal item structures
-		local previous = nil
-		local currentHash = currentAlt.inventoryHash or 0
-		local currentMailHash = currentAlt.mailHash or 0
-		requesterMailHash = requesterMailHash or 0  -- Default to 0 if not provided
+	local byKey = Record.aggregate(records or {})
+	for _, key in ipairs(delta.removed or {}) do byKey[key] = nil end
+	for _, rec in ipairs(delta.added or {}) do
+		if Record.isValid(rec) then byKey[Record.key(rec)] = rec end
+	end
+	-- `modified` carries the WHOLE row, not a count difference, so applying it twice is
+	-- idempotent. A delta that shipped a delta-of-count would not be, and a duplicated message
+	-- would silently double a stack.
+	for _, rec in ipairs(delta.modified or {}) do
+		if Record.isValid(rec) then byKey[Record.key(rec)] = rec end
+	end
 
-		-- Helper: Convert minimal item structure to full structure (without Links)
-		local function expandMinimalItems(minimalItems)
-			if not minimalItems then return {} end
-			local expanded = {}
-			for _, item in ipairs(minimalItems) do
-				-- Create full item structure with ID and Count, Link will be nil
-				table.insert(expanded, { ID = item.ID, Count = item.Count or 1 })
-			end
-			return expanded
-		end
-
-		if requesterInventoryHash and requesterInventoryHash ~= 0 then
-			-- Requester has data - check if it matches current (both inventory AND mail)
-			if requesterInventoryHash == currentHash and requesterMailHash == currentMailHash then
-				-- Hash match (both hashes) - no changes needed (empty delta)
-				TOGBankClassic_Output:Debug("DELTA", "BUILD", "[MAIL-SYNC] Hash match: requester inv=%d mail=%d, banker inv=%d mail=%d (no changes)",
-					requesterInventoryHash, requesterMailHash, currentHash, currentMailHash)
-				previous = currentAlt  -- Use current as previous (results in empty delta)
-			elseif requesterInventoryHash == currentHash and requesterMailHash ~= currentMailHash then
-				-- Inventory matches but mail changed - use requester's actual baseline if available
-				if requesterBaseline then
-					-- DELTA-020: Use requester's sent baseline (correct approach)
-					previous = {
-						items = {},
-						money = requesterBaseline.money or 0,
-						mailHash = requesterMailHash,
-						bank = { items = expandMinimalItems(requesterBaseline.bank) },
-						bags = { items = expandMinimalItems(requesterBaseline.bags) },
-						mail = { items = expandMinimalItems(requesterBaseline.mail) },
-					}
-					TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-020] Mail changed: using requester's actual baseline (bank=%d, bags=%d, mail=%d)",
-						#previous.bank.items, #previous.bags.items, #previous.mail.items)
-				else
-					-- BUGFIX: No requester baseline - cannot compute accurate delta
-					-- GetSnapshot returns RESPONDER's saved data, not REQUESTER's actual data
-					-- This causes severe duplication (items added multiple times)
-					-- Force full sync by using empty baseline instead
-					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-					TOGBankClassic_Output:Warn("DELTA", "[DUPLICATION-FIX] Missing requester baseline (mail change) - forcing full sync for %s (mail=%d→%d)",
-						altName, requesterMailHash, currentMailHash)
-				end
-			else
-				-- Hash mismatch - use requester's actual baseline if available
-				if requesterBaseline then
-					-- DELTA-020: Use requester's sent baseline (correct approach - fixes duplication bug!)
-					previous = {
-						items = {},
-						money = requesterBaseline.money or 0,
-						mailHash = requesterMailHash,
-						bank = { items = expandMinimalItems(requesterBaseline.bank) },
-						bags = { items = expandMinimalItems(requesterBaseline.bags) },
-						mail = { items = expandMinimalItems(requesterBaseline.mail) },
-					}
-					TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-020] Using requester's actual baseline: inv=%d→%d (bank=%d, bags=%d, mail=%d items)",
-						requesterInventoryHash, currentHash,
-						#previous.bank.items, #previous.bags.items, #previous.mail.items)
-				else
-					-- BUGFIX: No requester baseline - cannot compute accurate delta
-					-- GetSnapshot returns RESPONDER's saved data, not REQUESTER's actual data
-					-- This causes severe duplication (items added multiple times)
-					-- Force full sync by using empty baseline instead
-					previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-					TOGBankClassic_Output:Warn("DELTA", "[DUPLICATION-FIX] Missing requester baseline - forcing full sync for %s (hash=%08x→%08x)",
-						altName, requesterInventoryHash or 0, currentHash)
-				end
-			end
-		else
-			-- Requester has no data (hash 0 or nil) - send everything as delta additions
-			previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }
-			TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-014] Requester has no data (hash=%s), sending all as additions",
-				tostring(requesterInventoryHash))
-		end
-
-		if not previous then
-			return nil
-		end
-
-		local delta = {
-			type = "alt-delta",
-			name = altName,
-			version = currentAlt.version or GetServerTime(),
-			updatedAt = currentAlt.inventoryUpdatedAt or currentAlt.version or GetServerTime(),
-			inventoryHash = currentAlt.inventoryHash or 0,
-			-- baseVersion removed; still accepted when receiving for backwards compatibility
-			changes = {},
-		}
-
-		-- Money change
-		if currentAlt.money ~= previous.money then
-			delta.changes.money = currentAlt.money
-		end
-
-		-- MAIL-012: Track mailHash changes so receivers can detect mail updates
-		-- mailHash allows clients to identify when mail data has changed without comparing full item arrays
-		if currentAlt.mailHash ~= previous.mailHash then
-			delta.changes.mailHash = currentAlt.mailHash
-			TOGBankClassic_Output:Debug(
-				"DELTA",
-				"BUILD",
-				"[MAIL-012] Mail hash changed for %s: %s → %s",
-				altName,
-				tostring(previous.mailHash),
-				tostring(currentAlt.mailHash)
-			)
-		end
-
-		-- Compute separate deltas for bank, bags, and mail inventories
-		-- These are sent individually (not aggregated) so receiver can populate them correctly
-		local previousBank = (previous.bank and previous.bank.items) or {}
-		local currentBank = (currentAlt.bank and currentAlt.bank.items) or {}
-		delta.changes.bank = self:ComputeItemDelta(previousBank, currentBank)
-
-		-- Include bank slots metadata if changed
-		local previousBankSlots = previous.bank and previous.bank.slots
-		local currentBankSlots = currentAlt.bank and currentAlt.bank.slots
-		if currentBankSlots and (not previousBankSlots or
-			currentBankSlots.count ~= previousBankSlots.count or
-			currentBankSlots.total ~= previousBankSlots.total) then
-			delta.changes.bank.slots = currentBankSlots
-			TOGBankClassic_Output:Debug("DELTA", "BUILD", "Including bank slots in delta: %d/%d",
-				currentBankSlots.count, currentBankSlots.total)
-		end
-
-		local previousBags = (previous.bags and previous.bags.items) or {}
-		local currentBags = (currentAlt.bags and currentAlt.bags.items) or {}
-		delta.changes.bags = self:ComputeItemDelta(previousBags, currentBags)
-
-		-- Include bags slots metadata if changed
-		local previousBagsSlots = previous.bags and previous.bags.slots
-		local currentBagsSlots = currentAlt.bags and currentAlt.bags.slots
-		if currentBagsSlots and (not previousBagsSlots or
-			currentBagsSlots.count ~= previousBagsSlots.count or
-			currentBagsSlots.total ~= previousBagsSlots.total) then
-			delta.changes.bags.slots = currentBagsSlots
-			TOGBankClassic_Output:Debug("DELTA", "BUILD", "Including bags slots in delta: %d/%d",
-				currentBagsSlots.count, currentBagsSlots.total)
-		end
-
-		local previousMail = (previous.mail and previous.mail.items) or {}
-		local currentMail = (currentAlt.mail and currentAlt.mail.items) or {}
-		delta.changes.mail = self:ComputeItemDelta(previousMail, currentMail)
-
-		-- Always include slot counts so non-bank members can display accurate inventory totals.
-		-- Item deltas carry item changes but never slot totals, so receivers would always see 0/0.
-		if currentAlt.bank and currentAlt.bank.slots then
-			delta.changes.bankSlots = currentAlt.bank.slots
-		end
-		if currentAlt.bags and currentAlt.bags.slots then
-			delta.changes.bagsSlots = currentAlt.bags.slots
-		end
-
-		-- Debug: Log what's being sent
-		TOGBankClassic_Output:Debug(
-			"DELTA",
-			"BUILD",
-			"[SEPARATE-INV] Delta for %s: bank=%d→%d, bags=%d→%d, mail=%d→%d",
-			altName,
-			#previousBank, #currentBank,
-			#previousBags, #currentBags,
-			#previousMail, #currentMail
-		)
-
-		return delta
-	end)
+	local out = {}
+	for _, rec in pairs(byKey) do out[#out + 1] = rec end
+	table.sort(out, function(a, b) return Record.key(a) < Record.key(b) end)
+	return out
 end
+
+-- INV2 step 10: `ComputeItemDelta` was deleted here, and its shape is the clearest single argument
+-- for the rework. It matched a new row to an old one through THREE successive guesses -- normalised
+-- link key, then an ID-only index for minimal baselines, then a per-ID candidate list with a
+-- `deepFallbackUsed` set to stop two suffix variants of one base ID collapsing onto the same old
+-- row. Every layer was compensation for identity being derived from a LINK that may or may not be
+-- present. `ComputeTupleDelta` above is thirty lines because `Record.key` is `id:suffix:enchant`
+-- from integers that are always there: identity is a hash lookup and there is nothing to fall back
+-- to. The ambiguity is not handled better; it stops existing.
+
+-- INV2 step 10: `ComputeDelta` was deleted here. It built an `alt-delta` envelope by diffing the
+-- banker's three containers against the REQUESTER's baseline, reconstructed from the state summary
+-- via `expandMinimalItems` -- rows with an ID and a Count and no Link, which is where much of
+-- ComputeItemDelta's fallback machinery came from. A V2 send is a full tuple snapshot and needs to
+-- know nothing about what the requester holds, so the baseline, its expansion and the diff all go
+-- together. `ComputeTupleDelta` is the replacement when `togbank-state` learns to carry a tuple
+-- baseline; until then the snapshot is the whole message.
 
 -- Estimate serialized size of a data structure
 function TOGBankClassic_DeltaComms:EstimateSize(data)
@@ -782,592 +407,29 @@ function TOGBankClassic_DeltaComms:EstimateSize(data)
 	return string.len(serialized or "")
 end
 
--- Check if delta has any actual changes
-function TOGBankClassic_DeltaComms:DeltaHasChanges(delta)
-	if not delta or not delta.changes then
-		return false
-	end
+-- INV2 step 10: `DeltaHasChanges` went with `ComputeDelta`. Its only job was deciding whether a
+-- computed `alt-delta` was empty enough to answer with a `togbank-nochange` correction instead, and
+-- the delta is gone. The MESSAGE is not: `RespondToStateSummary` still sends `togbank-nochange`
+-- when the hashes already match, which it decides from the hashes directly and never needed this.
 
-	local changes = delta.changes
-
-	-- Check money change
-	if changes.money then
-		return true
-	end
-
-	-- MAIL-012: Check mailHash change
-	if changes.mailHash ~= nil then
-		return true
-	end
-
-	-- Check bank changes
-	if changes.bank then
-		if next(changes.bank.added) or next(changes.bank.modified) or next(changes.bank.removed) then
-			return true
-		end
-	end
-
-	-- Check bags changes
-	if changes.bags then
-		if next(changes.bags.added) or next(changes.bags.modified) or next(changes.bags.removed) then
-			return true
-		end
-	end
-
-	-- Check mail changes
-	if changes.mail then
-		if next(changes.mail.added) or next(changes.mail.modified) or next(changes.mail.removed) then
-			return true
-		end
-	end
-
-	-- Legacy: Check aggregated items changes (for backwards compatibility)
-	if changes.items then
-		if next(changes.items.added) or next(changes.items.modified) or next(changes.items.removed) then
-			return true
-		end
-	end
-
-	return false
-end
-
--- DELTA APPLICATION FUNCTIONS --
-
--- Apply item delta to an items table
-function TOGBankClassic_DeltaComms:ApplyItemDelta(items, delta)
-	if not items or not delta then
-		return false
-	end
-
-	-- Build current items index by itemKey
-	local itemsByKey = self:BuildItemIndex(items)
-
-	-- Build ID-only lookup for items without Links
-	local itemsByIDOnly = {}
-	for _, item in pairs(items) do
-		if item and item.ID and not (item.Link or item.ItemString) then
-			itemsByIDOnly[tostring(item.ID)] = item
-		end
-	end
-
-	-- STALE-INDEX-FIX: Process operations in order: removed → modified → added
-	-- This prevents indexes from becoming invalid when Aggregate() clears the array
-
-	-- STEP 1: Remove items
-	if delta.removed then
-		for _, removedItem in ipairs(delta.removed) do
-			if removedItem and removedItem.ID then
-				-- Still support old format with Link for backwards compatibility
-				if removedItem.Link then
-					-- Has Link (new format with link-preserved remove, OR old v0.7.0 format):
-					-- Match by normalized key so suffix variants are distinguished precisely
-					local normalizedRemovedKey = TOGBankClassic_Item:GetItemKey(removedItem.Link)
-					local key = tostring(removedItem.ID) .. normalizedRemovedKey
-					for i = #items, 1, -1 do
-						local item = items[i]
-						if item and item.ID and (item.Link or item.ItemString) then
-							local normalizedItemKey = TOGBankClassic_Item:GetItemKey(item.Link or item.ItemString)
-							local itemKey = tostring(item.ID) .. normalizedItemKey
-							if itemKey == key then
-								table.remove(items, i)
-								break
-							end
-						end
-					end
-				else
-					-- New format (v0.8.0): Only has ID, match by ID only
-					for i = #items, 1, -1 do
-						local item = items[i]
-						if item and item.ID == removedItem.ID then
-							table.remove(items, i)
-							break  -- Remove first match only
-						end
-					end
-				end
-			end
-		end
-	end
-
-	-- STEP 2: Modify existing items (MUST be before added to use valid indexes)
-	if delta.modified then
-		for _, changes in ipairs(delta.modified) do
-			if changes and changes.ID then
-				-- DUPLICATION-FIX: Try full key first, then fallback to ID-only
-				local existingItem = nil
-				local matchedViaIDOnlyFallback = false
-
-				if changes.Link or changes.ItemString then
-					-- Full item with Link - use normalized key
-					local normalizedKey = TOGBankClassic_Item:GetItemKey(changes.Link or changes.ItemString)
-					local key = tostring(changes.ID) .. normalizedKey
-					existingItem = itemsByKey[key]
-
-					-- Fallback: check ID-only index if not found
-					if not existingItem then
-						existingItem = itemsByIDOnly[tostring(changes.ID)]
-						if existingItem then
-							matchedViaIDOnlyFallback = true
-						end
-					end
-				else
-					-- Minimal item without Link - use ID-only key
-					local key = tostring(changes.ID)
-					existingItem = itemsByKey[key] or itemsByIDOnly[key]
-					if itemsByIDOnly[key] == existingItem then
-						matchedViaIDOnlyFallback = true
-					end
-				end
-
-				-- [ITEM-003 GUARD-HOLE FIX] If we matched a LINKLESS existing entry via the
-				-- ID-only fallback and the incoming changes describe a SUFFIXED gear item,
-				-- the existing entry is a stripped-gear GHOST (from a pre-fix delta or a
-				-- cold-cache scrape that bypassed NeedsLink). Mutating it in place would
-				-- propagate the ghost's potentially-inflated Count to a fresh suffixed
-				-- variant, corrupting display and replicating to peers. Drop the ghost
-				-- and let STEP 3 add the suffixed entry cleanly. See docs/DELTA_BUGS.md
-				-- ITEM-004 / ghost-mutation analysis for the full chain.
-				if existingItem and matchedViaIDOnlyFallback
-				   and not existingItem.Link and not existingItem.ItemString
-				   and TOGBankClassic_Item
-				   and TOGBankClassic_Item:ItemClassNeedsLink(changes.ID) == true then
-					for i = #items, 1, -1 do
-						if items[i] == existingItem then
-							table.remove(items, i)
-							break
-						end
-					end
-					itemsByIDOnly[tostring(changes.ID)] = nil
-					existingItem = nil  -- force the else branch below to ADD as new (with guard)
-					TOGBankClassic_Output:Debug("DELTA", "APPLY",
-						"[ITEM-003 GUARD] STEP2: dropped linkless gear ghost ID=%d before applying suffixed modification",
-						changes.ID)
-				end
-
-				if existingItem then
-					-- Apply changed fields to existing item
-					for field, value in pairs(changes) do
-						existingItem[field] = value
-					end
-				else
-					-- Item doesn't exist (shouldn't happen), add as new.
-					-- ITEM-003 GUARD: Reject linkless items for weapon/armor types (same logic as STEP 3).
-					local guardBlock = false
-					if not changes.Link and TOGBankClassic_Item then
-						local needsLink = TOGBankClassic_Item:ItemClassNeedsLink(changes.ID)
-						if needsLink == true then
-							guardBlock = true
-							TOGBankClassic_Output:Debug("DELTA", "APPLY", "[ITEM-003] STEP2: blocked linkless modified-as-new weapon/armor ID=%d", changes.ID)
-						elseif needsLink == nil then
-							-- Class not cached; block if any linked entry already exists for this base ID
-							for _, existingEntry in ipairs(items) do
-								if existingEntry and existingEntry.ID == changes.ID and existingEntry.Link then
-									guardBlock = true
-									TOGBankClassic_Output:Debug("DELTA", "APPLY", "[ITEM-003] STEP2: blocked linkless modified-as-new ID=%d (linked entry exists, class uncached)", changes.ID)
-									break
-								end
-							end
-						end
-					end
-					if not guardBlock then
-						table.insert(items, changes)
-						TOGBankClassic_Output:Debug("DELTA", "APPLY", "[STALE-INDEX-FIX] Modified item not found, adding as new: ID=%d", changes.ID)
-					end
-				end
-			end
-		end
-	end
-
-	-- STEP 3: Add new items (CAN invalidate indexes, but no more operations depend on them)
-	if delta.added then
-		-- DUPLICATION-FIX-003: Use normalized key (Link/ItemString → GetItemKey) to find existing items.
-		-- The previous ID-only lookup caused items with same base ID but different suffixes
-		-- (e.g., "Stone Hammer" ×4 and "Stone Hammer of Tiger" ×1, both ID=15260) to collide:
-		-- the second item processed would find the first by ID and overwrite it, corrupting
-		-- counts and links. Fix: match by normalized key; only fall back to ID-only for
-		-- truly linkless existing entries (old-format upgrade: {ID,Count} → linked item).
-		local updated = 0
-		local added = 0
-
-		for _, newItem in ipairs(delta.added) do
-			if newItem and newItem.ID and (newItem.Link or newItem.ItemString) then
-				local existingItem = nil
-				local newNormKey = TOGBankClassic_Item:GetItemKey(newItem.Link or newItem.ItemString)
-				local newFullKey = tostring(newItem.ID) .. newNormKey
-
-				-- Primary: exact normalized-key match (distinguishes suffix variants)
-				for _, item in ipairs(items) do
-					if item and item.ID == newItem.ID then
-						local existingNormKey = TOGBankClassic_Item:GetItemKey(item.Link or item.ItemString or "")
-						if (tostring(item.ID) .. existingNormKey) == newFullKey then
-							existingItem = item
-							break
-						end
-					end
-				end
-
-				-- Fallback: ID-only match ONLY for linkless existing entries
-				-- (upgrades old-format {ID,Count} stubs to linked items)
-				local matchedViaLinklessFallback = false
-				if not existingItem then
-					for _, item in ipairs(items) do
-						if item and item.ID == newItem.ID and not item.Link and not item.ItemString then
-							existingItem = item
-							matchedViaLinklessFallback = true
-							break
-						end
-					end
-				end
-
-				-- [ITEM-003 GUARD-HOLE FIX] If we hit a linkless GEAR entry via the fallback,
-				-- that entry is a stripped-gear GHOST. Don't mutate it into a suffixed entry —
-				-- doing so propagates whatever Count divergence the ghost picked up from
-				-- prior cycles. Drop the ghost and ADD the new suffixed item cleanly.
-				if existingItem and matchedViaLinklessFallback
-				   and TOGBankClassic_Item
-				   and TOGBankClassic_Item:ItemClassNeedsLink(newItem.ID) == true then
-					for i = #items, 1, -1 do
-						if items[i] == existingItem then
-							table.remove(items, i)
-							break
-						end
-					end
-					existingItem = nil
-					TOGBankClassic_Output:Debug("DELTA", "APPLY",
-						"[ITEM-003 GUARD] STEP3: dropped linkless gear ghost ID=%d before adding suffixed entry",
-						newItem.ID)
-				end
-
-				if existingItem then
-					-- Item exists - UPDATE quantities and fields
-					existingItem.Count = newItem.Count
-					existingItem.Link = newItem.Link or existingItem.Link
-					existingItem.ItemString = newItem.ItemString or existingItem.ItemString
-					existingItem.ForceLink = newItem.ForceLink or existingItem.ForceLink
-					if newItem.Info then
-						existingItem.Info = newItem.Info
-					end
-					updated = updated + 1
-				else
-					-- Item doesn't exist - ADD it.
-					-- ITEM-003 GUARD: Reject linkless items for weapon/armor types.
-					-- When GetItemInfo confirms class 2 (Weapon) or 4 (Armor), a Link is required
-					-- to distinguish suffix variants (e.g. plain vs. "of the Wolf"). Accepting an
-					-- ItemString-only entry would create a ghost plain-weapon stack that dedup
-					-- cannot merge with existing suffixed entries sharing the same base ID.
-					-- If the item class is uncached, fall back to: block if any linked entry for
-					-- this base ID already exists in storage (the linked version is authoritative).
-					local guardBlock = false
-					if not newItem.Link and TOGBankClassic_Item then
-						local needsLink = TOGBankClassic_Item:ItemClassNeedsLink(newItem.ID)
-						if needsLink == true then
-							guardBlock = true
-							TOGBankClassic_Output:Debug("DELTA", "APPLY", "[ITEM-003] STEP3: blocked linkless weapon/armor ID=%d (class confirmed)", newItem.ID)
-						elseif needsLink == nil then
-							-- Class not cached; block if any linked entry already exists for this base ID
-							for _, existingEntry in ipairs(items) do
-								if existingEntry and existingEntry.ID == newItem.ID and existingEntry.Link then
-									guardBlock = true
-									TOGBankClassic_Output:Debug("DELTA", "APPLY", "[ITEM-003] STEP3: blocked linkless ID=%d (linked entry exists, class uncached)", newItem.ID)
-									break
-								end
-							end
-						end
-					end
-					if not guardBlock then
-						table.insert(items, newItem)
-						added = added + 1
-					end
-				end
-			end
-		end
-
-		TOGBankClassic_Output:Debug("DELTA", "APPLY", "Applied %d added items (%d updated existing, %d new)",
-			#delta.added, updated, added)
-	end
-
-	return true
-end
-
--- Apply a delta to alt data
-function TOGBankClassic_DeltaComms:ApplyDelta(guildInfo, altName, deltaData, sender)
-	return TOGBankClassic_Performance:Track("ApplyDelta", function()
-		if not guildInfo then
-			return ADOPTION_STATUS.IGNORED
-		end
-
-		local applyStart = debugprofilestop()
-		local norm = TOGBankClassic_Guild:NormalizeName(altName)
-		local current = guildInfo.alts[norm]
-		local currentIsBanker = TOGBankClassic_Guild:IsBank(norm)
-
-		-- Validate base version matches
-		if not current then
-			-- No existing data: adopt delta against empty baseline to avoid full sync fallback
-			if not guildInfo.alts then
-				guildInfo.alts = {}
-			end
-			current = {
-				name = norm,
-				version = 0,
-				money = 0,
-				items = {},
-				inventoryHash = 0,
-				inventoryUpdatedAt = 0,
-				mailHash = 0,
-			}
-			guildInfo.alts[norm] = current
-			TOGBankClassic_Output:Debug("DELTA", "APPLY", "No existing data for %s; applying delta against empty baseline", norm)
-		end
-
-		-- DATA-004: Protect banker data - bankers are the source of truth
-		local player = UnitName("player")
-		local realm = GetNormalizedRealmName()
-		local playerFull = player .. "-" .. realm
-		local playerNorm = TOGBankClassic_Guild:NormalizeName(playerFull)
-		local playerIsBanker = TOGBankClassic_Guild:IsBank(playerNorm)
-
-		if playerIsBanker then
-			-- We are a banker - protect our own data and other banker data
-
-			-- CRITICAL: If this delta is about US, reject it (we are the source of truth for our own data)
-			if norm == playerNorm then
-				local errorMsg = string.format(
-					"Rejected delta from %s about ourselves (banker is source of truth for own data)",
-					sender or "unknown"
-				)
-				TOGBankClassic_Output:Debug("DELTA", "VALIDATE", "[DATA-004] %s", errorMsg)
-				-- Not an error - this is expected banker protection, don't record as error
-				return ADOPTION_STATUS.UNAUTHORIZED
-			end
-
-			-- Also protect OTHER banker data from non-banker updates
-			local senderNorm = sender and TOGBankClassic_Guild:NormalizeName(sender) or nil
-			local senderIsBanker = senderNorm and TOGBankClassic_Guild:IsBank(senderNorm) or false
-
-			if currentIsBanker and not senderIsBanker then
-				-- Reject: non-banker trying to update banker data
-				local errorMsg = string.format(
-					"Rejected delta from non-banker %s for banker %s (bankers are source of truth)",
-					sender or "unknown",
-					norm
-				)
-				TOGBankClassic_Output:Debug("DELTA", "VALIDATE", "[DATA-004] %s", errorMsg)
-				-- Not an error - this is expected banker protection, don't record as error
-				return ADOPTION_STATUS.UNAUTHORIZED
-			end
-		end
-		-- Non-bankers accept all deltas (they're not the authority)
-
-		-- Newest-wins for non-banker alts
-		local incomingUpdatedAt = deltaData.updatedAt or deltaData.version
-		local existingUpdatedAt = current.inventoryUpdatedAt or current.version
-		if not currentIsBanker and incomingUpdatedAt and existingUpdatedAt and incomingUpdatedAt < existingUpdatedAt then
-			return ADOPTION_STATUS.STALE
-		end
-
-		local currentVersion = current.version or 0
-		-- baseVersion no longer sent, but accept it for backwards compatibility
-		local baseVersion = deltaData.baseVersion or currentVersion
-
-		-- Only check version mismatch if delta included baseVersion (v0.7.0 and earlier)
-		if deltaData.baseVersion and currentVersion ~= baseVersion then
-			local errorMsg = string.format(
-				"Version mismatch: have %d, delta expects %d",
-				currentVersion,
-				baseVersion
-			)
-
-			TOGBankClassic_Output:Debug(
-				"DELTA",
-				"VALIDATE",
-				"Version mismatch for %s (have %d, delta expects %d), requesting full sync",
-				norm,
-				currentVersion,
-				baseVersion
-			)
-			TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
-
-			self:RecordDeltaError(guildInfo.name, norm, "VERSION_MISMATCH", errorMsg)
-			if guildInfo and guildInfo.name then
-				TOGBankClassic_Database:RecordDeltaFailed(guildInfo.name)
-			end
-			return ADOPTION_STATUS.INVALID
-		end
-
-		-- Apply changes (wrapped in pcall for safety)
-		local success, err = pcall(function()
-			local changes = deltaData.changes
-
-			if changes.money then
-				current.money = changes.money
-			end
-
-			-- MAIL-012: mailHash is now recomputed from actual items after mail delta is applied (see below)
-
-			-- Apply bank changes
-			if changes.bank then
-				if not current.bank then
-					current.bank = { items = {} }
-				end
-				if not current.bank.items then
-					current.bank.items = {}
-				end
-				self:ApplyItemDelta(current.bank.items, changes.bank)
-				-- Apply bank slots metadata if present in delta
-				if changes.bank.slots then
-					current.bank.slots = changes.bank.slots
-					TOGBankClassic_Output:Debug("DELTA", "APPLY", "Applied bank slots for %s: %d/%d",
-						norm, changes.bank.slots.count, changes.bank.slots.total)
-				end
-				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied bank delta for %s: now %d items", norm, #current.bank.items)
-			end
-
-			-- Apply bags changes
-			if changes.bags then
-				if not current.bags then
-					current.bags = { items = {} }
-				end
-				if not current.bags.items then
-					current.bags.items = {}
-				end
-				self:ApplyItemDelta(current.bags.items, changes.bags)
-				-- Apply bags slots metadata if present in delta
-				if changes.bags.slots then
-					current.bags.slots = changes.bags.slots
-					TOGBankClassic_Output:Debug("DELTA", "APPLY", "Applied bags slots for %s: %d/%d",
-						norm, changes.bags.slots.count, changes.bags.slots.total)
-				end
-				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied bags delta for %s: now %d items", norm, #current.bags.items)
-			end
-
-			-- Apply bank/bags slot counts so the inventory status bar shows correct totals
-			if changes.bankSlots then
-				if not current.bank then current.bank = { items = {} } end
-				current.bank.slots = changes.bankSlots
-			end
-			if changes.bagsSlots then
-				if not current.bags then current.bags = { items = {} } end
-				current.bags.slots = changes.bagsSlots
-			end
-
-			-- Apply mail changes
-			if changes.mail then
-				if not current.mail then
-					current.mail = { items = {} }
-				end
-				if not current.mail.items then
-					current.mail.items = {}
-				end
-				self:ApplyItemDelta(current.mail.items, changes.mail)
-				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Applied mail delta for %s: now %d items", norm, #current.mail.items)
-			end
-
-			-- Recalculate aggregated items for UI display.
-			-- Single-pass: iterate all three sources directly into one hash table,
-			-- then sort keys once. Replaces the previous 3 per-section dedup passes
-			-- (Aggregate bank, Aggregate bags, Aggregate mail) + 2-pass final aggregate
-			-- (Aggregate(bank,bags) then Aggregate(result,mail)) = 5 passes → 1 pass.
-			if changes.bank or changes.bags or changes.mail then
-				local bankItems = (current.bank and current.bank.items) or {}
-				local bagItems  = (current.bags and current.bags.items) or {}
-				local mailItems = (current.mail and current.mail.items) or {}
-
-				if TOGBankClassic_Item then
-					-- Pass bank+bags through Aggregate (deduplicates between them),
-					-- then fold mail items in. Two calls but bank+bags share one pass
-					-- and mail is a typically small second pass — no redundant re-iteration.
-					local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
-					-- Fold mail directly into the already-built hash table by passing it
-					-- as the second argument (Aggregate iterates b into the existing map).
-					aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
-					current.items = {}
-					local keys = {}
-					for k in pairs(aggregated) do table.insert(keys, k) end
-					table.sort(keys)
-					for _, k in ipairs(keys) do table.insert(current.items, aggregated[k]) end
-					TOGBankClassic_Output:Debug("DELTA", "APPLY", "[SEPARATE-INV] Recalculated aggregated items for %s: %d items (bank=%d, bags=%d, mail=%d)",
-						norm, #current.items, #bankItems, #bagItems, #mailItems)
-				end
-			end
-
-			-- Legacy: Apply aggregated items changes (for backwards compatibility with old deltas)
-			if changes.items then
-				if not current.items then
-					current.items = {}
-				end
-				self:ApplyItemDelta(current.items, changes.items)
-				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[LEGACY] Applied aggregated items delta for %s: now %d items", norm, #current.items)
-			end
-
-			-- Update version
-			current.version = deltaData.version
-			current.inventoryUpdatedAt = deltaData.updatedAt or deltaData.version or current.inventoryUpdatedAt
-
-			-- HASH-RECOMPUTE: Derive inventoryHash from the actual applied items rather than
-			-- stamping the banker's hash value. This ensures the stored hash always reflects
-			-- what we actually have locally. If items weren't applied correctly the hash
-			-- will diverge → next sync detects the mismatch → self-heals automatically.
-			-- Stamping deltaData.inventoryHash can create a false "in-sync" state that
-			-- silences future syncs even when item counts are still stale.
-			local recomputedInvHash = self:ComputeInventoryHash(current.items or {}, nil, nil, current.money or 0)
-			current.inventoryHash = recomputedInvHash
-			TOGBankClassic_Output:Debug("DELTA", "APPLY", "[HASH-RECOMPUTE] %s inventoryHash recomputed=%d (delta had %d)",
-				norm, recomputedInvHash, deltaData.inventoryHash or 0)
-
-			-- HASH-RECOMPUTE: Also recompute mailHash from actual mail items after delta application.
-			if current.mail and current.mail.items then
-				local recomputedMailHash = self:ComputeInventoryHash(current.mail.items, nil, nil, nil)
-				current.mailHash = recomputedMailHash
-				TOGBankClassic_Output:Debug("DELTA", "APPLY", "[HASH-RECOMPUTE] %s mailHash recomputed=%d (delta had %d)",
-					norm, recomputedMailHash, changes.mailHash or 0)
-			end
-		end)
-
-		if not success then
-			-- Delta application failed, request full sync
-			local errorMsg = string.format("Delta application error: %s", tostring(err))
-			TOGBankClassic_Output:Error("Failed to apply delta for %s: %s", norm, tostring(err))
-			self:RecordDeltaError(guildInfo.name, norm, "APPLICATION_ERROR", errorMsg)
-			TOGBankClassic_Guild:QueryAlt(nil, norm, nil)
-			if guildInfo and guildInfo.name then
-				TOGBankClassic_Database:RecordDeltaFailed(guildInfo.name)
-			end
-			return ADOPTION_STATUS.INVALID
-		end
-
-		-- Save new snapshot for future deltas
-		if guildInfo and guildInfo.name then
-			TOGBankClassic_Database:SaveSnapshot(guildInfo.name, norm, current)
-			TOGBankClassic_Database:RecordDeltaApplied(guildInfo.name)
-
-			-- Record apply time
-			local applyTime = debugprofilestop() - applyStart
-			TOGBankClassic_Database:RecordDeltaApplyTime(guildInfo.name, applyTime)
-			TOGBankClassic_Output:Debug(
-				"DELTA",
-				"APPLY",
-				"✓ Applied delta for %s (v%d→v%d) in %.2fms",
-				norm,
-				baseVersion,
-				deltaData.version,
-				applyTime
-			)
-		end
-
-		-- Reset error count on successful application
-		self:ResetDeltaErrorCount(guildInfo.name, norm)
-
-		-- Trigger UI refresh if Inventory window is open AND viewing this alt
-		if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-			-- Only refresh if we're viewing the alt that was updated
-			if not TOGBankClassic_UI_Inventory.currentTab or TOGBankClassic_UI_Inventory.currentTab == norm then
-				TOGBankClassic_UI_Inventory:DrawContent()
-			end
-		end
-
-		return ADOPTION_STATUS.ADOPTED
-	end)
-end
+-- INV2 step 10 / directive 2026-09-09: `ApplyItemDelta` and `ApplyDelta` WERE HERE, ~570 lines of
+-- them, and they are deleted with the legacy link wire format they existed to apply.
+--
+-- They were the RECEIVE half of the link protocol: link-keyed identity via `Item:GetItemKey`, a
+-- second ID-only index for linkless rows, the ITEM-003 ghost guards, the STALE-INDEX ordering, the
+-- version/banker/newest-wins validation and the hash recompute. Every HIGH finding this codebase's
+-- audit produced came out of this region -- findings 31, 32 and 34 among them -- which is the
+-- argument for deleting it rather than keeping it warm for peers who no longer exist to us.
+--
+-- What replaces it: `ApplyTupleDelta` above, plus the direct `SetAltRecords` store in Chat.lua's
+-- tuple receive branch. A tuple row is `{id, count, suffix, enchant}` and its identity is
+-- `Record.keyFor` -- one function, shared with the hash, so there is no second index to keep in
+-- step and no ghost class to guard against.
+--
+-- `Item:ItemClassNeedsLink` does NOT go with it, and an earlier draft of this note wrongly said it
+-- did. The ITEM-003 guards here were not its last callers: `Database:PurgeLinklessGearGhosts` still
+-- uses it to repair linkless gear ALREADY SITTING in players' SavedVariables from earlier versions,
+-- and that runs at load. Deleting it would abandon that repair for anyone who has not loaded since.
 
 -- ERROR TRACKING FUNCTIONS --
 
@@ -1640,6 +702,19 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 			end
 		end
 	end
+
+	-- NOTHING CONSUMES THIS ANSWER, and that is worth stating rather than quietly deleting.
+	-- The two passes above -- including a GuildRoster() server refresh and a full
+	-- GetNumGuildMembers() scan on the miss path -- compute whether any banker is online, and the
+	-- loop below then queries every missing alt regardless. The flag clearly used to gate
+	-- something (peer-vs-banker routing, most likely) and that gate is gone.
+	--
+	-- Kept rather than removed because GuildRoster() is a SIDE EFFECT on the server, and whether
+	-- the refresh is still wanted here is a decision, not a cleanup. Logging it makes the computed
+	-- fact visible instead of discarded, and changes no control flow.
+	TOGBankClassic_Output:Debug("DELTA", "FAST-FILL",
+		"Fast-fill proceeding for %d alt(s); banker online = %s (advisory only, nothing gates on it)",
+		#missing, tostring(hasOnlineBanker))
 
 	-- Query each missing alt using pull-based protocol
 	for _, norm in ipairs(missing) do

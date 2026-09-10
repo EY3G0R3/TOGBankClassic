@@ -166,9 +166,7 @@ describe("Bank:Scan gating", function()
 		TOGBankClassic_Options  = { GetBankEnabled = function() return true end }
 		TOGBankClassic_Database = { SaveSnapshot = function() return true end }
 		TOGBankClassic_MailInventory = { hasUpdated = false }
-		TOGBankClassic_Core = {
-			ComputeInventoryHash = function() return 12345 end,
-		}
+		TOGBankClassic_Core = env.coreHashStub(12345)
 		Bank.hasUpdated = true
 		Bank.eventsRegistered = false
 	end)

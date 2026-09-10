@@ -85,7 +85,7 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	local version = GetAddOnMetadata("TOGBankClassic", "Version") or "?"
 	window:SetTitle("TOGBankClassic v" .. version)
 	window:SetLayout("Flow")
-	TOGBankClassic_UI:ApplyThinBorder(window)
+	TOGBankClassic_UI:ApplyThinBorder(window, "inventory")
 	-- Persist window position/size across reloads (each window gets its own sub-table)
 	if TOGBankClassic_Options and TOGBankClassic_Options.db then
 		local positions = TOGBankClassic_Options.db.char.framePositions
@@ -101,7 +101,7 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	end)
 
 	self.Window = window
-	self.StatusBar = TOGBankClassic_StatusBar:Attach(window)
+	self.StatusBar = TOGBankClassic_UI_StatusBar:Attach(window)
 
 	-- Shrink status bar right edge to make room for the help and settings icons.
 	-- Layout (right to left): [Close button] [Help "?" icon @ -133] [Gear icon @ -165] [Status bar ending at -195]
@@ -255,7 +255,7 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 		sortDropdown.dropdown:SetPoint("TOPLEFT", sortDropdown.frame, "TOPLEFT", 0, 0)
 		sortDropdown.dropdown:SetPoint("BOTTOMRIGHT", sortDropdown.frame, "BOTTOMRIGHT", 0, 0)
 	end
-	sortDropdown:SetCallback("OnValueChanged", function(widget, _, value)
+	sortDropdown:SetCallback("OnValueChanged", function(_, _, value)
 		local db = TOGBankClassic_Options and TOGBankClassic_Options.db and TOGBankClassic_Options.db.char
 		if not db then return end
 		db.sortMode = value
@@ -423,41 +423,16 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		end
 		g:AddChild(scroll)
 
-		-- Track scroll container to prevent race conditions
-		local scrollId = tostring(scroll)
+		-- The guard against a double-processed callback is this flag on the container itself.
+		-- A `local scrollId = tostring(scroll)` sat here describing that job and was never read
+		-- by anything; the flag below is, and always was, the whole mechanism.
 		scroll.callbackProcessed = false
 
 		local normTab = TOGBankClassic_Guild:NormalizeName(tab)
-		local alt = info.alts[normTab]
 
-		-- Use alt.items if available (post-SYNC-006 aggregate)
-		-- Otherwise compute from sources for backward compatibility
-		local items = {}
-
-		if alt.items and next(alt.items) ~= nil then
-			-- alt.items exists - use it directly (may be array or key-value)
-			for _, item in pairs(alt.items) do
-				table.insert(items, item)
-			end
-			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: using alt.items (%d items)",
-				tab, #items)
-		else
-			-- Fallback: compute from sources (backward compatibility for very old data)
-			local bankItems = (alt.bank and alt.bank.items) or {}
-			local bagItems = (alt.bags and alt.bags.items) or {}
-			local mailItems = (alt.mail and alt.mail.items) or {}
-
-			TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: computing from sources bank=%d, bags=%d, mail=%d",
-				tab, #bankItems, #bagItems, #mailItems)
-
-			-- Aggregate all sources (all are now in array format), then convert the key-value result to array
-			local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
-			aggregated = TOGBankClassic_Item:Aggregate(aggregated, mailItems)
-			for _, item in pairs(aggregated) do
-				table.insert(items, item)
-			end
-		end
-
+		-- INV2 step 7a: the aggregate-or-rebuild decision, and the inventoryV2 switch with it,
+		-- live in Guild:GetAltItems. This used to open-code both here.
+		local items = TOGBankClassic_Guild:GetAltItems(normTab)
 		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: aggregated to %d unique items",
 			tab, #items)
 

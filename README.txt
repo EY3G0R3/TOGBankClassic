@@ -106,7 +106,7 @@ FOR GUILD BANK CHARACTERS:
 5. Press ESC -> Interface -> AddOns -> TOGBankClassic
 6. Click the [-] icon to expand the Bank section
 7. Enable "Report bank contents" and "Scan bank on open"
-8. Open your bank to perform the initial scan
+8. Open your bank and then CLOSE it - the scan runs when the bank closes
 9. The addon will now automatically share this character's inventory!
 
 VIEW-ONLY BANK CHARACTERS (e.g. a raid bank):
@@ -420,7 +420,22 @@ OPTIONS PANEL:
   - Enable/disable automatic bank scanning
   - Configure minimap button position
   - Adjust output verbosity
+  - Set how see-through each window is (Appearance tab)
   - (OFFICERS ONLY) Configure guild-wide request limits
+
+WINDOW TRANSPARENCY:
+--------------------------------------
+The "Appearance" tab has an opacity slider for every window - Inventory,
+Search, Requests, Donations and the Mail viewer - so you can fade the ones
+you leave open and keep the rest solid.
+
+Only the window frame fades. Item icons, stack counts and text stay fully
+readable at any setting, and a window you have made transparent still drags
+and closes normally. Changes apply immediately to a window that is already
+open, and "Reset All Windows to Solid" puts everything back to 100%.
+
+The setting is shared by all your characters, unlike window positions, which
+stay per-character.
 
 GUILD REQUEST LIMITS (OFFICERS ONLY):
 --------------------------------------

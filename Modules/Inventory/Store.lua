@@ -14,13 +14,35 @@
 --
 -- Storage shape, mirroring the legacy scoping so nothing new has to be learned:
 --   TOGBankClassicInvDB.faction[guildName].alts[altName] = {
---       records = { <tuple>, ... },   -- see Record.lua
+--       sources = { bank = { <tuple>, ... }, bags = { ... }, mail = { ... } },
 --       money   = <copper>,
 --       updated = <server time>,
+--       schema  = <Store.SCHEMA at write time>,
 --   }
+--
+-- STORED PER SOURCE, and that is the fix for INV2-VAULT-001 rather than a tidier shape. The vault
+-- can only be read at a banker; bags and mail can be read anywhere. A single flat record set forces
+-- a writer that is away from the vault to choose between overwriting the stored vault with nothing
+-- and skipping the write entirely -- and skipping means bag and mail changes never land either, so
+-- the record silently stops tracking the character. The legacy DB has always kept its three sources
+-- apart (`alt.bank.items` / `alt.bags.items` / `alt.mail.items`) and aggregated on the way out,
+-- which is exactly why it never had this defect. This mirrors that.
+--
+-- Reads are unchanged: GetAltRecords still returns one flat, aggregated array.
 
 TOGBankClassic_Inventory_Store = {}
 local Store = TOGBankClassic_Inventory_Store
+
+--- Which SOURCES a stored record set was built from. Bumped when the scan gains a source, NOT when
+--- the tuple layout changes -- Record.lua owns that, and the two version independently because they
+--- fail differently: a layout change makes rows unreadable, a source change makes totals SHORT.
+---
+---   1 (or absent) -- bags + bank. Everything written before INV2-MAIL-001.
+---   2             -- bags + bank + mail.
+---
+--- INV2-STALE-001 is why this exists. `updated` records WHEN a record was written and cannot answer
+--- what it covers, so a reader had no way to distinguish "V2 is complete" from "V2 has some rows".
+Store.SCHEMA = 2
 
 local Record  = TOGBankClassic_Inventory_Record
 local Resolve = TOGBankClassic_Inventory_Resolve
@@ -28,6 +50,11 @@ local Resolve = TOGBankClassic_Inventory_Resolve
 -- Materialised UI views, keyed guild\altName. Rebuilt on demand, dropped on write.
 -- Purely derived: nothing here is persisted and losing it costs one rebuild.
 local viewCache = {}
+
+-- The flattened, aggregated record array per alt — the same derivation, one level below the view.
+-- Separate cache because the two have different lifetimes in principle (a locale change drops
+-- views and leaves records untouched); both are dropped together on write.
+local recordCache = {}
 
 --- Attach to the SavedVariable. Kept separate from Database:Init so the legacy DB's lifecycle
 --- is untouched — this module is inert until something calls into it.
@@ -61,30 +88,98 @@ local function viewKey(guild, altName) return tostring(guild) .. "\031" .. tostr
 --- rather than at read time means the miscount cannot be reintroduced by a caller that forgets:
 --- whatever a scan hands over, what lands in the DB is already deduplicated by tuple key.
 --- @return number stored, number skipped
-function Store:SetAltRecords(guild, altName, records, money)
-	local g = guildTable(self, guild, true)
-	if not g or not altName then return 0, 0 end
-
+--- Aggregate one source's records into a stably-ordered array.
+--- @return table bucket
+--- @return number skipped
+local function bucketOf(records)
 	local map, skipped = Record.aggregate(records)
 	local out = {}
 	for _, rec in pairs(map) do out[#out + 1] = rec end
 	-- Stable order so the SavedVariables file does not churn between saves for unchanged data.
 	table.sort(out, function(a, b) return Record.key(a) < Record.key(b) end)
-
-	g.alts[altName] = {
-		records = out,
-		money   = tonumber(money) or (g.alts[altName] and g.alts[altName].money) or 0,
-		updated = GetServerTime(),
-	}
-	self:InvalidateView(guild, altName)
-	return #out, skipped
+	return out, skipped
 end
 
---- An alt's stored tuples, or an empty table. Never nil, so callers need no guard.
+--- Replace SOME of an alt's sources, keeping the rest.
+---
+--- A source present in `sources` is replaced. A source ABSENT from it is kept exactly as stored --
+--- which is how a scan away from a banker refreshes bags and mail without erasing the vault. An
+--- empty table is not the same as absent: it means that source was read and is genuinely empty.
+---
+--- INV2-VAULT-001. The previous arrangement had the caller skip the whole write when the vault was
+--- out of reach, to protect the stored vault contents. It protected them and froze everything else:
+--- a character who opened their mailbox anywhere but a bank NPC updated the legacy record to 71 and
+--- left the V2 record at 68, permanently, because the next write was skipped for the same reason.
+--- Deciding per source here rather than per write is what removes the choice.
+--- @return number stored, number skipped
+function Store:SetAltSources(guild, altName, sources, money)
+	local g = guildTable(self, guild, true)
+	if not g or not altName or type(sources) ~= "table" then return 0, 0 end
+
+	local prev = g.alts[altName]
+	local out, skipped = {}, 0
+	-- Carry forward every bucket the caller did not mention.
+	if prev and prev.sources then
+		for name, bucket in pairs(prev.sources) do out[name] = bucket end
+	end
+	for name, records in pairs(sources) do
+		local bucket, s = bucketOf(records)
+		out[name], skipped = bucket, skipped + s
+	end
+
+	g.alts[altName] = {
+		sources = out,
+		money   = tonumber(money) or (prev and prev.money) or 0,
+		updated = GetServerTime(),
+		-- Stamped on every write, so a record's coverage travels with it rather than being inferred
+		-- from its age.
+		schema  = Store.SCHEMA,
+	}
+	self:InvalidateView(guild, altName)
+	return #self:GetAltRecords(guild, altName), skipped
+end
+
+--- Replace an alt's inventory wholesale, discarding every stored source.
+---
+--- The single-source entry point, for a caller that has one complete record set and no notion of
+--- where the rows came from. Distinct from SetAltSources on purpose: this one CANNOT preserve a
+--- vault, so a caller that might be away from a banker wants the other.
+--- @return number stored, number skipped
+function Store:SetAltRecords(guild, altName, records, money)
+	local g = guildTable(self, guild, true)
+	if not g or not altName then return 0, 0 end
+	local prev = g.alts[altName]
+	-- Wholesale replace: drop every existing bucket first, so nothing is carried forward.
+	g.alts[altName] = nil
+	return self:SetAltSources(guild, altName, { all = records or {} },
+		money or (prev and prev.money))
+end
+
+--- An alt's stored tuples as ONE flat, aggregated array, or an empty table. Never nil, so callers
+--- need no guard.
+---
+--- The per-source split is a storage detail: an item held in both bags and mail is one row here
+--- with the counts summed, exactly as it was when a single flat set was stored. Cached because
+--- every read would otherwise re-aggregate, and the tooltip path reads this per hover.
 function Store:GetAltRecords(guild, altName)
 	local g = guildTable(self, guild, false)
 	local alt = g and g.alts[altName]
-	return (alt and alt.records) or {}
+	if not alt then return {} end
+
+	-- Written before the per-source split (INV2-VAULT-001): already flat, nothing to aggregate.
+	if not alt.sources then return alt.records or {} end
+
+	local key = viewKey(guild, altName)
+	local cached = recordCache[key]
+	if cached then return cached end
+
+	local all = {}
+	for _, bucket in pairs(alt.sources) do
+		for _, rec in ipairs(bucket) do all[#all + 1] = rec end
+	end
+	local out = bucketOf(all)
+	recordCache[key] = out
+	return out
 end
 
 function Store:GetAltMoney(guild, altName)
@@ -96,6 +191,24 @@ end
 function Store:HasAlt(guild, altName)
 	local g = guildTable(self, guild, false)
 	return (g and g.alts[altName]) ~= nil
+end
+
+--- Was this alt's stored record set built from every source the current scan reads?
+---
+--- `HasAlt` answers "is there a record". This answers "is that record built from today's sources",
+--- and the two disagree for every alt scanned before INV2-MAIL-001: those hold bags + bank and no
+--- mail, so their totals are SHORT rather than wrong. A short total is the worst shape to fall back
+--- on, because it looks like data rather than like an absence -- the reader shows 68 where the
+--- legacy record has 71 and nothing marks the difference.
+---
+--- Absent stamp means schema 1, not "unknown": the field was added with schema 2, so anything
+--- without it was written by a scan that predates mail.
+--- @return boolean
+function Store:IsAltComplete(guild, altName)
+	local g = guildTable(self, guild, false)
+	local alt = g and g.alts[altName]
+	if not alt then return false end
+	return (tonumber(alt.schema) or 1) >= Store.SCHEMA
 end
 
 function Store:GetAltNames(guild)
@@ -158,9 +271,12 @@ end
 --- records, and nothing else would notice.
 function Store:InvalidateView(guild, altName)
 	if guild and altName then
-		viewCache[viewKey(guild, altName)] = nil
+		local key = viewKey(guild, altName)
+		viewCache[key] = nil
+		recordCache[key] = nil
 	else
 		viewCache = {}
+		recordCache = {}
 	end
 end
 

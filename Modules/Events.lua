@@ -59,7 +59,7 @@ function TOGBankClassic_Events:RegisterEvents()
 	-- Filter out "No player named X is currently playing" and "Player not found" errors from chat
 	-- These are detected and handled by CHAT_MSG_SYSTEM event handler
 	-- Use fast plain-text check before pattern matching for performance
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function(self, event, message, ...)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function(_, _, message)
 		if message then
 			-- Check for Classic Era pattern
 			if message:find("No player named ", 1, true) then
@@ -77,6 +77,12 @@ function TOGBankClassic_Events:RegisterEvents()
 	end)
 
 	-- Hook MailFrame visibility changes directly for more reliable detection
+	-- THREE MARKER SPELLINGS EXIST AND EACH BELONGS TO A DIFFERENT HOOK. `togBankHooked` here
+	-- and on MailFrameTab2; `TOGBankHooked` on MailFrame further down for a separate hook;
+	-- `togbankHooked` in Modules/Output.lua for the debug frame. Every set/check pair is
+	-- internally consistent, so nothing is broken today -- but MailFrame carries TWO of them,
+	-- and reusing the wrong one for a third hook would either skip the hook or install it twice,
+	-- silently. Match the spelling to the hook you are guarding, do not pick the nearest one.
 	if MailFrame and not MailFrame.togBankHooked then
 		MailFrame.togBankHooked = true
 		MailFrame:HookScript("OnShow", function()
@@ -128,7 +134,14 @@ function TOGBankClassic_Events:UnregisterEvents()
 	end
 	TOGBankClassic_Bank.eventsRegistered = false
 
+	-- EVENT-002: these three were registered and never unregistered, so after OnDisable the
+	-- addon kept handling them -- still paying the roster-update cost and still running its
+	-- logout handler for a user who had switched it off. The register and unregister sets must
+	-- stay symmetric; a spec now asserts that rather than leaving it to review.
 	self:UnregisterEvent("PLAYER_LOGIN")
+	self:UnregisterEvent("PLAYER_LOGOUT")
+	self:UnregisterEvent("GUILD_ROSTER_UPDATE")
+	self:UnregisterEvent("PLAYER_ENTERING_WORLD")
 	self:UnregisterEvent("GUILD_RANKS_UPDATE")
 	self:UnregisterEvent("BANKFRAME_OPENED")
 	self:UnregisterEvent("BANKFRAME_CLOSED")
@@ -152,7 +165,7 @@ function TOGBankClassic_Events:SetShareTimer()
 		TOGBankClassic_Core:CancelTimer(self.shareTimer)
 		self.shareTimer = nil
 	end
-	self.shareTimer = TOGBankClassic_Core:ScheduleTimer(function(...)
+	self.shareTimer = TOGBankClassic_Core:ScheduleTimer(function()
 		TOGBankClassic_Events:OnShareTimer()
 	end, TIMER_INTERVALS.VERSION_BROADCAST)
 end
@@ -201,7 +214,10 @@ function TOGBankClassic_Events:OnShareTimer()
 
 	-- REQUEST-RETIRE-001: Prune expired done requests on the periodic timer so fulfilled/
 	-- cancelled requests don't accumulate indefinitely.  PruneIfNeeded is throttled
-	-- internally (5-min guard) so calling it here every ~3 min is safe.
+	-- internally (REQUEST_LOG.PRUNE_INTERVAL) so calling it on every share timer is safe --
+	-- DOC-004: this said "every ~3 min", but the share timer is TIMER_INTERVALS.VERSION_BROADCAST,
+	-- which is 600s. The conclusion held; the reasoning did not, since at that interval the
+	-- internal guard is never the limiter.
 	TOGBankClassic_Guild:PruneIfNeeded()
 
 	self:SetShareTimer()
@@ -209,7 +225,8 @@ end
 
 -- Delta-specific version broadcast (SYNC-001 fix)
 -- P2P-006: Broadcast our hash list to the guild so peers can offer newer data.
--- Called on the 3-minute timer (via Guild:Share) and after every bank scan.
+-- Called on the periodic share timer (TIMER_INTERVALS.VERSION_BROADCAST, via Guild:Share) and
+-- after every bank scan.
 function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then return end
@@ -289,8 +306,8 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 
 	-- SETTINGS-001: Piggyback settings broadcast for authorized senders so new joiners
 	-- and members who missed the immediate broadcast still receive guild-configured values.
-	local myPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
-	if myPlayer and (TOGBankClassic_Guild:IsBank(myPlayer) or TOGBankClassic_Guild:SenderIsOfficer(myPlayer) or TOGBankClassic_Guild:SenderIsGM(myPlayer)) then
+	local settingsSender = TOGBankClassic_Guild:GetNormalizedPlayer()
+	if settingsSender and (TOGBankClassic_Guild:IsBank(settingsSender) or TOGBankClassic_Guild:SenderIsOfficer(settingsSender) or TOGBankClassic_Guild:SenderIsGM(settingsSender)) then
 		TOGBankClassic_Guild:BroadcastSettings()
 	end
 

@@ -18,6 +18,12 @@ local CATEGORY_META = {
 	SYNC     = { order = 22, desc = "Data synchronization operations" },
 	UI       = { order = 23, desc = "UI operations, window opens/closes (includes SEARCH keystroke and DrawContent timing)" },
 	WHISPER  = { order = 24, desc = "Whisper sends, skips, and online checks" },
+	-- DEBUG-001: the third of the three registries that must agree (DEBUG_CATEGORY in
+	-- Constants.lua and debugCategories in Database:Init are the others). Without a row here the
+	-- category exists and works but has no toggle in the options panel, so a user cannot turn it
+	-- off -- which is the same category of silent gap the finding is about, one layer up.
+	FULFILL  = { order = 25, desc = "Request fulfillment: mail matching and completion detection" },
+	SYSTEM   = { order = 26, desc = "The addon's own logging internals: persistent log rotation and garbage collection" },
 }
 
 -- Build one inline AceConfig group for a single debug category.
@@ -193,6 +199,72 @@ local function BuildDebugArgs()
 	return args
 end
 
+-- ALPHA-001: one transparency slider per window, generated from TOGBankClassic_UI.ALPHA_WINDOWS
+-- so adding a window means adding one row there rather than editing this file too.
+--
+-- Stored as 0..1, which is what SetBackdropColor wants, and displayed as a percentage by
+-- AceConfig's `isPercent` -- it renders the value and both end labels as percentages, so no
+-- conversion is needed in get/set and there is no rounding step to get wrong.
+--
+-- Shape (min/max/step/isPercent/width) deliberately mirrors the Window opacity slider in FGI, so
+-- the control behaves identically across the TOG addons. The difference is that FGI has one
+-- window and therefore one slider; here it is one per window, which is what was asked for.
+local function BuildAppearanceArgs()
+	local args = {
+		["alphaHeader"] = {
+			order = 0,
+			type  = "header",
+			name  = "Window Transparency",
+		},
+		["alphaDesc"] = {
+			order = 1,
+			type  = "description",
+			name  = "Set how see-through each window's background is. Only the window frame fades — "
+				.. "item icons, counts and text stay fully readable at every setting.\n\n"
+				.. "Changes apply immediately to any window that is already open.",
+		},
+	}
+
+	for i, entry in ipairs(TOGBankClassic_UI.ALPHA_WINDOWS) do
+		args["alpha_" .. entry.key] = {
+			order = 10 + i,
+			type  = "range",
+			-- Full row so the slider has a long track to drag against.
+			width = "full",
+			name  = entry.label,
+			desc  = ("Background opacity of the %s window. 100%% is solid, 10%% is nearly "
+				.. "invisible. The frame texture has its own translucency, so a solid backing "
+				.. "layer sits behind it to make 100%% actually opaque."):format(entry.label),
+			-- Matches the same slider in FGI. The floor is 10%, not 0: a fully invisible window
+			-- is one a player cannot find again to fix, and 10% is already see-through enough
+			-- for any real use.
+			min = 0.1, max = 1.0, step = 0.05,
+			isPercent = true,
+			get = function() return TOGBankClassic_UI:GetWindowAlpha(entry.key) end,
+			set = function(_, v) TOGBankClassic_UI:SetWindowAlpha(entry.key, v) end,
+		}
+	end
+
+	args["alphaResetSpacer"] = { order = 100, type = "description", name = " " }
+	args["alphaReset"] = {
+		order = 101,
+		type  = "execute",
+		width = "full",
+		name  = "Reset All Windows to Solid",
+		desc  = "Sets every window back to 100% opacity.",
+		func  = function()
+			for _, entry in ipairs(TOGBankClassic_UI.ALPHA_WINDOWS) do
+				TOGBankClassic_UI:SetWindowAlpha(entry.key, 1)
+			end
+			-- Single %, not %%: Output:Log only runs string.format when varargs are present, so
+			-- with none this string is printed verbatim.
+			TOGBankClassic_Output:Info("All window transparency reset to 100%.")
+		end,
+	}
+
+	return args
+end
+
 -- ─────────────────────────────────────────────────────────────────────────────
 TOGBankClassic_Options = {}
 
@@ -214,6 +286,12 @@ function TOGBankClassic_Options:Init()
 		},
 		global = {
 				bank = { report = true, logLevel = LOG_LEVEL.INFO, commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true },
+			-- ALPHA-001: per-window chrome transparency, 0..1, keyed by TOGBankClassic_UI.ALPHA_WINDOWS.
+			-- Account-wide rather than per-character: it is a pure display preference with no
+			-- per-character meaning, and setting it once per alt is exactly the chore the request
+			-- was about avoiding. Window POSITIONS stay per-character (db.char.framePositions) --
+			-- those people really do arrange differently per alt.
+			windowAlpha = {},
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
@@ -416,6 +494,12 @@ function TOGBankClassic_Options:Init()
 						end,
 					},
 				},
+			},
+			appearance = {
+				order = 1.5,
+				type = "group",
+				name = "Appearance",
+				args = BuildAppearanceArgs(),
 			},
 			debug = {
 				order = 2,

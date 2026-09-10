@@ -19,12 +19,18 @@ a *later file*. That failure mode is invisible in a single-file run.
 Coverage for one module:
 
 ```sh
-lua Tests/coverage.lua Modules/Item.lua Tests/item_spec.lua
+lua Tests/wowapi/coverage.lua Modules/Item.lua Tests/item_spec.lua
 ```
 
-`busted` also works (`.busted` defers to the shared config in the submodule), but it is not
-needed and not installed here — the bundled runner exists because busted pulls in `luasystem`,
-whose MSVC build chain fights Windows badly, doubly so under `C:\Program Files (x86)`.
+**Do not run `busted`, and do not select `.busted` from a multi-suite runner.** `.busted` exists
+only because busted reads it from the run directory; it is a discovery marker, not a suite to
+invoke. The harness bans it fleet-wide (`Tests/wowapi/CLAUDE.md`), and it is red here: driven
+through busted on 2026-09-09 it produced ~50 errors across `wiring_spec`, `syncpipeline_spec`,
+`p2psession_spec`, `inventoryhash_spec` and others, every one an addon global reading nil in a
+module (`Modules/Bank.lua:129: attempt to index global 'TOGBankClassic_Guild'`) that the spec's
+own `before_each` had just assigned. The same specs are green under `run.lua`, so this is the
+runner, not the addon — the cause was not traced further, because the fix is to not run it.
+An earlier version of this section said "busted also works"; that claim was never tested.
 
 ## First-time setup
 
@@ -40,7 +46,7 @@ git submodule update --init --recursive
 | --- | --- |
 | `Tests/wowapi/` | The shared WoWAPITesting harness (submodule — **do not edit**) |
 | `Tests/env_togbank.lua` | The fake WoW environment this addon needs on top of the harness |
-| `Tests/coverage.lua` | Zero-dependency line coverage, from Lua 5.1 bytecode debug info |
+| `Tests/wowapi/coverage.lua` | Zero-dependency line coverage, from Lua 5.1 bytecode debug info. **Lives in the harness** -- a local `Tests/coverage.lua` was deleted on 2026-09-08 as the stale fork it had become (209 lines against the harness's maintained 489) |
 | `Tests/*_spec.lua` | The specs |
 | `Tests/HARNESS_CONTRACT.md` | Proposed harness additions, staged locally — hand upstream |
 
