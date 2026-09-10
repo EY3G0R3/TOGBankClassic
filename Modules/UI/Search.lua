@@ -279,8 +279,11 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 		itemName = itemName,
 		itemID = itemEntry.ID,  -- numeric ID; enables same-name variant disambiguation on fulfillment
 		-- REQ-003: random-suffix ID (e.g. "of the Tiger" vs "of the Monkey"), which shares itemID
-		-- with its sibling variants. nil for plain items and items with no link available.
-		suffixID = TOGBankClassic_Item:GetSuffixID(itemEntry.Link),
+		-- with its sibling variants. nil for plain items and items with no suffix.
+		-- INV2-SUFFIX-001: this is where a request's suffix is MINTED, so parsing it out of the
+		-- rebuilt Link lost it for good -- the request was then created suffix-less and matched
+		-- any sibling variant. Read the row's stored Suffix instead.
+		suffixID = TOGBankClassic_Item:RowSuffixID(itemEntry),
 		available = tonumber(itemEntry.Count) or 0,
 	}
 
@@ -1046,8 +1049,16 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 						end
 						local found = false
 						local existingEntry = nil
+						-- INV2-SUFFIX-001: identity here is ID *plus suffix*. Matching on ID alone
+						-- summed "of the Tiger" and "of the Monkey" into one row carrying a single
+						-- variant's link and both variants' counts -- so search showed a stock
+						-- figure no variant actually had, and requesting from it minted whichever
+						-- suffix happened to be seen first. REQ-003 already treats these as
+						-- different items; this makes search agree.
+						local entrySuffix = TOGBankClassic_Item:RowSuffixID(itemEntry)
 						for _, existing in pairs(self.SearchData.Lookup[name]) do
-							if existing.alt == player and existing.item.ID == itemEntry.ID then
+							if existing.alt == player and existing.item.ID == itemEntry.ID
+							   and TOGBankClassic_Item:RowSuffixID(existing.item) == entrySuffix then
 								found = true
 								existingEntry = existing
 								break
@@ -1062,10 +1073,16 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 							table.insert(self.SearchData.Lookup[name], {
 								alt  = player,
 								item = {
-									ID    = itemEntry.ID,
-									Count = itemEntry.Count,
-									Link  = itemEntry.Link,
-									Info  = info,
+									ID      = itemEntry.ID,
+									Count   = itemEntry.Count,
+									-- INV2-SUFFIX-001: carried, not re-derived. This rebuilt row is
+									-- what ShowRequestDialog mints the request's suffixID from, and
+									-- dropping the field here sent it back to parsing a link that
+									-- only encodes the suffix when ItemDB resolved the id.
+									Suffix  = itemEntry.Suffix,
+									Enchant = itemEntry.Enchant,
+									Link    = itemEntry.Link,
+									Info    = info,
 								},
 							})
 						end

@@ -151,6 +151,16 @@ function P2P:BeginCollectWindow(myHashes) -- luacheck: ignore myHashes
 
 	self.isCollecting = true
 	self.offers = {}
+	-- TIMER-SAFE: assigns without cancelling first, and that is correct HERE rather than an
+	-- oversight -- this branch is only reached when `isCollecting` is false, and the only thing
+	-- that clears that flag is `Dispatch` (:239-240), which is called from NOWHERE BUT THE TIMER
+	-- CALLBACKS above and below. So when control arrives here the previous timer has already
+	-- FIRED, and `collectTimer` holds a spent handle rather than a live one.
+	--
+	-- WHAT WOULD BREAK IT, stated because it is one edit away: any new path that sets
+	-- `isCollecting = false` while the timer is still armed -- a reset, an abort, a manual
+	-- Dispatch. That path must cancel the timer, or this line silently overwrites a live one and
+	-- it fires later into a window it does not belong to. That is exactly P2P-026/027.
 	self.collectTimer = C_Timer.NewTimer(COLLECT_WINDOW, function()
 		P2P:Dispatch()
 	end)

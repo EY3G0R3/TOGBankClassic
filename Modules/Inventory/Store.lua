@@ -234,7 +234,14 @@ end
 --- Present an alt's inventory in the shape the existing UI already consumes, so the first cut
 --- of V2 needs no UI changes:
 ---
----     { { ID = <id>, Count = <n>, Link = <link|nil>, Info = { ... } }, ... }
+---     { { ID = <id>, Count = <n>, Suffix = <n>, Enchant = <n>, Link = <link|nil>, Info = { ... } }, ... }
+---
+--- INV2-SUFFIX-001: Suffix and Enchant are carried as first-class numbers (0 meaning "none")
+--- rather than left to be parsed back out of Link. Only the FIRST step of Resolve.describe
+--- preserves them in the link -- step 2 (Resolve.lua:187) emits a bare "item:<id>" and step 3
+--- emits no link at all -- so a consumer recovering the suffix from the link silently loses it
+--- on any client whose ItemDB lacks that id. The record held the value the whole time; this
+--- stops the lossy round trip rather than working around it.
 ---
 --- Cached because resolving ~10k rows on every draw would be worse than the link storage it
 --- replaces. Dropped on any write to that alt — see InvalidateView.
@@ -247,10 +254,12 @@ function Store:GetAltView(guild, altName)
 	for _, rec in ipairs(self:GetAltRecords(guild, altName)) do
 		local d = Resolve.describe(rec)
 		out[#out + 1] = {
-			ID    = Record.id(rec),
-			Count = Record.count(rec),
-			Link  = d.link,
-			Info  = {
+			ID      = Record.id(rec),
+			Count   = Record.count(rec),
+			Suffix  = Record.suffix(rec),
+			Enchant = Record.enchant(rec),
+			Link    = d.link,
+			Info    = {
 				name     = d.name,
 				icon     = d.icon,
 				rarity   = d.quality,

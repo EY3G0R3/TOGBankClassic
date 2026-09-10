@@ -2,12 +2,20 @@
 --
 -- See docs/INVENTORY_V2.md §6. The asymmetry here is deliberate and permanent:
 --
---   SEND    switchable (sendV2Wire). Safely reversible: flip it off and old clients keep working.
---   RECEIVE never switchable. Both formats are always accepted.
+--   SEND    switchable (sendV2Wire). The legacy send path is GONE, so off means send nothing.
+--   RECEIVE never switchable -- but see the correction below about what that now means.
 --
--- Receiving both is not a migration aid to be removed later -- it is what lets a guild run mixed
--- versions at all. A client that only understood tuples would silently ignore every peer still
--- sending links, and "ignored" looks exactly like "that banker has no items".
+-- CORRECTION, AND IT MATTERS FOR ANYONE REASONING ABOUT MIXED VERSIONS. This header used to say
+-- "Both formats are always accepted ... what lets a guild run mixed versions at all". THAT IS NO
+-- LONGER TRUE AT THE CONSUMER. The 2026-09-09 directive deleted backwards compatibility on the
+-- wire in both directions: `Modules/Chat.lua`'s `togbank-d4` handler now DROPS any payload that is
+-- not a tuple payload, including an old client's delta, before `Wire.decode` is ever reached -- and
+-- warns the user by name when the sender is a banker.
+--
+-- SO `decodeLegacy` BELOW IS REACHABLE ONLY THROUGH `Wire.decode` ITSELF, and the inventory path no
+-- longer calls it that way. Do not read its continued existence as evidence that legacy inventory
+-- is still accepted: it is not. Read Chat.lua's handler for what actually happens to an old
+-- payload; this file describes only what the decoder is capable of.
 --
 -- Wire shape (positional, matching the togbank-ri / rd2 convention already used for requests):
 --
@@ -29,7 +37,8 @@ local Record = TOGBankClassic_Inventory_Record
 -- not breaking: older receivers ignore it, newer ones tolerate its absence.
 Wire.VERSION = 1
 
-local F_VERSION, F_ALT, F_MONEY, F_RECORDS, F_HASH, F_HASHV2, F_UPDATEDAT = 1, 2, 3, 4, 5, 6, 7
+local F_VERSION, F_ALT, F_MONEY, F_RECORDS, F_HASH, F_HASHV2, F_UPDATEDAT, F_MAILHASH =
+	1, 2, 3, 4, 5, 6, 7, 8
 
 --- Build a V2 payload. Returns nil when there is nothing sendable, so callers never transmit an
 --- empty envelope that a receiver would apply as "this alt has no items".
@@ -75,17 +84,35 @@ local F_VERSION, F_ALT, F_MONEY, F_RECORDS, F_HASH, F_HASHV2, F_UPDATEDAT = 1, 2
 --- `Bank.lua:417-420` stamps the timestamp and both hashes in one block from one scan, and they
 --- travel together in one payload.
 ---
+--- HASH-CANON-004: `mailHash` TRAVELS TOO, and leaving it off was a regression rather than an
+--- omission. `Guild:HashesAgreeWith` requires BOTH the inventory hash and the mail hash to match
+--- before it will call an alt in sync (`Guild.lua:1097`). Only the author's own scan stamps
+--- `alt.mailHash` (`Bank.lua:454`), and the two paths that used to populate it for a REMOTE alt --
+--- the query-path recompute and the no-change adoption -- were both deleted as hash-mutation sites
+--- in HASH-CANON-002. Correctly deleted: they minted a number on a client that had not read that
+--- mail. But nothing replaced them, so a receiving client held `nil` for every remote banker's mail
+--- hash while the banker advertised a real one.
+---
+--- FAILURE THAT CAUSED: `mailHashMatches` compares the advertised value against `localAlt.mailHash
+--- or 0`, so it is false forever. Every remote banker reads as permanently sync-pending and is
+--- re-requested indefinitely -- a broadcast storm of exactly the shape this work exists to remove,
+--- and it would have looked like the original complaint rather than like a new defect.
+---
+--- The fix is the same shape as the other two: the author stamps it, it rides with the data it
+--- describes, and the receiver stores it verbatim rather than deriving one.
 --- @param hash number|nil the author's revision-1 hash for this record set
 --- @param hashV2 number|nil the author's revision-2 hash
 --- @param updatedAt number|nil the author's publish time, from the scan that produced these records
-function Wire.encode(altName, records, money, hash, hashV2, updatedAt)
+--- @param mailHash number|nil the author's mail hash, stamped by the same scan
+function Wire.encode(altName, records, money, hash, hashV2, updatedAt, mailHash)
 	if type(altName) ~= "string" or altName == "" then return nil end
 	local out = {}
 	for _, rec in ipairs(records or {}) do
 		if Record.isValid(rec) then out[#out + 1] = rec end
 	end
 	return { Wire.VERSION, altName, tonumber(money) or 0, out,
-		tonumber(hash) or nil, tonumber(hashV2) or nil, tonumber(updatedAt) or nil }
+		tonumber(hash) or nil, tonumber(hashV2) or nil, tonumber(updatedAt) or nil,
+		tonumber(mailHash) or nil }
 end
 
 --- True if `payload` looks like a V2 tuple payload rather than a legacy link payload.
@@ -104,12 +131,12 @@ end
 --- are nil when the sender did not supply them, and nil is meaningful -- it means "this author
 --- published no canon", which a receiver must be able to tell apart from "the author published
 --- zero". Do not coerce them to 0.
---- @return string|nil altName, table records, number money, number|nil hash, number|nil hashV2, number dropped
+--- @return string|nil altName, table records, number money, number|nil hash, number|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash
 local function decodeV2(payload)
 	local version = payload[F_VERSION]
 	-- A newer major layout cannot be read positionally, and guessing would apply wrong values
 	-- silently. Refusing is the safe failure: the sender retries as the receiver upgrades.
-	if version > Wire.VERSION then return nil, {}, 0, nil, nil, 0 end
+	if version > Wire.VERSION then return nil, {}, 0, nil, nil, 0, nil, nil end
 
 	local records, dropped = {}, 0
 	for _, rec in ipairs(payload[F_RECORDS] or {}) do
@@ -141,7 +168,7 @@ local function decodeV2(payload)
 	-- reasoning as the hashes directly above.
 	return payload[F_ALT], records, tonumber(payload[F_MONEY]) or 0,
 		tonumber(payload[F_HASH]), tonumber(payload[F_HASHV2]), dropped,
-		tonumber(payload[F_UPDATEDAT])
+		tonumber(payload[F_UPDATEDAT]), tonumber(payload[F_MAILHASH])
 end
 
 --- Decode a legacy link payload into tuples.
@@ -166,6 +193,44 @@ local function decodeLegacy(payload)
 	return altName, records, tonumber(payload.money) or 0
 end
 
+--- CMD-004: build the LEGACY payload these tuples would have been sent as, for size comparison.
+---
+--- Deliberately adjacent to `decodeLegacy` above, because the two are one contract seen from either
+--- end and this is the only thing keeping them in step. `/togbank dev bandwidth` used to rebuild
+--- this shape inline in `Modules/Chat.lua`, which made it a SECOND SPELLING of the legacy format
+--- with nothing asserting the two agreed -- and the number it produces is published on the store
+--- page, so a silent divergence would put a wrong figure in front of users.
+---
+--- `wire_spec` round-trips the output through `Wire.decode` and asserts the records come back
+--- unchanged. That is what makes divergence loud: if this stops emitting a shape `decodeLegacy`
+--- accepts, the round trip breaks rather than the measurement quietly moving.
+---
+--- NOT A SEND PATH. Nothing transmits this -- the legacy send path is deleted. It exists to be
+--- MEASURED. Resolve is looked up at call time rather than held, so this file gains no load-order
+--- dependency on it.
+--- @return table payload, number resolvedLinks, number rows
+function Wire.legacyShapeFor(altName, records, money)
+	local Resolve = TOGBankClassic_Inventory_Resolve
+	local items, resolved = {}, 0
+	for _, rec in ipairs(records or {}) do
+		local link
+		if Resolve and Resolve.describe then
+			local d = Resolve.describe(rec)
+			link = d and d.link or nil
+		end
+		if link then resolved = resolved + 1 end
+		items[#items + 1] = {
+			ID    = Record.id(rec),
+			Count = Record.count(rec),
+			Link  = link,
+		}
+	end
+	-- `resolved` is returned so a caller can tell "the legacy payload was genuinely this small"
+	-- from "ItemDB could not resolve these items, so the links are missing and the comparison is
+	-- measuring an absence". Without it a client with no ItemDB reports a spectacular saving.
+	return { name = altName, items = items, money = tonumber(money) or 0 }, resolved, #items
+end
+
 --- Decode either format. Callers do not need to know which arrived.
 ---
 --- HASH-CANON-001: `hash` and `hashV2` are the AUTHOR'S, forwarded verbatim, and are nil when the
@@ -174,15 +239,23 @@ end
 --- HASH-CANON-001 rule 7: `updatedAt` is the AUTHOR'S publish time, forwarded the same way, and is
 --- nil when the sender published none. A caller must order by this rather than by its own receive
 --- time -- see the note on `Wire.encode` for what the receive-time stamp broke.
---- @return string|nil altName, table records, number money, string format, number|nil hash, number|nil hashV2, number dropped, number|nil updatedAt
+--- HASH-CANON-004: `mailHash` is forwarded the same way and for the same reason -- see the note on
+--- `Wire.encode`. Agreement needs it, and only the author may produce one.
+---
+--- THE POSITIONS ARE NOT THE SAME AS `decodeV2`'s. This wrapper inserts `format` at position 4, so
+--- every later value sits one slot further right than the inner function returns it. Counting
+--- underscores against `decodeV2` is how a caller lands on `updatedAt` while believing it read the
+--- mail hash -- which happened while writing this, and the spec caught it only because it asserted
+--- a distinctive value rather than merely "not nil".
+--- @return string|nil altName, table records, number money, string format, number|nil hash, number|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash
 function Wire.decode(payload)
-	if type(payload) ~= "table" then return nil, {}, 0, "invalid", nil, nil, 0, nil end
+	if type(payload) ~= "table" then return nil, {}, 0, "invalid", nil, nil, 0, nil, nil end
 	if Wire.isV2(payload) then
-		local alt, records, money, hash, hashV2, dropped, updatedAt = decodeV2(payload)
-		return alt, records, money, "v2", hash, hashV2, dropped, updatedAt
+		local alt, records, money, hash, hashV2, dropped, updatedAt, mailHash = decodeV2(payload)
+		return alt, records, money, "v2", hash, hashV2, dropped, updatedAt, mailHash
 	end
 	local alt, records, money = decodeLegacy(payload)
-	return alt, records, money, "legacy", nil, nil, 0, nil
+	return alt, records, money, "legacy", nil, nil, 0, nil, nil
 end
 
 --- Should this client emit tuples? Send is switchable; receive never is.

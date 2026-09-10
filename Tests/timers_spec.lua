@@ -156,3 +156,144 @@ describe("TIMER-001 as a class, across every scheduling module", function()
 		end
 	end)
 end)
+
+-- P2P-026 / P2P-027 AS A CLASS: a LIVE timer handle overwritten without being cancelled.
+--
+-- THIS IS A DIFFERENT DEFECT FROM TIMER-001 ABOVE, and the distinction is why this block exists.
+-- TIMER-001 is "the handle was never real" (C_Timer.After returns nothing). This is "the handle was
+-- real, and we dropped our only reference to it while it was still armed". Fixing TIMER-001 by
+-- swapping to NewTimer is what MADE this one reachable: the handles became real, so overwriting one
+-- became capable of losing a live timer instead of losing a nil.
+--
+-- IT HAS BITTEN TWICE, in one version -- P2P-026 (a repeated sync request aborted five seconds later
+-- by the request it replaced) and P2P-027 (a retry cycle abandoning a sync that was already
+-- succeeding). Both were found by hand-sweeping, twice, and a hand sweep is exactly what does not
+-- survive the next edit.
+--
+-- THE FIVE SHAPES THAT ARE SAFE, all of which exist in this codebase today:
+--   1. `:Cancel()` on the same slot immediately before  (P2PSession ArmSessionTimer)
+--   2. a named stop method called first                 (UI/StatusBar StartTicker -> StopTicker)
+--   3. a latch guard, `if not <slot> then`              (Chat hashBroadcastTimer)
+--   4. a fresh `local` per call, self-cancelling        (Guild's player-name ticker)
+--   5. unreachable while live, PROVEN and marked TIMER-SAFE with the reasoning  (P2PSession:154)
+--
+-- Shape 5 is the escape hatch and it is deliberately expensive: it costs a comment that has to say
+-- WHY, and what would break it. A site that cannot justify itself in a sentence is a site that
+-- should be cancelling.
+describe("P2P-026/027 as a class: no live timer handle is overwritten", function()
+	-- TWO SPELLINGS, BECAUSE THIS ADDON HAS TWO TIMER APIS. Watching only one is the enumeration
+	-- mistake the audit item explicitly warned about: "the reviewer enumerated by PATTERN, which
+	-- only finds the spellings thought of -- an aliased local, a wrapper, or AceTimer would not
+	-- appear."
+	--
+	--   C_Timer.NewTimer / NewTicker  -- the client API. Both share the prefix `NewTi`.
+	--   Core:ScheduleTimer            -- AceTimer, embedded on Core and used by four modules.
+	--
+	-- Lua patterns have no alternation, so these are two patterns rather than one. The first
+	-- version of the C_Timer line tried to fake alternation with a character class and matched 2 of
+	-- the 7 real sites, so the guard below passed while reading almost nothing. The anti-vacuous
+	-- example at the bottom caught that on its first run.
+	local ASSIGN_PATTERNS = {
+		"([%w_%.%[%]\"']+)%s*=%s*C_Timer%.NewTi[%a]*%s*%(",
+		"([%w_%.%[%]\"']+)%s*=%s*[%w_]+:ScheduleT[%a]*%s*%(",
+	}
+
+	--- Every line assigning a cancellable timer handle, as {line=, slot=, text=}.
+	--- An UNassigned call is fire-and-forget and entirely correct -- the risk is only ever in
+	--- holding a handle you might overwrite, so the test is the assignment, never the call.
+	local function timerAssignments(path)
+		local out, n = {}, 0
+		local lines = {}
+		for line in (readFile(path) .. "\n"):gmatch("([^\n]*)\n") do
+			n = n + 1
+			lines[n] = line
+			for _, pat in ipairs(ASSIGN_PATTERNS) do
+				local slot = line:match(pat)
+				if slot then
+					out[#out + 1] = { line = n, slot = slot, text = line }
+					break
+				end
+			end
+		end
+		return out, lines
+	end
+
+	--- Is this assignment protected by one of the five safe shapes?
+	local function isProtected(slot, lineNo, lines)
+		-- The tail of the slot name: `self.collectTimer` -> `collectTimer`, `s.timers[name]` ->
+		-- `timers`. Matching on the tail rather than the full expression is what lets a cancel
+		-- written as `existing:Cancel()` count for an assignment to `s.timers[name]`.
+		local tail = slot:match("([%w_]+)%s*$") or slot:match("([%w_]+)") or slot
+		for i = math.max(1, lineNo - 10), lineNo do
+			local L = lines[i]
+			-- Shape 1, cancel-first. `Cancel[%w_]*%(` rather than `Cancel%(` because AceTimer
+			-- spells it `CancelTimer(` -- the narrower pattern flagged Events.lua:168, which
+			-- cancels three lines above, as unguarded.
+			if L:find("Cancel[%w_]*%s*%(") then return true end
+			-- Shape 2, a named stop method.
+			if L:find(":Stop[%w_]*%s*%(") then return true end
+			-- Shape 3, a latch. BOTH SPELLINGS: `if not X then <arm>` and the early-return
+			-- `if X then return end`. Only the first was recognised at first, which flagged
+			-- Chat.lua:3149 -- guarded by `if self.reprocessTimer then return end` three lines
+			-- above. Requiring the slot name in the condition is what keeps this from matching
+			-- any unrelated `if`.
+			if L:find("if%s+not%s+[%w_%.%[%]]*" .. tail) then return true end
+			if L:find("if%s+[%w_%.%[%]]*" .. tail .. "[%w_%.%[%]]*%s+then") then return true end
+			-- Shape 4, a fresh local per call.
+			if L:find("local%s+" .. tail) then return true end
+			-- Shape 5, proven unreachable-while-live and justified in writing.
+			if L:find("TIMER%-SAFE") then return true end
+		end
+		return false
+	end
+
+	it("guards every NewTimer/NewTicker assignment in every shipped module", function()
+		local unguarded = {}
+		for _, path in ipairs(MODULES) do
+			local assigns, lines = timerAssignments(path)
+			for _, a in ipairs(assigns) do
+				if not isProtected(a.slot, a.line, lines) then
+					unguarded[#unguarded + 1] = string.format("%s:%d: %s", path, a.line,
+						(a.text:gsub("^%s+", "")))
+				end
+			end
+		end
+		assert.equal(0, #unguarded,
+			"a live timer handle can be overwritten here without being cancelled, which is the " ..
+			"P2P-026/027 class -- the old timer keeps running, fires into a state it does not " ..
+			"belong to, and typically aborts work that was already succeeding. Cancel the slot " ..
+			"first, or mark the site TIMER-SAFE with the reason it cannot be live:\n  " ..
+			table.concat(unguarded, "\n  "))
+	end)
+
+	-- Anti-vacuous. If the pattern stops matching -- a rename, a formatting change, a new spelling
+	-- of the call -- the example above passes while reading nothing, which is the exact failure
+	-- this whole file was written about.
+	it("actually finds the timer assignments, so the guard cannot pass over nothing", function()
+		local total = 0
+		for _, path in ipairs(MODULES) do
+			total = total + #(timerAssignments(path))
+		end
+		assert.is_true(total >= 7,
+			"found only " .. total .. " cancellable timer assignments across the shipped modules. " ..
+			"There were 9 when this guard was written -- 7 via C_Timer.NewTimer/NewTicker and 2 " ..
+			"via Core:ScheduleTimer. If they have genuinely gone, lower this number deliberately; " ..
+			"a sudden drop means a pattern stopped matching and the guard above is now checking " ..
+			"less than it appears to")
+
+		-- BOTH SPELLINGS MUST BE FOUND, not just enough of one to clear the total. The AceTimer
+		-- sites are the ones a C_Timer-only sweep misses, which is precisely the gap that made
+		-- this guard incomplete when first written -- a count alone would let that recur silently.
+		local sawC_Timer, sawAce = false, false
+		for _, path in ipairs(MODULES) do
+			local src = readFile(path)
+			if src:find("=%s*C_Timer%.NewTi") then sawC_Timer = true end
+			if src:find("=%s*[%w_]+:ScheduleT") then sawAce = true end
+		end
+		assert.is_true(sawC_Timer, "no C_Timer.NewTimer/NewTicker assignment found anywhere -- that " ..
+			"pattern has stopped matching")
+		assert.is_true(sawAce, "no Core:ScheduleTimer assignment found anywhere -- the AceTimer " ..
+			"half of this sweep has stopped matching, which is the exact blind spot it was " ..
+			"extended to close")
+	end)
+end)

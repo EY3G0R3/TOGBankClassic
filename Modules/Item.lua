@@ -171,6 +171,31 @@ function TOGBankClassic_Item:GetSuffixID(link)
 	return nil
 end
 
+-- INV2-SUFFIX-001: the suffix of an INVENTORY ROW, preferring the stored field over the link.
+--
+-- Rows from the V2 store (Inventory/Store.lua GetAltView) carry Suffix as a first-class number
+-- where 0 means "no suffix". Rows from the legacy store have no such field at all, and there nil
+-- means "unknown, ask the link" rather than "no suffix" -- which is why the two cases cannot be
+-- collapsed into `tonumber(row.Suffix) or GetSuffixID(row.Link)`.
+--
+-- Parsing the link was the old behaviour everywhere, and it is lossy: Resolve.describe only
+-- preserves the suffix in its FIRST step, so a viewer whose ItemDB lacks the id gets a bare
+-- "item:<id>" (or no link) and the variant match silently fails. Use this for anything that came
+-- out of Guild:GetAltItems; keep GetSuffixID for LIVE client links, which always encode it.
+function TOGBankClassic_Item:RowSuffixID(row)
+	if not row then
+		return nil
+	end
+	if row.Suffix ~= nil then
+		local n = tonumber(row.Suffix)
+		if n and n ~= 0 then
+			return n
+		end
+		return nil
+	end
+	return self:GetSuffixID(row.Link)
+end
+
 function TOGBankClassic_Item:GetItems(items, callback)
 	if not items or type(items) ~= "table" then
 		callback({})

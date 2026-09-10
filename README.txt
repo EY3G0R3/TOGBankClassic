@@ -29,8 +29,8 @@ KEY FEATURES:
 - Request items from guild banks via in-game mail
 - Guild-wide request limits for fair resource distribution (officers only)
 - Automatic synchronization with other guild members using the addon
-- Delta sync protocol for 90-99% bandwidth reduction
-- Link-less delta optimization for additional bandwidth savings
+- Bank contents sent as compact numbers, not item links - 85% less data
+- No transfer at all between members whose copies already match
 - Persistent debug logging system for troubleshooting
 - Works seamlessly with multiple bank alts
 
@@ -297,48 +297,63 @@ If the checkbox does nothing:
   addon logs which bag addon it detected and chose.
 
 ================================================================================
-DELTA SYNC FEATURE (v0.7.0+)
+HOW SYNCING WORKS (v1.4.0+)
 ================================================================================
 
-TOGBankClassic v0.7.0+ includes an intelligent delta sync protocol that
-dramatically reduces bandwidth usage by only transmitting changed data instead
-of complete inventories. Version 0.8.0 adds link-less optimization for even
-greater bandwidth savings.
+Bank contents are sent as compact numbers rather than as item links. Each item
+travels as its ID plus a count and a couple of small numbers, and YOUR client
+rebuilds the item from that - so nothing is transmitted that your game already
+knows. Measured on a live guild across 227 items: 19,740 bytes of the old
+format against 2,873 of the new, an 85% reduction.
 
 HOW IT WORKS:
 -------------
-When guild bank characters update their inventory, the addon automatically:
-1. Detects what items have changed since the last sync
-2. Strips item links from delta packets (links rebuilt on receive-side)
-3. Calculates if sending just the changes is more efficient
-4. Uses delta sync if it saves more than 70% bandwidth
-5. Falls back to full sync if changes are too large
-6. Automatically handles errors and version mismatches
+1. A bank character's contents are scanned when you CLOSE the bank window, and
+   given a fingerprint at that moment.
+2. That fingerprint is broadcast to the guild.
+3. Members compare it against what they already hold. If it matches, nothing is
+   requested and nothing is sent.
+4. If it differs, the two clients agree a transfer privately and the contents
+   are sent to the member who asked, not to the whole guild.
+
+The fingerprint is produced ONCE, by the bank character that did the scan, and
+is carried unchanged by everyone else. Nobody else recalculates it. This is what
+stops members overwriting each other's copies with stale data, and it is why
+simply looking at a bank no longer generates guild traffic.
 
 BENEFITS:
 ---------
-- 90-99% reduction in bandwidth for typical updates
-- Link-less optimization further reduces delta packet size
-- Faster sync times and less network traffic
+- 85% less data than the previous format (measured, not estimated)
+- No transfer at all when nothing has changed
+- Bulk transfers go privately to whoever asked, keeping guild chat clear
 - Fully automatic - no configuration required
-- Backwards compatible with older clients
-- Robust error handling with automatic fallback
 - Persistent debug logging for troubleshooting
 
-MONITORING DELTA SYNC:
-----------------------
-Delta sync runs automatically in the background. If you suspect issues,
-enable debug logging with /togbank debug (optionally /togbank debugtab
-first to direct output to a separate chat tab) and watch for DELTA / SYNC
-category messages. Use /togbank debuglog to export a recent slice of the
-persistent log for bug reports.
+MONITORING SYNC:
+----------------
+Syncing runs automatically in the background. If you suspect issues, enable
+debug logging with /togbank debug (optionally /togbank debugtab first to direct
+output to a separate chat tab) and watch for DELTA / SYNC / COMMS category
+messages. Use /togbank debuglog to export a recent slice of the persistent log
+for bug reports.
 
 COMPATIBILITY:
 --------------
-- v0.7.0+ clients can send and receive delta updates
-- v0.6.8 and older clients receive full syncs (no delta support)
-- Mixed guild scenarios work seamlessly
-- Delta sync automatically enables when 50%+ of online guild uses v0.7.0+
+IMPORTANT: v1.4.0 changed the format bank data is sent in, and it is NOT
+backwards compatible.
+
+- v1.4.0+ clients exchange bank data with each other normally.
+- Bank data from a pre-v1.4.0 client CANNOT be read. It is ignored rather than
+  misread, so nothing is corrupted - but you will not see that character's bank
+  contents until they update.
+- When a BANK character is on an older version, the addon tells you by name and
+  asks you to have them update. It says this once per character per session.
+- Everything else - orders, requests, the roster - continues to work across
+  versions.
+
+The practical effect during a rollout: whoever updates first sees less bank
+data, not more, until their bank characters follow. The addon names exactly who
+to chase.
 
 DEBUG LOGGING:
 --------------

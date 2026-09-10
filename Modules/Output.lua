@@ -120,6 +120,25 @@ function TOGBankClassic_Output:RedrawDebugMessages()
 	end
 end
 
+-- CHATWIN-001: how many chat windows the client has, WITHOUT depending on the bare global.
+--
+-- `NUM_CHAT_WINDOWS` is NOT a guaranteed global on Classic Era. Verified in Blizzard's own tree:
+-- the ONLY place it is assigned is
+-- `wow-ui-source-classic_era/Interface/AddOns/Blizzard_DeprecatedChatInfo/Deprecated_ChatFrame.lua:18`,
+-- and that whole file returns early at its line 4 unless `GetCVarBool("loadDeprecationFallbacks")`
+-- is true. So for a player with that CVar off the global is nil, and every `for i = 1,
+-- NUM_CHAT_WINDOWS` in this file was a HARD ERROR rather than a degraded lookup -- the debug tab
+-- would break outright instead of simply not being found.
+--
+-- The deprecated global forwards to `Constants.ChatFrameConstants.MaxChatWindows`, which is
+-- engine-side and present regardless, so that is read first and the global is only the fallback.
+-- The literal is a last resort: Classic Era ships 10 chat windows, and a wrong-but-plausible count
+-- costs a frame we do not scan, where nil costs an error.
+local function numChatWindows()
+	local c = Constants and Constants.ChatFrameConstants and Constants.ChatFrameConstants.MaxChatWindows
+	return tonumber(c) or tonumber(NUM_CHAT_WINDOWS) or 10
+end
+
 -- Create or get dedicated debug chat frame
 function TOGBankClassic_Output:GetDebugFrame()
 	-- Return cached frame if we have it
@@ -128,7 +147,7 @@ function TOGBankClassic_Output:GetDebugFrame()
 	end
 
 	-- Try to find existing TOGBank Debug tab (even if hidden)
-	for i = 1, NUM_CHAT_WINDOWS do
+	for i = 1, numChatWindows() do
 		local name = GetChatWindowInfo(i)
 		if name == "TOGBank Debug" then
 			self.debugFrame = _G["ChatFrame"..i]
@@ -153,7 +172,7 @@ end
 -- Create dedicated debug chat tab
 function TOGBankClassic_Output:CreateDebugTab()
 	-- Check if tab already exists
-	for i = 1, NUM_CHAT_WINDOWS do
+	for i = 1, numChatWindows() do
 		local name = GetChatWindowInfo(i)
 		if name == "TOGBank Debug" then
 			self.debugFrame = _G["ChatFrame"..i]
@@ -188,7 +207,7 @@ function TOGBankClassic_Output:CreateDebugTab()
 
 	-- Find first available chat frame slot (first one with no name)
 	local frameIndex = nil
-	for i = 1, NUM_CHAT_WINDOWS do
+	for i = 1, numChatWindows() do
 		local frame = _G["ChatFrame"..i]
 		if frame then
 			local name = GetChatWindowInfo(i)
@@ -254,7 +273,7 @@ end
 
 -- Remove debug tab
 function TOGBankClassic_Output:RemoveDebugTab()
-	for i = 1, NUM_CHAT_WINDOWS do
+	for i = 1, numChatWindows() do
 		local name = GetChatWindowInfo(i)
 		if name == "TOGBank Debug" then
 			local frame = _G["ChatFrame"..i]

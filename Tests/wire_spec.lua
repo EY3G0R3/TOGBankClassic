@@ -1,9 +1,14 @@
 -- Inventory/Wire — V2 payload encode/decode.
 --
--- The property that must never regress: RECEIVE accepts both formats, unconditionally. Send is
--- switchable; receive is not. A client that only understood tuples would silently ignore every
--- peer still sending links, and an ignored peer is indistinguishable from a banker with no
--- items — which is the exact class of silent wrongness this rework exists to remove.
+-- The property pinned here: `Wire.decode` is CAPABLE of reading both formats. That is a statement
+-- about this decoder and nothing more.
+--
+-- IT IS NOT A STATEMENT ABOUT THE ADDON'S BEHAVIOUR, and this header used to imply it was --
+-- "RECEIVE accepts both formats, unconditionally". Since the 2026-09-09 no-backwards-compatibility
+-- directive, `Modules/Chat.lua`'s `togbank-d4` handler DROPS any payload that is not a tuple
+-- payload before `Wire.decode` is reached, and warns the user by name when the sender is a banker.
+-- So a green run of the legacy examples below says the decoder still works; it does NOT say a
+-- legacy peer's inventory is accepted, because it is not.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
@@ -223,5 +228,95 @@ describe("Wire.estimateSize", function()
 
 	it("returns zero for a non-table", function()
 		assert.equal(0, Wire.estimateSize(nil))
+	end)
+end)
+
+-- CMD-004: the legacy shape now has ONE spelling, and this is what keeps it honest.
+--
+-- `/togbank dev bandwidth` compares a tuple payload against the legacy payload the same rows would
+-- have been sent as, and THE RESULT OF THAT COMPARISON IS PUBLISHED -- it is the "85% less data"
+-- figure on the CurseForge page and in README.txt. The legacy side was originally rebuilt inline in
+-- Modules/Chat.lua, which made it a second spelling of a format `decodeLegacy` already defines,
+-- with nothing asserting the two agreed. A silent divergence there does not break anything visibly;
+-- it puts a wrong number in front of users.
+--
+-- THE ROUND TRIP IS THE GUARD. If `legacyShapeFor` ever stops emitting a shape `decodeLegacy`
+-- accepts, these go red rather than the measurement quietly moving.
+describe("CMD-004: Wire.legacyShapeFor round-trips through the legacy decoder", function()
+	before_each(function()
+		env.reset()
+		loadWire()
+		-- A resolver that returns a realistic link. Without one, every row comes back link-less and
+		-- the examples below would pass over a shape that proves nothing about links at all.
+		TOGBankClassic_Inventory_Resolve = {
+			describe = function(rec)
+				local id = Record.id(rec)
+				return { link = ("|cffffffff|Hitem:%d:0:0:0:0:0:%d:0:60|h[Item %d]|h|r")
+					:format(id, Record.suffix(rec), id) }
+			end,
+		}
+	end)
+
+	it("produces a payload the legacy decoder accepts, with the rows intact", function()
+		local records = { Record.new(858, 7), Record.new(10132, 1, 863), Record.new(4306, 40) }
+		local shape = Wire.legacyShapeFor("Bob-Testrealm", records, 1234)
+
+		local alt, decoded, money, kind = Wire.decode(shape)
+		assert.equal("legacy", kind,
+			"legacyShapeFor emitted something Wire.decode does not classify as legacy -- the two " ..
+			"spellings of the legacy format have diverged (CMD-004)")
+		assert.equal("Bob-Testrealm", alt)
+		assert.equal(1234, money)
+		assert.equal(#records, #decoded,
+			"the legacy round trip lost rows, so the published bandwidth comparison is measuring " ..
+			"a payload nobody would have sent")
+	end)
+
+	-- The identity must survive, not merely the row count: a shape that dropped the suffix would
+	-- still round-trip by length while describing a different item.
+	it("carries the suffix through the round trip, via the link", function()
+		local records = { Record.new(10132, 1, 863) }
+		local _, decoded = Wire.decode(Wire.legacyShapeFor("Bob-Testrealm", records, 0))
+		assert.equal(1, #decoded)
+		assert.equal(863, Record.suffix(decoded[1]),
+			"the suffix did not survive -- legacyShapeFor is emitting links the legacy decoder " ..
+			"cannot read the variant out of, so the comparison is against a lossier payload than " ..
+			"the real legacy format was")
+	end)
+
+	-- The count that tells "the legacy payload really was this small" from "ItemDB is missing, so
+	-- there are no links to measure". Without it a broken install reports a spectacular saving.
+	it("reports how many rows actually resolved to a link", function()
+		local records = { Record.new(858, 7), Record.new(10132, 1, 863) }
+		local _, resolved, rows = Wire.legacyShapeFor("Bob-Testrealm", records, 0)
+		assert.equal(2, rows)
+		assert.equal(2, resolved)
+	end)
+
+	it("reports zero resolved when the resolver cannot produce links", function()
+		TOGBankClassic_Inventory_Resolve = { describe = function() return { link = nil } end }
+		local shape, resolved, rows = Wire.legacyShapeFor("Bob-Testrealm", { Record.new(858, 7) }, 0)
+		assert.equal(1, rows)
+		assert.equal(0, resolved,
+			"an unresolvable item was counted as resolved, so a client with no ItemDB would " ..
+			"report a huge bandwidth saving that is really just the absence of links")
+		-- Still a well-formed legacy payload, just a link-less one -- which is exactly the case
+		-- `decodeLegacy` documents as arriving from older link-less clients.
+		local _, decoded = Wire.decode(shape)
+		assert.equal(1, #decoded)
+	end)
+
+	it("survives an absent resolver rather than erroring", function()
+		TOGBankClassic_Inventory_Resolve = nil
+		local shape, resolved = Wire.legacyShapeFor("Bob-Testrealm", { Record.new(858, 7) }, 0)
+		assert.equal(0, resolved)
+		assert.equal(1, #shape.items)
+	end)
+
+	it("returns an empty item list for no records", function()
+		local shape, resolved, rows = Wire.legacyShapeFor("Bob-Testrealm", {}, 0)
+		assert.same({}, shape.items)
+		assert.equal(0, resolved)
+		assert.equal(0, rows)
 	end)
 end)

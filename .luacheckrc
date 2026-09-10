@@ -91,7 +91,11 @@ read_globals = {
 	"YES", "CANCEL",
 	-- Frames / UI
 	"CreateFrame", "UIParent", "GameTooltip", "GameFontNormal", "BackdropTemplateMixin",
-	"StaticPopupDialogs", "StaticPopup_Show", "SlashCmdList", "BankFrame",
+	-- NOTE: StaticPopupDialogs is deliberately NOT here -- it is in `globals` above, because
+	-- registering a dialog means WRITING a named field into it. Listing it in both made the
+	-- read-only entry win, and every one of Requests.lua's four registrations reported W122
+	-- "setting read-only field" -- the exact warning the `globals` entry exists to prevent.
+	"StaticPopup_Show", "SlashCmdList", "BankFrame",
 	"DEFAULT_CHAT_FRAME", "NUM_CHAT_WINDOWS", "GetChatWindowInfo",
 	"ChatFrame1", "ChatFrame_AddMessageEventFilter", "ChatFrame_RemoveAllMessageGroups",
 	"ChatFrame_RemoveAllChannels", "ChatEdit_InsertLink", "FCF_SetWindowName",
@@ -111,6 +115,11 @@ read_globals = {
 	-- from one source and need not agree.
 	"BANK_CONTAINER", "NUM_BANKGENERIC_SLOTS", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS",
 	"ITEM_UNIQUE", "NUM_CONTAINER_FRAMES",
+	-- CHATWIN-001: the engine-side constants table. Read for ChatFrameConstants.MaxChatWindows,
+	-- because the bare `NUM_CHAT_WINDOWS` global is only assigned inside
+	-- Blizzard_DeprecatedChatInfo, behind GetCVarBool("loadDeprecationFallbacks") -- so it is nil
+	-- for any player who has that CVar off. `Constants` is what the deprecated global forwards to.
+	"Constants",
 	-- Mail
 	"GetInboxNumItems", "GetInboxHeaderInfo", "GetInboxItem", "GetInboxItemLink",
 	"ATTACHMENTS_MAX_RECEIVE", "SendMail", "TakeInboxItem",
@@ -153,8 +162,13 @@ files["Tests"] = {
 	-- no fixture can reach by arranging roster data -- the env's default answers true. Declared as
 	-- the exact field, like Bagnon.search above, so writing any other field of the client's guild
 	-- namespace is still reported.
+	-- NUM_CHAT_WINDOWS and Constants are read-only to the addon (above) and WRITABLE here for the
+	-- same reason LibStub is: CHATWIN-001 is precisely the case where the client does NOT supply
+	-- them, and the only way to drive that branch is to take them away. `debugtab_spec` nils each
+	-- and restores it in a `finally`. A spec cannot arrange this by any other means -- the absence
+	-- IS the condition under test -- and the branch it reaches used to be a hard error.
 	globals = { "LibStub", "string.trim", "GetItemInfoInstant", "GameTooltip.HookScript",
-		"C_GuildInfo.CanViewOfficerNote" },
+		"C_GuildInfo.CanViewOfficerNote", "NUM_CHAT_WINDOWS", "Constants" },
 }
 
 -- The harness is a separate public repo (WoWAPITesting) vendored as a submodule; it carries

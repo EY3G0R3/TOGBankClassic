@@ -45,6 +45,36 @@ Comms system breakdown as of 2026-04-01:
   Never Sent (receive-only for backward compat): togbank-rd
 
 
+ WHY THE CHANNELS ARE SPLIT THE WAY THEY ARE. Read this before "optimising" any send.
+
+ The GUILD channel was the scarce resource -- it was HUGELY congested, and that is the problem
+ this whole layer was built to solve. The operator's own words, 2026-09-10: "P2P was my answer to
+ try to reduce the congestion on guild", and "there is a broadcast, and then the RESPONSE to the
+ broadcast are in Whispers".
+
+ So the split is one idea applied consistently:
+
+   * GUILD carries ONLY the one-to-many hash-list broadcast, which genuinely serves every
+     listener with a single message.
+   * WHISPER carries everything addressed to a specific peer -- the replies to that broadcast,
+     the entire P2P handshake, AND the bulk `togbank-d4` payload.
+
+ THE P2P SESSION MACHINERY IS NOT AN OPTIMISATION BOLTED ON TOP OF A BROADCAST DESIGN. It IS the
+ congestion fix. `togbank-d4` going to a WHISPER whenever a peer asked (Guild.lua:2825-2830) is
+ therefore correct and deliberate, not drift.
+
+ THE TRAP, which has now caught a reader three times in one session: a COMMS log makes the fix
+ look like the disease. One `togbank-hl` to GUILD is followed by ten "Received: togbank-hl via
+ WHISPER from <peer>" lines, and that reads as an amplifier. It is the opposite -- those ten
+ whispers are ten messages NOT sent on the congested channel. A change that moves traffic from
+ WHISPER back onto GUILD is not a win even when it lowers the TOTAL message count, because it
+ spends the exact resource this design protects. MEASURE GUILD-CHANNEL BYTES, NEVER THE TOTAL.
+
+ (One consequence, accepted with eyes open: after a banker scans, every peer goes stale at once,
+ so the same snapshot is whispered once per requester rather than broadcast once. The operator
+ reviewed exactly this cost and kept it -- "that's better, i'm glad that is what it is".)
+
+
  A typical sync looks like this:
 
   1. Banker scans bank → broadcasts togbank-hl (hash-list-broadcast) to guild
@@ -272,26 +302,18 @@ local function ColorPlayerName(name)
 	return string.format("|cff80bfff%s|r", name)
 end
 
--- After adopting full alt data, sync latestBankerHashes to match so IsAltSyncPending resolves.
--- Without this, tabs stay red when the hash-list broadcaster had different SV data than
--- the peer who actually delivered the full alt payload.
-local function SyncBankerHashAfterAdopt(norm)
-	if not TOGBankClassic_Guild.latestBankerHashes then return end
-	local existing = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
-	if not existing then return end
-	local entry = TOGBankClassic_Guild.latestBankerHashes[norm]
-	if not entry then return end
-	local newHash     = existing.inventoryHash or 0
-	local newMailHash = existing.mailHash or 0
-	local newUpdatedAt = existing.inventoryUpdatedAt or existing.version or 0
-	-- Only update if the adopted data is at least as new as what we advertised
-	if newUpdatedAt >= (entry.updatedAt or 0) then
-		entry.hash     = newHash
-		entry.mailHash = newMailHash
-		entry.updatedAt = newUpdatedAt
-		TOGBankClassic_Output:Debug("SYNC", "HASH-ADOPT", "Updated latestBankerHashes[%s] to match adopted data (hash=%08x)", norm, newHash)
-	end
-end
+-- `SyncBankerHashAfterAdopt` WAS HERE and went with the legacy alt-data branch that was its only
+-- caller. It re-pointed `latestBankerHashes[norm]` at whatever the local record held after adopting
+-- a full legacy payload, so that `IsAltSyncPending` would stop reporting the alt as out of date.
+--
+-- It is not worth reviving on the tuple path, and the reason is the point of this whole change: it
+-- copied `existing.inventoryHash` -- REVISION 1, and whatever this client happened to hold -- into
+-- the advertisement this client then serves to everyone else. That is the same "publish a number I
+-- did not author" shape as the three minting sites deleted in HASH-CANON-002, arrived at from the
+-- advertising side rather than the stamping side.
+--
+-- The tuple path needs no equivalent: it stores the AUTHOR'S canon verbatim, so the record and the
+-- advertisement already agree without anything copying between them.
 
 local function FormatSyncStatus(status)
 	if status == ADOPTION_STATUS.ADOPTED then
@@ -1142,38 +1164,25 @@ end
 			TOGBankClassic_Guild:ReceiveRequestMutations(data, sender)
 		end
 
-		if data.type == "alt" then
-			-- only accept alt data if the sender matches the claimed alt name
-			local claimed = data.name
-			local claimedNorm = TOGBankClassic_Guild:NormalizeName(claimed)
-			local allowed = self:IsAltDataAllowed(sender, claimedNorm)
-			if TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
-				allowed = true
-			end
-			local status = allowed and TOGBankClassic_Guild:ReceiveAltData(claimedNorm, data.alt, sender)
-				or ADOPTION_STATUS.UNAUTHORIZED
-			self:Debug(
-				"SYNC",
-				"RECEIVE",
-				">",
-				ColorPlayerName(sender),
-				SHARES_COLOR,
-				"bank data about",
-				ColorPlayerName(claimedNorm) .. ". We",
-				allowed and "accept it." or "do not accept it.",
-				FormatSyncStatus(status)
-			)
-			if allowed then
-				-- ReceiveAltData already applied/rejected; refresh UI if open
-				if status == ADOPTION_STATUS.ADOPTED and TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-					SyncBankerHashAfterAdopt(claimedNorm)
-					TOGBankClassic_UI_Inventory:DrawContent()
-				end
-			else
-				-- ignore spoofed alt data
-				return
-			end
-		end
+		-- INV2 step 10 / the 2026-09-09 directive: THE SECOND INVENTORY RECEIVE PATH WAS HERE, and
+		-- it is deleted along with `Guild:ReceiveAltData`, its only caller.
+		--
+		-- WHAT IT WAS: `data.type == "alt"` on the `togbank-rm` prefix, handing a link-bearing
+		-- LEGACY alt payload to `ReceiveAltData`, which wrote `alt.items` / `alt.bank.items` /
+		-- `alt.bags.items` straight from the wire. It never met the tuples-only guard on
+		-- `togbank-d4`, so the no-backwards-compatibility directive was enforced on one inventory
+		-- path and not the other -- a second way in, on the request-mutation channel.
+		--
+		-- VALIDATED AS UNFED BEFORE DELETING, so nobody re-derives this: the released v1.3.2
+		-- (`4d8fe14`) sends alt inventory on `togbank-d4` (`Guild.lua:2697`) and its ONLY
+		-- `togbank-rm` sender is `RequestLog.lua:1070`, request mutations. No shipped version sends
+		-- inventory on this prefix. So this was dead code rather than the source of the operator's
+		-- reported corruption -- that was INV2-ORDER-001 and HASH-CANON-002 -- and it is removed
+		-- because a bypass that nothing currently drives is still a bypass.
+		--
+		-- THE REQUEST BRANCHES ABOVE ARE UNTOUCHED. `requests-index`, `requests-by-id` and
+		-- `requests-log` are the request framework and share this prefix legitimately; only the
+		-- inventory branch squatting alongside them is gone.
 	end
 
 	if prefix == "togbank-d4" then
@@ -1191,8 +1200,8 @@ end
 		-- payload, including an old client's delta.
 		if TOGBankClassic_Inventory_Wire and TOGBankClassic_Inventory_Wire.isV2(data) then
 			local Wire = TOGBankClassic_Inventory_Wire
-			local altName, records, money, _, wireHash, wireHashV2, wireDropped, wireUpdatedAt =
-				Wire.decode(data)
+			local altName, records, money, _, wireHash, wireHashV2, wireDropped, wireUpdatedAt,
+				wireMailHash = Wire.decode(data)
 			local claimedNorm = altName and TOGBankClassic_Guild:NormalizeName(altName)
 			-- Same authorisation as the legacy branch below: a peer may only speak for an alt it
 			-- is entitled to. Dropping this for the new format would make V2 the easy way to spoof.
@@ -1291,6 +1300,17 @@ end
 						-- make the record disagree with itself.
 						alt.inventoryHash   = wireHash
 						alt.inventoryHashV2 = wireHashV2
+						-- HASH-CANON-004: the author's MAIL hash, stored verbatim like the other
+						-- two. `HashesAgreeWith` (Guild.lua:1097) requires this to match before it
+						-- will call the alt in sync, and after HASH-CANON-002 deleted the two paths
+						-- that used to mint one locally, this is the ONLY way a receiver can hold
+						-- the author's value. Without it every remote banker compares a real
+						-- advertised number against nil and stays pending forever.
+						--
+						-- `or alt.mailHash` so an author that has not scanned mail since upgrading
+						-- (nil on the wire) does not blank a value we already had -- the same
+						-- "absence is not a statement" rule the hashes follow.
+						alt.mailHash        = wireMailHash or alt.mailHash
 					end
 					-- THE AUTHOR'S PUBLISH TIME, STORED VERBATIM -- not our arrival time. This used
 					-- to be `GetServerTime()`, which made the stamp mean "when THIS client heard
@@ -1354,10 +1374,28 @@ end
 				"[INV2] discarded a legacy '%s' payload from %s for %s -- that client predates the " ..
 				"tuple wire format and its data cannot be read. It will sync once they update.",
 				tostring(staleType), tostring(sender), tostring(data.name))
-			if TOGBankClassic_Guild:IsBank(TOGBankClassic_Guild:NormalizeName(sender)) then
-				TOGBankClassic_Output:Warn(
-					"%s is running an older TOGBank and its bank contents cannot be read. " ..
-					"Ask them to update.", tostring(sender))
+			-- ONCE PER SENDER PER SESSION. The Warn above is user-visible and this branch is
+			-- reached on EVERY legacy payload, not once per client -- an unmigrated banker
+			-- re-broadcasts on every scan and every P2P answer, so an unlatched warning is a chat
+			-- flood exactly when a guild is mid-migration and most bankers are still old. Measured
+			-- against a real guild during the v1.4.0 rollout: 9 of 11 online clients unmigrated,
+			-- several of them bankers.
+			--
+			-- Latched per NORMALIZED sender rather than per raw name, so "Bob" and "Bob-Realm"
+			-- cannot each claim a warning for one person.
+			--
+			-- Session-scoped on purpose (a plain table, not SavedVariables): if a banker updates
+			-- mid-session the latch is irrelevant, and if they have not updated by the next login
+			-- the reminder is worth one more line.
+			local normSender = TOGBankClassic_Guild:NormalizeName(sender)
+			if normSender and TOGBankClassic_Guild:IsBank(normSender) then
+				self.staleFormatWarned = self.staleFormatWarned or {}
+				if not self.staleFormatWarned[normSender] then
+					self.staleFormatWarned[normSender] = true
+					TOGBankClassic_Output:Warn(
+						"%s is running an older TOGBank and its bank contents cannot be read. " ..
+						"Ask them to update.", tostring(sender))
+				end
 			end
 			return
 		end
@@ -1962,8 +2000,41 @@ local COMMAND_REGISTRY = {
 		expert = true,
 		handler = function()
 			if TOGBankClassic_Output:CreateDebugTab() then
-				TOGBankClassic_Output:Response("Debug output will now appear in 'TOGBank Debug' tab")
-				TOGBankClassic_Output:Response("Use /togbank debug to enable debug logging")
+				local Out = TOGBankClassic_Output
+				-- DEV-UX-002: this used to say "Debug output will now appear in 'TOGBank Debug'
+				-- tab" unconditionally. That is FALSE in the default state and it is the state
+				-- every first-time user is in: the tab is only the fourth of four gates, and the
+				-- two before it (log level, and at least one opt-in category) are both off by
+				-- default. So the addon confidently reported success and then produced nothing,
+				-- which reads as a broken tab rather than as an unset switch -- the same
+				-- "confident confirmation for something that cannot work" class as DEV-UX-001.
+				-- Report the gates that are actually shut instead of claiming the outcome.
+				local levelOn = Out:GetLevel() == LOG_LEVEL.DEBUG
+				local enabled = {}
+				for name in pairs(DEBUG_CATEGORY) do
+					if Out:IsCategoryEnabled(name) then enabled[#enabled + 1] = name end
+				end
+				table.sort(enabled)
+
+				Out:Response("'TOGBank Debug' tab is ready.")
+				if levelOn and #enabled > 0 then
+					Out:Response("Debug output |cff44ff44IS|r flowing to it. Categories on: |cffffff00%s|r",
+						table.concat(enabled, ", "))
+					return
+				end
+
+				Out:Response("|cffff8800Nothing will appear in it yet.|r Two switches feed the tab:")
+				if not levelOn then
+					Out:Response("  |cffff4444OFF|r  log level - turn it on with |cffffff00/togbank debug|r")
+				else
+					Out:Response("  |cff44ff44ON |r  log level")
+				end
+				if #enabled == 0 then
+					Out:Response("  |cffff4444OFF|r  every category - turn one on with |cffffff00/togbank debug only <CATEGORY>|r")
+					Out:Response("      |cff888888/togbank debug list shows them all.|r")
+				else
+					Out:Response("  |cff44ff44ON |r  categories: |cffffff00%s|r", table.concat(enabled, ", "))
+				end
 			end
 		end,
 	},
@@ -2481,6 +2552,100 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		-- INV2-DOC-001: measure the tuple wire against the link wire ON THIS GUILD'S REAL DATA.
+		--
+		-- The bandwidth claims were pulled from the CurseForge page in the v1.3.2 sweep because
+		-- they were unverified, and the item that replaced them insists on a REAL guild rather
+		-- than a synthetic payload. Scraping a live COMMS log cannot supply it: `togbank-d4` only
+		-- appears when a peer is actually behind, so a healthy guild produces no sample at all.
+		--
+		-- NEITHER SIDE OF THIS IS INVENTED. The V2 number is the real `Wire.encode` output for the
+		-- records actually held. The legacy number is built from the SAME rows with each item's
+		-- link resolved through `Resolve.describe` -- the real link for the real item -- so the
+		-- comparison is one inventory measured two ways, not a measurement against a guess about
+		-- how long a link is.
+		name = "bandwidth",
+		help = "measure the V2 tuple wire against the legacy link wire, on real stored data",
+		handler = function()
+			local Out    = TOGBankClassic_Output
+			local Store  = TOGBankClassic_Inventory_Store
+			local Wire   = TOGBankClassic_Inventory_Wire
+			local Record = TOGBankClassic_Inventory_Record
+			local Resolve = TOGBankClassic_Inventory_Resolve
+			local info   = TOGBankClassic_Guild and TOGBankClassic_Guild.Info
+
+			Out:Response("|cffffff00=== wire size: V2 tuples vs legacy links ===|r")
+			if not (Store and Wire and Record and Resolve) then
+				Out:Error("INV2 modules not loaded"); return
+			end
+			if not (info and info.name) then Out:Error("No guild data loaded"); return end
+
+			local alts = Store:GetAltNames(info.name)
+			if #alts == 0 then
+				Out:Response("|cffffcc00V2 store is empty - no scan has run yet.|r")
+				Out:Response("Open your bank and CLOSE it (the scan runs on close), then retry.")
+				return
+			end
+
+			local totalV2, totalLegacy, totalRows, measured = 0, 0, 0, 0
+			local totalResolved = 0
+			for _, altName in ipairs(alts) do
+				local records = Store:GetAltRecords(info.name, altName)
+				if #records > 0 then
+					local encoded = Wire.encode(altName, records, 0)
+					-- A nil encode would measure as 0 bytes and report a 100% saving -- a wrong
+					-- figure that looks like a triumph rather than an error. Skip the character
+					-- and say so instead.
+					if not encoded then
+						Out:Response("  |cffff4444%s: could not encode, skipped|r", altName)
+					else
+						local v2 = Wire.estimateSize(encoded) or 0
+						-- CMD-004: the legacy shape comes from Wire.legacyShapeFor, which lives
+						-- beside the decoder that defines it. It used to be rebuilt inline here,
+						-- which made it a second spelling with nothing keeping the two in step.
+						local shape, resolved = Wire.legacyShapeFor(altName, records, 0)
+						local legacy = Wire.estimateSize(shape) or 0
+
+						totalV2, totalLegacy = totalV2 + v2, totalLegacy + legacy
+						totalRows      = totalRows + #records
+						totalResolved  = totalResolved + resolved
+						measured       = measured + 1
+						Out:Response("  %s: %d rows, V2 %d B, legacy %d B", altName, #records, v2, legacy)
+					end
+				end
+			end
+
+			if measured == 0 or totalLegacy == 0 then
+				Out:Response("|cffffcc00Nothing measurable - every stored character has no rows.|r")
+				return
+			end
+
+			-- REFUSE TO REPORT A PERCENTAGE THE MEASUREMENT CANNOT SUPPORT. The legacy side is only
+			-- big because it carries item LINKS; if ItemDB could not resolve them the rows come out
+			-- link-less, the legacy payload is nearly as small as the tuple one, and the reduction
+			-- reads as spectacular for the worst possible reason -- the comparison is measuring an
+			-- absence. This is not hypothetical: ItemDB is a required dependency, so the failure
+			-- appears exactly on a broken install, which is where a wrong number is least likely to
+			-- be questioned. Whole numbers only, so a partial resolve is still reported rather than
+			-- rounded into looking fine.
+			if totalResolved < totalRows then
+				Out:Error("Only %d of %d items resolved to a link.", totalResolved, totalRows)
+				Out:Response("|cffffcc00No percentage reported: the legacy figure is only meaningful " ..
+					"when the links it is made of exist. Check ItemDB is installed.|r")
+				Out:Response("  V2 tuples : %d bytes over %d rows", totalV2, totalRows)
+				return
+			end
+
+			-- Reported as a REDUCTION because that is the claim the page makes. Rounded down, so
+			-- the published figure is never better than what was measured.
+			local pct = math.floor(((totalLegacy - totalV2) / totalLegacy) * 100)
+			Out:Response("|cffffff00TOTAL|r %d characters, %d rows", measured, totalRows)
+			Out:Response("  V2 tuples : |cff44ff44%d bytes|r", totalV2)
+			Out:Response("  legacy    : |cffff8800%d bytes|r", totalLegacy)
+			Out:Response("  reduction : |cff44ff44%d%%|r", pct)
+		end,
+	},
+	{
 		-- INV2: prove the V2 store agrees with the legacy one, on live data.
 		--
 		-- This is the whole reason the V2 scan mirrors rather than replaces: two independent
@@ -2752,7 +2917,14 @@ local COMMAND_REGISTRY = {
 -- Catalogued in docs/DEV_COMMANDS.md (not shipped to players; docs/ is ignored in .pkgmeta).
 -- Add a name here to flip a command from top-level user-facing to dev-only without touching the
 -- COMMAND_REGISTRY entry itself.
+-- A dev command must be in BOTH this list and COMMAND_REGISTRY. Registering it in only one is
+-- silent: the dispatch loop below sorts every registry entry into one bucket or the other, so a
+-- name missing HERE becomes a TOP-LEVEL command instead. `/togbank dev <name>` then reports "not
+-- a valid command" while `/togbank <name>` quietly works -- which reads as the command having
+-- failed to register at all. Cost one round trip with the operator on 2026-09-10; `chatcommand_spec`
+-- now cross-checks this list against the `/togbank dev` commands documented in DEV_COMMANDS.md.
 local DEV_COMMAND_NAMES = {
+	bandwidth              = true,
 	["clear-delta-errors"] = true,
 	clearhistory           = true,
 	clearsnapshots         = true,
@@ -2776,8 +2948,15 @@ local DEV_COMMAND_NAMES = {
 	resetmetrics           = true,
 	rostercheck            = true,
 	switches               = true,
-	test                   = true,
 	versioncheck           = true,
+	-- CMD-002: `wipeall` was MISSING here while being documented as `/togbank dev wipeall`, so the
+	-- guild-wide destructive reset was reachable as top-level `/togbank wipeall` and the documented
+	-- spelling was refused. Of everything this class could have misfiled, an officer-tier command
+	-- that resets the database for every online member is the worst one to make EASIER to reach.
+	wipeall                = true,
+	-- `test` was removed from this list: it named an in-game test command that no longer exists in
+	-- COMMAND_REGISTRY, so no handler was ever bound to it. DEV_COMMANDS.md is explicit that it must
+	-- not come back ("Do not re-add an in-game test command to stand in for" the offline suite).
 }
 
 -- Build lookup tables for fast command dispatch.

@@ -133,7 +133,14 @@ function M.install()
 	_G.GetTime          = function() return M.now end
 	_G.GetServerTime    = function() return math.floor(M.now) end
 	_G.time             = function() return math.floor(M.now) end
-	_G.date             = function(fmt) return tostring(fmt or "") end
+	-- HARNESS-DATE-001: this used to be `function(fmt) return tostring(fmt or "") end` -- it
+	-- ignored the timestamp argument entirely and handed back the FORMAT STRING. That is the
+	-- "a permissive stub PICKS the answer" class this file's own design note opens with: a spec
+	-- asserting a rendered date was asserting "%Y-%m-%d %H:%M" and passing for the wrong reason,
+	-- and `date("*t")` returned the string "*t" rather than a table. Now a real os.date driven
+	-- off this env's clock, which is the shape the harness ships (env/wow.lua:763) -- adopted
+	-- deliberately rather than by deleting the override, because this env drives its OWN clock.
+	_G.date             = function(fmt, when) return os.date(fmt, when or math.floor(M.now)) end
 	_G.debugprofilestop = function() return M.now * 1000 end
 
 	-- Timers. C_Timer.After returns NOTHING — see the design note at the top.
@@ -257,7 +264,15 @@ function M.install()
 
 	-- Containers -------------------------------------------------------------
 	_G.BANK_CONTAINER          = -1
-	_G.NUM_BANKGENERIC_SLOTS   = 28
+	-- BANKSLOT-001: MEASURED on a live Classic Era client 2026-09-09, not guessed. These are
+	-- engine-side (`Constants.InventoryConstants.NumGenericBankSlots` -> `BANK_NUM_GENERIC_SLOTS`,
+	-- which the client supplies), so no source read can produce them and the harness deliberately
+	-- ships neither -- see `Tests/wowapi/env/wow.lua:2337`. This env carried 28 for
+	-- `NUM_BANKGENERIC_SLOTS`, which was a guess and wrong by four slots; a spec asserting against
+	-- it was asserting against fiction. `NUM_BAG_SLOTS = 4` comes from the harness.
+	-- TBC is NOT known to match and must not be assumed to: this addon ships both flavours.
+	_G.NUM_BANKGENERIC_SLOTS   = 24
+	_G.NUM_BANKBAGSLOTS        = 6
 	_G.ATTACHMENTS_MAX_RECEIVE = 16
 	_G.C_Container = {
 		GetContainerNumSlots = function(bag)
@@ -543,14 +558,34 @@ function M.coreHashStub(fixed, extra)
 	local t = extra or {}
 	t.ComputeInventoryHash       = t.ComputeInventoryHash       or function() return value end
 	t.ComputeLegacyInventoryHash = t.ComputeLegacyInventoryHash or function() return value end
-	t.StampInventoryHashes = t.StampInventoryHashes or function(self, alt, ...)
-		local legacy  = t.ComputeLegacyInventoryHash(self, ...)
-		local current = t.ComputeInventoryHash(self, ...)
+
+	-- HASH-CANON-003 / AUDIT-S1. The canon is content PLUS the publish datestamp, so a stub that
+	-- ignores `updatedAt` is LOOSER than the real function -- exactly the CMD-001 class this helper
+	-- was created to stop. Two distinct values are produced deliberately:
+	--
+	--   * the CANON varies with updatedAt, so a spec asserting "two publishes of identical contents
+	--     differ" cannot pass by construction here;
+	--   * the CONTENT hash does NOT, because it is the change detector.
+	--
+	-- AND `inventoryContentHash` MUST BE STAMPED. Bank:Scan compares the fresh content hash against
+	-- it (Modules/Bank.lua:412-415) to decide whether to advance the version. A stub that leaves it
+	-- nil makes EVERY scan look like a change and bump the version -- so a regression that
+	-- reintroduced the broadcast storm would pass every spec built on this stub, silently. That was
+	-- true for one session and is the finding this comment exists to stop recurring.
+	t.ComputeCanonHash = t.ComputeCanonHash or function(self, bank, bags, mailOrMoney, money, updatedAt)
+		local content = t.ComputeInventoryHash(self, bank, bags, mailOrMoney, money)
+		return (tonumber(content) or value) + (tonumber(updatedAt) or 0)
+	end
+	t.StampInventoryHashes = t.StampInventoryHashes or function(self, alt, bank, bags, mailOrMoney, money, updatedAt)
+		local legacy  = t.ComputeLegacyInventoryHash(self, bank, bags, mailOrMoney, money)
+		local content = t.ComputeInventoryHash(self, bank, bags, mailOrMoney, money)
+		local canon   = t.ComputeCanonHash(self, bank, bags, mailOrMoney, money, updatedAt)
 		if alt then
-			alt.inventoryHash   = legacy
-			alt.inventoryHashV2 = current
+			alt.inventoryHash        = legacy
+			alt.inventoryHashV2      = canon
+			alt.inventoryContentHash = content
 		end
-		return legacy, current
+		return legacy, canon, content
 	end
 	return t
 end

@@ -2314,7 +2314,9 @@ function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
 							for altName in pairs(info.alts) do
 								for _, item in ipairs(TOGBankClassic_Guild:GetAltItems(altName)) do
 									if item.ID == requestItemID
-									   and (not requestSuffix or TOGBankClassic_Item:GetSuffixID(item.Link) == requestSuffix) then
+									   -- INV2-SUFFIX-001: read the row's stored Suffix, not the rebuilt
+									   -- Link -- the link only carries it when ItemDB resolved the id.
+									   and (not requestSuffix or TOGBankClassic_Item:RowSuffixID(item) == requestSuffix) then
 										itemLink = item.Link
 										itemID   = item.ID
 										break

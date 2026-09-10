@@ -2032,10 +2032,26 @@ end
 -- Returns onlineCount, totalMembers on success, or nil when the library can't answer (absent,
 -- or not yet stabilized) so the caller falls back to the legacy scan below.
 --
--- Why this matters beyond tidiness: the library wipes and rebuilds its roster on every update,
--- so a member who has left the guild cannot survive in it. That is ROSTER-002's failure mode --
--- stale ex-banker entries lingering as permanent "HLR pending" rows -- made structurally
--- impossible rather than cleaned up after the fact.
+-- Why this matters beyond tidiness, stated correctly -- THIS COMMENT USED TO BE WRONG and the
+-- error was load-bearing. It said "the library wipes and rebuilds its roster on every update, so a
+-- member who has left the guild cannot survive in it", and called ROSTER-002's failure mode
+-- structurally impossible. LibGuildRoster does nothing of the kind.
+--
+-- THE LIBRARY IS BUILD-ONCE. `LibGuildRoster-1.0.lua:1587` says so in as many words -- "BUILD ONCE.
+-- THE ROSTER IS NEVER REBUILT" -- and `:1613` returns early from GUILD_ROSTER_UPDATE the moment it
+-- is initialized. It constructs the roster during the login stream and then maintains membership
+-- from CHAT_MSG_SYSTEM alone: ERR_GUILD_JOIN_S, ERR_GUILD_LEAVE_S, ERR_GUILD_REMOVE_SS.
+--
+-- WHAT THIS FUNCTION ACTUALLY GUARANTEES, which is narrower and worth knowing: TOGBank wipes its
+-- OWN memberRoster and rebuilds it from lib:GetAllMembers(), so it holds exactly what the library
+-- holds and cannot accumulate stale entries of its own on top. The library's own membership is
+-- kept current by chat parsing plus a fresh build at the next login.
+--
+-- SO THERE IS A REAL WINDOW: a departure whose system message is never delivered -- missed, or
+-- suppressed -- persists until relog. That is weaker than "impossible" and anyone reasoning about
+-- ex-member staleness needs the true version. The wrong comment sent a spec at the wrong mechanism
+-- (it emptied the fake roster, fired GUILD_ROSTER_UPDATE, and read the survivor as a TOGBank bug
+-- when TOGBank was correct), which is how a misleading comment costs more than a missing one.
 --
 -- The derived fields (isBank, viewOnly, isOfficer) stay HERE. Banker identification is this
 -- addon's domain logic; the library's job is to hand over the raw notes, and it does.
@@ -2594,158 +2610,29 @@ end
 -- receiver rebuilds the link from those integers via LibItemDB (Modules/Inventory/Resolve.lua),
 -- so there is no link to strip and nothing to get wrong.
 
--- Reconstruct Link fields after receiving data (v0.8.0)
--- Calls GetItemInfo() to recreate links from ItemID or ItemString
--- Throttle UI refreshes to prevent stuttering when many items load async
-local lastUIRefresh = 0
-local function ThrottledUIRefresh()
-	local now = GetTime()
-	if now - lastUIRefresh < 0.5 then -- Throttle to max once per 0.5 seconds
-		return
-	end
-	lastUIRefresh = now
-
-	-- Only refresh if UI is actually open
-	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-		TOGBankClassic_UI_Inventory:DrawContent()
-	end
-	if TOGBankClassic_UI_Search and TOGBankClassic_UI_Search.isOpen then
-		TOGBankClassic_UI_Search:DrawContent()
-	end
-end
-
--- Queue system for batched item reconstruction
-local itemReconstructQueue = {}
-local isProcessingQueue = false
-local pendingAsyncLoads = 0  -- Track number of pending async loads
-local MAX_CONCURRENT_ASYNC = 3  -- Limit concurrent async operations
-local BATCH_SIZE = 10  -- Process 10 items at a time
-local BATCH_DELAY = 0.2  -- 0.2 second delay between batches (slower = smoother)
-
-local function ProcessItemQueue()
-	if #itemReconstructQueue == 0 then
-		isProcessingQueue = false
-		return
-	end
-
-	-- Process a batch of items
-	local processCount = math.min(BATCH_SIZE, #itemReconstructQueue)
-	local loadedAnyInBatch = false
-
-	for _ = 1, processCount do
-		local item = table.remove(itemReconstructQueue, 1)
-		if item and item.ID and not item.Link then
-			-- Skip obviously corrupted items (IDs < 100 are not valid WoW items)
-			if item.ID >= 100 then
-				-- If we have an ItemString, use it to reconstruct full link
-				if item.ItemString then
-				local itemName = GetItemInfo(item.ID)
-				if itemName then
-					item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", item.ItemString, itemName)
-					loadedAnyInBatch = true
-				else
-					-- Item not in cache - only start async if under limit
-					if pendingAsyncLoads < MAX_CONCURRENT_ASYNC then
-						pendingAsyncLoads = pendingAsyncLoads + 1
-						local itemObj = Item:CreateFromItemID(item.ID)
-
-						-- Debug: Check itemObj state
-						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[GUILD] ItemString Item %d: itemObj=%s, itemObj.itemID=%s",
-							item.ID or -1,
-							tostring(itemObj),
-							itemObj and tostring(itemObj.itemID) or "nil")
-
-						if itemObj and itemObj.itemID and itemObj.itemID == item.ID then
-							-- Item object is valid, try ContinueOnItemLoad with error protection
-							TOGBankClassic_Output:Debug("ITEM", "LOAD", "[GUILD] ItemString Item %d PASSED validation, calling ContinueOnItemLoad", item.ID)
-							local success, err = pcall(function()
-								itemObj:ContinueOnItemLoad(function()
-									pendingAsyncLoads = pendingAsyncLoads - 1
-									local name = itemObj:GetItemName()
-									if name then
-										-- Strip "item:" prefix defensively (mail items may store ItemString with prefix)
-										local rawStr = item.ItemString:match("^item:(.+)$") or item.ItemString
-										item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", rawStr, name)
-										ThrottledUIRefresh()
-									end
-								end)
-							end)
-							if not success then
-								TOGBankClassic_Output:Debug("ITEM", "LOAD", "[GUILD] ContinueOnItemLoad crashed for ItemString item %d: %s", item.ID, tostring(err))
-								pendingAsyncLoads = pendingAsyncLoads - 1
-							end
-						else
-							-- Item object is nil or corrupted, skip
-							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[GUILD] ItemString Item %d FAILED validation, skipping", item.ID or -1)
-							pendingAsyncLoads = pendingAsyncLoads - 1
-						end
-					else
-						-- Too many pending, requeue for later
-						table.insert(itemReconstructQueue, item)
-					end
-				end
-			else
-				-- No ItemString, fall back to basic ID-only link
-				local itemLink = select(2, GetItemInfo(item.ID))
-				if itemLink then
-					item.Link = itemLink
-					loadedAnyInBatch = true
-				else
-					-- Item not in cache - only start async if under limit
-					if pendingAsyncLoads < MAX_CONCURRENT_ASYNC then
-						pendingAsyncLoads = pendingAsyncLoads + 1
-						local itemObj = Item:CreateFromItemID(item.ID)
-
-						-- Debug: Check itemObj state
-						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[GUILD] Item %d: itemObj=%s, itemObj.itemID=%s",
-							item.ID or -1,
-							tostring(itemObj),
-							itemObj and tostring(itemObj.itemID) or "nil")
-
-						if itemObj and itemObj.itemID and itemObj.itemID == item.ID then
-							-- Item object is valid, try ContinueOnItemLoad with error protection
-							TOGBankClassic_Output:Debug("ITEM", "LOAD", "[GUILD] Item %d PASSED validation, calling ContinueOnItemLoad", item.ID)
-							local success, err = pcall(function()
-								itemObj:ContinueOnItemLoad(function()
-									pendingAsyncLoads = pendingAsyncLoads - 1
-									local link = itemObj:GetItemLink()
-									if link then
-										item.Link = link
-										ThrottledUIRefresh()
-									end
-								end)
-							end)
-							if not success then
-								TOGBankClassic_Output:Debug("ITEM", "LOAD", "[GUILD] ContinueOnItemLoad crashed for item %d: %s", item.ID, tostring(err))
-								pendingAsyncLoads = pendingAsyncLoads - 1
-							end
-						else
-							-- Item object is nil or corrupted, skip
-							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[GUILD] Item %d FAILED validation, skipping", item.ID or -1)
-							pendingAsyncLoads = pendingAsyncLoads - 1
-						end
-					else
-						-- Too many pending, requeue for later
-						table.insert(itemReconstructQueue, item)
-					end
-				end
-			end
-			end  -- End of if item.ID >= 100
-		end
-	end
-
-	-- Refresh UI if any items loaded synchronously in this batch
-	if loadedAnyInBatch then
-		ThrottledUIRefresh()
-	end
-
-	-- Schedule next batch
-	if #itemReconstructQueue > 0 then
-		C_Timer.After(BATCH_DELAY, ProcessItemQueue)
-	else
-		isProcessingQueue = false
-	end
-end
+-- INV2 step 10: THE BATCHED LINK-RECONSTRUCTION QUEUE WAS HERE and is deleted with
+-- `ReconstructItemLinks`, its only entry point, which went with `ReceiveAltData`.
+--
+-- WHAT IT WAS: `itemReconstructQueue` plus `ProcessItemQueue`, ~130 lines of asynchronous machinery
+-- -- a concurrency cap, a batch size, a re-queue path, `ContinueOnItemLoad` callbacks wrapped in
+-- pcall, and a throttled UI refresh -- whose entire job was to turn the ItemStrings in a received
+-- LEGACY payload back into item links, slowly enough not to stutter the client.
+--
+-- WHY IT IS GONE RATHER THAN KEPT FOR LATER: it exists only because the legacy format shipped links
+-- and item strings across the wire in the first place. V2 sends `{id, count, suffix, enchant}` and
+-- the link is built from LibItemDB on arrival, so there is no backlog of link-less rows to work
+-- through and nothing to schedule. This is the link machinery the operator's directive is about:
+-- "we are redesigning to get RID of this complexity because it's causing data corruption".
+--
+-- `ThrottledUIRefresh` AND `lastUIRefresh` WENT WITH IT. Every caller was inside this queue or
+-- inside `ReceiveAltData`: it existed to repaint the Inventory and Search windows as async link
+-- loads trickled in, at most twice a second so the client did not stutter. Nothing trickles in any
+-- more -- a V2 payload resolves its rows on arrival and the UI redraws once -- so there is no
+-- stream of late completions to coalesce.
+--
+-- NOT TO BE CONFUSED WITH `ReconstructItemLink` (SINGULAR), which is alive and called by
+-- Modules/UI.lua:320 and :339 while drawing, for records that still carry an ItemString. The names
+-- differ by one character; check the call sites before assuming that one went too.
 
 -- Reconstruct single item link (immediate, synchronous only)
 function TOGBankClassic_Guild:ReconstructItemLink(item)
@@ -2770,26 +2657,14 @@ function TOGBankClassic_Guild:ReconstructItemLink(item)
 	-- Note: If not in cache, link stays nil - will be reconstructed by queue
 end
 
--- Reconstruct item links from ItemStrings - queued/batched to prevent stuttering
-function TOGBankClassic_Guild:ReconstructItemLinks(items)
-	if not items then
-		return
-	end
-
-	-- Add all items without links to queue for async loading
-	-- Items already in cache will load synchronously and won't need async
-	for _, item in ipairs(items) do
-		if item and item.ID and not item.Link then
-			table.insert(itemReconstructQueue, item)
-		end
-	end
-
-	-- Start processing queue if not already running
-	if not isProcessingQueue and #itemReconstructQueue > 0 then
-		isProcessingQueue = true
-		ProcessItemQueue()
-	end
-end
+-- `ReconstructItemLinks` (PLURAL) was deleted here along with `ReceiveAltData`, its only caller.
+-- It queued every link-less item from a received LEGACY payload for async link reconstruction --
+-- work that exists only because that format shipped links in the first place. V2 sends integers and
+-- the link is built from LibItemDB on arrival, so there is nothing to reconstruct in a batch.
+--
+-- `ReconstructItemLink` (SINGULAR) is NOT dead and must stay: Modules/UI.lua:320 and :339 call it
+-- while drawing, for records that predate V2 and still carry an ItemString rather than a link. The
+-- names differ by one character, so check the call sites before assuming this one went too.
 
 -- INV2 step 10: `Guild:StripDeltaLinks` was deleted here along with the DeltaComms function it
 -- delegated to. It was the wrapper for the per-item "is this link safe to drop" guess; V2 sends
@@ -3057,9 +2932,13 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 		-- it in the same block as the two hashes, from the same scan, so all three describe one
 		-- version. Without it the receiver stamped its own arrival time and a relayed copy claimed
 		-- to be fresher than the author's own record -- see the note on Wire.encode.
+		-- HASH-CANON-004: `mailHash` goes too. `HashesAgreeWith` needs BOTH hashes to match before
+		-- it will call an alt in sync, and only the author's own scan stamps the mail one -- so
+		-- omitting it leaves every receiver comparing a real advertised value against nil, forever.
 		local payload = Wire.encode(norm, records, currentAlt.money,
 			currentAlt.inventoryHash, currentAlt.inventoryHashV2,
-			currentAlt.inventoryUpdatedAt or currentAlt.version)
+			currentAlt.inventoryUpdatedAt or currentAlt.version,
+			currentAlt.mailHash)
 		if payload and #records > 0 then
 			local body = TOGBankClassic_Core:SerializeWithChecksum(payload)
 			local onSent = CreateOnChunkSentCallback(norm, distTarget)
@@ -3102,440 +2981,33 @@ function TOGBankClassic_Guild:SendAltData(name, requesterInventoryHash, requeste
 	end
 end
 
-function TOGBankClassic_Guild:ReceiveAltData(name, alt, sender)
-	return TOGBankClassic_Performance:Track("ReceiveAltData", function()
-		if not self.Info then
-			return ADOPTION_STATUS.IGNORED
-		end
+-- INV2 step 10 / the 2026-09-09 directive: `ReceiveAltData` WAS HERE, ~430 lines, and it is
+-- deleted rather than left unreached. Its only caller was the `data.type == "alt"` branch on the
+-- `togbank-rm` prefix in Chat.lua, deleted with it.
+--
+-- WHAT IT DID: took a link-bearing LEGACY alt payload off the wire and wrote `alt.items`,
+-- `alt.bank.items` and `alt.bags.items` from it, with sanitising, the DATA-004/DATA-006 banker
+-- protection rules, and an OPTION-B timestamp comparison. None of it ever met the tuples-only
+-- guard on `togbank-d4`, so the no-backwards-compatibility directive was being enforced on one
+-- inventory path and not the other.
+--
+-- VALIDATED AS UNFED BEFORE DELETING, so nobody re-derives it: the released v1.3.2 (`4d8fe14`)
+-- sends alt inventory on `togbank-d4` (`Guild.lua:2697` there) and its ONLY `togbank-rm` sender is
+-- `RequestLog.lua:1070`, request mutations. No shipped version sends inventory on that prefix.
+-- So this was dead code, NOT the source of the corruption reported from the live guild -- that was
+-- INV2-ORDER-001 (no last-writer-wins guard on the tuple path) and HASH-CANON-002 (the hash being
+-- re-minted by every client). It is removed because a bypass nothing currently drives is still a
+-- bypass, and because the directive says delete rather than branch around.
+--
+-- WHAT WAS WORTH KEEPING FROM IT, and where it went: its OPTION-B ordering check was the only
+-- last-writer-wins logic in the addon, and reading it is what revealed the tuple path had none.
+-- That rule now lives in `Chat:ShouldApplyTuplePayload`, in one place, ordering on the author's
+-- publish time carried on the wire.
+--
+-- NO SPEC REFERENCED IT (checked: zero matches in Tests/), so nothing was re-baselined to allow
+-- this deletion.
 
-		-- PERF-005: Validate hash if we have an expected hash for this alt
-		-- PROTO-002: Defensive nil check for PEER_TO_PEER constant
-		if PEER_TO_PEER and PEER_TO_PEER.ENABLED and self.expectedHashes and self.expectedHashes[name] then
-			local expectedHash = self.expectedHashes[name]
-			local receivedHash = alt.inventoryHash or 0
 
-			if receivedHash ~= expectedHash then
-				TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "PERF-005: Hash mismatch for %s from %s! Expected=%d, Got=%d - rejecting",
-					name, sender, expectedHash, receivedHash)
-				-- Don't clear expected hash - let timeout handle fallback to banker
-				return ADOPTION_STATUS.INVALID
-			else
-				TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "PERF-005: Hash validated for %s from %s (hash=%08x)",
-					name, sender, receivedHash)
-				-- Clear expected hash after successful validation
-				self.expectedHashes[name] = nil
-				-- Also clear expectedHashUpdatedAt to prevent memory leak
-				if self.expectedHashUpdatedAt then
-					self.expectedHashUpdatedAt[name] = nil
-				end
-			end
-		end
-
-		-- Sanitize incoming alt data
-		local function sanitizeAlt(a)
-			if not a or type(a) ~= "table" then
-				return nil
-			end
-
-			-- [MAIL-012] Log mailHash IMMEDIATELY upon receiving alt data
-			TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "[MAIL-012] ReceiveAltData for %s: received mailHash=%s", name, tostring(a.mailHash))
-			if a.items then
-				local cleaned = {}
-				for _, v in pairs(a.items) do
-					if v and type(v) == "table" and v.ID then
-						table.insert(cleaned, v)
-					end
-				end
-				a.items = cleaned
-			end
-
-			-- Sanitize bank items (array) - compact after removing invalids
-			if a.bank and type(a.bank) == "table" and a.bank.items then
-				local cleaned = {}
-				for _, v in pairs(a.bank.items) do
-					if v and type(v) == "table" and v.ID then
-						table.insert(cleaned, v)
-					end
-				end
-				a.bank.items = cleaned
-			end
-
-			-- Sanitize bag items (array) - compact after removing invalids
-			if a.bags and type(a.bags) == "table" and a.bags.items then
-				local cleaned = {}
-				local beforeCount = 0
-				local validCount = 0
-				local invalidCount = 0
-				for k, v in pairs(a.bags.items) do
-					beforeCount = beforeCount + 1
-					if v and type(v) == "table" and v.ID then
-						table.insert(cleaned, v)
-						validCount = validCount + 1
-					else
-						invalidCount = invalidCount + 1
-						TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "  Sanitize: invalid bag item at [%s]: v=%s, type=%s, ID=%s",
-							tostring(k), tostring(v), type(v), v and tostring(v.ID) or "nil")
-					end
-				end
-					TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Sanitized bags: before=%d, valid=%d, invalid=%d",
-					beforeCount, validCount, invalidCount)
-				a.bags.items = cleaned
-			end
-
-			return a
-		end
-
-		alt = sanitizeAlt(alt)
-		if not alt then
-			return ADOPTION_STATUS.INVALID
-		end
-
-		-- Debug: Log what we received
-		local function countItems(items)
-			if not items or type(items) ~= "table" then return 0 end
-			local count = 0
-			for _ in pairs(items) do count = count + 1 end
-			return count
-		end
-
-		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "ReceiveAltData for %s: alt.items=%d, alt.bank.items=%d, alt.bags.items=%d",
-			name,
-			countItems(alt.items),
-			(alt.bank and alt.bank.items) and countItems(alt.bank.items) or 0,
-			(alt.bags and alt.bags.items) and countItems(alt.bags.items) or 0)
-
-		-- Backward compatibility: Compute alt.items from sources if missing (SYNC-006)
-		-- This handles data from players who haven't rescanned after the aggregation update
-		-- OLD STRUCTURE: Only bank and bags were synced (mail was local-only)
-
-		-- Check if alt.items has any content (handles both array and key-value formats)
-		local function hasAnyItems(items)
-			if not items or type(items) ~= "table" then return false end
-			return next(items) ~= nil
-		end
-
-		local needsReconstruction = not hasAnyItems(alt.items)
-
-		if needsReconstruction then
-			local bankItems = (alt.bank and alt.bank.items) or {}
-			local bagItems = (alt.bags and alt.bags.items) or {}
-
-			TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Reconstructing alt.items for %s: bank=%d, bags=%d",
-				name, #bankItems, #bagItems)
-
-			-- Aggregate bank + bags ONLY (mail was never synced in old system)
-			if #bankItems > 0 or #bagItems > 0 then
-				local aggregated = TOGBankClassic_Item:Aggregate(bankItems, bagItems)
-				alt.items = {}
-				for _, item in pairs(aggregated) do
-					table.insert(alt.items, item)
-				end
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Reconstructed alt.items for %s: %d items from bank+bags",
-					name, #alt.items)
-			else
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "No items to reconstruct for %s (bank and bags both empty)", name)
-			end
-		else
-			-- alt.items exists, deduplicate and ensure array format
-			-- Items may have duplicates from corrupted syncs, so aggregate to dedupe
-			-- DEBUG: Log sample counts BEFORE deduplication
-			if alt.items and #alt.items > 0 then
-				local beforeSample = {}
-				for i = 1, math.min(5, #alt.items) do
-					local item = alt.items[i]
-					if item then
-						table.insert(beforeSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
-					end
-				end
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "BEFORE dedupe - First 5 items received: %s", table.concat(beforeSample, ", "))
-			end
-
-			-- MAIL-010: Check if we need to merge mail items into alt.items
-			-- Only merge if this is OLD data (no mailHash = created before mail sync existed)
-			-- If mailHash exists, alt.items already includes mail from sender's Bank:Scan()
-			local hasMailHash = alt.mailHash ~= nil
-			local mailItems = (alt.mail and alt.mail.items) or {}
-			local hasMailItems = mailItems and #mailItems > 0
-			local needsMailMerge = hasMailItems and not hasMailHash
-
-			if needsMailMerge then
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "OLD DATA: Merging %d mail items into alt.items for %s (no mailHash)", #mailItems, name)
-				-- Aggregate alt.items with mail to ensure mail is included
-				local aggregated = TOGBankClassic_Item:Aggregate(alt.items, mailItems)
-				local arrayItems = {}
-				for _, item in pairs(aggregated) do
-					table.insert(arrayItems, item)
-				end
-				alt.items = arrayItems
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Merged alt.items for %s: %d items (including mail)",
-					name, #alt.items)
-			else
-				if hasMailHash then
-					TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "NEW DATA: alt.items already includes mail (mailHash present) for %s", name)
-				end
-				-- No mail merge needed, just deduplicate
-				local aggregated = TOGBankClassic_Item:Aggregate(alt.items, nil)
-				local arrayItems = {}
-				for _, item in pairs(aggregated) do
-					table.insert(arrayItems, item)
-				end
-				alt.items = arrayItems
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "alt.items exists for %s, deduplicated and converted to array: %d items",
-					name, #alt.items)
-			end
-
-			-- DEBUG: Log sample counts AFTER deduplication
-			if alt.items and #alt.items > 0 then
-				local afterSample = {}
-				for i = 1, math.min(5, #alt.items) do
-					local item = alt.items[i]
-					if item then
-						table.insert(afterSample, string.format("%s:%d", item.ID or "?", item.Count or 0))
-					end
-				end
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "AFTER dedupe - First 5 items stored: %s", table.concat(afterSample, ", "))
-			end
-		end
-
-		local norm = self:NormalizeName(name)
-		self.pendingP2PRequests[norm] = nil
-		self.pendingAltRequests[norm] = nil
-		local existing = self.Info.alts[norm]
-		local hadBankerData = self:HasAltData(existing)
-		local senderNorm = sender and self:NormalizeName(sender) or nil
-
-		-- DATA-004/DATA-006: Banker protection logic
-		-- Rule 1: Never accept data about yourself (you are source of truth)
-		-- Rule 2: Bankers only accept data about OTHER bankers FROM that banker
-		-- Rule 3: Non-bankers accept data from anyone
-		local player = UnitName("player") .. "-" .. GetNormalizedRealmName()
-		local playerNorm = self:NormalizeName(player)
-		local isOwnData = playerNorm == norm
-		local targetIsBanker = self:IsBank(norm)
-		local receiverIsBanker = self:IsBank(playerNorm)
-
-		-- Rule 1: Reject data about ourselves (we already have our own current data)
-		if isOwnData then
-			TOGBankClassic_Output:Warn(
-				"[DATA-004] Rejected alt data about ourselves (we are the source of truth)"
-			)
-			return ADOPTION_STATUS.UNAUTHORIZED
-		end
-
-		-- Rule 2: Banker protection - only apply if WE are a banker protecting our data
-		-- Regular users should accept banker data from anyone
-		if receiverIsBanker and targetIsBanker then
-			-- We are a banker, and data is about a banker - only accept if sender is that banker
-			if senderNorm ~= norm then
-			-- OPTION-B: Check timestamps before rejecting - allow if incoming is newer
-			local incomingUpdatedAt = alt.inventoryUpdatedAt or alt.version
-			local existingUpdatedAt = existing and (existing.inventoryUpdatedAt or existing.version) or nil
-
-			-- Allow if: no existing data OR incoming is newer
-			local shouldAccept = false
-			if not existing then
-				shouldAccept = true
-				TOGBankClassic_Output:Info(
-					"[OPTION-B] Accepting banker data from non-banker: no existing data for %s", norm)
-			elseif incomingUpdatedAt and existingUpdatedAt and incomingUpdatedAt > existingUpdatedAt then
-				shouldAccept = true
-				TOGBankClassic_Output:Info(
-					"[OPTION-B] Accepting newer banker data: %s about %s (timestamp %d > %d)",
-					senderNorm or "unknown", norm, incomingUpdatedAt, existingUpdatedAt)
-			end
-
-			if not shouldAccept then
-				-- Reject: incoming is not newer
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE",
-					"[DATA-006] Rejected data about banker %s from %s (not newer: incoming=%s, existing=%s)",
-					norm, senderNorm or "unknown",
-					tostring(incomingUpdatedAt), tostring(existingUpdatedAt))
-				return ADOPTION_STATUS.UNAUTHORIZED
-			end
-		else
-			-- If we get here: senderNorm == norm (banker updating themselves) - ACCEPT
-			TOGBankClassic_Output:Debug("SYNC", "RECEIVE",
-				"[DATA-006] Accepting data about banker %s from themselves",
-				norm)
-		end
-	end
-
-	-- Rule 3: Non-bankers accept all data, non-banker data accepted from anyone
-
-	-- Non-banker conflict resolution: newest wins (timestamped hash)
-	local incomingUpdatedAt = alt.inventoryUpdatedAt or alt.version
-	local existingUpdatedAt = existing and (existing.inventoryUpdatedAt or existing.version) or nil
-
-	-- Backfill missing inventoryUpdatedAt on incoming data
-		if incomingUpdatedAt and not alt.inventoryUpdatedAt then
-			alt.inventoryUpdatedAt = incomingUpdatedAt
-		end
-
-		local function itemCount(a)
-			local c = 0
-			if a and a.items then
-				for _, v in pairs(a.items) do
-					if v and v.ID then
-						c = c + 1
-					end
-				end
-			end
-			return c
-		end
-
-		local existingHasContent = existing and self:HasAltContent(existing, norm) or false
-		local incomingHasContent = self:HasAltContent(alt, norm)
-		-- Allow incoming data if we have no existing data OR existing has no content
-		local allowStaleBecauseMissingContent = (not existing) or (not existingHasContent and incomingHasContent)
-		if allowStaleBecauseMissingContent then
-			TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Accepting data for %s (no existing data or existing has no content)", norm)
-		end
-		if existingHasContent and not incomingHasContent then
-			TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Rejecting empty data for %s because existing has content", norm)
-			return ADOPTION_STATUS.STALE
-		end
-
--- PERFORMANCE FIX: Reject old client syncs if we already have mail preserved
-	-- Old clients (pre-v0.8.0) don't include mail in their syncs
-	-- If we already have data with mail, don't accept incomplete data from old clients
-	local incomingHasMail = alt.mail ~= nil
-	local existingHasMail = existing and existing.mail ~= nil
-	if existing and existingHasMail and not incomingHasMail then
-		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Rejecting old client sync for %s (we have mail, incoming doesn't) - STALE",
-			norm)
-		return ADOPTION_STATUS.STALE
-	end
-
-	-- Hash-based staleness check: If inventory hash matches, data is identical (PERFORMANCE FIX)
-	-- Skip expensive mail preservation if nothing changed
-	-- ONLY reject if we actually have content - if existing has no content, always accept incoming data
-	if existing and existingHasContent and alt.inventoryHash and existing.inventoryHash and alt.inventoryHash == existing.inventoryHash then
-		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Hash match for %s (hash=%08x) - data unchanged, rejecting as STALE",
-			norm, alt.inventoryHash)
-		return ADOPTION_STATUS.STALE
-	end
-
-	if not targetIsBanker and existing and incomingUpdatedAt and existingUpdatedAt and not allowStaleBecauseMissingContent then
-		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Timestamp staleness check for %s: incoming=%d, existing=%d, hasContent=%s",
-			norm, incomingUpdatedAt, existingUpdatedAt, tostring(existingHasContent))
-		if incomingUpdatedAt < existingUpdatedAt then
-			TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Rejecting %s: incoming timestamp %d < existing %d",
-				norm, incomingUpdatedAt, existingUpdatedAt)
-			return ADOPTION_STATUS.STALE
-		elseif incomingUpdatedAt == existingUpdatedAt then
-			-- Tie-breaker: choose the one with more items
-			local incomingCount = itemCount(alt)
-			local existingCount = itemCount(existing)
-			TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Timestamp tie for %s: incomingCount=%d, existingCount=%d",
-				norm, incomingCount, existingCount)
-			if incomingCount <= existingCount then
-				TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "Rejecting %s: incoming itemCount %d <= existing %d",
-					norm, incomingCount, existingCount)
-				return ADOPTION_STATUS.STALE
-			end
-		end
-	end
-
-		-- Legacy fallback: version-based staleness check
-		if existing and alt.version ~= nil and existing.version ~= nil and alt.version < existing.version and not allowStaleBecauseMissingContent then
-			return ADOPTION_STATUS.STALE
-		end
-
-		if self.hasRequested then
-			if self.requestCount == nil then
-				self.requestCount = 0
-			else
-				self.requestCount = self.requestCount - 1
-			end
-			if self.requestCount == 0 then
-				self.hasRequested = false
-				TOGBankClassic_Output:Info("Sync completed.")
-			end
-		end
-
-		if not self.Info.alts then
-			self.Info.alts = {}
-		end
-
-		-- DATA-006/MAIL-009: Preserve mail field from existing data when incoming sync lacks it
-		-- Mail is now synced in v0.8.0+, but old clients don't include it in their syncs
-		-- Preserve locally-scanned mail data to maintain visibility for new clients
-		local existingMail = existing and existing.mail or nil
-		local mailArrivedWithAlt = alt.mail ~= nil
-
-		TOGBankClassic_Output:Debug("MAIL", "ADOPT", "AdoptAltData for %s: existingMail=%s, incomingHasMail=%s",
-			norm, existingMail and "YES" or "NO", tostring(mailArrivedWithAlt))
-		if existingMail then
-			TOGBankClassic_Output:Debug("MAIL", "ADOPT", "  existingMail has %d items", existingMail.items and #existingMail.items or 0)
-		end
-
-		---@diagnostic disable-next-line: need-check-nil
-		self.Info.alts[norm] = alt
-		TOGBankClassic_Output:Debug("MAIL", "ADOPT", "Overwrote self.Info.alts[%s], mail field now: %s",
-			norm, alt.mail and "EXISTS" or "GONE")
-
-		-- [MAIL-012] Log mailHash after storing to verify it persisted
-		TOGBankClassic_Output:Debug("SYNC", "RECEIVE", "[MAIL-012] Stored alt data for %s: mailHash=%s", norm, tostring(self.Info.alts[norm].mailHash))
-
-		-- Restore preserved mail if we had it locally and incoming sync doesn't have it
-		-- This handles backward compatibility: new clients preserve mail when receiving from old clients
-		if existingMail and not incomingHasMail then
-			self.Info.alts[norm].mail = existingMail
-			local mailItemCount = existingMail.items and #existingMail.items or 0
-			TOGBankClassic_Output:Debug("MAIL", "ADOPT", "Restored mail for %s (%d items) - incoming sync lacked mail",
-				norm, mailItemCount)
-			TOGBankClassic_Output:Debug("MAIL",
-				"[MAIL-009] Preserved mail data for %s (%d items, lastScan=%s) - backward compat",
-				norm, mailItemCount, tostring(existingMail.lastScan))
-
-			-- MAIL-010: Re-aggregate alt.items to include the restored mail
-			-- The incoming alt.items doesn't have mail, so we need to merge it back in
-			if existingMail.items and #existingMail.items > 0 then
-				TOGBankClassic_Output:Debug("MAIL", "ADOPT", "[MAIL-010] Merging %d restored mail items into alt.items for %s",
-					#existingMail.items, norm)
-				local aggregated = TOGBankClassic_Item:Aggregate(self.Info.alts[norm].items, existingMail.items)
-				self.Info.alts[norm].items = {}
-				for _, item in pairs(aggregated) do
-					table.insert(self.Info.alts[norm].items, item)
-				end
-				TOGBankClassic_Output:Debug("MAIL", "ADOPT", "[MAIL-010] Re-aggregated alt.items for %s: %d items (including restored mail)",
-					norm, #self.Info.alts[norm].items)
-			end
-		elseif incomingHasMail then
-			TOGBankClassic_Output:Debug("MAIL", "ADOPT", "Using incoming mail data for %s (new client sync)", norm)
-		end
-
-		-- Reset search data flag so inventory UI rebuilds search index (UI-008 fix)
-		if TOGBankClassic_UI_Inventory then
-			TOGBankClassic_UI_Inventory.searchDataBuilt = false
-		end
-
-		-- Reconstruct Links for items (v0.8.0 bandwidth optimization)
-		if alt.items then
-			self:ReconstructItemLinks(alt.items)
-			-- Ensure UI refresh even when no links need reconstruction
-			ThrottledUIRefresh()
-		end
-
-		-- Reset error count on successful full sync
-		self:ResetDeltaErrorCount(norm)
-
-		-- Progress reporting for banker sync coverage
-		local rosterAlts = self:GetRosterAlts() or self:GetBanks() or {}
-		local isRosterBanker = false
-		for _, altName in ipairs(rosterAlts) do
-			if self:NormalizeName(altName) == norm then
-				isRosterBanker = true
-				break
-			end
-		end
-		if isRosterBanker and not hadBankerData then
-			self:ReportBankerDataProgress("received " .. tostring(norm), true)
-		end
-
-		return ADOPTION_STATUS.ADOPTED
-	end)
-end
 
 -- Protocol version helper functions
 

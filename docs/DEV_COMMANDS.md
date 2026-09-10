@@ -115,6 +115,24 @@ See [INVENTORY_V2.md](INVENTORY_V2.md) for the design these two operate on.
   Both stores are written inside a single `Bank:Scan` call, so a divergence here is a real
   encoding bug, not a stack that moved between passes.
 
+- **`/togbank dev bandwidth`** -- measure the V2 tuple wire against the legacy link wire, on the
+  records this client actually holds. Prints per-character sizes and a total with the reduction
+  percentage. Needs a populated V2 store, so the same rule as `dev compare` applies: open the bank
+  and **close** it first.
+
+  **This exists because the obvious method does not work.** `INV2-DOC-001` requires the bandwidth
+  figures on the CurseForge page to come from a real guild rather than a synthetic payload, and the
+  natural way to get that -- read `togbank-d4` byte counts out of a live `COMMS` log -- cannot
+  deliver: `togbank-d4` is only sent when a peer is genuinely behind, so a healthy guild emits no
+  sample at all. Two ~200-line live captures during the v1.4.0 rollout contained zero of them.
+
+  **Neither side of the comparison is invented, and that is the whole point.** The V2 figure is the
+  real `Wire.encode` output measured by `Wire.estimateSize`. The legacy figure is built from **the
+  same rows**, each item's link resolved through `Resolve.describe` -- the real link for the real
+  item. It is one inventory measured two ways, not a measurement against an assumption about how
+  long an item link is. The reduction is rounded **down**, so a figure published from it is never
+  better than what was measured.
+
 ### Protocol / network
 
 - **`/togbank dev protocol`** — protocol version distribution across guild members; delta-sync adoption %.

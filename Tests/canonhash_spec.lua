@@ -417,6 +417,50 @@ describe("CANON RULE 6: the wire carries the author's canon, stored verbatim", f
 		loadChain(PEER, { BANKER })
 	end)
 
+	-- HASH-CANON-004. THIS EXISTS BECAUSE A GREEN SUITE MISSED THE REGRESSION THAT CAUSED IT.
+	--
+	-- `Guild:HashesAgreeWith` (Guild.lua:1097) requires BOTH the inventory hash AND the mail hash to
+	-- match before it calls an alt in sync. Only the author's own scan stamps `alt.mailHash`
+	-- (Bank.lua:454). HASH-CANON-002 deleted the two paths that used to produce one for a REMOTE
+	-- alt -- the query-path recompute and the no-change adoption -- correctly, because both minted a
+	-- number on a client that had never read that mail. Nothing replaced them, and the wire did not
+	-- carry it, so a receiver held nil for every remote banker while the banker advertised a real
+	-- value: `mailHashMatches` false forever, every banker permanently sync-pending, re-requested
+	-- indefinitely. A broadcast storm of the exact shape this work exists to remove.
+	--
+	-- 713 examples passed throughout. Nothing compared what the WIRE carries against what
+	-- AGREEMENT needs, so the gap was invisible from both ends.
+	it("carries the author's MAIL hash, which agreement also depends on", function()
+		local Wire   = TOGBankClassic_Inventory_Wire
+		local Record = TOGBankClassic_Inventory_Record
+		local payload = Wire.encode(BANKER, { Record.new(858, 5) }, 100,
+			SENTINEL_V1, SENTINEL, 1757000000, 99887766)
+		-- NINE returns, not eight: the public `Wire.decode` wrapper yields one more value at
+		-- position 4 than `decodeV2` does, so the mail hash is ninth. Counting the underscores
+		-- against the inner function is how the first version of this landed on `updatedAt`.
+		local _, _, _, _, _, _, _, _, mailHash = Wire.decode(payload)
+
+		assert.equal(99887766, mailHash,
+			"the author's mail hash did not survive the wire. A receiver cannot mint one -- only " ..
+			"the client that read the mail may -- so it compares the banker's advertised value " ..
+			"against nil and the alt never agrees, forever")
+	end)
+
+	it("keeps a nil mail hash nil rather than defaulting it", function()
+		local Wire   = TOGBankClassic_Inventory_Wire
+		local Record = TOGBankClassic_Inventory_Record
+		local payload = Wire.encode(BANKER, { Record.new(858, 5) }, 100, 1, 2, 3, nil)
+		-- NINE returns, not eight: the public `Wire.decode` wrapper yields one more value at
+		-- position 4 than `decodeV2` does, so the mail hash is ninth. Counting the underscores
+		-- against the inner function is how the first version of this landed on `updatedAt`.
+		local _, _, _, _, _, _, _, _, mailHash = Wire.decode(payload)
+
+		assert.is_nil(mailHash,
+			"'this author has not scanned mail' must stay distinguishable from a real value -- " ..
+			"coercing it to 0 would claim the banker's mail is empty, and 0 is a real hash meaning " ..
+			"exactly that")
+	end)
+
 	it("round-trips the canon and the publish time", function()
 		local Wire   = TOGBankClassic_Inventory_Wire
 		local Record = TOGBankClassic_Inventory_Record

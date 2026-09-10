@@ -5,8 +5,24 @@
 --
 --   EVENT-001  TOGBank's CHAT_MSG_SYSTEM handler has never run, so real-time presence has
 --              always been dead. The library owns its own event frame and handles it.
---   ROSTER-002 Stale ex-banker stubs. The library wipes and rebuilds, so stale members are
---              structurally impossible.
+--   ROSTER-002 Stale ex-banker stubs. TOGBank wipes its OWN memberRoster and rebuilds it from
+--              lib:GetAllMembers(), so it cannot accumulate stale entries on top of what the
+--              library holds.
+--
+-- THIS HEADER USED TO SAY "the library wipes and rebuilds, so stale members are structurally
+-- impossible", AND THAT IS FALSE. LibGuildRoster is BUILD-ONCE: `LibGuildRoster-1.0.lua:1587`
+-- reads "BUILD ONCE. THE ROSTER IS NEVER REBUILT", and `:1613` returns early from
+-- GUILD_ROSTER_UPDATE once initialized. Membership is maintained after login from CHAT_MSG_SYSTEM
+-- alone (ERR_GUILD_JOIN_S / ERR_GUILD_LEAVE_S / ERR_GUILD_REMOVE_SS).
+--
+-- The wrong version is what sent the removal example at the wrong mechanism: it emptied the fake
+-- roster and fired GUILD_ROSTER_UPDATE, which build-once ignores by design, so the ex-member
+-- survived and the red read as a TOGBank defect when TOGBank was correct. The example now
+-- announces the departure in chat and asserts removal through that path.
+--
+-- THE REAL GUARANTEE IS WEAKER THAN "IMPOSSIBLE" and must not be restated as such: chat parsing
+-- plus a fresh build at the next login. A departure whose system message is never delivered
+-- persists in the roster until relog.
 --
 -- These specs load the REAL library from the sibling GuildRoster install (not a stub), because
 -- the whole value of the migration is that its behaviour is real. A stub would assert only that

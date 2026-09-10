@@ -613,7 +613,15 @@
 			"ERR_GUILD_DEMOTE_SSS",
 			"GameTooltip_HideShoppingTooltips",
 			"GameTooltip_ShowCompareItem",
-			"assertsafe"
+			"assertsafe",
+			"PanelTemplates_SetNumTabs",
+			"OpenAllBags",
+			"CloseAllBags",
+			"UpdateContainerFrameAnchors",
+			"SetMoneyFrameColor",
+			"ToggleBag",
+			"BankFrameTitleText",
+			"BAG_FILTER_ASSIGNED_TO"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"
