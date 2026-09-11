@@ -85,6 +85,7 @@ end
 local function gates(levelIsDebug, enabledCategories)
 	local Out = TOGBankClassic_Output
 	Out.CreateDebugTab   = function() return true end
+	local LOG_LEVEL      = TOGBankClassic_Constants.LOG_LEVEL   -- NS-001: no longer a bare global
 	Out.GetLevel         = function() return levelIsDebug and LOG_LEVEL.DEBUG or LOG_LEVEL.INFO end
 	Out.IsCategoryEnabled = function(_, name) return (enabledCategories or {})[name] == true end
 	return Out

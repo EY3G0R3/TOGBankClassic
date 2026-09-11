@@ -50,9 +50,10 @@ describe("module loading", function()
 
 	it("loads Constants and publishes its tables", function()
 		env.loadFile("Modules/Constants.lua")
-		assert.is_table(DEBUG_CATEGORY)
-		assert.is_table(DEBUG_TAGS)
-		assert.is_table(COMM_PREFIX_DESCRIPTIONS)
+		-- NS-001: one namespace, not eleven bare globals. See Modules/Constants.lua's header.
+		assert.is_table(TOGBankClassic_Constants.DEBUG_CATEGORY)
+		assert.is_table(TOGBankClassic_Constants.DEBUG_TAGS)
+		assert.is_table(TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS)
 	end)
 
 	it("loads every module in .toc order without error", function()

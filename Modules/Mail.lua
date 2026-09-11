@@ -3,27 +3,39 @@ TOGBankClassic_Mail = {
 	splitState = nil  -- {bag, slot, amount, attachmentSlot, request}
 }
 
+--- First empty slot in containers `first`..`last`, as (bag, slot), or nil.
+---
+--- THE ONE empty-slot walk. Three copies existed -- the split popup below, tog_findEmptyBagSlot and
+--- FindEmptyBankSlot's inner scan -- and two of them still hardcoded the carried range as `0, 4`
+--- after BANKSLOT-001 had fixed every other container walk; the guard in itemhighlight_spec found
+--- them the first time it covered this file. Ranges come from Constants.lua (BANKSLOT-001).
+local function tog_firstEmptySlot(first, last)
+	for bag = first, last do
+		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
+		for slot = 1, numSlots do
+			if not C_Container.GetContainerItemInfo(bag, slot) then
+				return bag, slot
+			end
+		end
+	end
+	return nil
+end
+
+local function tog_findEmptyBagSlot()
+	return tog_firstEmptySlot(TOGBankClassic_Constants.CarriedBagRange())
+end
+
 -- Initialize split stack popup dialog
 if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 	StaticPopupDialogs["TOGBANK_SPLIT_STACK"] = {
 		text = "%s",
 		button1 = "Split",
 		button2 = "Cancel",
-		OnAccept = function(self, data)
+		OnAccept = function(_, data)
 			if not data then return end
 			ClearCursor()
 			-- Find an empty bag slot to place the split items
-			local emptyBag, emptySlot
-			for bag = 0, 4 do
-				local numSlots = C_Container.GetContainerNumSlots(bag)
-				for slot = 1, numSlots do
-					if not C_Container.GetContainerItemInfo(bag, slot) then
-						emptyBag, emptySlot = bag, slot
-						break
-					end
-				end
-				if emptyBag then break end
-			end
+			local emptyBag, emptySlot = tog_findEmptyBagSlot()
 			if not emptyBag then
 				return
 			end
@@ -69,7 +81,7 @@ function TOGBankClassic_Mail:Check()
 end
 
 -- Check if received item matches an active request from current player
-function TOGBankClassic_Mail:CheckForFulfilledRequest(itemName, quantity, sender)
+function TOGBankClassic_Mail:CheckForFulfilledRequest(itemName, _, sender)
 	local info = TOGBankClassic_Guild.Info
 	if not info or not info.requests then
 		return false
@@ -160,7 +172,7 @@ function TOGBankClassic_Mail:Scan()
 
 	self.isScanning = true
 
-	local numItems, totalItems = GetInboxNumItems()
+	local numItems = GetInboxNumItems()
 
 	if numItems > 0 then
 		for mailId = 1, numItems do
@@ -212,7 +224,7 @@ function TOGBankClassic_Mail:InitSendHook()
 	end
 	self.sendHooked = true
 
-	hooksecurefunc("SendMail", function(recipient, subject, body)
+	hooksecurefunc("SendMail", function(recipient)
 		TOGBankClassic_Mail:OnSendMail(recipient)
 	end)
 end
@@ -264,7 +276,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	local items = {}
 
 	for attachmentIndex = 1, ATTACHMENTS_MAX_SEND do
-		local itemName, itemID, texture, quantity = GetSendMailItem(attachmentIndex)
+		local itemName, _, _, quantity = GetSendMailItem(attachmentIndex)
 		if itemName and quantity and quantity > 0 then
 			table.insert(items, { name = itemName, quantity = quantity })
 		end
@@ -318,7 +330,7 @@ function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
 	local items = {}
 	local totalCount = 0
 	for attachmentIndex = 1, (ATTACHMENTS_MAX_SEND or 12) do
-		local itemName, itemID, texture, quantity = GetSendMailItem(attachmentIndex)
+		local itemName, itemID, _, quantity = GetSendMailItem(attachmentIndex)
 		if itemName and quantity and quantity > 0 then
 			table.insert(items, { name = itemName, id = itemID, quantity = quantity })
 			totalCount = totalCount + quantity
@@ -411,7 +423,7 @@ end
 function TOGBankClassic_Mail:ResetScan()
 	-- have to wait for server to remove item from inbox before we can take another
 	-- so we wait a second before trying the next item
-	TOGBankClassic_Core:ScheduleTimer(function(...)
+	TOGBankClassic_Core:ScheduleTimer(function()
 		TOGBankClassic_Mail:OnTimer()
 	end, 1)
 end
@@ -456,7 +468,11 @@ function TOGBankClassic_Mail:Open(mailId)
 		current_score = ledger[sender]
 	end
 
-	local score = 0
+	-- Was `local score = 0`, and luacheck was right that the 0 is never read. Both readers --
+	-- the money ledger below and the item ledger in the attachment loop -- sit inside a branch that
+	-- assigns `score` first, so the initialiser could not be observed. Dropping it changes no
+	-- behaviour; checked by reading both call sites rather than by trusting the warning.
+	local score
 	if money > 0 then
 		-- convert from copper to gold
 		score = money / 10000
@@ -485,7 +501,7 @@ function TOGBankClassic_Mail:Open(mailId)
 			local link = GetInboxItemLink(mailId, attachmentIndex)
 			if link then
 				local _, _, _, quantity, _ = GetInboxItem(mailId, attachmentIndex)
-				local name, _, quality, level, _, _, _, _, _, _, price = GetItemInfo(link)
+				local name, _, _, level, _, _, _, _, _, _, price = GetItemInfo(link)
 				if not name or level == nil then
 					TOGBankClassic_Mail:RetryOpen(mailId)
 					return
@@ -536,7 +552,7 @@ end
 function TOGBankClassic_Mail:RetryOpen(mailId)
 	-- have to wait for server to remove item from inbox before we can take another
 	-- so we wait a second before trying the next item
-	TOGBankClassic_Core:ScheduleTimer(function(...)
+	TOGBankClassic_Core:ScheduleTimer(function()
 		TOGBankClassic_Mail:OnRetryTimer(mailId)
 	end, 1)
 end
@@ -579,14 +595,16 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 		return a.count > b.count
 	end)
 
-	local largestStack = items[1].count
+	-- BANKFILL-001 cleanup: `largestStack` was computed here and never read. Deleted rather than
+	-- silenced -- the sort above already means items[1] IS the largest, so anything wanting it can
+	-- say so at the point of use.
 	local smallestStack = items[#items].count
 
 	-- PHASE 1: Try greedy exact match (accumulate stacks that fit without exceeding)
 	local accumulated = 0
 	local attachList = {}
 
-	for i, item in ipairs(items) do
+	for _, item in ipairs(items) do
 		local remaining = qtyNeeded - accumulated
 		if item.count <= remaining then
 			accumulated = accumulated + item.count
@@ -615,7 +633,6 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 	if accumulated < qtyNeeded and totalInBags >= qtyNeeded then
 		local bestAccumulated = accumulated
 		local bestAttachList = attachList
-		local bestSkipIndex = nil
 
 		for skipIndex = 1, math.min(5, #items) do
 			local testAccumulated = 0
@@ -652,7 +669,6 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 			if testAccumulated > bestAccumulated and testAccumulated < qtyNeeded then
 				bestAccumulated = testAccumulated
 				bestAttachList = testAttachList
-				bestSkipIndex = skipIndex
 			end
 		end
 
@@ -668,7 +684,7 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 		-- Find a stack large enough to split from
 		-- Prefer splitting from largest available stack
 		local splitCandidate = nil
-		for i, item in ipairs(items) do
+		for _, item in ipairs(items) do
 			if item.count >= remaining then
 				-- Check if this stack is already in attach list
 				local alreadyAttaching = false
@@ -987,18 +1003,6 @@ local function tog_copyItems(items)
 	return out
 end
 
-local function tog_findEmptyBagSlot()
-	for bag = 0, 4 do
-		local numSlots = C_Container.GetContainerNumSlots(bag)
-		for slot = 1, numSlots do
-			if not C_Container.GetContainerItemInfo(bag, slot) then
-				return bag, slot
-			end
-		end
-	end
-	return nil
-end
-
 -- FILLALL-001 (mail collect): does an inbox item link match a request's item?
 -- Mirrors CanFulfillRequest's match: by itemID (+ suffix) when known, else by name.
 local function tog_linkMatchesReq(link, req)
@@ -1100,6 +1104,180 @@ end
 function TOGBankClassic_Mail:ResetFulfillStep()
 	self.batchState = nil
 	self.collectState = nil
+	self.bankCollectState = nil
+end
+
+--- BANKFILL-001 -- true while the player can actually see and move bank contents.
+---
+--- Frame state is ground truth, exactly as IsMailboxOpen uses it: the container API answers for bank
+--- slots only while the bank is open, so this is not a convenience check. Away from a banker,
+--- FindItemsInBank returns EMPTY, which means "not visible from here" and must never be read as
+--- "the bank does not have it" -- the same conflation INV2-VAULT-001 was.
+function TOGBankClassic_Mail:IsBankOpen()
+	return (BankFrame and BankFrame:IsShown()) or false
+end
+
+--- The oldest open order for this banker that the BANK could help fill, plus how much is still
+--- missing from bags.
+---
+--- BANKFILL-001. Deliberately a SEPARATE search from FindOldestServiceableOrder rather than a flag
+--- on it: that function decides what to work on AT THE MAILBOX, and bank stock is unreachable from
+--- there. Teaching it about the bank would make it select orders it cannot fill and skip ones it
+--- can, which is a regression in the existing button dressed up as a feature.
+--- @return table|nil req, number shortfall how many more are needed than bags hold
+function TOGBankClassic_Mail:FindOldestBankFillableOrder(normActor)
+	local info = TOGBankClassic_Guild.Info
+	local requests = info and info.requests
+	if not requests then return nil end
+	local best, bestShort
+	for _, req in pairs(requests) do
+		if (req.status or "open") == "open"
+			and req.bank and TOGBankClassic_Guild:NormalizeName(req.bank) == normActor then
+			local qtyNeeded = (tonumber(req.quantity) or 0) - (tonumber(req.fulfilled) or 0)
+			if qtyNeeded > 0 then
+				local inBags = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
+				local shortfall = qtyNeeded - inBags
+				if shortfall > 0 then
+					local inBank = TOGBankClassic_Bank:CountItemInBank(req.item, req.itemID, req.suffixID)
+					if inBank > 0 then
+						-- Oldest first, with the same stable id tiebreak the mailbox search uses so
+						-- the two agree about what "oldest" means.
+						local d  = tonumber(req.date) or 0
+						local bd = best and (tonumber(best.date) or 0) or nil
+						if not best or d < bd or (d == bd and tostring(req.id) < tostring(best.id)) then
+							-- The TRUE shortfall, not capped at what the bank holds: the pick below already
+							-- takes the largest stack when nothing covers it, and the status message
+							-- reports "of the N needed" from this number, so capping it under-reported N.
+							best, bestShort = req, shortfall
+						end
+					end
+				end
+			end
+		end
+	end
+	return best, bestShort
+end
+
+--- Advance the stepped BANK collection one action. Returns (ok, message).
+---
+--- BANKFILL-001, and the operator's framing is the design: *"it pulls from your bags, splits it,
+--- then attaches it. i need the same pull/split/put back into the bank. the mail isn't close enough
+--- to a bank to fill it, but you need to be able to collect everything you need from the bank
+--- quickly."*
+---
+--- So this is the COLLECTION half, and it runs at the bank with the mailbox shut. Per click:
+---   pull one matching stack out of the bank, and if that stack overshoots what the order needs,
+---   split the surplus back INTO the bank so you walk away carrying exactly the order.
+---
+--- States: nil(idle) -> "return"(only when the pulled stack overshot) -> nil.
+function TOGBankClassic_Mail:BankCollectStep(actor)
+	if not self:IsBankOpen() then
+		self.bankCollectState = nil
+		return false, "Open your bank first — bank contents can only be moved while the bank is open."
+	end
+
+	local normActor = TOGBankClassic_Guild:NormalizeName(actor)
+	if not normActor then return false, "Could not work out which character you are." end
+	-- Same gate FulfillStep applies. The button is only built for bankers, but that is a property
+	-- of one caller and this is a public method (AUDIT-S3/S4: a guard at the call site is a guard
+	-- with a half-life).
+	if not TOGBankClassic_Guild:IsBank(normActor) then
+		return false, "Only bank characters can collect for orders."
+	end
+
+	local st = self.bankCollectState
+
+	-- RETURN: the previous click pulled a stack bigger than the order needed. Put the surplus back
+	-- so the bank keeps it, rather than leaving the banker to sort their bags out by hand.
+	if st and st.phase == "return" then
+		local rows = TOGBankClassic_Bank:FindItemsByName(st.item, st.itemID, st.suffixID)
+		local source
+		for _, row in ipairs(rows) do
+			if row.count >= st.surplus then source = row; break end
+		end
+		if not source then
+			-- The stack has not landed in bags yet (UseContainerItem is async), or the player moved
+			-- it. Give it a bounded number of clicks, then let go: a phase that can only be exited by
+			-- finding a stack is a phase that can strand, and "click again" forever is worse than
+			-- leaving the banker holding a few spares.
+			st.waits = (st.waits or 0) + 1
+			if st.waits >= 3 then
+				self.bankCollectState = nil
+				return false, string.format(
+					"Could not find the %s stack to return the spare %d from — carrying on without it.",
+					tostring(st.item), st.surplus)
+			end
+			return false, "Waiting for the stack to reach your bags — click again."
+		end
+		local emptyBank = self:FindEmptyBankSlot()
+		if not emptyBank then
+			self.bankCollectState = nil
+			return false, string.format(
+				"No free bank slot to put the spare %d back into — you are carrying %d extra %s.",
+				st.surplus, st.surplus, tostring(st.item))
+		end
+		ClearCursor()
+		C_Container.SplitContainerItem(source.bag, source.slot, st.surplus)
+		local bag, slot = emptyBank.bag, emptyBank.slot
+		C_Timer.After(0.1, function() C_Container.PickupContainerItem(bag, slot) end)
+		self.bankCollectState = nil
+		return true, string.format("Put %d spare %s back in the bank. Click for the next item.",
+			st.surplus, tostring(st.item))
+	end
+
+	local req, shortfall = self:FindOldestBankFillableOrder(normActor)
+	if not req then
+		return false, "Nothing left to collect — your bags already cover every order the bank can fill."
+	end
+
+	if not TOGBankClassic_Bank:HasInventorySpace() then
+		return false, "Bags are full — make room, then click again."
+	end
+
+	local rows = TOGBankClassic_Bank:FindItemsInBank(req.item, req.itemID, req.suffixID)
+	if #rows == 0 then
+		return false, string.format("Could not see %s in the bank just now — click again.", tostring(req.item))
+	end
+
+	-- Prefer a stack that covers the shortfall exactly or with the least surplus, so the common case
+	-- needs no split at all and the bank keeps its stacks tidy.
+	local pick = rows[1]
+	for _, row in ipairs(rows) do
+		local overshoot = row.count - shortfall
+		local bestOver  = pick.count - shortfall
+		if (overshoot >= 0 and (bestOver < 0 or overshoot < bestOver))
+			or (overshoot < 0 and bestOver < 0 and row.count > pick.count) then
+			pick = row
+		end
+	end
+
+	ClearCursor()
+	C_Container.UseContainerItem(pick.bag, pick.slot)   -- bank slot + bank open = move to bags
+
+	local surplus = pick.count - shortfall
+	if surplus > 0 then
+		self.bankCollectState = {
+			phase = "return", surplus = surplus,
+			item = req.item, itemID = req.itemID, suffixID = req.suffixID,
+		}
+		return true, string.format(
+			"Pulled %d %s for %s. Click to put the spare %d back in the bank.",
+			pick.count, tostring(req.item), tostring(req.requester), surplus)
+	end
+
+	self.bankCollectState = nil
+	return true, string.format("Pulled %d of the %d %s needed for %s. Click for more.",
+		pick.count, shortfall, tostring(req.item), tostring(req.requester))
+end
+
+--- First empty slot in the bank vault or its bags, or nil. BANKFILL-001.
+--- @return table|nil { bag = number, slot = number }
+function TOGBankClassic_Mail:FindEmptyBankSlot()
+	local bag, slot = tog_firstEmptySlot(BANK_CONTAINER, BANK_CONTAINER)
+	if not bag then
+		bag, slot = tog_firstEmptySlot(TOGBankClassic_Constants.BankBagRange())   -- BANKSLOT-001
+	end
+	return bag and { bag = bag, slot = slot } or nil
 end
 
 -- Advance the stepped batch fulfillment one action. Returns (ok, message).

@@ -21,8 +21,20 @@ local function stubGuild(opts)
 		GetNormalizedPlayer = function() return "Me-Testrealm" end,
 		IsBank              = function(_, n) return opts.banks == nil or opts.banks[n] == true end,
 		HasAltContent       = function(_, alt) return alt ~= nil and alt.hasContent == true end,
+		-- Peer Review F1: the sync-request gate is CanServe (tuple records), not HasAltContent. The
+		-- stub treats `hasContent` as "servable"; the real predicate is specified in servablecanon_spec.
+		CanServe            = function(self, norm)
+			local alt = self.Info.alts[norm]
+			return alt ~= nil and alt.hasContent == true
+		end,
 		HasMissingContent   = function() return opts.missingContent == true end,
 		SendStateSummary    = function() end,
+		-- The real rule is Guild's and is specified against the real Guild (hashcache_spec,
+		-- "Guild:AdvertisedImproves"). The mechanics here only need "we hold nothing -> useful".
+		AdvertisedImproves  = function(self, norm)
+			local held = self.Info.alts[norm]
+			return not (held and held.hasContent), "stub"
+		end,
 	}
 	TOGBankClassic_Core = {
 		-- Called as a method, so the payload arrives in the second slot.
@@ -59,9 +71,44 @@ describe("P2PSession collect window", function()
 		assert.equal(1, #P2P.offers["Banker-Testrealm"])
 	end)
 
-	it("ignores offers when no window is open", function()
-		P2P:OnOffer("Peer1-Testrealm", { ["Banker-Testrealm"] = { hash = 1, updatedAt = 100 } })
-		assert.is_nil(P2P.offers["Banker-Testrealm"])
+	-- P2P-034. This example used to assert the opposite ("ignores offers when no window is open")
+	-- and it was pinning the live defect: `OnOffer from Leatherrcp ignored (not collecting)` -- the
+	-- banker's offer for the one bank the viewer lacked, whispered behind three payloads, landed
+	-- after the 60-second window and was thrown away. An offer is a peer saying "I hold newer than
+	-- you"; late, it opens its session at once instead of waiting for the next catch-up broadcast.
+	-- The offers here carry a canon (the shape a broadcast-as-offer has), so they dispatch without
+	-- the version query; the bare number-only offer and its query are specified further down.
+	local CANON = "17890000000000000001"
+	it("dispatches an offer that arrives AFTER the window closed, rather than dropping it", function()
+		P2P:BeginCollectWindow({})
+		env.flushTimers()   -- the window closes with nothing in it
+		assert.is_false(P2P.isCollecting, "precondition: the window is still open")
+		env.sent = {}
+		P2P:OnOffer("Peer1-Testrealm", { ["Banker-Testrealm"] = { hashV2 = CANON } })
+		assert.truthy(env.sent[1] and env.sent[1].data:find("sync%-request"),
+			"a late offer was ignored; the viewer learned nothing from the one peer that had the bank")
+		assert.equal("Peer1-Testrealm", env.sent[1].target)
+		assert.is_not_nil(P2P.sessionsByAlt["Banker-Testrealm"])
+	end)
+
+	it("does not open a session from a late offer for a bank we already hold", function()
+		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true } } })
+		env.sent = {}
+		P2P:OnOffer("Peer1-Testrealm", { ["Banker-Testrealm"] = { hashV2 = CANON } })
+		assert.equal(0, #env.sent, "a late offer bypassed the usefulness filter")
+		assert.is_nil(P2P.sessionsByAlt["Banker-Testrealm"])
+	end)
+
+	it("parks a late offer for a peer we already have a session with, and dispatches it when that frees", function()
+		P2P:BeginCollectWindow({})
+		P2P:OnOffer("Peer1-Testrealm", { ["Alpha-Testrealm"] = { hashV2 = CANON } })
+		env.flushTimers()   -- Dispatch: one session with Peer1 for Alpha
+		env.sent = {}
+		P2P:OnOffer("Peer1-Testrealm", { ["Beta-Testrealm"] = { hashV2 = CANON } })
+		assert.equal(0, #env.sent, "a second request went to a peer that already has one of ours in flight")
+		assert.equal(1, #P2P.pendingDispatch, "the late offer was not parked for that peer")
+		P2P:OnAltCompleted("Alpha-Testrealm", "Peer1-Testrealm")
+		assert.truthy(env.sent[1] and env.sent[1].data:find("sync%-request"), "the parked late offer never dispatched")
 	end)
 
 	it("sorts candidates newest first", function()
@@ -168,6 +215,264 @@ describe("P2PSession send slots", function()
 	end)
 end)
 
+-- P2P-032: which offers are worth a session, and which go first. Read off the viewer's sendqueue:
+-- three fetch slots on old-build relays' offers (one for a bank already held current), 23 queued
+-- behind them, the bank that mattered among the 23.
+describe("P2P-032: offers are filtered and ordered by canon", function()
+	local P2P
+	local C = env.canon
+	local T = 1757000000
+
+	-- The REAL Guild here (Bank.lua for GetNormalizedPlayer, DeltaComms for the canons): P2P-034 moved
+	-- the rule into Guild:AdvertisedImproves, and a stub of the rule under test would test nothing.
+	before_each(function()
+		env.reset()
+		env.stubOutput()
+		env.loadModules({ "Modules/Constants.lua", "Modules/Item.lua", "Modules/DeltaComms.lua",
+			"Modules/Bank.lua", "Modules/Guild.lua", "Modules/BankerNumbers.lua" })
+		P2P = loadP2P()
+		-- P2P-035: every banker these examples name has a number, so the number-only offer and the
+		-- version query can be driven. Set directly; minting has its own spec.
+		local numbers = {}
+		local i = 0
+		for _, n in ipairs({ "Banker", "Alpha", "Beta", "Zed", "Alt1", "Alt2", "Alt3", "Alt4", "Alt5", "Alt6" }) do
+			i = i + 1
+			numbers[n .. "-Testrealm"] = i
+		end
+		TOGBankClassic_Guild.Info = { name = "Testguild", alts = {},
+			roster = { alts = {}, numbers = numbers, numbersNext = i + 1, numbersVersion = 1 } }
+		TOGBankClassic_Guild.IsBank = function() return true end
+		TOGBankClassic_Guild.HasMissingContent = function() return false end
+		TOGBankClassic_Core = {
+			-- The type, and the canon when the message names one, so a spec can see what was asked for.
+			SerializeWithChecksum = function(_, t)
+				return "ser:" .. tostring(t and t.type) .. (t and t.canon and (":" .. t.canon) or "")
+			end,
+			SendWhisper = function(_, prefix, data, target)
+				env.sent[#env.sent + 1] = { prefix = prefix, data = data, target = target }
+				return true
+			end,
+		}
+		P2P.sessions, P2P.sessionsByAlt, P2P.offers = {}, {}, {}
+		P2P.activeSessions, P2P.activeSends = 0, {}
+		P2P.isCollecting, P2P.collectTimer = false, nil
+		P2P.pendingDispatch, P2P.catchUpTimer, P2P.catchUpCycles = {}, nil, 0
+	end)
+
+	local function hold(alt, canon)
+		TOGBankClassic_Guild.Info.alts[alt] = {
+			name = alt, items = { { ID = 1, Count = 1 } }, inventoryHash = 1,
+			inventoryHashV2 = canon, inventoryUpdatedAt = T,
+		}
+	end
+
+	it("takes any offer for a bank we hold nothing for", function()
+		assert.is_true(P2P:OfferIsUseful("Banker-Testrealm", { hash = 1 }))
+		assert.is_true(P2P:OfferIsUseful("Banker-Testrealm", { hash = 1, hashV2 = C(T, 1) }))
+	end)
+
+	it("refuses a canon-less offer for a bank we already hold", function()
+		hold("Banker-Testrealm", C(T, 1))
+		assert.is_false(P2P:OfferIsUseful("Banker-Testrealm", { hash = 0xDEAD, updatedAt = T + 99999 }),
+			"an old-build relay's revision-1 offer took a fetch slot for a bank we already hold (P2P-032)")
+		hold("Banker-Testrealm", nil)
+		assert.is_false(P2P:OfferIsUseful("Banker-Testrealm", { hash = 0xDEAD }),
+			"revision-1 data cannot improve a revision-1 copy -- v1 is always red")
+	end)
+
+	it("refuses the same or an older canon, takes a newer one, and takes any canon when ours has none", function()
+		hold("Banker-Testrealm", C(T, 1))
+		assert.is_false(P2P:OfferIsUseful("Banker-Testrealm", { hashV2 = C(T, 1) }))
+		assert.is_false(P2P:OfferIsUseful("Banker-Testrealm", { hashV2 = C(T - 1, 1) }))
+		assert.is_true(P2P:OfferIsUseful("Banker-Testrealm", { hashV2 = C(T + 1, 1) }))
+		hold("Banker-Testrealm", nil)
+		assert.is_true(P2P:OfferIsUseful("Banker-Testrealm", { hashV2 = C(T - 100, 1) }),
+			"a copy with no canon must take ANY canon-bearing offer; that is the only way it acquires one")
+	end)
+
+	-- P2P-033: "why don't we introduce parallel processing." No global cap; one session per peer.
+	it("dispatches every alt at once when each has an idle peer -- no global cap of three", function()
+		P2P:BeginCollectWindow({})
+		for i = 1, 6 do
+			P2P:OnOffer("Peer" .. i .. "-Testrealm", { ["Alt" .. i .. "-Testrealm"] = { hash = 1, hashV2 = C(T, i) } })
+		end
+		env.sent = {}
+		P2P:Dispatch()
+		local requests = 0
+		for _, m in ipairs(env.sent) do if m.data:find("sync%-request") then requests = requests + 1 end end
+		assert.equal(6, requests,
+			"six alts held by six different peers were not all requested at once -- a global cap " ..
+			"is holding fetches that cost this client 300 bytes each (P2P-033)")
+		assert.equal(0, #P2P.pendingDispatch)
+	end)
+
+	it("holds a second alt for the SAME peer until the first session with that peer completes", function()
+		P2P:BeginCollectWindow({})
+		P2P:OnOffer("Author-Testrealm", {
+			["Alpha-Testrealm"] = { hash = 1, hashV2 = C(T, 1) },
+			["Beta-Testrealm"]  = { hash = 1, hashV2 = C(T, 2) },
+		})
+		env.sent = {}
+		P2P:Dispatch()
+		local requests = 0
+		for _, m in ipairs(env.sent) do if m.data:find("sync%-request") then requests = requests + 1 end end
+		assert.equal(1, requests, "two requests went to one peer; the second only sits in its queue")
+		assert.equal(1, #P2P.pendingDispatch, "the second alt was not parked for that peer")
+
+		env.sent = {}
+		P2P:OnAltCompleted("Alpha-Testrealm", "Author-Testrealm")
+		assert.truthy(env.sent[1] and env.sent[1].data:find("sync%-request"),
+			"the parked alt was not dispatched when the peer became free")
+		assert.equal("Author-Testrealm", env.sent[1].target)
+	end)
+
+	it("dispatches an alt whose AUTHOR offered with its canon at once, and asks the others what they hold", function()
+		P2P:BeginCollectWindow({})
+		P2P:OnOffer("Relay-Testrealm",  { ["Zed-Testrealm"]   = {} })     -- bare: version unknown
+		P2P:OnOffer("Relay-Testrealm",  { ["Alpha-Testrealm"] = {} })
+		P2P:OnOffer("Alpha-Testrealm",  { ["Alpha-Testrealm"] = { hashV2 = C(T, 1) } })   -- the author
+		env.sent = {}
+		P2P:Dispatch()
+		local request, query
+		for _, m in ipairs(env.sent) do
+			if m.data:find("sync%-request") then request = request or m end
+			if m.data:find("ver%-query") then query = query or m end
+		end
+		assert.truthy(request, "nothing was dispatched")
+		assert.equal("Alpha-Testrealm", request.target,
+			"Alpha's request did not go to its author, whose version nothing can beat (P2P-035)")
+		assert.truthy(query and query.target == "Relay-Testrealm",
+			"Zed's only offer named no version, so the relay should have been asked what it holds")
+	end)
+
+	-- P2P-035: THE VERSION QUERY. The operator: "you have a bunch of people that responded <0001>
+	-- and you have no idea what version. you need to ask 3-5 or some number of those people, what
+	-- version do you have, and then find the latest one ... once you know the latest, then you
+	-- request the data."
+	describe("the version query", function()
+		local BN
+		local function bareOffer(peer, alt) P2P:OnOffer(peer, { [alt] = {} }) end
+		local function reply(peer, alt, canon)
+			P2P:OnVersionReply(peer, BN:EncodeEntries({ { number = BN:NumberOf(alt), canon = canon } }))
+		end
+		local function requestsTo(target)
+			local n = 0
+			for _, m in ipairs(env.sent) do
+				if m.data:find("sync%-request") and (target == nil or m.target == target) then n = n + 1 end
+			end
+			return n
+		end
+		before_each(function() BN = TOGBankClassic_BankerNumbers end)
+
+		it("asks the offerers what they hold, the author first, at most five, one whisper per peer", function()
+			P2P:BeginCollectWindow({})
+			for i = 1, 7 do bareOffer("Peer" .. i .. "-Testrealm", "Zed-Testrealm") end
+			bareOffer("Zed-Testrealm", "Zed-Testrealm")   -- the author, offered last
+			env.sent = {}
+			P2P:Dispatch()
+			local queried = {}
+			for _, m in ipairs(env.sent) do
+				assert.is_nil(m.data:find("sync%-request"), "data was requested before any version was known")
+				if m.data:find("ver%-query") then queried[#queried + 1] = m.target end
+			end
+			assert.equal(5, #queried, "asked " .. #queried .. " peers; the cap is five")
+			assert.equal("Zed-Testrealm", queried[1], "the author was not asked first")
+		end)
+
+		it("requests the data from the holder of the NEWEST version, naming that version", function()
+			P2P:BeginCollectWindow({})
+			bareOffer("Old-Testrealm", "Zed-Testrealm")
+			bareOffer("New-Testrealm", "Zed-Testrealm")
+			P2P:Dispatch()
+			env.sent = {}
+			reply("Old-Testrealm", "Zed-Testrealm", C(T, 1))
+			reply("New-Testrealm", "Zed-Testrealm", C(T + 60, 2))
+			assert.equal(1, requestsTo(), "expected exactly one request once every asked peer answered")
+			assert.equal("New-Testrealm", env.sent[#env.sent].target, "the older holder was asked")
+			assert.truthy(env.sent[#env.sent].data:find(C(T + 60, 2), 1, true),
+				"the request did not name the version it wants")
+		end)
+
+		it("the author's answer ends the wait at once, whoever else is still to answer", function()
+			P2P:BeginCollectWindow({})
+			bareOffer("Relay-Testrealm", "Zed-Testrealm")
+			bareOffer("Zed-Testrealm", "Zed-Testrealm")
+			P2P:Dispatch()
+			env.sent = {}
+			reply("Zed-Testrealm", "Zed-Testrealm", C(T, 1))
+			assert.equal(1, requestsTo("Zed-Testrealm"), "the author answered and was not asked for the data")
+		end)
+
+		it("asks nobody when no offered version improves what we hold", function()
+			hold("Zed-Testrealm", C(T + 100, 1))
+			P2P:BeginCollectWindow({})
+			bareOffer("Relay-Testrealm", "Zed-Testrealm")
+			P2P:Dispatch()
+			env.sent = {}
+			reply("Relay-Testrealm", "Zed-Testrealm", C(T, 1))   -- older than ours
+			assert.equal(0, requestsTo(), "requested a version older than the one we hold")
+			assert.is_nil(P2P.sessionsByAlt["Zed-Testrealm"])
+		end)
+
+		it("gives up on a peer that never answers when the window closes, and asks the ones that did", function()
+			P2P:BeginCollectWindow({})
+			bareOffer("Silent-Testrealm", "Zed-Testrealm")
+			bareOffer("Talker-Testrealm", "Zed-Testrealm")
+			P2P:Dispatch()
+			env.sent = {}
+			reply("Talker-Testrealm", "Zed-Testrealm", C(T, 1))
+			assert.equal(0, requestsTo(), "asked before the silent peer had a chance to answer")
+			env.advance(6)
+			assert.equal(1, requestsTo("Talker-Testrealm"))
+			assert.equal(0, requestsTo("Silent-Testrealm"), "a peer with no known version was asked for data")
+		end)
+
+		-- Self-audit A2. A peer answered "nothing servable" (its scan was not done), then scanned and
+		-- offered again; the earlier answer must not stand in the way of asking it again.
+		it("asks a peer again when it re-offers after having answered nothing", function()
+			P2P:BeginCollectWindow({})
+			bareOffer("Late-Testrealm", "Zed-Testrealm")
+			P2P:Dispatch()
+			reply("Late-Testrealm", "Zed-Testrealm", nil)   -- nothing servable
+			env.advance(6)
+			assert.equal(0, requestsTo())
+			env.sent = {}
+			bareOffer("Late-Testrealm", "Zed-Testrealm")   -- late, outside any window
+			local asked = false
+			for _, m in ipairs(env.sent) do if m.data:find("ver%-query") and m.target == "Late-Testrealm" then asked = true end end
+			assert.is_true(asked, "a peer that once answered nothing was never asked again until the next window")
+			reply("Late-Testrealm", "Zed-Testrealm", C(T, 1))
+			assert.equal(1, requestsTo("Late-Testrealm"))
+		end)
+
+		it("answers a query with the versions it can SERVE, and answers even when that is nothing", function()
+			TOGBankClassic_Guild.ServableCanon = function(_, name)
+				return name == "Alpha-Testrealm" and C(T, 9) or nil
+			end
+			env.sent = {}
+			P2P:HandleVersionQuery("Asker-Testrealm", BN:EncodeNumbers({ BN:NumberOf("Alpha-Testrealm"), BN:NumberOf("Beta-Testrealm") }))
+			assert.equal(1, #env.sent)
+			assert.equal("Asker-Testrealm", env.sent[1].target)
+			assert.truthy(env.sent[1].data:find("ver%-reply"))
+			env.sent = {}
+			P2P:HandleVersionQuery("Asker-Testrealm", BN:EncodeNumbers({ BN:NumberOf("Beta-Testrealm") }))
+			assert.equal(1, #env.sent, "an empty answer must still be sent, or the asker waits the whole window")
+		end)
+
+		it("refuses a request for a version it no longer holds, so the requester moves on", function()
+			hold("Alpha-Testrealm", C(T + 5, 1))
+			TOGBankClassic_Guild.CanServe = function() return true end
+			TOGBankClassic_Guild.ServableCanon = function() return C(T + 5, 1) end
+			env.sent = {}
+			assert.is_false(P2P:HandleSyncRequest("sid1", "Requester", "Alpha-Testrealm", C(T, 1)))
+			assert.truthy(env.sent[1].data:find("sync%-busy"))
+			env.sent = {}
+			assert.is_true(P2P:HandleSyncRequest("sid2", "Requester", "Alpha-Testrealm", C(T + 5, 1)))
+			assert.truthy(env.sent[1].data:find("sync%-accept"))
+		end)
+	end)
+end)
+
 describe("P2PSession handshake", function()
 	local P2P
 
@@ -194,12 +499,141 @@ describe("P2PSession handshake", function()
 		assert.truthy(env.sent[1].data:find("sync%-accept"))
 	end)
 
-	it("replies busy once at the send cap", function()
+	-- P2P-029. The operator: "that 3 was an arbitrary number ... make it so it 'buffers' all
+	-- requests and then has only 3 open responses, so nothing gets dropped." And on why the cap
+	-- was there: "to force the P2P in a busy guild, so one player wasn't getting hammered." A
+	-- request past the cap is QUEUED and told its position; it is accepted, in order, as slots
+	-- free; a requester with another peer to try cancels and moves on.
+	it("QUEUES a request at the send cap rather than refusing it, and reports the position", function()
 		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true } } })
 		P2P:TryAcquireSendSlot("A"); P2P:TryAcquireSendSlot("B"); P2P:TryAcquireSendSlot("C")
 		local accepted = P2P:HandleSyncRequest("sid1", "Requester", "Banker-Testrealm")
 		assert.is_false(accepted)
-		assert.truthy(env.sent[#env.sent].data:find("sync%-busy"))
+		assert.truthy(env.sent[#env.sent].data:find("sync%-queued"),
+			"a request past the cap was refused with sync-busy -- every refused requester retries " ..
+			"every peer, which is the storm (P2P-029)")
+		assert.equal(1, P2P:EnqueueSend("sid1", "Requester", "Banker-Testrealm"), "a repeat keeps its position")
+		assert.equal(2, P2P:EnqueueSend("sid2", "Other", "Banker-Testrealm"))
+	end)
+
+	it("accepts the queued request, in order, as slots free", function()
+		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true } } })
+		P2P:TryAcquireSendSlot("A"); P2P:TryAcquireSendSlot("B"); P2P:TryAcquireSendSlot("C")
+		P2P:HandleSyncRequest("sid1", "First", "Banker-Testrealm")
+		P2P:HandleSyncRequest("sid2", "Second", "Banker-Testrealm")
+		env.sent = {}
+		P2P:ReleaseSendSlot("A", "complete")
+		assert.equal(1, #env.sent, "freeing one slot should accept exactly one queued requester")
+		assert.equal("First", env.sent[1].target)
+		assert.truthy(env.sent[1].data:find("sync%-accept"))
+		assert.equal(3, P2P:GetActiveSendTotal(), "the accepted requester took the freed slot")
+		P2P:ReleaseSendSlot("B", "complete")
+		assert.equal("Second", env.sent[2].target)
+	end)
+
+	it("forgets a queued requester that cancels", function()
+		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true } } })
+		P2P:TryAcquireSendSlot("A"); P2P:TryAcquireSendSlot("B"); P2P:TryAcquireSendSlot("C")
+		P2P:HandleSyncRequest("sid1", "First", "Banker-Testrealm")
+		P2P:HandleSyncRequest("sid2", "Second", "Banker-Testrealm")
+		P2P:DequeueSend("sid1", "First")
+		env.sent = {}
+		P2P:ReleaseSendSlot("A", "complete")
+		assert.equal("Second", env.sent[1].target, "a cancelled entry was still served")
+	end)
+
+	it("drops a queued entry whose requester has long since given up", function()
+		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true } } })
+		P2P:TryAcquireSendSlot("A"); P2P:TryAcquireSendSlot("B"); P2P:TryAcquireSendSlot("C")
+		P2P:HandleSyncRequest("sid1", "First", "Banker-Testrealm")
+		env.advance(400)
+		env.sent = {}
+		P2P:ReleaseSendSlot("A", "complete")
+		assert.equal(0, #env.sent, "an accept was sent to a requester whose wait expired minutes ago")
+	end)
+
+	-- The requester's half.
+	it("moves on to another untried peer when queued, and tells the queuing peer", function()
+		stubGuild()
+		P2P.sessions["sid1"] = {
+			sessionId = "sid1", altName = "Banker-Testrealm", state = "DISPATCHED", peer = "Busy",
+			candidates = { { peer = "Busy", updatedAt = 2 }, { peer = "Free", updatedAt = 1 } },
+			triedPeers = { Busy = true }, timers = {},
+		}
+		P2P.sessionsByAlt["Banker-Testrealm"] = "sid1"
+		P2P.activeSessions = 1
+		env.sent = {}
+		P2P:OnSyncQueued("sid1", "Busy")
+		local cancel, request
+		for _, m in ipairs(env.sent) do
+			if m.data:find("sync%-cancel") and m.target == "Busy" then cancel = true end
+			if m.data:find("sync%-request") and m.target == "Free" then request = true end
+		end
+		assert.is_true(cancel == true, "the queuing peer was not told to drop us")
+		assert.is_true(request == true, "the other peer was not asked")
+	end)
+
+	it("waits in the queue when nobody else holds the bank, past the normal ACK timeout", function()
+		stubGuild()
+		P2P.sessions["sid1"] = {
+			sessionId = "sid1", altName = "Banker-Testrealm", state = "DISPATCHED", peer = "Busy",
+			candidates = { { peer = "Busy", updatedAt = 2 } }, triedPeers = { Busy = true }, timers = {},
+		}
+		P2P.sessionsByAlt["Banker-Testrealm"] = "sid1"
+		P2P.activeSessions = 1
+		P2P:OnSyncQueued("sid1", "Busy")
+		env.advance(60)
+		assert.equal("DISPATCHED", P2P.sessions["sid1"].state,
+			"the session gave up inside the queue wait, so the later accept would land on nothing")
+		P2P:OnSyncAccept("sid1", "Busy")
+		assert.equal("ACTIVE", P2P.sessions["sid1"].state)
+	end)
+
+	-- P2P-028: THE SLOT LEAK, read off two live clients on 2026-09-10. The banker answered dozens
+	-- of sync-requests in thirty seconds, received no state summary and sent no payload: every
+	-- one of its three slots was held by an accept that ended in nothing, for the 210-second
+	-- safety timer, and every requester was told "busy" and retried. An accept must give its
+	-- slot back on every path that will never send.
+	it("frees an accepted slot when the requester never sends its state summary", function()
+		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true } } })
+		assert.is_true(P2P:HandleSyncRequest("sid1", "Requester", "Banker-Testrealm"))
+		assert.equal(1, P2P:GetActiveSendTotal(), "precondition: the accept took a slot")
+		env.advance(31)
+		assert.equal(0, P2P:GetActiveSendTotal(),
+			"an accept nobody followed up held its slot past the state-summary window; with a " ..
+			"guild's worth of requesters that is a permanently busy banker (P2P-028)")
+	end)
+
+	it("keeps the slot when the state summary DOES arrive, until the send itself releases it", function()
+		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true } } })
+		P2P:HandleSyncRequest("sid1", "Requester", "Banker-Testrealm")
+		P2P:StateSummaryArrived("Requester", "Banker-Testrealm")
+		env.advance(31)
+		assert.equal(1, P2P:GetActiveSendTotal(),
+			"the state-wait fired although the summary had arrived -- a live send would lose its slot")
+	end)
+
+	it("does not free a slot the wait did not own when the requester has two in flight", function()
+		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true } } })
+		P2P:HandleSyncRequest("sid1", "Requester", "Banker-Testrealm")
+		P2P:StateSummaryArrived("Requester", "Banker-Testrealm")
+		P2P:HandleSyncRequest("sid2", "Requester", "Banker-Testrealm")   -- second accept, unanswered
+		env.advance(31)
+		assert.equal(1, P2P:GetActiveSendTotal(), "the unanswered accept freed one slot, not both")
+	end)
+
+	-- Self-audit F2: two accepts to ONE requester for TWO alts; the summary for one must not
+	-- cancel the wait for the other, and the second accept must not cancel the first's wait.
+	it("keys the state-wait by requester AND alt", function()
+		stubGuild({ alts = { ["Banker-Testrealm"] = { hasContent = true }, ["Other-Testrealm"] = { hasContent = true } } })
+		P2P:HandleSyncRequest("sid1", "Requester", "Banker-Testrealm")
+		P2P:HandleSyncRequest("sid2", "Requester", "Other-Testrealm")
+		P2P:StateSummaryArrived("Requester", "Banker-Testrealm")   -- only the first is answered
+		env.advance(31)
+		assert.equal(1, P2P:GetActiveSendTotal(),
+			"the unanswered accept for the OTHER alt kept its slot: keyed by requester alone, its " ..
+			"wait was cancelled by the first alt's summary (or by the second accept) and the slot " ..
+			"fell back to the 210s timer -- the P2P-028 leak, narrowed to this shape")
 	end)
 
 	it("ignores a sync-accept for an unknown session", function()

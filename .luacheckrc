@@ -30,7 +30,7 @@ globals = {
 	"TOGBankClassic_Core", "TOGBankClassic_Compat", "TOGBankClassic_Output",
 	"TOGBankClassic_Performance", "TOGBankClassic_DeltaComms", "TOGBankClassic_Bank",
 	"TOGBankClassic_Chat", "TOGBankClassic_Database", "TOGBankClassic_Events",
-	"TOGBankClassic_Guild", "TOGBankClassic_P2PSession", "TOGBankClassic_RequestLog",
+	"TOGBankClassic_Guild", "TOGBankClassic_BankerNumbers", "TOGBankClassic_P2PSession", "TOGBankClassic_RequestLog",
 	"TOGBankClassic_Item", "TOGBankClassic_ItemHighlight", "TOGBankClassic_TooltipBankerInfo",
 	"TOGBankClassic_Mail", "TOGBankClassic_MailInventory", "TOGBankClassic_Options",
 	"TOGBankClassic_UI", "TOGBankClassic_Tests",
@@ -47,14 +47,14 @@ globals = {
 	"TOGBankClassicDB", "TOGBankClassicInvDB", "TOGBankClassicIconDB", "TOGBankClassicOptionDB",
 	"TOGBankClassicDB_DebugLog", "TOGBankClassic_PerfMetrics", "TOGBankClassic_PerfEnabled",
 	"TOGBankClassic_DebugLogEnabled",
-	-- Bare globals declared by Modules/Constants.lua.
-	-- NOTE: audit NS-001 — these should move under a TOGBankClassic_ prefix. Listed here so
-	-- luacheck is quiet until that refactor lands, not as an endorsement of the current shape.
-	"ADOPTION_STATUS", "TIMER_INTERVALS", "LOG_LEVEL", "DEBUG_CATEGORY", "DEBUG_TAGS",
-	"REQUEST_LOG", "REQUESTS_SYNC", "COMM_PREFIX_DESCRIPTIONS", "PROTOCOL", "PEER_TO_PEER",
-	"FEATURES",
-	-- Bare global function declared by Modules/Guild.lua (audit NS-001).
-	"GetPlayerWithNormalizedRealm",
+	-- NS-001 (fixed): the shared constant tables, published as ONE global by Modules/Constants.lua.
+	-- The eleven bare globals that used to be listed here -- ADOPTION_STATUS, TIMER_INTERVALS,
+	-- LOG_LEVEL, DEBUG_CATEGORY, DEBUG_TAGS, REQUEST_LOG, REQUESTS_SYNC, COMM_PREFIX_DESCRIPTIONS,
+	-- PROTOCOL, PEER_TO_PEER, FEATURES -- plus the bare `GetPlayerWithNormalizedRealm` function from
+	-- Guild.lua are GONE, and their absence from this list is now load-bearing rather than cosmetic:
+	-- a stray bare `DEBUG_CATEGORY` is an undefined-variable warning here instead of a silent read of
+	-- whatever another installed addon happens to have published under that name. Do not re-add them.
+	"TOGBankClassic_Constants",
 	-- Client frames the addon TAGS with a "already hooked" marker field. They are the client's
 	-- frames, not ours, but we do write a field on them -- so they belong here rather than in
 	-- read_globals, which forbids field assignment and reported every tag as an error.
@@ -120,9 +120,16 @@ read_globals = {
 	-- Blizzard_DeprecatedChatInfo, behind GetCVarBool("loadDeprecationFallbacks") -- so it is nil
 	-- for any player who has that CVar off. `Constants` is what the deprecated global forwards to.
 	"Constants",
-	-- Mail
+	-- Mail. The Send-Mail half was missing from this list entirely, so every one of Mail.lua's
+	-- attach/send call sites reported as an undefined variable -- 20-odd warnings that were real
+	-- signal being drowned out rather than real problems. All verified present in Blizzard's
+	-- Classic Era tree before being added here, not assumed from the name.
 	"GetInboxNumItems", "GetInboxHeaderInfo", "GetInboxItem", "GetInboxItemLink",
 	"ATTACHMENTS_MAX_RECEIVE", "SendMail", "TakeInboxItem",
+	"ATTACHMENTS_MAX_SEND", "GetSendMailItem", "ClickSendMailItemButton", "TakeInboxMoney",
+	"CheckInbox", "SendMailNameEditBox", "SendMailSubjectEditBox",
+	-- Sound, for the donation-collected cue (Modules/Mail.lua)
+	"PlaySound", "SOUNDKIT",
 	-- Timers
 	"C_Timer",
 	-- Addon message prefix registration + its result enum (LIBREQ-ALL-005, Modules/Chat.lua)
@@ -167,8 +174,16 @@ files["Tests"] = {
 	-- them, and the only way to drive that branch is to take them away. `debugtab_spec` nils each
 	-- and restores it in a `finally`. A spec cannot arrange this by any other means -- the absence
 	-- IS the condition under test -- and the branch it reaches used to be a hard error.
+	-- The three container-MOVING calls are stood in front of by bankcollect_spec (BANKFILL-001):
+	-- the env models container READS only, and the bank-collect state machine is about what the
+	-- moves do to the stacks -- pull, split, drop -- so the spec has to implement them over the env's
+	-- bag tables to assert the arithmetic. Exact fields, so every other C_Container write is still
+	-- reported. BankFrame is the same spec's stand-in for the bank being open; IsBankOpen reads
+	-- `BankFrame:IsShown()` and the frame is steered per example.
 	globals = { "LibStub", "string.trim", "GetItemInfoInstant", "GameTooltip.HookScript",
-		"C_GuildInfo.CanViewOfficerNote", "NUM_CHAT_WINDOWS", "Constants" },
+		"C_GuildInfo.CanViewOfficerNote", "NUM_CHAT_WINDOWS", "Constants",
+		"C_Container.UseContainerItem", "C_Container.SplitContainerItem",
+		"C_Container.PickupContainerItem", "BankFrame" },
 }
 
 -- The harness is a separate public repo (WoWAPITesting) vendored as a submodule; it carries

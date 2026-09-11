@@ -1,478 +1,659 @@
 # TOGBankClassic Changelog
 
-## [v1.4.0] (2026-09-10) - Canon Hashes, Tuple Wire & LibGuildRoster Adoption
-
-### Bug Fixes
-
-- **VERIFIED IN GAME: the reported data-loss bug did not reproduce under the conditions that caused it.** The whole canon-hash rework was built from one live report -- *"I was getting V2 data from the banker, the banker logged off and then I was getting the mutated V1 hash that was 'newer' and it was over-writing my V2 data"*. That sequence was run deliberately on a real guild: **banker offline**, the reporting client online, and 9 of 11 online clients still unmigrated and therefore still re-minting and re-broadcasting hashes exactly as before. The inventory stayed correct and no overwrite occurred.
-
-  **The banker being offline is the whole test, not a detail.** While the author is online they keep republishing their own canon, so a stale relayed copy loses on merit and the guard is never the thing that saved you. Only with the author gone does a third party's older copy get its chance -- which is precisely the sequence that lost data. An earlier "no overwrites" observation had the banker online for most of the window and was deliberately **not** counted.
-
-  Stated at the strength the evidence supports: the failure **did not occur** under the conditions that previously produced it. One session is not a proof of impossibility, but it is the difference between *"mechanism-correct and spec-covered offline"* and *"the bug we set out to fix did not happen on the real guild"*. The guard is `Chat:ShouldApplyTuplePayload`, ordering on the author's publish time that `INV2-ORDER-001` put on the wire.
-
-  **What this does NOT establish, because the same guild cannot show it:** whether the broadcast storm is quieter. The unmigrated majority still mutate hashes and the fix has no reach into them, so any traffic capture there is dominated by old clients behaving like old clients. That closes when a guild finishes upgrading.
-
-- **MIGRATE-002 (release blocker, found while assessing whether v1.4.0 was shippable): the mixed-version warning had no throttle and would have flooded chat during exactly the rollout it exists to help.** Removing wire back-compat means a v1.4.0 client drops every v1.3.2 inventory payload, and the drop branch warns by name when the sender is a banker -- *"X is running an older TOGBank and its bank contents cannot be read. Ask them to update."* That diagnostic is right and load-bearing: without it the drop is silent and indistinguishable from the banker having no items, from the sync never being requested, and from a bug in the new path.
-
-  **But the branch is reached on every legacy payload, not once per client.** An unmigrated banker re-broadcasts on every scan and answers every P2P query, so the warning fired repeatedly per person -- worst precisely mid-migration, when most bankers are still old. Measured against a live guild during this rollout: 9 of 11 online clients unmigrated, several of them bankers.
-
-  Now latched once per **normalised** sender per session, so `Bob` and `Bob-Realm` cannot each claim a line. Session-scoped on purpose rather than persisted: if a banker updates mid-session the latch is irrelevant, and if they have not updated by the next login the reminder is worth one more line. **The DEBUG record is deliberately left unlatched** -- a diagnostic log should show every occurrence, and it is opt-in so it cannot flood anyone. Location: `Modules/Chat.lua`.
-
-- **CHATWIN-001: `/togbank debugtab` could fail with a Lua error instead of a missing tab, on any client with deprecation fallbacks turned off.** Four loops in `Modules/Output.lua` iterated `for i = 1, NUM_CHAT_WINDOWS`, and that global is **not guaranteed on Classic Era**. Verified in Blizzard's own tree rather than assumed: the only assignment is `Blizzard_DeprecatedChatInfo/Deprecated_ChatFrame.lua:18`, and that file returns early at its line 4 unless `GetCVarBool("loadDeprecationFallbacks")` is true. With the CVar off the global is `nil`, so `for i = 1, nil` is a hard error -- the debug tab broke outright rather than simply not being found, and the same nil reached the tab's creation and removal paths.
-
-  Now read from `Constants.ChatFrameConstants.MaxChatWindows`, which is engine-side and present regardless and is what the deprecated global forwards to; the bare global is the fallback and a literal is the last resort. This is the fleet's standing trap -- a bare global that exists **only** as a deprecation shim is not evidence the client prefers it, and feature-detection branches on exactly that. Location: `Modules/Output.lua`.
-
-- **DEV-UX-002: `/togbank debugtab` reported success in a state where it could not possibly produce output.** It replied *"Debug output will now appear in 'TOGBank Debug' tab"* unconditionally -- but the tab is only the **fourth of four gates**, and the two before it are off by default: the log level, and at least one opt-in category. So a first-time user got a confident confirmation followed by silence, which reads as a broken tab rather than an unset switch. Same class as `DEV-UX-001`, which this codebase already filed against a confident confirmation for a typo.
-
-  It now reports the gates that are actually shut, naming the command that opens each, and lists the enabled categories when output really is flowing. Location: `Modules/Chat.lua`.
-
-- **INV2-SUFFIX-001: a random-suffix item's variant was recovered by parsing a link that does not always carry it, instead of being read from the record that always does.** Same class as the link-stripping the operator ruled out for V2 -- *"in V2 the link is just constructed on the other side from ItemDB"*, *"link stripping is causing a lot of problems"* -- and the data was on the record the whole time.
-
-  A `Record` holds `{id, count, suffix, enchant}` with the suffix as a real field, but `Store:GetAltView` materialised rows as `{ID, Count, Link, Info}` and dropped it. Two consumers then recovered it with `Item:GetSuffixID(row.Link)`. That link is rebuilt by `Resolve.describe`, and **only its first step preserves the suffix**: step 2 emits a bare `item:<id>` and step 3 emits no link at all. So on any client whose ItemDB lacks that id -- or that loaded an older copy, or none -- the suffix silently read as `nil` and every "of the Tiger" matched every "of the Monkey".
-
-  **The more severe of the two sites was the minting one.** `UI/Search.lua`'s request dialog is where a request's `suffixID` is first written, so the loss was not a failed match downstream -- the request was **created** with no variant at all and then matched any sibling for the rest of its life. The second site, `UI/Requests.lua`'s tooltip lookup, could only fail to resolve.
-
-  **A third defect surfaced while tracing it**, and it made the other two moot: `Search.lua`'s lookup deduplicated on **itemID alone**, so two suffix variants held by one character were summed into a single row carrying one variant's link and both variants' counts. Search therefore offered a stock figure that no single variant actually had. Identity there is now id **plus** suffix, which is what `REQ-003` already says these items are.
-
-  Fixed by carrying `Suffix` and `Enchant` through the view as first-class numbers and reading them via a new `Item:RowSuffixID(row)`. The helper is not a one-liner for a reason worth recording: on a V2 row `Suffix = 0` means *definitely no suffix*, while on a legacy row the field is **absent** and means *unknown, ask the link*. Collapsing those into `tonumber(row.Suffix) or GetSuffixID(row.Link)` would make legacy suffixed gear unmatchable, because `0` is truthy in Lua and would short-circuit the fallback away.
-
-  **Three other call sites were enumerated by reading and deliberately left alone**: `Mail.lua:799`, `Mail.lua:1012` and `Bank.lua:556` parse live client links, which always encode the suffix. Those are safe and must not be confused with the two above -- the distinction is where the link came from, not what is done to it. Locations: `Modules/Inventory/Store.lua`, `Modules/Item.lua`, `Modules/UI/Search.lua`, `Modules/UI/Requests.lua`, `Tests/suffixcarry_spec.lua`.
-
-- **HASH-CANON-002: the sync fingerprint was being re-minted by every client that touched it, not just by the bank character that produced it** -- reported from a live guild, and diagnosed there rather than here. The operator's words: *"the hash gets recomputed anytime anyone looks at the bank"*, *"V1 has a broadcast STORM because the hashes are ALWAYS updating"*, *"they are being mutated by EVERY user"*, and the sequence that cost them data: *"I was getting V2 data from the banker, the banker logged off and then I was getting the mutated V1 hash that was 'newer' and it was over-writing my V2 data"*.
-
-  A fingerprint is the **identity of a version of a record**. That only works if every client holding that version reports the same number, which requires it be produced once, by the client that read the bank, and carried unchanged by everyone else. Three separate places broke that, and each looked entirely reasonable where it stood.
-
-  **1. The query path.** `Chat.lua`'s `PERF-005` block ran on **every incoming query about a character** and stamped a freshly computed fingerprint whenever one was missing -- on a client that had not authored the record, computed from whatever its own copy happened to hold. This is literally "recomputed any time anyone looks at the bank". Deleted; a record with no fingerprint now advertises none and is re-requested from the client that can actually produce one.
-
-  **2. The no-change correction.** The `togbank-nochange` handler read `hash` / `hashV2` / `mailHash` off the message and wrote them over stored values, **adopting from any sender rather than from the author**. Any peer holding a copy answers a state summary, so peer A minted a number, B stored it as its own, and B then served it to C. That is the propagation mechanism for "mutated by every user", and it is exactly the reported sequence: the banker went offline and a mutated revision-1 number arrived from a third party and replaced good data. Deleted on receive, **and the three fingerprint fields removed from the send side too** -- an older client still adopts whatever arrives, so refusing them on receive alone would leave the loop fed from the other end. The message itself is kept; it still closes the sync session, which is its real job.
-
-  **3. The database migration**, which ran over saved data that mostly describes **other players'** bank characters received over the wire.
-
-  **The second one's own comment recorded how it began** and should have been the warning: it existed to *"fix stale inventoryHash left by the pre-DELTA-025 bug"*. A repair for one client mis-stamping became the channel by which every client restamped every other. Its justification -- that the sender only reaches that path when the item baselines match, so its number must be right -- argues that the **data** matched and says nothing about how the sender's **number** was produced.
-
-  **Four specs were deleted rather than re-baselined**, and that is worth naming: they were green, careful, and asserted the adoption as a **requirement**. A spec pinning a live data-loss bug is worse than no spec, because the next person to fix it meets a red test with a confident message. Locations: `Modules/Chat.lua`, `Modules/Guild.lua`, `Modules/Database.lua`, `Tests/syncwire_spec.lua`.
-
-- **HASH-CANON-003: the fingerprint now includes the moment it was published, so two scans of coincidentally identical contents are two distinguishable versions** -- the operator's directive: *"The hash HAS to have the DTS in it and the NEWER V2 Hash wins"*.
-
-  This looks circular and is the reason it had not been done: if the datestamp is inside the fingerprint, the fingerprint differs on every call by construction, so it cannot also be the thing that decides whether anything changed -- and comparing against it would make **every** bank close look like a change and republish to the whole guild. That is the broadcast storm, arrived at from the other direction.
-
-  Resolved by keeping three numbers with three different jobs: a **content** fingerprint (no datestamp, never sent) which is the change detector; the **canon** (datestamp included, sent) which is the identity of a version; and the frozen original, which is what un-upgraded clients still compute. A scan computes the content fingerprint first, advances the datestamp only if it moved, and only then stamps the canon. Every publish gets a distinct identity with no churn.
-
-  **The bump is bankers only, and that is now pinned rather than incidental.** `Bank:Scan` returns early for a character that is not in the banker list, and the stamp sits ~280 lines below that gate with nothing connecting them. Two guards close it: a class guard asserting exactly **one** production site can mint a fingerprint (which is what would have caught the three deleted above), and a behavioural example asserting a non-banker's scan stamps neither number -- proven red by removing the gate's `return`. Locations: `Modules/DeltaComms.lua`, `Modules/Bank.lua`, `Core.lua`, `Tests/canonhash_spec.lua`, `Tests/wiring_spec.lua`.
-
-- **INV2-ORDER-001: the tuple receive path had no last-writer-wins guard at all, so a stale snapshot silently overwrote a fresher one** -- the other half of the operator's report, and a straightforward data-loss bug.
-
-  The legacy path has always refused a record that is not newer. The tuple path called `Store:SetAltRecords` **unconditionally**. With several peers relaying the same character over the peer-to-peer layer, whichever snapshot arrived **last** won regardless of when it was authored, so a peer holding a days-old copy overwrote a fresh one and nothing anywhere said so.
-
-  It could not have checked even if it had wanted to: the author's publish time was **not on the wire**, and the receiver stamped its own arrival time on everything it stored. **That second half is arguably worse**, because every receiver re-advertises what it holds and the peer-to-peer layer picks the holder with the newest timestamp -- so a relayed third-hand copy advertised itself as **fresher than the author's own record**, and the further a copy travelled the fresher it claimed to be.
-
-  The publish time now rides as a trailing wire field, is stored verbatim rather than minted, and ordering is decided in exactly one place. A payload with no publish time is still accepted, deliberately: refusing it would freeze that character permanently rather than merely leaving it unordered, and unordered is what already shipped. Locations: `Modules/Inventory/Wire.lua`, `Modules/Guild.lua`, `Modules/Chat.lua`, `Tests/inventoryordering_spec.lua`.
-
-- **INV2 step 10 remainder: the second inventory receive path is deleted, along with the link-reconstruction machinery it kept alive** -- about 680 lines.
-
-  `Guild:ReceiveAltData` took a link-bearing legacy payload off the wire and wrote a character's items straight from it, reached through a `type == "alt"` branch sitting on the **request-mutation** prefix alongside the genuine request traffic. It never met the tuples-only guard, so the no-backwards-compatibility directive was being enforced on one inventory path and not the other.
-
-  **Validated as unfed before deleting**, so nobody re-derives it: the released v1.3.2 sends inventory on `togbank-d4`, and its only sender on the request prefix is request mutations. No shipped version sends inventory there. So this was dead code and **not** the source of the reported corruption -- that was the two entries above -- but a bypass nothing currently drives is still a bypass.
-
-  Removing it orphaned a cascade that had not been anticipated: `ReconstructItemLinks`, then the batched reconstruction queue behind it (a concurrency cap, a batch size, a re-queue path, asynchronous item-load callbacks), then the throttled UI refresh that existed to repaint as those loads trickled in. All of it existed **only** because the legacy format shipped links across the wire; tuples resolve on arrival and the display redraws once. `ReconstructItemLink` (singular) is alive and still used while drawing -- the names differ by one character. Locations: `Modules/Guild.lua`, `Modules/Chat.lua`.
-
-- **LIBREQ-ALL-005: a comm prefix the client refuses to register is now reported instead of failing silently** -- and the obvious version of this guard would have been dead code.
-
-  The registration call returns an **enum**, never a boolean and never nil. So `if not RegisterAddonMessagePrefix(p)` can never fire, because success is `0` and zero is truthy in Lua. Both spellings of the naive guard would have passed their specs against a harness stub that returned `true` and whose own comment admitted the return had never been checked against Blizzard's documentation. Confirmed against the generated documentation for this flavour before writing anything.
-
-  A duplicate registration is deliberately silent: the embedded comms library registers first, so this addon checking its own gets "duplicate" for all eleven prefixes on every login, and a warning that fires every time is one that gets trained out. Only genuinely invalid prefixes and hitting the client-wide cap are loud -- the cap being the one a player with many addons can actually hit, which is the case worth knowing about because it silently costs you all guild bank sync. Locations: `Modules/Chat.lua`, `Tests/commprefix_spec.lua`.
-
-- **INV2 step 10: the link-based sync protocol is deleted, in both directions** -- the standing directive was that V2 sends tuples only and the link-stripping machinery goes rather than being branched around. It has, and the operator then extended it: there is **no backwards compatibility on the wire at all**.
-
-  **Gone:** `StripDeltaLinks` and `Item:NeedsLink` (the per-item "is this link safe to drop" guess -- a decision made on one machine about a *different* machine's item cache, and the corruption this whole rework exists to remove); `ComputeDelta`, `ComputeItemDelta`, `BuildItemIndex`, `ItemsEqual`, `GetChangedFields` and `DeltaHasChanges` on the send side; `ApplyDelta` and `ApplyItemDelta` with their `ITEM-003` ghost guards on the receive side; the `alt-delta` validators; seven `Guild` wrappers; and `Modules/Tests.lua` with its `/togbank test` command, an in-game harness written entirely against those functions. `DeltaComms.lua` went from 1,720 lines to about 380.
-
-  **`ComputeItemDelta` is worth naming as the reason.** It matched a new row to a stored one through three successive guesses -- normalised link key, then an ID-only index for minimal baselines, then a per-ID candidate list with a used-set to stop two suffix variants of one base ID collapsing onto each other. Every layer compensated for identity being derived from a link that might not be there. `ComputeTupleDelta` is thirty lines because `id:suffix:enchant` comes from integers that always are. The ambiguity is not handled better; it stops existing.
-
-  **Kept deliberately, and the design doc's deletion list was wrong about them:** `Item:GetSuffixID` has four live consumers reading *client* links (bank scanning, mail fulfilment, search, request matching), `GetItemString` backs mail inventory, and `ItemClassNeedsLink` still serves `PurgeLinklessGearGhosts`, which repairs damage already sitting in players' saved data. Deleting those removes features, not complexity. `docs/INVENTORY_V2.md` section 8 has been corrected.
-
-  **KNOWN COST:** during a mixed-version window an upgraded member sees nothing from un-upgraded bankers and vice versa; it heals as members upgrade. Every send is now a full snapshot rather than a delta, because `ComputeTupleDelta` needs a tuple baseline that `togbank-state` does not yet carry -- tuple rows are small enough that this is not the regression it sounds like, but it is one. The V2 switches now default **on**, and off is a diagnostic rather than a rollback: there is nothing left to roll back to. Locations: `Modules/DeltaComms.lua`, `Modules/Guild.lua`, `Modules/Chat.lua`, `Modules/Item.lua`, `Modules/Switches.lua`, `Core.lua`, both `.toc` files.
-
-- **INV2-SESSION-001: a V2 delivery never closed its sync session** -- found by deleting the legacy receive branch, which had been doing this work for a payload shape that never reached it.
-
-  The tuple receive path returns as soon as it has stored the rows, and it returned *before* the code that ends a delivery. So every V2 sync leaked a session slot, left the 15-second acknowledgement timer armed -- which then fired and abandoned a sync that had **already succeeded** -- and recorded no inbound traffic. It sat behind an early return, which is why it looked covered. Locations: `Modules/Chat.lua`.
-
-- **HASH-REV-001 follow-up: the no-change hash correction sent only one of the two hashes** -- `RespondToStateSummary` has two `no-change` senders and only the third one elsewhere had been wired for `HASH-REV-001`. Because the receiver **adopts** these values rather than comparing them, a corrected client ended up holding the sender's revision-1 hash beside its own older revision-2 one -- and revision 2 is what two upgraded clients actually compare. Locations: `Modules/Guild.lua`.
-
-- **HASH-REV-001: upgrading no longer desyncs you from guildmates who have not upgraded** -- raised as audit finding 37, and it removes a protocol break this version was otherwise going to ship.
-
-  Fixing `SYNC-031`/`SYNC-032` corrected what the sync fingerprint is computed from, and did it **in place**. That fingerprint is compared between clients, so changing it meant an upgraded client and an un-upgraded one could never agree again -- each seeing the other as permanently out of date and re-syncing forever. Worse, the "no changes" correction message **stores** the sender's fingerprint on the receiver, so the two versions would have kept overwriting each other's, leaving clients disagreeing with their own next scan.
-
-  The addon now carries **both** fingerprints. The corrected one rides alongside the original, and two clients use it only when both have it; otherwise they fall back to the original, which every client can still compute. **A mixed guild needs no coordinated update** -- upgrade whenever you like, and each pair of clients quietly uses the best fingerprint they share.
-
-  The original is now frozen and must stay wrong: it cannot see random-suffix or enchant differences, and specs assert those limitations deliberately, so nobody later "fixes" the one function whose job is to match what un-upgraded clients compute. Change detection still runs on the corrected fingerprint, so `SYNC-031` stays fixed. Fifteen new examples, **three confirmed red** against the wrong negotiation. Locations: `Modules/DeltaComms.lua`, `Modules/Guild.lua`, `Modules/Chat.lua`, `Modules/Bank.lua`, `Modules/Database.lua`, `Core.lua`.
-
-- **P2P-027: a retry cycle could abandon a sync that was already succeeding elsewhere** -- the same defect as `P2P-026`, found by sweeping `Modules/P2PSession.lua` for it deliberately rather than by another report.
-
-  When every peer holding a character's data replied "busy", the addon scheduled a retry cycle and reset its candidate list. If a peer then freed up before that cycle ran, the session moved on to it -- but **`AdvanceCandidate` cancelled the dispatch timeout and never the retry**. The superseded cycle stayed live, fired anyway, found no untried candidate left, and failed the session while a request to a perfectly good peer was still outstanding. It could also whisper a second sync-request for the same session and re-arm the dispatch timeout underneath the peer being waited on.
-
-  All three session timers now arm through one `ArmSessionTimer`, and advancing cancels the retry it supersedes. **Three of five new examples proven red**, including the one that drives the session being destroyed. The fifth is the over-reach guard: a retry cycle that nothing supersedes must still fire and re-dispatch, or busy guilds would be worse off than before.
-
-  **This is the third instance of one class in this version** (`P2P-026`, `P2P-027`, and audit finding 24 before them), and only the first was reported. The distinguishing detail: none of them was the `C_Timer.After` mistake that finding 24 named -- every handle was real. The defect each time was a **live handle being assigned over**, which reads as correct at the arm site. `BeginCollectWindow` in the same file already guarded against it and its comment explains why; nothing carried that rule to the other arm sites. Locations: `Modules/P2PSession.lua`.
-
-- **HASH-REV-002: `/togbank hashdebug` reported `OK` for characters the addon was actively treating as out of sync** -- the local-vs-remote hash comparison existed in **four** places, and the fourth was wrong.
-
-  Three copies were byte-equivalent (`Guild:IsAltSyncPending`, `Guild:ReportHashListCoverage`, and the hash-list compare in `Modules/Chat.lua`). The fourth, in `/togbank hashdebug`, compared **only the inventory hash** and ignored the mail hash entirely. So a character whose mail had changed printed a green `OK` while the sync layer was calling it pending and re-requesting it -- and `Guild.lua`'s own docstring claims the command and `IsAltSyncPending` share one definition. **A diagnostic that disagrees with the thing it diagnoses points whoever reads it away from the problem**, which is the same shape as `DOC-005`.
-
-  All four now route through one `Guild:HashesAgreeWith`, and the command prints both hashes, because a `MISMATCH` verdict decided by a mail hash that is not on the line is unreadable. The rule that makes the comparison correct -- an absent field is **not** a wildcard, while `0` is a real value meaning "empty" and matches only another `0` -- is documented once and pinned by ten examples in `Tests/hashagree_spec.lua`.
-
-  **This was done now, ahead of the hash-revision work (audit finding 37), specifically because that work edits this comparison.** Four unspecced copies about to be changed is how one gets fixed and the others do not. The fourth copy was found by the guard written to prevent a fifth, not by reading. Locations: `Modules/Guild.lua`, `Modules/Chat.lua`.
-
-- **P2P-026: a repeated sync request for the same banker was aborted five seconds later by the request it replaced** -- the second half of audit finding 24, and the half the finding's own fix did not close.
-
-  Finding 24's remedy was `C_Timer.NewTimer` at three timeout sites, so the stored handle stops being `nil` and `:Cancel()` finally does something. That fixed the path where a **peer answers**. It did nothing for the path where nobody answers at all: `BroadcastP2PRequest` has no in-flight guard, so a second request for the same banker inside the window armed a second timer and **overwrote the stored handle**, dropping the first on the floor with nothing left that could reach it.
-
-  **Failure:** a request goes out, and within five seconds something re-requests the same banker -- a catch-up, a bank open, a manual sync. The first timer then fires and finds the **second** request's state sitting under its own key. It clears the pending entry and the expected hash, records a banker fallback against the guild, and calls `AdvanceCandidate` on a session it was never armed for. A live sync is abandoned and blamed on a timeout belonging to a request that had already been superseded. The 15-second ACK fallback in `Modules/Chat.lua` is the worse of the two, because 15 seconds is a long window to hold a stale claim on an alt.
-
-  Fixed with one `Guild:ArmAltTimeout` helper that all three sites now arm through: it cancels whatever that alt already had in flight before storing the new handle, so *at most one timer per alt per registry* is a property of the helper rather than something three hand-written assignments each have to remember. Cancelling an already-fired handle is safe, and that was checked rather than assumed -- Blizzard's own `AsyncRequestMixin` cancels its timeout timer from inside that timer's own callback.
-
-  **Six of eleven new examples in `Tests/p2ptimeout_spec.lua` confirmed red** against the pre-fix behaviour, including the finding's exact scenario. One of them exists to stop the fix over-reaching: a request that genuinely gets no answer must still time out at its **own** deadline. `Tests/timers_spec.lua`'s shape guard was updated to the stronger invariant it now pins -- arming through the helper, rather than each site remembering `NewTimer`. Locations: `Modules/Guild.lua`, `Modules/Chat.lua`, `Modules/Constants.lua`.
-
-- **HIGHLIGHT-004: item highlighting silently did nothing whenever bags were opened out of order** -- raised as audit finding 29. Both call sites derived the container frame from the bag id (`containerID = (bag == 0) and 1 or (bag + 1)`), which assumes a fixed bag-to-frame mapping. **Classic Era has no such mapping**, and this is Blizzard's own code for this flavour rather than an inference: `ContainerFrame_GetOpenFrame` returns the first frame that is **not shown** and that is the frame a bag renders into, while `ToggleBag`, `OpenBag`, `CloseBag` and `IsBagOpen` all **search** by `frame:IsShown() and frame:GetID() == id`. Blizzard never derives the name anywhere.
-
-  **Failure:** open bag 1 with the backpack closed and bag 1 renders into `ContainerFrame1`, while the addon looked up `ContainerFrame2` -- not shown, so `ApplyOverlay` bailed on its `IsVisible` guard and **nothing was highlighted, with no error**. Open bag 2 then bag 1 and it is worse than nothing: the lookups cross, so one bag is addressed using another bag's slot count.
-
-  **The symptom was already on record and attributed elsewhere.** The `ELVUI-001` note describes *"the checkbox ticks and nothing happens"* -- the identical silent signature, because both failures end at the same `IsVisible` guard. ElvUI is a real cause of that; it was not the only one, and stock-UI reports would have stayed unexplained.
-
-  Resolved now by searching, exactly as the client does, with the slot count taken from the frame's own `size` (which `ContainerFrame_GenerateFrame` stamps on it) rather than from the bag id. **This subsumes `HIGHLIGHT-001`/audit finding 9** -- that the bank path applied no button-order reversal while the bag path applied one, and the two could not both be right. There is now one resolution and one reversal, so the divergence has nowhere left to live. Six examples in `Tests/itemhighlight_spec.lua`, four **confirmed red** against the old arithmetic. Locations: `Modules/ItemHighlight.lua`, `.luacheckrc`, `.luarc.json`.
-
-- **SYNC-034: a banker's mail was discarded by every receiver, and no rescan could ever fix it** -- raised as audit finding 34. `ApplyItemDelta`'s add step required `(newItem.Link or newItem.ItemString)` before it would look at a row at all, so a **linkless** row was skipped before any branch could consider it: no add, no block, no log line.
-
-  **Linkless rows are a designed state here, not malformed input.** `Modules/MailInventory.lua` deliberately leaves `Link` nil when `GetInboxItemLink` returns nothing, `ComputeItemDelta` puts that row straight into `delta.added`, and `ApplyDelta` routes **mail** through this exact function. So a mail attachment whose link the client could not supply at scan time went out on the wire and was silently dropped by every peer -- and a rescan reproduced the same linkless row and the same drop, permanently.
-
-  **Same user-visible symptom as `INV2-MAIL-001` -- "the banker's mail is missing" -- by a completely different mechanism.** That fix was on the SCAN side (the V2 store not recording mail); this is the SYNC side and was untouched by it. Two independent causes, one of which had been treated as solved.
-
-  **The fix is not "always add linkless rows".** The `ITEM-003` guard immediately below is written to reject linkless *gear* (`if not newItem.Link ...`) and had simply never been reached by the rows it was written for. Blocking a row deliberately with a debug line is a decision; dropping it before the guard can look is not. Both halves are pinned in `Tests/applyitemdelta_spec.lua`: linkless mail is admitted, linkless weapons are still blocked.
-
-  **The log actively concealed it.** It printed `#delta.added` beside `updated` and `added`, so two lost rows read as *"Applied 5 added items (0 updated existing, 3 new)"* -- numbers that do not reconcile, with nothing saying so. There is now a `dropped` count and a spec asserting `updated + added + dropped == #delta.added`. **Confirmed red:** restoring the old guard fails five examples, and instructively the two ITEM-003 blocking tests stay green -- a dropped row and a blocked row look identical from outside, which is why this survived. Location: `Modules/DeltaComms.lua`.
-
-- **SYNC-033: `Record.aggregate` promised one bad row would not discard the rest, and a nil hole discarded every row after it** -- raised as audit finding 33. The docstring is explicit that invalid entries are skipped rather than aborting the batch, citing `ITEM-005`. The loop was `ipairs`, and **`ipairs` stops at the first nil** -- so a hole did not skip, it truncated, and `skipped` did not count it, so the return value reported nothing wrong.
-
-  **The asymmetry is why this was worth fixing rather than documenting.** A hole in the *old* side under-reports it, so rows re-appear as `added` -- wasteful and self-correcting. A hole in the *new* side makes every row after it absent from the new map, so `ComputeTupleDelta` emits them all as **`removed`**: a delta instructing the receiver to delete items the sender still holds, in a message that looks entirely legitimate.
-
-  The two paths also disagreed on the contract -- legacy `ComputeItemDelta` and `BuildItemIndex` use `pairs` throughout and are hole-tolerant, so the rework was quietly changing the iteration contract in the direction of *less* tolerance. Now a numeric-keyed `pairs` walk, which makes the docstring true. **No production path is known to create a hole** -- the reviewer said so plainly and so does this entry -- the finding is that nothing asserted density, nothing documented it, and the docstring asserted the opposite. Locations: `Modules/Inventory/Record.lua`.
-
-- **SEC-001: receiving a message from someone was enough to be treated as a guild member** -- `Chat:OnCommReceived` marks the sender online for every inbound message, *before* any authorisation runs (`Modules/Chat.lua`). `Guild:UpdateOnlineMember` creates a stub roster entry when the name is unknown -- its own comment says *"shouldn't happen, but safeguard"* -- and `IsInCurrentGuildRoster` answered purely on whether an entry existed. So the sequence was: a stranger sends an addon message, the handler puts them in the roster, and the roster half of `IsAltDataAllowed` then passes.
-
-  **What that allowed:** any player able to send an addon message on the guild channel could inject inventory data for **any character the addon already knows is a banker** -- the remaining `IsBank` check constrains the *claimed alt*, not the *sender*. The victim's client would store and display fabricated bank contents, and pass them on to other members as its own.
-
-  **This is not new and it is not V2-specific.** It affects the `alt` and `alt-delta` paths exactly as much; it simply had never been exercised, because until now no spec drove `OnCommReceived` from a sender outside the roster. Found by `Tests/syncwire_spec.lua`'s two-client join, whose first version **passed vacuously** -- the roster was not stood up, so every payload was refused for the wrong reason and the guard got credit for work it never did. Standing the real `LibGuildRoster` up is what turned it red.
-
-  **Fixed by marking provenance rather than by removing the stub.** The stub still exists (it genuinely covers the window before the roster loads), but now carries `isStub = true`, and `IsInCurrentGuildRoster` no longer accepts one as membership -- it falls through to the authoritative client roster scan. The marker is a security boundary, and the comment at both sites says so, because a later reader tidying "an unused flag" would silently reopen this. Locations: `Modules/Guild.lua`.
-
-- **INV2-STRIP-001: deleted `Guild:StripAltLinks` and `Guild:StripItemLinks`, the per-item "is this link safe to drop" decision** -- both were **already dead**: `StripAltLinks` had no caller anywhere in the addon and was `StripItemLinks`'s only one. They survived because they read as the live transmission path; the live path is delta-only (`Modules/Guild.lua`'s `DELTA-ONLY: All syncs use delta protocol, no full sync fallback`), so nothing had reached them in a long time.
-
-  **They are worth naming rather than quietly deleting, because they implemented the mechanism V2 exists to remove.** For each item they guessed whether the client cache would let the receiver rebuild a link -- keeping the full link for gear, uncached and `ForceLink` rows, substituting an `ItemString` otherwise. That guess is made at transmission time about a *different machine's* cache, and getting it wrong is how link-bearing rows go bad.
-
-  **V2 does not make the guess.** A row on the wire is `{id, count, suffix, enchant}` and the receiver rebuilds the link from those integers through LibItemDB -- `Modules/Inventory/Resolve.lua` already does exactly this via `lib:GetSuffixLink(id, suffix, enchant)`, and `Store:GetAltView` already consumes it. There is no link to strip and so nothing to get wrong. `Modules/DeltaComms.lua`'s `StripDeltaLinks` is the remaining live instance and goes with the wire-format change.
-
-- **INV2-SWITCH-001: `dualWrite` reported itself ON while nothing could read it** -- introduced and caught inside one session, which is the only reason this is a changelog line rather than a shipped defect. `INV2-VAULT-001` replaced `Bank:Scan`'s single `Scan:ScanAll()` call with separate `ScanBags`/`ScanBank` calls to get per-source output. That **orphaned `ScanAll`** -- and `ScanAll` held the only `IsEnabled("dualWrite")` in the addon, so the switch's sole reader became unreachable code while the dev-switch listing went on printing `ON dualWrite` beside a description promising it was keeping the legacy DB current from the same scan.
-
-  **The legacy DB was never actually at risk**, which is worth stating because the description implies otherwise: the legacy scan path writes that DB unconditionally and is still the authoritative writer. What broke was the **diagnostic** -- the thing a rollback decision gets made on.
-
-  **Fixed by un-orphaning `ScanAll` rather than by relabelling the switch.** `ScanAll` now returns the per-source shape itself -- `sources.bags` always, `sources.bank` **absent** when the vault was unreachable -- alongside the flat `records` array it always returned, both from the one walk so they cannot disagree. `Bank:Scan` makes one call again and no other caller or spec had to change.
-
-  **The guard is the substantive part.** `Tests/switches_spec.lua` now sweeps every `.lua` the `.toc` ships and asserts each registered switch is genuinely read via `IsEnabled("<name>")`, or else declares a `pending` marker that makes the listing print `NOT YET ACTIVE`. The file set comes from the `.toc` for the reason `timers_spec` gives: a module missing from it does not load in game, so it is the one list that cannot silently omit a file. **The guard's first version matched the bare switch name and reported `dualWrite` as read because `Modules/Bank.lua:292` mentions it in a comment** -- prose about a switch is the opposite of a reader, and counting it would have concealed exactly what the guard exists to find. Both branches confirmed red: the `pending` branch by the real orphan, the primary branch by registering a throwaway unwired switch. Locations: `Modules/Inventory/Scan.lua`, `Modules/Bank.lua`, `Modules/Switches.lua`, `Modules/Chat.lua`.
-
-- **FINDING 28: `ReleaseSendSlot` was documented as safe to call redundantly, and that is a property of its caller rather than of the function** -- raised by peer review, round 11. `P2P-024` gave each acquisition a generation token so a stale 210 s safety timer cannot free a slot belonging to a later send. **That protects the timer path from the completion path and does nothing to protect the completion path from itself.** A completion arrives with no token, so it retires the *oldest* outstanding token for that requester -- which, with two sends in flight for them, belongs to the **other** send. A duplicated completion therefore retires send B's token and decrements a slot B still holds, and the cap admits an extra concurrent send: `P2P-024`'s symptom returning through the door `P2P-024` did not close.
-
-  **Not demonstrated, and the entry says so.** There is one production caller, `Modules/Guild.lua`'s send-complete callback, and a single call site cannot double-release on its own. What made the claim load-bearing is that `Tests/p2psession_spec.lua:136-137` deliberately calls it twice and passes -- **pinning redundancy as safe in the only case where it is.**
-
-  **Fixed at the caller, not in the function, because only the caller knows which send finished.** The completion callback already owns per-send state in `sendStats`, so the release is guarded by `sendStats.slotReleased` and runs at most once per send. The reviewer's preferred remedy was to thread the token from acquisition through to completion; that was **not** done, and the reason is stated rather than hidden: the two acquire sites (`Modules/Chat.lua`, `Modules/P2PSession.lua`) are separated from the release by the whole send call chain, and rewiring the addon's core send path for a latent, single-caller defect is a worse trade than carrying the identity where it already exists. **KNOWN COST:** a *new* caller of `ReleaseSendSlot` does not inherit the guard. The docstring now says exactly that instead of claiming a safety it does not provide.
-
-  **The spec is a source-text assertion and its limits are written into it.** `CreateOnChunkSentCallback` is a `local function`, so no spec can invoke it -- which is why every guard in `Tests/sendresult_spec.lua` reads the source. It will fail if the guard is deleted; it cannot tell a correct guard from a broken one. Saying so in the spec matters on a board whose recurring finding is checks that cannot fail for the reason their name gives.
-
-- **INV2-VAULT-001: with `inventoryV2` on, a banker's own tooltip showed a different number from everyone else's** -- the same item, the same line of code, 68 on the banker and 71 on a non-banker. Viewer-dependent, which is only possible through the V2 branch of `Guild:GetAltItems`: a non-banker has no V2 record for that alt and falls back to the legacy store, so the two clients were reading two different databases.
-
-  **The V2 mirror protected the bank vault by skipping the entire write.** The vault can only be read at a bank NPC, so a scan away from one sees empty vault slots -- writing that through would erase a character's whole bank from the guild's view. `Modules/Bank.lua` avoided that with `if not result.bankScanned and Store:HasAlt(...) then <keep the stored record> end`. It protected the vault and froze **everything else with it**: bags and mail included. A mailbox is almost never opened while standing at a banker, so opening one updated the legacy aggregate to 71 and skipped the V2 write, leaving V2 at 68 **permanently** -- the next scan skipped for the same reason.
-
-  **This survived the `INV2-MAIL-001` fix**, which is why it looked like that fix had not worked. Mail did become a first-class V2 source; the write that would have carried it was being skipped.
-
-  **The legacy DB never had this defect, and the reason is the remedy.** It stores its three sources separately -- `alt.bank.items` / `alt.bags.items` / `alt.mail.items` -- and aggregates on the way out, so it preserves the vault without skipping anything. The V2 store now does the same: `alts[name].sources = { bank = , bags = , mail = }`. `Store:SetAltSources` replaces the sources it is given and **keeps the ones it is not**, so `Bank:Scan` simply omits `bank` when the vault is out of reach and passes today's bags and mail regardless. The `bankScanned` skip is gone. Reads are unchanged -- `GetAltRecords` still returns one flat aggregated array, now cached beside the view cache.
-
-  **Absent and empty are deliberately different.** An omitted source means "keep what is stored"; an empty table means "read, and genuinely empty". Conflating them would make mail a ratchet that only ever grows, so a spec drives an emptied mailbox and asserts the 3 stop being counted. **Both new specs were confirmed red** by restoring the skip: `actual: 108` against 111 (short by exactly the 3 in mail) and `actual: 71` against 68.
-
-  **One collateral finding, and it is the recurring shape on this board.** `Tests/wiring_spec.lua`'s *"still completes the legacy scan when the V2 mirror throws"* stubbed `Scan.ScanAll` to raise -- and the mirror no longer calls `ScanAll`, so nothing threw, the `pcall` trivially succeeded and the spec passed while testing nothing. It now stubs `ScanBags`. Locations: `Modules/Bank.lua`, `Modules/Inventory/Store.lua`.
-
-- **INV2-STALE-001: the V2 store was preferred even when it held fewer sources than the legacy record** -- `Guild:GetAltItems` gated the V2 branch on `#view > 0`, which cannot tell *"V2 is complete"* from *"V2 has some rows"*. Every alt scanned before `INV2-MAIL-001` holds bags and bank and no mail, so its total is **short rather than wrong** -- the worst shape to fall back on, because it looks like data rather than like an absence.
-
-  `Store.SCHEMA` is now stamped on every write and records which **sources** a stored record set covers. It is bumped when the scan gains a source, **not** when the tuple layout changes -- `Record.lua` owns that, and the two version independently because they fail differently: a layout change makes rows unreadable, a source change makes totals short. An absent stamp reads as schema 1, not as "unknown", because the field was added with schema 2. Every record written before this release therefore reads as incomplete and falls back to the legacy store until that character rescans, which needs no migration pass and clears itself.
-
-  **The rejected alternative is pinned by a spec so it cannot creep back in.** "Prefer whichever store reports more" would self-heal faster, but it masks a genuinely lagging V2 and it builds a permanent dependency on the legacy store that step 10 deletes. A complete V2 record that holds **less** than the legacy one still wins, and a spec asserts exactly that. Locations: `Modules/Guild.lua`, `Modules/Inventory/Store.lua`.
-
-- **DOC-005: the addon told you to do the one thing that cannot trigger a scan** -- the bank scan fires on `BANKFRAME_CLOSED` (`Modules/Events.lua:518-520`); `BANKFRAME_OPENED` only marks the data dirty, and bags alone trigger nothing at all because no `BAG_UPDATE` is registered for scanning. Meanwhile `/togbank dev compare` said *"V2 store is empty - open your bank/bags to trigger a scan"*, `README.txt` said *"Open your bank to perform the initial scan"*, and the CurseForge page said *"Open your bank/bags/mail"*. Following any of them literally leaves the store empty and the same message repeating. **This cost a live debugging session**, and the addon's own setup instructions had it right all along (*"Open and close your bags and bank"*), so the two halves of the documentation disagreed with each other. All four now say open **and close**. Locations: `Modules/Chat.lua`, `README.txt`, `docs/Curseforge_Description.html`, `docs/DEV_COMMANDS.md`.
-
-- **DEBUG-002: "was a scan even attempted?" was invisible to the debug category that exists to answer it** -- `Bank:OnUpdateStop` is the only caller of `Bank:Scan` on the bag/bank path, and its four diagnostic lines were logged under `MAIL`/`EVENTS`. So enabling `BANK` -- described in the options panel as *"Bank/bag inventory scanning, including why a scan was skipped"* -- produced silence, which reads as "no event fired" when it may equally mean "the trigger fired and `hasUpdated` was false". Found when exactly that happened. Now logged under `BANK`/`GATE`. Location: `Modules/Bank.lua`.
-
-- **DEV-UX-001: `/togbank debug` raised the log level but could not enable a single category** -- categories are opt-in and default off, so the command a developer reaches for produced no debug output whatsoever, and the only way to turn one on was the options panel. On a busy guild "Enable All" is unusable, which is precisely why the category system exists -- so what was missing was a **surgical** way to drive it, not a bulk one. `/togbank debug <CATEGORY> [on|off]`, `/togbank debug <CATEGORY> <TAG> on|off`, `/togbank debug only <CATEGORY>` (everything off, then one on -- the isolating case), `/togbank debug none` and `/togbank debug list` now exist. Bare `/togbank debug` still toggles the log level exactly as before, and a spec pins that. **This could not have been built before `CMD-001`**: no argument reached a handler at all. Location: `Modules/Chat.lua`.
-
-- **CMD-001: no `/togbank dev` subcommand could receive its arguments, in any release** -- `Chat:ChatCommand` called `Core:GetArgs(input, 2)`, and AceConsole's `GetArgs` **tokenizes**: its contract is `arg1, ..., argN, nextposition` (`Ace3/AceConsole-3.0/AceConsole-3.0.lua:138-139`), not "prefix and remainder". So `/togbank dev switches inventoryV2 on` yielded `"dev"` and `"switches"` and **silently discarded `inventoryV2 on`**. The dev dispatcher then took its no-argument branch and printed the switch list -- which is indistinguishable from a command that ran and had nothing to do. `dev switches <name> on|off`, `dev forcedelta`, `dev forcefull` and `dev test help` were all equally inert. Found by an operator whose switch would not turn on. `ChatCommand` now derives the remainder from `nextposition` and passes it as a **second** parameter, so every existing single-token handler receives exactly what it did before. Locations: `Modules/Chat.lua`.
-
-  **The suite could not have caught it, and that is the more important half.** `Tests/wiring_spec.lua` *does* drive the real `ChatCommand` -- but it stubbed `Core:GetArgs` as `(prefix, remainder)` in **two** places, a **looser contract than the real library**, so code that dropped the remainder passed against the fake indefinitely. This is the same lesson as `MIGRATE-001`: **a stub cannot adjudicate a calling convention.** Both fakes are replaced by one `env.stubCore()` in `Tests/env_togbank.lua` implementing AceConsole's real tokenizing behaviour including the `1e9` end-of-string sentinel, and `Tests/chatcommand_spec.lua` drives the raw text a player types. **Confirmed red:** reverting the fix fails six examples, four of which had been green against the loose stub.
-
-- **DOC-003: the P2P collect window was documented as 10 seconds and is 60** -- six times the stated value, in three places: `Modules/P2PSession.lua:7` and `:9` (the module header's phase timings) and `:116` (`BeginCollectWindow`'s docstring), against `COLLECT_WINDOW = 60` at `:34`. The header is the worse pair, because it is what a reader consults before touching dispatch. **Not fixed by writing 60 three times** -- all three now name the constant, so the only way to make them wrong again is to rename it, which does not silently pass. Also corrected a second wrong model the header implied: dispatch fires at `T+W` from the **last** broadcast, not the first, because a later broadcast *extends* the window -- which is the behaviour `TIMER-001` was about, and believing otherwise is what made the stacked timer hard to see. Raised as audit finding 23; answered on the board.
-
-- **P2P-025: the status bar's "sends in flight" indicator could never appear** -- `StatusBar.NetTxText` read `TOGBankClassic_Guild.pendingSendCount`. **Four sites decrement that counter and nothing anywhere increments it**, so it sat at `0` for the life of every session, and the function returns `""` the moment it reads `0`. The `Tx:n/3` readout therefore never rendered, at any load, in any release -- and the failure is invisible by construction, because an empty string is exactly what "no sends in flight" is supposed to look like. Anyone watching the status bar to see whether a sync was moving saw nothing, always.
-
-  **The send cap itself was never affected**, which is the reassuring half and worth stating so nobody hardens the wrong thing: the cap is enforced against `P2PSession.activeSends` (`Chat.lua:477`, `:605`), which is live and correct. Nothing floods.
-
-  **The dead counter itself is now gone from `Modules/Guild.lua`**, and the proof that this was safe is stronger than the one it was deferred on. A peer review enumerated the sites by reading and found a **fifth** read of `pendingSendTimeouts` that the first pass missed -- `Guild.lua:2753`, `local isP2PSend = self.pendingSendTimeouts and self.pendingSendTimeouts[norm] ~= nil`. That is a **decision, not a cleanup**, and `releaseP2PSlot` wrapped its *entire body* in `if isP2PSend then`. So the helper and its four call sites were dead **at the guard** rather than at the counter -- a no-op by control flow, which is far easier to be certain of than reasoning about a decrement on a zero counter. Removed: both declarations, two identical dead cleanup blocks in the no-change paths, the `elseif pendingSendCount > 0` legacy branch in the send-complete callback, and `isP2PSend` / `releaseP2PSlot` with all four calls. `MAX_PENDING_SENDS` stays -- `Chat.lua` and the status bar both read it.
-
-  **The stale comment was the real hazard**, and it is the reason this was not left alone: `Guild.lua:2749-2752` described a "P2P backoff timer path" that sets the registry "alongside `pendingSendCount++`". No such path exists. An accurate description of deleted code, sitting directly above the flag it describes, makes a reader conclude the registry is populated somewhere they simply have not looked yet.
-
-  The underlying shape is **one number with five spellings** -- the sum over `activeSends` was hand-written at four call sites (`P2PSession.lua`, twice; `Chat.lua`, twice) and the status bar read a fifth, dead source. All five now call `P2PSession:GetActiveSendTotal()`. Pinned by `Tests/statusbar_spec.lua`, which drives the *rendering* path with sends in flight -- asserting `""` when idle would have passed against the bug throughout -- and which was **confirmed red** by restoring the old read. Locations: `Modules/UI/StatusBar.lua`, `Modules/P2PSession.lua`, `Modules/Chat.lua`.
-
-- **The `TIMER-001` class guard did not cover two of the files that schedule timers** -- `Tests/timers_spec.lua` listed "every module that schedules anything" by hand, and the list was compiled from the files the audit finding happened to name. It omitted `Modules/Database.lua` (`C_Timer.After` at `:47`, `:338`) and `Modules/UI/StatusBar.lua` (`C_Timer.NewTicker` at `:414`). That is the same defect the guard exists to catch: coverage that looks complete and is not, so a clean run proves less than it appears to.
-
-  The file set is now **derived from `TOGBankClassic.toc`**, which is the one list that cannot silently omit a module -- a file missing from it does not load in game -- so a new module is covered the moment it ships. The parse is itself pinned, because a `.toc` read that silently returned empty would make every assertion in the file pass without reading a line. Verified by breaking `Database.lua` on purpose and watching the sweep fail. **Result: no captured `C_Timer.After` return anywhere in the shipped source**, established by machine over every first-party file rather than by reading some of them.
-
-- **ITEM-005: one bad item wedged the entire inventory load** — `Item:GetItems` increments `pendingAsync` before `Item.CreateFromItemID`, but **seven** failure branches incremented `processed` and called `checkComplete()` without ever decrementing it. Since `checkComplete` requires `pendingAsync == 0`, a single item taking any of those paths left the counter stuck above zero and the callback never fired — for the **whole batch**, discarding every healthy item alongside the bad one. The symptom was the Inventory window sitting on "Loading items…" forever. All seven now route through one `abandonAsync()` helper, so an eighth branch cannot reintroduce the leak by forgetting a line. Added a 10s watchdog for the other stall: an item whose `ContinueOnItemLoad` is accepted but never fires (an id the server never resolves) has nothing to decrement the counter, and the Blizzard API provides no error or timeout — it now delivers what did load rather than nothing. Also reworded the `TRACE-9` diagnostic, which shipped reading `FOUND CORRUPTION … THIS IS THE BUG!` and pointed at the wrong thing: a nil `itemData.itemID` was never the bug, failing to release the slot afterwards was. Location: `Modules/Item.lua`.
-
-- **ACQ-004: a refused send was reported as delivered** — raised by AceCommQueue-1.0's owner after auditing this addon's call sites against v1.0.5, and confirmed here before changing anything. Three separate defects:
-
-  `Modules/Guild.lua` compared the callback's 4th argument against a `SendAddonMessageResult` enum table. That argument is a **boolean** — the enum is lost two layers down (ChatThrottleLib retries only `AddonMessageThrottle`; AceComm's `ctlCallback` declares two parameters and drops the enum) — so `isThrottled` could never be true and the throttled counter had always been `0`. The comparisons are **deleted** rather than corrected, because no value of argument 4 could ever satisfy them, and the counter is removed with them: a permanent `0` printed in the send summary read as "no throttling occurred" while measuring nothing.
-
-  `Modules/RequestLog.lua` assigned `SendCommMessage`'s return value and logged it. Neither AceComm nor AceCommQueue returns anything, so it had been printing `nil` since it was written while reading like a delivery result. This is the `togbank-rm` ALERT mutation broadcast, so a silent refusal diverges every member's request list permanently; it now passes a callback and surfaces a refusal as a player-visible error.
-
-  Two `togbank-hl` sends passed argument-ignoring callbacks, which is also how a caller tells AceCommQueue "I will handle the verdict myself" — so the library deliberately would not report those refusals on our behalf. Both now accept the arguments, release the collision guard on refusal as well as completion (holding it after a failure blocked every later broadcast), and this closes **DOC-001**: the comment claimed the guard cleared "once the final chunk is confirmed sent by CTL", which the code could not previously determine.
-
-  A fourth site was found by the library reporting a real loss in-game: `togbank-ri` request-index chunks passed no callback. That one matters disproportionately because the index is **chunked** — a receiver cannot tell a short index from a complete one, so a dropped chunk leaves them permanently unaware of those request ids and they never re-query. Locations: `Modules/Guild.lua`, `Modules/RequestLog.lua`, `Modules/Events.lua`.
-
-- **EVENT-001: real-time online/offline tracking has never worked** — `Events:CHAT_MSG_SYSTEM` was declared as `function TOGBankClassic_Events:CHAT_MSG_SYSTEM(message)`, with no leading parameter to absorb the event name. AceEvent dispatches as `fn(eventName, ...)` — verified in `Ace3/AceEvent-3.0/AceEvent-3.0.lua:120` and `CallbackHandler-1.0.lua:54` — so `message` received the literal string `"CHAT_MSG_SYSTEM"`, every pattern match failed, and the handler silently did nothing in **every release the addon has ever shipped**. The code above it called this "the PRIMARY method for tracking online/offline state changes in real-time". Consequently `onlineMembers` only refreshed on a full `GUILD_ROSTER_UPDATE` sweep, degrading `Core:SendWhisper`'s online gate, banker selection in `Guild:RequestHashListFromBanker` and `Guild:QueryAltPullBased`, and the anti-spam guard that stops repeated whispers to an offline player. Location: `Modules/Events.lua`.
-
-- **ROSTER-002: stale ex-banker entries are dropped when the departure is announced** — zero-data stubs for characters who left the banker roster lingered as permanent "HLR pending" rows, swept up only by a bespoke pass in `RebuildBankerRoster`. `Guild:_RefreshFromRosterLib` now wipes `memberRoster` and rebuilds it from `lib:GetAllMembers()`, so TOGBank holds exactly what the library holds and cannot accumulate stale entries of its own. Location: `Modules/Guild.lua:1757`.
-
-  **This entry previously said "structurally impossible" and credited it to the library wiping and rebuilding "on every update". That was wrong, and the correction matters because it changes what the guarantee actually is.** LibGuildRoster is **build-once**: `LibGuildRoster-1.0.lua:1587` states the roster is never rebuilt, and `:1613` returns early from `GUILD_ROSTER_UPDATE` the moment it is initialized. It constructs the roster during the login stream and then maintains membership from `CHAT_MSG_SYSTEM` alone (`ERR_GUILD_JOIN_S`, `ERR_GUILD_LEAVE_S`, `ERR_GUILD_REMOVE_SS`).
-
-  So the real guarantee is chat parsing plus a fresh build at the next login, which is weaker than "impossible" and worth stating honestly: a departure whose system message is never delivered persists in the roster until relog. The spec was rewritten to match, because it had been asserting the wrong mechanism. It emptied the fake roster and fired `GUILD_ROSTER_UPDATE`, which build-once ignores, so the ex-member survived and the failure read as a TOGBank bug when TOGBank was correct. It now announces the departure in chat and asserts removal through that path (`Tests/guildroster_integration_spec.lua`).
-
-- **The offline suite is green for the first time: 473 passing, 0 failing.** It had been carrying 13 deliberately-failing specs, each written against the behaviour the code *should* have and pinning an open finding from `docs/AUDIT_2026-08-03.md`. Every one is now fixed in the code rather than by weakening an assertion.
-
-  **`TIMER-001`** -- `C_Timer.After` returns nothing, so the four cancellable timers in `Modules/P2PSession.lua` stored nil and every `:Cancel()` sat behind an `if timer then` guard that was always false. A cancel that never happened was indistinguishable from one that did. The harmful instance: extending the collect window STACKED a second timer instead of replacing the first, so `Dispatch` fired at the original deadline -- discarding every offer that arrived during the extension -- and then fired again with the window already closed. On a busy login, where hash-list broadcasts arrive in bursts and re-open the window repeatedly, that cost real offers every time. All four moved to `C_Timer.NewTimer`; genuinely fire-and-forget `After` calls were left alone.
-
-  **`TIMER-001` was then found to be only HALF fixed, by an outside review, and the other half was worse.** The finding named three further sites that the suite does not reach -- `Chat.lua` (the 5s peer timeout and the 15s ACK fallback) and `Guild.lua` (`PEER_RESPONSE_TIMEOUT`) -- and they were left on `C_Timer.After` because the failing specs only covered `P2PSession.lua`. Green was treated as evidence when no spec went near those files, and a comment naming `TIMER-001` was added to the fixed file, which is exactly what would stop the next reader looking. All three are now `NewTimer`.
-
-  **The cause sits one step upstream of where the finding pointed, and that matters for anyone fixing a fourth site.** It is not that `:Cancel()` is a no-op. `After` returns nothing, so the assignment stores nil, and **a Lua table cannot hold a nil value -- so the key is never created.** `pendingP2PTimeouts` and `pendingP2PFallbackTimeouts` were therefore permanently EMPTY, and all five `if tbl[norm] then` cancel guards were permanently false. Anyone fixing the `:Cancel()` call would have changed nothing.
-
-  **Why it was harmful rather than merely dead:** `BroadcastP2PRequest` has no in-flight guard, so a second request for the same alt inside the window re-populates the key. The orphaned timer then fires, sees the guard as true, and tears down the **new** request -- clearing `pendingP2PRequests`, `pendingAltRequests`, `expectedHashes` and `expectedHashUpdatedAt`, recording a banker fallback, and calling `AdvanceCandidate` on a session it was never armed for. A live delta sync abandoned and blamed on a timeout belonging to a request that had already succeeded. The 15s one is the worse of the two, simply because the window is longer.
-
-  **`P2P-024`** -- `TryAcquireSendSlot` scheduled an unconditional 210s release. A send that completed normally released at completion **and** again when its stale safety timer fired, by which point the slot belonged to a different, later send from the same requester. The `> 0` guard prevents underflow but says nothing about over-release, so `MAX_ACTIVE_SENDS = 3` was quietly exceeded under sustained load. Each acquisition now carries a generation token; the real release consumes it, and the safety timer only acts if its own token is still outstanding.
-
-  **`MIGRATE-001` is REFUTED, and the "fix" for it was reverted before release.** The finding said the migration called `ComputeInventoryHash(bank, bags, money)` against a signature of `(bank, bags, mail, money)`, dropping money. It does not survive reading the callee. `Core:ComputeInventoryHash` is a one-line forwarder, and **its parameter names are one caller's spelling, not the contract**: the behaviour is `DeltaComms:ComputeInventoryHash(bank, bags, mailOrMoney, money)`, which documents *both* conventions at `DeltaComms.lua:150-152` and, in the branch a `(bank, bags, ...)` call reaches, does `local actualMoney = mailOrMoney or 0` -- reading the **third** argument as money, with no type check. The three-argument call was correct.
-
-  **Changing it to four arguments was a regression that would have shipped**, caught by an outside review (`docs/AUDIT.md` finding 25). Passing `alt.mail` there means `alt.mail` is read as money: nil for the pre-v0.8 saves this migration targets, so money is silently dropped from the hash and the real fourth argument is never read at all; and where an alt does carry mail, `tostring()` on a table yields **an address**, so the migrated hash differs on every login and matches nothing -- including itself an hour earlier. That is precisely the "re-syncs forever" failure the finding described, arriving as a consequence of the fix rather than of the bug. Reverted, with the calling convention documented at the call site so it is not "corrected" again.
-
-  **The spec is why this got through, and that is the sharper half.** `Tests/database_spec.lua` replaced `TOGBankClassic_Core` wholesale with a stub whose third parameter it *named* `mail`, then asserted money must arrive in the fourth -- the spec asserting its own stub's parameter names back at itself. **A stub cannot adjudicate a calling convention.** It now asserts the real contract, driven through the real implementation.
-
-  **The first replacement control could not fail either, and a further review round caught that too.** It asserted "the same inputs hash the same twice" while passing a **number** in every call -- so it never exercised the failing input -- and even with a table it could not have detected one, because `tostring` on a single table returns the same string for the life of the process. **An address only varies between sessions or between distinct table instances.** The property is that the hash depends on the **value** of its inputs, never on their **identity**. The spec now hashes two structurally identical but distinct tables and asserts they agree, and separately puts a table in the money slot and asserts the result matches hashing `0`. **That example was confirmed red before the fix** -- temporarily restoring the old line produced two differing hashes (`1070785157` against `1784462064`) -- rather than assumed to be meaningful.
-
-- **`DeltaComms:ComputeInventoryHash` now type-guards the money slot**, which removes the hazard the revert above only worked around. The parameter is positional and overloaded (`mailOrMoney`), and `or 0` accepted a table without complaint, so `tostring()` could bake a table address into the hash from *any* caller -- reverting one call site fixed only the caller that happened to be wrong. A non-number now hashes as `0`. Location: `Modules/DeltaComms.lua`.
-
-- **The legacy hash migration now produces the same hash a scan does, which is the half of `MIGRATE-001` that was real.** The arity claim was refuted above; this is the part that stood, and it is the part with a user-visible cost.
-
-  `ComputeInventoryHash` has two branches that emit **different strings for the same character**: the aggregated branch emits `"I:"..hashItems(items)`, the container branch emits `"B:".."` and `"G:".."`. The migration passed containers, so a migrated character got a hash **nothing else in the addon could reproduce** -- `IsAltSyncPending` saw a mismatch on every comparison, forever, for that character.
-
-  **The migration was the last caller of the container branch.** Every live producer already used the aggregated form -- `Bank.lua:345`, `Chat.lua:435`, `DeltaComms.lua:1325` -- so this call site was the odd one out rather than the standard. It now aggregates bank + bags + mail through `Item:Aggregate` and hashes the resulting array, matching `Bank:Scan` exactly, **including mail and including the merge**: an item held in both bank and bags must collapse to one row, or a different aggregation reintroduces the same divergence in a new form. Location: `Modules/Database.lua`.
-
-  Pinned by a spec that first asserts the two conventions still disagree -- so it cannot pass by accident if the branches ever converge -- and then asserts the migration lands on the scan's value.
-
-- **More discarded work removed from `Modules/DeltaComms.lua`.** `usedFallback` was set on the ID-only match path and never read -- the `fallbackMatches` counter beside it is the fact that is actually consumed. Three `= nil` initialisers that were immediately overwritten are gone. And `hasOnlineBanker` in the fast-fill path is computed by two passes -- **including a `GuildRoster()` server refresh and a full `GetNumGuildMembers()` scan on the miss path** -- and then never read: the loop below queries every missing alt regardless. That one is **kept and now logged rather than deleted**, because `GuildRoster()` is a side effect on the server and whether the refresh is still wanted there is a decision rather than a cleanup.
-
-  **`DEBUG-001`** -- `SYSTEM` and `FULFILL` were being passed as debug categories by thirteen real call sites while not existing in `DEBUG_CATEGORY`, and `MIGRATION` was used where the registered tag is `MIGRATE`. An unrecognised value was treated as the format string, shifting every argument: players saw a raw `%d` and the real format string printed as data. Both categories are now registered across all three registries that must agree (`Constants.lua`, `Database:Init`'s defaults, `Options.CATEGORY_META`), `HASH-ADOPT` is registered under `SYNC`, and the typo is corrected. Separately, `Output:Debug` now detects a tag by its SHAPE rather than by registry membership -- an unregistered tag used to fall through and become the format string, contradicting the documented opt-out model where new tags auto-show.
-
-  **`LOG-001`, fixed as a consequence rather than by direct repair.** `GarbageCollectPersistentLog` ends with a `Debug()` call and `Log()` appends every DEBUG message to the persistent log, so collection wrote an entry into the log it had just collected: it could never drain to empty and each pass seeded the next. That call passes `SYSTEM`, which was not a category -- so it took the uncategorised branch, which logs unconditionally. Registering `SYSTEM` puts it behind `IsCategoryEnabled`, and it defaults to off.
-
-  **`ITEM-006`** -- `IsUnique` called `CreateFrame` on every invocation. WoW frames cannot be destroyed, so each call leaked one and clobbered the shared global name `scanTip`, handing any other addon reading it whichever frame we created last. Scanning a large bank calls this per item, so the leak scaled with the thing the addon exists to do. Created once and reused, under an addon-prefixed name. Also `ITEM_UNIQUE` is a localized string and was being used as a Lua pattern; it is now a plain find, so a locale whose wording contains a magic character does not silently stop matching.
-
-  **`EVENT-002`** -- `PLAYER_LOGOUT`, `GUILD_ROSTER_UPDATE` and `PLAYER_ENTERING_WORLD` were registered and never unregistered, so after `OnDisable` the addon kept handling all three.
-
-  **`PROTO-001`** -- `Guild:GetVersion` derived its comparable number by stripping the dots, producing an integer whose magnitude depends on DIGIT COUNT rather than precedence: `1.10.0` encoded as 1100 and `2.0.0` as 200, so a major-version bump ranked below a two-digit minor and protocol negotiation picked the older peer as authoritative. `1.3.2` against `1.10.0` happens to order correctly, which is what let it survive. Now parsed into fixed-width fields; the old and new encodings stay correctly ordered across the migration boundary, so a mixed-version guild is unaffected.
-
-  **`REQ-004`** -- `Bank:FindItemsByName` returned empty whenever the name was nil or empty, even with a valid `itemID`, contradicting the ID-primacy rule `REQ-001` established and breaking the exact path `REQ-001` added for same-name variants: an ID-only lookup reported the item as not banked.
-
-  **`DB-002`** -- `Database:ResetPlayer` dereferenced `faction[name].alts` with no guard on `faction[name]`, so resetting for a guild the addon had never stored raised a Lua error where the correct answer is "nothing to reset".
-
-  **`BANK-002`** -- `TOGBankClassic_Bank = { ... }` at file scope captured the addon varargs, so the module table was born holding two phantom array entries.
-
-- **`ITEM-007`: the cold-cache fallback discarded the item type it had just fetched** -- found while clearing a lint warning, not by a test. In `Item:GetItems`, the `GetItemInfoInstant` fallback named its returns `itemClassId`/`itemSubClassId`, shadowing the outer pair from the `GetItemInfo` call above -- which are nil there **by definition**, because a nil name from that call is what selects this branch. So the fallback stored `class = nil, subClass = nil` and threw away the values it had successfully fetched. Silent: the row still rendered, it just sorted and filtered as untyped. Location: `Modules/Item.lua`.
-
-- **Dead scaffolding removed from `Modules/Guild.lua`, all of it found by clearing linter warnings rather than by a test.** Each was code that computed something and discarded it, which reads as live logic to the next person:
-
-  **The wipe-recovery rate-limit bypass did not exist.** A loop walked every roster alt to compute `isWipeRecovery` under the comment *"Bypass rate limiting for bulk requests when user has blank DB"*, and nothing ever read the result. A user with a wiped database was rate-limited exactly like anyone else while the code claimed otherwise. The same shape as `P2P-025`. Removed rather than left in place -- if the bypass is wanted it has to be written, not restored as a flag.
-
-  **`WipeMine` built a guild announcement it never sent** (*"I wiped all my addon data from &lt;guild&gt;."*). Worse than dead: the local was named `wipe`, which **shadowed the WoW `wipe()` global** for the rest of that scope, so any later code there calling `wipe(t)` would have tried to call a string.
-
-  **`Share`'s `requestsMode` argument has never reached the send path** -- it was defaulted into a local nothing read. The parameter is still accepted so call sites are unaffected, and it is now documented as inert rather than looking wired.
-
-  **`useDelta`** was set false, set true, and never read: DELTA-ONLY means every send is a delta, so the flag had nothing left to decide. **`senderIsBanker`** was computed and unused.
-
-  Also cleaned: a stale `lastHave` shadow, a `name` shadow inside the banker-lookup loop, and an `incomingHasMail` redefinition whose debug line was reading the *outer* value.
-
-- **BANKSLOT-001: the bank slot counts were hardcoded, wrong, and the offline env asserted a fourth wrong value on top of them** -- three numbers, three different places, none of them read from the client.
-
-  `ItemHighlight:UpdateBankHighlighting` iterated a literal `1, 28` for the general bank slots and `5, 11` for the bank bags, with a comment stating that range as fact. **Measurement on a live Classic Era client (2026-09-09) proved both wrong**: `NUM_BANKGENERIC_SLOTS = 24`, `NUM_BAG_SLOTS = 4`, `NUM_BANKBAGSLOTS = 6` -- so the general loop ran four slots too many and the bag loop one bag too many. Neither overran harmfully, because `GetContainerItemInfo` returns nil for a slot that does not exist and `GetBankSlotButton` finds no `BankFrameItem25`; it was wasted work behind a false statement. Both loops now ask the client the way Blizzard's own `BankFrame.lua` does, with the measured Era numbers as fallbacks only.
-
-  **The shape was wrong regardless of the values, and that is the part worth keeping**: this addon ships Era and TBC from one source tree and the two need not agree, so a literal is the cross-flavour answer to a per-flavour question. Reading the global means each client answers for itself.
-
-  **These constants cannot be read from Blizzard's source at all.** `Blizzard_FrameXMLBase/Classic/Constants.lua` has `NUM_BANKGENERIC_SLOTS = Constants.InventoryConstants.NumGenericBankSlots`, and the generated documentation defines *that* as `Value = BANK_NUM_GENERIC_SLOTS` -- a symbol the engine supplies. The constant points at the docs and the docs point back at the constant, identically in the `classic_era` and `classic_anniversary` trees. A live client is the only route, which is why the test harness refused to guess it and asked us for it instead.
-
-  **`Tests/env_togbank.lua` was itself asserting a guess.** It defined `NUM_BANKGENERIC_SLOTS = 28` -- invented here, four slots off, and the number every bank-scanning spec had been measured against. Corrected to the measured `24`, `NUM_BANKBAGSLOTS = 6` added (the env never defined it, so `ItemHighlight`'s fallback was the only thing being exercised), and both carry the measurement date and a note that TBC must not be assumed to match. The suite is 713 passing with the corrected values. Locations: `Modules/ItemHighlight.lua`, `Tests/env_togbank.lua`.
-
-  Still open, and blocked on the operator rather than on us: **the TBC value is unknown.** One line on a TBC client answers it -- `/run local v,b,d,i=GetBuildInfo() print(v.." iface "..i.." generic="..tostring(NUM_BANKGENERIC_SLOTS).." bankbags="..tostring(NUM_BANKBAGSLOTS).." bags="..tostring(NUM_BAG_SLOTS))` -- and no bank visit or banker character is needed, since these are load-time constants.
+## [v1.4.1] (2026-09-10) - Collect From The Bank, Banker Numbers, Fast Sync
+
+Two threads in one release. The bank-collect button and three peer-review fixes (namespaced globals,
+the performance counters, the bank-bag range) came first. The rest is the sync rework read off two
+live clients over one evening: the `<dts><hash>` canon, the five "same hash" gates that each stopped
+a resync on its own, the send-slot leak, and then the redesign of the P2P cycle with the operator --
+banker numbers, a one-chunk offer, the version query, and every broadcast as an offer.
+
+**Rollout, stated once here and in the player notes:** the numbered broadcast and offer are not
+readable by v1.4.0, so a v1.4.0 client stops receiving offers from updated ones (it is told nothing,
+not something wrong). Any bank character not scanned since v1.4.0 stays red until its bank is opened
+and closed once. The first banker account to log in (already owning a v1.4.0-scanned record) or to
+scan (P2P-036) numbers every banker on the roster; everyone else adopts the table from the next
+numbered message.
 
 ### New Features
 
-- **The bankers block is now callable by other addons: `TOGBankClassic_TooltipBankerInfo:AppendTo(tooltip, itemId)`** — it returns `true` if it added lines, `false` otherwise, and never raises, so a caller mid-tooltip with no item context is safe. Our own `OnTooltipSetItem` is now a four-line adapter that pulls the id out of the link and calls it, so there is exactly one implementation of the layout.
+- **BANKFILL-001: the fulfil button now also collects from the bank.** Requested from the guild
+  (*"automated retrieve items from bank, use a button we click over and over"*) and scoped by the
+  operator: *"it pulls from your bags, splits it, then attaches it. i need the same pull/split/put
+  back into the bank."*
 
-  The renderer had been a file-local closure reachable only through that hook, and the hook only fires for a tooltip carrying a real **item**. TOGProfessionMaster draws recipe tooltips for the roughly one third of recipes that are trainer-taught and have no teaching item at all — built from `AddLine` calls — so the block was silently absent on exactly the tooltips where a player is asking "can I get these reagents from the bank?". They had worked around it by rebuilding our block from `TOGBankClassic_Guild` themselves.
+  **One button, two contexts, because the game will not give you both at once** -- a mailbox is
+  never within reach of a bank. With the **bank** open each click pulls what an order still needs
+  out of the vault; with the **mailbox** open it fills orders exactly as before. Each bank click
+  takes the stack that overshoots the order least, and when it does overshoot it splits the surplus
+  straight back into the bank. Bags full, no free bank slot, and nothing left to collect each report
+  plainly rather than failing quietly.
 
-  Adopting it caught what the workaround cost, which was more than the expected "a restyle here stops matching there": the two had already diverged in **data**, not layout. Their copy walked designated bankers where we walk every rostered alt, showed the raw `"Name-Realm"` where we strip the realm, sorted by name where we sort by stock, and took only the first matching entry where we sum — so a banker holding three stacks of a reagent was reported as one stack, both in their tooltip and in their request dialog's stock cap. Fixed on their side; recorded here because it is the argument for exposing the renderer rather than against it.
+  **Bank stock deliberately does NOT make an order look fillable at the mailbox.** The existing
+  search decides what to work on while standing at the mailbox, where bank contents are unreachable;
+  teaching it about the bank would have made it select orders it cannot fill and skip ones it can --
+  a regression dressed as a feature. The bank search is a separate function for that reason.
 
-  Also fixed while the file was open: the block's `AddLine` calls did not pass the tooltip **wrap** flag, which defaults to `false`. An unwrapped line ignores the client's engine-side preset width and stretches the shared `GameTooltip`, dragging every other addon's content out with it. The two `AddDoubleLine` calls take no such flag and need none — a character name and a stack count are short by construction. Specs: `Tests/tooltipbankerinfo_spec.lua` (14), one of which drives the hook and asserts it renders *through* `AppendTo`, so a copy grown back inside the hook fails rather than drifting silently. Raised as `docs/DEPENDENCY_CONTRACTS.md` §1 by TOGProfessionMaster on 2026-08-06. Location: `Modules/TooltipBankerInfo.lua`.
+  One honest limit: **none of this has run in the game client.** The container moves
+  (`UseContainerItem`, `SplitContainerItem`, `PickupContainerItem`) are client calls the offline
+  suite models rather than executes. The path IS specced -- `Tests/bankcollect_spec.lua`, 49
+  examples, see Internal -- after an earlier draft of this entry claimed coverage that did not
+  exist and the self-audit corrected it. The self-audit also found and fixed a stuck state in it
+  (see below). Locations: `Modules/Mail.lua`, `Modules/Bank.lua`, `Modules/UI/Requests.lua`.
 
-- **ROSTER-003: LibGuildRoster-1.0 is now a required dependency** — declared in both TOCs (folder name `GuildRoster`) and in `.pkgmeta` (CurseForge slug `libguildroster`). The two spellings differ deliberately and each fails silently in its own way — a wrong slug skips auto-install, a wrong folder name breaks load order — so both are asserted by spec. The library owns its own `PLAYER_LOGIN` / `GUILD_ROSTER_UPDATE` / `CHAT_MSG_SYSTEM` registration, which is what turns `EVENT-001` from a fixed instance into a fixed *class*: a consumer can no longer wire that event up incorrectly and have nothing notice.
+  Two small corrections made while writing that spec: the bank step now refuses a non-banker
+  exactly as the mailbox step does (it was safe only because the button is built for bankers --
+  the AUDIT-S3/S4 class), and the status message reports the order's TRUE shortfall rather than a
+  figure capped at what the bank held, which under-reported "of the N needed" when the bank was
+  short. Neither changes what gets pulled.
 
-  `Guild:_RefreshFromRosterLib` builds `memberRoster` from `lib:GetAllMembers()` / `GetMember()`, falling back to the legacy `GetGuildRosterInfo` scan when the library is absent or has not yet stabilised. `Guild:InitRosterCallbacks` subscribes to `OnMemberOnline` / `OnMemberOffline` / `OnMemberJoined` / `OnMemberLeft`. Banker identification — the `gbank` tag and the `VIEWBANK-001` view-only markers — deliberately **stays in this addon**; the library's job is to hand over the raw note fields, which is the correct boundary. Locations: `Modules/Guild.lua`, `Modules/Events.lua`, `Core.lua`.
+- **The item-matching rules are now in one place.** The bank source needed the same "is this the
+  same item" test the bag search uses, and copying it would have left REQ-001 (id beats name) and
+  REQ-003 (suffix siblings differ) as two implementations that must be corrected together.
 
-  The whisper-failure signal (`"No player named X is currently playing"`) also stays here: it is `ERR_CHAT_PLAYER_NOT_FOUND_S`, which is **not** in the set LibGuildRoster matches. Deleting the handler outright would have fixed `EVENT-001` while silently dropping the one signal that stops the addon whispering someone who is not logged in.
+### Bug Fixes
 
-- **ACQ-001: AceCommQueue-1.0 is a declared dependency, no longer vendored** — `Libs/AceCommQueue-1.0/` is deleted; the library is declared in both TOCs and `.pkgmeta` (slug `acecommqueue`). The shipped copy had drifted to MINOR 2 while the standalone reached 5, and MINOR 5 is where a refused send is finally reported as failed rather than delivered — so the `ACQ-004` fixes above would have been trusting a signal the embedded copy does not send. Two specs guard against a vendored copy returning.
+- **HASH-CANON-005 / TABCOLOUR-002: the V2 canon is now `<dts><hash>` -- one string, the publish time
+  readable off its front -- and the Inventory tabs are coloured from it.** Reported live: bankers whose
+  data had just arrived stayed red; the operator's own banker was red on its own bank; after fixes the
+  tabs still took ~5 minutes to settle. The operator stopped the patching -- *"you're cobbling on
+  something that existed. is there a better way to do this?"* -- and then stated the design in two
+  sentences: *"v1 is always red, v2 does it by is someone newer"* and *"i wanted the hash to be
+  `<dts><hash>` all one long string ... so you COULD read the DTS and do quick/easy comparison
+  without having to pull the hash apart."*
 
-- **ItemDB and DeltaSync are now declared dependencies** -- both TOCs gain `ItemDB, DeltaSync` on the `## Dependencies:` line and `.pkgmeta` gains the CurseForge slugs `libitemdb` and `deltasync`.
+  **What was wrong with the old mechanism, and why no patch could fix it.** Red was decided by whether
+  the hash a peer last mentioned was *equal* to the one held. Equality cannot tell newer from older
+  from garbage, so a copy-of-a-copy or a number an old client minted read as "different" forever; the
+  cache it compared against had three writers with three rules (last-writer-wins, newest-by-time-but-
+  drops-hashV2, and a login seed); and it only learned anything on the sync cycle's cadence. Three
+  real defects were fixed on that path first -- a repaint that only ran when a tab was about to turn
+  red and never when data landed; the cache overwrite; and a hash-list reply that **threw** on any
+  banker this client had no record for, aborting before its request pass (a fresh or wiped client
+  with a banker online errored at login and never asked for anything) -- and they stay fixed. But the
+  operator was right that the mechanism itself was the defect.
 
-  **ItemDB is the one that was actually broken.** `docs/INVENTORY_V2.md` section 4 is explicit that rendering "asks IDB, never the wire": V2 stores integer tuples and derives the link at render time, so the library is what the whole storage rework rests on. It was not declared anywhere, and `Modules/Inventory/Resolve.lua` asks for it with `LibStub("LibItemDB-1.0", true)` -- the optional form, which returns nil rather than raising. On any install without ItemDB present, step 1 of the resolution chain never answered and every lookup fell through to `GetItemInfoInstant` or the "Item #12345" placeholder. That is exactly the cold-cache dependence the rework exists to delete, arriving silently, and nothing in the addon or the suite would have reported it.
+  **The canon, `Modules/DeltaComms.lua`.** `ComputeCanonHash` returns `string.format("%010d%010d",
+  publishTime, contentChecksum)`. The datestamp used to be *mixed into* the checksum, which made every
+  publish unique but left nothing able to ask two canons which was newer. Now `canon:sub(1, 10)` is
+  the publish time, two canons order as plain strings (later publish sorts higher until the year
+  2286), and equality still identifies one exact publish. A **number** in the revision-2 slot is a
+  v1.4.0 canon and carries no readable time.
 
-  **The two spellings differ on purpose and each fails silently in its own way**, which is why both are now pinned by spec: the TOC takes the addon FOLDER name (`ItemDB`, `DeltaSync`) and a wrong one breaks load order, while `.pkgmeta` takes the CurseForge SLUG (`libitemdb`, `deltasync`) and a wrong one just skips auto-install. The slugs were taken from sibling consumers rather than guessed -- Dibs and TOGProfessionMaster both ship `libitemdb` for the folder `ItemDB`. This is the same folder-vs-slug trap already documented for `GuildRoster`/`libguildroster`. Four specs in `Tests/wiring_spec.lua` assert both spellings in both flavours plus the TOC lockstep rule.
+  **No rehydration.** The operator's first reaction was *"fuck, so the v2 data i have now will be old
+  again"*. It is not: `DeltaComms:CanonFrom` re-encodes a v1.4.0 numeric canon beside the author's
+  publish time into `<dts><number>` -- both inputs are the author's own and the rule is deterministic,
+  so every copy of one old publish converges on one string on every client, the author included, with
+  no rescan. It runs once on load (`Guild:ReencodeHeldCanons`), on the wire (`Wire.decode`), and on
+  every advertised entry (`Guild:CanonicaliseSummary`), and it touches **only the revision-2 slot** --
+  a source-scan spec pins that no revision-1 hash is ever fed to it. Rebuilding the content half on
+  the receiver was considered and rejected: the author hashes its legacy aggregate and a receiver
+  holds the V2 view, which can legitimately differ, so that would be the recompute-on-receipt
+  HASH-CANON-001 forbids. A numeric canon with no publish time beside it cannot be placed in time and
+  is cleared.
 
-  DeltaSync is declared ahead of its use: the migration off `Modules/DeltaComms.lua` and `Modules/P2PSession.lua` has not started, so nothing calls it yet.
+  **The tab rule, `Guild:GetAltStaleness`.** `none` (nothing held), `v1` (no readable canon -- red,
+  full stop), `behind` (someone mentioned a canon published later than the one held), `current`.
+  `Guild.newestAdvertisedAt[banker]` is the newest publish time anyone has mentioned, read off the
+  canon; every hash-list reply, hash-offer **and hash-list broadcast** raises it (never lowers it),
+  claims with no readable canon are ignored, claims about our own character are ignored, and each
+  raise repaints. It converges on the first message and goes yellow the instant the newer copy lands,
+  because delivery stores the author's canon. The tooltip now says which red it is, with both publish
+  times when it has them. `IsAltSyncPending` remains the sync layer's question and no longer colours
+  anything.
 
-- **Both TOC files stripped of comments** -- the header comments explaining library policy, load order and the INV2 module set are removed from `TOGBankClassic.toc` and `TOGBankClassic_BCC.toc`. They are duplicated in `docs/INVENTORY_V2.md` and this changelog, and the TOC ships to every player.
+  **The sending side is one string compare.** Answering a broadcast with an offer used to compare the
+  sidecar `updatedAt` fields; it is now `mine > theirs` on the two canons, exactly as the operator
+  described: *"now when you do a broadcast, super easy to figure out if you should whisper respond or
+  not."* KNOWN COST, stated: a copy with no readable canon is never offered as newer -- "v1 is always
+  red" applied to the sending side -- so a client holding only revision-1 data no longer relays it.
 
-- **ALPHA-001: per-window transparency sliders** (requested by Vishiswaz) — a new **Appearance** tab in the options panel with one opacity slider per window: Inventory, Search, Requests, Donations and Mail Viewer. Changes apply immediately to a window that is already open. Account-wide, not per-character: it is a display preference with no per-character meaning, and setting it five times per alt is the chore the request was about. Window *positions* stay per-character. Locations: `Modules/UI.lua`, `Modules/Options.lua`, `Modules/UI/*.lua`.
+  **The ordering guard reads the canon too, and no longer defends a stub.** The self-audit found
+  `ShouldApplyTuplePayload` still ordering by the sidecar time while everything else read the canon,
+  so a sender whose two numbers disagreed would be ordered by one and displayed by the other; it now
+  reads the canon's time on both sides and falls back to the sidecar only when there is no canon.
+  Pinning that exposed a second edge: a record seeded from a hash-list reply carries the banker's
+  canon and **no contents**, and the guard was refusing an older-but-real delivery to protect that
+  empty record -- leaving the alt with nothing. Ordering defends content we hold; a stub holds none.
+  The spec that covers this had been passing on a module leaked from another spec file in the shared
+  Lua state; it now loads what it uses.
 
-  **Only the window chrome fades** — backdrop, border, title-bar art and the status bar — never the contents. `frame:SetAlpha()` would have been one line but it cascades to every child, so at 50% the item icons, stack counts and labels fade too. Fading only the chrome is what makes a see-through window still usable.
+  **HASH-CANON-006: a pre-canon copy was never replaced, because four separate "same hash" gates
+  each said it was current.** Read off the live guild rather than reasoned: on the banker's account
+  Alchemyrcp carried a canon and revision-1 hash `808855588`; on the operator's viewer the copy from
+  Sep 5 carried the same `808855588` and **no canon**. The bank had not changed since, so every
+  revision-1 comparison said "in sync" and nothing was ever requested; the tab was yellow under the old
+  rule and correctly red under the new one, and it could never clear because the client had no way to
+  *acquire* a canon. `/togbank share` does not push data -- it advertises, and receivers decide whether
+  to ask -- so "he received it" was the Sep-5 copy already matching. The operator's summary, *"V1 IS
+  OVERWRITING V2"*, is the same outcome by a different mechanism: V1 was never being replaced.
 
-  **100% is now genuinely opaque, which is more solid than v1.3.2 looked.** The backdrop's parchment texture carries its own per-pixel alpha and `SetBackdropColor` multiplies over it, so a half-transparent parchment pixel stayed half-transparent no matter what alpha was passed — the slider could never reach solid. A black backing layer at `BACKGROUND` sublevel -8 scales with the same slider. Anyone who preferred the old lighter look can reproduce it from the slider; the mechanism is the one already proven in FGI.
+  The negotiate-down rule was right while a guild ran mixed versions and is exactly wrong now that it
+  does not. `HashesAgreeWith` now says **not in sync** when the peer advertises a canon and we hold
+  none; the HLR compare's inline revision-1 test, `BroadcastP2PRequest`'s "PERF-005" skip and
+  `FastFillMissingAlts`'s inline check -- three more spellings of the same decision, each of which
+  would have swallowed the request on its own -- all defer to that one comparison, and the canon
+  travels through `BroadcastP2PRequest` so the skip can see it. The e2e negotiation spec's two
+  examples that pinned mixed-version agreement now assert the opposite, with the old assertion kept
+  in the message; `Tests/tabstaleness_spec.lua` reproduces the Alchemyrcp state through the real
+  hash-list path and asserts a request goes out. Reverting the one comparison turns exactly those
+  three red.
 
-  Two subtleties worth recording. The slider floors at 10% rather than 0 — an invisible window is one a player cannot find again to fix. And `Requests` releases and recreates its window on a banker-status change, so `UI:ClearWindowAlpha` resets the chrome to opaque *before* the release: AceGUI's frame pool is shared by every addon using the library, and a faded frame returned to it can reappear as somebody else's window carrying our black slab. 32 specs in `Tests/windowalpha_spec.lua`, run against the real AceGUI-3.0 rather than a stub.
+  **The transport, hop by hop, because the operator asked for it end to end.** `Wire.encode` carries
+  the canon as a string and never through `tonumber` (twenty digits would lose their low digits as a
+  float); `Wire.decode` accepts a string canon, re-encodes a numeric one beside its time (**this
+  claim was false when first written -- see HASH-CANON-008 below**), and drops
+  garbage; `HashesAgreeWith` normalises both sides before comparing, so an old-encoding and a
+  new-encoding copy of the same publish agree; the HLR stub seed, the cache writer, the offer path
+  and the login seed all carry the canonicalised string. Every writer of `alt.inventoryHashV2` --
+  there are five -- now produces a string or nil.
 
-- **CMD-002: `/togbank dev wipeall` was refused while `/togbank wipeall` quietly worked, so the guild-wide destructive reset sat one word closer to hand than intended.** A dev command must be declared in **two** places -- `COMMAND_REGISTRY` and `DEV_COMMAND_NAMES` -- and the dispatch loop sorts every registry entry into one bucket or the other. A command missing from the names set therefore does not fail to register: it registers as **top-level**. `wipeall` was documented as `/togbank dev wipeall`, was in the registry, and was absent from the set.
+  **Specs.** `Tests/tabstaleness_spec.lua` (29 examples: the rule in isolation, every writer through
+  the real receive paths, delivery clearing it, delivery of an *older* copy not clearing it, the
+  offer decision); `Tests/inventoryhash_spec.lua` (the canon's shape, ordering, `CanonPublishTime`,
+  `CanonFrom` over every input class, and the revision-1-never-re-encoded scan);
+  `Tests/inventoryordering_spec.lua` (the canon crosses the wire byte for byte, and the three ways a
+  bad revision-2 slot is handled); `Tests/hashagree_spec.lua` (old and new encodings of one publish
+  agree; two unreadable numbers fall back to revision 1); `Tests/hashcache_spec.lua` (a v1.4.0 peer's
+  numeric canon is re-encoded at the door; load-time re-encoding counts and clears). Red-proofs:
+  reverting the canon format alone turns **13 examples red across five files**; reverting "v1 is
+  always red" turns 3 red; reverting the string compare turns 2 red. `env.canon(dts, checksum)` is the
+  one spelling a fixture uses. Locations: `Modules/DeltaComms.lua`, `Modules/Guild.lua`,
+  `Modules/Chat.lua`, `Modules/P2PSession.lua`, `Modules/Inventory/Wire.lua`, `Modules/UI/Inventory.lua`.
 
-  Found by a guard written for a different instance of the same defect: `/togbank dev bandwidth`, added in this release, had it too and the symptom pointed away from the cause -- "not a valid command" reads as the command not existing rather than as being filed in the wrong drawer. A dead `test` entry naming a command deleted in the step-10 sweep went at the same time.
+  **HASH-CANON-008: the decoder dropped an old-build numeric canon although its publish time was the
+  next field.** The paragraph above said `Wire.decode` re-encodes a numeric canon beside its time. It
+  did not: `decodeV2` called `canonOrNil(payload[6])` without `payload[7]`, so `CanonFrom` had no
+  time to lead with and returned nil. The spec that "covered" it built the payload through *this
+  build's* `Wire.encode`, which re-encodes before the wire, so the decoder never saw a number. Read
+  off the operator's viewer account: three bankers scanned that afternoon on the previous build --
+  Elementals, Bsrecipe, Cardsngames -- held with the author's tuples, the author's exact publish
+  time, and **no canon**, painting "v1". The publish time now goes in beside the canon on decode as
+  it does on encode, and `Tests/inventoryordering_spec.lua` drives a **raw** old-build payload rather
+  than one this build encoded. Location: `Modules/Inventory/Wire.lua`.
 
-  `Tests/devcommandwiring_spec.lua` now cross-checks the two tables against the `/togbank dev` commands **documented in `DEV_COMMANDS.md`**, which is the third copy and the one a user actually follows. It is a source-text guard deliberately: both dispatch tables are file-locals, and the alternative -- driving each command to see if it is accepted -- would **execute** them, `wipeall` included. Two rounds of tightening were needed, and both are recorded in the spec: the first pattern matched prose mentions, the second still matched a **removal notice written in list form** (*"`/togbank dev test` no longer exists"*), which has the exact shape of a definition and says the opposite.
+  **HASH-CANON-009: a canon was advertised that nobody could deliver.** Read off the operator's
+  banker account after the re-encode: 36 records carried a revision-2 canon and **10** had tuple
+  data in the V2 store -- v1.4.0's scan stamped both revisions whatever the switch said, so the other
+  26 were revision-1 data wearing a canon. Every advertiser (the hash-list reply, both offer
+  emitters, the version broadcast) read `alt.inventoryHashV2` straight off the record, so a viewer was
+  told "a newer version exists", requested it, and the responder's `SendAltData` -- tuples from the V2
+  store or nothing -- found no records and sent nothing: a request wasted every cycle and a tab on
+  red for a version nobody could ship. `Guild:ServableCanon(norm)` is now the one spelling of "the
+  canon I can serve" (nil unless the V2 store holds records for the alt) and all four advertisers
+  read it. The relay responder on `togbank-r` answers only when it can serve too -- the Alchemyrcp
+  shape again: a peer holding the Sep-5 copy (same revision-1 hash, no canon) would have won the race
+  to answer and shipped tuples with no canon, leaving the requester on "v1" having been "answered".
+  A banker still answers from its own record. `Tests/servablecanon_spec.lua` (12 examples: the
+  predicate, both advertisers, the relay through the real `togbank-r` path with a positive control)
+  and one new example in `Tests/tabstaleness_spec.lua`, whose offer fixtures now hold tuple records
+  because an offer without them is the defect. Locations: `Modules/Guild.lua`, `Modules/Chat.lua`.
 
-- **INV2-DOC-001 CLOSED: the bandwidth figures are measured and back on the store page, at 85%.** Run against a live guild's own bank characters, 4 characters and 227 rows: **19,740 bytes of legacy link payload against 2,873 bytes of tuples**, an 85% reduction.
+  **HASH-CANON-010: the FIFTH "same hash" gate, on the responder, and the one HASH-CANON-006 could
+  not reach.** Read off Galdof's live log after the other four were fixed: Galdof requested
+  Alchemyrcp (so the fix worked), Alchemy ACKed, Galdof whispered its state summary -- revision-1
+  `808855588`, no canon -- and Alchemy answered `togbank-nochange`, because `RespondToStateSummary`
+  compared revision 1 and the contents had not changed since Sep 5; only the canon had. "Answered",
+  and still no canon. The state summary now carries the requester's canon (`hashV2`, nil when it
+  holds none, forced nil on a full request), and the responder decides "do they already hold my
+  version?" through `HashesAgreeWith` with the seats swapped -- the requester's summary as the held
+  record, our record as the advertisement -- so a canon on our side and none on theirs is a send, and
+  two canon-less copies still agree on revision 1. The "mail-only" and "inventory changed" branches
+  that stood there called `SendAltData` identically and are one branch now.
+  `Tests/statesummary_spec.lua` (Alchemyrcp's exact summary is sent the data; same canon is
+  no-change; older canon, forced-full and mail-only are sent; canon-less pair falls back to
+  revision 1; the summary carries the canon and drops it on forced-full). `syncwire_spec`'s
+  no-change fixture now holds the responder's canon, because a canon-less requester earning a
+  no-change was the defect. Location: `Modules/Guild.lua`.
 
-  **The per-character spread is the part that makes it publishable rather than a lucky sample:** 85.7%, 84.4%, 85.8%, 85.3%, across inventories from 15 rows to 101. A figure that held within 1.4 points across a 7x size range is a property of the encoding, not of the sample.
+  **HASH-CANON-011: a banker's broadcast did not feed the advertised-hash cache.** The operator,
+  watching `/togbank share` from the banker: *"I should be getting the new hash from the broadcast at
+  least."* The broadcast handler raised the tab's newest-time and never called `NoteAdvertisedHashes`
+  -- only the hash-list reply and the offer path did -- so `hashdump` read `known=-` for a canon the
+  whole guild had just heard, and `IsAltSyncPending` / catch-up could not see it either. The comment
+  at the end of that handler had claimed the cache was updated there since PERF-020. It is now,
+  through the one writer, so a revision-1-only broadcast still cannot displace a held V2 entry.
+  Location: `Modules/Chat.lua`.
 
-  **It also corrects the claim that was pulled.** The old page said *"1-10% of bandwidth compared to full snapshots"* -- implying a 90-99% saving -- and it was removed in the v1.3.2 sweep precisely because nobody could show where it came from. The real number is 85%, which is lower than what was previously advertised. The page now states the measured figure and the sample it came from.
+  **HASH-CANON-012: a banker never offered its OWN bank in answer to a broadcast.** Found by
+  reading the offer loop while chasing a `known=-` that turned out to have a simpler cause -- the
+  banker was not logged in -- so this one is established by the code and its specs, not by a live
+  observation. The offer loop in `ProcessQueuedHashBroadcasts` skipped `norm == myPlayer` -- correct for the three `NoteAdvertised*` calls,
+  which must refuse a peer's claim about our own bank (rule 1), but the same skip stopped us
+  *offering* it, and Alchemyrcp's V2 data existed on exactly one client: Alchemyrcp's own. The only
+  way a viewer ever got it was a direct hash-list request, which picks one online banker at random.
+  The offer compare now runs for self on both emitters (the proactive one too, so a wiped viewer's
+  empty list is answered by the author); the `NoteAdvertised*` calls keep their own self-guards, asserted in the
+  same example. Three examples in `Tests/tabstaleness_spec.lua`. Location: `Modules/Chat.lua`.
 
-- **`/togbank dev bandwidth`** -- measures the V2 tuple wire against the legacy link wire on the records this client actually holds, and exists because the obvious method cannot work. `INV2-DOC-001` requires the CurseForge bandwidth figures to come from a real guild rather than a synthetic payload, and the natural route -- reading `togbank-d4` byte counts out of a live `COMMS` log -- delivers nothing: that payload is only sent when a peer is genuinely behind, so a healthy guild emits no sample at all. Two ~200-line live captures during this rollout contained zero of them.
+  **P2P-028: the send-slot leak -- the whisper storm, and why the one client holding a bank could
+  not hand it over.** Read off two live clients thirty seconds after a share: the banker answered
+  dozens of sync-requests with short `togbank-rr` replies, received not one state summary and sent
+  not one payload; the viewer's log was the mirror image. `HandleSyncRequest` (and the relay ACK
+  on `togbank-r`) take one of THREE send slots on accept, and the only release was `SendAltData`'s
+  chunk-complete callback -- so every accept that ended in a no-change, a "no data" early return,
+  a nothing-to-send, or a requester that never followed up held its slot for the 210-second safety
+  timer. Three leaked accepts and the banker is "busy" to everyone; every requester retries; the
+  retries leak more. Now every terminal outcome in `RespondToStateSummary` and `SendAltData`
+  releases, and an accept arms a 30-second wait for the requester's summary that releases if none
+  comes (cancelled the moment it does). Five examples across `Tests/p2psession_spec.lua` and
+  `Tests/statesummary_spec.lua`, including the two-in-flight case so the wait cannot free the
+  other send's slot. Locations: `Modules/P2PSession.lua`, `Modules/Guild.lua`, `Modules/Chat.lua`.
 
-  **Neither side of the comparison is invented.** The V2 figure is real `Wire.encode` output through `Wire.estimateSize`; the legacy figure is built from **the same rows** with each item's link resolved through `Resolve.describe`. One inventory measured two ways, rather than a measurement against an assumption about how long an item link is -- which is exactly the synthetic payload the item forbids. The reduction is rounded **down**, so nothing published from it can overstate the saving. Documented in `docs/DEV_COMMANDS.md`. Locations: `Modules/Chat.lua`.
+  **CONFIRMED LIVE, 2026-09-10 ~21:20:** with everything above loaded on both clients, Alchemyrcp
+  arrived on the viewer and every V2 bank's tab went yellow in one pass -- the operator's screenshot
+  shows the nine V2 banks yellow and the rest red, exactly "v1 is always red". The three changes
+  below were built after that observation, from what the same session's logs showed about speed.
 
-- **`/togbank dev rostercheck`** — in-game verification for the migration. Compares the library against the WoW API directly (the only genuinely independent check of the three), then our cache against the library, then reports presence transitions seen since login. Documented in `docs/DEV_COMMANDS.md`.
+  **P2P-032: offers are filtered and ordered by canon.** Read off the viewer's
+  `/togbank dev sendqueue`: three fetch slots busy with old-build relays' offers -- one of them for
+  a bank the viewer already held current (the peer answered no-change) -- and 23 banks queued behind
+  them, the one that mattered included. Old-build peers offer everything whose revision-1 hash
+  differs, and `OnOffer` accepted every offer unread. Now an offer enters the collect window only if
+  we hold nothing for the alt, or it carries a canon newer than ours (a canon-less offer for a bank
+  we hold is revision-1 data and cannot improve anything); at dispatch, alts with a canon-bearing
+  offer go first and the canon-bearing peer is preferred over a relay with a newer sidecar time.
+  Four examples in `Tests/p2psession_spec.lua`. Location: `Modules/P2PSession.lua`.
 
-<!-- MOVED-TO-ARCHIVE 2026-09-10: a second, longer write-up of HASH-CANON-002, HASH-CANON-003, the
-     INV2 step 10 receiver deletion and INV2-ORDER-001 stood here. All four are already covered in
-     the Bug Fixes section above -- they had been written up twice, in two separate sessions. The
-     long treatment moved whole to CHANGELOG_ARCHIVE.md under "[v1.4.0] extended engineering
-     detail"; nothing was deleted. -->
+  **P2P-033: fetches run in parallel across peers.** The operator: *"why don't we introduce
+  parallel processing."* The requester held every fetch behind a global cap of three -- the same
+  arbitrary number as the sender's, on the other side. A fetch costs the requester ~300 bytes; the
+  payload is the sender's bandwidth, and every sender serialises its own sends. The only cap now is
+  **one session in flight per peer** -- a second request to one peer would only sit in that peer's
+  queue while other peers stand idle -- and an alt whose peers are all busy with us waits and is
+  retried as sessions complete. Two examples (six peers dispatch at once; a second alt for one peer
+  waits and goes out on completion). Location: `Modules/P2PSession.lua`.
+
+  **P2P-035: banker NUMBERS, a tiny offer, and every broadcast is an offer.** Designed with the
+  operator on 2026-09-10 after Leatherrcp took ten minutes to cross a loaded banker's NORMAL lane;
+  their words are quoted at the top of `Modules/BankerNumbers.lua` and recorded as directives.
+  Every banker has a four-digit NUMBER, `0001`..`9999`, issued once and for life (a banker that
+  leaves keeps it; one that returns has the same one; `next` only rises). It is minted by the ADDON,
+  never typed: any account that OWNS a banker -- a record carrying `inventoryContentHash`, which
+  only a local scan writes and which never travels -- numbers every unnumbered banker on the roster
+  in alphabetical order from `next`, so two banker accounts minting at once from the same roster
+  produce the identical table and "only one online" never has to be true. The table lives on the
+  existing togbank roster (`Info.roster.numbers`, `numbersNext`, `numbersVersion`) and is 100%
+  synced: the version rides in every numbered message, a client behind it whispers the sender once
+  for the table (`numbers-request` / `numbers-reply`), and a same-version conflict goes to the
+  lower-sorting sender with the loser re-minting its stragglers under a higher version. KNOWN COST,
+  stated: in the seconds between two independent first mints a number can name two bankers on two
+  clients; it self-heals on the first exchange and cannot recur once a table has been adopted.
+  `/togbank roster` prints the number beside each banker and the table version.
+
+  ON THE WIRE, fixed width, digits only, no separators: a broadcast (`hlb2`) is a run of
+  `<number><canon>` entries, 24 characters each, for every banker we hold a number and a servable
+  canon for -- ~900 bytes for 38 bankers, 4 chunks, where the keyed table was ~5 KB / 20 chunks on
+  the guild channel from every member every login and every ten minutes. An offer (`hash-offer2`)
+  is `<header><0001><0004>...` -- BARE NUMBERS, "hashless and TINY": 13 bankers is 52 bytes and it
+  is one chunk however many are newer. Both carry the table version. Entries whose number this
+  client cannot name are skipped and trigger the table request; a torn string decodes to nothing,
+  never to a prefix.
+
+  THE VERSION QUERY. A bare offer says WHO, not WHAT, so before asking anyone for data the requester
+  whispers up to five of the offerers -- the banker itself first -- "what version do you hold for
+  `0001`" (`ver-query` / `ver-reply` on `togbank-rr` at ALERT, 24 characters per answer), waits up
+  to five seconds (the author answering ends the wait; so does every asked peer answering), judges
+  the answers by the one rule (`AdvertisedImproves`), keeps the holders of the NEWEST version (the
+  author wins a tie), and asks one of them -- the sync-request now NAMES the version, and a peer
+  that no longer serves that exact version answers `sync-busy` (reason `version`) so the requester
+  moves to the next holder. A peer that never answers is never asked for data. When the author is
+  already among the candidates with its canon, nothing anyone else says can beat it, so the alt is
+  dispatched at once and the version-less candidates dropped rather than asked.
+
+  EVERY BROADCAST IS AN OFFER (the operator: "OH YES!"). A broadcast names the versions its sender
+  can deliver, so hearing anyone advertise a version newer than ours is that peer saying "I hold
+  newer"; the receive path feeds it to `OnOffer` with the canon attached, and it dispatches (inside
+  a window: accumulates; outside one: at once, P2P-034) with no query and no wait for our own next
+  broadcast. A banker's post-scan broadcast now fetches within seconds -- the Leatherrcp case.
+
+  Peer Review F1 folded in: `Guild:CanServe(norm)` -- tuple records in the V2 store, exactly
+  `SendAltData`'s own condition -- is the sync-request and queue gate, replacing `HasAltContent`
+  (true for legacy-only content the send could not ship, costing the requester its 180-second
+  watchdog); `ServableCanon` is `CanServe` plus a canon. The offer emitter's "is mine newer"
+  compares publish times, the same compare as the receiving side (it compared whole strings).
+
+  **CONFIRMED LIVE, 2026-09-10 ~23:00:** Metals' bank was opened on the banker account at
+  23:00:05 and the viewer held and re-offered that exact version within the same minute -- the
+  banker's post-scan broadcast fetched as an offer, no window, no wait. A peer's numbered broadcast
+  decoded with versions on the viewer (the table had synced). Offers measured at 97-118 bytes, one
+  chunk. The operator: "wow, it synced already!"
+
+  **Self-audit, same session:** `/togbank dev hashdump` still judged OK/MISMATCH with
+  `HashesAgreeWith` after P2P-034 moved the request rule to `AdvertisedImproves` -- a diagnostic
+  disagreeing with what it diagnoses, and under P2P-035 it would have printed MISMATCH for every
+  entry learned from a numbered broadcast (no mail hash; fails closed). Verdict is now
+  `AdvertisedImproves`, pinned by an example that reddens under the old verdict. A peer that once
+  answered a version query with "nothing" was never asked again on a later bare re-offer until the
+  next window; it is now. `Guild:CanonIsNewer` is the ONE publish-time compare behind the offer
+  emitter and `AdvertisedImproves` (they had two spellings). `Guild:CanServe` (Peer Review F1)
+  as above.
+
+  NOT DONE HERE, deliberately: Path B (`hash-list-request` -> keyed `hash-list-reply` -> guild
+  `alt-request`) still speaks the keyed table and the revision-1 hash, per the directive to keep
+  both paths; the state-summary round-trip is now redundant for a versioned request and is the next
+  change. The keyed `hash-list-broadcast` / `hash-offer` RECEIVE branches remain (the decoded
+  numbered forms feed the same code), the SEND side emits only the numbered forms -- no wire
+  back-compat. Thirty-six new examples: `Tests/bankernumbers_spec.lua` (minting, for-life, adopt
+  rules and tie-break, sync, the fixed-width wire, and the whole thing through the real receive
+  paths including broadcast-as-offer and the emitted broadcast), the version query in
+  `Tests/p2psession_spec.lua`, and the number-only offer in `Tests/tabstaleness_spec.lua`.
+  Locations: `Modules/BankerNumbers.lua` (new, both TOCs), `Modules/Guild.lua`,
+  `Modules/P2PSession.lua`, `Modules/Chat.lua`, `Modules/Events.lua`, `Modules/Constants.lua`.
+
+  **What has and has not been seen live**, so the next reader does not take the suite for the
+  client: the first banker account minted all 38 numbers on login and the viewer account held the
+  identical table and version after one broadcast; numbered broadcasts decoded with versions on both
+  sides; offers measured at 97-118 bytes, one chunk; broadcast-as-offer fetched a fresh scan within
+  the minute (below). **Not yet observed live:** the `ver-query` / `ver-reply` exchange -- every
+  live fetch so far arrived via broadcast-as-offer with the canon attached, so no query was needed
+  -- and two banker accounts minting concurrently, which is unit-specced (adopt tie-break, re-mint)
+  but has not been driven as two clients.
+
+  **P2P-036: a brand-new bank account's first scan numbers the roster.** Minting ran only in
+  `RebuildBankerRoster`, and an account owns nothing until its first scan writes
+  `inventoryContentHash` -- so a banker set up from the help instructions (open and close the bank,
+  then `/togbank roster`) showed no number, and its own post-scan broadcast left it out, until the
+  next login. `Bank:Scan` now mints right after it stores the record; a no-op once numbered.
+  `BankerNumbers:CanMint` walks `GetBanks()` rather than every alt through `IsBank` -- the same
+  answer, one roster method instead of two, and the one `Bank:Scan`'s callers already carry. One
+  new example on a whole client in `Tests/bankernumbers_spec.lua`. Locations: `Modules/Bank.lua`,
+  `Modules/BankerNumbers.lua`.
+
+  **DOC-004 again, in the client this time:** the `/togbank share` help text and the in-game setup
+  instructions said the share ran "every 3 minutes"; it is `TIMER_INTERVALS.VERSION_BROADCAST`,
+  ten minutes, and after every bank scan. The setup steps now say the bank close shares at once and
+  that `/togbank roster` should show the new banker with a number. Location: `Modules/Chat.lua`.
+
+  **Three wording defects from Peer Review, fixed:** the P2P request timeout log said "(no banker
+  online)" whenever no banker was named on the request, which the fast-fill and no-banker callers
+  always do -- it claimed a fact the code had not established, with the banker online; it says only
+  what is known (F3, `Modules/Guild.lua`). The relay-skip log said "no content" when the gate is
+  `ServableCanon`, sending a reader to the wrong condition (F4, `Modules/Chat.lua`). And the
+  broadcast-as-offer path wrote the advertised-hash cache twice -- once in the receive handler and
+  again inside `OnOffer` -- so the summary now carries `cachedByBroadcast` and `OnOffer` skips its
+  write (F2, `Modules/Chat.lua`, `Modules/P2PSession.lua`).
+
+  **P2P-034: one request rule, and a late offer is acted on.** Read off the viewer at 21:30 with
+  P2P-031/032/033 loaded on both clients: seven banks arrived and went yellow in one pass, and the
+  one that did not, Leatherrcp, showed two things. `OnOffer from Leatherrcp ignored (not
+  collecting)` -- the banker's offer for it, whispered behind the three payloads it was serving,
+  landed after the viewer's 60-second window and was thrown away. And 26 `No P2P response ...
+  after 5s timeout` lines from ONE hash-list reply, Togweapons and Toglowweap among them -- banks
+  the viewer held with the author's canon -- because the reply compare asked `HashesAgreeWith`
+  ("the same version?") and requested on any difference, older canons and canon-less revision-1
+  copies included; the offer path had asked the publish-time question since P2P-032. Two spellings
+  of "can this claim improve my copy?", and the second one was the guild traffic P2P exists to
+  remove. Now: **`Guild:AdvertisedImproves`** is the one answer -- hold nothing -> yes (if the claim
+  carries anything); claim has no canon -> no; we hold no canon -> yes; both -> only a LATER publish
+  time, read off the canon -- and `P2PSession:OfferIsUseful`, the hash-list compare, `IsAltSyncPending`
+  (catch-up) and `BroadcastP2PRequest`'s guard all call it. Mail needs no clause: a mail scan changes
+  `alt.items`, so the canon moves with it. And an offer arriving outside a window is judged by the
+  same rule and, if useful, dispatched at once through `DispatchList` (one-per-peer still holds; a
+  busy peer parks it). `HashesAgreeWith` is unchanged; it still answers "same version?" where that
+  is the question. Three examples that used to pin the defects were rewritten to the rule --
+  "ignores offers when no window is open" and "is pending on a hash mismatch" among them -- and
+  thirteen added across `Tests/p2psession_spec.lua` and `Tests/hashcache_spec.lua`, three of them
+  through the real `togbank-hlr` receive path counting guild broadcasts. Locations:
+  `Modules/Guild.lua`, `Modules/P2PSession.lua`, `Modules/Chat.lua`.
+
+  **HASH-CANON-013: a canon mangled through a number is not a version.** Read off the banker's
+  log: `theirs=17890060850786974720` advertised for a real canon ending `...974116`. A peer on the
+  previous release put the 20-digit string through `tonumber`, lost the low digits to a float, and
+  re-advertised the float; re-encoding it produced a canon with the right date and a wrong checksum,
+  unequal to the real one forever. A genuine v1.4.0 canon is `Core:Checksum` output, below 2^31
+  (`% 2147483647`); `CanonFrom` now refuses anything larger. Finding the bound also found that
+  `string.format("%d")` wraps negative above 2^31 in this Lua, which the spec records. Location:
+  `Modules/DeltaComms.lua`.
+
+  **The manual `/togbank sync` broadcast moved from ALERT to NORMAL** so the ALERT lane carries
+  handshakes only (the operator: *"you can move it and we can test it"*). Location: `Modules/Chat.lua`.
+
+  **P2P-031: every handshake whisper goes out at ALERT.** The operator, on Path B's 5-second
+  timeout firing with the banker online: *"why don't we just make ack's a priority? it's a whisper,
+  super fast."* All ten `togbank-rr` control messages (request, accept, queued, cancel, busy, and
+  both alt-request ACKs) were NORMAL -- the same lane as the kilobyte offers and state summaries
+  every client sprays -- and ChatThrottleLib splits its budget equally between lanes with
+  something to send, so a 100-byte ACK could sit behind seconds of NORMAL. The ALERT lane is
+  otherwise near-empty. They are still whispers; only the lane changed. Locations:
+  `Modules/P2PSession.lua`, `Modules/Chat.lua`.
+
+  **Self-audit, same session:** the 30-second state-wait was keyed by requester alone, so two
+  accepts to one requester cancelled each other's wait; keyed by requester and alt now, one new
+  example in `Tests/p2psession_spec.lua`.
+
+  **P2P-029: at capacity, QUEUE -- never refuse.** The operator, on the cap P2P-028 exposed:
+  *"that 3 was an arbitrary number ... make it so it 'buffers' all requests and then has only 3
+  open responses, so nothing gets dropped"* -- and on why it was there: *"to force the P2P in a busy
+  guild, so one player wasn't getting hammered."* Both hold. A sync-request past the cap is queued
+  (FIFO; a repeat from the same requester refreshes its entry in place) and answered `sync-queued`
+  with its position; every freed slot accepts the next live entry; an entry older than three
+  minutes is dropped when it comes up. On the requester, `sync-queued` with another untried peer
+  holding the bank sends `sync-cancel` and moves on -- so load still spreads -- and with nobody else
+  to ask it holds the session open for the queue's lifetime instead of the 15-second ACK timeout,
+  so the later accept lands on a live session. `sync-busy` now means only "I do not have it". Two
+  new `togbank-rr` types, no new prefix. Six examples in `Tests/p2psession_spec.lua`. Locations:
+  `Modules/P2PSession.lua`, `Modules/Chat.lua`.
+
+  **`/togbank dev sendqueue`** (the operator: *"put a / command in so we can see the queue data"*):
+  slots in use and who holds them (marked when we are still waiting on their summary), the queue
+  with each waiter's position and age, and our own fetch sessions with state, peer and candidate
+  count. Documented in `docs/DEV_COMMANDS.md`; driven through `ChatCommand` in `Tests/hashdump_spec.lua`.
+
+  **P2P-030: state summaries were 6.5 KB of nothing.** Read off the viewer's log: every
+  `togbank-state` carried the alt's bank, bags and mail item lists as a "delta baseline" for a
+  `ComputeDelta` that INV2 step 10 deleted -- `SendAltData`'s `requesterBaseline` had been
+  luacheck-ignored since. Every request in the guild paid six kilobytes to carry a table nothing
+  read. The summary is the four identity fields and money, ~200 bytes. Location: `Modules/Guild.lua`.
+
+  **Diagnosability, same session:** the per-bank offer decision (`mine=… theirs=… -> OFFER/skip`)
+  is logged under `P2P/OFFER` -- it was not logged at all -- and the tuple send and store lines
+  under `DELTA` now print the canon.
+
+  **HASH-CANON-007: `/togbank dev hashdump` did not show the canon.** The operator, with a banker just
+  re-published: *"is there a / command i can use to see if he did?"* There was not -- the one command
+  for this printed only the revision-1 numbers after the canon had become the field that decides
+  every verdict. It now prints, per banker, the tab state and the held and known canons with the
+  publish time as a date, the revision-1 and mail hashes on a second line; a missing canon reads `-`
+  and a v1.4.0 number is shown as the bare number rather than given an invented date.
+  `Tests/hashdump_spec.lua` drives it through `ChatCommand`. Location: `Modules/Chat.lua`.
+
+- **BANKFILL-002 (self-audit, same session): the bank-collect "return the surplus" phase could
+  strand.** That phase can only be left by finding the pulled stack in bags. Walk away from the bank
+  with it armed -- then use, mail or bank the item -- and every later click at any bank answered
+  *"waiting for the stack to reach your bags"* and never collected anything. Closing the bank now
+  clears the state (the mailbox side already did this on `MAIL_CLOSED`), and the phase gives up
+  after three empty looks rather than waiting forever. Location: `Modules/Events.lua`,
+  `Modules/Mail.lua`.
+
+- **TOOLTIP-002 (reported from a live guild): the item tooltip listed characters who are no longer
+  bankers.** Reporter's words: *"if I mouse-over an item that said banker used to have, the tooltip
+  says they have it. They do not have gbank in their note"* -- and it survived a reload, which is
+  the detail that rules out a stale cache and points at the real cause.
+
+  `Guild.Info.alts` is **stored data, not a roster**. Removing `gbank` from someone's note stops
+  them being a banker, but their last-synced inventory stays in the database indefinitely -- and
+  should, so re-adding the note does not force a resync. `Modules/TooltipBankerInfo.lua` iterated
+  that table gated only on `IsInCurrentGuildRoster` (still in the guild), never asking whether they
+  were still a banker, so it reported them forever.
+
+  **Why the Inventory window was right while this was wrong** -- the reporter confirmed the list
+  behaves: `UI/Inventory.lua` iterates `Guild:GetRosterAlts()` (the banker roster) and *then* looks
+  each name up in `info.alts`. It iterates the roster and reads the data; the tooltip iterated the
+  data and never consulted the roster. One concept, two spellings -- and this was the only
+  "who holds this item" surface on the wrong side of it, out of ~40 `IsBank` call sites.
+
+  The gate is `IsBank` alone, deliberately **not** `IsBank and not IsViewOnlyBank`: VIEWBANK-001
+  makes a view-only banker visible everywhere and merely not requestable, so their stock belongs in
+  the tooltip. A spec pins that, so a later "tightening" cannot quietly remove them.
+
+  **The fixture was corrected mid-fix and it matters:** the first version left `memberRoster` empty
+  and drove `IsBank`'s legacy `GetGuildRosterInfo` fallback -- passing while never exercising the
+  path the addon runs, since v1.4.0 takes the roster from **LibGuildRoster**. The specs now build it
+  through the library and assert it produced members before trusting any answer. Both regression
+  examples proven red.
+
+- **NS-001 (HIGH, confirmed live, realised cost): another installed addon was overwriting this
+  addon's debug categories, so `/togbank debug BANK` answered "Unknown debug category".** The
+  command offered `AUTOJOIN, BROWSE, CREATE, MANAGE, SEARCH` and six others -- a group-finder
+  addon's set -- while `BANK` sat defined in `Modules/Constants.lua` the whole time. The realised
+  cost is the sharp part: the operator could not enable the `BANK` category to diagnose a live
+  INV2 divergence, which is the exact diagnostic `DEV-UX-001` exists to make reachable.
+
+  **Cause, named rather than inferred:** `Grouper/GrouperOutput.lua:16` declares `DEBUG_CATEGORY`
+  as a bare global and `:7` declares `LOG_LEVEL`. Bare globals share ONE namespace across every
+  addon installed, and last writer wins. `LOG_LEVEL` collided too and was harmless **only by
+  coincidence** -- both tables happened to be byte-identical (`DEBUG = 1 .. RESPONSE = 5`) with
+  nothing enforcing it, so either side renumbering would silently have changed the other addon's
+  log filtering with no error anywhere.
+
+  **The harm ran both ways**, which is why the remedy is not "declare ours later" -- this addon was
+  equally clobbering Grouper. `Modules/Constants.lua` now publishes exactly ONE global,
+  `TOGBankClassic_Constants`, with its eleven tables as file-scope locals; each consumer takes a
+  local alias, and a local shadows any foreign global of the same name. `Guild.lua`'s bare
+  `GetPlayerWithNormalizedRealm` -- generic enough that a collision would silently change how every
+  player name is normalised -- moved onto the module table the same way.
+
+  **Two guards, both proven red rather than assumed:** `Tests/constants_spec.lua` asserts none of
+  the twelve names is a global after load, and `.luacheckrc` no longer lists them, so a stray bare
+  `DEBUG_CATEGORY` is an undefined-variable warning instead of a silent read of another addon's
+  table. The first red-proof was itself wrong -- `PROTOCOL = PROTOCOL` inside the file assigns the
+  *local*, so the mutation was a no-op and the guard "passed" against it. A guard that passes
+  against a broken mutation proves nothing.
+
+- **PERF-013: the performance subsystem measured a code path that no longer exists and
+  structurally could not measure the one that replaced it. Both halves failed silently.** 17 of the
+  21 declared counters had no site that could ever record them -- 13 already dead, four killed by
+  INV2 step 10, which deleted the functions and left the counters.
+
+  **Where they actually leaked, checked rather than inherited from the report:** `PrintReport` does
+  **not** print them (`if data.count > 0` skips a zero row), so the peer-review claim that
+  `ComputeDelta: 0` reached chat every session is wrong and is not repeated here. What carried them
+  is the `TOGBankClassic_PerfMetrics` SavedVariable and `GetCurrentStats`, which hands every declared
+  key to its caller as a zero indistinguishable from "it ran and cost nothing".
+
+  **The second half is the one with teeth.** The declared key doubled as an ALLOW-LIST, so a name
+  not already in the table was silently dropped -- no count, no warning, no row explaining the
+  absence, which is why the V2 tuple path could not be instrumented at all. An unknown name now
+  creates its key; a typo'd name yields a spurious row instead of nothing, and a visible wrong row
+  gets noticed while a measurement that never happens does not.
+
+  `Modules/Performance.lua` had **no spec at all**; `Tests/performance_spec.lua` is new and covers
+  both halves plus `Track`, `GetCurrentStats` and the profiling-off paths. Its class guard fails
+  when a counter is declared that nothing records -- the check that would have caught all 17 -- and
+  carries an anti-vacuous assertion. Both guards proven red by mutation.
+
+- **BANKSLOT-001, second half: the two SCAN paths still hardcoded the bank-bag range, and one more
+  literal turned up that nobody had counted.** `ItemHighlight.lua` was fixed on 2026-09-09 to read
+  the geometry from the client; `Modules/Bank.lua` and `Modules/Inventory/Scan.lua` were knowingly
+  left at `for bag = 5, 11` on the reasoning that they were **identically** wrong and so could not
+  produce a legacy-vs-V2 divergence.
+
+  **That reasoning holds only while both stay wrong together**, which makes it a trap for whoever
+  fixes one file: the two scans would then walk different ranges and `/togbank dev compare` would
+  report a divergence that is an artefact of the fix, with the addon's own comparison tool doing the
+  lying. Both changed in one edit, using Blizzard's expression from `BankFrame.lua:245`
+  (`NUM_BAG_SLOTS+1 .. NUM_BAG_SLOTS+NUM_BANKBAGSLOTS`, which is 5..10 on Classic Era).
+
+  **The guard then found four more sites on its first run** -- `for bag = 0, 4`, the *carried* bag
+  range, three times in `Bank.lua` and once in `ItemHighlight.lua`. Same class, on nobody's list.
+  Neither range overran harmfully on Era, so the real cost is that a hardcoded end is wrong for any
+  flavour whose count differs, and **too few silently drops a whole bag from every scan with nothing
+  reporting it.** This addon ships Era and TBC from one source.
+
+  `Inventory/Scan.lua` reads the constants at **call** time: they are engine-side globals an addon
+  file can load before, so a file-scope capture would latch the fallback for the session and behave
+  exactly like the hardcode it replaces, with nothing to show it had happened.
 
 ### Internal
 
-- **`.luacheckrc` declared `StaticPopupDialogs` twice, and the read-only copy won.** It is in `globals` -- with a comment explaining that registering a dialog *is* writing a named field into it -- and was also in `read_globals`, which forbids field assignment. The duplicate silently defeated the deliberate declaration, so all four of `Modules/UI/Requests.lua`'s dialog registrations reported `W122 setting read-only field`: the exact warning the `globals` entry exists to prevent. Removed from `read_globals`, with a note there saying why it must not come back. `Requests.lua` now lints clean.
+- **AUDIT-S3 / AUDIT-S4: two public functions were safe only because of their single caller.**
+  Peer review filed both in one session and named the class: *an invariant enforced at the call
+  site and not stated at the callee is a guard with a half-life* -- the next caller is written by
+  someone reading the function, not the call site, and silently loses the protection.
 
-- **`Tests/staleformat_spec.lua`** (6 examples) pins MIGRATE-002 from both sides: one unmigrated banker earns exactly **one** line however many payloads it sends, two unmigrated bankers earn **two**, a non-banker earns none, and the debug record still counts every occurrence. **Proven red against the real mutation** -- removing the latch turned 25 payloads into 25 user-visible lines. Worth recording that the file's *first* red run was a false one: the fixture was missing `Guild:UpdateOnlineMember` and then a working envelope, so the examples failed at 0 warnings without ever reaching the branch. A red that arrives for the wrong reason proves nothing, which is why the latch was mutated deliberately afterwards.
+  **S3, `Modules/Inventory/Wire.lua`:** `Wire.decode` would decode a legacy link payload if handed
+  one; only `Chat.lua`'s `isV2` check before the call stopped that. The check now lives in
+  `Wire.decode` itself -- a non-tuple payload returns `"dropped"` and no records -- and the
+  `decodeLegacy` function and the `"legacy"` format value are deleted, so there is no dead path for
+  a future caller to reach and no value to branch on. Three specs were pinning the forbidden
+  behaviour (one headed *"Permanent, not a migration aid: this is what lets a guild run mixed
+  versions"*, which stopped being true on 2026-09-09); they now pin the drop. The CMD-004 bandwidth
+  guard can no longer round-trip through a decoder, so it asserts the v1.3.2 shape directly.
 
-- **`Tests/debugtab_spec.lua`** (12 examples) pins CHATWIN-001 and DEV-UX-002. The CHATWIN half drives the defect by **taking the globals away** -- `NUM_CHAT_WINDOWS` and `Constants` are nilled and restored in a `finally` -- because the absence *is* the condition under test and no fixture can reach it any other way; `.luacheckrc` declares both writable in `Tests` for the same reason `LibStub` already is. The DEV-UX half asserts **both directions** on every gate combination: level-off/category-off, level-on/category-off, level-off/category-on all warn, and only both-on confirms. Asserting the warning alone would pass for a command that always warns, which is the same false confirmation in the opposite direction.
+  **S4, `Modules/RequestLog.lua`:** `ApplyRequestMutation` collapsed "no sender" and "sender that
+  does not resolve" into one nil, and every permission gate was wrapped in `if normSender then` --
+  so a DELETE from an unresolvable name applied with **no GM check at all**. Latent, not live: the
+  real sender is server-supplied, and `NormalizePlayerName` returns nil in exactly two places (an
+  empty name, or an empty character-part before the hyphen). Now three states -- a nil sender is
+  refused (no caller applies locally; a future one must add an explicit flag), a malformed sender is
+  refused, and only a resolving one reaches the gates. Both malformed inputs are driven through the
+  real receive path in `Tests/requestchain_spec.lua`, proven red. **That fixture had stubbed
+  `NormalizeName` looser than the real function on exactly these inputs** -- `"-Realm"` came back
+  as-is instead of nil -- so the examples could not have gone red against it. The stub is gone; the
+  env's realm already makes the real function deterministic.
 
-- **The `Modules/Chat.lua` header now records WHY the channels are split**, not just what each prefix does. It had the complete prefix table and the sync sequence, and never the rationale -- so a reader could see that replies go by whisper and not that the GUILD channel being congested is the reason the whole P2P layer exists. Written from the operator's own words, with the trap stated explicitly: a COMMS log shows one GUILD broadcast followed by ten whispered replies, which reads as an amplifier and is the exact opposite -- those are ten messages *not* sent on the congested channel. It misled a reader three times in one session before being written down.
+- **The test stand-ins for `Core` were WIDER than the real one** (AUDIT-S1 follow-on). Two test
+  surfaces installed a `ComputeCanonHash` method that the real `Core` does not have -- the canon is
+  minted at exactly one site inside DeltaComms and Core never fronts it. CMD-001 with the sign
+  reversed: correct-looking code calling it would pass every spec and fail in the client. Removed
+  from both, and `Tests/coresurface_spec.lua` now reads the real surface (Core.lua's own methods plus
+  the six Ace mixin lists from the sibling install) and fails if any stand-in installs a name
+  outside it. Five spec files hand-roll a Core table; all checked, guard proven red.
 
-- **`Tests/suffixcarry_spec.lua`** (10 examples) pins INV2-SUFFIX-001 from both ends. Its ItemDB stub is **deliberately lossy** -- `GetSuffixLink` ignores the suffix it is handed and returns a bare link, exactly like `Resolve` step 2 on a client whose ItemDB lacks the id. A faithful stub would let the old link-parsing code pass and prove nothing, so one example asserts the fixture is actually reproducing the defect (`GetSuffixID(row.Link)` is nil) before asserting the fix reads through it. The `Suffix = 0` versus absent-field distinction gets its own example for the same reason: the two cases are one keystroke apart and the wrong one breaks legacy data rather than V2 data, where nothing would notice for a release.
+- **The order-splitting logic has real coverage for the first time** (`Tests/fulfillsplit_spec.lua`,
+  32 examples). `CalculateFulfillmentPlan` decides which whole stacks to attach and whether one must
+  be split to hit the exact quantity -- get it wrong and a guildmate receives the wrong number of
+  items, or an order the bags can cover is refused. It had no direct spec.
 
-- **LIBREQ-ALL-005: a comm prefix the client REFUSES to register is now reported instead of silently breaking sync** -- `TOGBankClassic_Chat:VerifyCommPrefixes()`, called at the end of `Chat:Init`. `C_ChatInfo.RegisterAddonMessagePrefix` can refuse, and until now nothing looked: AceComm registers each prefix inside `RegisterComm` and discards the result, so a refusal presented as a guild bank that simply never syncs, with no error anywhere. Location: `Modules/Chat.lua`.
+  All four phases are now driven against known stack layouts, plus the property that matters:
+  **across twenty stack/quantity combinations, attached + split must equal exactly what was
+  ordered.** The two most likely to go wrong silently are pinned specifically -- that it never
+  splits from a stack it is already attaching whole (one stack counted twice sends the order short),
+  and that it prefers an exact combination over a split when one exists.
 
-  **The obvious guard would have been dead code, and that is why this was blocked on the harness rather than written months ago.** The return is a **number** from `Enum.RegisterAddonMessagePrefixResult` (`Success = 0`, `DuplicatePrefix = 1`, `InvalidPrefix = 2`, `MaxPrefixes = 3`) -- never a boolean, never nil, per Blizzard's generated `ChatInfoDocumentation.lua` for the classic_era tree (`Nilable = false`). So `if not C_ChatInfo.RegisterAddonMessagePrefix(p)` can **never** fire, because `Success` is `0` and `0` is truthy in Lua, and `result == false` never matches. Both read as guards and neither can execute. The harness stub returned `true` until `c9f3199` -- with its own comment admitting the return had never been checked against the docs -- so either guard would also have passed its spec. Writing it then would have ratified a branch that cannot run, which is worse than no guard.
+  **Reported honestly: the planner passed every one on the first run.** Nothing was found broken;
+  the behaviour is now pinned rather than assumed.
 
-  **`DuplicatePrefix` is deliberately silent, and that is the load-bearing decision.** AceComm registers our prefixes first, so re-registering to read the verdict returns `DuplicatePrefix` for all eleven, every login, forever. Treating it as failure would print eleven warnings a session, be trained out, and then a genuine `MaxPrefixes` refusal -- a client-wide cap a player running many addons can really hit -- would arrive on a channel nobody reads. Only `InvalidPrefix` and `MaxPrefixes` are loud.
+- **The bank-collect state machine has a spec** (`Tests/bankcollect_spec.lua`, 49 examples) -- the
+  half that was missing above. It drives `BankCollectStep`, `FindOldestBankFillableOrder`,
+  `FindEmptyBankSlot`, `FindItemsInBank` and `CountItemInBank` against a bag/bank model that actually
+  moves stacks: the three container-moving APIs are implemented over the env's bag tables so the
+  arithmetic can be asserted, not just the calls counted.
 
-  **Both failure modes are proven red, not merely covered.** `Tests/commprefix_spec.lua` (9 examples). Replacing the branch with the dead `if not result` guard reddens 3; treating `DuplicatePrefix` as a failure reddens exactly 1 -- the *"says NOTHING when the client reports DuplicatePrefix"* example, which no other assertion catches.
+  The property that matters is pinned under BOTH client behaviours: after pull and return, bags hold
+  exactly what they held plus the order and the bank holds exactly what it held minus it -- with the
+  pulled stack merging into partial bag stacks (the client auto-stacks) and without, across seven
+  layouts each, because the addon cannot know which happened. Also pinned: least-overshoot stack
+  choice, re-choosing on every click, the three-look give-up, no-free-bank-slot, bags-full refusing
+  before touching the bank, the oldest-by-date-then-id tiebreak agreeing with the mailbox search,
+  bank stock NOT making an order serviceable at the mailbox, id-primacy and suffix equality on the
+  bank side, and BANKFILL-002 -- closing the bank drops the armed phase. The BANKFRAME_CLOSED reset
+  and the new banker guard were each reverted to prove exactly their examples go red. One
+  expectation of mine was wrong on the first run, not the code: on a second click with a shortfall
+  of 2 the step correctly takes the exact 2-stack rather than the 3 I had written down.
 
-- **The eleven comm prefixes are registered from one list instead of eleven copy-pasted blocks** -- `TOGBankClassic_Chat.COMM_PREFIXES`, iterated to subscribe and again to verify. It is deliberately **not** derived from `COMM_PREFIX_DESCRIPTIONS`: that is a bare global, and NS-001 is a confirmed live case of another addon overwriting one of ours, so deriving registration from it would mean silently receiving nothing. `commprefix_spec` asserts the two hold the same set in both directions, so the second list cannot drift. Locations: `Modules/Chat.lua`, `Modules/Constants.lua` (new `PROTOCOL` / `PREFIX` debug tag).
+- **BANKSLOT-001, the last spelling.** The bank-bag and carried-bag ranges now have ONE spelling,
+  `TOGBankClassic_Constants.CarriedBagRange()` / `BankBagRange()` (functions, read at call time --
+  the globals are engine-side and can be unset when a file loads). Five files derived the arithmetic
+  themselves; the guard in `Tests/itemhighlight_spec.lua` now requires `NUM_BANKBAGSLOTS` to appear
+  only in `Constants.lua`, is anchored on `for bag =` so an unrelated literal loop cannot trip it,
+  and covers `Mail.lua` -- where its first run found **two more** hardcoded `for bag = 0, 4` walks
+  nobody had counted (the split popup and the empty-slot search). Those and `FindEmptyBankSlot`'s
+  inner scan collapsed onto one `tog_firstEmptySlot(first, last)`.
 
-- **Harness pinned to `c9f3199`** (from `f38f923`), which ships the real `RegisterAddonMessagePrefix` enum requested above, plus `GetServerTime`, `wow.pendingTimerCount()` and `wow.flushTimers()`. Suite green. **The local stand-ins for those last three are NOT yet deleted**: `Tests/env_togbank.lua` drives them from its own `M.now` clock rather than the harness's `wow.serverTimeOffset`, so removing them is the `ENV MIGRATION` work and not a side-edit.
+- Three dead locals removed from the same function while covering it, and `Modules/Mail.lua`'s
+  Send-Mail API calls added to `.luacheckrc` -- roughly 20 of its 43 warnings were the linter not
+  knowing real WoW globals, which is real signal being drowned rather than real problems.
 
-- **INV2 step 7a: the UI reads through one accessor, and the `inventoryV2` switch is honoured in one place** -- `Guild:GetAltItems(altName)`. Six sites across three UI files open-coded *"use `alt.items` if it has anything, otherwise aggregate bank + bags + mail"*; wiring the switch would have meant repeating it six times. `INVENTORY_V2.md` 7.1 anticipated exactly this by having the V2 store expose a view in the shape the UI already consumes, so the read side needs no other change. With the switch off, behaviour is identical to before.
+- `env.readFile` and `env.codeLines` lifted into `Tests/env_togbank.lua`. The identical bodies were
+  open-coded across several spec files and the new specs would have added more; a scan helper copied
+  per file can be corrected in one place and stay wrong in the others.
 
-  **The fallback is the load-bearing part.** With `inventoryV2` on but an alt absent from the V2 store, the accessor returns the **legacy** rows rather than nothing -- during the `dualWrite` window only the local character is written to V2, while every other member's data still arrives over the legacy wire, so returning empty would blank most of the guild's inventory the instant the switch was flipped. Pinned by `Tests/altitems_spec.lua`, and the V2-read example was **confirmed red** by disabling the branch.
+- **`CHANGELOG.md` split at the v1.4.0 boundary.** The v1.4.0 section (~113,000 characters) moved
+  whole into `CHANGELOG_ARCHIVE.md`; with it here the release body was over GitHub's 125,000-
+  character hard limit, which fails the GitHub release silently while the CurseForge upload succeeds.
 
-- **RESOLVE-001: every successfully-resolved V2 item drew as a question mark** -- `Resolve.describe`'s LibItemDB branch, the path taken when resolution *works*, hardcoded `icon = UNKNOWN_ICON`. Name, link, quality, stack count and rarity border were all correct beside it, which is exactly why it read as an icon-cache problem rather than a missing field. LibItemDB ships no icon (there is no `GetIcon` -- it carries names, quality, stats, prices and levels), so the icon comes from `GetItemInfoInstant`, chosen for the same reason the fallback step already uses it: it reads the client's **static** item data, needs no warm cache and never defers. An icon is a fixed per-item fileID, so there is nothing for the library to add and no contract to raise.
-
-  **Icons are memoised per item id**, since an icon does not vary by suffix, enchant, stack, owner or locale: a bank holding 1,200 stacks across 400 distinct items costs 400 lookups rather than 1,200, later alts holding the same items cost none, and with Store's per-alt view cache the steady state is zero lookups per draw. Misses are remembered too -- caching only hits would mean exactly the ids that fail get retried on every rebuild. Both properties are asserted by counting calls rather than asserted in a comment.
-
-  **The pre-existing guard could not have caught this**: `resolve_spec` asserted `d.icon ~= nil`, which the placeholder satisfies. A check that cannot distinguish the right answer from its own fallback proves nothing. Location: `Modules/Inventory/Resolve.lua`.
-
-- **SEARCH-002: an item in a banker's mailbox was findable in one view and invisible in another** -- found while consolidating the above. Search's copy of the fallback aggregated bank + bags and **omitted mail**, while the Inventory tab's copy included it. Same character, same data, two answers, and neither view said which it was showing. Both now use `Guild:GetAltItems`, which includes mail. **This changes search results**: items sitting in a banker's mailbox now appear, and previously did not. Locations: `Modules/UI/Search.lua`, `Modules/UI/Inventory.lua`, `Modules/UI/Requests.lua`.
-
-- **Dead link-parsing removed from Search** -- a `LINK_COLOR_RARITY` table and a `RarityFromLink()` that recovered an item's quality by parsing the colour prefix out of its link, called by nothing. Quality comes from `Info.quality`, which is resolved data rather than a display string parsed backwards, and deriving attributes from link text is the practice `INVENTORY_V2.md` section 8 exists to delete. Also removed an unused `allReqs` local and a `totalPages` that shadowed an identical value computed 90 lines above it, and blanked 13 whitespace-only lines. Locations: `Modules/UI/Search.lua`, `Modules/UI/Requests.lua`.
-
-- **The status-bar module now follows the UI namespace rule** -- it declared `TOGBankClassic_StatusBar`, while every other UI sub-module uses `TOGBankClassic_UI_<Window>` and both linter configs already listed `TOGBankClassic_UI_StatusBar`. The code was the odd one out, so it was renamed rather than teaching the linter the wrong name. That alone cleared **31 luacheck warnings** in the file, which had been reporting its own module global as undefined on every line that touched it. Locations: `Modules/UI/StatusBar.lua`, `Modules/UI/Inventory.lua`.
-
-- **Linter config gaps closed rather than suppressed** -- `SecondsToTime`, `IsShiftKeyDown`, `IsControlKeyDown` and `debugstack` are real client APIs that were missing from `.luacheckrc`'s `read_globals`, and upvalue-shadowing (luacheck 431/432) is now ignored there for the reason the language server already ignores it: `function(self, event)` is the universal AceGUI and frame-script idiom in this codebase, so an inner `self` shadowing an outer one is the convention rather than a mistake. **Equality between `.luacheckrc` and `.luarc.json` is explicitly not the rule** -- luacheck reports `undefined-global` with per-directory precision and the language server has it disabled outright, so copying names between them would only blunt the one tool that can still report a typo. Also removed a dead `scrollId` local in `Modules/UI/Inventory.lua` whose comment claimed it was the double-callback guard; the flag on the next line is, and always was, the whole mechanism.
-
-- **INV2: the tuple-inventory foundation is in place, and off** — six new modules implementing the storage/wire rework designed in `docs/INVENTORY_V2.md`. `inventoryV2` defaults off; with it off nothing reaches them, and **no user behaviour changes in this release** either way — nothing reads the V2 store for display, sync, or fulfillment yet.
-
-  | Module | Responsibility |
-  | --- | --- |
-  | `Modules/Switches.lua` | Dev-switch registry; each switch declares what it gates and when it should be deleted |
-  | `Modules/Inventory/Record.lua` | The tuple `{id, count, suffix, enchant}`, its identity function, validation, aggregation |
-  | `Modules/Inventory/Resolve.lua` | LibItemDB lookup plus the three-step fallback chain |
-  | `Modules/Inventory/Store.lua` | The `TOGBankClassicInvDB` SavedVariable and the UI-compatibility view |
-  | `Modules/Inventory/Scan.lua` | Containers → tuples, emitting both shapes from one walk under `dualWrite` |
-  | `Modules/Inventory/Wire.lua` | Tuple encode/decode; send is switchable, receive always accepts both formats |
-
-  **142 specs, 445 executable lines, 100% line coverage on every module.** Greenfield is the one point at which that is achievable — retrofitting reached 18% on `Guild.lua`.
-
-  Three properties are asserted rather than assumed, because each is silent when it breaks. `Scan.parseLink` treats `item:10132::::::863` and `item:10132:0:0:0:0:0:863` as the same item — that equivalence is what makes the miscount class stop existing rather than be normalised around. Under `dualWrite` both shapes come from a **single** container walk, since a comparison across two walks could not distinguish an encoding bug from a stack that moved between passes. And an item arriving as a legacy link decodes to the same `Record.key` as the same item scanned locally, or a synced row and a scanned row would aggregate separately — the original bug reintroduced through the wire.
-
-  `Wire.estimateSize` exists to put real figures back on the CurseForge page: `INV2-DOC-001` removed the bandwidth claims because they were unverified, and this measures rather than asserts.
-
-- **INV2-WIRE-001: the V2 store is now fed from the live scan, behind the switch** — `Bank:Scan` mirrors each scan into `TOGBankClassicInvDB` when `inventoryV2` is on, and `Core:OnInitialize` attaches that SavedVariable. Writing only: nothing reads the V2 store, so with the switch off the addon is byte-for-byte what it was, and with it on the only change is a second table in the saved variables file.
-
-  Three deliberate choices, each of which would be a silent data-loss bug the other way round. The mirror is wrapped in `pcall`, so a fault in brand-new code cannot abort the path every existing user depends on — the legacy scan completes and the failure is reported. It sits *after* the banker/enabled gates, so a non-banker never accumulates V2 data. And when the vault is out of reach the previously stored V2 record is **kept**, not replaced with a bags-only scan; the legacy path has always had this property and losing it would erase a character's whole vault from the guild's view on the first scan away from a banker.
-
-  Note that the mirror currently re-walks the containers rather than sharing the legacy walk. That is the opposite of the single-walk arrangement `docs/INVENTORY_V2.md` §6.1 specifies, and it is intentional for exactly as long as the legacy path is authoritative: sharing the walk means editing it, and the property being protected here is that it is untouched. `Scan:ScanAll` already emits both shapes from one walk, so the swap is a deletion when V2 becomes the writer. Locations: `Modules/Bank.lua`, `Core.lua`.
-
-- **`/togbank dev switches` and `/togbank dev compare`** — `switches` lists the INV2 dev switches with their live state (a dependent switch reads OFF while its parent is off, whatever its stored value says) and sets them. `compare` diffs the V2 store against the legacy one on live data.
-
-  `compare` matches on **per-item-ID totals**, not rows: suffix variants legitimately split into separate V2 rows that a legacy link key may have merged, so a row-count comparison would flag every random-suffix item in the game. It also refuses to report agreement when there is nothing to compare — switch off, store empty, or no character in both — because a green result from a diagnostic that checked nothing is what a default-on decision would be justified by. 25 specs, including one that asserts the legacy scan result is identical with the switch on and off. Locations: `Modules/Chat.lua`, `Tests/wiring_spec.lua`.
-
-- **The request chain now has end-to-end coverage, and it did not before** -- raised by the operator, who asked whether editing the request-mutation handler had broken request propagation. It was a fair question: that handler carries request traffic **and** used to carry an inventory branch, and the only existing coverage tested the send callback, so a break in request **receive** would not have shown up in a green suite.
-
-  `Tests/requestchain_spec.lua` drives a mutation from one client's `AddRequest` through the real serializer and the real prefix dispatch into another client's list -- new order, cancel, complete, delete-as-tombstone, both permission refusals, and one asserting an inventory payload on the request prefix is now ignored. What crosses between the two clients is a serialised string and nothing else, so neither side can share a table reference and manufacture agreement.
-
-  **Two of them failed for a while and were left red rather than weakened**, because a failing test is a found bug until proven otherwise. Both turned out to be the fixture: the message was being delivered **from the banker to a client the fixture had also made the banker**, and a message from yourself is correctly ignored -- indistinguishable from the merge rejecting it when all you can see is "the order stayed open". Reading the merge logic could never have explained it, because the break was upstream of the merge entirely; **instrumenting** the apply step and finding it was never reached is what settled it. The examples now assert each layer separately, so the next failure localises itself.
-
-  Fixture facts worth knowing for any two-client spec, all paid for here: the harness clock starts at zero and request mutations order on their timestamp, so a tombstone can never be recorded (`0 > 0`); a realistic clock then reaches the pruning path; and selecting a message by "the last thing sent on that prefix" is wrong, because finalising a mutation puts further traffic on the same prefix straight after it.
-
-- **`Tests/canonhash_spec.lua` holds the fingerprint rules as executable invariants**, built around a deliberately **wrong** value rather than a correct one. Checking that a record still holds the right number is worthless -- a path that quietly recomputes produces the right number and passes. Every no-mutation example plants a value that cannot be derived from the contents, runs a path, and asserts it survived. Proven red three ways: removing the datestamp from the fingerprint (4 examples), reinstating the no-change adoption (4, including the relaying-peer case that caused the live data loss), and pointing the change detector at the canon instead of the content hash (the churn example, verbatim).
-
-- **33 new specs** in `Tests/guildroster_integration_spec.lua`, run against the **real** library rather than a stub. The harness gained `freshGuildRoster`, `readyGuildRoster` and `fireGuildRosterEvent`, plus two environment prerequisites now recorded in `Tests/HARNESS_CONTRACT.md` §4a/§4b: `securecallfunction` (a CallbackHandler file-scope upvalue) and the five localized `ERR_*` globals. The second is worth knowing — LibGuildRoster builds its chat patterns from those strings **at file scope**, so if they are missing when it loads it matches nothing at all, with no error. That failure looks exactly like a library defect and is not one; it cost two wrong diagnoses before the library's own spec settled it.
-
-- **`GetNormalizedRealmName()` takes no arguments** — three call sites passed `"player"`. Harmless (the argument was ignored) but wrong, and it was the only genuine defect in a large batch of language-server warnings. Locations: `Core.lua`, `Modules/Guild.lua`.
-
-- **`.luarc.json` brought in line with the other TOG addons** — added `redundant-parameter`, `undefined-field`, `missing-parameter`, `param-type-mismatch`, `duplicate-set-field` and `trailing-space` to `diagnostics.disable`, matching `GuildRoster/.luarc.json`. These are noise on dynamic WoW addon code: the language server cannot resolve a vararg method through a global module table, so it reported `Output:Debug(fmt, ...)` as taking zero arguments and flagged roughly a hundred correct call sites. `Tests` stays **analysed** — an earlier attempt at this excluded it via `workspace.ignoreDir`, which suppressed the symptom by giving up language-server support in the specs instead of configuring the rules that were wrong.
-
-- **Verified in-game** on a 981-member guild: library and WoW API agree in both directions, no cache divergence, no normalization disagreement across 981 real character names, 38 bankers detected, and a live transition recorded (`online=1`, `recent: online Fartcaptain-OldBlanchy`) — the first direct evidence that real-time presence works.
-
-> Releases **v1.1.2 and older** have been moved to
+> Releases **v1.4.0 and older** have been moved to
 > [`CHANGELOG_ARCHIVE.md`](CHANGELOG_ARCHIVE.md) to keep this file under GitHub's 125,000-character
 > release-body limit. Nothing was deleted; each section moved whole, at a version boundary.
-
-*Older releases (v0.10.10 and earlier) are archived in [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md).*

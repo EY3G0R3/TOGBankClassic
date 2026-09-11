@@ -2,7 +2,7 @@
 TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era & TBC
 ================================================================================
 
-Version: 1.3.0
+Version: 1.4.1
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme
 Website: https://www.curseforge.com/wow/addons/togbankclassic
 
@@ -27,10 +27,15 @@ KEY FEATURES:
 - View all guild bank inventories in one convenient interface
 - Search across all bank characters simultaneously
 - Request items from guild banks via in-game mail
+- One Fulfill button that collects from the bank AND attaches to mail
 - Guild-wide request limits for fair resource distribution (officers only)
 - Automatic synchronization with other guild members using the addon
+- A bank character's update reaches everyone online within seconds
 - Bank contents sent as compact numbers, not item links - 85% less data
+- Every bank character has a permanent four-digit number, so the guild-wide
+  check-in is a few hundred bytes and an offer is a single message
 - No transfer at all between members whose copies already match
+- Bank tabs coloured by whether your copy is current (hover for why)
 - Persistent debug logging system for troubleshooting
 - Works seamlessly with multiple bank alts
 
@@ -106,8 +111,11 @@ FOR GUILD BANK CHARACTERS:
 5. Press ESC -> Interface -> AddOns -> TOGBankClassic
 6. Click the [-] icon to expand the Bank section
 7. Enable "Report bank contents" and "Scan bank on open"
-8. Open your bank and then CLOSE it - the scan runs when the bank closes
-9. The addon will now automatically share this character's inventory!
+8. Open your bank and then CLOSE it - the scan runs when the bank closes and
+   is shared with the guild straight away
+9. Type /togbank roster - your bank character is listed with a four-digit
+   number beside it (assigned automatically; nothing to type anywhere)
+10. The addon will now automatically share this character's inventory!
 
 VIEW-ONLY BANK CHARACTERS (e.g. a raid bank):
 ---------------------------------------------
@@ -147,6 +155,20 @@ REQUESTING ITEMS:
   able to request the full available quantity. The interface will show the
   maximum allowed amount (e.g., "Available: 100 (Max: 50% = 50)").
 
+FULFILLING ORDERS (bank characters):
+  Open the Requests window and click "Fulfill" on an order. The button does
+  the right thing for wherever you are standing:
+
+  - At your BANK: each click pulls out what the order still needs. If the
+    stack is bigger than the order, the spare is split straight back into
+    the bank. Bags full, no free bank slot, and nothing left to collect are
+    each reported rather than failing quietly.
+  - At a MAILBOX: each click attaches the items to the mail, splitting
+    stacks as needed. Type the recipient's name and send.
+
+  The game never lets you have the bank and a mailbox open at once, so the
+  normal flow is: collect at the bank, walk to the mailbox, keep clicking.
+
 MANUAL SYNC:
   /togbank sync
     Manually requests the latest inventory data from all online guild
@@ -154,10 +176,10 @@ MANUAL SYNC:
 
 SHARING YOUR DATA:
   /togbank share
-    Manually broadcasts your bank character's hash to notify other guild
-    members that you have updated data. They will automatically pull the
-    data during their next sync cycle. This happens automatically every
-    3 minutes.
+    Manually announces your bank character's current version to the guild.
+    Anyone holding an older copy asks you for it straight away. This happens
+    automatically every 10 minutes and immediately after every bank scan,
+    so you should rarely need it.
 
 ================================================================================
 COMMAND REFERENCE
@@ -179,10 +201,9 @@ BASIC COMMANDS:
   (Automatic sync happens every 10 minutes)
 
 /togbank share
-  Manually broadcast your bank character's hash to notify other users
-  of available data. Other users will pull the data during their next
-  sync cycle (manual /togbank sync, UI open, or automatic 3-minute timer).
-  (Automatic hash broadcasting happens every 3 minutes)
+  Manually announce your bank character's current version to the guild.
+  Anyone holding an older copy requests it from you straight away.
+  (Automatic every 10 minutes, and immediately after every bank scan)
 
 /togbank reset
   Resets your TOGBankClassic database (clears all stored data)
@@ -218,8 +239,16 @@ listed alphabetically for easy reference.
   Removes the TOGBank Debug chat tab
 
 /togbank roster
-  Guild officers can use this to share updated roster data with the guild
-  (Requires officer note viewing permissions)
+  Lists the guild's bank characters as read from your guild notes, with the
+  permanent four-digit number each one has been given and the version of that
+  numbering. The numbers are assigned automatically by any account that owns
+  a bank character - the first time it logs in on this version, or the first
+  time a new bank character's bank is scanned - and are the same on everyone's
+  screen. A number is for life: a bank character that leaves and comes back
+  keeps it. If a bank character shows "----" its number has not reached you
+  yet, which resolves the next time any updated guildmate's check-in is heard.
+  On a fresh install the first sync learns the numbers and the second sync
+  uses them.
 
 /togbank wipe
   Resets your own TOGBankClassic database
@@ -306,25 +335,52 @@ rebuilds the item from that - so nothing is transmitted that your game already
 knows. Measured on a live guild across 227 items: 19,740 bytes of the old
 format against 2,873 of the new, an 85% reduction.
 
-HOW IT WORKS:
--------------
-1. A bank character's contents are scanned when you CLOSE the bank window, and
-   given a fingerprint at that moment.
-2. That fingerprint is broadcast to the guild.
-3. Members compare it against what they already hold. If it matches, nothing is
-   requested and nothing is sent.
-4. If it differs, the two clients agree a transfer privately and the contents
-   are sent to the member who asked, not to the whole guild.
+HOW IT WORKS (v1.4.1):
+----------------------
+1. A bank character's contents are scanned when you CLOSE the bank window. If
+   anything changed since the last scan they get a new VERSION STAMP; if
+   nothing changed, nothing is stamped and nothing is sent. The stamp carries
+   the time it was published, so any two copies can be compared at a glance.
+2. Every bank character has a permanent four-digit NUMBER (see /togbank
+   roster), so the guild-wide check-in - sent at login, every 10 minutes and
+   after every scan - is just "number + version" per bank, a few hundred bytes.
+3. Anyone who hears a check-in and holds a NEWER version of one of those banks
+   replies with a single short message naming the bank numbers they can
+   improve. And a check-in from a bank character announcing a new version is
+   itself an offer: everyone behind on it asks straight away, within seconds.
+4. Before asking for the data, the addon asks a few of those who offered which
+   version they hold, and takes the newest - from the bank character itself
+   when it answers. The request names that exact version.
+5. The two clients agree the transfer privately and the contents are sent to
+   the member who asked, not to the whole guild. Downloads from different
+   guildmates run at the same time; a player sends to three at a time and
+   tells anyone else their place in the queue - nobody is refused.
+6. The short back-and-forth that sets a transfer up travels on a fast lane of
+   its own, separate from the bulk data, so it is answered even while the
+   other player is busy sending to someone else.
 
-The fingerprint is produced ONCE, by the bank character that did the scan, and
-is carried unchanged by everyone else. Nobody else recalculates it. This is what
-stops members overwriting each other's copies with stale data, and it is why
-simply looking at a bank no longer generates guild traffic.
+The version stamp is produced ONCE, by the bank character that did the scan,
+and is carried unchanged by everyone else. Nobody else recalculates it. This is
+what stops members overwriting each other's copies with stale data, and it is
+why simply looking at a bank no longer generates guild traffic.
+
+BANK TAB COLOURS:
+-----------------
+In the Inventory window each bank character's tab is coloured by whether your
+copy is current. Hover a red tab to see which of these it is:
+- YELLOW: your copy is the newest anyone has mentioned.
+- RED, "predates the current format": that bank has not been scanned since its
+  owner updated. It stays red until they open and close their bank once.
+- RED, "a newer copy was published": someone has a newer version than you and
+  it is being fetched. The tab turns yellow the moment it arrives.
+Nothing another guildmate says about YOUR OWN bank can turn its tab red.
 
 BENEFITS:
 ---------
 - 85% less data than the previous format (measured, not estimated)
+- Check-ins and offers a fraction of their former size
 - No transfer at all when nothing has changed
+- A bank character's update reaches everyone online within seconds
 - Bulk transfers go privately to whoever asked, keeping guild chat clear
 - Fully automatic - no configuration required
 - Persistent debug logging for troubleshooting
@@ -355,6 +411,15 @@ The practical effect during a rollout: whoever updates first sees less bank
 data, not more, until their bank characters follow. The addon names exactly who
 to chase.
 
+v1.4.1 changed the check-in and offer messages again. A v1.4.0 client cannot
+read them and simply stops hearing offers from anyone who has updated - nothing
+breaks for them, they just stop getting newer copies until they update. After
+updating, open and close each bank character's bank once, so its contents are
+published with a version stamp - until then that bank's tab is red for
+everyone. The first bank account to do that (or simply to log in, if it already
+scanned on v1.4.0) numbers EVERY bank character in the guild in one go, and
+everyone else picks the list up automatically from the next check-in they hear.
+
 DEBUG LOGGING:
 --------------
 v0.8.0 introduces persistent debug logging:
@@ -381,6 +446,22 @@ SOLUTION:
   - Type /togbank sync to request fresh data
   - Bank characters need to open their bank for the addon to scan it
   - Data is automatically synced every 10 minutes when players are online
+
+PROBLEM: A bank's tab is red in the Inventory window
+SOLUTION:
+  - Hover the tab: it says which of the two reds it is.
+  - "Predates the current format": that bank character has not opened their
+    bank since updating. Ask them to open and close it once.
+  - "A newer copy was published": it is already being fetched; the tab turns
+    yellow when it lands. If it stays red for more than a few minutes, type
+    /togbank sync.
+
+PROBLEM: /togbank roster shows "----" instead of a number
+SOLUTION:
+  - The numbering has not reached you yet. It arrives with the next check-in
+    from any updated guildmate; /togbank sync asks for it now.
+  - If EVERY bank character shows "----", no bank account has logged in or
+    scanned on this version yet - nothing can be numbered until one does.
 
 PROBLEM: Delta sync not working
 SOLUTION:
@@ -512,6 +593,44 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.4.1:
+--------------
+NEW FEATURES:
+- The Fulfill button collects from the bank as well as attaching to mail
+- Every bank character has a permanent four-digit number, assigned by the
+  addon and identical on every client (/togbank roster)
+- A bank character's fresh scan reaches everyone online within seconds
+- Bank tabs coloured by whether your copy is current; hover a red tab for why
+
+IMPROVEMENTS:
+- Guild check-ins about a fifth of their former size; offers a single message
+- The handshake between two players rides a fast lane separate from bulk data
+- Downloads from different guildmates run at the same time
+- Nobody is refused at capacity: you are told your place in the queue
+
+BUG FIXES:
+- Banks stayed red after their data had arrived, or could never be brought up
+  to date because their contents happened to match an older copy
+- Late offers were thrown away; requests went guild-wide for banks nobody had
+  newer copies of; a leaked send slot made bank characters "busy" to everyone
+- The item tooltip listed characters who are no longer bank characters
+- Another addon could overwrite this addon's debug category list
+- Help text said sharing ran every 3 minutes; it is 10, and after every scan
+
+COMPATIBILITY: v1.4.0 clients cannot read the new check-in or offer messages
+and stop hearing offers until they update. Open and close each bank once.
+
+Version 1.4.0:
+--------------
+NEW FEATURES:
+- Bank contents travel as compact numbers rather than item links (85% less)
+- A bank's version stamp is written once by the bank character and carried
+  unchanged by everyone else
+- Guild roster and online tracking moved to LibGuildRoster
+
+COMPATIBILITY: not backwards compatible with earlier versions - see HOW
+SYNCING WORKS above.
 
 Version 1.3.0:
 --------------

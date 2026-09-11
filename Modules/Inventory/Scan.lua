@@ -16,9 +16,15 @@ local Scan = TOGBankClassic_Inventory_Scan
 
 local Record = TOGBankClassic_Inventory_Record
 
--- Bag ids. 0-4 are carried bags; BANK_CONTAINER plus 5-11 are the vault and its bag slots.
-local CARRIED_FIRST, CARRIED_LAST = 0, 4
-local BANK_BAG_FIRST, BANK_BAG_LAST = 5, 11
+-- Bag ids. The carried bags come first, then BANK_CONTAINER (the vault) and its bag slots.
+--
+-- BANKSLOT-001: these were `0, 4` and `5, 11` here, and the second end was one too many on Classic
+-- Era. The arithmetic now has ONE spelling, in Modules/Constants.lua, shared with Bank.lua,
+-- ItemHighlight.lua and Mail.lua -- because the two scan paths walking different ranges is a
+-- divergence `/togbank dev compare` would report as an encoding bug. Still read at CALL time, for
+-- the reason given there.
+local carriedBagRange = TOGBankClassic_Constants.CarriedBagRange
+local bankBagRange    = TOGBankClassic_Constants.BankBagRange
 
 --- Pull (enchantID, suffixID) out of an item link.
 ---
@@ -78,7 +84,8 @@ end
 function Scan:ScanBags(withLegacy)
 	local records, legacy = {}, withLegacy and {} or nil
 	local used, total = 0, 0
-	for bag = CARRIED_FIRST, CARRIED_LAST do
+	local firstBag, lastBag = carriedBagRange()
+	for bag = firstBag, lastBag do
 		used = used + scanContainer(bag, records, legacy)
 		total = total + (C_Container.GetContainerNumSlots(bag) or 0)
 	end
@@ -94,7 +101,8 @@ function Scan:ScanBank(withLegacy)
 	local records, legacy = {}, withLegacy and {} or nil
 	local used = scanContainer(BANK_CONTAINER, records, legacy)
 	local total = NUM_BANKGENERIC_SLOTS or 0
-	for bag = BANK_BAG_FIRST, BANK_BAG_LAST do
+	local firstBankBag, lastBankBag = bankBagRange()
+	for bag = firstBankBag, lastBankBag do
 		used = used + scanContainer(bag, records, legacy)
 		total = total + (C_Container.GetContainerNumSlots(bag) or 0)
 	end

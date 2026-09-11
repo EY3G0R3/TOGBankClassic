@@ -1248,7 +1248,16 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		fulfillBtn:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
 		fulfillBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 		fulfillBtn:SetScript("OnClick", function()
-			local _, message = TOGBankClassic_Mail:FulfillStep(actor)
+			-- BANKFILL-001: one button, two contexts, because the game will not give you both at
+			-- once -- a mailbox is never within reach of a bank. At the BANK it collects what the
+			-- orders need out of the vault; at the MAILBOX it fills them. The context decides, so
+			-- the banker mashes the same button in both places rather than learning two.
+			local _, message
+			if TOGBankClassic_Mail:IsBankOpen() then
+				_, message = TOGBankClassic_Mail:BankCollectStep(actor)
+			else
+				_, message = TOGBankClassic_Mail:FulfillStep(actor)
+			end
 			if self.Window then self.Window:SetStatusText(message or "") end
 		end)
 		fulfillBtn:SetScript("OnEnter", function(f)
@@ -1256,6 +1265,8 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 			GameTooltip:ClearLines()
 			GameTooltip:AddLine("Fulfill Oldest Order")
 			GameTooltip:AddLine("Click to advance the oldest order you can fully fill, one step per click: select \226\134\146 split \226\134\146 attach \226\134\146 send, then the next-oldest. If the needed items are sitting in your mail, it pulls them into your bags first (one per click). Watch the status bar for the next step. Requires an open mailbox; orders you can't fully cover (from bags + mail) are skipped.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine(" ")
+			GameTooltip:AddLine("At the BANK the same button collects instead: each click pulls what an order still needs out of your bank, and if the stack is bigger than the order it puts the spare back. Mash it at the bank to gather everything, then go to a mailbox and mash it again to send.", 0.9, 0.9, 0.9, true)
 			GameTooltip:Show()
 		end)
 		fulfillBtn:SetScript("OnLeave", function()

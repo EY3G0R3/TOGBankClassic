@@ -85,13 +85,15 @@ describe("LIBREQ-ALL-005: comm prefix registration", function()
 	-- The list itself
 	-- ------------------------------------------------------------------
 
-	-- COMM_PREFIXES is deliberately NOT derived from COMM_PREFIX_DESCRIPTIONS — that is a bare
-	-- global, and NS-001 is a confirmed live case of another addon overwriting one of ours, which
-	-- would leave us registering nothing and silently receiving nothing. The cost of a second list
-	-- is that it can drift, so this is the thing that stops it drifting.
+	-- COMM_PREFIXES is deliberately NOT derived from the descriptions table: one list is the wire
+	-- contract and the other is the log's prose, and a registration that vanishes because the
+	-- description was deleted is a silent receive failure. The cost of a second list is that it can
+	-- drift, so this is the thing that stops it drifting.
+	-- (NS-001 has since moved the table off the bare global that made this worse -- see the header
+	-- of Modules/Constants.lua -- but the two lists stay separate for the reason above.)
 	it("registers exactly the prefixes Constants documents, and no others", function()
 		local documented, registered = {}, {}
-		for prefix in pairs(COMM_PREFIX_DESCRIPTIONS) do documented[prefix] = true end
+		for prefix in pairs(TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS) do documented[prefix] = true end
 		for _, prefix in ipairs(TOGBankClassic_Chat.COMM_PREFIXES) do registered[prefix] = true end
 
 		for prefix in pairs(documented) do

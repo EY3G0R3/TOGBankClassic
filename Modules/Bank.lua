@@ -5,6 +5,10 @@
 -- ipairs or `#` over the module table -- which would have failed far from this line.
 TOGBankClassic_Bank = {}
 
+-- BANKSLOT-001: the one spelling of the container geometry, read at call time (see Constants.lua).
+local CarriedBagRange = TOGBankClassic_Constants.CarriedBagRange
+local BankBagRange    = TOGBankClassic_Constants.BankBagRange
+
 local function HasUpdated()
 	return TOGBankClassic_Bank.hasUpdated
 end
@@ -21,20 +25,41 @@ end
 -- implemented, and `wiring_spec`'s "still completes the legacy scan when the V2 mirror throws"
 -- turned red -- correctly.
 --
--- WHAT THE COLLAPSE COSTS: one walk means one point of failure. With the legacy shape derived from
--- Scan:ScanAll, any fault in the V2 scanner stops the legacy scan too -- and the legacy store is
--- what every character without a V2 record still reads. A bug in new code would freeze the whole
--- guild's inventory rather than just the new path. Two independent walks is what makes that
--- impossible, and that spec was written deliberately to hold the property.
+-- WHAT THE COLLAPSE COSTS: with the legacy shape derived from Scan:ScanAll, any fault in the V2
+-- scanner stops the legacy scan too -- and the legacy store is what every character without a V2
+-- record still reads. A bug in new code would freeze the whole guild's inventory rather than just
+-- the new path.
+--
+-- THE INVARIANT IS "THE LEGACY STORE MUST NOT DEPEND ON THE V2 SCANNER'S OUTPUT". It is NOT "two
+-- walks", and this note said "two independent walks is what makes that impossible" until a peer
+-- review showed the code beside it disagrees: the V2 mirror at :320 runs AFTER the legacy aggregate
+-- and inside a `pcall` whose failure is loud but non-fatal (:366-371, "legacy scan unaffected"), so
+-- a V2 fault is already contained by ORDERING plus that pcall -- and would still be contained if
+-- the two shapes shared a walk. The walk COUNT was never carrying the property.
+--
+-- What the collapse would really change is the DEPENDENCY DIRECTION: it makes legacy a CONSUMER of
+-- the V2 scanner, and then no pcall helps, because a pcall protects the caller from the fault -- it
+-- cannot conjure legacy data that was never derived. That is why the spec went red, and it is a
+-- stronger reason than the one this note used to give, because it survives noticing the pcall.
 --
 -- WHAT IT BUYS, measured against that: the todo's own words are that a divergence caused by a stack
 -- moving between the two walks is "close to theoretical" -- they are microseconds apart inside one
 -- Bank:Scan call with no yield. So the trade is a real robustness guarantee for a theoretical
--- consistency gain. Not worth it.
+-- consistency gain. Not worth it, and the revert stands.
 --
--- If it is ever revisited, the thing to solve first is: what should happen to the legacy store when
--- the shared scan throws? "Leave it as it was" silently freezes inventory; "clear it" loses data.
--- Until there is a good answer, two walks is the right shape.
+-- IF IT IS EVER REVISITED, START FROM THE THIRD OPTION, not from the binary this note used to pose.
+-- The old wording asked "what should happen to the legacy store when the SHARED SCAN throws?" -- a
+-- question that only exists if the shared scan is assumed to be V2's, which forecloses the shape
+-- that could actually work: ONE NEUTRAL RAW CONTAINER PASS THAT NEITHER FORMAT OWNS, with the
+-- legacy shape built from it first and the V2 tuples derived from it second, still inside the
+-- existing pcall. Then the dilemma dissolves rather than needing an answer -- a raw pass throwing
+-- is exactly what a legacy-walk throw is today, so it needs no new policy.
+--
+-- NOT COSTED, and the reason this is a pointer rather than a plan: the neutral pass must carry the
+-- UNION of what both shapes consume. Legacy rows carry Link/ItemString; V2 tuples are
+-- {id, count, suffix, enchant} integers. Whether Scan:ScanAll already retains enough to build both
+-- has not been established, and if it does not, the neutral pass costs more memory per slot than
+-- either walk alone.
 
 local function ScanBag(bag, slots)
 	local count = 0
@@ -64,7 +89,12 @@ local function ScanBags(bag_info)
 	local total = 0
 	local numslots = 0
 	local bagItems = nil
-	for bag = 0, 4 do
+	-- BANKSLOT-001: container 0 is the backpack, then NUM_BAG_SLOTS carried bags. Read from the
+	-- client for the same reason as the bank range below -- Era and TBC ship from one source and
+	-- need not agree, and a hardcoded end that is too SMALL silently drops a whole bag from every
+	-- scan with nothing reporting it.
+	local firstBag, lastBag = CarriedBagRange()
+	for bag = firstBag, lastBag do
 		local slots = C_Container.GetContainerNumSlots(bag)
 		local count, items = ScanBag(bag, slots)
 		if bagItems == nil then
@@ -93,7 +123,14 @@ end
 local function ScanBank(bank_info)
 	local numslots = NUM_BANKGENERIC_SLOTS
 	local total, bankItems = ScanBag(BANK_CONTAINER, NUM_BANKGENERIC_SLOTS)
-	for bag = 5, 11 do
+	-- BANKSLOT-001, second half. This said `5, 11` -- one bag too many on Classic Era. The overrun
+	-- was harmless (GetContainerNumSlots returns nil for a container that does not exist); the cost
+	-- is that a hardcoded end is wrong for any flavour whose count differs, and this addon ships Era
+	-- and TBC from one source. Too FEW would silently drop a whole bank bag from every scan with
+	-- nothing reporting it. This scan and Inventory/Scan.lua's must walk the SAME range or
+	-- `/togbank dev compare` reports the difference as an encoding bug -- hence the shared spelling.
+	local firstBankBag, lastBankBag = BankBagRange()
+	for bag = firstBankBag, lastBankBag do
 		local slots = C_Container.GetContainerNumSlots(bag)
 		local count, items = ScanBag(bag, slots)
 		for k, v in pairs(items) do
@@ -490,6 +527,14 @@ function TOGBankClassic_Bank:Scan()
 	-- Write to aggregate view (info.alts) for normal use
 	info.alts[player] = alt
 
+	-- P2P-035: this scan may be the one that makes the account a banker-owner (the record now
+	-- carries inventoryContentHash), so number the roster here rather than waiting for the next
+	-- roster rebuild -- a brand-new bank character would otherwise be left out of its own
+	-- post-scan broadcast until the next login. No-op once numbered.
+	if TOGBankClassic_BankerNumbers then
+		TOGBankClassic_BankerNumbers:Mint()
+	end
+
 	if alt.mail then
 		TOGBankClassic_Output:Debug("MAIL", "STORE", "Saved mail to info.alts[%s] (%d items)", player, #alt.mail.items)
 	else
@@ -506,39 +551,29 @@ end
 
 function TOGBankClassic_Bank:HasInventorySpace()
 	local total = 0
-	for bag = 0, 4 do
+	local firstBag, lastBag = CarriedBagRange()   -- BANKSLOT-001: ask the client, not a literal
+	for bag = firstBag, lastBag do
 		local slots, _ = C_Container.GetContainerNumFreeSlots(bag)
 		total = total + slots
 	end
 	return total > 0
 end
 
--- Find all slots containing an item by name (case-insensitive), optionally filtered by item ID
--- and random-suffix ID.
--- When itemID is provided it takes precedence and the name is only used as a display fallback;
--- this correctly distinguishes same-named variants (e.g. Punctured Voodoo Doll by class).
--- REQ-003: when suffixID is also provided, the slot's own suffix must match too, so random-suffix
--- siblings that share a base itemID ("of the Tiger" vs "of the Monkey") are kept apart. suffixID
--- is nil for plain items and legacy requests, in which case suffix is not considered.
--- Returns: table of {bag, slot, count, link}
-function TOGBankClassic_Bank:FindItemsByName(itemName, itemID, suffixID)
-	local results = {}
-	local targetID = tonumber(itemID) or nil
-	local targetSuffix = tonumber(suffixID) or nil
-	local hasName = itemName ~= nil and itemName ~= ""
-
-	-- REQ-004: bail only when there is NOTHING to match on. This used to return empty whenever
-	-- the name was nil or empty, even with a perfectly good itemID -- which contradicts the
-	-- ID-primacy rule REQ-001 established, and silently broke the exact path REQ-001 was added
-	-- for: an ID-only lookup for a same-name variant reported the item as not banked at all.
-	if not hasName and not targetID then
-		return results
-	end
-
-	local targetName = hasName and string.lower(itemName) or nil
-
-	for bag = 0, 4 do
-		local slots = C_Container.GetContainerNumSlots(bag)
+--- Append every slot in containers `first`..`last` holding the wanted item to `results`.
+---
+--- BANKFILL-001: the one place the identity rules live, because the bank fill source needs the
+--- identical match and a second copy would let REQ-001 (id primacy) and REQ-003 (suffix equality)
+--- drift apart -- two spellings of "is this the same item" is the shape that produced REQ-001 in
+--- the first place.
+--- @param results table rows are appended to this
+--- @param first number first container id (inclusive)
+--- @param last number last container id (inclusive)
+--- @param targetID number|nil itemID; takes precedence over the name when present
+--- @param targetName string|nil lowercased name, used only when there is no id
+--- @param targetSuffix number|nil when set, the slot's suffix must equal it
+local function MatchContainers(results, first, last, targetID, targetName, targetSuffix)
+	for bag = first, last do
+		local slots = C_Container.GetContainerNumSlots(bag) or 0
 		for slot = 1, slots do
 			local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
 			if itemInfo and itemInfo.hyperlink then
@@ -566,8 +601,77 @@ function TOGBankClassic_Bank:FindItemsByName(itemName, itemID, suffixID)
 			end
 		end
 	end
+end
 
+-- Find all slots containing an item by name (case-insensitive), optionally filtered by item ID
+-- and random-suffix ID.
+-- When itemID is provided it takes precedence and the name is only used as a display fallback;
+-- this correctly distinguishes same-named variants (e.g. Punctured Voodoo Doll by class).
+-- REQ-003: when suffixID is also provided, the slot's own suffix must match too, so random-suffix
+-- siblings that share a base itemID ("of the Tiger" vs "of the Monkey") are kept apart. suffixID
+-- is nil for plain items and legacy requests, in which case suffix is not considered.
+-- Returns: table of {bag, slot, count, link}
+function TOGBankClassic_Bank:FindItemsByName(itemName, itemID, suffixID)
+	local results = {}
+	local targetID = tonumber(itemID) or nil
+	local targetSuffix = tonumber(suffixID) or nil
+	local hasName = itemName ~= nil and itemName ~= ""
+
+	-- REQ-004: bail only when there is NOTHING to match on. This used to return empty whenever
+	-- the name was nil or empty, even with a perfectly good itemID -- which contradicts the
+	-- ID-primacy rule REQ-001 established, and silently broke the exact path REQ-001 was added
+	-- for: an ID-only lookup for a same-name variant reported the item as not banked at all.
+	if not hasName and not targetID then
+		return results
+	end
+
+	local targetName = hasName and string.lower(itemName) or nil
+
+	-- BANKFILL-001: the matcher moved out so the BANK search below can use it. It was open-coded
+	-- here and nowhere else until the bank became a fill source; copying it would have made the
+	-- REQ-001 id-primacy rule and the REQ-003 suffix rule two implementations that must be
+	-- corrected together, which is exactly the divergence this codebase keeps finding.
+	local firstBag, lastBag = CarriedBagRange()
+	MatchContainers(results, firstBag, lastBag, targetID, targetName, targetSuffix)
 	return results
+end
+
+--- Every container slot in the BANK -- the vault plus its bag slots -- holding the requested item.
+---
+--- BANKFILL-001. Same row shape as FindItemsByName, so a caller can treat the two identically; the
+--- only difference is which containers are walked. READABLE ONLY AT A BANKER: the container API
+--- reports nothing for bank slots when the bank frame has never been opened this session, so an
+--- empty result means "not visible from here", NOT "the bank does not have it". Callers must not
+--- turn one into the other -- that conflation is what INV2-VAULT-001 was.
+--- @return table rows { bag, slot, count, link }
+function TOGBankClassic_Bank:FindItemsInBank(itemName, itemID, suffixID)
+	local results = {}
+	local targetID = tonumber(itemID) or nil
+	local targetSuffix = tonumber(suffixID) or nil
+	local hasName = itemName ~= nil and itemName ~= ""
+	if not hasName and not targetID then
+		return results
+	end
+	local targetName = hasName and string.lower(itemName) or nil
+
+	-- The vault itself is a single container id, then the bank bags -- the same geometry
+	-- Bank:Scan walks, read from the client (BANKSLOT-001) rather than hardcoded.
+	MatchContainers(results, BANK_CONTAINER, BANK_CONTAINER, targetID, targetName, targetSuffix)
+	local firstBankBag, lastBankBag = BankBagRange()
+	MatchContainers(results, firstBankBag, lastBankBag, targetID, targetName, targetSuffix)
+	return results
+end
+
+--- Total of the item held in the BANK. See FindItemsInBank on why zero is ambiguous away from a
+--- banker.
+--- @return number total, table rows
+function TOGBankClassic_Bank:CountItemInBank(itemName, itemID, suffixID)
+	local items = self:FindItemsInBank(itemName, itemID, suffixID)
+	local total = 0
+	for _, item in ipairs(items) do
+		total = total + item.count
+	end
+	return total, items
 end
 
 -- Count total of named item in bags (0-4), optionally filtered by item ID and random-suffix ID.

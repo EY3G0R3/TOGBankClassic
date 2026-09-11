@@ -95,14 +95,68 @@ describe("ComputeLegacyInventoryHash: frozen revision 1", function()
 end)
 
 describe("StampInventoryHashes", function()
-	before_each(function() env.reset(); load() end)
+	before_each(function()
+		env.reset(); load()
+		-- HASH-CANON-005: the canon is `<dts><hash>` with the content checksum zero-padded to ten
+		-- digits, so it needs a NUMERIC checksum -- the identity stub the rest of this file uses
+		-- (see the header) would put the whole hashed input where a number must go. This is the
+		-- same 31-multiply the legacy hash uses; the value is irrelevant, the type is not.
+		TOGBankClassic_Core.Checksum = function(_, s)
+			local sum = 0
+			for i = 1, #s do sum = (sum * 31 + string.byte(s, i)) % 2147483647 end
+			return sum
+		end
+	end)
 
 	it("writes both revisions from one item set", function()
 		local alt = {}
-		D:StampInventoryHashes(alt, { linked(10132, 1, 863) }, nil, nil, 0)
+		D:StampInventoryHashes(alt, { linked(10132, 1, 863) }, nil, nil, 0, 1757000000)
 		assert.is_not_nil(alt.inventoryHash)
 		assert.is_not_nil(alt.inventoryHashV2)
 		assert.is_not.equal(alt.inventoryHash, alt.inventoryHashV2)
+	end)
+
+	-- HASH-CANON-005: the shape, asserted directly. The operator's words are the spec: "i wanted
+	-- the hash to be <dts><hash> all one long string ... so you COULD read the DTS and do
+	-- quick/easy comparison without having to pull the hash apart."
+	it("mints the canon as <dts><hash>: twenty digits, the publish time first", function()
+		local items = { linked(858, 5) }
+		local canon = D:ComputeCanonHash(items, nil, nil, 0, 1757000000)
+		assert.is_string(canon, "the canon is a STRING now, not a checksum with the date mixed in")
+		assert.equal(20, #canon)
+		assert.truthy(canon:match("^%d+$"), "the canon contains something other than digits: " .. canon)
+		assert.equal("1757000000", canon:sub(1, 10), "the publish time is not the first ten digits")
+		assert.equal(string.format("%010d", D:ComputeInventoryHash(items, nil, nil, 0)), canon:sub(11),
+			"the last ten digits are not the content checksum")
+	end)
+
+	it("reads the publish time straight back off the canon", function()
+		local canon = D:ComputeCanonHash({ linked(858, 5) }, nil, nil, 0, 1757000000)
+		assert.equal(1757000000, D:CanonPublishTime(canon))
+	end)
+
+	-- The comparison the whole redesign is for: a LATER publish sorts HIGHER as a plain string,
+	-- because the datestamp is fixed-width and leads. No parsing, no arithmetic.
+	it("orders two canons by publish time with a plain string compare", function()
+		local items = { linked(858, 5) }
+		local earlier = D:ComputeCanonHash(items, nil, nil, 0, 1757000000)
+		local later   = D:ComputeCanonHash(items, nil, nil, 0, 1757000001)
+		assert.is_true(earlier < later, "the later publish does not sort higher")
+		-- And a wildly different content at an earlier time still sorts LOWER: time dominates.
+		local otherEarlier = D:ComputeCanonHash({ linked(2589, 20), linked(10132, 1, 863) }, nil, nil, 99, 1700000000)
+		assert.is_true(otherEarlier < earlier)
+	end)
+
+	it("pads a small checksum and a small time so the width never varies", function()
+		local canon = D:ComputeCanonHash({}, nil, nil, 0, 1)
+		assert.equal(20, #canon)
+		assert.equal("0000000001", canon:sub(1, 10))
+	end)
+
+	it("treats a missing or negative publish time as zero rather than erroring", function()
+		assert.equal("0000000000", D:ComputeCanonHash({}, nil, nil, 0, nil):sub(1, 10))
+		assert.equal("0000000000", D:ComputeCanonHash({}, nil, nil, 0, -5):sub(1, 10))
+		assert.equal("0000000000", D:ComputeCanonHash({}, nil, nil, 0, "junk"):sub(1, 10))
 	end)
 
 	-- HASH-CANON-003: revision 2 is now the CANON and carries the publish datestamp, so it is
@@ -146,9 +200,97 @@ describe("StampInventoryHashes", function()
 	end)
 
 	it("returns both without needing a record to write into", function()
-		local legacy, current = D:StampInventoryHashes(nil, { linked(858, 5) }, nil, nil, 0)
+		local legacy, current = D:StampInventoryHashes(nil, { linked(858, 5) }, nil, nil, 0, 1757000000)
 		assert.is_not_nil(legacy)
 		assert.is_not_nil(current)
+	end)
+end)
+
+-- HASH-CANON-005: reading a canon back, and re-encoding what v1.4.0 left behind.
+describe("CanonPublishTime / CanonFrom", function()
+	before_each(function() env.reset(); load() end)
+
+	describe("CanonPublishTime", function()
+		it("reads the time off a canon", function()
+			assert.equal(1757000000, D:CanonPublishTime("17570000000000424242"))
+		end)
+
+		it("is nil, never zero, for anything that is not a canon", function()
+			-- Zero would sort as OLDER than everything and make garbage read as ancient data rather
+			-- than as no data.
+			assert.is_nil(D:CanonPublishTime(nil))
+			assert.is_nil(D:CanonPublishTime(424242), "a v1.4.0 numeric canon has no readable time")
+			assert.is_nil(D:CanonPublishTime("424242"), "too short")
+			assert.is_nil(D:CanonPublishTime("175700000000042424200"), "too long")
+			assert.is_nil(D:CanonPublishTime("1757000000000042424x"), "not all digits")
+			assert.is_nil(D:CanonPublishTime("00000000000000424242"), "a zero time is not a time")
+			assert.is_nil(D:CanonPublishTime({}))
+		end)
+	end)
+
+	describe("CanonFrom -- the ONE spelling of 'is this a canon we carry'", function()
+		it("passes a canon through unchanged", function()
+			assert.equal("17570000000000424242", D:CanonFrom("17570000000000424242", 999))
+			assert.equal("17570000000000424242", D:CanonFrom("17570000000000424242", nil))
+		end)
+
+		-- The re-encoding that spares the guild a rehydration: a v1.4.0 numeric canon plus the
+		-- author's publish time becomes `<dts><number>`, deterministically, on every client.
+		it("re-encodes a v1.4.0 numeric canon beside its publish time", function()
+			assert.equal("17570000000000424242", D:CanonFrom(424242, 1757000000))
+			-- A string is either a canon or nothing: a numeric STRING in the slot is not a v1.4.0
+			-- canon (those are numbers, and the serializer keeps them numbers), so it is not guessed at.
+			assert.is_nil(D:CanonFrom("424242", 1757000000))
+		end)
+
+		-- HASH-CANON-013, read off the live guild: `theirs=17890060850786974720` advertised for a
+		-- real canon ending `...974116`. A peer on the previous release put the 20-digit string
+		-- through `tonumber`, lost the low digits to a float, and re-advertised the float. A v1.4.0
+		-- numeric canon is a 32-bit checksum; anything larger is a mangled string, not a version.
+		it("refuses a number too large to be a v1.4.0 canon -- a string canon mangled through a float", function()
+			assert.is_nil(D:CanonFrom(17890060850786974720, 1789006085),
+				"a float-mangled canon was re-encoded into a canon with the right date and a wrong " ..
+				"checksum, which compares unequal to the real one forever (HASH-CANON-013)")
+			-- The bound is Core:Checksum's modulus (Core.lua:138, `% 2147483647`), which is also the
+			-- most `%d` carries in this Lua without wrapping negative -- 4294967295 formats as
+			-- "-2147483648", which is how this example first found the bound was wrong.
+			assert.is_nil(D:CanonFrom(2147483647, 1757000000))
+			assert.equal("17570000002147483646", D:CanonFrom(2147483646, 1757000000), "the top of the checksum range is still a canon")
+		end)
+
+		it("re-encodes identically wherever it runs -- author and receiver converge", function()
+			assert.equal(D:CanonFrom(424242, 1757000000), D:CanonFrom(424242, 1757000000))
+			assert.equal(D:CanonFrom(424242, 1757000000.7), D:CanonFrom(424242, 1757000000), "a fractional time floors")
+		end)
+
+		it("cannot re-encode a numeric canon with no publish time, and says nil", function()
+			assert.is_nil(D:CanonFrom(424242, nil))
+			assert.is_nil(D:CanonFrom(424242, 0))
+			assert.is_nil(D:CanonFrom(424242, "junk"))
+		end)
+
+		it("is nil for garbage in the revision-2 slot", function()
+			assert.is_nil(D:CanonFrom(nil, 1757000000))
+			assert.is_nil(D:CanonFrom({}, 1757000000))
+			assert.is_nil(D:CanonFrom("not a canon", 1757000000))
+			assert.is_nil(D:CanonFrom(-1, 1757000000), "a negative number is not a checksum")
+		end)
+
+		it("only ever touches the revision-2 slot -- a revision-1 hash is never fed to it", function()
+			-- Pinned as a source scan: the operator's "but ONLY for v2 hashes". Every call site
+			-- passes hashV2 / inventoryHashV2; none passes hash / inventoryHash.
+			local offenders = {}
+			for _, path in ipairs({ "Modules/Guild.lua", "Modules/Chat.lua", "Modules/P2PSession.lua",
+				"Modules/Inventory/Wire.lua", "Modules/DeltaComms.lua" }) do
+				for lineNo, line in env.codeLines(env.readFile(path)) do
+					local arg = line:match("CanonFrom%(%s*([%w_%.]+)") or line:match("canonOrNil%(%s*([%w_%.]+)")
+					if arg and (arg == "hash" or arg:match("%.hash$") or arg:match("inventoryHash$")) then
+						offenders[#offenders + 1] = string.format("%s:%d %s", path, lineNo, (line:gsub("^%s+", "")))
+					end
+				end
+			end
+			assert.same({}, offenders, "a revision-1 hash is being re-encoded as a canon")
+		end)
 	end)
 end)
 

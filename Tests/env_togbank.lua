@@ -473,6 +473,7 @@ M.MODULE_ORDER = {
 	"Modules/Database.lua",
 	"Modules/Events.lua",
 	"Modules/Guild.lua",
+	"Modules/BankerNumbers.lua",
 	"Modules/P2PSession.lua",
 	"Modules/RequestLog.lua",
 	"Modules/Item.lua",
@@ -535,7 +536,7 @@ function M.loadOutput(enabledCategories)
 	-- the shipped default every Debug() call is silently discarded. In-game the user raises the
 	-- level via Options; here we raise it at load so a spec that enables a category actually
 	-- sees output. A spec that wants to exercise level filtering sets it back explicitly.
-	TOGBankClassic_Output:SetLevel(LOG_LEVEL.DEBUG)
+	TOGBankClassic_Output:SetLevel(TOGBankClassic_Constants.LOG_LEVEL.DEBUG)
 	return TOGBankClassic_Output
 end
 
@@ -572,14 +573,21 @@ function M.coreHashStub(fixed, extra)
 	-- nil makes EVERY scan look like a change and bump the version -- so a regression that
 	-- reintroduced the broadcast storm would pass every spec built on this stub, silently. That was
 	-- true for one session and is the finding this comment exists to stop recurring.
-	t.ComputeCanonHash = t.ComputeCanonHash or function(self, bank, bags, mailOrMoney, money, updatedAt)
+	--
+	-- AUDIT-S1 FOLLOW-ON: the canon is a LOCAL closure, not a member of the stub. The real Core has
+	-- no ComputeCanonHash -- it is a DeltaComms method that Core never delegates, and the canon is
+	-- minted at exactly one production site inside StampInventoryHashes. Installing it on the stub
+	-- made this surface WIDER than production, which is CMD-001 with the sign reversed: production
+	-- code calling Core:ComputeCanonHash would pass every spec built here and fail in the client.
+	-- The surface must MATCH the real thing, not merely be no looser than it.
+	local function canonHash(self, bank, bags, mailOrMoney, money, updatedAt)
 		local content = t.ComputeInventoryHash(self, bank, bags, mailOrMoney, money)
 		return (tonumber(content) or value) + (tonumber(updatedAt) or 0)
 	end
 	t.StampInventoryHashes = t.StampInventoryHashes or function(self, alt, bank, bags, mailOrMoney, money, updatedAt)
 		local legacy  = t.ComputeLegacyInventoryHash(self, bank, bags, mailOrMoney, money)
 		local content = t.ComputeInventoryHash(self, bank, bags, mailOrMoney, money)
-		local canon   = t.ComputeCanonHash(self, bank, bags, mailOrMoney, money, updatedAt)
+		local canon   = canonHash(self, bank, bags, mailOrMoney, money, updatedAt)
 		if alt then
 			alt.inventoryHash        = legacy
 			alt.inventoryHashV2      = canon
@@ -764,9 +772,89 @@ function M.readyGuildRoster(lib)
 	return lib
 end
 
+--- Stand up a WHOLE client: every module in .toc order, the real Core, the V2 store, a real
+--- LibGuildRoster roster, and the Database / Options stand-ins the sync layer reads.
+---
+--- Lifted from syncwire_spec's `loadClient` the day a second spec needed it (hashcache_spec);
+--- a fixture copied per file is corrected in one place and stays wrong in the others.
+---
+--- `who` is the character this client IS, and it is set BEFORE the modules load: the roster
+--- build and every "is this my own message" guard resolve self through UnitName, so assigning it
+--- afterwards leaves the client believing it is still the default Bankchar -- which discards a
+--- banker's own broadcast as its own echo and the delivery silently does nothing.
+---
+--- `members` is { { name=, note= }, ... }; a note carrying "gbank" makes a banker. The roster is
+--- REAL: since v1.4.0 IsBank and IsInCurrentGuildRoster resolve through LibGuildRoster, and with
+--- the library absent the roster is EMPTY, every payload is refused as unauthorised, and a spoof
+--- test passes vacuously. readyGuildRoster is required too -- the library suppresses presence
+--- until the member count stops changing.
+--- @param who string bare character name this client plays
+--- @param members table roster members to add
+--- @param guild string|nil guild name, default "Testguild"
+function M.standUpClient(who, members, guild)
+	M.playerName = who or "Bankchar"
+	M.stubOutput()
+	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
+		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
+	require("env.libs").load("AceCommQueue-1.0")
+	M.loadModules(M.MODULE_ORDER)
+	-- Re-stub AFTER the module load, which installs the real Output over the earlier stub. The
+	-- real Output:Debug reads db.global.debugCategories/debugTags and the persistent log, none of
+	-- which a sync spec is testing.
+	M.stubOutput()
+
+	local AceAddon = LibStub("AceAddon-3.0")
+	if AceAddon and AceAddon.addons then
+		AceAddon.addons["TOGBankClassic"] = nil
+		if AceAddon.addonstatus then AceAddon.addonstatus["TOGBankClassic"] = nil end
+	end
+	M.loadFile("Core.lua")
+
+	TOGBankClassic_Inventory_Store:Init({ faction = {} })
+	TOGBankClassic_Database = {
+		-- BOTH switches: inventoryV2 chooses local storage, sendV2Wire chooses what goes on the
+		-- wire. A send test with only the first one on exercises the legacy emission path while
+		-- looking like it covers V2.
+		db = { global = { switches = { inventoryV2 = true, sendV2Wire = true } }, faction = {} },
+		RecordDeltaSent = function() end, RecordDeltaSavings = function() end,
+		RecordDeltaComputeTime = function() end, RecordNoChangeSent = function() end,
+		RecordDeltaFailed = function() end, SaveSnapshot = function() end,
+		RecordDeltaReceived = function() end,
+		-- HLR-CRASH-001: the hash-list reply handler used to die before its request pass, so
+		-- nothing had ever reached the metric it records. Real method (Database.lua:702).
+		RecordP2PRequestBroadcast = function() end,
+		-- HASH-CANON-009: the relay-responder path (Chat.lua togbank-r) records an offer before it
+		-- ACKs; nothing had driven that path on a whole client before. Real method (Database.lua:693).
+		RecordP2POffered = function() end,
+	}
+	TOGBankClassic_Options = {
+		IsIntegrityCheckDiagnosticsEnabled = function() return false end,
+		IsSyncProgressMuted = function() return true end,
+		GetBankEnabled = function() return true end,
+	}
+
+	for _, m in ipairs(members or {}) do M.addGuildMember(m.name, { note = m.note }) end
+	local roster = M.freshGuildRoster()
+	M.readyGuildRoster(roster)
+	TOGBankClassic_Guild.Info = { name = guild or M.guildName, alts = {} }
+	TOGBankClassic_Guild:RefreshOnlineCache()
+	return roster
+end
+
 -- ---------------------------------------------------------------------------
 -- Fixture helpers
 -- ---------------------------------------------------------------------------
+
+--- A revision-2 canon as HASH-CANON-005 defines it: `<10-digit publish time><10-digit checksum>`.
+--- The one spelling a spec uses to write one by hand, so a fixture cannot drift from the format
+--- DeltaComms:ComputeCanonHash produces. A numeric `hashV2` in a fixture is a v1.4.0 canon and is
+--- re-encoded on receipt beside its `updatedAt` -- so a spec that advertises `hashV2 = 0x20,
+--- updatedAt = 100` and asserts the cache holds `0x20` is asserting the old format.
+--- @param publishedAt number the author's publish time
+--- @param checksum number the content checksum (any non-negative integer)
+function M.canon(publishedAt, checksum)
+	return string.format("%010d%010d", publishedAt, checksum % 10000000000)
+end
 
 --- Register an item in the fake client cache.
 --- @param id number
@@ -919,6 +1007,45 @@ function M.shippedModules(toc)
 		end
 	end
 	return paths
+end
+
+--- Read a shipped source file as a string, tolerating a UTF-8 BOM (audit LINT-001) and returning
+--- "" rather than erroring when the path does not exist -- a class guard that scans files must be
+--- able to report "nothing found HERE" without the whole spec dying.
+---
+--- Lifted here because the identical five-line body was open-coded in FOUR spec files
+--- (timers, constantprose, itemhighlight, guildroster_integration) and performance_spec was about
+--- to be the fifth. Same move as shippedModules() above, and the same reason: a scan helper copied
+--- per file is a helper that can be corrected in one place and stay wrong in three.
+--- @param path string repo-relative
+--- @return string contents ("" when the file cannot be read)
+function M.readFile(path)
+	local fh = io.open(path, "rb")
+	if not fh then return "" end
+	local src = fh:read("*a")
+	fh:close()
+	if src:sub(1, 3) == "\239\187\191" then src = src:sub(4) end
+	return src
+end
+
+--- Iterate the REAL CODE lines of a source string, skipping whole-line `--` comments, yielding
+--- (lineNumber, line).
+---
+--- Every source-scanning guard needs this and none of them can do without it: the comments in this
+--- addon quote the very patterns the guards hunt for -- Output.lua's header spells out
+--- Debug("CATEGORY", "TAG", ...) and Bank.lua's BANKSLOT-001 note writes out the hardcoded `5, 11`
+--- it exists to explain -- so a scan that reads comments reports its own documentation as a defect.
+--- Lifted here rather than copied a second time, for the reason in readFile above.
+--- @param src string
+--- @return function iterator yielding lineNumber, line
+function M.codeLines(src)
+	local n = 0
+	return coroutine.wrap(function()
+		for line in (src .. "\n"):gmatch("([^\n]*)\n") do
+			n = n + 1
+			if not line:match("^%s*%-%-") then coroutine.yield(n, line) end
+		end
+	end)
 end
 
 M.install()

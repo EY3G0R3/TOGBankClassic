@@ -5,6 +5,10 @@ local deltaSnapshotsCache = {}
 
 TOGBankClassic_Database = {}
 
+-- NS-001: aliased as file-scope locals so a foreign global of the same name cannot be read
+-- instead. See the header of Modules/Constants.lua.
+local PROTOCOL = TOGBankClassic_Constants.PROTOCOL
+
 function TOGBankClassic_Database:Init()
 	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicDB", {
 		global = {

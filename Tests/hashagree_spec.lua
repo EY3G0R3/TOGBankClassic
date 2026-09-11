@@ -16,6 +16,8 @@ local env = require("env_togbank")
 local function loadGuild()
 	env.stubOutput()
 	env.loadFile("Modules/Constants.lua")
+	-- HASH-CANON-005: the comparison normalises both revision-2 slots through DeltaComms:CanonFrom.
+	env.loadFile("Modules/DeltaComms.lua")
 	env.loadFile("Modules/Guild.lua")
 	return TOGBankClassic_Guild
 end
@@ -110,21 +112,55 @@ describe("Guild:HashesAgreeWith revision negotiation", function()
 		Guild = loadGuild()
 	end)
 
+	-- HASH-CANON-005: a canon is `<dts><hash>`, one string. These fixtures write real ones.
+	local T = 1757000000
+
 	it("uses revision 2 when both sides advertise it", function()
 		-- Revision 1 AGREES here and revision 2 does not. Revision 1 is the blind one -- it cannot
 		-- see suffix -- so trusting it when a better answer exists is exactly finding 31's failure:
 		-- a banker swaps one suffix variant for another and nobody notices.
 		local matches = Guild:HashesAgreeWith(
-			{ inventoryHash = 42, inventoryHashV2 = 111, mailHash = 7 },
-			{ hash = 42,          hashV2 = 222,          mailHash = 7 })
+			{ inventoryHash = 42, inventoryHashV2 = env.canon(T, 111), mailHash = 7 },
+			{ hash = 42,          hashV2 = env.canon(T, 222),          mailHash = 7 })
 		assert.is_false(matches)
 	end)
 
 	it("agrees on revision 2 even when the frozen revision 1 disagrees", function()
 		local matches = Guild:HashesAgreeWith(
-			{ inventoryHash = 42, inventoryHashV2 = 999, mailHash = 7 },
-			{ hash = 43,          hashV2 = 999,          mailHash = 7 })
+			{ inventoryHash = 42, inventoryHashV2 = env.canon(T, 999), mailHash = 7 },
+			{ hash = 43,          hashV2 = env.canon(T, 999),          mailHash = 7 })
 		assert.is_true(matches)
+	end)
+
+	-- HASH-CANON-005: the same publish in the OLD encoding on one side and the new on the other is
+	-- ONE version and must agree -- this is what spares the guild a rehydration on upgrade. The
+	-- numeric canon is re-encoded beside its publish time before the comparison.
+	it("agrees when one side holds a v1.4.0 numeric canon and the other its re-encoding", function()
+		assert.is_true(Guild:HashesAgreeWith(
+			{ inventoryHash = 42, inventoryHashV2 = 999, inventoryUpdatedAt = T, mailHash = 7 },
+			{ hash = 42,          hashV2 = env.canon(T, 999),                    mailHash = 7 }))
+		assert.is_true(Guild:HashesAgreeWith(
+			{ inventoryHash = 42, inventoryHashV2 = env.canon(T, 999),          mailHash = 7 },
+			{ hash = 42,          hashV2 = 999, updatedAt = T,                   mailHash = 7 }))
+	end)
+
+	it("treats a numeric canon with NO publish time as no revision 2 at all, and falls back to revision 1", function()
+		-- Nothing can place that number in time, so it cannot be a canon; revision 1 decides.
+		assert.is_true(Guild:HashesAgreeWith(
+			{ inventoryHash = 42, inventoryHashV2 = 999, mailHash = 7 },
+			{ hash = 42,          hashV2 = 111,          mailHash = 7 }),
+			"two unreadable numbers were compared as revision 2 instead of falling back")
+		assert.is_false(Guild:HashesAgreeWith(
+			{ inventoryHash = 42, inventoryHashV2 = 999, mailHash = 7 },
+			{ hash = 43,          hashV2 = 999,          mailHash = 7 }),
+			"two equal unreadable numbers were taken as agreement")
+	end)
+
+	it("does not agree on revision 2 for the same content published at two different times", function()
+		-- Two publishes are two versions, whatever their contents.
+		assert.is_false(Guild:HashesAgreeWith(
+			{ inventoryHash = 42, inventoryHashV2 = env.canon(T, 999),     mailHash = 7 },
+			{ hash = 42,          hashV2 = env.canon(T + 1, 999),          mailHash = 7 }))
 	end)
 
 	it("falls back to revision 1 when the PEER does not speak revision 2", function()
@@ -132,23 +168,29 @@ describe("Guild:HashesAgreeWith revision negotiation", function()
 		-- still produce agreement -- otherwise upgrading one client desyncs it from the whole guild,
 		-- which is the break this design exists to avoid.
 		local matches = Guild:HashesAgreeWith(
-			{ inventoryHash = 42, inventoryHashV2 = 999, mailHash = 7 },
-			{ hash = 42,                                 mailHash = 7 })
+			{ inventoryHash = 42, inventoryHashV2 = env.canon(T, 999), mailHash = 7 },
+			{ hash = 42,                                               mailHash = 7 })
 		assert.is_true(matches)
 	end)
 
-	it("falls back to revision 1 when WE do not have one yet", function()
-		-- Our own record was stamped before the upgrade. Same requirement, other direction.
+	-- HASH-CANON-006. This example used to assert the OPPOSITE ("falls back to revision 1 when WE do
+	-- not have one yet") and it was pinning the live defect: read off the guild on 2026-09-10,
+	-- Alchemyrcp's banker held canon + revision-1 808855588, the viewer held revision-1 808855588
+	-- and NO canon (a copy from before canons existed). Revision 1 said "in sync", the viewer never
+	-- requested, could never ACQUIRE a canon, and its tab read "v1" forever. The only way to get a
+	-- canon is to fetch, so a peer having one when we do not is a mismatch by definition.
+	it("does NOT agree when the peer holds a canon and we hold none -- fetching is the only way to get one", function()
 		local matches = Guild:HashesAgreeWith(
 			{ inventoryHash = 42, mailHash = 7 },
-			{ hash = 42, hashV2 = 999, mailHash = 7 })
-		assert.is_true(matches)
+			{ hash = 42, hashV2 = env.canon(T, 999), mailHash = 7 })
+		assert.is_false(matches,
+			"revision 1 agreed, so this client will never request the canon it lacks")
 	end)
 
 	it("still requires the mail hash to match, whichever revision decided the inventory", function()
 		local matches = Guild:HashesAgreeWith(
-			{ inventoryHash = 42, inventoryHashV2 = 999, mailHash = 7 },
-			{ hash = 42,          hashV2 = 999,          mailHash = 8 })
+			{ inventoryHash = 42, inventoryHashV2 = env.canon(T, 999), mailHash = 7 },
+			{ hash = 42,          hashV2 = env.canon(T, 999),          mailHash = 8 })
 		assert.is_false(matches)
 	end)
 
@@ -161,7 +203,7 @@ describe("Guild:HashesAgreeWith revision negotiation", function()
 		-- green under the very mutation it exists to catch, because the absent mail hash failed it
 		-- for an unrelated reason -- a passing assertion that was testing nothing.
 		local matches = Guild:HashesAgreeWith(
-			{ inventoryHash = 500, inventoryHashV2 = 42, mailHash = 7 },
+			{ inventoryHash = 500, inventoryHashV2 = env.canon(T, 42), mailHash = 7 },
 			{ hash = 42, mailHash = 7 })
 		assert.is_false(matches,
 			"our revision-2 hash was compared against their revision-1 hash")

@@ -120,7 +120,7 @@ describe("Output:Debug", function()
 		it("enables every known category at once", function()
 			Output:DisableAllCategories()
 			Output:EnableAllCategories()
-			for category in pairs(DEBUG_CATEGORY) do
+			for category in pairs(TOGBankClassic_Constants.DEBUG_CATEGORY) do
 				assert.is_true(Output:IsCategoryEnabled(category), category .. " was not enabled")
 			end
 		end)
@@ -128,7 +128,7 @@ describe("Output:Debug", function()
 		it("disables every known category at once", function()
 			Output:EnableAllCategories()
 			Output:DisableAllCategories()
-			for category in pairs(DEBUG_CATEGORY) do
+			for category in pairs(TOGBankClassic_Constants.DEBUG_CATEGORY) do
 				assert.is_false(Output:IsCategoryEnabled(category), category .. " was not disabled")
 			end
 		end)

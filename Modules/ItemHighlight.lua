@@ -669,8 +669,9 @@ end
 
 -- Update highlighting for default WoW bags
 function ItemHighlight:UpdateDefaultBagHighlighting()
-	-- Iterate through all bags
-	for bag = 0, 4 do
+	-- Iterate through all bags. BANKSLOT-001: the carried range comes from the client too, the same
+	-- way the bank range below does -- this was the one literal the first pass left behind.
+	for bag = 0, (NUM_BAG_SLOTS or 4) do
 		-- Slot count comes from the FRAME, not the bag: the button numbering below is relative to
 		-- the frame that is actually rendering this bag, and taking the two from different places
 		-- is how a reversal lands on the wrong button.
@@ -742,12 +743,10 @@ function ItemHighlight:UpdateBankHighlighting()
 		end
 	end
 	-- BANKSLOT-001: bank bags are the containers AFTER the carried bags, and both ends come from the
-	-- client. Blizzard's BankFrame.lua:245 is the same expression:
-	--   for i = NUM_BAG_SLOTS+1, (NUM_BAG_SLOTS + NUM_BANKBAGSLOTS)
-	-- On Classic Era that is 5..10. This said `5, 11` -- a hardcoded start that happened to be right
-	-- and a hardcoded end that was one too many, with a comment stating the wrong range as fact.
-	local firstBankBag = (NUM_BAG_SLOTS or 4) + 1
-	local lastBankBag  = (NUM_BAG_SLOTS or 4) + (NUM_BANKBAGSLOTS or 6)
+	-- client -- the one spelling in Constants.lua. This said `5, 11` -- a hardcoded start that
+	-- happened to be right and a hardcoded end that was one too many, with a comment stating the
+	-- wrong range as fact.
+	local firstBankBag, lastBankBag = TOGBankClassic_Constants.BankBagRange()
 	for bag = firstBankBag, lastBankBag do
 		local numSlots = C_Container.GetContainerNumSlots(bag)
 		for slot = 1, numSlots do

@@ -94,14 +94,14 @@ local function loadRequestStack()
 		requestsTombstones = {},
 		settings = {},
 	}
-	-- Deterministic naming. The real NormalizeName resolves against the live realm, and a nil from
-	-- it silently SKIPS the whole permission block in ApplyRequestMutation (`if normSender then`),
-	-- so an unresolvable name reads as "no sender to authorise" and the mutation applies. That is
-	-- worth knowing about the production code, and it is not what these examples are testing.
-	TOGBankClassic_Guild.NormalizeName = function(_, n)
-		if not n or n == "" then return nil end
-		return n:find("-") and n or (n .. "-Testrealm")
-	end
+	-- THE REAL NormalizeName IS USED, DELIBERATELY. This fixture used to stub it as
+	-- `n:find("-") and n or (n .. "-Testrealm")`, which is LOOSER than the real function on exactly
+	-- the inputs AUDIT-S4 is about: the real NormalizePlayerName returns nil for "-Realm" (empty
+	-- character part), the stub returned "-Realm" as-is, so the malformed-sender examples below
+	-- could not go red against it. The stub existed for determinism, and the env already provides
+	-- that -- GetNormalizedRealmName returns "Testrealm" -- so the real function yields the same
+	-- names for every well-formed input and the right nil for the malformed ones. CMD-001 class:
+	-- a stub looser than the real thing is how a hole stays invisible.
 	TOGBankClassic_Guild.GetNormalizedPlayer = function() return ME end
 	TOGBankClassic_Guild.GetPlayer = function() return ME end
 	TOGBankClassic_Guild.GetBanks = function() return { PEER } end
@@ -389,6 +389,76 @@ describe("REQUEST CHAIN: a mutation reaches another player's list", function()
 		assert.is_table(TOGBankClassic_Guild.Info.requests[id],
 			"a non-GM deleted an order for the whole guild -- delete is the one mutation that " ..
 			"cannot be undone by re-sending, so its permission gate is the one that matters most")
+	end)
+
+	-- AUDIT-S4. ApplyRequestMutation used to collapse "no sender" and "sender that does not resolve"
+	-- into one nil, and every permission gate was wrapped in `if normSender then` -- so a DELETE from
+	-- a sender whose name failed to normalise applied with NO GM CHECK AT ALL. NormalizePlayerName
+	-- returns nil in exactly two places, traced by peer review: a trimmed-empty name, and an empty
+	-- character-part before the hyphen. Both are driven here, through the real receive path, and both
+	-- must be REFUSED rather than applied unchecked or treated as a local apply.
+	--
+	-- Latent rather than live -- the real sender is server-supplied and a hostile client does not
+	-- control it -- but the function is public and was safe only because of its one caller.
+	describe("AUDIT-S4: a sender that does not resolve is refused, not trusted", function()
+		local function deleteFromMalformedSender(sender)
+			addOrder("Gold Bar", 1)
+			local id = orderFor("Gold Bar").id
+			TOGBankClassic_Guild.SenderIsGM = function(_, p)
+				return TOGBankClassic_Guild:NormalizeName(p) == ME
+			end
+			TOGBankClassic_Guild:DeleteRequest(id, ME)
+			local msg = lastMutation("delete")
+
+			becomeFreshPeer()
+			-- A GM check that would say YES to anyone, so the only thing standing between the
+			-- malformed sender and the delete is the resolve gate under test.
+			TOGBankClassic_Guild.SenderIsGM = function() return true end
+			TOGBankClassic_Guild.Info.requests[id] = { id = id, item = "Gold Bar", quantity = 1, status = "open" }
+
+			deliver(msg, sender)
+			return id
+		end
+
+		it("refuses a delete from an empty sender name", function()
+			local id = deleteFromMalformedSender("")
+			assert.is_table(TOGBankClassic_Guild.Info.requests[id],
+				"an EMPTY sender name deleted an order. The name did not resolve, so the old code " ..
+				"took the nil for 'local apply, no auth needed' and skipped the GM gate (AUDIT-S4)")
+		end)
+
+		it("refuses a delete from a sender with no character part", function()
+			local id = deleteFromMalformedSender("-Testrealm")
+			assert.is_table(TOGBankClassic_Guild.Info.requests[id],
+				"a sender of '-Realm' deleted an order -- the second of the two inputs that " ..
+				"normalise to nil (AUDIT-S4)")
+		end)
+
+		-- Driven at the public function directly: the wire always supplies a sender (AceComm fills it
+		-- in), and this fixture's `deliver` defaults a nil to ME, so a nil can only reach
+		-- ApplyRequestMutation from a caller that passes it on purpose -- which is the case the
+		-- state exists to refuse.
+		it("refuses a delete with no sender at all rather than treating it as local", function()
+			addOrder("Gold Bar", 1)
+			local id = orderFor("Gold Bar").id
+			TOGBankClassic_Guild.SenderIsGM = function() return true end
+			local applied = TOGBankClassic_Guild:ApplyRequestMutation(
+				{ type = "delete", requestId = id, ts = env.now + 60 }, nil)
+			assert.is_false(applied, "a nil sender was accepted")
+			assert.is_table(TOGBankClassic_Guild.Info.requests[id],
+				"a nil sender was treated as a local apply. No caller applies mutations locally; " ..
+				"a future one must add an explicit flag, not acquire unauthenticated writes by " ..
+				"passing nil (AUDIT-S4)")
+		end)
+
+		-- The gate must not have broken the authenticated path: the same message from a resolving
+		-- GM still applies. (The GM-delete example above already proves this; this one pins it in
+		-- the same fixture so the two cannot drift apart.)
+		it("still applies the same delete from a resolving GM", function()
+			local id = deleteFromMalformedSender(ME)
+			assert.is_nil(TOGBankClassic_Guild.Info.requests[id],
+				"the resolve gate refused a sender that DOES resolve")
+		end)
 	end)
 
 	-- The request branches and the deleted inventory branch shared one handler. This asserts the

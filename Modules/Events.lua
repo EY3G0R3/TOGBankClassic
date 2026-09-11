@@ -1,5 +1,9 @@
 TOGBankClassic_Events = {}
 
+-- NS-001: aliased as file-scope locals so a foreign global of the same name cannot be read
+-- instead. See the header of Modules/Constants.lua.
+local TIMER_INTERVALS = TOGBankClassic_Constants.TIMER_INTERVALS
+
 function TOGBankClassic_Events:RegisterMessage(message, callback)
 	if not callback then
 		callback = message
@@ -274,9 +278,26 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 	self.hashBroadcastCount = (self.hashBroadcastCount or 0) + 1
 
 	local myPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	-- P2P-035: the broadcast is a run of `<number><canon>` entries, 24 characters each, for every
+	-- banker we hold a SERVABLE canon for and a number for. That is ~900 bytes for 38 bankers where
+	-- the keyed table was ~5 KB / 20 chunks on the guild channel from every member, every login and
+	-- every ten minutes. A banker with no number yet, or no canon to serve, is simply absent -- a
+	-- responder offers everything we did not mention, so absence is the wipe-recovery signal too.
+	-- Sorted by number so two clients holding the same versions emit the same bytes.
+	local BN = TOGBankClassic_BankerNumbers
+	local entries, numbered = {}, 0
+	for norm, summary in pairs(list) do
+		local num = BN and BN:NumberOf(norm)
+		if num and summary.hashV2 then
+			entries[#entries + 1] = { number = num, canon = summary.hashV2 }
+			numbered = numbered + 1
+		end
+	end
+	table.sort(entries, function(a, b) return a.number < b.number end)
 	local payload = {
-		type     = "hash-list-broadcast",
-		alts     = list,
+		type     = "hlb2",
+		v        = BN and BN:Version() or 0,
+		e        = BN and BN:EncodeEntries(entries) or "",
 		banker   = myPlayer,
 		isBanker = TOGBankClassic_Guild:IsBank(myPlayer),
 		addon    = GetAddOnMetadata("TOGBankClassic", "Version") or "dev",
@@ -301,8 +322,8 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 				selfRef.hashBroadcastInProgress = false
 			end
 		end)
-	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d alts (isBanker=%s)",
-		altCount, tostring(payload.isBanker))
+	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d numbered canon(s) of %d roster alts (isBanker=%s, numbers v%d, %d bytes)",
+		numbered, altCount, tostring(payload.isBanker), payload.v, data and #data or 0)
 
 	-- SETTINGS-001: Piggyback settings broadcast for authorized senders so new joiners
 	-- and members who missed the immediate broadcast still receive guild-configured values.
@@ -517,6 +538,12 @@ end
 
 function TOGBankClassic_Events:BANKFRAME_CLOSED(_)
 	TOGBankClassic_Bank:OnUpdateStop()
+	-- BANKFILL-001 self-audit: the bank-collect state machine has a "return the surplus" phase that
+	-- can only be left by finding the pulled stack in bags. Walking away from the bank with that
+	-- phase armed -- and then using, mailing or banking the item -- left it armed forever: every
+	-- later click at any bank answered "waiting for the stack to reach your bags" and never
+	-- collected anything. MAIL_CLOSED already drops the mailbox-side state for the same reason.
+	TOGBankClassic_Mail:ResetFulfillStep()
 end
 
 function TOGBankClassic_Events:MAIL_SHOW(_)

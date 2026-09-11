@@ -1,4 +1,20 @@
-ADOPTION_STATUS = {
+-- NS-001: every table below is a FILE-SCOPE LOCAL, published once at the bottom of this file as
+-- TOGBankClassic_Constants. None of them is a bare global any more, and that is not tidiness.
+--
+-- Bare globals in a WoW addon share ONE namespace with every other addon the player has installed,
+-- and last writer wins. Grouper/GrouperOutput.lua:16 declares `DEBUG_CATEGORY` and :7 declares
+-- `LOG_LEVEL` at file scope, and Grouper's DEBUG_CATEGORY was the one that won on the author's
+-- client: `/togbank debug BANK` answered "Unknown debug category" and offered Grouper's eleven
+-- (AUTOJOIN, BROWSE, CREATE, ...) instead of ours, so the BANK category could not be enabled to
+-- diagnose a live sync divergence. LOG_LEVEL collided too and was harmless ONLY by coincidence --
+-- both tables happened to be byte-identical (DEBUG=1..RESPONSE=5), with nothing enforcing it, so
+-- either side renumbering would have silently changed the other addon's log filtering with no error.
+--
+-- Consumers take a file-scope local alias (`local DEBUG_CATEGORY = TOGBankClassic_Constants.DEBUG_CATEGORY`),
+-- which shadows any foreign global of the same name. Publishing nothing bare also stops US clobbering
+-- THEM -- the harm ran both ways. `.luacheckrc` no longer lists these as globals, so a stray bare use
+-- is now an undefined-variable error rather than something that silently reads another addon's table.
+local ADOPTION_STATUS = {
 	ADOPTED = "adopted",
 	STALE = "stale",
 	INVALID = "invalid",
@@ -7,13 +23,13 @@ ADOPTION_STATUS = {
 }
 
 -- Timer intervals (in seconds)
-TIMER_INTERVALS = {
+local TIMER_INTERVALS = {
 	VERSION_BROADCAST = 600,        -- 10 minutes: lightweight version ping (reduced for large guild congestion)
 	ALT_DATA_QUEUE_RETRY = 5,       -- 5 seconds: queue reprocessing delay
 }
 
 -- Log levels (lower = more verbose)
-LOG_LEVEL = {
+local LOG_LEVEL = {
 	DEBUG = 1,       -- development/troubleshooting details
 	INFO = 2,        -- sync status, normal operations
 	WARN = 3,        -- something unexpected but recoverable
@@ -22,7 +38,7 @@ LOG_LEVEL = {
 }
 
 -- Debug categories for filtering
-DEBUG_CATEGORY = {
+local DEBUG_CATEGORY = {
 	ROSTER = "ROSTER",           -- Guild roster updates, online/offline tracking
 	COMMS = "COMMS",             -- All addon communication traffic
 	DELTA = "DELTA",             -- Delta sync operations and computations
@@ -54,7 +70,7 @@ DEBUG_CATEGORY = {
 -- If a tag is supplied and matches a key in this table, only that tag's toggle gates it.
 -- If no tag is supplied (or the string is not a known tag), the category master switch gates it.
 -- nil entry in debugTags DB = tag is ALLOWED by default (opt-out model; new tags auto-show).
-DEBUG_TAGS = {
+local DEBUG_TAGS = {
 	P2P = {
 		OFFER     = "hash-offer send / receive",
 		DISPATCH  = "session creation, peer selection, collect-window fallbacks (no response after timeout)",
@@ -64,6 +80,7 @@ DEBUG_TAGS = {
 		["BROADCAST"] = "P2P hash-broadcast sent to guild channel (waiting for peers)",
 		["RESPOND"]   = "peer sending data in response to a P2P request (queue progress)",
 		["TIMEOUT"]   = "per-alt timeout timers armed, and an in-flight one being replaced (P2P-026)",
+		["VERSION"]   = "P2P-035 version query: who was asked what they hold, what they answered, which version was chosen",
 	},
 	PROTOCOL = {
 		["HLR"]               = "hash-list-reply processing",
@@ -106,6 +123,7 @@ DEBUG_TAGS = {
 	ROSTER = {
 		ONLINE  = "member online / offline events",
 		REFRESH = "GuildRoster() refresh cycles",
+		NUMBERS = "P2P-035 banker numbers: minting, adopting a peer's table, table requests and replies",
 	},
 	BANK = {
 		GATE = "why Bank:Scan() returned early (not a banker, scanning disabled, roster not ready, ...)",
@@ -166,13 +184,13 @@ DEBUG_TAGS = {
 }
 
 -- Request storage settings
-REQUEST_LOG = {
+local REQUEST_LOG = {
 	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests and tombstones removed after this
 	PRUNE_INTERVAL = 300,                     -- 5 minutes: minimum interval between automatic prunes
 }
 
 -- Request sync throttling settings
-REQUESTS_SYNC = {
+local REQUESTS_SYNC = {
 	INDEX_QUERY_COOLDOWN = 60,         -- seconds between index queries (global and per-sender)
 	INDEX_INFLIGHT_TIMEOUT = 180,      -- seconds before in-flight index sync is considered stale (must exceed max batch sequence: ceil(requests/BATCH_SIZE) * BATCH_DELAY)
 	REQUESTS_BY_ID_BATCH_SIZE = 50,    -- max IDs per by-id query (prevents throttle on large syncs)
@@ -189,7 +207,7 @@ REQUESTS_SYNC = {
 }
 
 -- Communication prefix descriptions for debug logging
-COMM_PREFIX_DESCRIPTIONS = {
+local COMM_PREFIX_DESCRIPTIONS = {
 
 	["togbank-d4"] = "(Delta Data v2 - No Links)",
 	["togbank-r"] = "(Query)",
@@ -205,7 +223,7 @@ COMM_PREFIX_DESCRIPTIONS = {
 }
 
 -- Protocol version and capabilities
-PROTOCOL = {
+local PROTOCOL = {
 	VERSION = 2,                    -- Current protocol version (bump for breaking changes)
 	SUPPORTS_DELTA = true,          -- This client supports delta updates
 	MIN_DELTA_SIZE_RATIO = 0.3,     -- Only use delta if <30% of full sync size
@@ -214,7 +232,7 @@ PROTOCOL = {
 }
 
 -- Peer-to-Peer distribution settings (PERF-005)
-PEER_TO_PEER = {
+local PEER_TO_PEER = {
 	ENABLED = true,                  -- Enable P2P distribution (allows any peer with matching hash to respond)
 	MIN_GUILD_SIZE = 3,              -- Only enable for guilds with >3 members
 	HASH_QUERY_TIMEOUT = 5,          -- Seconds to wait for hash from banker
@@ -223,8 +241,49 @@ PEER_TO_PEER = {
 }
 
 -- Feature flags (for easy enable/disable during development/testing)
-FEATURES = {
+local FEATURES = {
 	DELTA_ENABLED = true,           -- Enable delta sync protocol
 	FORCE_DELTA_SYNC = false,       -- Force delta sync (bypass thresholds) for testing
 	FORCE_FULL_SYNC = false,        -- Force full sync (disable delta) for testing
+}
+
+-- Container geometry, BANKSLOT-001. THE ONE SPELLING of which bag ids are carried and which are the
+-- bank's: Blizzard's own expression from BankFrame.lua:245,
+--     for i = NUM_BAG_SLOTS+1, (NUM_BAG_SLOTS + NUM_BANKBAGSLOTS)
+-- which is 0..4 and 5..10 on Classic Era (measured on a live client 2026-09-09: NUM_BAG_SLOTS = 4,
+-- NUM_BANKBAGSLOTS = 6). Five files carried their own copy of this arithmetic; a fifth was added the
+-- day the fourth was fixed. Five spellings of one range is a divergence nothing reports -- the two
+-- scan paths walking different ranges would make `/togbank dev compare` lie -- so they all call here.
+--
+-- FUNCTIONS, READ AT CALL TIME, not values captured at file scope: these are engine-side globals the
+-- client's own Constants.lua sets, and an addon file can load before that has happened. A file-scope
+-- capture would latch the fallback for the whole session and behave exactly like the hardcode this
+-- replaced, with nothing to show it had. The fallbacks are the measured Era values; TBC may differ
+-- and that costs nothing, because each client reads its own constant.
+local function CarriedBagRange()
+	return 0, (NUM_BAG_SLOTS or 4)
+end
+local function BankBagRange()
+	local carried = NUM_BAG_SLOTS or 4
+	return carried + 1, carried + (NUM_BANKBAGSLOTS or 6)
+end
+
+-- NS-001: the single global this file publishes. Consumers alias what they need at file scope:
+--     local DEBUG_CATEGORY = TOGBankClassic_Constants.DEBUG_CATEGORY
+-- Aliasing rather than rewriting every reference keeps the ~240 call sites untouched, and the local
+-- shadows any same-named global another addon declares -- which is the whole point (see the header).
+TOGBankClassic_Constants = {
+	ADOPTION_STATUS          = ADOPTION_STATUS,
+	TIMER_INTERVALS          = TIMER_INTERVALS,
+	LOG_LEVEL                = LOG_LEVEL,
+	DEBUG_CATEGORY           = DEBUG_CATEGORY,
+	DEBUG_TAGS               = DEBUG_TAGS,
+	REQUEST_LOG              = REQUEST_LOG,
+	REQUESTS_SYNC            = REQUESTS_SYNC,
+	COMM_PREFIX_DESCRIPTIONS = COMM_PREFIX_DESCRIPTIONS,
+	PROTOCOL                 = PROTOCOL,
+	PEER_TO_PEER             = PEER_TO_PEER,
+	FEATURES                 = FEATURES,
+	CarriedBagRange          = CarriedBagRange,
+	BankBagRange             = BankBagRange,
 }

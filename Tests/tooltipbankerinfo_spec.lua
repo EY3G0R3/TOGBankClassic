@@ -31,12 +31,47 @@ end
 ---
 --- Only `IsInCurrentGuildRoster` is overridden, because it reaches for roster state these specs
 --- have no business standing up.
-local function installGuild(alts, rosterMembers)
+---
+--- TOOLTIP-002: BANKER STATUS IS **NOT** OVERRIDDEN, and that is deliberate. The tooltip's question
+--- is now "is this character still a banker", which is decided by whether `gbank` appears in their
+--- note -- so these examples build a REAL guild roster with real notes and let the real
+--- `Guild:IsBank` read it. Stubbing IsBank here would stand a fake in front of the exact function
+--- the fix turns on, which is the CMD-001 trap this file's header already describes.
+---
+--- Every alt is given a `gbank` note by default, so the pre-existing examples keep meaning what they
+--- meant. `notes` overrides that per alt -- "" for an ex-banker, "gbank viewonly" for VIEWBANK-001.
+---
+--- THE ROSTER IS BUILT THROUGH LibGuildRoster, WHICH IS THE PRODUCTION PATH. Guild:IsBank reads
+--- memberRoster.isBank, and since v1.4.0 that table is populated by
+--- Guild:_RefreshFromRosterLib -- it takes `publicNote`/`officerNote` from the LIBRARY and does the
+--- `gbank` find itself (Guild.lua:2117-2120). The legacy GetGuildRosterInfo scan is only the
+--- fallback for when the library is absent or not ready.
+---
+--- An earlier version of this helper drove that FALLBACK instead, by leaving memberRoster empty. It
+--- would have passed while never once exercising the code the addon actually runs -- the same shape
+--- as the CMD-001 trap in this file's header, one level up: not a stubbed function, but a real
+--- function reached down a path no player takes.
+--- @param alts table altName -> stored record
+--- @param rosterMembers table|nil altName -> true (nil means everyone is in the guild)
+--- @param notes table|nil altName -> note string (default "gbank")
+local function installGuild(alts, rosterMembers, notes)
 	TOGBankClassic_Guild.Info = { name = "Testguild", alts = alts }
 	TOGBankClassic_Guild.IsInCurrentGuildRoster = function(_, name)
 		if not rosterMembers then return true end
 		return rosterMembers[name] == true
 	end
+
+	for altName in pairs(alts) do
+		env.addGuildMember(altName, { note = (notes and notes[altName]) or "gbank" })
+	end
+	env.readyGuildRoster(env.freshGuildRoster())
+	TOGBankClassic_Guild.memberRoster = nil
+	TOGBankClassic_Guild.banksCache = nil
+	TOGBankClassic_Guild:RefreshOnlineCache()
+	assert.is_truthy(TOGBankClassic_Guild.memberRoster
+		and next(TOGBankClassic_Guild.memberRoster),
+		"precondition: the roster library produced no members, so every IsBank answer below " ..
+		"would be a fallback result rather than the path the addon runs")
 end
 
 describe("TooltipBankerInfo:AppendTo", function()
@@ -46,6 +81,9 @@ describe("TooltipBankerInfo:AppendTo", function()
 		env.loadModules({
 			"Modules/Constants.lua",
 			"Modules/Switches.lua",
+			-- RefreshOnlineCache records a perf timing on both its paths, so the real module has to
+			-- be here; without it the roster refresh dies indexing a nil Performance.
+			"Modules/Performance.lua",
 			"Modules/Item.lua",
 			"Modules/Inventory/Record.lua",
 			"Modules/Inventory/Resolve.lua",
@@ -120,6 +158,49 @@ describe("TooltipBankerInfo:AppendTo", function()
 		TBI:AppendTo(tip, 2589)
 		assert.equal(1, #tip.doubles)
 		assert.equal("Abe", tip.doubles[1].left)
+	end)
+
+	-- TOOLTIP-002, reported from a live guild: "if I mouse-over an item that said banker used to
+	-- have, the tooltip says they have it. They do not have gbank in their note." It survived a
+	-- reload, because nothing was stale -- the data is stored and correct, and the tooltip simply
+	-- never asked whether the character was still a banker.
+	it("ignores an alt whose gbank note was removed, even though their data is still stored",
+		function()
+			installGuild({
+				["Abe-Realm"]      = { items = { { ID = 2589, Count = 5 } } },
+				["ExBanker-Realm"] = { items = { { ID = 2589, Count = 99 } } },
+			}, nil, { ["ExBanker-Realm"] = "" })
+			local tip = fakeTooltip()
+			TBI:AppendTo(tip, 2589)
+			assert.equal(1, #tip.doubles,
+				"an ex-banker was still listed -- their stored inventory outlives their gbank note " ..
+				"by design, so the tooltip has to ask Guild:IsBank rather than trust info.alts")
+			assert.equal("Abe", tip.doubles[1].left)
+		end)
+
+	it("reports false when the ONLY holder is no longer a banker", function()
+		installGuild({
+			["ExBanker-Realm"] = { items = { { ID = 2589, Count = 99 } } },
+		}, nil, { ["ExBanker-Realm"] = "" })
+		local tip = fakeTooltip()
+		assert.is_false(TBI:AppendTo(tip, 2589),
+			"the block was drawn with no eligible banker in it")
+		assert.equal(0, #tip.lines)
+	end)
+
+	-- VIEWBANK-001 draws the line the other way: a view-only banker is visible everywhere and merely
+	-- not requestable, so their stock belongs here. The gate is IsBank, NOT `IsBank and not
+	-- IsViewOnlyBank`, and this is what stops someone "tightening" it later.
+	it("still lists a VIEW-ONLY banker, who is visible but not requestable", function()
+		installGuild({ ["Viewer-Realm"] = { items = { { ID = 2589, Count = 7 } } } },
+			nil, { ["Viewer-Realm"] = "gbank viewonly" })
+		assert.is_true(TOGBankClassic_Guild:IsViewOnlyBank("Viewer-Realm"),
+			"precondition: the note was not read as view-only, so this proves nothing")
+		local tip = fakeTooltip()
+		assert.is_true(TBI:AppendTo(tip, 2589),
+			"a view-only banker was dropped from the tooltip -- VIEWBANK-001 makes them visible " ..
+			"everywhere and only blocks REQUESTS")
+		assert.equal("Viewer", tip.doubles[1].left)
 	end)
 
 	it("draws nothing and reports false when no banker holds the item", function()

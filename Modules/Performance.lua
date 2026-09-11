@@ -56,37 +56,34 @@ function Performance:Initialize()
 		sessionStart = sessionStart,
 		sessionId = string.format("%s_%d", date("%Y%m%d_%H%M%S"), sessionStart),
 
-		-- Event counters
+		-- PERF-013: these three tables list only what is ACTUALLY INSTRUMENTED, and every entry
+		-- was verified by reading its call site rather than by trusting the declaration.
+		--
+		-- 17 of the 21 keys that used to be here were unreachable -- 13 already dead, and four
+		-- (ComputeDelta, ApplyDelta in both tables, ReceiveAltData) killed by INV2 step 10, which
+		-- deleted the functions and left the counters.
+		--
+		-- WHERE THEY LEAKED, checked rather than assumed: PrintReport does NOT print them --
+		-- `if data.count > 0` at :238 and :245 skips a zero row. What did carry them is the session
+		-- table pushed into the TOGBankClassic_PerfMetrics SavedVariable at :98, and GetCurrentStats,
+		-- which returns every declared key with count/perMinute/avgMs of zero to any other caller.
+		-- So the cost was a saved variable and an API asserting measurements that could not happen,
+		-- not a chat line -- smaller than it first looks, and worth stating accurately.
+		--
+		-- Live sites, enumerated: RecordEvent from Events.lua:335 and :366; RecordOperation from
+		-- Guild.lua:2139 and :2218. Nothing else records anything.
 		events = {
 			GUILD_ROSTER_UPDATE = 0,
 			PLAYER_ENTERING_WORLD = 0,
-			CHAT_MSG_ADDON = 0,
-			MAIL_INBOX_UPDATE = 0,
-			BANKFRAME_OPENED = 0,
-			BANKFRAME_CLOSED = 0,
 		},
 
-		-- Operation counters
 		operations = {
 			RefreshOnlineCache = 0,
-			InvalidateBanksCache = 0,
-			GetBanks = 0,
-			ComputeDelta = 0,
-			ApplyDelta = 0,
-			ReceiveAltData = 0,
-			ReceiveRequestsData = 0,
-			NormalizeRequestList = 0,
-			ItemHighlightUpdate = 0,
 		},
 
 		-- Timing data (cumulative ms)
 		timing = {
 			RefreshOnlineCache = 0,
-			GetBanks = 0,
-			ComputeDelta = 0,
-			ApplyDelta = 0,
-			NormalizeRequestList = 0,
-			ItemHighlightUpdate = 0,
 		},
 
 		-- Memory snapshots (in KB)
@@ -113,13 +110,22 @@ function Performance:Initialize()
 	self.sessionStartTime = GetTime()
 end
 
+-- PERF-013: the declared key is no longer an ALLOW-LIST. These three functions used to be gated on
+-- `if self.currentSession.events[name] then` -- with no else -- so a name that was not already in
+-- the table above was SILENTLY DROPPED: no count, no warning, no error, and no row in the report to
+-- say why. That made the instrumentation unable to follow the code. Anyone wrapping the V2 tuple
+-- path in Performance:Track("BuildTuplePayload", fn) got silence and a report with nothing in it.
+--
+-- An unknown name now CREATES its key. The trade, stated rather than hidden: a typo'd name produces
+-- a spurious row instead of nothing at all. That is the better failure -- a visible wrong row gets
+-- noticed, and a measurement that silently never happens does not.
+
 -- Track an event firing
 function Performance:RecordEvent(eventName)
 	if not TOGBankClassic_PerfEnabled then return end
 	if not self.currentSession then return end
-	if self.currentSession.events[eventName] then
-		self.currentSession.events[eventName] = self.currentSession.events[eventName] + 1
-	end
+	local events = self.currentSession.events
+	events[eventName] = (events[eventName] or 0) + 1
 end
 
 -- Track an operation execution with timing
@@ -127,12 +133,11 @@ function Performance:RecordOperation(operationName, durationMs)
 	if not TOGBankClassic_PerfEnabled then return end
 	if not self.currentSession then return end
 
-	if self.currentSession.operations[operationName] then
-		self.currentSession.operations[operationName] = self.currentSession.operations[operationName] + 1
-	end
+	local operations = self.currentSession.operations
+	operations[operationName] = (operations[operationName] or 0) + 1
 
-	if durationMs and self.currentSession.timing[operationName] then
-		self.currentSession.timing[operationName] = self.currentSession.timing[operationName] + durationMs
+	if durationMs then
+		self.currentSession.timing[operationName] = (self.currentSession.timing[operationName] or 0) + durationMs
 
 		-- Track peak
 		if durationMs > self.currentSession.peaks.longestOperation.duration then
@@ -164,7 +169,13 @@ function Performance:RecordMemory(label)
 	end
 end
 
--- Track a function execution with timing (returns the function's return values)
+-- Track a function execution with timing (returns the function's return values).
+--
+-- PERF-013: this has NO PRODUCTION CALLER today -- both live recording sites call RecordOperation
+-- directly. Kept rather than deleted because it is the one-line way to instrument a code path, and
+-- until the allow-list gate above was removed it did not actually work: a name not pre-declared in
+-- the session table was dropped, so wrapping anything new in it measured nothing. It works now.
+-- If a later pass finds it still unused and the gate change forgotten, delete it then.
 function Performance:Track(operationName, func)
 	if not TOGBankClassic_PerfEnabled then
 		return func()

@@ -166,15 +166,18 @@ describe("V2 payloads on the real wire envelope", function()
 		assert.is_nil(Wire.encode("", { Record.new(858, 1) }, 0))
 	end)
 
-	-- Mixed-version guilds are permanent, not a migration window: a client that understood only
-	-- tuples would silently ignore every peer still sending links, and "ignored" is
-	-- indistinguishable from "that banker has no items".
+	-- AUDIT-S3. This example used to be "still decodes a legacy link payload", headed "Mixed-version
+	-- guilds are permanent, not a migration window". Neither is true since the 2026-09-09 directive
+	-- deleted backwards compatibility on the wire, and the example pinned the decoder ACCEPTING a
+	-- format the addon must drop. "Ignored" being indistinguishable from "that banker has no items"
+	-- was a real concern -- and it is answered elsewhere, by Chat.lua warning the user by name when
+	-- a banker's payload is dropped, not by decoding what should not be decoded.
 	-- writ-cannot: the removed "placeholder anchor" example was mine, added seconds ago by mistake
 	-- as an insertion marker while appending the join block below. It asserted `true` and covered
 	-- nothing -- an assertion-free test is exactly what this project's rules forbid, because it
 	-- reads as coverage and can never fail. Nothing regresses by its removal.
-	it("still decodes a legacy link payload", function()
-		local altName, records = Wire.decode({
+	it("drops a legacy link payload rather than decoding it, even with real links", function()
+		local altName, records, _, format = Wire.decode({
 			name = ME,
 			items = {
 				{ ID = 858, Count = 5,
@@ -183,13 +186,11 @@ describe("V2 payloads on the real wire envelope", function()
 				  Link = "|cffffffff|Hitem:15260:0:0:0:0:0:863:0:60|h[Stone Hammer]|h|r" },
 			},
 		})
-		assert.equal(ME, altName)
-		assert.equal(2, #records)
-		local byKey = {}
-		for _, rec in ipairs(records) do byKey[Record.key(rec)] = Record.count(rec) end
-		assert.equal(5, byKey["858:0:0"])
-		assert.equal(1, byKey["15260:863:0"],
-			"a legacy payload's suffix must survive, or a mixed-version guild double-counts gear")
+		assert.equal("dropped", format,
+			"a legacy payload was accepted -- the wire is tuples-only and the decoder must say so " ..
+			"itself rather than rely on its caller (AUDIT-S3)")
+		assert.is_nil(altName)
+		assert.equal(0, #records)
 	end)
 end)
 
@@ -213,69 +214,11 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 	local PEER   = "Otherguy-Testrealm"
 	local GUILD  = "Testguild"
 
-	--- Stand up a whole client: every module in .toc order, then the real Core.
-	---
-	--- `who` is the character this client IS, and it must be set BEFORE the modules load: the
-	--- roster build and every "is this my own message" guard resolve self through UnitName, so
-	--- assigning it afterwards leaves the client believing it is still the default Bankchar --
-	--- which is the banker, so it discards the banker's own broadcast as its own echo and the
-	--- delivery silently does nothing.
+	--- Stand up a whole client as `who` (see env.standUpClient -- lifted from here). The roster
+	--- is REAL LibGuildRoster, which is load-bearing: with it absent every payload is refused as
+	--- unauthorised, silently, so a spoof test passes vacuously.
 	local function loadClient(who)
-		env.playerName = who or "Bankchar"
-		env.stubOutput()
-		require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
-			"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
-		require("env.libs").load("AceCommQueue-1.0")
-		env.loadModules(env.MODULE_ORDER)
-		-- Re-stub AFTER the module load, which installs the real Output over the earlier stub.
-		-- The real Output:Debug reads db.global.debugCategories/debugTags and the persistent log,
-		-- none of which this spec is testing -- faking that shape here would be inventing a
-		-- Database contract rather than exercising one.
-		env.stubOutput()
-
-		local AceAddon = LibStub("AceAddon-3.0")
-		if AceAddon and AceAddon.addons then
-			AceAddon.addons["TOGBankClassic"] = nil
-			if AceAddon.addonstatus then AceAddon.addonstatus["TOGBankClassic"] = nil end
-		end
-		env.loadFile("Core.lua")
-
-		TOGBankClassic_Inventory_Store:Init({ faction = {} })
-		TOGBankClassic_Database = {
-			-- BOTH switches: inventoryV2 chooses local storage, sendV2Wire chooses what goes on the
-			-- wire. A send test with only the first one on exercises the legacy emission path while
-			-- looking like it covers V2.
-			db = { global = { switches = { inventoryV2 = true, sendV2Wire = true } } },
-			RecordDeltaSent = function() end, RecordDeltaSavings = function() end,
-			RecordDeltaComputeTime = function() end, RecordNoChangeSent = function() end,
-			RecordDeltaFailed = function() end, SaveSnapshot = function() end,
-			-- INV2-SESSION-001: the tuple receive path now records inbound bytes and closes the
-			-- session, work it never did while it returned early past the legacy branch.
-			RecordDeltaReceived = function() end,
-		}
-		TOGBankClassic_Options = {
-			IsIntegrityCheckDiagnosticsEnabled = function() return false end,
-			IsSyncProgressMuted = function() return true end,
-			GetBankEnabled = function() return true end,
-		}
-
-		-- A REAL roster through the REAL LibGuildRoster, not a stubbed always-yes.
-		--
-		-- This is load-bearing rather than setup ceremony: the receive path calls
-		-- IsAltDataAllowed -> IsInCurrentGuildRoster + IsBank, and since the v1.4.0 migration those
-		-- resolve through LibGuildRoster. With the library absent the roster is EMPTY, every
-		-- payload is refused as unauthorised, and the refusal is silent -- so a delivery test fails
-		-- with "nothing arrived" and a spoof test PASSES VACUOUSLY, which is how a rejection guard
-		-- gets credited for work it never did.
-		--
-		-- readyGuildRoster is required too: the library suppresses presence until the member count
-		-- stops changing, so a single GUILD_ROSTER_UPDATE leaves it not-yet-ready.
-		env.addGuildMember(BANKER, { note = "gbank" })
-		env.addGuildMember(PEER, {})
-		local roster = env.freshGuildRoster()
-		env.readyGuildRoster(roster)
-		TOGBankClassic_Guild.Info = { name = GUILD, alts = {} }
-		TOGBankClassic_Guild:RefreshOnlineCache()
+		env.standUpClient(who, { { name = BANKER, note = "gbank" }, { name = PEER } }, GUILD)
 		assert.is_true(TOGBankClassic_Guild:IsBank(BANKER),
 			"precondition: the roster did not come up, so every authorisation check below would " ..
 			"refuse and the assertions would be measuring the setup rather than the code")
@@ -372,6 +315,146 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 		assert.equal(publishedHash, alt.inventoryHash,
 			"client B's revision-1 hash is not the author's, so the two of them would give an " ..
 			"unmigrated third client contradictory answers about the same inventory")
+	end)
+
+	-- TABCOLOUR-001. A red tab means IsAltSyncPending: the advertised hash disagrees with what we
+	-- hold, or we hold nothing. Delivery is the event that ends that state, so delivery has to
+	-- repaint -- the only repaints hung off the two places NEW HASHES arrive, which is when a tab
+	-- turns red, never when it should turn back. Reported from a live guild: two bankers received in
+	-- full, tabs still red until an unrelated broadcast happened to redraw them.
+	--- Stand up the banker, scan, and capture BOTH things it publishes: the tuple payload and the
+	--- hash-list entry it advertises. Built by the real builder, not by hand: a hand-rolled entry
+	--- with `mailHash = nil` reads as "the peer said nothing about mail" and fails closed forever,
+	--- which is a property of the fixture, not of delivery.
+	local function authorPublishes()
+		env.reset()
+		loadClient()
+		local Record = TOGBankClassic_Inventory_Record
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, BANKER, { Record.new(858, 5) }, 0)
+		TOGBankClassic_Guild.Info.alts[BANKER] = { name = BANKER, items = {}, money = 0 }
+		TOGBankClassic_Core:StampInventoryHashes(TOGBankClassic_Guild.Info.alts[BANKER],
+			TOGBankClassic_Inventory_Store:GetAltView(GUILD, BANKER), nil, nil, 0)
+		local advertised = TOGBankClassic_Guild:BuildBankerHashList()[BANKER]
+		assert.is_table(advertised, "precondition: the banker advertises nothing for itself")
+		assert.is_not_nil(advertised.hashV2, "precondition: the banker advertised no revision-2 canon")
+		local sent = captureSends()
+		TOGBankClassic_Guild:SendAltData(BANKER, 0, 0, PEER)
+		local d4
+		for _, msg in ipairs(sent) do if msg.prefix == "togbank-d4" then d4 = msg end end
+		assert.is_table(d4, "SendAltData sent no togbank-d4 message at all")
+		return d4.text, advertised
+	end
+
+	--- A hash-list reply arriving from `sender` carrying `summary` for the banker, through the
+	--- real receive path.
+	local function hashListFrom(sender, summary)
+		local body = TOGBankClassic_Core:SerializeWithChecksum({
+			type = "hash-list-reply", alts = { [BANKER] = summary },
+		})
+		TOGBankClassic_Chat:OnCommReceived("togbank-hlr", body, "WHISPER", sender)
+	end
+
+	it("asks the Inventory window to repaint on delivery, and the alt is no longer pending", function()
+		local payload, advertised = authorPublishes()
+
+		env.reset()
+		loadClient("Otherguy")
+		-- The peer has been TOLD what the banker holds (a hash-list arrived) and holds nothing
+		-- itself: that is exactly the red-tab state.
+		hashListFrom(BANKER, advertised)
+		assert.is_true(TOGBankClassic_Guild:IsAltSyncPending(BANKER),
+			"precondition: the peer is not pending before delivery, so nothing below can turn")
+
+		local repaints = 0
+		TOGBankClassic_UI_Inventory = {
+			isOpen = true,
+			RefreshSoon = function() repaints = repaints + 1 end,
+		}
+		TOGBankClassic_Chat:OnCommReceived("togbank-d4", payload, "WHISPER", BANKER)
+		TOGBankClassic_UI_Inventory = nil
+
+		assert.equal(1, repaints,
+			"the delivery did not ask the Inventory window to repaint, so a red tab stays red " ..
+			"until some later hash broadcast happens to redraw it")
+		assert.is_false(TOGBankClassic_Guild:IsAltSyncPending(BANKER),
+			"the data landed and the author's hashes were stored, yet the alt still reads as " ..
+			"pending -- a repaint would draw it red again")
+	end)
+
+	-- THE OPERATOR'S RULE, verbatim: "I NEED CANON hashes written ONCE by the banker, then passed
+	-- around. NEVER mutated. The hash HAS to have the DTS in it and the NEWER V2 Hash wins." And the
+	-- failure it was written from: "the banker logged off and then I was getting the mutated V1 hash
+	-- that was 'newer' and it was over-writing my V2 data."
+	--
+	-- The advertised-hash cache is where that overwrite happens on the RECEIVER: whatever it holds
+	-- for an alt is what the tab colour and the re-request decision are compared against. So the
+	-- cache must obey the same rule as the data -- a revision-1-only claim is not a V2 hash and can
+	-- never displace one, and among V2 claims only a strictly NEWER publish time wins.
+	describe("the advertised-hash cache: the NEWER V2 hash wins", function()
+		local function peerHoldingTheCanon()
+			local payload, advertised = authorPublishes()
+			env.reset()
+			loadClient("Otherguy")
+			hashListFrom(BANKER, advertised)
+			TOGBankClassic_Chat:OnCommReceived("togbank-d4", payload, "WHISPER", BANKER)
+			assert.is_false(TOGBankClassic_Guild:IsAltSyncPending(BANKER),
+				"precondition: the peer is still pending after the author's own delivery")
+			return advertised
+		end
+
+		it("keeps the author's V2 entry when a peer advertises a revision-1-only hash with a NEWER time", function()
+			local canon = peerHoldingTheCanon()
+			-- The shape that did the damage: an unmigrated relayer recomputed its own revision-1
+			-- number and stamped its own clock, so it looks newer than the author's publish time.
+			hashListFrom("Stalepeer-Testrealm", {
+				hash = 0xDEAD, updatedAt = canon.updatedAt + 3600, mailHash = 0, version = 1,
+			})
+			local cached = TOGBankClassic_Guild.latestBankerHashes[BANKER]
+			assert.equal(canon.hashV2, cached.hashV2,
+				"a revision-1-only claim displaced the author's revision-2 canon in the cache -- " ..
+				"the tab turns red and the client re-requests from a peer whose data it cannot read")
+			assert.is_false(TOGBankClassic_Guild:IsAltSyncPending(BANKER),
+				"holding the author's own delivery, the alt reads as pending because a stale peer " ..
+				"advertised a mutated hash -- the red tab that never clears")
+		end)
+
+		it("keeps the newer V2 entry when a peer advertises an OLDER V2 hash", function()
+			local canon = peerHoldingTheCanon()
+			hashListFrom("Stalepeer-Testrealm", {
+				hash = 0xDEAD, hashV2 = env.canon(canon.updatedAt - 3600, 0xBEEF),
+				updatedAt = canon.updatedAt - 3600, mailHash = 0, version = 1,
+			})
+			assert.equal(canon.hashV2, TOGBankClassic_Guild.latestBankerHashes[BANKER].hashV2,
+				"an older V2 claim displaced a newer one -- 'newer wins' is the whole rule")
+			assert.is_false(TOGBankClassic_Guild:IsAltSyncPending(BANKER))
+		end)
+
+		it("takes a NEWER V2 entry, so a rescan by the banker turns the tab red again", function()
+			local canon = peerHoldingTheCanon()
+			-- The banker scanned again: a new canon with a later publish time. THIS one must win,
+			-- or the peer never learns it is behind.
+			local newer = env.canon(canon.updatedAt + 60, 0xF00D)
+			hashListFrom(BANKER, {
+				hash = 0xCAFE, hashV2 = newer, updatedAt = canon.updatedAt + 60, mailHash = 0, version = 2,
+			})
+			assert.equal(newer, TOGBankClassic_Guild.latestBankerHashes[BANKER].hashV2,
+				"a strictly newer V2 canon did not replace the older one")
+			assert.is_true(TOGBankClassic_Guild:IsAltSyncPending(BANKER),
+				"the banker published a newer version and the peer does not read as behind")
+		end)
+
+		it("never lets a hash-offer strip the revision-2 hash out of a cached entry", function()
+			local canon = peerHoldingTheCanon()
+			-- The P2P offer path writes the cache too. An offer for the SAME version must not
+			-- replace a full entry with one that has forgotten hashV2 -- that silently drops every
+			-- later comparison to revision 1.
+			TOGBankClassic_P2PSession:OnOffer("Relayer-Testrealm", { [BANKER] = {
+				hash = canon.hash, hashV2 = canon.hashV2, updatedAt = canon.updatedAt, mailHash = canon.mailHash,
+			} })
+			assert.equal(canon.hashV2, TOGBankClassic_Guild.latestBankerHashes[BANKER].hashV2,
+				"the offer path wrote a cache entry without hashV2")
+			assert.is_false(TOGBankClassic_Guild:IsAltSyncPending(BANKER))
+		end)
 	end)
 
 	-- `sendV2Wire` is the ROLLBACK. Emission is the only half a peer can observe, so it has to be
@@ -490,18 +573,19 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 		-- corrector CANNOT fix because that one is gated on the hash being ABSENT.
 		TOGBankClassic_Guild.Info.alts[BANKER] = {
 			name = BANKER, items = {}, money = 0,
-			inventoryHash = 111111, inventoryHashV2 = 222222,
+			inventoryHash = 111111, inventoryHashV2 = env.canon(1700000000, 222222),
 		}
 
 		-- Build a payload on this same client, then feed it back as if it arrived from the banker.
 		-- THE AUTHOR'S HASHES ARE DELIBERATELY VALUES NO RECOMPUTE COULD PRODUCE. That is what makes
 		-- this example able to tell "stored the author's canon" from "minted its own": if the
 		-- receiver recomputed, it would land on the hash of a single 858x5 stack, never on 777777.
-		local AUTHOR_HASH, AUTHOR_HASHV2 = 777777, 888888
+		-- HASH-CANON-005: the revision-2 canon is `<dts><hash>`, a string, and travels as one.
+		local AUTHOR_HASH, AUTHOR_HASHV2 = 777777, env.canon(1757000000, 888888)
 		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, BANKER, { Record.new(858, 5) }, 4242)
 		local payload = TOGBankClassic_Inventory_Wire.encode(
 			BANKER, TOGBankClassic_Inventory_Store:GetAltRecords(GUILD, BANKER), 4242,
-			AUTHOR_HASH, AUTHOR_HASHV2)
+			AUTHOR_HASH, AUTHOR_HASHV2, 1757000000)
 		local body = TOGBankClassic_Core:SerializeWithChecksum(payload)
 
 		TOGBankClassic_Chat:OnCommReceived("togbank-d4", body, "WHISPER", BANKER)
@@ -543,7 +627,7 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 
 		TOGBankClassic_Guild.Info.alts[BANKER] = {
 			name = BANKER, items = {}, money = 0,
-			inventoryHash = 111111, inventoryHashV2 = 222222,
+			inventoryHash = 111111, inventoryHashV2 = env.canon(1700000000, 222222),
 		}
 
 		-- Hand-build a payload carrying one GOOD row and one MALFORMED one. Record.new rejects a
@@ -552,7 +636,7 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 		local payload = {
 			TOGBankClassic_Inventory_Wire.VERSION, BANKER, 4242,
 			{ { 858, 5 }, { 10132, 0 } },
-			777777, 888888,
+			777777, env.canon(1757000000, 888888), 1757000000,
 		}
 		local body = TOGBankClassic_Core:SerializeWithChecksum(payload)
 
@@ -706,8 +790,12 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 			inventoryHash = 111, inventoryHashV2 = 222, mailHash = 0,
 			bank = { items = {}, slots = { count = 1, total = 28 } },
 		}
+		-- HASH-CANON-010: the requester holds OUR canon (same publish, same number), which is what
+		-- earns a no-change now. This summary used to carry revision 1 only, and the responder used
+		-- to call that "current" -- the exact gate that swallowed Alchemyrcp's canon on the live
+		-- guild. A requester with no canon is now sent the data; see Tests/statesummary_spec.lua.
 		TOGBankClassic_Guild:RespondToStateSummary(BANKER, {
-			name = BANKER, hash = 111, mailHash = 0, version = 999,
+			name = BANKER, hash = 111, hashV2 = 222, updatedAt = 999, mailHash = 0, version = 999,
 		}, PEER)
 
 		-- Asserted, not guarded with `if sent then`: a no-change that was never sent would make every

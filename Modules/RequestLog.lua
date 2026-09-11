@@ -1,6 +1,12 @@
 TOGBankClassic_Guild = TOGBankClassic_Guild or {}
 local Guild = TOGBankClassic_Guild
 
+-- NS-001: aliased as file-scope locals so a foreign global of the same name cannot be read
+-- instead. See the header of Modules/Constants.lua.
+local ADOPTION_STATUS = TOGBankClassic_Constants.ADOPTION_STATUS
+local REQUEST_LOG     = TOGBankClassic_Constants.REQUEST_LOG
+local REQUESTS_SYNC   = TOGBankClassic_Constants.REQUESTS_SYNC
+
 -- Throttle warnings to prevent spam (only warn once per session per type)
 local warnedAbout = {
 	invalidRequestVersion = false,
@@ -933,8 +939,33 @@ function Guild:ApplyRequestMutation(entry, sender)
 		entryType, requestId, entryTs, tostring(sender))
 
 	-- REQSYNC-001: Normalize sender once for all checks below.
-	-- sender is nil only for locally-applied mutations (no remote auth needed).
+	--
+	-- AUDIT-S4: THREE STATES, NOT TWO. This used to be `sender and NormalizeName(sender) or nil`
+	-- with every permission gate below wrapped in `if normSender then`, so a sender that was GIVEN
+	-- but did not resolve collapsed into the same nil as "no sender" -- and nil read as "local,
+	-- no auth needed". The consequence was a DELETE applied with NO GM check at all whenever the
+	-- name failed to normalise.
+	--
+	-- Severity, established by reading rather than asserted: NormalizePlayerName returns nil in
+	-- exactly two places (a trimmed-empty name, or an empty character-part before the hyphen), and
+	-- the one production caller passes the SERVER-supplied AceComm sender, which a hostile client
+	-- does not control. So it was latent, not live -- but it was safe only because of a property of
+	-- the caller, and this function is public. An invariant enforced at the call site and not stated
+	-- at the callee is a guard with a half-life.
+	--
+	--   nil sender        -> would mean a LOCAL apply. No caller does this; the comment that used to
+	--                        say "nil only for locally-applied mutations" described a caller that
+	--                        does not exist. Refused, so a future local caller has to add an
+	--                        explicit flag rather than acquire unauthenticated writes by passing nil.
+	--   sender, resolves  -> AUTHENTICATED; the per-type permission gates below apply.
+	--   sender, no resolve-> MALFORMED; refused here. Not applied unchecked, not treated as local.
 	local normSender = sender and self:NormalizeName(sender) or nil
+	if not normSender then
+		TOGBankClassic_Output:Debug("SYNC", "APPLY",
+			"ApplyRequestMutation: %s rejected - sender %s did not resolve to a player (AUDIT-S4)",
+			tostring(entryType), tostring(sender))
+		return false
+	end
 
 	local tombstones = self.Info.requestsTombstones or {}
 

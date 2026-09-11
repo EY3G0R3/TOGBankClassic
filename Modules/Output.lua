@@ -1,5 +1,12 @@
 TOGBankClassic_Output = {}
 
+-- NS-001: the shared constants are aliased as file-scope locals rather than read as bare globals.
+-- A local shadows any same-named global another installed addon publishes -- Grouper declares both
+-- DEBUG_CATEGORY and LOG_LEVEL, and its DEBUG_CATEGORY was winning. Full account in the header of
+-- Modules/Constants.lua, which loads first (see the TOC's dependency order).
+local LOG_LEVEL      = TOGBankClassic_Constants.LOG_LEVEL
+local DEBUG_CATEGORY = TOGBankClassic_Constants.DEBUG_CATEGORY
+
 -- Current log level (default to INFO)
 TOGBankClassic_Output.level = LOG_LEVEL.INFO
 

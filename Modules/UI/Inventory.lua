@@ -308,6 +308,23 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	self.TabGroup = tabGroup
 end
 
+--- Repaint the tab colours shortly, coalescing a burst of deliveries into one redraw.
+---
+--- TABCOLOUR-001: the tabs were redrawn at the two places NEW HASHES arrive (a hash-list batch,
+--- a P2P dispatch) -- the moments a tab is about to turn red -- and nowhere that DATA arrives, so
+--- a tab stayed red after its bank contents had landed until some later broadcast happened to
+--- repaint it. Reported from a live guild: two bankers received in full, still red. Debounced
+--- because several peers relay the same alts within the same second and each delivery would
+--- otherwise rebuild the tab strip and status bar.
+function TOGBankClassic_UI_Inventory:RefreshSoon()
+	if not self.isOpen or self.refreshPending then return end
+	self.refreshPending = true
+	C_Timer.After(0.5, function()
+		self.refreshPending = nil
+		if self.isOpen then self:DrawContent() end
+	end)
+end
+
 function TOGBankClassic_UI_Inventory:DrawContent()
 	local info = TOGBankClassic_Guild.Info
 	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
@@ -336,10 +353,12 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 	table.sort(players)
 
-	-- Returns true if this alt is HLR-pending (same definition as /togbank hashdebug):
-	-- hash mismatch, no local data, or hash matches but content is missing.
-	local function IsAltSyncPending(norm)
-		return TOGBankClassic_Guild:IsAltSyncPending(norm)
+	-- TABCOLOUR-002: red is decided by Guild:GetAltStaleness -- "v1 is always red, v2 does it by
+	-- is someone newer" -- not by the sync layer's hash-equality question, which is what made the
+	-- tabs take minutes to settle and paint current bankers red.
+	local function IsStale(norm)
+		local state = TOGBankClassic_Guild:GetAltStaleness(norm)
+		return state ~= "current"
 	end
 
 	local tabs = {}
@@ -352,7 +371,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			if not first_tab then
 				first_tab = player
 			end
-			local tabText = IsAltSyncPending(norm) and ("|cffff0000" .. player .. "|r") or player
+			local tabText = IsStale(norm) and ("|cffff0000" .. player .. "|r") or player
 			tabs[i] = { value = player, text = tabText }
 			i = i + 1
 		end
@@ -367,16 +386,34 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 	self.TabGroup:SetTabs(tabs)
 
-	-- Show a tooltip on stale banker tabs explaining that newer data exists.
+	-- TABCOLOUR-002: the tooltip says WHICH kind of red this is, with the two publish times when it
+	-- has them, so a banker can tell "I need to open my bank" from "a newer copy is on its way".
+	local function ago(at)
+		local diff = (GetServerTime() or 0) - (tonumber(at) or 0)
+		if diff < 0 then diff = 0 end
+		return SecondsToTime(diff)
+	end
 	self.TabGroup:SetCallback("OnTabEnter", function(_, _, value, tabBtn)
 		local norm = TOGBankClassic_Guild:NormalizeName(value)
-		if IsAltSyncPending(norm) then
-			GameTooltip:SetOwner(tabBtn, "ANCHOR_TOP")
-			GameTooltip:AddLine("|cffff0000Outdated Data|r")
-			GameTooltip:AddLine("Other guild members have newer data for this banker.", 1, 1, 1, true)
-			GameTooltip:AddLine("What you're seeing may not reflect current availability.", 0.8, 0.8, 0.8, true)
-			GameTooltip:Show()
+		local state, heldAt, newestAt = TOGBankClassic_Guild:GetAltStaleness(norm)
+		if state == "current" then return end
+		GameTooltip:SetOwner(tabBtn, "ANCHOR_TOP")
+		GameTooltip:AddLine("|cffff0000Outdated Data|r")
+		if state == "behind" then
+			GameTooltip:AddLine(string.format("A newer copy of this bank was published %s ago; yours is from %s ago.",
+				ago(newestAt), ago(heldAt)), 1, 1, 1, true)
+			GameTooltip:AddLine("It is being fetched -- the tab turns yellow when it arrives.", 0.8, 0.8, 0.8, true)
+		elseif state == "v1" then
+			if norm == TOGBankClassic_Guild:GetNormalizedPlayer() then
+				GameTooltip:AddLine("Your own bank has not been published in the current format yet. Open your bank once to publish it.", 1, 1, 1, true)
+			else
+				GameTooltip:AddLine("This copy predates the current format. It stays red until the banker opens their bank on the new version.", 1, 1, 1, true)
+			end
+		else -- "none"
+			GameTooltip:AddLine("No contents held for this banker yet.", 1, 1, 1, true)
 		end
+		GameTooltip:AddLine("What you're seeing may not reflect current availability.", 0.8, 0.8, 0.8, true)
+		GameTooltip:Show()
 	end)
 	self.TabGroup:SetCallback("OnTabLeave", function()
 		GameTooltip:Hide()

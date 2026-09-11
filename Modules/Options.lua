@@ -1,3 +1,10 @@
+-- NS-001: aliased as file-scope locals so a foreign global of the same name cannot be read
+-- instead. See the header of Modules/Constants.lua. This file reads no DEBUG_CATEGORY of its own --
+-- the Debug tab is built from CATEGORY_META below, and Tests/constants_spec.lua is what holds the
+-- two in step.
+local DEBUG_TAGS = TOGBankClassic_Constants.DEBUG_TAGS
+local LOG_LEVEL  = TOGBankClassic_Constants.LOG_LEVEL
+
 -- ─── Debug category metadata ────────────────────────────────────────────────
 -- Controls display order and description text in the Options UI.
 -- Must stay in sync with DEBUG_CATEGORY in Constants.lua.

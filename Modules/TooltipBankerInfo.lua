@@ -37,7 +37,28 @@ function TooltipBankerInfo:AppendTo(tooltip, itemID)
 
 	wipe(found)
 	for altName in pairs(info.alts) do
-		if TOGBankClassic_Guild:IsInCurrentGuildRoster(altName) then
+		-- TOOLTIP-002: ASK WHETHER THEY ARE STILL A BANKER, not merely whether they are still in the
+		-- guild. Reported from a live guild: "if I mouse-over an item that said banker used to have,
+		-- the tooltip says they have it. They do not have gbank in their note" -- and it survived a
+		-- reload, because the cause is not a stale cache.
+		--
+		-- `info.alts` is STORED DATA, not a roster. Removing `gbank` from someone's note stops them
+		-- being a banker, but their last-synced inventory stays in the database indefinitely (and
+		-- should -- re-adding the note must not require a resync). This loop was the only "who holds
+		-- this item" surface reading that table directly, so it kept reporting them forever.
+		--
+		-- WHY THE INVENTORY WINDOW WAS RIGHT AND THIS WAS WRONG, since the reporter confirmed the
+		-- list behaves: UI/Inventory.lua iterates Guild:GetRosterAlts() -- the banker roster -- and
+		-- only then looks each name up in info.alts. It iterates the roster and reads the data; this
+		-- iterated the data and never consulted the roster. One concept, two spellings.
+		--
+		-- Gate is IsBank alone, deliberately NOT `IsBank and not IsViewOnlyBank`: VIEWBANK-001 makes
+		-- a view-only banker visible everywhere and merely not requestable, so their stock belongs in
+		-- this tooltip. IsBank is O(1) via memberRoster and is the addon's canonical spelling of this
+		-- question (~40 call sites); it is tested first because IsInCurrentGuildRoster can fall
+		-- through to a full roster scan.
+		if TOGBankClassic_Guild:IsBank(altName)
+			and TOGBankClassic_Guild:IsInCurrentGuildRoster(altName) then
 			-- INV2 step 7a: this read `alt.items` directly and was missed when the other six read
 			-- sites moved to Guild:GetAltItems -- so with inventoryV2 on, every other view read the
 			-- V2 store and this one still read the legacy record. Two sources for one number is

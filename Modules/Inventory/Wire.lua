@@ -3,19 +3,16 @@
 -- See docs/INVENTORY_V2.md §6. The asymmetry here is deliberate and permanent:
 --
 --   SEND    switchable (sendV2Wire). The legacy send path is GONE, so off means send nothing.
---   RECEIVE never switchable -- but see the correction below about what that now means.
+--   RECEIVE never switchable, and TUPLES ONLY. The 2026-09-09 directive deleted backwards
+--           compatibility on the wire in both directions. `Wire.decode` itself drops anything that
+--           is not a tuple payload (AUDIT-S3 -- it used to rely on `Modules/Chat.lua` to do that
+--           before calling it), and Chat.lua's `togbank-d4` handler additionally warns the user by
+--           name when the dropped payload came from a banker.
 --
--- CORRECTION, AND IT MATTERS FOR ANYONE REASONING ABOUT MIXED VERSIONS. This header used to say
--- "Both formats are always accepted ... what lets a guild run mixed versions at all". THAT IS NO
--- LONGER TRUE AT THE CONSUMER. The 2026-09-09 directive deleted backwards compatibility on the
--- wire in both directions: `Modules/Chat.lua`'s `togbank-d4` handler now DROPS any payload that is
--- not a tuple payload, including an old client's delta, before `Wire.decode` is ever reached -- and
--- warns the user by name when the sender is a banker.
---
--- SO `decodeLegacy` BELOW IS REACHABLE ONLY THROUGH `Wire.decode` ITSELF, and the inventory path no
--- longer calls it that way. Do not read its continued existence as evidence that legacy inventory
--- is still accepted: it is not. Read Chat.lua's handler for what actually happens to an old
--- payload; this file describes only what the decoder is capable of.
+-- This header used to say "Both formats are always accepted ... what lets a guild run mixed
+-- versions at all", and then for a while said the legacy decoder was merely unreachable. Both are
+-- gone: there is no legacy decoder in this file. `legacyShapeFor` below BUILDS the old shape for
+-- the bandwidth measurement and nothing reads one.
 --
 -- Wire shape (positional, matching the togbank-ri / rd2 convention already used for requests):
 --
@@ -25,8 +22,8 @@
 -- ~70-90 bytes, a tuple is 2-4 integers. Named keys would put the saving back.
 --
 -- NOTE ON THE NO-TRANSLATION RULE (§5): that rule forbids reading one DB to produce the other.
--- Decoding an incoming legacy payload into tuples is not that -- it is parsing a message off the
--- wire, exactly as Scan parses a bag slot. Neither DB is read to produce the other.
+-- Decoding a wire payload into tuples is not that -- it is parsing a message off the wire, exactly
+-- as Scan parses a bag slot. Neither DB is read to produce the other.
 
 TOGBankClassic_Inventory_Wire = {}
 local Wire = TOGBankClassic_Inventory_Wire
@@ -100,8 +97,13 @@ local F_VERSION, F_ALT, F_MONEY, F_RECORDS, F_HASH, F_HASHV2, F_UPDATEDAT, F_MAI
 ---
 --- The fix is the same shape as the other two: the author stamps it, it rides with the data it
 --- describes, and the receiver stores it verbatim rather than deriving one.
+--- HASH-CANON-005: the revision-2 canon is a STRING (`<dts><hash>`, DeltaComms:ComputeCanonHash)
+--- and goes on the wire as one. `tonumber` on it would turn twenty digits into a float and lose the
+--- low digits -- a canon that no longer equals itself after one hop. Only a string or nil is
+--- carried; anything else (a v1.4.0 numeric canon) is dropped to nil, which the receiver reads as
+--- "the author published no canon we can use".
 --- @param hash number|nil the author's revision-1 hash for this record set
---- @param hashV2 number|nil the author's revision-2 hash
+--- @param hashV2 string|nil the author's revision-2 canon
 --- @param updatedAt number|nil the author's publish time, from the scan that produced these records
 --- @param mailHash number|nil the author's mail hash, stamped by the same scan
 function Wire.encode(altName, records, money, hash, hashV2, updatedAt, mailHash)
@@ -111,8 +113,18 @@ function Wire.encode(altName, records, money, hash, hashV2, updatedAt, mailHash)
 		if Record.isValid(rec) then out[#out + 1] = rec end
 	end
 	return { Wire.VERSION, altName, tonumber(money) or 0, out,
-		tonumber(hash) or nil, tonumber(hashV2) or nil, tonumber(updatedAt) or nil,
+		tonumber(hash) or nil, Wire.canonOrNil(hashV2, updatedAt), tonumber(updatedAt) or nil,
 		tonumber(mailHash) or nil }
+end
+
+--- The canon if `v` is (or re-encodes to) one, else nil. Delegates to the one spelling in
+--- DeltaComms:CanonFrom; a v1.4.0 numeric canon arriving beside its publish time is re-encoded here
+--- so an un-upgraded banker's data still carries a readable version.
+function Wire.canonOrNil(v, updatedAt)
+	-- DeltaComms loads before this file (TOC order) and owns the definition. No local fallback: a
+	-- second spelling of "is this a canon" here is exactly the two-implementations shape this
+	-- addon keeps paying for, and if DeltaComms is absent nothing on the wire works anyway.
+	return TOGBankClassic_DeltaComms:CanonFrom(v, updatedAt)
 end
 
 --- True if `payload` looks like a V2 tuple payload rather than a legacy link payload.
@@ -131,7 +143,7 @@ end
 --- are nil when the sender did not supply them, and nil is meaningful -- it means "this author
 --- published no canon", which a receiver must be able to tell apart from "the author published
 --- zero". Do not coerce them to 0.
---- @return string|nil altName, table records, number money, number|nil hash, number|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash
+--- @return string|nil altName, table records, number money, number|nil hash, string|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash
 local function decodeV2(payload)
 	local version = payload[F_VERSION]
 	-- A newer major layout cannot be read positionally, and guessing would apply wrong values
@@ -166,44 +178,35 @@ local function decodeV2(payload)
 	-- `updatedAt` is returned as nil when absent, NOT defaulted to 0 or to now. nil means "this
 	-- author published no time", which the caller must be able to tell from a real one -- the same
 	-- reasoning as the hashes directly above.
+	-- HASH-CANON-008: the sidecar publish time goes in beside the canon, as it does in `encode`.
+	-- Without it a v1.4.0 sender's NUMERIC canon was dropped to nil here even though the time
+	-- needed to re-encode it was the very next field -- so the receiver stored the author's tuples
+	-- and publish time with NO canon, and the tab read "v1" for a banker on the previous release.
+	-- Read off the operator's viewer account on 2026-09-10: three bankers scanned that afternoon
+	-- (canon on the author's side) held on the viewer with the same publish time and no canon.
 	return payload[F_ALT], records, tonumber(payload[F_MONEY]) or 0,
-		tonumber(payload[F_HASH]), tonumber(payload[F_HASHV2]), dropped,
+		tonumber(payload[F_HASH]), Wire.canonOrNil(payload[F_HASHV2], payload[F_UPDATEDAT]), dropped,
 		tonumber(payload[F_UPDATEDAT]), tonumber(payload[F_MAILHASH])
 end
 
---- Decode a legacy link payload into tuples.
----
---- Accepts the shapes older clients send: `{ name = ..., items = { {ID=, Count=, Link=}, ... } }`.
---- Suffix and enchant come from the link via the same parser the scanner uses, so a legacy
---- payload and a local scan of the same item produce an identical tuple key.
-local function decodeLegacy(payload)
-	local altName = payload.name or payload.alt
-	if type(altName) ~= "string" then return nil, {}, 0 end
-
-	local Scan = TOGBankClassic_Inventory_Scan
-	local records = {}
-	for _, item in ipairs(payload.items or {}) do
-		if type(item) == "table" and item.ID then
-			local enchant, suffix = 0, 0
-			if Scan and item.Link then enchant, suffix = Scan.parseLink(item.Link) end
-			local rec = Record.new(item.ID, item.Count or 1, suffix, enchant)
-			if rec then records[#records + 1] = rec end
-		end
-	end
-	return altName, records, tonumber(payload.money) or 0
-end
+--- AUDIT-S3: `decodeLegacy` WAS HERE and is deleted. It turned an old client's
+--- `{ name=, items={ {ID=,Count=,Link=} }, money= }` payload into tuples, and after the 2026-09-09
+--- no-backwards-compatibility directive it had exactly ONE way to be reached: a caller that skipped
+--- the `isV2` check `Modules/Chat.lua` performs before calling `Wire.decode`. So it was unreachable
+--- in production and a trap for the next caller -- a decoder that visibly handled two formats, in a
+--- file that nowhere said only one of them still arrives. The guard now lives in `Wire.decode`
+--- itself (below), which is what makes the branch have nowhere to be reached from.
 
 --- CMD-004: build the LEGACY payload these tuples would have been sent as, for size comparison.
 ---
---- Deliberately adjacent to `decodeLegacy` above, because the two are one contract seen from either
---- end and this is the only thing keeping them in step. `/togbank dev bandwidth` used to rebuild
---- this shape inline in `Modules/Chat.lua`, which made it a SECOND SPELLING of the legacy format
---- with nothing asserting the two agreed -- and the number it produces is published on the store
---- page, so a silent divergence would put a wrong figure in front of users.
----
---- `wire_spec` round-trips the output through `Wire.decode` and asserts the records come back
---- unchanged. That is what makes divergence loud: if this stops emitting a shape `decodeLegacy`
---- accepts, the round trip breaks rather than the measurement quietly moving.
+--- The shape is `{ name = altName, items = { {ID=, Count=, Link=}, ... }, money = n }` -- what
+--- v1.3.2 and earlier put on the wire. THIS FUNCTION IS NOW THE ONLY SPELLING OF THAT SHAPE in the
+--- addon: the decoder that used to sit beside it is gone (AUDIT-S3, above), so `wire_spec` asserts
+--- the shape directly -- field names, row count, and that the suffix survives inside the link via
+--- the same `Scan.parseLink` the scanner uses -- rather than round-tripping through a decoder that
+--- no longer exists. `/togbank dev bandwidth` used to rebuild this inline in `Modules/Chat.lua`,
+--- which made it a second spelling with nothing asserting the two agreed; the number it produces is
+--- published on the store page, so a silent divergence puts a wrong figure in front of users.
 ---
 --- NOT A SEND PATH. Nothing transmits this -- the legacy send path is deleted. It exists to be
 --- MEASURED. Resolve is looked up at call time rather than held, so this file gains no load-order
@@ -231,11 +234,22 @@ function Wire.legacyShapeFor(altName, records, money)
 	return { name = altName, items = items, money = tonumber(money) or 0 }, resolved, #items
 end
 
---- Decode either format. Callers do not need to know which arrived.
+--- Decode a tuple payload. ANYTHING ELSE IS DROPPED HERE, by this function, not by its caller.
+---
+--- AUDIT-S3: the `isV2` check used to live only in `Modules/Chat.lua`, at the one call site, and
+--- this function would happily decode a legacy link payload if handed one. That is an invariant
+--- enforced at the call site and not stated at the callee -- a guard with a half-life, because the
+--- next caller is written by someone reading THIS function, which advertised two formats. Peer review
+--- filed the same shape twice in one session (AUDIT-S3 here, AUDIT-S4 in RequestLog) and called it
+--- one finding. The check is now here, so there is nothing for a caller to skip; Chat.lua's own
+--- check is belt-and-braces and is what produces the named-banker warning.
+---
+--- A non-tuple payload returns format `"dropped"` and NO records. There is no `"legacy"` format any
+--- more -- a value a caller can branch on is exactly what would have kept the dead path alive.
 ---
 --- HASH-CANON-001: `hash` and `hashV2` are the AUTHOR'S, forwarded verbatim, and are nil when the
---- sender published none. A legacy payload never carries them, which is correct rather than a gap
---- -- an author that did not publish a canon has not made a statement for anyone to store.
+--- sender published none -- an author that did not publish a canon has not made a statement for
+--- anyone to store.
 --- HASH-CANON-001 rule 7: `updatedAt` is the AUTHOR'S publish time, forwarded the same way, and is
 --- nil when the sender published none. A caller must order by this rather than by its own receive
 --- time -- see the note on `Wire.encode` for what the receive-time stamp broke.
@@ -247,18 +261,15 @@ end
 --- underscores against `decodeV2` is how a caller lands on `updatedAt` while believing it read the
 --- mail hash -- which happened while writing this, and the spec caught it only because it asserted
 --- a distinctive value rather than merely "not nil".
---- @return string|nil altName, table records, number money, string format, number|nil hash, number|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash
+--- @return string|nil altName, table records, number money, string format, number|nil hash, string|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash
 function Wire.decode(payload)
 	if type(payload) ~= "table" then return nil, {}, 0, "invalid", nil, nil, 0, nil, nil end
-	if Wire.isV2(payload) then
-		local alt, records, money, hash, hashV2, dropped, updatedAt, mailHash = decodeV2(payload)
-		return alt, records, money, "v2", hash, hashV2, dropped, updatedAt, mailHash
-	end
-	local alt, records, money = decodeLegacy(payload)
-	return alt, records, money, "legacy", nil, nil, 0, nil, nil
+	if not Wire.isV2(payload) then return nil, {}, 0, "dropped", nil, nil, 0, nil, nil end
+	local alt, records, money, hash, hashV2, dropped, updatedAt, mailHash = decodeV2(payload)
+	return alt, records, money, "v2", hash, hashV2, dropped, updatedAt, mailHash
 end
 
---- Should this client emit tuples? Send is switchable; receive never is.
+--- Should this client emit tuples? Send is switchable; receive never is (and is tuples-only).
 function Wire.shouldSendV2()
 	return TOGBankClassic_Switches
 		and TOGBankClassic_Switches:IsEnabled("sendV2Wire")

@@ -238,3 +238,81 @@ describe("ItemHighlight: clearing overlays on anonymous buttons (finding 10)", f
 			"lines apart -- fixing only one leaves the other live")
 	end)
 end)
+
+-- BANKSLOT-001, the cross-file half.
+--
+-- Four shipped files walk the bank's bag slots: ItemHighlight.lua (highlighting), Bank.lua (the
+-- legacy scan and the bank fill source), Inventory/Scan.lua (the V2 scan) and Mail.lua (the
+-- bank-collect empty-slot search). The two SCAN sites were once knowingly left hardcoded at `5, 11`
+-- on the reasoning that they were identically wrong and therefore could not produce a legacy-vs-V2
+-- divergence.
+--
+-- THAT REASONING HAS AN EXPIRY DATE, and it is the deferral rather than the numbers that this
+-- guards. It holds only while both stay wrong TOGETHER: the moment one file is fixed alone the two
+-- scans walk different ranges, `/togbank dev compare` reports a divergence that is an artefact of
+-- the fix, and the addon's own comparison tool starts lying. The range now has ONE spelling --
+-- Constants.lua's CarriedBagRange / BankBagRange -- and every site calls it; this is what stops a
+-- later pass re-deriving it locally in one of them.
+--
+-- Scope: a literal loop bound is what the guard can see. It cannot see a range derived wrongly from
+-- the right constants, and does not claim to.
+describe("BANKSLOT-001: one spelling of the bank-bag range", function()
+	local SITES = {
+		"Modules/ItemHighlight.lua",
+		"Modules/Bank.lua",
+		"Modules/Inventory/Scan.lua",
+		"Modules/Mail.lua",
+	}
+
+	-- ANTI-VACUOUS, and it earns its place: this is a source scan, and a pattern that matches
+	-- nothing passes every assertion built on it while reading no code at all. If this fails, the
+	-- scan below is broken and its green result means nothing.
+	it("finds the shared bank-bag range in each of the four files", function()
+		for _, path in ipairs(SITES) do
+			local src = env.readFile(path)
+			assert.truthy(#src > 0, path .. " read as empty -- the scan cannot see it")
+			assert.truthy(src:find("BankBagRange", 1, true),
+				path .. " does not call BankBagRange, so either it stopped walking bank bags or it " ..
+				"derives the range itself again")
+		end
+	end)
+
+	-- The arithmetic lives in exactly one file. A second `NUM_BANKBAGSLOTS` read anywhere else is a
+	-- second spelling, which is the state this guard exists to end.
+	it("reads NUM_BANKBAGSLOTS in Constants.lua and nowhere else", function()
+		assert.truthy(env.readFile("Modules/Constants.lua"):find("NUM_BANKBAGSLOTS", 1, true),
+			"Constants.lua no longer reads NUM_BANKBAGSLOTS -- the one spelling has moved or gone")
+		local offenders = {}
+		for _, path in ipairs(SITES) do
+			for lineNo, line in env.codeLines(env.readFile(path)) do
+				if line:find("NUM_BANKBAGSLOTS", 1, true) then
+					offenders[#offenders + 1] = string.format("%s:%d %s", path, lineNo,
+						(line:gsub("^%s+", "")))
+				end
+			end
+		end
+		assert.same({}, offenders,
+			"a file derives the bank-bag range itself instead of calling " ..
+			"TOGBankClassic_Constants.BankBagRange() -- two spellings of one range")
+	end)
+
+	it("hardcodes the range in none of them", function()
+		local offenders = {}
+		for _, path in ipairs(SITES) do
+			for lineNo, line in env.codeLines(env.readFile(path)) do
+				-- `for bag = 5, 11`, and the same with any other literal pair, which is the shape
+				-- every one of these sites had before BANKSLOT-001. Anchored on the loop VARIABLE
+				-- (S5): an innocent `for i = 1, 3 do` elsewhere in the file is not a container walk
+				-- and must not trip a guard about container geometry.
+				if line:match("for%s+bag%s*=%s*%d+%s*,%s*%d+%s*do") then
+					offenders[#offenders + 1] = string.format("%s:%d %s", path, lineNo,
+						(line:gsub("^%s+", "")))
+				end
+			end
+		end
+		assert.same({}, offenders,
+			"a bank/bag range is hardcoded again. Read it from the client -- " ..
+			"NUM_BAG_SLOTS+1 .. NUM_BAG_SLOTS+NUM_BANKBAGSLOTS, which is Blizzard's own expression " ..
+			"in BankFrame.lua:245. Era and TBC ship from one source and need not agree.")
+	end)
+end)

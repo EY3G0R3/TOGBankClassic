@@ -28,6 +28,7 @@ To promote a command back to user-facing, just remove its name from `DEV_COMMAND
 - **`/togbank dev debugdump`** — print a list of keys in `TOGBankClassic_Guild.Info.alts` (truncated at 200). Quick check that the alts table looks right after a sync.
 - **`/togbank dev hashdebug`** — print hash-list coverage and which alts are missing from `latestBankerHashes`. Used to diagnose why a banker's data isn't propagating.
 - **`/togbank dev hashdump`** — dump the raw `latestBankerHashes` table used for sync comparison, with `OK`/`MISMATCH` per alt against the local data. Heavy output for large guilds — best run on a dummy character or with output captured.
+- **`/togbank dev sendqueue`** -- this client's P2P state in one place: send slots in use (and which requesters we have accepted but are still waiting on a state summary from), the send queue with each waiter's position and age, and our own fetch sessions with their state, chosen peer and candidate count. Added with P2P-029 so a queued request can be seen rather than inferred.
 - **`/togbank dev persistcheck`** — report request persistence counters: `requests` count, `requestLog` length, `requestLogApplied` actors, `requestLogSeq` actors, and whether `Guild.Info` is the same Lua reference as the SavedVariables faction table. Created during SYNC-001 investigation.
 - **`/togbank dev perfstats`** — print `Performance:PrintReport()`. Per-function CPU time tracked by `Performance:Track`. Useful for hot-path profiling.
 

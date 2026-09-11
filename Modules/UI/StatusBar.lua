@@ -48,6 +48,10 @@
 
 TOGBankClassic_UI_StatusBar = {}
 
+-- NS-001: aliased as a file-scope local so a foreign global of the same name cannot be read
+-- instead. See the header of Modules/Constants.lua.
+local COMM_PREFIX_DESCRIPTIONS = TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS
+
 -- ---------------------------------------------------------------------------
 -- FORMATTERS
 -- ---------------------------------------------------------------------------

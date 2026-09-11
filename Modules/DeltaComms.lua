@@ -4,6 +4,11 @@
 
 TOGBankClassic_DeltaComms = {}
 
+-- NS-001: aliased as file-scope locals so a foreign global of the same name cannot be read
+-- instead. See the header of Modules/Constants.lua.
+local PROTOCOL = TOGBankClassic_Constants.PROTOCOL
+local FEATURES = TOGBankClassic_Constants.FEATURES
+
 -- INV2 step 10: `ValidateDeltaStructure` and `ValidateItemDelta` were deleted here. They validated
 -- the `alt-delta` envelope and its added/modified/removed arrays -- a message shape this addon no
 -- longer sends or accepts. The tuple payload is validated by `Wire.isV2`/`Wire.decode` on the
@@ -213,14 +218,93 @@ end
 --- DTS only advances when the content hash moves; the canon is then computed over both. So an
 --- unchanged bank produces the same canon it did before and generates no traffic.
 ---
---- `updatedAt` is folded in with the same 31-multiply the checksum uses, over the content hash
---- rather than the item list, so this costs one extra arithmetic step and not a second walk.
+--- HASH-CANON-005: THE SHAPE IS `<dts><hash>`, ONE STRING, and the operator's words are the spec:
+--- "i wanted the hash to be <dts><hash> all one long string ... so you COULD read the DTS and do
+--- quick/easy comparison without having to pull the hash apart."
+---
+--- Until 2026-09-10 this was `Checksum(content .. "@" .. dts)`: the datestamp went IN and came out
+--- as an unreadable number. That made the canon unique per publish, which is half the point, but
+--- nothing could ask two canons WHICH IS NEWER -- only whether they were the same publish. Every
+--- "am I behind?" question therefore fell back to hash EQUALITY against whatever a peer last said,
+--- and that is the mechanism that painted current bankers red for minutes (TABCOLOUR-002).
+---
+--- Now the publish time is the first ten characters and the content checksum the last ten, both
+--- zero-padded, so:
+---   * `canon:sub(1, 10)` is the publish time, no parsing beyond tonumber;
+---   * two canons compare as plain strings and the LATER PUBLISH SORTS HIGHER, because the
+---     datestamp is fixed-width and leads (`a < b` is "a was published first" for any two canons
+---     until the year 2286);
+---   * equality still identifies one exact publish, which is what "what overwrites what" needs.
+--- A canon is a STRING from here on. A NUMBER in the revision-2 slot is a canon minted by v1.4.0
+--- (the mixed-in form) and carries no readable time: it is treated as no canon at all -- red until
+--- its author scans once on this build. That is the no-backwards-compatibility directive applied,
+--- and it is the whole reason the format could change at all.
 ---@param updatedAt number the publish time stamped by the scan that produced these items
----@return number
+---@return string canon `<10-digit publish time><10-digit content checksum>`
 function TOGBankClassic_DeltaComms:ComputeCanonHash(bank, bags, mailOrMoney, money, updatedAt)
 	local content = self:ComputeInventoryHash(bank, bags, mailOrMoney, money)
-	local stamp = tonumber(updatedAt) or 0
-	return TOGBankClassic_Core:Checksum(tostring(content) .. "@" .. tostring(stamp))
+	local stamp = math.floor(tonumber(updatedAt) or 0)
+	if stamp < 0 then stamp = 0 end
+	return string.format("%010d%010d", stamp, content)
+end
+
+--- THE canon, from whatever the revision-2 slot holds. One spelling of "is this a canon we carry".
+---
+--- Three inputs, three answers:
+---   * a `<dts><hash>` string          -> itself;
+---   * a v1.4.0 NUMERIC canon plus the author's publish time -> RE-ENCODED as `<dts><number>`;
+---   * anything else                    -> nil.
+---
+--- THE RE-ENCODING IS NOT A MUTATION, and the distinction is the operator's rule ("NEVER mutated").
+--- Both inputs are the author's own -- the number they minted and the time they stamped, carried
+--- verbatim to every holder -- and the rule is deterministic, so every client that holds a copy of
+--- one old publish, the author included, converges on the SAME string with no rescan and no
+--- recompute of content. Rebuilding the content half instead was considered and rejected: the
+--- author hashes its legacy aggregate (Bank.lua:470) and a receiver holds the V2 view, which can
+--- legitimately differ (that is what `/togbank dev compare` exists to catch), so it would be a
+--- recompute on receipt -- exactly what HASH-CANON-001 forbids. Without this, every V2 copy in the
+--- guild would read as "no canon" the day this shipped and the whole guild would rehydrate; the
+--- operator's words on hearing that: "fuck, so the v2 data i have now will be old again".
+---
+--- A numeric canon with NO publish time cannot be re-encoded -- there is no date to lead with --
+--- and is nil: no readable version, red until its author scans.
+---@param v any the revision-2 slot as held or as received
+---@param updatedAt number|nil the author's publish time that travelled beside it
+---@return string|nil canon
+function TOGBankClassic_DeltaComms:CanonFrom(v, updatedAt)
+	if type(v) == "string" then
+		if #v == 20 and v:match("^%d+$") then return v end
+		return nil
+	end
+	local n = tonumber(v)
+	local at = tonumber(updatedAt)
+	-- HASH-CANON-013: a v1.4.0 numeric canon is Core:Checksum output, `% 2147483647` (Core.lua:138),
+	-- so it is below 2^31 -- which is also the most `string.format("%d")` can carry in this Lua
+	-- without wrapping negative. A number ABOVE that range is a
+	-- 20-digit string canon that went through `tonumber` on an old-build client and came back as a
+	-- float with its low digits gone -- read off the live guild: `theirs=17890060850786974720` for a
+	-- real canon ending `...974116`, re-advertised by a peer on the previous release. Re-encoding
+	-- that produces a canon with the right date and a wrong checksum, which compares unequal to the
+	-- real one forever. It is not a version anyone can place; it is nil.
+	if n and at and at > 0 and n >= 0 and n <= 2147483646 then
+		return string.format("%010d%010d", math.floor(at), math.floor(n) % 10000000000)
+	end
+	return nil
+end
+
+--- The publish time read off the front of a canon, or nil when `canon` is not one.
+---
+--- nil for anything that is not a 20-digit string: a v1.4.0 numeric canon, a revision-1 hash, a
+--- missing value. Callers treat nil as "no readable version" -- never as zero, because zero would
+--- compare as OLDER than everything and make a garbage value look like ancient data rather than
+--- like no data.
+---@param canon any
+---@return number|nil publishedAt
+function TOGBankClassic_DeltaComms:CanonPublishTime(canon)
+	if type(canon) ~= "string" or #canon ~= 20 or not canon:match("^%d+$") then return nil end
+	local at = tonumber(canon:sub(1, 10))
+	if not at or at <= 0 then return nil end
+	return at
 end
 
 --- Stamp BOTH revisions onto an alt record from one item set.
@@ -231,7 +315,7 @@ end
 --- computed from another, and disagree with everybody including itself.
 ---@param alt table the alt record to stamp
 ---@return number legacy revision-1 hash, also stored as alt.inventoryHash
----@return number canon the DTS-bearing revision-2 hash, also stored as alt.inventoryHashV2
+---@return string canon the `<dts><hash>` revision-2 canon, also stored as alt.inventoryHashV2
 ---@return number content the datestamp-free change detector, stored as alt.inventoryContentHash
 --- HASH-CANON-003: `updatedAt` makes `inventoryHashV2` the CANON rather than a content digest.
 --- Revision 1 stays content-only and FROZEN -- it is what an unmigrated peer computes, and folding a
@@ -636,16 +720,16 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 		local hashMismatch = false
 		local mismatchReason = nil
 		if bankerCache and hasEntry and localAlt then
-			local localHash = (localAlt.inventoryHash) or 0
-			local bankerHash = bankerCache.hash or 0
-			local localMailHash = (localAlt.mailHash) or 0
-			local bankerMailHash = bankerCache.mailHash or 0
-			if localHash ~= bankerHash then
+			-- HASH-CANON-006: through the ONE comparison. This was a fourth inline spelling of
+			-- revision-1 equality (after HashesAgreeWith, the HLR compare and BroadcastP2PRequest),
+			-- and every one of them called a pre-canon copy "in sync" with the banker's canon when
+			-- the revision-1 numbers happened to agree -- so the copy was never replaced.
+			local agree, localHash, localMailHash = TOGBankClassic_Guild:HashesAgreeWith(localAlt, bankerCache)
+			if not agree then
 				hashMismatch = true
-				mismatchReason = string.format("inventory hash mismatch (local=%s, banker=%s)", tostring(localHash), tostring(bankerHash))
-			elseif localMailHash ~= bankerMailHash then
-				hashMismatch = true
-				mismatchReason = string.format("mail hash mismatch (local=%s, banker=%s)", tostring(localMailHash), tostring(bankerMailHash))
+				mismatchReason = string.format("version mismatch (local=%s/%s canon=%s, banker=%s/%s canon=%s)",
+					tostring(localHash), tostring(localMailHash), tostring(localAlt.inventoryHashV2),
+					tostring(bankerCache.hash), tostring(bankerCache.mailHash), tostring(bankerCache.hashV2))
 			end
 		end
 
@@ -661,6 +745,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 			missingInfo[norm] = {
 				reason = reason,
 				hash = (bankerCache and bankerCache.hash) or (localAlt and localAlt.inventoryHash) or nil,
+				hashV2 = (bankerCache and bankerCache.hashV2) or nil,
 				updatedAt = (bankerCache and bankerCache.updatedAt) or (localAlt and (localAlt.inventoryUpdatedAt or localAlt.version)) or nil,
 			}
 			table.insert(
@@ -740,7 +825,7 @@ function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
 				tostring(info.hash),
 				tostring(info.updatedAt)
 			)
-			TOGBankClassic_Guild:BroadcastP2PRequest(norm, info.hash, info.updatedAt, nil)
+			TOGBankClassic_Guild:BroadcastP2PRequest(norm, info.hash, info.updatedAt, nil, info.hashV2)
 		-- No hash: skip; will be acquired in next SyncDeltaVersion cycle
 		end
 	end

@@ -30,8 +30,11 @@ local BANKER = "Bankchar-Testrealm"
 local PEER   = "Someoneelse-Testrealm"
 
 -- A canon nothing can legitimately produce for these contents. If it is still here afterwards, the
--- path under test carried it rather than deriving one.
-local SENTINEL = 424242
+-- path under test carried it rather than deriving one. HASH-CANON-005: a canon is `<dts><hash>`,
+-- one string, so the sentinel is one; the content checksum it would have been minted from is
+-- planted separately because that field stays numeric.
+local SENTINEL_CONTENT = 424242
+local SENTINEL = env.canon(1757000000, SENTINEL_CONTENT)
 local SENTINEL_V1 = 313131
 
 local function checksum(str)
@@ -61,7 +64,13 @@ local function loadChain(playerName, bankers)
 		Checksum                   = function(_, s) return checksum(s) end,
 		ComputeInventoryHash       = function(_, ...) return D:ComputeInventoryHash(...) end,
 		ComputeLegacyInventoryHash = function(_, ...) return D:ComputeLegacyInventoryHash(...) end,
-		ComputeCanonHash           = function(_, ...) return D:ComputeCanonHash(...) end,
+		-- NO ComputeCanonHash here, on purpose (AUDIT-S1 follow-on). The real Core fronts exactly
+		-- three hash methods and this one is not among them: the canon is minted at ONE production
+		-- site, inside DeltaComms:StampInventoryHashes, which is the invariant the class guard below
+		-- pins. This table used to carry a fourth delegate, making the test surface WIDER than
+		-- production -- CMD-001 with the sign reversed: correct-looking code calling
+		-- Core:ComputeCanonHash would pass every spec and be "attempt to call a nil value" in the
+		-- client, on the hash path, at scan time. Specs that need the canon directly call D.
 		StampInventoryHashes       = function(_, alt, ...) return D:StampInventoryHashes(alt, ...) end,
 		-- The envelope is a pass-through HERE ONLY. This file is about which client may produce a
 		-- hash, not about framing, and syncwire_spec drives the real checksum envelope end to end.
@@ -115,7 +124,7 @@ local function plantSentinel()
 	local alt = TOGBankClassic_Guild.Info.alts[BANKER]
 	alt.inventoryHash        = SENTINEL_V1
 	alt.inventoryHashV2      = SENTINEL
-	alt.inventoryContentHash = SENTINEL
+	alt.inventoryContentHash = SENTINEL_CONTENT
 	alt.inventoryUpdatedAt   = 1757000000
 	alt.version              = 1757000000
 	return alt

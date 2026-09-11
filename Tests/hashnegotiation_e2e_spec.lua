@@ -168,17 +168,24 @@ describe("HASH-REV-001 end to end: scan -> stamp -> advertise -> compare", funct
 			"reported agreement -- so no delta is computed and the change never propagates")
 	end)
 
-	--- THE CLAIM THE WHOLE CHANGE RESTS ON. Upgrading must not cut you off from the guild.
-	it("a migrated and an UNMIGRATED client still agree about an identical inventory", function()
+	--- HASH-CANON-006 REVERSED THIS EXAMPLE, and the old assertion is kept in the message so nobody
+	--- restores it. It used to assert agreement -- "upgrading must not cut you off from the guild" --
+	--- which was right while the guild ran mixed versions and is the exact defect once it does not
+	--- (the no-backwards-compatibility directive): a client holding a copy with NO canon whose
+	--- revision-1 hash equals the banker's current one was told "in sync", never requested, and could
+	--- never ACQUIRE a canon. Read off the live guild: Alchemyrcp, banker 808855588 + canon, viewer
+	--- 808855588 + none, tab red forever. The only way to get a canon is to fetch, so this pair must
+	--- DISAGREE, and the disagreement is what triggers the fetch.
+	it("a client with NO canon does NOT agree with a peer advertising one, even on an identical inventory", function()
 		scan(PLAIN)
 		local summaryA = advertise()
 		local altB = asSecondClient(PLAIN)
-		asUnmigrated(altB, nil)  -- B is running the previous release
+		asUnmigrated(altB, nil)  -- B holds a pre-canon copy
 
 		assert.is_nil(altB.inventoryHashV2, "precondition: B still looks migrated")
-		assert.is_true(TOGBankClassic_Guild:HashesAgreeWith(altB, summaryA),
-			"an un-upgraded client disagreed with an upgraded one about an identical inventory -- " ..
-			"which is the protocol break HASH-REV-001 exists to remove")
+		assert.is_false(TOGBankClassic_Guild:HashesAgreeWith(altB, summaryA),
+			"a pre-canon copy was called in sync with the banker's canon on revision 1 alone -- this " ..
+			"client will never request, and never acquire, the canon it lacks")
 	end)
 
 	it("agrees in the other direction too: migrated client, unmigrated ADVERTISEMENT", function()
@@ -203,24 +210,26 @@ describe("HASH-REV-001 end to end: scan -> stamp -> advertise -> compare", funct
 			"that has not upgraded -- a regression caused entirely by code they do not run")
 	end)
 
-	--- The honest limitation, asserted rather than left implied. A mixed pair falls back to revision
-	--- 1, which is blind to suffix -- so it MISSES the swap, exactly as the previous release did.
-	--- That is the status quo, not a regression, and it heals the moment both sides upgrade. Writing
-	--- it down stops a later reader reporting it as a new bug, and stops anyone "fixing" it by
-	--- making the fallback compare revision 2 against revision 1.
-	it("a mixed pair is blind to the suffix swap -- the status quo, and it heals on upgrade", function()
+	--- HASH-CANON-006 changed the first half of this example. It used to assert that a client with no
+	--- canon AGREED with a canon-bearing advertisement across a suffix swap ("the honest limitation
+	--- ... blind to suffix"); under the no-back-compat rule that client disagrees for the prior
+	--- reason -- it holds no canon at all -- and the fetch that follows is what heals it. The half
+	--- that still matters is unchanged: a peer advertising NO canon is compared on revision 1, which
+	--- is blind to the swap, and two canon-bearing clients catch it.
+	it("a suffix swap is caught once both sides hold a canon; a canon-less ADVERTISEMENT is blind to it", function()
 		scan(TIGER)
 		local summaryA = advertise()
+
+		-- A canon-less advertisement against our canon-bearing copy: revision 1 decides, and it
+		-- cannot see the swap. That is the status quo for a peer that has not upgraded, and it heals
+		-- the moment that peer scans on the new build.
 		local altB = asSecondClient(MONKEY)
+		local oldAdvert = { hash = summaryA.hash, updatedAt = summaryA.updatedAt, mailHash = summaryA.mailHash }
+		assert.is_true(TOGBankClassic_Guild:HashesAgreeWith(altB, oldAdvert),
+			"unexpected: the revision-1 fallback saw a difference revision 1 cannot represent")
 
-		-- Mixed: falls back to revision 1, which cannot see the difference.
-		asUnmigrated(altB, nil)
-		assert.is_true(TOGBankClassic_Guild:HashesAgreeWith(altB, summaryA),
-			"unexpected: the fallback saw a difference revision 1 cannot represent, which means it " ..
-			"is not really falling back")
-
-		-- Both migrated: caught. Same two inventories, same comparison, different verdict -- which
-		-- is the entire value of shipping revision 2 at all.
+		-- Both hold a canon: caught. Same two inventories, different verdict -- the entire value of
+		-- shipping revision 2 at all.
 		local altB2 = asSecondClient(MONKEY)
 		assert.is_false(TOGBankClassic_Guild:HashesAgreeWith(altB2, summaryA),
 			"once BOTH sides speak revision 2 the swap must be caught")

@@ -44,6 +44,7 @@
 
 <ul>
 <li>One-Click Fulfill: Bankers click "Fulfill" button—addon automatically attaches items to mail</li>
+<li>Collect From The Bank: the same button works at the bank &mdash; each click pulls out what an order still needs, splitting oversized stacks and putting the spare straight back. Gather at the bank, walk to the mailbox, keep clicking to send</li>
 <li>Smart Stack Splitting: Automatically splits oversized stacks with confirmation dialogs
   <ul>
   <li>Example: Request for 2 Felcloth from a 5-stack? Addon prompts to split precisely 2 items</li>
@@ -58,8 +59,12 @@
 
 <ul>
 <li><strong>Bank contents travel as compact numbers, not item links.</strong> Your own client rebuilds each item from its ID, so nothing is sent that your game already knows &mdash; measured at 85% less data than the old format across 227 items on a live guild.</li>
-<li><strong>Nothing is sent when nothing changed.</strong> A bank character's contents get a fingerprint when they are scanned, and members compare fingerprints before asking for anything. Matching fingerprints means no transfer at all.</li>
-<li><strong>No single bottleneck.</strong> Data comes from whichever guild member has the freshest copy, not from one designated player who has to be online.</li>
+<li><strong>Nothing is sent when nothing changed.</strong> A bank character's contents get a version stamp when they are scanned &mdash; only when something actually changed, so opening the bank to look costs nothing &mdash; and members compare stamps before asking for anything. A stamp says when it was published, so &quot;who has the newest copy&quot; is one glance.</li>
+<li><strong>Seconds, not minutes.</strong> When a bank character opens their bank, everyone online who is behind on it has the update within seconds &mdash; the announcement itself is the offer.</li>
+<li><strong>Tiny messages.</strong> Every bank character has a permanent four-digit number, the same on everyone's screen, so a guild-wide check-in is a few hundred bytes and a &quot;I have newer copies of these&quot; reply is a single message however many banks it covers.</li>
+<li><strong>No single bottleneck.</strong> Data comes from whichever guild member has the freshest copy, not from one designated player who has to be online. Downloads from different guildmates run at the same time, and the short back-and-forth that sets them up travels on a fast lane of its own, so it is answered even while the other player is busy sending to someone else.</li>
+<li><strong>Nobody is refused.</strong> A player sends to three people at a time; anyone else is told their place in the queue and waits their turn, or asks someone else who has the same bank.</li>
+<li><strong>The tab colour tells you where you stand.</strong> A yellow bank tab is current; a red one means either that bank has not been scanned since its owner updated, or someone has a newer copy than you and it is on its way. Hover the tab to see which.</li>
 <li><strong>Log in and catch up.</strong> Anything you missed while offline arrives shortly after you log in, without you asking.</li>
 <li><strong>Built to stay quiet.</strong> Traffic is queued and paced so a busy guild chat doesn't get flooded and messages don't arrive garbled.</li>
 <li><strong>Nothing to configure.</strong> All of this runs on its own; there are no sync settings to tune.</li>
@@ -85,6 +90,8 @@
 <li>Automatic Detection: Add "gbank" to Public Note or Officer Note—addon handles the rest</li>
 <li>Auto-Scan: Configure to scan bank/bags/mail automatically when opened</li>
 <li>Mail Fulfillment: Receive requests, click Fulfill, send mail—streamlined 3-step process</li>
+<li>Bank Collection: click the same Fulfill button at your bank to pull out what open orders need before you head to the mailbox</li>
+<li>Numbered Automatically: every bank character gets a permanent four-digit number the first time its bank is scanned &mdash; nothing to type, and it shows beside the name in <code>/togbank roster</code></li>
 <li>Donation Tracking: Optional feature to accept and track donations from guild members</li>
 </ul>
 
@@ -181,9 +188,9 @@
 <ul>
 <li><code>/togbank</code> &mdash; open or close the main inventory window</li>
 <li><code>/togbank help</code> &mdash; list every available command</li>
-<li><code>/togbank roster</code> &mdash; show the bank characters the addon knows about</li>
-<li><code>/togbank sync</code> &mdash; manually pull the latest data from your guild</li>
-<li><code>/togbank share</code> &mdash; push your own inventory and requests to the guild</li>
+<li><code>/togbank roster</code> &mdash; list the bank characters with their four-digit numbers</li>
+<li><code>/togbank sync</code> &mdash; manually pull the latest data from your guild (automatic every ten minutes)</li>
+<li><code>/togbank share</code> &mdash; announce your own bank's current version to the guild now (automatic every ten minutes and after every bank scan)</li>
 <li><code>/togbank version</code> &mdash; show which version you are running</li>
 <li><code>/togbank wipeframes</code> &mdash; put all windows back to their default positions and sizes</li>
 </ul>
@@ -288,6 +295,51 @@
 <p>In practice that means a fix to the shared sync layer benefits every TOG addon at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
 
 <h2>Recent Updates</h2>
+
+<h3>v1.4.1 - Collect From The Bank, Faster Sync</h3>
+<p><strong>Everyone in your guild should update.</strong> The way bank characters announce and offer their contents has changed again and a guildmate still on v1.4.0 will simply stop hearing offers from anyone who has updated &mdash; nothing breaks for them, they just stop getting newer copies until they update. One thing to do once after updating: <strong>open and close each bank character's bank once</strong>, so its contents are published in the current format &mdash; until then that bank's tab stays red for everyone. The first bank account to do that (or simply to log in, if it already scanned on v1.4.0) numbers every bank character in the guild in one go, and everyone else picks the list up automatically.</p>
+
+<p><strong>New</strong></p>
+<ul>
+<li>When a bank character opens their bank, everyone online who is behind on it now has the update within seconds. Before, you had to wait for your own next check-in &mdash; up to ten minutes &mdash; and even then the reply could get lost behind a busy bank character's other transfers. Now a bank character announcing a new version is treated as the offer itself, and you ask for it straight away.</li>
+<li>Every bank character now has a permanent four-digit number, assigned automatically and the same on everyone's screen. <code>/togbank roster</code> shows the number beside each bank character. Nothing to set up: the first bank account to log in on this version numbers the roster, and everyone else picks the list up from the next message they hear. A new bank character gets the next number the moment its bank is first scanned; a bank character that leaves and comes back keeps its old one.</li>
+<li>The fulfil button now collects from your bank as well. Open your bank and keep clicking it: each click pulls out what an order still needs, and if the stack is bigger than the order it puts the spare straight back. Gather everything at the bank, walk to a mailbox, then keep clicking the same button to send it. One button, and it does the right thing for wherever you are standing &mdash; the game never lets you have a bank and a mailbox open at the same time.</li>
+</ul>
+
+<p><strong>Changed</strong></p>
+<ul>
+<li>Sync messages are a fraction of their former size. The list every member sends the guild at login and every ten minutes is about a fifth of what it was, and a &quot;I have newer copies of these&quot; reply &mdash; which used to be several messages &mdash; is now a single one of about a hundred bytes. Less guild-channel traffic for everyone, and the messages that matter get through a busy bank character far sooner.</li>
+<li>Before asking anyone for a bank's data, the addon now asks the few people who said they have it which version they hold, and takes it from whoever has the newest &mdash; the bank character itself if it answers. If everyone holding the newest copy is busy, you wait your turn for the newest rather than taking an older copy from someone idle.</li>
+<li>A red bank tab now means exactly one of two things, and hovering it tells you which: either that bank's contents are from before the current version and will stay red until its owner opens their bank once, or someone in the guild has a newer copy than you and it is on its way. Red used to be decided by whether the last number a guildmate happened to mention matched yours &mdash; which could not tell newer from older, took minutes to settle, and painted banks red that were perfectly current. It is now decided by which copy was published later, it updates the moment anyone mentions a newer copy, and it turns yellow the instant that copy arrives. Your own bank can never be turned red by something another guildmate says about it.</li>
+<li>Answering a guildmate's &quot;what do you have?&quot; with &quot;I have newer&quot; is now a single comparison instead of a calculation, which is what lets the above be fast.</li>
+<li>The short back-and-forth between two players &mdash; &quot;can I have this bank?&quot;, &quot;yes&quot;, &quot;you're third in line&quot; &mdash; now travels on a fast lane of its own, separate from the bulk bank data. A request is answered within a second or two even while the other player is busy sending banks to someone else; before, that answer could sit for many seconds behind the larger messages.</li>
+<li>The manual <code>/togbank sync</code> announcement moved off that fast lane so it can never delay those answers.</li>
+<li>The <code>/togbank share</code> help text and the in-game setup instructions said sharing happened &quot;every 3 minutes&quot;. It is every ten minutes, and immediately whenever a bank is scanned; the instructions now say so and tell you to look for your bank character's number in <code>/togbank roster</code>.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>A reply that arrived a little late &mdash; after the addon had stopped waiting for replies &mdash; was thrown away, so a bank could sit red for ten minutes until the next check-in happened to catch it. Late replies are acted on now.</li>
+<li>One reply from a guildmate could set off a burst of requests to the whole guild for banks that nobody actually had a newer copy of &mdash; twenty-six at once was seen &mdash; each one timing out. The addon now asks only when someone has genuinely published something newer than you hold.</li>
+<li>The developer diagnostic for &quot;is this bank up to date?&quot; could disagree with the tab colour it was meant to explain. They now use the same rule.</li>
+<li>Bank tabs stayed red after the data had actually arrived, until some unrelated later message happened to repaint them. They now repaint on arrival.</li>
+<li>A bank whose contents had not changed since before this version could never be brought up to date: because the contents matched, every check said &quot;you already have this&quot; and nothing was ever asked for, so the tab stayed red with no way to clear it. It is now requested the first time its owner is seen on the new version.</li>
+<li>Data sent by a guildmate still on the previous version arrived with its contents and publish time intact but lost its version marker on the way in, so the tab read as out of date even though it had just been updated. The marker is now kept.</li>
+<li>Asking a bank character for a bank whose contents had not changed &mdash; only its version marker had &mdash; got the answer &quot;you already have this&quot;, so the new marker never arrived and the tab stayed red even though the request itself had gone out. The bank character now answers based on the version you actually hold, not on whether the contents happen to match.</li>
+<li>Syncing could grind to a halt in a busy guild. A character sends to three people at a time; anyone beyond that was told &quot;busy&quot; and went off to ask someone else &mdash; and a request that was accepted but then turned out to need nothing kept its place for over three minutes, so bank characters were &quot;busy&quot; to everyone, everyone kept re-asking, and the re-asking made it worse. Now a place is given back the moment there is nothing to send, and instead of &quot;busy&quot; you are told your place in the queue: if someone else has the same bank you ask them, and if not you simply wait your turn. Nothing is dropped.</li>
+<li>Bank data now downloads from several guildmates at the same time instead of three at a time in a fixed order, and offers that could not improve what you already hold are no longer accepted &mdash; so the bank you are actually missing is fetched first rather than waiting behind twenty that are already current.</li>
+<li>Each request carried a full list of what you already hold &mdash; several kilobytes &mdash; that the sender no longer uses. It now carries only the version markers, a few hundred bytes.</li>
+<li>A bank character never answered a guildmate's &quot;what do you have?&quot; with their own bank &mdash; only with copies of other people's. If that character was the only one online holding the current version, nobody could get it except by asking them directly, and the addon only asks one bank character at a time. They now answer with their own bank too.</li>
+<li>A bank character sharing their bank now tells everyone the current version straight away; before, the share coloured the tab but the version itself only registered when you next asked directly.</li>
+<li>A guildmate could advertise a version of a bank they were not actually able to send &mdash; an older copy that had picked up a version marker without the data behind it. Everyone else then asked for it, received nothing, and asked again on the next cycle. Only a version that can genuinely be delivered is advertised or answered with now.</li>
+<li>A version marker that had been damaged by a guildmate on the previous version &mdash; passed through as a number and losing its last few digits on the way &mdash; could be re-shared as a version that never matched anything, so the bank it belonged to could never read as up to date. Damaged markers are now recognised and ignored.</li>
+<li>Walking away from the bank part-way through collecting for an order &mdash; and then using, mailing or banking the stack you had pulled &mdash; left the button stuck saying it was &quot;waiting for the stack to reach your bags&quot; at every bank from then on. Closing the bank now clears it, and it gives up looking after a few tries rather than forever.</li>
+<li>A fresh install &mdash; or a database you had just cleared &mdash; could error the first time a bank character answered it, before it had asked for anything, so nothing ever downloaded. Two bank characters in the same guild and a stale copy from a third could also wrestle over which version was &quot;newest&quot;, with the loser's tab going red and the addon re-requesting data it could not use.</li>
+<li>Hovering an item could list a character who is no longer a bank character. Once someone's bank marker is taken off their note they stop being a bank, but the addon keeps their last known contents on file &mdash; deliberately, so putting the marker back does not force everything to sync again. The tooltip was reading that stored list without checking who is still a bank, so it kept naming them. It now checks, and reloading was never going to help because nothing was out of date. Bank characters marked view-only are still listed, as intended.</li>
+<li>Turning on a debug category could fail with &quot;Unknown debug category&quot;, and the list you were offered belonged to a different addon entirely. If you have another addon installed that uses the same internal names, it was overwriting this one's list &mdash; so a category like BANK looked as though it did not exist, exactly when you were trying to use it to work out what was wrong. Each addon now keeps its own list to itself, in both directions.</li>
+<li>The performance report listed operations that no longer exist, showing them as zero. A zero there looked like &quot;this ran and cost nothing&quot; when it actually meant &quot;this cannot happen any more&quot;, which is misleading in the one place you go to find out why something is slow. The report now lists only what is genuinely measured.</li>
+<li>How many bags and bank bags to look through was written into the code as a fixed number rather than asked of the game. On Classic Era it happened to be close enough that nothing broke, but it is the kind of number that differs between game versions &mdash; and if it were ever too small, a whole bag would quietly go missing from a scan with nothing to tell you. Every place that walks your bags now asks the game.</li>
+</ul>
 
 <h3>v1.4.0 - Guild Roster Overhaul</h3>
 <p><strong>Everyone in your guild needs this version.</strong> The way bank contents are shared has changed and is not compatible with older versions &mdash; until a bank character updates, players on this version cannot read their contents. Nothing is lost in the meantime, and the addon will tell you by name who still needs to update.</p>

@@ -349,7 +349,7 @@ describe("Database snapshots", function()
 
 	it("expires a snapshot older than the max age", function()
 		DB:SaveSnapshot("Testguild", "Bob-Testrealm", { version = 100 })
-		env.advance(PROTOCOL.DELTA_SNAPSHOT_MAX_AGE + 1)
+		env.advance(TOGBankClassic_Constants.PROTOCOL.DELTA_SNAPSHOT_MAX_AGE + 1)
 		assert.is_nil(DB:GetSnapshot("Testguild", "Bob-Testrealm"))
 	end)
 

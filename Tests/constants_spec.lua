@@ -35,31 +35,57 @@ local function sourceFiles()
 	return files
 end
 
-local function readFile(path)
-	local fh = io.open(path, "rb")
-	if not fh then return "" end
-	local src = fh:read("*a")
-	fh:close()
-	if src:sub(1, 3) == "\239\187\191" then src = src:sub(4) end   -- tolerate a BOM
-	return src
-end
-
--- Iterate real code lines, skipping `--` comments. Without this the scans below trip over
+-- Both lifted into the env: the identical bodies were open-coded across several spec files, and a
+-- scan helper copied per file can be corrected in one place and stay wrong in the others. The
+-- comment-skipping in codeLines is load-bearing here -- without it these scans trip over
 -- Output.lua's own doc header, which spells out the signature as Debug("CATEGORY", "TAG", ...).
-local function codeLines(src)
-	local n = 0
-	return coroutine.wrap(function()
-		for line in (src .. "\n"):gmatch("([^\n]*)\n") do
-			n = n + 1
-			if not line:match("^%s*%-%-") then coroutine.yield(n, line) end
-		end
-	end)
-end
+local readFile  = env.readFile
+local codeLines = env.codeLines
 
 describe("Constants", function()
+	-- NS-001: the constant tables are no longer bare globals -- Constants.lua publishes ONE global,
+	-- TOGBankClassic_Constants, because another installed addon (Grouper) declared DEBUG_CATEGORY and
+	-- LOG_LEVEL at file scope and won. Captured in before_each rather than at file scope because
+	-- Constants.lua has not been loaded when this file is read.
+	local DEBUG_CATEGORY, DEBUG_TAGS, COMM_PREFIX_DESCRIPTIONS
+
 	before_each(function()
 		env.reset()
 		env.loadFile("Modules/Constants.lua")
+		DEBUG_CATEGORY           = TOGBankClassic_Constants.DEBUG_CATEGORY
+		DEBUG_TAGS               = TOGBankClassic_Constants.DEBUG_TAGS
+		COMM_PREFIX_DESCRIPTIONS = TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS
+	end)
+
+	-- NS-001 guard. The collision this fixes was invisible in game: `/togbank debug BANK` answered
+	-- "Unknown debug category" and offered another addon's eleven, because that addon's bare
+	-- DEBUG_CATEGORY had overwritten ours. Nothing errored. Asserting the ABSENCE of the old bare
+	-- globals is what stops one being reintroduced by a later edit -- luacheck no longer lists them,
+	-- but a spec that reads _G is the check that survives someone re-adding them to .luacheckrc.
+	it("publishes its constants under ONE namespace and leaves no bare global behind", function()
+		local leaked = {}
+		for _, name in ipairs({
+			"ADOPTION_STATUS", "TIMER_INTERVALS", "LOG_LEVEL", "DEBUG_CATEGORY", "DEBUG_TAGS",
+			"REQUEST_LOG", "REQUESTS_SYNC", "COMM_PREFIX_DESCRIPTIONS", "PROTOCOL", "PEER_TO_PEER",
+			"FEATURES",
+		}) do
+			assert.is_not_nil(TOGBankClassic_Constants[name],
+				name .. " is missing from TOGBankClassic_Constants")
+			if rawget(_G, name) ~= nil then leaked[#leaked + 1] = name end
+		end
+		assert.same({}, leaked,
+			"these are bare globals again -- another addon declaring the same name silently " ..
+			"replaces them, which is audit NS-001 (see Modules/Constants.lua's header)")
+	end)
+
+	-- The same rule for the one bare FUNCTION Guild.lua used to declare. Its name is generic enough
+	-- that a collision is a live risk rather than a theoretical one.
+	it("declares no bare GetPlayerWithNormalizedRealm global", function()
+		env.loadFile("Modules/Guild.lua")
+		assert.is_nil(rawget(_G, "GetPlayerWithNormalizedRealm"),
+			"GetPlayerWithNormalizedRealm is a bare global again (audit NS-001)")
+		assert.is_function(TOGBankClassic_Guild.GetPlayerWithNormalizedRealm,
+			"it should be published on the module table instead")
 	end)
 
 	it("gives every debug category a default in Database:Init", function()
