@@ -14,6 +14,17 @@
 -- moving a stack out of the bank MAY merge it into a partial stack already in bags (the client
 -- auto-stacks). The surplus arithmetic is asserted with merging on AND off, because the addon cannot
 -- know which happened and must be right regardless.
+--
+-- WHY THIS MODEL IS STILL HERE after the harness shipped its cursor (WoWAPITesting 1211a3a, which
+-- multifill_spec adopted on 2026-09-13): (1) the move the whole file turns on, `UseContainerItem`
+-- on a bank slot with the bank open, was not in the harness -- DELIVERED at f787c81 (pinned
+-- 55b0c88, same day) with `wow.bankOpen` / `wow.bankAutoStack`, so this reason is gone; (2) the
+-- harness's swap leaves the displaced stack ON THE CURSOR, while this fixture -- and COLLECT-002's
+-- code, Mail.lua's "the client exchanges the two" -- has it return to the slot the addon picked up
+-- from. Which the client does is unmeasured (the harness now says so in its own comment); the
+-- operator's BANKFILL in-game check answers it, and the fixture follows the client, not the
+-- harness. Thread b14ca32272f3 on WoWAPITesting's inbox is where the reading lands. Lift this file
+-- once the swap question is settled by a client -- that is the only condition left.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
@@ -33,6 +44,8 @@ local calls
 local cursor
 --- Whether UseContainerItem merges into partial stacks of the same item first (client behaviour).
 local mergeOnMove
+--- COLLECT-002: the slot the cursor stack was picked up from, and every swap the client performed.
+local pickedFrom, swaps
 
 local function bagSlots(first, last)
 	local out = {}
@@ -93,15 +106,32 @@ local function pickupContainerItem(bag, slot)
 	assert(tbl and slot >= 1 and slot <= tbl.size,
 		string.format("pickup targeted a slot that does not exist: %d/%d", bag, tostring(slot)))
 	if cursor then
-		-- The addon only ever drops onto a slot it found EMPTY. Dropping onto an occupied one is a
-		-- swap in the client, which would leave the swapped item on the cursor -- a fixture failure
-		-- rather than a modelled behaviour, because the code must never do it.
-		assert(not tbl[slot], string.format("dropped the cursor onto an OCCUPIED slot %d/%d", bag, slot))
+		-- Dropping onto an EMPTY slot places the cursor stack. Dropping onto an OCCUPIED slot is the
+		-- client's SWAP: the two change places and the cursor is empty afterwards (a same-item drop
+		-- would merge instead; the code never does that -- it swaps a stack of a DIFFERENT item, and
+		-- the fixture says so rather than modelling a merge it never sees). COLLECT-002 relies on
+		-- the swap; before it, this fixture asserted the addon never dropped on an occupied slot.
+		local there = tbl[slot]
+		if there then
+			assert(there.itemID ~= cursor.itemID, string.format(
+				"dropped a stack onto the SAME item at %d/%d -- that merges, and the addon must not rely on it", bag, slot))
+			swaps[#swaps + 1] = { bag = bag, slot = slot, put = cursor.itemID, took = there.itemID }
+		end
 		tbl[slot] = cursor
-		cursor = nil
+		cursor = there
+		if there then
+			-- The swapped-out stack rides the cursor back into the slot the addon picked up from.
+			local from = pickedFrom
+			assert(from, "a swap with no origin slot: the addon dropped without picking up first")
+			assert(not env.bags[from.bag][from.slot], "the origin slot was refilled before the swap landed")
+			env.bags[from.bag][from.slot] = there
+			cursor = nil
+		end
+		pickedFrom = nil
 	else
 		cursor = tbl[slot]
 		tbl[slot] = nil
+		pickedFrom = cursor and { bag = bag, slot = slot } or nil
 	end
 end
 
@@ -120,6 +150,7 @@ local function load()
 	Guild.IsBank = function(_, n) return n == ME end
 
 	calls, cursor, mergeOnMove = {}, nil, true
+	pickedFrom, swaps = nil, {}
 	C_Container.UseContainerItem    = useContainerItem
 	C_Container.SplitContainerItem  = splitContainerItem
 	C_Container.PickupContainerItem = pickupContainerItem
@@ -371,18 +402,101 @@ describe("Mail:BankCollectStep", function()
 			assert.equal(0, #calls, "must not touch the bank when there is nothing to do")
 		end)
 
-		-- (7)
-		it("refuses with full bags before touching the bank", function()
+		-- (7) -- was "refuses with full bags". COLLECT-002 (NanaTheBanana: "if the bag is full, it
+		-- will swap items in the inventory for the missing items"; the operator: "put things into the
+		-- bank when the bags are full that aren't needed to fill an order"): the click now SWAPS an
+		-- unneeded carried stack for the wanted bank stack. Same button, same step, no new UI.
+		it("with full bags, swaps an unneeded carried stack into the bank for the wanted one", function()
+			local full = {}
+			for i = 1, 16 do full[i] = { id = WOOL, count = 1 } end
+			env.setBag(0, 16, full)
+			vault(5)
+			order("r1", 5)
+			local ok, msg = click()
+			assert.is_true(ok, msg)
+			assert.truthy(msg:find("swapped"), msg)
+			assert.equal(0, callsNamed("UseContainerItem"), "a plain move-out with full bags is a no-op in the client")
+			assert.equal(2, callsNamed("PickupContainerItem"), "a swap is one pick-up and one drop")
+			assert.equal(1, #swaps)
+			assert.equal(WOOL, swaps[1].put)
+			assert.equal(LINEN, swaps[1].took)
+			assert.equal(VAULT, swaps[1].bag)
+			assert.equal(5, inBags(), "the wanted stack did not land in the bags")
+			assert.equal(0, inBank())
+			assert.equal(1, Bank:CountItemInBank(nil, WOOL), "the spare wool did not go into the bank")
+			assert.equal(15, Bank:CountItemInBags(nil, WOOL))
+			assert.is_nil(cursor, "something was left on the cursor")
+			assert.is_nil(Mail.bankCollectState, "an exact swap has nothing to return")
+		end)
+
+		it("swaps and then returns the surplus, exactly like a plain pull that overshot", function()
 			local full = {}
 			for i = 1, 16 do full[i] = { id = WOOL, count = 1 } end
 			env.setBag(0, 16, full)
 			vault(20)
 			order("r1", 5)
 			local ok, msg = click()
+			assert.is_true(ok, msg)
+			assert.equal("return", Mail.bankCollectState.phase)
+			assert.equal(15, Mail.bankCollectState.surplus)
+			assert.truthy(msg:find("spare 15"), msg)
+			-- The swap freed a vault slot (the wool took one, the linen left one), so the spare goes back.
+			ok, msg = click()
+			assert.is_true(ok, msg)
+			assert.equal(5, inBags())
+			assert.equal(15, inBank())
+			assert.is_nil(Mail.bankCollectState)
+		end)
+
+		it("never swaps out a stack an open order needs, and says so when every stack is needed", function()
+			-- Bags: 15 wool + 1 linen, all 16 slots. Two orders: linen (short) and wool (covered).
+			local full = {}
+			for i = 1, 15 do full[i] = { id = WOOL, count = 1 } end
+			full[16] = { id = LINEN, count = 1 }
+			env.setBag(0, 16, full)
+			vault(5)
+			order("r1", 6)                                     -- linen: 1 in bags, needs 5 more
+			order("r2", 15, { name = "Wool Cloth", itemID = WOOL, date = 2000 })   -- wool: covered, must stay
+			local ok, msg = click()
 			assert.is_false(ok)
-			assert.truthy(msg:find("full"))
-			assert.equal(0, callsNamed("UseContainerItem"))
-			assert.equal(20, inBank())
+			assert.truthy(msg:find("everything in them is needed"), msg)
+			assert.equal(0, #swaps)
+			assert.equal(15, Bank:CountItemInBags(nil, WOOL), "a stack an order needs was swapped out")
+			assert.equal(1, inBags())
+		end)
+
+		it("protects a legacy request's item by name when it carries no itemID", function()
+			local full = {}
+			for i = 1, 15 do full[i] = { id = WOOL, count = 1 } end
+			full[16] = { id = 6948, count = 1 }                -- a hearthstone: never swapped out
+			env.defineItem(6948, { name = "Hearthstone" })
+			env.setBag(0, 16, full)
+			vault(5)
+			order("r1", 5)
+			order("r2", 1, { name = "Wool Cloth", itemID = nil, date = 2000 })
+			Guild.Info.requests.r2.itemID = nil
+			local ok, msg = click()
+			assert.is_false(ok)
+			assert.truthy(msg:find("everything in them is needed"), msg)
+			assert.equal(1, Bank:CountItemInBags(nil, 6948), "the hearthstone was swapped into the bank")
+		end)
+
+		it("swaps the first unneeded stack in bag order, leaving needed ones alone", function()
+			env.defineItem(6948, { name = "Hearthstone" })
+			local full = {}
+			full[1] = { id = 6948, count = 1 }
+			full[2] = { id = LINEN, count = 1 }
+			for i = 3, 16 do full[i] = { id = WOOL, count = 1 } end
+			env.setBag(0, 16, full)
+			vault(4)
+			order("r1", 5)
+			local ok, msg = click()
+			assert.is_true(ok, msg)
+			assert.equal(VAULT, swaps[1].bag)
+			assert.equal(WOOL, swaps[1].put)
+			assert.equal(3, calls[2][3], "the swap did not take the first UNNEEDED slot (slot 3; 1 is the hearthstone, 2 is linen)")
+			assert.equal(1, Bank:CountItemInBags(nil, 6948))
+			assert.equal(5, inBags())
 		end)
 	end)
 
