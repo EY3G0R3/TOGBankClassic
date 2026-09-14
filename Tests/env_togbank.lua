@@ -55,7 +55,12 @@ local M = { wow = wow }
 -- State a spec may read or steer directly
 -- ---------------------------------------------------------------------------
 
-M.now        = 0      -- drives GetTime() and GetServerTime()
+--- The clock behind GetTime() and GetServerTime(). CLOCK-001 (self-audit H5a, Peer Review): this
+--- defaulted to 0, a server time no client ever reads, so every whole-client spec ran where any
+--- `ts <= 0` / `not ts or ts == 0` guard took the branch production never takes -- a suite-wide
+--- way to hide a real defect. A fixed 2026 epoch is the default; a spec that needs 0 sets 0.
+M.EPOCH      = 1757000000
+M.now        = M.EPOCH
 M.timers     = {}     -- pending {at, fn, cancelled, kind}
 M.bags       = {}     -- bagID -> { size = n, [slot] = {itemID=, stackCount=, hyperlink=} }
 M.roster     = {}     -- array of { name, rank, rankIndex, level, class, zone, note, officerNote, online }
@@ -65,7 +70,6 @@ M.playerName = "Bankchar"
 M.realmName  = "Testrealm"
 M.guildName  = "Testguild"
 M.inGuild    = true
-M.inRaid     = false
 M.sent       = {}     -- captured SendCommMessage/SendWhisper traffic
 M.printed    = {}     -- captured chat output
 M.popups     = {}     -- captured StaticPopup_Show calls
@@ -216,7 +220,9 @@ function M.install()
 	_G.GetRealmName            = function() return M.realmName end
 	_G.GetNormalizedRealmName  = function() return M.realmName end
 	_G.GetMoney                = function() return M.money end
-	_G.IsInRaid                = function() return M.inRaid end
+	-- IsInRaid / GetNumGroupMembers / IsInGroup are the harness's (pin f845a14), DERIVED from
+	-- `wow.units`; a private `M.inRaid` flag behind a stand-in here was overridden by any harness
+	-- reset run mid-spec (raidvisibility_spec re-loads env.frames). Steer the raid with M.setInRaid.
 	_G.IsInGuild               = function() return M.inGuild end
 	_G.GetGuildInfo            = function() return M.inGuild and M.guildName or nil end
 
@@ -274,6 +280,13 @@ function M.install()
 	_G.NUM_BANKGENERIC_SLOTS   = 24
 	_G.NUM_BANKBAGSLOTS        = 6
 	_G.ATTACHMENTS_MAX_RECEIVE = 16
+	-- The harness's own container API is COMPLETE at this point (wow.reset() ran just before this
+	-- overlay) and reads `wow.bags` in the harness shape (`count`/`link`/`slots`). It is kept so a
+	-- spec that drives the harness's cursor and send-mail slots -- which move stacks in `wow.bags`,
+	-- not in this env's `M.bags` -- can put it back with `M.useHarnessBags()` instead of carrying a
+	-- private cursor model beside the harness's (adoption of harness 1211a3a, step 2). The env's
+	-- own readers below stay the default until the env migration moves `M.bags` onto that shape.
+	M.harnessContainer = _G.C_Container
 	_G.C_Container = {
 		GetContainerNumSlots = function(bag)
 			local b = M.bags[bag]
@@ -295,6 +308,10 @@ function M.install()
 				stackCount = it.stackCount or 1,
 				hyperlink  = it.hyperlink,
 				quality    = it.quality,
+				-- HIDE-002: Era's ContainerItemInfo carries `isBound` (ContainerDocumentation.lua:622).
+				-- Steered per slot with `bound = true` in setBag's contents; false otherwise, as the
+				-- client reports for an unbound stack.
+				isBound    = it.isBound == true,
 			}
 		end,
 	}
@@ -324,7 +341,18 @@ function M.install()
 		return d.id, d.equipLoc or "", d.equipLoc or "", d.equipLoc or "",
 			d.icon or 134400, d.class or 0, d.subClass or 0
 	end
-	_G.GetItemQualityColor = function() return 1, 1, 1, "|cffffffff" end
+	-- The client's per-quality colours (the same table env/wow.lua carries), not a stub that answers
+	-- white for everything: BROWSE-001 colours row names by quality, and a stub that could not tell
+	-- a legendary from linen would have passed that spec by construction. Installed here because
+	-- this env owns the item globals and reinstalls them on every reset.
+	local QUALITY_COLORS = {
+		[0] = { 0.62, 0.62, 0.62, "ff9d9d9d" }, [1] = { 1, 1, 1, "ffffffff" }, [2] = { 0.12, 1, 0, "ff1eff00" },
+		[3] = { 0, 0.44, 0.87, "ff0070dd" }, [4] = { 0.64, 0.21, 0.93, "ffa335ee" }, [5] = { 1, 0.5, 0, "ffff8000" },
+	}
+	_G.GetItemQualityColor = function(quality)
+		local c = QUALITY_COLORS[quality] or QUALITY_COLORS[1]
+		return c[1], c[2], c[3], "|c" .. c[4]
+	end
 	_G.C_Item = {
 		GetItemNameByID = function(id) local d = M.items[id]; return d and d.name or nil end,
 		GetItemInventoryTypeByID = function(id) local d = M.items[id]; return d and d.invType or 0 end,
@@ -371,13 +399,19 @@ function M.install()
 	-- `for i = 1, tip:NumLines()` loop raise "'for' limit must be a number" — a harness artifact
 	-- that would masquerade as an addon bug. Tooltip text is driven by M.tooltipLines.
 	M.tooltipLines = M.tooltipLines or {}
+	-- Lines the ADDON adds (GameTooltip:AddLine), the other direction from tooltipLines above,
+	-- which is what a scanning tooltip reports TO the addon. Cleared by ClearLines and reset().
+	M.tooltipAdded = M.tooltipAdded or {}
 	_G.CreateFrame = function(frameType, name)
 		local f = wow.newFrame()
 		if frameType == "GameTooltip" then
 			f.NumLines    = function() return #M.tooltipLines end
-			f.ClearLines  = function() end
+			f.ClearLines  = function() M.tooltipAdded = {} end
 			f.SetOwner    = function() end
 			f.SetHyperlink = function() end
+			f.AddLine     = function(_, text, r, g, b, wrap)
+				M.tooltipAdded[#M.tooltipAdded + 1] = { text = text, r = r, g = g, b = b, wrap = wrap }
+			end
 			f.GetItem     = function() return nil, M.tooltipLink end
 			-- Real scanning tooltips are read via the global _G[name.."TextLeftN"] font strings.
 			if name then
@@ -439,19 +473,33 @@ end
 --- state AND reinstalls every global, so a spec that reassigned one cannot leak
 --- into a later spec file.
 function M.reset()
-	M.now, M.timers          = 0, {}
+	M.now, M.timers          = M.EPOCH, {}
 	M.bags, M.roster, M.items = {}, {}, {}
 	M.money                  = 0
 	M.playerName             = "Bankchar"
 	M.realmName              = "Testrealm"
 	M.guildName              = "Testguild"
-	M.inGuild, M.inRaid      = true, false
+	M.inGuild                = true
 	M.sent, M.printed        = {}, {}
 	M.popups                 = {}
 	M.tooltipLines           = {}
 	M.tooltipLink            = nil
+	M.tooltipAdded           = {}
 	M.guildRosterCalls       = 0
+	-- The harness's own reset FIRST, then this env's overlay on top of it. The harness owns the
+	-- inbox model (wow.mail / wow.mailActions) among much else, and its reset() wipes all of it;
+	-- this env used to reinstall only its own globals, so anything a spec steered in the harness
+	-- survived into every later spec FILE. Found as mailbox_spec's inbox being read by
+	-- multipc_spec's mail scan in a FULL-SUITE run only: two extra deposits and a count of 20.
+	wow.reset()
 	M.install()
+end
+
+--- Put the player in (or out of) a raid, through the harness's own tunable: a `raid1` entry in
+--- `wow.units` is what its `IsInRaid` reads, so this survives a harness reset the way a private
+--- flag could not. `wow.reset()` clears it with the rest of `wow.units`.
+function M.setInRaid(on)
+	wow.units.raid1 = on and { name = "Raider" } or nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -476,6 +524,8 @@ M.MODULE_ORDER = {
 	"Modules/BankerNumbers.lua",
 	"Modules/P2PSession.lua",
 	"Modules/RequestLog.lua",
+	"Modules/Log.lua",
+	"Modules/Propagation.lua",
 	"Modules/Item.lua",
 	"Modules/ItemHighlight.lua",
 	"Modules/Switches.lua",
@@ -484,6 +534,8 @@ M.MODULE_ORDER = {
 	"Modules/Inventory/Store.lua",
 	"Modules/Inventory/Scan.lua",
 	"Modules/Inventory/Wire.lua",
+	"Modules/Inventory/Chain.lua",
+	"Modules/Inventory/Sync.lua",
 	"Modules/TooltipBankerInfo.lua",
 	"Modules/Mail.lua",
 	"Modules/MailInventory.lua",
@@ -772,6 +824,36 @@ function M.readyGuildRoster(lib)
 	return lib
 end
 
+--- A FRESH V2 store: the inventory modules loaded if a spec has not, and the store re-attached to
+--- an empty SavedVariable so nothing seeded by an earlier example survives.
+---
+--- INV2-RETIRE-003. The store is the only content the addon serves, counts or hashes, so a spec
+--- that stages "we hold content" for a banker must put it HERE -- a legacy `items = { ... }` array
+--- on the alt record is metadata the negotiation layer no longer reads. Call from before_each.
+function M.freshV2()
+	if not TOGBankClassic_Inventory_Record then M.loadFile("Modules/Inventory/Record.lua") end
+	if not TOGBankClassic_Inventory_Resolve then M.loadFile("Modules/Inventory/Resolve.lua") end
+	if not TOGBankClassic_Inventory_Store then M.loadFile("Modules/Inventory/Store.lua") end
+	TOGBankClassic_Inventory_Store:Init({ faction = {} })
+	return TOGBankClassic_Inventory_Store
+end
+
+--- Seed the V2 store with content for `alt`: `rows` are `{ id, count[, suffix[, enchant]] }`,
+--- default one row of one item. `money` defaults to 0. Written through SetAltRecords, so the
+--- record is schema-complete (as a received delivery is) and reads back through every accessor.
+function M.holdV2(guild, alt, rows, money)
+	local Store = TOGBankClassic_Inventory_Store
+	if not (Store and Store.db) then Store = M.freshV2() end
+	local Record = TOGBankClassic_Inventory_Record
+	local recs = {}
+	for _, r in ipairs(rows or { { 1, 1 } }) do
+		local rec = Record.new(r[1], r[2], r[3], r[4])
+		if rec then recs[#recs + 1] = rec end
+	end
+	Store:SetAltRecords(guild, alt, recs, money or 0)
+	return Store
+end
+
 --- Stand up a WHOLE client: every module in .toc order, the real Core, the V2 store, a real
 --- LibGuildRoster roster, and the Database / Options stand-ins the sync layer reads.
 ---
@@ -796,7 +878,9 @@ function M.standUpClient(who, members, guild)
 	M.stubOutput()
 	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
-	require("env.libs").load("AceCommQueue-1.0")
+	-- DS-HOST-001: Core stands up a DeltaSync-1.0 host and the wire envelope is the host's, so the
+	-- REAL library loads here exactly as it does in game (a declared hard dependency).
+	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")
 	M.loadModules(M.MODULE_ORDER)
 	-- Re-stub AFTER the module load, which installs the real Output over the earlier stub. The
 	-- real Output:Debug reads db.global.debugCategories/debugTags and the persistent log, none of
@@ -818,7 +902,7 @@ function M.standUpClient(who, members, guild)
 		db = { global = { switches = { inventoryV2 = true, sendV2Wire = true } }, faction = {} },
 		RecordDeltaSent = function() end, RecordDeltaSavings = function() end,
 		RecordDeltaComputeTime = function() end, RecordNoChangeSent = function() end,
-		RecordDeltaFailed = function() end, SaveSnapshot = function() end,
+		RecordDeltaFailed = function() end,
 		RecordDeltaReceived = function() end,
 		-- HLR-CRASH-001: the hash-list reply handler used to die before its request pass, so
 		-- nothing had ever reached the metric it records. Real method (Database.lua:702).
@@ -831,6 +915,9 @@ function M.standUpClient(who, members, guild)
 		IsIntegrityCheckDiagnosticsEnabled = function() return false end,
 		IsSyncProgressMuted = function() return true end,
 		GetBankEnabled = function() return true end,
+		-- Options.lua's default. mergeRequest reads it whenever the clock is non-zero (M.now set), to
+		-- tombstone an open request older than the threshold on receive.
+		GetAutoTombstoneDays = function() return 30 end,
 	}
 
 	for _, m in ipairs(members or {}) do M.addGuildMember(m.name, { note = m.note }) end
@@ -894,9 +981,37 @@ function M.setBag(bagID, size, contents)
 				id, enchant, suffix, def.name)
 		end
 
-		bag[slot] = { itemID = id, stackCount = count, hyperlink = link }
+		bag[slot] = { itemID = id, stackCount = count, hyperlink = link, isBound = tbl and entry.bound == true or nil }
 	end
 	M.bags[bagID] = bag
+	return bag
+end
+
+--- Hand the container surface back to the harness for this example: `C_Container` becomes the
+--- harness's complete table (readers, `PickupContainerItem`, `SplitContainerItem`), which reads and
+--- moves stacks in `wow.bags`. Use it in a spec that drives the harness's cursor or send-mail slots
+--- (`ClickSendMailItemButton`, `GetSendMailItem`, `SendMail`): those work on `wow.bags`, so a bag
+--- filled with `setBag` (this env's `M.bags`) would be invisible to them. Fill bags with
+--- `harnessBag` after calling this. Undone by the next `reset()`.
+function M.useHarnessBags()
+	_G.C_Container = M.harnessContainer
+	return wow.bags
+end
+
+--- `setBag` for `wow.bags`: the harness shape (`slots`, `count`, `link`), with the record carrying
+--- `name` so the harness's `GetSendMailItem` can answer it (its item cache is `wow.items`, not this
+--- env's). Same `contents` form as `setBag`, minus `suffix`/`enchant`/`bound`, which no spec on
+--- this path uses yet -- add them here when one does, not in the spec.
+function M.harnessBag(bagID, slots, contents)
+	local bag = { slots = slots }
+	for slot, entry in ipairs(contents or {}) do
+		local tbl   = type(entry) == "table"
+		local id    = tbl and entry.id or entry
+		local count = tbl and (entry.count or 1) or 1
+		local def   = M.items[id] or M.defineItem(id, {})
+		bag[slot] = { itemID = id, count = count, link = tbl and entry.link or def.link, name = def.name }
+	end
+	wow.bags[bagID] = bag
 	return bag
 end
 
@@ -915,43 +1030,23 @@ function M.addGuildMember(name, opts)
 	return M.roster[#M.roster]
 end
 
---- AceConsole-3.0's `GetArgs`, faithful to the contract that matters.
+--- AceConsole-3.0's `GetArgs` -- THE REAL ONE, loaded from the sibling Ace3 install.
 ---
---- CMD-001: a spec previously stubbed this as `(prefix, remainder)` -- a LOOSER contract than the
---- real library -- and that is what hid the defect. AceConsole **tokenizes**: it returns
---- `arg1, ..., argN, nextposition`, with `nextposition = 1e9` at end of string
---- (`Ace3/AceConsole-3.0/AceConsole-3.0.lua:138-139`). So `GetArgs(input, 2)` on
---- `"dev switches inventoryV2 on"` yields `"dev", "switches", <pos of 'inventoryV2'>` and the
---- caller must use the position to reach the rest. Under the old fake, code that discarded the
---- remainder still passed, while in game every `/togbank dev <sub> <args>` silently lost its
---- arguments.
+--- CMD-001: a spec once stubbed this as `(prefix, remainder)` -- a LOOSER contract than the real
+--- library -- and that is what hid the defect. AceConsole **tokenizes**: it returns
+--- `arg1, ..., argN, nextposition`, with `nextposition = 1e9` at end of string, so the caller must
+--- use the position to reach the rest.
 ---
---- Quoted strings and item links are deliberately NOT modelled -- the real function treats them as
---- non-spaced, and no TOGBank command takes either. If one ever does, this needs the real pattern.
---- @param str string  the raw argument string
---- @param numargs number  how many arguments to take (default 1)
---- @return ... the arguments, then the next scan position
-function M.aceGetArgs(str, numargs)
-	numargs = numargs or 1
-	str = tostring(str or "")
-	local out = {}
-	-- NILABLE ON PURPOSE, and :824 depends on it: nil means "the input ran out before we had
-	-- numargs of them", which is a different answer from "position 1". Declared rather than left
-	-- to inference, which reads the initialiser and concludes integer.
-	---@type integer|nil
-	local pos = 1
-	for i = 1, numargs do
-		local s, e = str:find("%S+", pos)
-		if not s then
-			pos = nil
-			break
-		end
-		out[i] = str:sub(s, e)
-		pos = e + 1
-	end
-	out[numargs + 1] = (pos and str:find("%S", pos)) or 1e9
-	-- Explicit bounds so missing arguments come back as real nils, exactly as `nils()` does there.
-	return unpack(out, 1, numargs + 1)
+--- CMD-001 FOLLOW-UP: the replacement was a local RE-IMPLEMENTATION, which is the same class one
+--- step removed. Read against `Ace3/AceConsole-3.0/AceConsole-3.0.lua:140`, it differed twice:
+--- it dropped the third parameter (`startpos`, how a caller continues tokenizing from `nextpos`),
+--- and it split on `%S` where the real one splits on the space character only. Neither bit the one
+--- production caller today, and both would have passed a caller that the client then broke.
+--- Loading the installed library removes the whole category of drift instead of the two found.
+function M.aceGetArgs(str, numargs, startpos)
+	require("env.ace").load("AceConsole-3.0")
+	local AC = LibStub("AceConsole-3.0")
+	return AC.GetArgs(AC, tostring(str or ""), numargs, startpos)
 end
 
 --- A minimal TOGBankClassic_Core carrying the AceConsole methods the chat path needs.
@@ -966,7 +1061,7 @@ end
 --- spec author to get right.
 function M.stubCore(extra)
 	local core = TOGBankClassic_Core or {}
-	core.GetArgs = function(_, str, numargs) return M.aceGetArgs(str, numargs) end
+	core.GetArgs = function(_, str, numargs, startpos) return M.aceGetArgs(str, numargs, startpos) end
 	for k, v in pairs(extra or {}) do core[k] = v end
 	TOGBankClassic_Core = core
 	return core
