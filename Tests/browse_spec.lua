@@ -966,7 +966,9 @@ describe("BROWSE-001: the window", function()
 		assert.equal("Guild Bank", GameTooltip._lines[2].right)
 		-- /togbank legacy, typed (the operator: "rename it from togbank browse to togbank legacy"):
 		-- the real dispatcher with the faithful GetArgs (chatcommand_spec's reason for
-		-- env.stubCore), the bare /togbank still the old window, and `browse` no longer a command.
+		-- env.stubCore), and `browse` no longer a command. ENTRY-002 (v1.5.1, the operator: "the
+		-- /togbank command still brings up the old UI, we need it to bring up the new UI, we have a
+		-- /togbank legacy for the old UI"): bare /togbank is the Guild Bank window too.
 		env.loadModules({ "Modules/Switches.lua", "Modules/Chat.lua" })
 		env.stubCore()
 		TOGBankClassic_Database = { db = { global = {} } }
@@ -974,12 +976,13 @@ describe("BROWSE-001: the window", function()
 		assert.equal(1, toggled.inventory, "/togbank legacy did not open the old Inventory window")
 		assert.equal(1, toggled.browse, "/togbank legacy opened the Guild Bank window")
 		TOGBankClassic_Chat:ChatCommand("")
-		assert.equal(2, toggled.inventory, "bare /togbank changed windows")
+		assert.equal(2, toggled.browse, "bare /togbank did not open the Guild Bank window")
+		assert.equal(1, toggled.inventory, "bare /togbank still opens the old Inventory window")
 		local helped = 0
 		TOGBankClassic_Chat.ShowHelp = function() helped = helped + 1 end
 		TOGBankClassic_Chat:ChatCommand("browse")
 		assert.equal(1, helped, "/togbank browse is still a command")
-		assert.equal(2, toggled.inventory); assert.equal(1, toggled.browse)
+		assert.equal(1, toggled.inventory); assert.equal(2, toggled.browse)
 		local chat = env.readFile("Modules/Chat.lua")
 		assert.truthy(chat:find('help = "open the old Inventory window', 1, true), "the legacy help text does not say which window")
 		local inv = env.readFile("Modules/UI/Inventory.lua")
@@ -993,6 +996,43 @@ describe("BROWSE-001: the window", function()
 			assert.is_not_nil(browse, toc .. " does not load Browse.lua")
 			assert.is_true(search < rowlist and rowlist < browse, toc .. " loads Browse before the files it reads")
 		end
+	end)
+
+	-- ENTRY-002 (v1.5.1, the operator: "the /togbank command still brings up the old UI, we need it
+	-- to bring up the new UI"). END TO END, nothing stubbed between the typed command and the
+	-- screen: the real dispatcher, the real Browse:Toggle, the real AceGUI window. The example above
+	-- proves the routing with a counter; this one proves the window is actually up.
+	it("bare /togbank opens the Guild Bank window on screen, again closes it, and /togbank legacy leaves it alone", function()
+		local inventoryToggles = 0
+		TOGBankClassic_UI_Inventory = { Toggle = function() inventoryToggles = inventoryToggles + 1 end }
+		env.loadModules({ "Modules/Switches.lua", "Modules/Chat.lua" })
+		env.stubCore()
+		TOGBankClassic_Database = { db = { global = {} } }
+		assert.is_falsy(Browse.isOpen)
+		assert.is_nil(Browse.Window, "the window existed before anything opened it")
+
+		TOGBankClassic_Chat:ChatCommand("")
+		assert.is_true(Browse.isOpen, "bare /togbank did not open the Guild Bank window")
+		assert.is_not_nil(Browse.Window, "no window was built")
+		assert.is_true(Browse.Window.frame:IsShown(), "the window was built but is not showing")
+		assert.equal(TOGBankClassic_UI:WindowTitle("Guild Bank"), Browse.Window.titletext:GetText())
+		assert.is_not_nil(Browse.TabGroup, "the tab strip was not built")
+		assert.equal(Browse.currentTab, Browse.TabGroup.localstatus.selected, "no tab is selected on open")
+		assert.equal(0, inventoryToggles, "bare /togbank also touched the old Inventory window")
+
+		-- A second bare /togbank is the toggle's other half.
+		TOGBankClassic_Chat:ChatCommand("")
+		assert.is_false(Browse.isOpen, "a second /togbank did not close the window")
+		assert.is_false(Browse.Window.frame:IsShown(), "closed, but the frame is still showing")
+
+		-- /togbank legacy is the OLD window only.
+		TOGBankClassic_Chat:ChatCommand("legacy")
+		assert.equal(1, inventoryToggles, "/togbank legacy did not toggle the old Inventory window")
+		assert.is_false(Browse.isOpen, "/togbank legacy opened the Guild Bank window")
+
+		-- The command's own help line names the window it opens.
+		local src = env.readFile("Modules/Chat.lua")
+		assert.truthy(src:find('"%s/togbank%s - open or close the Guild Bank window"', 1, true), "/togbank help still describes the old window")
 	end)
 end)
 

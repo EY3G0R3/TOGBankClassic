@@ -2,7 +2,7 @@
 TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era & TBC
 ================================================================================
 
-Version: 1.5.0
+Version: 1.5.1
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -163,7 +163,9 @@ OPENING THE INTERFACE:
     Opens the Guild Bank window: every bank character's items as ONE
     sortable list, with Browse, Bankers, Requests and Log tabs. The ? beside
     Close explains each tab.
-  /togbank  (or /togbank legacy)
+  /togbank
+    The same as the minimap button: opens the Guild Bank window.
+  /togbank legacy
     Opens the old Inventory window, a tab per bank character, while it lasts.
 
 SEARCHING FOR ITEMS:
@@ -261,8 +263,7 @@ COMMAND REFERENCE
 BASIC COMMANDS:
 ---------------
 /togbank
-  Opens the old Inventory window (a tab per bank character); the minimap
-  button opens the Guild Bank window
+  Opens the Guild Bank window, the same as the minimap button
 
 /togbank help
   Displays help information and command list
@@ -289,12 +290,13 @@ Minimap button (click)
   the old Inventory window. Shift-click the minimap button for the options.
 
 /togbank legacy
-  Opens the old Inventory window (a tab per bank character) - the same window
-  bare /togbank opens.
+  Opens the old Inventory window (a tab per bank character), while it lasts.
 
 /togbank mailbox
   Opens the Mailbox window while you are at a mailbox. It opens by itself for
-  bank characters. Every mail in your inbox is a row - icon, subject, how many
+  bank characters (switch that off under Settings > General if you prefer, or
+  tick the box under it to have it open on your other characters too).
+  Every mail in your inbox is a row - icon, subject, how many
   attachments, sender, days left - with items a pending request needs marked
   in green. The clicks are the game's own: click a mail to open it and see
   what is on it, click an item to take it into your bags, shift-click (or
@@ -660,8 +662,12 @@ OPTIONS PANEL:
   Press ESC -> Interface -> AddOns -> TOGBankClassic
 
   Available settings:
-  - General: minimap button, hide in combat, chat message volume, and
-    "Keep syncing in a raid group" (off by default)
+  - General: minimap button, hide in combat, chat message volume, "Keep
+    syncing in a raid group" (off by default), "Open the Mailbox window
+    at a mailbox" (on by default; untick it if you would rather open the
+    window yourself with /togbank mailbox or the mail frame's button) and
+    "Mailbox window on non-bank characters" (off by default; the window
+    opens by itself only on bank characters until you tick this)
   - Appearance: how see-through each window is, "Reset All Windows to
     Solid", "Recenter All Windows" (for a window lost off screen) and
     "Pulsing glow on cancelled requests" (on by default)

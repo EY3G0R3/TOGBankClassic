@@ -1843,7 +1843,7 @@ local COMMAND_REGISTRY = {
 		-- only until BROWSE-002 follow-on (d) retires it. (BROWSE-001 had `browse` opening the new
 		-- window while it settled; that name is gone.)
 		name = "legacy",
-		help = "open the old Inventory window (a tab per bank character); the minimap button opens the Guild Bank window",
+		help = "open the old Inventory window (a tab per bank character); /togbank and the minimap button open the Guild Bank window",
 		handler = function()
 			TOGBankClassic_UI_Inventory:Toggle()
 		end,
@@ -3309,7 +3309,11 @@ local HELP_INSTRUCTIONS = {
 
 function TOGBankClassic_Chat:ChatCommand(input)
 	if input == nil or input == "" then
-		TOGBankClassic_UI_Inventory:Toggle()
+		-- ENTRY-002 (operator 2026-09-14, v1.5.1: "the /togbank command still brings up the old UI,
+		-- we need it to bring up the new UI, we have a /togbank legacy for the old UI"): bare
+		-- /togbank is the Guild Bank window, like the minimap button. ENTRY-001 had left it on the
+		-- old Inventory window on purpose; that is `legacy` alone now.
+		TOGBankClassic_UI_Browse:Toggle()
 	else
 		-- CMD-001: GetArgs TOKENIZES; it does not hand back a remainder. Its contract is
 		-- `arg1, ..., argN, nextposition` (AceConsole-3.0.lua:138-139), with nextposition = 1e9 at
@@ -3346,7 +3350,7 @@ function TOGBankClassic_Chat:ShowHelp()
 
 	-- Basic commands header
 	TOGBankClassic_Output:Response("\n%sCommands:%s", H, R)
-	TOGBankClassic_Output:Response("%s/togbank%s - display the TOGBankClassic interface", C, R)
+	TOGBankClassic_Output:Response("%s/togbank%s - open or close the Guild Bank window", C, R)
 
 	-- Print basic commands (skip dev commands)
 	for _, cmd in ipairs(COMMAND_REGISTRY) do

@@ -254,11 +254,15 @@ describe("MAILUI-001: opening beside the mail frame", function()
 		assert.equal(1, opened)
 	end)
 
-	it("does NOT open by itself for a non-banker -- the window is about what the bank received", function()
+	-- MAILBOX-TOGGLE-002 (the operator, 2026-09-14): "have it on by default for bankers only".
+	it("does NOT open by itself for a non-banker out of the box, and the verdict says which box would", function()
 		env.reset(); load(false); spyOpen()
 		M:OnMailShow()
 		assert.equal(0, opened)
-		assert.is_false(M:AutoOpens())
+		local opens, why = M:AutoOpens()
+		assert.is_false(opens)
+		assert.matches("not a bank character", why)
+		assert.matches("Mailbox window on non%-bank characters", why)
 	end)
 
 	it("closes with the mailbox and abandons a take-all in progress", function()
@@ -268,6 +272,116 @@ describe("MAILUI-001: opening beside the mail frame", function()
 		M:OnMailClosed()
 		assert.is_false(M.isOpen)
 		assert.is_nil(M.taking, "the take-all outlived the mailbox")
+	end)
+
+	-- MAILBOX-TOGGLE-001 (the operator, v1.5.1: "we also need the ability to turn on/off the mail
+	-- window, some folks might not want that" / "put a settings in the general settings for that").
+	describe("the 'Open the Mailbox window at a mailbox' setting", function()
+		-- Options:Init registers with the Blizzard options window, library state that outlives this
+		-- file; hand the registration back so a later Init (raidvisibility_spec, searchbox_spec) is
+		-- not "already been added" -- in an after_each, so a red example still hands it back.
+		after_each(function()
+			local ACD = LibStub("AceConfigDialog-3.0")
+			ACD.BlizOptions["TOGBankClassic"] = nil
+			ACD.BlizOptions["TOGBankClassic/Bank"] = nil
+			ACD.BlizOptionsIDMap["TOGBankClassic"] = nil
+			TOGBankClassic_Options = nil
+		end)
+
+		it("is ON by default, on before the database exists and for a profile saved before it existed, and a General-tab toggle that reads back", function()
+			env.reset(); load(true); spyOpen()
+			-- No Options module at all (load(true)'s world): the banker's window opens as before.
+			assert.is_true(M:AutoOpens())
+			-- The REAL Options: executed, not grepped.
+			require("env.frames").reset()
+			require("env.ace").load("AceDB-3.0", "AceConfig-3.0", "AceConfigDialog-3.0")
+			env.loadUI()
+			env.loadFile("Modules/Options.lua")
+			assert.is_true(TOGBankClassic_Options:IsMailboxAutoOpenEnabled(), "off before Init -- the default must be ON")
+			TOGBankClassic_Options:Init()
+			assert.is_true(TOGBankClassic_Options.db.global.bank.mailboxAutoOpen, "the default is not ON")
+			-- A profile from before the setting: nil reads as ON, not as off.
+			TOGBankClassic_Options.db.global.bank.mailboxAutoOpen = nil
+			assert.is_true(TOGBankClassic_Options:IsMailboxAutoOpenEnabled())
+			local toggle = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("TOGBankClassic", "dialog", "Spec-1.0").args.general.args.mailboxAutoOpen
+			assert.equal("toggle", toggle.type)
+			assert.is_true(toggle.get())
+			assert.is_true(M:AutoOpens())
+			M:OnMailShow()
+			assert.equal(1, opened, "with the setting on, the banker's window did not open")
+			-- Off: the gate closes, the window stays down at MAIL_SHOW, and the by-hand ways stay.
+			toggle.set(nil, false)
+			assert.is_false(TOGBankClassic_Options:IsMailboxAutoOpenEnabled())
+			assert.is_false(TOGBankClassic_Options.db.global.bank.mailboxAutoOpen)
+			local opens, why = M:AutoOpens()
+			assert.is_false(opens, "the setting off did not close the auto-open gate")
+			assert.matches("General setting", why)
+			M:OnMailShow()
+			assert.equal(1, opened, "the window opened by itself with the setting off")
+			assert.is_function(M.Toggle, "the by-hand way (/togbank mailbox -> Toggle) is gone")
+			-- On again: back to the shipped behaviour.
+			toggle.set(nil, true)
+			assert.is_true(M:AutoOpens())
+			M:OnMailShow()
+			assert.equal(2, opened)
+		end)
+
+		-- MAILBOX-TOGGLE-002 (the operator, 2026-09-14, the first box ticked and no window on a
+		-- non-banker): "it used to open for normal characters, which is why i wanted the check box. it
+		-- could be useful for non-bankers too" / "make a 2nd check box that enables/disables it, and
+		-- have it on by default for bankers only".
+		it("has a second General-tab box, off by default, that opens the window on non-bankers too -- and only while the first is on", function()
+			env.reset(); load(false); spyOpen()
+			require("env.frames").reset()
+			require("env.ace").load("AceDB-3.0", "AceConfig-3.0", "AceConfigDialog-3.0")
+			env.loadUI()
+			env.loadFile("Modules/Options.lua")
+			assert.is_false(TOGBankClassic_Options:IsMailboxAutoOpenForNonBankersEnabled(), "on before Init -- the default must be OFF")
+			TOGBankClassic_Options:Init()
+			assert.is_false(TOGBankClassic_Options.db.global.bank.mailboxAutoOpenNonBankers, "the default is not OFF")
+			local general = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("TOGBankClassic", "dialog", "Spec-1.0").args.general.args
+			local second = general.mailboxAutoOpenNonBankers
+			assert.equal("toggle", second.type)
+			assert.is_true(second.order > general.mailboxAutoOpen.order, "the second box does not sit under the first")
+			assert.is_false(second.get())
+			assert.is_false(second.disabled(), "greyed while the master switch is on")
+			-- Out of the box: a non-banker's window stays down, and the verdict names the second box.
+			M:OnMailShow()
+			assert.equal(0, opened)
+			local opens, why = M:AutoOpens()
+			assert.is_false(opens)
+			assert.matches("Mailbox window on non%-bank characters", why)
+			-- Ticked: the non-banker's window opens.
+			second.set(nil, true)
+			assert.is_true(TOGBankClassic_Options:IsMailboxAutoOpenForNonBankersEnabled())
+			assert.is_true(M:AutoOpens())
+			M:OnMailShow()
+			assert.equal(1, opened, "the second box ticked did not open a non-banker's window")
+			-- The master off overrides it: greyed, and the verdict names the master.
+			general.mailboxAutoOpen.set(nil, false)
+			assert.is_true(second.disabled(), "not greyed with the master switch off")
+			opens, why = M:AutoOpens()
+			assert.is_false(opens)
+			assert.matches("Open the Mailbox window at a mailbox", why)
+			M:OnMailShow()
+			assert.equal(1, opened, "the window opened by itself with the master switch off")
+			-- A profile from before the setting: nil reads as OFF, the bankers-only default.
+			general.mailboxAutoOpen.set(nil, true)
+			TOGBankClassic_Options.db.global.bank.mailboxAutoOpenNonBankers = nil
+			assert.is_false(TOGBankClassic_Options:IsMailboxAutoOpenForNonBankersEnabled())
+			assert.is_false(M:AutoOpens())
+		end)
+
+		it("the second box changes nothing for a banker -- they open on the first alone", function()
+			env.reset(); load(true); spyOpen()
+			TOGBankClassic_Options = {
+				IsMailboxAutoOpenEnabled = function() return true end,
+				IsMailboxAutoOpenForNonBankersEnabled = function() return false end,
+			}
+			assert.is_true(M:AutoOpens())
+			M:OnMailShow()
+			assert.equal(1, opened)
+		end)
 	end)
 end)
 

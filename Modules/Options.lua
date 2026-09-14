@@ -352,7 +352,10 @@ function TOGBankClassic_Options:Init()
 		global = {
 				-- RAID-SYNC-001: syncInRaid OFF by default -- the raid guard stays as it has always been
 				-- unless the player opts out of it (the chat channel is throttled; raid addons need it).
-				bank = { report = true, logLevel = LOG_LEVEL.INFO, commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true, syncInRaid = false },
+				-- MAILBOX-TOGGLE-001: mailboxAutoOpen ON by default -- v1.5.0 shipped the auto-open.
+				-- MAILBOX-TOGGLE-002: mailboxAutoOpenNonBankers OFF by default -- "on by default for
+				-- bankers only" (the operator, 2026-09-14).
+				bank = { report = true, logLevel = LOG_LEVEL.INFO, commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true, syncInRaid = false, mailboxAutoOpen = true, mailboxAutoOpenNonBankers = false },
 			-- ALPHA-001: per-window chrome transparency, 0..1, keyed by TOGBankClassic_UI.ALPHA_WINDOWS.
 			-- Account-wide rather than per-character: it is a pure display preference with no
 			-- per-character meaning, and setting it once per alt is exactly the chore the request
@@ -510,6 +513,44 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return self.db.global.bank["syncInRaid"] == true
+						end,
+					},
+					-- MAILBOX-TOGGLE-001 (operator, v1.5.1: "we also need the ability to turn on/off the
+					-- mail window, some folks might not want that" / "put a settings in the general
+					-- settings for that"). ON by default: the auto-open is v1.5.0's shipped behaviour and
+					-- an upgrade must not take it away. Off, the window still opens by hand
+					-- (/togbank mailbox, the TOG Bank button on the mail frame).
+					["mailboxAutoOpen"] = {
+						order = 2.66,
+						type = "toggle",
+						width = "full",
+						name = "Open the Mailbox window at a mailbox",
+						desc = "On bank characters, the addon's Mailbox window opens beside the mail frame whenever you open a mailbox. Untick to stop that; /togbank mailbox and the TOG Bank button on the mail frame still open it when you want it.",
+						set = function(_, v)
+							self.db.global.bank["mailboxAutoOpen"] = v and true or false
+						end,
+						get = function()
+							return self:IsMailboxAutoOpenEnabled()
+						end,
+					},
+					-- MAILBOX-TOGGLE-002 (operator, 2026-09-14: "it used to open for normal characters
+					-- ... it could be useful for non-bankers too" / "make a 2nd check box that
+					-- enables/disables it, and have it on by default for bankers only"). OFF by
+					-- default; greyed while the master switch above is off, since it only adds to it.
+					["mailboxAutoOpenNonBankers"] = {
+						order = 2.67,
+						type = "toggle",
+						width = "full",
+						name = "Mailbox window on non-bank characters",
+						desc = "The Mailbox window normally opens by itself only on bank characters. Tick this to have it open at a mailbox on every character. Needs 'Open the Mailbox window at a mailbox' above.",
+						disabled = function()
+							return not self:IsMailboxAutoOpenEnabled()
+						end,
+						set = function(_, v)
+							self.db.global.bank["mailboxAutoOpenNonBankers"] = v and true or false
+						end,
+						get = function()
+							return self:IsMailboxAutoOpenForNonBankersEnabled()
 						end,
 					},
 					["muteWarnings"] = {
@@ -909,6 +950,25 @@ end
 
 function TOGBankClassic_Options:GetBankReporting()
 	return self.db.global.bank["report"]
+end
+
+--- MAILBOX-TOGGLE-001: does the Mailbox window open by itself at a mailbox (bank characters)?
+--- True unless the player has unticked it; true before the DB is up, and for a saved profile
+--- from before the setting existed (nil reads as the default, not as off).
+function TOGBankClassic_Options:IsMailboxAutoOpenEnabled()
+	local bank = self.db and self.db.global and self.db.global.bank
+	local v = bank and bank["mailboxAutoOpen"]
+	if v == nil then return true end
+	return v == true
+end
+
+--- MAILBOX-TOGGLE-002: does the Mailbox window open by itself on characters that are NOT bank
+--- characters? Off unless ticked -- "on by default for bankers only" -- so nil (a saved profile
+--- from before the setting, or no DB yet) reads as off. Only meaningful while
+--- IsMailboxAutoOpenEnabled; Mailbox:AutoOpens asks that first.
+function TOGBankClassic_Options:IsMailboxAutoOpenForNonBankersEnabled()
+	local bank = self.db and self.db.global and self.db.global.bank
+	return (bank and bank["mailboxAutoOpenNonBankers"]) == true
 end
 
 function TOGBankClassic_Options:GetLogLevel()

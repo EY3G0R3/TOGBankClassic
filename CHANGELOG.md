@@ -1,5 +1,51 @@
 # TOGBankClassic Changelog
 
+## [v1.5.1] (2026-09-14) - /togbank Opens The Guild Bank Window
+
+### New Features
+
+- **MAILBOX-TOGGLE-001: a General-tab setting to stop the Mailbox window opening by itself.** The
+  operator, the morning after v1.5.0: *"we also need the ability to turn on/off the mail window,
+  some folks might not want that"* -- and, on where: *"put a settings in the general settings for
+  that"*. **Open the Mailbox window at a mailbox**, account-wide (`db.global.bank.mailboxAutoOpen`),
+  ON by default so an upgrade changes nothing; `Options:IsMailboxAutoOpenEnabled()` reads a missing
+  value as on, so a profile saved before the setting existed is on too. `Mailbox:AutoOpens()` reads
+  it ahead of the banker check, so the setting only ever narrows -- a non-banker is never opened for
+  either way (until MAILBOX-TOGGLE-002, next) -- and off, the window is still one click away on the mail frame's TOG Bank button or
+  `/togbank mailbox`. `mailbox_spec` drives the REAL Options module and its AceConfig toggle
+  (raidvisibility_spec's pattern): the default, the nil-reads-as-on rule, the gate closing and
+  reopening at `MAIL_SHOW`; proven red with the gate removed. Locations: `Modules/Options.lua`,
+  `Modules/UI/Mailbox.lua`.
+- **MAILBOX-TOGGLE-002: a second General-tab box opens the Mailbox window on non-bank characters
+  too.** The operator, with the first box ticked and no window on a non-banker: *"it used to open
+  for normal characters, which is why i wanted the check box. it could be useful for non-bankers
+  too"* -- then *"make a 2nd check box that enables/disables it, and have it on by default for
+  bankers only"*. **Mailbox window on non-bank characters** (first cut *"Open it on characters
+  that are not bank characters too"*; the operator: *"open what? the hatch to the nuclear bomb?
+  come on, make it short but descriptive and then you put the detail in the tooltip"*)
+  (`db.global.bank.mailboxAutoOpenNonBankers`), OFF by default and greyed while the first box is
+  off; `Options:IsMailboxAutoOpenForNonBankersEnabled()` reads a missing value as off. So
+  `Mailbox:AutoOpens()` is: first box on, then a bank character opens on that alone and anyone
+  else needs the second box. It now also returns *why* when the answer is no, and
+  `Mailbox:OnMailShow` logs it on `MAIL.EVENTS` -- the first box, the guild note or the second box
+  -- because "ticked but it doesn't pop up" looks the same from outside whichever gate it was.
+  `mailbox_spec` drives the real toggle: the default, the order under the first box, the greying,
+  a non-banker opening once ticked, the master switch overriding it, nil-reads-as-off, and a
+  banker unaffected by it. Locations: `Modules/Options.lua`, `Modules/UI/Mailbox.lua`.
+
+### Bug Fixes
+
+- **ENTRY-002: bare `/togbank` opens the Guild Bank window.** The operator, minutes after v1.5.0:
+  *"the /togbank command still brings up the old UI, we need it to bring up the new UI, we have a
+  /togbank legacy for the old UI."* ENTRY-001 had moved the minimap button to the Guild Bank window
+  and deliberately left the bare command on the old Inventory window (its self-audit F4: "not
+  changing it unasked"); v1.5.0's own notes said so. Now `ChatCommand("")` toggles
+  `TOGBankClassic_UI_Browse`, so `/togbank`, `/bank` and `/gbank` (the aliases route through the
+  same dispatcher) all open the Guild Bank window, and `/togbank legacy` alone opens the old
+  tab-per-banker window. The `/togbank help` line and the `legacy` help text say so. `browse_spec`'s
+  ENTRY-001 example flips from pinning the old window to pinning the new one -- the directive
+  changed the spec, the one legitimate reason. Location: `Modules/Chat.lua`.
+
 ## [v1.5.0] (2026-09-14) - Setting The Red
 
 <!-- This release was labelled v1.4.2 until 2026-09-13, when the operator renamed it -- "the new UI

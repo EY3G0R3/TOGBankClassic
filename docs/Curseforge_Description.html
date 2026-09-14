@@ -200,9 +200,9 @@
 <h3>Everyday Commands</h3>
 
 <ul>
-<li><strong>Minimap button</strong> &mdash; open or close the Guild Bank window (shift-click for the options)</li>
-<li><code>/togbank</code> or <code>/togbank legacy</code> &mdash; open or close the old Inventory window, a tab per bank character</li>
-<li><code>/togbank mailbox</code> &mdash; open the Mailbox window while you are at a mailbox (it opens by itself for bank characters; there is also a <strong>TOG Bank</strong> button on the mail frame's title bar)</li>
+<li><code>/togbank</code> &mdash; open or close the Guild Bank window, the same as the minimap button (shift-click that for the options)</li>
+<li><code>/togbank legacy</code> &mdash; open or close the old Inventory window, a tab per bank character</li>
+<li><code>/togbank mailbox</code> &mdash; open the Mailbox window while you are at a mailbox (it opens by itself for bank characters &mdash; or for every character, or never, under Settings &gt; General; there is also a <strong>TOG Bank</strong> button on the mail frame's title bar)</li>
 <li><code>/togbank help</code> &mdash; list every available command</li>
 <li><code>/togbank roster</code> &mdash; list the bank characters with their four-digit numbers</li>
 <li><code>/togbank sync</code> &mdash; manually pull the latest data from your guild (automatic every ten minutes)</li>
@@ -243,7 +243,7 @@
 <h3>Key Settings</h3>
 
 <ul>
-<li>General: Minimap button, hide in combat, chat message volume, sounds, and <strong>Keep syncing in a raid group</strong> (off by default)</li>
+<li>General: Minimap button, hide in combat, chat message volume, sounds, <strong>Keep syncing in a raid group</strong> (off by default), <strong>Open the Mailbox window at a mailbox</strong> (on by default) and <strong>Mailbox window on non-bank characters</strong> (off by default)</li>
 <li>Appearance: A transparency slider for each window, <strong>Reset All Windows to Solid</strong>, <strong>Recenter All Windows</strong> for a window lost off screen, and <strong>Pulsing glow on cancelled requests</strong> (on by default)</li>
 <li>Bank (bank characters only): <strong>Enable for &lt;character&gt;</strong> &mdash; the one switch that governs whether this bank is scanned and shared &mdash; <strong>Hide soulbound items from the guild</strong>, and the donation options</li>
 <li>Officer: Request limits and how long requests stay open</li>
@@ -318,6 +318,19 @@
 
 <h2>Recent Updates</h2>
 
+<h3>v1.5.1 - /togbank Opens The Guild Bank Window</h3>
+
+<p><strong>New</strong></p>
+<ul>
+<li>A setting to stop the Mailbox window opening by itself. Bank characters get it beside the mail frame whenever they open a mailbox; if you would rather it did not, untick <strong>Open the Mailbox window at a mailbox</strong> under Settings &gt; General. The <strong>TOG Bank</strong> button on the mail frame and <code>/togbank mailbox</code> still open it whenever you want it. On unless you turn it off.</li>
+<li>The Mailbox window on your other characters too. Tick <strong>Mailbox window on non-bank characters</strong>, just under that setting, and every character gets the window at a mailbox, not only the bank ones. Off unless you turn it on.</li>
+</ul>
+
+<p><strong>Changed</strong></p>
+<ul>
+<li><code>/togbank</code> (and the <code>/bank</code> / <code>/gbank</code> shortcuts, if you have them on) now opens the Guild Bank window, the same as the minimap button. The old tab-per-character Inventory window is <code>/togbank legacy</code>.</li>
+</ul>
+
 <h3>v1.5.0 - Setting The Red</h3>
 <p><strong>Everyone in your guild should update.</strong> Bank contents no longer travel between this version and older ones: a guildmate still on v1.4.1 stops receiving bank contents from anyone who has updated, and is not asked for theirs. Nothing breaks for them &mdash; requests, the roster and everything else still work across versions &mdash; they simply stop seeing current bank contents until they update, and a banker sees their requests marked with the old version number. One thing to do once after updating, bank characters: <strong>open and close your bank once</strong>, so its contents are published in the new form; that bank's status may go red for guildmates for a moment while the fresh copy reaches them.</p>
 
@@ -347,7 +360,7 @@
 <li>Every cancelled request's date now has a soft, gently pulsing glow, so cancelled orders stand out in the list at a glance. If a reason was given, mouse over the date and it is in the tooltip, as it always was &mdash; nobody was finding it there. If the pulse is not for you, switch it off on the Appearance tab of the settings; the reason stays in the tooltip either way.</li>
 <li>The Requests, Search, Mailbox and Donations windows now carry the same bottom status bar as the main window &mdash; the sync activity on the right, and the bank-update line in the middle &mdash; and are titled the same way (&quot;TOG Bank v1.5.0 - Requests&quot;), so the windows read as one addon.</li>
 <li>The Requests tab of the Guild Bank window is now in the same striped-row style as the Browse, Bankers and Log tabs &mdash; the same row height, font and spacing, so the four tabs look like one window. The list scrolls instead of paging, so the page arrows are gone; the buttons at the right of each row are now small icons, and mousing over one names it. Because the columns fit a smaller space, the window can be made a good deal narrower than before.</li>
-<li>The minimap button now opens the Guild Bank window. The old Inventory window (a tab per bank character) is <code>/togbank legacy</code> &mdash; bare <code>/togbank</code> still opens it too &mdash; and <code>/togbank browse</code> is gone. Shift-click the minimap button for the options, as before.</li>
+<li>The minimap button now opens the Guild Bank window. The old Inventory window (a tab per bank character) is <code>/togbank legacy</code> &mdash; bare <code>/togbank</code> still opens it too (until v1.5.1, above) &mdash; and <code>/togbank browse</code> is gone. Shift-click the minimap button for the options, as before.</li>
 <li>Several orders for the same person can go in one mail. Click Fulfill on each of their requests in turn &mdash; each one is added to the mail already open for them, up to the twelve attachments a mail holds &mdash; then press Send once, and every order on it is marked filled. The <strong>Fulfill Oldest</strong> envelope does the same on its own: after picking the oldest order it adds that person's other orders you can fill from your bags to the same mail &mdash; including ones that need a stack split. One click does every split at once, each into its own free bag slot (it tells you if you need to make room first), the next attaches everything, and the last sends the one mail.</li>
 <li>Completed and cancelled requests are kept for 14 days instead of 30. TOGTools keeps the long history.</li>
 <li>Mousing over items is lighter in a guild with many bank characters. The &quot;Bankers:&quot; lines on an item tooltip used to be worked out by reading through every bank character's entire contents on every hover; each bank now keeps a small per-item tally that is looked up directly and refreshed only when that bank's contents change.</li>

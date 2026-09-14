@@ -497,11 +497,28 @@ local function OnClose(_)
 	if Mailbox.Window then Mailbox.Window:Hide() end
 end
 
---- Should the window open by itself when this character opens a mailbox? Bankers only: the
---- window is about handling what the bank received.
+--- Should the window open by itself when this character opens a mailbox? Two General settings
+--- decide. MAILBOX-TOGGLE-001 (the operator, v1.5.1: "some folks might not want that"): the first
+--- is the master switch, default on. MAILBOX-TOGGLE-002 (the operator, 2026-09-14, on the box
+--- ticked and no window on a non-banker: "it used to open for normal characters ... it could be
+--- useful for non-bankers too" / "make a 2nd check box that enables/disables it, and have it on
+--- by default for bankers only"): a bank character opens on the master alone; any other
+--- character needs the second box as well, default off. Either way off, the window is still one
+--- click away on the mail frame's TOG Bank button or /togbank mailbox. Returns the verdict and,
+--- when it is no, which box said so -- MAIL_SHOW logs it, so "ticked but it doesn't pop up" is
+--- answerable from the log: the two boxes and the note look identical from outside.
 function Mailbox:AutoOpens()
+	local O = TOGBankClassic_Options
+	if O and O.IsMailboxAutoOpenEnabled and not O:IsMailboxAutoOpenEnabled() then
+		return false, "the General setting 'Open the Mailbox window at a mailbox' is off"
+	end
 	local G = TOGBankClassic_Guild
-	return G and G.IsBank and G:IsBank(G:GetNormalizedPlayer()) or false
+	local player = G and G.GetNormalizedPlayer and G:GetNormalizedPlayer()
+	if G and G.IsBank and player and G:IsBank(player) then return true end
+	if O and O.IsMailboxAutoOpenForNonBankersEnabled and O:IsMailboxAutoOpenForNonBankersEnabled() then
+		return true
+	end
+	return false, string.format("%s is not a bank character (no 'gbank' in the guild note) and the General setting 'Mailbox window on non-bank characters' is off", tostring(player))
 end
 
 --- MAILUI-002: the "TOG Bank" button on Blizzard's mail frame, for everyone -- the operator: "it
@@ -536,7 +553,12 @@ end
 
 function Mailbox:OnMailShow()
 	self:EnsureMailFrameButton()
-	if self:AutoOpens() then self:Open() end
+	local opens, why = self:AutoOpens()
+	if opens then
+		self:Open()
+	else
+		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Mailbox window not opened by itself: %s", why)
+	end
 end
 
 function Mailbox:OnMailClosed()
