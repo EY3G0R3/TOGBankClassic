@@ -7,8 +7,10 @@
 --
 -- So: the revision-2 canon is `<10-digit publish time><10-digit checksum>`; "am I behind?" is the
 -- newest canon anyone has mentioned for a banker against the canon I hold, read off the front;
--- a held copy with no readable canon is red, full stop; our own character is never behind on its
--- own bank; and a broadcast is answered with an offer by ONE string compare.
+-- a held copy with no readable canon is red, full stop; our own character CAN be behind on its own
+-- bank when another PC on a shared account published later (MULTIPC-001 -- the publish gate that
+-- follows from it is multipc_spec's ground); and a broadcast is answered with an offer by ONE
+-- string compare.
 --
 -- Every writer of "newest mentioned" is driven through the real receive path below, because the
 -- previous mechanism's defect was precisely that its three writers disagreed.
@@ -34,14 +36,18 @@ describe("Guild:GetAltStaleness", function()
 	before_each(function()
 		env.reset(); env.stubOutput()
 		env.loadModules(LIGHT)
+		env.freshV2()
 		Guild = TOGBankClassic_Guild
 		Guild.Info = { name = GUILD, alts = {} }
 		Guild.IsBank = function(_, n) return n == BANKER or n == OTHER end
 		Guild.newestAdvertisedAt = {}
 	end)
 
+	-- INV2-RETIRE-003: content lives in the V2 store; the alt record carries the canon only.
+	-- `items = {}` (explicitly empty) means "held, no content".
 	local function hold(alt, canon, items)
-		Guild.Info.alts[alt] = { name = alt, inventoryHash = 1, inventoryHashV2 = canon, items = items or { { ID = 1, Count = 1 } } }
+		Guild.Info.alts[alt] = { name = alt, inventoryHash = 1, inventoryHashV2 = canon }
+		if items == nil or #items > 0 then env.holdV2(GUILD, alt) end
 	end
 
 	it("is 'none' when we hold nothing, or hold a record with no content", function()
@@ -90,16 +96,46 @@ describe("Guild:GetAltStaleness", function()
 	end)
 
 	it("reads the held time off the CANON, not off a sidecar field that may disagree", function()
-		Guild.Info.alts[OTHER] = { name = OTHER, inventoryHashV2 = C(T, 5), inventoryUpdatedAt = T + 999, items = { { ID = 1, Count = 1 } } }
+		Guild.Info.alts[OTHER] = { name = OTHER, inventoryHashV2 = C(T, 5), inventoryUpdatedAt = T + 999 }
+		env.holdV2(GUILD, OTHER)
 		Guild.newestAdvertisedAt[OTHER] = T + 1
 		assert.equal("behind", (Guild:GetAltStaleness(OTHER)), "the sidecar time masked the canon's")
 	end)
 
-	-- "for the banker that is on, it should probably NEVER be red" -- for a peer's claim.
-	it("is never 'behind' on OUR OWN character -- we are the author", function()
+	-- MULTIPC-001. This used to pin "never 'behind' on OUR OWN character -- we are the author". The
+	-- operator's guild runs its bankers on a SHARED ACCOUNT played from several PCs, each with its own
+	-- SavedVariables: "the banker CAN be red in its tab and out of date ... their data COULD be out of
+	-- date until they open their bags/mail/bank." A peer naming a later version of our own bank is
+	-- right, and the tab says so.
+	it("is 'behind' on OUR OWN character when another PC published a later version", function()
 		hold(BANKER, C(T, 5))
-		Guild.newestAdvertisedAt[BANKER] = T + 99999
+		Guild.newestAdvertisedAt[BANKER] = T + 60
+		local state, heldAt, newestAt = Guild:GetAltStaleness(BANKER)
+		assert.equal("behind", state)
+		assert.equal(T, heldAt)
+		assert.equal(T + 60, newestAt)
+		assert.equal(T + 60, Guild:NewerSelfVersionAt(), "the publish gate reads the same answer")
+	end)
+
+	it("is 'current' on our own character when what was named is the same time, or older", function()
+		hold(BANKER, C(T, 5))
+		Guild.newestAdvertisedAt[BANKER] = T
 		assert.equal("current", (Guild:GetAltStaleness(BANKER)))
+		assert.is_nil(Guild:NewerSelfVersionAt())
+		Guild.newestAdvertisedAt[BANKER] = T - 1
+		assert.equal("current", (Guild:GetAltStaleness(BANKER)))
+	end)
+
+	it("is 'behind' on our own character even with no canon or no content, once a later version is named", function()
+		-- "behind" wins over "v1" and "none" for our own name: its tooltip is the one that says what
+		-- fixes it (re-read the bank and the mailbox here).
+		hold(BANKER, nil)
+		Guild.newestAdvertisedAt[BANKER] = T + 60
+		local state, heldAt = Guild:GetAltStaleness(BANKER)
+		assert.equal("behind", state)
+		assert.equal(0, heldAt)
+		Guild.Info.alts[BANKER] = nil
+		assert.equal("behind", (Guild:GetAltStaleness(BANKER)))
 	end)
 
 	it("can still be 'v1' or 'none' on our own character -- only opening the bank fixes that", function()
@@ -154,13 +190,21 @@ describe("Guild:NoteAdvertisedPublishTime", function()
 		assert.equal(T, Guild.newestAdvertisedAt[OTHER], "the sidecar field was believed over the canon")
 	end)
 
-	it("ignores claims about our own character, non-bankers, and junk", function()
-		assert.is_false(Guild:NoteAdvertisedPublishTime(BANKER, { hashV2 = C(T, 1) }))
+	it("ignores claims about non-bankers, and junk", function()
 		assert.is_false(Guild:NoteAdvertisedPublishTime("Nobody-Testrealm", { hashV2 = C(T, 1) }))
 		assert.is_false(Guild:NoteAdvertisedPublishTime(nil, { hashV2 = C(T, 1) }))
 		assert.is_false(Guild:NoteAdvertisedPublishTime(OTHER, nil))
 		assert.is_false(Guild:NoteAdvertisedPublishTime(OTHER, "junk"))
 		assert.same({}, Guild.newestAdvertisedAt)
+	end)
+
+	-- MULTIPC-001: this used to be in the list above. A claim about OUR OWN character is recorded like
+	-- any other -- on a shared account another PC can have published a version this PC never saw.
+	-- The hash CACHE keeps refusing it (nothing is ever fetched for our own name), which is the half
+	-- the "self-guard there must stay" example in the offer section pins.
+	it("records a claim about our own character (a shared account on another PC can be ahead)", function()
+		assert.is_true(Guild:NoteAdvertisedPublishTime(BANKER, { hashV2 = C(T, 1) }))
+		assert.equal(T, Guild.newestAdvertisedAt[BANKER])
 	end)
 
 	it("asks the Inventory window to repaint only when it raised the time", function()
@@ -193,13 +237,17 @@ describe("the tab colour through the real receive paths", function()
 		TOGBankClassic_Chat:OnCommReceived("togbank-hlr", body, "WHISPER", sender)
 	end
 
+	-- N6: the KEYED offer / broadcast are what old-build peers send; off by default since v1.5.0 and
+	-- accepted only under this switch. The paths they feed are shared with the numbered forms.
 	local function hashOfferFrom(sender, alts)
+		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
 		TOGBankClassic_P2PSession:BeginCollectWindow({})
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = alts })
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", sender)
 	end
 
 	local function hashListBroadcastFrom(sender, alts)
+		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
 		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
 		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = 0.15
 		local body = TOGBankClassic_Core:SerializeWithChecksum({
@@ -209,11 +257,14 @@ describe("the tab colour through the real receive paths", function()
 		env.advance(1)   -- PERF-020: batched
 	end
 
+	-- INV2-RETIRE-003: the content is in the V2 store (standUpClient attaches one); the record
+	-- carries the version metadata.
 	local function holdCurrent(alt, at)
 		TOGBankClassic_Guild.Info.alts[alt] = {
-			name = alt, items = { { ID = 1, Count = 1 } }, money = 0,
+			name = alt, money = 0,
 			inventoryHash = 0x10, inventoryHashV2 = C(at, 0x20), inventoryUpdatedAt = at, mailHash = 0,
 		}
+		env.holdV2(GUILD, alt)
 	end
 
 	before_each(function() env.reset() end)
@@ -231,6 +282,31 @@ describe("the tab colour through the real receive paths", function()
 		holdCurrent(OTHER, T)
 		hashOfferFrom(PEER, { [OTHER] = { hash = 0x10, hashV2 = C(T + 60, 0x21), updatedAt = T + 60, mailHash = 0 } })
 		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(OTHER)))
+	end)
+
+	-- N6: the KEYED forms are off by default from v1.5.0 -- the operator's "comment it out first".
+	-- The same messages that turn the tab red above do NOTHING with the switch at its default, and
+	-- the numbered forms are untouched by it.
+	it("IGNORES a keyed hash-offer and hash-list broadcast while legacyKeyedReceive is off (N6)", function()
+		client("Bankchar")
+		holdCurrent(OTHER, T)
+		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
+		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = 0.15
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"), "precondition: the switch ships off")
+		local newer = { [OTHER] = { hash = 0x10, hashV2 = C(T + 60, 0x21), updatedAt = T + 60, mailHash = 0 } }
+		TOGBankClassic_P2PSession:BeginCollectWindow({})
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = newer }), "WHISPER", PEER)
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-broadcast", alts = newer, banker = PEER, isBanker = false }), "GUILD", PEER)
+		env.advance(1)
+		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(OTHER)), "a keyed message moved the tab with the switch off")
+		assert.equal(0, #TOGBankClassic_Chat.hashBroadcastQueue, "a keyed broadcast was queued with the switch off")
+		-- The numbered form still lands.
+		local BN = TOGBankClassic_BankerNumbers
+		BN:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum({ type = "hlb2", v = 5, banker = PEER, isBanker = false,
+			e = BN:EncodeEntries({ { number = "0002", canon = C(T + 60, 0x21) } }) }), "GUILD", PEER)
+		env.advance(1)
+		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(OTHER)), "the numbered broadcast was gated too")
 	end)
 
 	it("turns red on a hash-list BROADCAST that mentions a newer canon -- the earliest signal there is", function()
@@ -252,10 +328,18 @@ describe("the tab colour through the real receive paths", function()
 			"a revision-1-only number with a self-stamped clock turned the tab red")
 	end)
 
-	it("stays yellow on our OWN character whatever a peer claims", function()
+	-- MULTIPC-001: this used to pin "stays yellow on our OWN character whatever a peer claims".
+	it("turns red on our OWN character when a peer names a later version -- another PC on the account published it", function()
 		client("Bankchar")
 		holdCurrent(BANKER, T)
-		hashListReplyFrom(PEER, { [BANKER] = { hash = 0xDEAD, hashV2 = C(T + 99999, 0xBEEF), updatedAt = T + 99999, mailHash = 0 } })
+		hashListReplyFrom(PEER, { [BANKER] = { hash = 0xDEAD, hashV2 = C(T + 60, 0xBEEF), updatedAt = T + 60, mailHash = 0 } })
+		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
+		assert.is_nil((TOGBankClassic_Guild.latestBankerHashes or {})[BANKER],
+			"the claim reached the FETCH cache -- our own bank is re-read, never fetched")
+		-- And not on a claim that is no newer than what this PC holds.
+		env.reset(); client("Bankchar")
+		holdCurrent(BANKER, T)
+		hashListReplyFrom(PEER, { [BANKER] = { hash = 0xDEAD, hashV2 = C(T, 0xBEEF), updatedAt = T, mailHash = 0 } })
 		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
 	end)
 
@@ -290,6 +374,41 @@ describe("the tab colour through the real receive paths", function()
 		assert.equal(newCanon, TOGBankClassic_Guild.Info.alts[BANKER].inventoryHashV2, "delivery did not store the author's canon verbatim")
 	end)
 
+	-- TABCOLOUR-003: the number-only offer (P2P-035) is the reply to our own broadcast, and until now
+	-- it moved no tab -- it names no version. The operator: "if someone replies that they have a newer
+	-- data set than us, we need to make that bankers tab go red until we can get it."
+	it("turns red on a NUMBER-ONLY offer through the real path, and yellow again when the delivery lands", function()
+		client("Bankchar")
+		local Record = TOGBankClassic_Inventory_Record
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, BANKER, { Record.new(858, 5) }, 0)
+		TOGBankClassic_Guild.Info.alts[BANKER] = { name = BANKER, items = {}, money = 0 }
+		TOGBankClassic_Core:StampInventoryHashes(TOGBankClassic_Guild.Info.alts[BANKER],
+			TOGBankClassic_Inventory_Store:GetAltView(GUILD, BANKER), nil, nil, 0, T + 60)
+		local sent = {}
+		TOGBankClassic_Core.SendCommMessage = function(_, prefix, text) sent[#sent + 1] = { prefix = prefix, text = text } end
+		TOGBankClassic_Guild:SendAltData(BANKER, 0, 0, PEER)
+		local d4
+		for _, m in ipairs(sent) do if m.prefix == "togbank-d4" then d4 = m end end
+		assert.is_table(d4, "no payload was sent")
+
+		env.reset()
+		client("Otherguy")
+		local BN = TOGBankClassic_BankerNumbers
+		BN:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
+		holdCurrent(BANKER, T)
+		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)), "precondition")
+		TOGBankClassic_Core.SendWhisper = function() return true end   -- the version query goes nowhere here
+		-- The offer comes from the banker itself: on this client PEER is us, and our own echo is dropped.
+		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer2", v = 5, n = BN:EncodeNumbers({ "0001" }) })
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", BANKER)
+		local state, _, _, who = TOGBankClassic_Guild:GetAltStaleness(BANKER)
+		assert.equal("offered", state, "a bare offer for a bank we hold left the tab yellow")
+		assert.equal(BANKER, who)
+
+		TOGBankClassic_Chat:OnCommReceived("togbank-d4", d4.text, "WHISPER", BANKER)
+		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)), "the delivery landed and the tab is still red")
+	end)
+
 	it("does not go yellow on delivery of a copy OLDER than the newest mentioned", function()
 		client("Bankchar")
 		local Record = TOGBankClassic_Inventory_Record
@@ -318,15 +437,17 @@ describe("the tab colour through the real receive paths", function()
 	it("REQUESTS the data when the banker advertises a canon and we hold a pre-canon copy with the same revision-1 hash", function()
 		client("Otherguy")
 		TOGBankClassic_Guild.Info.alts[OTHER] = {
-			name = OTHER, items = { { ID = 13491, Count = 27 } }, money = 127821,
+			name = OTHER, money = 127821,
 			inventoryHash = 808855588, inventoryUpdatedAt = 1788651417, mailHash = 0,   -- no canon
 		}
+		env.holdV2(GUILD, OTHER, { { 13491, 27 } }, 127821)
 		local sent = {}
 		TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, dist, target)
 			sent[#sent + 1] = { prefix = prefix, text = text, dist = dist, target = target }
 		end
 		TOGBankClassic_Core.SendWhisper = function(_, prefix, text, target)
 			sent[#sent + 1] = { prefix = prefix, text = text, target = target }
+			return true   -- the real one returns true for an online target, and callers branch on it
 		end
 		assert.equal("v1", (TOGBankClassic_Guild:GetAltStaleness(OTHER)), "precondition: the pre-canon copy reads as v1")
 		hashListReplyFrom(BANKER, { [OTHER] = {
@@ -345,6 +466,12 @@ describe("the tab colour through the real receive paths", function()
 	it("is wiped and re-seeded per guild on Init", function()
 		client("Otherguy")
 		TOGBankClassic_Guild.newestAdvertisedAt = { [OTHER] = T + 999 }
+		-- CLAIM-TRACE-001: the CLAIMANT is wiped with the time it belongs to. Asserted here rather
+		-- than in a file of its own because the defect was exactly that it was NOT in this block:
+		-- created lazily inside NoteAdvertisedPublishTime, so switching guilds left the trace naming
+		-- a peer from the previous one -- a diagnostic built to identify a culprit, naming the wrong
+		-- player with confidence, which is worse than printing nothing.
+		TOGBankClassic_Guild.newestAdvertisedBy = { [OTHER] = { peer = "Stale-Testrealm", canon = "x", at = T + 999 } }
 		TOGBankClassic_Database.Load = function()
 			return { name = GUILD, alts = {}, requests = {}, requestsTombstones = {}, settings = {}, roster = { alts = {} } }
 		end
@@ -352,6 +479,8 @@ describe("the tab colour through the real receive paths", function()
 		assert.is_true(TOGBankClassic_Guild:Init(GUILD))
 		env.advance(1.5)
 		assert.same({}, TOGBankClassic_Guild.newestAdvertisedAt)
+		assert.same({}, TOGBankClassic_Guild.newestAdvertisedBy,
+			"the claimant table outlived the guild it belongs to")
 	end)
 end)
 
@@ -373,7 +502,11 @@ describe("answering a hash-list broadcast with an offer", function()
 		TOGBankClassic_Core.SendWhisper = function(_, prefix, text, target)
 			local ok, data = TOGBankClassic_Core:DeserializeWithChecksum(text)
 			sent[#sent + 1] = { prefix = prefix, data = ok and data or nil, target = target }
+			return true   -- the real one returns true for an online target, and callers branch on it
 		end
+		-- N6: the keyed broadcast is accepted only under the switch; the OFFER these examples assert
+		-- on is the numbered hash-offer2, which is what the shared path emits regardless.
+		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
 		local body = TOGBankClassic_Core:SerializeWithChecksum({
 			type = "hash-list-broadcast", alts = alts, banker = sender, isBanker = false,
 		})

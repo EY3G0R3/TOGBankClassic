@@ -1,8 +1,14 @@
 -- Switches — the V2 dev-switch registry.
 --
--- These gate a storage-format migration, so the failure that matters is a switch reporting a
--- state it is not actually in: `dualWrite` claiming to be on while V2 is off would mean the
--- legacy DB is silently going stale behind a diagnostic that says it is being maintained.
+-- These gate diagnostics on a storage-format migration, so the failure that matters is a switch
+-- reporting a state it is not actually in: a dependent switch claiming to be on while its parent
+-- is off would describe an effect that is not happening.
+--
+-- INV2-RETIRE-003 (2026-09-11): `inventoryV2` and `dualWrite` are RETIRED -- the V2 store is the
+-- only storage format, the legacy rows are neither written nor kept, and the accessors have no
+-- fallback. Every example below that named them is re-pinned on the switches that remain
+-- (`sendV2Wire`, `legacyKeyedReceive`); the dependency rule, which no shipped switch uses any more
+-- but which `IsEnabled` still implements, is pinned through a pair registered by the example.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
@@ -22,12 +28,21 @@ local function loadSwitches(withoutDB)
 	return Switches
 end
 
+local function find(list, name)
+	for _, e in ipairs(list) do if e.name == name then return e end end
+end
+
 describe("Switches registry", function()
 	before_each(function() env.reset(); loadSwitches() end)
 
-	it("declares the three V2 switches", function()
-		for _, name in ipairs({ "inventoryV2", "sendV2Wire", "dualWrite" }) do
+	it("declares the wire switch and the N6 grace-period switch, and nothing retired", function()
+		for _, name in ipairs({ "sendV2Wire", "legacyKeyedReceive" }) do
 			assert.is_table(Switches.registry[name], name .. " is not registered")
+		end
+		for _, name in ipairs({ "inventoryV2", "dualWrite" }) do
+			assert.is_nil(Switches.registry[name],
+				name .. " is registered again -- it was retired by INV2-RETIRE-003 when the V2 " ..
+				"store became the only storage format, and nothing reads it")
 		end
 	end)
 
@@ -41,12 +56,11 @@ describe("Switches registry", function()
 		end
 	end)
 
-	-- INV2 step 9: BOTH now default ON, and this is a deliberate re-baseline rather than a spec bent
-	-- to fit the code. The legacy link wire format is deleted in both directions (the 2026-09-09
-	-- directive), so with these off the addon has no send path and no receive path -- "off" is no
-	-- longer a rollback to the old behaviour, because the old behaviour no longer exists.
-	it("defaults V2 and the wire format ON, because there is no longer anything else", function()
-		assert.is_true(Switches:IsEnabled("inventoryV2"))
+	-- INV2 step 9: defaults ON, and this is a deliberate re-baseline rather than a spec bent to fit
+	-- the code. The legacy link wire format is deleted in both directions (the 2026-09-09
+	-- directive), so with this off the addon has no send path -- "off" is no longer a rollback to
+	-- the old behaviour, because the old behaviour no longer exists.
+	it("defaults the wire format ON, because there is no longer anything else", function()
 		assert.is_true(Switches:IsEnabled("sendV2Wire"))
 	end)
 end)
@@ -55,15 +69,15 @@ describe("Switches state", function()
 	before_each(function() env.reset(); loadSwitches() end)
 
 	it("turns a switch on and off", function()
-		assert.is_true(Switches:Set("inventoryV2", true))
-		assert.is_true(Switches:IsEnabled("inventoryV2"))
-		Switches:Set("inventoryV2", false)
-		assert.is_false(Switches:IsEnabled("inventoryV2"))
+		assert.is_true(Switches:Set("sendV2Wire", true))
+		assert.is_true(Switches:IsEnabled("sendV2Wire"))
+		Switches:Set("sendV2Wire", false)
+		assert.is_false(Switches:IsEnabled("sendV2Wire"))
 	end)
 
 	it("persists through db.global so it survives a reload", function()
-		Switches:Set("inventoryV2", true)
-		assert.is_true(TOGBankClassic_Database.db.global.switches.inventoryV2)
+		Switches:Set("sendV2Wire", true)
+		assert.is_true(TOGBankClassic_Database.db.global.switches.sendV2Wire)
 	end)
 
 	-- A typo at the slash command must be reported, not silently create a switch nothing reads.
@@ -78,38 +92,54 @@ describe("Switches state", function()
 	-- A switch may be queried before Database:Init has run.
 	it("falls back to defaults with no database", function()
 		env.reset(); loadSwitches(true)
-		-- The assertion is "it reports the DEFAULT", not "it reports false". The default moved.
-		assert.is_true(Switches:IsEnabled("inventoryV2"))
-		assert.is_false(Switches:Set("inventoryV2", true))
+		-- The assertion is "it reports the DEFAULT", not "it reports false".
+		assert.is_true(Switches:IsEnabled("sendV2Wire"))
+		assert.is_false(Switches:IsEnabled("legacyKeyedReceive"))
+		assert.is_false(Switches:Set("sendV2Wire", true))
 	end)
 end)
 
+-- The dependency rule: a switch with `requires` is inert while its parent is off, whatever its own
+-- stored value says. No shipped switch carries `requires` since `dualWrite` retired, but the rule is
+-- still what `IsEnabled` implements and the next staged migration will lean on it -- so it is pinned
+-- through a pair the example registers, and unregisters, itself.
 describe("Switches dependencies", function()
-	before_each(function() env.reset(); loadSwitches() end)
-
-	-- The one that matters: dualWrite keeps the legacy DB current so a rollback lands on live
-	-- data. Reporting it as on while V2 is off would describe maintenance that is not happening.
-	-- inventoryV2 is turned off EXPLICITLY rather than relied on being off by default. The rule under
-	-- test is the dependency rule, which has nothing to do with what the parent happens to default
-	-- to -- and this example broke when that default moved, which is the tell that it was testing
-	-- the default by accident.
-	it("reports dualWrite off while inventoryV2 is off, despite its own default", function()
-		assert.is_true(Switches.registry.dualWrite.default, "precondition: dualWrite defaults on")
-		Switches:Set("inventoryV2", false)
-		assert.is_false(Switches:IsEnabled("inventoryV2"), "precondition: V2 is off for this example")
-		assert.is_false(Switches:IsEnabled("dualWrite"),
-			"dualWrite claimed to be active while V2 is off")
+	before_each(function()
+		env.reset(); loadSwitches()
+		Switches.registry.specParent = { default = true, description = "spec", retire = "spec" }
+		Switches.registry.specChild  = { default = true, requires = "specParent", description = "spec", retire = "spec" }
+	end)
+	after_each(function()
+		Switches.registry.specParent, Switches.registry.specChild = nil, nil
 	end)
 
-	it("reports dualWrite on once inventoryV2 is on", function()
-		Switches:Set("inventoryV2", true)
-		assert.is_true(Switches:IsEnabled("dualWrite"))
+	-- The parent is turned off EXPLICITLY rather than relied on being off by default. The rule under
+	-- test is the dependency rule, which has nothing to do with what the parent happens to default
+	-- to -- an earlier form of this example broke when a default moved, which is the tell that it
+	-- was testing the default by accident.
+	it("reports a dependent switch off while its parent is off, despite its own default", function()
+		assert.is_true(Switches.registry.specChild.default, "precondition: the child defaults on")
+		Switches:Set("specParent", false)
+		assert.is_false(Switches:IsEnabled("specParent"), "precondition: the parent is off")
+		assert.is_false(Switches:IsEnabled("specChild"), "the child claimed to be active while its parent is off")
+	end)
+
+	it("reports a dependent switch on once its parent is on", function()
+		Switches:Set("specParent", true)
+		assert.is_true(Switches:IsEnabled("specChild"))
 	end)
 
 	it("still honours an explicit off for a dependent switch", function()
-		Switches:Set("inventoryV2", true)
-		Switches:Set("dualWrite", false)
-		assert.is_false(Switches:IsEnabled("dualWrite"))
+		Switches:Set("specParent", true)
+		Switches:Set("specChild", false)
+		assert.is_false(Switches:IsEnabled("specChild"))
+	end)
+
+	it("reports live state through GetAll, not the stored value", function()
+		Switches:Set("specParent", false)
+		assert.is_false(find(Switches:GetAll(), "specChild").enabled)
+		Switches:Set("specParent", true)
+		assert.is_true(find(Switches:GetAll(), "specChild").enabled)
 	end)
 end)
 
@@ -118,54 +148,41 @@ describe("Switches:GetAll", function()
 
 	it("returns every switch, sorted by name", function()
 		local all = Switches:GetAll()
-		assert.equal(3, #all)
-		assert.equal("dualWrite", all[1].name)
-		assert.equal("inventoryV2", all[2].name)
-		assert.equal("sendV2Wire", all[3].name)
+		assert.equal(2, #all)
+		assert.equal("legacyKeyedReceive", all[1].name)
+		assert.equal("sendV2Wire", all[2].name)
 	end)
 
-	it("reports live state, not the stored value", function()
-		local function find(list, name)
-			for _, e in ipairs(list) do if e.name == name then return e end end
-		end
-		-- dualWrite defaults on but is inert while V2 is off. V2 is turned off explicitly, for the
-		-- same reason as the dependency example above: the rule is the subject, not the default.
-		Switches:Set("inventoryV2", false)
-		assert.is_false(find(Switches:GetAll(), "dualWrite").enabled)
-		Switches:Set("inventoryV2", true)
-		assert.is_true(find(Switches:GetAll(), "dualWrite").enabled)
+	-- N6: the operator's "comment it out first, delete in a week or two if nothing happens". Off
+	-- by default is the comment-out; the switch is what makes it undoable in game.
+	it("ships legacyKeyedReceive OFF, with a retire note naming the deletion", function()
+		assert.is_false(Switches:IsEnabled("legacyKeyedReceive"))
+		assert.truthy(Switches.registry.legacyKeyedReceive.retire:find("delete", 1, true))
 	end)
 
 	-- Distinguishes "the user set this" from "this is inherited", which is the first question
 	-- when diagnosing a report.
 	it("flags whether a switch was explicitly overridden", function()
-		local function find(list, name)
-			for _, e in ipairs(list) do if e.name == name then return e end end
-		end
 		assert.is_false(find(Switches:GetAll(), "sendV2Wire").overridden)
-		Switches:Set("sendV2Wire", false)   -- same as the default, but explicitly set
+		Switches:Set("sendV2Wire", true)   -- same as the default, but explicitly set
 		assert.is_true(find(Switches:GetAll(), "sendV2Wire").overridden)
 	end)
 
 	it("carries the description, default and retirement note through", function()
-		local e = Switches:GetAll()[2]   -- inventoryV2
+		local e = find(Switches:GetAll(), "sendV2Wire")
 		assert.is_string(e.description)
 		assert.is_string(e.retire)
 		assert.is_true(e.default)   -- INV2 step 9: defaults on
-
 	end)
 
 	-- `pending` has no user today and that is the correct state: every registered switch is wired
 	-- to something. It is carried through GetAll so the escape hatch the wiring guard below offers
 	-- actually reaches the listing the moment a switch is staged ahead of its code.
 	it("carries the pending marker through, so the listing can show it", function()
-		local function find(list, name)
-			for _, e in ipairs(list) do if e.name == name then return e end end
-		end
-		assert.is_nil(find(Switches:GetAll(), "dualWrite").pending)
-		Switches.registry.dualWrite.pending = "staged"
-		assert.equal("staged", find(Switches:GetAll(), "dualWrite").pending)
-		Switches.registry.dualWrite.pending = nil
+		assert.is_nil(find(Switches:GetAll(), "sendV2Wire").pending)
+		Switches.registry.sendV2Wire.pending = "staged"
+		assert.equal("staged", find(Switches:GetAll(), "sendV2Wire").pending)
+		Switches.registry.sendV2Wire.pending = nil
 	end)
 end)
 
@@ -201,11 +218,11 @@ describe("Switches are wired to something", function()
 		return out
 	end
 
-	-- Matches the CALL, not the name. A bare substring search reports `dualWrite` as read because
-	-- Bank.lua:292 mentions it in a comment explaining what it will do at step 10 -- prose about a
-	-- switch is the opposite of a reader, and counting it would have hidden exactly the defect this
-	-- guard exists to find. `IsEnabled("<name>")` is the only way a switch is consulted; `Set` is
-	-- driven from the slash command through a variable, so it never appears as a literal.
+	-- Matches the CALL, not the name. A bare substring search would report a switch as read because
+	-- a comment mentions it -- prose about a switch is the opposite of a reader, and counting it
+	-- would have hidden exactly the defect this guard exists to find. `IsEnabled("<name>")` is the
+	-- only way a switch is consulted; `Set` is driven from the slash command through a variable, so
+	-- it never appears as a literal.
 	local function readsSwitch(src, name)
 		return src:find('IsEnabled%s*%(%s*["\']' .. name .. '["\']') ~= nil
 	end
@@ -235,6 +252,23 @@ describe("Switches are wired to something", function()
 					"The dev-switch listing therefore promises an effect no code delivers -- " ..
 					"either wire it up, or declare `pending` so the listing says NOT YET ACTIVE",
 					name))
+			end
+		end
+	end)
+
+	-- The other direction, added with INV2-RETIRE-003: a switch that was retired must not still be
+	-- READ anywhere, or the reader silently branches on a name `IsEnabled` answers false for.
+	it("has no shipped reader of a retired switch", function()
+		for _, path in ipairs(shippedSources()) do
+			local fh = io.open(path, "r")
+			if fh then
+				local src = fh:read("*a")
+				fh:close()
+				for _, name in ipairs({ "inventoryV2", "dualWrite" }) do
+					assert.is_false(readsSwitch(src, name), string.format(
+						"%s still reads the retired switch '%s' -- IsEnabled answers false for an " ..
+						"unregistered name, so that branch is silently dead", path, name))
+				end
 			end
 		end
 	end)

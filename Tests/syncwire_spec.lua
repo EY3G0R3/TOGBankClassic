@@ -28,7 +28,7 @@ local function loadWireStack()
 	env.stubOutput()
 	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
-	require("env.libs").load("AceCommQueue-1.0")
+	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")   -- DS-HOST-001: Core needs the host
 
 	env.loadModules({
 		"Modules/Constants.lua",
@@ -680,17 +680,22 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 	-- THE RULE NOW: a hash is written ONCE, by the client that scanned the bank, and carried
 	-- unchanged by everyone else. A no-change says "your version is current" and nothing more.
 	-- Re-baselining the old assertions was not an option -- the behaviour they described is gone.
-	local function noChangeFrom(sender, hash, hashV2)
+	--
+	-- THE DELTA RELEASE step 3b: the no-change rides the DeltaSync host's RESPONSE channel as
+	-- `inv-nochange` (togbank-nochange is retired), so it is delivered here the way the client
+	-- receives it -- through the host's own RESPONSE handler, not a TOGBank prefix.
+	local function noChangeFrom(sender, hash, hashV2, extra)
 		local msg = {
-			type = "no-change",
-			name = BANKER,
+			type = "inv-nochange",
+			alt = BANKER,
 			version = 999,
 			hash = hash,
 			hashV2 = hashV2,
 			mailHash = 0,
 		}
-		local body = TOGBankClassic_Core:SerializeWithChecksum(msg)
-		TOGBankClassic_Chat:OnCommReceived("togbank-nochange", body, "WHISPER", sender)
+		for k, v in pairs(extra or {}) do msg[k] = v end
+		local host = TOGBankClassic_Core:DeltaHost()
+		host:OnComm_RESPONSE(host.prefixes.RESPONSE, host:SerializeData(msg), "WHISPER", sender)
 	end
 
 	-- THE CENTRAL ONE. Everything else in this block is a variation on it.
@@ -760,12 +765,7 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 			inventoryHash = 111, inventoryHashV2 = 222,
 		}
 
-		local msg = {
-			type = "no-change", name = BANKER, version = 999,
-			bankSlots = { count = 12, total = 28 },
-		}
-		TOGBankClassic_Chat:OnCommReceived("togbank-nochange",
-			TOGBankClassic_Core:SerializeWithChecksum(msg), "WHISPER", BANKER)
+		noChangeFrom(BANKER, nil, nil, { bankSlots = { count = 12, total = 28 } })
 
 		local alt = TOGBankClassic_Guild.Info.alts[BANKER]
 		assert.is_table(alt.bank and alt.bank.slots, "slot counts stopped being applied")
@@ -776,33 +776,35 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 	-- adopts whatever arrives, so continuing to publish a hash we may not have authored would keep
 	-- feeding the same loop from the other end.
 	it("publishes NO hashes on a no-change it sends", function()
+		local host = TOGBankClassic_Core:DeltaHost()
 		local sent
-		TOGBankClassic_Core.SendWhisper = function(_, prefix, body)
-			if prefix == "togbank-nochange" then
+		TOGBankClassic_Core.SendCommMessage = function(_, prefix, body)
+			if prefix == host.prefixes.RESPONSE then
 				local _, decoded = TOGBankClassic_Core:DeserializeWithChecksum(body, {})
 				sent = decoded
 			end
-			return true
 		end
 
+		local canon = env.canon(999, 222)
 		TOGBankClassic_Guild.Info.alts[BANKER] = {
-			name = BANKER, items = {}, money = 0, version = 999,
-			inventoryHash = 111, inventoryHashV2 = 222, mailHash = 0,
-			bank = { items = {}, slots = { count = 1, total = 28 } },
+			name = BANKER, money = 0, version = 999, inventoryUpdatedAt = 999,
+			inventoryHash = 111, inventoryHashV2 = canon, mailHash = 0,
+			bank = { slots = { count = 1, total = 28 } },
 		}
-		-- HASH-CANON-010: the requester holds OUR canon (same publish, same number), which is what
-		-- earns a no-change now. This summary used to carry revision 1 only, and the responder used
-		-- to call that "current" -- the exact gate that swallowed Alchemyrcp's canon on the live
-		-- guild. A requester with no canon is now sent the data; see Tests/statesummary_spec.lua.
-		TOGBankClassic_Guild:RespondToStateSummary(BANKER, {
-			name = BANKER, hash = 111, hashV2 = 222, updatedAt = 999, mailHash = 0, version = 999,
-		}, PEER)
+		env.holdV2(GUILD, BANKER, { { 858, 5 } })
+		-- HASH-CANON-010: the requester holds OUR canon, which is what earns a no-change. The
+		-- request used to carry revision 1 only, and the responder used to call that "current" --
+		-- the exact gate that swallowed Alchemyrcp's canon on the live guild. A requester with no
+		-- canon is now sent the data; see Tests/statesummary_spec.lua.
+		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)   -- the accept: CHAIN-003 answers nobody else
+		TOGBankClassic_Inventory_Sync:OnDataRequest(PEER, { type = "inv", hash = canon, keys = { alt = BANKER } })
 
 		-- Asserted, not guarded with `if sent then`: a no-change that was never sent would make every
 		-- assertion below vacuous and the example would pass while testing nothing.
 		assert.is_table(sent,
-			"RespondToStateSummary did not send a no-change, so this example proves nothing about " ..
+			"OnDataRequest did not send a no-change, so this example proves nothing about " ..
 			"what a no-change carries -- fix the fixture rather than letting it pass")
+		assert.equal("inv-nochange", sent.type)
 		assert.is_nil(sent.hash,
 			"a no-change still carried a revision-1 hash -- an older client will adopt it, so " ..
 			"publishing one keeps the mutation loop alive from the sending end")

@@ -56,6 +56,14 @@ local viewCache = {}
 -- views and leaves records untouched); both are dropped together on write.
 local recordCache = {}
 
+-- PERF-022: per alt, `itemID -> total count` across every variant, derived from the record array
+-- above on first ask and dropped with it. The tooltip hover asks "how many of X does each banker
+-- hold" for every banker on every mouseover -- O(bankers x items) as a linear scan, one hash
+-- lookup per banker with this. The hard part of an index is INVALIDATION (audit finding 13): this
+-- one cannot miss a writer because it is dropped in the same call the record cache is, and every
+-- writer of the store already goes through that call (INV2-ISOLATE-001 pins the writer set).
+local totalsCache = {}
+
 --- Attach to the SavedVariable. Kept separate from Database:Init so the legacy DB's lifecycle
 --- is untouched — this module is inert until something calls into it.
 function Store:Init(db)
@@ -66,7 +74,38 @@ function Store:Init(db)
 		self.db = TOGBankClassicInvDB
 	end
 	self.db.faction = self.db.faction or {}
+	self.repaired = self:RepairWholesaleBuckets()
 	return self.db
+end
+
+--- DOUBLE-001, the repair for records already on disk: any alt holding a wholesale `all` bucket
+--- BESIDE a named source has been double-counting since the day the two met, and nothing but a
+--- wholesale delivery would ever have cleared it. The named sources are what this account's own
+--- scans read from the real containers; `all` was a copy of them. Dropped, visible and hidden
+--- halves, and the alt's caches with it. Returns how many alts were repaired, so the caller can say
+--- so; safe to run every load (a clean store is a no-op).
+---@return number repaired
+function Store:RepairWholesaleBuckets()
+	local repaired = 0
+	for guild, g in pairs(self.db and self.db.faction or {}) do
+		for altName, alt in pairs(g.alts or {}) do
+			local sources = alt.sources
+			if sources and sources.all then
+				local named = false
+				for name in pairs(sources) do if name ~= "all" then named = true break end end
+				if named then
+					sources.all = nil
+					if alt.hidden then
+						alt.hidden.all = nil
+						if not next(alt.hidden) then alt.hidden = nil end
+					end
+					self:InvalidateView(guild, altName)
+					repaired = repaired + 1
+				end
+			end
+		end
+	end
+	return repaired
 end
 
 local function guildTable(self, guild, create)
@@ -80,15 +119,23 @@ local function guildTable(self, guild, create)
 	return f[guild]
 end
 
+--- The guild's table on the V2 SavedVariable, for the sibling module that keeps its data beside
+--- the records: Inventory/Chain.lua stores each banker's delta chain in `<guild>.chains`. Exposed
+--- rather than giving Chain its own SavedVariable -- one V2 file, one lifecycle (Init, wipe).
+---@param guild string
+---@param create boolean create the guild table if absent
+---@return table|nil
+function Store:GuildTable(guild, create)
+	return guildTable(self, guild, create)
+end
+
 local function viewKey(guild, altName) return tostring(guild) .. "\031" .. tostring(altName) end
 
---- Replace an alt's inventory with `records`.
+--- Aggregate one source's records into a stably-ordered array.
 ---
 --- Aggregates on the way in so the stored array holds one row per distinct item. Doing it here
 --- rather than at read time means the miscount cannot be reintroduced by a caller that forgets:
 --- whatever a scan hands over, what lands in the DB is already deduplicated by tuple key.
---- @return number stored, number skipped
---- Aggregate one source's records into a stably-ordered array.
 --- @return table bucket
 --- @return number skipped
 local function bucketOf(records)
@@ -111,24 +158,74 @@ end
 --- a character who opened their mailbox anywhere but a bank NPC updated the legacy record to 71 and
 --- left the V2 record at 68, permanently, because the next write was skipped for the same reason.
 --- Deciding per source here rather than per write is what removes the choice.
+---
+--- HIDE-001: `hiddenKeys` (`Record.key -> true`) is the banker's own "not for the guild" list. Every
+--- bucket -- the ones supplied AND the ones carried forward -- is split on it: rows whose key is
+--- hidden go to `hidden[source]`, the rest to `sources[source]`. Only `sources` is what the store
+--- reads back (GetAltRecords, the view, the totals), so a hidden row is absent from the hash, the
+--- chain, the log, the snapshot and every viewer -- the addon acts as if the banker does not have
+--- it. The hidden rows are KEPT, per source, beside the visible ones: that is what lets a banker
+--- unhide an item while away from the vault (the carried-forward bank bucket still holds the row to
+--- give back) and what the banker's own tab draws greyed out. Split here rather than in the scan so
+--- the carry-forward cannot skip it. nil means "nothing hidden".
 --- @return number stored, number skipped
-function Store:SetAltSources(guild, altName, sources, money)
+function Store:SetAltSources(guild, altName, sources, money, hiddenKeys)
 	local g = guildTable(self, guild, true)
 	if not g or not altName or type(sources) ~= "table" then return 0, 0 end
 
 	local prev = g.alts[altName]
-	local out, skipped = {}, 0
-	-- Carry forward every bucket the caller did not mention.
+	local full, skipped = {}, 0
+	-- Carry forward every bucket the caller did not mention -- visible and hidden halves together,
+	-- so a key that left the hidden list comes back into view without a re-read of that source.
 	if prev and prev.sources then
-		for name, bucket in pairs(prev.sources) do out[name] = bucket end
+		for name, bucket in pairs(prev.sources) do full[name] = bucket end
+	end
+	if prev and prev.hidden then
+		for name, bucket in pairs(prev.hidden) do
+			local merged = {}
+			for _, rec in ipairs(full[name] or {}) do merged[#merged + 1] = rec end
+			for _, rec in ipairs(bucket) do merged[#merged + 1] = rec end
+			full[name] = merged
+		end
 	end
 	for name, records in pairs(sources) do
 		local bucket, s = bucketOf(records)
-		out[name], skipped = bucket, skipped + s
+		full[name], skipped = bucket, skipped + s
+	end
+
+	-- DOUBLE-001: A WHOLESALE BUCKET AND PER-SOURCE BUCKETS NEVER COEXIST. `all` is what a delivery
+	-- from the wire stores (SetAltRecords) -- the whole record, every source folded in. A scan writes
+	-- named sources. The carry-forward above kept `all` beside them, and the view sums every bucket,
+	-- so every item was counted from `all` AND from the bucket it now sits in. Read off the
+	-- operator's own banker 2026-09-12: `all` 100 rows / 141 units beside bags 53 / bank 46 / mail 0,
+	-- "i only have 3x archaic defenders. the ui is showing 6". The path is ordinary and will recur:
+	-- the store is account-wide, so a viewer alt on the same account receives the banker's record
+	-- as `all`, and the banker's next scan adds its sources next to it. The v1.1.0 ITEM-004 class --
+	-- a source summed instead of replaced -- in the V2 store. So: a named source arriving REPLACES
+	-- the wholesale bucket outright (the scan is reading the real containers; the delivery was a
+	-- copy of them), visible and hidden halves both.
+	local named = false
+	for name in pairs(sources) do if name ~= "all" then named = true break end end
+	if named and full.all then full.all = nil end
+
+	local out, hidden, anyHidden = {}, {}, false
+	for name, bucket in pairs(full) do
+		if hiddenKeys and next(hiddenKeys) then
+			local shown, kept = {}, {}
+			for _, rec in ipairs(bucket) do
+				if hiddenKeys[Record.key(rec)] then kept[#kept + 1] = rec else shown[#shown + 1] = rec end
+			end
+			-- Re-bucket so a carried-forward merge above is aggregated and ordered like a fresh write.
+			out[name] = bucketOf(shown)
+			if #kept > 0 then hidden[name], anyHidden = bucketOf(kept), true end
+		else
+			out[name] = bucketOf(bucket)
+		end
 	end
 
 	g.alts[altName] = {
 		sources = out,
+		hidden  = anyHidden and hidden or nil,
 		money   = tonumber(money) or (prev and prev.money) or 0,
 		updated = GetServerTime(),
 		-- Stamped on every write, so a record's coverage travels with it rather than being inferred
@@ -137,6 +234,22 @@ function Store:SetAltSources(guild, altName, sources, money)
 	}
 	self:InvalidateView(guild, altName)
 	return #self:GetAltRecords(guild, altName), skipped
+end
+
+--- HIDE-001: an alt's HIDDEN tuples as one flat, aggregated array -- the rows the banker keeps
+--- from the guild. Empty for every alt but the banker's own (a received record carries none), and
+--- read by exactly one thing: the banker's own tab, which draws them greyed so they can be unhidden.
+--- Never nil. Not cached: one reader, on one tab, on draw.
+---@return table records
+function Store:GetAltHiddenRecords(guild, altName)
+	local g = guildTable(self, guild, false)
+	local alt = g and g.alts[altName]
+	if not (alt and alt.hidden) then return {} end
+	local all = {}
+	for _, bucket in pairs(alt.hidden) do
+		for _, rec in ipairs(bucket) do all[#all + 1] = rec end
+	end
+	return (bucketOf(all))
 end
 
 --- Replace an alt's inventory wholesale, discarding every stored source.
@@ -182,10 +295,80 @@ function Store:GetAltRecords(guild, altName)
 	return out
 end
 
+--- How many of `itemID` an alt holds, every suffix/enchant variant summed. O(1) after the first
+--- ask per alt since its last write (PERF-022); 0 for an alt the store has not seen.
+---@param guild string
+---@param altName string
+---@param itemID number
+---@return number
+function Store:GetAltItemTotal(guild, altName, itemID)
+	itemID = tonumber(itemID)
+	if not itemID then return 0 end
+	local key = viewKey(guild, altName)
+	local totals = totalsCache[key]
+	if not totals then
+		-- Nothing is cached for an alt the store has not seen: an empty index under that key would
+		-- outlive a later InvalidateView(guild, alt) only by spelling, and GetAltRecords itself never
+		-- caches the unknown case either.
+		if not self:HasAlt(guild, altName) then return 0 end
+		totals = {}
+		for _, rec in ipairs(self:GetAltRecords(guild, altName)) do
+			local id = Record.id(rec)
+			totals[id] = (totals[id] or 0) + Record.count(rec)
+		end
+		totalsCache[key] = totals
+	end
+	return totals[itemID] or 0
+end
+
 function Store:GetAltMoney(guild, altName)
 	local g = guildTable(self, guild, false)
 	local alt = g and g.alts[altName]
 	return (alt and alt.money) or 0
+end
+
+--- ONE source's records for an alt -- `"bank"`, `"bags"` or `"mail"` -- or an empty table. Never nil.
+---
+--- INV2-RETIRE-003. Two readers needed the split the legacy record kept (`alt.bank.items`,
+--- `alt.mail.items`) and nothing here offered it: the fulfil path's "in mail" / "in bank" hint
+--- (Mail.lua CanFulfillRequest) and the status bar's mail count. Both are about the LOCAL banker,
+--- whose own scans write per source (SetAltSources), so the buckets are there to read. A record
+--- written by SetAltRecords -- a received delivery -- holds one flat `all` bucket and answers empty
+--- for every named source, which is right: a receiver was never told which source a row sat in.
+---
+--- RETURNS THE LIVE STORED BUCKET, not a copy -- deliberately (Peer Review, 55250c0f F5). Both
+--- callers are read-only and one is on the fulfil path; a defensive copy per call is the wrong
+--- trade there. A caller must not mutate what it gets back.
+---@param source string "bank" | "bags" | "mail"
+---@return table records
+function Store:GetAltSourceRecords(guild, altName, source)
+	local g = guildTable(self, guild, false)
+	local alt = g and g.alts[altName]
+	local bucket = alt and alt.sources and alt.sources[source]
+	return bucket or {}
+end
+
+--- LOG-MAIL-001: what the banker HOLDS -- every source but `mail`, as one flat aggregated array.
+--- The operator: "the log should only show the 'deposit' when it's taken from the mail, not when
+--- it's scanned in the inbox. it may sit there and be sent back." An unopened mail is not the
+--- bank's yet, so the bank LOG diffs this set (Bank:MintVersion), while the version, the hash and
+--- every viewer's rows still carry the mail rows (a viewer may request what sits in the inbox).
+--- A record written by SetAltRecords -- a received delivery, one `all` bucket -- answers everything,
+--- which is right for the one caller that can meet it (a diff base fetched from a peer): a receiver
+--- was never told which source a row sat in. A fresh array per call; not cached (one reader, at mint).
+---@return table records
+function Store:GetAltHeldRecords(guild, altName)
+	local g = guildTable(self, guild, false)
+	local alt = g and g.alts[altName]
+	if not alt then return {} end
+	if not alt.sources then return alt.records or {} end
+	local all = {}
+	for name, bucket in pairs(alt.sources) do
+		if name ~= "mail" then
+			for _, rec in ipairs(bucket) do all[#all + 1] = rec end
+		end
+	end
+	return (bucketOf(all))
 end
 
 function Store:HasAlt(guild, altName)
@@ -243,8 +426,59 @@ end
 --- on any client whose ItemDB lacks that id. The record held the value the whole time; this
 --- stops the lossy round trip rather than working around it.
 ---
+--- RESOLVE-002: `Info.equipId` is the NUMERIC Enum.InventoryType, as the legacy loader stores it
+--- (Item.lua: `C_Item.GetItemInventoryTypeByID`). Resolve.describe hands back `equipLoc`, the
+--- INVTYPE_* STRING that LibItemDB and GetItemInfoInstant both return, and this view used to copy
+--- that string straight into `equipId`. The By-Type sort (Item.lua / UI/Search.lua) compares
+--- equipId with `<`: on V2 rows that sorted slots alphabetically by token instead of in slot order,
+--- and a Search result mixing a V2 alt with a legacy-only alt compared a string against a number
+--- -- a Lua error in the comparator. Token -> enum value from Era's ItemConstantsDocumentation.lua
+--- (Enum.InventoryType, 0..34); anything unknown or non-equippable is 0 (IndexNonEquipType), the
+--- same value the legacy path stores for it.
+local INVTYPE_TO_ID = {
+	INVTYPE_HEAD = 1, INVTYPE_NECK = 2, INVTYPE_SHOULDER = 3, INVTYPE_BODY = 4, INVTYPE_CHEST = 5,
+	INVTYPE_WAIST = 6, INVTYPE_LEGS = 7, INVTYPE_FEET = 8, INVTYPE_WRIST = 9, INVTYPE_HAND = 10,
+	INVTYPE_FINGER = 11, INVTYPE_TRINKET = 12, INVTYPE_WEAPON = 13, INVTYPE_SHIELD = 14,
+	INVTYPE_RANGED = 15, INVTYPE_CLOAK = 16, INVTYPE_2HWEAPON = 17, INVTYPE_BAG = 18,
+	INVTYPE_TABARD = 19, INVTYPE_ROBE = 20, INVTYPE_WEAPONMAINHAND = 21, INVTYPE_WEAPONOFFHAND = 22,
+	INVTYPE_HOLDABLE = 23, INVTYPE_AMMO = 24, INVTYPE_THROWN = 25, INVTYPE_RANGEDRIGHT = 26,
+	INVTYPE_QUIVER = 27, INVTYPE_RELIC = 28,
+}
+Store.INVTYPE_TO_ID = INVTYPE_TO_ID
+
+local function equipIdFor(equipLoc)
+	if type(equipLoc) == "number" then return equipLoc end
+	return INVTYPE_TO_ID[equipLoc] or 0
+end
+
 --- Cached because resolving ~10k rows on every draw would be worse than the link storage it
 --- replaces. Dropped on any write to that alt — see InvalidateView.
+---
+--- An alt the store has never seen caches an EMPTY view under its name too (INV2-RETIRE-003:
+--- `Guild:GetAltItems` reaches here for every name the UI asks about, with no `Info.alts` guard in
+--- front). Bounded by the roster -- one empty array per name ever asked -- and dropped by that
+--- alt's first write like any other entry. Not a leak; said so nobody "fixes" it with a copy.
+local function viewRow(rec)
+	local d = Resolve.describe(rec)
+	return {
+		ID      = Record.id(rec),
+		Count   = Record.count(rec),
+		Suffix  = Record.suffix(rec),
+		Enchant = Record.enchant(rec),
+		Link    = d.link,
+		Info    = {
+			name     = d.name,
+			icon     = d.icon,
+			rarity   = d.quality,
+			level    = d.itemLevel,
+			reqLevel = d.reqLevel,
+			class    = d.class,
+			subClass = d.subClass,
+			equipId  = equipIdFor(d.equipLoc),
+		},
+	}
+end
+
 function Store:GetAltView(guild, altName)
 	local key = viewKey(guild, altName)
 	local cached = viewCache[key]
@@ -252,26 +486,23 @@ function Store:GetAltView(guild, altName)
 
 	local out = {}
 	for _, rec in ipairs(self:GetAltRecords(guild, altName)) do
-		local d = Resolve.describe(rec)
-		out[#out + 1] = {
-			ID      = Record.id(rec),
-			Count   = Record.count(rec),
-			Suffix  = Record.suffix(rec),
-			Enchant = Record.enchant(rec),
-			Link    = d.link,
-			Info    = {
-				name     = d.name,
-				icon     = d.icon,
-				rarity   = d.quality,
-				level    = d.itemLevel,
-				reqLevel = d.reqLevel,
-				class    = d.class,
-				subClass = d.subClass,
-				equipId  = d.equipLoc,
-			},
-		}
+		out[#out + 1] = viewRow(rec)
 	end
 	viewCache[key] = out
+	return out
+end
+
+--- HIDE-001: the hidden rows in the same shape as GetAltView, each flagged `Hidden = true`. NOT part
+--- of GetAltView on purpose: that view feeds Search, the tooltips, the fulfil path and
+--- TOGProfessionMaster, none of which may see a hidden item. The banker's own tab appends these.
+---@return table rows
+function Store:GetAltHiddenView(guild, altName)
+	local out = {}
+	for _, rec in ipairs(self:GetAltHiddenRecords(guild, altName)) do
+		local row = viewRow(rec)
+		row.Hidden = true
+		out[#out + 1] = row
+	end
 	return out
 end
 
@@ -283,9 +514,11 @@ function Store:InvalidateView(guild, altName)
 		local key = viewKey(guild, altName)
 		viewCache[key] = nil
 		recordCache[key] = nil
+		totalsCache[key] = nil
 	else
 		viewCache = {}
 		recordCache = {}
+		totalsCache = {}
 	end
 end
 
@@ -306,9 +539,7 @@ function Store:GetGuildTotal(guild, itemID)
 	if not itemID then return 0 end
 	local total = 0
 	for _, altName in ipairs(self:GetAltNames(guild)) do
-		for _, rec in ipairs(self:GetAltRecords(guild, altName)) do
-			if Record.id(rec) == itemID then total = total + Record.count(rec) end
-		end
+		total = total + self:GetAltItemTotal(guild, altName, itemID)
 	end
 	return total
 end
@@ -320,10 +551,7 @@ function Store:FindItem(guild, itemID)
 	if not itemID then return {} end
 	local out = {}
 	for _, altName in ipairs(self:GetAltNames(guild)) do
-		local n = 0
-		for _, rec in ipairs(self:GetAltRecords(guild, altName)) do
-			if Record.id(rec) == itemID then n = n + Record.count(rec) end
-		end
+		local n = self:GetAltItemTotal(guild, altName, itemID)
 		if n > 0 then out[#out + 1] = { name = altName, count = n } end
 	end
 	table.sort(out, function(a, b)

@@ -85,13 +85,16 @@ describe("HASH-CANON-009: advertisers carry only a servable canon", function()
 		assert.equal(C(T, 0x30), list[BANKER].hashV2)
 	end)
 
-	it("version broadcast: the same rule", function()
+	-- INV2-RETIRE-003: this used to expect the legacy-only alt IN the broadcast with a nil canon.
+	-- Legacy rows are no longer content (HasAltContent is the V2 store), so a canon beside them is a
+	-- stub and the broadcast excludes it outright -- the stronger form of the same rule.
+	it("version broadcast: the same rule -- a legacy-only copy is not advertised at all", function()
 		hold(OTHER, C(T, 0x20), T, true)
 		hold(BANKER, C(T, 0x30), T)
 		local data = TOGBankClassic_Guild:GetVersion()
-		assert.is_table(data.alts[OTHER], "precondition: the alt is in the broadcast at all")
-		assert.is_nil(data.alts[OTHER].hashV2,
-			"the version broadcast advertised a canon this client cannot deliver (HASH-CANON-009)")
+		assert.is_nil(data.alts[OTHER],
+			"the version broadcast advertised a bank this client holds no records for (HASH-CANON-009)")
+		assert.is_table(data.alts[BANKER], "the bank with records is missing from the broadcast")
 		assert.equal(C(T, 0x30), data.alts[BANKER].hashV2)
 	end)
 end)

@@ -91,6 +91,37 @@ describe("Database:Load", function()
 		assert.equal(0, db.deltaMetrics.bytesSentDelta)
 		assert.equal(0, db.deltaMetrics.deltasApplied)
 	end)
+
+	-- DB-003 (audit finding 18, round 20): the deltaMetrics literal lived in FOUR places and had
+	-- diverged -- Reset/Load carried 16 keys, ResetDeltaMetrics 20 -- so a fresh guild record lacked
+	-- the four timing counters a reset one had, and every reader carried an `or 0` to survive it.
+	local function keySet(t)
+		local keys = {}
+		for k in pairs(t) do keys[#keys + 1] = k end
+		table.sort(keys)
+		return keys
+	end
+
+	it("gives a fresh record, a Load-repaired record and a reset record the SAME metric keys", function()
+		local fresh = DB:Load("Testguild").deltaMetrics
+		DB.db.faction["Repaired"] = { name = "Repaired" }
+		local repaired = DB:Load("Repaired").deltaMetrics
+		assert.is_true(DB:ResetDeltaMetrics("Testguild"))
+		local reset = DB.db.faction["Testguild"].deltaMetrics
+		assert.same(keySet(fresh), keySet(repaired))
+		assert.same(keySet(fresh), keySet(reset), "Reset and ResetDeltaMetrics disagree on the metric keys (DB-003)")
+		assert.equal(0, fresh.computeCount, "the timing counters are missing from a fresh record")
+		assert.equal(20, #keySet(fresh))
+	end)
+
+	it("backfills the timing counters onto a record saved before they existed, without touching the rest", function()
+		DB.db.faction["Old"] = { name = "Old", deltaMetrics = { bytesSentDelta = 77, deltasApplied = 3 } }
+		local m = DB:Load("Old").deltaMetrics
+		assert.equal(77, m.bytesSentDelta, "an existing counter was reset")
+		assert.equal(3, m.deltasApplied)
+		assert.equal(0, m.computeCount, "a counter the old record lacked was not backfilled -- readers must carry `or 0` forever")
+		assert.equal(0, m.totalApplyTime)
+	end)
 end)
 
 -- ---------------------------------------------------------------------------
@@ -193,92 +224,66 @@ describe("Database:Load legacy hash migration", function()
 		return core
 	end
 
+	-- HASH-PIN-001 (2026-09-11): the four examples below used to drive the (bank, bags, money)
+	-- container form. That branch was unreachable from production and is DELETED; the form is now
+	-- refused. Each property they pinned still holds and is pinned on the one live convention.
 	it("hashes on the value of its inputs, not on table identity", function()
 		local core = realHasher()
 
 		-- Structurally identical, deliberately DISTINCT tables. Two separate instances is what
 		-- makes an address observable; reusing one hides it.
-		local bankA = { items = { { ID = 858, Count = 5 } } }
-		local bagsA = { items = { { ID = 2589, Count = 20 } } }
-		local bankB = { items = { { ID = 858, Count = 5 } } }
-		local bagsB = { items = { { ID = 2589, Count = 20 } } }
+		local itemsA = { { ID = 858, Count = 5 }, { ID = 2589, Count = 20 } }
+		local itemsB = { { ID = 858, Count = 5 }, { ID = 2589, Count = 20 } }
 
-		assert.equal(core:ComputeInventoryHash(bankA, bagsA, 5000),
-			core:ComputeInventoryHash(bankB, bagsB, 5000),
+		assert.equal(core:ComputeInventoryHash(itemsA, nil, nil, 5000),
+			core:ComputeInventoryHash(itemsB, nil, nil, 5000),
 			"two structurally identical inventories hashed differently, so the hash depends on " ..
 			"table identity rather than contents -- an address is in it")
 	end)
 
 	-- Names the defect rather than a property. Per finding 26 this failed against the reverted
 	-- code too, because `mailOrMoney or 0` accepted a table without complaint -- the revert worked
-	-- around the hazard rather than removing it. DeltaComms now type-guards the money slot.
+	-- around the hazard rather than removing it. The guard sat ONLY on the deleted branch until
+	-- HASH-PIN-001; the live branch had `money or 0`, and this is the example that would have
+	-- caught it had it driven the live form.
 	it("does not let a table in the money slot reach the hash", function()
 		local core = realHasher()
-		local bank = { items = { { ID = 858, Count = 5 } } }
-		local bags = { items = { { ID = 2589, Count = 20 } } }
+		local items = { { ID = 858, Count = 5 }, { ID = 2589, Count = 20 } }
 
-		local withTable = core:ComputeInventoryHash(bank, bags, { items = {} })
-		local withZero  = core:ComputeInventoryHash(bank, bags, 0)
+		local withTable = core:ComputeInventoryHash(items, nil, nil, { items = {} })
+		local withZero  = core:ComputeInventoryHash(items, nil, nil, 0)
 
 		assert.equal(withZero, withTable,
-			"a table in the overloaded money slot changed the hash, so tostring() put a TABLE " ..
-			"ADDRESS in it. That address differs between sessions, so the hash matches nothing -- " ..
-			"including itself an hour earlier (audit finding 25/26)")
+			"a table in the money slot changed the hash, so tostring() put a TABLE ADDRESS in it. " ..
+			"That address differs between sessions, so the hash matches nothing -- including " ..
+			"itself an hour earlier (audit finding 25/26)")
 		assert.is_nil(tostring(withTable):find("table:", 1, true),
 			"the hash string literally contains a table address")
 	end)
 
-	-- AUDIT finding 3, SECOND HALF. This is the assertion the arity argument distracted from, and
-	-- it is the one with a user-visible cost: a migrated character's hash must equal the hash a
-	-- normal scan produces for the same contents, or IsAltSyncPending sees a mismatch on every
-	-- comparison for the rest of that character's life.
-	--
-	-- It fails against the container form by construction -- the two branches emit different
-	-- strings ("B:"/"G:" against "I:") -- so this cannot pass by accident.
-	it("migrates to the same hash a scan would produce for the same contents", function()
+	-- AUDIT finding 3, SECOND HALF, re-pinned. It used to assert that the two calling conventions
+	-- hash DIFFERENTLY and that the migration lands on the scan's side. There is one convention
+	-- now, so the property is that the old shape cannot be hashed at all -- a caller that passes
+	-- it gets an error, never a silent money-only hash that agrees with no peer.
+	it("refuses the retired (bank, bags, money) container form rather than hashing it money-only", function()
 		local core = realHasher()
-		env.loadFile("Modules/Item.lua")
-
 		local bank = { items = { { ID = 858, Count = 5 } } }
 		local bags = { items = { { ID = 2589, Count = 20 } } }
 
-		-- What Bank:Scan stores and hashes: bank + bags + mail aggregated into one array.
-		local aggregated = TOGBankClassic_Item:Aggregate(bank.items, bags.items)
-		aggregated = TOGBankClassic_Item:Aggregate(aggregated, {})
-		local scanned = {}
-		for _, item in pairs(aggregated) do table.insert(scanned, item) end
-
-		local scanHash = core:ComputeInventoryHash(scanned, nil, nil, 5000)
-		local containerHash = core:ComputeInventoryHash(bank, bags, 5000)
-
-		assert.is_true(scanHash ~= containerHash,
-			"the two calling conventions produced the SAME hash, so this example can no longer " ..
-			"detect the divergence it exists for -- check DeltaComms' two branches before " ..
-			"weakening it")
-
-		-- And the migration must land on the scan's value, not the container one.
-		local migrated = { bank = bank, bags = bags, money = 5000, version = 100 }
-		local items = migrated.items
-		if not items then
-			local agg = TOGBankClassic_Item:Aggregate(bank.items, bags.items)
-			agg = TOGBankClassic_Item:Aggregate(agg, {})
-			items = {}
-			for _, item in pairs(agg) do table.insert(items, item) end
-		end
-		assert.equal(scanHash, core:ComputeInventoryHash(items, nil, nil, migrated.money),
-			"a migrated character hashes differently from a scanned one with identical contents, " ..
-			"so it can never agree with any peer (audit finding 3, second half)")
+		local ok, err = pcall(function() return core:ComputeInventoryHash(bank, bags, 5000) end)
+		assert.is_false(ok, "the container form was accepted -- which convention is live is ambiguous again")
+		assert.truthy(tostring(err):find("HASH-PIN-001", 1, true), tostring(err))
+		assert.is_false((pcall(function() return core:ComputeInventoryHash(nil, nil, nil, 5000) end)))
 	end)
 
 	it("changes when money changes", function()
 		local core = realHasher()
-		local bank = { items = { { ID = 858, Count = 5 } } }
-		local bags = { items = { { ID = 2589, Count = 20 } } }
+		local items = { { ID = 858, Count = 5 }, { ID = 2589, Count = 20 } }
 
-		assert.is_true(core:ComputeInventoryHash(bank, bags, 5000)
-			~= core:ComputeInventoryHash(bank, bags, 9999),
+		assert.is_true(core:ComputeInventoryHash(items, nil, nil, 5000)
+			~= core:ComputeInventoryHash(items, nil, nil, 9999),
 			"money is not reaching the hash: changing it left the hash unchanged, which is what " ..
-			"happens when a nil lands in the money slot and `mailOrMoney or 0` collapses to 0")
+			"happens when a nil lands in the money slot and `or 0` collapses to 0")
 	end)
 
 	it("does not recompute a hash that already exists", function()
@@ -322,64 +327,140 @@ describe("Database:Load legacy hash migration", function()
 	end)
 end)
 
-describe("Database snapshots", function()
+-- INV2-RETIRE-002: the delta-snapshot cache is gone, and the guard is that it STAYS gone. Its only
+-- reader (the legacy alt-delta) was deleted in v1.4.0; a snapshot save that comes back is a deep copy
+-- of every item row per scan for nothing. See the header of Modules/Database.lua.
+-- writ-cannot: the eight examples that stood here drove SaveSnapshot / GetSnapshot / DeepCopy, which
+-- were removed on purpose as dead code with a per-scan cost; the feature they covered no longer exists.
+describe("Database snapshots (deleted)", function()
 	local DB
 	before_each(function()
 		env.reset()
 		DB = loadDatabase()
-		TOGBankClassic_Core = env.coreHashStub(1)
 	end)
 
-	it("round-trips a saved snapshot", function()
-		assert.is_true(DB:SaveSnapshot("Testguild", "Bob-Testrealm", { version = 100, items = {} }))
-		assert.equal(100, DB:GetSnapshot("Testguild", "Bob-Testrealm").version)
-	end)
-
-	it("stores a deep copy, not a live reference", function()
-		local alt = { version = 100, items = { { ID = 858, Count = 1 } } }
-		DB:SaveSnapshot("Testguild", "Bob-Testrealm", alt)
-		alt.items[1].Count = 999
-		assert.equal(1, DB:GetSnapshot("Testguild", "Bob-Testrealm").items[1].Count,
-			"the snapshot aliased the live table, so it cannot serve as a delta baseline")
-	end)
-
-	it("returns nil for an unknown alt", function()
-		assert.is_nil(DB:GetSnapshot("Testguild", "Nobody"))
-	end)
-
-	it("expires a snapshot older than the max age", function()
-		DB:SaveSnapshot("Testguild", "Bob-Testrealm", { version = 100 })
-		env.advance(TOGBankClassic_Constants.PROTOCOL.DELTA_SNAPSHOT_MAX_AGE + 1)
-		assert.is_nil(DB:GetSnapshot("Testguild", "Bob-Testrealm"))
-	end)
-
-	it("rejects a snapshot with no numeric version", function()
-		DB:SaveSnapshot("Testguild", "Bob-Testrealm", { items = {} })
-		assert.is_nil(DB:GetSnapshot("Testguild", "Bob-Testrealm"))
-	end)
-
-	it("refuses to save with a missing argument", function()
-		assert.is_false(DB:SaveSnapshot(nil, "Bob", {}))
-		assert.is_false(DB:SaveSnapshot("Testguild", nil, {}))
-		assert.is_false(DB:SaveSnapshot("Testguild", "Bob", nil))
+	it("exposes no snapshot surface", function()
+		assert.is_nil(DB.SaveSnapshot)
+		assert.is_nil(DB.GetSnapshot)
+		assert.is_nil(DB.ValidateSnapshot)
+		assert.is_nil(DB.DeepCopy)
+		assert.is_nil(TOGBankClassic_Constants.PROTOCOL.DELTA_SNAPSHOT_MAX_AGE)
 	end)
 end)
 
-describe("Database:DeepCopy", function()
+-- INV2-RETIRE-003: THE LEGACY ITEM ROWS ARE STRIPPED ON LOAD, unconditionally. Measured on the
+-- operator's account they were 56% of a 1.52 MB SavedVariables file, and nothing writes or reads
+-- them any more. The record itself and its per-source METADATA (slots, lastScan, version, mailHash)
+-- must survive: the status bar and the MULTIPC-001 publish gate read them.
+describe("Database:Load strips the legacy item rows (INV2-RETIRE-003)", function()
 	local DB
-	before_each(function() env.reset(); DB = loadDatabase() end)
-
-	it("copies nested tables by value", function()
-		local src = { a = { b = { c = 1 } } }
-		local copy = DB:DeepCopy(src)
-		copy.a.b.c = 2
-		assert.equal(1, src.a.b.c)
+	before_each(function()
+		env.reset()
+		DB = loadDatabase()
+		TOGBankClassic_Core = env.coreHashStub(4242)
 	end)
 
-	it("returns non-tables unchanged", function()
-		assert.equal(5, DB:DeepCopy(5))
-		assert.equal("x", DB:DeepCopy("x"))
-		assert.is_nil(DB:DeepCopy(nil))
+	local function legacyRecord()
+		return {
+			name = "Bob-Testrealm", version = 7, money = 1234, inventoryHashV2 = "canon", mailHash = 9,
+			items = { { ID = 858, Count = 5, Link = "|Hitem:858|h[x]|h" }, { ID = 2589, Count = 20 } },
+			bank  = { slots = { count = 1, total = 24 }, lastScan = 100, items = { { ID = 858, Count = 5 } } },
+			bags  = { slots = { count = 1, total = 16 }, lastScan = 100, items = { { ID = 2589, Count = 20 } } },
+			mail  = { slots = { count = 0, total = 0 }, lastScan = 50, version = 1, items = {} },
+		}
+	end
+
+	-- `rawget`, because after Load the record answers `items` from the store through its metatable
+	-- (INV2-COMPAT-001, altcompat_spec). "Stripped" means gone from the RAW record -- which is what
+	-- the client serializes -- not that the field reads nil.
+	it("removes items, bank.items, bags.items and mail.items from every alt", function()
+		DB.db.faction["Testguild"] = { name = "Testguild", alts = { ["Bob-Testrealm"] = legacyRecord(),
+			["Carol-Testrealm"] = { version = 1, items = { { ID = 1, Count = 1 } } } } }
+		local db = DB:Load("Testguild")
+		for _, name in ipairs({ "Bob-Testrealm", "Carol-Testrealm" }) do
+			local alt = db.alts[name]
+			assert.is_nil(rawget(alt, "items"), name .. ": alt.items survived the load")
+			assert.is_nil(alt.bank and alt.bank.items, name .. ": bank.items survived the load")
+			assert.is_nil(alt.bags and alt.bags.items, name .. ": bags.items survived the load")
+			assert.is_nil(alt.mail and alt.mail.items, name .. ": mail.items survived the load")
+		end
+	end)
+
+	it("keeps the record and every piece of metadata on it", function()
+		DB.db.faction["Testguild"] = { name = "Testguild", alts = { ["Bob-Testrealm"] = legacyRecord() } }
+		local alt = DB:Load("Testguild").alts["Bob-Testrealm"]
+		assert.equal(7, alt.version)
+		assert.equal(1234, alt.money)
+		assert.equal("canon", alt.inventoryHashV2)
+		assert.equal(9, alt.mailHash)
+		assert.same({ count = 1, total = 24 }, alt.bank.slots)
+		assert.equal(100, alt.bank.lastScan, "the MULTIPC-001 read stamp was lost with the rows")
+		assert.same({ count = 1, total = 16 }, alt.bags.slots)
+		assert.equal(50, alt.mail.lastScan)
+		assert.equal(1, alt.mail.version)
+	end)
+
+	it("strips synchronously, before Load returns -- not on a timer", function()
+		DB.db.faction["Testguild"] = { name = "Testguild", alts = { ["Bob-Testrealm"] = legacyRecord() } }
+		local db = DB:Load("Testguild")
+		assert.is_nil(rawget(db.alts["Bob-Testrealm"], "items"),
+			"the rows were still there when Load returned -- a reader running before a deferred " ..
+			"strip would see them, and the SV would keep them if the session ended first")
+	end)
+
+	it("is unconditional -- a record the V2 store has never seen is stripped too", function()
+		-- The V2 store is taken away for this example, which is the strongest form of "not gated on
+		-- IsAltComplete": the strip cannot even ask. (Removed explicitly rather than assumed absent:
+		-- module globals loaded by an earlier spec file survive env.reset in the shared Lua state.)
+		local realStore = TOGBankClassic_Inventory_Store
+		_G.TOGBankClassic_Inventory_Store = nil
+		DB.db.faction["Testguild"] = { name = "Testguild", alts = { ["Bob-Testrealm"] = legacyRecord() } }
+		local ok, err = pcall(function() return DB:Load("Testguild") end)
+		_G.TOGBankClassic_Inventory_Store = realStore
+		assert.is_true(ok, tostring(err))
+		assert.is_nil(rawget(DB.db.faction["Testguild"].alts["Bob-Testrealm"], "items"))
+	end)
+
+	it("reports how many rows it removed, and zero on a second load", function()
+		local db = { alts = { ["Bob-Testrealm"] = legacyRecord() } }
+		assert.equal(4, DB:StripLegacyItemRows(db))   -- 2 aggregate + 1 bank + 1 bags + 0 mail, per row
+		assert.equal(0, DB:StripLegacyItemRows(db), "a second pass found rows the first left behind")
+	end)
+
+	-- Load runs per guild; a record for a guild the player has since left would keep its rows in
+	-- the file forever. Init strips every guild the faction scope holds.
+	it("strips every guild record in the faction scope at Init time, not only the one being loaded", function()
+		DB.db.faction["Current"] = { name = "Current", alts = { ["Bob-Testrealm"] = legacyRecord() } }
+		DB.db.faction["Former"]  = { name = "Former",  alts = { ["Old-Testrealm"] = legacyRecord() } }
+		assert.equal(8, DB:StripAllLegacyItemRows())
+		assert.is_nil(DB.db.faction["Former"].alts["Old-Testrealm"].items,
+			"a guild Load never runs for kept its legacy rows")
+		assert.is_nil(DB.db.faction["Former"].alts["Old-Testrealm"].bank.items)
+		assert.equal(0, DB:StripAllLegacyItemRows())
+		DB.db = nil
+		assert.equal(0, DB:StripAllLegacyItemRows(), "no database is zero rows, not an error")
+	end)
+
+	it("is called from Init, after the database is attached", function()
+		local src = env.readFile("Modules/Database.lua")
+		local init = src:match("function TOGBankClassic_Database:Init%(%)(.-)\nend")
+		assert.is_not_nil(init, "could not locate Database:Init")
+		local new, strip = init:find("AceDB%-3%.0", 1, false), init:find("StripAllLegacyItemRows", 1, true)
+		assert.is_not_nil(strip, "Init does not call StripAllLegacyItemRows -- a former guild's rows stay in the SV")
+		assert.is_true(new < strip, "the strip runs before the database exists")
+	end)
+
+	it("tolerates a malformed record without raising", function()
+		local db = { alts = {
+			["NotATable"] = "junk",
+			["NoSubTables"] = { version = 1 },
+			["ItemsNotATable"] = { items = "junk", bank = { items = 5 } },
+		} }
+		assert.has_no_error(function() DB:StripLegacyItemRows(db) end)
+		assert.is_nil(db.alts["ItemsNotATable"].items)
+		assert.is_nil(db.alts["ItemsNotATable"].bank.items)
+		assert.equal(0, DB:StripLegacyItemRows(nil))
+		assert.equal(0, DB:StripLegacyItemRows({}))
 	end)
 end)
 

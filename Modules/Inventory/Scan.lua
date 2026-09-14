@@ -1,15 +1,10 @@
 -- Inventory/Scan.lua — read the player's containers into V2 tuples.
 --
--- See docs/INVENTORY_V2.md §6.1. The container API is walked ONCE and the single result is
--- emitted in both shapes when dualWrite is on:
---
---   > Running two independent scans would double the cost of the addon's hottest path and --
---   > worse -- invalidate the comparison, because the bank could change between passes.
---
--- That second point is the important one. dualWrite exists so a rollback lands on live data and
--- so `/togbank dev compare` can prove the two encodings agree. A comparison between two separate
--- walks proves nothing: any divergence could be a real encoding bug or just a stack that moved
--- between passes, and there is no way to tell which.
+-- THE one container walk (INV2-RETIRE-003). Until 2026-09-11 this walk also emitted the legacy
+-- link-bearing row shape when the `dualWrite` switch was on, so a rollback would land on live data
+-- and `/togbank dev compare` could prove the two encodings agreed from a single pass. The legacy
+-- rows are not written by anything any more (docs/DELTA_RELEASE.md section 4), so the second shape,
+-- the switch and the `withLegacy` parameters are gone with them.
 
 TOGBankClassic_Inventory_Scan = {}
 local Scan = TOGBankClassic_Inventory_Scan
@@ -47,9 +42,13 @@ function Scan.parseLink(link)
 	return tonumber(fields[2]) or 0, tonumber(fields[7]) or 0
 end
 
---- Walk one container, appending to `records` (V2) and, when supplied, `legacy` (v1 shape).
---- Returns the number of occupied slots seen.
-local function scanContainer(bag, records, legacy)
+--- Walk one container, appending tuples to `records`. Returns the number of occupied slots seen.
+---
+--- HIDE-002: `bound` (`Record.key -> true`) collects the key of every slot the client reports as
+--- bound (`ContainerItemInfo.isBound`, in Era's ContainerDocumentation.lua) -- the input to the
+--- banker's "hide soulbound items" setting. Keyed, not per stack, because the store aggregates by
+--- key: a bound and an unbound copy of the same variant are one row, and hiding is per row.
+local function scanContainer(bag, records, bound)
 	local slots = C_Container.GetContainerNumSlots(bag) or 0
 	local used = 0
 	for slot = 1, slots do
@@ -58,14 +57,9 @@ local function scanContainer(bag, records, legacy)
 			used = used + 1
 			local enchant, suffix = Scan.parseLink(info.hyperlink)
 			local rec = Record.new(info.itemID, info.stackCount or 1, suffix, enchant)
-			if rec then records[#records + 1] = rec end
-			-- Same walk, second shape. Deliberately the legacy structure verbatim rather than a
-			-- conversion of the tuple: each format is produced by its own native path, so
-			-- neither can corrupt the other (INVENTORY_V2.md §5).
-			if legacy then
-				legacy[#legacy + 1] = {
-					ID = info.itemID, Count = info.stackCount or 1, Link = info.hyperlink,
-				}
+			if rec then
+				records[#records + 1] = rec
+				if bound and info.isBound then bound[Record.key(rec)] = true end
 			end
 		end
 	end
@@ -80,40 +74,39 @@ local function bankAvailable()
 end
 
 --- Scan carried bags.
---- @return table records, table|nil legacy, number slotsUsed, number slotsTotal
-function Scan:ScanBags(withLegacy)
-	local records, legacy = {}, withLegacy and {} or nil
+--- @return table records, number slotsUsed, number slotsTotal, table boundKeys
+function Scan:ScanBags()
+	local records, bound = {}, {}
 	local used, total = 0, 0
 	local firstBag, lastBag = carriedBagRange()
 	for bag = firstBag, lastBag do
-		used = used + scanContainer(bag, records, legacy)
+		used = used + scanContainer(bag, records, bound)
 		total = total + (C_Container.GetContainerNumSlots(bag) or 0)
 	end
-	return records, legacy, used, total
+	return records, used, total, bound
 end
 
 --- Scan the bank vault and its bag slots. Returns nil when the player is not at a banker, which
 --- callers must treat as "unknown", NOT as "empty" -- overwriting stored bank contents with an
 --- empty scan is how a character's whole vault disappears from the guild's view.
---- @return table|nil records, table|nil legacy, number slotsUsed, number slotsTotal
-function Scan:ScanBank(withLegacy)
-	if not bankAvailable() then return nil, nil, 0, 0 end
-	local records, legacy = {}, withLegacy and {} or nil
-	local used = scanContainer(BANK_CONTAINER, records, legacy)
+--- @return table|nil records, number slotsUsed, number slotsTotal, table|nil boundKeys
+function Scan:ScanBank()
+	if not bankAvailable() then return nil, 0, 0, nil end
+	local records, bound = {}, {}
+	local used = scanContainer(BANK_CONTAINER, records, bound)
 	local total = NUM_BANKGENERIC_SLOTS or 0
 	local firstBankBag, lastBankBag = bankBagRange()
 	for bag = firstBankBag, lastBankBag do
-		used = used + scanContainer(bag, records, legacy)
+		used = used + scanContainer(bag, records, bound)
 		total = total + (C_Container.GetContainerNumSlots(bag) or 0)
 	end
-	return records, legacy, used, total
+	return records, used, total, bound
 end
 
 --- Full scan: carried bags always, vault when reachable.
 ---
---- `legacy` is populated only when dualWrite is on, and comes from the SAME container walk --
---- see the header. When the bank is out of reach the result carries `bankScanned = false` so the
---- caller can preserve previously-stored vault contents instead of replacing them with nothing.
+--- When the bank is out of reach the result carries `bankScanned = false` so the caller can
+--- preserve previously-stored vault contents instead of replacing them with nothing.
 ---
 --- `sources` is the per-source view the store writes through (INV2-VAULT-001): `sources.bags` is
 --- always present, `sources.bank` is ABSENT when the vault was unreachable. That absence is the
@@ -123,34 +116,27 @@ end
 --- `records` stays the flat combined array it always was. Both are derived from the one walk, so
 --- they cannot disagree, and keeping it means no caller or spec had to change to gain `sources`.
 function Scan:ScanAll()
-	local dual = TOGBankClassic_Switches
-		and TOGBankClassic_Switches:IsEnabled("dualWrite")
-		or false
-
-	local bagRecords, legacy, bagsUsed, bagsTotal = self:ScanBags(dual)
-	local bankRecords, bankLegacy, bankUsed, bankTotal = self:ScanBank(dual)
+	local bagRecords, bagsUsed, bagsTotal, bagsBound = self:ScanBags()
+	local bankRecords, bankUsed, bankTotal, bankBound = self:ScanBank()
 
 	-- Per source, before they are combined. `bank` stays nil when unreachable.
 	local sources = { bags = bagRecords }
 	if bankRecords then sources.bank = bankRecords end
+	-- HIDE-002: the bound keys, per source, in the same shape -- `bank` nil when unreachable, so
+	-- the caller keeps the bound keys it remembered from the last vault read rather than losing them.
+	local bound = { bags = bagsBound }
+	if bankBound then bound.bank = bankBound end
 
-	-- INV2-WIRE-001 was tried and reverted (2026-09-09). A `legacySources` split was added here so
-	-- `Bank:Scan` could drop its own container walk and take the legacy shape from this one -- see
-	-- the note at the top of `Modules/Bank.lua` for why that trade is wrong. Bank:Scan keeps its
-	-- own walk, so this returns the flat `legacy` array it always did.
 	local records = {}
 	for _, rec in ipairs(bagRecords) do records[#records + 1] = rec end
 	if bankRecords then
 		for _, rec in ipairs(bankRecords) do records[#records + 1] = rec end
-		if legacy and bankLegacy then
-			for _, item in ipairs(bankLegacy) do legacy[#legacy + 1] = item end
-		end
 	end
 
 	return {
 		records     = records,
 		sources     = sources,
-		legacy      = legacy,
+		bound       = bound,
 		money       = GetMoney and GetMoney() or 0,
 		bankScanned = bankRecords ~= nil,
 		slots       = {

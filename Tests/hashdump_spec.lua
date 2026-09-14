@@ -23,12 +23,22 @@ local function loadAll()
 		"Modules/Bank.lua", "Modules/Guild.lua", "Modules/Switches.lua", "Modules/Chat.lua" })
 	env.stubCore()
 	TOGBankClassic_Database = { db = { global = {} } }
+	env.freshV2()
 	local Guild = TOGBankClassic_Guild
 	Guild.Info = { name = GUILD, alts = {} }
 	Guild.IsBank = function(_, n) return n == ME or n == OTHER end
 	Guild.newestAdvertisedAt = {}
 	Guild.latestBankerHashes = {}
 	return Guild
+end
+
+--- INV2-RETIRE-003: "we hold OTHER" means the V2 store holds records for it; the record itself
+--- carries only the version metadata the dump prints.
+local function holdOther(fields)
+	local alt = { name = OTHER }
+	for k, v in pairs(fields) do alt[k] = v end
+	TOGBankClassic_Guild.Info.alts[OTHER] = alt
+	env.holdV2(GUILD, OTHER)
 end
 
 --- Everything the command printed through Output:Response, joined.
@@ -51,8 +61,7 @@ describe("HASH-CANON-007: /togbank dev hashdump shows the canon", function()
 	end)
 
 	it("prints the held canon and the known canon, with the publish time readable", function()
-		Guild.Info.alts[OTHER] = { name = OTHER, inventoryHash = 7, inventoryHashV2 = C(T, 5),
-			items = { { ID = 1, Count = 1 } } }
+		holdOther({ inventoryHash = 7, inventoryHashV2 = C(T, 5) })
 		Guild.latestBankerHashes[OTHER] = { hash = 7, hashV2 = C(T + 60, 9), updatedAt = T + 60, mailHash = 0 }
 
 		TOGBankClassic_Chat:ChatCommand("dev hashdump")
@@ -67,8 +76,7 @@ describe("HASH-CANON-007: /togbank dev hashdump shows the canon", function()
 	end)
 
 	it("names the tab state beside the canon, so this line and the tab colour cannot silently disagree", function()
-		Guild.Info.alts[OTHER] = { name = OTHER, inventoryHash = 7, inventoryHashV2 = C(T, 5),
-			items = { { ID = 1, Count = 1 } } }
+		holdOther({ inventoryHash = 7, inventoryHashV2 = C(T, 5) })
 		Guild.latestBankerHashes[OTHER] = { hash = 7, hashV2 = C(T + 60, 9), updatedAt = T + 60, mailHash = 0 }
 		Guild.newestAdvertisedAt[OTHER] = T + 60
 
@@ -77,7 +85,7 @@ describe("HASH-CANON-007: /togbank dev hashdump shows the canon", function()
 	end)
 
 	it("shows '-' for a missing canon and 'v1' for the state -- the Galdof/Alchemyrcp case", function()
-		Guild.Info.alts[OTHER] = { name = OTHER, inventoryHash = 7, items = { { ID = 1, Count = 1 } } }
+		holdOther({ inventoryHash = 7 })
 		Guild.latestBankerHashes[OTHER] = { hash = 7, hashV2 = C(T, 9), updatedAt = T, mailHash = 0 }
 
 		TOGBankClassic_Chat:ChatCommand("dev hashdump")
@@ -92,8 +100,7 @@ describe("HASH-CANON-007: /togbank dev hashdump shows the canon", function()
 	-- entry printed MISMATCH while nothing was pending. Reverting the command to HashesAgreeWith
 	-- reddens exactly this example.
 	it("prints OK for the same version learned from a numbered broadcast, which carries no mail hash", function()
-		Guild.Info.alts[OTHER] = { name = OTHER, inventoryHash = 7, inventoryHashV2 = C(T, 5), mailHash = 3,
-			items = { { ID = 1, Count = 1 } } }
+		holdOther({ inventoryHash = 7, inventoryHashV2 = C(T, 5), mailHash = 3 })
 		Guild.latestBankerHashes[OTHER] = { hashV2 = C(T, 5), updatedAt = T }   -- as BN:EntriesToAlts shapes it
 
 		TOGBankClassic_Chat:ChatCommand("dev hashdump")
@@ -125,8 +132,7 @@ describe("HASH-CANON-007: /togbank dev hashdump shows the canon", function()
 	end)
 
 	it("shows a v1.4.0 numeric canon as the bare number rather than inventing a date for it", function()
-		Guild.Info.alts[OTHER] = { name = OTHER, inventoryHash = 7, inventoryHashV2 = 424242,
-			items = { { ID = 1, Count = 1 } } }
+		holdOther({ inventoryHash = 7, inventoryHashV2 = 424242 })
 		Guild.latestBankerHashes[OTHER] = { hash = 7, mailHash = 0 }
 
 		TOGBankClassic_Chat:ChatCommand("dev hashdump")

@@ -5,8 +5,8 @@
 ## Version: @project-version@
 
 ## SavedVariables: TOGBankClassicDB, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog, TOGBankClassic_PerfMetrics, TOGBankClassic_PerfEnabled, TOGBankClassic_DebugLogEnabled, TOGBankClassicInvDB
-## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0, ItemDB, DeltaSync
-## OptionalDeps: Bagnon
+## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0, ItemDB, DeltaSync, LibAceGUIWidgets
+## OptionalDeps: Bagnon, TOGTools
 ## X-Curse-Project-ID: 1400244
 
 Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua
@@ -27,8 +27,11 @@ Modules/Guild.lua
 Modules/BankerNumbers.lua
 Modules/P2PSession.lua
 Modules/RequestLog.lua
+Modules/Log.lua
+Modules/Propagation.lua
 Modules/Item.lua
 Modules/ItemHighlight.lua
+Modules/Usable.lua
 
 Modules/Switches.lua
 
@@ -37,6 +40,8 @@ Modules/Inventory/Resolve.lua
 Modules/Inventory/Store.lua
 Modules/Inventory/Scan.lua
 Modules/Inventory/Wire.lua
+Modules/Inventory/Chain.lua
+Modules/Inventory/Sync.lua
 Modules/TooltipBankerInfo.lua
 Modules/Mail.lua
 Modules/MailInventory.lua
@@ -49,5 +54,8 @@ Modules/UI/Mail.lua
 Modules/UI/Minimap.lua
 Modules/UI/Requests.lua
 Modules/UI/Search.lua
+Modules/UI/RowList.lua
+Modules/UI/Mailbox.lua
+Modules/UI/Browse.lua
 
 Core.lua

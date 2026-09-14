@@ -51,11 +51,26 @@ end
 --- would have passed while never once exercising the code the addon actually runs -- the same shape
 --- as the CMD-001 trap in this file's header, one level up: not a stubbed function, but a real
 --- function reached down a path no player takes.
---- @param alts table altName -> stored record
+--- INV2-RETIRE-003: the item rows go into the V2 STORE, which is the only place the accessor reads
+--- now; `Info.alts` gets a metadata-only record per alt, exactly as a post-strip SavedVariables
+--- holds. The `{ ID =, Count = }` spelling at the call sites is kept and converted here, through
+--- `Record.new` -- so a row the store would refuse (no count, zero count) is refused here too,
+--- which is what the two examples about such rows now pin.
+--- @param alts table altName -> { items = { { ID =, Count = }, ... } }
 --- @param rosterMembers table|nil altName -> true (nil means everyone is in the guild)
 --- @param notes table|nil altName -> note string (default "gbank")
 local function installGuild(alts, rosterMembers, notes)
-	TOGBankClassic_Guild.Info = { name = "Testguild", alts = alts }
+	local Record, Store = TOGBankClassic_Inventory_Record, TOGBankClassic_Inventory_Store
+	local metadata = {}
+	for altName, alt in pairs(alts) do
+		local records = {}
+		for _, item in ipairs(alt.items or {}) do
+			records[#records + 1] = Record.new(item.ID, item.Count)
+		end
+		Store:SetAltRecords("Testguild", altName, records, 0)
+		metadata[altName] = { name = altName, version = 1, money = 0 }
+	end
+	TOGBankClassic_Guild.Info = { name = "Testguild", alts = metadata }
 	TOGBankClassic_Guild.IsInCurrentGuildRoster = function(_, name)
 		if not rosterMembers then return true end
 		return rosterMembers[name] == true
@@ -74,27 +89,32 @@ local function installGuild(alts, rosterMembers, notes)
 		"would be a fallback result rather than the path the addon runs")
 end
 
+--- The real modules behind the tooltip, loaded fresh per example. Both describes use this: the
+--- hook describe used to load only TooltipBankerInfo.lua and worked because the Guild and Store
+--- globals LEAKED from the describe before it -- a spec that passes on another spec's leftovers.
+local function loadAll()
+	env.reset(); env.stubOutput()
+	env.loadModules({
+		"Modules/Constants.lua",
+		"Modules/Switches.lua",
+		-- RefreshOnlineCache records a perf timing on both its paths, so the real module has to
+		-- be here; without it the roster refresh dies indexing a nil Performance.
+		"Modules/Performance.lua",
+		"Modules/Item.lua",
+		"Modules/Inventory/Record.lua",
+		"Modules/Inventory/Resolve.lua",
+		"Modules/Inventory/Store.lua",
+		"Modules/Guild.lua",
+		"Modules/TooltipBankerInfo.lua",
+	})
+	TOGBankClassic_Database = { db = { global = {} } }
+	TOGBankClassic_Inventory_Store:Init({ faction = {} })
+	return TOGBankClassic_TooltipBankerInfo
+end
+
 describe("TooltipBankerInfo:AppendTo", function()
 	local TBI
-	before_each(function()
-		env.reset(); env.stubOutput()
-		env.loadModules({
-			"Modules/Constants.lua",
-			"Modules/Switches.lua",
-			-- RefreshOnlineCache records a perf timing on both its paths, so the real module has to
-			-- be here; without it the roster refresh dies indexing a nil Performance.
-			"Modules/Performance.lua",
-			"Modules/Item.lua",
-			"Modules/Inventory/Record.lua",
-			"Modules/Inventory/Resolve.lua",
-			"Modules/Inventory/Store.lua",
-			"Modules/Guild.lua",
-			"Modules/TooltipBankerInfo.lua",
-		})
-		TOGBankClassic_Database = { db = { global = {} } }
-		TOGBankClassic_Inventory_Store:Init({ faction = {} })
-		TBI = TOGBankClassic_TooltipBankerInfo
-	end)
+	before_each(function() TBI = loadAll() end)
 
 	it("draws the block and reports that it did", function()
 		installGuild({ ["Bank1-Realm"] = { items = { { ID = 2589, Count = 20 } } } })
@@ -129,9 +149,17 @@ describe("TooltipBankerInfo:AppendTo", function()
 		assert.equal("40", tip.doubles[1].right)
 	end)
 
-	it("counts an entry with no Count as one, not zero", function()
+	-- INV2-RETIRE-003: this was "counts an entry with no Count as one, not zero" -- a legacy-row
+	-- property. A tuple cannot lack a count: the store refuses the row at write time, so a
+	-- count-less entry is an ABSENCE, not a one. The example now pins that boundary from the
+	-- tooltip's side, and that a genuine single stack still renders "1".
+	it("never sees a count-less row -- the store refuses it -- and renders a single stack as one", function()
 		installGuild({ ["Bank1-Realm"] = { items = { { ID = 2589 } } } })
 		local tip = fakeTooltip()
+		assert.is_false(TBI:AppendTo(tip, 2589), "a row with no count reached the tooltip")
+
+		installGuild({ ["Bank1-Realm"] = { items = { { ID = 2589, Count = 1 } } } })
+		tip = fakeTooltip()
 		assert.is_true(TBI:AppendTo(tip, 2589))
 		assert.equal("1", tip.doubles[1].right)
 	end)
@@ -257,11 +285,7 @@ end)
 
 describe("TooltipBankerInfo's own hook", function()
 	local TBI
-	before_each(function()
-		env.reset(); env.stubOutput()
-		env.loadFile("Modules/TooltipBankerInfo.lua")
-		TBI = TOGBankClassic_TooltipBankerInfo
-	end)
+	before_each(function() TBI = loadAll() end)
 
 	-- One implementation of the layout, reached two ways. If the hook grew its own copy this
 	-- would still pass on the hook and silently drift from what TOGProfessionMaster renders.

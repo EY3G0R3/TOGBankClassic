@@ -16,12 +16,17 @@
 --                        updatedAt, send a sync-request whisper. Note the window is
 --                        EXTENDED by a later broadcast, so T+W is measured from the last
 --                        one, not the first.
---   Phase 4 (handshake): Peer replies sync-accept (has capacity → sends data via
---                        existing togbank-state/togbank-d4 pipeline) or sync-busy
---                        (at cap → try next candidate).
+--   Phase 4 (handshake): Peer replies sync-accept (has capacity) or sync-busy (does not hold
+--                        it → try next candidate) or sync-queued (at cap → wait, or move on).
+--   Phase 5 (data):      THE DELTA RELEASE step 3b -- on accept the requester asks on the
+--                        DeltaSync host's QUERY channel, naming the canon it holds
+--                        (Inventory/Sync.lua, RequestFrom); the peer answers on the RESPONSE
+--                        channel with the delta chain, a snapshot, or a no-change. The
+--                        togbank-state summary this replaced is gone.
 --
--- The existing togbank-state / togbank-d4 / togbank-nochange data pipeline is
--- unchanged.  Only the trigger/negotiation layer is new.
+-- LIBREQ-DS-008: the whole of this module (the numbered handshake, phases 1-4) moves INTO
+-- DeltaSync as the library's P2P and this file is deleted when that ships. Phase 5 stays where it
+-- is -- the library's data leg calls Inventory/Sync exactly as this file does.
 --
 -- Backward compat: old clients who whisper banker with hash-list-request still work
 -- via the togbank-hlr path (BroadcastP2PRequest).  New clients skip that and use
@@ -42,7 +47,9 @@ local STATE = {
 -- peers; the only cap is per peer, because a second request to one peer only sits in that peer's
 -- queue while others stand idle. `activeSessions` is still counted, for the status bar.
 local MAX_SESSIONS_PER_PEER = 1
-local MAX_ACTIVE_SENDS    = 3  -- max concurrent outbound sends (sender side)
+-- The outbound send cap is Constants' (one spelling, Peer Review F2 2026-09-12); read at file scope
+-- because Constants loads first, in the TOC and in every spec that loads this file.
+local MAX_ACTIVE_SENDS    = TOGBankClassic_Constants.PEER_TO_PEER.MAX_ACTIVE_SENDS
 local COLLECT_WINDOW      = 60 -- seconds to accumulate hash-offer responses (large guild congestion)
 local DISPATCH_TIMEOUT    = 15 -- seconds to wait for sync-accept before next candidate (whisper congestion)
 local DELIVERY_TIMEOUT    = 180 -- seconds before declaring a data delivery failed (must
@@ -79,6 +86,25 @@ P2P.catchUpTimer   = nil -- boolean latch: is a catch-up broadcast already sched
 P2P.catchUpCycles  = 0   -- how many catch-up rounds have fired since last full sync
 P2P.versionQueries = {}  -- P2P-035: normalized altName -> dispatch item awaiting version replies
 P2P.versionQueryTimer = nil
+-- MULTIPC-001: has this session's first broadcast/collect/query cycle SETTLED what the guild holds
+-- for our own character? Until it has, Bank:Scan will not mint a version from a partial read (bags
+-- alone, at a vendor), because a PC that shares the account may be weeks behind and cannot know it
+-- until the peers answer. Set once, by Dispatch (no offer named us) or by the version query for our
+-- own number finishing (a peer named a version -- newestAdvertisedAt now says whether it is newer),
+-- or by Bank's own fallback timer if the cycle never runs. Never cleared within a session.
+-- `consultBegun` is set the moment SyncDeltaVersion is CALLED (BeginConsult) -- before its
+-- collision-guard defer, before the send -- and again when the collect window opens. Before that,
+-- "unconsulted" would mean "not asked yet" rather than "asked and unanswered", and the gate does
+-- not apply. The login call is made from the roster-ready callback, which is also the first moment
+-- a scan can run at all (GetBanks needs the roster), so the gap is the frame between the two
+-- (Peer Review, self-audit F2: it used to be roster-ready to window-open, unmeasured).
+P2P.selfConsulted = false
+P2P.consultBegun  = false
+
+--- MULTIPC-001: the guild is about to be asked. Called at the top of Events:SyncDeltaVersion.
+function P2P:BeginConsult()
+	self.consultBegun = true
+end
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 local function Norm(name)
@@ -141,6 +167,7 @@ end
 --- Start (or extend) the COLLECT_WINDOW-second collect window after broadcasting our hashes.
 -- @param myHashes table: altName → {hash, updatedAt, ...}  (from BuildBankerHashList)
 function P2P:BeginCollectWindow(myHashes) -- luacheck: ignore myHashes
+	self:BeginConsult()   -- MULTIPC-001: the guild has been asked; Bank's gate now waits on the answer
 	-- TIMER-001: NewTimer, not After. C_Timer.After returns NOTHING, so `self.collectTimer` was
 	-- always nil, the `if self.collectTimer` guard was always false, and the cancel below never
 	-- ran -- while looking exactly like a cancel that did. Extending the window therefore STACKED
@@ -232,6 +259,24 @@ end
 -- @param alts      table:  altName → {hash, updatedAt, mailHash}
 function P2P:OnOffer(peerName, alts)
 	if not alts then return end
+	-- WIRE-SKEW-006: AN OFFER FROM A PEER THAT CANNOT SERVE US IS REFUSED AT THE DOOR. Read off the
+	-- operator's two v1.5.0 clients on 2026-09-12, holding the IDENTICAL canon for Cardsngames and
+	-- "not syncing": every tab red. A bare offer turns the tab red (TABCOLOUR-003) and the version
+	-- query is what clears it when nobody really holds newer; WIRE-SKEW-004 drops incapable holders
+	-- BEFORE that query, so an alt every old-release peer offered went to DispatchList with no
+	-- candidates, was skipped there, and nothing ever cleared the red -- credited to a v1.4.1 peer,
+	-- for a bank we already held current. Forty old clients offer every bank on every cycle ("v1
+	-- is always red": their compare is the revision-1 hash, which always differs), so this was every
+	-- tab, permanently. Such a peer's "I hold newer" carries no information and names nothing we
+	-- could fetch, so it is not an offer: not recorded, not folded into a session, no red.
+	local G = TOGBankClassic_Guild
+	if G and G.PeerSpeaksDataLeg then
+		local ok, why = G:PeerSpeaksDataLeg(peerName)
+		if not ok then
+			Dbg("OFFER", "offer from %s ignored: release %s is before the data leg changed", tostring(peerName), tostring(why))
+			return
+		end
+	end
 	local late = not self.isCollecting
 	local touched = {}
 
@@ -242,12 +287,47 @@ function P2P:OnOffer(peerName, alts)
 		-- after the version query, by the same rule. An offer that carries a canon (a broadcast read
 		-- as an offer, or a version reply folded in) is judged now.
 		local bare = summary.hashV2 == nil and summary.hash == nil
+		-- P2P-037: an offer for an alt with a LIVE session is not thrown away -- it teaches the
+		-- session. Read off the banker account on 2026-09-10: Togstone was rescanned while Galdof's
+		-- session for it was in flight; the post-scan broadcast (a canon-bearing offer) was skipped
+		-- here, so the session kept naming the old version and could learn neither the new one nor
+		-- that this peer held it. A canon-bearing offer that improves what we hold now adds or
+		-- refreshes that peer among the session's candidates, so AdvanceCandidate / the retry can
+		-- reach it. (A bare offer names nothing a session can use; it is still dropped here.)
+		local liveSid = self.sessionsByAlt[norm]
+		if liveSid and not bare and self.sessions[liveSid] and norm ~= Me()
+				and TOGBankClassic_Guild and TOGBankClassic_Guild:IsBank(norm)
+				and self:OfferIsUseful(norm, summary) then
+			local s = self.sessions[liveSid]
+			s.candidates = s.candidates or {}
+			local found
+			for _, c in ipairs(s.candidates) do if c.peer == peerName then found = c break end end
+			if found then
+				found.canon = summary.hashV2
+				if (summary.updatedAt or 0) > (found.updatedAt or 0) then found.updatedAt = summary.updatedAt end
+			else
+				table.insert(s.candidates, { peer = peerName, canon = summary.hashV2,
+					updatedAt = summary.updatedAt or 0, hash = summary.hash or 0, mailHash = summary.mailHash or 0 })
+			end
+			Dbg("OFFER", "  offer: %s from %s (%s) -- folded into live session %s", norm, peerName, tostring(summary.hashV2), liveSid)
+			if not summary.cachedByBroadcast then
+				if TOGBankClassic_Guild.NoteAdvertisedHashes then TOGBankClassic_Guild:NoteAdvertisedHashes(norm, summary, peerName) end
+				if TOGBankClassic_Guild.NoteAdvertisedPublishTime then TOGBankClassic_Guild:NoteAdvertisedPublishTime(norm, summary, peerName) end
+			end
+		end
 		-- Skip alts for which we already have a dispatched/active session.
 		-- Skip alts not in our current guild's banker roster (prevents cross-guild bleed-in
 		-- when a player's account SV contains data from another guild's bankers).
+		-- MULTIPC-001: a BARE offer for OUR OWN number is let through to the version query. It is
+		-- the reply to our own broadcast from a peer holding a version of our bank we did not
+		-- advertise -- on a shared account played from several PCs, that is the only prompt signal
+		-- this PC gets that it is behind on itself. The query names the version, which raises
+		-- newestAdvertisedAt for our name (tab red, publish gate); FinishVersionQuery then stops,
+		-- because AdvertisedImproves is "self" and nothing is ever FETCHED for our own name. A
+		-- canon-bearing offer for self needs no query and is judged useless above, as before.
 		if not self.sessionsByAlt[norm]
 				and TOGBankClassic_Guild and TOGBankClassic_Guild:IsBank(norm)
-				and norm ~= Me()
+				and (norm ~= Me() or bare)
 				and (bare or self:OfferIsUseful(norm, summary)) then
 			touched[#touched + 1] = norm
 			self.offers[norm] = self.offers[norm] or {}
@@ -292,13 +372,19 @@ function P2P:OnOffer(peerName, alts)
 			-- A bare offer advertises nothing the cache can hold, and a broadcast read as an offer
 			-- was already written to the cache by the broadcast loop that fed it here (Peer Review
 			-- F2: the second write was idempotent and read as if it did something).
-			if not bare and not summary.cachedByBroadcast then
+			if bare then
+				-- TABCOLOUR-003: the tab goes red on the offer itself, not on the data.
+				if TOGBankClassic_Guild.NoteNewerOffered
+					and TOGBankClassic_Guild:NoteNewerOffered(norm, peerName) then
+					Dbg("OFFER", "  %s: %s offers newer -- tab red until it lands", norm, peerName)
+				end
+			elseif not summary.cachedByBroadcast then
 				if TOGBankClassic_Guild.NoteAdvertisedHashes
-					and TOGBankClassic_Guild:NoteAdvertisedHashes(norm, summary) then
+					and TOGBankClassic_Guild:NoteAdvertisedHashes(norm, summary, peerName) then
 					Dbg("OFFER", "  latestBankerHashes[%s] = hash=%08x updatedAt=%s", norm, entry.hash, tostring(entry.updatedAt))
 				end
 				if TOGBankClassic_Guild.NoteAdvertisedPublishTime then
-					TOGBankClassic_Guild:NoteAdvertisedPublishTime(norm, summary)   -- TABCOLOUR-002
+					TOGBankClassic_Guild:NoteAdvertisedPublishTime(norm, summary, peerName)   -- TABCOLOUR-002
 				end
 			end
 		end
@@ -331,6 +417,23 @@ function P2P:DispatchOrQuery(altList)
 	local ready, query = {}, {}
 	for _, item in ipairs(altList) do
 		local norm = item.altName
+		-- WIRE-SKEW-004: DROP THE INCAPABLE HOLDERS HERE, not at dispatch. This filter used to run
+		-- only in DispatchList, so a peer on the old release was still asked WHICH VERSION IT HOLDS
+		-- (a whisper out and a reply back, five per alt per round), counted as a holder, and -- while
+		-- its own version was still unknown to us -- picked as the peer to fetch from, costing a full
+		-- dispatch timeout and then a five-round retry with 20s of backoff. With 40 of 42 clients on
+		-- the old release that is the entire cycle doing nothing but timing out. Filtered here, an
+		-- alt nobody capable holds simply has no candidates and resolves at once.
+		item.candidates = self:CapableCandidates(item.candidates, norm)
+		-- WIRE-SKEW-006: the filter emptied the list, so every offer for this alt came from a peer
+		-- we will not ask -- one whose version was learned AFTER its offer got through OnOffer's
+		-- door (VersionCheck and its broadcast both land during the same login burst). The red that
+		-- offer raised would otherwise stand for the session, because the version query that clears
+		-- it never opens for an empty list. Nobody we can hear from has claimed newer: yellow.
+		if #item.candidates == 0 and TOGBankClassic_Guild and TOGBankClassic_Guild.ClearNewerOffered
+				and TOGBankClassic_Guild:ClearNewerOffered(norm) then
+			Dbg("DISPATCH", "%s: every offer came from a release before the data leg changed -- tab back to yellow", norm)
+		end
 		local needs, authorKnown = false, false
 		for _, c in ipairs(item.candidates) do
 			if c.canon == nil then needs = true end
@@ -387,8 +490,7 @@ function P2P:BeginVersionQuery(items)
 	end
 	for peer, numbers in pairs(perPeer) do
 		table.sort(numbers)
-		local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "ver-query", n = BN:EncodeNumbers(numbers) })
-		TOGBankClassic_Core:SendWhisper("togbank-rr", d, peer, "ALERT")
+		self:SendHandshake(peer, { type = "ver-query", n = BN:EncodeNumbers(numbers) })
 	end
 	-- A latch: one window timer serves every open query, and it clears itself when it fires.
 	if not self.versionQueryTimer and next(self.versionQueries) then
@@ -410,8 +512,7 @@ function P2P:HandleVersionQuery(sender, encoded)
 		local canon = name and TOGBankClassic_Guild:ServableCanon(name)
 		if canon then entries[#entries + 1] = { number = num, canon = canon } end
 	end
-	local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "ver-reply", e = BN:EncodeEntries(entries) })
-	TOGBankClassic_Core:SendWhisper("togbank-rr", d, sender, "ALERT")
+	self:SendHandshake(sender, { type = "ver-reply", e = BN:EncodeEntries(entries) })
 	Dbg("VERSION", "ver-query from %s: answered %d of %d", sender, #entries, #BN:DecodeNumbers(encoded))
 end
 
@@ -421,9 +522,25 @@ function P2P:OnVersionReply(sender, encoded)
 	local BN = TOGBankClassic_BankerNumbers
 	if not BN or not sender then return end
 	local held = {}
+	local G = TOGBankClassic_Guild
 	for _, e in ipairs(BN:DecodeEntries(encoded)) do
 		local name = BN:NameOf(e.number)
-		if name then held[name] = e.canon end
+		if name then
+			held[name] = e.canon
+			-- TABCOLOUR-003: the reply is the first message on this path that NAMES the version, so
+			-- it feeds the same two caches every other canon-bearing message does -- the tab's
+			-- newest time (red by publish time, from here on) and the advertised-hash cache
+			-- (`hashdump`'s `known`). Nothing else on the offer -> query -> fetch path did.
+			local summary = { hashV2 = e.canon, updatedAt = TOGBankClassic_DeltaComms:CanonPublishTime(e.canon) }
+			if G.NoteAdvertisedHashes then G:NoteAdvertisedHashes(name, summary, sender) end
+			if G.NoteAdvertisedPublishTime then G:NoteAdvertisedPublishTime(name, summary, sender) end
+			-- MULTIPC-002: the replier HOLDS every version it names, our own character's included --
+			-- recorded HERE, where the version is learned, not in FinishVersionQuery (peer review A2).
+			-- A LATE reply -- after the self query settled -- or a reply to a query about some other
+			-- banker that also names ours raised the tab's newest time above without ever reaching
+			-- FinishVersionQuery, so Bank knew it was behind and knew nobody to fetch from.
+			if name == Me() and G.NoteSelfHolder then G:NoteSelfHolder(e.canon, sender) end
+		end
 	end
 	local done = {}
 	for norm, item in pairs(self.versionQueries) do
@@ -452,12 +569,67 @@ function P2P:FinishVersionQuery(norm)
 	if not item then return end
 	self.versionQueries[norm] = nil
 	local G, DC = TOGBankClassic_Guild, TOGBankClassic_DeltaComms
+	-- MULTIPC-001: the query for OUR OWN number ends here. Every reply already raised
+	-- newestAdvertisedAt through OnVersionReply, so the tab and Bank:Scan's publish gate now know
+	-- whether another PC published a later version of this character. Nothing is fetched for our
+	-- own name; the remedy is a rescan on this PC. The cycle has answered, whatever it said.
+	-- HIDE-SYNC-001: a queried peer that CANNOT answer is not "unanswered". A v1.4.1 client offers
+	-- banker numbers but does not speak the version query, so it stays queried-and-silent for ever;
+	-- with one such peer in the guild the own-bank check below never settled, every partial scan --
+	-- a right-click hide, a vendor visit -- was held for the whole 180 s fallback, and CanServe
+	-- refused our own record for the duration. Read off the operator's banker 2026-09-12: `consult:
+	-- begun=true settled=false` fifteen minutes into a session, a hide "never syncing". The rule
+	-- that a silent CAPABLE peer may still hold the newer version stands; a peer the addon already
+	-- knows runs the old wire (Guild:ClaimantCanServe -> PeerSpeaksDataLeg) has given its answer by
+	-- being what it is.
+	local function stillWaiting(c)
+		return c.queried and not c.answered and G:ClaimantCanServe(c.peer)
+	end
+	if norm == Me() then
+		-- The same rule the other-alt branch below applies to the red tab (Peer Review, self-audit
+		-- F1): a capable peer that went SILENT may still hold the newer version, so silence is not
+		-- an answer. The gate stays closed until someone answers -- a late reply still raises
+		-- newestAdvertisedAt through OnVersionReply -- or Bank's fallback releases it, which bounds
+		-- the wait at DEFERRED_PUBLISH_FALLBACK seconds from the first deferred scan.
+		local unanswered = false
+		for _, c in ipairs(item.candidates) do
+			if stillWaiting(c) then unanswered = true break end
+		end
+		if unanswered then
+			Dbg("VERSION", "%s is us: a peer that offered newer never answered -- not settled", norm)
+			return
+		end
+		-- MULTIPC-002: WHO holds the later version was recorded as each reply arrived (OnVersionReply
+		-- -> Guild:NoteSelfHolder), so Bank can fetch it as its diff base when this PC has re-read
+		-- everything (docs/DELTA_RELEASE.md section 3.5). Nothing to add here.
+		-- WIRE-SKEW-008: this line used to read "a peer holds a LATER version" directly under a reply
+		-- naming the SAME canon we hold, because the verdict is read off newestAdvertisedAt, not off
+		-- the reply. Say who raised it and to what, so the next reader does not blame the replier.
+		local newer = G.NewerSelfVersionAt and G:NewerSelfVersionAt()
+		local by = newer and G.newestAdvertisedBy and G.newestAdvertisedBy[norm]
+		Dbg("VERSION", "%s is us: %s", norm,
+			newer and string.format("%s claims a version of this character published at %d, later than this PC's -- rescan to republish",
+				(by and by.peer) or "a peer", newer)
+			or "nobody holds anything newer than this PC")
+		self:MarkSelfConsulted("version query answered")
+		return
+	end
 	local live = {}
 	for _, c in ipairs(item.candidates) do
 		if c.canon and G:AdvertisedImproves(norm, { hashV2 = c.canon }) then live[#live + 1] = c end
 	end
 	if #live == 0 then
 		Dbg("VERSION", "%s: nobody who offered holds a version newer than ours", norm)
+		-- TABCOLOUR-003: the offer that turned the tab red has been checked and found empty (a peer
+		-- whose scan had not finished, or a version no newer than ours). Back to yellow -- but ONLY
+		-- when every peer we asked actually answered. A peer that went silent may still hold it,
+		-- and the operator's rule is red "until we can get it", so an unanswered offer stays red
+		-- for the next cycle to settle.
+		local unanswered = false
+		for _, c in ipairs(item.candidates) do
+			if stillWaiting(c) then unanswered = true break end
+		end
+		if not unanswered and G.ClearNewerOffered then G:ClearNewerOffered(norm) end
 		return
 	end
 	table.sort(live, function(a, b)
@@ -516,16 +688,45 @@ function P2P:Dispatch()
 
 	if #altList == 0 then
 		Dbg("DISPATCH", "Dispatch: no offers to dispatch")
+		-- MULTIPC-001: the window closed and nobody offered anything, our own bank included.
+		self:MarkSelfConsulted("collect window closed, no offers")
 		self:ScheduleCatchUp("no_offers")
 		return
 	end
 
 	Dbg("DISPATCH", "Dispatch: %d alts with offers", #altList)
 	self:DispatchOrQuery(altList)
-	-- Refresh tab colors now that latestBankerHashes reflects the newest peer hashes
-	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-		TOGBankClassic_UI_Inventory:DrawContent()
+	-- MULTIPC-001: if an offer named OUR OWN number, DispatchOrQuery opened a version query for it
+	-- and FinishVersionQuery will settle the latch; otherwise nobody claims to hold newer than us.
+	if not self.versionQueries[Me()] then
+		self:MarkSelfConsulted("collect window closed, nobody offered our own bank")
 	end
+	-- Refresh tab colors now that latestBankerHashes reflects the newest peer hashes. BROWSE-008:
+	-- through RefreshSoon, the one fan-out that reaches the Guild Bank window as well (see Chat's
+	-- broadcast batch, the other site that bypassed it).
+	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.RefreshSoon then
+		TOGBankClassic_UI_Inventory:RefreshSoon()
+	end
+end
+
+--- MULTIPC-001: the session's first cycle has said what the guild holds for our own character.
+--- Idempotent; the first call releases a publish Bank:Scan deferred while waiting on it.
+---@param reason string for the debug line
+function P2P:MarkSelfConsulted(reason)
+	if self.selfConsulted then return end
+	self.selfConsulted = true
+	Dbg("VERSION", "own-bank check settled (%s)", tostring(reason))
+	if TOGBankClassic_Bank and TOGBankClassic_Bank.PublishIfDeferred then
+		TOGBankClassic_Bank:PublishIfDeferred()
+	end
+end
+
+--- MULTIPC-001: may a partial scan trust that nobody holds a newer version of our own bank? True
+--- once the cycle has answered -- and also before it has been ASKED, because a window that has not
+--- opened cannot be waited on (see `consultBegun`).
+---@return boolean
+function P2P:IsSelfConsulted()
+	return self.selfConsulted == true or not self.consultBegun
 end
 
 --- How many of our fetch sessions are currently pointed at `peer`.
@@ -535,6 +736,33 @@ local function sessionsWith(self, peer)
 		if s.peer == peer and (s.state == STATE.DISPATCHED or s.state == STATE.ACTIVE) then n = n + 1 end
 	end
 	return n
+end
+
+--- WIRE-SKEW-001: the candidates that can complete the data leg with us (Guild:PeerSpeaksDataLeg).
+--- Logged once per alt when something was dropped, so a bank nobody capable holds says so.
+function P2P:CapableCandidates(candidates, altName)
+	local G = TOGBankClassic_Guild
+	if not (G and G.PeerSpeaksDataLeg) then return candidates or {} end
+	local kept, dropped, sample = {}, 0, {}
+	for _, c in ipairs(candidates or {}) do
+		local ok, why = G:PeerSpeaksDataLeg(c.peer)
+		if ok then
+			kept[#kept + 1] = c
+		else
+			dropped = dropped + 1
+			-- WIRE-SKEW-004: a COUNT and three names, never the whole list. This printed every
+			-- dropped peer, and in a guild 40 clients deep on the old release that is a 40-name line
+			-- per alt per cycle -- the operator's chat was unreadable and the real handshake lines
+			-- were buried in it. Three is enough to recognise who, and the count is the fact.
+			if #sample < 3 then sample[#sample + 1] = c.peer .. "(" .. tostring(why) .. ")" end
+		end
+	end
+	if dropped > 0 then
+		Dbg("DISPATCH", "%s: not asking %d holder(s) on a release before the data leg changed: %s%s",
+			tostring(altName), dropped, table.concat(sample, ", "),
+			dropped > #sample and (" +" .. (dropped - #sample) .. " more") or "")
+	end
+	return kept
 end
 
 --- Schedule sessions from a list -- IN PARALLEL ACROSS PEERS.
@@ -558,10 +786,13 @@ function P2P:DispatchList(altList)
 	end
 
 	for _, item in ipairs(altList) do
+		-- WIRE-SKEW-001: a holder on a release before the data leg changed accepts and then never
+		-- answers our query (180 seconds each, per alt, per such peer). Not a candidate.
+		item.candidates = self:CapableCandidates(item.candidates, item.altName)
 		-- Skip an alt that already gained a session while we were working through the list.
 		-- Written as a negated guard rather than an empty `if ... then -- comment` branch, which
 		-- reads as an unfinished thought and is what luacheck reports.
-		if not self.sessionsByAlt[item.altName] then
+		if not self.sessionsByAlt[item.altName] and #item.candidates > 0 then
 			-- Candidates already busy with us count as tried for THIS pass; they become available
 			-- again when their session completes and FlushPendingDispatch re-runs this.
 			local busy = {}
@@ -570,7 +801,16 @@ function P2P:DispatchList(altList)
 			end
 			local peer = PickPeer(item.candidates, busy, peerLoad)
 			if not peer then
-				table.insert(self.pendingDispatch, item)
+				-- One parked item per alt: the newest candidates replace the old. Every late offer
+				-- (each peer's broadcast is one, per bank) re-ran this list while the holders were
+				-- busy and parked the same alt again -- read off the operator's log as the same
+				-- fourteen banks "asking" after every broadcast -- so the park grew without bound
+				-- and FlushPendingDispatch walked hundreds of duplicates to open one session.
+				local replaced = false
+				for i, parked in ipairs(self.pendingDispatch) do
+					if parked.altName == item.altName then self.pendingDispatch[i] = item; replaced = true; break end
+				end
+				if not replaced then table.insert(self.pendingDispatch, item) end
 			else
 				peerLoad[peer] = (peerLoad[peer] or 0) + 1
 				local sid = MakeSessionId(item.altName)
@@ -587,10 +827,28 @@ function P2P:DispatchList(altList)
 				-- Reserve the slot immediately so concurrent flushes see the correct count.
 				self.activeSessions = self.activeSessions + 1
 				self:SendSyncRequest(sid)
-				Dbg("DISPATCH", "  → %s to %s (sid=%s, with that peer: %d)", item.altName, peer, sid, sessionsWith(self, peer))
+				Dbg("DISPATCH", "  -> %s to %s (sid=%s, with that peer: %d)", item.altName, peer, sid, sessionsWith(self, peer))
 			end
 		end
 	end
+end
+
+--- EVERY handshake message this module sends goes out through here, on `togbank-rr` at ALERT.
+--- P2P-031: the operator, "why don't we just make ack's a priority? it's a whisper, super fast."
+--- Read off the live guild: a banker serving 13-chunk payloads and spraying kilobyte offers at
+--- NORMAL could not get a 100-byte ACK out inside the requester's wait, and every request timed
+--- out "no banker online" with the banker online. ChatThrottleLib splits its byte budget EQUALLY
+--- among lanes with something to send, so the ALERT lane -- otherwise near-empty -- carries a
+--- handshake in the next tick regardless of how much NORMAL and BULK is backed up.
+--- Peer Review c6819531 F2: the prefix and the priority were twelve literals across this file and
+--- two of them had drifted to NORMAL (the queue-drain busy, the queued-elsewhere cancel) -- one of
+--- six paths at a different priority is the kind of thing a sync investigation cannot see. One
+--- function, no literal at a call site, and the count in a comment is no longer a thing to go stale.
+---@param to string the peer
+---@param message table the payload, serialised with the checksum framing here
+function P2P:SendHandshake(to, message)
+	local data = TOGBankClassic_Core:SerializeWithChecksum(message)
+	return TOGBankClassic_Core:SendWhisper("togbank-rr", data, to, "ALERT")
 end
 
 function P2P:SendSyncRequest(sessionId)
@@ -603,23 +861,13 @@ function P2P:SendSyncRequest(sessionId)
 	for _, c in ipairs(s.candidates or {}) do
 		if c.peer == s.peer then canon = c.canon break end
 	end
-	local payload = {
+	self:SendHandshake(s.peer, {
 		type      = "sync-request",
 		sessionId = sessionId,
 		altName   = s.altName,
 		requester = Me(),
 		canon     = canon,
-	}
-	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	-- P2P-031: EVERY togbank-rr handshake message goes out at ALERT. The operator: "why don't we
-	-- just make ack's a priority? it's a whisper, super fast." Read off the live guild: a banker
-	-- serving 13-chunk payloads and spraying kilobyte offers at NORMAL could not get a 100-byte ACK
-	-- out inside the requester's 5-second wait, and every request timed out "no banker online" with
-	-- the banker online. ChatThrottleLib splits its byte budget EQUALLY among lanes with something
-	-- to send, so the ALERT lane -- otherwise near-empty -- carries a handshake in the next tick
-	-- regardless of how much NORMAL and BULK is backed up. The eight sites are: sync-request,
-	-- sync-accept, sync-busy (x2), sync-queued, sync-cancel, and the two alt-request-reply ACKs.
-	TOGBankClassic_Core:SendWhisper("togbank-rr", data, s.peer, "ALERT")
+	})
 
 	-- Timeout: if no ACK, advance to next candidate.
 	-- TIMER-001: NewTimer, so the :Cancel() calls on this handle actually cancel.
@@ -643,12 +891,17 @@ end
 --- Peer accepted our sync-request.
 function P2P:OnSyncAccept(sessionId, sender)
 	local s = self.sessions[sessionId]
-	if not s then
-		Dbg("HANDSHAKE", "OnSyncAccept: unknown session %s from %s", tostring(sessionId), sender)
-		return
-	end
-	if s.state ~= STATE.DISPATCHED then
-		Dbg("HANDSHAKE", "OnSyncAccept: session %s wrong state %s", sessionId, s.state)
+	-- P2P-038: an accept we cannot use -- the session is gone, or already ACTIVE with another peer
+	-- (we advanced on a timeout or a queued reply and the first peer accepted after all) -- used to
+	-- be logged and left. The peer had taken a slot for us and held it the full 30-second state-wait
+	-- for a query that was never coming; read off the operator's clients on 2026-09-12 as a run of
+	-- "wrong state ACTIVE" on one side and "No query from X within 30s of accept" on the other.
+	-- Tell it, the same way a queued request is withdrawn: sync-cancel names the session, and the
+	-- provider gives the slot back at once (DequeueSend / CancelAccept).
+	if not s or s.state ~= STATE.DISPATCHED then
+		Dbg("HANDSHAKE", "OnSyncAccept: %s from %s cannot be used (%s) - cancelling it", tostring(sessionId), sender,
+			s and ("wrong state " .. tostring(s.state)) or "unknown session")
+		self:SendHandshake(sender, { type = "sync-cancel", sessionId = sessionId })
 		return
 	end
 
@@ -676,10 +929,12 @@ function P2P:OnSyncAccept(sessionId, sender)
 		end
 	end)
 
-	-- Kick the existing data-delivery pipeline: send our current state to the
-	-- peer so it can compute and send back only the delta (or a full sync).
+	-- THE DELTA RELEASE step 3b: ask on the host's QUERY channel, naming the canon we hold, so the
+	-- peer can answer with the links after it rather than the whole bank (Inventory/Sync.lua). A
+	-- refused send (the peer went offline between accept and now) is left to the delivery watchdog
+	-- above, which advances the session the way a silent peer always has.
 	local norm = Norm(s.altName)
-	TOGBankClassic_Guild:SendStateSummary(norm, sender)
+	TOGBankClassic_Inventory_Sync:RequestFrom(sender, norm)
 end
 
 --- Peer is at its concurrent-send cap; try the next candidate.
@@ -688,6 +943,33 @@ function P2P:OnSyncBusy(sessionId, sender)
 	if not s then return end
 	Dbg("HANDSHAKE", "BUSY: %s from %s - advancing", s.altName, sender)
 	self:AdvanceCandidate(sessionId, "busy")
+end
+
+--- CHAIN-004: the provider refused our data QUERY for `altName` -- its accept had lapsed (the
+--- 30-second state-wait) and it had no room to treat the query as a fresh one. Only the session
+--- waiting on THAT peer advances; a refusal from a peer we have already moved on from is stale.
+function P2P:OnQueryRefused(altName, sender)
+	local norm = Norm(altName)
+	local sid = self.sessionsByAlt[norm]
+	local s = sid and self.sessions[sid]
+	if s then
+		if s.peer ~= sender or s.state ~= STATE.ACTIVE then return end
+		Dbg("HANDSHAKE", "REFUSED: %s from %s (no room for our query) - advancing", norm, sender)
+		self:AdvanceCandidate(sid, "query_refused")
+		return
+	end
+	-- No session: the query came from the PULL path (a banker or relay ACK, Chat.lua). Peer Review
+	-- F1: this refusal used to be heard and dropped. Forget the pull request the way its own
+	-- timeouts do and let the catch-up ask again -- the 15-second "ACKed but never delivered" watch
+	-- would reach the same place later; this is the same answer, now.
+	local G = TOGBankClassic_Guild
+	if G and G.ClearPendingP2PRequest then G:ClearPendingP2PRequest(norm) end
+	Dbg("HANDSHAKE", "REFUSED: %s from %s (no room for our query, no session) - catch-up", norm, sender)
+	local DB = TOGBankClassic_Database
+	if G and G.Info and G.Info.name and DB and DB.RecordP2PBankerFallback then
+		DB:RecordP2PBankerFallback(G.Info.name)
+	end
+	self:ScheduleCatchUp("query_refused")
 end
 
 --- Move to the next untried candidate for a session.
@@ -707,7 +989,17 @@ function P2P:AdvanceCandidate(sessionId, reason)
 		s.timers.retry:Cancel()
 		s.timers.retry = nil
 	end
+	-- CHAIN-004: an ACTIVE session can advance now (a refused query), so the delivery watchdog armed
+	-- for the peer being left goes too. Its ACTIVE guard already made a late fire harmless once the
+	-- next peer's accept re-armed the slot; cancelling is simply the honest state.
+	if s.timers.delivery then
+		s.timers.delivery:Cancel()
+		s.timers.delivery = nil
+	end
 
+	-- WIRE-SKEW-001: a candidate learned mid-session (OnOffer folds broadcasts into a live session)
+	-- may be on the old release; it is dropped here the same way DispatchList drops it.
+	s.candidates = self:CapableCandidates(s.candidates, s.altName)
 	local nextPeer = nil
 	for _, candidate in ipairs(s.candidates) do
 		if not s.triedPeers[candidate.peer] then
@@ -852,6 +1144,21 @@ function P2P:GetActiveSendTotal()
 	return total
 end
 
+--- Consume one ACCEPT for `requester`: true when it holds a send slot that no reply is serving
+--- yet, and that slot is now marked serving. The data QUERY on the host is answered only when this
+--- succeeds (CHAIN-003): the cap is enforced at accept time, so a QUERY that never went through the
+--- handshake would be a BULK send outside it -- and a second QUERY inside one accept's window
+--- (peer review A1) would be a second BULK send for one accept. A slot is ACCEPTED (granted by the
+--- accept) then SERVING (claimed here); the count and the cap are untouched, and the release on
+--- drain gives both back. Two accepts for one requester (two alts) are two passes.
+function P2P:ClaimSendSlot(requester)
+	self.servingSends = self.servingSends or {}
+	local held, serving = self.activeSends[requester] or 0, self.servingSends[requester] or 0
+	if held <= serving then return false end
+	self.servingSends[requester] = serving + 1
+	return true
+end
+
 --- Try to acquire an outbound send slot for a given requester.
 -- Returns true (slot incremented + safety timer set) if under cap; false if at cap.
 -- Call ReleaseSendSlot on send completion; the safety timer is a no-op fallback.
@@ -920,6 +1227,14 @@ function P2P:ReleaseSendSlot(requester, reason, token)
 
 	if (self.activeSends[requester] or 0) > 0 then
 		self.activeSends[requester] = self.activeSends[requester] - 1
+		-- The serving mark goes back with the slot (ClaimSendSlot); a slot released before any QUERY
+		-- claimed it (the state-wait, the safety timer) has nothing to give back here. Counts, not
+		-- identities: with TWO accepts for one requester, one serving, a state-wait release of the
+		-- unclaimed one also clears the mark -- the residual is one extra reply for that requester,
+		-- which is what every accept used to allow.
+		if self.servingSends and (self.servingSends[requester] or 0) > 0 then
+			self.servingSends[requester] = self.servingSends[requester] - 1
+		end
 		Dbg("HANDSHAKE", "ReleaseSendSlot: %s (%s, remaining=%d)",
 			requester, reason or "complete", self.activeSends[requester])
 		-- P2P-029: a freed slot goes to whoever has been waiting longest.
@@ -940,19 +1255,38 @@ function P2P:HandleSyncRequest(sessionId, requester, altName, canon)
 	-- condition, so an accept here is a promise the send can keep.
 	if not TOGBankClassic_Guild:CanServe(norm) then
 		Dbg("HANDSHAKE", "HandleSyncRequest: nothing servable for %s - busy to %s", norm, requester)
-		local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-busy", sessionId = sessionId })
-		TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "ALERT")
+		self:SendHandshake(requester, { type = "sync-busy", sessionId = sessionId })
 		return false
 	end
-	-- P2P-035: the requester named the version it wants. If that is not what we can serve now (we
-	-- rescanned, or a wipe took it), say so rather than sending a different version under that name.
+	-- WIRE-SKEW-001: a requester on a release before the data leg changed would answer our accept
+	-- with a state summary we no longer read, hold the slot for the whole state-wait and requeue --
+	-- and with a guild of them, nobody who CAN complete ever reaches a slot. Busy, at once, and no
+	-- queue position; its own build cannot get anything from us until it updates.
+	local G = TOGBankClassic_Guild
+	local capable, why = true, nil
+	if G.PeerSpeaksDataLeg then capable, why = G:PeerSpeaksDataLeg(requester) end
+	if not capable then
+		Dbg("HANDSHAKE", "HandleSyncRequest: %s runs %s, before the data leg changed - busy (version skew)", requester, tostring(why))
+		self:SendHandshake(requester, { type = "sync-busy", sessionId = sessionId, reason = "addon_version" })
+		return false
+	end
+	-- P2P-035: the requester named the version it wants. P2P-037: we serve when we hold THAT version
+	-- OR A LATER ONE -- what they want is the newest, and ours is newer still. Read off the banker
+	-- account on 2026-09-10: Togstone was rescanned six seconds after Galdof learned its version, so
+	-- Galdof asked for `...1707...`, the holder had `...1713...`, and an EXACT-match check answered
+	-- `busy (version)` five times in a row to an idle holder with the better copy -- the requester's
+	-- live session could not learn the new version either, because an offer for an alt with a live
+	-- session is skipped. Refuse only when ours is OLDER than asked (a relay behind the author) or
+	-- unreadable; the requester then moves to the next holder, as designed.
 	if canon ~= nil then
-		local mine = TOGBankClassic_Guild.ServableCanon and TOGBankClassic_Guild:ServableCanon(norm)
-		if mine ~= canon then
+		local mine = G.ServableCanon and G:ServableCanon(norm)
+		local older = mine ~= canon and not (G.CanonIsNewer and G:CanonIsNewer(mine, canon))
+		if older then
 			Dbg("HANDSHAKE", "HandleSyncRequest: %s wants %s at %s, we hold %s - busy (version)", requester, norm, tostring(canon), tostring(mine))
-			local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-busy", sessionId = sessionId, reason = "version" })
-			TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "ALERT")
+			self:SendHandshake(requester, { type = "sync-busy", sessionId = sessionId, reason = "version" })
 			return false
+		elseif mine ~= canon then
+			Dbg("HANDSHAKE", "HandleSyncRequest: %s wants %s at %s, we hold NEWER %s - serving ours", requester, norm, tostring(canon), tostring(mine))
 		end
 	end
 
@@ -963,26 +1297,46 @@ function P2P:HandleSyncRequest(sessionId, requester, altName, canon)
 	-- queue position, and a requester with ANOTHER untried peer moves on (and cancels here), so
 	-- load still spreads; a requester with nobody else to ask waits here and is served in turn.
 	-- Refusing was the storm -- every refused requester retried every peer.
+	-- ONE DELIBERATE EXCEPTION, written where the rule is so the two cannot be read apart: a data
+	-- QUERY whose accept LAPSED (Sync:OnDataRequest, CHAIN-004) is refused at capacity rather than
+	-- queued -- that requester was already accepted once and waited the state-wait out, and the
+	-- QUERY carries no session id to queue under. The reasoning is at that site.
 	if self:GetActiveSendTotal() >= MAX_ACTIVE_SENDS then
 		local position = self:EnqueueSend(sessionId, requester, norm)
 		Dbg("HANDSHAKE", "HandleSyncRequest: at capacity (%d) - queued %s for %s at position %d",
 			self:GetActiveSendTotal(), requester, norm, position)
-		local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-queued", sessionId = sessionId, position = position })
-		TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "ALERT")
+		self:SendHandshake(requester, { type = "sync-queued", sessionId = sessionId, position = position })
 		return false
 	end
 
 	return self:AcceptSend(sessionId, requester, norm)
 end
 
---- Take a slot and send the accept. The requester then sends its state summary, which
---- RespondToStateSummary answers; every outcome there, or the state-wait, frees the slot.
+--- Take a slot and send the accept. The requester then asks on the host's QUERY channel, naming the
+--- canon it holds, and Inventory/Sync's OnDataRequest answers; every outcome there (no-change, a
+--- reply that has drained, a refused send), or the state-wait below, frees the slot.
 function P2P:AcceptSend(sessionId, requester, norm)
 	if not self:TryAcquireSendSlot(requester) then return false end
-	local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-accept", sessionId = sessionId })
-	TOGBankClassic_Core:SendWhisper("togbank-rr", d, requester, "ALERT")
+	self:SendHandshake(requester, { type = "sync-accept", sessionId = sessionId })
 	Dbg("HANDSHAKE", "HandleSyncRequest: accepted %s for %s", norm, requester)
-	self:ArmStateWait(requester, norm)
+	self:ArmStateWait(requester, norm, sessionId)
+	return true
+end
+
+--- P2P-038: the requester withdrew a session we ACCEPTED (its sync-cancel names the session id). If
+--- the accept is still waiting on its query, the wait ends and the slot goes back now rather than
+--- when the 30-second wait expires; an accept whose query already arrived is in Sync's hands and
+--- releases on drain as before. Called beside DequeueSend from the sync-cancel handler.
+function P2P:CancelAccept(sessionId, requester)
+	local key = self.stateWaitSids and sessionId and self.stateWaitSids[sessionId]
+	if not key then return false end
+	self.stateWaitSids[sessionId] = nil
+	local t = self.stateWaits and self.stateWaits[key]
+	if not t then return false end
+	t:Cancel()
+	self.stateWaits[key] = nil
+	Dbg("HANDSHAKE", "Accept for %s withdrawn by %s before its query - releasing slot", key, tostring(requester))
+	self:ReleaseSendSlot(requester, "accept_cancelled")
 	return true
 end
 
@@ -1020,13 +1374,29 @@ function P2P:ServeQueue()
 	while self.sendQueue and #self.sendQueue > 0 and self:GetActiveSendTotal() < MAX_ACTIVE_SENDS do
 		local e = table.remove(self.sendQueue, 1)
 		if GetTime() - e.at <= QUEUE_TTL then
-			if TOGBankClassic_Guild:CanServe(e.altName) then
+			-- WIRE-SKEW-005: THE SECOND DOOR INTO AcceptSend, and it had no version gate on it.
+			-- HandleSyncRequest refuses an old-release requester before it can take a slot, but a
+			-- requester QUEUED while we were at capacity comes back through here instead, and this
+			-- path only ever re-checked whether the content still exists. So an old peer sat in the
+			-- queue, a slot freed, it was accepted, and it burned the whole 30-second state-wait
+			-- before releasing -- `no_state_summary`. Read off the operator's live log 2026-09-12:
+			-- Cinia, Zurayli, Groucho and Bilgoth each appear REFUSED on one line and ACCEPTED on
+			-- another, and every accept follows a ReleaseSendSlot -- that is this drain. The queue
+			-- can hold entries from before we learned the peer's version, so re-checking at drain
+			-- time is the only place that catches them.
+			local capable, why = true, nil
+			local G = TOGBankClassic_Guild
+			if G.PeerSpeaksDataLeg then capable, why = G:PeerSpeaksDataLeg(e.requester) end
+			if not capable then
+				Dbg("HANDSHAKE", "ServeQueue: %s runs %s, before the data leg changed - busy (version skew)",
+					e.requester, tostring(why))
+				self:SendHandshake(e.requester, { type = "sync-busy", sessionId = e.sessionId, reason = "addon_version" })
+			elseif TOGBankClassic_Guild:CanServe(e.altName) then
 				self:AcceptSend(e.sessionId, e.requester, e.altName)
 			else
 				-- Content went away while they waited (a wipe): the honest answer is the same one
 				-- HandleSyncRequest gives, so their session advances rather than hangs.
-				local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-busy", sessionId = e.sessionId })
-				TOGBankClassic_Core:SendWhisper("togbank-rr", d, e.requester, "NORMAL")
+				self:SendHandshake(e.requester, { type = "sync-busy", sessionId = e.sessionId })
 			end
 		else
 			Dbg("HANDSHAKE", "ServeQueue: dropping stale queue entry for %s/%s", e.requester, e.altName)
@@ -1044,8 +1414,7 @@ function P2P:OnSyncQueued(sessionId, sender)
 		if not s.triedPeers[c.peer] then untried = untried + 1 end
 	end
 	if untried > 0 then
-		local d = TOGBankClassic_Core:SerializeWithChecksum({ type = "sync-cancel", sessionId = sessionId })
-		TOGBankClassic_Core:SendWhisper("togbank-rr", d, sender, "NORMAL")
+		self:SendHandshake(sender, { type = "sync-cancel", sessionId = sessionId })
 		Dbg("HANDSHAKE", "QUEUED at %s for %s - %d other peer(s) untried, advancing", sender, s.altName, untried)
 		self:AdvanceCandidate(sessionId, "queued")
 		return
@@ -1060,32 +1429,87 @@ function P2P:OnSyncQueued(sessionId, sender)
 	end)
 end
 
--- P2P-028: an accept that is never followed by the requester's state summary -- their session
--- timed out first, they logged off, the whisper was lost -- used to hold the slot for the full
--- 210-second safety timer, which is sized for a large payload in flight, not for a handshake that
--- went nowhere. Read off two live clients: with a guild's worth of requesters and three slots,
--- that alone kept the banker permanently "busy". The summary follows an accept within seconds
--- when it is coming at all, so the wait is short; RespondToStateSummary cancels it on arrival.
+-- P2P-028: an accept that is never followed by the requester's QUERY (its "state": the canon it
+-- holds) -- their session timed out first, they logged off, the whisper was lost -- used to hold
+-- the slot for the full 210-second safety timer, which is sized for a large payload in flight, not
+-- for a handshake that went nowhere. Read off two live clients: with a guild's worth of requesters
+-- and three slots, that alone kept the banker permanently "busy". The query follows an accept
+-- within seconds when it is coming at all, so the wait is short; Sync:OnDataRequest cancels it on
+-- arrival through StateSummaryArrived.
 local STATE_WAIT = 30
 
---- Arm the short wait for a requester's state summary after we accepted its sync-request.
+--- Arm the short wait for a requester's query after we accepted its sync-request.
 --- Keyed by requester AND alt (self-audit F2): two accepts to one requester inside the window are
 --- two waits, and one summary cancels only its own -- keyed by requester alone, the second accept
 --- cancelled the first's wait and one summary cancelled whichever wait was left.
-function P2P:ArmStateWait(requester, norm)
+---@param sessionId string|nil the accepted session, so a sync-cancel naming it can find this wait
+function P2P:ArmStateWait(requester, norm, sessionId)
 	self.stateWaits = self.stateWaits or {}
+	self.stateWaitSids = self.stateWaitSids or {}
 	local key = requester .. "|" .. tostring(norm)
 	local prior = self.stateWaits[key]
 	if prior then prior:Cancel() end
+	if sessionId then self.stateWaitSids[sessionId] = key end
 	self.stateWaits[key] = C_Timer.NewTimer(STATE_WAIT, function()
 		if P2P.stateWaits then P2P.stateWaits[key] = nil end
-		Dbg("HANDSHAKE", "No state summary from %s for %s within %ds of accept - releasing slot", requester, tostring(norm), STATE_WAIT)
+		P2P:ForgetStateWaitSids(key)
+		Dbg("HANDSHAKE", "No query from %s for %s within %ds of accept - releasing slot", requester, tostring(norm), STATE_WAIT)
+		-- WIRE-SKEW-007: the silence IS the evidence. A capable requester's query follows the accept
+		-- within seconds; thirty of nothing is the old wire (its summary lost, or a build that never
+		-- sent one). Remembered, so its next request is refused at the door rather than given a slot
+		-- to sit in for another thirty. KNOWN COST: a capable peer whose query was genuinely lost is
+		-- refused until VersionCheck or its own broadcast names its version, which both happen
+		-- within the login burst -- and a known claim outranks this mark.
+		if TOGBankClassic_Guild and TOGBankClassic_Guild.NotePeerOldWire
+				and TOGBankClassic_Guild:NotePeerOldWire(requester, "silent") then
+			Dbg("HANDSHAKE", "%s answered an accept with silence - treated as the old wire until its version says otherwise", requester)
+		end
 		P2P:ReleaseSendSlot(requester, "no_state_summary")
 	end)
 end
 
---- The requester's state summary arrived: the send is now in RespondToStateSummary's hands, and
---- every outcome there releases the slot itself.
+--- WIRE-SKEW-007: a `togbank-state` summary arrived -- the message a v1.4.1 requester whispers after
+--- our accept, which a v1.5.0 requester never sends (it asks on the host's QUERY channel). The
+--- prefix is registered for exactly this and nothing in it is read: the SENDER is the fact. Every
+--- accept still waiting on that requester's query is released now, not at the end of the 30-second
+--- wait, and the peer is remembered so its next request costs nothing.
+---@param requester string normalized sender
+function P2P:OnOldWireSummary(requester)
+	if not requester then return end
+	local G = TOGBankClassic_Guild
+	if G and G.NotePeerOldWire and G:NotePeerOldWire(requester, "state-summary") then
+		Dbg("HANDSHAKE", "%s sent a togbank-state summary: it runs the old wire - refused from here on", requester)
+	end
+	local prefix = requester .. "|"
+	-- WIRE-SKEW-009: collect first, release after. ReleaseSendSlot can dispatch the next queued
+	-- send, which ADDS a wait to this table -- inserting during pairs() is undefined in Lua and
+	-- raised "invalid key to 'next'" 15 times on the operator's banker (Bellow's summary, 2026-09-12).
+	local matched = {}
+	for key, t in pairs(self.stateWaits or {}) do
+		if key:sub(1, #prefix) == prefix then matched[#matched + 1] = { key = key, timer = t } end
+	end
+	local released = 0
+	for _, m in ipairs(matched) do
+		m.timer:Cancel()
+		self.stateWaits[m.key] = nil
+		self:ForgetStateWaitSids(m.key)
+		self:ReleaseSendSlot(requester, "old_wire")
+		released = released + 1
+	end
+	if released > 0 then
+		Dbg("HANDSHAKE", "Released %d accept(s) held for %s at once rather than after the %ds wait", released, requester, STATE_WAIT)
+	end
+end
+
+--- Drop every session id that pointed at a wait that has ended.
+function P2P:ForgetStateWaitSids(key)
+	for sid, k in pairs(self.stateWaitSids or {}) do
+		if k == key then self.stateWaitSids[sid] = nil end
+	end
+end
+
+--- The requester's query arrived: the send is now in Sync:OnDataRequest's hands, and every outcome
+--- there releases the slot itself.
 function P2P:StateSummaryArrived(requester, norm)
 	local key = requester .. "|" .. tostring(norm)
 	local t = self.stateWaits and self.stateWaits[key]
@@ -1093,6 +1517,7 @@ function P2P:StateSummaryArrived(requester, norm)
 		t:Cancel()
 		self.stateWaits[key] = nil
 	end
+	self:ForgetStateWaitSids(key)
 end
 
 --- True while we are still waiting on this requester's summary for any alt (for sendqueue).

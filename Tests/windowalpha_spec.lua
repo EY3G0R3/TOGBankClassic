@@ -23,7 +23,7 @@ describe("TOGBankClassic_UI.ALPHA_WINDOWS", function()
 	it("covers every window the addon opens", function()
 		local keys = {}
 		for _, entry in ipairs(UI.ALPHA_WINDOWS) do keys[entry.key] = true end
-		for _, expected in ipairs({ "inventory", "search", "requests", "donations", "mail" }) do
+		for _, expected in ipairs({ "inventory", "search", "requests", "donations", "mail", "mailbox", "browse" }) do
 			assert.is_true(keys[expected] == true, "no transparency slider for the " .. expected .. " window")
 		end
 	end)
@@ -39,6 +39,8 @@ describe("TOGBankClassic_UI.ALPHA_WINDOWS", function()
 			requests  = "Modules/UI/Requests.lua",
 			donations = "Modules/UI/Donations.lua",
 			mail      = "Modules/UI/Mail.lua",
+			mailbox   = "Modules/UI/Mailbox.lua",
+			browse    = "Modules/UI/Browse.lua",
 		}
 		for _, entry in ipairs(UI.ALPHA_WINDOWS) do
 			local path = sources[entry.key]
@@ -361,6 +363,7 @@ describe("ApplyThinBorder alpha integration", function()
 			["Modules/UI/Requests.lua"]  = 'ApplyThinBorder(window, "requests")',
 			["Modules/UI/Donations.lua"] = 'ApplyWindowAlpha("donations", donations)',
 			["Modules/UI/Mail.lua"]      = 'ApplyWindowAlpha("mail", window)',
+			["Modules/UI/Browse.lua"]    = 'ApplyThinBorder(window, "browse")',
 		}
 		for path, expected in pairs(wired) do
 			local fh = assert(io.open(path, "rb"))

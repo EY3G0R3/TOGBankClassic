@@ -58,7 +58,7 @@ local function loadClient()
 		GetBanks = function() return { ME } end,
 	}
 	TOGBankClassic_Options       = { GetBankEnabled = function() return true end }
-	TOGBankClassic_Database      = { SaveSnapshot = function() return true end, db = { global = {} } }
+	TOGBankClassic_Database      = { db = { global = {} } }
 	TOGBankClassic_MailInventory = { hasUpdated = false }
 	TOGBankClassic_Core          = env.coreHashStub(12345)
 

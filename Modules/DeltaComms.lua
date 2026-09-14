@@ -103,15 +103,33 @@ end
 --- "Keep the two in step" does NOT apply here and is the one case where duplication is correct: this
 --- function is frozen by definition. It retires when no unmigrated client remains, not before, and
 --- improving it would break the interop it exists to preserve.
+---
+--- HASH-REV-002 (INV2-RETIRE-003): ONE change, and it is not an improvement to the identity -- the
+--- identity is still `ID:Count`, blind to suffix and enchant. It is that the rows it reads are now
+--- TUPLES: the scan hashes the V2 record set rather than the legacy aggregate, and the guard above
+--- (`item.ID`) would have made every tuple contribute nothing, collapsing revision 1 to money-only
+--- on every client at once. The "unmigrated client" this revision was frozen for is no longer
+--- supported (the 2026-09-09 no-wire-back-compat directive), so the value only has to agree between
+--- clients on THIS build -- and every one of them now computes it over tuples the same way. A
+--- suffix-variant pair that the legacy aggregate merged into one `ID:Count` becomes two entries
+--- here; that differs from what v1.4.x computed, which is the one-bump-per-character the scan
+--- already accepts for revision 2.
 local function hashInventoryItemsV1(itemsArray)
 	if not itemsArray or type(itemsArray) ~= "table" then
 		return ""
 	end
 	local sorted = {}
 	for _, item in ipairs(itemsArray) do
-		if type(item) == "table" and item.ID then
-			table.insert(sorted, string.format("%d:%d",
-				tonumber(item.ID) or 0, tonumber(item.Count) or 0))
+		if type(item) == "table" then
+			local id, count
+			if item.ID then
+				id, count = tonumber(item.ID), tonumber(item.Count)
+			elseif type(item[1]) == "number" then
+				id, count = item[1], item[2]
+			end
+			if id then
+				table.insert(sorted, string.format("%d:%d", id, count or 0))
+			end
 		end
 	end
 	table.sort(sorted)
@@ -121,69 +139,29 @@ end
 --- The argument handling shared by both revisions. Extracted so the two hashes cannot disagree about
 --- anything EXCEPT the item identity -- the calling-convention detection, the money type guard from
 --- finding 26 and the checksum are one implementation, and only `hashItems` differs.
-local function computeInventoryHashWith(hashItems, bank, bags, mailOrMoney, money)
-	-- Handle multiple calling conventions:
-	-- SYNC-006 (aggregated): ComputeInventoryHash(items, nil, nil, money) - items is direct array
-	-- Pre-SYNC-006: ComputeInventoryHash(bank, bags, money) - bank/bags have .items, no mail
-
-	-- Detect SYNC-006 aggregated call: first param is array, second is nil
-	if bank and type(bank) == "table" and bags == nil and mailOrMoney == nil then
-		-- SYNC-006: bank is actually the aggregated items array, money is the 4th param
-		local items = bank
-		local actualMoney = money or 0
-
-		local parts = {}
-		table.insert(parts, tostring(actualMoney))
-
-		table.insert(parts, "I:" .. hashItems(items))
-		local combined = table.concat(parts, "|")
-		return TOGBankClassic_Core:Checksum(combined)
-	end
-
-	-- Pre-SYNC-006 calling convention: ComputeInventoryHash(bank, bags, money)
-	-- mailOrMoney is actually money (number), no mail parameter exists
+local function computeInventoryHashWith(hashItems, items, bags, mailOrMoney, money)
+	-- ONE calling convention: ComputeInventoryHash(items, nil, nil, money) -- `items` is the flat
+	-- record array (tuples, or legacy rows), the two middle slots are nil, money is fourth.
 	--
-	-- TYPE-GUARDED, and this is a real defence rather than tidiness (AUDIT finding 26). This slot
-	-- is positional and overloaded, so a caller passing a table here is a live hazard: `or 0`
-	-- accepted it without complaint, and line 190's tostring() then baked a TABLE ADDRESS into the
-	-- hash. An address differs between sessions, so the hash matched nothing -- including itself an
-	-- hour earlier -- and re-drove every sync comparison forever. That is exactly what
-	-- MIGRATE-001's "fix" did before it was reverted.
-	--
-	-- Reverting the one call site worked around it; this removes the class. A non-number in the
-	-- money slot now hashes as 0, so the value can never depend on a table's IDENTITY.
-	local actualMoney = (type(mailOrMoney) == "number") and mailOrMoney or 0
-
-	local parts = {}
-
-	-- Include money
-	table.insert(parts, tostring(actualMoney))
-
-	-- Include bank items (pre-SYNC-006 structure: bank.items)
-	if bank and bank.items then
-		table.insert(parts, "B:" .. hashItems(bank.items))
+	-- HASH-PIN-001 (2026-09-11): the pre-SYNC-006 branch that stood here -- (bank, bags, money),
+	-- reading `bank.items` / `bags.items` and emitting "B:" / "G:" parts through its own copy of
+	-- the checksum loop -- was UNREACHABLE (no production caller had passed that shape since
+	-- SYNC-006) and is deleted. Peer Review's point, taken: dead code in the one function that
+	-- mints canons is the dangerous choice, because the next reader cannot tell which convention
+	-- is live. The live branch's bytes are untouched -- inventoryhash_spec pins the exact string
+	-- for a fixed record set, captured before the deletion. The dead shape is now REFUSED rather
+	-- than silently hashed money-only, which is what it would have done for any table in slot 2.
+	if type(items) ~= "table" or bags ~= nil or mailOrMoney ~= nil then
+		error("ComputeInventoryHash(items, nil, nil, money): the (bank, bags, money) form is gone (HASH-PIN-001)", 3)
 	end
 
-	-- Include bag items (pre-SYNC-006 structure: bags.items)
-	if bags and bags.items then
-		table.insert(parts, "G:" .. hashItems(bags.items))
-	end
-
-	-- Note: Pre-SYNC-006 clients never had mail, so no mail hashing
-
-	-- Concatenate all parts and compute simple hash
-	local combined = table.concat(parts, "|")
-
-	-- Use same hash function as checksum for consistency
-	local sum = 0
-	local len = #combined
-	for i = 1, len do
-		local byte = string.byte(combined, i)
-		sum = (sum * 31 + byte) % 2147483647
-	end
-	sum = (sum * 31 + len) % 2147483647
-
-	return sum
+	-- TYPE-GUARDED money, and this is a real defence rather than tidiness (AUDIT finding 26): a
+	-- table in the money slot with `or 0` would have tostring()'d a TABLE ADDRESS into the hash. An
+	-- address differs between sessions, so the hash would match nothing -- including itself an hour
+	-- earlier -- and re-drive every sync comparison forever. That guard used to sit only on the
+	-- deleted branch; the live one had `money or 0`. A non-number now hashes as 0.
+	local actualMoney = (type(money) == "number") and money or 0
+	return TOGBankClassic_Core:Checksum(tostring(actualMoney) .. "|I:" .. hashItems(items))
 end
 
 --- Revision 2: the corrected identity (suffix- and enchant-aware, tuple-aware). This is the hash the
@@ -259,11 +237,14 @@ end
 --- Both inputs are the author's own -- the number they minted and the time they stamped, carried
 --- verbatim to every holder -- and the rule is deterministic, so every client that holds a copy of
 --- one old publish, the author included, converges on the SAME string with no rescan and no
---- recompute of content. Rebuilding the content half instead was considered and rejected: the
---- author hashes its legacy aggregate (Bank.lua:470) and a receiver holds the V2 view, which can
---- legitimately differ (that is what `/togbank dev compare` exists to catch), so it would be a
---- recompute on receipt -- exactly what HASH-CANON-001 forbids. Without this, every V2 copy in the
---- guild would read as "no canon" the day this shipped and the whole guild would rehydrate; the
+--- recompute of content. Rebuilding the content half instead was considered and rejected: at the
+--- time the author hashed its legacy aggregate and a receiver held the V2 view, which could
+--- legitimately differ (that is what `/togbank dev compare` existed to catch), so it would have
+--- been a recompute on receipt -- exactly what HASH-CANON-001 forbids. (INV2-RETIRE-003 has since
+--- moved the author onto the V2 records too, so the two shapes now agree -- which is what lets a
+--- receiver VERIFY a delta chain against the canon; the rule against recomputing on receipt to
+--- REPLACE the author's value stands unchanged.) Without this, every V2 copy in the guild would
+--- have read as "no canon" the day this shipped and the whole guild would have rehydrated; the
 --- operator's words on hearing that: "fuck, so the v2 data i have now will be old again".
 ---
 --- A numeric canon with NO publish time cannot be re-encoded -- there is no date to lead with --
@@ -477,8 +458,9 @@ end
 -- via `expandMinimalItems` -- rows with an ID and a Count and no Link, which is where much of
 -- ComputeItemDelta's fallback machinery came from. A V2 send is a full tuple snapshot and needs to
 -- know nothing about what the requester holds, so the baseline, its expansion and the diff all go
--- together. `ComputeTupleDelta` is the replacement when `togbank-state` learns to carry a tuple
--- baseline; until then the snapshot is the whole message.
+-- together. THE DELTA RELEASE step 3 is the replacement, and it is not a diff computed at request
+-- time at all: the author writes the per-version delta at mint (Inventory/Chain.lua) and a provider
+-- serves the links after the canon the requester names (Inventory/Sync.lua).
 
 -- Estimate serialized size of a data structure
 function TOGBankClassic_DeltaComms:EstimateSize(data)
@@ -493,8 +475,8 @@ end
 
 -- INV2 step 10: `DeltaHasChanges` went with `ComputeDelta`. Its only job was deciding whether a
 -- computed `alt-delta` was empty enough to answer with a `togbank-nochange` correction instead, and
--- the delta is gone. The MESSAGE is not: `RespondToStateSummary` still sends `togbank-nochange`
--- when the hashes already match, which it decides from the hashes directly and never needed this.
+-- the delta is gone. The no-change survives as `inv-nochange` on the DeltaSync host, decided by
+-- Sync:OnDataRequest from the canon alone, which never needed this.
 
 -- INV2 step 10 / directive 2026-09-09: `ApplyItemDelta` and `ApplyDelta` WERE HERE, ~570 lines of
 -- them, and they are deleted with the legacy link wire format they existed to apply.

@@ -36,6 +36,11 @@ Wire.VERSION = 1
 
 local F_VERSION, F_ALT, F_MONEY, F_RECORDS, F_HASH, F_HASHV2, F_UPDATEDAT, F_MAILHASH =
 	1, 2, 3, 4, 5, 6, 7, 8
+-- LOG-MAIL-001: the trailing optional field -- the author's bank-log entries for the versions in
+-- its chain window (Chain:WireLogs), so a snapshot receiver applies the author's log instead of
+-- diffing two full record sets, which carry the inbox rows. Absent from a payload built before
+-- this field existed; a receiver then logs nothing from that delivery (Log:ApplyWireLogs).
+local F_LOGS = 9
 
 --- Build a V2 payload. Returns nil when there is nothing sendable, so callers never transmit an
 --- empty envelope that a receiver would apply as "this alt has no items".
@@ -106,15 +111,18 @@ local F_VERSION, F_ALT, F_MONEY, F_RECORDS, F_HASH, F_HASHV2, F_UPDATEDAT, F_MAI
 --- @param hashV2 string|nil the author's revision-2 canon
 --- @param updatedAt number|nil the author's publish time, from the scan that produced these records
 --- @param mailHash number|nil the author's mail hash, stamped by the same scan
-function Wire.encode(altName, records, money, hash, hashV2, updatedAt, mailHash)
+--- @param logs table|nil LOG-MAIL-001: Chain:WireLogs, the window's bank-log entries; nil for none
+function Wire.encode(altName, records, money, hash, hashV2, updatedAt, mailHash, logs)
 	if type(altName) ~= "string" or altName == "" then return nil end
 	local out = {}
 	for _, rec in ipairs(records or {}) do
 		if Record.isValid(rec) then out[#out + 1] = rec end
 	end
-	return { Wire.VERSION, altName, tonumber(money) or 0, out,
+	local payload = { Wire.VERSION, altName, tonumber(money) or 0, out,
 		tonumber(hash) or nil, Wire.canonOrNil(hashV2, updatedAt), tonumber(updatedAt) or nil,
 		tonumber(mailHash) or nil }
+	if type(logs) == "table" and #logs > 0 then payload[F_LOGS] = logs end
+	return payload
 end
 
 --- The canon if `v` is (or re-encodes to) one, else nil. Delegates to the one spelling in
@@ -143,12 +151,12 @@ end
 --- are nil when the sender did not supply them, and nil is meaningful -- it means "this author
 --- published no canon", which a receiver must be able to tell apart from "the author published
 --- zero". Do not coerce them to 0.
---- @return string|nil altName, table records, number money, number|nil hash, string|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash
+--- @return string|nil altName, table records, number money, number|nil hash, string|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash, table|nil logs
 local function decodeV2(payload)
 	local version = payload[F_VERSION]
 	-- A newer major layout cannot be read positionally, and guessing would apply wrong values
 	-- silently. Refusing is the safe failure: the sender retries as the receiver upgrades.
-	if version > Wire.VERSION then return nil, {}, 0, nil, nil, 0, nil, nil end
+	if version > Wire.VERSION then return nil, {}, 0, nil, nil, 0, nil, nil, nil end
 
 	local records, dropped = {}, 0
 	for _, rec in ipairs(payload[F_RECORDS] or {}) do
@@ -184,9 +192,12 @@ local function decodeV2(payload)
 	-- and publish time with NO canon, and the tab read "v1" for a banker on the previous release.
 	-- Read off the operator's viewer account on 2026-09-10: three bankers scanned that afternoon
 	-- (canon on the author's side) held on the viewer with the same publish time and no canon.
+	-- LOG-MAIL-001: the ninth return is the author's log window, a table or nil, passed through
+	-- untouched -- Log:ApplyWireLogs validates every element before appending any of it.
 	return payload[F_ALT], records, tonumber(payload[F_MONEY]) or 0,
 		tonumber(payload[F_HASH]), Wire.canonOrNil(payload[F_HASHV2], payload[F_UPDATEDAT]), dropped,
-		tonumber(payload[F_UPDATEDAT]), tonumber(payload[F_MAILHASH])
+		tonumber(payload[F_UPDATEDAT]), tonumber(payload[F_MAILHASH]),
+		type(payload[F_LOGS]) == "table" and payload[F_LOGS] or nil
 end
 
 --- AUDIT-S3: `decodeLegacy` WAS HERE and is deleted. It turned an old client's
@@ -261,12 +272,12 @@ end
 --- underscores against `decodeV2` is how a caller lands on `updatedAt` while believing it read the
 --- mail hash -- which happened while writing this, and the spec caught it only because it asserted
 --- a distinctive value rather than merely "not nil".
---- @return string|nil altName, table records, number money, string format, number|nil hash, string|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash
+--- @return string|nil altName, table records, number money, string format, number|nil hash, string|nil hashV2, number dropped, number|nil updatedAt, number|nil mailHash, table|nil logs
 function Wire.decode(payload)
-	if type(payload) ~= "table" then return nil, {}, 0, "invalid", nil, nil, 0, nil, nil end
-	if not Wire.isV2(payload) then return nil, {}, 0, "dropped", nil, nil, 0, nil, nil end
-	local alt, records, money, hash, hashV2, dropped, updatedAt, mailHash = decodeV2(payload)
-	return alt, records, money, "v2", hash, hashV2, dropped, updatedAt, mailHash
+	if type(payload) ~= "table" then return nil, {}, 0, "invalid", nil, nil, 0, nil, nil, nil end
+	if not Wire.isV2(payload) then return nil, {}, 0, "dropped", nil, nil, 0, nil, nil, nil end
+	local alt, records, money, hash, hashV2, dropped, updatedAt, mailHash, logs = decodeV2(payload)
+	return alt, records, money, "v2", hash, hashV2, dropped, updatedAt, mailHash, logs
 end
 
 --- Should this client emit tuples? Send is switchable; receive never is (and is tuples-only).

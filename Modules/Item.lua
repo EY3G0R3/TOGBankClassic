@@ -196,6 +196,48 @@ function TOGBankClassic_Item:RowSuffixID(row)
 	return self:GetSuffixID(row.Link)
 end
 
+--- Is this the stand-in a resolver hands back when it has no name? These three spellings are the
+--- ones the addon produces (Inventory/Resolve.lua, Item.lua, UI/Search.lua); a real item is never
+--- called any of them.
+---@param name string|nil
+---@return boolean
+function TOGBankClassic_Item:IsPlaceholderName(name)
+	if name == nil or name == "" then return true end
+	if name == "Unknown item" or name == "Unknown" then return true end
+	return name:match("^Item %d+$") ~= nil
+end
+
+--- NAME-001: the name to SHOW for a request. Reported from a live guild: a request row reading
+--- `Item 7969`. The requester's client could not name the item when the request was created (cold
+--- cache, and before ItemDB), so the placeholder was stored in `request.item` and synced to every
+--- client, where it stays for the life of the request -- the record is append-only and correct as
+--- written. But the request also carries `itemID`, and by the time anyone looks at it the name is
+--- almost always available (ItemDB, or the client's cache). So: a real name is returned as stored;
+--- a placeholder is re-resolved from the id at display time, and only if that also fails does the
+--- placeholder show. Never mutates the request -- the stored record is the wire's, not the UI's.
+---@param request table a request record ({ item, itemID, suffixID, ... })
+---@return string name
+function TOGBankClassic_Item:RequestDisplayName(request)
+	if type(request) ~= "table" then return "Unknown" end
+	local stored = request.item
+	local id = tonumber(request.itemID)
+	local suffix = tonumber(request.suffixID) or 0
+	-- SUFFIX-NAME-001: a request for a random-suffix variant names the VARIANT. Every request minted
+	-- before Resolve.describe named suffixed rows stored the base name ("Spiked Club" for a
+	-- `4564:1180` = "of the Bear" order), and the banker filling it could not tell which club was
+	-- asked for (the operator, 2026-09-13: "it's still a problem ... aka, the suffixes"). The stored
+	-- name is real and stays as written; when the record carries a suffix the shown name is
+	-- resolved from id + suffix, which is where the link's name comes from too.
+	if not self:IsPlaceholderName(stored) and suffix == 0 then return stored end
+	local Record, Resolve = TOGBankClassic_Inventory_Record, TOGBankClassic_Inventory_Resolve
+	if id and Record and Resolve then
+		local rec = Record.new(id, 1, suffix)
+		local name = rec and Resolve.name(rec)
+		if name and not self:IsPlaceholderName(name) then return name end
+	end
+	return stored or "Unknown"
+end
+
 function TOGBankClassic_Item:GetItems(items, callback)
 	if not items or type(items) ~= "table" then
 		callback({})
@@ -651,13 +693,37 @@ function TOGBankClassic_Item:Sort(items, mode)
 	end
 end
 
+-- INV2-SUFFIX-002: the aggregated row carries EVERYTHING that identifies the variant, not just
+-- ID/Count/Link. This used to rebuild rows as { ID, Count, Link, ItemString, ForceLink } and drop
+-- Suffix, Enchant and Info on the floor -- harmless only because UI/Search.lua used Aggregate's
+-- output solely for its name corpus. The moment a request-carrying row went through here,
+-- INV2-SUFFIX-001 (two "of the ..." variants merged into one request) came straight back with no
+-- test to catch it. A merge keeps the first non-nil of each.
+local function mergeRow(into, v)
+	into.Count      = (into.Count or 1) + (v.Count or 1)
+	into.Link       = into.Link or v.Link
+	into.ItemString = into.ItemString or v.ItemString
+	into.ForceLink  = into.ForceLink or v.ForceLink
+	into.Suffix     = into.Suffix or v.Suffix
+	into.Enchant    = into.Enchant or v.Enchant
+	into.Info       = into.Info or v.Info
+end
+
+local function newRow(v)
+	return { ID = v.ID, Count = v.Count or 1, Link = v.Link, ItemString = v.ItemString,
+		ForceLink = v.ForceLink, Suffix = v.Suffix, Enchant = v.Enchant, Info = v.Info }
+end
+
 function TOGBankClassic_Item:Aggregate(a, b)
 	local items = {}
 	-- Build ID index to avoid O(n²) lookups for linkless deduplication
 	local itemsByID = {}
 
-	if a then
-		for _, v in pairs(a) do
+	-- One walk for both sources. This was two byte-identical loops (peer review's "same behaviour
+	-- implemented more than once" class); the order matters -- `a` first, so a linkless `b` row
+	-- (mail) can merge into a linked `a` row (bank/bags), see MAIL-015.
+	local function absorb(src)
+		for _, v in pairs(src) do
 			-- Only require ID field (Link is optional for v0.8.0 link-less data); a malformed
 			-- entry with no ID is skipped. Written as a positive test rather than an empty
 			-- `if ... then -- skip` branch, which reads as an unfinished thought.
@@ -666,39 +732,24 @@ function TOGBankClassic_Item:Aggregate(a, b)
 				-- This allows identical items with different instance IDs to merge
 				local itemKey = self:GetItemKey(v.Link or v.ItemString)
 				local key = tostring(v.ID) .. itemKey
+				local idStr = tostring(v.ID)
 
 				-- If no Link, also check if there's an existing entry with same ID but with link
 				-- This handles deduplication between linked (bank/bags) and linkless (mail) items
 				if not v.Link and itemKey == "" then
-					-- Use ID index for O(1) lookup instead of O(n) iteration
-					local idStr = tostring(v.ID)
 					local existingKeys = itemsByID[idStr]
 					if existingKeys and #existingKeys > 0 then
 						-- Found item(s) with same ID - merge into first entry
-						local existingKey = existingKeys[1]
-						local existingItem = items[existingKey]
-						local itemCount = existingItem.Count or 1
-						local vCount = v.Count or 1
-								existingItem.Count = itemCount + vCount
-								existingItem.Link = existingItem.Link or v.Link
-								existingItem.ItemString = existingItem.ItemString or v.ItemString
-								existingItem.ForceLink = existingItem.ForceLink or v.ForceLink
+						mergeRow(items[existingKeys[1]], v)
 						key = nil  -- Signal that we already merged
 					end
 				end
 
 				if key then
 					if items[key] then
-						local item = items[key]
-						-- Defensive: use default value if Count is missing
-						local itemCount = item.Count or 1
-						local vCount = v.Count or 1
-							items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link or v.Link, ItemString = item.ItemString or v.ItemString, ForceLink = item.ForceLink or v.ForceLink }
+						mergeRow(items[key], v)
 					else
-						-- Ensure stored item has Count field
-							items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link, ItemString = v.ItemString, ForceLink = v.ForceLink }
-						-- Add to ID index
-						local idStr = tostring(v.ID)
+						items[key] = newRow(v)
 						if not itemsByID[idStr] then
 							itemsByID[idStr] = {}
 						end
@@ -709,58 +760,8 @@ function TOGBankClassic_Item:Aggregate(a, b)
 		end
 	end
 
-	if b then
-		for _, v in pairs(b) do
-			-- Only require ID field (Link is optional for v0.8.0 link-less data); a malformed
-			-- entry with no ID is skipped. Written as a positive test rather than an empty
-			-- `if ... then -- skip` branch, which reads as an unfinished thought.
-			if v and v.ID then
-				-- Use NORMALIZED key (strips unique instance ID) for deduplication
-				-- This allows identical items with different instance IDs to merge
-				local itemKey = self:GetItemKey(v.Link or v.ItemString)
-				local key = tostring(v.ID) .. itemKey
-
-				-- If no Link, also check if there's an existing entry with same ID but with link
-				-- This handles deduplication between linked (bank/bags) and linkless (mail) items
-				if not v.Link and itemKey == "" then
-					-- Use ID index for O(1) lookup instead of O(n) iteration
-					local idStr = tostring(v.ID)
-					local existingKeys = itemsByID[idStr]
-					if existingKeys and #existingKeys > 0 then
-						-- Found item(s) with same ID - merge into first entry
-						local existingKey = existingKeys[1]
-						local existingItem = items[existingKey]
-						local itemCount = existingItem.Count or 1
-						local vCount = v.Count or 1
-							existingItem.Count = itemCount + vCount
-							existingItem.Link = existingItem.Link or v.Link
-							existingItem.ItemString = existingItem.ItemString or v.ItemString
-							existingItem.ForceLink = existingItem.ForceLink or v.ForceLink
-						key = nil  -- Signal that we already merged
-					end
-				end
-
-				if key then
-					if items[key] then
-						local item = items[key]
-						-- Defensive: use default value if Count is missing
-						local itemCount = item.Count or 1
-						local vCount = v.Count or 1
-							items[key] = { ID = item.ID, Count = itemCount + vCount, Link = item.Link or v.Link, ItemString = item.ItemString or v.ItemString, ForceLink = item.ForceLink or v.ForceLink }
-					else
-						-- Ensure stored item has Count field
-							items[key] = { ID = v.ID, Count = v.Count or 1, Link = v.Link, ItemString = v.ItemString, ForceLink = v.ForceLink }
-						-- Add to ID index
-						local idStr = tostring(v.ID)
-						if not itemsByID[idStr] then
-							itemsByID[idStr] = {}
-						end
-						table.insert(itemsByID[idStr], key)
-					end
-				end
-			end
-		end
-	end
+	if a then absorb(a) end
+	if b then absorb(b) end
 
 	return items
 end

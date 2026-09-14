@@ -12,11 +12,14 @@ function TOGBankClassic_UI_Minimap:Init()
 		OnLeave = function()
 			TOGBankClassic_UI:HideTooltip()
 		end,
-		OnClick = function(_, b)
+		-- ENTRY-001 (operator 2026-09-13: "can you make the MMB open the new UI and browse open the
+		-- legacy ui?"): the click is the Guild Bank window; `/togbank legacy` is the old Inventory
+		-- window for as long as it exists (BROWSE-002 follow-on (d) retires it).
+		OnClick = function(_, _)
 			if IsShiftKeyDown() then
 				TOGBankClassic_Options:Open()
 			else
-				TOGBankClassic_UI_Inventory:Toggle()
+				TOGBankClassic_UI_Browse:Toggle()
 			end
 		end,
 	})
@@ -41,7 +44,7 @@ end
 function TOGBankClassic_UI_Minimap:ShowTooltip()
 	GameTooltip:SetOwner(WorldFrame, "ANCHOR_CURSOR")
 	GameTooltip:AddLine("TOGBankClassic")
-	GameTooltip:AddDoubleLine("Click", "Inventory", 1, 1, 1)
+	GameTooltip:AddDoubleLine("Click", "Guild Bank", 1, 1, 1)
 	GameTooltip:AddDoubleLine("Shift-Click", "Options", 1, 1, 1)
 	GameTooltip:Show()
 end

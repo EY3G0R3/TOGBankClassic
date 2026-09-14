@@ -101,7 +101,6 @@ local function loadChain(playerName, bankers)
 	}
 	TOGBankClassic_Options       = { GetBankEnabled = function() return true end }
 	TOGBankClassic_Database      = {
-		SaveSnapshot = function() return true end,
 		RecordDeltaReceived = function() end,
 		db = { global = {} },
 	}

@@ -157,6 +157,16 @@ describe("Bank:Scan gating", function()
 		env.reset()
 		Bank = loadBank()
 		env.loadFile("Modules/Constants.lua")
+		-- INV2-RETIRE-003: the V2 store is the scan's source of truth, so the scan REQUIRES the
+		-- inventory modules -- exactly as the TOC guarantees in production. A spec that ran the scan
+		-- without them was exercising a branch the client never takes.
+		env.loadModules({
+			"Modules/Inventory/Record.lua",
+			"Modules/Inventory/Resolve.lua",
+			"Modules/Inventory/Store.lua",
+			"Modules/Inventory/Scan.lua",
+		})
+		TOGBankClassic_Inventory_Store:Init({ faction = {} })
 		TOGBankClassic_Guild = {
 			Info = { name = "Testguild", alts = {} },
 			GetNormalizedPlayer = function() return "Bankchar-Testrealm" end,
@@ -164,7 +174,8 @@ describe("Bank:Scan gating", function()
 			GetBanks = function() return { "Bankchar-Testrealm" } end,
 		}
 		TOGBankClassic_Options  = { GetBankEnabled = function() return true end }
-		TOGBankClassic_Database = { SaveSnapshot = function() return true end }
+		-- INV2-RETIRE-002: no SaveSnapshot here on purpose -- a scan that reaches for it must fail.
+		TOGBankClassic_Database = {}
 		TOGBankClassic_MailInventory = { hasUpdated = false }
 		TOGBankClassic_Core = env.coreHashStub(12345)
 		Bank.hasUpdated = true
@@ -189,25 +200,32 @@ describe("Bank:Scan gating", function()
 		assert.is_nil(TOGBankClassic_Guild.Info.alts["Bankchar-Testrealm"])
 	end)
 
+	-- INV2-RETIRE-003: the scan writes the V2 store and leaves the record's sub-tables as
+	-- METADATA ONLY -- `alt.bags` carries the slot counts and the read stamp, never rows. The rows
+	-- are read back from the store's bags bucket.
 	it("records the character's bags when every gate passes", function()
 		env.defineItem(858, { name = "Minor Healing Potion", class = 0 })
 		env.setBag(0, 4, { { id = 858, count = 5 } })
 		Bank:Scan()
 		local alt = TOGBankClassic_Guild.Info.alts["Bankchar-Testrealm"]
 		assert.is_not_nil(alt, "the scan produced no alt record")
-		assert.is_not_nil(alt.bags)
-		assert.equal(1, #alt.bags.items)
-		assert.equal(5, alt.bags.items[1].Count)
+		assert.is_not_nil(alt.bags, "the bags metadata block was not written")
+		assert.is_nil(alt.bags.items, "the scan wrote legacy bag rows onto the record")
+		assert.is_nil(alt.items, "the scan wrote the legacy aggregate onto the record")
+		local bags = TOGBankClassic_Inventory_Store:GetAltSourceRecords("Testguild", "Bankchar-Testrealm", "bags")
+		assert.equal(1, #bags)
+		assert.equal(858, TOGBankClassic_Inventory_Record.id(bags[1]))
+		assert.equal(5, TOGBankClassic_Inventory_Record.count(bags[1]))
 	end)
 
-	it("aggregates bags into alt.items", function()
+	it("aggregates the same item across bags into one store record", function()
 		env.defineItem(858, { name = "Minor Healing Potion", class = 0 })
 		env.setBag(0, 4, { { id = 858, count = 5 } })
 		env.setBag(1, 4, { { id = 858, count = 2 } })
 		Bank:Scan()
-		local alt = TOGBankClassic_Guild.Info.alts["Bankchar-Testrealm"]
-		assert.equal(1, #alt.items, "the same item in two bags should aggregate to one row")
-		assert.equal(7, alt.items[1].Count)
+		local records = TOGBankClassic_Inventory_Store:GetAltRecords("Testguild", "Bankchar-Testrealm")
+		assert.equal(1, #records, "the same item in two bags should aggregate to one row")
+		assert.equal(7, TOGBankClassic_Inventory_Record.count(records[1]))
 	end)
 
 	it("records the character's money", function()

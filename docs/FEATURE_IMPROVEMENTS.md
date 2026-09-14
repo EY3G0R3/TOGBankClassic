@@ -1,4 +1,4 @@
-﻿# TOGBankClassic - Feature Improvements
+# TOGBankClassic - Feature Improvements
 
 **Development Note:** Use GitKraken for pushing updates to repository.
 
@@ -1055,7 +1055,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 
 **Communication Prefixes:**
 
-- `togbank-v` - Version broadcasts (lightweight pings every 3 minutes)
+- `togbank-v` - Version broadcasts (lightweight pings every 10 minutes and after every bank scan)
 - `togbank-d` - Data transfers (alt inventory, roster, requests)
 - `togbank-r` - Query requests (asking for specific data)
 - `togbank-h` / `togbank-hr` - Hello/Hello Reply (handshake)
@@ -1065,7 +1065,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 **Sync Timers:**
 
 - Full roster/alt data sync: Every 10 minutes (600s)
-- Lightweight version broadcast: Every 3 minutes (180s)
+- Lightweight version broadcast: Every 10 minutes (600s, `TIMER_INTERVALS.VERSION_BROADCAST`) and after every bank scan -- this said 3 minutes until 2026-09-10 (DOC-004)
 - Queue retry delay: 5 seconds
 
 **Data Serialization Process:**
@@ -1129,7 +1129,7 @@ The addon uses WoW's guild chat communication system (AceComm-3.0) to synchroniz
 
 **Query/Response Pattern:**
 
-- Clients send lightweight version broadcasts every 3 minutes
+- Clients send lightweight version broadcasts every 10 minutes and after every bank scan
 - Includes: player name, addon version, list of known alts with their versions
 - Recipients compare versions, send queries for fresher data
 - Queries: `SendCommMessage("togbank-r", {type="alt", name="BankAlt-Realm"})`

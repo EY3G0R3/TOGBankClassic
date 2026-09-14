@@ -34,13 +34,18 @@ Comms system breakdown as of 2026-04-01:
   │ togbank-r        │ GUILD or       │ NORMAL/BULK │ Universal query — requests alt data, requests-index, or requests-by-id            │
   │                  │ WHISPER        │             │                                                                                   │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
-  │ togbank-rr       │ WHISPER        │ NORMAL      │ P2P handshake control: sync-request / sync-accept / sync-queued / sync-cancel /   │
-  │                  │                │             │ sync-busy (busy = "I do not have it"; capacity queues, it never refuses)          │
+  │ togbank-rr       │ WHISPER        │ ALERT       │ P2P handshake control, every message through P2P:SendHandshake: sync-request /   │
+  │                  │                │             │ sync-accept / sync-queued / sync-cancel / sync-busy / sync-done / ver-query /     │
+  │                  │                │             │ ver-reply, and the alt-request-reply ACKs. busy = "I do not have it" (reasons:    │
+  │                  │                │             │ version, addon_version); a sync-request at capacity is QUEUED, never refused --   │
+  │                  │                │             │ ONE exception, CHAIN-004: a data QUERY whose accept lapsed gets busy (no_slot) at │
+  │                  │                │             │ capacity, since it was accepted once already and carries no session id to queue  │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
-  │ togbank-state    │ WHISPER        │ NORMAL      │ Requester sends minimal state summary to responder; responder decides delta vs.   │
-  │                  │                │             │ full                                                                              │
+  │ togban-q         │ WHISPER        │ ALERT       │ DeltaSync host QUERY: after sync-accept the requester names the alt and the canon │
+  │ (host)           │                │             │ it holds (Inventory/Sync.lua RequestFrom). Replaced togbank-state in v1.5.0.      │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
-  │ togbank-nochange │ WHISPER        │ NORMAL      │ Responder tells requester "your data is already current, nothing to send"         │
+  │ togban-r         │ WHISPER        │ NORMAL/BULK │ DeltaSync host RESPONSE: inv-chain (the author's links after the held canon,      │
+  │ (host)           │                │ /ALERT      │ NORMAL), inv-snapshot (full tuples, BULK), inv-nochange (ALERT)                   │
   ├──────────────────┼────────────────┼─────────────┼───────────────────────────────────────────────────────────────────────────────────┤
   │ togbank-ri       │ GUILD or       │ NORMAL      │ Request index (compact positional v1): chunked list of request IDs sent to       │
   │                  │ WHISPER        │             │ queriers; supersedes togbank-rd for index delivery                                │
@@ -56,6 +61,17 @@ Comms system breakdown as of 2026-04-01:
   └──────────────────┴────────────────┴─────────────┴───────────────────────────────────────────────────────────────────────────────────┘
 
   Never Sent (receive-only for backward compat): togbank-rd
+  Never Sent, never READ (receive-only tripwire, WIRE-SKEW-007): togbank-state -- a pre-v1.5.0
+  requester whispers it after our accept; hearing it names that peer as the old wire and frees its
+  slot at once. The message body is not deserialized.
+
+  Retired in v1.5.0 (THE DELTA RELEASE step 3b) as a data leg, send AND receive: togbank-state (the
+  requester's state summary) and togbank-nochange. The data leg after a sync-accept is the
+  DeltaSync host's QUERY/RESPONSE pair above; a v1.4.1 peer that still whispers a state summary is
+  not answered and its session times out into catch-up -- the same no-wire-back-compat rule
+  v1.4.0 set for tuples.
+  The host's other five prefixes (togban-v/-d/-x/-o/-h) are registered by the library and carry
+  nothing from TOGBank yet.
 
 
  WHY THE CHANNELS ARE SPLIT THE WAY THEY ARE. Read this before "optimising" any send.
@@ -92,10 +108,11 @@ Comms system breakdown as of 2026-04-01:
 
   1. Banker scans bank → broadcasts togbank-hl (hash-list-broadcast) to guild
   2. Peer receives hashes, compares to local — if stale, initiates P2P session via togbank-rr handshake
-  3. Peer sends togbank-state (minimal summary) to banker
-  4. Banker compares hashes:
-    - Same → togbank-nochange
-    - Different → togbank-d4 (delta)
+  3. On sync-accept the peer asks on the host QUERY channel (togban-q), naming the canon it holds
+  4. The holder answers on the host RESPONSE channel (togban-r), deciding on the canon alone:
+    - They hold our version (or newer) → inv-nochange
+    - Our delta chain connects from their canon → inv-chain (a few tuples per changed row)
+    - Otherwise → inv-snapshot (the full tuple set)
   5. Separately, togbank-r (requests-index query) → togbank-rd (chunked index response) → togbank-r (requests-by-id) → togbank-rd (request
   data)
   6. New/changed requests propagate immediately via togbank-rm (ALERT priority)
@@ -119,10 +136,14 @@ TOGBankClassic_Chat.COMM_PREFIXES = {
 	"togbank-rd",
 	"togbank-r",
 	"togbank-rr",
-	"togbank-state",
-	"togbank-nochange",
 	"togbank-ri",
 	"togbank-rd2",
+	-- WIRE-SKEW-007: RECEIVE-ONLY TRIPWIRE. Never sent, never read -- the sender is the whole
+	-- message. A v1.4.1 requester whispers its state summary on this prefix straight after our
+	-- accept; a v1.5.0 one asks on the host's QUERY channel and never sends it. Hearing it names an
+	-- old-wire peer before VersionCheck or its broadcast can, and frees its slot at once instead of
+	-- at the end of the 30-second wait. Removing this line restores three burned slots per login.
+	"togbank-state",
 }
 
 --- Documented values of `Enum.RegisterAddonMessagePrefixResult`, used only if the client does not
@@ -235,6 +256,103 @@ function TOGBankClassic_Chat:ShouldApplyTuplePayload(altName, wireUpdatedAt, wir
 	return theirs >= held
 end
 
+local SHARES_COLOR = "|cff80bfffshares|r"
+local QUERIES_COLOR = "|cffffff00queries|r"
+
+local function ColorPlayerName(name)
+	if not name or name == "" then
+		return ""
+	end
+	local normalized = name
+	if TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizeName then
+		normalized = TOGBankClassic_Guild:NormalizeName(name) or name
+	end
+	if TOGBankClassic_Guild and TOGBankClassic_Guild.GetPlayerInfo then
+		local class = TOGBankClassic_Guild:GetPlayerInfo(normalized)
+		if class then
+			local _, _, _, color = GetClassColor(class)
+			if color then
+				return string.format("|c%s%s|r", color, name)
+			end
+		end
+	end
+	return string.format("|cff80bfff%s|r", name)
+end
+
+--- A provider answered "you already hold my version" (`inv-nochange` on the DeltaSync host --
+--- Inventory/Sync.lua). Completes the P2P session for the alt and applies the slot counts it
+--- carries; nothing else. `data` is { name=, version=, bankSlots=, bagsSlots= }.
+---
+--- HASH-CANON-002: THE "HASH-CORRECTION" BLOCK THAT USED TO LIVE IN THIS HANDLER IS DELETED. It
+--- read `hash` / `hashV2` / `mailHash` off the no-change and wrote them over this client's stored
+--- canon. IT ADOPTED FROM ANY SENDER, NOT FROM THE AUTHOR: any peer holding a copy answers a
+--- request, carrying whatever number IT holds, so a hash minted by a non-author travelled the guild
+--- and overwrote good records -- the operator's report exactly. A hash is written ONCE, by the
+--- client that scanned the bank, and every other client carries it unchanged. The message itself
+--- is kept because completing the session is its real job.
+---
+--- The SLOT COUNTS are kept for the opposite reason: display data with no bearing on version
+--- identity, so a peer passing one along cannot make two clients disagree about which version they
+--- hold. (Slots are not part of the item hash, so they never make a version by themselves; the
+--- provider piggybacks them here so non-bankers still see accurate free/total counts.)
+function TOGBankClassic_Chat:HandleNoChange(data, sender)
+	local G = TOGBankClassic_Guild
+	local altName = data and data.name
+	if type(altName) ~= "string" then return end
+	local norm = G:NormalizeName(altName)
+	local version = data.version or 0
+	if G.pendingAltRequests then G.pendingAltRequests[norm] = nil end
+	if G.pendingP2PRequests then
+		G.pendingP2PRequests[norm] = nil
+		-- Cancel the 15s ACK fallback: the peer confirmed no changes.
+		if G.pendingP2PFallbackTimeouts and G.pendingP2PFallbackTimeouts[norm] then
+			G.pendingP2PFallbackTimeouts[norm]:Cancel()
+			G.pendingP2PFallbackTimeouts[norm] = nil
+			TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cancelled fallback timeout for %s (no-change received)", altName)
+		end
+	end
+
+	-- P2P-006: a no-change is a completed sync.
+	if TOGBankClassic_P2PSession then TOGBankClassic_P2PSession:OnAltCompleted(norm, sender) end
+
+	TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Received no-change from %s for alt %s (version=%d)", sender, altName, version)
+	self:Debug("SYNC", "RECEIVE", ">", ColorPlayerName(sender), QUERIES_COLOR,
+		string.format("no changes for %s (v%d)", ColorPlayerName(altName), version))
+
+	if (data.bankSlots or data.bagsSlots) and G.Info and G.Info.alts then
+		local localAlt = G.Info.alts[norm]
+		if localAlt then
+			-- INV2-RETIRE-003: the sub-tables are metadata only -- no `items = {}` seed.
+			if data.bankSlots then
+				if not localAlt.bank then localAlt.bank = {} end
+				localAlt.bank.slots = data.bankSlots
+				TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION", "%s bankSlots %d/%d (from %s)",
+					norm, data.bankSlots.count or 0, data.bankSlots.total or 0, sender)
+			end
+			if data.bagsSlots then
+				if not localAlt.bags then localAlt.bags = {} end
+				localAlt.bags.slots = data.bagsSlots
+				TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION", "%s bagsSlots %d/%d (from %s)",
+					norm, data.bagsSlots.count or 0, data.bagsSlots.total or 0, sender)
+			end
+		end
+	end
+
+	-- Mark sync as complete
+	G:ConsumePendingSync("alt", sender, norm)
+	if G.hasRequested then
+		if G.requestCount == nil then
+			G.requestCount = 0
+		else
+			G.requestCount = G.requestCount - 1
+		end
+		if G.requestCount == 0 then
+			G.hasRequested = false
+			TOGBankClassic_Output:Info("Sync completed.")
+		end
+	end
+end
+
 function TOGBankClassic_Chat:Init()
 	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "[INIT] TOGBankClassic_Chat:Init() starting")
 	TOGBankClassic_Core:RegisterChatCommand("togbank", function(input)
@@ -313,29 +431,6 @@ function TOGBankClassic_Chat:PerformSync()
 	else
 		TOGBankClassic_Output:Response("Request sync failed to send.")
 	end
-end
-
-local SHARES_COLOR = "|cff80bfffshares|r"
-local QUERIES_COLOR = "|cffffff00queries|r"
-
-local function ColorPlayerName(name)
-	if not name or name == "" then
-		return ""
-	end
-	local normalized = name
-	if TOGBankClassic_Guild and TOGBankClassic_Guild.NormalizeName then
-		normalized = TOGBankClassic_Guild:NormalizeName(name) or name
-	end
-	if TOGBankClassic_Guild and TOGBankClassic_Guild.GetPlayerInfo then
-		local class = TOGBankClassic_Guild:GetPlayerInfo(normalized)
-		if class then
-			local _, _, _, color = GetClassColor(class)
-			if color then
-				return string.format("|c%s%s|r", color, name)
-			end
-		end
-	end
-	return string.format("|cff80bfff%s|r", name)
 end
 
 -- `SyncBankerHashAfterAdopt` WAS HERE and went with the legacy alt-data branch that was its only
@@ -422,6 +517,16 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 	-- Process each unique broadcast
 	for sender, entry in pairs(uniqueBroadcasts) do
 		local data = entry.data
+		-- WIRE-SKEW-008: a broadcast from a release we cannot exchange data with is read for its
+		-- VERSION (NotePeerAddonVersion, at the door) and nothing else. Its claims cannot move a
+		-- tab or the cache (Guild:ClaimantCanServe, on every Note*), and offering it our newer copy
+		-- only produces a sync-request we refuse -- read off the operator's log as twenty refusals a
+		-- minute. One line, then on to the next sender.
+		local capable, why = TOGBankClassic_Guild:PeerSpeaksDataLeg(sender)
+		if not capable then
+			TOGBankClassic_Output:Debug("P2P", "BROADCAST", "HL broadcast from %s ignored: release %s is before the data leg changed",
+				tostring(sender), tostring(why))
+		else
 
 		-- Build hash-offer: alts where WE have newer data than what the sender advertised
 		local offerAlts  = {}
@@ -445,7 +550,7 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 				-- TABCOLOUR-002: a broadcast is the earliest anyone mentions a version, so it is
 				-- where the tab learns fastest that something newer exists.
 				TOGBankClassic_Guild:CanonicaliseSummary(peerSummary)                -- HASH-CANON-005
-				TOGBankClassic_Guild:NoteAdvertisedPublishTime(norm, peerSummary)
+				TOGBankClassic_Guild:NoteAdvertisedPublishTime(norm, peerSummary, sender)   -- CLAIM-TRACE-001
 				-- HASH-CANON-011: the broadcast feeds the advertised-hash cache too, through the one
 				-- writer. It did not -- only the hash-list REPLY and the offer path did -- so a
 				-- banker's `/togbank share` raised the tab's newest-time and left `latestBankerHashes`
@@ -453,7 +558,7 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 				-- no canon for it. The operator, watching exactly that: "I should be getting the new
 				-- hash from the broadcast at least." The comment at the end of this function has
 				-- claimed the cache was updated here since PERF-020; now it is.
-				TOGBankClassic_Guild:NoteAdvertisedHashes(norm, peerSummary)
+				TOGBankClassic_Guild:NoteAdvertisedHashes(norm, peerSummary, sender)
 				-- P2P-035: EVERY BROADCAST IS AN OFFER. The operator: "OH YES!" A broadcast names the
 				-- versions its sender can DELIVER (ServableCanon), so a version newer than ours is a
 				-- peer saying "I hold newer" -- exactly what a hash-offer says -- and there is no
@@ -464,6 +569,13 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 						and TOGBankClassic_Guild:AdvertisedImproves(norm, peerSummary) then
 					peerSummary.cachedByBroadcast = true   -- the two Note* calls above already ran
 					TOGBankClassic_P2PSession:OnOffer(sender, { [norm] = peerSummary })
+				end
+				-- MULTIPC-002: a broadcast naming OUR OWN character at a later version than we hold is
+				-- a peer telling us who holds the diff base this PC will need when it re-reads
+				-- (docs/DELTA_RELEASE.md section 3.5). AdvertisedImproves is "self" for our own name,
+				-- so it never reaches OnOffer; recorded for Bank here instead.
+				if norm == TOGBankClassic_Guild:GetNormalizedPlayer() then
+					TOGBankClassic_Guild:NoteSelfHolder(peerSummary.hashV2, sender)
 				end
 				local myAlt = myAlts[norm]
 				if myAlt and TOGBankClassic_Guild:HasAltContent(myAlt, norm) then
@@ -534,19 +646,79 @@ function TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
 		elseif unnumbered > 0 then
 			TOGBankClassic_Output:Debug("P2P", "OFFER", "Nothing offered to %s: %d newer banker(s) have no number yet", sender, unnumbered)
 		end
+		end -- WIRE-SKEW-008 capable sender
 	end
 
 	-- Clear queue and timer
 	self.hashBroadcastQueue = {}
 	self.hashBroadcastTimer = nil
 
-	-- Refresh inventory tab colors now that latestBankerHashes has been updated
-	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen then
-		TOGBankClassic_UI_Inventory:DrawContent()
+	-- Refresh the tab colours now that latestBankerHashes has been updated. BROWSE-008: through
+	-- RefreshSoon, not DrawContent -- RefreshSoon is the ONE place that also repaints the Guild
+	-- Bank window (its Bankers tab and the status dots on Browse rows). This was a direct
+	-- DrawContent, so a broadcast batch repainted the old window and left the new one stale until
+	-- something else happened to raise a signal. The operator: "is there a refresh on the new
+	-- banker tab when something updates?" -- not from here, it was not.
+	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.RefreshSoon then
+		TOGBankClassic_UI_Inventory:RefreshSoon()
 	end
 
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Output:Debug("P2P", "OFFER", "Batch processed %d broadcasts in %.2fms", queueSize, duration)
+end
+
+--- A peer's ACK to our pull-path alt-request for `norm` has arrived: the "no response" timer is
+--- answered, and the "ACKed but never delivered" watch takes over. Returns false when nothing was
+--- pending for the alt (an ACK we did not ask for, or a second ACKer after the first -- only the
+--- first is asked for data). ONE spelling for the relay ACK and the banker ACK (CHAIN-004, Peer
+--- Review F1): the banker branch had none of this bookkeeping.
+---
+--- The 15-second watch: if the peer ACKs but never sends (disconnect, crash, an at-capacity refusal
+--- with no session to hear it), advance the session that owns the alt, or schedule the catch-up.
+--- TIMER-001 / AUDIT finding 24: a long window, and the callback advances whatever session owns
+--- the alt when it fires. P2P-026: through ArmAltTimeout, so a re-ACK inside those 15s cancels the
+--- previous watch instead of leaving two racing to advance the same session.
+---@return boolean wasPending
+function TOGBankClassic_Chat:OnPullAckAccepted(sender, altName, norm)
+	local G = TOGBankClassic_Guild
+	if not (G.pendingP2PRequests and G.pendingP2PRequests[norm]) then return false end
+	if not TOGBankClassic_Options:IsSyncProgressMuted() then
+		TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
+	end
+	G.pendingP2PRequests[norm] = nil
+	if G.pendingP2PTimeouts and G.pendingP2PTimeouts[norm] then
+		G.pendingP2PTimeouts[norm]:Cancel()
+		G.pendingP2PTimeouts[norm] = nil
+	end
+	if G.pendingAltRequests then G.pendingAltRequests[norm] = nil end
+	-- "Delivered" is a VERSION that moved, not "has content": a bank we already held a stale copy
+	-- of satisfied HasAltContent, and the watch printed "successfully delivered" over an ACK that
+	-- was never followed by data (Galdof's log, 2026-09-12, against v1.4.1 relays that cannot
+	-- answer this tree's QUERY at all). Compare the held canon / time before and after.
+	local function heldVersion()
+		local alt = G.Info and G.Info.alts and G.Info.alts[norm]
+		if not alt then return nil end
+		return tostring(alt.inventoryHashV2) .. "@" .. tostring(alt.inventoryUpdatedAt or alt.version)
+	end
+	local before = heldVersion()
+	G:ArmAltTimeout("pendingP2PFallbackTimeouts", norm, 15, function()
+		local alt = G.Info and G.Info.alts and G.Info.alts[norm]
+		if not alt or not G:HasAltContent(alt, norm) or heldVersion() == before then
+			TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s ACKed %s but never delivered data - advancing session", sender, altName)
+			if TOGBankClassic_P2PSession then
+				local sid = TOGBankClassic_P2PSession.sessionsByAlt[norm]
+				if sid then
+					TOGBankClassic_P2PSession:AdvanceCandidate(sid, "ack_no_data")
+				else
+					TOGBankClassic_P2PSession:ScheduleCatchUp("ack_no_data")
+				end
+			end
+		else
+			TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s successfully delivered data for %s", sender, altName)
+		end
+		if G.pendingP2PFallbackTimeouts then G.pendingP2PFallbackTimeouts[norm] = nil end
+	end)
+	return true
 end
 
 function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sender)
@@ -561,7 +733,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "Received: %s via %s from %s", prefix, distribution, sender)
 	end
 
-	if IsInRaid() then
+	if TOGBankClassic_Constants.SyncPausedByRaid() then
 		self:Debug("PROTOCOL", "HASH-SKIP", "> (ignoring)", prefix, prefixDesc, "from", ColorPlayerName(sender), "(in raid)")
 		return
 	end
@@ -576,6 +748,18 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 
 	if player == sender then
 		self:Debug("PROTOCOL", "HASH-SKIP", "> (ignoring)", prefix, prefixDesc, "(our own)")
+		return
+	end
+
+	-- WIRE-SKEW-007: the old wire's state summary. Not deserialized -- its format is the one this
+	-- tree retired, and nothing in it is wanted. The SENDER is the fact: only a pre-v1.5.0 requester
+	-- sends this, and it sends it the moment we accept, so it is the earliest and surest "old wire"
+	-- signal there is. Retiring the receive in v1.5.0 was what let such a requester hold an accepted
+	-- slot for the full state-wait; see P2PSession:OnOldWireSummary.
+	if prefix == "togbank-state" then
+		if TOGBankClassic_P2PSession and TOGBankClassic_P2PSession.OnOldWireSummary then
+			TOGBankClassic_P2PSession:OnOldWireSummary(sender)
+		end
 		return
 	end
 
@@ -722,7 +906,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 								return
 							end
 							-- P2P-028: this ACK is an accept too; the slot it took is freed by
-							-- RespondToStateSummary or by the state-wait timer, never by nothing.
+							-- Sync:OnDataRequest or by the state-wait timer, never by nothing.
 							TOGBankClassic_P2PSession:ArmStateWait(sender, normAltName)
 
 							shouldRespond = true
@@ -760,6 +944,22 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 						end)
 						return  -- Exit early since we'll send ACK in timer
 					end
+				end
+			end
+
+			-- CHAIN-004: the BANKER's ACK is an accept too, and it reserves a send slot exactly as the
+			-- relay branch above does -- it never did, so the QUERY it invited arrived at Sync's
+			-- accept gate with nothing to claim and was dropped: "Galdof-OldBlanchy sent a QUERY with
+			-- no unclaimed accept -- ignored", for every bank only the banker authored. At capacity
+			-- the banker does not ACK (the relay rule: "send queue full"); the requester's 5-second
+			-- timeout then leads to the catch-up, whose session path queues at this banker in turn.
+			if shouldRespond and not hashOnly then
+				if TOGBankClassic_P2PSession and not TOGBankClassic_P2PSession:TryAcquireSendSlot(sender) then
+					TOGBankClassic_Output:Debug("QUERIES", "SKIP", "Banker not ACKing %s for %s (send queue full: %d/%d)",
+						altName, sender, TOGBankClassic_P2PSession:GetActiveSendTotal(), TOGBankClassic_Guild.MAX_PENDING_SENDS)
+					return
+				elseif TOGBankClassic_P2PSession then
+					TOGBankClassic_P2PSession:ArmStateWait(sender, normAltName)
 				end
 			end
 
@@ -941,9 +1141,23 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		end
 		if data.type == "sync-busy" then
 			local sessionId = data.sessionId
-			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "sync-busy from %s (sid=%s)", sender, tostring(sessionId))
+			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "sync-busy from %s (sid=%s, alt=%s)", sender, tostring(sessionId), tostring(data.alt))
 			if TOGBankClassic_P2PSession and sessionId then
 				TOGBankClassic_P2PSession:OnSyncBusy(sessionId, sender)
+			elseif TOGBankClassic_P2PSession and type(data.alt) == "string" then
+				-- CHAIN-004: the provider refused our data QUERY (it had no accept for it and no room):
+				-- named by alt, because the QUERY carries no session id. Our session for that alt, if
+				-- this peer is the one it is waiting on, moves to its next holder now.
+				TOGBankClassic_P2PSession:OnQueryRefused(data.alt, sender)
+			end
+			return
+		end
+		-- SYNCED-001: a receiver applied a version we served it -- the receipt the propagation tracker
+		-- turns green on. Only our own bank's current version registers (Propagation checks).
+		if data.type == "sync-done" then
+			if TOGBankClassic_Propagation and type(data.alt) == "string" and type(data.canon) == "string" then
+				local norm = TOGBankClassic_Guild:NormalizeName(data.alt) or data.alt
+				TOGBankClassic_Propagation:NoteHolder(norm, data.canon, sender, "seen")
 			end
 			return
 		end
@@ -951,6 +1165,8 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		if data.type == "sync-cancel" then
 			if TOGBankClassic_P2PSession then
 				TOGBankClassic_P2PSession:DequeueSend(data.sessionId, sender)
+				-- P2P-038: and an accept still waiting on its query gives its slot back now.
+				TOGBankClassic_P2PSession:CancelAccept(data.sessionId, sender)
 			end
 			return
 		end
@@ -987,6 +1203,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					tostring(hasData),
 					tostring(expectedHash))
 			)
+
+			-- WIRE-SKEW-001: an ACK from a peer on a release before the data leg changed invites a
+			-- query it cannot answer; asking would only arm the 15-second watch to no purpose. The
+			-- next ACKer, or the catch-up, carries on.
+			local capable, why = TOGBankClassic_Guild:PeerSpeaksDataLeg(sender)
+			if hasData and not hashOnly and not capable then
+				TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Ignoring %s's ACK for %s: it runs %s, before the data leg changed", sender, altName, tostring(why))
+				return
+			end
 
 			-- PERF-005: If we have a hash from banker, broadcast to GUILD to enable P2P
 			-- Any peer with matching hash can respond instead of just the banker
@@ -1039,29 +1264,10 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 					-- Closes over the `norm` computed above rather than recomputing it: identical
 					-- expression over the same `altName` upvalue, so this is the same value, and
 					-- shadowing it here only made the two look like they could differ.
-					local pending = TOGBankClassic_Guild.pendingP2PRequests and TOGBankClassic_Guild.pendingP2PRequests[norm]
+					-- One clearing (Guild:ClearPendingP2PRequest): pending entry, expected hashes, the
+					-- alt-request marker, both timers -- it used to be spelled out here as well.
+					local pending = TOGBankClassic_Guild:ClearPendingP2PRequest(norm)
 					if pending then
-						TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
-						-- PERF-006: Clear pendingAltRequests to allow banker fallback
-						if TOGBankClassic_Guild.pendingAltRequests then
-							TOGBankClassic_Guild.pendingAltRequests[norm] = nil
-						end
-						-- FIX: Clear expectedHashes on fallback
-						if TOGBankClassic_Guild.expectedHashes then
-							TOGBankClassic_Guild.expectedHashes[norm] = nil
-						end
-						if TOGBankClassic_Guild.expectedHashUpdatedAt then
-							TOGBankClassic_Guild.expectedHashUpdatedAt[norm] = nil
-						end
-						-- Clear timeout timer tracking
-						if TOGBankClassic_Guild.pendingP2PTimeouts then
-							TOGBankClassic_Guild.pendingP2PTimeouts[norm] = nil
-						end
-						-- Also cancel 15s fallback if it exists (shouldn't exist yet, but be defensive)
-						if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
-							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
-							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
-						end
 						TOGBankClassic_Output:Debug("P2P", "COMPLETE", "PERF-005: No P2P response for %s, scheduling catch-up", altName)
 						if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
 							TOGBankClassic_Database:RecordP2PBankerFallback(TOGBankClassic_Guild.Info.name)
@@ -1072,205 +1278,33 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			elseif not isBanker and hasData and TOGBankClassic_Guild.pendingP2PRequests then
 				-- P2P: Non-banker (peer) acknowledged - continue with delta sync
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
-				local wasPending = TOGBankClassic_Guild.pendingP2PRequests[norm] ~= nil
-
-				if wasPending then
-					if not TOGBankClassic_Options:IsSyncProgressMuted() then
-						TOGBankClassic_Output:Info("P2P: Peer %s acknowledged %s - will send delta", sender, altName)
-					end
-
-					-- Clear pending P2P request since peer is responding
-					TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
-
-					-- FIX: Cancel the first timeout timer since peer responded
-					if TOGBankClassic_Guild.pendingP2PTimeouts and TOGBankClassic_Guild.pendingP2PTimeouts[norm] then
-						TOGBankClassic_Guild.pendingP2PTimeouts[norm]:Cancel()
-						TOGBankClassic_Guild.pendingP2PTimeouts[norm] = nil
-					end
-
-					-- Also clear pendingAltRequests to prevent banker fallback
-					if TOGBankClassic_Guild.pendingAltRequests then
-						TOGBankClassic_Guild.pendingAltRequests[norm] = nil
-					end
-
-					-- Secondary timeout: if peer ACKs but never sends data (disconnect/crash),
-					-- advance to next candidate (or schedule catch-up) after 15 seconds.
-					-- TIMER-001 / AUDIT finding 24. The worse of the two: 15s is a long window and
-					-- this callback calls AdvanceCandidate on whatever session owns the alt when it
-					-- fires, which need not be the session it was armed for. P2P-026: armed through
-					-- ArmAltTimeout so a re-ACK inside those 15s cancels the previous one instead of
-					-- leaving two live timers racing to advance the same session.
-					TOGBankClassic_Guild:ArmAltTimeout("pendingP2PFallbackTimeouts", norm, 15, function()
-						-- Check if we still don't have content (peer never delivered)
-						local alt = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts and TOGBankClassic_Guild.Info.alts[norm]
-						if not alt or not TOGBankClassic_Guild:HasAltContent(alt, norm) then
-							TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s ACKed %s but never delivered data - advancing session", sender, altName)
-							-- Advance to next candidate via P2PSession; fall back to ScheduleCatchUp
-							-- if the session has already been cleaned up.
-							if TOGBankClassic_P2PSession then
-								local sid = TOGBankClassic_P2PSession.sessionsByAlt[norm]
-								if sid then
-									TOGBankClassic_P2PSession:AdvanceCandidate(sid, "ack_no_data")
-								else
-									TOGBankClassic_P2PSession:ScheduleCatchUp("ack_no_data")
-								end
-							end
-						else
-							TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Peer %s successfully delivered data for %s", sender, altName)
-						end
-						-- Clean up timer reference
-						if TOGBankClassic_Guild.pendingP2PFallbackTimeouts then
-							TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
-						end
-					end)
-
-					-- Send state summary for delta comparison
+				if self:OnPullAckAccepted(sender, altName, norm) then
+					-- THE DELTA RELEASE step 3b: the data leg is the host's QUERY, naming our canon.
 					if hasData and expectedHash then
-						TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Calling SendStateSummary for %s to %s", altName, sender)
-						TOGBankClassic_Guild:SendStateSummary(altName, sender)
+						TOGBankClassic_Inventory_Sync:RequestFrom(sender, norm)
 					end
 				end
 			elseif hasData then
-				-- Banker (non-P2P path) or fallback - send state summary
-				if expectedHash == nil then
-					TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "PERF-006: Responder has no hash support (old code) - forcing full data request for %s", altName)
-					TOGBankClassic_Guild:SendStateSummary(altName, sender, true) -- forceFull=true
-				else
-					TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Calling SendStateSummary for %s to %s", altName, sender)
-					TOGBankClassic_Guild:SendStateSummary(altName, sender)
-				end
+				-- Banker (non-P2P path) or fallback. A responder that advertised no hash at all is
+				-- asked for everything (PERF-006).
+				-- CHAIN-004 (Peer Review F1): the banker's ACK answers OUR broadcast too, so it takes
+				-- the same bookkeeping the relay branch above does -- the 5-second "no response" timer
+				-- is cancelled (it used to fire anyway, logging "banker ... online, did not answer"
+				-- under an ACK that had arrived), and the 15-second "ACKed but never delivered" watch is
+				-- armed, which is what carries an at-capacity refusal or a lost reply into catch-up.
+				local norm = TOGBankClassic_Guild:NormalizeName(altName)
+				self:OnPullAckAccepted(sender, altName, norm)
+				TOGBankClassic_Inventory_Sync:RequestFrom(sender, norm, expectedHash == nil)
 			else
-				TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Not sending state summary to %s (hasData=false)", sender)
+				TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Not asking %s for data (hasData=false)", sender)
 			end
 	end
 end
 
-	if prefix == "togbank-state" then
-		if data.type == "state-summary" then
-			local altName = data.name
-			local summary = data.summary
-
-			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Received state summary from %s for alt %s (hash=%s, version=%s)", sender, altName, tostring(summary and summary.hash), tostring(summary and summary.version))
-
-			self:Debug(
-				"SYNC",
-				"RECEIVE",
-				">",
-				ColorPlayerName(sender),
-				QUERIES_COLOR,
-				string.format("received state summary for %s", ColorPlayerName(altName))
-			)
-
-			-- Compute and send response (full/delta/no-change)
-			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Calling RespondToStateSummary for %s from %s", altName, sender)
-			TOGBankClassic_Guild:RespondToStateSummary(altName, summary, sender)
-		end
-	end
-
-	if prefix == "togbank-nochange" then
-		if data.type == "no-change" then
-			local altName = data.name
-			local version = data.version or 0
-			if TOGBankClassic_Guild.pendingAltRequests then
-				local norm = TOGBankClassic_Guild:NormalizeName(altName)
-				TOGBankClassic_Guild.pendingAltRequests[norm] = nil
-			end
-			if TOGBankClassic_Guild.pendingP2PRequests then
-				local norm = TOGBankClassic_Guild:NormalizeName(altName)
-				TOGBankClassic_Guild.pendingP2PRequests[norm] = nil
-
-				-- Cancel 15s fallback timeout since peer confirmed no changes
-				if TOGBankClassic_Guild.pendingP2PFallbackTimeouts and TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] then
-					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm]:Cancel()
-					TOGBankClassic_Guild.pendingP2PFallbackTimeouts[norm] = nil
-					TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cancelled fallback timeout for %s (no-change received)", altName)
-				end
-			end
-
-			-- P2P-006: Signal session completion (no-change = sync confirmed up-to-date).
-			if TOGBankClassic_P2PSession then
-				TOGBankClassic_P2PSession:OnAltCompleted(altName, sender)
-			end
-
-			TOGBankClassic_Output:Debug("P2P", "HANDSHAKE", "Received no-change from %s for alt %s (version=%d)", sender, altName, version)
-
-			self:Debug(
-				"SYNC",
-				"RECEIVE",
-				">",
-				ColorPlayerName(sender),
-				QUERIES_COLOR,
-				string.format("no changes for %s (v%d)", ColorPlayerName(altName), version)
-			)
-
-			-- HASH-CANON-002: THE "HASH-CORRECTION" BLOCK WAS HERE AND IS DELETED. It read
-			-- `data.hash` / `data.hashV2` / `data.mailHash` off a no-change message and wrote them
-			-- over this client's stored canon for that alt.
-			--
-			-- IT ADOPTED FROM ANY SENDER, NOT FROM THE AUTHOR, and that is what made a bad hash
-			-- travel. Any peer holding a copy answers a state summary with a no-change
-			-- (`Guild:RespondToStateSummary`), carrying whatever number IT holds. So peer A minted a
-			-- hash, sent it here, this client stored it as its own, and then sent it onward to peer
-			-- C the same way. The operator's report is exactly this shape: the banker went offline
-			-- and a mutated revision-1 hash arrived from somebody else and replaced good data.
-			--
-			-- ITS OWN COMMENT RECORDED THE ORIGIN and should have been the warning: it existed to
-			-- "fix stale inventoryHash/mailHash left by the pre-DELTA-025 bug (hash was blindly
-			-- stamped from the delta instead of recomputed from items)". A repair for one client
-			-- mis-stamping became a channel by which every client restamps every other.
-			--
-			-- ITS JUSTIFICATION WAS ALSO UNSOUND: "the sender only reaches this no-change path if
-			-- our item baseline matched their current items exactly, so their hash IS correct for
-			-- our data." That argues the DATA matches; it says nothing about how the sender's NUMBER
-			-- was produced. A number computed by a peer from its own view is that peer's opinion,
-			-- and adopting it is precisely how "nobody is authoritative" begins.
-			--
-			-- THE MESSAGE ITSELF IS KEPT: no-change still completes the P2P session above, which is
-			-- its real job. What is gone is its ability to rewrite canon. A hash is written ONCE, by
-			-- the client that scanned the bank, and every other client carries it unchanged.
-
-			-- Apply slot counts from no-change (slots are not part of the item hash, so they
-			-- never trigger a new delta.  Sender piggybacks current slot data here so non-bankers
-			-- always see accurate free/total counts even when items haven't changed.)
-			--
-			-- HASH-CANON-002 kept this while deleting the hash correction above, and the difference
-			-- is the whole point: a slot count is DISPLAY data with no bearing on version identity,
-			-- so a peer passing one along cannot make two clients disagree about which version they
-			-- hold. A hash can, which is why only the author may write one.
-			local norm = TOGBankClassic_Guild:NormalizeName(altName)
-			if (data.bankSlots or data.bagsSlots) and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts then
-				local localAlt = TOGBankClassic_Guild.Info.alts[norm]
-				if localAlt then
-					if data.bankSlots then
-						if not localAlt.bank then localAlt.bank = { items = {} } end
-						localAlt.bank.slots = data.bankSlots
-						TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION", "%s bankSlots %d/%d (from %s)",
-							norm, data.bankSlots.count or 0, data.bankSlots.total or 0, sender)
-					end
-					if data.bagsSlots then
-						if not localAlt.bags then localAlt.bags = { items = {} } end
-						localAlt.bags.slots = data.bagsSlots
-						TOGBankClassic_Output:Debug("SYNC", "SLOT-CORRECTION", "%s bagsSlots %d/%d (from %s)",
-							norm, data.bagsSlots.count or 0, data.bagsSlots.total or 0, sender)
-					end
-				end
-			end
-
-			-- Mark sync as complete
-			TOGBankClassic_Guild:ConsumePendingSync("alt", sender, altName)
-			if TOGBankClassic_Guild.hasRequested then
-				if TOGBankClassic_Guild.requestCount == nil then
-					TOGBankClassic_Guild.requestCount = 0
-				else
-					TOGBankClassic_Guild.requestCount = TOGBankClassic_Guild.requestCount - 1
-				end
-				if TOGBankClassic_Guild.requestCount == 0 then
-					TOGBankClassic_Guild.hasRequested = false
-					TOGBankClassic_Output:Info("Sync completed.")
-				end
-			end
-		end
-	end
+	-- THE DELTA RELEASE step 3b: the `togbank-state` and `togbank-nochange` branches WERE HERE.
+	-- The state summary is gone (the requester asks on the DeltaSync host's QUERY channel, naming
+	-- the canon it holds -- Inventory/Sync.lua), and the no-change rides the host's RESPONSE as
+	-- `inv-nochange`, handled by HandleNoChange below. Both prefixes are retired, send and receive.
 
 	if prefix == "togbank-rm" then
 		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "[SYNC-003p] togbank-rm received from %s: type=%s", sender, tostring(data.type))
@@ -1336,178 +1370,14 @@ end
 		-- longer a fork between two formats -- it is a guard that drops anything which is not a tuple
 		-- payload, including an old client's delta.
 		if TOGBankClassic_Inventory_Wire and TOGBankClassic_Inventory_Wire.isV2(data) then
-			local Wire = TOGBankClassic_Inventory_Wire
-			local altName, records, money, _, wireHash, wireHashV2, wireDropped, wireUpdatedAt,
-				wireMailHash = Wire.decode(data)
-			local claimedNorm = altName and TOGBankClassic_Guild:NormalizeName(altName)
-			-- Same authorisation as the legacy branch below: a peer may only speak for an alt it
-			-- is entitled to. Dropping this for the new format would make V2 the easy way to spoof.
-			local allowed = claimedNorm and self:IsAltDataAllowed(sender, claimedNorm)
-			if claimedNorm and TOGBankClassic_Guild:ConsumePendingSync("alt", sender, claimedNorm) then
-				allowed = true
-			end
-			if not (claimedNorm and allowed) then
-				TOGBankClassic_Output:Debug("DELTA", "VALIDATE",
-					"[INV2] rejected tuple payload for %s from %s (not allowed)",
-					tostring(altName), tostring(sender))
-				return
-			end
-
-			-- HASH-CANON-001 rule 7: ORDERING, DECIDED HERE AND ONLY HERE.
-			--
-			-- THIS GUARD DID NOT EXIST AND ITS ABSENCE IS A DATA-LOSS BUG, reported from a live
-			-- guild: a V2 record replaced by older data. The legacy path always had it -- it refused
-			-- an incoming record that was not newer, in `Guild:ReceiveAltData`, deleted in commit
-			-- 9c42109 (see the docblock on ShouldApplyTuplePayload; the line numbers this used to
-			-- cite are now past the end of Guild.lua). The tuple path applied EVERY payload
-			-- unconditionally -- so with several peers relaying the
-			-- same alt, whichever snapshot arrived LAST won regardless of when it was authored, and
-			-- a peer holding a days-old copy could overwrite a fresh one.
-			--
-			-- It could not have been written before this change, which is why the two halves ship
-			-- together: the author's publish time was not on the wire at all, and the receiver
-			-- stamped its own arrival time, so there was no honest number to compare.
-			--
-			-- A NIL `wireUpdatedAt` IS ACCEPTED, deliberately. It means the author published no time
-			-- -- a client between builds, or a record that predates this field. Refusing those would
-			-- freeze that alt permanently instead of merely ordering it, and an unordered write is
-			-- the behaviour we already had. Ordering improves the moment both ends carry the field.
-			if not self:ShouldApplyTuplePayload(claimedNorm, wireUpdatedAt, wireHashV2) then
-				TOGBankClassic_Output:Debug("DELTA", "APPLY",
-					"[INV2] discarded a STALE tuple payload for %s from %s (authored %s)",
-					tostring(claimedNorm), tostring(sender), tostring(wireUpdatedAt))
-				return
-			end
-
-			local guild = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name
-			if guild and TOGBankClassic_Inventory_Store then
-				TOGBankClassic_Inventory_Store:SetAltRecords(guild, claimedNorm, records, money)
-
-				-- STAMP THE SYNC METADATA, which is not bookkeeping -- it is what stops the client
-				-- re-syncing forever. The negotiation layer compares `inventoryHash` and
-				-- `inventoryUpdatedAt` to decide whether it is stale, and both live on the legacy
-				-- alt record. Storing tuples without stamping these leaves the receiver believing
-				-- it never got the data: it re-requests on every hash-list broadcast and never
-				-- offers the alt onward.
-				--
-				-- HASH-CANON-001: THE AUTHOR'S HASH IS STORED VERBATIM. This used to recompute both
-				-- revisions from the received tuples, and that is the one move DeltaSync's
-				-- canonical-hash rules single out: "recompute on receipt -- you overwrite the
-				-- author's statement with your own opinion of their data. Now nobody is
-				-- authoritative and every client can disagree with every other." A hash is not a
-				-- checksum you recalculate when convenient; it is the IDENTITY OF A VERSION, and
-				-- identity only works if every client holding that version reports the same number.
-				--
-				-- It matters beyond reporting: the hash is what decides WHAT OVERWRITES WHAT. A
-				-- recomputed hash means that decision rests on a number the author never published.
-				--
-				-- THE OLD COMMENT'S OBJECTION WAS REAL AND IS ANSWERED, NOT IGNORED. It argued the
-				-- payload hash must be distrusted because "a sender-supplied hash that disagrees
-				-- with the stored rows produces a false in-sync state that silences future syncs
-				-- while the data is wrong". True -- but that disagreement can only arise when the
-				-- decode DISCARDED something, and the remedy for a lossy decode is to report the
-				-- loss, not to mint a different number that hides it. `Wire.decode` now returns
-				-- `dropped`, and a payload that lost rows does NOT get to claim the author's canon:
-				-- we hold something other than the author's version, so we publish no version at
-				-- all and get re-requested. Self-correcting, and it cannot go quiet while wrong.
-				--
-				-- NO CANON MEANS NO CANON. When the sender published none -- an author that has not
-				-- scanned since upgrading -- we store nil rather than keeping a stale local value of
-				-- unknown authorship. DeltaSync's own example does the same on the advertise side
-				-- (`if not r.contentHash then return {} end`). KNOWN COST, accepted: such an alt
-				-- advertises nothing and is re-requested until its owner scans and publishes, which
-				-- is noisier during the rollout while 3 of 38 bankers are on V2.
-				local alts = TOGBankClassic_Guild.Info.alts
-				if alts then
-					local alt = alts[claimedNorm]
-					if not alt then
-						alt = { name = claimedNorm, items = {}, money = 0 }
-						alts[claimedNorm] = alt
-					end
-					alt.money = money or alt.money or 0
-					if wireDropped and wireDropped > 0 then
-						alt.inventoryHash   = nil
-						alt.inventoryHashV2 = nil
-						TOGBankClassic_Output:Warn(
-							"Discarded %d malformed item row(s) in a bank update from %s for %s. " ..
-							"That data will be re-requested.", wireDropped, tostring(sender),
-							tostring(claimedNorm))
-					else
-						-- Both revisions together, or neither. HASH-REV-001: revision 2 is what two
-						-- migrated clients negotiate on and revision 1 is what an unmigrated peer
-						-- reads, so taking one from the author and leaving the other stale would
-						-- make the record disagree with itself.
-						alt.inventoryHash   = wireHash
-						alt.inventoryHashV2 = wireHashV2
-						-- HASH-CANON-004: the author's MAIL hash, stored verbatim like the other
-						-- two. `HashesAgreeWith` (Guild.lua:1097) requires this to match before it
-						-- will call the alt in sync, and after HASH-CANON-002 deleted the two paths
-						-- that used to mint one locally, this is the ONLY way a receiver can hold
-						-- the author's value. Without it every remote banker compares a real
-						-- advertised number against nil and stays pending forever.
-						--
-						-- `or alt.mailHash` so an author that has not scanned mail since upgrading
-						-- (nil on the wire) does not blank a value we already had -- the same
-						-- "absence is not a statement" rule the hashes follow.
-						alt.mailHash        = wireMailHash or alt.mailHash
-					end
-					-- THE AUTHOR'S PUBLISH TIME, STORED VERBATIM -- not our arrival time. This used
-					-- to be `GetServerTime()`, which made the stamp mean "when THIS client heard
-					-- about it". Every receiver re-advertises what it holds (`Guild.lua:358`,
-					-- `:1033`, `:1582`) and P2PSession sorts candidates by `updatedAt` descending to
-					-- pick the freshest (`P2PSession.lua:184-190`), so a receive-time stamp made a
-					-- relayed third-hand copy advertise a NEWER time than the author's own record --
-					-- the later a copy propagated, the fresher it claimed to be.
-					--
-					-- Falls back to our clock only when the author published no time, which is the
-					-- same case the staleness guard above lets through.
-					alt.inventoryUpdatedAt = wireUpdatedAt or GetServerTime()
-					alt.version            = alt.inventoryUpdatedAt
-				end
-
-				TOGBankClassic_Output:Debug("DELTA", "APPLY",
-					"[INV2] stored %d tuple(s) for %s from %s (canon=%s)", #records, claimedNorm, sender,
-					tostring(wireHashV2))
-
-				-- INV2-SESSION-001: CLOSE THE SYNC OFF. Storing the rows is not the end of a
-				-- delivery -- three things did that, and this branch did none of them, because it
-				-- `return`ed before reaching the legacy branch that carried them. So a V2 delivery
-				-- has NEVER released its session slot: `activeSessions` leaked on every one, the
-				-- 15s ACK fallback stayed armed and then fired `AdvanceCandidate("ack_no_data")` on
-				-- a sync that had already succeeded, and inbound bytes went unrecorded.
-				--
-				-- Found by deleting the legacy branch: it was doing this work for a payload shape
-				-- that never reached it. Sitting behind an early return is why it looked covered.
-				if TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name then
-					local isFromBanker = TOGBankClassic_Guild:IsBank(sender) or false
-					TOGBankClassic_Database:RecordDeltaReceived(
-						TOGBankClassic_Guild.Info.name, #message, isFromBanker)
-				end
-
-				local fallbacks = TOGBankClassic_Guild.pendingP2PFallbackTimeouts
-				if fallbacks and fallbacks[claimedNorm] then
-					fallbacks[claimedNorm]:Cancel()
-					fallbacks[claimedNorm] = nil
-					TOGBankClassic_Output:Debug("P2P", "COMPLETE",
-						"Cancelled fallback timeout for %s (tuples received)", claimedNorm)
-				end
-
-				if TOGBankClassic_P2PSession then
-					TOGBankClassic_P2PSession:OnAltCompleted(claimedNorm, sender)
-				end
-
-				-- TABCOLOUR-001: the data has landed and the stored hash now agrees with the
-				-- advertised one, so this is the moment a red tab should turn back -- not the next
-				-- hash broadcast, which is where the only other repaints hang. Not routed through
-				-- OnAltCompleted: that returns early for a delivery no P2P session asked for (a
-				-- banker's own broadcast), which is a delivery all the same.
-				if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.RefreshSoon then
-					TOGBankClassic_UI_Inventory:RefreshSoon()
-				end
-			end
+			-- THE DELTA RELEASE step 3b: decode, authorise (never our own character -- MULTIPC-001;
+			-- IsAltDataAllowed or a pending sync), order (HASH-CANON-001 rule 7) and store, in
+			-- Inventory/Sync -- the same path an `inv-snapshot` on the host takes, so the manual
+			-- GUILD share and the whispered reply cannot apply a payload differently. The ~200 lines
+			-- that stood here are that function.
+			TOGBankClassic_Inventory_Sync:ReceiveSnapshot(data, sender, #message)
 			return
 		end
-
 		-- A payload we no longer speak. THIS LINE IS THE WHOLE DIAGNOSTIC for the commonest support
 		-- question a mixed-version guild will produce -- "why can't I see their bank?" -- so it says
 		-- WHO sent it and WHAT it was, and it says it at WARN rather than debug when the sender is a
@@ -1617,6 +1487,10 @@ end
 		-- cache, the tab colour) is one path. A number we cannot name is skipped and, because the
 		-- sender's table version rides with it, triggers a request for the table.
 		if data.type == "hlb2" then
+			-- WIRE-SKEW-001: the broadcast names the sender's addon version; the data-leg gate reads it.
+			if TOGBankClassic_Guild.NotePeerAddonVersion then
+				TOGBankClassic_Guild:NotePeerAddonVersion(sender, data.addon)
+			end
 			local BN = TOGBankClassic_BankerNumbers
 			if BN then
 				BN:OnAdvertisedVersion(sender, data.v)
@@ -1628,7 +1502,17 @@ end
 				end
 				data.alts = alts
 				data.type = "hash-list-broadcast"
+				-- N6: marks this as the NUMBERED wire re-typed for the shared path below, so the
+				-- legacyKeyedReceive gate on that path never applies to it.
+				data.fromNumbered = true
 			end
+		end
+		-- N6: the KEYED forms only old-build (<= v1.4.0) peers send. Off by default; see Switches.lua.
+		local acceptKeyed = TOGBankClassic_Switches and TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive")
+		if (data.type == "hash-list-broadcast" and not data.fromNumbered or data.type == "hash-offer") and not acceptKeyed then
+			TOGBankClassic_Output:Debug("P2P", "BROADCAST", "N6: ignoring keyed %s from %s (legacyKeyedReceive is off)",
+				tostring(data.type), tostring(sender))
+			return
 		end
 		if data.type == "hash-list-request" then
 			local replyTarget = data.requester or sender
@@ -1735,6 +1619,16 @@ end
 		end
 	end
 	if prefix == "togbank-hlr" then
+		-- WIRE-SKEW-008 (self-audit): the reply's claims are refused by every Note* below, but the
+		-- SECOND PASS of this handler turned them into one BroadcastP2PRequest per alt -- a guild
+		-- broadcast each, on the strength of an old release's fabricated publish times, which is the
+		-- fast-fill burst behind the pull-path ACK storm. Nothing in a reply we cannot act on is
+		-- worth acting on; one line, and the whole handler is skipped.
+		if data.type == "hash-list-reply" and not TOGBankClassic_Guild:ClaimantCanServe(sender) then
+			TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR from %s ignored: release %s is before the data leg changed",
+				tostring(sender), tostring(select(2, TOGBankClassic_Guild:PeerSpeaksDataLeg(sender))))
+			return
+		end
 		if data.type == "hash-list-reply" and data.alts then
 			local altCount = 0
 			for _ in pairs(data.alts) do
@@ -1751,8 +1645,12 @@ end
 				local norm = TOGBankClassic_Guild:NormalizeName(altName)
 				if norm and summary then
 					TOGBankClassic_Guild:CanonicaliseSummary(summary)                -- HASH-CANON-005
-					TOGBankClassic_Guild:NoteAdvertisedHashes(norm, summary)
-					TOGBankClassic_Guild:NoteAdvertisedPublishTime(norm, summary)   -- TABCOLOUR-002
+					TOGBankClassic_Guild:NoteAdvertisedHashes(norm, summary, sender)
+					TOGBankClassic_Guild:NoteAdvertisedPublishTime(norm, summary, sender)   -- TABCOLOUR-002
+					-- MULTIPC-002: the replier can serve every version it lists -- our own included.
+					if norm == TOGBankClassic_Guild:GetNormalizedPlayer() then
+						TOGBankClassic_Guild:NoteSelfHolder(summary.hashV2, sender)
+					end
 				end
 			end
 			local localAlts = TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.alts or {}
@@ -1772,15 +1670,24 @@ end
 				-- the honest form of "is this a banker's reply".
 				local normSender = TOGBankClassic_Guild:NormalizeName(sender)
 				local fromBanker = normSender and TOGBankClassic_Guild:IsBank(normSender) or false
+				local me = TOGBankClassic_Guild:GetNormalizedPlayer()
 				for altName, summary in pairs(data.alts) do
 					local norm = TOGBankClassic_Guild:NormalizeName(altName)
 					local localAlt = localAlts[norm]
 					local localHash = localAlt and localAlt.inventoryHash or 0
 
 					if summary and summary.hash and summary.hash > 0 then
-						if not localAlt and fromBanker and TOGBankClassic_Guild:IsBank(norm) then
+						-- MULTIPC-001: NO STUB FOR OUR OWN CHARACTER. A stub exists "so there is something
+						-- to sync into", and nothing is ever synced into our own name. Worse, it would
+						-- carry the PEER'S canon as if this PC held that version: a wiped PC on a shared
+						-- account would then read as current and publish a bags-only scan over the real
+						-- copy. With no record it reads as behind, and Bank:Scan holds publishing until
+						-- the vault and mailbox have been read here.
+						if not localAlt and fromBanker and TOGBankClassic_Guild:IsBank(norm) and norm ~= me then
 							-- Create stub entry with banker's authoritative hash (only trusted banker replies).
 							-- Both revisions together, or neither -- the rule the delivery path follows.
+							-- INV2-RETIRE-003: metadata only, no legacy item arrays (see the roster stub
+							-- in Guild:RebuildBankerRoster for the same shape and why).
 							TOGBankClassic_Guild.Info.alts[norm] = {
 								name = norm,
 								version = summary.version or 0,
@@ -1788,11 +1695,9 @@ end
 								inventoryHash = summary.hash,
 								inventoryHashV2 = summary.hashV2,
 								inventoryUpdatedAt = summary.updatedAt,
-								items = {},
-								mail = { items = {}, slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
+								mail = { slots = { count = 0, total = 0 }, lastScan = 0, version = 0 },
 								mailHash = summary.mailHash or 0,
 							}
-							TOGBankClassic_Guild:EnsureLegacyFields(TOGBankClassic_Guild.Info.alts[norm])
 							TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR: Stored banker hash for new alt %s: hash=%08x, mailHash=%08x, updatedAt=%s", norm, summary.hash, summary.mailHash or 0, tostring(summary.updatedAt))
 						elseif localAlt and (localHash ~= summary.hash or (localAlt.mailHash or 0) ~= (summary.mailHash or 0)) then
 							-- Hash mismatch detected - banker has different hash than our local data
@@ -1884,6 +1789,18 @@ local HELP_COLOR = {
 	RESET = "|r",
 }
 
+--- A canon as the dev commands print it: `<date time> <checksum>` when the publish time is readable,
+--- the raw value for a v1.4.0 numeric canon (no readable date -- shown as what it is), and "-" for
+--- nil so a missing canon cannot be mistaken for 0. ONE spelling, shared by hashdump and trace.
+local function canonStr(c)
+	if c == nil then return "-" end
+	local at = TOGBankClassic_DeltaComms and TOGBankClassic_DeltaComms:CanonPublishTime(c)
+	if at then
+		return string.format("%s %s", date("%Y-%m-%d %H:%M:%S", at), tostring(c):sub(11))
+	end
+	return tostring(c)
+end
+
 -- Command registry: name, usage, help, expert, handler
 -- Commands are displayed in help in the order they appear here.
 -- Set help = nil to hide from help output.
@@ -1898,10 +1815,37 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "version",
-		help = "display the TOGBankClassic version",
+		help = "display the TOG Bank version",
 		handler = function()
-			local version = GetAddOnMetadata("TOGBankClassic", "Version") or "unknown"
-			TOGBankClassic_Output:Response("TOGBankClassic version:", version)
+			-- BRAND-001 / VERSION-TEXT-001: what a window title says, said the same way here. This
+			-- printed the raw tag under the old name -- "TOGBankClassic version:
+			-- TOGBankClassic-v1.5.0" beside a title reading "TOG Bank v1.5.0".
+			TOGBankClassic_Output:Response(TOGBankClassic_Constants.BrandVersion())
+		end,
+	},
+	{
+		-- MAILUI-001: opens by itself for bankers at a mailbox; this is for everyone else, and for
+		-- re-opening it after closing it while the mailbox is still open.
+		name = "mailbox",
+		help = "open the Mailbox window: every attachment in your inbox as a row, with a filter and Take buttons (needs an open mailbox)",
+		handler = function()
+			if not (TOGBankClassic_Mail and TOGBankClassic_Mail:IsMailboxOpen()) then
+				TOGBankClassic_Output:Response("Open a mailbox first -- the Mailbox window reads the live inbox.")
+				return
+			end
+			TOGBankClassic_UI_Mailbox:Toggle()
+		end,
+	},
+	{
+		-- ENTRY-001 (operator 2026-09-13: "make the MMB open the new UI and browse open the legacy
+		-- ui", then "rename it from togbank browse to togbank legacy"): the minimap click is the
+		-- Guild Bank window now, and this command is the old tab-per-banker Inventory window, kept
+		-- only until BROWSE-002 follow-on (d) retires it. (BROWSE-001 had `browse` opening the new
+		-- window while it settled; that name is gone.)
+		name = "legacy",
+		help = "open the old Inventory window (a tab per bank character); the minimap button opens the Guild Bank window",
+		handler = function()
+			TOGBankClassic_UI_Inventory:Toggle()
 		end,
 	},
 	{
@@ -1913,7 +1857,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "share",
-		help = "manually share the contents of your guild bank with other online users of TOGBankClassic; this is done every 10 minutes and after every bank scan automatically",
+		help = "manually share the contents of your guild bank with other online users of TOGBankClassic; this is done every 10 minutes automatically and whenever you open the Inventory window",
 		handler = function()
 			-- PERF-021: Warn user if zone-in cooldown is active
 			if TOGBankClassic_Events.zoningCooldown then
@@ -1976,29 +1920,10 @@ local COMMAND_REGISTRY = {
 			end
 		end,
 	},
-	{
-		name = "clearsnapshots",
-		help = "clear all delta snapshots (forces full syncs next time)",
-		expert = true,
-		handler = function()
-			local guild = TOGBankClassic_Guild:GetGuild()
-			if not guild then
-				TOGBankClassic_Output:Response("Not in a guild")
-				return
-			end
-			local db = TOGBankClassic_Database.db.faction[guild]
-			if db and db.deltaSnapshots then
-				local count = 0
-				for _ in pairs(db.deltaSnapshots) do
-					count = count + 1
-				end
-				db.deltaSnapshots = {}
-				TOGBankClassic_Output:Response("Cleared %d delta snapshot(s)", count)
-			else
-				TOGBankClassic_Output:Response("No snapshots to clear")
-			end
-		end,
-	},
+	-- INV2-RETIRE-002: `/togbank dev clearsnapshots` was deleted here. It cleared `db.deltaSnapshots`,
+	-- the SavedVariables key PERF-012 stopped writing and Database:Init nils on every load -- so it
+	-- has printed "No snapshots to clear" since v1.2, and the in-memory cache it was meant to reach
+	-- is gone with the legacy alt-delta (see the header of Modules/Database.lua).
 	{
 		name = "compact",
 		help = "manually run compaction to prune old requests and tombstones",
@@ -2372,7 +2297,10 @@ local COMMAND_REGISTRY = {
 			VC:FireBatch()
 			TOGBankClassic_Output:Response("Version check broadcast sent — waiting 21 seconds for responses...")
 			C_Timer.After(21, function()
-				local myVersion = GetAddOnMetadata("TOGBankClassic", "Version") or "dev"
+				-- VERSION-TEXT-001: our own row reads like the title bar. The OTHER rows below stay
+				-- raw on purpose -- they are what each guildmate's client reported, and normalising
+				-- someone else's string would hide a peer running something unexpected.
+				local myVersion = TOGBankClassic_Constants.VersionText(GetAddOnMetadata("TOGBankClassic", "Version"))
 				local myPlayer = TOGBankClassic_Guild:GetNormalizedPlayer() or "unknown"
 				local responses = hostEntry.VersionResponses or {}
 
@@ -2424,10 +2352,39 @@ local COMMAND_REGISTRY = {
 					count = count + 1
 				end
 				TOGBankClassic_Options.db.char.framePositions = {}
-				TOGBankClassic_Output:Response("Cleared %d saved window position(s). Type /reload to reset window positions.", count)
+				-- RECENTER-001: a live widget holds a REFERENCE to its old status table, so replacing
+				-- the saved one above moves nothing that is currently on screen -- which is why this
+				-- command used to end by telling you to reload. RecenterWindows clears the table the
+				-- widget is actually reading and re-applies, so an open window moves now. Sizes still
+				-- need the reload (they are read from a table the widget no longer points at), and
+				-- the message says so rather than implying the whole reset took effect.
+				local moved = TOGBankClassic_UI:RecenterWindows()
+				TOGBankClassic_Output:Response(
+					"Cleared %d saved window position(s); recentred %d open window(s). Sizes reset on /reload.",
+					count, moved)
 			else
 				TOGBankClassic_Output:Response("No frame positions to clear")
 			end
+		end,
+	},
+	{
+		-- HELP-PULSE-003: the breath is a one-time attention-getter remembered per account, so once
+		-- hovered there is no way to see it again -- the operator, testing the per-tab change: "you
+		-- would need to 'unmark' mine so i can test this again". Forgets every hover; the icon on the
+		-- open window starts breathing again at once.
+		name = "helpreset",
+		help = "forget which help icons you have hovered, so they breathe again",
+		expert = true,
+		handler = function()
+			local db = TOGBankClassic_Options and TOGBankClassic_Options.db
+			if not (db and db.global) then
+				TOGBankClassic_Output:Response("Settings are not loaded yet.")
+				return
+			end
+			db.global.helpSeen = {}
+			local Browse = TOGBankClassic_UI_Browse
+			if Browse and Browse.SyncHelpPulse then Browse:SyncHelpPulse() end
+			TOGBankClassic_Output:Response("Help icons reset: each one breathes again until you hover it.")
 		end,
 	},
 	{
@@ -2690,8 +2647,7 @@ local COMMAND_REGISTRY = {
 			for _, e in ipairs(S:GetAll()) do
 				-- `enabled` is the LIVE answer, so a dependent switch shows OFF while its
 				-- parent is off even though its own stored value says otherwise. Showing the
-				-- stored value here would claim dualWrite is maintaining the legacy DB when
-				-- V2 is not even running.
+				-- stored value here would claim an effect the switch is not having.
 				local state = e.enabled and "|cff44ff44ON|r " or "|cffff4444OFF|r"
 				local note  = e.overridden and "" or " |cff888888(default)|r"
 				Out:Response("  %s %s%s", state, e.name, note)
@@ -2700,7 +2656,7 @@ local COMMAND_REGISTRY = {
 					Out:Response("      |cff888888requires: %s|r", e.requires)
 				end
 				-- A staged switch must say so where the state is read, not only in the source.
-				-- Without this the listing shows `ON dualWrite` and nothing contradicts it.
+				-- Without this the listing shows it ON and nothing contradicts it.
 				if e.pending then
 					Out:Response("      |cffff8800NOT YET ACTIVE: %s|r", e.pending)
 				end
@@ -2802,92 +2758,10 @@ local COMMAND_REGISTRY = {
 			Out:Response("  reduction : |cff44ff44%d%%|r", pct)
 		end,
 	},
-	{
-		-- INV2: prove the V2 store agrees with the legacy one, on live data.
-		--
-		-- This is the whole reason the V2 scan mirrors rather than replaces: two independent
-		-- encodings of the same containers, compared. A divergence here is a real encoding
-		-- bug, not a timing artifact -- both are written inside a single Bank:Scan() call.
-		name = "compare",
-		help = "compare the V2 tuple store against the legacy inventory",
-		handler = function()
-			local Out   = TOGBankClassic_Output
-			local Store = TOGBankClassic_Inventory_Store
-			local Record = TOGBankClassic_Inventory_Record
-			local info  = TOGBankClassic_Guild and TOGBankClassic_Guild.Info
-
-			Out:Response("|cffffff00=== V2 vs legacy inventory ===|r")
-			if not (Store and Record) then Out:Error("INV2 modules not loaded"); return end
-			if not (info and info.name) then Out:Error("No guild data loaded"); return end
-			if not (TOGBankClassic_Switches and TOGBankClassic_Switches:IsEnabled("inventoryV2")) then
-				Out:Response("|cffffcc00inventoryV2 is OFF - the V2 store is not being written.|r")
-				Out:Response("Enable it with /togbank dev switches inventoryV2 on, then open and CLOSE your bank.")
-				return
-			end
-
-			local alts = Store:GetAltNames(info.name)
-			if #alts == 0 then
-				-- DOC-005: this said "open your bank/bags", which is the one instruction that
-				-- cannot work. The scan runs on BANKFRAME_CLOSED (Events.lua:518-520);
-				-- BANKFRAME_OPENED only sets hasUpdated. Bags alone trigger nothing at all -- no
-				-- BAG_UPDATE is registered for scanning. Following the old wording literally
-				-- leaves the store empty and this message repeating, which cost a live debugging
-				-- session on 2026-09-08.
-				Out:Response("|cffffcc00V2 store is empty - no scan has run yet.|r")
-				Out:Response("Open your bank and then CLOSE it (the scan runs on close), or use /togbank share.")
-				return
-			end
-
-			local mismatches, checked = {}, 0
-			for _, altName in ipairs(alts) do
-				local legacy = info.alts and info.alts[altName]
-				if legacy and legacy.items then
-					checked = checked + 1
-					-- Compare per item id rather than per row: the two encodings legitimately
-					-- differ in ROW count, because V2 splits suffix variants that the legacy
-					-- link key may have merged. Totals per id must still agree exactly.
-					local legacyTotals = {}
-					for _, item in ipairs(legacy.items) do
-						if item.ID then
-							legacyTotals[item.ID] = (legacyTotals[item.ID] or 0) + (item.Count or 0)
-						end
-					end
-					local v2Totals = {}
-					for _, rec in ipairs(Store:GetAltRecords(info.name, altName)) do
-						local id = Record.id(rec)
-						v2Totals[id] = (v2Totals[id] or 0) + Record.count(rec)
-					end
-					for id, n in pairs(legacyTotals) do
-						if (v2Totals[id] or 0) ~= n then
-							mismatches[#mismatches + 1] = string.format(
-								"%s item %d: legacy=%d v2=%d", altName, id, n, v2Totals[id] or 0)
-						end
-					end
-					for id, n in pairs(v2Totals) do
-						if legacyTotals[id] == nil then
-							mismatches[#mismatches + 1] = string.format(
-								"%s item %d: legacy=absent v2=%d", altName, id, n)
-						end
-					end
-				end
-			end
-
-			Out:Response("Compared %d character(s) present in both stores.", checked)
-			if checked == 0 then
-				Out:Response("|cffffcc00Nothing to compare - no character appears in both.|r")
-			elseif #mismatches == 0 then
-				Out:Response("|cff44ff44No divergence. Every item total agrees.|r")
-			else
-				Out:Response("|cffff4444%d divergence(s):|r", #mismatches)
-				for i = 1, math.min(#mismatches, 15) do
-					Out:Response("  %s", mismatches[i])
-				end
-				if #mismatches > 15 then
-					Out:Response("  ... and %d more", #mismatches - 15)
-				end
-			end
-		end,
-	},
+	-- INV2-RETIRE-003: `/togbank dev compare` -- "prove the V2 store agrees with the legacy one, on
+	-- live data" -- was deleted here. Its whole subject was the dual-write period: two encodings of
+	-- one container walk, diffed per item id. The legacy rows are no longer written or kept, so
+	-- there is nothing left to compare the store against.
 	{
 		-- ROSTER-003: in-game verification for the LibGuildRoster migration. The offline suite
 		-- proves the library works and that our derivations are right, but it cannot prove the
@@ -3006,17 +2880,8 @@ local COMMAND_REGISTRY = {
 			end
 		end,
 	},
-	{
-		name = "purgeghosts",
-		help = "manually re-run the linkless-gear-ghost purge migration (normally fires 30s after login)",
-		handler = function()
-			if TOGBankClassic_Database and TOGBankClassic_Database.PurgeLinklessGearGhosts then
-				TOGBankClassic_Database:PurgeLinklessGearGhosts()
-			else
-				TOGBankClassic_Output:Response("|cFFFF0000Database:PurgeLinklessGearGhosts not available.|r")
-			end
-		end,
-	},
+	-- INV2-RETIRE-003: `/togbank dev purgeghosts` (re-run Database:PurgeLinklessGearGhosts) was
+	-- deleted here with the migration it re-ran; the legacy rows it walked are stripped on load.
 	{
 		name = "hashdump",
 		help = "dump raw latestBankerHashes table used for sync comparison",
@@ -3069,16 +2934,6 @@ local COMMAND_REGISTRY = {
 				})
 			end
 			table.sort(rows, function(a, b) return a.norm < b.norm end)
-			local function canonStr(c)
-				-- A v1.4.0 numeric canon has no readable date and is shown as what it is rather than
-				-- formatted as one; nil is "-" so a missing canon cannot be mistaken for 0.
-				if c == nil then return "-" end
-				local at = TOGBankClassic_DeltaComms:CanonPublishTime(c)
-				if at then
-					return string.format("%s %s", date("%Y-%m-%d %H:%M:%S", at), tostring(c):sub(11))
-				end
-				return tostring(c)
-			end
 			for _, r in ipairs(rows) do
 				local matchStr = r.match and "|cff00ff00OK|r" or "|cffff4444MISMATCH|r"
 				TOGBankClassic_Output:Response(string.format(
@@ -3144,6 +2999,202 @@ local COMMAND_REGISTRY = {
 			end
 		end,
 	},
+	{
+		-- DOUBLE-001: the operator, 2026-09-12: "i only have 3x archaic defenders. the ui is showing 6.
+		-- most of the things on toglowweap are doubled in the UI". The view SUMS the store's per-source
+		-- buckets (bags + bank + mail, or a wholesale `all`), so a doubled count almost always means one
+		-- item sitting in two buckets -- and nothing in the game could show which. This prints every
+		-- bucket, visible and hidden, with when each source was last read, and an item's count in each.
+		name = "sources",
+		usage = "<banker> [item name]",
+		help = "print the store's per-source buckets for one banker (bags / bank / mail / all, visible and hidden), and an item's count in each",
+		expert = true,
+		handler = function(arg)
+			local G, Out, Store = TOGBankClassic_Guild, TOGBankClassic_Output, TOGBankClassic_Inventory_Store
+			local Record, Item = TOGBankClassic_Inventory_Record, TOGBankClassic_Item
+			local text = tostring(arg or ""):trim()
+			local name, item = text:match("^(%S+)%s*(.-)$")
+			if not name or name == "" then Out:Response("Usage: /togbank dev sources <banker> [item name]"); return end
+			if not (G and G.Info and G.Info.name and Store) then Out:Error("No guild data loaded"); return end
+			local norm = G:NormalizeName(name) or name
+			local g = Store:GuildTable(G.Info.name, false)
+			local alt = g and g.alts and g.alts[norm]
+			if not alt then Out:Response("%s: no V2 record held", norm); return end
+			local rec = G.Info.alts and G.Info.alts[norm]
+			item = (item or ""):lower()
+			Out:Response("|cffffff00=== sources %s ===|r  schema=%s  updated=%s  canon=%s", norm,
+				tostring(alt.schema), tostring(alt.updated), tostring(rec and rec.inventoryHashV2))
+			local function nameOf(r)
+				local d = Item and Item.RequestDisplayName and Item:RequestDisplayName({ item = "Item " .. Record.id(r), itemID = Record.id(r), suffixID = Record.suffix(r) })
+				return d or ("item " .. tostring(Record.id(r)))
+			end
+			local function dump(label, buckets)
+				for source, bucket in pairs(buckets or {}) do
+					local rows, units = #bucket, 0
+					for _, r in ipairs(bucket) do units = units + Record.count(r) end
+					local at = rec and rec[source] and rec[source].lastScan
+					Out:Response("  %s %s: %d row(s), %d unit(s), last read %s", label, source, rows, units, at and tostring(at) or "?")
+					if item ~= "" then
+						for _, r in ipairs(bucket) do
+							local n = nameOf(r)
+							if n:lower():find(item, 1, true) then
+								Out:Response("      %s x%d  (key %s)", n, Record.count(r), Record.key(r))
+							end
+						end
+					end
+				end
+			end
+			dump("visible", alt.sources)
+			dump("|cffff4444hidden|r", alt.hidden)
+			local total = 0
+			for _, r in ipairs(Store:GetAltRecords(G.Info.name, norm)) do
+				if item == "" or nameOf(r):lower():find(item, 1, true) then total = total + Record.count(r) end
+			end
+			Out:Response("  the view sums the visible buckets: %d unit(s)%s", total, item ~= "" and (" of '" .. item .. "'") or "")
+		end,
+	},
+	{
+		-- P2P-035 follow-up (Peer Review): sendqueue's sibling. ONE alt, walked through every gate in
+		-- the order the code asks them, printing each answer WITH ITS INPUTS and stopping at the
+		-- first "no" on the serving side. Every gate here is the production predicate itself
+		-- (IsBank, HasAltContent, CanServe, ServableCanon, the slot count, the state-wait table,
+		-- AdvertisedImproves, GetAltStaleness), never a copy of one -- a diagnostic that disagrees
+		-- with what it diagnoses is the DOC-005 / HASH-REV-002 class this file has paid for twice.
+		name = "trace",
+		usage = "<banker>",
+		help = "walk one banker through every P2P gate, serving side then fetching side, and name the first that says no",
+		expert = true,
+		handler = function(arg)
+			local G, P2P, Out = TOGBankClassic_Guild, TOGBankClassic_P2PSession, TOGBankClassic_Output
+			local Store, BN = TOGBankClassic_Inventory_Store, TOGBankClassic_BankerNumbers
+			local name = tostring(arg or ""):trim()
+			if name == "" then Out:Response("Usage: /togbank dev trace <banker>"); return end
+			if not (G and G.Info) then Out:Error("No guild data loaded"); return end
+			local norm = G:NormalizeName(name) or name
+			local YES, NO = "|cff00ff00yes|r", "|cffff4444NO|r"
+
+			Out:Response("|cffffff00=== trace %s ===|r", norm)
+			-- ── Serving side: could we deliver this alt to a requester right now? ──
+			Out:Response("|cffffff00-- serving side (the order HandleSyncRequest asks) --|r")
+			local isBank = G:IsBank(norm)
+			Out:Response("  1. banker on the roster: %s%s", isBank and YES or NO,
+				(BN and BN:NumberOf(norm)) and (" number " .. BN:NumberOf(norm)) or " (unnumbered)")
+			local alt = G.Info.alts and G.Info.alts[norm]
+			local records = (Store and G.Info.name) and Store:GetAltRecords(G.Info.name, norm) or {}
+			Out:Response("  2. record held: %s  V2 tuples=%d  HasAltContent=%s",
+				alt and YES or NO, #records, tostring(G:HasAltContent(alt, norm)))
+			local canServe = G:CanServe(norm)
+			Out:Response("  3. CanServe (V2 tuples > 0, SendAltData's own test): %s", canServe and YES or NO)
+			if not canServe then
+				Out:Response("  |cffff4444STOP:|r a sync-request for %s gets 'busy' here -- only a rescan by the banker or a delivery fills the V2 store", norm)
+			else
+				local servable = G:ServableCanon(norm)
+				Out:Response("  4. ServableCanon: %s  held canon=%s  publish=%s", servable and YES or NO,
+					canonStr(alt and alt.inventoryHashV2), tostring(alt and (alt.inventoryUpdatedAt or alt.version)))
+				if not servable then
+					Out:Response("  |cffff4444STOP:|r tuples but no canon -- this copy is advertised as nothing and a versioned request is refused")
+				end
+				if P2P then
+					local total, cap = P2P:GetActiveSendTotal(), P2P.MAX_ACTIVE_SENDS or 0
+					Out:Response("  5. send slot: %s  %d/%d in use", total < cap and YES or "|cffffff00queue|r", total, cap)
+					for i, e in ipairs(P2P.sendQueue or {}) do
+						if e.altName == norm then Out:Response("     queued: %s at position %d", e.requester, i) end
+					end
+					local waiting = false
+					for key in pairs(P2P.stateWaits or {}) do
+						local who, what = key:match("^(.-)|(.*)$")
+						if what == norm then waiting = true; Out:Response("  6. state-wait: accepted %s, still waiting on their summary", who) end
+					end
+					if not waiting then Out:Response("  6. state-wait: none open for this alt") end
+				end
+			end
+
+			-- ── Fetching side: do we want a newer copy, and where is the session? ──
+			Out:Response("|cffffff00-- fetching side --|r")
+			local state, _, _, who = G:GetAltStaleness(norm)
+			Out:Response("  tab state: %s%s", tostring(state), who and (" (offered by " .. tostring(who) .. ")") or "")
+			local known = G.latestBankerHashes and G.latestBankerHashes[norm]
+			if known then
+				local improves, reason = G:AdvertisedImproves(norm, known)
+				Out:Response("  newest known: canon=%s  AdvertisedImproves=%s (%s)", canonStr(known.hashV2), improves and YES or NO, tostring(reason))
+			else
+				Out:Response("  newest known: nothing advertised yet this session")
+			end
+			Out:Response("  newestAdvertisedAt=%s  IsAltSyncPending=%s",
+				tostring(G.newestAdvertisedAt and G.newestAdvertisedAt[norm]), tostring(G:IsAltSyncPending(norm)))
+			-- CLAIM-TRACE-001: WHO SAID SO. A red tab means "somebody has newer than you", and until
+			-- this line nothing in the game could name the somebody -- so a banker sitting behind a
+			-- version its own author never published (CANON-TIME-001 was one way that happens) could
+			-- not be diagnosed from a live client at all. If the claimed time is far ahead of every
+			-- real publish, or the claimant is a viewer rather than the banker, that is the culprit.
+			local by = G.newestAdvertisedBy and G.newestAdvertisedBy[norm]
+			if by then
+				Out:Response("  claimed by: %s  canon=%s  (%s ago)", tostring(by.peer or "unattributed"),
+					canonStr(by.canon), tostring(GetServerTime() - (by.at or 0)))
+			else
+				Out:Response("  claimed by: nobody has named a version for this banker yet")
+			end
+			-- MULTIPC-001: for our own character the question is not "fetch?" but "may this PC
+			-- publish?" -- the same predicate Bank:Scan asks, with the inputs it reads.
+			if norm == G:GetNormalizedPlayer() and TOGBankClassic_Bank and TOGBankClassic_Bank.CanPublish then
+				local Bank = TOGBankClassic_Bank
+				local ok, why = Bank:CanPublish(alt)
+				local newer = G.NewerSelfVersionAt and G:NewerSelfVersionAt()
+				Out:Response("|cffffff00-- publish gate (this is us) --|r")
+				Out:Response("  newer version elsewhere: %s  consulted this session: %s",
+					newer and tostring(newer) or "none named", tostring(P2P and P2P.IsSelfConsulted and P2P:IsSelfConsulted()))
+				for _, source in ipairs({ "bank", "bags", "mail" }) do
+					local at = alt and alt[source] and alt[source].lastScan
+					Out:Response("  %s: last read on this PC %s%s", source, at and tostring(at) or "never",
+						(Bank.readThisSession or {})[source] and " (this session)" or "")
+				end
+				Out:Response("  CanPublish: %s (%s)%s", ok and YES or NO, tostring(why),
+					Bank.deferred and "  -- a scan is waiting to publish" or "")
+				-- HIDE-SYNC-001: the operator's trace read 'NO (unconsulted)' 33 minutes into a session
+				-- with nothing deferred, and the three facts that decide between "the login consult
+				-- never began", "it began and never settled" and "the fallback never fired" were not on
+				-- it. Every value here is the production state, read raw.
+				Out:Response("  consult: begun=%s settled=%s  fallback timer armed=%s  raid-paused=%s",
+					tostring(P2P and P2P.consultBegun), tostring(P2P and P2P.selfConsulted),
+					tostring(Bank.deferredFallbackArmed or false),
+					tostring(TOGBankClassic_Constants.SyncPausedByRaid and TOGBankClassic_Constants.SyncPausedByRaid()))
+				-- Stored vs current content hash: equal means the next scan takes the "no changes" branch
+				-- and defers nothing, whatever the gate says.
+				local S = TOGBankClassic_Inventory_Store
+				local recs = S and G.Info.name and S:GetAltRecords(G.Info.name, norm) or {}
+				local current = TOGBankClassic_Core.ComputeInventoryHash
+					and TOGBankClassic_Core:ComputeInventoryHash(recs, nil, nil, alt and alt.money or 0) or nil
+				Out:Response("  content hash: stored=%s  current=%s (%s)", tostring(alt and alt.inventoryContentHash),
+					tostring(current), (alt and alt.inventoryContentHash == current) and "same -- a scan would defer nothing" or "differs -- a scan would publish or defer")
+				-- CLAIM-TRACE-001: and for OUR OWN character, who is holding the version we are behind
+				-- on -- the peers a diff-base fetch would go to. "none recorded" beside a `newer`
+				-- version means nobody can supply it, which is the state the fallback publishes out of.
+				local ns = Bank.newerSelf
+				Out:Response("  newer copy held by: %s", ns and (#(ns.holders or {}) > 0
+					and (table.concat(ns.holders, ", ") .. "  canon=" .. canonStr(ns.canon))
+					or ("none recorded  canon=" .. canonStr(ns.canon))) or "nobody named one")
+			end
+			if P2P then
+				local sid = P2P.sessionsByAlt and P2P.sessionsByAlt[norm]
+				local s = sid and P2P.sessions and P2P.sessions[sid]
+				if s then
+					local tried, wanted = 0, nil
+					for _ in pairs(s.triedPeers or {}) do tried = tried + 1 end
+					-- The version the request names is the chosen peer's candidate canon (SendSyncRequest).
+					for _, c in ipairs(s.candidates or {}) do if c.peer == s.peer then wanted = c.canon end end
+					Out:Response("  session: [%s] peer=%s candidates=%d tried=%d wanted=%s",
+						tostring(s.state), tostring(s.peer), #(s.candidates or {}), tried, canonStr(wanted))
+				else
+					Out:Response("  session: none")
+				end
+				for _, e in ipairs(P2P.pendingDispatch or {}) do
+					if type(e) == "table" and e.altName == norm then
+						Out:Response("  waiting for a session slot of our own")
+					end
+				end
+			end
+		end,
+	},
 }
 
 -- Developer-only commands: hidden from /togbank help, only dispatched via /togbank dev <name>.
@@ -3160,7 +3211,6 @@ local DEV_COMMAND_NAMES = {
 	bandwidth              = true,
 	["clear-delta-errors"] = true,
 	clearhistory           = true,
-	clearsnapshots         = true,
 	debugdump              = true,
 	debuglogsave           = true,
 	deltaerrors            = true,
@@ -3175,13 +3225,18 @@ local DEV_COMMAND_NAMES = {
 	perfstats              = true,
 	persistcheck           = true,
 	protocol               = true,
-	purgeghosts            = true,
-	compare                = true,
+	-- INV2-RETIRE-003: `purgeghosts` and `compare` were removed from this list with their handlers.
 	reqscan                = true,
 	resetmetrics           = true,
 	rostercheck            = true,
 	sendqueue              = true,
+	-- DOUBLE-001: registered in COMMAND_REGISTRY without this line first, so `/togbank dev sources`
+	-- answered "Unknown dev subcommand" on the operator's client while the handler sat bound at
+	-- top level -- the CMD-002 class again, in the other direction. The registry and this list are
+	-- two spellings of one fact; chatcommand_spec pins that every `expert` registry entry is here.
+	sources                = true,
 	switches               = true,
+	trace                  = true,
 	versioncheck           = true,
 	-- CMD-002: `wipeall` was MISSING here while being documented as `/togbank dev wipeall`, so the
 	-- guild-wide destructive reset was reachable as top-level `/togbank wipeall` and the documented
@@ -3236,11 +3291,11 @@ local HELP_INSTRUCTIONS = {
 		text = [[
 1. Log in with the guild bank character, ensuring they are in the guild.
 2. Add |cffe6cc80gbank|r to their guild or officer note, then type |cffe6cc80/reload|r.
-3. In addon options (Escape -> Options -> Addons -> TOGBankClassic), click on the |cffe6cc80-|r icon (expand/collapse) to the left of the entry, enable reporting and scanning for the bank character in the |cffe6cc80Bank|r section.
-4. Open and close your bags and bank.
+3. In addon options (Escape -> Options -> Addons -> TOGBankClassic), click on the |cffe6cc80-|r icon (expand/collapse) to the left of the entry, and check |cffe6cc80Enable for <character>|r is ticked in the |cffe6cc80Bank|r section. It is on by default, so there is usually nothing to change.
+4. Open your bank and then CLOSE it - the scan runs on close.
 5. Type |cffe6cc80/togbank roster|r and confirm your bank character is listed with a four-digit number.
-6. Closing the bank shares it straight away (|cffe6cc80Sharing guild bank data...|r); it is shared again every 10 minutes, or type |cffe6cc80/togbank share|r to share it now.
-7. Verify with a guild member (they type |cffe6cc80/togbank|r).]],
+6. The guild picks the scan up on the next 10-minute check-in, or straight away if you type |cffe6cc80/togbank share|r.
+7. Verify with a guild member (they click the minimap button and look at the Bankers tab).]],
 	},
 	{
 		title = "Instructions for removing a guild bank:",
@@ -3248,7 +3303,7 @@ local HELP_INSTRUCTIONS = {
 1. Log in with an officer or another bank character in the same guild (or a character from a different guild).
 2. If the bank character is still in the guild, remove |cffe6cc80gbank|r from their notes.
 3. Type |cffe6cc80/togbank roster|r and confirm the bank character is no longer listed or the roster is empty.
-4. Verify with a guild member (they type |cffe6cc80/togbank|r).]],
+4. Verify with a guild member (they click the minimap button and look at the Bankers tab).]],
 	},
 }
 
@@ -3348,7 +3403,7 @@ function TOGBankClassic_Chat:ShowDevHelp()
 end
 
 function TOGBankClassic_Chat:ProcessQueue()
-	if IsInRaid() then
+	if TOGBankClassic_Constants.SyncPausedByRaid() then
 		return
 	end
 	if #self.sync_queue == 0 then
@@ -3366,7 +3421,7 @@ function TOGBankClassic_Chat:ProcessQueue()
 		self.last_alt_sync[name] = time
 		-- DELTA-014: Broadcast mode - no specific requester, use empty baseline (0,0)
 		-- This sends full delta to everyone
-		TOGBankClassic_Guild:SendAltData(name, 0, 0)
+		TOGBankClassic_Guild:SendAltData(name)
 	end
 	local duration = debugprofilestop() - startTime
 	TOGBankClassic_Output:Debug("EVENTS", "TIMER", "ProcessQueue took %.2fms (name=%s, queue=%d)", duration, tostring(name), #self.sync_queue)
@@ -3654,7 +3709,7 @@ function TOGBankClassic_Chat:PrintDeltaHistory()
 				end
 
 				TOGBankClassic_Output:Response(
-					"  %d. v%d→v%d (%d change(s), %s)",
+					"  %d. v%d->v%d (%d change(s), %s)",
 					i,
 					delta.baseVersion or 0,
 					delta.version or 0,
@@ -3751,11 +3806,13 @@ function TOGBankClassic_Chat:PrintProtocolInfo()
 	end
 
 	-- Display threshold status
-	local statusIcon = support >= threshold and "|cff00ff00✓|r" or "|cffff0000⚠|r"
+	-- GLYPH-001: ASCII only -- the client's fonts have no check mark, warning sign or >= glyph, and
+	-- each rendered as an empty box (operator screenshot, 2026-09-13).
+	local statusIcon = support >= threshold and "|cff00ff00[OK]|r" or "|cffff0000[LOW]|r"
 	local statusText = support >= threshold and "enabled" or "disabled"
 	TOGBankClassic_Output:Response("%s Delta sync %s (%.1f%% %s %.0f%% threshold)",
 		statusIcon, statusText, support * 100,
-		support >= threshold and "≥" or "<",
+		support >= threshold and ">=" or "<",
 		threshold * 100)
 
 	-- Display recent members

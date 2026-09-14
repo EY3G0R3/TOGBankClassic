@@ -153,7 +153,7 @@ describe("Output persistent log", function()
 		env.advance(1000)
 		Output:AddToPersistentLog("first")
 		assert.equal(1, #Output.persistentLog)
-		assert.equal(1000, Output.persistentLog[1].timestamp)
+		assert.equal(env.EPOCH + 1000, Output.persistentLog[1].timestamp)
 		assert.equal("first", Output.persistentLog[1].message)
 	end)
 

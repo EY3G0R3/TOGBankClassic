@@ -14,6 +14,7 @@ TOGBankClassic uses an **event-sourced, distributed synchronization system** for
 ## Core Data Structures
 
 ### 1. Request Snapshot (`self.Info.requests`)
+
 **Type:** Array of request objects
 **Persistence:** SavedVariables via AceDB
 **Purpose:** Current materialized state of all active requests
@@ -48,6 +49,7 @@ self.Info.alts["BankerName-Realm"] = {
 ```
 
 ### 2. Event Log (`self.Info.requestLog`)
+
 **Type:** Array of log entries
 **Persistence:** SavedVariables via AceDB
 **Purpose:** Append-only history of all request mutations
@@ -77,6 +79,7 @@ self.Info.requestLog = {
 ```
 
 ### 3. Applied Sequence Tracker (`self.Info.requestLogApplied`)
+
 **Type:** Map of actor → last applied sequence number
 **Persistence:** SavedVariables via AceDB
 **Purpose:** Track which log entries have been applied to the snapshot
@@ -99,6 +102,7 @@ end
 ```
 
 ### 4. Sequence Generator (`self.Info.requestLogSeq`)
+
 **Type:** Map of actor → next sequence to emit
 **Persistence:** SavedVariables via AceDB
 **Purpose:** Generate monotonically increasing sequence numbers per actor
@@ -111,6 +115,7 @@ self.Info.requestLogSeq = {
 ```
 
 ### 5. Tombstones (`self.Info.requestsTombstones`)
+
 **Type:** Map of requestId → deletion timestamp
 **Persistence:** SavedVariables via AceDB
 **Purpose:** Track deleted requests to prevent resurrection
@@ -122,6 +127,7 @@ self.Info.requestsTombstones = {
 ```
 
 ### 6. Runtime Indices (NOT Persisted)
+
 **Type:** Maps built on load
 **Persistence:** Rebuilt from `requestLog` on every load
 **Purpose:** Fast lookups during runtime
@@ -367,7 +373,7 @@ This prevents infinite retry loops for entries that will never succeed while sti
 
 ### Version Broadcast (togbank-v)
 
-**Frequency:** Every 3 minutes (automatic)
+**Frequency:** Every 10 minutes (`TIMER_INTERVALS.VERSION_BROADCAST = 600`; this said 3 minutes until 2026-09-10, DOC-004) and after every bank scan (automatic)
 **Priority:** BULK
 **Purpose:** Let other players know your current request state version
 
@@ -448,6 +454,7 @@ This prevents infinite retry loops for entries that will never succeed while sti
 ### Query Protocols (togbank-r)
 
 #### Query Snapshot
+
 ```lua
 -- Sent via QueryRequestsSnapshot()
 {
@@ -458,6 +465,7 @@ This prevents infinite retry loops for entries that will never succeed while sti
 Response: Snapshot (togbank-d type="requests")
 
 #### Query Log Entries
+
 ```lua
 -- Sent via QueryRequestLog()
 {

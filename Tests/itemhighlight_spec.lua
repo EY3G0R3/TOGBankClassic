@@ -316,3 +316,66 @@ describe("BANKSLOT-001: one spelling of the bank-bag range", function()
 			"in BankFrame.lua:245. Era and TBC ship from one source and need not agree.")
 	end)
 end)
+
+-- HIGHLIGHT-003 (audit finding 11): the checkbox's value was written to the raw AceDB root and read
+-- by nothing, so the setting looked persistent and did not survive a reload. It now lives in
+-- db.global and is applied once the roster can say the character is a banker.
+describe("HIGHLIGHT-003: the highlight preference survives a reload", function()
+	local ME = "Bankchar-Testrealm"
+
+	local function client(isBank)
+		env.reset(); load()
+		TOGBankClassic_Database = { db = { global = {} } }
+		TOGBankClassic_Guild = {
+			GetBanks = function() return isBank and { ME } or { "Someone-Testrealm" } end,
+			GetNormalizedPlayer = function() return ME end,
+			NormalizeName = function(_, n) return n end,
+		}
+		H.enabled = false
+		-- The bag-event registration and overlay refresh are the parts under other specs' care.
+		H.RefreshHighlighting = function() end
+		H.ClearAllOverlays = function() end
+		_G.NUM_CONTAINER_FRAMES = 0
+		return TOGBankClassic_Database.db.global
+	end
+
+	it("is off, and not preferred, before anyone ticks the box", function()
+		client(true)
+		assert.is_false(H:IsPreferred())
+		assert.is_false(H:ApplySavedPreference())
+		assert.is_false(H.enabled)
+	end)
+
+	it("stores a banker's tick in db.global and re-applies it after a reload", function()
+		local global = client(true)
+		H:SetEnabled(true)
+		assert.is_true(global.highlightEnabled, "the preference was not saved where it is read back from")
+		-- Reload: fresh module, same SavedVariables.
+		H.enabled = false
+		assert.is_true(H:ApplySavedPreference(), "the saved preference was not honoured after a reload")
+		assert.is_true(H.enabled)
+		-- Untick, reload: stays off.
+		H:SetEnabled(false)
+		assert.is_false(global.highlightEnabled)
+		H.enabled = false
+		assert.is_false(H:ApplySavedPreference())
+	end)
+
+	it("never turns on for a character the roster says is not a banker, whatever was saved", function()
+		local global = client(false)
+		global.highlightEnabled = true
+		assert.is_false(H:ApplySavedPreference())
+		assert.is_false(H.enabled, "highlighting came on for a non-banker")
+	end)
+
+	it("writes nowhere but db.global -- the raw AceDB root is not touched", function()
+		client(true)
+		-- A SavedVariable the env does not own: install it for this example and remove it after,
+		-- or store_spec's "separate from the legacy DB" example sees it in the shared Lua state.
+		_G.TOGBankClassicDB = {}
+		H:SetEnabled(true)
+		local settings = TOGBankClassicDB.settings
+		_G.TOGBankClassicDB = nil
+		assert.is_nil(settings, "the setting was written to the raw SavedVariables root again")
+	end)
+end)

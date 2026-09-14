@@ -1,13 +1,11 @@
--- PERF-012: deltaSnapshots stored in-memory only — no persistence needed.
--- Snapshots are delta computation baselines that are rebuilt from live data each session.
--- Persisting them to SavedVariables added ~18k lines / 0.5 MB and caused the load freeze.
-local deltaSnapshotsCache = {}
+-- INV2-RETIRE-002: the delta-snapshot cache (`SaveSnapshot` / `GetSnapshot` / `ValidateSnapshot` /
+-- `DeepCopy`) was deleted here. It was the baseline for the legacy alt-delta (`ComputeDelta`), which
+-- INV2 step 10 removed in v1.4.0 -- and since then Bank:Scan deep-copied every item row of the
+-- banker's record into it on every scan, for a reader that no longer existed. PERF-012's lesson
+-- stays on record because it is the operator's SV rule in numbers: persisting these snapshots once
+-- added ~18k lines / 0.5 MB to the SavedVariables and caused a load freeze.
 
 TOGBankClassic_Database = {}
-
--- NS-001: aliased as file-scope locals so a foreign global of the same name cannot be read
--- instead. See the header of Modules/Constants.lua.
-local PROTOCOL = TOGBankClassic_Constants.PROTOCOL
 
 function TOGBankClassic_Database:Init()
 	self.db = LibStub("AceDB-3.0"):New("TOGBankClassicDB", {
@@ -34,152 +32,210 @@ function TOGBankClassic_Database:Init()
 				-- agree, so a category added to one and not the others is invisible.
 				SYSTEM = false,
 				FULFILL = false,
+				DELTASYNC = false,
+				LOG = false,
 			},
 			debugTags = {},  -- per-category tag overrides: debugTags["P2P"]["OFFER"] = false
 			showUncategorizedDebug = true,  -- Show legacy debug messages by default
 		},
 	})
 
-	-- Schedule the linkless-gear-ghost purge after a short delay so the WoW item cache
-	-- has time to warm up. The purge identifies gear-class items (class 2/4) that lack
-	-- a Link field; these can only have been created by ApplyItemDelta accepting a
-	-- stripped delta (real bag scans always produce Links via C_Container). See
-	-- docs/DELTA_BUGS.md ITEM-004 and the ITEM-003 update-path analysis.
-	-- pcall-wrapped: a single malformed alt entry must not silently abort the migration
-	-- or break addon initialization.
-	if C_Timer and C_Timer.After then
-		C_Timer.After(30, function()
-			local ok, err = pcall(function()
-				TOGBankClassic_Database:PurgeLinklessGearGhosts()
-			end)
-			if not ok then
-				TOGBankClassic_Output:Error("Ghost purge migration failed: %s", tostring(err))
-			end
-		end)
+	-- INV2-RETIRE-003: the 30-second `PurgeLinklessGearGhosts` timer that ran here is gone with the
+	-- migration itself (ITEM-004: drop link-less gear rows that only a stripped legacy delta could
+	-- have produced). It walked the legacy item arrays, and those are now stripped: here for every
+	-- guild record this faction holds, and again in Load for the guild being loaded.
+	self:StripAllLegacyItemRows()
+end
+
+--- INV2-RETIRE-003: strip the legacy item rows from EVERY guild record in this faction's scope, not
+--- only the one Load is about to attach. `Load` runs per guild name, so a record for a guild the
+--- player has since left would otherwise keep its rows in the SavedVariables forever -- and the SV's
+--- size is the whole point of the strip. AceDB's faction scope is keyed by guild name, so this is
+--- one pass over what the file holds for this faction; the other faction's records are reached when
+--- a character of that faction logs in.
+--- @return number rows stripped across every guild
+function TOGBankClassic_Database:StripAllLegacyItemRows()
+	local faction = self.db and self.db.faction
+	if type(faction) ~= "table" then return 0 end
+	local stripped = 0
+	for _, guild in pairs(faction) do
+		stripped = stripped + self:StripLegacyItemRows(guild)
+	end
+	if stripped > 0 then
+		TOGBankClassic_Output:Debug("DATABASE", "MIGRATE",
+			"[INV2-RETIRE-003] stripped %d legacy item row(s) across every guild record; the V2 store holds the inventory",
+			stripped)
+	end
+	return stripped
+end
+
+--- INV2-COMPAT-001: `Info.alts[name].items` STAYS READABLE FOR OTHER ADDONS, answered from the store.
+---
+--- The operator, 2026-09-11, on being told the strip left TOGProfessionMaster's [Bank] button empty:
+--- "we can't break the bank integration, why did you break it?" TOGProfessionMaster (Compat.lua
+--- `addon.Bank.GetStock` / `GetBanksWithItem`) reads `TOGBankClassic_Guild.Info.alts[name].items`
+--- directly -- `pairs` over the alts, `ipairs` over `.items`, `entry.ID` / `entry.Count` -- and it
+--- is a shipped consumer of that shape. Deleting the rows without a replacement broke it; and on
+--- v1.4.x it was already reading STALE rows for every received banker, because the tuple receive
+--- never refreshed `alt.items`. So this is a fix as well as a shim.
+---
+--- HOW: every alt record carries a metatable whose `__index` answers `items` from
+--- `Guild:GetAltItems(name)` -- the store's resolved view, the same array every TOGBank window reads,
+--- so an external reader now sees LIVE data for every banker. The alts table carries a `__newindex`
+--- that wraps any record created later at a NEW key (`alts[name] = {}` in Bank:Scan, the roster
+--- stub, the hash-list stub, the tuple receive); a record replaced at an EXISTING key does not
+--- trigger it, and the one site that does that (`ResetPlayer`) wraps explicitly.
+---
+--- WHY IT DOES NOT UNDO THE STRIP: the client writes SavedVariables by walking a table's RAW
+--- contents, so a metatable-provided field is never serialized -- AceDB's own defaults rely on the
+--- same property. Nothing is added to the file. Internal readers use the accessors, not this; the
+--- strip reads through `rawget` so a wrapped record does not look like it still has rows.
+---@param name string the alt's normalized name
+---@return function __index handler
+local function compatIndex(name)
+	return function(_, key)
+		if key ~= "items" then return nil end
+		local G = TOGBankClassic_Guild
+		if not (G and G.GetAltItems) then return nil end
+		return G:GetAltItems(name)
 	end
 end
 
--- Walk every alt's items / bank.items / bags.items and drop entries where the item is
--- gear (class 2/4) AND has no Link. These cannot come from a local scan; they're
--- artifacts of pre-fix stripped deltas that landed in SavedVariables. Removing them
--- here recovers existing corruption without requiring users to /togbank wipe.
---
--- Safety: an entry whose class cannot be determined (Item:ItemClassNeedsLink returns
--- nil) is LEFT ALONE. We don't delete data we can't classify. Subsequent runs (after
--- TOGBankClassic_ItemDB is populated, or after the WoW cache warms further) will
--- catch them.
-function TOGBankClassic_Database:PurgeLinklessGearGhosts()
-	if not self.db or not self.db.faction then return end
-	if not TOGBankClassic_Item or not TOGBankClassic_Item.ItemClassNeedsLink then return end
+local COMPAT_MARK = "__togbankAltCompat"
 
-	local totalPurged = 0
-	local totalScanned = 0
+--- Is this record wrapped? Exposed so a spec can assert PRESENCE, not only that `items` answers.
+---@param alt table
+---@return boolean
+function TOGBankClassic_Database:HasAltCompat(alt)
+	local mt = type(alt) == "table" and getmetatable(alt)
+	return (mt and mt[COMPAT_MARK]) == true
+end
 
-	local function purgeArray(arr, label, altName)
-		if not arr then return 0 end
-		local removed = 0
-		for i = #arr, 1, -1 do
-			local item = arr[i]
-			totalScanned = totalScanned + 1
-			if item and item.ID and not item.Link
-			   and TOGBankClassic_Item:ItemClassNeedsLink(item.ID) == true then
-				table.remove(arr, i)
-				removed = removed + 1
-				-- DEBUG-001: the registered tag is MIGRATE, not MIGRATION. An unrecognised tag is
-				-- treated as the format string, so this printed "[GHOST-PURGE] Removed linkless
-				-- gear ID=%d from %s.%s" followed by the real arguments as data.
-				TOGBankClassic_Output:Debug("DATABASE", "MIGRATE",
-					"[GHOST-PURGE] Removed linkless gear ID=%d from %s.%s",
-					item.ID, altName, label)
+--- HAZARD, stated because it is silent (Peer Review, 2026-09-11): a record that ALREADY carries a
+--- metatable is left alone -- and no record does today, because Init registers AceDB defaults for
+--- `global` only. The day a `faction` default is added, AceDB attaches its own metatable to every
+--- record, this wraps nothing, and TPM's [Bank] button goes empty with the suite still green --
+--- unless a spec asserts the wrapper is PRESENT on a loaded record. `altcompat_spec` does, through
+--- `HasAltCompat`. If that day comes, the answer is to chain: keep AceDB's `__index` as the fallback
+--- inside ours.
+---@param name string
+---@param alt table
+function TOGBankClassic_Database:AttachAltCompat(name, alt)
+	if type(alt) ~= "table" or getmetatable(alt) ~= nil then return end
+	setmetatable(alt, { [COMPAT_MARK] = true, __index = compatIndex(name) })
+end
+
+--- Wrap every record in `alts` and arm the table so records added later are wrapped too.
+--- Idempotent: an alts table already armed is left alone, and a record with a metatable of its own
+--- is never re-wrapped.
+---@param alts table
+function TOGBankClassic_Database:AttachAltsCompat(alts)
+	if type(alts) ~= "table" then return end
+	local mt = getmetatable(alts)
+	if not (mt and mt[COMPAT_MARK]) then
+		setmetatable(alts, {
+			[COMPAT_MARK] = true,
+			__newindex = function(t, key, value)
+				TOGBankClassic_Database:AttachAltCompat(key, value)
+				rawset(t, key, value)
+			end,
+		})
+	end
+	for name, alt in pairs(alts) do
+		self:AttachAltCompat(name, alt)
+	end
+end
+
+--- INV2-RETIRE-003: STRIP THE LEGACY ITEM ROWS FROM EVERY ALT RECORD, on load, unconditionally.
+---
+--- `alt.items`, `alt.bank.items`, `alt.bags.items`, `alt.mail.items` -- the link-bearing rows the
+--- legacy scan and the legacy wire wrote -- are no longer written by anything (Bank:Scan writes the
+--- V2 store; the tuple receive writes the V2 store) and no longer read by anything (every reader is
+--- on `Guild:GetAltItems` / `GetAltItemTotal` / the store). Measured on the operator's own account
+--- on 2026-09-11 they were 56% of a 1.52 MB SavedVariables file -- ~35,900 of 64,123 lines -- and
+--- the SV's size is what the operator's rule is about: "the larger it is, the more impact it has on
+--- init performance. to the point that it can crash the game". Nothing in them is unique: every
+--- banker's rows are re-derivable from the V2 store or the next delivery/scan.
+---
+--- UNCONDITIONAL, not gated on `Store:IsAltComplete`. docs/DELTA_RELEASE.md section 4 first said to
+--- gate the strip so a schema-1 V2 record (scanned before INV2-MAIL-001, no mail bucket) could keep
+--- its legacy rows for the accessors' fallback. The fallback is deleted -- there is nothing for the
+--- rows to be kept FOR -- so the gate would only keep 56% of the file for a record that heals on
+--- the banker's next mailbox visit anyway.
+---
+--- The sub-tables themselves stay: `slots` feeds the status bar and `lastScan` the MULTIPC-001
+--- publish gate. Synchronous, in Load, before anything reads the record. Idempotent.
+--- @return number rows stripped (the legacy row count, for the one-time load message)
+function TOGBankClassic_Database:StripLegacyItemRows(db)
+	local alts = db and db.alts
+	if type(alts) ~= "table" then return 0 end
+	local stripped = 0
+	-- rawget, not `t.items`: a record that AttachAltCompat has already wrapped answers `items` from
+	-- the store through its metatable, and that answer is not a row to strip (nor to count).
+	local function take(t)
+		if type(t) ~= "table" then return end
+		local rows = rawget(t, "items")
+		if rows ~= nil then
+			if type(rows) == "table" then
+				for _ in pairs(rows) do stripped = stripped + 1 end
 			end
+			rawset(t, "items", nil)
 		end
-		return removed
 	end
+	for _, alt in pairs(alts) do
+		if type(alt) == "table" then
+			take(alt)
+			take(alt.bank)
+			take(alt.bags)
+			take(alt.mail)
+		end
+	end
+	return stripped
+end
 
-	for _, guildData in pairs(self.db.faction) do
-		if guildData and guildData.alts then
-			for altName, alt in pairs(guildData.alts) do
-				if type(alt) == "table" then
-					totalPurged = totalPurged + purgeArray(alt.items, "items", altName)
-					if alt.bank then
-						totalPurged = totalPurged + purgeArray(alt.bank.items, "bank.items", altName)
-					end
-					if alt.bags then
-						totalPurged = totalPurged + purgeArray(alt.bags.items, "bags.items", altName)
-					end
-					if alt.mail then
-						totalPurged = totalPurged + purgeArray(alt.mail.items, "mail.items", altName)
-					end
-				end
-			end
-		end
-		-- NS-001: this used to read `_ = guildName`, which writes a bare GLOBAL `_` on every
-		-- iteration purely to mark the value as deliberately unused. The loop variable already
-		-- carries that intent, so the write bought nothing and leaked a global.
-	end
+-- DB-003 (audit finding 18, round 20): THE ONE deltaMetrics constructor. The literal lived in FOUR
+-- places -- Reset, twice in Load, ResetDeltaMetrics -- and had diverged: three carried 16 keys and
+-- the fourth 20, so a guild record created by Reset lacked the four timing counters a /togbank
+-- reset one had, and every reader had to carry an `or 0` to survive it. One spelling; a spec
+-- asserts Reset and ResetDeltaMetrics produce equal key sets.
+local function newDeltaMetrics()
+	return {
+		bytesSentDelta = 0,
+		bytesSentFull = 0,
+		bytesSavedByDelta = 0,
+		deltasSentCount = 0,
+		p2pSentCount = 0,
+		noChangeSentCount = 0,
+		bytesReceived = 0,
+		deltasReceivedFromBanker = 0,
+		deltasReceivedFromPeer = 0,
+		p2pOffered = 0,
+		p2pRequestsBroadcast = 0,
+		p2pFulfilledByPeer = 0,
+		p2pBankerFallback = 0,
+		deltasApplied = 0,
+		deltasFailed = 0,
+		fullSyncFallbacks = 0,
+		totalComputeTime = 0,
+		computeCount = 0,
+		totalApplyTime = 0,
+		applyCount = 0,
+	}
+end
+TOGBankClassic_Database.NewDeltaMetrics = newDeltaMetrics
 
-	-- Count linkless-gear-suspect entries that we could NOT confidently classify
-	-- (Item:ItemClassNeedsLink returned nil — either uncached or no static DB yet).
-	-- These survive this pass and may be purged on a future run once the cache warms
-	-- or the static DB is populated.
-	local skippedSuspects = 0
-	local function countSkipped(arr)
-		if not arr then return end
-		for _, item in ipairs(arr) do
-			if item and item.ID and not item.Link
-			   and TOGBankClassic_Item:ItemClassNeedsLink(item.ID) == nil then
-				skippedSuspects = skippedSuspects + 1
-			end
-		end
-	end
-	for _, guildData in pairs(self.db.faction) do
-		if guildData and guildData.alts then
-			for _, alt in pairs(guildData.alts) do
-				if type(alt) == "table" then
-					countSkipped(alt.items)
-					if alt.bank then countSkipped(alt.bank.items) end
-					if alt.bags then countSkipped(alt.bags.items) end
-					if alt.mail then countSkipped(alt.mail.items) end
-				end
-			end
-		end
-	end
-
-	-- Always print a result so the user knows the migration actually ran.
-	-- Three states: purged some, found suspects but couldn't confirm, fully clean.
-	if totalPurged > 0 then
-		TOGBankClassic_Output:Info(
-			"Ghost purge: removed %d linkless gear ghost(s) from saved data (scanned %d entries). " ..
-			"This recovers corruption caused by pre-fix stripped deltas. Fresh syncs " ..
-			"from bankers will refill any missing data.",
-			totalPurged, totalScanned)
-		if skippedSuspects > 0 then
-			TOGBankClassic_Output:Info(
-				"Ghost purge: %d additional linkless entries skipped (item class unknown — " ..
-				"item not in shipped Modules/Static/ItemDB.lua AND not yet in WoW client cache). " ..
-				"Re-run /togbank dev purgeghosts after WoW has loaded the item to catch the rest.",
-				skippedSuspects)
-		end
-	elseif skippedSuspects > 0 then
-		TOGBankClassic_Output:Info(
-			"Ghost purge: scanned %d entries, found %d linkless entries that COULD be gear " ..
-			"ghosts but item class is unknown (not in shipped Modules/Static/ItemDB.lua and not " ..
-			"yet in WoW client cache). Open the inventory window so WoW loads the items, then " ..
-			"re-run /togbank dev purgeghosts.",
-			totalScanned, skippedSuspects)
-	else
-		TOGBankClassic_Output:Info("Ghost purge: scanned %d entries, no linkless gear ghosts found. Clean.",
-			totalScanned)
-	end
+local function newDeltaErrors()
+	return {
+		lastErrors = {},     -- Recent errors for debugging (max 10)
+		failureCounts = {},  -- Track failures per alt
+		notifiedAlts = {},   -- Track which alts we've notified about
+	}
 end
 
 function TOGBankClassic_Database:Reset(name)
 	if not name then
 		return
 	end
-
-	-- PERF-012: Clear in-memory snapshot cache for this guild on reset
-	deltaSnapshotsCache[name] = nil
 
 	self.db.faction[name] = {
 		name = name,
@@ -208,30 +264,13 @@ function TOGBankClassic_Database:Reset(name)
 		},
 		-- Delta sync fields
 		guildProtocolVersions = {},
-		deltaMetrics = {
-			bytesSentDelta = 0,
-			bytesSentFull = 0,
-			bytesSavedByDelta = 0,
-			deltasSentCount = 0,
-			p2pSentCount = 0,
-			noChangeSentCount = 0,
-			bytesReceived = 0,
-			deltasReceivedFromBanker = 0,
-			deltasReceivedFromPeer = 0,
-			p2pOffered = 0,
-			p2pRequestsBroadcast = 0,
-			p2pFulfilledByPeer = 0,
-			p2pBankerFallback = 0,
-			deltasApplied = 0,
-			deltasFailed = 0,
-			fullSyncFallbacks = 0,
-		},
+		-- STALE-REQ-002: the last ADDON version each guildmate was seen on ({ version, at } by
+		-- normalized name), for the Requests tab's mark on an offline requester. Session sources
+		-- (VersionCheck, the broadcast) empty on reload; this does not.
+		peerAddonVersions = {},
+		deltaMetrics = newDeltaMetrics(),
 		-- Delta error tracking (persisted across reloads)
-		deltaErrors = {
-			lastErrors = {},  -- Recent errors for debugging (max 10)
-			failureCounts = {},  -- Track failures per alt
-			notifiedAlts = {},  -- Track which alts we've notified about
-		},
+		deltaErrors = newDeltaErrors(),
 	}
 
 	TOGBankClassic_Output:Response("Reset Database (cleared deltaHistory and deltaSnapshots)")
@@ -254,7 +293,11 @@ function TOGBankClassic_Database:ResetPlayer(name, player)
 		return
 	end
 
-	guild.alts[player] = {}
+	-- Replaced at an EXISTING key, which `__newindex` does not see -- so wrapped by hand
+	-- (INV2-COMPAT-001).
+	local fresh = {}
+	self:AttachAltCompat(player, fresh)
+	guild.alts[player] = fresh
 
 	TOGBankClassic_Output:Response("Reset Player Database")
 end
@@ -298,6 +341,17 @@ function TOGBankClassic_Database:Load(name)
 		db.deltaSnapshots = nil
 	end
 
+	-- INV2-RETIRE-003: the legacy item rows go here, synchronously, before any reader runs.
+	local strippedRows = self:StripLegacyItemRows(db)
+	if strippedRows > 0 then
+		TOGBankClassic_Output:Debug("DATABASE", "MIGRATE",
+			"[INV2-RETIRE-003] stripped %d legacy item row(s) from %s; the V2 store holds the inventory",
+			strippedRows, name)
+	end
+	-- INV2-COMPAT-001: and `alt.items` keeps answering, from the store, for the addons that read it.
+	-- After the strip, so the wrapper never sits over rows that are about to go.
+	self:AttachAltsCompat(db.alts)
+
 	if not db.requestsVersion then
 		db.requestsVersion = 0
 	end
@@ -306,36 +360,25 @@ function TOGBankClassic_Database:Load(name)
 		db.requestsTombstones = {}
 	end
 
-	-- Initialize delta sync fields if missing
+	-- Initialize delta sync fields if missing. DB-003: this block used to appear TWICE in this
+	-- function (the second copy sat after the settings block and could never take effect); one copy
+	-- now, through the one constructor. A record whose metrics table predates the four timing
+	-- counters gets them backfilled here rather than relying on every reader's `or 0`.
 	if not db.guildProtocolVersions then
 		db.guildProtocolVersions = {}
 	end
+	if not db.peerAddonVersions then   -- STALE-REQ-002
+		db.peerAddonVersions = {}
+	end
 	if not db.deltaMetrics then
-		db.deltaMetrics = {
-			bytesSentDelta = 0,
-			bytesSentFull = 0,
-			bytesSavedByDelta = 0,
-			deltasSentCount = 0,
-			p2pSentCount = 0,
-			noChangeSentCount = 0,
-			bytesReceived = 0,
-			deltasReceivedFromBanker = 0,
-			deltasReceivedFromPeer = 0,
-			p2pOffered = 0,
-			p2pRequestsBroadcast = 0,
-			p2pFulfilledByPeer = 0,
-			p2pBankerFallback = 0,
-			deltasApplied = 0,
-			deltasFailed = 0,
-			fullSyncFallbacks = 0,
-		}
+		db.deltaMetrics = newDeltaMetrics()
+	else
+		for key, zero in pairs(newDeltaMetrics()) do
+			if db.deltaMetrics[key] == nil then db.deltaMetrics[key] = zero end
+		end
 	end
 	if not db.deltaErrors then
-		db.deltaErrors = {
-			lastErrors = {},
-			failureCounts = {},
-			notifiedAlts = {},
-		}
+		db.deltaErrors = newDeltaErrors()
 	end
 
 	-- Migrate old alt data structures from pre-v0.8 saves (no-ops for v0.9.6+ users)
@@ -376,17 +419,29 @@ function TOGBankClassic_Database:Load(name)
 					-- this call site passed. The call site is gone, so those are moot here rather
 					-- than resolved -- do not read this deletion as agreeing with either.
 
-					if alt.inventoryHash and not alt.inventoryUpdatedAt then
-						alt.inventoryUpdatedAt = alt.version or GetServerTime()
+					-- CANON-TIME-001: `alt.version`, NEVER our clock -- and this used to read
+					-- `alt.version or GetServerTime()`, which is the very thing the comment above
+					-- forbids, arrived at one field later. The deletion recorded above removed the
+					-- invented HASH and left an invented TIME, and a time is enough on its own:
+					-- `Guild:ReencodeHeldCanons` runs immediately after this load and builds a canon
+					-- as `<inventoryUpdatedAt><hash>` from any still-numeric v1.4.0 canon. So a record
+					-- for SOMEONE ELSE'S banker, carried from a pre-v1.4.0 file with no version of its
+					-- own, was re-encoded as a canon stamped with THIS CLIENT'S LOGIN TIME -- newer
+					-- than anything the real author ever published -- and then advertised, putting the
+					-- author's own tab behind a version that never existed.
+					--
+					-- Leaving it nil is the designed outcome, not a gap: CanonFrom with no publish
+					-- time returns nil, ReencodeHeldCanons CLEARS the canon ("a version nobody can
+					-- place in time"), the record advertises nothing and is re-requested from the
+					-- client that can author one.
+					if alt.inventoryHash and not alt.inventoryUpdatedAt and alt.version then
+						alt.inventoryUpdatedAt = alt.version
 						TOGBankClassic_Output:Debug("DATABASE", "MIGRATE", "Migrated alt data: backfilled inventoryUpdatedAt for %s (ts=%s)", altName, tostring(alt.inventoryUpdatedAt))
 					end
 				end
 			end
 		end
 	end)
-	if not db.requestsTombstones then
-		db.requestsTombstones = {}
-	end
 
 	if not db.settings then
 		db.settings = {}
@@ -423,146 +478,8 @@ function TOGBankClassic_Database:Load(name)
 		end
 	end
 
-	-- Initialize delta sync fields if not present
-	if not db.guildProtocolVersions then
-		db.guildProtocolVersions = {}
-	end
-	if not db.deltaMetrics then
-		db.deltaMetrics = {
-			bytesSentDelta = 0,
-			bytesSentFull = 0,
-			bytesSavedByDelta = 0,
-			deltasSentCount = 0,
-			p2pSentCount = 0,
-			noChangeSentCount = 0,
-			bytesReceived = 0,
-			deltasReceivedFromBanker = 0,
-			deltasReceivedFromPeer = 0,
-			p2pOffered = 0,
-			p2pRequestsBroadcast = 0,
-			p2pFulfilledByPeer = 0,
-			p2pBankerFallback = 0,
-			deltasApplied = 0,
-			deltasFailed = 0,
-			fullSyncFallbacks = 0,
-		}
-	end
-	if not db.deltaErrors then
-		db.deltaErrors = {
-			lastErrors = {},
-			failureCounts = {},
-			notifiedAlts = {},
-		}
-	end
-
 	return db
 end
-
--- Snapshot Management Functions
-
--- Save a snapshot of alt data for future delta computation
--- PERF-012: Uses in-memory cache only — not persisted to SavedVariables
-function TOGBankClassic_Database:SaveSnapshot(name, altName, altData)
-	if not name or not altName or not altData then
-		return false
-	end
-
-	if not deltaSnapshotsCache[name] then
-		deltaSnapshotsCache[name] = {}
-	end
-
-	-- Create a deep copy with timestamp
-	deltaSnapshotsCache[name][altName] = {
-		data = TOGBankClassic_Database:DeepCopy(altData),
-		timestamp = GetServerTime(),
-	}
-
-	return true
-end
-
--- Retrieve a snapshot of alt data for delta computation
--- PERF-012: Uses in-memory cache only — not persisted to SavedVariables
-function TOGBankClassic_Database:GetSnapshot(name, altName)
-	if not name or not altName then
-		return nil
-	end
-
-	local cache = deltaSnapshotsCache[name]
-	if not cache then
-		return nil
-	end
-
-	local snapshot = cache[altName]
-	if not snapshot then
-		return nil
-	end
-
-	-- Check if snapshot is still valid (not too old)
-	local age = GetServerTime() - (snapshot.timestamp or 0)
-	if age > PROTOCOL.DELTA_SNAPSHOT_MAX_AGE then
-		-- Snapshot expired, remove it
-		cache[altName] = nil
-		return nil
-	end
-
-	-- Validate snapshot structure
-	if not self:ValidateSnapshot(snapshot.data) then
-		-- Corrupted snapshot, remove it
-		cache[altName] = nil
-		return nil
-	end
-
-	return snapshot.data
-end
-
--- Validate snapshot structure
-function TOGBankClassic_Database:ValidateSnapshot(snapshot)
-	if not snapshot or type(snapshot) ~= "table" then
-		return false
-	end
-
-	-- Check required fields
-	if not snapshot.version or type(snapshot.version) ~= "number" then
-		return false
-	end
-
-	-- Validate bank structure if present
-	if snapshot.bank then
-		if type(snapshot.bank) ~= "table" then
-			return false
-		end
-		if snapshot.bank.items and type(snapshot.bank.items) ~= "table" then
-			return false
-		end
-	end
-
-	-- Validate bags structure if present
-	if snapshot.bags then
-		if type(snapshot.bags) ~= "table" then
-			return false
-		end
-		if snapshot.bags.items and type(snapshot.bags.items) ~= "table" then
-			return false
-		end
-	end
-
-	return true
-end
-
--- Deep copy function for snapshot creation
-function TOGBankClassic_Database:DeepCopy(obj)
-	if type(obj) ~= "table" then
-		return obj
-	end
-
-	local copy = {}
-	for k, v in pairs(obj) do
-		copy[k] = self:DeepCopy(v)
-	end
-
-	return copy
-end
-
 
 -- Protocol Version Tracking
 
@@ -789,28 +706,7 @@ function TOGBankClassic_Database:ResetDeltaMetrics(name)
 		return false
 	end
 
-	db.deltaMetrics = {
-		bytesSentDelta = 0,
-		bytesSentFull = 0,
-		bytesSavedByDelta = 0,
-		deltasSentCount = 0,
-		p2pSentCount = 0,
-		noChangeSentCount = 0,
-		bytesReceived = 0,
-		deltasReceivedFromBanker = 0,
-		deltasReceivedFromPeer = 0,
-		p2pOffered = 0,
-		p2pRequestsBroadcast = 0,
-		p2pFulfilledByPeer = 0,
-		p2pBankerFallback = 0,
-		deltasApplied = 0,
-		deltasFailed = 0,
-		fullSyncFallbacks = 0,
-		totalComputeTime = 0,
-		computeCount = 0,
-		totalApplyTime = 0,
-		applyCount = 0,
-	}
+	db.deltaMetrics = newDeltaMetrics()
 
 	return true
 end

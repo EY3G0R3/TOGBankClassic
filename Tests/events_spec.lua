@@ -121,6 +121,23 @@ describe("Events:CHAT_MSG_SYSTEM", function()
 		assert.same({ "Bob" }, offline)
 	end)
 
+	-- OUTPUT-002, reported from a live guild 2026-08-24 with three of these lines in a row in a
+	-- player's chat: "[WHISPER-SPAM-FIX] Player Lasting is not online ... also ensure they are behind
+	-- a debug flag". A bounced whisper is a debug event, not something every player reads about.
+	it("says NOTHING user-visible about a bounced whisper -- debug channel only (OUTPUT-002)", function()
+		fire(handlers, "CHAT_MSG_SYSTEM", "No player named Lasting is currently playing.")
+		assert.same({ "Lasting" }, offline, "precondition: the bounce was not handled at all")
+		local visible, debug = 0, 0
+		for _, call in ipairs(TOGBankClassic_Output.calls) do
+			if call.level == "Debug" then debug = debug + 1
+			elseif call.level == "Info" or call.level == "Warn" or call.level == "Error" or call.level == "Response" then
+				visible = visible + 1
+			end
+		end
+		assert.equal(0, visible, "a bounced whisper printed to the player's chat")
+		assert.truthy(debug > 0, "the bounce left no trace in the debug log either")
+	end)
+
 	-- Guards the exact defect EVENT-001 was: if the leading parameter is ever dropped again,
 	-- `message` becomes the event name and this fails loudly instead of silently doing nothing.
 	it("reads the message, not the event name, as its payload", function()
@@ -196,5 +213,61 @@ describe("Events registration symmetry", function()
 		assert.same({}, leftOver,
 			"these events are registered but never unregistered, so they keep firing after " ..
 			"OnDisable (audit EVENT-002)")
+	end)
+end)
+
+-- BROWSE-005. The operator, 2026-09-12, on the standalone Requests window popping at the mailbox
+-- after the body had been made a tab of the Guild Bank window: "when filling orders, it should
+-- just pop up the full new UI and go to the requests tab".
+describe("Send Mail tab (BROWSE-005): a banker's mailbox opens the Guild Bank window on Requests", function()
+	local onClick, browseOpens, draws, standaloneOpens
+
+	before_each(function()
+		env.reset()
+		env.stubOutput()
+		captureHandlers()
+		env.loadFile("Modules/Constants.lua")
+		env.loadFile("Modules/Events.lua")
+		TOGBankClassic_Bank  = { eventsRegistered = false }
+		TOGBankClassic_Guild = { GetNormalizedPlayer = function() return "Bankchar-Testrealm" end,
+		                         IsBank = function() return true end }
+		TOGBankClassic_UI    = { OnInsertLink = function() end }
+		browseOpens, draws, standaloneOpens = {}, 0, 0
+		TOGBankClassic_UI_Requests = {
+			isOpen = false, embedded = false,
+			DrawContent = function() draws = draws + 1 end,
+			Open = function() standaloneOpens = standaloneOpens + 1 end,
+		}
+		TOGBankClassic_UI_Browse = { Open = function(_, tab) browseOpens[#browseOpens + 1] = tab end }
+		_G.ChatFrame_AddMessageEventFilter = function() end
+		_G.MailFrame = nil
+		_G.MailFrameTab2 = { HookScript = function(_, _, fn) onClick = fn end }
+		TOGBankClassic_Events:RegisterEvents()
+		assert.is_function(onClick, "the Send Mail tab was not hooked")
+	end)
+
+	it("opens the Guild Bank window on its Requests tab, never the standalone window", function()
+		onClick()
+		env.advance(0.2)
+		assert.same({ "requests" }, browseOpens, "the mailbox did not open the Guild Bank window on Requests")
+		assert.equal(0, standaloneOpens, "the standalone Requests window was opened at the mailbox (BROWSE-005)")
+		-- Browse:Open -> ShowTab -> Requests:Embed draws the body itself; no second draw here.
+		assert.equal(0, draws)
+	end)
+
+	it("redraws a body already showing on that tab (the fulfil icons change with the mailbox open)", function()
+		TOGBankClassic_UI_Requests.isOpen, TOGBankClassic_UI_Requests.embedded = true, true
+		onClick()
+		env.advance(0.2)
+		assert.same({ "requests" }, browseOpens)
+		assert.equal(1, draws, "Browse:Open keeps an already-showing body (Peer Review F4), so nothing redrew the icons")
+	end)
+
+	it("does nothing for a non-banker", function()
+		TOGBankClassic_Guild.IsBank = function() return false end
+		onClick()
+		env.advance(0.2)
+		assert.same({}, browseOpens)
+		assert.equal(0, standaloneOpens)
 	end)
 end)

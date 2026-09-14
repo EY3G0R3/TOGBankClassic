@@ -9,6 +9,7 @@ local env = require("env_togbank")
 
 local function loadP2P()
 	env.stubOutput()
+	env.loadFile("Modules/Constants.lua")   -- the send cap is Constants' (one spelling)
 	env.loadFile("Modules/P2PSession.lua")
 	return TOGBankClassic_P2PSession
 end
@@ -28,7 +29,6 @@ local function stubGuild(opts)
 			return alt ~= nil and alt.hasContent == true
 		end,
 		HasMissingContent   = function() return opts.missingContent == true end,
-		SendStateSummary    = function() end,
 		-- The real rule is Guild's and is specified against the real Guild (hashcache_spec,
 		-- "Guild:AdvertisedImproves"). The mechanics here only need "we hold nothing -> useful".
 		AdvertisedImproves  = function(self, norm)
@@ -41,6 +41,16 @@ local function stubGuild(opts)
 		SerializeWithChecksum = function(_, t) return "ser:" .. tostring(t and t.type) end,
 		SendWhisper = function(_, prefix, data, target)
 			env.sent[#env.sent + 1] = { prefix = prefix, data = data, target = target }
+			return true
+		end,
+	}
+	-- THE DELTA RELEASE step 3b: on accept the session asks for the data through Inventory/Sync
+	-- (the host's QUERY channel). The mechanics under test here are the handshake's; the request
+	-- itself is specified in chainwire_spec against the real host. Recorded so an example can see
+	-- that the accept DID hand off.
+	TOGBankClassic_Inventory_Sync = {
+		RequestFrom = function(_, peer, norm)
+			env.sent[#env.sent + 1] = { prefix = "host-query", data = norm, target = peer }
 			return true
 		end,
 	}
@@ -241,6 +251,7 @@ describe("P2P-032: offers are filtered and ordered by canon", function()
 		end
 		TOGBankClassic_Guild.Info = { name = "Testguild", alts = {},
 			roster = { alts = {}, numbers = numbers, numbersNext = i + 1, numbersVersion = 1 } }
+		env.freshV2()
 		TOGBankClassic_Guild.IsBank = function() return true end
 		TOGBankClassic_Guild.HasMissingContent = function() return false end
 		TOGBankClassic_Core = {
@@ -259,11 +270,12 @@ describe("P2P-032: offers are filtered and ordered by canon", function()
 		P2P.pendingDispatch, P2P.catchUpTimer, P2P.catchUpCycles = {}, nil, 0
 	end)
 
+	-- INV2-RETIRE-003: content in the V2 store, version metadata on the record.
 	local function hold(alt, canon)
 		TOGBankClassic_Guild.Info.alts[alt] = {
-			name = alt, items = { { ID = 1, Count = 1 } }, inventoryHash = 1,
-			inventoryHashV2 = canon, inventoryUpdatedAt = T,
+			name = alt, inventoryHash = 1, inventoryHashV2 = canon, inventoryUpdatedAt = T,
 		}
+		env.holdV2("Testguild", alt)
 	end
 
 	it("takes any offer for a bank we hold nothing for", function()
@@ -445,6 +457,75 @@ describe("P2P-032: offers are filtered and ordered by canon", function()
 			assert.equal(1, requestsTo("Late-Testrealm"))
 		end)
 
+		-- TABCOLOUR-003. The operator: "if someone replies that they have a newer data set than us, we
+		-- need to make that bankers tab go red until we can get it." A bare offer names no version, so
+		-- it cannot raise newestAdvertisedAt -- it needs its own flag, and its own two clearing events.
+		describe("TABCOLOUR-003: the offer itself sets the red", function()
+			local function state(alt) return TOGBankClassic_Guild:GetAltStaleness(alt) end
+
+			it("turns a current tab red on a bare offer, naming who offered", function()
+				hold("Zed-Testrealm", C(T, 1))
+				assert.equal("current", (state("Zed-Testrealm")), "precondition")
+				P2P:BeginCollectWindow({})
+				bareOffer("Relay-Testrealm", "Zed-Testrealm")
+				local s, _, _, who = state("Zed-Testrealm")
+				assert.equal("offered", s, "a peer said it holds newer and the tab stayed yellow")
+				assert.equal("Relay-Testrealm", who)
+			end)
+
+			it("moves to 'behind' when the version reply names a newer canon, and the cache learns it", function()
+				hold("Zed-Testrealm", C(T, 1))
+				P2P:BeginCollectWindow({})
+				bareOffer("Relay-Testrealm", "Zed-Testrealm")
+				P2P:Dispatch()
+				reply("Relay-Testrealm", "Zed-Testrealm", C(T + 60, 2))
+				local s, heldAt, newestAt = state("Zed-Testrealm")
+				assert.equal("behind", s, "the reply named a newer version and the tab did not learn its time")
+				assert.equal(T, heldAt)
+				assert.equal(T + 60, newestAt)
+				local cached = TOGBankClassic_Guild.latestBankerHashes and TOGBankClassic_Guild.latestBankerHashes["Zed-Testrealm"]
+				assert.equal(C(T + 60, 2), cached and cached.hashV2, "hashdump's `known` did not learn the replied canon")
+			end)
+
+			it("goes back to yellow when the offerer turns out to hold nothing newer", function()
+				hold("Zed-Testrealm", C(T + 100, 1))
+				P2P:BeginCollectWindow({})
+				bareOffer("Relay-Testrealm", "Zed-Testrealm")
+				assert.equal("offered", (state("Zed-Testrealm")), "precondition")
+				P2P:Dispatch()
+				reply("Relay-Testrealm", "Zed-Testrealm", C(T, 1))   -- older than ours
+				assert.equal("current", (state("Zed-Testrealm")), "a false alarm left the tab red for good")
+			end)
+
+			it("goes back to yellow when the offerer answers 'nothing servable' and the window closes", function()
+				hold("Zed-Testrealm", C(T, 1))
+				P2P:BeginCollectWindow({})
+				bareOffer("Relay-Testrealm", "Zed-Testrealm")
+				P2P:Dispatch()
+				reply("Relay-Testrealm", "Zed-Testrealm", nil)
+				env.advance(6)
+				assert.equal("current", (state("Zed-Testrealm")))
+			end)
+
+			it("stays red while the offerer never answers -- 'until we can get it'", function()
+				hold("Zed-Testrealm", C(T, 1))
+				P2P:BeginCollectWindow({})
+				bareOffer("Silent-Testrealm", "Zed-Testrealm")
+				P2P:Dispatch()
+				env.advance(6)
+				assert.equal("offered", (state("Zed-Testrealm")),
+					"an unanswered offer cleared itself; the operator wants red until the data lands")
+			end)
+
+			it("never marks our OWN character as offered", function()
+				local me = TOGBankClassic_Guild:GetNormalizedPlayer()
+				hold(me, C(T, 1))
+				P2P:BeginCollectWindow({})
+				bareOffer("Relay-Testrealm", me)
+				assert.equal("current", (state(me)))
+			end)
+		end)
+
 		it("answers a query with the versions it can SERVE, and answers even when that is nothing", function()
 			TOGBankClassic_Guild.ServableCanon = function(_, name)
 				return name == "Alpha-Testrealm" and C(T, 9) or nil
@@ -459,16 +540,43 @@ describe("P2P-032: offers are filtered and ordered by canon", function()
 			assert.equal(1, #env.sent, "an empty answer must still be sent, or the asker waits the whole window")
 		end)
 
-		it("refuses a request for a version it no longer holds, so the requester moves on", function()
+		-- P2P-037. Read off the banker account: Togstone rescanned six seconds after the requester
+		-- learned its version; an exact-match gate answered "busy (version)" five times from an idle
+		-- holder with the BETTER copy. We serve what was asked for or anything newer; we refuse only
+		-- when ours is older than asked (a relay behind the author), so the requester moves on.
+		it("serves a request for the version it holds OR an older one, and refuses only when its own copy is older", function()
 			hold("Alpha-Testrealm", C(T + 5, 1))
 			TOGBankClassic_Guild.CanServe = function() return true end
 			TOGBankClassic_Guild.ServableCanon = function() return C(T + 5, 1) end
 			env.sent = {}
-			assert.is_false(P2P:HandleSyncRequest("sid1", "Requester", "Alpha-Testrealm", C(T, 1)))
-			assert.truthy(env.sent[1].data:find("sync%-busy"))
+			assert.is_true(P2P:HandleSyncRequest("sid1", "Requester", "Alpha-Testrealm", C(T, 1)),
+				"refused a requester asking for an OLDER version than we hold -- the Togstone loop (P2P-037)")
+			assert.truthy(env.sent[1].data:find("sync%-accept"))
+			P2P:ReleaseSendSlot("Requester", "test")
 			env.sent = {}
 			assert.is_true(P2P:HandleSyncRequest("sid2", "Requester", "Alpha-Testrealm", C(T + 5, 1)))
 			assert.truthy(env.sent[1].data:find("sync%-accept"))
+			P2P:ReleaseSendSlot("Requester", "test")
+			env.sent = {}
+			assert.is_false(P2P:HandleSyncRequest("sid3", "Requester", "Alpha-Testrealm", C(T + 10, 1)),
+				"served a version OLDER than the one asked for")
+			assert.truthy(env.sent[1].data:find("sync%-busy"))
+		end)
+
+		it("folds a canon-bearing offer for an alt with a LIVE session into that session's candidates", function()
+			P2P:BeginCollectWindow({})
+			P2P:OnOffer("Relay-Testrealm", { ["Zed-Testrealm"] = { hashV2 = C(T, 1) } })
+			P2P:Dispatch()
+			local sid = P2P.sessionsByAlt["Zed-Testrealm"]
+			assert.truthy(sid, "precondition: no session was opened")
+			-- The author rescans and broadcasts while the session is in flight.
+			P2P:OnOffer("Zed-Testrealm", { ["Zed-Testrealm"] = { hashV2 = C(T + 60, 2) } })
+			local s = P2P.sessions[sid]
+			local author
+			for _, c in ipairs(s.candidates) do if c.peer == "Zed-Testrealm" then author = c end end
+			assert.truthy(author, "the author's newer offer was thrown away because a session was live (P2P-037)")
+			assert.equal(C(T + 60, 2), author.canon)
+			assert.equal(T + 60, TOGBankClassic_Guild.newestAdvertisedAt["Zed-Testrealm"], "the tab did not learn the newer time")
 		end)
 	end)
 end)

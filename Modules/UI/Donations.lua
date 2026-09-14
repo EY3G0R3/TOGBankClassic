@@ -64,7 +64,7 @@ function TOGBankClassic_UI_Donations:DrawWindow()
 	local donations = TOGBankClassic_UI:Create("Frame")
 	donations:Hide()
 	donations:SetCallback("OnClose", OnClose)
-	donations:SetTitle("Donations")
+	donations:SetTitle(TOGBankClassic_UI:WindowTitle("Donations"))
 	donations:SetLayout("Flow")
 	donations:SetWidth(350)
 	donations:EnableResize(false)
@@ -77,6 +77,7 @@ function TOGBankClassic_UI_Donations:DrawWindow()
 
 	self.Window = donations
 	TOGBankClassic_UI:ApplyWindowAlpha("donations", donations)
+	self.StatusBar = TOGBankClassic_UI_StatusBar:AttachSides(donations)   -- SYNCED-001
 
 	local content = TOGBankClassic_UI:Create("SimpleGroup")
 	content:SetLayout("Table")

@@ -29,6 +29,7 @@ To promote a command back to user-facing, just remove its name from `DEV_COMMAND
 - **`/togbank dev hashdebug`** — print hash-list coverage and which alts are missing from `latestBankerHashes`. Used to diagnose why a banker's data isn't propagating.
 - **`/togbank dev hashdump`** — dump the raw `latestBankerHashes` table used for sync comparison, with `OK`/`MISMATCH` per alt against the local data. Heavy output for large guilds — best run on a dummy character or with output captured.
 - **`/togbank dev sendqueue`** -- this client's P2P state in one place: send slots in use (and which requesters we have accepted but are still waiting on a state summary from), the send queue with each waiter's position and age, and our own fetch sessions with their state, chosen peer and candidate count. Added with P2P-029 so a queued request can be seen rather than inferred.
+- **`/togbank dev trace <banker>`** -- `sendqueue`'s sibling for ONE banker: walks it through every P2P gate in the order the code asks them and prints each answer with its inputs. Serving side (would a sync-request for it be accepted?): on the roster and its number, record held with legacy-row and V2-tuple counts, `CanServe`, `ServableCanon` with the held canon and publish time, the send slot count, and any open state-wait -- stopping with `STOP:` at the first gate that says no. Fetching side: the tab state, the newest advertised canon with the `AdvertisedImproves` verdict and reason, `IsAltSyncPending`, and the live session (state, peer, candidates, tried, the version the request names). Every line calls the production predicate itself, never a copy. Added for the P2P-035 follow-up so "why is this tab red / why does nobody serve it" is one command rather than a debug-log read. Traced on YOUR OWN character it adds the MULTIPC-001 publish gate: whether a peer has named a newer version of you, whether this session's login cycle has answered, when this PC last read the vault / bags / mail (and whether this session), the `CanPublish` verdict with its reason, and whether a scan is waiting to publish -- the thing to run when your own tab is red on a shared-account PC.
 - **`/togbank dev persistcheck`** — report request persistence counters: `requests` count, `requestLog` length, `requestLogApplied` actors, `requestLogSeq` actors, and whether `Guild.Info` is the same Lua reference as the SavedVariables faction table. Created during SYNC-001 investigation.
 - **`/togbank dev perfstats`** — print `Performance:PrintReport()`. Per-function CPU time tracked by `Performance:Track`. Useful for hot-path profiling.
 
@@ -39,7 +40,7 @@ To promote a command back to user-facing, just remove its name from `DEV_COMMAND
 - **`/togbank dev deltaerrors`** — recent delta sync errors and per-alt failure counts. First place to look when sync is misbehaving.
 - **`/togbank dev clear-delta-errors`** — clear all recorded delta sync errors (`db.deltaErrors.lastErrors`, `failureCounts`, `notifiedAlts`).
 - **`/togbank dev clearhistory`** — clear the stored delta chain (`db.deltaHistory`). Forces future syncs to compute new deltas from snapshots rather than replay history.
-- **`/togbank dev clearsnapshots`** — clear delta computation snapshots (`db.deltaSnapshots`). Forces the next outbound sync to be a full snapshot rather than a delta.
+- ~~`/togbank dev clearsnapshots`~~ — removed in v1.5.0 (INV2-RETIRE-002). It cleared an SV key that has been nil since PERF-012, and the snapshot cache it was meant to reach went with the legacy alt-delta.
 - **`/togbank dev resetmetrics`** — zero out `db.deltaMetrics`. Useful before a benchmarking run.
 - **`/togbank dev forcedelta on|off`** — flip `FEATURES.FORCE_DELTA_SYNC`. Bypasses size-ratio thresholds, always uses delta. Off by default.
 - **`/togbank dev forcefull on|off`** — flip `FEATURES.FORCE_FULL_SYNC`. Disables delta entirely, always sends full snapshot. Off by default.
@@ -88,38 +89,30 @@ See [INVENTORY_V2.md](INVENTORY_V2.md) for the design these two operate on.
   `TOGBankClassic_Switches.registry` with its live state, description, and whether the value is
   the default or was explicitly set. With arguments, set one.
 
-  The state shown is the **live** answer, not the stored value: `dualWrite` reads OFF while
-  `inventoryV2` is off, whatever its own stored value says, because that is what the code
-  actually does. Showing the stored value would claim the legacy DB is being kept current when
-  V2 is not even running.
+  The state shown is the **live** answer, not the stored value: a dependent switch reads OFF while
+  its parent is off, whatever its own stored value says, because that is what the code actually
+  does. Showing the stored value would claim an effect the switch is not having.
 
-  Switches are per-account (`db.global.switches`) and survive a reload. A half-migrated account —
-  V2 on for one character, off for another — would write both storage formats from one machine,
-  which is why they are not per-character.
+  Switches are per-account (`db.global.switches`) and survive a reload, so a half-migrated account
+  cannot behave differently per character from one machine.
 
-- **`/togbank dev compare`** — diff the V2 tuple store against the legacy inventory, on live data.
-  Run it on a banker with `inventoryV2` on, after opening the bank **and closing it** -- the scan
-  fires on `BANKFRAME_CLOSED`, not on open, and bags alone trigger nothing (DOC-005). Leaving the
-  bank open scans nothing and this command then reports an empty V2 store.
+  **Retired (INV2-RETIRE-003, v1.5.0):** `inventoryV2` and `dualWrite`. The V2 store is the only
+  storage format -- the legacy item rows are neither written by the scan nor kept in the
+  SavedVariables (they are stripped on load) -- so there is nothing for either switch to choose
+  between. A stale value for them in an older `db.global.switches` is ignored, and setting them
+  now reports `Unknown switch`. What remains: `sendV2Wire` (the wire diagnostic) and
+  `legacyKeyedReceive` (the N6 grace-period switch).
 
-  Comparison is on **per-item-ID totals**, not rows. Random-suffix variants split into separate V2
-  rows that a legacy link key may have merged, so comparing row counts would flag every
-  suffixed item in the game as a divergence. Per-ID totals are the only thing the two encodings
-  actually promise to agree on.
-
-  It reports one of: `No divergence` (every total agrees), a list of mismatches in the form
-  `<alt> item <id>: legacy=<n> v2=<n>` (capped at 15), or a reason it could not compare —
-  `inventoryV2 is OFF`, an empty V2 store, or no character present in both. It never reports
-  agreement it did not check; a green result from a diagnostic that compared nothing is exactly
-  what a switch-to-default-on would be wrongly justified by.
-
-  Both stores are written inside a single `Bank:Scan` call, so a divergence here is a real
-  encoding bug, not a stack that moved between passes.
+- **`/togbank dev compare` -- retired (INV2-RETIRE-003, v1.5.0).** It diffed the V2 tuple store
+  against the legacy item rows on live data, per item ID, and existed for the dual-write period:
+  two encodings of one container walk, compared, so a divergence was an encoding bug rather than a
+  moved stack. The legacy rows are gone, so there is nothing left to compare the store against. The
+  DOC-005 rule it carried still applies to every store-reading command below: the scan fires on
+  `BANKFRAME_CLOSED`, not on open, and bags alone trigger nothing.
 
 - **`/togbank dev bandwidth`** -- measure the V2 tuple wire against the legacy link wire, on the
   records this client actually holds. Prints per-character sizes and a total with the reduction
-  percentage. Needs a populated V2 store, so the same rule as `dev compare` applies: open the bank
-  and **close** it first.
+  percentage. Needs a populated V2 store: open the bank and **close** it first (DOC-005).
 
   **This exists because the obvious method does not work.** `INV2-DOC-001` requires the bandwidth
   figures on the CurseForge page to come from a real guild rather than a synthetic payload, and the
@@ -147,7 +140,10 @@ See [INVENTORY_V2.md](INVENTORY_V2.md) for the design these two operate on.
 
 ### Data integrity migrations
 
-- **`/togbank dev purgeghosts`** — manually re-run the linkless-gear-ghost purge that normally fires 30 seconds after login. Useful when the shipped static `TOGBankClassic_ItemDB` has been regenerated (via `tools/build-itemdb.py`) and you want to re-classify items the previous run skipped. Prints a result line every time (purged count + skipped-suspect count).
+- **`/togbank dev purgeghosts` -- retired (INV2-RETIRE-003, v1.5.0).** It re-ran the
+  linkless-gear-ghost purge (ITEM-004) that fired 30 seconds after login and walked the legacy item
+  rows for gear with no link. Those rows are now stripped on load, so the migration and its command
+  went together.
 
 ### Testing
 
@@ -164,7 +160,7 @@ See [INVENTORY_V2.md](INVENTORY_V2.md) for the design these two operate on.
 
   Do **not** re-add an in-game test command to stand in for it. The one thing an in-game harness can
   do that the offline suite cannot is exercise real client APIs against real data, and that is what
-  the diagnostic commands above are for: `dev compare`, `dev hashdebug` and `dev rostercheck` each
+  the diagnostic commands above are for: `dev trace`, `dev hashdebug` and `dev rostercheck` each
   answer a specific question about live state rather than re-running assertions.
 
 ### Logging

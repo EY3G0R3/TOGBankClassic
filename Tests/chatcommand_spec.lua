@@ -27,50 +27,82 @@ local function loadChat()
 	return TOGBankClassic_Chat
 end
 
+-- INV2-RETIRE-003: the live string that exposed CMD-001 was `dev switches inventoryV2 on`; that
+-- switch is retired, so these drive `legacyKeyedReceive` -- OFF by default, which is what makes
+-- "on" an observable change -- and the dependency example registers its own parent/child pair,
+-- since no shipped switch carries `requires` any more.
 describe("CMD-001: /togbank argument plumbing", function()
 	before_each(function() env.reset(); loadChat() end)
 
-	-- The exact string that exposed this, from a live client.
+	-- The same shape as the exact string that exposed this from a live client.
 	it("delivers both arguments of a dev subcommand", function()
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 on")
-		assert.is_true(TOGBankClassic_Switches:IsEnabled("inventoryV2"),
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"), "precondition: defaults off")
+		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive on")
+		assert.is_true(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"),
 			"the switch did not change, so the arguments never reached the handler -- ChatCommand " ..
 			"tokenized them away and the command fell through to its no-argument branch, which " ..
 			"prints the list and looks exactly like success (CMD-001)")
 	end)
 
 	it("turns a switch back off through the same path", function()
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 on")
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 off")
-		assert.is_false(TOGBankClassic_Switches:IsEnabled("inventoryV2"))
+		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive on")
+		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive off")
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"))
 	end)
 
-	-- Ordering matters to the operator: dualWrite reports OFF while its parent is off, so a spec
-	-- that only set dualWrite would assert nothing.
+	-- Ordering matters to the operator: a dependent switch reports OFF while its parent is off, so
+	-- a spec that only set the child would assert nothing.
 	it("sets a dependent switch once its parent is on", function()
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 on")
-		TOGBankClassic_Chat:ChatCommand("dev switches dualWrite on")
-		assert.is_true(TOGBankClassic_Switches:IsEnabled("dualWrite"))
+		TOGBankClassic_Switches.registry.specParent = { default = false, description = "spec", retire = "spec" }
+		TOGBankClassic_Switches.registry.specChild  = { default = false, requires = "specParent", description = "spec", retire = "spec" }
+		TOGBankClassic_Chat:ChatCommand("dev switches specChild on")
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("specChild"), "precondition: inert while the parent is off")
+		TOGBankClassic_Chat:ChatCommand("dev switches specParent on")
+		assert.is_true(TOGBankClassic_Switches:IsEnabled("specChild"))
+		TOGBankClassic_Switches.registry.specParent, TOGBankClassic_Switches.registry.specChild = nil, nil
+	end)
+
+	-- DOUBLE-001 / CMD-002 class: a registry entry meant for `/togbank dev` is routed there ONLY by
+	-- DEV_COMMAND_NAMES. `sources` was registered without that line and the operator's client answered
+	-- "Unknown dev subcommand: sources" -- so this drives the typed string and asserts the handler ran.
+	it("routes /togbank dev sources to its handler, with its arguments", function()
+		-- ONE Lua state for the whole suite: the Store global is put back, or every later spec that
+		-- loads the real store finds this stub instead.
+		local realStore = TOGBankClassic_Inventory_Store
+		TOGBankClassic_Inventory_Store = { GuildTable = function() return { alts = {} } end }
+		TOGBankClassic_Guild = { Info = { name = "Testguild", alts = {} },
+			NormalizeName = function(_, n) return n .. "-Testrealm" end }
+		TOGBankClassic_Chat:ChatCommand("dev sources Bankchar archaic")
+		TOGBankClassic_Inventory_Store = realStore
+		-- stubOutput records the format string and its arguments separately.
+		local lines = {}
+		for _, c in ipairs(TOGBankClassic_Output.calls) do
+			local ok, s = pcall(string.format, tostring(c[1]), select(2, unpack(c, 1, c.n)))
+			lines[#lines + 1] = ok and s or tostring(c[1])
+		end
+		local text = table.concat(lines, "\n")
+		assert.is_nil(text:find("Unknown dev subcommand", 1, true), "`dev sources` is not routed to the dev dispatcher")
+		assert.truthy(text:find("Bankchar-Testrealm: no V2 record held", 1, true), "the handler did not run with its banker argument: " .. text)
 	end)
 
 	it("leaves a bare dev subcommand working, with no arguments", function()
-		-- A KNOWN state is established first and the assertion is that it is UNCHANGED. This used
-		-- `is_false` as a stand-in for "unchanged", which only worked while inventoryV2 defaulted
-		-- off -- so INV2 step 9 flipping the default turned a listing command into an apparent
-		-- mutation. Asserting the actual property is what makes it independent of the default.
-		TOGBankClassic_Switches:Set("inventoryV2", false)
-		assert.is_false(TOGBankClassic_Switches:IsEnabled("inventoryV2"), "precondition")
+		-- A KNOWN state is established first and the assertion is that it is UNCHANGED. An earlier
+		-- form used `is_false` as a stand-in for "unchanged", which only worked while the switch
+		-- defaulted off -- flipping a default turned a listing command into an apparent mutation.
+		-- Asserting the actual property is what makes it independent of the default.
+		TOGBankClassic_Switches:Set("sendV2Wire", false)
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("sendV2Wire"), "precondition")
 
 		assert.has_no_error(function()
 			TOGBankClassic_Chat:ChatCommand("dev switches")
 		end)
-		assert.is_false(TOGBankClassic_Switches:IsEnabled("inventoryV2"),
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("sendV2Wire"),
 			"a bare `dev switches` changed a switch; it must only list them")
 
 		-- And in the other direction, so "unchanged" cannot be satisfied by always reporting off.
-		TOGBankClassic_Switches:Set("inventoryV2", true)
+		TOGBankClassic_Switches:Set("sendV2Wire", true)
 		TOGBankClassic_Chat:ChatCommand("dev switches")
-		assert.is_true(TOGBankClassic_Switches:IsEnabled("inventoryV2"),
+		assert.is_true(TOGBankClassic_Switches:IsEnabled("sendV2Wire"),
 			"a bare `dev switches` turned a switch off; it must only list them")
 	end)
 
@@ -80,10 +112,10 @@ describe("CMD-001: /togbank argument plumbing", function()
 		local seen = {}
 		local original = TOGBankClassic_Chat.ChatCommand
 		assert.is_not_nil(original)
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 on")
-		-- inventoryV2 must be the switch name, not "inventoryV2 on".
-		assert.is_not_nil(TOGBankClassic_Switches.registry["inventoryV2"])
-		assert.is_nil(TOGBankClassic_Switches.registry["inventoryV2 on"],
+		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive on")
+		-- legacyKeyedReceive must be the switch name, not "legacyKeyedReceive on".
+		assert.is_not_nil(TOGBankClassic_Switches.registry["legacyKeyedReceive"])
+		assert.is_nil(TOGBankClassic_Switches.registry["legacyKeyedReceive on"],
 			"the name and its value were concatenated, so the remainder replaced the token " ..
 			"instead of being passed alongside it")
 		seen[#seen + 1] = true

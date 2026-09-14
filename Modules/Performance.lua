@@ -193,6 +193,12 @@ function Performance:GetCurrentStats()
 	if not self.currentSession then return nil end
 
 	local sessionDuration = GetTime() - self.sessionStartTime
+	-- PERF-023 (audit finding 20): in the frame the session started, duration is 0 and every rate
+	-- below divided by it -- `inf` per minute in the report. Rates over no elapsed time are 0.
+	local minutes = sessionDuration > 0 and (sessionDuration / 60) or nil
+	local function perMinute(count)
+		return minutes and (count / minutes) or 0
+	end
 	local stats = {
 		sessionId = self.currentSession.sessionId,
 		duration = sessionDuration,
@@ -207,7 +213,7 @@ function Performance:GetCurrentStats()
 	for event, count in pairs(self.currentSession.events) do
 		stats.events[event] = {
 			count = count,
-			perMinute = (count / sessionDuration) * 60,
+			perMinute = perMinute(count),
 		}
 	end
 
@@ -216,7 +222,7 @@ function Performance:GetCurrentStats()
 		local totalTime = self.currentSession.timing[operation] or 0
 		stats.operations[operation] = {
 			count = count,
-			perMinute = (count / sessionDuration) * 60,
+			perMinute = perMinute(count),
 			avgMs = count > 0 and (totalTime / count) or 0,
 			totalMs = totalTime,
 		}
@@ -259,7 +265,7 @@ function Performance:PrintReport()
 	if #stats.memory > 0 then
 		local firstMem = stats.memory[1].memoryKB
 		local lastMem = stats.memory[#stats.memory].memoryKB
-		TOGBankClassic_Output:Response("|cffffff00Memory:|r %.1f KB → %.1f KB (%.1f KB growth)",
+		TOGBankClassic_Output:Response("|cffffff00Memory:|r %.1f KB -> %.1f KB (%.1f KB growth)",
 			firstMem, lastMem, lastMem - firstMem)
 	end
 end

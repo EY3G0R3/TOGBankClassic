@@ -42,14 +42,15 @@ local function loadModules()
 	Record = TOGBankClassic_Inventory_Record
 end
 
---- Put a record for `name` into the legacy alt table with a known publish time and real contents,
---- which is what the ordering guard defends. `updatedAt = nil` holds nothing at all.
+--- Put a record for `name` into the alt table with a known publish time, and real contents in the
+--- V2 store (INV2-RETIRE-003: that is what "holding content" means), which is what the ordering
+--- guard defends. `updatedAt = nil` holds nothing at all.
 local function holding(name, updatedAt)
 	TOGBankClassic_Guild.Info = { name = "Testguild", alts = {} }
+	env.freshV2()
 	if updatedAt then
-		TOGBankClassic_Guild.Info.alts[name] = {
-			name = name, inventoryUpdatedAt = updatedAt, items = { { ID = 858, Count = 5 } },
-		}
+		TOGBankClassic_Guild.Info.alts[name] = { name = name, inventoryUpdatedAt = updatedAt }
+		env.holdV2("Testguild", name, { { 858, 5 } })
 	end
 end
 
@@ -139,7 +140,9 @@ end)
 describe("HASH-CANON-001 rule 7: a stale payload must not overwrite a newer record", function()
 	local ALT = "Toggems-Azuresong"
 
-	before_each(function() env.reset(); loadModules() end)
+	-- freshV2 in before_each: the store outlives env.reset (it is addon state, not WoW state), so
+	-- an example that stages a content-less stub must not inherit the previous example's records.
+	before_each(function() env.reset(); loadModules(); env.freshV2() end)
 
 	it("REFUSES a payload authored before the record we hold", function()
 		holding(ALT, 1757000000)
@@ -174,10 +177,14 @@ describe("HASH-CANON-001 rule 7: a stale payload must not overwrite a newer reco
 			"an author between builds publishes no time; refusing it would freeze the alt")
 	end)
 
-	local ITEMS = { { ID = 858, Count = 5 } }
+	-- INV2-RETIRE-003: "with content" is the V2 store, seeded beside each record below.
+	local function withContent(alt)
+		TOGBankClassic_Guild.Info = { name = "Testguild", alts = { [ALT] = alt } }
+		env.holdV2("Testguild", ALT, { { 858, 5 } })
+	end
 
 	it("falls back to version when inventoryUpdatedAt is absent", function()
-		TOGBankClassic_Guild.Info = { name = "Testguild", alts = { [ALT] = { name = ALT, version = 1757000000, items = ITEMS } } }
+		withContent({ name = ALT, version = 1757000000 })
 		assert.is_false(TOGBankClassic_Chat:ShouldApplyTuplePayload(ALT, 1756000000),
 			"older records carry only `version`; ignoring it would leave them unprotected")
 	end)
@@ -187,7 +194,7 @@ describe("HASH-CANON-001 rule 7: a stale payload must not overwrite a newer reco
 	-- nothing; the operator's peers relay days-old copies all the time and those are better than air.
 	it("accepts an older payload when all we hold is a content-less stub", function()
 		TOGBankClassic_Guild.Info = { name = "Testguild", alts = { [ALT] = {
-			name = ALT, inventoryHashV2 = env.canon(1758000000, 1), inventoryUpdatedAt = 1758000000, items = {} } } }
+			name = ALT, inventoryHashV2 = env.canon(1758000000, 1), inventoryUpdatedAt = 1758000000 } } }
 		assert.is_true(TOGBankClassic_Chat:ShouldApplyTuplePayload(ALT, 1757000000, env.canon(1757000000, 2)),
 			"an empty stub was defended against real contents")
 	end)
@@ -197,21 +204,18 @@ describe("HASH-CANON-001 rule 7: a stale payload must not overwrite a newer reco
 	-- the other. The sidecar is only consulted when there is no canon to read.
 	describe("reads the time off the canon, not the sidecar", function()
 		it("refuses a payload whose canon is older even though its sidecar claims newer", function()
-			TOGBankClassic_Guild.Info = { name = "Testguild", alts = { [ALT] = {
-				name = ALT, inventoryHashV2 = env.canon(1757000000, 1), inventoryUpdatedAt = 1757000000, items = ITEMS } } }
+			withContent({ name = ALT, inventoryHashV2 = env.canon(1757000000, 1), inventoryUpdatedAt = 1757000000 })
 			assert.is_false(TOGBankClassic_Chat:ShouldApplyTuplePayload(ALT, 1758000000, env.canon(1756000000, 2)),
 				"the sidecar's newer time overrode the canon's older one")
 		end)
 
 		it("accepts a payload whose canon is newer even though its sidecar claims older", function()
-			TOGBankClassic_Guild.Info = { name = "Testguild", alts = { [ALT] = {
-				name = ALT, inventoryHashV2 = env.canon(1757000000, 1), inventoryUpdatedAt = 1757000000, items = ITEMS } } }
+			withContent({ name = ALT, inventoryHashV2 = env.canon(1757000000, 1), inventoryUpdatedAt = 1757000000 })
 			assert.is_true(TOGBankClassic_Chat:ShouldApplyTuplePayload(ALT, 1756000000, env.canon(1758000000, 2)))
 		end)
 
 		it("reads the HELD side off its canon too, over a sidecar that disagrees", function()
-			TOGBankClassic_Guild.Info = { name = "Testguild", alts = { [ALT] = {
-				name = ALT, inventoryHashV2 = env.canon(1758000000, 1), inventoryUpdatedAt = 1750000000, items = ITEMS } } }
+			withContent({ name = ALT, inventoryHashV2 = env.canon(1758000000, 1), inventoryUpdatedAt = 1750000000 })
 			assert.is_false(TOGBankClassic_Chat:ShouldApplyTuplePayload(ALT, 1757000000, env.canon(1757000000, 2)),
 				"the held record's stale sidecar let an older payload through")
 		end)

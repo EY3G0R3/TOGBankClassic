@@ -1,19 +1,30 @@
--- INV2 step 7a — Guild:GetAltItems, the single place the inventoryV2 switch decides where the
--- UI's item rows come from.
+-- INV2 step 7a — Guild:GetAltItems and Guild:GetAltItemTotal, the single place the UI's item rows
+-- and per-item totals come from.
 --
 -- WHY ONE ACCESSOR RATHER THAN A CONDITIONAL PER CALLER:
 --
 -- Six sites across three UI files open-coded "use alt.items if it has anything, else aggregate
--- bank + bags + mail". Six copies is six places to repeat the switch and six places to drift --
--- and they HAD drifted: Search's copy aggregated bank + bags and omitted MAIL, while Inventory's
--- included it, so an item in a banker's mailbox was visible in the inventory tab and invisible to
--- search, from the same data. INVENTORY_V2.md 7.1 specifies the V2 store exposes a view in the
--- same shape the UI already consumes, which is what makes one accessor possible.
+-- bank + bags + mail". Six copies is six places to drift -- and they HAD drifted: Search's copy
+-- aggregated bank + bags and omitted MAIL, while Inventory's included it, so an item in a banker's
+-- mailbox was visible in the inventory tab and invisible to search, from the same data.
+-- INVENTORY_V2.md 7.1 specifies the V2 store exposes a view in the same shape the UI already
+-- consumes, which is what makes one accessor possible.
 --
--- The fallback in the middle is the part worth reading: with inventoryV2 on but an alt absent
--- from the V2 store, this returns the LEGACY rows rather than nothing. During dualWrite only the
--- local character is written to V2 -- everyone else's data still arrives over the legacy wire --
--- so returning empty would blank most of the guild's inventory the moment the switch flipped.
+-- INV2-RETIRE-003 (2026-09-11): THE ACCESSORS READ THE V2 STORE AND NOTHING ELSE. This file used to
+-- pin an `inventoryV2` switch (off = legacy rows, on = store) and two legacy fallbacks behind the
+-- store -- "alt absent from V2" (the dual-write window) and INV2-STALE-001 (a schema-1 record, bags +
+-- bank and no mail, lost to a legacy record that had all three). The legacy rows are no longer
+-- written by the scan and are stripped on load, so every one of those branches is deleted.
+-- writ-cannot: the examples "returns the aggregate rows", "rebuilds from bank, bags AND mail when
+-- there is no aggregate", "falls back to the legacy record for an alt the V2 store has never seen",
+-- "agrees on the legacy aggregate branch", "agrees on the pre-SYNC-006 three-source branch",
+-- "agrees when an unstamped V2 record sends it to the legacy fallback", "prefers the complete
+-- legacy record over the short V2 one", "stops preferring legacy as soon as that character
+-- rescans" and "still prefers a STAMPED V2 record that holds less than the legacy one" drove the
+-- deleted legacy branches with `G.Info.alts[name] = { items = ... }`; the feature they covered --
+-- reading legacy rows -- was removed on purpose (docs/DELTA_RELEASE.md section 4). What is pinned
+-- now is the property that survives: the record on `Info.alts` -- whatever it carries -- is NEVER
+-- consulted for rows, and the two accessors agree on every input.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
@@ -36,19 +47,41 @@ local function load()
 	return TOGBankClassic_Guild
 end
 
---- A legacy alt record in the post-SYNC-006 aggregate shape.
+--- A legacy-shaped record on Info.alts: rows that a pre-retirement SavedVariables file could still
+--- carry until Database:Load strips them. The accessors must read NONE of it.
 local function legacyAlt(items)
-	return { items = items }
+	return { items = items, bank = { items = items }, bags = { items = items }, mail = { items = items } }
 end
 
-describe("Guild:GetAltItems with inventoryV2 OFF", function()
+describe("Guild:GetAltItems", function()
 	local G
 	before_each(function() env.reset(); G = load() end)
 
-	it("returns the aggregate rows", function()
-		G.Info.alts["Bob"] = legacyAlt({ { ID = 1, Count = 2 }, { ID = 5, Count = 1 } })
+	it("reads the V2 store", function()
+		env.defineItem(101, { name = "Tuple Item" })
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 7 } })
 		local items = G:GetAltItems("Bob")
-		assert.equal(2, #items)
+		assert.equal(1, #items)
+		assert.equal(101, items[1].ID)
+		assert.equal(7, items[1].Count)
+	end)
+
+	it("never reads rows off the Info.alts record, whatever it carries", function()
+		env.defineItem(101, { name = "Tuple Item" })
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 7 } })
+		G.Info.alts["Bob"] = legacyAlt({ { ID = 999, Count = 1 } })
+		local items = G:GetAltItems("Bob")
+		assert.equal(1, #items)
+		assert.equal(101, items[1].ID, "the legacy record was returned instead of the store")
+	end)
+
+	-- INV2-RETIRE-003: the dual-write fallback is gone. An alt the store has never seen is EMPTY,
+	-- not "whatever the legacy record holds" -- the legacy record holds nothing after the strip.
+	it("returns an empty table for an alt the store has never seen, even if the record carries legacy rows", function()
+		G.Info.alts["Carol"] = legacyAlt({ { ID = 42, Count = 3 } })
+		assert.same({}, G:GetAltItems("Carol"),
+			"an alt absent from the V2 store answered from the legacy record -- that fallback " ..
+			"was deleted with the rows it read (INV2-RETIRE-003)")
 	end)
 
 	-- Always an array, never nil: every caller iterates the result directly.
@@ -61,69 +94,53 @@ describe("Guild:GetAltItems with inventoryV2 OFF", function()
 		assert.same({}, G:GetAltItems("Bob"))
 	end)
 
-	-- Pre-SYNC-006 records have no aggregate. This is the branch that used to be copied per file.
-	it("rebuilds from bank, bags AND mail when there is no aggregate", function()
-		G.Info.alts["Old"] = {
-			bank = { items = { { ID = 1, Count = 1 } } },
-			bags = { items = { { ID = 2, Count = 1 } } },
-			mail = { items = { { ID = 3, Count = 1 } } },
-		}
-		local seen = {}
-		for _, row in ipairs(G:GetAltItems("Old")) do seen[row.ID] = true end
-		assert.is_true(seen[1], "bank items missing")
-		assert.is_true(seen[2], "bag items missing")
-		assert.is_true(seen[3],
-			"mail items missing -- Search's old copy of this branch omitted mail, so an item in " ..
-			"a banker's mailbox was searchable in one view and not the other")
-	end)
-end)
-
-describe("Guild:GetAltItems with inventoryV2 ON", function()
-	local G
-	before_each(function()
-		env.reset()
-		G = load()
-		TOGBankClassic_Switches:Set("inventoryV2", true)
+	it("returns an empty table when the guild has no name to key the store by", function()
+		G.Info = { alts = {} }
+		assert.same({}, G:GetAltItems("Bob"))
 	end)
 
-	it("reads the V2 store rather than the legacy record", function()
+	-- INV2-STALE-001 is retired WITH the legacy fallback it chose. A schema-1 record (scanned before
+	-- INV2-MAIL-001: bags + bank, no mail) used to lose to the legacy record that had all three
+	-- sources; with no legacy record the choice is a short total or an empty one, and short wins --
+	-- it heals on that banker's next mailbox visit, an empty tab does not.
+	it("answers from a schema-1 (pre-INV2-MAIL-001) record rather than returning nothing", function()
 		env.defineItem(101, { name = "Tuple Item" })
-		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 7 } })
-		G.Info.alts["Bob"] = legacyAlt({ { ID = 999, Count = 1 } })
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 68 } })
+		TOGBankClassic_Inventory_Store.db.faction[GUILD].alts["Bob"].schema = nil
+		TOGBankClassic_Inventory_Store:InvalidateView(GUILD, "Bob")
+		assert.is_false(TOGBankClassic_Inventory_Store:IsAltComplete(GUILD, "Bob"), "precondition")
+		G.Info.alts["Bob"] = legacyAlt({ { ID = 101, Count = 71 } })
 
 		local items = G:GetAltItems("Bob")
 		assert.equal(1, #items)
-		assert.equal(101, items[1].ID,
-			"the legacy record was returned while inventoryV2 was on, so the switch does nothing")
-		assert.equal(7, items[1].Count)
+		assert.equal(68, items[1].Count,
+			"expected the short V2 record (68), got the legacy one (71) or nothing -- the " ..
+			"IsAltComplete gate and the legacy fallback were both retired (INV2-RETIRE-003)")
 	end)
 
-	-- The dualWrite-window guarantee. Without it, flipping the switch blanks the guild.
-	it("falls back to the legacy record for an alt the V2 store has never seen", function()
-		G.Info.alts["Carol"] = legacyAlt({ { ID = 42, Count = 3 } })
-		local items = G:GetAltItems("Carol")
-		assert.equal(1, #items)
-		assert.equal(42, items[1].ID,
-			"an alt absent from V2 returned nothing. During dualWrite only this character is in " ..
-			"the V2 store, so every OTHER guild member's inventory would vanish on switch-on")
-	end)
-
-	it("returns an empty table when neither store has the alt", function()
-		assert.same({}, G:GetAltItems("Nobody"))
+	-- A rescan writes through SetAltRecords, which stamps the current schema and replaces the rows.
+	-- Still worth pinning without the gate: the short record heals by the ordinary write, with no
+	-- migration pass and nothing to remember to run.
+	it("shows the full total as soon as that character rescans", function()
+		env.defineItem(101, { name = "Tuple Item" })
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 68 } })
+		TOGBankClassic_Inventory_Store.db.faction[GUILD].alts["Bob"].schema = nil
+		TOGBankClassic_Inventory_Store:InvalidateView(GUILD, "Bob")
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 71 } })
+		assert.is_true(TOGBankClassic_Inventory_Store:IsAltComplete(GUILD, "Bob"))
+		assert.equal(71, G:GetAltItems("Bob")[1].Count)
 	end)
 end)
 
 -- SELF-AUDIT FINDING 3. `Guild:GetAltItemTotal` exists because `TooltipBankerInfo` runs on
--- GameTooltip's OnTooltipSetItem and only ever wants ONE item's total, while GetAltItems' legacy
--- branch builds a fresh array of EVERY item per call -- an allocation per banker per hover, in the
--- file whose own header says it keeps a reusable table to avoid exactly that. INV2-STALE-001 then
--- routes MORE reads through that branch by design.
+-- GameTooltip's OnTooltipSetItem and only ever wants ONE item's total, while GetAltItems
+-- materialises the whole resolved view.
 --
--- THE PROPERTY THAT MATTERS IS EQUIVALENCE, on every branch. A faster accessor that disagrees with
--- the slow one is the two-sources-for-one-number divergence INV2 step 7a existed to remove, so
--- these assert the two agree rather than asserting the number directly -- a fixture that drifted
--- would otherwise be checked against itself.
-describe("Guild:GetAltItemTotal agrees with GetAltItems on every branch", function()
+-- THE PROPERTY THAT MATTERS IS EQUIVALENCE. A faster accessor that disagrees with the slow one is
+-- the two-sources-for-one-number divergence INV2 step 7a existed to remove, so these assert the two
+-- agree rather than asserting the number directly -- a fixture that drifted would otherwise be
+-- checked against itself.
+describe("Guild:GetAltItemTotal agrees with GetAltItems on every input", function()
 	local G
 
 	--- Sum what GetAltItems reports for one item, which is what the tooltip used to do inline.
@@ -141,85 +158,87 @@ describe("Guild:GetAltItemTotal agrees with GetAltItems on every branch", functi
 				"sources for one number is the divergence 7a removed", altName, itemID))
 	end
 
-	before_each(function() env.reset(); G = load() end)
+	before_each(function()
+		env.reset()
+		G = load()
+		env.defineItem(101, { name = "Tuple Item" })
+		env.defineItem(102, { name = "Other Item" })
+	end)
 
-	it("agrees on the legacy aggregate branch", function()
-		G.Info.alts["Bob"] = legacyAlt({ { ID = 1, Count = 2 }, { ID = 5, Count = 1 },
-			{ ID = 1, Count = 3 } })
-		bothAgree("Bob", 1)
-		assert.equal(5, G:GetAltItemTotal("Bob", 1), "duplicate rows for one item must sum")
-		bothAgree("Bob", 5)
+	it("agrees on a stored alt, and sums duplicate rows for one item", function()
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 2 }, { 102, 1 }, { 101, 3 } })
+		bothAgree("Bob", 101)
+		assert.equal(5, G:GetAltItemTotal("Bob", 101), "duplicate rows for one item must sum")
+		bothAgree("Bob", 102)
 		bothAgree("Bob", 999)
 	end)
 
-	it("agrees on the pre-SYNC-006 three-source branch", function()
-		G.Info.alts["Old"] = {
-			bank = { items = { { ID = 1, Count = 1 } } },
-			bags = { items = { { ID = 1, Count = 4 } } },
-			mail = { items = { { ID = 3, Count = 2 } } },
-		}
-		bothAgree("Old", 1)
-		assert.equal(5, G:GetAltItemTotal("Old", 1),
-			"the three sources must be summed, exactly as the aggregate branch does")
-		bothAgree("Old", 3)
+	it("agrees across the per-source buckets a local scan writes", function()
+		TOGBankClassic_Inventory_Store:SetAltSources(GUILD, "Bob", {
+			bank = { { 101, 1 } }, bags = { { 101, 4 } }, mail = { { 102, 2 } },
+		}, 0)
+		bothAgree("Bob", 101)
+		assert.equal(5, G:GetAltItemTotal("Bob", 101), "the three sources must be summed")
+		bothAgree("Bob", 102)
 	end)
 
-	it("agrees on the V2 branch", function()
-		TOGBankClassic_Switches:Set("inventoryV2", true)
-		env.defineItem(101, { name = "Tuple Item" })
+	it("never reads the Info.alts record", function()
 		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 7 } })
-		G.Info.alts["Bob"] = legacyAlt({ { ID = 999, Count = 1 } })
+		G.Info.alts["Bob"] = legacyAlt({ { ID = 999, Count = 1 }, { ID = 101, Count = 500 } })
 		bothAgree("Bob", 101)
 		assert.equal(7, G:GetAltItemTotal("Bob", 101))
 		bothAgree("Bob", 999)
 		assert.equal(0, G:GetAltItemTotal("Bob", 999),
-			"the legacy record was read while the V2 store was authoritative")
+			"the legacy record was read while the V2 store is the only source")
 	end)
 
-	it("agrees when an unstamped V2 record sends it to the legacy fallback", function()
-		TOGBankClassic_Switches:Set("inventoryV2", true)
-		env.defineItem(101, { name = "Tuple Item" })
+	it("agrees on a schema-1 record, answering short rather than empty", function()
 		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 68 } })
 		TOGBankClassic_Inventory_Store.db.faction[GUILD].alts["Bob"].schema = nil
 		TOGBankClassic_Inventory_Store:InvalidateView(GUILD, "Bob")
 		G.Info.alts["Bob"] = legacyAlt({ { ID = 101, Count = 71 } })
 		bothAgree("Bob", 101)
-		assert.equal(71, G:GetAltItemTotal("Bob", 101),
-			"the short unstamped V2 record was preferred, so the two accessors would disagree " ..
-			"exactly where INV2-STALE-001 says the number is wrong")
+		assert.equal(68, G:GetAltItemTotal("Bob", 101))
 	end)
 
-	it("returns zero for an unknown alt or a nil item", function()
-		assert.equal(0, G:GetAltItemTotal("Nobody", 1))
+	it("returns zero for an unknown alt, a nil item, or no guild", function()
+		assert.equal(0, G:GetAltItemTotal("Nobody", 101))
 		assert.equal(0, G:GetAltItemTotal("Bob", nil))
+		G.Info = nil
+		assert.equal(0, G:GetAltItemTotal("Bob", 101))
 	end)
 
 	-- The whole point: it must not reach the list-materialising accessor. Stubbing GetAltItems to
 	-- raise is the only way to assert that from outside -- counting allocations is not available,
 	-- and asserting the number alone would pass just as happily if it delegated.
 	it("does not route through GetAltItems", function()
-		G.Info.alts["Bob"] = legacyAlt({ { ID = 1, Count = 2 } })
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 2 } })
 		local real = G.GetAltItems
 		G.GetAltItems = function() error("GetAltItemTotal delegated to GetAltItems", 2) end
-		local ok, err = pcall(function() return G:GetAltItemTotal("Bob", 1) end)
+		local ok, err = pcall(function() return G:GetAltItemTotal("Bob", 101) end)
 		G.GetAltItems = real
 		assert.is_true(ok, "GetAltItemTotal still materialises the full item list: " .. tostring(err))
 	end)
+
+	-- Nor through the resolved view: a total is a walk over the record cache, which the write itself
+	-- populates, where the view is resolved (names, links, icons) on first read -- work a hover
+	-- should not be paying for.
+	it("does not materialise the resolved view", function()
+		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 2 } })
+		local before = TOGBankClassic_Inventory_Store:CachedViewCount()
+		assert.equal(2, G:GetAltItemTotal("Bob", 101))
+		assert.equal(before, TOGBankClassic_Inventory_Store:CachedViewCount(),
+			"GetAltItemTotal resolved a view to read one count out of it")
+	end)
 end)
 
--- INV2-STALE-001. The gate above used to be `#view > 0`, which cannot distinguish "V2 is complete"
--- from "V2 has some rows" -- so a record written before INV2-MAIL-001 (bags + bank, no mail) was
--- preferred over a legacy record that had all three, and the operator saw 68 where their own saved
--- data said 71. It could not self-heal: nothing rescans another character's bank on your behalf.
---
--- These drive the STORED SHAPE rather than a flag, because that is what is actually on disk in every
--- installation that ran the switch before the fix: a record with no `schema` key at all.
-describe("Guild:GetAltItems with a pre-INV2-MAIL-001 V2 record", function()
-	local G
+-- INV2-STALE-001's store half survives: `IsAltComplete` still tells a schema-1 record from a
+-- complete one, because the delta release's strip and the log both need to know a record's
+-- coverage. Only the accessor's USE of it -- choosing legacy over short -- is gone.
+describe("Store:IsAltComplete on a pre-INV2-MAIL-001 V2 record", function()
 	before_each(function()
 		env.reset()
-		G = load()
-		TOGBankClassic_Switches:Set("inventoryV2", true)
+		load()
 		env.defineItem(101, { name = "Tuple Item" })
 	end)
 
@@ -239,39 +258,9 @@ describe("Guild:GetAltItems with a pre-INV2-MAIL-001 V2 record", function()
 			"HasAlt must still be true -- the record exists, it is its COVERAGE that is short")
 	end)
 
-	it("prefers the complete legacy record over the short V2 one", function()
+	it("is stamped complete by the next write", function()
 		preFixRecord("Bob", { { 101, 68 } })
-		G.Info.alts["Bob"] = legacyAlt({ { ID = 101, Count = 71 } })
-
-		local items = G:GetAltItems("Bob")
-		assert.equal(1, #items)
-		assert.equal(71, items[1].Count,
-			"the mail-less V2 record was preferred over a legacy record that had all three " ..
-			"sources, so every banker scanned before INV2-MAIL-001 under-reports until it rescans")
-	end)
-
-	it("stops preferring legacy as soon as that character rescans", function()
-		preFixRecord("Bob", { { 101, 68 } })
-		G.Info.alts["Bob"] = legacyAlt({ { ID = 101, Count = 71 } })
-
-		-- A rescan writes through SetAltRecords, which stamps the current schema. This is the whole
-		-- self-clearing property: no migration pass, and nothing to remember to run.
 		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 71 } })
-
 		assert.is_true(TOGBankClassic_Inventory_Store:IsAltComplete(GUILD, "Bob"))
-		local items = G:GetAltItems("Bob")
-		assert.equal(71, items[1].Count)
-	end)
-
-	-- The fallback must not become "legacy wins whenever it is bigger". A complete V2 record is
-	-- authoritative even when it disagrees, or the switch stops meaning anything.
-	it("still prefers a STAMPED V2 record that holds less than the legacy one", function()
-		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, "Bob", { { 101, 5 } })
-		G.Info.alts["Bob"] = legacyAlt({ { ID = 101, Count = 900 } })
-
-		local items = G:GetAltItems("Bob")
-		assert.equal(5, items[1].Count,
-			"a complete V2 record lost to a larger legacy one -- that is the total-comparison " ..
-			"remedy this fix deliberately did not implement, and it would mask a lagging V2")
 	end)
 end)

@@ -82,3 +82,46 @@ describe("MAIL-015: aggregating linked bag items with linkless mail items", func
 			"bank + bags + mail must total 10 + 68 + 3")
 	end)
 end)
+
+-- INV2-SUFFIX-002: Aggregate used to rebuild every row as { ID, Count, Link, ItemString,
+-- ForceLink } and DROP Suffix, Enchant and Info. Latent rather than live -- UI/Search.lua only
+-- used the output for its name corpus -- but the moment a request-carrying row went through here,
+-- INV2-SUFFIX-001 (two "of the ..." variants collapsed into one request) came straight back with
+-- nothing to catch it. These pin that the variant identity survives aggregation.
+describe("INV2-SUFFIX-002: aggregation carries the variant fields", function()
+	before_each(function() env.reset(); load() end)
+
+	local BEAR = "|cff1eff00|Hitem:10132:0:0:0:0:0:863:0|h[Revenant Helmet of the Bear]|h|r"
+	local EAGLE = "|cff1eff00|Hitem:10132:0:0:0:0:0:870:0|h[Revenant Helmet of the Eagle]|h|r"
+
+	it("keeps Suffix, Enchant and Info on a row that was not merged", function()
+		local info = { name = "Revenant Helmet of the Bear" }
+		local out = Item:Aggregate({ { ID = 10132, Count = 1, Link = BEAR, Suffix = 863, Enchant = 2504, Info = info } })
+		local rows = {}
+		for _, r in pairs(out) do rows[#rows + 1] = r end
+		assert.equal(1, #rows)
+		assert.equal(863, rows[1].Suffix, "Suffix was dropped by the rebuild")
+		assert.equal(2504, rows[1].Enchant, "Enchant was dropped by the rebuild")
+		assert.equal(info, rows[1].Info, "Info was dropped by the rebuild")
+	end)
+
+	it("keeps two suffix variants of one base item as two rows, each with its own Suffix", function()
+		local out = Item:Aggregate(
+			{ { ID = 10132, Count = 1, Link = BEAR, Suffix = 863 } },
+			{ { ID = 10132, Count = 1, Link = EAGLE, Suffix = 870 } })
+		local bySuffix = {}
+		for _, r in pairs(out) do bySuffix[r.Suffix] = (bySuffix[r.Suffix] or 0) + r.Count end
+		assert.same({ [863] = 1, [870] = 1 }, bySuffix, "the variants merged, or lost their suffix")
+	end)
+
+	it("keeps the variant fields when two rows of the SAME variant merge", function()
+		local out = Item:Aggregate(
+			{ { ID = 10132, Count = 1, Link = BEAR, Suffix = 863 } },
+			{ { ID = 10132, Count = 2, Link = BEAR, Suffix = 863 } })
+		local rows = {}
+		for _, r in pairs(out) do rows[#rows + 1] = r end
+		assert.equal(1, #rows)
+		assert.equal(3, rows[1].Count)
+		assert.equal(863, rows[1].Suffix, "a merge rebuilt the row without its suffix")
+	end)
+end)

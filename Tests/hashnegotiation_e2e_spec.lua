@@ -17,8 +17,10 @@
 -- Core's hash functions below forward to the real DeltaComms, over the real ComputeChecksum.
 --
 -- WHAT THIS DOES **NOT** COVER, so it is not read as more than it is:
---   * the transport. This compares what `BuildBankerHashList` produces against what another client
---     stamped; it does not send it. Serialisation of that table is `syncpipeline_spec`'s ground.
+--   * the checksum FRAMING and the comm layer. What `BuildBankerHashList` produces IS serialised
+--     and deserialised through the installed AceSerializer-3.0 before the peer compares it (see
+--     `advertise`), so a value the serialiser mangles is caught here; Core's checksum envelope
+--     around it and AceComm chunking are `syncwire_spec`'s ground.
 --   * `Guild:GetBanks` and `GetNormalizedPlayer` are stubbed, because they need a live roster.
 --     `NormalizeName`, `BuildBankerHashList` and `HashesAgreeWith` -- the functions under test --
 --     are the REAL ones.
@@ -70,7 +72,7 @@ local function loadClient()
 	TOGBankClassic_Guild.GetBanks = function() return { ME } end
 
 	TOGBankClassic_Options       = { GetBankEnabled = function() return true end }
-	TOGBankClassic_Database      = { SaveSnapshot = function() return true end, db = { global = {} } }
+	TOGBankClassic_Database      = { db = { global = {} } }
 	TOGBankClassic_MailInventory = { hasUpdated = false }
 
 	TOGBankClassic_Inventory_Store:Init({ faction = {} })
@@ -89,9 +91,24 @@ local function scan(contents)
 	return TOGBankClassic_Guild.Info.alts[ME]
 end
 
---- What a peer actually receives about this client's own alt: the real hash-list entry.
+--- What a peer actually receives about this client's own alt: the real hash-list entry, AFTER a
+--- round trip through the serialiser the wire uses.
+---
+--- HASH-REV-001 gap (4), closed: this used to hand the peer the Lua table BuildBankerHashList
+--- returned, so every comparison below was between two tables that never left this process. The
+--- guild sees the entry only after AceSerializer-3.0 has written and re-read it -- the same library
+--- Core:SerializeWithChecksum wraps -- and that is where a number can come back float-mangled (the
+--- concern CanonIsNewer's docblock names) or a string can come back as something else. The checksum
+--- framing around it is Core's own and is syncwire_spec's ground; the serialisation is exercised
+--- here, on the real installed library, for every example in this file.
 local function advertise()
-	return TOGBankClassic_Guild:BuildBankerHashList()[ME]
+	require("env.ace").load("AceSerializer-3.0")
+	local AS = LibStub("AceSerializer-3.0")
+	local wire = AS:Serialize(TOGBankClassic_Guild:BuildBankerHashList())
+	assert(type(wire) == "string", "the hash list did not serialise")
+	local ok, list = AS:Deserialize(wire)
+	assert(ok, "the hash list did not deserialise: " .. tostring(list))
+	return list[ME]
 end
 
 --- Build a SECOND client from scratch and scan `contents` on it. Fresh env, fresh modules, fresh

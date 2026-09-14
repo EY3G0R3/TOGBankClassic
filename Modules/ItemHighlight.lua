@@ -86,11 +86,35 @@ end
 
 -- Initialize the module
 function ItemHighlight:Initialize()
-	-- Don't auto-enable from saved settings - let the checkbox control it
+	-- Off until the roster can say whether this character is a banker; ApplySavedPreference turns
+	-- it on once it can (HIGHLIGHT-003).
 	self.enabled = false
 
 	-- No events registered at initialization - they'll be registered when highlighting is enabled
 	TOGBankClassic_Output:Debug("REQUESTS", "INIT", "ItemHighlight: initialized (events will be registered when enabled)")
+end
+
+-- HIGHLIGHT-003 (audit finding 11): the checkbox's value used to be written to the raw AceDB root
+-- (`TOGBankClassicDB.settings.highlightEnabled`) and read by NOTHING, so a banker who ticked it saw
+-- a setting that looked persistent and did not survive a reload. It is a per-player UI preference,
+-- so it lives in db.global (the tightest scope this addon uses for player-side toggles) and is
+-- applied once the roster can answer IsBank -- the login refresh in Events.lua calls this.
+local function prefStore()
+	local D = TOGBankClassic_Database
+	return D and D.db and D.db.global or nil
+end
+
+--- The saved preference, or false. Never errors before the database exists.
+function ItemHighlight:IsPreferred()
+	local g = prefStore()
+	return g and g.highlightEnabled == true or false
+end
+
+--- Turn highlighting on if the banker asked for it last time. Returns true when it did.
+function ItemHighlight:ApplySavedPreference()
+	if self.enabled or not self:IsPreferred() then return false end
+	self:SetEnabled(true)
+	return self.enabled == true
 end
 
 -- Enable/disable highlighting
@@ -119,11 +143,9 @@ function ItemHighlight:SetEnabled(enabled)
 
 	self.enabled = enabled
 
-	-- Save to settings
-	if not TOGBankClassicDB.settings then
-		TOGBankClassicDB.settings = {}
-	end
-	TOGBankClassicDB.settings.highlightEnabled = enabled
+	-- Save the preference where ApplySavedPreference reads it back (HIGHLIGHT-003).
+	local g = prefStore()
+	if g then g.highlightEnabled = enabled and true or false end
 
 	if enabled then
 		-- Register BAG_UPDATE events when enabling highlighting
@@ -185,7 +207,7 @@ function ItemHighlight:BuildNeededItemsList()
 			and request.status ~= "cancelled" then
 
 			local itemName = request.item
-			local qtyNeeded = (request.quantity or 0) - (request.fulfilled or 0)
+			local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(request)
 
 			if qtyNeeded > 0 then
 				if request.itemID then

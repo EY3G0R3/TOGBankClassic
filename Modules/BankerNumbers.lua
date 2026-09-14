@@ -302,6 +302,8 @@ end
 ---@return table alts
 ---@return number unknown how many entries named a number we do not hold
 function BN:EntriesToAlts(entries)
+	-- A fresh SUMMARY table, not Guild.Info.alts: nothing here is an alt record, so INV2-COMPAT-001's
+	-- wrapper does not apply and this is not an escape from it.
 	local alts, unknown = {}, 0
 	local DC = TOGBankClassic_DeltaComms
 	for _, e in ipairs(entries or {}) do

@@ -1,13 +1,20 @@
 -- INV2 wiring — the seams where the V2 store is fed from live code.
 --
 -- Record/Resolve/Store/Scan/Wire are covered by their own specs in isolation. What is NOT covered
--- there is the part that can actually hurt a player: the V2 mirror runs inside Bank:Scan, the
--- hottest path in the addon and the source of every number it shows. The contract this file
--- exists to hold is narrow and absolute:
+-- there is the part that can actually hurt a player: the V2 write runs inside Bank:Scan, the
+-- hottest path in the addon and the source of every number it shows.
 --
---   the legacy scan must produce byte-identical results whether V2 is on, off, or broken.
---
--- Anything less and the switch is not a switch, it is a second way to lose data.
+-- INV2-RETIRE-003 changed the contract this file holds. It used to be "the legacy scan must produce
+-- byte-identical results whether V2 is on, off, or broken", because V2 was a switch-gated mirror
+-- and the legacy aggregate fed the hash. Now the V2 store IS the scan's source of truth: the write
+-- is unconditional, the hash / version stamp / bank log read the store's records, a fault in the
+-- V2 scan is a scan fault, and the `inventoryV2` / `dualWrite` switches that gated the mirror are
+-- retired -- the record's sub-tables carry metadata only (docs/DELTA_RELEASE.md section 4).
+-- writ-cannot: the "/togbank dev compare" describe (nine examples: agreement, count divergence, a
+-- missing source, an item in one store only in each direction, suffix variants, the switch-off and
+-- empty-store refusals, and characters-in-both) is gone with the command -- its whole subject was
+-- diffing the V2 store against legacy rows that no longer exist; and "registers switches and
+-- compare as dev subcommands" is re-pinned on `switches` alone for the same reason.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
@@ -40,7 +47,7 @@ local function loadWiring()
 		GetBanks = function() return { ME } end,
 	}
 	TOGBankClassic_Options       = { GetBankEnabled = function() return true end }
-	TOGBankClassic_Database      = { SaveSnapshot = function() return true end, db = { global = {} } }
+	TOGBankClassic_Database      = { db = { global = {} } }
 	TOGBankClassic_MailInventory = { hasUpdated = false }
 	TOGBankClassic_Core          = env.coreHashStub(12345)
 
@@ -50,6 +57,9 @@ local function loadWiring()
 	return TOGBankClassic_Bank
 end
 
+--- Write a switch's stored value directly, as a reload would find it. INV2-RETIRE-003: the
+--- `inventoryV2` value is written by two examples below as a STALE override -- a SavedVariables
+--- file from before the retirement still carries it -- to pin that the scan ignores it.
 local function setSwitch(name, on)
 	TOGBankClassic_Database.db.global.switches = TOGBankClassic_Database.db.global.switches or {}
 	TOGBankClassic_Database.db.global.switches[name] = on
@@ -65,17 +75,40 @@ describe("Bank:Scan INV2 mirror", function()
 		env.setBag(0, 4, { { id = 858, count = 5 } })
 	end)
 
-	-- The switch is turned off EXPLICITLY. INV2 step 9 made it default on, and this example is about
-	-- whether the switch gates the mirror -- not about which way it points out of the box.
-	it("leaves the V2 store untouched while the switch is off", function()
+	-- INV2-RETIRE-003. This example used to assert the switch GATES the write ("leaves the V2 store
+	-- untouched while the switch is off"). It no longer does, on purpose: the store is what gets
+	-- hashed, stamped and logged, so a scan that skipped it would publish a version describing
+	-- nothing. The switch itself is retired; a stale `inventoryV2 = false` left in a SavedVariables
+	-- file from before must change nothing.
+	it("writes the V2 store regardless of a stale inventoryV2 override", function()
 		setSwitch("inventoryV2", false)
 		Bank:Scan()
-		assert.is_false(TOGBankClassic_Inventory_Store:HasAlt(GUILD, ME),
-			"the V2 store was written with inventoryV2 off — the switch does not actually gate it")
+		assert.is_true(TOGBankClassic_Inventory_Store:HasAlt(GUILD, ME),
+			"the V2 store was NOT written with a stale inventoryV2=false -- the write is gated " ..
+			"again, so the hash and the canon below would describe records that were never stored")
 	end)
 
-	it("writes the V2 store when the switch is on", function()
-		setSwitch("inventoryV2", true)
+	-- THE change: what gets hashed and stamped is the store's record set, not the legacy aggregate.
+	-- Captured off the stamp call rather than compared by value, because coreHashStub returns a
+	-- constant -- a value comparison would pass for either input.
+	it("hashes and stamps the V2 records, not the legacy aggregate", function()
+		local stampedWith
+		TOGBankClassic_Core.StampInventoryHashes = function(_, alt, rows, _, _, _, updatedAt)
+			stampedWith = rows
+			alt.inventoryHash, alt.inventoryHashV2, alt.inventoryContentHash = 1, env.canon(updatedAt, 2), 3
+			return 1, alt.inventoryHashV2, 3
+		end
+		Bank:Scan()
+		assert.is_not_nil(stampedWith, "nothing was stamped")
+		assert.equal(1, #stampedWith)
+		assert.is_true(TOGBankClassic_Inventory_Record.isValid(stampedWith[1]),
+			"the stamp was taken over legacy rows, not tuples")
+		assert.is_nil(stampedWith[1].ID, "a legacy-shaped row reached the stamp")
+		assert.equal(858, TOGBankClassic_Inventory_Record.id(stampedWith[1]))
+		assert.equal(5,   TOGBankClassic_Inventory_Record.count(stampedWith[1]))
+	end)
+
+	it("writes the V2 store", function()
 		Bank:Scan()
 		local records = TOGBankClassic_Inventory_Store:GetAltRecords(GUILD, ME)
 		assert.equal(1, #records)
@@ -94,7 +127,6 @@ describe("Bank:Scan INV2 mirror", function()
 	-- This is not a display bug and it cannot be fixed at read time for long: step 10 deletes the
 	-- legacy path, so a V2 store that structurally cannot hold mail blocks steps 9 and 10 forever.
 	it("mirrors mail into the V2 store, not just bags and bank", function()
-		setSwitch("inventoryV2", true)
 		env.defineItem(11754, { name = "Black Diamond", class = 7 })
 		env.setBag(0, 4, { { id = 11754, count = 68 } })
 		-- What MailInventory produces: an array of linkless {ID, Count}, already scanned into the
@@ -120,50 +152,64 @@ describe("Bank:Scan INV2 mirror", function()
 	end)
 
 	it("records money alongside the tuples", function()
-		setSwitch("inventoryV2", true)
 		env.money = 987654
 		Bank:Scan()
 		assert.equal(987654, TOGBankClassic_Inventory_Store:GetAltMoney(GUILD, ME))
 	end)
 
-	-- The whole point of running the mirror inside the legacy scan rather than replacing it.
-	it("produces the same legacy result with the switch on as with it off", function()
+	-- INV2-RETIRE-003. This used to compare the LEGACY aggregate with the switch on and off, back
+	-- when the mirror ran inside the legacy scan. There is no legacy aggregate and no switch any
+	-- more: the scan writes the store only, whatever a stale override says, so what is pinned is
+	-- that the record carries no rows in either state and the store's result is the same in both.
+	it("writes no legacy rows onto the record, whatever a stale inventoryV2 override says", function()
+		local Record = TOGBankClassic_Inventory_Record
+		local function stored()
+			local recs = TOGBankClassic_Inventory_Store:GetAltRecords(GUILD, ME)
+			return { count = #recs, id = Record.id(recs[1]), n = Record.count(recs[1]) }
+		end
+		local function noLegacyRows(alt)
+			assert.is_nil(alt.items, "the legacy aggregate was written")
+			assert.is_nil(alt.bags and alt.bags.items, "legacy bag rows were written")
+			assert.is_nil(alt.bank and alt.bank.items, "legacy vault rows were written")
+			assert.is_nil(alt.mail and alt.mail.items, "legacy mail rows were written")
+		end
+
+		setSwitch("inventoryV2", false)
 		Bank:Scan()
-		local without = TOGBankClassic_Guild.Info.alts[ME]
-		local snapshot = { count = #without.items, id = without.items[1].ID, n = without.items[1].Count }
+		noLegacyRows(TOGBankClassic_Guild.Info.alts[ME])
+		local without = stored()
+		assert.equal(1, without.count)
 
 		env.reset()
 		Bank = loadWiring()
 		env.defineItem(858, { name = "Minor Healing Potion", class = 0 })
 		env.setBag(0, 4, { { id = 858, count = 5 } })
-		setSwitch("inventoryV2", true)
 		Bank:Scan()
-		local with = TOGBankClassic_Guild.Info.alts[ME]
+		noLegacyRows(TOGBankClassic_Guild.Info.alts[ME])
+		local with = stored()
 
-		assert.equal(snapshot.count, #with.items)
-		assert.equal(snapshot.id, with.items[1].ID)
-		assert.equal(snapshot.n, with.items[1].Count)
+		assert.same(without, with)
 	end)
 
-	-- A fault in brand-new code must not take down the path every existing user depends on.
-	it("still completes the legacy scan when the V2 mirror throws", function()
-		setSwitch("inventoryV2", true)
-		-- Stub the function the mirror ACTUALLY calls. This used to stub ScanAll, which the mirror
-		-- stopped calling when INV2-VAULT-001 split the scan per source -- so nothing threw, the
-		-- pcall trivially succeeded, and the spec passed while testing nothing.
+	-- INV2-RETIRE-003. This used to be "still completes the legacy scan when the V2 mirror throws":
+	-- the write sat in a pcall so a fault in new code could not take down the path every user read.
+	-- The store IS that path now, so a fault in it is a scan fault and must SURFACE -- a scan that
+	-- swallowed it would carry on to hash and publish a version over records it never stored.
+	-- Nothing is minted and nothing is stored: the fault leaves no half-published state behind.
+	it("surfaces a fault in the V2 scan instead of publishing around it", function()
 		TOGBankClassic_Inventory_Scan.ScanBags = function() error("boom") end
-		local ok = pcall(function() Bank:Scan() end)
-		assert.is_true(ok, "a fault in the V2 mirror escaped and aborted Bank:Scan")
+		local ok, err = pcall(function() Bank:Scan() end)
+		assert.is_false(ok, "a fault in the V2 scan was swallowed; the scan went on to publish")
+		assert.truthy(tostring(err):find("boom", 1, true))
+		assert.is_false(TOGBankClassic_Inventory_Store:HasAlt(GUILD, ME), "a half-written store survived the fault")
 		local alt = TOGBankClassic_Guild.Info.alts[ME]
-		assert.is_not_nil(alt, "the legacy scan produced nothing after the V2 mirror failed")
-		assert.equal(5, alt.items[1].Count)
+		assert.is_true(alt == nil or alt.inventoryHashV2 == nil, "a version was minted over a failed scan")
 	end)
 
 	-- Mirrors the legacy behaviour verified in bank_spec: away from a banker the vault slots read
 	-- as empty, and writing that emptiness through would erase the character's whole vault from
 	-- the guild's view.
 	it("keeps previously stored records when the vault is out of reach", function()
-		setSwitch("inventoryV2", true)
 		env.setBag(-1, 4, { { id = 858, count = 40 } })
 		Bank:Scan()
 		assert.equal(45, TOGBankClassic_Inventory_Record.count(
@@ -177,7 +223,6 @@ describe("Bank:Scan INV2 mirror", function()
 	end)
 
 	it("does replace the stored records once the vault is reachable again", function()
-		setSwitch("inventoryV2", true)
 		env.setBag(-1, 4, { { id = 858, count = 40 } })
 		Bank:Scan()
 		env.setBag(-1, 4, { { id = 858, count = 10 } })
@@ -193,7 +238,6 @@ describe("Bank:Scan INV2 mirror", function()
 	-- 68 on the banker, 71 on a non-banker -- surviving the INV2-MAIL-001 fix, because a mailbox is
 	-- almost never opened while standing at a bank NPC.
 	it("takes mail scanned away from a banker WITHOUT losing the stored vault", function()
-		setSwitch("inventoryV2", true)
 		env.defineItem(11754, { name = "Black Diamond", class = 7 })
 
 		-- At the banker: 40 in the vault, 68 in bags, no mail.
@@ -223,7 +267,6 @@ describe("Bank:Scan INV2 mirror", function()
 	end)
 
 	it("clears the mail source when the mailbox is emptied", function()
-		setSwitch("inventoryV2", true)
 		env.defineItem(11754, { name = "Black Diamond", class = 7 })
 		env.setBag(0, 4, { { id = 11754, count = 68 } })
 
@@ -254,7 +297,6 @@ describe("Bank:Scan INV2 mirror", function()
 
 	-- The gates are checked before the mirror runs, so a non-banker never accumulates V2 data.
 	it("does not mirror for a character that fails the banker gate", function()
-		setSwitch("inventoryV2", true)
 		TOGBankClassic_Guild.GetBanks = function() return { "SomeoneElse-Testrealm" } end
 		Bank:Scan()
 		assert.is_false(TOGBankClassic_Inventory_Store:HasAlt(GUILD, ME))
@@ -293,14 +335,16 @@ describe("INV2 dev commands", function()
 	before_each(function() env.reset() end)
 
 	-- Registration is what makes them reachable; the dispatcher only sees names in both tables.
-	it("registers switches and compare as dev subcommands", function()
+	-- INV2-RETIRE-003: `compare` is gone with the legacy store it compared against, and must stay
+	-- gone -- a name in either table with no partner is the CMD-002 class.
+	it("registers switches as a dev subcommand, and compare not at all", function()
 		local chat = readFile("Modules/Chat.lua")
-		for _, name in ipairs({ "switches", "compare" }) do
-			assert.is_not_nil(chat:match("name%s*=%s*[\"']" .. name .. "[\"']"),
-				name .. " has no COMMAND_REGISTRY entry")
-			assert.is_not_nil(chat:match("\n\t" .. name .. "%s+=%s*true"),
-				name .. " is missing from DEV_COMMAND_NAMES, so /togbank dev " .. name ..
-				" reports an unknown subcommand")
+		assert.is_not_nil(chat:match("name%s*=%s*[\"']switches[\"']"), "switches has no COMMAND_REGISTRY entry")
+		assert.is_not_nil(chat:match("\n\tswitches%s+=%s*true"),
+			"switches is missing from DEV_COMMAND_NAMES, so /togbank dev switches reports an unknown subcommand")
+		for _, name in ipairs({ "compare", "purgeghosts" }) do
+			assert.is_nil(chat:match("name%s*=%s*[\"']" .. name .. "[\"']"), name .. " has a COMMAND_REGISTRY entry again")
+			assert.is_nil(chat:match("\n\t" .. name .. "%s+=%s*true"), name .. " is in DEV_COMMAND_NAMES again")
 		end
 	end)
 
@@ -316,163 +360,12 @@ describe("INV2 dev commands", function()
 
 end)
 
--- compare is the only thing that will ever prove, on live data, that the two encodings agree.
--- A diagnostic that reports agreement it did not actually check is worse than no diagnostic:
--- it is what a switch flip to V2-by-default would be justified by. So it gets exercised, not
--- grepped.
-describe("/togbank dev compare", function()
-	local function loadChat()
-		env.stubOutput()
-		env.loadFile("Modules/Item.lua")
-		env.loadFile("Modules/Bank.lua")
-		env.loadFile("Modules/Constants.lua")
-		env.loadFile("Modules/Switches.lua")
-		env.loadFile("Modules/Inventory/Record.lua")
-		env.loadFile("Modules/Inventory/Resolve.lua")
-		env.loadFile("Modules/Inventory/Store.lua")
-		env.loadFile("Modules/Inventory/Scan.lua")
-		env.loadFile("Modules/Chat.lua")
-
-		TOGBankClassic_Guild    = { Info = { name = GUILD, alts = {} } }
-		TOGBankClassic_Database = { db = { global = {} } }
-		-- CMD-001: this used to hand-roll GetArgs as `(prefix, remainder)`. AceConsole TOKENIZES
-		-- and returns `arg1, ..., argN, nextposition`, so the fake implemented a LOOSER contract
-		-- than the library -- and ChatCommand, which discarded the remainder, passed against it
-		-- while every `/togbank dev <sub> <args>` lost its arguments in game. env.stubCore is the
-		-- faithful one; do not replace it with a convenient local.
-		env.stubCore()
-		TOGBankClassic_Inventory_Store:Init({ faction = {} })
-		return TOGBankClassic_Chat
-	end
-
-	--- Every line the command emitted, joined — the assertions care about what it concluded.
-	-- The stub Output records (format, ...) unformatted, so a spec that just concatenated the
-	-- pieces would never see "Compared 1 character" — only "Compared %d character(s)" and a
-	-- lone 1. Format here so the assertions read the line a player would actually see.
-	local function output()
-		local parts = {}
-		for _, call in ipairs(TOGBankClassic_Output.calls) do
-			local args = {}
-			for i = 1, call.n do args[i] = call[i] end
-			local ok, line = pcall(string.format, unpack(args, 1, call.n))
-			if not ok then
-				-- Not a format string, or mismatched args. Fall back to the raw pieces rather
-				-- than letting the helper itself error and take the assertion down with it.
-				line = {}
-				for i = 1, call.n do line[i] = tostring(args[i]) end
-				line = table.concat(line, " ")
-			end
-			parts[#parts + 1] = line
-		end
-		return table.concat(parts, "\n")
-	end
-
-	--- Put one item into both stores for `alt`, at the counts given.
-	local function seed(alt, itemID, legacyCount, v2Count)
-		TOGBankClassic_Guild.Info.alts[alt] = { items = { { ID = itemID, Count = legacyCount } } }
-		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, alt,
-			{ TOGBankClassic_Inventory_Record.new(itemID, v2Count) }, 0)
-	end
-
-	before_each(function()
-		env.reset()
-		loadChat()
-		setSwitch("inventoryV2", true)
-	end)
-
-	it("reports agreement when the two stores hold the same totals", function()
-		seed(ME, 858, 5, 5)
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		assert.is_not_nil(output():find("No divergence", 1, true), "expected agreement, got:\n" .. output())
-	end)
-
-	it("reports a divergence when the counts differ", function()
-		seed(ME, 858, 5, 4)
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		local out = output()
-		assert.is_nil(out:find("No divergence", 1, true),
-			"compare called a 5-vs-4 mismatch agreement:\n" .. out)
-		assert.is_not_nil(out:find("legacy=5 v2=4", 1, true), "the divergence was not described:\n" .. out)
-	end)
-
-	-- INV2-MAIL-001 follow-up: compare reported "No divergence" on a live client at the moment the
-	-- V2 store was missing an entire source (mail). Two explanations were possible -- compare has a
-	-- blind spot, or compare was right because the legacy record ALSO had no mail yet at the time
-	-- it ran. This distinguishes them: it drives the exact shape the defect produces, a legacy
-	-- record carrying bags + mail against a V2 record carrying bags only.
-	--
-	-- If this passes, compare has no blind spot and the live "No divergence" was CORRECT for the
-	-- state at that instant -- which makes it a timing artefact, not a diagnostic that lies.
-	it("reports the divergence when V2 is missing an entire source", function()
-		seed(ME, 11754, 71, 68)   -- legacy: 68 bags + 3 mail. V2: bags only.
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		local out = output()
-		assert.is_nil(out:find("No divergence", 1, true),
-			"compare called a missing-mail V2 record agreement. If this is what happened live, " ..
-			"compare cannot be the gate for INV2 step 9:\n" .. out)
-		assert.is_not_nil(out:find("legacy=71 v2=68", 1, true),
-			"the missing source was not described:\n" .. out)
-	end)
-
-	it("reports an item the legacy store has and V2 does not", function()
-		TOGBankClassic_Guild.Info.alts[ME] = { items = { { ID = 858, Count = 5 } } }
-		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, ME, {}, 0)
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		assert.is_not_nil(output():find("legacy=5 v2=0", 1, true))
-	end)
-
-	it("reports an item V2 has and the legacy store does not", function()
-		TOGBankClassic_Guild.Info.alts[ME] = { items = {} }
-		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, ME,
-			{ TOGBankClassic_Inventory_Record.new(858, 3) }, 0)
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		assert.is_not_nil(output():find("legacy=absent v2=3", 1, true), output())
-	end)
-
-	-- Suffix variants split into separate V2 rows but share a legacy row. Comparing row counts
-	-- would flag every random-suffix item in the game as a divergence; comparing per-id totals
-	-- is the only thing the two encodings actually promise to agree on.
-	it("does not flag suffix variants that split into extra V2 rows", function()
-		TOGBankClassic_Guild.Info.alts[ME] = { items = { { ID = 10132, Count = 2 } } }
-		TOGBankClassic_Inventory_Store:SetAltRecords(GUILD, ME, {
-			TOGBankClassic_Inventory_Record.new(10132, 1, 863),
-			TOGBankClassic_Inventory_Record.new(10132, 1, 865),
-		}, 0)
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		assert.is_not_nil(output():find("No divergence", 1, true),
-			"two suffix variants summing to the legacy count were reported as a mismatch:\n" .. output())
-	end)
-
-	it("says so rather than claiming agreement when the switch is off", function()
-		setSwitch("inventoryV2", false)
-		seed(ME, 858, 5, 4)
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		local out = output()
-		assert.is_nil(out:find("No divergence", 1, true),
-			"compare reported agreement while V2 was not being written:\n" .. out)
-		assert.is_not_nil(out:find("inventoryV2 is OFF", 1, true), out)
-	end)
-
-	it("says so rather than claiming agreement when the V2 store is empty", function()
-		TOGBankClassic_Guild.Info.alts[ME] = { items = { { ID = 858, Count = 5 } } }
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		local out = output()
-		assert.is_nil(out:find("No divergence", 1, true),
-			"an empty V2 store was reported as agreeing with a populated legacy store:\n" .. out)
-		assert.is_not_nil(out:find("empty", 1, true), out)
-	end)
-
-	-- A character present in only one store is not a divergence -- it has simply not been
-	-- scanned under the new path yet. Counting it as one would bury the real mismatches.
-	it("only compares characters present in both stores", function()
-		seed(ME, 858, 5, 5)
-		TOGBankClassic_Guild.Info.alts["Other-Testrealm"] = { items = { { ID = 999, Count = 1 } } }
-		TOGBankClassic_Chat:ChatCommand("dev compare")
-		local out = output()
-		assert.is_not_nil(out:find("Compared 1 character", 1, true), out)
-		assert.is_not_nil(out:find("No divergence", 1, true), out)
-	end)
-end)
+-- INV2-RETIRE-003: the "/togbank dev compare" describe stood here. writ-cannot: its nine examples
+-- (agreement, count divergence, a missing source, an item in one store only in each direction,
+-- suffix variants, the switch-off and empty-store refusals, characters-in-both) covered a command
+-- that was removed on purpose -- its whole subject was diffing the V2 store against legacy rows
+-- that are no longer written or kept (docs/DELTA_RELEASE.md section 4), so there is nothing for
+-- it to compare and nothing for these to drive.
 
 describe("/togbank dev switches", function()
 	before_each(function()
@@ -522,19 +415,28 @@ describe("/togbank dev switches", function()
 		end
 	end)
 
+	-- INV2-RETIRE-003: driven on `legacyKeyedReceive` (defaults OFF, so "on" is observable) now
+	-- that `inventoryV2` is retired.
 	it("turns a switch on", function()
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 on")
-		assert.is_true(TOGBankClassic_Switches:IsEnabled("inventoryV2"))
+		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive on")
+		assert.is_true(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"))
 	end)
 
 	it("turns a switch off again", function()
-		TOGBankClassic_Switches:Set("inventoryV2", true)
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 off")
-		assert.is_false(TOGBankClassic_Switches:IsEnabled("inventoryV2"))
+		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
+		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive off")
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"))
 	end)
 
 	it("reports a typo as an unknown switch", function()
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV3 on")
+		TOGBankClassic_Chat:ChatCommand("dev switches sendV3Wire on")
+		assert.is_not_nil(output():find("Unknown switch", 1, true), output())
+	end)
+
+	-- A retired switch is an unknown one: the listing must not accept a name from an older release
+	-- and report success for a setting nothing reads.
+	it("reports a retired switch as unknown", function()
+		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 on")
 		assert.is_not_nil(output():find("Unknown switch", 1, true), output())
 	end)
 
@@ -542,7 +444,7 @@ describe("/togbank dev switches", function()
 	-- switch" sends someone hunting for a typo that is not there.
 	it("distinguishes an unready database from a typo", function()
 		TOGBankClassic_Database.db = nil
-		TOGBankClassic_Chat:ChatCommand("dev switches inventoryV2 on")
+		TOGBankClassic_Chat:ChatCommand("dev switches sendV2Wire on")
 		local out = output()
 		assert.is_nil(out:find("Unknown switch", 1, true),
 			"a valid switch name was reported as unknown because the database was not ready:\n" .. out)
@@ -628,7 +530,6 @@ describe("INV2-ISOLATE-001: legacy data cannot reach the V2 store", function()
 	before_each(function()
 		env.reset()
 		Bank = loadWiring()
-		setSwitch("inventoryV2", true)
 		env.defineItem(858, { name = "Minor Healing Potion", class = 0 })
 	end)
 
@@ -680,8 +581,12 @@ describe("INV2-ISOLATE-001: legacy data cannot reach the V2 store", function()
 	-- today; this one fails the moment a third appears, which is the failure mode that actually
 	-- happens -- somebody adds a convenience "seed V2 from legacy" helper in six months.
 	it("has exactly TWO production writers of the V2 store, and both are container/wire sourced", function()
+		-- THE DELTA RELEASE step 3b moved the wire writer out of Chat.lua's comm handler into
+		-- Inventory/Sync (StoreDelivery): the one store-and-stamp every delivery -- a togbank-d4
+		-- snapshot, an inv-snapshot on the host, or a chain applied and PROVEN against the author's
+		-- canon -- passes through. Still wire-sourced, still exactly two.
 		local WRITERS = {
-			["Modules/Chat.lua"] = "tuple payload decoded from the wire (togbank-d4)",
+			["Modules/Inventory/Sync.lua"] = "tuple payload decoded from the wire, or a delta chain applied to what the wire delivered",
 			["Modules/Bank.lua"] = "Scan:ScanAll() over live containers, plus MailInventory",
 		}
 

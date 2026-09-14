@@ -9,10 +9,15 @@ local env = require("env_togbank")
 describe("harness", function()
 	before_each(function() env.reset() end)
 
-	it("provides a controllable clock", function()
-		assert.equal(0, GetTime())
+	-- CLOCK-001: the clock starts at a realistic epoch, never 0 -- a live client never reads a
+	-- server time of 0, and a suite that did let every `ts <= 0` guard take the branch production
+	-- never takes.
+	it("provides a controllable clock that starts at a real epoch, not 0", function()
+		assert.equal(env.EPOCH, GetTime())
+		assert.is_true(env.EPOCH > 1700000000, "the default clock is not a real epoch")
 		env.advance(5)
-		assert.equal(5, GetTime())
+		assert.equal(env.EPOCH + 5, GetTime())
+		assert.equal(env.EPOCH + 5, GetServerTime())
 	end)
 
 	it("runs a C_Timer.After callback only once its delay has elapsed", function()
@@ -40,7 +45,7 @@ describe("harness", function()
 	end)
 
 	it("resets state between tests", function()
-		assert.equal(0, GetTime())
+		assert.equal(env.EPOCH, GetTime())
 		assert.equal(0, env.pendingTimerCount())
 	end)
 end)

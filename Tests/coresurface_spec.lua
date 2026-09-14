@@ -135,6 +135,23 @@ describe("TOGBankClassic_Core stand-ins match the real surface", function()
 		assert.same({}, extras, "stubCore carries methods the real Core does not have (AUDIT-S1)")
 	end)
 
+	-- CMD-001 FOLLOW-UP: the name being present is not the contract. stubCore's GetArgs used to be
+	-- a local re-implementation that dropped the third parameter (startpos, how a caller continues
+	-- from nextposition) and split on any whitespace where AceConsole splits on the space character
+	-- and honours quotes. It is now the installed library; these two inputs are the ones the
+	-- re-implementation got wrong, so they go red if anyone stands a copy in again.
+	it("env.stubCore's GetArgs IS AceConsole's: quotes and startpos behave as in the client", function()
+		TOGBankClassic_Core = nil
+		local stub = env.stubCore()
+		local a, b, nextpos = stub:GetArgs('dev "two words" tail', 2)
+		assert.equal("dev", a)
+		assert.equal("two words", b, "a quoted argument was split on its space")
+		assert.equal("tail", (stub:GetArgs('dev "two words" tail', 1, nextpos)), "startpos was ignored")
+		local x, y = stub:GetArgs("a\tb", 2)
+		assert.equal("a\tb", x, "AceConsole splits on the space character only; a tab is part of the token")
+		assert.is_nil(y)
+	end)
+
 	describe("hand-rolled Core tables in spec files", function()
 		local files, tables
 

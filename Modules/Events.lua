@@ -38,6 +38,7 @@ function TOGBankClassic_Events:RegisterEvents()
 
 	self:RegisterEvent("PLAYER_LOGIN")
 	self:RegisterEvent("PLAYER_LOGOUT")
+	self:RegisterEvent("PLAYER_CAMPING")
 	self:RegisterEvent("GUILD_RANKS_UPDATE")
 	self:RegisterEvent("BANKFRAME_OPENED")
 	self:RegisterEvent("BANKFRAME_CLOSED")
@@ -111,17 +112,27 @@ function TOGBankClassic_Events:RegisterEvents()
 		end)
 	end
 
-	-- Hook Send Mail tab to auto-open Requests window for bank alts (like BulkMail)
+	-- Hook Send Mail tab to auto-open the requests for bank alts (like BulkMail).
+	-- BROWSE-005 (the operator, 2026-09-12: "when filling orders, it should just pop up the full new
+	-- UI and go to the requests tab"): this is the Guild Bank window on its Requests tab, not the
+	-- standalone Requests window. Browse:Open re-selects the tab without rebuilding a body that is
+	-- already showing (Peer Review F4), so a body that was up is redrawn here for the fulfil icons
+	-- the open mailbox changes -- exactly what the old `isOpen -> DrawContent` branch did.
 	if MailFrameTab2 and not MailFrameTab2.togBankHooked then
 		MailFrameTab2.togBankHooked = true
 		MailFrameTab2:HookScript("OnClick", function()
 			local player = TOGBankClassic_Guild:GetNormalizedPlayer()
 			if player and TOGBankClassic_Guild:IsBank(player) then
 				C_Timer.After(0.1, function()
-					if TOGBankClassic_UI_Requests.isOpen then
-						TOGBankClassic_UI_Requests:DrawContent()
+					local Requests, Browse = TOGBankClassic_UI_Requests, TOGBankClassic_UI_Browse
+					local wasEmbedded = Requests.isOpen and Requests.embedded
+					if Browse and Browse.Open then
+						Browse:Open("requests")
+						if wasEmbedded then Requests:DrawContent() end
+					elseif Requests.isOpen then
+						Requests:DrawContent()
 					else
-						TOGBankClassic_UI_Requests:Open()
+						Requests:Open()
 					end
 				end)
 			end
@@ -144,6 +155,7 @@ function TOGBankClassic_Events:UnregisterEvents()
 	-- stay symmetric; a spec now asserts that rather than leaving it to review.
 	self:UnregisterEvent("PLAYER_LOGIN")
 	self:UnregisterEvent("PLAYER_LOGOUT")
+	self:UnregisterEvent("PLAYER_CAMPING")
 	self:UnregisterEvent("GUILD_ROSTER_UPDATE")
 	self:UnregisterEvent("PLAYER_ENTERING_WORLD")
 	self:UnregisterEvent("GUILD_RANKS_UPDATE")
@@ -229,11 +241,35 @@ end
 
 -- Delta-specific version broadcast (SYNC-001 fix)
 -- P2P-006: Broadcast our hash list to the guild so peers can offer newer data.
--- Called on the periodic share timer (TIMER_INTERVALS.VERSION_BROADCAST, via Guild:Share) and
--- after every bank scan.
+-- Called on the periodic share timer (TIMER_INTERVALS.VERSION_BROADCAST, via Guild:Share), at
+-- login, from /togbank share and /togbank sync (which the Inventory window's Open runs), and by
+-- the P2P catch-up cycle. NOT after a bank scan -- deliberately, per the operator 2026-09-11: a
+-- broadcast fired from the scan "risk[s] doing a broadcast with 1/2 the data, and then creating
+-- another hash 5 seconds later ... that was 'too close' and wasn't updating". A fresh version
+-- reaches peers on the next of those, or the moment anyone's broadcast is answered with an offer.
 function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then return end
+
+	-- MULTIPC-001: from here on, a partial scan of our own bank waits for the guild's answer
+	-- (P2PSession.consultBegun) -- set before the collision-guard defer below, so the wait covers
+	-- the deferred send too.
+	if TOGBankClassic_P2PSession and TOGBankClassic_P2PSession.BeginConsult then
+		TOGBankClassic_P2PSession:BeginConsult()
+	end
+
+	-- RAID-CONSULT-001 (LOG-HYGIENE-002 F6, Peer Review db06c629): inside a raid the guard in
+	-- Core:SendCommMessage drops this broadcast and Chat drops every receive, so nobody hears us
+	-- and nobody can answer -- yet the collect window below still opened, closed 60 s later on
+	-- "no offers", and MARKED THE GUILD CONSULTED. A partial read then published on the strength
+	-- of a broadcast nobody heard, which is the MULTIPC-001 case the consult exists to prevent.
+	-- The consult has begun (above), so a partial read is held; it settles on the fallback or on
+	-- the first cycle that actually leaves this client. Nothing else here would reach the wire.
+	if TOGBankClassic_Constants.SyncPausedByRaid() then
+		TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST",
+			"SyncDeltaVersion: skipped (sync paused by raid) -- no collect window, own-bank check stays open")
+		return
+	end
 
 	-- P2P-023: Prevent concurrent broadcasts from colliding in AceComm multipart_spool
 	-- Spool key is "prefix\tdistribution\tsender" - when same sender broadcasts twice
@@ -347,6 +383,13 @@ function TOGBankClassic_Events:PLAYER_LOGOUT(_)
 	TOGBankClassic_Output:SavePersistentLog()
 end
 
+--- SYNCED-001: the logout countdown started. If the version of our bank minted this session has
+--- reached nobody, say so now -- the countdown is the one moment the banker can still change their
+--- mind. Advisory only; nothing cancels the logout.
+function TOGBankClassic_Events:PLAYER_CAMPING(_)
+	if TOGBankClassic_Propagation then TOGBankClassic_Propagation:OnCamping() end
+end
+
 -- Request initial guild roster update on world enter
 function TOGBankClassic_Events:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
 	TOGBankClassic_Performance:RecordEvent("PLAYER_ENTERING_WORLD")
@@ -405,11 +448,23 @@ TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[INIT] GUILD_ROSTER_UPDATE #%d
 			-- the banker-gated options init here. GUILD_RANKS_UPDATE alone is not a
 			-- reliable retry hook -- it may not fire again after the roster loads.
 			TOGBankClassic_Options:InitGuild()
+			-- HIGHLIGHT-003: same moment, same reason -- a banker's saved highlight preference
+			-- can only be honoured once IsBank can answer.
+			if TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.ApplySavedPreference then
+				TOGBankClassic_ItemHighlight:ApplySavedPreference()
+			end
 
 			-- Clear delta error counters for offline players (depends on RefreshOnlineCache)
 			TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.name)
 			-- Refresh Requests UI to update banker-only controls (like highlight checkbox)
 			TOGBankClassic_Guild:RefreshRequestsUI()
+
+			-- PROP-PERSIST-001: an unconfirmed "bank update" from the last session comes back BEFORE
+			-- the login broadcast below, so a peer that names the canon in reply is counted as seen.
+			-- Idempotent across the retries of this block.
+			if TOGBankClassic_Propagation and TOGBankClassic_Propagation.Restore then
+				TOGBankClassic_Propagation:Restore()
+			end
 
 			-- Keep refreshing until we get actual online member data OR we've tried 5 times
 			-- If we have 0 online members after API returns data, roster API hasn't initialized yet
@@ -497,10 +552,12 @@ function TOGBankClassic_Events:CHAT_MSG_SYSTEM(_, message)
 		if TOGBankClassic_Guild.NoteRosterEvent then
 			TOGBankClassic_Guild:NoteRosterEvent("notFound", notFoundName)
 		end
+		-- OUTPUT-002: this used to ALSO print an unconditional Output:Info line ("[WHISPER-SPAM-FIX]
+		-- Player X is not online ...") -- one per bounced whisper, in every player's chat, with no
+		-- way to turn it off. Reported from a live guild 2026-08-24: "ensure they are behind a debug
+		-- flag". The Debug line below is that line, under ROSTER/ONLINE.
 		TOGBankClassic_Output:Debug("ROSTER", "ONLINE",
-			"[CHAT_MSG_SYSTEM] Player not found: %s - marking offline", notFoundName)
-		TOGBankClassic_Output:Info(
-			"[WHISPER-SPAM-FIX] Player %s is not online (WoW error - marked offline to prevent spam)",
+			"[CHAT_MSG_SYSTEM] Player %s is not online (WoW error) - marked offline to stop whispering them",
 			notFoundName)
 		TOGBankClassic_Guild:UpdateOnlineMember(notFoundName, false, "wow-error-not-online")
 	end
@@ -521,7 +578,7 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 
 	-- Load guild data and perform a one-time cleanup of malformed alt entries
 	if TOGBankClassic_Guild:Init(guild) then
-		if IsInRaid() then
+		if TOGBankClassic_Constants.SyncPausedByRaid() then
 			TOGBankClassic_Output:Debug("EVENTS", "SKIP", "GUILD_RANKS_UPDATE: ignoring guild ranks cleanup (in raid)")
 			return
 		end
@@ -554,6 +611,10 @@ function TOGBankClassic_Events:MAIL_SHOW(_)
 	TOGBankClassic_Mail.isOpen = true
 	TOGBankClassic_Mail:InitSendHook()
 	TOGBankClassic_Mail:Check()
+	-- MAILUI-001: the inbox window opens beside Blizzard's for bankers.
+	if TOGBankClassic_UI_Mailbox and TOGBankClassic_UI_Mailbox.OnMailShow then
+		TOGBankClassic_UI_Mailbox:OnMailShow()
+	end
 
 	-- Hook MailFrame OnHide to detect when mail closes (MAIL_CLOSED event may not fire reliably)
 	if not MailFrame.TOGBankHooked then
@@ -567,7 +628,16 @@ function TOGBankClassic_Events:MAIL_SHOW(_)
 end
 
 function TOGBankClassic_Events:MAIL_INBOX_UPDATE(_)
+	-- LOG-MAIL-001: every inbox read records what left it since the last, so the mint can name the
+	-- sender of an attachment the banker TOOK (the bank log's deposit is the take, not the arrival).
+	if TOGBankClassic_MailInventory and TOGBankClassic_MailInventory.NoteInbox then
+		TOGBankClassic_MailInventory:NoteInbox()
+	end
 	TOGBankClassic_Mail:Scan()
+	-- MAILUI-001: a take, a delete or a refresh renumbers the inbox; the rows are rebuilt from it.
+	if TOGBankClassic_UI_Mailbox and TOGBankClassic_UI_Mailbox.OnInboxUpdate then
+		TOGBankClassic_UI_Mailbox:OnInboxUpdate()
+	end
 end
 
 function TOGBankClassic_Events:MAIL_CLOSED(_)
@@ -575,10 +645,19 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
 	TOGBankClassic_Mail.isOpen = false
 	TOGBankClassic_Mail.isScanning = false
 	TOGBankClassic_Mail:ResetFulfillStep()  -- FILLALL-001: drop any in-progress stepped fulfillment
+	-- LOG-MAIL-001: the inbox comparison ends with the mailbox. NOT a final read here: the inbox
+	-- data may already be gone from the client at this point, and an empty read would count every
+	-- attachment still sitting there as taken.
+	if TOGBankClassic_MailInventory and TOGBankClassic_MailInventory.CloseInbox then
+		TOGBankClassic_MailInventory:CloseInbox()
+	end
 	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Calling Bank:OnUpdateStop()")
 	TOGBankClassic_Bank:OnUpdateStop()
 	TOGBankClassic_Output:Debug("MAIL", "EVENTS", "Bank:OnUpdateStop() completed")
 	TOGBankClassic_UI_Mail:Close()
+	if TOGBankClassic_UI_Mailbox and TOGBankClassic_UI_Mailbox.OnMailClosed then
+		TOGBankClassic_UI_Mailbox:OnMailClosed()
+	end
 	-- Refresh fulfill button states without a full structural rebuild
 	C_Timer.After(0.1, function()
 		if TOGBankClassic_UI_Requests.isOpen then
@@ -608,8 +687,8 @@ function TOGBankClassic_Events:UI_ERROR_MESSAGE(_, message)
 		if TOGBankClassic_Mail and TOGBankClassic_Mail.DebugSendMailState then
 			TOGBankClassic_Mail:DebugSendMailState(message)
 		end
-		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Window then
-			TOGBankClassic_UI_Requests.Window:SetStatusText(string.format("Mail error: %s", tostring(message)))
+		if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+			TOGBankClassic_UI_Requests:SetStatusText(string.format("Mail error: %s", tostring(message)))
 		end
 	end
 end

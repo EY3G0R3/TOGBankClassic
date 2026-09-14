@@ -26,6 +26,7 @@ required-dependencies:
   - acecommqueue
   - libitemdb
   - deltasync
+  - libaceguiwidgets
 
 # External dependencies (Ace3, VersionCheck) are handled via required-dependencies above
 
@@ -50,6 +51,7 @@ ignore:
   - tools
   - Tests
   - CLAUDE.md
+  - CHANGELOG_ARCHIVE.md
   - wow-version-replication.ps1
   - "*.ps1"
   - "*.bat"

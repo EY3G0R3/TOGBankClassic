@@ -82,18 +82,14 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	local window = TOGBankClassic_UI:Create("Frame")
 	window:Hide()
 	window:SetCallback("OnClose", OnClose)
-	local version = GetAddOnMetadata("TOGBankClassic", "Version") or "?"
-	window:SetTitle("TOGBankClassic v" .. version)
+	window:SetTitle(TOGBankClassic_UI:WindowTitle())
 	window:SetLayout("Flow")
 	TOGBankClassic_UI:ApplyThinBorder(window, "inventory")
-	-- Persist window position/size across reloads (each window gets its own sub-table)
-	if TOGBankClassic_Options and TOGBankClassic_Options.db then
-		local positions = TOGBankClassic_Options.db.char.framePositions
-		positions.inventory = positions.inventory or { width = 550, height = 500 }
-		window:SetStatusTable(positions.inventory)
-	end
+	-- WINDOW-PERSIST-002: position, size and the resize floor per character, the one spelling every
+	-- window uses (UI:PersistWindow -> the library's). This used to open-code the status table and a
+	-- SetResizeBounds(500, 500) beside it.
+	TOGBankClassic_UI:PersistWindow(window, "inventory", 550, 500, 500, 500)
 	--handle keyboard events
-	window.frame:SetResizeBounds(500, 500)
 	window.frame:EnableKeyboard(true)
 	window.frame:SetPropagateKeyboardInput(true)
 	window.frame:SetScript("OnKeyDown", function(self, event)
@@ -103,116 +99,46 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	self.Window = window
 	self.StatusBar = TOGBankClassic_UI_StatusBar:Attach(window)
 
-	-- Shrink status bar right edge to make room for the help and settings icons.
-	-- Layout (right to left): [Close button] [Help "?" icon @ -133] [Gear icon @ -165] [Status bar ending at -195]
-	local statusbg = window.statustext:GetParent()
-	statusbg:ClearAllPoints()
-	statusbg:SetPoint("BOTTOMLEFT",  window.frame, "BOTTOMLEFT",  15, 15)
-	statusbg:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -195, 15)
-
-	-- Help "?" icon — sits in the gap between the status bar and the close button
-	local helpIcon = CreateFrame("Frame", nil, window.frame)
-	helpIcon:SetSize(24, 24)
-	helpIcon:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -133, 15)
-	helpIcon:EnableMouse(true)
-	-- HITBOX-001: lift above AceGUI's mouse-enabled bottom resize strip (sizer_s,
-	-- level 101) so the whole icon takes clicks/hover instead of a center sliver.
-	helpIcon:SetFrameLevel(window.frame:GetFrameLevel() + 10)
-	local helpTex = helpIcon:CreateTexture(nil, "OVERLAY")
-	helpTex:SetAllPoints(helpIcon)
-	helpTex:SetTexture("Interface\\Common\\help-i")
-	helpIcon:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine("Guild Bank — How It Works")
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("This window shows the combined inventory of all guild banker alts and their mail inventory. Each tab represents one banker character, which is a real in-game character.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100To donate items:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Mail the item using in-game mail directly to the banker character shown in the tab you want to contribute to.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100To request items:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Open the Search window to search for an item, click on it to open the submit request popup and submit the request. Alternatively, you can click on the item directly in the banker tabs to open the request popup. A banker will fulfil it when they are next online and see your request.", 0.9, 0.9, 0.9, true)
-		TOGBankClassic_UI:AppendGuildHelpNote("inventory")  -- HELPNOTE-001
-		GameTooltip:Show()
-	end)
-	helpIcon:SetScript("OnLeave", function()
-		TOGBankClassic_UI:HideTooltip()
-	end)
-
-	-- Gear icon — opens TOGBankClassic settings (Escape → Options → AddOns → TOGBankClassic).
-	-- 20x20 to match FastGuildInvite's settings gear (same project author, same visual feel).
-	-- Bottom-anchor offset +17 (vs help icon's +15) so the gear's vertical centre lines up with
-	-- the help icon's (help is 24x24 → centre y=27; gear is 20x20 → bottom 17 + 10 = centre 27).
-	-- Texture pattern matches FGI: the Trade_Engineering icon looks like a gear, but Blizzard's
-	-- icon files ship with ~8% transparent padding on each edge; cropping the TexCoord to
-	-- (0.08-0.92) makes the visible gear fill the button instead of looking floaty in the middle.
-	local settingsIcon = CreateFrame("Button", nil, window.frame)
-	settingsIcon:SetSize(20, 20)
-	settingsIcon:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -165, 17)
-	settingsIcon:EnableMouse(true)
-	settingsIcon:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
-	settingsIcon:SetNormalTexture("Interface\\Icons\\Trade_Engineering")
-	settingsIcon:SetPushedTexture("Interface\\Icons\\Trade_Engineering")
-	local gearNormal = settingsIcon:GetNormalTexture()
-	if gearNormal then gearNormal:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
-	local gearPushed = settingsIcon:GetPushedTexture()
-	if gearPushed then
-		gearPushed:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-		gearPushed:SetVertexColor(0.7, 0.7, 0.7)
-	end
-	-- Expand the click hit-rect 2px beyond the visible button so the click target
-	-- matches the larger feel a player expects from a 24px-wide icon.
-	settingsIcon:SetHitRectInsets(-2, -2, -2, -2)
-	settingsIcon:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	settingsIcon:SetScript("OnClick", function()
-		if not (TOGBankClassic_Options and TOGBankClassic_Options.Open) then return end
-		-- Blizzard's Settings panel takes focus when it opens and (depending on WoW
-		-- version) can hide other top-level frames. Our inventory is registered in
-		-- UISpecialFrames, so a focus-grab can propagate through the controller's
-		-- OnHide and close it. We don't want that — the user wants to return to the
-		-- inventory after closing Settings. So: remember whether the inventory was
-		-- open BEFORE opening Settings, and if it got closed by the focus change,
-		-- restore it on the next frame. If Settings doesn't close it, this is a no-op.
-		local wasOpen = TOGBankClassic_UI_Inventory.isOpen
-		TOGBankClassic_Options:Open()
-		if wasOpen then
-			C_Timer.After(0, function()
-				if not TOGBankClassic_UI_Inventory.isOpen then
-					TOGBankClassic_UI_Inventory:Open()
-				end
-			end)
-		end
-	end)
-	settingsIcon:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine("TOGBankClassic Settings")
-		GameTooltip:AddLine("Open the addon options panel (banker/scan configuration, debug logging, minimap button, etc.).", 0.9, 0.9, 0.9, true)
-		GameTooltip:Show()
-	end)
-	settingsIcon:SetScript("OnLeave", function()
-		TOGBankClassic_UI:HideTooltip()
-	end)
-
-	-- HITBOX-001: re-assert the bottom-row lift on every show so the whole icon (and the
-	-- AceGUI Close button) stays clickable, not just its top half. See KeepAboveResizeSizers.
-	TOGBankClassic_UI:KeepAboveResizeSizers(window, { helpIcon, settingsIcon })
+	-- WINDOW-CHROME-001: the "?" and the gear, the status bar ending at the gear, the hitbox lift --
+	-- the shared bottom row (UI:DressWindow). Only the help text is this window's.
+	TOGBankClassic_UI:DressWindow(window, {
+		settings = TOGBankClassic_UI_Inventory,
+		help = function()
+			GameTooltip:AddLine("Guild Bank — How It Works")
+			GameTooltip:AddLine(" ")
+			GameTooltip:AddLine("This window shows the combined inventory of all guild banker alts and their mail inventory. Each tab represents one banker character, which is a real in-game character.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine(" ")
+			GameTooltip:AddLine("|cffffd100To donate items:|r", 1, 1, 1, false)
+			GameTooltip:AddLine("Mail the item using in-game mail directly to the banker character shown in the tab you want to contribute to.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine(" ")
+			GameTooltip:AddLine("|cffffd100To request items:|r", 1, 1, 1, false)
+			GameTooltip:AddLine("Open the Search window to search for an item, click on it to open the submit request popup and submit the request. Alternatively, you can click on the item directly in the banker tabs to open the request popup. A banker will fulfil it when they are next online and see your request.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine(" ")
+			GameTooltip:AddLine("|cffffd100Bankers -- to hide an item from the guild:|r", 1, 1, 1, false)
+			GameTooltip:AddLine("On your own tab, right-click an item to hide it. It stays on your tab greyed out with a red mark; to everyone else it is as if you do not have it. Right-click it again to show it.", 0.9, 0.9, 0.9, true)
+			TOGBankClassic_UI:AppendGuildHelpNote("inventory")  -- HELPNOTE-001
+		end,
+	})
 
 	local buttonContainer = TOGBankClassic_UI:Create("SimpleGroup")
 	buttonContainer:SetLayout("Table")
+	-- Four columns since BROWSE-001: Search | Browse | Sort | Requests.
 	buttonContainer:SetUserData("table", {
 		columns = {
 			{
-				width = 0.34,
+				width = 0.25,
 				align = "start",
 			},
 			{
-				width = 0.33,
+				width = 0.20,
 				align = "center",
 			},
 			{
-				width = 0.33,
+				width = 0.30,
+				align = "center",
+			},
+			{
+				width = 0.25,
 				align = "end",
 			},
 		},
@@ -241,6 +167,26 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	searchButton:SetWidth(160)
 	searchButton:SetHeight(24)
 	buttonContainer:AddChild(searchButton)
+
+	-- BROWSE-001: the whole bank as one list, in parallel with these tabs.
+	local browseButton = TOGBankClassic_UI:Create("Button")
+	browseButton:SetText("Browse")
+	browseButton:SetCallback("OnClick", function(_)
+		TOGBankClassic_UI_Browse:Toggle()
+	end)
+	browseButton:SetCallback("OnEnter", function()
+		GameTooltip:SetOwner(browseButton.frame, "ANCHOR_BOTTOM")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine("Browse Guild Bank")
+		GameTooltip:AddLine("Every banker's items as one sortable list, with filters for type, slot, quality and level across the top, and a Bankers tab showing each bank's status.", 0.9, 0.9, 0.9, true)
+		GameTooltip:Show()
+	end)
+	browseButton:SetCallback("OnLeave", function()
+		TOGBankClassic_UI:HideTooltip()
+	end)
+	browseButton:SetWidth(120)
+	browseButton:SetHeight(24)
+	buttonContainer:AddChild(browseButton)
 
 	local sortDropdown = TOGBankClassic_UI:Create("Dropdown")
 	sortDropdown:SetLabel("")
@@ -317,12 +263,52 @@ end
 --- because several peers relay the same alts within the same second and each delivery would
 --- otherwise rebuild the tab strip and status bar.
 function TOGBankClassic_UI_Inventory:RefreshSoon()
+	-- BROWSE-001: the Guild Bank window shows the same data; every "data landed" signal that
+	-- repaints these tabs repaints it too, on the same debounce. Fanned out here rather than at
+	-- each of the six callers so a seventh cannot forget it.
+	local Browse = TOGBankClassic_UI_Browse
+	if Browse and Browse.isOpen and not Browse.refreshPending then
+		Browse.refreshPending = true
+		C_Timer.After(0.5, function()
+			Browse.refreshPending = nil
+			Browse:Refresh()
+		end)
+	end
 	if not self.isOpen or self.refreshPending then return end
 	self.refreshPending = true
 	C_Timer.After(0.5, function()
 		self.refreshPending = nil
 		if self.isOpen then self:DrawContent() end
 	end)
+end
+
+--- HIDE-001: right click on the banker's own tab. Flips the item's hidden flag, which re-reads and
+--- republishes (Bank:SetHidden), then reloads the tab so the row moves between greyed and normal.
+--- The tab reload is explicit because DrawContent deliberately does not re-select the current tab
+--- (UI-004) -- the contents would otherwise stay as they were until the next tab change.
+---@param item table a view row: ID, Suffix, Enchant, Hidden
+---@param tab string the tab value (the banker's display name)
+function TOGBankClassic_UI_Inventory:ToggleHidden(item, tab)
+	if not (item and item.ID) then return end
+	local nowHidden = not item.Hidden
+	-- HIDE-002: a row the checkbox hid has no manual key to remove; a right click would look like
+	-- it did nothing. Say what governs it instead.
+	local T = TOGBankClassic_UI.HIDDEN_TEXT   -- HIDDEN-TEXT-001: the same words the Browse tab says
+	local name = item.Info and item.Info.name or ("item " .. tostring(item.ID))
+	if item.Hidden and TOGBankClassic_Bank:HiddenReason(item.ID, item.Suffix, item.Enchant) == "soulbound" then
+		TOGBankClassic_Output:Info(T.noticeSoulbound:format(name))
+		return
+	end
+	if not TOGBankClassic_Bank:SetHidden(item.ID, item.Suffix, item.Enchant, nowHidden) then return end
+	TOGBankClassic_Output:Info((nowHidden and T.noticeHidden or T.noticeShown):format(name))
+	self:ReloadTab(tab)
+end
+
+--- Re-run the current tab's OnGroupSelected so its rows are rebuilt from the store.
+function TOGBankClassic_UI_Inventory:ReloadTab(tab)
+	if not (self.isOpen and self.TabGroup) then return end
+	self.currentTab, self.tabLoaded = nil, false
+	self.TabGroup:SelectTab(tab)
 end
 
 function TOGBankClassic_UI_Inventory:DrawContent()
@@ -371,7 +357,10 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			if not first_tab then
 				first_tab = player
 			end
-			local tabText = IsStale(norm) and ("|cffff0000" .. player .. "|r") or player
+			-- TAB-STATE-003: grey for a newer copy nobody who can serve us holds; red for the rest.
+			local state = TOGBankClassic_Guild:GetAltStaleness(norm)
+			local tabText = state == "refused" and ("|cffa0a0a0" .. player .. "|r")
+				or IsStale(norm) and ("|cffff0000" .. player .. "|r") or player
 			tabs[i] = { value = player, text = tabText }
 			i = i + 1
 		end
@@ -395,13 +384,31 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	end
 	self.TabGroup:SetCallback("OnTabEnter", function(_, _, value, tabBtn)
 		local norm = TOGBankClassic_Guild:NormalizeName(value)
-		local state, heldAt, newestAt = TOGBankClassic_Guild:GetAltStaleness(norm)
+		local state, heldAt, newestAt, offeredBy, peerVersion = TOGBankClassic_Guild:GetAltStaleness(norm)
 		if state == "current" then return end
 		GameTooltip:SetOwner(tabBtn, "ANCHOR_TOP")
+		if state == "refused" then   -- TAB-STATE-003: the one sentence, Browse's
+			GameTooltip:AddLine("|cffa0a0a0Newer Copy Unreachable|r")
+			GameTooltip:AddLine(TOGBankClassic_UI_Browse.RefusedText(offeredBy, peerVersion), 1, 1, 1, true)
+			GameTooltip:Show()
+			return
+		end
 		GameTooltip:AddLine("|cffff0000Outdated Data|r")
-		if state == "behind" then
+		if state == "behind" and norm == TOGBankClassic_Guild:GetNormalizedPlayer() then
+			-- MULTIPC-001: our own bank, and another computer on this account published a later
+			-- version than this one holds. Nothing is fetched for our own character; the only way
+			-- forward is to re-read every source here, and the gate in Bank:Scan holds publishing
+			-- until that has happened.
+			GameTooltip:AddLine(string.format("Another computer published a newer copy of this bank %s ago; this computer's copy is from %s.",
+				ago(newestAt), heldAt > 0 and (ago(heldAt) .. " ago") or "before that"), 1, 1, 1, true)
+			GameTooltip:AddLine("Open your bank on this character (and your mailbox, if this character uses mail) to refresh and republish it. Until then nothing you scan here is sent to the guild.", 0.8, 0.8, 0.8, true)
+		elseif state == "behind" then
 			GameTooltip:AddLine(string.format("A newer copy of this bank was published %s ago; yours is from %s ago.",
 				ago(newestAt), ago(heldAt)), 1, 1, 1, true)
+			GameTooltip:AddLine("It is being fetched -- the tab turns yellow when it arrives.", 0.8, 0.8, 0.8, true)
+		elseif state == "offered" then   -- TABCOLOUR-003
+			GameTooltip:AddLine(string.format("%s says they hold a newer copy of this bank than yours (from %s ago).",
+				tostring(offeredBy), ago(heldAt)), 1, 1, 1, true)
 			GameTooltip:AddLine("It is being fetched -- the tab turns yellow when it arrives.", 0.8, 0.8, 0.8, true)
 		elseif state == "v1" then
 			if norm == TOGBankClassic_Guild:GetNormalizedPlayer() then
@@ -450,14 +457,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		scroll:SetFullHeight(true)
 		scroll:SetFullWidth(true)
 
-		-- Apply thin scrollbar style to match dropdown scrollbars
-		if scroll.scrollbar then
-			scroll.scrollbar:ClearAllPoints()
-			scroll.scrollbar:SetPoint("TOPRIGHT", scroll.scrollframe, "TOPRIGHT", 0, -20)
-			scroll.scrollbar:SetPoint("BOTTOMRIGHT", scroll.scrollframe, "BOTTOMRIGHT", 0, 20)
-			scroll.scrollbar:SetWidth(8)
-			scroll.scrollbar:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Vertical")
-		end
+		TOGBankClassic_UI:ApplyThinScrollbar(scroll)   -- SCROLLBAR-002: in the gap, not over the icons
 		g:AddChild(scroll)
 
 		-- The guard against a double-processed callback is this flag on the container itself.
@@ -469,7 +469,13 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 
 		-- INV2 step 7a: the aggregate-or-rebuild decision, and the inventoryV2 switch with it,
 		-- live in Guild:GetAltItems. This used to open-code both here.
-		local items = TOGBankClassic_Guild:GetAltItems(normTab)
+		-- HIDE-001 / HIDDEN-MERGE-001: the banker's OWN tab also shows what they keep from the
+		-- guild, greyed, so it can be shown again -- Guild:GetAltItemsWithOwnHidden is the one
+		-- place that merge is spelled (the Browse tab reads the same); GetAltItems (Search,
+		-- tooltips, TPM) never carries these rows.
+		local items = TOGBankClassic_Guild:GetAltItemsWithOwnHidden(normTab)
+		local ownTab = normTab == TOGBankClassic_Guild:GetNormalizedPlayer()
+			and TOGBankClassic_Guild:IsBank(normTab)
 		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: aggregated to %d unique items",
 			tab, #items)
 
@@ -535,9 +541,20 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 					end
 					local itemWidget = TOGBankClassic_UI:DrawItem(item, scroll)
 					if itemWidget then
-						itemWidget:SetCallback("OnClick", function(widget, event)
+						-- HIDE-001: on the banker's own tab the tooltip says what a right click does, and
+						-- a hidden row says so first.
+						if ownTab then
+							-- HIDE-002 / HIDDEN-TEXT-001: the words are UI.HIDDEN_TEXT's, shared with Browse.
+							local why = item.Hidden and TOGBankClassic_Bank:HiddenReason(item.ID, item.Suffix, item.Enchant) or nil
+							itemWidget.tooltipLines = TOGBankClassic_UI:HiddenTooltipLines(item.Hidden and true or false, why)
+						end
+						itemWidget:SetCallback("OnClick", function(widget, event, button)
+							if button == "RightButton" then
+								if ownTab then self:ToggleHidden(item, tab) end
+								return
+							end
 							if IsShiftKeyDown() or IsControlKeyDown() then
-								TOGBankClassic_UI:EventHandler(widget, event)
+								TOGBankClassic_UI:EventHandler(widget, event, button)
 								return
 							end
 							TOGBankClassic_UI_Search:ShowRequestDialog(item, tab)

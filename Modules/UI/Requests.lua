@@ -1,49 +1,84 @@
 TOGBankClassic_UI_Requests = {}
 
-local COLUMN_SPACING_H = 5
-local COLUMN_SPACING_V = 2
-local CONTENT_WIDTH_PADDING = 60
-local REQUESTS_PER_PAGE = 50  -- Pagination: limit visible requests per page to prevent freezing
+-- REQUESTS-ROWLIST-001. The operator, 2026-09-13, with a screenshot of this tab beside the Browse
+-- tab: "we need to make the request tab look and feel like the browse and bankers tab looks. right
+-- now it's different. we need the same zebra striping/spaceing etc." So the body is a
+-- TOGBankClassic_UI_RowList (Modules/UI/RowList.lua) -- the same 16px banded rows, fonts, header
+-- rule and scrollbar as the Browse, Bankers and Log tabs -- and the AceGUI label grid it replaced,
+-- with its 50-a-page pagination and its own column-width arithmetic, is gone: the list scrolls the
+-- whole set virtually, so there is nothing to page. Three columns own their cells (RowList `build`):
+-- the date (the status glyph, the cancelled glow and the timeline tooltip), the item (the copyable
+-- overlay and the item tooltip) and the actions (the icon strip). This resolves REQUESTS-LAYOUT-001
+-- by its candidate (a): the fixed-offset grid that set the Guild Bank window's 972px floor is what
+-- went.
+--
+-- SEARCH-006: `search = true` marks a column the ONE search box (above the dropdowns) matches
+-- against -- the operator's Discord ask of 2026-08-19 ("add search on requestors to find someone
+-- easily"), then on 2026-09-11 "one bar that filters on all columns". The four text columns are
+-- searched; `#`, `Sent` and `Actions` are not -- a number or a button row is not something to
+-- search. (SEARCH-005 briefly put a box under each of the four; that row is gone.)
+-- `width` is the RowList's: fixed columns chained either side of the one auto column (the item).
 local COLUMNS = {
-	{ key = "date",      label = "Date",      width = 140, align = "center",                       tooltipTitle = "Date Submitted",  tooltipDetail = "When the request was submitted. Click to sort." },
-	{ key = "requester", label = "Requester", width = 150, align = "center", flex = true, weight = 1, tooltipTitle = "Requester",        tooltipDetail = "The guild member who submitted the request. Click to sort." },
-	{ key = "bank",      label = "Bank",      width = 150, align = "center", flex = true, weight = 1, tooltipTitle = "Bank",            tooltipDetail = "The banker character this request is assigned to. Click to sort." },
-	{ key = "quantity",  label = "#",         width = 50,  align = "end",   headerSuffix = " ",         tooltipTitle = "Quantity",         tooltipDetail = "The number of items requested. Click to sort." },
-	{ key = "item",      label = "Item",      width = 170, align = "start", headerAlign = "center", flex = true, weight = 2, tooltipTitle = "Item",            tooltipDetail = "The item being requested. Click to sort." },
-	{ key = "fulfilled", label = "Sent",      width = 70,  align = "center",                           tooltipTitle = "Amount Sent",     tooltipDetail = "How many items have been sent to the requester so far. Click to sort." },
-	-- WRAP-001: width holds the 5-button actionGroup (fulfill+complete+cancel+delete+reopen =
-	-- 120px of buttons + 20px of spacers = 140px of Flow content, all reserved even when some
-	-- buttons are hidden). At exactly 140 the last button (reopen) sat on the content==column
-	-- boundary and wrapped onto the fulfill/mail button on smaller windows; 152 gives headroom.
-	{ key = "actions",   label = "Actions",   width = 152, align = "center",                           tooltipTitle = "Actions",         tooltipDetail = "Fulfill, complete, or cancel the request. Click to sort." },
+	{ key = "date",      header = "Date",      width = 118, justify = "LEFT", search = true, headerTip = "When the request was submitted. Click to sort." },
+	{ key = "requester", header = "Requester", width = 128, justify = "LEFT", search = true, headerTip = "The guild member who submitted the request. Click to sort." },
+	{ key = "bank",      header = "Bank",      width = 128, justify = "LEFT", search = true, headerTip = "The banker character this request is assigned to. Click to sort." },
+	{ key = "quantity",  header = "#",         width = 36,  justify = "RIGHT",               headerTip = "The number of items requested. Click to sort." },
+	{ key = "item",      header = "Item",                   justify = "LEFT", search = true, headerTip = "The item being requested. Click to sort." },
+	{ key = "fulfilled", header = "Sent",      width = 36,  justify = "RIGHT",               headerTip = "How many items have been sent to the requester so far. Click to sort." },
+	{ key = "actions",   header = "Actions",   width = 96,  justify = "LEFT", sortable = false, headerTip = "Fulfill, mark handed over, cancel, delete or re-open the request." },
 }
 
-local function minContentWidth()
-	local total = 0
+-- The item column's narrowest useful width: an item name in the small font.
+local ITEM_MIN_WIDTH = 150
+
+-- REQUESTS-STRIP-001: the filter strip's inset from the tab border -- UI.FILTER_INSET, the ONE
+-- number Browse's strips read too, so the tabs' left edges line up -- and the gap between the
+-- strip and the list.
+local FILTER_INSET = TOGBankClassic_UI.FILTER_INSET
+local LIST_GAP = 10
+-- REQUESTS-STRIP-002: the Requests/Archive/Settings sub-tab row's height -- the 24px tab buttons
+-- at y=-7 (AceGUI TabGroup) end at 31; the filter strip hangs under this, so the difference is the
+-- clearance between the tab bottoms and the strip. One number.
+local SUBTAB_H = 39
+
+--- BROWSE-007: the narrowest window this body fits in -- every fixed column, the list's own
+--- padding and gutter, and the item column at its narrowest useful width. The standalone window
+--- uses it as its resize floor and the Guild Bank window reads it for ITS floor (Browse.ResizeFloor),
+--- because it hosts this body on a tab. The operator: "the window can shrink smaller than the
+--- columns, and the column headers float outside the window." REQUESTS-LAYOUT-001: the old grid's
+--- 972 came down with the grid -- the RowList's auto column absorbs the width, and the fixed columns
+--- are narrower in the small font.
+---@return number
+local function minWidth()
+	local RowList = TOGBankClassic_UI_RowList
+	local total = ITEM_MIN_WIDTH
 	for _, col in ipairs(COLUMNS) do
-		total = total + (col.width or 0)
+		if col.width then total = total + col.width + (RowList and RowList.COL_GAP or 4) end
 	end
-	total = total + COLUMN_SPACING_H * (#COLUMNS - 1)
-	return total
+	total = total + (RowList and (RowList.LEFT_PAD + RowList.SCROLLBAR_GUTTER) or 28)
+	-- The AceGUI Frame's own insets either side of its content.
+	return total + 40
+end
+function TOGBankClassic_UI_Requests:MinWidth()
+	return minWidth()
 end
 
-local MIN_WIDTH = minContentWidth() + CONTENT_WIDTH_PADDING
-
-local CANCEL_ICON = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:18:18:0:0|t"
-local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:18:18:0:0|t"
-local DELETE_ICON = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:18:18:0:0|t"
-local FULFILL_ICON = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"
+-- The action icons, sized for the RowList's 16px row.
+local CANCEL_ICON = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:14:14:0:0|t"
+local COMPLETE_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:14:14:0:0|t"
+local DELETE_ICON = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:14:14:0:0|t"
+local FULFILL_ICON = "|TInterface\\Icons\\INV_Letter_15:14:14:0:0|t"
 -- REOPEN-001: re-open icon. NOTE: Classic Era is missing many textures (see the broom saga,
 -- BROOM-001); if this renders blank in-game, swap the texture or bundle a TGA like Textures/broom.
-local REOPEN_ICON = "|TInterface\\Buttons\\UI-RefreshButton:18:18:0:0|t"
+local REOPEN_ICON = "|TInterface\\Buttons\\UI-RefreshButton:14:14:0:0|t"
 -- Contextual fulfill button icons based on state
-local FULFILL_ICON_READY = "|TInterface\\Icons\\INV_Letter_15:18:18:0:0|t"        -- Envelope: ready to send
-local FULFILL_ICON_NO_MAILBOX = "|TInterface\\Icons\\INV_Letter_02:18:18:0:0|t"   -- Sealed letter: need mailbox
-local FULFILL_ICON_NOT_IN_BAGS = "|TInterface\\Icons\\INV_Misc_Bag_07:18:18:0:0|t" -- Bag: pick up from bank
-local FULFILL_ICON_IN_MAIL         = "|TInterface\\Icons\\INV_Letter_06:18:18:0:0|t"                                                  -- Wax-sealed letter: item is in your mail inbox
-local FULFILL_ICON_IN_MAIL_AND_BANK = "|TInterface\\Icons\\INV_Misc_Bag_07:14:14:0:0|t|TInterface\\Icons\\INV_Letter_06:14:14:0:0|t" -- Bag + wax letter: item is in both bank and mail
-local FULFILL_ICON_NEED_SPLIT      = "|TInterface\\Icons\\INV_Misc_Shovel_01:18:18:0:0|t"      -- Shovel: manual work needed
-local FULFILL_ICON_NO_ITEMS = "|TInterface\\Icons\\INV_Misc_QuestionMark:18:18:0:0|t" -- Question mark: no items
+local FULFILL_ICON_READY = "|TInterface\\Icons\\INV_Letter_15:14:14:0:0|t"        -- Envelope: ready to send
+local FULFILL_ICON_NO_MAILBOX = "|TInterface\\Icons\\INV_Letter_02:14:14:0:0|t"   -- Sealed letter: need mailbox
+local FULFILL_ICON_NOT_IN_BAGS = "|TInterface\\Icons\\INV_Misc_Bag_07:14:14:0:0|t" -- Bag: pick up from bank
+local FULFILL_ICON_IN_MAIL         = "|TInterface\\Icons\\INV_Letter_06:14:14:0:0|t"                                                  -- Wax-sealed letter: item is in your mail inbox
+local FULFILL_ICON_IN_MAIL_AND_BANK = "|TInterface\\Icons\\INV_Misc_Bag_07:10:10:0:0|t|TInterface\\Icons\\INV_Letter_06:10:10:0:0|t" -- Bag + wax letter: item is in both bank and mail
+local FULFILL_ICON_NEED_SPLIT      = "|TInterface\\Icons\\INV_Misc_Shovel_01:14:14:0:0|t"      -- Shovel: manual work needed
+local FULFILL_ICON_NO_ITEMS = "|TInterface\\Icons\\INV_Misc_QuestionMark:14:14:0:0|t" -- Question mark: no items
 -- Row status prefix icons (date column decorators)
 local CHECK_MARK_ICON = "|TInterface\\Buttons\\UI-CheckBox-Check:0|t "
 local CANCELLED_ICON  = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:0|t "
@@ -104,66 +139,7 @@ local function handleFilterChange(self, key, widget, value)
 	else
 		setFilterValue(self, key, value)
 	end
-	self.currentPage = 1  -- Reset to first page on filter change
-	self:DrawRows()
-end
-
-local function ColumnLayout(contentWidth)
-	local cols = {}
-	local widths = {}
-	local baseTotal = 0
-	local flexTotal = 0
-	local spaceH = COLUMN_SPACING_H
-
-	for _, col in ipairs(COLUMNS) do
-		baseTotal = baseTotal + (col.width or 0)
-		if col.flex then
-			flexTotal = flexTotal + (col.weight or 1)
-		end
-	end
-
-	local available = (tonumber(contentWidth) or 0) - spaceH * (#COLUMNS - 1)
-	if available < baseTotal then
-		available = baseTotal
-	end
-
-	local extra = available - baseTotal
-	local used = 0
-	local lastFlex = nil
-
-	for i, col in ipairs(COLUMNS) do
-		local width = col.width or 0
-		if col.flex and flexTotal > 0 then
-			width = width + extra * ((col.weight or 1) / flexTotal)
-			lastFlex = i
-		end
-		width = math.floor(width + 0.5)
-		widths[i] = width
-		used = used + width
-	end
-
-	local remainder = available - used
-	if remainder ~= 0 then
-		local adjustIndex = lastFlex or #COLUMNS
-		widths[adjustIndex] = widths[adjustIndex] + remainder
-	end
-
-	for i, col in ipairs(COLUMNS) do
-		cols[i] = { width = widths[i], alignH = col.align or "start" }
-	end
-
-	return cols, widths
-end
-
-local function justifyForAlign(align)
-	align = tostring(align or "start"):lower()
-	if align == "end" or align == "right" then
-		return "RIGHT"
-	end
-	if align == "center" or align == "middle" then
-		return "CENTER"
-	end
-	return "LEFT"
+	self:DrawRows(false)   -- a new filter starts at the top of the list
 end
 
 local function OnClose(_)
@@ -173,20 +149,63 @@ local function OnClose(_)
 	end
 end
 
-local function tagColumnWidget(widget, colIndex, keepWidth)
-	if not widget or not widget.SetUserData then
-		return
+-- BROWSE-001 fold-in. The operator: "requests isn't a separate window, it's just another tab".
+-- The same body -- tab strip, the one search box, the Requester/Bank dropdowns, the RowList
+-- (header and banded rows), the bottom icon cluster -- renders in one of two places:
+--   STANDALONE: its own AceGUI Frame (the Inventory window's Requests button, /togbank requests).
+--   EMBEDDED:   the Guild Bank window's Requests tab (Browse:ShowTab -> Requests:Embed).
+-- `self.Host` is the AceGUI container the body's widgets are children of (the window, or that
+-- window's tab group); `self.Chrome` is the AceGUI Frame whose bottom row carries the icon
+-- cluster and whose status bar takes the messages (the window, or the Guild Bank window).
+-- Standalone, both are `self.Window`. Only one rendering exists at a time: embedding releases
+-- the standalone window, and Open() while the Guild Bank window is up goes to its tab.
+
+--- The status line, wherever the body is showing.
+function TOGBankClassic_UI_Requests:SetStatusText(text)
+	if self.embedded then
+		local Browse = TOGBankClassic_UI_Browse
+		if Browse and Browse.SetStatus then Browse:SetStatus(text) end
+	elseif self.Window then
+		self.Window:SetStatusText(text)
 	end
-	widget:SetUserData("togRequestsColIndex", colIndex)
-	widget:SetUserData("togRequestsKeepWidth", keepWidth and true or false)
 end
 
-local function centerButtonText(button)
-	if button.text and button.text.SetJustifyH then
-		button.text:ClearAllPoints()
-		button.text:SetPoint("CENTER")
-		button.text:SetJustifyH("CENTER")
+--- Re-lay the container the body lives in.
+function TOGBankClassic_UI_Requests:DoLayout()
+	if self.Host and self.Host.DoLayout then self.Host:DoLayout() end
+end
+
+-- POOL HYGIENE. AceGUI's widget pool is shared with every addon in the client, and this file
+-- leaves marks on a widget's FRAME that outlive the widget's release: a neutered `Show` (below)
+-- and the cancel glow (SetCancelGlow). Handed back with any of those in place, the same frame
+-- comes out of the pool for the next Create -- the Guild Bank window's filter strip took a Button
+-- whose Show did nothing, and the strip's Clear button was simply not there; a SimpleGroup with the
+-- same mark took the WHOLE strip with it ("issue with the stuff at the top disappearing
+-- sometimes"). ONE OnRelease handler undoes every mark, registered by each site that makes one;
+-- one handler rather than one per mark because SetCallback holds a single OnRelease and the
+-- last registration would silently drop the others'. Registered on every marking, not once:
+-- AceGUI wipes a widget's callbacks when it is released.
+-- REQUESTS-ROWLIST-001: the row cells are plain frames on the RowList's pooled rows now, never
+-- released to AceGUI, so the fulfil dim and the glow only reach this path through an AceGUI Label
+-- someone hands SetCancelGlow (the spec does); the hidden-Show mark is still the Settings tab's.
+local function restoreWidgetOnRelease(widget)
+	local frame = widget and widget.frame
+	if not frame then return end
+	if frame.togRequestsHidden then
+		frame.Show = frame.togRequestsOrigShow
+		frame.togRequestsHidden = false
 	end
+	if frame.togDisabled ~= nil then
+		frame.togDisabled = nil
+		frame:SetAlpha(1)
+	end
+	if widget.label and widget.label.togCancelGlow then
+		TOGBankClassic_UI_Requests:SetCancelGlow(widget, false)
+	end
+end
+
+local function markForRestore(widget)
+	if widget and widget.SetCallback then widget:SetCallback("OnRelease", restoreWidgetOnRelease) end
 end
 
 local function setWidgetShown(widget, shown)
@@ -208,61 +227,45 @@ local function setWidgetShown(widget, shown)
 			-- AceGUI Flow layout calls frame:Show() during layout; override to keep hidden.
 			frame.togRequestsHidden = true
 			frame.Show = function() end
+			markForRestore(widget)
 		end
 		frame:Hide()
 	end
 end
 
--- Enable/disable a raw Button frame (pagination icons), swapping to its disabled
--- texture and suppressing clicks. Mirrors AceGUI Button:SetDisabled for our needs.
-local function setBtnEnabled(btn, enabled)
-	if not btn then
-		return
-	end
-	if enabled then
-		btn:Enable()
-	else
-		btn:Disable()
+--- REQUESTS-ROWLIST-001: a row's action icon -- a plain Button on the row's actions cell carrying
+--- the icon as text, a hover highlight, and a title/detail tooltip read off the button at hover
+--- time (so the fulfil icon's tooltip can change with its state without re-hooking). Its click
+--- reads the request off the cell it sits on (`cell.req`, set on every render) -- the RowList pools
+--- rows by position, so nothing about a request may be captured at build time.
+--- The icons show even when the action is greyed (the fulfil dim), which is why the tooltip is on
+--- the frame's own scripts rather than gated on enabled state.
+--- A cell that takes the mouse locks its row's highlight while the cursor is on it, so the row reads
+--- as hovered across its whole width, as a Browse row does. Every mouse-taking cell -- the action
+--- icons here, the date/item cells below -- goes through this one spelling.
+local function lockRowHighlight(cell, on)
+	local row = cell:GetParent()
+	if not row then return end
+	if on then
+		if row.LockHighlight then row:LockHighlight() end
+	elseif row.UnlockHighlight then
+		row:UnlockHighlight()
 	end
 end
 
-local function attachActionTooltip(button, title, detail)
-	if not button or not button.SetCallback then
-		return
-	end
-	button:SetCallback("OnEnter", function()
-		if not button.frame then
-			return
-		end
-		GameTooltip:SetOwner(button.frame, "ANCHOR_RIGHT")
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine(title or "")
-		if detail and detail ~= "" then
-			GameTooltip:AddLine(detail, 0.9, 0.9, 0.9, true)
-		end
-		GameTooltip:Show()
-	end)
-	button:SetCallback("OnLeave", function()
-		TOGBankClassic_UI:HideTooltip()
-	end)
-end
-
--- Special tooltip handler for fulfill button that works even when disabled
--- Hooks frame directly and stores tooltip data for dynamic updates
-local function setupFulfillButtonTooltip(button)
-	if not button or not button.frame then
-		return
-	end
-	local frame = button.frame
-	if frame.togFulfillTooltipHooked then
-		return
-	end
-	frame.togFulfillTooltipHooked = true
-	frame.togTooltipTitle = "Fulfill request"
-	frame.togTooltipDetail = ""
-
-	-- Hook scripts directly on the frame (works even when button is disabled)
-	frame:HookScript("OnEnter", function(self)
+local ACTION_ICON_SIZE = 16
+local function newActionIcon(cell, slot, iconText, title, detail, onClick)
+	local btn = CreateFrame("Button", nil, cell)
+	btn:SetSize(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
+	btn:SetPoint("LEFT", cell, "LEFT", (slot - 1) * (ACTION_ICON_SIZE + 2), 0)
+	local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	fs:SetPoint("CENTER", btn, "CENTER", 0, 0)
+	fs:SetText(iconText)
+	btn.icon = fs
+	btn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+	btn.togTooltipTitle, btn.togTooltipDetail = title, detail
+	btn:SetScript("OnEnter", function(self)
+		lockRowHighlight(cell, true)
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:ClearLines()
 		GameTooltip:AddLine(self.togTooltipTitle or "")
@@ -271,17 +274,22 @@ local function setupFulfillButtonTooltip(button)
 		end
 		GameTooltip:Show()
 	end)
-	frame:HookScript("OnLeave", function()
+	btn:SetScript("OnLeave", function()
+		lockRowHighlight(cell, false)
 		TOGBankClassic_UI:HideTooltip()
 	end)
+	btn:SetScript("OnClick", function(self)
+		if self.togDisabled then return end
+		local req = cell.req
+		if req and req.id then onClick(req) end
+	end)
+	return btn
 end
 
 local function updateFulfillButtonTooltip(button, title, detail)
-	if not button or not button.frame then
-		return
-	end
-	button.frame.togTooltipTitle = title or "Fulfill request"
-	button.frame.togTooltipDetail = detail or ""
+	if not button then return end
+	button.togTooltipTitle = title or "Fulfill request"
+	button.togTooltipDetail = detail or ""
 end
 
 local function closeCancelReasonDialog()
@@ -429,8 +437,8 @@ local function showCancelReasonDialog(req, actor, ui)
 			local cUI    = pendingCancelUI
 			closeCancelReasonDialog()
 			local success = TOGBankClassic_Guild:CancelRequest(cReq.id, cActor, reasonText)
-			if not success and cUI and cUI.Window then
-				cUI.Window:SetStatusText("Unable to cancel request.")
+			if not success and cUI and cUI.SetStatusText then
+				cUI:SetStatusText("Unable to cancel request.")
 			end
 		end)
 		frame:AddChild(confirmBtn)
@@ -453,6 +461,8 @@ local function showCancelReasonDialog(req, actor, ui)
 		end)
 
 		cancelReasonFrame = frame
+		-- Reachable for the spec (requestsactions_spec drives the dialog's own buttons); built once.
+		TOGBankClassic_UI_Requests.CancelDialog, TOGBankClassic_UI_Requests.CancelDropdown = frame, dd
 	end
 
 	---@diagnostic disable-next-line: undefined-field
@@ -491,8 +501,8 @@ local function ensureDeleteDialog()
 				return
 			end
 			if not TOGBankClassic_Guild:DeleteRequest(data.requestId, data.actor) then
-				if data.ui and data.ui.Window then
-					data.ui.Window:SetStatusText("Unable to delete request.")
+				if data.ui and data.ui.SetStatusText then
+					data.ui:SetStatusText("Unable to delete request.")
 				end
 			end
 		end,
@@ -516,12 +526,14 @@ local function ensureCancelStaleDialog()
 		OnAccept = function(_, data)
 			if not data then return end
 			local expired = TOGBankClassic_Guild:ExpireStaleRequests(data.actor)
-			if data.ui and data.ui.Window then
+			if data.ui and data.ui.SetStatusText then
 				if expired > 0 then
-					data.ui.Window:SetStatusText(string.format("Cancelled %d stale request%s.", expired, expired == 1 and "" or "s"))
+					-- Redraw FIRST: DrawContent sets its own "Showing N requests" status, which used
+					-- to land on top of this message the same instant (requestsactions_spec found it).
 					data.ui:DrawContent()
+					data.ui:SetStatusText(string.format("Cancelled %d stale request%s.", expired, expired == 1 and "" or "s"))
 				else
-					data.ui.Window:SetStatusText("No stale requests found.")
+					data.ui:SetStatusText("No stale requests found.")
 				end
 			end
 		end,
@@ -536,7 +548,7 @@ local function confirmDeleteRequest(request, actor)
 	ensureDeleteDialog()
 
 	local qty = tonumber(request.quantity or 0) or 0
-	local item = request.item or "Unknown"
+	local item = TOGBankClassic_Item:RequestDisplayName(request)   -- NAME-001
 	local requester = request.requester or "Unknown"
 	local bank = request.bank or "Unknown"
 	local message = string.format(
@@ -573,8 +585,8 @@ local function ensureReopenDialog()
 				return
 			end
 			if not TOGBankClassic_Guild:ReopenRequest(data.requestId, data.actor) then
-				if data.ui and data.ui.Window then
-					data.ui.Window:SetStatusText("Unable to re-open request.")
+				if data.ui and data.ui.SetStatusText then
+					data.ui:SetStatusText("Unable to re-open request.")
 				end
 			end
 		end,
@@ -591,7 +603,7 @@ local function confirmReopenRequest(request, actor)
 	ensureReopenDialog()
 
 	local qty = tonumber(request.quantity or 0) or 0
-	local item = request.item or "Unknown"
+	local item = TOGBankClassic_Item:RequestDisplayName(request)   -- NAME-001
 	local requester = request.requester or "Unknown"
 	local message = string.format(
 		"Re-open the request for %dx %s from %s?\n\nThis clears its Sent count and makes it an open order again.",
@@ -658,7 +670,7 @@ local function ensureCompleteQtyDialog()
 			local n = tonumber(eb and eb:GetText())
 			local ui = TOGBankClassic_UI_Requests
 			if not n or n < 1 then
-				if ui.Window then ui.Window:SetStatusText("Enter a quantity of 1 or more.") end
+				ui:SetStatusText("Enter a quantity of 1 or more.")
 				return
 			end
 			n = math.floor(n)
@@ -667,8 +679,8 @@ local function ensureCompleteQtyDialog()
 			-- bank+requester+item, which could silently no-op). Records the amount in
 			-- Sent and flips the order to fulfilled once Sent reaches the requested qty.
 			local applied = TOGBankClassic_Guild:FulfillRequestById(data.requestId, n, data.actor)
-			if (applied or 0) <= 0 and ui.Window then
-				ui.Window:SetStatusText("Unable to record that quantity.")
+			if (applied or 0) <= 0 then
+				ui:SetStatusText("Unable to record that quantity.")
 			end
 		end,
 	}
@@ -677,12 +689,10 @@ end
 local function showCompleteQtyPrompt(request, actor)
 	if not request or not StaticPopup_Show then return end
 	ensureCompleteQtyDialog()
-	local qty = tonumber(request.quantity or 0) or 0
-	local fulfilled = tonumber(request.fulfilled or 0) or 0
-	local remaining = math.max(qty - fulfilled, 0)
+	local remaining = TOGBankClassic_Guild:RequestQuantityNeeded(request)
 	local message = string.format(
 		"How many %s did you fill for %s?\n\nUse this for items handed over in person or mailed yourself. Recorded in the Sent column (up to %d remaining).",
-		request.item or "items", request.requester or "the requester", remaining)
+		TOGBankClassic_Item:RequestDisplayName(request), request.requester or "the requester", remaining)
 	StaticPopup_Show(COMPLETE_QTY_DIALOG, message, nil, {
 		requestId  = request.id,
 		bank       = request.bank,
@@ -692,22 +702,6 @@ local function showCompleteQtyPrompt(request, actor)
 		defaultQty = remaining,
 		maxQty     = remaining,
 	})
-end
-
-local function currentContentWidth(self)
-	if self.Content and self.Content.content and self.Content.content.GetWidth then
-		local width = self.Content.content:GetWidth()
-		if width and width > 0 then
-			return width
-		end
-	end
-	if self.Window and self.Window.frame and self.Window.frame.GetWidth then
-		local width = self.Window.frame:GetWidth()
-		if width and width > 0 then
-			return width - CONTENT_WIDTH_PADDING
-		end
-	end
-	return MIN_WIDTH - CONTENT_WIDTH_PADDING
 end
 
 -- Throttled bag update handling - only active when window is open
@@ -769,15 +763,13 @@ function TOGBankClassic_UI_Requests:Init()
 	self.sortDirection = "desc"
 	self.requesterFilter = nil
 	self.bankFilter = nil
+	self.searchText = nil    -- SEARCH-006: the one search, session-scoped like the dropdowns
 	self.defaultFiltersApplied = false
 	self.currentTab = "active"
-	self.currentPage = 1  -- Pagination: current page number
-	-- Sort/data cache (invalidated by DrawContent, persists across DrawRows calls)
-	self._cachedSortedTabFiltered = nil
-	self._cachedTotal             = nil
-	self._cachedSortColumn        = nil
-	self._cachedSortDirection     = nil
-	self._cachedTabFilter         = nil
+	-- Tab-filter cache (invalidated by DrawContent, persists across DrawRows calls)
+	self._cachedTabFiltered = nil
+	self._cachedTotal       = nil
+	self._cachedTabFilter   = nil
 	self._drawGeneration          = 0
 	-- Frame creation deferred to first Open() call (PERF-015)
 end
@@ -790,7 +782,39 @@ function TOGBankClassic_UI_Requests:Toggle()
 	end
 end
 
+--- Release the standalone window whole (banker status changed, or the body is moving into the
+--- Guild Bank window's tab). ALPHA-001: hand the frame back to AceGUI's shared pool with opaque
+--- chrome -- the pool is library-wide, so a faded frame released here can turn up as another
+--- addon's window.
+function TOGBankClassic_UI_Requests:ReleaseWindow()
+	if not self.Window then return end
+	TOGBankClassic_UI:ClearWindowAlpha(self.Window)
+	self.Window:Release()
+	self.Window = nil
+	self:ForgetBody()
+end
+
+--- What the body's lifecycle needs on every open, standalone or embedded: the first draw, the
+--- bag listener for a banker's fulfil icons, the request-index pull (REQUEST-001: a banker sees
+--- current data without waiting for the periodic timer; CanQueryRequestsIndex's cooldown stops
+--- a rapid toggle from spamming).
+local function afterOpen(self)
+	self:DrawContent()
+	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
+	if player and TOGBankClassic_Guild:IsBank(player) then
+		RegisterBagEvents()
+	end
+	TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
+end
+
 function TOGBankClassic_UI_Requests:Open()
+	-- BROWSE-001: while the Guild Bank window is up, the requests ARE its Requests tab; a second
+	-- rendering beside it would be two bodies over one row pool.
+	local Browse = TOGBankClassic_UI_Browse
+	if Browse and Browse.isOpen and Browse.Open then
+		Browse:Open("requests")
+		return
+	end
 	if self.isOpen then
 		return
 	end
@@ -803,11 +827,7 @@ function TOGBankClassic_UI_Requests:Open()
 
 	-- Recreate window if banker status changed (to add/remove highlight checkbox)
 	if bankerStatusChanged and self.Window then
-		-- ALPHA-001: hand the frame back to AceGUI's shared pool with opaque chrome. The pool is
-		-- library-wide, so a faded frame released here can turn up as another addon's window.
-		TOGBankClassic_UI:ClearWindowAlpha(self.Window)
-		self.Window:Release()
-		self.Window = nil
+		self:ReleaseWindow()
 	end
 
 	if not self.Window then
@@ -815,6 +835,7 @@ function TOGBankClassic_UI_Requests:Open()
 		self.wasBank = isCurrentlyBanker
 	end
 
+	-- Dock beside the Inventory window when it is open.
 	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
 		self.Window:ClearAllPoints()
 		self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
@@ -823,24 +844,13 @@ function TOGBankClassic_UI_Requests:Open()
 	-- Ensure window stays within screen bounds
 	TOGBankClassic_UI:ClampFrameToScreen(self.Window)
 
-	self:DrawContent()
+	afterOpen(self)
 
 	-- Force layout update before showing to ensure proper sizing
 	self.Window:DoLayout()
 
 	-- Show window AFTER content is drawn and laid out to prevent initial sizing issue
 	self.Window:Show()
-
-	-- Start listening for bag changes to update fulfill button states (bank alts only)
-	local player = TOGBankClassic_Guild:GetNormalizedPlayer()
-	if player and TOGBankClassic_Guild:IsBank(player) then
-		RegisterBagEvents()
-	end
-
-	-- REQUEST-001: Pull latest request state when the window opens so a banker
-	-- sees current data without needing to wait for the periodic timer.
-	-- CanQueryRequestsIndex cooldown prevents spam if the window is toggled rapidly.
-	TOGBankClassic_Guild:QueryRequestsIndex(nil, "NORMAL")
 
 	if _G["TOGBankClassic"] then
 		_G["TOGBankClassic"]:Show()
@@ -849,11 +859,75 @@ function TOGBankClassic_UI_Requests:Open()
 	end
 end
 
+--- BROWSE-001: render the body inside the Guild Bank window's Requests tab. `host` is that
+--- window's tab group (the widgets become its children, released with the tab), `chrome` the
+--- window itself (bottom icon cluster, status bar), `anchor` the window's help icon the cluster
+--- hangs left of. A standalone window that is up is released first -- one rendering at a time.
+function TOGBankClassic_UI_Requests:Embed(host, chrome, anchor)
+	if self.isOpen and not self.embedded then
+		UnregisterBagEvents()
+		if TOGBankClassic_ItemHighlight then TOGBankClassic_ItemHighlight:ClearAllOverlays() end
+		OnClose(self.Window)
+	end
+	self:ReleaseWindow()
+	self.embedded = true
+	self.isOpen = true
+	self.Host, self.Chrome = host, chrome
+	self.wasBank = nil   -- the standalone rebuild-on-role-change check starts over next time
+	if host.SetLayout then host:SetLayout("Flow") end
+	self:BuildBody(host, chrome, anchor)
+	-- Lay the widgets out ONCE before the first draw, so the list -- hung off the filter strip's
+	-- bottom edge -- resolves against the tab body's real width and height rather than a pooled
+	-- widget's stale ones; DrawContent lays out again after.
+	self:DoLayout()
+	afterOpen(self)
+end
+
+--- BROWSE-001: the Requests tab is going away (another tab, or the Guild Bank window closing).
+--- The AceGUI widgets are the tab group's children and are released by it; this forgets them,
+--- hides what lives on the chrome (the icon cluster, the settings overlay) and stops the
+--- listeners, exactly as Close does for the standalone window.
+function TOGBankClassic_UI_Requests:Detach()
+	if not self.embedded then return end
+	UnregisterBagEvents()
+	if TOGBankClassic_ItemHighlight then
+		TOGBankClassic_ItemHighlight:ClearAllOverlays()
+	end
+	self:ShowCluster(false)
+	if self.SettingsOverlay then self.SettingsOverlay:Hide() end
+	self.isOpen = false
+	self.embedded = false
+	self:ForgetBody()
+end
+
+--- Drop every reference to the body's widgets. The AceGUI widgets are released by whoever owns
+--- them (the standalone window's Release, the tab group's ReleaseChildren); the RowList's frames
+--- are plain frames on the host's content and are hidden with it -- WoW frames cannot be
+--- destroyed, so the list is also parked (`Hide`) here rather than left showing on a tab body
+--- that is about to hold another tab's list.
+function TOGBankClassic_UI_Requests:ForgetBody()
+	if self.ListHost then self.ListHost:Hide() end
+	self.Host, self.Chrome = nil, nil
+	self.TabGroup, self.SearchBox, self.FilterGroup, self.FilterRequester, self.FilterBank = nil, nil, nil, nil, nil
+	self.HighlightCheckbox, self.List, self.ListHost, self.EmptyText = nil, nil, nil, nil
+	self.SettingsOverlay, self.SettingsArchiveEB, self.SettingsTombstoneEB, self.SettingsMaxPctEB = nil, nil, nil, nil
+	self.ReasonInput, self.ReasonNewMember, self.ReasonNewBanker, self.ReasonSaveBtn = nil, nil, nil, nil
+	self.ReasonScroll, self.ReasonContent, self.ReasonRows, self.ReasonEditIndex = nil, nil, nil, nil
+	self.HelpIcon, self.CancelStaleBtn, self.FulfillOldestBtn = nil, nil, nil
+	self._lastDrawnTab = nil
+	-- UpdateFilters sends a dropdown its option list only when the list CHANGED against these; a
+	-- rebuilt body has fresh (pooled, empty) dropdowns, so a cache that survived it left the
+	-- Requester and Bank dropdowns with no list and an empty value ("bug with the requests": an
+	-- empty pullout the height of the window). The next UpdateFilters must send both lists.
+	self.cachedRequesterList, self.cachedRequesterOrder, self.cachedBankList, self.cachedBankOrder = nil, nil, nil, nil
+end
+
 function TOGBankClassic_UI_Requests:Close()
 	if not self.isOpen then
 		return
 	end
-	if not self.Window then
+	-- Embedded, the tab is the Guild Bank window's to show or hide (Browse:ShowTab / Close).
+	if self.embedded or not self.Window then
 		return
 	end
 
@@ -872,119 +946,23 @@ function TOGBankClassic_UI_Requests:Close()
 	end
 end
 
-function TOGBankClassic_UI_Requests:ApplyColumnWidths()
-	if not self.Content or not self.ColumnWidths then
-		return
-	end
-
-	local widths = self.ColumnWidths
-	local function applyTo(children)
-		if not children then
-			return
-		end
-		for _, child in ipairs(children) do
-			if child and child.SetWidth then
-				local colIndex = child:GetUserData("togRequestsColIndex")
-				if colIndex and widths[colIndex] and not child:GetUserData("togRequestsKeepWidth") then
-					child:SetWidth(widths[colIndex])
-				end
-			end
-		end
-	end
-
-	applyTo(self.Content.children)
-	if self.HeaderGroup then
-		applyTo(self.HeaderGroup.children)
-	end
-end
-
-function TOGBankClassic_UI_Requests:UpdateColumnLayout()
-	if not self.Content then
-		return
-	end
-
-	local width = currentContentWidth(self)
-	local columns, widths = ColumnLayout(width)
-	local function applyTable(group)
-		if not group then
-			return
-		end
-		local tableData = group:GetUserData("table") or {}
-		tableData.columns = columns
-		tableData.spaceH = COLUMN_SPACING_H
-		tableData.spaceV = COLUMN_SPACING_V
-		group:SetUserData("table", tableData)
-	end
-
-	applyTable(self.Content)
-	applyTable(self.HeaderGroup)
-	self.ColumnWidths = widths
-	self.lastLayoutWidth = math.floor((width or 0) + 0.5)
-end
-
-function TOGBankClassic_UI_Requests:HandleResize()
-	if not self.isOpen or not self.Content then
-		return
-	end
-
-	local width = currentContentWidth(self)
-	if not width or width <= 0 then
-		return
-	end
-
-	local rounded = math.floor(width + 0.5)
-	if self.lastLayoutWidth == rounded then
-		return
-	end
-
-	self:UpdateColumnLayout()
-	self:ApplyColumnWidths()
-	if self.HeaderGroup then
-		self.HeaderGroup:DoLayout()
-	end
-	if self.FilterGroup then
-		self.FilterGroup:DoLayout()
-	end
-	self:AdjustTableHeight()
-	if self.Window then
-		self.Window:DoLayout()
-	end
-	self.Content:DoLayout()
-end
-
-function TOGBankClassic_UI_Requests:AdjustTableHeight()
-	if not self.Window or not self.Window.content or not self.Content then
-		return
-	end
-
-	local contentHeight = self.Window.content:GetHeight() or 0
-	local headerHeight = 0
-	local headerRows = 0
-	if self.TabGroup and self.TabGroup.frame then
-		headerHeight = headerHeight + (self.TabGroup.frame:GetHeight() or 0)
-		headerRows = headerRows + 1
-	end
-	if self.FilterGroup and self.FilterGroup.frame then
-		headerHeight = headerHeight + (self.FilterGroup.frame:GetHeight() or 0)
-		headerRows = headerRows + 1
-	end
-	if self.HeaderGroup and self.HeaderGroup.frame then
-		headerHeight = headerHeight + (self.HeaderGroup.frame:GetHeight() or 0)
-		headerRows = headerRows + 1
-	end
-	local gap = 3 -- AceGUI Flow row spacing
-	local height = contentHeight - headerHeight - gap * headerRows
-	if height < 50 then
-		height = 50
-	end
-	self.Content:SetHeight(height)
-end
+-- REQUESTS-ROWLIST-001: ApplyColumnWidths / UpdateColumnLayout / HandleResize / AdjustTableHeight
+-- were here -- the grid's own column-width arithmetic and the table-height budget that had to be
+-- re-run on every resize (and once ran one row past the bottom under the status bar). The RowList
+-- hangs off the filter strip and the host's bottom edge by anchor and lays its own columns out on
+-- OnSizeChanged, so a resize needs nothing from this file.
 
 -- Helper to set up click-outside-to-close behavior for dropdowns
 local function SetupClickOutsideHandler(dropdown)
 	if not dropdown or not dropdown.pullout then return end
 
 	local pullout = dropdown.pullout
+	-- A Dropdown keeps ONE pullout for its whole life and AceGUI pools the Dropdown, so this runs
+	-- again on every rebuild of the body (a banker-status change; every visit to the Guild Bank
+	-- window's Requests tab). Wrap Open/Close once, or each rebuild nests another wrapper and
+	-- another full-screen click catcher.
+	if pullout.togClickOutsideHooked then return end
+	pullout.togClickOutsideHooked = true
 	local originalOpen = pullout.Open
 	local clickCatcher = nil
 
@@ -1024,173 +1002,138 @@ local function SetupClickOutsideHandler(dropdown)
 	end
 end
 
+--- The help text for the Requests body, wherever it is showing: the standalone window's own "?"
+--- icon, and the Guild Bank window's icon while its Requests tab is up.
+function TOGBankClassic_UI_Requests:AddHelpLines()
+	GameTooltip:AddLine("Guild Requests — How to Use")
+	GameTooltip:AddLine(" ")
+	GameTooltip:AddLine("|cffffd100Date column:|r", 1, 1, 1, false)
+	GameTooltip:AddLine("Mouseover any row's date to see a timeline tooltip showing when the request was submitted and, if applicable, when it was filled or cancelled. A cancelled request's date breathes with a soft glow; if a reason was given, mouse over it to read why.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine(" ")
+	GameTooltip:AddLine("|cffffd100Action icons (right side of each row -- mouse over one for its name):|r", 1, 1, 1, false)
+	GameTooltip:AddLine(" ")
+	GameTooltip:AddLine("|cffffd100Fulfill:|r", 1, 1, 1, false)
+	GameTooltip:AddLine("Sends the item by in-game mail. Click Fulfill on several of one person's requests and each is added to the same mail (up to 12), then Send once. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; wax-sealed letter = item is in your mail inbox, retrieve it first; chest = item is split between your mail and bank; shovel = quantity must be split manually; question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine(" ")
+	GameTooltip:AddLine("|cffffd100Mark hand-off (check):|r", 1, 1, 1, false)
+	GameTooltip:AddLine("For items handed over directly (not mailed). Asks how many you gave; that amount goes into the Sent column, and the order completes once Sent reaches the amount requested.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine(" ")
+	GameTooltip:AddLine("|cffffd100Cancel:|r", 1, 1, 1, false)
+	GameTooltip:AddLine("Opens a dialog to select a cancellation reason before cancelling. The reason is stored with the request and shown in the date tooltip. Cancelled requests move to the Archive tab.", 0.9, 0.9, 0.9, true)
+	TOGBankClassic_UI:AppendGuildHelpNote("requests")  -- HELPNOTE-001
+end
+
+--- The frame-level script a chrome frame needs while the body is on it: Escape closing an open
+--- dropdown before it closes the window. Installed ONCE per frame and written against the module,
+--- not a closure, so a pooled AceGUI frame that comes back (the standalone window after a release;
+--- the Guild Bank window on every tab visit) does not stack a second copy. A no-op while the body
+--- is not on that frame (the key handler finds no dropdowns). REQUESTS-ROWLIST-001: the resize
+--- follow-through that was hooked beside it went with the grid; the RowList resizes by anchor.
+local function hookChromeFrame(frame)
+	if not frame.togRequestsKeyHooked then
+		frame.togRequestsKeyHooked = true
+		frame:EnableKeyboard(true)
+		frame:SetPropagateKeyboardInput(true)
+		frame:SetScript("OnKeyDown", function(f, key)
+			local R = TOGBankClassic_UI_Requests
+			if key == "ESCAPE" then
+				-- Check if any dropdown pullout is open
+				local closedAny = false
+				if R.FilterRequester and R.FilterRequester.pullout and R.FilterRequester.pullout.frame:IsShown() then
+					R.FilterRequester.pullout:Close()
+					closedAny = true
+				end
+				if R.FilterBank and R.FilterBank.pullout and R.FilterBank.pullout.frame:IsShown() then
+					R.FilterBank.pullout:Close()
+					closedAny = true
+				end
+				-- If we closed a dropdown, consume the Esc key
+				f:SetPropagateKeyboardInput(not closedAny)
+			else
+				f:SetPropagateKeyboardInput(true)
+			end
+		end)
+	end
+end
+
+--- The standalone window: the frame, its persistence and resize bounds, the shared status bar,
+--- its own help icon -- then the body, exactly as the Guild Bank window's tab gets it.
 function TOGBankClassic_UI_Requests:DrawWindow()
 	local window = TOGBankClassic_UI:Create("Frame")
 	window:Hide()
 	window:SetCallback("OnClose", OnClose)
-	window:SetTitle("Requests")
+	window:SetTitle(TOGBankClassic_UI:WindowTitle("Requests"))
 	window:SetLayout("Flow")
 	window:EnableResize(true)
 	TOGBankClassic_UI:ApplyThinBorder(window, "requests")
-	-- Persist window position/size across reloads (each window gets its own sub-table)
-	if TOGBankClassic_Options and TOGBankClassic_Options.db then
-		local positions = TOGBankClassic_Options.db.char.framePositions
-		positions.requests = positions.requests or { width = MIN_WIDTH, height = 500 }
-		window:SetStatusTable(positions.requests)
-	end
-	if window.frame.SetResizeBounds then
-		window.frame:SetResizeBounds(MIN_WIDTH, 200)
-	else
-		window.frame:SetMinResize(MIN_WIDTH, 200)
-	end
-	if not window.frame.togRequestsResizeHooked then
-		window.frame.togRequestsResizeHooked = true
-		window.frame:HookScript("OnSizeChanged", function()
-			TOGBankClassic_UI_Requests:HandleResize()
-		end)
-	end
-
-	-- Register frame for ESC key handling
-	-- AceGUI frames handle ESC automatically, no manual registration needed
-
-	-- Handle Esc key to close dropdowns before closing window
-	window.frame:EnableKeyboard(true)
-	window.frame:SetPropagateKeyboardInput(true)
-	window.frame:SetScript("OnKeyDown", function(frame, key)
-		if key == "ESCAPE" then
-			-- Check if any dropdown pullout is open
-			local closedAny = false
-			if self.FilterRequester and self.FilterRequester.pullout and self.FilterRequester.pullout.frame:IsShown() then
-				self.FilterRequester.pullout:Close()
-				closedAny = true
-			end
-			if self.FilterBank and self.FilterBank.pullout and self.FilterBank.pullout.frame:IsShown() then
-				self.FilterBank.pullout:Close()
-				closedAny = true
-			end
-			-- If we closed a dropdown, consume the Esc key
-			if closedAny then
-				frame:SetPropagateKeyboardInput(false)
-			else
-				frame:SetPropagateKeyboardInput(true)
-			end
-		else
-			frame:SetPropagateKeyboardInput(true)
-		end
-	end)
+	-- WINDOW-PERSIST-002: position, size and the resize floor per character, the one spelling every
+	-- window uses (UI:PersistWindow -> the library's, which also raises a saved width under the
+	-- column floor, as BROWSE-007 does for the Guild Bank window). This used to open-code the
+	-- status table and a SetResizeBounds/SetMinResize pair beside it.
+	local floor = minWidth()
+	TOGBankClassic_UI:PersistWindow(window, "requests", floor, 500, floor, 200)
 
 	self.Window = window
+	self.embedded = false
+	-- SYNCED-001: the shared center/right status sections (network parts, the banker's "has my
+	-- update reached anyone" line), the same bar the Inventory window carries.
+	self.StatusBar = TOGBankClassic_UI_StatusBar:AttachSides(window)
 
-	-- Shrink status bar right edge to make room for the help icon
-	local statusbg = window.statustext:GetParent()
-	statusbg:ClearAllPoints()
-	statusbg:SetPoint("BOTTOMLEFT",  window.frame, "BOTTOMLEFT",  15, 15)
-	statusbg:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -163, 15)
+	-- WINDOW-CHROME-001: the "?" (this window's only own bottom icon -- no gear), the status bar
+	-- ending at it, the hitbox lift: the shared bottom row (UI:DressWindow). The cluster then hangs
+	-- left of it (BuildBody -> BuildBottomCluster) and ShowCluster moves the bar's edge along.
+	local chrome = TOGBankClassic_UI:DressWindow(window, {
+		help = function() TOGBankClassic_UI_Requests:AddHelpLines() end,
+	})
 
-	-- Help "?" icon — rightmost of the bottom-row cluster, in the gap between the
-	-- status bar and the AceGUI Close button (which spans x -127..-27). Must stay
-	-- left of -127 so it doesn't overlap Close. The status bar extends to meet the
-	-- cluster on its left.
-	local helpIcon = CreateFrame("Frame", nil, window.frame)
-	helpIcon:SetSize(22, 22)
-	helpIcon:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -133, 15)
-	helpIcon:EnableMouse(true)
-	-- HITBOX-001: AceGUI's Frame lays a mouse-enabled resize strip (sizer_s, full
-	-- bottom width, 25px tall) + corner sizer across this row at the parent's default
-	-- child level (101). Any button we add here defaults to the same level, so the
-	-- sizer Z-fights and swallows clicks AND mouseover except a center sliver. Lift
-	-- every bottom-row frame above the sizers so the whole 22x22 is live.
-	helpIcon:SetFrameLevel(window.frame:GetFrameLevel() + 10)
-	local helpTex = helpIcon:CreateTexture(nil, "OVERLAY")
-	helpTex:SetAllPoints(helpIcon)
-	helpTex:SetTexture("Interface\\Common\\help-i")
-	helpIcon:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine("Guild Requests — How to Use")
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100Date column:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Mouseover any row's date to see a timeline tooltip showing when the request was submitted and, if applicable, when it was filled or cancelled (including the cancellation reason).", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100Action buttons (right side of each row):|r", 1, 1, 1, false)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100Fulfill:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Sends the item by in-game mail. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; wax-sealed letter = item is in your mail inbox, retrieve it first; chest = item is split between your mail and bank; shovel = quantity must be split manually; question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100Mark hand-off (check):|r", 1, 1, 1, false)
-		GameTooltip:AddLine("For items handed over directly (not mailed). Asks how many you gave; that amount goes into the Sent column, and the order completes once Sent reaches the amount requested.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100Cancel:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Opens a dialog to select a cancellation reason before cancelling. The reason is stored with the request and shown in the date tooltip. Cancelled requests move to the Archive tab.", 0.9, 0.9, 0.9, true)
-		TOGBankClassic_UI:AppendGuildHelpNote("requests")  -- HELPNOTE-001
-		GameTooltip:Show()
-	end)
-	helpIcon:SetScript("OnLeave", function()
-		TOGBankClassic_UI:HideTooltip()
-	end)
+	self:BuildBody(window, window, chrome.anchor)
+end
 
-	-- Bottom-row icon buttons on the window frame near the status bar, to the left
-	-- of the help "?" icon: pagination (prev/next) and Cancel Stale (broom).
-	-- These replace the buttons that used to crowd the top tab strip.
+--- The bottom-row icon cluster on `chrome`'s frame, hung left of `anchor` (the help icon):
+--- pagination (prev/next), Cancel Stale (officers/bankers; the broom) and Fulfill Oldest
+--- (bankers; the envelope). The status bar's right edge meets the leftmost icon. Cached on the
+--- frame and rebuilt only when the roles it depends on change: AceGUI pools frames, so without
+--- the cache a frame that came back (banker status change; every visit to the Guild Bank
+--- window's Requests tab) accumulated a second set of icons under the first.
+--- The banker roster changed under an EMBEDDED body (Peer Review, self-audit 2 F1): the standalone
+--- window re-checks its role on the next Open, but the Guild Bank window's Requests tab is never
+--- re-opened while it sits there, so a 'gbank' note edit landing mid-session left the broom /
+--- envelope cluster and the highlight checkbox on the old role until a tab switch. Called from
+--- Guild:RebuildBankerRoster when the list actually changed; BuildBottomCluster caches on role and
+--- rebuilds only when it moved, so this is idempotent and cheap. No timer, no poll.
+function TOGBankClassic_UI_Requests:OnBankerRosterChanged()
+	if not (self.embedded and self.isOpen and self.Chrome and self.Chrome.frame) then return end
+	local cluster = self.Chrome.frame.togRequestsCluster
+	if not cluster then return end
+	local wasBanker = cluster.isBanker
+	self:BuildBottomCluster(self.Chrome, cluster.anchor)
+	local nowBanker = self.Chrome.frame.togRequestsCluster and self.Chrome.frame.togRequestsCluster.isBanker
+	-- The highlight checkbox and the fulfil column are role-bound too: a role change redraws.
+	if wasBanker ~= nowBanker then self:DrawContent() end
+end
+
+function TOGBankClassic_UI_Requests:BuildBottomCluster(chrome, anchor)
+	local frame = chrome.frame
 	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local canOfficer = (CanViewOfficerNote and CanViewOfficerNote()) or false
 	local isOfficerOrBanker = canOfficer or (actor and TOGBankClassic_Guild:IsBank(actor)) or false
+	local isBanker = (actor and TOGBankClassic_Guild:IsBank(actor)) or false
 
-	local function bottomIconTooltip(frame, titleText, detailText)
-		frame:SetScript("OnEnter", function(f)
-			GameTooltip:SetOwner(f, "ANCHOR_TOP")
-			GameTooltip:ClearLines()
-			GameTooltip:AddLine(titleText)
-			if detailText and detailText ~= "" then
-				GameTooltip:AddLine(detailText, 0.9, 0.9, 0.9, true)
-			end
-			GameTooltip:Show()
-		end)
-		frame:SetScript("OnLeave", function()
-			TOGBankClassic_UI:HideTooltip()
-		end)
+	local cached = frame.togRequestsCluster
+	if cached and (cached.isOfficerOrBanker ~= isOfficerOrBanker or cached.isBanker ~= isBanker or cached.anchor ~= anchor) then
+		for _, f in pairs(cached.frames) do f:Hide() end
+		cached = nil
+	end
+	if cached then
+		self.CancelStaleBtn, self.FulfillOldestBtn = cached.CancelStaleBtn, cached.FulfillOldestBtn
+		self:ShowCluster(true)
+		return
 	end
 
-	-- Next page (rightmost; sits just left of the help icon)
-	local nextPageBtn = CreateFrame("Button", nil, window.frame)
-	nextPageBtn:SetSize(22, 22)
-	nextPageBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
-	nextPageBtn:SetPoint("RIGHT", helpIcon, "LEFT", -8, 0)
-	nextPageBtn:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Up")
-	nextPageBtn:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Down")
-	nextPageBtn:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Disabled")
-	nextPageBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-	nextPageBtn:SetScript("OnClick", function()
-		local info = TOGBankClassic_Guild.Info
-		if not info or not info.requests then return end
-		local allSorted = self:GetSortedTabFiltered()
-		local allVisible = self:ApplyFilters(allSorted)
-		local totalPages = math.max(1, math.ceil(#allVisible / REQUESTS_PER_PAGE))
-		if self.currentPage < totalPages then
-			self.currentPage = self.currentPage + 1
-			self:DrawRows()
-		end
-	end)
-	bottomIconTooltip(nextPageBtn, "Next Page", "Show the next page of requests.")
-	self.NextPageBtn = nextPageBtn
-
-	-- Previous page
-	local prevPageBtn = CreateFrame("Button", nil, window.frame)
-	prevPageBtn:SetSize(22, 22)
-	prevPageBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
-	prevPageBtn:SetPoint("RIGHT", nextPageBtn, "LEFT", -8, 0)
-	prevPageBtn:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Up")
-	prevPageBtn:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Down")
-	prevPageBtn:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Disabled")
-	prevPageBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-	prevPageBtn:SetScript("OnClick", function()
-		if self.currentPage > 1 then
-			self.currentPage = self.currentPage - 1
-			self:DrawRows()
-		end
-	end)
-	bottomIconTooltip(prevPageBtn, "Previous Page", "Show the previous page of requests.")
-	self.PrevPageBtn = prevPageBtn
+	-- REQUESTS-ROWLIST-001: the Next / Previous page icons were here, rightmost of the cluster. The
+	-- list scrolls the whole set now (a RowList renders only the rows in view), so there are no
+	-- pages, and the broom hangs straight off the anchor. A member who is neither officer nor
+	-- banker has an EMPTY cluster: the status bar then meets the anchor itself (ShowCluster).
 
 	-- Cancel Stale — officers/bankers only. BROOM-001: Classic Era ships NO broom icon
 	-- (INV_Broom_01 / INV_Misc_Broom_01 / INV_Pet_Broom all render as the blue
@@ -1200,10 +1143,10 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	-- window, this block won't run and the status-bar inset below must see nil.
 	self.CancelStaleBtn = nil
 	if isOfficerOrBanker then
-		local cancelStaleBtn = CreateFrame("Button", nil, window.frame)
+		local cancelStaleBtn = CreateFrame("Button", nil, frame)
 		cancelStaleBtn:SetSize(22, 22)
-		cancelStaleBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
-		cancelStaleBtn:SetPoint("RIGHT", prevPageBtn, "LEFT", -8, 0)
+		cancelStaleBtn:SetFrameLevel(frame:GetFrameLevel() + 10)  -- HITBOX-001
+		cancelStaleBtn:SetPoint("RIGHT", anchor, "LEFT", -8, 0)
 		cancelStaleBtn:SetNormalTexture("Interface\\AddOns\\TOGBankClassic\\Textures\\broom")
 		cancelStaleBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 		cancelStaleBtn:SetScript("OnClick", function()
@@ -1239,12 +1182,11 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	-- send); spam it to drain the queue oldest-first. FILLALL-001. Sits left of the
 	-- broom (a banker always also has the broom, since banker implies the cluster).
 	self.FulfillOldestBtn = nil
-	local isBanker = (actor and TOGBankClassic_Guild:IsBank(actor)) or false
 	if isBanker then
-		local fulfillBtn = CreateFrame("Button", nil, window.frame)
+		local fulfillBtn = CreateFrame("Button", nil, frame)
 		fulfillBtn:SetSize(22, 22)
-		fulfillBtn:SetFrameLevel(window.frame:GetFrameLevel() + 10)  -- HITBOX-001
-		fulfillBtn:SetPoint("RIGHT", self.CancelStaleBtn or prevPageBtn, "LEFT", -8, 0)
+		fulfillBtn:SetFrameLevel(frame:GetFrameLevel() + 10)  -- HITBOX-001
+		fulfillBtn:SetPoint("RIGHT", self.CancelStaleBtn or anchor, "LEFT", -8, 0)
 		fulfillBtn:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
 		fulfillBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 		fulfillBtn:SetScript("OnClick", function()
@@ -1258,15 +1200,15 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 			else
 				_, message = TOGBankClassic_Mail:FulfillStep(actor)
 			end
-			if self.Window then self.Window:SetStatusText(message or "") end
+			self:SetStatusText(message or "")
 		end)
 		fulfillBtn:SetScript("OnEnter", function(f)
 			GameTooltip:SetOwner(f, "ANCHOR_TOP")
 			GameTooltip:ClearLines()
 			GameTooltip:AddLine("Fulfill Oldest Order")
-			GameTooltip:AddLine("Click to advance the oldest order you can fully fill, one step per click: select \226\134\146 split \226\134\146 attach \226\134\146 send, then the next-oldest. If the needed items are sitting in your mail, it pulls them into your bags first (one per click). Watch the status bar for the next step. Requires an open mailbox; orders you can't fully cover (from bags + mail) are skipped.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine("Click to advance the oldest order you can fully fill, one step per click: select, then split, then attach, then send; then the next-oldest. If the needed items are sitting in your mail, it pulls them into your bags first (one per click). Watch the status bar for the next step. Requires an open mailbox; orders you can't fully cover (from bags + mail) are skipped.", 0.9, 0.9, 0.9, true)
 			GameTooltip:AddLine(" ")
-			GameTooltip:AddLine("At the BANK the same button collects instead: each click pulls what an order still needs out of your bank, and if the stack is bigger than the order it puts the spare back. Mash it at the bank to gather everything, then go to a mailbox and mash it again to send.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine("At the BANK the same button collects instead: each click pulls what an order still needs out of your bank, and if the stack is bigger than the order it puts the spare back. If your bags are full, the click swaps something no order needs into the bank to make room. Mash it at the bank to gather everything, then go to a mailbox and mash it again to send.", 0.9, 0.9, 0.9, true)
 			GameTooltip:Show()
 		end)
 		fulfillBtn:SetScript("OnLeave", function()
@@ -1275,32 +1217,72 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		self.FulfillOldestBtn = fulfillBtn
 	end
 
-	-- Extend the status bar's right edge to just left of whichever icon is leftmost
-	-- (fulfill → broom → prev), anchored to the icon itself so the gap stays correct
-	-- no matter which icons are present. All icons are 22px at bottom y=15.
-	local leftmostBottomIcon = self.FulfillOldestBtn or self.CancelStaleBtn or prevPageBtn
-	statusbg:SetPoint("BOTTOMRIGHT", leftmostBottomIcon, "BOTTOMLEFT", -6, 0)
+	-- Appended one by one, never `ipairs` over a constructor with holes (Peer Review, self-audit 2
+	-- F2): today the roles nest, so no nil ever precedes a button, but a role that had the envelope
+	-- without the broom would have silently truncated this list at the hole.
+	local frames = {}
+	if self.CancelStaleBtn then frames[#frames + 1] = self.CancelStaleBtn end
+	if self.FulfillOldestBtn then frames[#frames + 1] = self.FulfillOldestBtn end
+	frame.togRequestsCluster = {
+		isOfficerOrBanker = isOfficerOrBanker, isBanker = isBanker, anchor = anchor, frames = frames,
+		CancelStaleBtn = self.CancelStaleBtn, FulfillOldestBtn = self.FulfillOldestBtn,
+	}
+	self:ShowCluster(true)
+end
 
-	-- HITBOX-001: re-assert the bottom-row lift on every show so the whole of each icon (help,
-	-- pagination, Cancel-Stale, Fulfill) and the AceGUI Close button stay clickable, not just
-	-- their top half. Conditional icons may be nil; KeepAboveResizeSizers skips nil holes.
-	TOGBankClassic_UI:KeepAboveResizeSizers(window, {
-		helpIcon, self.NextPageBtn, self.PrevPageBtn, self.CancelStaleBtn, self.FulfillOldestBtn,
-	})
+--- Show or hide the cluster on the current chrome, and give the status bar its right edge:
+--- with the cluster up it meets the leftmost icon (fulfill -> broom), anchored to the icon itself
+--- so the gap stays right whichever icons are present; without it (the Guild Bank window on
+--- another tab), or with an empty cluster (a member with neither role), it meets that window's
+--- own help icon. All icons are 22px at bottom y=15. HITBOX-001: the lift above AceGUI's resize
+--- sizers is re-asserted with the live set.
+function TOGBankClassic_UI_Requests:ShowCluster(show)
+	local chrome = self.Chrome
+	local frame = chrome and chrome.frame
+	local cluster = frame and frame.togRequestsCluster
+	if not cluster then return end
+	for _, f in ipairs(cluster.frames) do
+		if show then f:Show() else f:Hide() end
+	end
+	-- WINDOW-CHROME-001: the one status-bar rule (UI:AnchorStatusBar), given the cluster's leftmost.
+	local leftmost = show and (cluster.FulfillOldestBtn or cluster.CancelStaleBtn) or cluster.anchor
+	TOGBankClassic_UI:AnchorStatusBar(chrome, leftmost)
+	-- KeepAboveResizeSizers REPLACES the frame's lift set. The chrome's OWN bottom icons are the
+	-- chrome's to name (`chrome.togBottomIcons`, UI:DressWindow's list -- the Guild Bank window's
+	-- gear and "?"; this window's "?"), never re-derived here: with the cluster up the set is those
+	-- plus the cluster, hidden it is those alone. Peer Review F3-b: when the anchor became the
+	-- gear, a hand-written list here silently dropped the Guild Bank window's help icon from the
+	-- shown branch, and the OnShow re-lift walks only the stored set.
+	local lift = {}
+	for _, f in ipairs(chrome.togBottomIcons or { cluster.anchor }) do lift[#lift + 1] = f end
+	if show then
+		for _, f in ipairs(cluster.frames) do lift[#lift + 1] = f end
+	end
+	TOGBankClassic_UI:KeepAboveResizeSizers(chrome, lift)
+end
+
+--- THE BODY: the Requests/Archive/Settings tab strip, the one search box, the Requester/Bank
+--- dropdowns (and a banker's highlight checkbox), the column header, the scrolling row table --
+--- as children of `host`; the icon cluster and the officer settings overlay on `chrome`, the
+--- cluster hung left of `anchor`. Standalone, host and chrome are the window; embedded, the
+--- Guild Bank window's tab group and the window.
+function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
+	self.Host, self.Chrome = host, chrome
+	hookChromeFrame(chrome.frame)
+	self:BuildBottomCluster(chrome, anchor)
+	local canOfficer = (CanViewOfficerNote and CanViewOfficerNote()) or false
 
 	self.HeaderWidgets = nil
-	self.FilterWidgets = nil
+	self.SearchBox = nil
 	self.FilterRequester = nil
 	self.FilterBank = nil
 	self.TabGroup = nil
-	-- Settings overlay is parented to this window; drop the stale reference so
-	-- BuildSettingsPanel rebuilds it against the freshly created window frame.
+	-- The settings overlay lives on the chrome frame and is found again there (BuildSettingsPanel);
+	-- these are re-pointed when it is.
 	self.SettingsOverlay = nil
 	self.SettingsArchiveEB = nil
 	self.SettingsTombstoneEB = nil
 	self.SettingsMaxPctEB = nil
-	-- Cancel-reason editor widgets are children of the rebuilt overlay; drop the
-	-- stale refs (and the row pool) so RefreshReasonsList builds against the new one.
 	self.ReasonInput = nil
 	self.ReasonNewMember = nil
 	self.ReasonNewBanker = nil
@@ -1321,9 +1303,14 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	}
 	local tabGroup = TOGBankClassic_UI:Create("TabGroup")
 	tabGroup:SetFullWidth(true)
-	-- Just tall enough to contain the tab row (anchored at y=-7, 24px tall);
-	-- keeps the gap to the filter dropdowns below tight.
-	tabGroup:SetHeight(30)
+	-- Just tall enough to contain the tab row (anchored at y=-7, 24px tall) plus a small clearance
+	-- before the filter strip below. REQUESTS-STRIP-002 (operator 2026-09-13, screenshot: "there is
+	-- a lot of dead space between that strip and the subtabs"): the height set here never held --
+	-- a full-width child is laid out by the host's Flow, and a TabGroup with no children then sets
+	-- its OWN height to 3 + borderoffset (30) + 23 = 56 (AceGUIContainer-TabGroup LayoutFinished),
+	-- leaving ~25px of nothing under the tabs. Auto-height off is what makes the number below real.
+	tabGroup:SetAutoAdjustHeight(false)
+	tabGroup:SetHeight(SUBTAB_H)
 	local tabList = {
 		{ text = "Requests", value = "active" },
 		{ text = "Archive",  value = "archive" },
@@ -1352,22 +1339,54 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		GameTooltip:Show()
 	end)
 	tabGroup:SetCallback("OnTabLeave", function() TOGBankClassic_UI:HideTooltip() end)
-	window:AddChild(tabGroup)
+	host:AddChild(tabGroup)
 	self.TabGroup = tabGroup
 
 	do
-		local filterGroup = TOGBankClassic_UI:Create("SimpleGroup")
-		filterGroup:SetLayout("Table")
-		filterGroup:SetUserData("table", {
-			columns = {
-				{ width = 0.5, align = "start" },
-				{ width = 0.5, align = "start" },
-			},
-			spaceH = 10,
+		-- SEARCH-006: ONE search box, above the dropdowns. The operator, 2026-09-11: "i don't need
+		-- a search bar for each area, one bar that filters on all columns would work" and "put them
+		-- above the dropdown, not below". Every word typed must appear somewhere across what the
+		-- Date, Requester, Bank and Item columns show (SearchMatches). Its text lives on
+		-- `self.searchText` so it survives a window rebuild (banker status change).
+		-- REQUESTS-STRIP-001 (operator 2026-09-13, screenshot of a non-banker's tab: "the request
+		-- dropdowns overlap the column header row. we need to move the dropdowns up 5 or so px. we
+		-- also need to do the left hand alignment we did on the browse tab here"): ONE strip, in the
+		-- Browse tab's shape (Browse:BuildFilterStrip) -- a Table on a group whose content is inset
+		-- FILTER_INSET from the border, cells bottom-aligned. The list hangs LIST_GAP under the
+		-- strip, not 4px -- the dropdown's textures sit under its frame's bottom edge, which is what
+		-- ran into the header row. Second round (screenshot: the dropdowns' box art starts ~12px
+		-- right of the search box above them): the search box and the two dropdowns are ONE ROW --
+		-- Browse's search-then-dropdowns row exactly -- so nothing sits under the search to misalign
+		-- with it; the banker's checkbox is the second row.
+		local strip = TOGBankClassic_UI:Create("SimpleGroup")
+		strip:SetLayout("Table")
+		strip:SetUserData("table", {
+			columns = { 220, 200, 200 },
+			spaceH = 10, spaceV = 6, alignV = "end", alignH = "start",
 		})
-		filterGroup:SetFullWidth(true)
-		window:AddChild(filterGroup)
-		self.FilterGroup = filterGroup
+		if strip.content and strip.content.SetPoint then
+			strip.content:ClearAllPoints()
+			strip.content:SetPoint("TOPLEFT", FILTER_INSET, 0)
+			strip.content:SetPoint("BOTTOMRIGHT", -FILTER_INSET, 0)
+		end
+		strip:SetFullWidth(true)
+		host:AddChild(strip)
+		self.FilterGroup = strip
+		local filterGroup = strip
+
+		local searchBox = TOGBankClassic_UI:Create("TOGBankSearchBox")
+		searchBox:SetPlaceholder("Search requests...")
+		-- A query is a word or two; the operator on the full-width cut: "the search bar doesn't
+		-- need to be this big, it's a waste of space".
+		searchBox:SetWidth(220)
+		searchBox:SetText(self.searchText or "")
+		searchBox:SetCallback("OnTextChanged", function(_, _, text) self:SetSearch(text) end)
+		TOGBankClassic_UI:AttachTooltip(searchBox, "ANCHOR_BOTTOM", "Search requests", {
+			"Only requests with every word you type somewhere in their date, requester, bank or item are shown.",
+			"Works together with the Requester / Bank filters below.",
+		})
+		strip:AddChild(searchBox)
+		self.SearchBox = searchBox
 
 		local requesterFilter = TOGBankClassic_UI:Create("Dropdown")
 		requesterFilter:SetLabel("Requester")
@@ -1389,7 +1408,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		requesterLabelHit:SetScript("OnLeave", function()
 			TOGBankClassic_UI:HideTooltip()
 		end)
-		requesterFilter:SetFullWidth(true)
+		requesterFilter:SetWidth(200)   -- REQUESTS-STRIP-001: a column of Browse's row, not full width
 		requesterFilter:SetCallback("OnValueChanged", function(widget, _, value)
 			handleFilterChange(self, "requester", widget, value)
 		end)
@@ -1417,7 +1436,7 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		bankLabelHit:SetScript("OnLeave", function()
 			TOGBankClassic_UI:HideTooltip()
 		end)
-		bankFilter:SetFullWidth(true)
+		bankFilter:SetWidth(200)
 		bankFilter:SetCallback("OnValueChanged", function(widget, _, value)
 			handleFilterChange(self, "bank", widget, value)
 		end)
@@ -1425,88 +1444,46 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 		self.FilterBank = bankFilter
 		SetupClickOutsideHandler(bankFilter)
 
-		-- Add highlighting checkbox (only for bankers)
-		-- Check if guild roster is loaded before checking banker status
-		if GetNumGuildMembers() > 0 then
-			local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
-			local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
-			TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: currentPlayer=%s, isBank=%s", tostring(currentPlayer), tostring(isBank))
-
-			if isBank then
-				TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Creating highlight checkbox")
-				local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
-				highlightCheckbox:SetLabel("Highlight needed items")
-				highlightCheckbox:SetFullWidth(true)
-				highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
-				highlightCheckbox:SetCallback("OnValueChanged", function(_, _, value)
-					if TOGBankClassic_ItemHighlight then
-						TOGBankClassic_ItemHighlight:SetEnabled(value)
-					end
-				end)
-				highlightCheckbox:SetCallback("OnEnter", function()
-					GameTooltip:SetOwner(highlightCheckbox.frame, "ANCHOR_RIGHT")
-					GameTooltip:ClearLines()
-					GameTooltip:AddLine("Highlight Needed Items")
-					GameTooltip:AddLine("Highlights items in your bank bags that match pending requests, making it easier to see what needs to be sent.", 0.9, 0.9, 0.9, true)
-					GameTooltip:Show()
-				end)
-				highlightCheckbox:SetCallback("OnLeave", function()
-					TOGBankClassic_UI:HideTooltip()
-				end)
-				filterGroup:AddChild(highlightCheckbox)
-				self.HighlightCheckbox = highlightCheckbox
-				TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Highlight checkbox created and added to filterGroup")
-			else
-				TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Not a banker, skipping checkbox")
-			end
-		else
-			TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Guild roster not loaded yet, skipping banker check")
-		end
+		-- The banker's highlight checkbox, when the roster already says who we are; UpdateFilters
+		-- adds it later otherwise (the roster can load after the window). One builder for both.
+		self:EnsureHighlightCheckbox()
 	end
 
-	local headerGroup = TOGBankClassic_UI:Create("SimpleGroup")
-	headerGroup:SetLayout("Table")
-	headerGroup:SetUserData("table", {
-		columns = ColumnLayout(MIN_WIDTH - CONTENT_WIDTH_PADDING),
-		spaceH = COLUMN_SPACING_H,
-		spaceV = COLUMN_SPACING_V,
-	})
-	headerGroup:SetFullWidth(true)
-	if headerGroup.content and headerGroup.content.SetPoint then
-		headerGroup.content:ClearAllPoints()
-		-- -3 y adds a little breathing room between the filter dropdowns and the
-		-- column headers.
-		headerGroup.content:SetPoint("TOPLEFT", 8, -3)
-		headerGroup.content:SetPoint("BOTTOMRIGHT", 0, 0)
+	-- REQUESTS-ROWLIST-001: the list. A plain frame on the host's content, hung off the filter
+	-- strip's bottom edge and the content's bottom-right -- the Guild Bank window's Browse tab hangs
+	-- its list under its strip the same way -- so AceGUI's Flow layout of the widgets above (and the
+	-- banker's checkbox appearing under the dropdowns) moves it by anchor, and a resize needs no
+	-- code. The RowList's own header, banding, fonts and scrollbar are the Browse tab's.
+	-- ONE list per host frame, found again on the next visit: WoW frames cannot be destroyed, and
+	-- the Guild Bank window's tab body hosts this body on every visit to its Requests tab.
+	local content = host.content
+	local listHost = content.togRequestsListHost
+	if not listHost then
+		listHost = CreateFrame("Frame", nil, content)
+		content.togRequestsListHost = listHost
+		listHost.togList = TOGBankClassic_UI_RowList:New(listHost, {
+			columns = COLUMNS,
+			onRowRender = function(entry, rowFrame) TOGBankClassic_UI_Requests:_PopulateRow(rowFrame, entry) end,
+			-- The list sorts; the body only REMEMBERS the sort, so a rebuild (a tab revisit) hands
+			-- it back through SetSort below. The tab-filter cache does not depend on it.
+			onSortChanged = function(key, desc)
+				local R = TOGBankClassic_UI_Requests
+				R.sortColumn, R.sortDirection = key, desc and "desc" or "asc"
+			end,
+		})
+		local empty = listHost:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+		empty:SetPoint("TOP", listHost, "TOP", 0, -(TOGBankClassic_UI_RowList.HEADER_HEIGHT + 12))
+		empty:Hide()
+		listHost.togEmpty = empty
 	end
-	window:AddChild(headerGroup)
-	self.HeaderGroup = headerGroup
+	listHost:ClearAllPoints()
+	listHost:SetPoint("TOPLEFT",     self.FilterGroup.frame, "BOTTOMLEFT",  0, -LIST_GAP)
+	listHost:SetPoint("BOTTOMRIGHT", content,                "BOTTOMRIGHT", 0, 0)
+	listHost:Show()
+	self.ListHost, self.List, self.EmptyText = listHost, listHost.togList, listHost.togEmpty
+	self.List:SetSort(self.sortColumn or "date", (self.sortDirection or "desc") == "desc")
 
-	local tableFrame = TOGBankClassic_UI:Create("ScrollFrame")
-	tableFrame:SetLayout("Table")
-	tableFrame:SetUserData("table", {
-		columns = ColumnLayout(MIN_WIDTH - CONTENT_WIDTH_PADDING),
-		spaceH = COLUMN_SPACING_H,
-		spaceV = COLUMN_SPACING_V,
-	})
-	tableFrame:SetFullWidth(true)
-
-	-- Apply thin scrollbar style to match dropdown scrollbars
-	if tableFrame.scrollbar then
-		tableFrame.scrollbar:ClearAllPoints()
-		tableFrame.scrollbar:SetPoint("TOPRIGHT", tableFrame.scrollframe, "TOPRIGHT", 0, -20)
-		tableFrame.scrollbar:SetPoint("BOTTOMRIGHT", tableFrame.scrollframe, "BOTTOMRIGHT", 0, 20)
-		tableFrame.scrollbar:SetWidth(8)
-		tableFrame.scrollbar:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Vertical")
-	end
-
-	window:AddChild(tableFrame)
-	self.Content = tableFrame
-	self.RowPool = nil
-	self.EmptyRow = nil
-	self:UpdateColumnLayout()
-
-	-- Officer-only Settings tab needs its overlay panel built once per window.
+	-- Officer-only Settings tab needs its overlay panel on the chrome frame.
 	if canOfficer then
 		self:BuildSettingsPanel()
 	end
@@ -1545,16 +1522,41 @@ end
 -- Build the officer-only Settings panel: an opaque overlay covering the request
 -- list, with editable fields for the three request settings. The setters mirror
 -- the Blizzard options panel (Modules/Options.lua) so guild-wide sync still fires.
+-- The widget references the settings overlay hands back when it is found again on a chrome frame.
+local SETTINGS_REFS = {
+	"SettingsArchiveEB", "SettingsTombstoneEB", "SettingsMaxPctEB",
+	"ReasonInput", "ReasonNewMember", "ReasonNewBanker", "ReasonSaveBtn", "ReasonScroll", "ReasonContent", "ReasonRows",
+}
+
 function TOGBankClassic_UI_Requests:BuildSettingsPanel()
-	if self.SettingsOverlay or not self.Window or not self.TabGroup then
+	if self.SettingsOverlay or not self.Chrome or not self.TabGroup then
 		return
 	end
-	local window = self.Window
+	local chrome = self.Chrome
 
-	local overlay = CreateFrame("Frame", nil, window.frame, "BackdropTemplate")
-	overlay:SetFrameLevel(window.frame:GetFrameLevel() + 50)
+	-- Built once per chrome frame and found again: the frame is AceGUI-pooled (the standalone
+	-- window after a release) or long-lived (the Guild Bank window across tab visits), and a second
+	-- overlay on it would stack under the first with a second named scroll frame.
+	-- It fills the body BELOW the tab strip -- the host's content area, which is the window's
+	-- content standalone and the tab body embedded. Anchored to the window frame it ran past the
+	-- tab border ("settings is still popping up another window that overlaps the main window").
+	local overlay = chrome.frame.togRequestsSettings
+	if overlay then
+		self.SettingsOverlay = overlay
+		for _, key in ipairs(SETTINGS_REFS) do self[key] = overlay.togRefs[key] end
+		self.ReasonEditIndex = nil
+		overlay:SetFrameLevel(chrome.frame:GetFrameLevel() + 50)
+		overlay:ClearAllPoints()
+		overlay:SetPoint("TOPLEFT", self.TabGroup.frame, "BOTTOMLEFT", 4, -4)
+		overlay:SetPoint("BOTTOMRIGHT", self.Host.content, "BOTTOMRIGHT", 0, 0)
+		overlay:Hide()
+		return
+	end
+
+	overlay = CreateFrame("Frame", nil, chrome.frame, "BackdropTemplate")
+	overlay:SetFrameLevel(chrome.frame:GetFrameLevel() + 50)
 	overlay:SetPoint("TOPLEFT", self.TabGroup.frame, "BOTTOMLEFT", 4, -4)
-	overlay:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -16, 40)
+	overlay:SetPoint("BOTTOMRIGHT", self.Host.content, "BOTTOMRIGHT", 0, 0)
 	overlay:SetBackdrop({
 		bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
 		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1662,6 +1664,10 @@ function TOGBankClassic_UI_Requests:BuildSettingsPanel()
 
 	-- CANCELREASON-001: custom cancel-reason editor below the numeric settings.
 	self:BuildReasonsEditor(overlay)
+
+	overlay.togRefs = {}
+	for _, key in ipairs(SETTINGS_REFS) do overlay.togRefs[key] = self[key] end
+	chrome.frame.togRequestsSettings = overlay
 end
 
 -- ---------------------------------------------------------------------------
@@ -1758,7 +1764,7 @@ function TOGBankClassic_UI_Requests:BuildReasonsEditor(overlay)
 			c.text, c.member, c.banker = text, member, banker
 		else
 			if #cfg.custom >= REASON_MAX then
-				self.Window:SetStatusText(string.format("Custom reason limit reached (%d).", REASON_MAX))
+				self:SetStatusText(string.format("Custom reason limit reached (%d).", REASON_MAX))
 				return
 			end
 			cfg.custom[#cfg.custom + 1] = { text = text, member = member, banker = banker }
@@ -1983,31 +1989,29 @@ function TOGBankClassic_UI_Requests:PopulateSettings()
 	end
 end
 
--- Toggle between the Settings panel and the request list. The bottom-row
--- pagination/Cancel-Stale icons are meaningless on the Settings tab, so hide them.
+-- Toggle between the Settings panel and the request list. The list's own widgets -- the search
+-- box, the dropdowns, the column header, the table -- are HIDDEN while the panel is up, so
+-- Settings reads as a tab and not as a second window over the list (the operator, on the Guild
+-- Bank window: "settings is still popping up another window that overlaps the main window, it
+-- should just be a tab now"). The bottom-row pagination/Cancel-Stale icons are meaningless on the
+-- Settings tab, so they hide too.
 function TOGBankClassic_UI_Requests:ShowSettings(show)
+	for _, w in ipairs({ self.SearchBox, self.FilterGroup }) do
+		setWidgetShown(w, not show)
+	end
+	-- The list is a plain frame, not a pooled widget: a plain Hide is enough.
+	if self.ListHost then self.ListHost:SetShown(not show) end
 	if show then
 		if not self.SettingsOverlay then return end
 		self:PopulateSettings()
 		self:RefreshReasonsList()
 		self.SettingsOverlay:Show()
-		if self.PrevPageBtn then self.PrevPageBtn:Hide() end
-		if self.NextPageBtn then self.NextPageBtn:Hide() end
 		if self.CancelStaleBtn then self.CancelStaleBtn:Hide() end
-		self.Window:SetStatusText("Officer settings — changes to the last two sync guild-wide.")
+		self:SetStatusText("Officer settings — changes to the last two sync guild-wide.")
 	else
 		if self.SettingsOverlay then self.SettingsOverlay:Hide() end
-		if self.PrevPageBtn then self.PrevPageBtn:Show() end
-		if self.NextPageBtn then self.NextPageBtn:Show() end
 		if self.CancelStaleBtn then self.CancelStaleBtn:Show() end
 	end
-end
-
-local function valueForSort(request, key)
-	if key == "date" or key == "quantity" or key == "fulfilled" then
-		return tonumber(request[key] or 0) or 0
-	end
-	return tostring(request[key] or ""):lower()
 end
 
 local function isComplete(request)
@@ -2027,11 +2031,10 @@ local function isPending(request)
 	if qty <= 0 then
 		return false
 	end
-	local fulfilled = tonumber(request.fulfilled or 0) or 0
 	if (request.status or "open") ~= "open" then
 		return false
 	end
-	return fulfilled < qty
+	return TOGBankClassic_Guild:RequestQuantityNeeded(request) > 0
 end
 
 -- Returns open counts and total counts per requester/banker across all requests.
@@ -2133,10 +2136,13 @@ local function buildBankOptions(currentPlayer, bankOpen, bankTotal)
 	return buildNameOptions("Any Bank", currentPlayer, bankOpen, bankTotal)
 end
 
-function TOGBankClassic_UI_Requests:SortedRequests()
+--- Every request in the guild, in no particular order. The RowList sorts the entries (entryFor's
+--- `_sort_` values and the `_id` tie-break carry everything it needs); this used to be
+--- SortedRequests and sorted them too, for the list to sort again.
+function TOGBankClassic_UI_Requests:AllRequests()
 	local info = TOGBankClassic_Guild.Info
 	if not info or not info.requests then
-		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] SortedRequests: No guild info or requests")
+		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] AllRequests: No guild info or requests")
 		return {}
 	end
 
@@ -2146,330 +2152,385 @@ function TOGBankClassic_UI_Requests:SortedRequests()
 		table.insert(list, req)
 	end
 
-	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] SortedRequests: Found %d requests in Guild.Info", #list))
-
-	local column = self.sortColumn or "date"
-	local direction = self.sortDirection or "desc"
-
-	table.sort(list, function(a, b)
-		local va = valueForSort(a, column)
-		local vb = valueForSort(b, column)
-		if va == vb then
-			return valueForSort(a, "date") > valueForSort(b, "date")
-		end
-		if direction == "asc" then
-			return va < vb
-		end
-		return va > vb
-	end)
-
+	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] AllRequests: Found %d requests in Guild.Info", #list))
 	return list
 end
 
--- Create one row of widgets permanently bound to a request ID.
--- Rows are never reassigned to a different request; filter/sort changes
--- show/hide and reorder existing rows rather than re-populating them.
-function TOGBankClassic_UI_Requests:EnsureRowForRequest(reqId)
-	if not self.Content then return nil end
+-- ─── REQUESTS-ROWLIST-001: the cells the rows own ───────────────────────────────
+--
+-- The RowList pools its rows by POSITION and re-renders them on every scroll, so nothing about a
+-- request may be captured when a cell is built: every script reads the request off the cell
+-- (`cell.req`, `cell._tipData`, the item overlay's `_itemName`), and _PopulateRow writes those on
+-- every render. A cell that takes the mouse (all three do) locks the row's highlight through
+-- `lockRowHighlight` (defined beside the action icons, which share it).
 
-	self.RowPool = self.RowPool or {}
-	local row = self.RowPool[reqId]
-	if row then return row end
+local function cellFontString(cell, justify)
+	local fs = cell:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	fs:SetPoint("LEFT",  cell, "LEFT",  0, 0)
+	fs:SetPoint("RIGHT", cell, "RIGHT", 0, 0)
+	fs:SetJustifyH(justify or "LEFT")
+	fs:SetWordWrap(false)
+	fs:SetMaxLines(1)
+	return fs
+end
 
-	row = { cells = {}, reqId = reqId, dirty = true }
-	for i, col in ipairs(COLUMNS) do
-		if col.key == "actions" then
-			local actionGroup = TOGBankClassic_UI:Create("SimpleGroup")
-			actionGroup:SetLayout("Flow")
-			tagColumnWidget(actionGroup, i, false)
-			self.Content:AddChild(actionGroup)
-
-			local fulfillButton = TOGBankClassic_UI:Create("Button")
-			fulfillButton:SetText(FULFILL_ICON)
-			fulfillButton:SetWidth(24)
-			fulfillButton:SetHeight(20)
-			centerButtonText(fulfillButton)
-			setupFulfillButtonTooltip(fulfillButton)
-			actionGroup:AddChild(fulfillButton)
-
-			local fulfillSpacer = TOGBankClassic_UI:Create("Label")
-			fulfillSpacer:SetText("")
-			fulfillSpacer:SetWidth(8)
-			actionGroup:AddChild(fulfillSpacer)
-
-			local completeButton = TOGBankClassic_UI:Create("Button")
-			completeButton:SetText(COMPLETE_ICON)
-			completeButton:SetWidth(24)
-			completeButton:SetHeight(20)
-			centerButtonText(completeButton)
-			attachActionTooltip(completeButton, "Mark hand-off", "Record how many you gave the requester directly (not by mail). Enter a quantity; it goes into the Sent column, and the order completes once Sent reaches the amount requested.")
-			actionGroup:AddChild(completeButton)
-
-			local actionSpacer = TOGBankClassic_UI:Create("Label")
-			actionSpacer:SetText("")
-			actionSpacer:SetWidth(4)
-			actionGroup:AddChild(actionSpacer)
-
-			local cancelButton = TOGBankClassic_UI:Create("Button")
-			cancelButton:SetText(CANCEL_ICON)
-			cancelButton:SetWidth(24)
-			cancelButton:SetHeight(20)
-			centerButtonText(cancelButton)
-			attachActionTooltip(cancelButton, "Cancel request", "Cancels the request without fulfilling it.")
-			actionGroup:AddChild(cancelButton)
-
-			local deleteSpacer = TOGBankClassic_UI:Create("Label")
-			deleteSpacer:SetText("")
-			deleteSpacer:SetWidth(4)  -- REOPEN-001: trimmed 8->4 to keep the 5-button row's Flow content at 140px (Flow lays out hidden widgets too); the Actions column carries headroom to 152 per WRAP-001
-			actionGroup:AddChild(deleteSpacer)
-
-			local deleteButton = TOGBankClassic_UI:Create("Button")
-			deleteButton:SetText(DELETE_ICON)
-			deleteButton:SetWidth(24)
-			deleteButton:SetHeight(20)
-			centerButtonText(deleteButton)
-			attachActionTooltip(deleteButton, "Delete permanently", "Permanently removes the request.")
-			actionGroup:AddChild(deleteButton)
-
-			-- REOPEN-001: re-open a finished order (banker/officer/GM). Shown only on completed rows.
-			local reopenSpacer = TOGBankClassic_UI:Create("Label")
-			reopenSpacer:SetText("")
-			reopenSpacer:SetWidth(4)  -- REOPEN-001: keep the actionGroup content (5 buttons) at 140px; WRAP-001 widened the column to 152 so reopen can't wrap onto the fulfill button
-			actionGroup:AddChild(reopenSpacer)
-
-			local reopenButton = TOGBankClassic_UI:Create("Button")
-			reopenButton:SetText(REOPEN_ICON)
-			reopenButton:SetWidth(24)
-			reopenButton:SetHeight(20)
-			centerButtonText(reopenButton)
-			attachActionTooltip(reopenButton, "Re-open order", "Re-open this finished order back to open (clears its Sent count), in case it was marked filled by mistake. Banker/officer/GM only.")
-			actionGroup:AddChild(reopenButton)
-
-			row.actionGroup   = actionGroup
-			row.fulfillButton = fulfillButton
-			row.fulfillSpacer = fulfillSpacer
-			row.completeButton = completeButton
-			row.actionSpacer  = actionSpacer
-			row.cancelButton  = cancelButton
-			row.deleteSpacer  = deleteSpacer
-			row.deleteButton  = deleteButton
-			row.reopenSpacer  = reopenSpacer
-			row.reopenButton  = reopenButton
-			row.cells[i]      = actionGroup
+--- The date cell: the status glyph and the date, the timeline tooltip (submitted / filled /
+--- cancelled, with the cancel reason), and the home of the cancelled glow. `cell.glowTarget` is
+--- the { frame, label } pair SetCancelGlow takes -- the same shape as an AceGUI Label, which is
+--- what it was written against and what the spec still hands it.
+local function buildDateCell(row)
+	local cell = CreateFrame("Frame", nil, row)
+	cell:EnableMouse(true)
+	local fs = cellFontString(cell, "LEFT")
+	cell.label = fs
+	cell.glowTarget = { frame = cell, label = fs }
+	cell:SetScript("OnEnter", function(f)
+		lockRowHighlight(f, true)
+		local d = f._tipData
+		if not d then return end
+		GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine("Request Timeline", 1, 1, 1)
+		local subTs = tonumber(d.date or 0) or 0
+		if subTs > 0 then
+			GameTooltip:AddLine("Submitted:  " .. date("%Y-%m-%d %H:%M", subTs), 0.9, 0.9, 0.9)
 		else
-			local label = TOGBankClassic_UI:Create("Label")
-			label.label:SetHeight(18)
-			label.label:SetWordWrap(false)
-			label.label:SetJustifyH(justifyForAlign(col.align))
-			tagColumnWidget(label, i, false)
-			self.Content:AddChild(label)
-
-			-- Item column: Add copyable EditBox overlay
-			if col.key == "item" then
-				local eb = CreateFrame("EditBox", nil, label.frame)
-				eb:SetFontObject("GameFontHighlight")
-				eb:SetMaxLetters(0)
-				eb:SetMultiLine(false)
-				eb:EnableMouse(true)
-				eb:SetHeight(18)
-				eb:SetPoint("TOPLEFT", label.frame, "TOPLEFT", 0, 0)
-				eb:SetPoint("BOTTOMRIGHT", label.frame, "BOTTOMRIGHT", 0, 0)
-				eb:SetAutoFocus(false)
-				eb:SetJustifyH(justifyForAlign(col.align))
-				eb:SetTextInsets(0, 0, 0, 0)
-				eb:SetAlpha(0)
-				eb:SetHighlightColor(0, 0, 0, 0)
-				eb:Show()
-
-				-- Copyable text behavior: EditBox is a fully transparent (alpha 0) overlay.
-				-- Invisible but still receives mouse/keyboard events. On click, text is set
-				-- and highlighted so Ctrl+C copies it. Focus auto-clears after 5 seconds.
-				eb:SetScript("OnEditFocusGained", function(self)
-					self:SetText(self._itemName or "")
-					self:HighlightText()
-					C_Timer.After(5, function()
-						if self:HasFocus() then self:ClearFocus() end
-					end)
-				end)
-				eb:SetScript("OnEditFocusLost", function(self)
-					self:SetText("")
-				end)
-				eb:SetScript("OnChar", function(self)
-					self:SetText(self._itemName or "")
-					self:HighlightText()
-				end)
-				eb:SetScript("OnKeyDown", function(self, key)
-					if key == "ESCAPE" then self:ClearFocus() end
-				end)
-
-				-- Item tooltip on hover
-				eb:SetScript("OnEnter", function(self)
-					local itemName = self._itemName
-					if not itemName or itemName == "" then return end
-
-					-- If the request carries an explicit itemID, use it directly so we
-					-- show the correct same-name variant (e.g. Druid vs Warrior Voodoo Doll).
-					-- REQ-003: when a suffixID is present, prefer the inventory entry whose suffix
-					-- matches so random-suffix siblings ("of the Tiger" vs "of the Monkey") resolve
-					-- to the requested one rather than the first item sharing the base ID.
-					local requestItemID = self._itemID
-					local requestSuffix = self._suffixID
-					local itemLink, itemID
-					if requestItemID then
-						-- Search inventory for an entry with this exact ID (and suffix, when set) to get its full link
-						local info = TOGBankClassic_Guild.Info
-						if info and info.alts then
-							-- INV2 step 7a: keyed by name so the rows come from GetAltItems, which
-							-- honours the inventoryV2 switch. Reading alt.items directly here
-							-- would have kept this lookup on the legacy store after the switch.
-							for altName in pairs(info.alts) do
-								for _, item in ipairs(TOGBankClassic_Guild:GetAltItems(altName)) do
-									if item.ID == requestItemID
-									   -- INV2-SUFFIX-001: read the row's stored Suffix, not the rebuilt
-									   -- Link -- the link only carries it when ItemDB resolved the id.
-									   and (not requestSuffix or TOGBankClassic_Item:RowSuffixID(item) == requestSuffix) then
-										itemLink = item.Link
-										itemID   = item.ID
-										break
-									end
-								end
-								if itemLink or itemID then break end
-							end
-						end
-						-- Fall back to a bare/suffixed item string if no inventory entry found
-						if not itemLink and not itemID then
-							itemID = requestItemID
-						end
-					else
-						-- Legacy request (no itemID): search by name, take first match
-						local info = TOGBankClassic_Guild.Info
-						if info and info.alts then
-							for altName in pairs(info.alts) do
-								for _, item in ipairs(TOGBankClassic_Guild:GetAltItems(altName)) do
-									local name = item.Info and item.Info.name
-									      or (item.Link and item.Link:match("%[(.-)%]"))
-									if name == itemName then
-										itemLink = item.Link
-										itemID   = item.ID
-										break
-									end
-								end
-								if itemLink or itemID then break end
-							end
-						end
-					end
-
-					-- Build hyperlink from link string, or fall back to an item:ID string.
-					-- REQ-003: when only the ID is known but a suffix was requested, encode the suffix
-					-- (item:ID:0:0:0:0:0:suffixID) so the tooltip shows the requested random-suffix variant.
-					local hyperlink = itemLink
-					if not hyperlink and itemID then
-						if requestSuffix then
-							hyperlink = string.format("item:%d:0:0:0:0:0:%d", itemID, requestSuffix)
-						else
-							hyperlink = "item:" .. itemID
-						end
-					end
-					GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-					if hyperlink then
-						GameTooltip:SetHyperlink(hyperlink)
-					else
-						GameTooltip:ClearLines()
-						GameTooltip:AddLine(itemName, 1, 1, 1)
-					end
-					GameTooltip:Show()
-				end)
-				eb:SetScript("OnLeave", function()
-					GameTooltip:Hide()
-				end)
-
-				label.editbox = eb
+			GameTooltip:AddLine("Submitted:  Unknown", 0.9, 0.9, 0.9)
+		end
+		local updTs = tonumber(d.updatedAt or 0) or 0
+		if d.status == "fulfilled" or d.status == "complete" then
+			if updTs > 0 then
+				GameTooltip:AddLine("Filled:  " .. date("%Y-%m-%d %H:%M", updTs), 0.4, 1, 0.4)
+				GameTooltip:AddLine("Item arrives approx. 1 hour after sending.", 0.6, 0.8, 0.6)
 			end
-
-			if col.key == "date" then
-				label.frame:SetScript("OnEnter", function(f)
-					local d = f._tipData
-					if not d then return end
-					GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
-					GameTooltip:ClearLines()
-					GameTooltip:AddLine("Request Timeline", 1, 1, 1)
-					local subTs = tonumber(d.date or 0) or 0
-					if subTs > 0 then
-						GameTooltip:AddLine("Submitted:  " .. date("%Y-%m-%d %H:%M", subTs), 0.9, 0.9, 0.9)
-					else
-						GameTooltip:AddLine("Submitted:  Unknown", 0.9, 0.9, 0.9)
-					end
-					local updTs = tonumber(d.updatedAt or 0) or 0
-					if d.status == "fulfilled" or d.status == "complete" then
-						if updTs > 0 then
-							GameTooltip:AddLine("Filled:  " .. date("%Y-%m-%d %H:%M", updTs), 0.4, 1, 0.4)
-							GameTooltip:AddLine("Item arrives approx. 1 hour after sending.", 0.6, 0.8, 0.6)
-						end
-					elseif d.status == "cancelled" then
-						if updTs > 0 then
-							GameTooltip:AddLine("Cancelled:  " .. date("%Y-%m-%d %H:%M", updTs), 1, 0.4, 0.4)
-						end
-						if d.notes and d.notes ~= "" then
-							GameTooltip:AddLine("Reason:  " .. d.notes, 1, 0.65, 0.65, true)
-						end
-					end
-					GameTooltip:Show()
-				end)
-				label.frame:SetScript("OnLeave", function()
-					GameTooltip:Hide()
-				end)
+		elseif d.status == "cancelled" then
+			if updTs > 0 then
+				GameTooltip:AddLine("Cancelled:  " .. date("%Y-%m-%d %H:%M", updTs), 1, 0.4, 0.4)
 			end
-			row.cells[i] = label
+			if d.notes and d.notes ~= "" then
+				GameTooltip:AddLine("Reason:  " .. d.notes, 1, 0.65, 0.65, true)
+			end
+		end
+		GameTooltip:Show()
+	end)
+	cell:SetScript("OnLeave", function(f)
+		lockRowHighlight(f, false)
+		GameTooltip:Hide()
+	end)
+	return cell
+end
+
+--- The item cell: the name in its status colour, under a fully transparent EditBox so the name can
+--- be selected and copied (click, Ctrl+C), with the item tooltip on hover.
+local function buildItemCell(row)
+	local cell = CreateFrame("Frame", nil, row)
+	local fs = cellFontString(cell, "LEFT")
+	cell.label = fs
+
+	local eb = CreateFrame("EditBox", nil, cell)
+	eb:SetFontObject("GameFontHighlightSmall")
+	eb:SetMaxLetters(0)
+	eb:SetMultiLine(false)
+	eb:EnableMouse(true)
+	eb:SetPoint("TOPLEFT", cell, "TOPLEFT", 0, 0)
+	eb:SetPoint("BOTTOMRIGHT", cell, "BOTTOMRIGHT", 0, 0)
+	eb:SetAutoFocus(false)
+	eb:SetJustifyH("LEFT")
+	eb:SetTextInsets(0, 0, 0, 0)
+	eb:SetAlpha(0)
+	-- The selection highlight is invisible too: the overlay is alpha 0, but a highlight would still
+	-- paint. Era's SimpleEditBoxAPIDocumentation; the harness carries it since 1037beb, so the
+	-- feature-detect guard that hid this line offline is gone and the spec asserts the colour.
+	eb:SetHighlightColor(0, 0, 0, 0)
+	eb:Show()
+
+	-- Copyable text behavior: EditBox is a fully transparent (alpha 0) overlay.
+	-- Invisible but still receives mouse/keyboard events. On click, text is set
+	-- and highlighted so Ctrl+C copies it. Focus auto-clears after 5 seconds.
+	eb:SetScript("OnEditFocusGained", function(self)
+		self:SetText(self._itemName or "")
+		self:HighlightText()
+		C_Timer.After(5, function()
+			if self:HasFocus() then self:ClearFocus() end
+		end)
+	end)
+	eb:SetScript("OnEditFocusLost", function(self)
+		self:SetText("")
+	end)
+	eb:SetScript("OnChar", function(self)
+		self:SetText(self._itemName or "")
+		self:HighlightText()
+	end)
+	eb:SetScript("OnKeyDown", function(self, key)
+		if key == "ESCAPE" then self:ClearFocus() end
+	end)
+
+	-- Item tooltip on hover
+	eb:SetScript("OnEnter", function(self)
+		lockRowHighlight(cell, true)
+		local itemName = self._itemName
+		if not itemName or itemName == "" then return end
+
+		-- If the request carries an explicit itemID, use it directly so we
+		-- show the correct same-name variant (e.g. Druid vs Warrior Voodoo Doll).
+		-- REQ-003: when a suffixID is present, prefer the inventory entry whose suffix
+		-- matches so random-suffix siblings ("of the Tiger" vs "of the Monkey") resolve
+		-- to the requested one rather than the first item sharing the base ID.
+		-- LINK-AUDIT-001 (docs/LINK_AUDIT.md 3.4): this lookup and the hand-built item string
+		-- below are the link layer's and change with it, not here.
+		local requestItemID = self._itemID
+		local requestSuffix = self._suffixID
+		local itemLink, itemID
+		if requestItemID then
+			-- Search inventory for an entry with this exact ID (and suffix, when set) to get its full link
+			local info = TOGBankClassic_Guild.Info
+			if info and info.alts then
+				-- INV2 step 7a: keyed by name so the rows come from GetAltItems, which
+				-- honours the inventoryV2 switch. Reading alt.items directly here
+				-- would have kept this lookup on the legacy store after the switch.
+				for altName in pairs(info.alts) do
+					for _, item in ipairs(TOGBankClassic_Guild:GetAltItems(altName)) do
+						if item.ID == requestItemID
+						   -- INV2-SUFFIX-001: read the row's stored Suffix, not the rebuilt
+						   -- Link -- the link only carries it when ItemDB resolved the id.
+						   and (not requestSuffix or TOGBankClassic_Item:RowSuffixID(item) == requestSuffix) then
+							itemLink = item.Link
+							itemID   = item.ID
+							break
+						end
+					end
+					if itemLink or itemID then break end
+				end
+			end
+			-- Fall back to a bare/suffixed item string if no inventory entry found
+			if not itemLink and not itemID then
+				itemID = requestItemID
+			end
+		else
+			-- Legacy request (no itemID): search by name, take first match
+			local info = TOGBankClassic_Guild.Info
+			if info and info.alts then
+				for altName in pairs(info.alts) do
+					for _, item in ipairs(TOGBankClassic_Guild:GetAltItems(altName)) do
+						local name = item.Info and item.Info.name
+						      or (item.Link and item.Link:match("%[(.-)%]"))
+						if name == itemName then
+							itemLink = item.Link
+							itemID   = item.ID
+							break
+						end
+					end
+					if itemLink or itemID then break end
+				end
+			end
+		end
+
+		-- Build hyperlink from link string, or fall back to an item:ID string.
+		-- REQ-003: when only the ID is known but a suffix was requested, encode the suffix
+		-- (item:ID:0:0:0:0:0:suffixID) so the tooltip shows the requested random-suffix variant.
+		local hyperlink = itemLink
+		if not hyperlink and itemID then
+			if requestSuffix then
+				hyperlink = string.format("item:%d:0:0:0:0:0:%d", itemID, requestSuffix)
+			else
+				hyperlink = "item:" .. itemID
+			end
+		end
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		if hyperlink then
+			GameTooltip:SetHyperlink(hyperlink)
+		else
+			GameTooltip:ClearLines()
+			GameTooltip:AddLine(itemName, 1, 1, 1)
+		end
+		GameTooltip:Show()
+	end)
+	eb:SetScript("OnLeave", function()
+		lockRowHighlight(cell, false)
+		GameTooltip:Hide()
+	end)
+
+	cell.editbox = eb
+	return cell
+end
+
+--- The actions cell: five icon slots in a fixed order -- fulfil, hand-off, cancel, delete, re-open
+--- -- so an icon sits in the same column on every row whatever else that row shows. Which are
+--- shown, and the fulfil icon's state, are _PopulateRow's; the clicks read `cell.req` and
+--- `cell.actor` off the cell.
+local function buildActionsCell(row)
+	local cell = CreateFrame("Frame", nil, row)
+	local R = TOGBankClassic_UI_Requests
+	cell.fulfill = newActionIcon(cell, 1, FULFILL_ICON, "Fulfill request", "", function(req)
+		local _, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
+		R:SetStatusText(message or "")
+	end)
+	-- COMPLETEQTY-001: instead of silently marking complete, ask how many were handed over
+	-- directly; the amount goes into the Sent column.
+	cell.complete = newActionIcon(cell, 2, COMPLETE_ICON, "Mark hand-off",
+		"Record how many you gave the requester directly (not by mail). Enter a quantity; it goes into the Sent column, and the order completes once Sent reaches the amount requested.",
+		function(req) showCompleteQtyPrompt(req, cell.actor) end)
+	cell.cancel = newActionIcon(cell, 3, CANCEL_ICON, "Cancel request", "Cancels the request without fulfilling it.",
+		function(req) showCancelReasonDialog(req, cell.actor, R) end)
+	cell.delete = newActionIcon(cell, 4, DELETE_ICON, "Delete permanently", "Permanently removes the request.",
+		function(req) confirmDeleteRequest(req, cell.actor) end)
+	-- REOPEN-001: re-open a finished order (banker/officer/GM). Shown only on completed rows.
+	cell.reopen = newActionIcon(cell, 5, REOPEN_ICON, "Re-open order",
+		"Re-open this finished order back to open (clears its Sent count), in case it was marked filled by mistake. Banker/officer/GM only.",
+		function(req) confirmReopenRequest(req, cell.actor) end)
+	return cell
+end
+
+for _, col in ipairs(COLUMNS) do
+	if col.key == "date" then col.build = buildDateCell
+	elseif col.key == "item" then col.build = buildItemCell
+	elseif col.key == "actions" then col.build = buildActionsCell end
+end
+
+--- CANCEL-REASON-001: a soft glow on the date's LETTERS. The operator, on the first cut (a tinted
+--- block behind the cell): "what i meant was a soft glow of the letters/numbers themselves"; on the
+--- second (a coloured 1px text shadow): "it's just a 1px 'outline' can we actually make it 'glow'?".
+--- The client has no text blur, so the glow is BUILT: copies of the text drawn under the glyphs in
+--- three rings (1, 2 and 3 px out, eight directions each) whose alpha falls with distance -- the
+--- overlaps stack bright at the glyph edge and thin out to nothing, which is what a blur looks like.
+--- The glyphs' own black drop-shadow is switched off while the glow is on (it would cut a dark
+--- notch into the halo) and put back when the pooled row is reused for an open request.
+---
+--- The colour is WARM CREAM, not gold: cancelled text is red, and gold is red's neighbour on the
+--- wheel, so it merged into the glyphs ("red on red doesn't work" was the same lesson one step
+--- earlier). A luminous halo is desaturated -- near-white with a little warmth -- and that is what
+--- separates from red.
+local GLOW_R, GLOW_G, GLOW_B = 1, 0.9, 0.7
+-- Alpha per ring (index = radius in px). Eight copies overlap at the glyph edge, so coverage there
+-- is 1 - (1 - a)^8: 0.12 -> 0.64, 0.06 -> 0.39, 0.03 -> 0.22. The first cut used 0.4/0.2/0.1 and
+-- stacked to a solid cream blob that filled the counters of the 0s and 8s -- "i can't read it".
+local GLOW_RINGS = { 0.12, 0.06, 0.03 }
+local GLOW_DIRS  = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
+
+local function plainText(text)
+	return (tostring(text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+end
+
+--- The frame the glow copies live on: a child of the cell at the cell's OWN frame level, its copies
+--- on the ARTWORK layer, with the cell's glyphs raised to OVERLAY while they glow. Within one frame
+--- level the client draws by layer across frames, so the copies are always under the glyphs and
+--- never under anything else. A BACKGROUND sublevel under the label's own FontString was not enough
+--- (on screen the copies painted OVER the glyphs), and CANCEL-GLOW-003's one-level-BELOW frame was
+--- too much: whatever else sat at that level -- and it differs between the standalone window and
+--- the Guild Bank tab -- could paint over the halo, and on the tab the operator saw no glow at all.
+--- Re-levelled on every use, since AceGUI re-parents and re-levels pooled widgets.
+--- The glow BREATHES: the operator picked a pulse over an icon ("oh, i like 2, can we do that?")
+--- because motion is what catches the eye across a table where a static halo does not. One Alpha
+--- animation on the glow frame, full to a third over a second, BOUNCE looping so it climbs back the
+--- same way -- a two-second breath, eased at both ends so it never snaps. The glyphs are not on
+--- this frame and do not pulse; only the halo does. BREATH-001: the breath is the library's
+--- (LibAceGUIWidgets W:Breathe / W:StopBreathing, its defaults ARE these numbers -- 0.35 over 1.0 s,
+--- BOUNCE, eased), the same call the help icon and the status bar's urgent line make.
+
+local function glowFrame(label)
+	local f = label.frame.togGlowFrame
+	if not f then
+		f = CreateFrame("Frame", nil, label.frame)
+		f:SetAllPoints(label.frame)
+		label.frame.togGlowFrame = f
+	end
+	f:SetFrameLevel(label.frame:GetFrameLevel())
+	return f
+end
+
+local function ensureGlowLayers(label, fs)
+	if fs.togGlowLayers then return fs.togGlowLayers end
+	local parent = glowFrame(label)
+	local layers = {}
+	for radius, alpha in ipairs(GLOW_RINGS) do
+		for _, dir in ipairs(GLOW_DIRS) do
+			local g = parent:CreateFontString(nil, "ARTWORK")
+			g:SetFontObject(fs:GetFontObject() or GameFontHighlightSmall)
+			g:SetJustifyH(fs:GetJustifyH())
+			g:SetJustifyV(fs:GetJustifyV())
+			g:SetPoint("TOPLEFT",  fs, "TOPLEFT",  dir[1] * radius, dir[2] * radius)
+			g:SetPoint("TOPRIGHT", fs, "TOPRIGHT", dir[1] * radius, dir[2] * radius)
+			g:SetTextColor(GLOW_R, GLOW_G, GLOW_B)
+			g:SetAlpha(alpha)
+			if g.SetShadowColor then g:SetShadowColor(0, 0, 0, 0) end
+			layers[#layers + 1] = g
 		end
 	end
-
-	-- Tag first cell with its reqId for O(1) lookup in _ApplySortOrder
-	if row.cells[1] then
-		row.cells[1]:SetUserData("togRequestsReqId", reqId)
-	end
-	self.RowPool[reqId] = row
-	return row
+	fs.togGlowLayers = layers
+	return layers
 end
 
--- Mark a specific request's row as needing data refresh next DrawRows call.
-function TOGBankClassic_UI_Requests:InvalidateRow(reqId)
-	if self.RowPool and reqId then
-		local row = self.RowPool[reqId]
-		if row then row.dirty = true end
+--- The Appearance-tab switch for the glow. ON unless the player turned it off ("some folks will
+--- whine about it ... folks can turn it off if they want"); a missing options DB (the addon before
+--- Options:Init, a bare spec) is the default, not off.
+---@return boolean
+function TOGBankClassic_UI_Requests:CancelGlowEnabled()
+	local db = TOGBankClassic_Options and TOGBankClassic_Options.db
+	return not (db and db.global and db.global.cancelGlow == false)
+end
+
+---@param label table the date cell (an AceGUI Label with .label, its FontString)
+---@param on boolean
+function TOGBankClassic_UI_Requests:SetCancelGlow(label, on)
+	local fs = label and label.label
+	if not (fs and fs.SetShadowColor) then return end
+	if on and not self:CancelGlowEnabled() then on = false end
+	if on then
+		if not fs.togShadowSaved then
+			local r, g, b, a, x, y
+			if fs.GetShadowColor then r, g, b, a = fs:GetShadowColor() end
+			if fs.GetShadowOffset then x, y = fs:GetShadowOffset() end
+			-- GameFontNormal's own shadow when the getters are absent (the offline env).
+			fs.togShadowSaved = { r or 0, g or 0, b or 0, a or 1, x or 1, y or -1 }
+		end
+		fs:SetShadowColor(0, 0, 0, 0)
+		-- The glyphs above the copies by LAYER (AceGUI's Label draws its text on BACKGROUND).
+		if fs.SetDrawLayer and not fs.togLayerSaved then
+			fs.togLayerSaved = fs.GetDrawLayer and fs:GetDrawLayer() or "BACKGROUND"
+			fs:SetDrawLayer("OVERLAY")
+		end
+		-- The glow copies carry the plain glyphs: the cell's colour escapes would paint them red.
+		local text = plainText(fs:GetText())
+		local frame = glowFrame(label)   -- re-level under the cell every draw, not only at creation
+		for _, g in ipairs(ensureGlowLayers(label, fs)) do
+			g:SetText(text)
+			g:Show()
+		end
+		local W = TOGBankClassic_UI.Widgets
+		if W and W.Breathe then W:Breathe(frame) end
+		-- Self-audit 2026-09-12: AceGUI's widget pool is shared with every other addon, and the
+		-- Requests window is Released whole when banker status changes (Open, ALPHA-001). A Label
+		-- handed back with the glow ON would surface in someone else's UI with cream copies of our
+		-- date pulsing under their text. Switch it off on the way out, exactly as ALPHA-001 clears
+		-- the alpha -- through the one shared OnRelease (pool hygiene, above), since a date cell
+		-- hidden for pagination carries that mark too and one registration would drop the other.
+		fs.togCancelGlow = true
+		markForRestore(label)
+	elseif fs.togCancelGlow then
+		local s = fs.togShadowSaved
+		fs:SetShadowColor(s[1], s[2], s[3], s[4])
+		fs:SetShadowOffset(s[5], s[6])
+		if fs.togLayerSaved then
+			fs:SetDrawLayer(fs.togLayerSaved)
+			fs.togLayerSaved = nil
+		end
+		for _, g in ipairs(fs.togGlowLayers or {}) do g:Hide() end
+		-- Stop, and leave the frame at full alpha: a stopped BOUNCE holds wherever it was, and the
+		-- next cancelled request this pooled row shows would start from a dim halo.
+		local frame, W = label.frame.togGlowFrame, TOGBankClassic_UI.Widgets
+		if frame and W and W.StopBreathing then W:StopBreathing(frame) end
+		fs.togCancelGlow = nil
 	end
 end
 
--- Mark all existing pool rows dirty (used after actor change, mailbox open/close).
-function TOGBankClassic_UI_Requests:InvalidateAllRows()
-	if not self.RowPool then return end
-	for _, row in pairs(self.RowPool) do
-		row.dirty = true
-	end
-end
-
-function TOGBankClassic_UI_Requests:SetRowVisible(row, visible)
-	if not row or not row.cells then return end
-	for _, cell in ipairs(row.cells) do
-		setWidgetShown(cell, visible)
-	end
-end
-
-function TOGBankClassic_UI_Requests:EnsureEmptyLabel()
-	if not self.Content then
-		return nil
-	end
-	if self.EmptyRow then
-		return self.EmptyRow
-	end
-
-	local empty = TOGBankClassic_UI:Create("Label")
-	empty:SetText("No requests yet.")
-	empty:SetFullWidth(true)
-	tagColumnWidget(empty, 1, false)
-	self.Content:AddChild(empty)
-	self.EmptyRow = empty
-	return empty
-end
+-- REQUESTS-ROWLIST-001: the per-request row pool is gone (InvalidateRow / InvalidateAllRows /
+-- SetRowVisible / EnsureEmptyLabel / EnsureHeaderRows / DrawHeader were here). Every DrawRows
+-- rebuilds the entries from the requests and the RowList re-renders whatever is in view, so
+-- there is no "dirty" state to mark: the two invalidators are kept as the no-ops their callers
+-- (Options' glow toggle, the mailbox open/close) still expect to find, and the next DrawRows is
+-- the refresh.
+function TOGBankClassic_UI_Requests:InvalidateRow() end
+function TOGBankClassic_UI_Requests:InvalidateAllRows() end
 
 local function colorize(text, reqStatus)
 	local color
@@ -2484,86 +2545,93 @@ local function colorize(text, reqStatus)
 	return string.format("|c%s%s|r", color, text)
 end
 
-function TOGBankClassic_UI_Requests:EnsureHeaderRows()
-	if not self.HeaderGroup then
-		return
-	end
+-- SEARCH-006: the second header row SEARCH-005 built (a box under each of four columns) is gone.
+-- The operator, on seeing it: "i don't need a search bar for each area, one bar that filters on
+-- all columns would work" -- and "put them above the dropdown, not below". The one box is built
+-- in BuildBody, above the Requester / Bank dropdowns. The column header itself is the RowList's
+-- (gold GameFontNormalSmall, a click sorts, the arrow shows the direction, `headerTip` per column).
 
-	self.HeaderWidgets = self.HeaderWidgets or {}
-	self.FilterWidgets = self.FilterWidgets or {}
-
-	for i, col in ipairs(COLUMNS) do
-		local headerLabel = self.HeaderWidgets[i]
-		if not headerLabel then
-			-- Plain clickable sort header (no button background), justified to match
-			-- the column's data cells so headers and rows line up. Mirrors the FGI
-			-- RowList column headers. Gold text + hover glow signal click-to-sort.
-			headerLabel = TOGBankClassic_UI:Create("InteractiveLabel")
-			self.HeaderWidgets[i] = headerLabel
-			tagColumnWidget(headerLabel, i, false)
-			if headerLabel.label then
-				headerLabel.label:SetFontObject("GameFontNormal")
-				-- headerAlign overrides the data alignment for the header text only
-				-- (e.g. center the "#" / "Item" headers while their cells stay
-				-- right/left). Falls back to the column's data alignment.
-				headerLabel.label:SetJustifyH(justifyForAlign(col.headerAlign or col.align))
-				headerLabel.label:SetWordWrap(false)
-			end
-			headerLabel:SetHighlight("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-			local colKey = col.key
-			headerLabel:SetCallback("OnClick", function()
-				if self.sortColumn == colKey then
-					self.sortDirection = (self.sortDirection == "asc") and "desc" or "asc"
-				else
-					self.sortColumn = colKey
-					self.sortDirection = "desc"
-				end
-				self:DrawContent()
-			end)
-			if col.tooltipTitle then
-				attachActionTooltip(headerLabel, col.tooltipTitle, col.tooltipDetail)
-			end
-			self.HeaderGroup:AddChild(headerLabel)
-		end
-	end
-
+--- SEARCH-006: the one search text changed. Empty text clears the search.
+---@param text string|nil
+function TOGBankClassic_UI_Requests:SetSearch(text)
+	text = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	self.searchText = text ~= "" and text or nil
+	self:DrawRows(false)   -- a new search starts at the top of the list
 end
 
-function TOGBankClassic_UI_Requests:DrawHeader()
-	local ArrowUpIcon = " |TInterface\\Buttons\\Arrow-Up-Up:0|t"
-	local ArrowDownIcon = " |TInterface\\Buttons\\Arrow-Down-Up:0|t"
-	if not self.HeaderGroup then
-		return
+--- SEARCH-005: the text a column SHOWS for a request -- what a search must match against, so a
+--- player searching for what they can see finds it. Status icons are not part of the date's text.
+---@param req table
+---@param key string column key
+---@return string
+function TOGBankClassic_UI_Requests:ColumnText(req, key)
+	if key == "date" then
+		local ts = tonumber(req.date or 0) or 0
+		return ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
+	elseif key == "item" then
+		return TOGBankClassic_Item:RequestDisplayName(req) or ""
 	end
+	return tostring(req[key] or "")
+end
 
-	self:EnsureHeaderRows()
-
-	for i, col in ipairs(COLUMNS) do
-		local label = col.label
-		if self.sortColumn == col.key then
-			label = label .. (self.sortDirection == "asc" and ArrowUpIcon or ArrowDownIcon)
-		end
-		-- headerSuffix nudges a right-justified header in by ~1 char (e.g. "#" sits
-		-- over the first digit of the right-aligned quantity rather than the "x").
-		if col.headerSuffix then
-			label = label .. col.headerSuffix
-		end
-		local headerLabel = self.HeaderWidgets[i]
-
-		headerLabel:SetText(label)
-		local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
-		headerLabel:SetWidth(columnWidth)
-		setWidgetShown(headerLabel, true)
+--- SEARCH-006: does a request match the one search? Every word of `query` must appear somewhere
+--- across what the searchable columns SHOW -- date, requester, bank, item -- case-insensitive
+--- (TOGBankClassic_UI:SearchMatch over the four column texts). Pure: reads only the request and
+--- the query, so the rule is one function for the UI and the spec. Nil / empty matches everything.
+---@param req table
+---@param query string|nil
+---@return boolean
+function TOGBankClassic_UI_Requests:SearchMatches(req, query)
+	if not query or query == "" then return true end
+	local texts = {}
+	for _, col in ipairs(COLUMNS) do
+		if col.search then texts[#texts + 1] = self:ColumnText(req, col.key) end
 	end
+	return TOGBankClassic_UI:SearchMatch(query, unpack(texts))
+end
 
-	for i, _ in ipairs(COLUMNS) do
-		local widget = self.FilterWidgets[i]
-		if widget and widget.SetWidth then
-			local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or COLUMNS[i].width
-			widget:SetWidth(columnWidth)
-			setWidgetShown(widget, true)
-		end
+--- The banker's "Highlight needed items" checkbox on the filter strip's own second row. Built
+--- ONCE, the first time the roster says the player is a banker: at BuildBody when the roster is
+--- already loaded, else from UpdateFilters on a later draw. This used to be spelled twice (BuildBody
+--- and UpdateFilters), and only the first copy had REQUESTS-STRIP-001's colspan cell, so a checkbox
+--- created late landed in the Table as a bare fourth cell.
+---@return boolean created true when the checkbox was built by THIS call
+function TOGBankClassic_UI_Requests:EnsureHighlightCheckbox()
+	if self.HighlightCheckbox or not self.FilterGroup then return false end
+	-- The roster decides who is a banker; before it loads there is nothing to decide on.
+	if GetNumGuildMembers() <= 0 then
+		TOGBankClassic_Output:Debug("UI", "FILTER", "EnsureHighlightCheckbox: guild roster not loaded yet, skipping banker check")
+		return false
 	end
+	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	if not TOGBankClassic_Guild:IsBank(currentPlayer) then
+		TOGBankClassic_Output:Debug("UI", "FILTER", "EnsureHighlightCheckbox: %s is not a banker, no checkbox", tostring(currentPlayer))
+		return false
+	end
+	local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
+	highlightCheckbox:SetLabel("Highlight needed items")
+	highlightCheckbox:SetFullWidth(true)
+	highlightCheckbox:SetUserData("cell", { colspan = 3 })   -- REQUESTS-STRIP-001: its own row
+	highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
+	highlightCheckbox:SetCallback("OnValueChanged", function(_, _, value)
+		if TOGBankClassic_ItemHighlight then
+			TOGBankClassic_ItemHighlight:SetEnabled(value)
+		end
+	end)
+	highlightCheckbox:SetCallback("OnEnter", function()
+		GameTooltip:SetOwner(highlightCheckbox.frame, "ANCHOR_RIGHT")
+		GameTooltip:ClearLines()
+		GameTooltip:AddLine("Highlight Needed Items")
+		GameTooltip:AddLine("Highlights items in your bank bags that match pending requests, making it easier to see what needs to be sent.", 0.9, 0.9, 0.9, true)
+		GameTooltip:Show()
+	end)
+	highlightCheckbox:SetCallback("OnLeave", function()
+		TOGBankClassic_UI:HideTooltip()
+	end)
+	self.FilterGroup:AddChild(highlightCheckbox)
+	self.HighlightCheckbox = highlightCheckbox
+	TOGBankClassic_Output:Debug("UI", "FILTER", "EnsureHighlightCheckbox: highlight checkbox created for banker %s", tostring(currentPlayer))
+	return true
 end
 
 function TOGBankClassic_UI_Requests:UpdateFilters()
@@ -2588,38 +2656,9 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 		end
 	end
 
-	-- Create highlight checkbox if it doesn't exist but should (banker status now available)
-	if not self.HighlightCheckbox and self.FilterGroup and GetNumGuildMembers() > 0 then
-		local isBank = TOGBankClassic_Guild:IsBank(currentPlayer)
-		if isBank then
-			TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Creating highlight checkbox (delayed)")
-			local highlightCheckbox = TOGBankClassic_UI:Create("CheckBox")
-			highlightCheckbox:SetLabel("Highlight needed items")
-			highlightCheckbox:SetFullWidth(true)
-			highlightCheckbox:SetValue(TOGBankClassic_ItemHighlight and TOGBankClassic_ItemHighlight.enabled or false)
-			highlightCheckbox:SetCallback("OnValueChanged", function(_, _, value)
-				if TOGBankClassic_ItemHighlight then
-					TOGBankClassic_ItemHighlight:SetEnabled(value)
-				end
-			end)
-			highlightCheckbox:SetCallback("OnEnter", function()
-				GameTooltip:SetOwner(highlightCheckbox.frame, "ANCHOR_RIGHT")
-				GameTooltip:ClearLines()
-				GameTooltip:AddLine("Highlight Needed Items")
-				GameTooltip:AddLine("Highlights items in your bank bags that match pending requests, making it easier to see what needs to be sent.", 0.9, 0.9, 0.9, true)
-				GameTooltip:Show()
-			end)
-			highlightCheckbox:SetCallback("OnLeave", function()
-				TOGBankClassic_UI:HideTooltip()
-			end)
-			self.FilterGroup:AddChild(highlightCheckbox)
-			self.HighlightCheckbox = highlightCheckbox
-			-- Re-layout filter group to show new checkbox
-			if self.FilterGroup.DoLayout then
-				self.FilterGroup:DoLayout()
-			end
-			TOGBankClassic_Output:Debug("UI", "FILTER", "UpdateFilters: Highlight checkbox created and added")
-		end
+	-- The banker status may only now be known (the roster loaded after the window was built).
+	if self:EnsureHighlightCheckbox() and self.FilterGroup.DoLayout then
+		self.FilterGroup:DoLayout()
 	end
 
 	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterOpen, requesterTotal)
@@ -2682,7 +2721,9 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 end
 
 function TOGBankClassic_UI_Requests:ApplyFilters(requests)
-	if not self.requesterFilter and not self.bankFilter then
+	local search = self.searchText
+	local hasSearch = search ~= nil and search ~= ""
+	if not self.requesterFilter and not self.bankFilter and not hasSearch then
 		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] ApplyFilters: No filters, returning all %d requests", #(requests or {})))
 		return requests
 	end
@@ -2691,13 +2732,14 @@ function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 	-- Use pairs() since requests is now a map keyed by ID, not an array
 	for _, req in pairs(requests or {}) do
 		if (not self.requesterFilter or req.requester == self.requesterFilter)
-			and (not self.bankFilter or req.bank == self.bankFilter) then
+			and (not self.bankFilter or req.bank == self.bankFilter)
+			and (not hasSearch or self:SearchMatches(req, search)) then   -- SEARCH-006
 			table.insert(filtered, req)
 		end
 	end
 
-	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s)",
-		#(requests or {}), #filtered, tostring(self.requesterFilter), tostring(self.bankFilter)))
+	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] ApplyFilters: Filtered from %d to %d requests (requester=%s, bank=%s, search=%s)",
+		#(requests or {}), #filtered, tostring(self.requesterFilter), tostring(self.bankFilter), hasSearch and "yes" or "no"))
 
 	return filtered
 end
@@ -2725,560 +2767,322 @@ function TOGBankClassic_UI_Requests:ApplyTabFilter(requests)
 	return filtered
 end
 
--- Returns the tab-filtered sorted request list, caching the result so that
--- bag-update and filter-selection redraws skip the expensive sort+tabfilter.
+-- Returns the tab-filtered request list, caching the result so that bag-update and
+-- filter-selection redraws skip the tab filter. The ORDER is not this cache's business: the
+-- RowList sorts the entries by its own key (self-audit 1ebe87b4 F2 -- the body used to sort them
+-- first by sortColumn/sortDirection and the list sorted the same rows again, so the cache was
+-- keyed on a sort it did not need to know about).
 -- Cache is invalidated at the top of DrawContent (called on structural changes).
-function TOGBankClassic_UI_Requests:GetSortedTabFiltered()
-	if self._cachedSortedTabFiltered
-		and self._cachedSortColumn    == self.sortColumn
-		and self._cachedSortDirection == self.sortDirection
-		and self._cachedTabFilter     == self.currentTab
-	then
-		return self._cachedSortedTabFiltered, self._cachedTotal
+function TOGBankClassic_UI_Requests:GetTabFiltered()
+	if self._cachedTabFiltered and self._cachedTabFilter == self.currentTab then
+		return self._cachedTabFiltered, self._cachedTotal
 	end
-	local sorted      = self:SortedRequests()
-	local tabFiltered = self:ApplyTabFilter(sorted)
-	self._cachedSortedTabFiltered = tabFiltered
-	self._cachedTotal             = #tabFiltered
-	self._cachedSortColumn        = self.sortColumn
-	self._cachedSortDirection     = self.sortDirection
-	self._cachedTabFilter         = self.currentTab
+	local tabFiltered = self:ApplyTabFilter(self:AllRequests())
+	self._cachedTabFiltered = tabFiltered
+	self._cachedTotal       = #tabFiltered
+	self._cachedTabFilter   = self.currentTab
 	return tabFiltered, self._cachedTotal
 end
 
--- Populate a row with data from req. Only called when row.dirty == true.
--- SetCallback closures capture reqId from req.id, not the req table, so they
--- stay correct if req data is updated in-place by guild comms.
-function TOGBankClassic_UI_Requests:_PopulateRow(row, req, actor, actorIsGM, isActorBank, mailboxOpen)
-	row.dirty = false
+-- Units still owed on a request: Guild's one spelling, for both fulfil paths below.
+local function quantityNeeded(req)
+	return TOGBankClassic_Guild:RequestQuantityNeeded(req)
+end
 
+--- STALE-REQ-001: the version an OPEN request's requester is known to run when that version cannot
+--- receive current bank contents, else nil. Read off the banker's Requests tab on 2026-09-13: a
+--- request from a v1.3.2 client for a "Spiked Club" the bank had not held since the night before --
+--- a client that old is turned away from every bank delivery since v1.4.0, so it browses a
+--- months-old copy of the bank and requests from it, and the request itself is well-formed. The
+--- gate that knows this is the sync layer's (Guild:PeerSpeaksDataLeg, WIRE-SKEW-004); this reads
+--- it at draw time rather than storing a flag, so a requester who updates clears the mark on the
+--- next draw with nothing to migrate. "unknown" and "dev" are not stale: a peer nobody has heard
+--- from is not accused, as with the sync gate itself.
+---
+--- STALE-REQ-002: the gate's sources are session memory, and the requester of an order is usually
+--- OFFLINE when the banker looks at it -- so after a reload the gate said "unknown" for the very
+--- requester the mark was built for. When it does, the guild's memory of the version that
+--- guildmate was LAST SEEN on (Guild:LastSeenAddonVersion) answers instead. Memory is read only
+--- here, never by the sync gate.
+---@param req table
+---@return string|nil version the `d.d.d` the requester runs, when it is known to be too old
+local function staleRequesterVersion(req)
+	local G = TOGBankClassic_Guild
+	if not (G and G.PeerSpeaksDataLeg) or not req or not req.requester then return nil end
+	-- "Finished" is isComplete's one spelling (it already reads the cancelled/complete/fulfilled
+	-- statuses); entryFor and the fulfil-icon gate read the same predicate.
+	if isComplete(req) then return nil end
+	local capable, why = G:PeerSpeaksDataLeg(req.requester)
+	if not capable and type(why) == "string" then
+		return why:match("%d+%.%d+%.%d+") or why
+	end
+	if why == "unknown" and G.LastSeenAddonVersion then
+		local raw, remembered = G:LastSeenAddonVersion(req.requester)
+		if remembered and raw then
+			local n = G.EncodeVersion(raw)
+			local min = TOGBankClassic_Constants.PROTOCOL.DATA_LEG_MIN_ADDON_VERSION
+			if n ~= 0 and n < G.EncodeVersion(min) then
+				return raw:match("%d+%.%d+%.%d+") or raw
+			end
+		end
+	end
+	return nil
+end
+TOGBankClassic_UI_Requests.StaleRequesterVersion = staleRequesterVersion
+
+-- THE fulfil-button decision: turns Mail:CanFulfillRequest's verdict into the button's enabled
+-- state, icon and tooltip. Peer-review finding 39: this twelve-branch block was copied byte-for-
+-- byte into _PopulateRow AND _RefreshFulfillButtons, and every new reason string from
+-- CanFulfillRequest (the `in mail and bank` / `shortfall in ...` family) had to be added to both
+-- by hand -- miss one and the icon differs between the full redraw and the next BAG_UPDATE
+-- refresh, which reads as flicker. Two entry points are right (the refresh path deliberately
+-- skips text, permissions and closures); two copies of the decision were not.
+local function applyFulfillState(button, req, canFulfill, fulfillReason, itemsInBags, mailboxOpen)
+	if not button then return end
+	local qtyNeeded      = quantityNeeded(req)
+	local fulfillEnabled = canFulfill and mailboxOpen
+	local needsSplit     = fulfillReason and string.find(fulfillReason, "Split")
+	local isPartial      = fulfillReason and string.find(fulfillReason, "Partial")
+	local buttonEnabled  = fulfillEnabled or (canFulfill and mailboxOpen and (needsSplit or isPartial))
+	button.togDisabled = not buttonEnabled
+	button:SetAlpha(buttonEnabled and 1.0 or 0.4)
+
+	local icon, tooltipDetail
+	if isPartial then
+		icon = FULFILL_ICON_READY; tooltipDetail = fulfillReason
+	elseif needsSplit then
+		icon = FULFILL_ICON_NEED_SPLIT; tooltipDetail = fulfillReason
+	elseif fulfillEnabled then
+		icon = FULFILL_ICON_READY
+		tooltipDetail = string.format("Attach %d %s to mail for %s.", math.min(itemsInBags, qtyNeeded), TOGBankClassic_Item:RequestDisplayName(req), req.requester or "requester")
+	elseif canFulfill and not mailboxOpen then
+		icon = FULFILL_ICON_NO_MAILBOX; tooltipDetail = "Open a mailbox to fulfill this request."
+	elseif fulfillReason == "in mail and bank" then
+		icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = "Item is split between your mail inbox and bank. Retrieve mail items first, then pick up the rest from the bank."
+	elseif fulfillReason == "in mail" then
+		icon = FULFILL_ICON_IN_MAIL; tooltipDetail = "Item is in your mail inbox. Open mailbox and retrieve it first."
+	elseif fulfillReason == "shortfall in bank and mail" then
+		icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = string.format("Have %d in bags. More available in your bank and mail inbox — pick up or retrieve the rest to reach %d.", itemsInBags, qtyNeeded)
+	elseif fulfillReason == "shortfall in mail" then
+		icon = FULFILL_ICON_IN_MAIL; tooltipDetail = string.format("Have %d in bags. More available in your mail inbox — retrieve items to reach %d.", itemsInBags, qtyNeeded)
+	elseif fulfillReason == "shortfall in bank" then
+		icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = string.format("Have %d in bags. More available in your bank — pick up the rest to reach %d.", itemsInBags, qtyNeeded)
+	elseif fulfillReason and string.find(fulfillReason, "not in bags") then
+		icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = fulfillReason
+	elseif fulfillReason then
+		icon = FULFILL_ICON_NO_ITEMS; tooltipDetail = fulfillReason
+		-- STALE-REQ-001: not found anywhere, and the requester runs a version that cannot see the
+		-- bank as it is now -- say so, and what fixes it, rather than leaving "not in your bags"
+		-- to read as a scan problem.
+		local stale = staleRequesterVersion(req)
+		if stale then
+			tooltipDetail = tooltipDetail .. string.format(
+				" %s is on v%s, which cannot receive current bank contents -- they requested from an old copy of this bank, and the item may be long gone. Ask them to update TOG Bank.",
+				req.requester or "The requester", stale)
+		end
+	else
+		icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = "Pick up items from bank first."
+	end
+	button.icon:SetText(icon)
+	updateFulfillButtonTooltip(button, "Fulfill request", tooltipDetail)
+end
+
+--- The RowList entry for a request: the plain cells' text in the row's status colour, the sort
+--- values (`_sort_`), and the request itself for the owned cells. The tie-break `_id` is the date
+--- DESCENDING, so equal keys under any sort keep newest-first, as the old sorter did.
+--- REQUESTS-ROWLIST-002: the inverted date is ~8.2e9, past a 32-bit int, and the client's
+--- `string.format("%d")` refuses it ("integer overflow attempting to store 8210744788" -- the
+--- operator's first open of the tab). `%.0f` formats the double as digits with no int cast; the
+--- offline Lua casts silently, so the suite could not see it.
+local function entryFor(req)
 	local completed = isComplete(req)
 	local reqStatus = req.status or "open"
 	if completed and reqStatus == "open" then reqStatus = "fulfilled" end
-	local requestId = req.id
-
-	local canCancel   = not completed and requestId and TOGBankClassic_Guild:CanCancelRequest(req, actor)
-	local canComplete = not completed and requestId and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
-	local canDelete   = requestId and TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
-	-- REOPEN-001: only a finished order, and only for banker/officer/GM.
-	local canReopen   = completed and requestId and TOGBankClassic_Guild:CanManageRequests(actor, actorIsGM)
-
 	local ts = tonumber(req.date or 0) or 0
 	local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
+	local glyph
 	if reqStatus == "cancelled" then
-		dateText = CANCELLED_ICON .. dateText
+		glyph = CANCELLED_ICON
 	elseif completed then
-		dateText = CHECK_MARK_ICON .. dateText
+		glyph = CHECK_MARK_ICON
 	else
-		dateText = PADDING_ICON .. dateText
+		glyph = PADDING_ICON
+	end
+	local qty = req.quantity
+	local qtyText = (qty == nil or qty == "") and "" or (tostring(qty) .. "x")
+	local itemName = TOGBankClassic_Item:RequestDisplayName(req)   -- NAME-001
+	local requester, bank = req.requester or "", req.bank or ""
+	-- STALE-REQ-001: the requester's too-old version rides beside the name, in the fulfil icon's
+	-- amber, so the banker can see why an order names something the bank does not hold.
+	local stale = staleRequesterVersion(req)
+	local requesterText = colorize(requester, reqStatus)
+	if stale then requesterText = requesterText .. " |cffff9900v" .. stale .. "|r" end
+	return {
+		req = req, status = reqStatus, completed = completed, itemName = itemName, staleClient = stale,
+		_id = string.format("%010.0f:%s", 9999999999 - ts, tostring(req.id)),
+		date      = glyph .. colorize(dateText, reqStatus),         _sort_date      = ts,
+		requester = requesterText,                                   _sort_requester = requester:lower(),
+		bank      = colorize(bank, reqStatus),                       _sort_bank      = bank:lower(),
+		quantity  = colorize(qtyText, reqStatus),                    _sort_quantity  = tonumber(qty) or 0,
+		item      = colorize(itemName, reqStatus),                   _sort_item      = itemName:lower(),
+		fulfilled = colorize(tostring(req.fulfilled or ""), reqStatus), _sort_fulfilled = tonumber(req.fulfilled) or 0,
+	}
+end
+
+-- Paint the cells a row owns for the entry the RowList just put on it: the date (glyph, text,
+-- timeline tooltip data, the cancelled glow), the item (text and the copy overlay's lookup keys)
+-- and the actions (which icons show, the fulfil icon's state, the request the clicks act on).
+-- Called from the RowList's onRowRender on every render -- a scroll included -- so it captures
+-- nothing: the actor and the mailbox state are read off `self._renderCtx`, set by DrawRows.
+function TOGBankClassic_UI_Requests:_PopulateRow(row, entry)
+	local ctx = self._renderCtx or {}
+	local actor, actorIsGM, isActorBank, mailboxOpen = ctx.actor, ctx.actorIsGM, ctx.isActorBank, ctx.mailboxOpen
+	local req, reqStatus, completed = entry.req, entry.status, entry.completed
+	local requestId = req.id
+	row.togEntry = entry
+
+	local dateCell = row.cells.date
+	if dateCell then
+		dateCell.label:SetText(entry.date)
+		dateCell._tipData = { date = req.date, updatedAt = req.updatedAt, status = reqStatus, notes = req.notes }
+		-- CANCEL-REASON-001: the reason has always been in this cell's tooltip and nobody knew to
+		-- hover. The operator: "make some way to show why things were cancelled, folks can't see why
+		-- easily ... maybe a background glow or something". A cancelled request gets a soft glow on
+		-- its date's glyphs, so the cell reads as "there is more here" -- the reason itself stays in
+		-- the tooltip.
+		-- CANCEL-GLOW-002: EVERY cancelled request, not only those with a reason. The operator, the
+		-- day after: "can we add the 'breath' effect to the cancelled items? i'd like to apply what
+		-- we did yesterday to the old cancelled items to make them more noticible". Requests cancelled
+		-- before reasons existed have none and were the ones left unmarked; the breath is what draws
+		-- the eye, and a cancelled row is what it should draw it to, reason or not.
+		local label = dateCell.glowTarget
+		self:SetCancelGlow(label, reqStatus == "cancelled")
 	end
 
-	local canFulfill, fulfillReason, itemsInBags = false, nil, 0
-	if not completed and requestId and isActorBank then
-		canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
-	end
-	local showFulfill    = isActorBank and not completed and requestId
-	local fulfillEnabled = canFulfill and mailboxOpen
-
-	local qtyNeeded = 0
-	if req.quantity and req.fulfilled then
-		qtyNeeded = (tonumber(req.quantity) or 0) - (tonumber(req.fulfilled) or 0)
-	elseif req.quantity then
-		qtyNeeded = tonumber(req.quantity) or 0
+	local itemCell = row.cells.item
+	if itemCell then
+		itemCell.label:SetText(entry.item)
+		-- The copy overlay's keys for the tooltip lookup.
+		itemCell.editbox._itemName = entry.itemName
+		itemCell.editbox._itemID   = req.itemID or nil    -- nil for legacy requests
+		itemCell.editbox._suffixID = req.suffixID or nil  -- REQ-003: nil unless a random-suffix variant
 	end
 
-	for i, col in ipairs(COLUMNS) do
-		local columnWidth = (self.ColumnWidths and self.ColumnWidths[i]) or col.width
-		if col.key == "actions" then
-			local showComplete = canComplete and true or false
-			local showCancel   = canCancel   and true or false
-			local showDelete   = canDelete   and true or false
-			local showReopen   = canReopen   and true or false
-			if row.actionGroup   then row.actionGroup:SetWidth(columnWidth) end
-			if row.fulfillButton then setWidgetShown(row.fulfillButton, showFulfill) end
-			if row.fulfillSpacer then setWidgetShown(row.fulfillSpacer, showFulfill and (showComplete or showCancel)) end
-			if row.completeButton then setWidgetShown(row.completeButton, showComplete) end
-			if row.actionSpacer  then setWidgetShown(row.actionSpacer, showComplete and showCancel) end
-			if row.cancelButton  then setWidgetShown(row.cancelButton, showCancel) end
-			if row.deleteSpacer  then setWidgetShown(row.deleteSpacer, showDelete and (showComplete or showCancel or showFulfill)) end
-			if row.deleteButton  then setWidgetShown(row.deleteButton, showDelete) end
-			if row.reopenSpacer  then setWidgetShown(row.reopenSpacer, showReopen and (showFulfill or showComplete or showCancel or showDelete)) end
-			if row.reopenButton  then setWidgetShown(row.reopenButton, showReopen) end
-
-			-- Fulfill button visual/icon/tooltip state
-			if row.fulfillButton and row.fulfillButton.frame then
-				local needsSplit    = fulfillReason and string.find(fulfillReason, "Split")
-				local isPartial     = fulfillReason and string.find(fulfillReason, "Partial")
-				local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and (needsSplit or isPartial))
-				row.fulfillButton.frame.togDisabled = not buttonEnabled
-				row.fulfillButton.frame:SetAlpha(buttonEnabled and 1.0 or 0.4)
-
-				local icon, tooltipDetail
-				if fulfillReason and string.find(fulfillReason, "Partial") then
-					icon = FULFILL_ICON_READY; tooltipDetail = fulfillReason
-				elseif fulfillReason and string.find(fulfillReason, "Split") then
-					icon = FULFILL_ICON_NEED_SPLIT; tooltipDetail = fulfillReason
-				elseif fulfillEnabled then
-					icon = FULFILL_ICON_READY
-					tooltipDetail = string.format("Attach %d %s to mail for %s.", math.min(itemsInBags, qtyNeeded), req.item or "items", req.requester or "requester")
-				elseif canFulfill and not mailboxOpen then
-					icon = FULFILL_ICON_NO_MAILBOX; tooltipDetail = "Open a mailbox to fulfill this request."
-				elseif fulfillReason == "in mail and bank" then
-					icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = "Item is split between your mail inbox and bank. Retrieve mail items first, then pick up the rest from the bank."
-				elseif fulfillReason == "in mail" then
-					icon = FULFILL_ICON_IN_MAIL; tooltipDetail = "Item is in your mail inbox. Open mailbox and retrieve it first."
-				elseif fulfillReason == "shortfall in bank and mail" then
-					icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = string.format("Have %d in bags. More available in your bank and mail inbox — pick up or retrieve the rest to reach %d.", itemsInBags, qtyNeeded)
-				elseif fulfillReason == "shortfall in mail" then
-					icon = FULFILL_ICON_IN_MAIL; tooltipDetail = string.format("Have %d in bags. More available in your mail inbox — retrieve items to reach %d.", itemsInBags, qtyNeeded)
-				elseif fulfillReason == "shortfall in bank" then
-					icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = string.format("Have %d in bags. More available in your bank — pick up the rest to reach %d.", itemsInBags, qtyNeeded)
-				elseif fulfillReason and string.find(fulfillReason, "not in bags") then
-					icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = fulfillReason
-				elseif fulfillReason then
-					icon = FULFILL_ICON_NO_ITEMS; tooltipDetail = fulfillReason
-				else
-					icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = "Pick up items from bank first."
-				end
-				row.fulfillButton:SetText(icon)
-				updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", tooltipDetail)
-			end
-
-			-- Wire action button callbacks — closures capture requestId (value type, safe)
-			if row.completeButton then
-				-- COMPLETEQTY-001: instead of silently marking complete, ask how many
-				-- were handed over directly; the amount goes into the Sent column.
-				row.completeButton:SetCallback("OnClick", function()
-					if not requestId then return end
-					showCompleteQtyPrompt(req, actor)
-				end)
-			end
-			if row.cancelButton then
-				row.cancelButton:SetCallback("OnClick", function()
-					if not requestId then return end
-					showCancelReasonDialog(req, actor, self)
-				end)
-			end
-			if row.deleteButton then
-				row.deleteButton:SetCallback("OnClick", function()
-					if not requestId then return end
-					confirmDeleteRequest(req, actor)
-				end)
-			end
-			if row.reopenButton then
-				row.reopenButton:SetCallback("OnClick", function()
-					if not requestId then return end
-					confirmReopenRequest(req, actor)
-				end)
-			end
-			if row.fulfillButton then
-				row.fulfillButton:SetCallback("OnClick", function()
-					if not requestId then return end
-					if row.fulfillButton.frame and row.fulfillButton.frame.togDisabled then return end
-					local _, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
-					self.Window:SetStatusText(message or "")
-				end)
-			end
-		else
-			if row.cells then
-				local label = row.cells[i]
-				local cellVal
-				if col.key == "date" then
-					cellVal = dateText
-				elseif col.key == "requester" then
-					cellVal = req.requester or ""
-				elseif col.key == "bank" then
-					cellVal = req.bank or ""
-				elseif col.key == "quantity" then
-					local qty = req.quantity
-					cellVal = (qty == nil or qty == "") and "" or (tostring(qty) .. "x")
-				elseif col.key == "item" then
-					cellVal = req.item or ""
-				elseif col.key == "fulfilled" then
-					cellVal = tostring(req.fulfilled or "")
-				else
-					cellVal = tostring(req[col.key] or "")
-				end
-
-				-- Item column has EditBox overlay for copyable text
-				if col.key == "item" and label.editbox then
-					-- Label renders the visible (colorized) text
-					label:SetText(colorize(cellVal, reqStatus))
-					-- Store item name, itemID and suffixID on EditBox for tooltip lookup
-					label.editbox._itemName = cellVal
-					label.editbox._itemID   = req.itemID or nil    -- nil for legacy requests
-					label.editbox._suffixID = req.suffixID or nil  -- REQ-003: nil unless a random-suffix variant
-				else
-					label:SetText(colorize(cellVal, reqStatus))
-				end
-
-				label:SetWidth(columnWidth)
-
-				if col.key == "date" then
-					label.frame._tipData = {
-						date      = req.date,
-						updatedAt = req.updatedAt,
-						status    = reqStatus,
-						notes     = req.notes,
-					}
-				end
-			end
+	local actions = row.cells.actions
+	if actions then
+		actions.req, actions.actor = req, actor
+		local canCancel   = not completed and requestId and TOGBankClassic_Guild:CanCancelRequest(req, actor)
+		local canComplete = not completed and requestId and TOGBankClassic_Guild:CanCompleteRequest(req, actor, actorIsGM)
+		local canDelete   = requestId and TOGBankClassic_Guild:CanDeleteRequest(req, actor, actorIsGM)
+		-- REOPEN-001: only a finished order, and only for banker/officer/GM.
+		local canReopen   = completed and requestId and TOGBankClassic_Guild:CanManageRequests(actor, actorIsGM)
+		local showFulfill = isActorBank and not completed and requestId
+		actions.fulfill:SetShown(showFulfill and true or false)
+		actions.complete:SetShown(canComplete and true or false)
+		actions.cancel:SetShown(canCancel and true or false)
+		actions.delete:SetShown(canDelete and true or false)
+		actions.reopen:SetShown(canReopen and true or false)
+		if showFulfill then
+			local canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
+			applyFulfillState(actions.fulfill, req, canFulfill, fulfillReason, itemsInBags, mailboxOpen)
 		end
 	end
 end
 
--- Only refresh the fulfill button on visible rows — used by bag-update events
--- so the icon/state updates without touching text, permissions, or closures.
+-- Only refresh the fulfill icon on the rows in view -- used by bag-update events so the icon and
+-- its state follow the bags without a full redraw of the text, permissions or the list.
 function TOGBankClassic_UI_Requests:_RefreshFulfillButtons(actor, isActorBank, mailboxOpen)
-	if not self.RowPool or not self.Content then return end
-	local info = TOGBankClassic_Guild.Info
-	if not info or not info.requests then return end
-
-	for reqId, row in pairs(self.RowPool) do
-		if row._visible then
-			local req = info.requests[reqId]
-			if req then
-				local completed = isComplete(req)
-				if not completed and isActorBank then
-					local canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
-					local fulfillEnabled = canFulfill and mailboxOpen
-					local qtyNeeded = (tonumber(req.quantity) or 0) - (tonumber(req.fulfilled) or 0)
-					if row.fulfillButton and row.fulfillButton.frame then
-						local needsSplit    = fulfillReason and string.find(fulfillReason, "Split")
-						local isPartial     = fulfillReason and string.find(fulfillReason, "Partial")
-						local buttonEnabled = fulfillEnabled or (canFulfill and mailboxOpen and (needsSplit or isPartial))
-						row.fulfillButton.frame.togDisabled = not buttonEnabled
-						row.fulfillButton.frame:SetAlpha(buttonEnabled and 1.0 or 0.4)
-
-						local icon, tooltipDetail
-						if fulfillReason and string.find(fulfillReason, "Partial") then
-							icon = FULFILL_ICON_READY; tooltipDetail = fulfillReason
-						elseif fulfillReason and string.find(fulfillReason, "Split") then
-							icon = FULFILL_ICON_NEED_SPLIT; tooltipDetail = fulfillReason
-						elseif fulfillEnabled then
-							icon = FULFILL_ICON_READY
-							tooltipDetail = string.format("Attach %d %s to mail for %s.", math.min(itemsInBags, qtyNeeded), req.item or "items", req.requester or "requester")
-						elseif canFulfill and not mailboxOpen then
-							icon = FULFILL_ICON_NO_MAILBOX; tooltipDetail = "Open a mailbox to fulfill this request."
-						elseif fulfillReason == "in mail and bank" then
-							icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = "Item is split between your mail inbox and bank. Retrieve mail items first, then pick up the rest from the bank."
-						elseif fulfillReason == "in mail" then
-							icon = FULFILL_ICON_IN_MAIL; tooltipDetail = "Item is in your mail inbox. Open mailbox and retrieve it first."
-						elseif fulfillReason == "shortfall in bank and mail" then
-							icon = FULFILL_ICON_IN_MAIL_AND_BANK; tooltipDetail = string.format("Have %d in bags. More available in your bank and mail inbox — pick up or retrieve the rest to reach %d.", itemsInBags, qtyNeeded)
-						elseif fulfillReason == "shortfall in mail" then
-							icon = FULFILL_ICON_IN_MAIL; tooltipDetail = string.format("Have %d in bags. More available in your mail inbox — retrieve items to reach %d.", itemsInBags, qtyNeeded)
-						elseif fulfillReason == "shortfall in bank" then
-							icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = string.format("Have %d in bags. More available in your bank — pick up the rest to reach %d.", itemsInBags, qtyNeeded)
-						elseif fulfillReason and string.find(fulfillReason, "not in bags") then
-							icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = fulfillReason
-						elseif fulfillReason then
-							icon = FULFILL_ICON_NO_ITEMS; tooltipDetail = fulfillReason
-						else
-							icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = "Pick up items from bank first."
-						end
-						row.fulfillButton:SetText(icon)
-						updateFulfillButtonTooltip(row.fulfillButton, "Fulfill request", tooltipDetail)
-					end
-				end
+	if not self.List then return end
+	local ctx = self._renderCtx or {}
+	ctx.actor, ctx.isActorBank, ctx.mailboxOpen = actor, isActorBank, mailboxOpen
+	self._renderCtx = ctx
+	for _, row in ipairs(self.List.rows) do
+		local entry = row:IsShown() and row.togEntry
+		local actions = entry and row.cells.actions
+		if actions then
+			local req = entry.req
+			-- Same gate as _PopulateRow's showFulfill (finding 39's unnumbered note): a row whose
+			-- request completed between draws gets its icon hidden here too, not left showing a
+			-- stale icon until the next full redraw.
+			local showFulfill = isActorBank and not isComplete(req) and req.id
+			actions.fulfill:SetShown(showFulfill and true or false)
+			if showFulfill then
+				local canFulfill, fulfillReason, itemsInBags = TOGBankClassic_Mail:CanFulfillRequest(req, actor)
+				applyFulfillState(actions.fulfill, req, canFulfill, fulfillReason, itemsInBags, mailboxOpen)
 			end
 		end
 	end
 end
 
--- Reorder self.Content.children to match the desired sort order.
--- Each request occupies exactly #COLUMNS consecutive child slots.
--- We sort those slot groups without touching the widgets themselves.
-function TOGBankClassic_UI_Requests:_ApplySortOrder(sortedReqs)
-	if not self.Content or not self.Content.children then return end
+-- REQUESTS-ROWLIST-001: `_ApplySortOrder` and `_CreateNewRowsBatched` were here -- reordering the
+-- grid's AceGUI children to match the sort, and creating new rows twenty per frame so a page of
+-- fifty did not stutter the client. The RowList renders only the rows in view from a plain array,
+-- so the whole set is one SetData and there is nothing to reorder or to batch.
 
-	local children = self.Content.children
-	-- Build a map: reqId -> starting child index (1-based, step = #COLUMNS)
-	local step = #COLUMNS
-
-	-- O(N) linear scan: each row's first-cell widget carries its reqId via
-	-- SetUserData("togRequestsReqId"). EmptyRow and other non-row widgets
-	-- have no reqId and are safely skipped.
-	local idToStart = {}
-	for i, widget in ipairs(children) do
-		local reqId = widget:GetUserData("togRequestsReqId")
-		if reqId then
-			idToStart[reqId] = i
-		end
-	end
-
-	-- Build sorted children: all rows in allSorted order, then unsorted pool rows.
-	local newChildren = {}
-	local inSorted = {}
-	for _, req in ipairs(sortedReqs) do
-		inSorted[req.id] = true
-		local start = idToStart[req.id]
-		if start then
-			for j = 0, step - 1 do
-				newChildren[#newChildren + 1] = children[start + j]
-			end
-		end
-	end
-
-	-- Append pool rows not in sortedReqs (e.g. from a different archive tab).
-	for reqId, row in pairs(self.RowPool or {}) do
-		if not inSorted[reqId] and row.cells then
-			local start = idToStart[reqId]
-			if start then
-				for j = 0, step - 1 do
-					newChildren[#newChildren + 1] = children[start + j]
-				end
-			end
-		end
-	end
-
-	-- Preserve non-row widgets (e.g. EmptyRow) that were in children but not
-	-- placed by either loop above. Keep them at the end in their original order.
-	local inNew = {}
-	for _, w in ipairs(newChildren) do inNew[w] = true end
-	for _, w in ipairs(children) do
-		if not inNew[w] then
-			newChildren[#newChildren + 1] = w
-		end
-	end
-
-	-- Rebuild children in-place.
-	for i = 1, #newChildren do children[i] = newChildren[i] end
-	for i = #newChildren + 1, #children do children[i] = nil end
-end
-
--- Main row-only redraw.
--- Filter changes   → show/hide rows, reorder, one DoLayout.
--- Data changes     → additionally re-populate dirty rows before layout.
--- New requests     → create rows (batched across frames if many are new at once).
-function TOGBankClassic_UI_Requests:DrawRows()
-	if not self.Content or not self.Window then return end
+--- The rows: every request on the current tab through the search and the two dropdowns, as
+--- RowList entries, in one SetData. `preserveScroll` keeps the view where it was (a background
+--- request sync, a bag update) -- the "snap back" the old page reset produced; a new search,
+--- filter or tab starts at the top.
+---@param preserveScroll boolean|nil defaults to true
+function TOGBankClassic_UI_Requests:DrawRows(preserveScroll)
+	if not self.List or not self.Host then return end
+	if preserveScroll == nil then preserveScroll = true end
 
 	local actor       = TOGBankClassic_Guild:GetNormalizedPlayer()
 	local actorIsGM   = actor and TOGBankClassic_Guild:SenderIsGM(actor) or false
 	local isActorBank = TOGBankClassic_Guild:IsBank(actor)
 	local mailboxOpen = TOGBankClassic_Mail.isOpen or (MailFrame and MailFrame:IsShown()) or false
+	self._renderCtx = { actor = actor, actorIsGM = actorIsGM, isActorBank = isActorBank, mailboxOpen = mailboxOpen }
 
-	-- Get the full sorted+tab-filtered list (cached; invalidated by DrawContent)
-	local allSorted, total = self:GetSortedTabFiltered()
-
-	-- Apply requester/bank filter to get the visible subset
-	local allVisible = self:ApplyFilters(allSorted)
-	local totalVisible = #allVisible
-
-	-- Apply pagination: only show rows for current page. Clamp the page to the
-	-- valid range so a background refresh after the data shrank can't strand the
-	-- view on an out-of-range (empty) page.
-	self.currentPage = self.currentPage or 1
-	local totalPages = math.max(1, math.ceil(totalVisible / REQUESTS_PER_PAGE))
-	if self.currentPage > totalPages then self.currentPage = totalPages end
-	if self.currentPage < 1 then self.currentPage = 1 end
-	local startIdx = (self.currentPage - 1) * REQUESTS_PER_PAGE
-	local endIdx = startIdx + REQUESTS_PER_PAGE
-	local visible = {}
-	for i = startIdx + 1, math.min(endIdx, totalVisible) do
-		visible[#visible + 1] = allVisible[i]
-	end
+	-- The tab-filtered list (cached; invalidated by DrawContent), then the search and dropdowns.
+	-- Unordered: the RowList sorts the entries.
+	local tabFiltered, total = self:GetTabFiltered()
+	local visible = self:ApplyFilters(tabFiltered)
 	local count = #visible
 
-	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] DrawRows: %d visible of %d total (page %d)", count, total, self.currentPage))
+	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", string.format("[UI-003] DrawRows: %d visible of %d total", count, total))
 
-	-- Cancel any in-progress batch from a prior call
-	self._drawGeneration = (self._drawGeneration or 0) + 1
-	local gen = self._drawGeneration
+	local entries = {}
+	for i, req in ipairs(visible) do entries[i] = entryFor(req) end
+	self.List:SetData(entries, preserveScroll)
+	self.rowsShown = entries
 
-	local content = self.Content
-	content:PauseLayout()
-
-	-- Empty state
 	if count == 0 then
-		local empty       = self:EnsureEmptyLabel()
-		local columnWidth = (self.ColumnWidths and self.ColumnWidths[1]) or COLUMNS[1].width
-		if empty then
-			empty:SetWidth(columnWidth)
-			empty:SetText(self.currentTab == "archive" and "No archived requests." or "No requests yet.")
+		-- SEARCH-005: an empty list behind a search box or filter is "nothing matches", not
+		-- "nothing exists" -- the difference between clearing the box and waiting for a request.
+		local narrowed = (self.searchText ~= nil and self.searchText ~= "")
+			or self.requesterFilter or self.bankFilter
+		local text
+		if narrowed and total > 0 then
+			text = "No requests match the search or filters."
+		else
+			text = self.currentTab == "archive" and "No archived requests." or "No requests yet."
 		end
-		setWidgetShown(empty, true)
-		-- Hide all pooled rows
-		if self.RowPool then
-			for _, row in pairs(self.RowPool) do
-				if row._visible then
-					self:SetRowVisible(row, false)
-					row._visible = false
-				end
-			end
+		if self.EmptyText then
+			self.EmptyText:SetText(text)
+			self.EmptyText:Show()
 		end
-		self.Window:SetStatusText(string.format("Showing 0 requests out of %d total", total))
-		content:ResumeLayout()
-		content:DoLayout()
+		self:SetStatusText(string.format("Showing 0 requests out of %d total", total))
 		return
 	end
-
-	if self.EmptyRow then setWidgetShown(self.EmptyRow, false) end
-
-	-- Build set of visible req IDs for fast lookup
-	local visibleIds = {}
-	for _, req in ipairs(visible) do visibleIds[req.id] = true end
-
-	-- Show/hide rows and populate dirty ones synchronously (pool hits only).
-	-- Collect requests that need NEW row creation (not yet in pool).
-	local needsNewRow = {}
-	for _, req in ipairs(visible) do
-		local reqId = req.id
-		local row   = self.RowPool and self.RowPool[reqId]
-		if row then
-			if not row._visible then
-				self:SetRowVisible(row, true)
-				row._visible = true
-			end
-			if row.dirty then
-				self:_PopulateRow(row, req, actor, actorIsGM, isActorBank, mailboxOpen)
-			end
-		else
-			needsNewRow[#needsNewRow + 1] = req
-		end
-	end
-
-	-- Hide rows that are no longer in the visible set
-	if self.RowPool then
-		for reqId, row in pairs(self.RowPool) do
-			if row._visible and not visibleIds[reqId] then
-				self:SetRowVisible(row, false)
-				row._visible = false
-			end
-		end
-	end
-
-	-- Reorder Content.children to match current sort
-	self:_ApplySortOrder(allSorted)
-
-	if #needsNewRow == 0 then
-		-- All rows already existed (pool hits) and were populated above — one layout pass.
-		self._batchLayoutGen = nil
-		content:ResumeLayout()
-		content:DoLayout()
-		-- totalPages is already computed from the same totalVisible at the top of this function;
-		-- recomputing it here shadowed that one with an identical value.
-		setBtnEnabled(self.PrevPageBtn, self.currentPage > 1)
-		setBtnEnabled(self.NextPageBtn, self.currentPage < totalPages)
-
-		-- Always calculate the range being shown on current page
-		local showStart = startIdx + 1
-		local showEnd = math.min(endIdx, totalVisible)
-		local pageCount = showEnd - showStart + 1
-
-		if totalVisible <= REQUESTS_PER_PAGE then
-			self.Window:SetStatusText(string.format("Showing %d request%s out of %d total", pageCount, pageCount == 1 and "" or "s", total))
-		else
-			self.Window:SetStatusText(string.format("Showing %d-%d of %d (Page %d/%d)", showStart, showEnd, totalVisible, self.currentPage, totalPages))
-		end
-	else
-		-- Some rows are brand new. Batch their creation across frames.
-		-- Pool hits were already populated synchronously above, so one DoLayout
-		-- displays correct data immediately before any new-row batching starts.
-		self._batchLayoutGen = nil
-		content:ResumeLayout()
-		content:DoLayout()
-		self.Window:SetStatusText("Loading...")
-		C_Timer.After(0, function()
-			if self._drawGeneration == gen and self.isOpen then
-				self:_CreateNewRowsBatched(gen, needsNewRow, 1, count, total, allSorted, actor, actorIsGM, isActorBank, mailboxOpen)
-			end
-		end)
-	end
-end
-
--- Create brand-new rows in batches of 20, yielding between batches so the
--- game loop gets control. Layout stays paused across all batches; one
--- ResumeLayout+DoLayout fires only on the final batch.
-function TOGBankClassic_UI_Requests:_CreateNewRowsBatched(gen, newReqs, startIndex, count, total, allSorted, actor, actorIsGM, isActorBank, mailboxOpen)
-	if not self.isOpen or self._drawGeneration ~= gen then
-		-- Superseded. Only resume layout if we are still the active pauser;
-		-- a newer DrawRows may have already taken ownership of the pause.
-		if self._batchLayoutGen == gen and self.Content then
-			self.Content:ResumeLayout()
-			self._batchLayoutGen = nil
-		end
-		return
-	end
-	if not self.Content then return end
-
-	local batchSize = 20
-	local endIndex  = math.min(startIndex + batchSize - 1, #newReqs)
-	local content   = self.Content
-
-	-- Pause layout and take ownership so superseded-batch cleanup knows not to interfere.
-	content:PauseLayout()
-	self._batchLayoutGen = gen
-	for i = startIndex, endIndex do
-		local req = newReqs[i]
-		local row = self:EnsureRowForRequest(req.id)
-		if row then
-			row._visible = true
-			self:SetRowVisible(row, true)
-			self:_PopulateRow(row, req, actor, actorIsGM, isActorBank, mailboxOpen)
-		end
-	end
-
-	local isLast = (endIndex >= #newReqs)
-	if isLast then
-		-- Final batch: sort order is now authoritative (all rows exist in children).
-		self._batchLayoutGen = nil
-		self:_ApplySortOrder(allSorted)
-		content:ResumeLayout()
-		content:DoLayout()
-
-		-- Update pagination button states and status text
-		local info = TOGBankClassic_Guild.Info
-		if info and info.requests then
-			local allSorted2, total2 = self:GetSortedTabFiltered()
-			local allVisible2 = self:ApplyFilters(allSorted2)
-			local totalVisible2 = #allVisible2
-			local totalPages = math.max(1, math.ceil(totalVisible2 / REQUESTS_PER_PAGE))
-			setBtnEnabled(self.PrevPageBtn, self.currentPage > 1)
-			setBtnEnabled(self.NextPageBtn, self.currentPage < totalPages)
-
-			-- Calculate the range being shown on current page
-			local startIdx = (self.currentPage - 1) * REQUESTS_PER_PAGE
-			local endIdx = startIdx + REQUESTS_PER_PAGE
-			local showStart = startIdx + 1
-			local showEnd = math.min(endIdx, totalVisible2)
-			local pageCount = showEnd - showStart + 1
-
-			if totalVisible2 <= REQUESTS_PER_PAGE then
-				self.Window:SetStatusText(string.format("Showing %d request%s out of %d total", pageCount, pageCount == 1 and "" or "s", total2))
-			else
-				self.Window:SetStatusText(string.format("Showing %d-%d of %d (Page %d/%d)", showStart, showEnd, totalVisible2, self.currentPage, totalPages))
-			end
-		else
-			self.Window:SetStatusText(string.format("Showing %d request%s out of %d total", count, count == 1 and "" or "s", total))
-		end
-	else
-		-- Layout stays paused across batches — no intermediate DoLayout.
-		self.Window:SetStatusText(string.format("Loading %d / %d...", endIndex, #newReqs))
-		C_Timer.After(0, function()
-			self:_CreateNewRowsBatched(gen, newReqs, endIndex + 1, count, total, allSorted, actor, actorIsGM, isActorBank, mailboxOpen)
-		end)
-	end
+	if self.EmptyText then self.EmptyText:Hide() end
+	self:SetStatusText(string.format("Showing %d request%s out of %d total", count, count == 1 and "" or "s", total))
 end
 
 function TOGBankClassic_UI_Requests:DrawContent()
-	if not self.Content or not self.Window then
+	if not self.List or not self.Host then
 		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] DrawContent: No content or window")
 		return
 	end
 
 	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "[UI-003] DrawContent: Starting structural refresh")
 
-	self.Window:SetStatusText("")
-	-- Reset to the first page only when the tab actually changed. Background
-	-- request syncs call DrawContent too (via RefreshRequestsUI); resetting the
-	-- page there would snap the user back to page 1 mid-browse (the "snap back"
-	-- bug). DrawRows clamps currentPage if the data shrank.
-	if self._lastDrawnTab ~= self.currentTab then
-		self.currentPage = 1
-		self._lastDrawnTab = self.currentTab
-	end
+	self:SetStatusText("")
+	-- Back to the top of the list only when the tab actually changed. Background request syncs
+	-- call DrawContent too (via RefreshRequestsUI); resetting the scroll there would snap the user
+	-- back to the top mid-browse (the "snap back" bug).
+	local sameTab = self._lastDrawnTab == self.currentTab
+	self._lastDrawnTab = self.currentTab
 
 	-- Settings tab shows the officer panel instead of the request list.
 	if self.currentTab == "settings" then
@@ -3287,18 +3091,13 @@ function TOGBankClassic_UI_Requests:DrawContent()
 	end
 	self:ShowSettings(false)
 
-	self:UpdateColumnLayout()
-	self:DrawHeader()
 	self:UpdateFilters()
-	if self.HeaderGroup then self.HeaderGroup:DoLayout() end
-	if self.FilterGroup  then self.FilterGroup:DoLayout()  end
-	self:AdjustTableHeight()
-	if self.Window then self.Window:DoLayout() end
+	if self.FilterGroup then self.FilterGroup:DoLayout() end
+	self:DoLayout()
 
-	-- Invalidate sort/tab cache and mark all rows dirty so data is refreshed
-	self._cachedSortedTabFiltered = nil
-	self:InvalidateAllRows()
-	self:DrawRows()
+	-- Invalidate the tab-filter cache so the data is refreshed
+	self._cachedTabFiltered = nil
+	self:DrawRows(sameTab)
 end
 
 

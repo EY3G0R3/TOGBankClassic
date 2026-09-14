@@ -7,6 +7,23 @@ local ADOPTION_STATUS = TOGBankClassic_Constants.ADOPTION_STATUS
 local REQUEST_LOG     = TOGBankClassic_Constants.REQUEST_LOG
 local REQUESTS_SYNC   = TOGBankClassic_Constants.REQUESTS_SYNC
 
+-- LOGAPI-001: every request mutation, local or received, is a transition from the record held
+-- before to the record after, and the bank log records what changed. Local mutations edit the
+-- record in place, so the "before" is a shallow copy taken first; received ones pass the existing
+-- record and the merged one. Delta-based, so our own echoed broadcast records nothing twice.
+local function snapshotRequest(req)
+	if type(req) ~= "table" then return nil end
+	local c = {}
+	for k, v in pairs(req) do c[k] = v end
+	return c
+end
+
+local function logTransition(before, after)
+	if TOGBankClassic_Log and TOGBankClassic_Log.RecordRequestTransition then
+		TOGBankClassic_Log:RecordRequestTransition(before, after)
+	end
+end
+
 -- Throttle warnings to prevent spam (only warn once per session per type)
 local warnedAbout = {
 	invalidRequestVersion = false,
@@ -622,12 +639,14 @@ local function mergeRequest(requests, tombstones, id, incoming)
 					tonumber(existing.fulfilled or 0) or 0
 				)
 				requests[id] = merged
+				logTransition(existing, merged)
 				TOGBankClassic_Output:Debug("SYNC", "MERGE",
 					"mergeRequest: RATCHET - kept terminal %s, advanced updatedAt %d->%d (id=%s)",
 					existing.status, existingTs, incomingTs, id)
 				return "updated"
 			else
 				requests[id] = clean
+				logTransition(existing, clean)
 				TOGBankClassic_Output:Debug("SYNC", "MERGE",
 					"mergeRequest: UPDATED - id=%s, status %s->%s, updatedAt %d->%d",
 					id, existing.status, clean.status, existingTs, incomingTs)
@@ -641,6 +660,7 @@ local function mergeRequest(requests, tombstones, id, incoming)
 		end
 	else
 		requests[id] = clean
+		logTransition(nil, clean)
 		TOGBankClassic_Output:Debug("SYNC", "MERGE",
 			"mergeRequest: ADDED - id=%s, status=%s, updatedAt=%d",
 			id, clean.status, incomingTs)
@@ -1003,6 +1023,7 @@ function Guild:ApplyRequestMutation(entry, sender)
 			TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: FULFILL rejected (request not found or terminal state) id=%s", requestId)
 			return false
 		end
+		local before = snapshotRequest(req)   -- LOGAPI-001
 		local targetFulfilled = entry.targetFulfilled
 		if targetFulfilled ~= nil then
 			-- Idempotent: use max of current and target
@@ -1025,6 +1046,7 @@ function Guild:ApplyRequestMutation(entry, sender)
 		if entryTs > 0 then
 			req.updatedAt = math.max(tonumber(req.updatedAt or 0) or 0, entryTs)
 		end
+		logTransition(before, req)
 		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: FULFILL applied for id=%s (fulfilled=%d)",
 			requestId, req.fulfilled)
 		return true
@@ -1170,6 +1192,7 @@ function Guild:RefreshRequestsUI()
 	TOGBankClassic_Output:Debug(string.format("RefreshRequestsUI called: isOpen=%s, requests=%d",
 		tostring(TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen),
 		self.Info and self.Info.requests and countRequests(self.Info.requests) or 0))
+
 
 	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
 		-- Recreate filters (including banker checkbox) when roster updates
@@ -1804,6 +1827,7 @@ function Guild:AddRequest(request)
 
 	-- Store directly
 	self.Info.requests[clean.id] = clean
+	logTransition(nil, clean)   -- LOGAPI-001
 
 	-- Broadcast and finalize
 	self:BroadcastRequestMutation({ type = "add", requestId = clean.id, request = clean })
@@ -1936,11 +1960,13 @@ function Guild:CancelRequest(requestId, actor, reason)
 	-- Apply mutation directly
 	local now = GetServerTime()
 	local oldStatus = req.status
+	local before = snapshotRequest(req)   -- LOGAPI-001
 	req.status = "cancelled"
 	req.updatedAt = now
 	if reason and reason ~= "" then
 		req.notes = reason
 	end
+	logTransition(before, req)
 
 	TOGBankClassic_Output:Debug("SYNC", "APPLY", "CancelRequest SUCCESS: id=%s, item=%s, requester=%s, oldStatus=%s, updatedAt=%d",
 		requestId, req.item or "?", req.requester or "?", oldStatus, now)
@@ -1979,8 +2005,10 @@ function Guild:CompleteRequest(requestId, actor)
 
 	-- Apply mutation directly
 	local now = GetServerTime()
+	local before = snapshotRequest(req)   -- LOGAPI-001
 	req.status = "complete"
 	req.updatedAt = now
+	logTransition(before, req)
 
 	-- Broadcast and finalize
 	self:BroadcastRequestMutation({ type = "complete", requestId = requestId, request = req })
@@ -2018,11 +2046,13 @@ function Guild:ReopenRequest(requestId, actor)
 	end
 
 	local now = GetServerTime()
+	local before = snapshotRequest(req)   -- LOGAPI-001
 	req.status = "open"
 	req.fulfilled = 0
 	req.notes = ""        -- drop any cancel reason now that the order is live again
 	req.reopenedAt = now  -- defeats the terminal ratchet (mergeRequest) so the re-open survives sync
 	req.updatedAt = now
+	logTransition(before, req)
 
 	TOGBankClassic_Output:Debug("SYNC", "APPLY", "ReopenRequest SUCCESS: id=%s re-opened by %s", tostring(requestId), tostring(actor))
 
@@ -2156,6 +2186,7 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 			mutationCount = mutationCount + 1
 
 			-- Apply mutation directly
+			local before = snapshotRequest(req)   -- LOGAPI-001
 			local targetFulfilled = fulfilled + delta
 			req.fulfilled = targetFulfilled
 			req.updatedAt = mutationTs
@@ -2170,6 +2201,8 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 				TOGBankClassic_Output:Debug("FULFILL", "Status NOT changed: qty=%d, fulfilled=%d, status=%s",
 					qty, targetFulfilled, tostring(req.status))
 			end
+
+			logTransition(before, req)
 
 			-- Queue broadcast (targetFulfilled for idempotency on receiver)
 			table.insert(mutations, {
@@ -2234,6 +2267,7 @@ function Guild:FulfillRequestById(requestId, count, actor)
 
 	local delta = math.min(remaining, count)
 	local now = GetServerTime()
+	local before = snapshotRequest(req)   -- LOGAPI-001
 	local targetFulfilled = fulfilled + delta
 	req.fulfilled = targetFulfilled
 	req.updatedAt = now
@@ -2257,6 +2291,7 @@ function Guild:FulfillRequestById(requestId, count, actor)
 			targetFulfilled = targetFulfilled,
 		})
 	end
+	logTransition(before, req)
 
 	self:FinalizeMutation(now)
 	return delta
@@ -2379,68 +2414,7 @@ function Guild:ReqScan()
 	end
 end
 
---[[
-	CheckMailFulfillment(request)
-	Checks if requested items are available in mail across all alts
-]]
-function Guild:CheckMailFulfillment(request)
-	if not request or not request.item then
-		return { inMail = 0, canFulfillFromMail = false, alts = {} }
-	end
-
-	if not self.Info or not self.Info.alts then
-		return { inMail = 0, canFulfillFromMail = false, alts = {} }
-	end
-
-	-- Resolve the item ID to use for mail matching.
-	-- New requests carry itemID directly; legacy requests fall back to name lookup.
-	local itemID = tonumber(request.itemID) or nil
-
-	if not itemID then
-		-- Legacy: find item ID by name-matching across all alts' mail
-		for _, alt in pairs(self.Info.alts) do
-			if alt.mail and alt.mail.items then
-				for _, item in ipairs(alt.mail.items) do
-					local itemName = item.Link and (GetItemInfo(item.Link))
-					if itemName == request.item or item.ID == tonumber(request.item) then
-						itemID = item.ID
-						break
-					end
-				end
-			end
-			if itemID then break end
-		end
-	end
-
-	if not itemID then
-		return { inMail = 0, canFulfillFromMail = false, alts = {} }
-	end
-
-	local inMail = 0
-	local alts = {}
-
-	for name, alt in pairs(self.Info.alts) do
-		if alt.mail and alt.mail.items then
-			-- mail.items is an array, search for matching ID
-			for _, item in ipairs(alt.mail.items) do
-				if item.ID == itemID then
-					local count = item.Count
-					inMail = inMail + count
-					table.insert(alts, {
-						name = name,
-						count = count,
-						lastScan = alt.mail.lastScan or 0
-					})
-					break  -- Found the item, no need to continue
-				end
-			end
-		end
-	end
-
-	local needed = request.quantity - (request.fulfilled or 0)
-	return {
-		inMail = inMail,
-		canFulfillFromMail = inMail >= needed,
-		alts = alts
-	}
-end
+-- Guild:CheckMailFulfillment used to live here (MAIL_INVENTORY_DESIGN.md's "is the item in anyone's
+-- mail" helper). It never acquired a caller -- Mail:CanFulfillRequest reads the banker's OWN mail
+-- directly -- and it walked every Info.alts entry including ex-bankers (the TOOLTIP-002 class).
+-- Deleted 2026-09-11 rather than kept as a trap for the next reader.

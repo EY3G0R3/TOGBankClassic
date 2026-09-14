@@ -18,7 +18,7 @@ local CATEGORY_META = {
 	ITEM     = { order = 15, desc = "Item loading, validation, and processing" },
 	MAIL     = { order = 16, desc = "Mail inventory scanning and tracking" },
 	P2P      = { order = 17, desc = "Session manager: collect window, dispatch, handshake" },
-	PROTOCOL = { order = 18, desc = "Protocol version negotiation (includes INTEGRITY-MISMATCH CRC errors and SERIAL outgoing checksum tracing)" },
+	PROTOCOL = { order = 18, desc = "Protocol version negotiation, hash-list and alt-request decisions (envelope CRC and serialize tracing moved to DELTASYNC)" },
 	QUERIES  = { order = 19, desc = "P2P query/response decisions and hash matching" },
 	REQUESTS = { order = 20, desc = "Request system activity and updates" },
 	ROSTER   = { order = 21, desc = "Guild roster updates, online/offline tracking" },
@@ -31,6 +31,8 @@ local CATEGORY_META = {
 	-- off -- which is the same category of silent gap the finding is about, one layer up.
 	FULFILL  = { order = 25, desc = "Request fulfillment: mail matching and completion detection" },
 	SYSTEM   = { order = 26, desc = "The addon's own logging internals: persistent log rotation and garbage collection" },
+	DELTASYNC = { order = 27, desc = "The DeltaSync-1.0 library host: its initialisation, comms, envelope and delta lines" },
+	LOG      = { order = 28, desc = "The bank log: entries recorded from scans, deliveries and requests; batches delivered to the Log tab and TOGTools" },
 }
 
 -- Build one inline AceConfig group for a single debug category.
@@ -269,6 +271,55 @@ local function BuildAppearanceArgs()
 		end,
 	}
 
+	-- RECENTER-001: the escape hatch for a window that has ended up off-screen. It has to live in
+	-- the OPTIONS panel specifically, because that is the one TOGBank surface a player can still
+	-- reach when the window itself is somewhere they cannot click.
+	args["recenterSpacer"] = { order = 110, type = "description", name = " " }
+	args["recenterHeader"] = { order = 111, type = "header", name = "Window Position" }
+	args["recenterDesc"] = {
+		order = 112,
+		type  = "description",
+		name  = "If a TOG Bank window has ended up off the edge of your screen, this brings every "
+			.. "window back to the middle where you can reach it again. Sizes are kept.",
+	}
+	args["recenter"] = {
+		order = 113,
+		type  = "execute",
+		width = "full",
+		name  = "Recenter All Windows",
+		desc  = "Moves every TOG Bank window back to the centre of the screen. Takes effect "
+			.. "immediately -- no reload needed.",
+		func  = function()
+			local moved = TOGBankClassic_UI:RecenterWindows()
+			if moved > 0 then
+				TOGBankClassic_Output:Info("Recentred %d window(s).", moved)
+			else
+				TOGBankClassic_Output:Info("Every window was already in its default position.")
+			end
+		end,
+	}
+
+	-- CANCEL-REASON-001: the pulsing glow that marks a cancelled request as having a reason to
+	-- read. On by default; here so the people it annoys can switch it off.
+	args["glowSpacer"] = { order = 200, type = "description", name = " " }
+	args["glowHeader"] = { order = 201, type = "header", name = "Requests Window" }
+	args["cancelGlow"] = {
+		order = 202,
+		type  = "toggle",
+		width = "full",
+		name  = "Pulsing glow on cancelled requests",
+		desc  = "A cancelled request shows a soft, pulsing glow on its date so it stands out in the "
+			.. "list; if a reason was given, mouse over the date to read why. Turn this off for plain "
+			.. "red dates; the reason is still in the date's tooltip.",
+		get   = function() return TOGBankClassic_UI_Requests:CancelGlowEnabled() end,
+		set   = function(_, v)
+			TOGBankClassic_Options.db.global.cancelGlow = v and true or false
+			-- Every visible row repaints, so a glow already on screen goes out (or comes on) now.
+			TOGBankClassic_UI_Requests:InvalidateAllRows()
+			TOGBankClassic_UI_Requests:DrawRows()
+		end,
+	}
+
 	return args
 end
 
@@ -288,17 +339,33 @@ function TOGBankClassic_Options:Init()
 			-- scans are already gated on IsBank() independently.
 			bank = { enabled = true, donations = true },
 			framePositions = {},  -- Stores window positions/sizes
+			-- BROWSE-006: the Guild Bank window's last tab. Per character, beside the window
+			-- positions and for the same reason -- it is part of how this alt has that window set up.
+			browseTab = "browse",
 			sortMode = "alpha",   -- Inventory sort mode: "alpha" (A->Z) or "type" (by item type)
 			statusBarNetworkInfo = false,  -- Show sync activity in inventory status bar
+			-- HIDE-001: this banker's "not for the guild" items, `Record.key -> true`. Per character:
+			-- it is a property of what THIS toon carries, and a hearthstone hidden on one banker
+			-- says nothing about another.
+			hiddenItems = {},
 		},
 		global = {
-				bank = { report = true, logLevel = LOG_LEVEL.INFO, commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true },
+				-- RAID-SYNC-001: syncInRaid OFF by default -- the raid guard stays as it has always been
+				-- unless the player opts out of it (the chat channel is throttled; raid addons need it).
+				bank = { report = true, logLevel = LOG_LEVEL.INFO, commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true, syncInRaid = false },
 			-- ALPHA-001: per-window chrome transparency, 0..1, keyed by TOGBankClassic_UI.ALPHA_WINDOWS.
 			-- Account-wide rather than per-character: it is a pure display preference with no
 			-- per-character meaning, and setting it once per alt is exactly the chore the request
 			-- was about avoiding. Window POSITIONS stay per-character (db.char.framePositions) --
 			-- those people really do arrange differently per alt.
 			windowAlpha = {},
+			-- CANCEL-REASON-001: the pulsing glow on a cancelled request's date. ON by default --
+			-- the operator: "some folks will whine about it ... folks can turn it off if they want".
+			-- Account-wide for the same reason as windowAlpha: a display preference, set once.
+			cancelGlow = true,
+			-- BROWSE-001: which windows' help icons this account has hovered once. The Guild Bank
+			-- window's icon breathes until then ("draw their attention to it, ONCE").
+			helpSeen = {},
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
@@ -430,6 +497,19 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return self.db.global.bank["muteSyncProgress"]
+						end,
+					},
+					["syncInRaid"] = {
+						order = 2.65,
+						type = "toggle",
+						width = "full",
+						name = "Keep syncing in a raid group",
+						desc = "Guild bank data is normally not sent or received while you are in a raid group, so raid addons keep the addon chat channel to themselves. Tick this to keep syncing anyway.",
+						set = function(_, v)
+							self.db.global.bank["syncInRaid"] = v
+						end,
+						get = function()
+							return self.db.global.bank["syncInRaid"] == true
 						end,
 					},
 					["muteWarnings"] = {
@@ -770,6 +850,30 @@ function TOGBankClassic_Options:InitGuild()
 					return self.db.char.bank["donations"]
 				end,
 			},
+			-- HIDE-002 (the operator: "a setting for bankers in settings in the banker only settings,
+			-- a check box"). OFF by default: ticking it changes what this banker publishes, and an
+			-- upgrade must not do that unasked.
+			["hideSoulbound"] = {
+				order = 2.5,
+				type = "toggle",
+				width = "full",
+				name = "Hide soulbound items from the guild",
+				desc = "Every soulbound item in this character's bags and bank is kept off the guild's view of "
+					.. "this bank, as if you had right-clicked each one and hidden it. Your own tab still shows "
+					.. "them greyed out. Untick to show them again.",
+				set = function(_, v)
+					self.db.char.bank["hideSoulbound"] = v and true or false
+					-- Takes effect now, not at the next vault visit: the scan re-splits the stored
+					-- sources on the new list and republishes.
+					if TOGBankClassic_Bank and TOGBankClassic_Bank.OnUpdateStart then
+						TOGBankClassic_Bank:OnUpdateStart()
+						TOGBankClassic_Bank:Scan()
+					end
+				end,
+				get = function()
+					return self.db.char.bank["hideSoulbound"] == true
+				end,
+			},
 			["reset"] = {
 				order = 3,
 				name = "Reset Player Database",
@@ -795,6 +899,12 @@ end
 
 function TOGBankClassic_Options:GetDonationEnabled()
 	return self.db.char.bank["donations"]
+end
+
+--- HIDE-002: is this banker hiding every soulbound item from the guild? False before the DB is up.
+function TOGBankClassic_Options:GetHideSoulbound()
+	local char = self.db and self.db.char
+	return (char and char.bank and char.bank["hideSoulbound"]) == true
 end
 
 function TOGBankClassic_Options:GetBankReporting()
@@ -830,6 +940,13 @@ end
 function TOGBankClassic_Options:IsIntegrityCheckDiagnosticsEnabled()
 	if not self.db or not self.db.global or not self.db.global.bank then return false end
 	return self.db.global.bank["integrityCheckDiagnostics"] or false
+end
+
+--- RAID-SYNC-001: has the player opted OUT of the raid guard? False until the box is ticked, and
+--- false before the database exists -- the guard is the default, never the exception.
+function TOGBankClassic_Options:IsSyncInRaidEnabled()
+	if not self.db or not self.db.global or not self.db.global.bank then return false end
+	return self.db.global.bank["syncInRaid"] == true
 end
 
 function TOGBankClassic_Options:IsStatusBarNetworkInfoEnabled()

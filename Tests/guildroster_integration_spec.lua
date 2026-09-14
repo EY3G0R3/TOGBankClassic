@@ -356,6 +356,31 @@ describe("Guild presence transition counters", function()
 		env.fireGuildRosterEvent(lib, "CHAT_MSG_SYSTEM", "Bob has come online.")
 		assert.equal(1, Guild.rosterStats.online, "callbacks were bound twice and double-fired")
 	end)
+
+	-- ROSTER-005, found establishing the ROSTER-002 residual. The example above ("drops a member
+	-- whose departure was announced in chat") calls RefreshOnlineCache BY HAND after the message --
+	-- and nothing in production did. OnMemberLeft only invalidated banksCache, and GetBanks()
+	-- re-derives from memberRoster, which nobody had rebuilt: the departed banker came straight
+	-- back into the list. After login RebuildBankerRoster never runs again (GUILD_ROSTER_UPDATE is
+	-- ignored once init completes), so a kicked banker stayed a banker until relog EVEN WHEN the
+	-- system message arrived. This drives the callback alone, no manual refresh.
+	it("a banker whose departure is announced in chat stops being a banker, with no manual refresh", function()
+		env.addGuildMember("Kicked-Testrealm", { note = "gbank", online = true })
+		lib = env.freshGuildRoster()
+		env.readyGuildRoster(lib)
+		Guild._rosterCallbacksBound = nil
+		assert.is_true(Guild:InitRosterCallbacks())
+		Guild:RefreshOnlineCache()
+		assert.is_true(Guild:IsBank("Kicked-Testrealm"), "precondition: not a banker before the kick")
+
+		env.fireGuildRosterEvent(lib, "CHAT_MSG_SYSTEM", "Kicked has been kicked out of the guild by Bob.")
+
+		assert.is_nil(Guild.memberRoster["Kicked-Testrealm"], "the departed member survived in memberRoster (ROSTER-005)")
+		assert.is_false(Guild:IsBank("Kicked-Testrealm"), "a kicked banker is still a banker")
+		for _, name in ipairs(Guild:GetBanks() or {}) do
+			assert.is_not_equal("Kicked-Testrealm", name, "GetBanks re-derived the departed banker from a stale memberRoster")
+		end
+	end)
 end)
 
 -- ---------------------------------------------------------------------------

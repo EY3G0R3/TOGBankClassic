@@ -61,11 +61,27 @@ describe("ComputeLegacyInventoryHash: frozen revision 1", function()
 		assert.equal(plain, enchanted, "revision 1 became enchant-aware; it is frozen")
 	end)
 
-	it("ignores tuple rows entirely, collapsing to money only", function()
-		local withTuples = D:ComputeLegacyInventoryHash({ { 858, 5 }, { 10132, 1, 863 } }, nil, nil, 7)
-		local moneyOnly  = D:ComputeLegacyInventoryHash({}, nil, nil, 7)
-		assert.equal(withTuples, moneyOnly,
-			"revision 1 learned to read tuples. Unmigrated clients cannot, so it must not")
+	-- HASH-REV-002 (INV2-RETIRE-003). This example used to assert the OPPOSITE: that tuple rows
+	-- contribute nothing and revision 1 collapses to money-only, because "unmigrated clients cannot
+	-- read tuples, so it must not". That reasoning ended with the 2026-09-09 no-wire-back-compat
+	-- directive -- there is no unmigrated client to agree with -- and the scan now hashes the V2
+	-- record set, so a revision 1 that ignored tuples would be money-only on EVERY client at once.
+	-- The IDENTITY is still frozen (`ID:Count`, the two examples above), and a tuple is read as
+	-- exactly what a legacy row would have been: id and count, nothing else.
+	it("reads a tuple as id and count, and nothing else (HASH-REV-002)", function()
+		local tuples = D:ComputeLegacyInventoryHash({ { 858, 5 }, { 10132, 1, 863 } }, nil, nil, 7)
+		local legacy = D:ComputeLegacyInventoryHash({ linked(858, 5), linked(10132, 1, 863) }, nil, nil, 7)
+		assert.equal(legacy, tuples,
+			"a tuple and the legacy row for the same item must hash the same under revision 1 -- the " ..
+			"scan hashes tuples now, and a mixed shape must not move the value")
+		local moneyOnly = D:ComputeLegacyInventoryHash({}, nil, nil, 7)
+		assert.not_equal(moneyOnly, tuples,
+			"revision 1 ignored the tuple rows and collapsed to money-only: every change on every " ..
+			"client would hash the same as no change")
+		-- Still blind to the suffix, on a tuple exactly as on a link.
+		assert.equal(D:ComputeLegacyInventoryHash({ { 10132, 1, 863 } }, nil, nil, 0),
+			D:ComputeLegacyInventoryHash({ { 10132, 1, 2504 } }, nil, nil, 0),
+			"revision 1 became suffix-aware through the tuple path")
 	end)
 
 	it("still distinguishes what it always could -- id, count and money", function()
@@ -392,5 +408,42 @@ describe("ComputeInventoryHash: tuple records (finding 32)", function()
 
 	it("returns a value for an empty inventory rather than erroring", function()
 		assert.is_string(D:ComputeInventoryHash({}, nil, nil, 0))
+	end)
+end)
+
+-- HASH-PIN-001: THE CANON'S BYTES, FROZEN AS LITERALS.
+--
+-- Every example above compares two hashes with each other; none compares a hash to a VALUE. So a
+-- change to the function that moved every hash by the same amount would pass them all -- and a
+-- moved hash is a canon that no longer matches what every client in the guild already holds: one
+-- version bump for every banker at once, and worse, a "content changed" for banks that did not.
+-- These literals were captured on 2026-09-11 BEFORE the unreachable pre-SYNC-006 branch of
+-- `computeInventoryHashWith` was deleted (Peer Review on 608cc17a: dead code in the one function
+-- that mints canons is the dangerous choice), and they are what proves the deletion left the live
+-- branch's bytes untouched. What is pinned is the string that goes INTO the checksum, under the
+-- identity stub -- that is the whole of what DeltaComms contributes; the checksum itself is Core's
+-- (ComputeChecksum, a local there, exercised through the real envelope by syncwire_spec), and
+-- Core.lua cannot be loaded a second time in the shared state to pin the number here.
+describe("HASH-PIN-001: the canon's bytes are frozen", function()
+	local RECORDS = { { 858, 5 }, { 10132, 1, 863 }, { 15260, 2, 0, 2504 }, { 2589, 40 } }
+	local MONEY = 123456
+
+	before_each(function() env.reset(); load() end)
+
+	it("revision 2 feeds the checksum exactly this string for a fixed record set", function()
+		assert.equal("123456|I:10132:863:0:1,15260:0:2504:2,2589:0:0:40,858:0:0:5",
+			D:ComputeInventoryHash(RECORDS, nil, nil, MONEY),
+			"THE CANON MOVED. Every banker in every guild bumps a version on the next scan, and " ..
+			"unchanged banks report as changed. If this was deliberate, it is a wire-visible " ..
+			"change that belongs in the changelog under its own ticket, and this literal moves with it")
+	end)
+
+	it("revision 1 feeds the checksum exactly this string for the same records", function()
+		assert.equal("123456|I:10132:1,15260:2,2589:40,858:5",
+			D:ComputeLegacyInventoryHash(RECORDS, nil, nil, MONEY))
+	end)
+
+	it("hashes an empty inventory to exactly this", function()
+		assert.equal("0|I:", D:ComputeInventoryHash({}, nil, nil, 0))
 	end)
 end)

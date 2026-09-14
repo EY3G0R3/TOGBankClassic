@@ -129,6 +129,21 @@ describe("Performance counters", function()
 			assert.equal(20, stats.operations.RefreshOnlineCache.avgMs)
 			assert.equal(40, stats.operations.RefreshOnlineCache.totalMs)
 		end)
+
+		-- PERF-023 (audit finding 20): in the frame the session started, duration is 0 and the
+		-- per-minute rates divided by it -- `inf` in the report.
+		it("reports a rate of 0, not inf, in the frame the session started", function()
+			newSession()
+			Perf:RecordEvent("GUILD_ROSTER_UPDATE")
+			Perf:RecordOperation("RefreshOnlineCache", 10)
+			local stats = Perf:GetCurrentStats()
+			assert.equal(0, stats.duration)
+			assert.equal(0, stats.events.GUILD_ROSTER_UPDATE.perMinute)
+			assert.equal(0, stats.operations.RefreshOnlineCache.perMinute)
+			env.advance(30)
+			stats = Perf:GetCurrentStats()
+			assert.equal(2, stats.events.GUILD_ROSTER_UPDATE.perMinute, "one event in 30s is 2 per minute")
+		end)
 	end)
 
 	-- ------------------------------------------------------------------

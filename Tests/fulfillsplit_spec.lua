@@ -221,3 +221,33 @@ describe("Mail:CalculateFulfillmentPlan", function()
 		end)
 	end)
 end)
+
+-- Peer-review finding 39: the block that turns CanFulfillRequest's verdict into the fulfil
+-- button's icon and tooltip was copied in full into BOTH the full row draw and the bag-update
+-- refresh in UI/Requests.lua, so every new reason string had to be added twice by hand -- miss one
+-- and the icon differs between the two paths, which reads as flicker. Pinned at source level:
+-- the decision lives in ONE helper and both entry points call it. (UI/Requests.lua does load in
+-- this harness -- searchbox_spec drives it -- but the fulfil icon needs a drawn row, which the
+-- offline env cannot render, so the source-level pin is still the honest one.)
+describe("the fulfil-button decision is implemented once (finding 39)", function()
+	local src
+	before_each(function()
+		src = env.readFile("Modules/UI/Requests.lua")
+	end)
+
+	it("has exactly one copy of the icon decision", function()
+		local n = 0
+		for _ in src:gmatch("FULFILL_ICON_NO_MAILBOX; tooltipDetail =") do n = n + 1 end
+		assert.equal(1, n, "the icon/tooltip decision block appears " .. n .. " times")
+	end)
+
+	it("is called from both the full row draw and the bag-update refresh", function()
+		local populate = src:find("function TOGBankClassic_UI_Requests:_PopulateRow", 1, true)
+		local refresh  = src:find("function TOGBankClassic_UI_Requests:_RefreshFulfillButtons", 1, true)
+		assert.truthy(populate and refresh, "one of the two entry points is gone")
+		local populateBody = src:sub(populate, refresh)
+		local refreshBody  = src:sub(refresh)
+		assert.truthy(populateBody:find("applyFulfillState(", 1, true), "_PopulateRow no longer uses the shared helper")
+		assert.truthy(refreshBody:find("applyFulfillState(", 1, true), "_RefreshFulfillButtons no longer uses the shared helper")
+	end)
+end)

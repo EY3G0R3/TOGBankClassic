@@ -139,6 +139,7 @@ return PROTOCOL.SUPPORTS_DELTA
 ```
 
 ### Progress Summary
+
 - ✅ New message types registered (togbank-dv, togbank-d3, togbank-d4)
 - ✅ Inventory hashing system (ComputeInventoryHash)
 - ✅ Hash broadcasting in version messages
@@ -157,6 +158,7 @@ return PROTOCOL.SUPPORTS_DELTA
 - ✅ Async item loading with UI updates
 
 ### Bug Fixes Completed
+
 - ✅ [PROTO-001] Delta validation accepts link-less deltas
 - ✅ [UI-001] Inventory UI handles missing slots data
 - ✅ [UI-002] Item links now appear after async reconstruction (UI refresh added)
@@ -166,6 +168,7 @@ return PROTOCOL.SUPPORTS_DELTA
 - ✅ Message priority issues (changed BULK to NORMAL for reliability)
 
 ### Current Features
+
 - **Fast-Fill**: Auto-requests missing banker alts when UI opens (delta mode only)
 - **Async Link Loading**: Items display as links become available from WoW API
 - **UI Auto-Refresh**: UI updates when data arrives and links reconstruct
@@ -395,7 +398,7 @@ Three additional critical bugs discovered during testing prevented stub entries 
 **Primary Source: Banker HLR (togbank-hlr)**
 - Most authoritative - banker has scanned all alts
 - Stores hash+updatedAt for all roster alts immediately
-- Happens on /sync, UI open, and every 3 minutes
+- Happens on /sync, UI open, and every 10 minutes (the share timer; this said 3 minutes until 2026-09-10, DOC-004)
 
 **Secondary Source: Peer Version Broadcasts (togbank-dv2)**
 - Supplemental - fills gaps if HLR not received yet
@@ -488,7 +491,7 @@ end
 ### Sync Flow Matrix
 
 | Sender | Receiver | Target Data | Result |
-|--------|----------|-------------|--------|
+| --- | --- | --- | --- |
 | Banker | Banker | Self | ✅ Allowed (own scan) |
 | Banker | Banker | Other Banker | ✅ Allowed |
 | Banker | Banker | Non-Banker | ✅ Allowed |
@@ -499,6 +502,7 @@ end
 | Non-Banker | Non-Banker | Any | ✅ Allowed |
 
 ### Warning Messages
+
 - `[DATA-004] Rejected delta from X about ourselves (banker is source of truth)`
 - `[DATA-004] Rejected alt data about ourselves from X (banker is source of truth)`
 - `[DATA-004] Rejected delta from non-banker X for banker Y`
@@ -581,11 +585,13 @@ end
 - Checks itemID before ContinueOnItemLoad
 
 ### Debug Category
+
 - All validation messages use `TOGBankClassic_Output:Debug("ITEM", ...)`
 - Enable in options to troubleshoot item loading issues
 - Includes TRACE logs for detailed debugging
 
 ### Corrupted Data Handling
+
 - Items with ID 1, 2, and other low IDs are filtered
 - Logged but not processed: prevents cascade failures
 - Source: External sync from players with corrupted databases
@@ -593,16 +599,19 @@ end
 ---
 
 ### Response Prioritization
+
 1. THE BANKER response (authoritative)
 2. Highest version (among non-bankers)
 - `isBanker` flag in togbank-rr identifies authority
 
 ### Startup Optimization
+
 - On init: Discover online bankers
 - Maintain list from togbank-dv broadcasts
 - Choose: whisper directly (if known) or GUILD broadcast (if unknown)
 
 ### What Gets Eliminated
+
 - ❌ deltaSnapshots table
 - ❌ Chain replay logic
 - ❌ Thresholds (SEND_FULL_THRESHOLD)
@@ -614,6 +623,7 @@ end
 ### Implementation Tasks
 
 #### Config Flags (User-Selectable Protocol) ✅ COMPLETE
+
 - [x] Add Options.lua config section for protocol selection
 - [x] `PROTOCOL_MODE` setting with three options
 - [x] `AUTO` (default) - Dual-send for maximum compatibility during migration
@@ -628,6 +638,7 @@ end
 - [x] Defaults to AUTO for new users
 
 #### New Message Types ✅ COMPLETE
+
 - [x] `togbank-rr` - Query reply (registered, handler stub)
 - [x] `togbank-state` - State summary (registered, handler stub)
 - [x] `togbank-nochange` - No-change response (registered, handler stub)
@@ -635,6 +646,7 @@ end
 - [x] `togbank-d4` - Delta without Links (registered, pending implementation)
 
 #### Link Optimization ✅ COMPLETE
+
 - [x] Strip Links from full sync messages (togbank-d3)
 - [x] Dual-send togbank-d + togbank-d3 for compatibility
 - [x] Reconstruct Links on receiver with GetItemInfo()
@@ -646,6 +658,7 @@ end
 - [x] Handle async Link loading with Item:CreateFromItemID()
 
 #### Version Management Fixes ✅ COMPLETE
+
 - [x] Fix version creation to only happen on actual inventory changes
 - [x] Implement ComputeInventoryHash() to detect actual changes
 - [x] Compare hash in Bank:Scan(), only update version if different
@@ -655,11 +668,13 @@ end
 - [x] Prevents version drift from communication
 
 #### New Message Types ✅ COMPLETE
+
 - [x] `togbank-rr` - Query reply with isBanker flag
 - [x] `togbank-state` - Receiver sends state summary with bank/bags/mail arrays `{bank: [{ID, Count}], bags: [{ID, Count}], mail: [{ID, Count}]}` (DELTA-020)
 - [x] `togbank-nochange` - Explicit no-change response
 
 #### Pull-Based Handshake Flow ✅ COMPLETE
+
 - [x] Implement 7-step handshake protocol
 - [x] Banker announces on login (togbank-dv with isBanker flag)
 - [x] Non-banker requests data (togbank-r WHISPER/GUILD)
@@ -670,11 +685,13 @@ end
 - [x] Non-banker applies and reconstructs Links
 
 #### Banker Discovery ✅ COMPLETE
+
 - [x] Implement banker discovery on init
 - [x] Maintain list of online bankers from togbank-dv
 - [ ] Smart routing: whisper if banker known, GUILD if unknown
 
 #### Remove Old Code
+
 - [ ] Remove deltaSnapshots table and all snapshot functions
 - [ ] Remove chain replay logic (RequestDeltaChain, ApplyDeltaChain)
 - [ ] Remove SEND_FULL_THRESHOLD and size comparison logic
@@ -688,6 +705,7 @@ end
 ## Phase 1: Foundation & Core Implementation ✅ COMPLETE
 
 ### 1.1 Constants & Configuration
+
 - [x] Add protocol version constants to `Modules/Constants.lua`
   - [x] `PROTOCOL_VERSION = 2`
   - [x] `SUPPORTS_DELTA = true`
@@ -704,6 +722,7 @@ end
 - All constants organized in clear tables ready for use throughout implementation
 
 ### 1.2 Database Schema Updates
+
 - [x] Extend saved variables in `Modules/Database.lua`
   - [x] Add `deltaSnapshots = {}` table to store previous alt states
   - [x] Add `guildProtocolVersions = {}` to track peer capabilities
@@ -728,6 +747,7 @@ end
 - Metrics: `RecordDeltaSent()`, `RecordFullSyncSent()`, `RecordDeltaApplied()`, `RecordDeltaFailed()`, `RecordFullSyncFallback()`, `GetDeltaMetrics()`
 
 ### 1.3 Protocol Version Detection
+
 - [x] Update version broadcast structure in `Modules/Chat.lua`
   - [x] Modify `togbank-v` message to include `protocol_version` field
   - [x] Add `supports_delta` capability flag
@@ -744,13 +764,14 @@ end
 - Added `ShouldUseDelta()` decision logic with feature flag checks
 - Added `GetPeerCapabilities()` helper function for querying specific peers
 - Maintains full backwards compatibility - old clients (v0.6.8) ignore new fields
-- Protocol negotiation happens automatically via version broadcasts every 3 minutes
+- Protocol negotiation happens automatically via version broadcasts every 10 minutes
 
 ---
 
 ## Phase 2: Delta Computation & Serialization ✅ COMPLETE
 
 ### 2.1 Delta Computation Core
+
 - [x] Create delta computation functions in `Modules/Guild.lua`
   - [x] `ComputeDelta(name, currentAlt)` - Main delta calculation
   - [x] `ComputeItemDelta(oldItems, newItems)` - Item-level diff
@@ -809,8 +830,8 @@ end
 - `slot` field removed in v0.8.0 (items identified by ID+Link/ItemString)
 - `baseVersion` removed in v0.8.0 (pull-based protocol makes it redundant)
 
-
 ### 2.2 Item Comparison Logic
+
 - [x] Implement robust item comparison
   - [x] Compare `ID`, `Count`, `Link` fields
   - [x] Compare `Info` table if present (future-proofing)
@@ -824,6 +845,7 @@ end
 - Money changes tracked separately from item changes
 
 ### 2.3 Delta Structure Validation
+
 - [x] Add validation functions in `Core.lua`
   - [x] `ValidateDeltaStructure(delta)` - Ensure well-formed
   - [x] `ValidateItemDelta(itemDelta)` - Check added/modified/removed
@@ -843,12 +865,14 @@ end
 ## Phase 3: Communication Layer ✅ COMPLETE
 
 ### 3.1 New Comm Prefix Registration
+
 - [x] Register `togbank-d2` prefix in `Modules/Chat.lua`
   - [x] `RegisterComm("togbank-d2", OnCommReceived)`
   - [x] Add handler case in `OnCommReceived()` function
   - [x] Maintain existing `togbank-d` handler (backwards compatibility)
 
 ### 3.2 Smart Send Logic
+
 - [x] Update `SendAltData()` in `Modules/Guild.lua`
   - [x] Check if delta is appropriate (has snapshot, guild supports it)
   - [x] Compute delta and estimate size
@@ -874,6 +898,7 @@ end
 - Logs decision and size comparison for debugging
 
 ### 3.3 Receive & Apply Delta
+
 - [x] Implement delta receiver in `Modules/Chat.lua`
   - [x] Handle `togbank-d2` prefix in `OnCommReceived()`
   - [x] Validate sender authorization (reuse existing logic)
@@ -891,6 +916,7 @@ end
 - Handles unauthorized senders same as full sync (security)
 
 ### 3.4 Delta Application Logic
+
 - [x] Create `ApplyDelta()` in `Modules/Guild.lua`
   - [x] Validate base version matches current state
   - [x] Request full sync if base version mismatch
@@ -914,6 +940,7 @@ end
 - Returns ADOPTION_STATUS for logging
 
 ### 3.5 Item Delta Application
+
 - [x] Implement `ApplyItemDelta(items, delta)`
   - [x] Process `removed` slots (delete from items table)
   - [x] Process `added` items (insert with slot as key)
@@ -949,6 +976,7 @@ end
 ## Phase 5: Testing & Validation ✅ COMPLETE
 
 ### 5.1 Unit Tests for Delta Computation ✅ COMPLETE
+
 - [x] Test delta computation correctness
   - [x] Test with no changes (should produce minimal delta)
   - [x] Test with money changes only
@@ -977,6 +1005,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 - Slash command integration (`/togtest`)
 
 ### 5.2 Size Estimation Tests ✅ COMPLETE
+
 - [x] Test size estimation accuracy
   - [x] Compare estimated vs actual serialized size
   - [x] Test with various data sizes
@@ -990,6 +1019,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 5. `testDeltaSizeThreshold` - Validates 30% size ratio threshold
 
 ### 5.3 Protocol Negotiation Tests ✅ COMPLETE
+
 - [x] Test protocol version detection
   - [x] Verify V1 clients are detected
   - [x] Verify V2 clients are detected
@@ -1007,6 +1037,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 - Guild-wide adoption threshold validation
 
 ### 5.4 Error Handling Tests ✅ COMPLETE
+
 - [x] Test all error paths
   - [x] Test with missing base data
   - [x] Test with corrupted snapshots
@@ -1028,6 +1059,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 - Non-table changes in delta → fail
 
 ### 5.5 Integration Tests ✅ COMPLETE
+
 - [x] Test full sync workflow
   - [x] Test delta computation → send → receive → apply
   - [x] Test with real-world data sizes
@@ -1050,6 +1082,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 - Size ratio validation
 
 ### 5.6 Backwards Compatibility Tests ✅ COMPLETE
+
 - [x] Test mixed guild scenarios
   - [x] V2 client sending to V1 client (should use full sync)
   - [x] V1 client sending to V2 client (should work normally)
@@ -1085,6 +1118,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 ## Phase 4: Error Handling & Fallback
 
 ### 4.1 Delta Failure Detection ✅ COMPLETE
+
 - [x] Implement failure detection in `ApplyDelta()`
   - [x] Check for base version mismatch
   - [x] Validate delta structure before applying
@@ -1119,6 +1153,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 6. Corrupted snapshot → handled by GetSnapshot validation
 
 ### 4.2 Automatic Full Sync Fallback ✅ COMPLETE
+
 - [x] Trigger full sync on delta failure
   - [x] Call `QueryAlt(sender, name)` to request full data
   - [x] Clear invalid snapshot
@@ -1150,6 +1185,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 - Message cleared on successful sync
 
 ### 4.3 Snapshot Corruption Recovery ✅ COMPLETE
+
 - [x] Add snapshot validation
   - [x] Verify snapshot structure on load
   - [x] Check version timestamp is valid
@@ -1182,6 +1218,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 ## Phase 5: Testing & Validation
 
 ### 5.1 Unit Tests (Manual)
+
 - [ ] Test delta computation accuracy
   - [ ] No changes → empty delta
   - [ ] Add items → correct `added` array
@@ -1191,6 +1228,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
   - [ ] Money change only → minimal delta
 
 ### 5.2 Size Estimation Tests
+
 - [ ] Verify size estimation logic
   - [ ] Small delta (<10% full) → uses delta
   - [ ] Large delta (>50% full) → falls back to full
@@ -1198,6 +1236,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
   - [ ] Edge case: no snapshot → uses full sync
 
 ### 5.3 Protocol Negotiation Tests
+
 - [ ] Test version detection
   - [ ] Old client (v0.6.8) → receives full sync via `togbank-d`
   - [ ] New client (v0.7.0) → receives delta via `togbank-d2`
@@ -1205,6 +1244,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
   - [ ] Guild with <50% delta support → falls back to full
 
 ### 5.4 Error Handling Tests
+
 - [ ] Test failure scenarios
   - [ ] Base version mismatch → requests full sync
   - [ ] Corrupted delta → requests full sync
@@ -1212,6 +1252,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
   - [ ] Malformed serialization → logs error, ignores
 
 ### 5.5 Integration Tests
+
 - [ ] Test end-to-end flow
   - [ ] Bank alt makes item changes
   - [ ] Delta computed correctly
@@ -1221,6 +1262,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
   - [ ] Snapshot saved for next delta
 
 ### 5.6 Backwards Compatibility Tests
+
 - [ ] Test with v0.6.8 clients
   - [ ] Old clients ignore `togbank-d2` messages
   - [ ] Old clients still receive `togbank-d` full syncs
@@ -1232,6 +1274,7 @@ Created comprehensive test module (`Modules/Tests.lua`) with 30+ unit tests cove
 ## Phase 6: Metrics & Monitoring ✅ COMPLETE
 
 ### 6.1 Bandwidth Tracking ✅ COMPLETE
+
 - [x] Add metrics collection in `Modules/Guild.lua`
   - [x] Track bytes sent via delta protocol
   - [x] Track bytes sent via full protocol
@@ -1271,6 +1314,7 @@ Operations:
 ```
 
 ### 6.2 Performance Metrics ✅ COMPLETE
+
 - [x] Track delta computation time
   - [x] Measure `ComputeDelta()` execution time
   - [x] Measure `ApplyDelta()` execution time
@@ -1298,6 +1342,7 @@ Performance:
 ```
 
 ### 6.3 Adoption Tracking ✅ COMPLETE
+
 - [x] Track guild protocol versions
   - [x] Count online members by protocol version
   - [x] Display adoption percentage
@@ -1338,6 +1383,7 @@ Recently seen members:
 ```
 
 ### 6.4 Debug Output ✅ COMPLETE
+
 - [x] Enhanced debug logging for delta operations
   - [x] Add size information to debug messages
   - [x] Log protocol selection decisions
@@ -1370,6 +1416,7 @@ Sent delta update for Bankalt-Server via togbank-d2
 ## Phase 7: UI & User Experience ✅ COMPLETE
 
 ### 7.1 Options Panel Updates ⚠ DEFERRED
+
 - [ ] Add delta configuration to `Modules/Options.lua`
   - [ ] Toggle to enable/disable delta sync
   - [ ] Display current protocol version
@@ -1379,6 +1426,7 @@ Sent delta update for Bankalt-Server via togbank-d2
 **Note:** Options panel integration deferred - delta sync is controlled via `/togbank forcefull` command and FEATURES table in Constants.lua. Full GUI integration can be added in a future update.
 
 ### 7.2 Status Indicators ✅ COMPLETE
+
 - [x] Add visual feedback for sync type
   - [x] Indicator when sending delta vs. full sync
   - [x] Show delta success/failure in chat output
@@ -1394,6 +1442,7 @@ Sent delta update for Bankalt-Server via togbank-d2
 - Color-coded output in stats commands (green=success, yellow=warning, red=error)
 
 ### 7.3 User Commands ✅ COMPLETE
+
 - [x] Add debug commands
   - [x] `/togbank deltastats` - Show comprehensive delta metrics
   - [x] `/togbank protocol` - Show protocol version distribution
@@ -1487,6 +1536,7 @@ Recently seen members:
 ## Phase 8: Documentation & Release ✅ COMPLETE
 
 ### 8.1 Code Documentation
+
 - [ ] Add function header comments (optional enhancement for future)
   - [ ] Document delta computation algorithm
   - [ ] Document protocol version negotiation
@@ -1494,6 +1544,7 @@ Recently seen members:
   - [ ] Add usage examples for key functions
 
 ### 8.2 User Documentation ✅ COMPLETE
+
 - [x] Create README.txt
   - [x] Explain delta sync feature
   - [x] Document backwards compatibility
@@ -1526,6 +1577,7 @@ Recently seen members:
   - Known limitations documented
 
 ### 8.3 Testing Documentation ✅ COMPLETE
+
 - [x] Create TESTING.md
   - [x] Manual testing checklist (8 test suites, 30+ test cases)
   - [x] Expected behavior for each test case
@@ -1558,6 +1610,7 @@ Recently seen members:
 - Documents 26 automated unit tests plus 23 manual test cases
 
 ### 8.4 Version Bump ✅ COMPLETE
+
 - [x] Update `TOGBankClassic.toc`
   - [x] Changed `## Version: 0.7.0`
   - [x] Interface version unchanged (11508 for Classic Era)
@@ -1572,6 +1625,7 @@ Recently seen members:
 - Ready for git operations to finalize release
 
 ### 8.5 Testing Execution 🔄 IN PROGRESS
+
 - [x] Test Suite 1.1: Initial Snapshot Creation ✅ PASSED
 - [x] Test Suite 1.2: Small Change Delta ✅ PASSED (2026-01-20)
   - Fixed DELTA-005: Item merging breaks delta comparison
@@ -1599,6 +1653,7 @@ Recently seen members:
 ## Phase 10: Delta Chain Replay (DELTA-006) ✅ COMPLETE
 
 ### 10.1 Architecture & Design ✅ COMPLETE
+
 **Problem Statement:**
 - Delta sync requires exact version matching (currentVersion == baseVersion)
 - Offline players miss updates and become permanently out of sync
@@ -1630,6 +1685,7 @@ Galdof applies: v100→v105→v110→v115 ✅
 - ✅ Graceful degradation via fallback rules
 
 ### 10.2 Database Layer ✅ COMPLETE
+
 **Implementation Summary:**
 - Added `deltaHistory = {}` to database schema initialization
 - Implemented history management functions with automatic cleanup
@@ -1665,6 +1721,7 @@ db.deltaHistory["Metals-Azuresong"] = {
 ```
 
 ### 10.3 Protocol Layer ✅ COMPLETE
+
 **New Communication Prefixes:**
 - `togbank-dr` (Delta Range Request): Receiver requests chain from sender
 - `togbank-dc` (Delta Chain): Sender responds with delta array
@@ -1694,6 +1751,7 @@ db.deltaHistory["Metals-Azuresong"] = {
 - `togbank-dc` handler: Receives chain → ApplyDeltaChain → Log result
 
 ### 10.4 Application Logic ✅ COMPLETE
+
 **Guild.lua Functions:**
 
 **RequestDeltaChain(altName, fromVersion, toVersion, sender):**
@@ -1720,6 +1778,7 @@ db.deltaHistory["Metals-Azuresong"] = {
 - History available for future chain requests
 
 ### 10.5 Configuration ✅ COMPLETE
+
 **Constants.lua (PROTOCOL table):**
 ```lua
 DELTA_HISTORY_MAX_COUNT = 10,   -- Keep last N deltas per alt
@@ -1735,6 +1794,7 @@ DELTA_CHAIN_MAX_SIZE = 5000,    -- Fallback if chain >5KB
 ```
 
 ### 10.6 Fallback Rules ✅ COMPLETE
+
 Chain replay falls back to full sync if:
 1. **Chain too long**: >10 hops (prevents abuse)
 2. **Chain too large**: Total size >5KB (efficiency threshold)
@@ -1744,6 +1804,7 @@ Chain replay falls back to full sync if:
 6. **History expired**: Deltas older than 1 hour are purged
 
 ### 10.7 Testing Plan ✅ COMPLETE
+
 **Test 1.4 Added to TESTING.md:**
 - **Objective**: Verify delta chain replay for offline players
 - **Scenario**: Player offline during 3-5 updates, returns and catches up
@@ -1765,6 +1826,7 @@ Chain replay falls back to full sync if:
 - Ready for testing and PR to main
 
 ### 10.8 Diagnostic Tools ✅ COMPLETE
+
 **Commands Added:**
 
 1. **`/togbank deltaerrors`** - Shows recent delta sync errors
@@ -1833,6 +1895,7 @@ Galdof-OldBlanchy: 3 delta(s)
 ## Phase 11: Deployment & Monitoring
 
 ### 11.1 Beta Testing 🔄 IN PROGRESS
+
 - [x] Deploy to test environment
   - [x] Install on test characters
   - [x] Test in small guild (8 members)
@@ -1841,12 +1904,14 @@ Galdof-OldBlanchy: 3 delta(s)
   - [ ] Gather feedback on performance
 
 ### 9.2 Metrics Collection Period
+
 - [ ] Monitor delta usage
   - [ ] Track bandwidth savings over 1-2 weeks
   - [ ] Identify any failure patterns
   - [ ] Optimize based on real-world data
 
 ### 9.3 Full Release
+
 - [ ] Release v0.7.0 to guild
   - [ ] Announce new delta sync feature
   - [ ] Provide update instructions
@@ -1854,6 +1919,7 @@ Galdof-OldBlanchy: 3 delta(s)
   - [ ] Be available for bug reports
 
 ### 9.4 Post-Release Support
+
 - [ ] Monitor for issues
   - [ ] Check logs for errors
   - [ ] Respond to user reports
@@ -1864,21 +1930,25 @@ Galdof-OldBlanchy: 3 delta(s)
 ## Phase 10: Future Optimizations (Post v0.7.0)
 
 ### 10.1 Compression Integration (v0.7.1+)
+
 - [ ] Integrate LibDeflate for delta compression
 - [ ] Test compression ratio on deltas
 - [ ] Measure CPU overhead vs. bandwidth savings
 
 ### 10.2 Metadata Stripping (v0.7.2+)
+
 - [ ] Remove `Info` table from transmitted items
 - [ ] Implement local item cache using `GetItemInfo()`
 - [ ] Further reduce bandwidth by 60-70%
 
 ### 10.3 Old Protocol Deprecation (v0.9.0+)
+
 - [ ] Add deprecation warnings for old protocol
 - [ ] Track adoption rate (target >80% guild support)
 - [ ] Plan removal for v1.0.0
 
 ### 10.4 Advanced Features (v0.8.0+)
+
 - [ ] Event-driven updates (remove periodic timers)
 - [ ] Targeted whispers for query responses
 - [ ] Batch update accumulation (2-5 second buffer)
@@ -1889,6 +1959,7 @@ Galdof-OldBlanchy: 3 delta(s)
 ## Success Criteria
 
 ### Functional Requirements
+
 ✓ Delta sync works correctly for typical bank operations
 ✓ Backwards compatible with v0.6.8 clients
 ✓ Automatic fallback to full sync on delta failure
@@ -1896,12 +1967,14 @@ Galdof-OldBlanchy: 3 delta(s)
 ✓ UI updates correctly after delta application
 
 ### Performance Requirements
+
 ✓ Delta computation completes in <50ms for typical bank (200 items)
 ✓ Delta application completes in <20ms
 ✓ Bandwidth reduction of >90% for typical updates (1-5 items changed)
 ✓ Delta size <30% of full sync size (or fallback to full)
 
 ### Quality Requirements
+
 ✓ Zero crashes or Lua errors in production
 ✓ Clean code with proper error handling
 ✓ Adequate logging for debugging
@@ -1912,6 +1985,7 @@ Galdof-OldBlanchy: 3 delta(s)
 ## Risk Mitigation
 
 ### High Risk Areas
+
 1. **Base Version Mismatch** - If clients have different states, delta fails
    - Mitigation: Automatic full sync fallback, log mismatch events
 
@@ -1928,6 +2002,7 @@ Galdof-OldBlanchy: 3 delta(s)
    - Mitigation: Extensive testing, maintain `togbank-d` support indefinitely in v0.7.x
 
 ### Contingency Plan
+
 If critical issues arise post-release:
 1. Release hotfix v0.7.1 with `FEATURE_DELTA_ENABLED = false` by default
 2. Investigate root cause with debug logging

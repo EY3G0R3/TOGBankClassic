@@ -37,7 +37,7 @@ local function loadRequestStack()
 	env.stubOutput()
 	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
-	require("env.libs").load("AceCommQueue-1.0")
+	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")   -- DS-HOST-001: Core needs the host
 
 	env.loadModules({
 		"Modules/Constants.lua",
@@ -72,7 +72,6 @@ local function loadRequestStack()
 	TOGBankClassic_Inventory_Store:Init({ faction = {} })
 	TOGBankClassic_Database = {
 		db = { global = { switches = {} }, faction = {} },
-		SaveSnapshot = function() return true end,
 		RecordDeltaReceived = function() end,
 		RecordNoChangeSent = function() end,
 	}

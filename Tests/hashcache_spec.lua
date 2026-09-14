@@ -177,16 +177,21 @@ describe("Guild:IsAltSyncPending", function()
 	before_each(function()
 		env.reset(); env.stubOutput()
 		env.loadModules(LIGHT)
+		env.freshV2()
 		Guild = TOGBankClassic_Guild
 		Guild.Info = { name = GUILD, alts = {} }
 		Guild.IsBank = function(_, n) return n == BANKER or n == OTHER end
 	end)
 
+	-- INV2-RETIRE-003: content lives in the V2 store. `items` non-empty seeds it; absent or
+	-- empty holds a content-less record.
 	local function held(alt, hash, hashV2, mail, items)
-		Guild.Info.alts[alt] = {
-			name = alt, inventoryHash = hash, inventoryHashV2 = hashV2, mailHash = mail,
-			items = items or {},
-		}
+		Guild.Info.alts[alt] = { name = alt, inventoryHash = hash, inventoryHashV2 = hashV2, mailHash = mail }
+		if items and #items > 0 then
+			env.holdV2(GUILD, alt)
+		else
+			TOGBankClassic_Inventory_Store:RemoveAlt(GUILD, alt)
+		end
 	end
 	local SIX, SEVEN = C(1, 6), C(1, 7)
 
@@ -271,16 +276,20 @@ describe("Guild:AdvertisedImproves -- the one request rule", function()
 	before_each(function()
 		env.reset(); env.stubOutput()
 		env.loadModules(LIGHT)
+		env.freshV2()
 		Guild = TOGBankClassic_Guild
 		Guild.Info = { name = GUILD, alts = {} }
 		Guild.IsBank = function(_, n) return n == BANKER or n == OTHER end
 	end)
 
+	-- INV2-RETIRE-003: content lives in the V2 store; `items = {}` holds a content-less record.
 	local function hold(canon, items)
-		Guild.Info.alts[OTHER] = {
-			name = OTHER, inventoryHash = 5, inventoryHashV2 = canon, inventoryUpdatedAt = T,
-			items = items or { { ID = 1, Count = 1 } },
-		}
+		Guild.Info.alts[OTHER] = { name = OTHER, inventoryHash = 5, inventoryHashV2 = canon, inventoryUpdatedAt = T }
+		if items == nil or #items > 0 then
+			env.holdV2(GUILD, OTHER)
+		else
+			TOGBankClassic_Inventory_Store:RemoveAlt(GUILD, OTHER)
+		end
 	end
 
 	it("wants anything for a bank we hold nothing for -- but not a claim that carries nothing", function()
@@ -368,6 +377,9 @@ describe("the writers, through the real receive paths", function()
 		-- useful one opens a session at once. These examples are about the CACHE, so the window is
 		-- opened as the broadcast would have, and nothing here dispatches.
 		TOGBankClassic_P2PSession:BeginCollectWindow({})
+		-- N6: the KEYED offer is what old-build peers send; off by default since v1.5.0 and
+		-- accepted only under this switch. These examples are about the cache the offer feeds.
+		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = alts })
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", sender)
 	end
@@ -426,12 +438,15 @@ describe("the writers, through the real receive paths", function()
 			return #sent
 		end
 
+		-- INV2-RETIRE-003: "we hold" means the V2 store holds records; the alt record carries the
+		-- version metadata. env.holdV2 seeds the store beside each record below.
 		it("does NOT broadcast a request for a bank we hold with a canon when a reply carries only a differing revision-1 hash", function()
 			client("Otherguy")
 			TOGBankClassic_Guild.Info.alts[OTHER] = {
-				name = OTHER, items = { { ID = 1, Count = 1 } }, money = 0,
+				name = OTHER, money = 0,
 				inventoryHash = 0x10, inventoryHashV2 = C(100, 0x20), inventoryUpdatedAt = 100, mailHash = 0,
 			}
+			env.holdV2(GUILD, OTHER)
 			assert.equal(0, guildRequestsAfter(STALE, { [OTHER] = { hash = 0xDEAD, updatedAt = 100 + 86400, mailHash = 0 } }),
 				"a guild-wide alt-request went out for a bank nobody advertised anything newer for; " ..
 				"it will time out in 5s and count against the catch-up budget (P2P-034)")
@@ -440,9 +455,10 @@ describe("the writers, through the real receive paths", function()
 		it("does NOT broadcast for an OLDER or same-time canon, and DOES for a newer one", function()
 			client("Otherguy")
 			TOGBankClassic_Guild.Info.alts[OTHER] = {
-				name = OTHER, items = { { ID = 1, Count = 1 } }, money = 0,
+				name = OTHER, money = 0,
 				inventoryHash = 0x10, inventoryHashV2 = C(100, 0x20), inventoryUpdatedAt = 100, mailHash = 0,
 			}
+			env.holdV2(GUILD, OTHER)
 			assert.equal(0, guildRequestsAfter(STALE, { [OTHER] = { hash = 0x11, hashV2 = C(99, 0x21), updatedAt = 99, mailHash = 0 } }))
 			assert.equal(0, guildRequestsAfter(STALE, { [OTHER] = { hash = 0x11, hashV2 = C(100, 0x21), updatedAt = 100, mailHash = 0 } }))
 			assert.equal(1, guildRequestsAfter(BANKER, { [OTHER] = { hash = 0x11, hashV2 = C(101, 0x21), updatedAt = 101, mailHash = 0 } }),
@@ -452,9 +468,10 @@ describe("the writers, through the real receive paths", function()
 		it("DOES broadcast for a bank we hold with NO canon when the reply carries one", function()
 			client("Otherguy")
 			TOGBankClassic_Guild.Info.alts[OTHER] = {
-				name = OTHER, items = { { ID = 1, Count = 1 } }, money = 0,
+				name = OTHER, money = 0,
 				inventoryHash = 0x10, mailHash = 0,
 			}
+			env.holdV2(GUILD, OTHER)
 			assert.equal(1, guildRequestsAfter(BANKER, { [OTHER] = { hash = 0x10, hashV2 = C(100, 0x20), updatedAt = 100, mailHash = 0 } }),
 				"revision 1 agreed, so the canon was never requested (HASH-CANON-006)")
 		end)
@@ -462,9 +479,10 @@ describe("the writers, through the real receive paths", function()
 		it("ignores what a peer advertises about OUR OWN character", function()
 			client("Bankchar")
 			TOGBankClassic_Guild.Info.alts[BANKER] = {
-				name = BANKER, items = { { ID = 1, Count = 1 } }, money = 0,
+				name = BANKER, money = 0,
 				inventoryHash = 0x11, inventoryHashV2 = 0x22, mailHash = 0,
 			}
+			env.holdV2(GUILD, BANKER)
 			hashListReplyFrom(PEER, {
 				[BANKER] = { hash = 0xDEAD, hashV2 = 0xBEEF, updatedAt = 99999, mailHash = 0 },
 				[OTHER]  = { hash = 0x10, hashV2 = 0x20, updatedAt = 100, mailHash = 0 },
@@ -497,9 +515,10 @@ describe("the writers, through the real receive paths", function()
 		it("re-encodes a v1.4.0 peer's numeric canon on receipt, and it agrees with the re-encoded local copy", function()
 			client("Otherguy")
 			TOGBankClassic_Guild.Info.alts[OTHER] = {
-				name = OTHER, items = { { ID = 1, Count = 1 } }, money = 0,
+				name = OTHER, money = 0,
 				inventoryHash = 0x10, inventoryHashV2 = 0x20, inventoryUpdatedAt = 100, mailHash = 0,
 			}
+			env.holdV2(GUILD, OTHER)
 			hashListReplyFrom(BANKER, { [OTHER] = { hash = 0x10, hashV2 = 0x20, updatedAt = 100, mailHash = 0 } })
 			assert.equal(C(100, 0x20), TOGBankClassic_Guild.latestBankerHashes[OTHER].hashV2,
 				"the numeric canon reached the cache un-re-encoded")
@@ -567,8 +586,9 @@ describe("the writers, through the real receive paths", function()
 
 		it("seeds the cache from our own stored records WITH hashV2, so a V2 claim cannot displace it on time alone", function()
 			client("Otherguy")
+			env.holdV2(GUILD, OTHER)
 			initWith({
-				[OTHER] = { name = OTHER, items = { { ID = 1, Count = 1 } }, money = 0,
+				[OTHER] = { name = OTHER, money = 0,
 					inventoryHash = 0x10, inventoryHashV2 = C(100, 0x20), inventoryUpdatedAt = 100, version = 100, mailHash = 0 },
 			})
 			local seeded = TOGBankClassic_Guild.latestBankerHashes and TOGBankClassic_Guild.latestBankerHashes[OTHER]

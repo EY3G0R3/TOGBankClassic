@@ -2,6 +2,19 @@ TOGBankClassic_UI_Search = {}
 
 local FILTER_ANY = "any"
 local RESULTS_PER_PAGE = 50
+-- The "?" icon's text, under its "How It Works" title (UI:DressWindow draws the icon).
+local SEARCH_HELP_LINES = {
+	"Type at least 3 characters in |cFFFFFFFFItem Name|r to find items across all banker alts.",
+	"You can also drag an item from your bags into the field to search by ID.",
+	" ",
+	"|cffffd100Filters|r (compact row, auto-wraps based on window width):",
+	"  • Min lvl / Max lvl — required-level range",
+	"  • Filter — pick a Type (then Subtype) or a Quality tier",
+	"  • Sort — how to order results",
+	"  • Usable — hide items above your level (needs a Type or Quality first)",
+	" ",
+	"Click any result to open the request popup. Use |cFFFFFFFF<|r and |cFFFFFFFF>|r at the bottom-right to page through results.",
+}
 local SUBFILTER_LIST  = {
 	any     = "Any",
 	type    = "Type",
@@ -143,6 +156,16 @@ local function resolveSlotKey(info, item)
 	return loc and INVTYPE_TO_SLOT[loc] or nil
 end
 
+-- BROWSE-001: the Browse window builds its filter strip from these same lists, so the two windows
+-- cannot disagree about what a "Weapon" or a "Chest" is. Exposed, not copied.
+TOGBankClassic_UI_Search.Filters = {
+	FILTER_ANY = FILTER_ANY,
+	TYPE_LIST = TYPE_LIST, TYPE_ORDER = TYPE_ORDER,
+	QUALITY_LIST = QUALITY_LIST, QUALITY_ORDER = QUALITY_ORDER,
+	SUBCLASS_LISTS = SUBCLASS_LISTS,
+	SLOT_LIST = SLOT_LIST, SLOT_ORDER = SLOT_ORDER, INVTYPE_TO_SLOT = INVTYPE_TO_SLOT,
+}
+
 -- Sort modes for search results
 local SORT_LIST = {
 	alpha       = "A -> Z",
@@ -273,6 +296,13 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 	self:EnsureRequestDialog()
 
 	local itemName = itemEntry.Info.name or (itemEntry.Link and itemEntry.Link:match("%[(.-)%]")) or "Unknown item"
+	-- NAME-001: this is where a request's NAME is minted and synced to every client for the life
+	-- of the request, so a placeholder here ("Item 7969", read off a live guild's request window)
+	-- outlives the cold cache that produced it. Re-resolve from the id now; the display side does
+	-- the same for requests already stored that way.
+	itemName = TOGBankClassic_Item:RequestDisplayName({
+		item = itemName, itemID = itemEntry.ID, suffixID = TOGBankClassic_Item:RowSuffixID(itemEntry),
+	})
 	self.requestContext = {
 		item = itemEntry,
 		bank = bankAlt,
@@ -505,56 +535,40 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	local searchWindow = TOGBankClassic_UI:Create("Frame")
 	searchWindow:Hide()
 	searchWindow:SetCallback("OnClose", OnClose)
-	searchWindow:SetTitle("Search")
+	searchWindow:SetTitle(TOGBankClassic_UI:WindowTitle("Search"))
 	searchWindow:SetLayout("Flow")
 	searchWindow:EnableResize(true)
 	TOGBankClassic_UI:ApplyThinBorder(searchWindow, "search")
-	-- Persist window size across reloads (position is always snapped to the main UI in Open())
-	if TOGBankClassic_Options and TOGBankClassic_Options.db then
-		local positions = TOGBankClassic_Options.db.char.framePositions
-		positions.search = positions.search or { width = 250, height = 400 }
-		searchWindow:SetStatusTable(positions.search)
-	end
-	if searchWindow.frame.SetResizeBounds then
-		searchWindow.frame:SetResizeBounds(200, 200)
-	end
+	-- Persist window size across reloads (position is always snapped to the main UI in Open()).
+	-- WINDOW-PERSIST-002: the one spelling every window uses (UI:PersistWindow -> the library's),
+	-- floor 200x200 included; this used to open-code the table and the SetResizeBounds beside it.
+	TOGBankClassic_UI:PersistWindow(searchWindow, "search", 250, 400, 200, 200)
 
 	self.Window = searchWindow
+	self.StatusBar = TOGBankClassic_UI_StatusBar:AttachSides(searchWindow)   -- SYNCED-001
 
-	local searchInput = TOGBankClassic_UI:Create("EditBox")
+	-- SEARCH-005: the one search box the addon has (TOGBankSearchBox, Modules/UI.lua) -- magnifier,
+	-- placeholder, clear-X -- in place of an AceGUI EditBox with an "Item Name" label above it.
+	-- The placeholder carries the 3-letter rule the old label's tooltip did; the tooltip keeps the
+	-- rest.
+	local searchInput = TOGBankClassic_UI:Create("TOGBankSearchBox")
 	searchInput:SetMaxLetters(50)
-	searchInput:SetLabel("Item Name")
-	searchInput.label:ClearAllPoints()
-	searchInput.label:SetPoint("TOPLEFT", searchInput.frame, "TOPLEFT", 3, -2)
-	searchInput.label:SetPoint("TOPRIGHT", searchInput.frame, "TOPRIGHT", 0, -2)
-	-- Invisible hit frame over the "Item Name" label (FontString has no mouse events)
-	local itemNameLabelHit = CreateFrame("Frame", nil, searchInput.frame)
-	itemNameLabelHit:SetPoint("TOPLEFT", searchInput.frame, "TOPLEFT", 3, -2)
-	itemNameLabelHit:SetPoint("TOPRIGHT", searchInput.frame, "TOPRIGHT", 0, -2)
-	itemNameLabelHit:SetHeight(18)
-	itemNameLabelHit:EnableMouse(true)
-	itemNameLabelHit:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine("Search Guild Bank")
-		GameTooltip:AddLine("Type at least 3 characters to find items across all banker alts.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("You can also drag an item from your bags into this box to search by item.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("Click a result to open the request popup.", 0.9, 0.9, 0.9, true)
-		GameTooltip:Show()
-	end)
-	itemNameLabelHit:SetScript("OnLeave", function()
-		TOGBankClassic_UI:HideTooltip()
-	end)
-	searchInput:SetCallback("OnTextChanged", function(input)
-		self.SearchText = input:GetText()
+	searchInput:SetPlaceholder("Item name (3+ letters), or drag an item here")
+	TOGBankClassic_UI:AttachTooltip(searchInput, "ANCHOR_RIGHT", "Search Guild Bank", {
+		"Type at least 3 characters to find items across all banker alts.",
+		" ",
+		"You can also drag an item from your bags into this box to search by item.",
+		" ",
+		"Click a result to open the request popup.",
+	})
+	searchInput:SetCallback("OnTextChanged", function(_, _, text)
+		self.SearchText = text
 		TOGBankClassic_Output:Debug("UI", "SEARCH", "OnTextChanged: text='%s' t=%.3f", self.SearchText or "", GetTime())
 		self.currentPage = 1  -- reset to first page on search text change
 		self:DrawContent()
 	end)
-	searchInput:SetCallback("OnEnterPressed", function(input)
-		self.SearchText = input:GetText()
+	searchInput:SetCallback("OnEnterPressed", function(_, _, text)
+		self.SearchText = text
 		self:DrawContent()
 		self.searchField:ClearFocus()
 	end)
@@ -875,66 +889,26 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	resultGroup.scrollframe:SetPoint("TOPLEFT")
 	resultGroup.scrollframe:SetPoint("BOTTOMRIGHT")
 
-	-- Apply thin scrollbar style to match dropdown scrollbars
-	if resultGroup.scrollbar then
-		resultGroup.scrollbar:ClearAllPoints()
-		resultGroup.scrollbar:SetPoint("TOPRIGHT", resultGroup.scrollframe, "TOPRIGHT", 0, -20)
-		resultGroup.scrollbar:SetPoint("BOTTOMRIGHT", resultGroup.scrollframe, "BOTTOMRIGHT", 0, 20)
-		resultGroup.scrollbar:SetWidth(8)
-		resultGroup.scrollbar:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Vertical")
-	end
+	TOGBankClassic_UI:ApplyThinScrollbar(resultGroup)   -- SCROLLBAR-002: in the gap, not over the results
 	scrollGroup:AddChild(resultGroup)
 
 	self.Results = resultGroup
 
 	-- ─── Bottom-right control row ──────────────────────────────────────────────
-	-- Mirrors the inventory window's bottom-right layout: status bar shrunk to
-	-- leave room for icon-sized controls before the AceGUI close button.
-	-- Order right-to-left from close: [Next ">"] [Prev "<"] [Help "i"] [...status bar...]
-	-- All controls are raw frames parented to searchWindow.frame so they live
-	-- outside AceGUI's child layout and don't get re-flowed on resize.
-
-	-- Shrink the status bar to leave ~95px of room on the right for the three icons
-	-- (help 24px + 8px gap + prev 20px + 4px gap + next 20px + ~10px gap to close ≈ 95px).
-	local statusbg = searchWindow.statustext:GetParent()
-	statusbg:ClearAllPoints()
-	statusbg:SetPoint("BOTTOMLEFT",  searchWindow.frame, "BOTTOMLEFT",  15, 15)
-	statusbg:SetPoint("BOTTOMRIGHT", searchWindow.frame, "BOTTOMRIGHT", -210, 15)
-
-	-- Help "i" icon — opens a tooltip explaining the Search window.
-	local helpIcon = CreateFrame("Frame", nil, searchWindow.frame)
-	helpIcon:SetSize(24, 24)
-	helpIcon:SetPoint("BOTTOMRIGHT", searchWindow.frame, "BOTTOMRIGHT", -133, 15)
-	helpIcon:EnableMouse(true)
-	-- HITBOX-001: lift above AceGUI's mouse-enabled bottom resize strip (sizer_s,
-	-- level 101) so the whole icon takes clicks/hover instead of a center sliver.
-	helpIcon:SetFrameLevel(searchWindow.frame:GetFrameLevel() + 10)
-	local helpTex = helpIcon:CreateTexture(nil, "OVERLAY")
-	helpTex:SetAllPoints(helpIcon)
-	helpTex:SetTexture("Interface\\Common\\help-i")
-	TOGBankClassic_UI:AttachTooltip(helpIcon, "ANCHOR_TOP", "Search Window — How It Works", {
-		"Type at least 3 characters in |cFFFFFFFFItem Name|r to find items across all banker alts.",
-		"You can also drag an item from your bags into the field to search by ID.",
-		" ",
-		"|cffffd100Filters|r (compact row, auto-wraps based on window width):",
-		"  • Min lvl / Max lvl — required-level range",
-		"  • Filter — pick a Type (then Subtype) or a Quality tier",
-		"  • Sort — how to order results",
-		"  • Usable — hide items above your level (needs a Type or Quality first)",
-		" ",
-		"Click any result to open the request popup. Use |cFFFFFFFF<|r and |cFFFFFFFF>|r at the bottom-right to page through results.",
-	}, "search")  -- HELPNOTE-001: append the guild "search" note at the bottom
+	-- Order right-to-left from close: [Help "?"] [Prev "<"] [Next ">"] [...status bar...]. The
+	-- "?", the status bar's edge and the hitbox lift are the shared chrome (UI:DressWindow, below);
+	-- the two page arrows are this window's own and are handed to it as extras. Raw frames on
+	-- searchWindow.frame, outside AceGUI's child layout, so a resize does not re-flow them.
 
 	-- Helper that creates one of the small bottom-right pagination buttons.
 	-- Returns a raw frame Button with a SetDisabled(bool) method bolted on so the
 	-- existing DrawContent path (self.prevButton:SetDisabled(...) / self.nextButton:...)
-	-- keeps working without changes. Pattern mirrors the gear icon in Inventory.lua.
+	-- keeps working without changes.
 	local function createPaginationButton(label, anchorXOffset, tooltipTitle, tooltipLines, onClick)
 		local btn = CreateFrame("Button", nil, searchWindow.frame)
 		btn:SetSize(20, 20)
 		btn:SetPoint("BOTTOMRIGHT", searchWindow.frame, "BOTTOMRIGHT", anchorXOffset, 17)
 		btn:EnableMouse(true)
-		btn:SetFrameLevel(searchWindow.frame:GetFrameLevel() + 10)  -- HITBOX-001
 
 		local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 		fs:SetPoint("CENTER", btn, "CENTER", 0, 0)
@@ -990,10 +964,16 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	)
 	self.nextButton:SetDisabled(true)
 
-	-- HITBOX-001: re-assert the bottom-row lift on every show so the help icon, both
-	-- pagination buttons, and the AceGUI Close button stay fully clickable. See
-	-- TOGBankClassic_UI:KeepAboveResizeSizers.
-	TOGBankClassic_UI:KeepAboveResizeSizers(searchWindow, { helpIcon, self.prevButton, self.nextButton })
+	-- WINDOW-CHROME-001: the "?", the status bar ending at the leftmost arrow, the hitbox lift over
+	-- all three and the Close button -- the shared bottom row. Only the help text is this window's.
+	TOGBankClassic_UI:DressWindow(searchWindow, {
+		extra = { self.prevButton, self.nextButton },   -- leftmost last: the bar ends at Next
+		help = function()
+			GameTooltip:AddLine("Search Window — How It Works")
+			for _, line in ipairs(SEARCH_HELP_LINES) do GameTooltip:AddLine(line, 0.9, 0.9, 0.9, true) end
+			TOGBankClassic_UI:AppendGuildHelpNote("search")  -- HELPNOTE-001
+		end,
+	})
 end
 
 function TOGBankClassic_UI_Search:BuildSearchData()
@@ -1343,9 +1323,12 @@ function TOGBankClassic_UI_Search:DrawContent()
 
 		local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
 		if itemWidget then
-			itemWidget:SetCallback("OnClick", function(widget, event)
+			itemWidget:SetCallback("OnClick", function(widget, event, button)
+				-- HIDE-001 registered the right button on every slot (the banker's hide/show on the
+				-- Inventory tab); here it means nothing, and must not open the request dialog.
+				if button == "RightButton" then return end
 				if IsShiftKeyDown() or IsControlKeyDown() then
-					TOGBankClassic_UI:EventHandler(widget, event)
+					TOGBankClassic_UI:EventHandler(widget, event, button)
 					return
 				end
 				TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)

@@ -4,8 +4,9 @@
 --
 --   1. Link parsing treats `::::::` and `:0:0:0:0:0:` as the same thing. That equivalence is
 --      what makes the miscount class stop existing rather than being normalised around.
---   2. Under dualWrite both shapes come from ONE container walk. Two walks would make
---      /togbank dev compare meaningless, because divergence could be a moved stack.
+--   2. The walk emits ONE shape: tuples. INV2-RETIRE-003 deleted the `dualWrite` legacy shape
+--      that used to ride the same walk, and the examples here pin that nothing legacy-shaped
+--      comes back -- a link on the result is the retired shape creeping back in.
 --   3. An unreachable bank returns nil, not empty. Treating it as empty would wipe a
 --      character's whole vault from the guild's view.
 package.path = "./Tests/?.lua;" .. package.path
@@ -82,7 +83,7 @@ describe("Scan:ScanBags", function()
 	it("returns a record per occupied slot", function()
 		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
 		place(0, 2, 859, 5,  "|cffffffff|Hitem:859|h[Other]|h|r")
-		local records, _, used = Scan:ScanBags()
+		local records, used = Scan:ScanBags()
 		assert.equal(2, #records)
 		assert.equal(2, used)
 	end)
@@ -97,7 +98,7 @@ describe("Scan:ScanBags", function()
 	it("reports slot totals across all carried bags", function()
 		env.bags[0] = { size = 16, bagType = 0 }
 		env.bags[1] = { size = 10, bagType = 0 }
-		local _, _, used, total = Scan:ScanBags()
+		local _, used, total = Scan:ScanBags()
 		assert.equal(0, used)
 		assert.equal(26, total)
 	end)
@@ -106,10 +107,15 @@ describe("Scan:ScanBags", function()
 		assert.same({}, (Scan:ScanBags()))
 	end)
 
-	it("omits the legacy shape unless asked", function()
+	-- INV2-RETIRE-003: this was "omits the legacy shape unless asked" (a `withLegacy` parameter). The
+	-- parameter is gone; the second return is now the used-slot count, and a record is a tuple.
+	it("returns tuples only, never a legacy row", function()
 		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
-		local _, legacy = Scan:ScanBags()
-		assert.is_nil(legacy)
+		local records, second = Scan:ScanBags()
+		assert.is_number(second, "the second return is the used-slot count, not a legacy array")
+		assert.is_true(Record.isValid(records[1]))
+		assert.is_nil(records[1].ID, "a legacy-shaped row came back from the walk")
+		assert.is_nil(records[1].Link)
 	end)
 end)
 
@@ -140,7 +146,7 @@ describe("Scan:ScanBank", function()
 		place(-1, 1, 858, 10, "|cffffffff|Hitem:858|h[Potion]|h|r")
 		env.bags[5] = { size = 16, bagType = 0 }
 		place(5, 1, 859, 3, "|cffffffff|Hitem:859|h[Other]|h|r")
-		local records, _, used = Scan:ScanBank()
+		local records, used = Scan:ScanBank()
 		assert.equal(2, #records)
 		assert.equal(2, used)
 	end)
@@ -171,51 +177,55 @@ describe("Scan:ScanAll", function()
 		assert.equal(987654, Scan:ScanAll().money)
 	end)
 
-	-- dualWrite is turned off explicitly. It is inert while inventoryV2 is off, and INV2 step 9 made
-	-- inventoryV2 default ON -- so this example was previously passing because of the PARENT's
-	-- default rather than because of anything it set.
-	it("omits the legacy shape while dualWrite is off", function()
-		TOGBankClassic_Switches:Set("dualWrite", false)
+	-- INV2-RETIRE-003. These were "omits the legacy shape while dualWrite is off", "emits both
+	-- shapes", "produces both shapes from the same items" and "keeps the original link in the
+	-- legacy shape". writ-cannot: "emits both shapes" covered the dualWrite legacy shape, which was
+	-- removed on purpose with the switch (docs/DELTA_RELEASE.md section 4); there is no second shape
+	-- to emit. The other three are re-pinned below on the tuple shape: what they protected -- that
+	-- the one walk's output describes exactly the slots it saw -- still holds.
+	it("never emits a legacy shape, whatever the switch state", function()
+		TOGBankClassic_Switches:Set("sendV2Wire", false)
 		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
-		assert.is_nil(Scan:ScanAll().legacy)
+		local result = Scan:ScanAll()
+		assert.is_nil(result.legacy, "the retired legacy shape came back on the result")
+		assert.equal(1, #result.records)
 	end)
 
-	describe("with dualWrite on", function()
-		before_each(function()
-			TOGBankClassic_Switches:Set("inventoryV2", true)   -- dualWrite is inert without it
-		end)
+	it("emits one tuple per occupied slot, across bags and vault", function()
+		env.bags[-1] = { size = 28, bagType = 0 }
+		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
+		place(0, 2, 10132, 1, "|cff1eff00|Hitem:10132:0:0:0:0:0:863:1:60|h[X]|h|r")
+		place(-1, 1, 859, 5, "|cffffffff|Hitem:859|h[Other]|h|r")
 
-		it("emits both shapes", function()
-			place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
-			local result = Scan:ScanAll()
-			assert.equal(1, #result.records)
-			assert.is_table(result.legacy)
-			assert.equal(1, #result.legacy)
-		end)
+		local result = Scan:ScanAll()
+		assert.equal(3, #result.records)
+		local seen = {}
+		for _, rec in ipairs(result.records) do
+			assert.is_true(Record.isValid(rec), "a non-tuple reached the result")
+			seen[Record.id(rec)] = Record.count(rec)
+		end
+		assert.same({ [858] = 20, [10132] = 1, [859] = 5 }, seen)
+	end)
 
-		-- One walk, two writes. If these disagreed, /togbank dev compare could not tell an
-		-- encoding bug from a stack that moved between two separate passes.
-		it("produces both shapes from the same items", function()
-			env.bags[-1] = { size = 28, bagType = 0 }
-			place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
-			place(0, 2, 10132, 1, "|cff1eff00|Hitem:10132:0:0:0:0:0:863:1:60|h[X]|h|r")
-			place(-1, 1, 859, 5, "|cffffffff|Hitem:859|h[Other]|h|r")
+	-- The per-source split the store writes through: bags and bank kept apart on the result, and
+	-- the flat `records` is exactly their union.
+	it("splits the same walk per source, and records is their union", function()
+		env.bags[-1] = { size = 28, bagType = 0 }
+		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
+		place(-1, 1, 859, 5, "|cffffffff|Hitem:859|h[Other]|h|r")
+		local result = Scan:ScanAll()
+		assert.equal(1, #result.sources.bags)
+		assert.equal(1, #result.sources.bank)
+		assert.equal(858, Record.id(result.sources.bags[1]))
+		assert.equal(859, Record.id(result.sources.bank[1]))
+		assert.equal(#result.sources.bags + #result.sources.bank, #result.records)
+	end)
 
-			local result = Scan:ScanAll()
-			assert.equal(#result.records, #result.legacy,
-				"the two shapes disagree on how many items were seen")
-
-			local tupleIDs, legacyIDs = {}, {}
-			for _, rec in ipairs(result.records) do tupleIDs[Record.id(rec)] = true end
-			for _, item in ipairs(result.legacy) do legacyIDs[item.ID] = true end
-			assert.same(tupleIDs, legacyIDs, "the two shapes disagree on WHICH items were seen")
-		end)
-
-		it("keeps the original link in the legacy shape", function()
-			local link = "|cff1eff00|Hitem:10132:0:0:0:0:0:863:1:60|h[X]|h|r"
-			place(0, 1, 10132, 1, link)
-			assert.equal(link, Scan:ScanAll().legacy[1].Link,
-				"the legacy shape must carry the client's own link verbatim, not a rebuild")
-		end)
+	it("carries no link on any tuple -- the receiver rebuilds it from ItemDB", function()
+		local link = "|cff1eff00|Hitem:10132:0:0:0:0:0:863:1:60|h[X]|h|r"
+		place(0, 1, 10132, 1, link)
+		local rec = Scan:ScanAll().records[1]
+		assert.is_nil(rec.Link)
+		assert.equal(863, Record.suffix(rec), "the suffix the link carried must survive as a field")
 	end)
 end)

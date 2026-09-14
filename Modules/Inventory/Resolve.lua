@@ -156,26 +156,44 @@ function Resolve.describe(rec)
 		-- link; a plain item's link carries no suffix field at all.
 		local link = lib:GetSuffixLink(id, suffix ~= 0 and suffix or nil,
 			enchant ~= 0 and enchant or nil)
-		-- LIBREQ-IDB-002. Feature-detected because it landed later than the rest of the API:
-		-- an older resolved copy has the item data but not this method.
-		local reqLevel = lib.GetRequiredLevel and lib:GetRequiredLevel(id) or 0
-		-- RESOLVE-001: this hardcoded UNKNOWN_ICON, so every item that resolved SUCCESSFULLY
-		-- rendered as a question mark -- name, link, quality and level all correct beside it,
-		-- which is what made it read as an icon-cache problem rather than a missing field.
-		--
-		-- LibItemDB carries no icon (there is no GetIcon; it ships names, quality, stats, prices
-		-- and levels). The client does, and GetItemInfoInstant is the right source for exactly the
-		-- reason step 2 below uses it: it is CACHE-INDEPENDENT, so it answers on a cold client
-		-- where GetItemInfo returns nil. An icon is a fixed per-item fileID, so there is nothing
-		-- for the library to add here and no contract to raise.
-		return {
-			name = name, link = link, icon = iconFor(id) or UNKNOWN_ICON, quality = quality or 1,
-			itemLevel = itemLevel or 0, reqLevel = reqLevel or 0,
-			class = class or 0, subClass = subClass or 0, equipLoc = equipLoc or "",
-			resolved = "itemdb",
-		}
+		-- SUFFIX-NAME-001 (docs/LINK_AUDIT.md 3.4; the operator, 2026-09-13: "the item in the
+		-- requests HAS to show the link or i'm not able to fill the order properly ... aka, the
+		-- suffixes"): the NAME comes from the same source as the link. GetInfo's is the BASE name, so
+		-- "Spiked Club of the Bear" and "of Spirit" were two rows both reading "Spiked Club" -- to
+		-- the requester choosing, and to the banker reading the request. ResolveSuffix's `name` is
+		-- base .. " " .. the random-property family (LibItemDB-1.0.lua:1255-1269), exactly what the
+		-- link's brackets carry. An unknown property answers the base name, as the link does.
+		if suffix ~= 0 and lib.ResolveSuffix then
+			local full = lib:ResolveSuffix(id, suffix)
+			if full and full.name and full.name ~= "" then name = full.name end
+		end
+		-- A base the library has in `core` but not in `names` answers no name (GetInfo nil,
+		-- ResolveSuffix "" -- LibItemDB-1.0.lua:1260 `base or ""`). That is not a resolution: fall
+		-- through to the client's data rather than hand back a descriptor with no name to show.
+		if name ~= nil and name ~= "" then
+			-- LIBREQ-IDB-002. Feature-detected because it landed later than the rest of the API:
+			-- an older resolved copy has the item data but not this method.
+			local reqLevel = lib.GetRequiredLevel and lib:GetRequiredLevel(id) or 0
+			-- RESOLVE-001: this hardcoded UNKNOWN_ICON, so every item that resolved SUCCESSFULLY
+			-- rendered as a question mark -- name, link, quality and level all correct beside it,
+			-- which is what made it read as an icon-cache problem rather than a missing field.
+			--
+			-- LibItemDB carries no icon (there is no GetIcon; it ships names, quality, stats, prices
+			-- and levels). The client does, and GetItemInfoInstant is the right source for exactly
+			-- the reason step 2 below uses it: it is CACHE-INDEPENDENT, so it answers on a cold
+			-- client where GetItemInfo returns nil. An icon is a fixed per-item fileID, so there is
+			-- nothing for the library to add here and no contract to raise.
+			return {
+				name = name, link = link, icon = iconFor(id) or UNKNOWN_ICON, quality = quality or 1,
+				itemLevel = itemLevel or 0, reqLevel = reqLevel or 0,
+				class = class or 0, subClass = subClass or 0, equipLoc = equipLoc or "",
+				resolved = "itemdb",
+			}
+		end
+		noteUnresolved(id, "itemdb (no name)")
+	else
+		noteUnresolved(id, lib and "itemdb" or "itemdb (library absent)")
 	end
-	noteUnresolved(id, lib and "itemdb" or "itemdb (library absent)")
 
 	-- Step 2: the client's own static data. GetItemInfoInstant does NOT need a warm cache, so
 	-- it answers immediately after login where GetItemInfo returns nil. That property is the
@@ -183,9 +201,15 @@ function Resolve.describe(rec)
 	if GetItemInfoInstant then
 		local iid, _, _, equipLoc, icon, class, subClass = GetItemInfoInstant(id)
 		if iid then
+			-- NAME-001: GetItemInfoInstant carries no name, and this step used to hand back
+			-- "Item <id>" even when the client's cache HAD the name. Reported from a live guild
+			-- ("item id did not resolve into a descriptive name" -- a request row reading `Item
+			-- 7969`). GetItemInfo is cache-dependent, so it may still be nil here; when it answers,
+			-- its name, quality and link are the real ones and are used.
+			local name, link, quality, itemLevel, reqLevel = GetItemInfo(id)
 			return {
-				name = "Item " .. id, link = "item:" .. id, icon = icon or UNKNOWN_ICON,
-				quality = 1, itemLevel = 0, reqLevel = 0,
+				name = name or ("Item " .. id), link = link or ("item:" .. id), icon = icon or UNKNOWN_ICON,
+				quality = quality or 1, itemLevel = itemLevel or 0, reqLevel = reqLevel or 0,
 				class = class or 0, subClass = subClass or 0, equipLoc = equipLoc or "",
 				resolved = "client",
 			}

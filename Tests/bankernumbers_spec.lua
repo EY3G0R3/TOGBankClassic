@@ -310,6 +310,7 @@ describe("BankerNumbers through the real wire", function()
 		TOGBankClassic_Core.SendWhisper = function(_, prefix, text, target)
 			local ok, data = TOGBankClassic_Core:DeserializeWithChecksum(text)
 			sent[#sent + 1] = { prefix = prefix, data = ok and data or nil, target = target }
+			return true   -- the real one returns true for an online target, and callers branch on it
 		end
 	end
 	local function whisperFrom(sender, payload)
@@ -392,9 +393,10 @@ describe("BankerNumbers through the real wire", function()
 		local BN = TOGBankClassic_BankerNumbers
 		BN:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
 		TOGBankClassic_Guild.Info.alts[OTHER] = {
-			name = OTHER, items = { { ID = 1, Count = 1 } }, money = 0,
+			name = OTHER, money = 0,
 			inventoryHash = 0x10, inventoryHashV2 = C(T, 0x20), inventoryUpdatedAt = T, mailHash = 0,
 		}
+		env.holdV2(GUILD, OTHER)   -- INV2-RETIRE-003: "hold" is the V2 store
 		broadcastFrom(BANKER, { type = "hlb2", v = 5, banker = BANKER, isBanker = true,
 			e = BN:EncodeEntries({ { number = "0002", canon = C(T, 0x20) } }) })
 		broadcastFrom(BANKER, { type = "hlb2", v = 5, banker = BANKER, isBanker = true,
@@ -451,5 +453,127 @@ describe("BankerNumbers through the real wire", function()
 		assert.equal("0002", entries[1].number)
 		assert.equal(C(T, 0x20), entries[1].canon)
 		assert.is_nil(b.data.alts, "the keyed table is still on the wire")
+	end)
+end)
+
+-- ---------------------------------------------------------------------------------------------
+-- H6 (peer review): TWO banker accounts minting independently, as two real clients, converging.
+--
+-- BankerNumbers.lua's header ARGUES convergence: same-version conflict -> the lower-sorting sender's
+-- table wins on both sides, the loser re-mints its stragglers under a higher version, the winner
+-- adopts that back. Until this file it was never DRIVEN. The harness holds one Lua state, so the
+-- two clients take turns: each is stood up from its own saved roster state, speaks through the real
+-- `togbank-hl` receive path, and is saved again before the other boots.
+-- ---------------------------------------------------------------------------------------------
+describe("H6: two independently-minting banker accounts converge on one table", function()
+	local ALPHA, BETA, CHARLIE = "Alpha-Testrealm", "Beta-Testrealm", "Charlie-Testrealm"
+
+	--- Stand up `who`'s client with the bankers IT can see (officer-note visibility differs per
+	--- member), restoring the roster and alt records saved from its last turn.
+	local function boot(who, visible, state)
+		env.reset(); env.now = T
+		local members = {}
+		for _, b in ipairs(visible) do members[#members + 1] = { name = b, note = "gbank" } end
+		env.standUpClient(who, members, GUILD)
+		local Guild = TOGBankClassic_Guild
+		if state then
+			Guild.Info.roster = state.roster
+			Guild.Info.alts   = state.alts
+		end
+		-- This account owns its own banker: a content hash only a local scan writes.
+		local me = who .. "-Testrealm"
+		Guild.Info.alts[me] = Guild.Info.alts[me] or { name = me, items = { { ID = 1, Count = 1 } }, inventoryContentHash = 12345 }
+		TOGBankClassic_Core.SendCommMessage = function() end
+		return Guild
+	end
+
+	local function save(Guild)
+		return { roster = Guild.Info.roster, alts = Guild.Info.alts }
+	end
+
+	--- What this client would whisper back to a numbers-request: the serialised reply, captured
+	--- off the real send.
+	local function replyFrom(BN)
+		local body
+		TOGBankClassic_Core.SendWhisper = function(_, prefix, text)
+			if prefix == "togbank-hl" then body = text end
+			return true
+		end
+		assert.is_true(BN:HandleRequest("Asker-Testrealm"))
+		assert.is_string(body, "no numbers-reply went out")
+		return body
+	end
+
+	local function deliver(body, sender)
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", sender)
+	end
+
+	local function tableOf(BN)
+		local out = {}
+		for name, n in pairs(BN:Table().numbers) do out[name] = n end
+		return out
+	end
+
+	it("resolves a same-second conflict -- both minted 0001 for different bankers -- to one table with no number reused", function()
+		local BN = TOGBankClassic_BankerNumbers
+		-- Alpha sees {Alpha, Charlie}; Beta sees {Beta, Charlie}. Each mints in the same server second.
+		local Guild = boot("Alpha", { ALPHA, CHARLIE })
+		assert.equal(2, BN:Mint())
+		assert.equal("0001", BN:NumberOf(ALPHA)); assert.equal("0002", BN:NumberOf(CHARLIE))
+		local alphaState, alphaReply1 = save(Guild), replyFrom(BN)
+
+		Guild = boot("Beta", { BETA, CHARLIE })
+		assert.equal(2, BN:Mint())
+		assert.equal("0001", BN:NumberOf(BETA), "precondition: the conflict was not set up -- Beta should also have minted 0001")
+		assert.equal(alphaState.roster.numbersVersion, BN:Version(), "precondition: the two mints must land on the SAME version")
+		-- Beta hears Alpha's table. Alpha sorts lower, so Beta adopts it and re-mints itself.
+		deliver(alphaReply1, ALPHA)
+		assert.equal("0001", BN:NumberOf(ALPHA), "Beta did not adopt the lower-sorting sender's table")
+		assert.equal("0002", BN:NumberOf(CHARLIE))
+		assert.equal("0003", BN:NumberOf(BETA), "Beta was not re-minted at the next free number after adopting")
+		assert.is_true(BN:Version() > alphaState.roster.numbersVersion, "the re-mint did not raise the version, so Alpha can never adopt it back")
+		local betaState, betaReply = save(Guild), replyFrom(BN)
+
+		-- Alpha hears Beta's ORIGINAL conflicting table (same version, higher-sorting sender): refused.
+		boot("Alpha", { ALPHA, CHARLIE }, alphaState)
+		local betaOriginal = TOGBankClassic_Core:SerializeWithChecksum({ type = "numbers-reply",
+			numbers = { v = alphaState.roster.numbersVersion, n = 3, t = { [BETA] = 1, [CHARLIE] = 2 } } })
+		deliver(betaOriginal, BETA)
+		assert.equal("0001", BN:NumberOf(ALPHA), "Alpha gave up its table to a higher-sorting sender at the same version")
+		-- Then Beta's re-minted table, one version newer: adopted wholesale.
+		deliver(betaReply, BETA)
+		assert.same(tableOf(BN), betaState.roster.numbers, "the two clients did not converge on one table")
+		assert.equal(betaState.roster.numbersVersion, BN:Version())
+		assert.equal(betaState.roster.numbersNext, BN:Table().numbersNext)
+
+		-- Every number names exactly one banker, on both.
+		local seen = {}
+		for name, n in pairs(tableOf(BN)) do
+			assert.is_nil(seen[n], "number " .. n .. " names both " .. tostring(seen[n]) .. " and " .. name)
+			seen[n] = name
+		end
+		assert.same({ [1] = ALPHA, [2] = CHARLIE, [3] = BETA }, seen)
+
+		-- And it is stable: a further exchange in either direction changes nothing.
+		local alphaReply2 = replyFrom(BN)
+		boot("Beta", { BETA, CHARLIE }, betaState)
+		deliver(alphaReply2, ALPHA)
+		assert.same(betaState.roster.numbers, tableOf(BN))
+		assert.equal(betaState.roster.numbersVersion, BN:Version(), "a converged table kept moving")
+	end)
+
+	it("two accounts minting the SAME roster produce the identical table and never disturb each other", function()
+		local BN = TOGBankClassic_BankerNumbers
+		local Guild = boot("Alpha", { ALPHA, BETA, CHARLIE })
+		assert.equal(3, BN:Mint())
+		local alphaState, alphaReply = save(Guild), replyFrom(BN)
+
+		boot("Beta", { ALPHA, BETA, CHARLIE })
+		assert.equal(3, BN:Mint())
+		assert.same(alphaState.roster.numbers, tableOf(BN), "the same roster minted two different tables")
+		local v = BN:Version()
+		deliver(alphaReply, ALPHA)
+		assert.equal(v, BN:Version(), "an identical table at the same version was treated as a change")
+		assert.same(alphaState.roster.numbers, tableOf(BN))
 	end)
 end)

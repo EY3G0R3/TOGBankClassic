@@ -31,16 +31,18 @@ globals = {
 	"TOGBankClassic_Performance", "TOGBankClassic_DeltaComms", "TOGBankClassic_Bank",
 	"TOGBankClassic_Chat", "TOGBankClassic_Database", "TOGBankClassic_Events",
 	"TOGBankClassic_Guild", "TOGBankClassic_BankerNumbers", "TOGBankClassic_P2PSession", "TOGBankClassic_RequestLog",
+	"TOGBankClassic_Log", "TOGBankClassic_Propagation",
 	"TOGBankClassic_Item", "TOGBankClassic_ItemHighlight", "TOGBankClassic_TooltipBankerInfo",
 	"TOGBankClassic_Mail", "TOGBankClassic_MailInventory", "TOGBankClassic_Options",
 	"TOGBankClassic_UI", "TOGBankClassic_Tests",
 	"TOGBankClassic_Switches",
 	"TOGBankClassic_Inventory_Record", "TOGBankClassic_Inventory_Resolve",
-	"TOGBankClassic_Inventory_Store", "TOGBankClassic_Inventory_Scan",
-	"TOGBankClassic_Inventory_Wire",
+	"TOGBankClassic_Inventory_Store", "TOGBankClassic_Inventory_Scan", "TOGBankClassic_Inventory_Chain",
+	"TOGBankClassic_Inventory_Wire", "TOGBankClassic_Inventory_Sync",
 	"TOGBankClassic_UI_Donations", "TOGBankClassic_UI_StatusBar", "TOGBankClassic_UI_Inventory",
 	"TOGBankClassic_UI_Mail", "TOGBankClassic_UI_Minimap", "TOGBankClassic_UI_Requests",
-	"TOGBankClassic_UI_Search",
+	"TOGBankClassic_UI_Search", "TOGBankClassic_UI_Mailbox",
+	"TOGBankClassic_UI_RowList", "TOGBankClassic_UI_Browse", "TOGBankClassic_Usable",
 	-- Static data tables
 	"TOGBankClassic_ItemDB", "TOGBankClassic_SuffixDB",
 	-- SavedVariables (see .toc)
@@ -78,6 +80,9 @@ read_globals = {
 	-- Core Lua-ish WoW helpers
 	"strsplit", "strjoin", "strtrim", "wipe", "tContains", "unpack", "hooksecurefunc",
 	"debugprofilestop", "GetTime", "GetServerTime", "time", "date", "format",
+	-- The client's error handler, for routing a CONSUMER's callback error (Modules/Log.lua) to
+	-- BugSack/the default frame rather than swallowing it. Feature-detected: absent offline.
+	"geterrorhandler",
 	-- Addon / metadata
 	"LibStub", "GetAddOnMetadata", "C_AddOns", "UpdateAddOnMemoryUsage", "GetAddOnMemoryUsage",
 	-- The Settings panel API. Feature-detected at every call site (Options:Open), because it is
@@ -87,10 +92,19 @@ read_globals = {
 	"IsShiftKeyDown", "IsControlKeyDown", "debugstack",
 	-- Cursor drag-and-drop, unit level, and the localized "Close" string (Modules/UI/Search.lua)
 	"GetCursorInfo", "ClearCursor", "UnitLevel", "CLOSE",
+	-- BROWSE-004 (Modules/Usable.lua): the character's class and race, the tooltip-data API
+	-- Classic Era's own TooltipComparisonManager reads (feature-detected), its arg surfacer, and the
+	-- localized "Classes: %s" / "Races: %s" formats the tags are recognised by.
+	"UnitClass", "UnitRace", "C_TooltipInfo", "TooltipUtil", "ITEM_CLASSES_ALLOWED", "ITEM_RACES_ALLOWED",
 	-- Localized button captions used by the StaticPopupDialogs entries (Modules/UI/Requests.lua)
 	"YES", "CANCEL",
 	-- Frames / UI
-	"CreateFrame", "UIParent", "GameTooltip", "GameFontNormal", "BackdropTemplateMixin",
+	"CreateFrame", "UIParent", "GameTooltip", "GameFontNormal", "GameFontNormalSmall", "GameFontHighlightSmall", "BackdropTemplateMixin",
+	-- Modules/UI.lua reads these four; all verified in the Era tree (WorldFrame is the engine's
+	-- root frame; UISpecialFrames in UIParentPanelManager.lua; GameTooltip_SetDefaultAnchor in
+	-- Blizzard_GameTooltip/Classic/GameTooltip.lua; DressUpItemLink in Classic/DressUpFrames.lua).
+	-- UISpecialFrames is APPENDED to (table.insert), which is a read of the global itself.
+	"WorldFrame", "UISpecialFrames", "GameTooltip_SetDefaultAnchor", "DressUpItemLink",
 	-- NOTE: StaticPopupDialogs is deliberately NOT here -- it is in `globals` above, because
 	-- registering a dialog means WRITING a named field into it. Listing it in both made the
 	-- read-only entry win, and every one of Requests.lua's four registrations reported W122
@@ -126,8 +140,16 @@ read_globals = {
 	-- Classic Era tree before being added here, not assumed from the name.
 	"GetInboxNumItems", "GetInboxHeaderInfo", "GetInboxItem", "GetInboxItemLink",
 	"ATTACHMENTS_MAX_RECEIVE", "SendMail", "TakeInboxItem",
+	-- MAILRETURN-001: Era MailFrame.lua:787/:798 (OpenMail_Delete) -- the Return button's pair.
+	"InboxItemCanDelete", "ReturnInboxItem",
 	"ATTACHMENTS_MAX_SEND", "GetSendMailItem", "ClickSendMailItemButton", "TakeInboxMoney",
 	"CheckInbox", "SendMailNameEditBox", "SendMailSubjectEditBox",
+	-- MAILUI-001: C_Mail.IsCommandPending gates the next take (Era's MailFrame.lua:1216 calls it;
+	-- MailInfoDocumentation.lua declares it). Feature-detected at the call.
+	"C_Mail",
+	-- SEARCH-005: the global string SearchBoxTemplate uses as its instruction text
+	-- (Blizzard_SharedXML/Shared/InputBox/InputBoxTemplates.xml:31, `value="SEARCH" type="global"`).
+	"SEARCH",
 	-- Sound, for the donation-collected cue (Modules/Mail.lua)
 	"PlaySound", "SOUNDKIT",
 	-- Timers

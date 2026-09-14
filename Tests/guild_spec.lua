@@ -57,6 +57,63 @@ describe("Guild:NormalizeName", function()
 	end)
 end)
 
+-- Peer review F2 / delta release step 5: "units still owed" had seven spellings across Mail,
+-- ItemHighlight and the Requests window. This is the one; the sites call it.
+-- BANKERS-FILTER-001: what a banker stores is whatever the officer wrote in the guild note beside
+-- the gbank marker (the operator: "metadata for each banker, on the types of stuff they store").
+describe("Guild:BankerStores", function()
+	local Guild
+	before_each(function()
+		env.reset(); Guild = loadGuild()
+		Guild.memberRoster = {
+			["Alice-Testrealm"] = { name = "Alice-Testrealm", isBank = true, note = "gbank: herbs & potions" },
+			["Bob-Testrealm"]   = { name = "Bob-Testrealm",   isBank = true, note = "Raid mats gbank" },
+			["Cara-Testrealm"]  = { name = "Cara-Testrealm",  isBank = true, note = "GBANKRO view-only -- enchanting mats" },
+			["Dan-Testrealm"]   = { name = "Dan-Testrealm",   isBank = true, note = "gbank" },
+			["Eve-Testrealm"]   = { name = "Eve-Testrealm",   isBank = false },
+		}
+	end)
+
+	it("is the note with every marker and the punctuation around it stripped", function()
+		assert.equal("herbs & potions", Guild:BankerStores("Alice-Testrealm"))
+		assert.equal("Raid mats", Guild:BankerStores("Bob"))   -- a bare name normalises
+		assert.equal("enchanting mats", Guild:BankerStores("Cara-Testrealm"), "the view-only markers (any case) were not stripped")
+	end)
+
+	it("is empty for a marker-only note, a non-banker, an unknown name and nil", function()
+		assert.equal("", Guild:BankerStores("Dan-Testrealm"))
+		assert.equal("", Guild:BankerStores("Eve-Testrealm"))
+		assert.equal("", Guild:BankerStores("Nobody-Testrealm"))
+		assert.equal("", Guild:BankerStores(nil))
+	end)
+end)
+
+describe("Guild:RequestQuantityNeeded", function()
+	local Guild
+	before_each(function() env.reset(); Guild = loadGuild() end)
+
+	it("is quantity minus the Sent column", function()
+		assert.equal(6, Guild:RequestQuantityNeeded({ quantity = 10, fulfilled = 4 }))
+		assert.equal(10, Guild:RequestQuantityNeeded({ quantity = 10 }), "an unfilled request needs all of it")
+	end)
+
+	it("is never negative, and reads the fields as numbers even when a wire left them as strings", function()
+		assert.equal(0, Guild:RequestQuantityNeeded({ quantity = 4, fulfilled = 10 }), "an over-filled request owes nothing, not a negative")
+		assert.equal(0, Guild:RequestQuantityNeeded({ quantity = 4, fulfilled = 4 }))
+		assert.equal(3, Guild:RequestQuantityNeeded({ quantity = "5", fulfilled = "2" }))
+	end)
+
+	it("answers zero for junk rather than raising", function()
+		assert.equal(0, Guild:RequestQuantityNeeded(nil))
+		assert.equal(0, Guild:RequestQuantityNeeded({}))
+		assert.equal(0, Guild:RequestQuantityNeeded({ quantity = "lots" }))
+	end)
+
+	it("says nothing about status -- callers gate on that beside it", function()
+		assert.equal(2, Guild:RequestQuantityNeeded({ quantity = 2, fulfilled = 0, status = "cancelled" }))
+	end)
+end)
+
 describe("Guild:GetBanks", function()
 	local Guild
 	before_each(function()
@@ -224,6 +281,19 @@ describe("Guild:RebuildBankerRoster", function()
 		assert.is_true(Guild.memberRoster["Banker-Testrealm"].isBank)
 	end)
 
+	-- BROWSE F1 (Peer Review, 2026-09-12): the embedded Requests tab re-checks its role HERE, on the
+	-- event that propagates a note edit -- and only when the list actually moved.
+	it("tells the Requests body when the banker list changed, and not otherwise", function()
+		local calls = 0
+		TOGBankClassic_UI_Requests = { OnBankerRosterChanged = function() calls = calls + 1 end }
+		env.addGuildMember("Banker-Testrealm", { note = "gbank" })
+		Guild:RebuildBankerRoster()
+		assert.equal(1, calls, "a changed banker list did not reach the Requests body (F1)")
+		Guild:RebuildBankerRoster()
+		assert.equal(1, calls, "an unchanged list re-checked the role anyway")
+		TOGBankClassic_UI_Requests = nil
+	end)
+
 	it("keeps memberRoster's viewOnly flag in step", function()
 		Guild.memberRoster = { ["Raidbank-Testrealm"] = { name = "Raidbank-Testrealm", isBank = false } }
 		env.addGuildMember("Raidbank-Testrealm", { note = "gbank viewonly" })
@@ -232,28 +302,45 @@ describe("Guild:RebuildBankerRoster", function()
 	end)
 end)
 
+-- INV2-RETIRE-003: content is the V2 store, full stop. The three examples that stood here asserted
+-- "true when aggregated / bank-only / mail-only LEGACY items are present"; that is the content the
+-- client cannot serve (CanServe is `#records > 0`), so saying yes for it is the Peer Review F1
+-- defect -- accept a request, ship nothing -- reintroduced.
 describe("Guild:HasAltContent", function()
 	local Guild
-	before_each(function() env.reset(); Guild = loadGuild() end)
+	before_each(function()
+		env.reset(); Guild = loadGuild()
+		env.freshV2()
+		Guild.Info = { name = "Testguild", alts = {} }
+	end)
 
 	it("is false for nil", function()
-		assert.falsy(Guild:HasAltContent(nil, "X"))
+		assert.falsy(Guild:HasAltContent(nil, "X-Testrealm"))
 	end)
 
 	it("is false for an empty stub", function()
-		assert.falsy(Guild:HasAltContent({ version = 0, items = {} }, "X"))
+		assert.falsy(Guild:HasAltContent({ version = 0 }, "X-Testrealm"))
 	end)
 
-	it("is true when aggregated items are present", function()
-		assert.truthy(Guild:HasAltContent({ items = { { ID = 858 } } }, "X"))
+	it("is true when the V2 store holds records for the alt", function()
+		env.holdV2("Testguild", "X-Testrealm", { { 858, 1 } })
+		assert.truthy(Guild:HasAltContent(Guild.Info.alts["X-Testrealm"], "X-Testrealm"))
 	end)
 
-	it("is true when only bank items are present", function()
-		assert.truthy(Guild:HasAltContent({ bank = { items = { { ID = 858 } } } }, "X"))
+	it("is true from the V2 store even when the legacy record is absent entirely", function()
+		env.holdV2("Testguild", "X-Testrealm", { { 858, 1 } })
+		assert.truthy(Guild:HasAltContent(nil, "X-Testrealm"))
 	end)
 
-	it("is true when only mail items are present", function()
-		assert.truthy(Guild:HasAltContent({ mail = { items = { { ID = 858 } } } }, "X"))
+	it("is FALSE for legacy-only content -- rows the client could not serve", function()
+		assert.falsy(Guild:HasAltContent({ items = { { ID = 858, Count = 1 } } }, "X-Testrealm"))
+		assert.falsy(Guild:HasAltContent({ bank = { items = { { ID = 858, Count = 1 } } } }, "X-Testrealm"))
+		assert.falsy(Guild:HasAltContent({ mail = { items = { { ID = 858, Count = 1 } } } }, "X-Testrealm"))
+	end)
+
+	it("reads the name off the record when no name is passed", function()
+		env.holdV2("Testguild", "X-Testrealm", { { 858, 1 } })
+		assert.truthy(Guild:HasAltContent({ name = "X-Testrealm" }))
 	end)
 end)
 
@@ -296,6 +383,16 @@ describe("Guild:GetVersion", function()
 	it("reports zero for an unpackaged dev build", function()
 		_G.GetAddOnMetadata = function() return "@project-version@" end
 		assert.equal(0, Guild:GetVersion().addon)
+	end)
+
+	-- WIRE-SKEW-002: a RELEASED client's Version is the packager's substitution of
+	-- @project-version@, which is the WHOLE git tag. An anchored match read every released peer
+	-- as a dev build, and the data-leg gate never refused one.
+	it("reads the version out of the packager's tag-shaped string", function()
+		assert.equal(numericVersion("1.4.1"), numericVersion("TOGBankClassic-v1.4.1"))
+		assert.truthy(numericVersion("TOGBankClassic-v1.4.1") > 0, "a released build encoded as a dev build")
+		assert.truthy(numericVersion("TOGBankClassic-v1.5.0") > numericVersion("TOGBankClassic-v1.4.1"))
+		assert.equal(0, numericVersion("dev"))
 	end)
 
 	it("excludes an alt with no content from the broadcast", function()

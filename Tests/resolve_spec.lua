@@ -21,7 +21,7 @@ local function stubItemDB(items, opts)
 			local d = items[id]
 			if not d then return nil end
 			-- Contract order: name, quality, classID, subClassID, equipLoc, itemLevel
-			return d.name, d.quality, d.class, d.subClass, d.equipLoc, d.itemLevel
+			return (not d.nameless) and d.name or nil, d.quality, d.class, d.subClass, d.equipLoc, d.itemLevel
 		end,
 		GetSuffixLink = function(_, id, suffix, enchant)
 			local s = "item:" .. id
@@ -29,7 +29,19 @@ local function stubItemDB(items, opts)
 			elseif suffix then s = ("item:%d::::::%d"):format(id, suffix) end
 			return "|cffffffff|H" .. s .. "|h[" .. (items[id].name or "?") .. "]|h|r"
 		end,
+		-- LibItemDB-1.0.lua:1255-1269: nil for an unknown base; the full name is base .. " " ..
+		-- the random-property family, and an unknown property answers the base name alone. One
+		-- more shape (Peer Review on 2a82f9ad): a base present in `core` but absent from `names`
+		-- answers name = "" (`base or ""`, :1260) -- an item marked `nameless` here models it.
+		ResolveSuffix = function(_, id, prop)
+			local d = items[id]
+			if not d then return nil end
+			local base = (not d.nameless) and d.name or nil
+			local family = opts.suffixes and opts.suffixes[prop]
+			return { id = id, propID = family and prop or nil, name = (base and family) and (base .. " " .. family) or (base or "") }
+		end,
 	}
+	if opts.withoutResolveSuffix then lib.ResolveSuffix = nil end
 	-- LIBREQ-IDB-002 arrived later than the rest of the API, so Resolve feature-detects it.
 	if not opts.withoutRequiredLevel then
 		lib.GetRequiredLevel = function(_, id) return items[id] and items[id].reqLevel or 0 end
@@ -134,6 +146,43 @@ describe("Resolve via LibItemDB", function()
 		assert.truthy(d.link:find("::::::863", 1, true), "suffix missing from link: " .. tostring(d.link))
 	end)
 
+	-- SUFFIX-NAME-001 (docs/LINK_AUDIT.md 3.4; the operator, 2026-09-13: "the item in the requests
+	-- HAS to show the link ... aka, the suffixes"): the name comes from the same source as the
+	-- link, so two suffix variants of one base item are two different names, not two "Spiked Club".
+	it("names a random-suffix record with its family, from the same source as the link", function()
+		env.reset()
+		stubItemDB({ [4564] = { name = "Spiked Club", quality = 2, class = 2, subClass = 4, equipLoc = "INVTYPE_WEAPON", itemLevel = 20 } },
+			{ suffixes = { [1180] = "of the Bear", [28] = "of Spirit" } })
+		loadResolve()
+		assert.equal("Spiked Club of the Bear", Resolve.describe(Record.new(4564, 1, 1180)).name)
+		assert.equal("Spiked Club of Spirit",   Resolve.name(Record.new(4564, 1, 28)))
+		assert.equal("Spiked Club", Resolve.name(Record.new(4564, 1)), "a plain record grew a suffix")
+		assert.equal("Spiked Club", Resolve.name(Record.new(4564, 1, 9999)), "an unknown property should fall back to the base name, as the link does")
+	end)
+
+	-- Peer Review on 2a82f9ad: a base the library has in `core` but not in `names` answers name ""
+	-- from ResolveSuffix and nil from GetInfo. Neither is a name to show: the resolver falls through
+	-- to the client (which has it here) rather than returning an itemdb descriptor with no name.
+	it("falls through to the client when the library knows the id but has no name for it", function()
+		env.reset()
+		stubItemDB({ [4564] = { nameless = true, name = "Spiked Club", quality = 2, class = 2, subClass = 4, equipLoc = "INVTYPE_WEAPON", itemLevel = 20 } },
+			{ suffixes = { [1180] = "of the Bear" } })
+		loadResolve()
+		env.defineItem(4564, { name = "Spiked Club" })
+		local d = Resolve.describe(Record.new(4564, 1, 1180))
+		assert.equal("client", d.resolved, "a nameless library hit was returned as resolved")
+		assert.equal("Spiked Club", d.name)
+		assert.are_not.equal("", Resolve.name(Record.new(4564, 1)))
+	end)
+
+	it("keeps the base name on a library copy that predates ResolveSuffix", function()
+		env.reset()
+		stubItemDB({ [4564] = { name = "Spiked Club", quality = 2, class = 2, subClass = 4, equipLoc = "INVTYPE_WEAPON", itemLevel = 20 } },
+			{ withoutResolveSuffix = true })
+		loadResolve()
+		assert.equal("Spiked Club", Resolve.name(Record.new(4564, 1, 1180)))
+	end)
+
 	it("builds a link carrying the enchant", function()
 		local d = Resolve.describe(Record.new(10132, 1, 863, 2504))
 		assert.truthy(d.link:find(":2504:", 1, true), "enchant missing from link: " .. tostring(d.link))
@@ -174,6 +223,16 @@ describe("Resolve fallback chain", function()
 		local d = Resolve.describe(Record.new(99999, 1))
 		assert.equal("client", d.resolved)
 		assert.equal(2, d.class)
+		-- NAME-001: the client step used to say "Item 99999" even with the name in the cache.
+		assert.equal("Patch Item", d.name, "the client had the name cached and the placeholder was shown instead")
+	end)
+
+	it("still names a cold-cache item by its id when only GetItemInfoInstant answers", function()
+		env.defineItem(99999, { name = "Patch Item", class = 2, subClass = 7 })
+		_G.GetItemInfo = function() return nil end   -- cold cache: the name is not available yet; env.reset restores it
+		local d = Resolve.describe(Record.new(99999, 1))
+		assert.equal("client", d.resolved)
+		assert.equal("Item 99999", d.name)
 	end)
 
 	it("falls back to a placeholder when nothing knows the item", function()

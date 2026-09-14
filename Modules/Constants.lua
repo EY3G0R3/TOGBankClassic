@@ -63,6 +63,14 @@ local DEBUG_CATEGORY = {
 	-- and Options.CATEGORY_META.
 	SYSTEM = "SYSTEM",           -- Output's own internals: persistent log rotation and GC
 	FULFILL = "FULFILL",         -- request fulfillment: mail matching and completion detection
+	-- DS-HOST-001: everything the DeltaSync-1.0 host logs. The library's own category rides as the
+	-- TAG (its category and tag joined, `COMMS-SEND`), so one TOGBank toggle gates the library and
+	-- its tags stay filterable -- see the logger in Core.lua. Same three-registry rule as above.
+	DELTASYNC = "DELTASYNC",     -- the DeltaSync-1.0 host: its init, comms, serialize and delta lines
+	-- LOG-DEBUG-001: the operator, watching a banker's entries fail to reach a viewer, had no category
+	-- to isolate the bank log with -- its only lines were failure-only, under SYNC/LOGAPI. Same
+	-- three-registry rule as above.
+	LOG = "LOG",                 -- the bank log: entries recorded, batches delivered, consumers and TOGTools
 }
 
 -- Debug sub-tags: optional second argument to Output:Debug() for per-feature filtering.
@@ -71,10 +79,24 @@ local DEBUG_CATEGORY = {
 -- If no tag is supplied (or the string is not a known tag), the category master switch gates it.
 -- nil entry in debugTags DB = tag is ALLOWED by default (opt-out model; new tags auto-show).
 local DEBUG_TAGS = {
+	-- DS-HOST-001: the library's own categories, as this category's tags. A library line that
+	-- carries a tag of its own arrives as `<CATEGORY>-<TAG>` (e.g. `COMMS-SEND`); those are
+	-- opt-out and auto-show, listed here only as far as the library's fixed set goes.
+	DELTASYNC = {
+		INIT      = "DeltaSync host initialisation: namespace, prefixes, channel config",
+		HASH      = "DeltaSync hash computation",
+		COMMS     = "DeltaSync communication layer (COMMS-SEND / -RECEIVE / -HANDLER / -REGISTER)",
+		["COMMS-SKIP"] = "a send the client REFUSED (DeltaSync onSendFailed) -- the message never left",
+		DELTA     = "DeltaSync delta operations (DELTA-COMPUTE / -APPLY / -VALIDATE)",
+		VALIDATE  = "DeltaSync validation / sanitisation",
+		SERIALIZE = "DeltaSync envelope: every SerializeWithChecksum call (bytes + checksum) -- high volume",
+		P2P       = "DeltaSync P2P session module (unused by TOGBank; the numbered handshake is ours)",
+		ROSTER    = "DeltaSync RosterSync module (unused by TOGBank)",
+	},
 	P2P = {
 		OFFER     = "hash-offer send / receive",
 		DISPATCH  = "session creation, peer selection, collect-window fallbacks (no response after timeout)",
-		HANDSHAKE = "sync-accept/busy, state-summary exchange, RespondToStateSummary decisions, no-change replies",
+		HANDSHAKE = "sync-request/accept/busy/queued, the send-slot accounting, no-change replies received",
 		COMPLETE  = "data delivered, session COMPLETE/FAILED/delivery-timeout, queue slot release",
 		CATCHUP   = "catch-up broadcast scheduling (fires when data is still missing after dispatch)",
 		["BROADCAST"] = "P2P hash-broadcast sent to guild channel (waiting for peers)",
@@ -91,9 +113,9 @@ local DEBUG_TAGS = {
 		["SETTINGS"]          = "guild settings broadcast / receive (maxRequestPercent, autoTombstoneDays, cancelReasons, helpNotes)",
 		["MAIL-SYNC"]         = "mail hash sync query decisions (when/why to query for mail updates)",
 		["PULL-HASH"]         = "requester hash data included in pull-based requests",
-		["INTEGRITY-MISMATCH"] = "stop-marker present but CRC failed (genuine bit-corruption, not truncation)",
+		-- DS-HOST-001: `INTEGRITY-MISMATCH` and `SERIAL` used to live here. The envelope is the
+		-- DeltaSync host's now, so those lines arrive as DELTASYNC / COMMS and DELTASYNC / SERIALIZE.
 		["COLLISION-GUARD"]   = "hash-list broadcast collision prevention (skip/defer/retry decisions, P2P-023 fix)",
-		["SERIAL"]           = "SerializeWithChecksum call tracing (outgoing checksum + payload size)",
 		["PREFIX"]  = "comm prefix registration verdicts from the client (LIBREQ-ALL-005)",
 		["RECV"]    = "general incoming message dispatch and receipt",
 		["WHISPER"] = "whisper send routing and online-check decisions",
@@ -113,10 +135,20 @@ local DEBUG_TAGS = {
 		["SEND"]            = "outgoing sync data and acknowledgments",
 		["VALIDATE"]        = "request mutation validation and rejection decisions",
 		["HASH-ADOPT"]      = "adopting a peer's hash for an alt we have no newer data for",
+		-- LOG-DEBUG-001: the bank log's own lines moved to the LOG category; this tag is kept so a
+		-- saved debugTags["SYNC"]["LOGAPI"] = false does not become an unknown key.
+		["LOGAPI"]          = "(moved to the LOG category) bank-log API failures",
+	},
+	LOG = {
+		RECORD  = "an entry recorded: inventory diffs (per banker, from/to version, how many moved) and request transitions",
+		DELIVER = "a batch delivered to consumers, the AceEvent message, and the TOGTools push (stored / duplicate / disabled)",
+		FAIL    = "a consumer's callback or the TOGTools bridge threw (was SYNC / LOGAPI)",
 	},
 	DELTA = {
 		APPLY        = "applying deltas to local state",
 		BUILD        = "constructing deltas",
+		CHAIN        = "the per-version delta chain: a link recorded at mint, served, applied, verified (THE DELTA RELEASE step 3)",
+		WIRE         = "the data leg on the DeltaSync host: what a requester asked for, and whether the provider answered with the chain, a snapshot or a no-change (step 3b)",
 		VALIDATE     = "delta validation / error recovery",
 		["FAST-FILL"] = "fast-fill request count and missing-alt trigger",
 	},
@@ -128,6 +160,7 @@ local DEBUG_TAGS = {
 	BANK = {
 		GATE = "why Bank:Scan() returned early (not a banker, scanning disabled, roster not ready, ...)",
 		SCAN = "bank / bag slot enumeration and totals",
+		HIDE = "HIDE-001: an item hidden from or shown to the guild by right-click, and the rescan it triggers",
 	},
 	REQUESTS = {
 		RECEIVE = "incoming request data",
@@ -185,7 +218,10 @@ local DEBUG_TAGS = {
 
 -- Request storage settings
 local REQUEST_LOG = {
-	EXPIRY_SECONDS = 30 * 24 * 60 * 60,      -- 30 days: completed/cancelled requests and tombstones removed after this
+	-- RETENTION-001 (operator 2026-09-13: "keep 14 days, should be enough to get it over to togtools
+	-- for longer retention"): was 30. Requests were 35% of the SavedVariables; TOGTools stores every
+	-- request event from the log feed (LOGAPI-005), so the addon's copy only spans the hand-off.
+	EXPIRY_SECONDS = 14 * 24 * 60 * 60,      -- 14 days: completed/cancelled requests and tombstones removed after this
 	PRUNE_INTERVAL = 300,                     -- 5 minutes: minimum interval between automatic prunes
 }
 
@@ -216,8 +252,12 @@ local COMM_PREFIX_DESCRIPTIONS = {
 	["togbank-rd2"] = "(Request Data v2: single record/tombstone)",
 	["togbank-rd"]  = "(Request Data: idx/by-id)",
 	["togbank-rm"] = "(Request Mutations)",
-	["togbank-state"] = "(State Summary)",
-	["togbank-nochange"] = "(No Change)",
+	-- THE DELTA RELEASE step 3b: `togbank-state` and `togbank-nochange` are retired as a data leg.
+	-- After a sync-accept it rides the DeltaSync host's QUERY/RESPONSE prefixes, which the library
+	-- generates from the namespace; Core:SendCommMessage names those from the host itself.
+	-- WIRE-SKEW-007: `togbank-state` is registered again RECEIVE-ONLY, as a tripwire -- only a
+	-- pre-v1.5.0 requester sends it, and hearing it is what names that peer as the old wire.
+	["togbank-state"] = "(Old-wire state summary: receive-only tripwire, never read)",
 	["togbank-hl"] = "(Hash List Request)",
 	["togbank-hlr"] = "(Hash List Reply)",
 }
@@ -227,8 +267,14 @@ local PROTOCOL = {
 	VERSION = 2,                    -- Current protocol version (bump for breaking changes)
 	SUPPORTS_DELTA = true,          -- This client supports delta updates
 	MIN_DELTA_SIZE_RATIO = 0.3,     -- Only use delta if <30% of full sync size
-	DELTA_SNAPSHOT_MAX_AGE = 3600,  -- 1 hour: snapshots older than this are invalid
 	DELTA_SUPPORT_THRESHOLD = 0.05, -- Use delta if >5% of online guild supports it (lowered for testing: 1 of 14 = 7.1%)
+	-- WIRE-SKEW-001: the first addon version whose data leg is the DeltaSync QUERY (v1.5.0 retired
+	-- togbank-state, with no wire back-compat). A peer that announces an OLDER version in its
+	-- hlb2 broadcast cannot answer our query nor send one we read, so it is neither asked nor
+	-- accepted (Guild:PeerSpeaksDataLeg). Unknown or dev-build versions are treated as capable.
+	-- Was "1.4.2" until 2026-09-13, when that release was renamed v1.5.0 before ever being tagged;
+	-- no client will ever report 1.4.2, so the floor is the version that actually ships.
+	DATA_LEG_MIN_ADDON_VERSION = "1.5.0",
 }
 
 -- Peer-to-Peer distribution settings (PERF-005)
@@ -238,6 +284,12 @@ local PEER_TO_PEER = {
 	HASH_QUERY_TIMEOUT = 5,          -- Seconds to wait for hash from banker
 	PEER_RESPONSE_TIMEOUT = 5,       -- Seconds to wait for peer data
 	FALLBACK_TO_BANKER = true,       -- Always fall back to banker on hash mismatch or timeout
+	-- THE ONE SPELLING of the outbound send cap (Peer Review, 2026-09-12 F2): it was
+	-- `MAX_ACTIVE_SENDS = 3` in P2PSession, `Guild.MAX_PENDING_SENDS = 3`, and a literal `or 3` in
+	-- StatusBar -- three definitions, nothing asserting they agreed. Guild and P2PSession both read
+	-- this one now. The operator's ruling on the number (P2P-029): "that 3 was an arbitrary number ...
+	-- make it so it 'buffers' all requests and then has only 3 open responses".
+	MAX_ACTIVE_SENDS = 3,
 }
 
 -- Feature flags (for easy enable/disable during development/testing)
@@ -268,6 +320,54 @@ local function BankBagRange()
 	return carried + 1, carried + (NUM_BANKBAGSLOTS or 6)
 end
 
+--- BRAND-001 / VERSION-TEXT-001: THE ONE PLACE THE ADDON NAMES AND VERSIONS ITSELF TO A PLAYER.
+---
+--- The operator, 2026-09-12: "i've rebranded as TOG Bank and removed the classic" -- and every
+--- identifier stays `TOGBankClassic`, so the display name exists ONLY as text and had to be applied
+--- by hand at each site. It was applied to the window titles and missed `/togbank version` and the
+--- `/togbank versioncheck` listing, so one build showed as "TOG Bank v1.5.0" in a title and
+--- "TOGBankClassic version: TOGBankClassic-v1.5.0" in chat (Peer Review, thread 7b7efb1f).
+---
+--- The VERSION half is the same trap twice over: a RELEASED client's `Version` is the packager's
+--- substitution of `@project-version@`, which is the WHOLE git tag (`TOGBankClassic-v1.5.0`).
+--- WIRE-SKEW-002 was an anchored match against that string reading every released peer as a dev
+--- build; a second, differently-spelled extraction had already appeared in the window title. One
+--- function, so a change to the tag scheme cannot leave two readings of it in the addon.
+---
+--- `VersionText` is for DISPLAY only. Ordering peers is `Guild.EncodeVersion`, which must keep its
+--- own parse: it has to answer for strings this one would hand back unchanged ("dev").
+local BRAND = "TOG Bank"
+
+--- The version to SHOW a player: the `d.d.d` out of whatever the TOC carries, or the raw string
+--- when it holds no version at all (a dev build shows `@project-version@`, as FGI's does).
+---@param raw string|nil as GetAddOnMetadata returns it
+---@return string
+local function VersionText(raw)
+	if type(raw) ~= "string" or raw == "" then return "unknown" end
+	return raw:match("%d+%.%d+%.%d+") or raw:match("%d+%.%d+") or raw
+end
+
+--- "TOG Bank v1.5.0" -- the addon as a player sees it named, everywhere.
+---@return string
+local function BrandVersion()
+	local raw = GetAddOnMetadata and GetAddOnMetadata("TOGBankClassic", "Version") or nil
+	return BRAND .. " v" .. VersionText(raw)
+end
+
+--- RAID-SYNC-001: is sync paused right now? In a raid group, unless the player has ticked "Keep
+--- syncing in a raid group" (Options, off by default -- the operator, 2026-09-12: "make a setting so
+--- sync will work during a raid? have it unchecked by default"). THE ONE spelling of the raid guard:
+--- the send gate (Core:SendCommMessage), the receive gate (Chat:OnCommReceived), the legacy queue
+--- (Chat:ProcessQueue), the ranks cleanup (Events) and the status bar's paused line all read it, so
+--- the setting cannot free one door and leave another shut. Lives here rather than on Core because
+--- this is the one module every one of those files -- and every spec that loads them -- has;
+--- tolerates an Options table without the accessor (spec stubs), which reads as the default, paused.
+local function SyncPausedByRaid()
+	if not IsInRaid() then return false end
+	local O = TOGBankClassic_Options
+	return not (O and O.IsSyncInRaidEnabled and O:IsSyncInRaidEnabled())
+end
+
 -- NS-001: the single global this file publishes. Consumers alias what they need at file scope:
 --     local DEBUG_CATEGORY = TOGBankClassic_Constants.DEBUG_CATEGORY
 -- Aliasing rather than rewriting every reference keeps the ~240 call sites untouched, and the local
@@ -286,4 +386,8 @@ TOGBankClassic_Constants = {
 	FEATURES                 = FEATURES,
 	CarriedBagRange          = CarriedBagRange,
 	BankBagRange             = BankBagRange,
+	SyncPausedByRaid         = SyncPausedByRaid,
+	BRAND                    = BRAND,
+	VersionText              = VersionText,
+	BrandVersion             = BrandVersion,
 }
