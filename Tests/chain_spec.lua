@@ -17,7 +17,7 @@ local function load()
 	env.reset(); env.stubOutput()
 	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
-	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")
+	env.loadDeltaSync()
 	env.loadModules({
 		"Modules/Constants.lua",
 		"Modules/Inventory/Record.lua",

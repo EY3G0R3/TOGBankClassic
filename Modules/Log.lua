@@ -167,24 +167,23 @@ end
 
 -- ─── Recording: bank contents ────────────────────────────────────────────────
 
---- A flat, aggregated array of rows in either shape the addon holds -- V2 tuple records (Record)
---- or legacy `{ ID, Count, Link }` rows -- reduced to id+suffix -> count.
+--- A flat, aggregated array of V2 tuple records reduced to Record.key -> count. Records are the only
+--- shape any caller passes (Bank:MintVersion's held sets, Sync's stored records); LINK-AUDIT-001
+--- step 1 deleted the legacy `{ ID, Count, Link }` branch, which had no producer. Step 5 keys by
+--- `Record.key` (id:suffix:enchant) rather than a private `id:suffix`: an enchant applied to a
+--- stored weapon is a movement, and the key is the one MailInventory's senders are keyed by.
 local function countsByKey(rows)
-	local Record, Item = TOGBankClassic_Inventory_Record, TOGBankClassic_Item
+	local Record = TOGBankClassic_Inventory_Record
 	local out = {}
 	for _, row in ipairs(rows or {}) do
-		local id, count, suffix
-		if type(row) == "table" and row.ID then
-			id, count = tonumber(row.ID), tonumber(row.Count) or 0
-			suffix = Item and Item.RowSuffixID and Item:RowSuffixID(row) or 0
-		elseif Record and Record.isValid(row) then
-			id, count, suffix = Record.id(row), Record.count(row), Record.suffix(row)
-		end
-		if id and count > 0 then
-			local key = id .. ":" .. (suffix or 0)
+		if Record and Record.isValid(row) and Record.count(row) > 0 then
+			local key = Record.key(row)
 			local e = out[key]
-			if e then e.count = e.count + count
-			else out[key] = { id = id, suffix = (suffix and suffix ~= 0) and suffix or nil, count = count } end
+			if e then e.count = e.count + Record.count(row)
+			else
+				local suffix = Record.suffix(row)
+				out[key] = { id = Record.id(row), suffix = suffix ~= 0 and suffix or nil, count = Record.count(row) }
+			end
 		end
 	end
 	return out
@@ -198,7 +197,7 @@ local function itemName(id, suffix)
 	return "Item " .. id
 end
 
---- A banker's contents moved from `before` to `after` (either row shape, see countsByKey), money
+--- A banker's contents moved from `before` to `after` (records, see countsByKey), money
 --- from `moneyBefore` to `moneyAfter`, published at `ts`. Records one entry per item whose count
 --- changed and one for money. Nothing is recorded for the FIRST version held (there is no before
 --- to diff against -- a fresh install must not log a whole bank as a deposit).
@@ -208,7 +207,7 @@ end
 --- the banker's client knows the member on both sides: a withdrawal by fulfilment is a `mailed` /
 --- `handed` request event (-> `to` = the requester), a deposit by mail is an inbox row whose sender
 --- the mailbox scan saw (-> `from` = the sender). `who` is that knowledge, keyed like countsByKey
---- (`id:suffix`), each key an array of { count=, to= } or { count=, from= } parts. It is derived ONCE,
+--- (`Record.key`, id:suffix:enchant), each key an array of { count=, to= } or { count=, from= } parts. It is derived ONCE,
 --- by the author at mint (AttributeChanges), rides inside the chain link (Chain:Compute's `who`), and
 --- every receiver applies it here verbatim -- so a viewer's entry carries the same `to` as the
 --- banker's and nobody derives it twice. A key with parts is split into one entry per part; a
@@ -422,7 +421,7 @@ end
 ---@param bank string normalized banker name (this client's own character)
 ---@param before table|nil rows held before
 ---@param after table rows now held
----@param mailSenders table|nil { ["id:suffix"] = { [sender] = count } } taken from the inbox since the last mint
+---@param mailSenders table|nil { [Record.key] = { [sender] = count } } taken from the inbox since the last mint
 ---@return table|nil who nil when nothing could be attributed
 function Log:AttributeChanges(bank, before, after, mailSenders)
 	if not bank or before == nil then return nil end

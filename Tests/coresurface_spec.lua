@@ -164,12 +164,15 @@ describe("TOGBankClassic_Core stand-ins match the real surface", function()
 		end)
 
 		-- ANTI-VACUOUS. The scan is a pattern over source text; a pattern that matches nothing
-		-- passes every assertion built on it. Five files are known to hand-roll a table.
+		-- passes every assertion built on it. Two files are known to hand-roll a one-key-per-line
+		-- table (canonhash, hashnegotiation_e2e); the pull-path specs that did went with LIBREQ-DS-008
+		-- part 2, and p2psession_spec became the P2P.lua spec on the real host. The named anchor
+		-- below is the real guard; the count only says the scan read more than one file.
 		it("finds the hand-rolled tables at all", function()
 			assert.is_true(#files >= 20, "spec file listing came back short: " .. #files)
 			local n = 0
 			for _ in pairs(tables) do n = n + 1 end
-			assert.is_true(n >= 4,
+			assert.is_true(n >= 2,
 				"found only " .. n .. " hand-rolled Core tables -- the scan is broken, not the suite")
 			assert.is_not_nil(tables["Tests/canonhash_spec.lua"],
 				"canonhash_spec's table was not read, and it is the one this finding came from")

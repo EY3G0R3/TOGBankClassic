@@ -356,6 +356,41 @@ its own:
      `togbank-hl` / `-hlr` / `-rr` prefixes (`-state` and `-nochange` went with step 3b). Until then
      step 3 proceeds on the host's data leg with TOGBank's own P2PSession driving the handshake --
      nothing here blocks v1.5.0, and the deletion is the adoption.
+     **PART 1 SHIPPED AND ADOPTED 2026-09-15** (DeltaSync reply ea0e5f57 on the thread; adopted
+     from the working tree under LIB-RELEASE-ORDER): `DeltaSyncNumbers.lua` is `BankerNumbers`
+     generalised to any key, on the host as `host.numbers` via `host:InitNumbers(config)`.
+     `Modules/BankerNumbers.lua` is now the configuration (table on `Info.roster`, keys = the
+     banker roster, canMint = owns a banker, canon clock, repaint on change) plus forwarders, and
+     KEEPS the `numbers-request` / `-reply` exchange on `togbank-hl` for this release -- the
+     library's own rides its HANDSHAKE whisper, which no shipped client answers; the channel moves
+     with the rest of the wire in part 2. **PART 2 (the numbered session protocol) is NOT built;**
+     DeltaSync asked two design questions first (which observers TOGBank needs; whether the
+     peer-capability check is a callback or the library reading VersionCheck) and both were
+     answered on the thread from the code (reply 23fc1c2b: four observers with the payload each
+     needs, self NOT filtered from `onAdvertised`; `peerCapable` a CALLBACK, for WIRE-SKEW-007's
+     behavioural refusal and the `why` string). Part 2 is DeltaSync's next release; its adoption
+     is the P2PSession.lua deletion and a WIRE BREAK with every earlier TOGBank (hlb2 moves to
+     the library's OFFER prefix) -- a release-planning point for when it lands.
+     **PART 2 SHIPPED AND ADOPTED 2026-09-15** (DeltaSync reply a7d91c11 from its working tree;
+     pushed that evening as v4.1.0 `934f12b`, **MINOR 18** -- folded into the DS-009 release, so
+     there is no MINOR 19): `DeltaSyncP2PNumbered.lua` on the host as `host.p2p` via
+     `host:InitP2P({ mode = "numbered", ...hooks })`. `Modules/P2PSession.lua` is DELETED;
+     `Modules/P2P.lua` is the configuration (each hook the production predicate it names) plus
+     three stand-ins with removal conditions: `OfferUnmentioned` (the library offers back only
+     LISTED keys; unmentioned = wipe recovery; the numbers table goes first to a broadcaster
+     behind on it), `SendOwn` (`sync-done` / `query-refused` on `togbank-hl` at ALERT), and
+     `NoteVersionFirst` (the library judges an hlb2 BEFORE the host's `onOfferReceived` sees its
+     `addon` field -- an instance-level pre-hook reads the version first). The pull path is gone
+     whole (`BroadcastP2PRequest`, the relay ACK, the per-alt timers, the `togbank-state`
+     tripwire, `togbank-rr` / `-hlr`). `Chat:ReceiveHashListReply` hands a reply to the library as
+     the replier's broadcast; the reply now CARRIES the replier's numbers table (XGUILD D5: a sister
+     client never hears our hlb2), and an alt neither table numbers is dispatched BY NAME -- the
+     session names its key, only the collect encodings are numbered. THE WIRE BREAK IS TAKEN:
+     `DATA_LEG_MIN_ADDON_VERSION = 1.6.0` (the release first numbered v1.5.2; VERSION-160-001); a v1.5.1 hlb2 on `togbank-hl` is read for its addon and
+     numbers-table versions only (the table exchange stays on `togbank-hl` for that release,
+     `BankerNumbers.lua`). Three library asks open on the thread: offer unlisted keys + table
+     first; keep an unresolvable bare offer until the table lands; fire `onOfferReceived` before
+     the P2P acts. `Tests/fullsync_spec.lua` 24/24 on the library end to end. Not run in game.
 3. **Deltas over the canon chain** (sections 3.1-3.5): the packed diff at mint; the 25-per-banker
    window; the sync-request naming the held canon; the chain reply or full-snapshot fallback; apply,
    verify against the canon, fall back on mismatch; the MULTIPC diff-base fetch.

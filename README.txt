@@ -2,7 +2,7 @@
 TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era & TBC
 ================================================================================
 
-Version: 1.5.1
+Version: 1.6.0
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -27,7 +27,19 @@ build automatically for whichever version you install it under.
 KEY FEATURES:
 - One Guild Bank window: every bank character's items as one sortable list,
   with filters across the top (search, bank, type, slot, quality, level,
-  usable by me), plus Bankers, Requests and Log tabs
+  usable by me), plus Bankers, Requests and Log tabs - and a Shop tab for a
+  guild bank that sells
+- A "Window and Text Size" slider (80% to 200%) that enlarges every TOGBank
+  window's writing, icons and rows together
+- A guild shop: estimates from your price sources, shop orders, an officer's
+  open/closed sign and a percentage discount, single items taken off sale
+- Donation points: what you mail to a bank character earns points on a board
+  the whole guild shares, valued once at a rate the officers set
+- One guild price list, published by an officer-named price authority, so
+  everyone values the same item the same way
+- One bank across sister guilds (listed in the Guild Roster addon): their
+  bank characters, orders and fills cross between the guilds on their own
+- Officers can say who runs each bank character; everyone sees it on hover
 - Search across all bank characters simultaneously
 - Request items from guild banks via in-game mail
 - One Fulfill button that collects from the bank AND attaches to mail; a
@@ -38,7 +50,10 @@ KEY FEATURES:
   soulbound item at once
 - A bank log: deposits, withdrawals, money and every request event, with who
   was on each side - and handed to TOGTools for the long history
-- Guild-wide request limits for fair resource distribution (officers only)
+- Guild-wide request limits for fair resource distribution (officers only),
+  enforced however an order is placed
+- A filled order reaches every guildmate's Requests tab the moment it is
+  filled, ahead of the bulk sync
 - Automatic synchronization with other guild members using the addon
 - Catching up on a bank you already hold sends only what changed
 - Bank contents sent as compact numbers, not item links - 85% less data
@@ -154,6 +169,32 @@ FOR REGULAR GUILD MEMBERS:
 3. Type /togbank sync to manually request latest data from bank characters
 4. The addon automatically syncs every 10 minutes
 
+SISTER GUILDS (one bank across several guilds):
+-----------------------------------------------
+If your guild lists sister guilds in the Guild Roster addon (its own settings
+say WHICH guilds are sisters -- and BOTH guilds' officers must list each other:
+a guild that lists yours without your officer listing it back gets nothing from
+you), an officer can open the bank to them: Options > TOG Bank Classic >
+Officer > "Sister-guild bank" (off by default; it syncs to the whole guild, and
+the sister guild's officers tick it on their side too).
+On, their bank characters appear on the Bankers tab, in the Banker column, in
+tooltips and in the request dialog, each tagged with its guild's name in grey,
+and their members can browse your bank characters and place orders with them
+like your own members do. Orders and fills, bank contents, and who runs each
+bank character travel between the guilds on their own (each guild's officers
+say who runs their own bank characters). Three things to know:
+- Bank contents are fetched from a sister-guild member who is online and runs
+  a current TOGBank. Until Guild Roster has seen someone from that guild online
+  (its roster pull, or the /who it sends when you click), there is nobody to
+  ask yet. Use the latest Guild Roster on both guilds' clients.
+- A sister guild's bank character is recognised by the "gbank" mark in its
+  PUBLIC note. Officer notes never leave a guild, so a bank character marked
+  only in its officer note is invisible to the sister guild.
+- The public notes reach a sister guild through the Guild Roster addon, from
+  version 0.8.0. The member of each guild who SERVES its roster to the other
+  needs that version or newer; until they have it, the sister guild's members
+  see no bank characters from yours.
+
 ================================================================================
 BASIC USAGE
 ================================================================================
@@ -183,7 +224,8 @@ REQUESTING ITEMS:
   NOTE: Guild officers can configure maximum request limits to ensure fair
   distribution of resources. If a percentage limit is set, you may not be
   able to request the full available quantity. The interface will show the
-  maximum allowed amount (e.g., "Available: 100 (Max: 50% = 50)").
+  maximum allowed amount (e.g., "Available: 100 (max 50% = 50)"). Your own
+  open orders of that item count towards it.
 
 FULFILLING ORDERS (bank characters):
   Open the Guild Bank window's Requests tab (clicking the mail frame's Send
@@ -236,6 +278,15 @@ SHARING YOUR DATA:
     automatically every 10 minutes and whenever you open the Inventory window;
     run it yourself right after a bank visit if you want the guild to see it
     sooner. Hiding or showing an item announces itself the moment it is done.
+    On a bank character the circling-arrows button beside the settings gear
+    at the bottom of the Guild Bank window does the same with one click.
+
+WHO RUNS EACH BANK CHARACTER (officers):
+  Right-click a row on the Bankers tab and type a name - guildmates' names
+  complete as you type, as in the mail window - or anything at all, such as
+  "shared account". It shows for the whole guild when anyone mouses over that
+  bank character. Each guild's officers set it for their own bank characters;
+  a sister guild's entries are shown, never overwritten.
 
 HIDING ITEMS FROM THE GUILD (bank characters):
   On your own bank's rows - your tab of the old Inventory window, or your
@@ -244,6 +295,61 @@ HIDING ITEMS FROM THE GUILD (bank characters):
   have it. Right-click it again to show it. To hide every soulbound item at
   once, tick "Hide soulbound items from the guild" in the Bank settings.
   To the bank log, hiding looks like a withdrawal and showing like a deposit.
+
+THE SHOP TAB (guild banks that SELL items):
+  Off unless an officer turns it on - "Shop", under Requests in the addon's
+  options. Most guild banks are not shops; off, nothing changes. On, the
+  Guild Bank window gains a fifth tab, Shop: the bank's items with an "Est."
+  column showing what each is worth as an ESTIMATE from your price sources
+  (type /itemdb to choose them and scan the auction house), and a hover that
+  says where the number came from and how old it is. Every figure is an
+  estimate - the bank character sets the real price when the order is
+  filled. The whole guild sees the same tab within seconds of the switch.
+  Officers: untick "Ordering open" in the shop settings (under Requests in
+  the options) and nobody can place an order until an officer ticks it
+  again - a stocktake, a pricing mistake, nobody around to fill orders.
+  Anyone who clicks an item is told the guild bank is not taking orders
+  right now. "Shop discount" beside it takes a percentage off every
+  estimate on the Shop tab: set 50 and every item shows at half its market
+  estimate, the hover says what it was taken from, and the tab's status
+  line reads "50% OFF". The bank character still sets the real price when
+  an order is filled.
+  To take ONE item off the shop list, Ctrl+right-click its row: it stays in
+  the list marked "(not for sale)" so everyone can see the bank holds it,
+  but a click on it says an officer has taken it off the shop list instead
+  of opening a request. Ctrl+right-click again to put it back on sale.
+
+DONATION POINTS:
+  What you mail to a bank character earns points. The bank character's
+  addon values it the moment it takes it out of the mail - a cautious figure
+  from its price sources (the lowest current listing or the historical
+  price, never a spike) and never less than a vendor would pay - at a rate
+  an officer sets ("Donation points per gold", under Requests in the
+  options; 1 by default). Gold mailed in counts too. The value is written
+  down once and never changes, however the market moves afterwards. Points
+  are a record for the whole guild: /togbank donations prints the board in
+  chat, and /togbank donations window opens the Donations window - the same
+  board for everyone, with your own balance on its status line. Officers can
+  correct a balance with /togbank donations adjust <name> <points> <reason>
+  - the reason is kept with the entry. Points are a record, not a currency:
+  nothing spends them yet. Scores from before this version carry forward.
+
+THE GUILD PRICE LIST (one set of prices for everyone):
+  Left alone, every client prices from its own price addons, so two bank
+  characters can value the same donation differently and the estimate you
+  see in the shop depends on what you have installed. An officer can name
+  a "Price authority" (under Requests in the options, with the shop
+  settings): that character's price sources become the guild's price list,
+  sent to everyone in the guild and kept on each client between sessions.
+  Donations are then credited from it wherever they arrive, the Shop tab
+  and the request dialog show its figures, and the hover says so - "guild
+  list (Name), min buyout, 3h old". An item the list does not know falls
+  back to your own sources; anything below what a vendor pays is still
+  valued at the vendor price. The list refreshes when the authority's price
+  data changes (at most hourly otherwise) and the Shop tab's status line
+  names whose list you are looking at and how old it is. While the
+  authority is offline everyone keeps the last list they received. Blank
+  the field and each client prices on its own again.
 
 THE BANK LOG:
   The Log tab shows what has moved in and out of the guild bank, newest
@@ -306,6 +412,15 @@ Minimap button (click)
   Take Needed collects what your open orders are short of; Take Shown collects
   everything the filter left, one after another. Cash-on-delivery mail is
   marked and left for the normal mail frame.
+
+/togbank donations
+  Prints the donation points board (top ten) and your own balance.
+  /togbank donations window opens the Donations window (the board as a
+  list); /togbank donations <name> shows one member's balance; /togbank
+  donations log [<name>] lists the entries your own bank character wrote,
+  newest first, with where each value came from; officers correct a balance with
+  /togbank donations adjust <name> <points> <reason> (a minus removes points;
+  the reason is required and kept).
 
 /togbank reset
   Resets your TOGBankClassic database (clears all stored data)
@@ -557,6 +672,15 @@ old version number. After updating, bank characters: open and close your bank
 once so its contents are published in the new form. EVERYONE IN THE GUILD
 SHOULD UPDATE.
 
+v1.6.0 moved the hand-over onto the shared DeltaSync library. A v1.5.1 client
+and a v1.6.0 client no longer exchange bank contents in either direction; a
+bank character scanned on the older client keeps showing you the last copy
+you received until its owner updates. Requests, orders, settings, donation
+points and the price list still cross. Update the whole guild together, and
+update DeltaSync with it - this version needs its latest release and says so
+once in chat if yours is out of date. The sister-guild bank also needs the
+latest Guild Roster on both guilds' clients.
+
 DEBUG LOGGING:
 --------------
 v0.8.0 introduces persistent debug logging:
@@ -662,7 +786,10 @@ OPTIONS PANEL:
   Press ESC -> Interface -> AddOns -> TOGBankClassic
 
   Available settings:
-  - General: minimap button, hide in combat, chat message volume, "Keep
+  - General: minimap button, hide in combat, "Window and Text Size" (the
+    accessibility slider: 80% to 200%, it enlarges the writing, the icons
+    and the row height of every TOGBank window together, saved for this
+    character and restored at login), chat message volume, "Keep
     syncing in a raid group" (off by default), "Open the Mailbox window
     at a mailbox" (on by default; untick it if you would rather open the
     window yourself with /togbank mailbox or the mail frame's button) and
@@ -677,9 +804,19 @@ OPTIONS PANEL:
   - Debug: persistent logging and the debug categories (tick LOG to watch
     the bank log being written)
   - (OFFICERS ONLY) Officer tab: guild-wide request limits, how long a
-    request stays open before it is archived or auto-cancelled, and the help
-    notes appended to each window's ? tooltip. Custom cancel reasons are on
-    the Requests tab's own Settings sub-tab.
+    request stays open before it is archived or auto-cancelled, "Shop"
+    (turns the Shop tab on for a guild bank that sells; off by default),
+    "Ordering open" (the shop's open/closed sign), "Shop discount" (a
+    percentage off every estimate on the Shop tab),
+    "Donation points per gold" (what a donation earns; 1 by default),
+    "Price authority" (the character whose price sources become the
+    guild's one price list; blank for none), "Sister-guild bank" (opens
+    this bank to the guilds listed as sisters in Guild Roster; off by
+    default, and both guilds' officers must switch it on), and
+    the help notes appended to each window's ? tooltip. Custom cancel
+    reasons are on the Requests tab's own Settings sub-tab. Every officer
+    setting knows which change is newest, so a bank character who logs in
+    holding old values cannot undo yours.
 
 WINDOW TRANSPARENCY:
 --------------------------------------
@@ -703,19 +840,26 @@ characters with officer note viewing permissions.
 
 To configure request limits:
 1. Press ESC -> Interface -> AddOns -> TOGBankClassic
-2. Click the "Requests" tab (only visible to officers)
+2. Click the "Officer" section (only visible to officers)
 3. Adjust the "Maximum Request Amount" slider (1% - 100%)
 4. Changes automatically sync to all guild members
 
 How it works:
-- Setting determines the maximum percentage of available inventory that
-  can be requested at once
+- Setting determines the maximum percentage of a bank character's stock of
+  an item that one member can have on order
 - Example: If set to 50% and there are 100 items available, members can
   request up to 50 items maximum
+- A member's open orders count: someone with 30 on order can ask for 20
+  more, not another 50. Once an order is mailed or cancelled, it stops
+  counting
+- The limit applies however the order is placed - the request dialog, or
+  another addon's request button (such as TOG Profession Master's [Bank])
 - Single items (gear, weapons) are protected - members can always request
   at least 1 if available, regardless of percentage
 - The setting syncs guild-wide, so all members use the same limits
-- Changes take effect immediately for all online guild members
+- Changes take effect immediately for all online guild members, and a
+  member who was offline gets the new limit the moment they log in, as
+  long as a bank character or officer is online to hand it over
 
 Common use cases:
 - Set to 50% during raid prep to share limited consumables fairly
@@ -755,6 +899,59 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.6.0:
+--------------
+NEW FEATURES:
+- A Shop tab for guild banks that sell: estimates from your price sources,
+  shop orders that remember the estimate shown, an officer's open/closed
+  sign, a percentage discount, single items taken off sale (Ctrl+right-click)
+- Donation points: what you mail to a bank character earns points, valued
+  once when it arrives; /togbank donations and a Donations window show the
+  board; officers correct a balance with a kept reason
+- One guild price list from an officer-named price authority
+- One bank across sister guilds listed in Guild Roster: their bank
+  characters, orders, fills and bank contents cross between the guilds
+- Officers say who runs each bank character (right-click on the Bankers tab)
+- "Window and Text Size" slider, 80% to 200%, per character
+- A share button on the Guild Bank window for bank characters
+- Shop tab carries the Browse tab's full filter set
+
+IMPROVEMENTS:
+- Request limits are enforced however an order is placed, count your open
+  orders, and reach a member the moment they log in
+- Officer settings are in sections (requests, shop, donations and pricing,
+  sister guilds) and each setting knows which change is newest
+- Browse and Shop read as a waterfall: Type, Qty, Lvl, item, status dot,
+  banker; Type and Qty columns only as wide as the longest entry
+- A split lands on the order's own partial stack, so an order goes as one
+  attachment with one postage
+- Every ? help is current; the Donations window shows points and gold value
+- Items with a random suffix are one item everywhere: in the mail, the log,
+  the search, the bag highlight and the Requests hover; 3.7 MB of unused
+  item data no longer loads at login; the Inventory window draws at once
+
+BUG FIXES:
+- Sister guilds' bank contents never arrived, and who-runs entries were
+  overwritten across guilds
+- Members could exceed the request limit from another addon's button
+- A version reply about one bank settled a query about another
+- Donations through the Mailbox window earned no points; a stack could be
+  credited twice on a slow server; transfers between bank characters counted
+- Officer settings reached only higher ranks, could be reverted by a stale
+  bank character, or reopened ordering with a discount change
+- A shared account's donation records wiped each other's; points split
+  across spellings of one name; Unique-Equipped items treated as Unique
+- The Shop tab did not repaint on a new scan; bank characters took minutes to
+  fill in on a busy login; a suffixed item in the mail became a second row
+
+COMPATIBILITY: the way clients pass bank contents around moved onto the shared
+sync library the addon ships with. A client on v1.5.1 or earlier and one on
+this version no longer exchange bank contents in either direction (requests,
+orders, settings, donation points and the price list still cross). Update the
+whole guild together, and update DeltaSync with it. A bank character with a
+suffixed or enchanted item in its mail is fetched once more by everyone after
+the update, then settles.
 
 Version 1.5.0:
 --------------

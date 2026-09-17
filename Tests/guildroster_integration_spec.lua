@@ -87,7 +87,7 @@ describe("LibGuildRoster name normalization", function()
 	it("agrees with TOGBank's own normalizer on the shapes TOGBank stores", function()
 		env.stubOutput()
 		env.loadFile("Modules/Constants.lua")
-		env.loadFile("Modules/Guild.lua")
+		env.loadFile("Modules/Guild.lua"); TOGBankClassic_Bank = {}   -- SPEC-ALONE-001: Guild:GetPlayer caches the player on it
 		local Guild = TOGBankClassic_Guild
 		for _, name in ipairs({ "Bob", "Bob-Testrealm", "Bob-Otherrealm", "  Bob  " }) do
 			assert.equal(Guild:NormalizeName(name), lib:NormalizeName(name),
@@ -193,7 +193,7 @@ describe("Guild roster build via LibGuildRoster", function()
 	local function loadGuild()
 		env.stubOutput()
 		env.loadFile("Modules/Constants.lua")
-		env.loadFile("Modules/Guild.lua")
+		env.loadFile("Modules/Guild.lua"); TOGBankClassic_Bank = {}   -- SPEC-ALONE-001: Guild:GetPlayer caches the player on it
 		TOGBankClassic_Performance = { RecordOperation = function() end }
 		Guild = TOGBankClassic_Guild
 		Guild.memberRoster, Guild.onlineMembers, Guild.banksCache = {}, {}, nil
@@ -305,7 +305,7 @@ describe("Guild presence transition counters", function()
 		env.reset()
 		env.stubOutput()
 		env.loadFile("Modules/Constants.lua")
-		env.loadFile("Modules/Guild.lua")
+		env.loadFile("Modules/Guild.lua"); TOGBankClassic_Bank = {}   -- SPEC-ALONE-001: Guild:GetPlayer caches the player on it
 		Guild = TOGBankClassic_Guild
 		Guild.memberRoster, Guild.onlineMembers, Guild.recentlySeen = {}, {}, {}
 		Guild._rosterCallbacksBound = nil
@@ -438,7 +438,7 @@ describe("ROSTER-004: explaining an empty banker list", function()
 		env.reset()
 		env.stubOutput()
 		env.loadFile("Modules/Constants.lua")
-		env.loadFile("Modules/Guild.lua")
+		env.loadFile("Modules/Guild.lua"); TOGBankClassic_Bank = {}   -- SPEC-ALONE-001: Guild:GetPlayer caches the player on it
 		env.freshGuildRoster()
 		Guild = TOGBankClassic_Guild
 		Guild.memberRoster, Guild.banksCache = {}, nil

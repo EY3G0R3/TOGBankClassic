@@ -50,27 +50,35 @@ Mailbox.MONEY_ICON = 133784
 --- Every attachment in the inbox, one row each, plus one row per mail that carries money. Rows
 --- are in mail order, attachment order. A COD mail's rows carry `cod` (copper) and are not
 --- takeable from here; a GM mail is skipped entirely, as Blizzard's Open All skips it.
----@return table rows  array of { mailIndex, attachmentIndex|nil, itemID, name, link, icon, count,
----   quality, sender, subject, daysLeft, cod, money, needed }
+---@return table rows  array of { mailIndex, attachmentIndex|nil, itemID, suffix, name, link, icon,
+---   count, quality, sender, subject, daysLeft, cod, money, needed }
 function Mailbox:BuildRows()
 	local rows = {}
 	local numItems = GetInboxNumItems() or 0
 	local wanted = self:WantedByOpenOrders()
+	local Scan = TOGBankClassic_Inventory_Scan
 	for i = 1, numItems do
-		local _, _, sender, subject, money, cod, daysLeft, itemCount, _, _, _, _, isGM = GetInboxHeaderInfo(i)
+		-- `wasReturned` (the tenth return) rides the row: a mail of ours that bounced back is not a
+		-- gift, and TakeRow's donation credit reads it.
+		local _, _, sender, subject, money, cod, daysLeft, itemCount, _, wasReturned, _, _, isGM = GetInboxHeaderInfo(i)
 		if sender and not isGM then
 			cod = cod or 0
+			wasReturned = wasReturned and true or false
 			if itemCount and itemCount > 0 then
 				for j = 1, (ATTACHMENTS_MAX_RECEIVE or 16) do
 					local name, itemID, icon, count, quality = GetInboxItem(i, j)
 					if itemID then
 						local link = GetInboxItemLink(i, j)
+						-- LINK-AUDIT-001 step 3 (docs/LINK_AUDIT.md 3.6): the link is parsed at this edge, once,
+						-- and "needed" is decided on id + suffix -- a request for one random-suffix variant
+						-- lit every variant of the base item when this keyed by id alone.
+						local _, suffix = Scan.parseLink(link)
 						rows[#rows + 1] = {
 							mailIndex = i, attachmentIndex = j,
-							itemID = itemID, name = name or ("Item " .. itemID), link = link, icon = icon,
+							itemID = itemID, suffix = suffix, name = name or ("Item " .. itemID), link = link, icon = icon,
 							count = count or 1, quality = quality or 1,
 							sender = sender, subject = subject or "", daysLeft = daysLeft or 0,
-							cod = cod, needed = wanted[itemID] or false,
+							cod = cod, wasReturned = wasReturned, needed = wanted[Mailbox.OrderKey(itemID, suffix)] or false,
 						}
 					end
 				end
@@ -80,7 +88,7 @@ function Mailbox:BuildRows()
 					mailIndex = i, attachmentIndex = nil,
 					itemID = nil, name = "Money", link = nil, icon = Mailbox.MONEY_ICON, count = 1, quality = 1,
 					sender = sender, subject = subject or "", daysLeft = daysLeft or 0,
-					cod = cod, money = money, needed = false,
+					cod = cod, wasReturned = wasReturned, money = money, needed = false,
 				}
 			end
 		end
@@ -111,7 +119,12 @@ function Mailbox:BuildMails()
 	return mails
 end
 
---- itemID -> true for every item an OPEN order addressed to this character still wants. What the
+--- The identity an open order and an attachment are matched on: Record.requestKey (item id + random
+--- suffix, enchant 0), the one spelling ItemHighlight and the fulfil matchers use too
+--- (docs/LINK_AUDIT.md section 4). A request with no suffixID is the plain item.
+Mailbox.OrderKey = TOGBankClassic_Inventory_Record.requestKey
+
+--- OrderKey -> true for every item an OPEN order addressed to this character still wants. What the
 --- Requests window and ItemHighlight call "needed"; spelled here on the request record directly
 --- because the mailbox is the one place a banker sees the item before it is in their bags.
 function Mailbox:WantedByOpenOrders()
@@ -124,7 +137,7 @@ function Mailbox:WantedByOpenOrders()
 		if type(req) == "table" and req.itemID and req.status ~= "cancelled" and req.status ~= "complete"
 				and (G:NormalizeName(req.bank) == me) then
 			local qty, done = tonumber(req.quantity) or 0, tonumber(req.fulfilled) or 0
-			if qty == 0 or done < qty then out[tonumber(req.itemID)] = true end
+			if qty == 0 or done < qty then out[Mailbox.OrderKey(req.itemID, req.suffixID)] = true end
 		end
 	end
 	return out
@@ -136,30 +149,32 @@ end
 --- WantedByOpenOrders (open, mine, itemID known), summed; the bags are what BankCollectStep
 --- measures its pulls against too. Bags are read through Bank:CountItemInBags when the module is
 --- up; without it (a bare spec) the whole owed amount stands.
----@return table owed itemID -> units short
+---@return table owed OrderKey -> units short
 function Mailbox:OwedByOpenOrders()
 	local owed = {}
 	local G = TOGBankClassic_Guild
 	local info = G and G.Info
 	if not info or not info.requests then return owed end
 	local me = G:GetNormalizedPlayer()
-	local names = {}
+	local ids, suffixes, names = {}, {}, {}
 	for _, req in pairs(info.requests) do
 		if type(req) == "table" and req.itemID and req.status ~= "cancelled" and req.status ~= "complete"
 				and (G:NormalizeName(req.bank) == me) then
 			local qty, done = tonumber(req.quantity) or 0, tonumber(req.fulfilled) or 0
 			if qty > done then
-				local id = tonumber(req.itemID)
-				owed[id] = (owed[id] or 0) + (qty - done)
-				names[id] = names[id] or req.item
+				local key = Mailbox.OrderKey(req.itemID, req.suffixID)
+				owed[key] = (owed[key] or 0) + (qty - done)
+				ids[key], suffixes[key] = tonumber(req.itemID), tonumber(req.suffixID)
+				names[key] = names[key] or req.item
 			end
 		end
 	end
 	local Bank = TOGBankClassic_Bank
 	if Bank and Bank.CountItemInBags then
-		for id, units in pairs(owed) do
-			local inBags = Bank:CountItemInBags(names[id], id) or 0
-			owed[id] = math.max(0, units - inBags)
+		for key, units in pairs(owed) do
+			-- The bags are counted for the same variant (REQ-003's rule in Bank:MatchContainers).
+			local inBags = Bank:CountItemInBags(names[key], ids[key], suffixes[key]) or 0
+			owed[key] = math.max(0, units - inBags)
 		end
 	end
 	return owed
@@ -178,10 +193,11 @@ function Mailbox:NeededAttachments(mails)
 		local m = mails[i]
 		if (m.cod or 0) == 0 then
 			for _, a in ipairs(m.attachments) do
-				local need = a.itemID and owed[a.itemID]
+				local key = a.itemID and Mailbox.OrderKey(a.itemID, a.suffix)
+				local need = key and owed[key]
 				if need and need > 0 then
 					out[#out + 1] = a
-					owed[a.itemID] = need - (a.count or 1)
+					owed[key] = need - (a.count or 1)
 				end
 			end
 		end
@@ -251,15 +267,30 @@ end
 -- ─── Taking ───────────────────────────────────────────────────────────────────
 
 --- Take one row now. Returns false, reason when it cannot (COD, full bags).
+---
+--- UX-WATERFALL-001 / STORE-007: a take from here CREDITS a donation exactly as the Donation
+--- popup's Open does -- through Mail:IsDonation / CreditMoney / CreditItem, the one rule -- because
+--- this window is the mailbox for a bank character now and the popup stands aside for it
+--- (Mail:Scan). Until this, a gift taken through this window earned no points at all: the credit
+--- lived only in the popup's path, and a banker with this window open (the default since v1.5.0)
+--- never went through it. The value is read BEFORE the take, off the link the row carries, so a
+--- stack that has already left the mail by the time the credit runs is still valued.
 function Mailbox:TakeRow(row)
 	if not row then return false, "nothing to take" end
 	if (row.cod or 0) > 0 then return false, "cash-on-delivery mail is taken from the mail frame" end
+	local Mail = TOGBankClassic_Mail
+	local credit = Mail and Mail.IsDonation and Mail:IsDonation(row.sender, row.wasReturned)
 	if row.attachmentIndex then
 		if TOGBankClassic_Bank and TOGBankClassic_Bank.HasInventorySpace and not TOGBankClassic_Bank:HasInventorySpace() then
 			return false, "bags are full"
 		end
+		if credit and row.link then
+			local _, _, _, _, _, _, _, _, _, _, price = GetItemInfo(row.link)
+			Mail:CreditItem(row.sender, row.link, row.name, row.count or 1, price or 0)
+		end
 		TakeInboxItem(row.mailIndex, row.attachmentIndex)
 	else
+		if credit and (row.money or 0) > 0 then Mail:CreditMoney(row.sender, row.money) end
 		TakeInboxMoney(row.mailIndex)
 	end
 	return true
@@ -358,11 +389,22 @@ end
 -- button on every MAIL row that returns the mail to its sender. Painted by OnRowRender, which
 -- reads the entry off the row on every render (the RowList pools rows by position).
 Mailbox.RETURN_ICON = "Interface\\Icons\\INV_Letter_15"   -- the envelope Fulfill Oldest uses
+Mailbox.RETURN_SIZE, Mailbox.RETURN_INSET = 14, 2
+
+--- VISIBILITY-001 part 2: the envelope's size and inset at the accessibility scale. At build and on
+--- the scale signal; module-level, reading the button off the owner argument (weak-keyed table).
+local function layoutReturnButton(_, _, btn)
+	local S = function(px) return TOGBankClassic_UI:UIScaled(px) end
+	btn:SetSize(S(Mailbox.RETURN_SIZE), S(Mailbox.RETURN_SIZE))
+	btn:ClearAllPoints()
+	btn:SetPoint("LEFT", btn:GetParent(), "LEFT", S(Mailbox.RETURN_INSET), 0)
+end
+
 local function buildReturnCell(row)
 	local cell = CreateFrame("Frame", nil, row)
 	local btn = CreateFrame("Button", nil, cell)
-	btn:SetSize(14, 14)
-	btn:SetPoint("LEFT", cell, "LEFT", 2, 0)
+	layoutReturnButton(nil, nil, btn)
+	TOGBankClassic_UI:OnUIScaleChanged(btn, layoutReturnButton)
 	btn:SetNormalTexture(Mailbox.RETURN_ICON)
 	btn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 	btn:SetScript("OnClick", function()

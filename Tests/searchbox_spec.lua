@@ -178,6 +178,10 @@ describe("Requests: ONE search across every column", function()
 		R:Init()
 		env.defineItem(15260, { name = "Stone Hammer" })
 	end)
+	-- The Appearance-tab example below runs the real Options:Init; hand its Blizzard-options
+	-- registration back, or the next file to Init (raidvisibility_spec, mailbox_spec -- whichever
+	-- sorts after this one) is "already been added". SPEC-ORDER-001.
+	after_each(env.releaseBlizOptions)
 
 	local function req(over)
 		local r = { id = "r1", date = 1757000000, requester = "Galdof-Azuresong", bank = "Togstone-Azuresong",
@@ -185,6 +189,20 @@ describe("Requests: ONE search across every column", function()
 		for k, v in pairs(over or {}) do r[k] = v end
 		return r
 	end
+
+	-- HELP-CURRENT-001 (the operator, 2026-09-15: "lets get all the i tooltips updated on all the
+	-- pages to be current"): the Requests help names the sub-tabs, the filters, the shop order's
+	-- estimate, the stale-version mark and the bottom-row buttons.
+	it("the '?' text is current: sub-tabs, the search and dropdowns, the guild tag, the estimate on the date, the amber version, the envelope and the broom", function()
+		GameTooltip:ClearLines()
+		R:AddHelpLines()
+		local text = {}
+		for _, l in ipairs(GameTooltip:GetLines()) do text[#text + 1] = l.left or "" end
+		text = table.concat(text, "\n")
+		for _, phrase in ipairs({ "Archive", "Settings", "search box", "Requester", "Bank", "sister guild", "shop order", "estimate", "amber version", "Fulfill Oldest", "Cancel Stale", "Fulfill:", "Mark hand-off", "Cancel:" }) do
+			assert.truthy(text:find(phrase, 1, true), "the Requests help does not say: " .. phrase)
+		end
+	end)
 
 	it("searches the text a column SHOWS: the formatted date, the names, the item's display name", function()
 		local r = req()

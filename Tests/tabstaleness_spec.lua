@@ -27,6 +27,50 @@ local T      = 1757000000
 
 local LIGHT = { "Modules/Constants.lua", "Modules/Item.lua", "Modules/DeltaComms.lua", "Modules/Bank.lua", "Modules/Guild.lua" }
 
+--- The library's numbered P2P on this client's host (LIBREQ-DS-008 part 2: the broadcast, the offer
+--- and the version query are DeltaSync's; Modules/P2P.lua is only TOGBank's hooks).
+local function p2p()
+	local lib = TOGBankClassic_P2P:Lib()
+	assert.is_table(lib, "precondition: the host has no numbered P2P")
+	return lib
+end
+
+local function host() return TOGBankClassic_Core:DeltaHost() end
+
+--- N6 (2026-09-14): the KEYED `hash-list-broadcast` is deleted, so a spec broadcast is the numbered
+--- hlb2 a v1.4.1+ peer sends. Every name in `alts` is named by the number THIS client's table holds
+--- for it; a name the table lacks is first numbered (the table is EXTENDED, never replaced -- an
+--- example that set numbers by hand keeps them) unless it is in `unnumbered`, when it goes out under
+--- a number this client cannot resolve, as a peer with a newer table would send it. A name whose
+--- claim carries NO canon is not on the numbered wire at all (an entry is `<number><canon>`): it is
+--- simply UNMENTIONED, which is what "the peer holds no version" means there. Returns the body.
+local function hlb2Body(sender, alts, unnumbered)
+	local BN = TOGBankClassic_BankerNumbers
+	unnumbered = unnumbered or {}
+	local names, missing = {}, {}
+	for name, claim in pairs(alts) do
+		if claim.hashV2 ~= nil then
+			names[#names + 1] = name
+			if not BN:NumberOf(name) and not unnumbered[name] then missing[#missing + 1] = name end
+		end
+	end
+	table.sort(names); table.sort(missing)
+	if #missing > 0 then
+		local t, maxN = {}, 0
+		for name, n in pairs(TOGBankClassic_Guild.Info.roster.numbers or {}) do t[name] = n; if n > maxN then maxN = n end end
+		for _, name in ipairs(missing) do maxN = maxN + 1; t[name] = maxN end
+		local v = (BN:Version() or 0) + 1
+		assert.is_true(BN:Adopt({ v = v, n = maxN + 1, t = t }, sender), "the numbers table was not adopted")
+	end
+	local entries = {}
+	for i, name in ipairs(names) do
+		entries[#entries + 1] = { number = BN:NumberOf(name) or BN:Format(9000 + i), canon = alts[name].hashV2 }
+	end
+	return TOGBankClassic_Core:SerializeWithChecksum({
+		type = "hlb2", v = BN:Version(), banker = sender, isBanker = false, e = BN:EncodeEntries(entries),
+	})
+end
+
 -- ---------------------------------------------------------------------------------------------
 -- The rule, in isolation.
 -- ---------------------------------------------------------------------------------------------
@@ -230,31 +274,38 @@ describe("the tab colour through the real receive paths", function()
 		}, GUILD)
 		assert.is_true(TOGBankClassic_Guild:IsBank(BANKER) and TOGBankClassic_Guild:IsBank(OTHER),
 			"precondition: the roster did not come up; every path below would refuse silently")
+		-- The numbered wire names bankers by NUMBER: every client in these examples holds the same
+		-- table (BANKER 0001, OTHER 0002), so a claim resolves to a key on receipt.
+		TOGBankClassic_BankerNumbers:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
+		assert.equal("0001", TOGBankClassic_BankerNumbers:NumberOf(BANKER), "precondition: the numbers table was not adopted")
 	end
 
+	--- `hash-list-reply` on togbank-hl (LIBREQ-DS-008: Chat hands it to the library as a broadcast).
 	local function hashListReplyFrom(sender, alts)
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-reply", alts = alts })
-		TOGBankClassic_Chat:OnCommReceived("togbank-hlr", body, "WHISPER", sender)
-	end
-
-	-- N6: the KEYED offer / broadcast are what old-build peers send; off by default since v1.5.0 and
-	-- accepted only under this switch. The paths they feed are shared with the numbered forms.
-	local function hashOfferFrom(sender, alts)
-		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
-		TOGBankClassic_P2PSession:BeginCollectWindow({})
-		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = alts })
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", sender)
 	end
 
+	-- N6 (2026-09-14): the KEYED `hash-offer` / `hash-list-broadcast` wires these used to ride are
+	-- DELETED -- the door drops them. LIBREQ-DS-008 part 2: a canon-bearing claim from ONE peer by
+	-- whisper is the library's `ver-reply` (a peer answering "this is the version I hold") on the
+	-- host's HANDSHAKE prefix -- the library reports every entry through onAdvertised whether or
+	-- not a query asked for it; the numbered hash-offer2 carries bare numbers and no canons, so it
+	-- could not turn a tab red on its own. The broadcast is the numbered hlb2 on the host's OFFER
+	-- prefix, encoded exactly as a peer on this build sends it.
+	local function hashOfferFrom(sender, alts)
+		local BN = TOGBankClassic_BankerNumbers
+		local entries = {}
+		for name, claim in pairs(alts) do
+			if claim.hashV2 ~= nil then entries[#entries + 1] = { number = BN:NumberOf(name), canon = claim.hashV2 } end
+		end
+		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "ver-reply", e = BN:EncodeEntries(entries) })
+		host():OnComm_HANDSHAKE(host().prefixes.HANDSHAKE, body, "WHISPER", sender)
+	end
+
+	--- A numbered broadcast naming every alt in `alts` with its `hashV2` canon (hlb2Body above).
 	local function hashListBroadcastFrom(sender, alts)
-		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
-		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
-		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = 0.15
-		local body = TOGBankClassic_Core:SerializeWithChecksum({
-			type = "hash-list-broadcast", alts = alts, banker = sender, isBanker = false,
-		})
-		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "GUILD", sender)
-		env.advance(1)   -- PERF-020: batched
+		host():OnComm_OFFER(host().prefixes.OFFER, hlb2Body(sender, alts), "GUILD", sender)
 	end
 
 	-- INV2-RETIRE-003: the content is in the V2 store (standUpClient attaches one); the record
@@ -277,36 +328,42 @@ describe("the tab colour through the real receive paths", function()
 		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(OTHER)))
 	end)
 
-	it("turns red on a hash-offer that mentions a newer canon", function()
+	it("turns red on a version reply that mentions a newer canon", function()
 		client("Bankchar")
 		holdCurrent(OTHER, T)
 		hashOfferFrom(PEER, { [OTHER] = { hash = 0x10, hashV2 = C(T + 60, 0x21), updatedAt = T + 60, mailHash = 0 } })
 		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(OTHER)))
 	end)
 
-	-- N6: the KEYED forms are off by default from v1.5.0 -- the operator's "comment it out first".
-	-- The same messages that turn the tab red above do NOTHING with the switch at its default, and
-	-- the numbered forms are untouched by it.
-	it("IGNORES a keyed hash-offer and hash-list broadcast while legacyKeyedReceive is off (N6)", function()
+	-- N6: the KEYED forms went OFF by default in v1.5.0 (the operator's "comment it out first") and
+	-- were DELETED on 2026-09-14 ("then we can do this work"). The same messages that turn the tab
+	-- red above do NOTHING now -- there is no switch to reopen them -- and the numbered form lands.
+	-- LIBREQ-DS-008 part 2: so does a v1.5.1 client's hlb2 / hash-offer2 on togbank-hl, the prefix
+	-- this build no longer P2Ps on -- read for its versions, its claims never reach the library.
+	it("DROPS a keyed hash-offer and hash-list broadcast at the door, with no switch to reopen them (N6)", function()
 		client("Bankchar")
 		holdCurrent(OTHER, T)
-		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
-		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = 0.15
-		assert.is_false(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"), "precondition: the switch ships off")
+		assert.is_nil(TOGBankClassic_Switches.registry.legacyKeyedReceive, "the grace-period switch is back")
 		local newer = { [OTHER] = { hash = 0x10, hashV2 = C(T + 60, 0x21), updatedAt = T + 60, mailHash = 0 } }
-		TOGBankClassic_P2PSession:BeginCollectWindow({})
+		local P2P = p2p()
+		P2P:BeginCollectWindow()
+		local reached = 0
+		-- Counted on the instance; whatever OnBroadcast the instance resolves (the library's class
+		-- method) is kept underneath and put back after.
+		local prevOffer, prevBroadcast = rawget(P2P, "OnOffer"), rawget(P2P, "OnBroadcast")
+		P2P.OnOffer = function(...) reached = reached + 1; return (prevOffer or getmetatable(P2P).__index.OnOffer)(...) end
+		P2P.OnBroadcast = function(...) reached = reached + 1; return (prevBroadcast or getmetatable(P2P).__index.OnBroadcast)(...) end
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = newer }), "WHISPER", PEER)
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-broadcast", alts = newer, banker = PEER, isBanker = false }), "GUILD", PEER)
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", hlb2Body(PEER, newer), "GUILD", PEER)
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer2", v = 5, n = TOGBankClassic_BankerNumbers:EncodeNumbers({ "0002" }) }), "WHISPER", PEER)
 		env.advance(1)
-		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(OTHER)), "a keyed message moved the tab with the switch off")
-		assert.equal(0, #TOGBankClassic_Chat.hashBroadcastQueue, "a keyed broadcast was queued with the switch off")
-		-- The numbered form still lands.
-		local BN = TOGBankClassic_BankerNumbers
-		BN:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
-		TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum({ type = "hlb2", v = 5, banker = PEER, isBanker = false,
-			e = BN:EncodeEntries({ { number = "0002", canon = C(T + 60, 0x21) } }) }), "GUILD", PEER)
-		env.advance(1)
-		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(OTHER)), "the numbered broadcast was gated too")
+		P2P.OnOffer, P2P.OnBroadcast = prevOffer, prevBroadcast
+		assert.equal(0, reached, "a togbank-hl claim reached the library")
+		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(OTHER)), "a keyed message moved the tab")
+		-- The numbered form lands, on the host's prefix.
+		hashListBroadcastFrom(PEER, newer)
+		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(OTHER)), "the numbered broadcast was dropped too")
 	end)
 
 	it("turns red on a hash-list BROADCAST that mentions a newer canon -- the earliest signal there is", function()
@@ -394,13 +451,13 @@ describe("the tab colour through the real receive paths", function()
 		env.reset()
 		client("Otherguy")
 		local BN = TOGBankClassic_BankerNumbers
-		BN:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
 		holdCurrent(BANKER, T)
 		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)), "precondition")
-		TOGBankClassic_Core.SendWhisper = function() return true end   -- the version query goes nowhere here
+		TOGBankClassic_Core.SendCommMessage = function() end   -- the version query goes nowhere here
 		-- The offer comes from the banker itself: on this client PEER is us, and our own echo is dropped.
+		-- LIBREQ-DS-008 part 2: on the host's OFFER prefix, where the library reads it.
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer2", v = 5, n = BN:EncodeNumbers({ "0001" }) })
-		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", BANKER)
+		host():OnComm_OFFER(host().prefixes.OFFER, body, "WHISPER", BANKER)
 		local state, _, _, who = TOGBankClassic_Guild:GetAltStaleness(BANKER)
 		assert.equal("offered", state, "a bare offer for a bank we hold left the tab yellow")
 		assert.equal(BANKER, who)
@@ -453,10 +510,12 @@ describe("the tab colour through the real receive paths", function()
 		hashListReplyFrom(BANKER, { [OTHER] = {
 			hash = 808855588, hashV2 = C(1789007890, 486957224), updatedAt = 1789007890, mailHash = 0,
 		} })
+		-- LIBREQ-DS-008 part 2: the ask is the library's sync-request to the replier (the pull path's
+		-- GUILD alt-request is gone), on the host's HANDSHAKE prefix.
 		local asked = false
 		for _, m in ipairs(sent) do
 			local ok, data = TOGBankClassic_Core:DeserializeWithChecksum(m.text)
-			if ok and type(data) == "table" and data.type == "alt-request" and data.name == OTHER then asked = true end
+			if ok and type(data) == "table" and data.type == "sync-request" and data.itemKey == OTHER then asked = true end
 		end
 		assert.is_true(asked,
 			"revision 1 matched and the client did not ask for the banker's canon -- it can never " ..
@@ -495,30 +554,25 @@ describe("answering a hash-list broadcast with an offer", function()
 	end
 
 	local sent
-	local function broadcastFrom(sender, alts)
-		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
-		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = 0.15
+	local function broadcastFrom(sender, alts, unnumbered)
 		sent = {}
-		TOGBankClassic_Core.SendWhisper = function(_, prefix, text, target)
+		-- LIBREQ-DS-008 part 2: the offer leaves through the host (Core:SendCommMessage on its OFFER
+		-- prefix) for a listed number we hold newer for and for a number the broadcast left out alike
+		-- (both the library's since LIBREQ-DS-008 ask 1) -- one shape, one prefix.
+		TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, _, target)
 			local ok, data = TOGBankClassic_Core:DeserializeWithChecksum(text)
 			sent[#sent + 1] = { prefix = prefix, data = ok and data or nil, target = target }
-			return true   -- the real one returns true for an online target, and callers branch on it
 		end
-		-- N6: the keyed broadcast is accepted only under the switch; the OFFER these examples assert
-		-- on is the numbered hash-offer2, which is what the shared path emits regardless.
-		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
-		local body = TOGBankClassic_Core:SerializeWithChecksum({
-			type = "hash-list-broadcast", alts = alts, banker = sender, isBanker = false,
-		})
-		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "GUILD", sender)
-		env.advance(1)
+		-- N6 (2026-09-14): the keyed broadcast is deleted; this is the numbered hlb2 (hlb2Body), and
+		-- the OFFER these examples assert on is the numbered hash-offer2 the shared path emits.
+		host():OnComm_OFFER(host().prefixes.OFFER, hlb2Body(sender, alts, unnumbered), "GUILD", sender)
 	end
 
 	--- P2P-035: the offer is bare banker numbers ("we want to keep the offer hashless and TINY").
 	--- Decoded back to `{ [name] = true }` so the examples below read as they did: WHO was offered.
 	local function offered()
 		for _, m in ipairs(sent) do
-			if m.prefix == "togbank-hl" and m.data and m.data.type == "hash-offer2" then
+			if m.prefix == host().prefixes.OFFER and m.data and m.data.type == "hash-offer2" then
 				local BN = TOGBankClassic_BankerNumbers
 				local names = {}
 				for _, num in ipairs(BN:DecodeNumbers(m.data.n)) do names[BN:NameOf(num)] = true end
@@ -576,14 +630,19 @@ describe("answering a hash-list broadcast with an offer", function()
 	it("does not offer a banker that has no number yet", function()
 		TOGBankClassic_Guild.Info.roster.numbers[OTHER] = nil
 		hold(OTHER, C(T + 60, 0x21), T + 60)
-		broadcastFrom(PEER, { [OTHER] = { hash = 0x10, hashV2 = C(T, 0x20), updatedAt = T, mailHash = 0 } })
+		-- The peer names OTHER under a number this client cannot resolve (its table is ahead), so
+		-- OTHER is unmentioned here, held newer, and still not offerable by number.
+		broadcastFrom(PEER, { [OTHER] = { hash = 0x10, hashV2 = C(T, 0x20), updatedAt = T, mailHash = 0 } }, { [OTHER] = true })
 		assert.is_nil(offered(), "an unnumbered banker was put on the numbered wire")
 	end)
 
 	it("is one chunk for a whole roster of newer banks, and carries the table version", function()
+		local banks = {}
 		TOGBankClassic_Guild.IsBank = function() return true end
+		TOGBankClassic_Guild.GetBanks = function() return banks end
 		for i = 1, 30 do
 			local name = string.format("Bank%02d-Testrealm", i)
+			banks[#banks + 1] = name
 			TOGBankClassic_Guild.Info.roster.numbers[name] = i + 2
 			hold(name, C(T + 60, i), T + 60)
 		end

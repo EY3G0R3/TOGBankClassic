@@ -37,7 +37,7 @@ local function loadRequestStack()
 	env.stubOutput()
 	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
-	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")   -- DS-HOST-001: Core needs the host
+	env.loadDeltaSync()   -- DS-HOST-001: Core needs the host
 
 	env.loadModules({
 		"Modules/Constants.lua",
@@ -186,10 +186,12 @@ local function deliver(msg, from)
 	TOGBankClassic_Chat:OnCommReceived(msg.prefix, msg.body, msg.dist or "GUILD", from or ME)
 end
 
-local function addOrder(item, qty)
-	return TOGBankClassic_Guild:AddRequest({
-		requester = ME, bank = PEER, item = item, quantity = qty or 1,
-	})
+--- Place an order. `extra` merges further fields onto the request -- `{ shopOrder = true }` while
+--- the shop is selling (SHOP-NOFREE-001), because a plain request is then refused by design.
+local function addOrder(item, qty, extra)
+	local req = { requester = ME, bank = PEER, item = item, quantity = qty or 1 }
+	for k, v in pairs(extra or {}) do req[k] = v end
+	return TOGBankClassic_Guild:AddRequest(req)
 end
 
 local function orderFor(item)
@@ -480,6 +482,531 @@ describe("REQUEST CHAIN: a mutation reaches another player's list", function()
 			"never met the tuples-only guard on togbank-d4, and the no-backwards-compatibility " ..
 			"directive deleted it -- if it is back, the directive is being enforced on one " ..
 			"inventory path and not the other")
+	end)
+end)
+
+-- ─── STORE-006: the shop's open/closed sign ────────────────────────────────────
+--
+-- GUILD_STORE.md 4.6, build-order step 1 (the operator, 2026-09-14: "can we not do this work now?").
+-- One officer-set boolean on the guild-synced settings; off, Guild:AddRequest mints nothing. Run on
+-- the REAL Guild + RequestLog + Chat dispatch of this fixture, with the wire captured, so the
+-- broadcast is the shipped togbank-hl payload and the receive is the shipped ApplyRemoteSettings.
+describe("STORE-006: the open/closed sign", function()
+	before_each(function()
+		env.reset(); loadRequestStack()
+		-- BroadcastSettings sends only for a banker, officer or GM; make ME the officer.
+		TOGBankClassic_Guild.SenderIsOfficer = function(_, n) return n == ME end
+		TOGBankClassic_Guild.SenderIsGM = function() return false end
+		-- SHOP-TAB-001: the sign and the list exist only while the guild's shop is on. On here;
+		-- the example below is the one that turns it off.
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+	end)
+
+	local function infos()
+		local out = {}
+		for _, c in ipairs(TOGBankClassic_Output.calls) do if c.level == "Info" then out[#out + 1] = c[1] end end
+		return out
+	end
+
+	--- The settings table inside the last guild-settings broadcast, decoded.
+	local function lastSettingsBroadcast()
+		for i = #sent, 1, -1 do
+			local msg = sent[i]
+			if msg.prefix == "togbank-hl" then
+				local ok, decoded = TOGBankClassic_Core:DeserializeWithChecksum(msg.body, { sender = ME, prefix = msg.prefix })
+				if ok and type(decoded) == "table" and decoded.type == "guild-settings" then return decoded.settings, msg end
+			end
+		end
+		return nil
+	end
+
+	-- SHOP-TAB-001 (the operator, 2026-09-14): "a setting to turn it on/off ... off by default".
+	it("with the shop OFF (the default) there is no sign and no list: ordering is open and nothing is blocked", function()
+		TOGBankClassic_Guild.Info.settings.shopEnabled = nil
+		assert.is_false(TOGBankClassic_Guild:IsShopEnabled(), "the shop is on by default")
+		TOGBankClassic_Guild.Info.settings.storeOpen = false
+		TOGBankClassic_Guild.Info.settings.notForSale = { [2589] = true }
+		assert.is_true(TOGBankClassic_Guild:IsStoreOpen(), "a closed sign applied with the shop off")
+		assert.is_false(TOGBankClassic_Guild:IsNotForSale(2589), "the shop list applied with the shop off")
+		assert.is_true(TOGBankClassic_Guild:AddRequest({ requester = ME, bank = PEER, item = "Linen Cloth", itemID = 2589, quantity = 1 }))
+		-- The ONE writer turns it on, broadcasts a real boolean, and the stored sign then applies.
+		assert.is_true(TOGBankClassic_Guild:SetShopEnabled(true))
+		assert.is_true(TOGBankClassic_Guild:IsShopEnabled())
+		assert.is_false(TOGBankClassic_Guild:SetShopEnabled(true), "no change was reported as one")
+		local settings = lastSettingsBroadcast()
+		assert.is_true(settings.shopEnabled)
+		assert.is_false(settings.storeOpen, "the broadcast carried the shop-gated read, not the stored sign")
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen())
+		assert.is_true(TOGBankClassic_Guild:IsNotForSale(2589))
+		assert.truthy(infos()[#infos()]:find("Shop is ON", 1, true))
+		-- It reaches a peer, and an old client's broadcast (no field) leaves it alone.
+		local _, msg = lastSettingsBroadcast()
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings = {}
+		deliver(msg, ME)
+		assert.is_true(TOGBankClassic_Guild:IsShopEnabled(), "the shop switch did not reach the peer")
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { maxRequestPercent = 100 } }) }, ME)
+		assert.is_true(TOGBankClassic_Guild:IsShopEnabled(), "an old client's broadcast switched the shop off")
+		-- Off again from the officer: the peer's shop goes, its stored sign and list stay inert.
+		TOGBankClassic_Guild.GetNormalizedPlayer = function() return ME end
+		TOGBankClassic_Guild.GetPlayer = function() return ME end
+		assert.is_true(TOGBankClassic_Guild:SetShopEnabled(false))
+		assert.truthy(infos()[#infos()]:find("Shop is OFF", 1, true))
+		assert.is_true(TOGBankClassic_Guild:IsStoreOpen())
+	end)
+
+	it("is OPEN when the setting has never been written -- every guild ran without the sign", function()
+		assert.is_nil(TOGBankClassic_Guild.Info.settings.storeOpen)
+		assert.is_true(TOGBankClassic_Guild:IsStoreOpen())
+		-- SHOP-NOFREE-001: open with the shop on is SELLING, so the order carries the shop mark.
+		assert.is_true(addOrder("Copper Bar", 1, { shopOrder = true }))
+	end)
+
+	it("closed: nothing is minted, nothing goes on the wire, and the ONE writer broadcasts a real false", function()
+		assert.is_true(TOGBankClassic_Guild:SetStoreOpen(false))
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen())
+		assert.is_false(TOGBankClassic_Guild.Info.settings.storeOpen)
+		local settings = lastSettingsBroadcast()
+		assert.is_table(settings, "closing did not broadcast the guild settings")
+		assert.is_false(settings.storeOpen, "the sign went out as something other than a boolean false")
+		assert.truthy(infos()[#infos()]:find("CLOSED", 1, true))
+		-- A second close is not a change: no broadcast, no line, and the answer says so.
+		local before = #sent
+		assert.is_false(TOGBankClassic_Guild:SetStoreOpen(false))
+		assert.equal(before, #sent)
+		-- The gate: AddRequest refuses, and no togbank-rm mutation leaves the client.
+		before = #sent
+		assert.is_false(addOrder("Copper Bar", 1))
+		assert.is_nil(orderFor("Copper Bar"))
+		assert.equal(before, #sent, "a refused request still put something on the wire")
+	end)
+
+	it("reaches the other clients through the shipped settings broadcast, and reopens the same way", function()
+		TOGBankClassic_Guild:SetStoreOpen(false)
+		local _, closeMsg = lastSettingsBroadcast()
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings = {}   -- a fresh peer has its own settings too
+		assert.is_true(TOGBankClassic_Guild:IsStoreOpen(), "precondition: the peer started closed")
+		deliver(closeMsg, ME)
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen(), "the closed sign did not reach the peer")
+		local ok, why = TOGBankClassic_Guild:AddRequest({ requester = PEER, bank = PEER, item = "Tin Bar", quantity = 1 })
+		assert.is_false(ok)
+		assert.equal(TOGBankClassic_Guild.STORE_CLOSED_TEXT, why, "the gate gave no reason (Peer Review f5e52bcf F9)")
+		-- Reopen from the officer, delivered to the same peer.
+		TOGBankClassic_Guild.GetNormalizedPlayer = function() return ME end
+		TOGBankClassic_Guild.GetPlayer = function() return ME end
+		assert.is_true(TOGBankClassic_Guild:SetStoreOpen(true))
+		local _, openMsg = lastSettingsBroadcast()
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings.storeOpen = false
+		deliver(openMsg, ME)
+		assert.is_true(TOGBankClassic_Guild:IsStoreOpen(), "the reopen did not reach the peer")
+	end)
+
+	it("a broadcast from a client that predates the sign does NOT reopen a closed shop", function()
+		TOGBankClassic_Guild.Info.settings.storeOpen = false
+		local old = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { maxRequestPercent = 100, autoTombstoneDays = 30 } })
+		deliver({ prefix = "togbank-hl", body = old }, PEER)
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen(), "an old client's settings broadcast reopened the shop")
+		assert.equal(100, TOGBankClassic_Guild.Info.settings.maxRequestPercent, "the rest of the old broadcast was not applied")
+		-- And a sender that carries the field as a non-boolean truthy closes rather than opens.
+		local odd = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { storeOpen = "yes" } })
+		deliver({ prefix = "togbank-hl", body = odd }, PEER)
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen())
+	end)
+
+	-- STORE-006 step 2: the not-for-sale list, by itemID.
+	it("not for sale: keyed by itemID, the ONE writer broadcasts the list, the gate refuses, an id-less request passes", function()
+		assert.is_false(TOGBankClassic_Guild:IsNotForSale(2589))
+		assert.is_true(TOGBankClassic_Guild:SetNotForSale(2589, true, "Linen Cloth"))
+		assert.is_true(TOGBankClassic_Guild:IsNotForSale(2589))
+		assert.is_true(TOGBankClassic_Guild:IsNotForSale("2589"), "a string id did not match")
+		assert.is_false(TOGBankClassic_Guild:IsNotForSale(2590))
+		local settings = lastSettingsBroadcast()
+		assert.is_table(settings and settings.notForSale, "the list did not go out with the settings")
+		assert.is_true(settings.notForSale[2589])
+		assert.truthy(infos()[#infos()]:find("NOT FOR SALE", 1, true))
+		-- Not a change: no second broadcast.
+		local before = #sent
+		assert.is_false(TOGBankClassic_Guild:SetNotForSale(2589, true))
+		assert.equal(before, #sent)
+		-- The gate: an itemID on the list mints nothing; the same name WITHOUT an id (an old client's
+		-- request) still passes, because a name cannot be matched against an id list.
+		before = #sent
+		local ok, why = TOGBankClassic_Guild:AddRequest({ requester = ME, bank = PEER, item = "Linen Cloth", itemID = 2589, quantity = 1, shopOrder = true })
+		assert.is_false(ok)
+		assert.equal(TOGBankClassic_Guild.NOT_FOR_SALE_TEXT:format("Linen Cloth"), why, "the gate gave no reason (Peer Review f5e52bcf F9)")
+		assert.equal(before, #sent, "a refused request still put something on the wire")
+		assert.is_true(addOrder("Linen Cloth", 1, { shopOrder = true }), "an id-less request was refused by the id list")
+		-- Back on sale: the list entry goes, the broadcast carries an EMPTY table, not nil.
+		assert.is_true(TOGBankClassic_Guild:SetNotForSale(2589, false, "Linen Cloth"))
+		assert.is_false(TOGBankClassic_Guild:IsNotForSale(2589))
+		settings = lastSettingsBroadcast()
+		assert.is_table(settings.notForSale)
+		assert.is_nil(next(settings.notForSale))
+		-- Garbage ids are refused by the writer.
+		assert.is_false(TOGBankClassic_Guild:SetNotForSale("cloth", true))
+		assert.is_false(TOGBankClassic_Guild:SetNotForSale(0, true))
+		assert.is_false(TOGBankClassic_Guild:SetNotForSale(1.5, true))
+	end)
+
+	it("the list reaches a peer, is sanitized on the way in, and an old client's broadcast does not clear it", function()
+		TOGBankClassic_Guild:SetNotForSale(2589, true)
+		local _, msg = lastSettingsBroadcast()
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings = {}
+		deliver(msg, ME)
+		assert.is_true(TOGBankClassic_Guild:IsNotForSale(2589), "the list did not reach the peer")
+		-- A malformed list from a peer: string keys, zero, a fraction, a false value -- only the
+		-- integer ids survive, and the cap holds.
+		local junk = { [2590] = true, ["x"] = true, [0] = true, [1.5] = true, [2591] = false, ["2592"] = true }
+		-- From ME, not PEER: the local player IS PEER after becomeFreshPeer, and a message from
+		-- yourself is ignored (see becomeThirdParty's note). SETTINGS-002: a hand-built payload
+		-- must be NEWER than what the peer holds to be heard at all.
+		local v = TOGBankClassic_Guild:SettingsVersion()
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = v + 1, notForSale = junk } }) }, ME)
+		assert.is_true(TOGBankClassic_Guild:IsNotForSale(2590))
+		assert.is_true(TOGBankClassic_Guild:IsNotForSale(2592), "a numeric string key was dropped")
+		assert.is_false(TOGBankClassic_Guild:IsNotForSale(2591))
+		assert.is_false(TOGBankClassic_Guild:IsNotForSale(2589), "a delivered list did not REPLACE the held one")
+		local n = 0
+		for _ in pairs(TOGBankClassic_Guild.Info.settings.notForSale) do n = n + 1 end
+		assert.equal(2, n)
+		-- The cap: 600 valid ids arrive, 500 are kept (which 500 is pairs order, so only the count).
+		local many = {}
+		for i = 1, 600 do many[10000 + i] = true end
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = v + 2, notForSale = many } }) }, ME)
+		n = 0
+		for _ in pairs(TOGBankClassic_Guild.Info.settings.notForSale) do n = n + 1 end
+		assert.equal(500, n, "the cap did not hold")
+		-- A pre-STORE client's broadcast carries no list and clears nothing (and, carrying no
+		-- version either, is not even heard by a client holding a stamped copy -- SETTINGS-002).
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { maxRequestPercent = 100 } }) }, ME)
+		n = 0
+		for _ in pairs(TOGBankClassic_Guild.Info.settings.notForSale) do n = n + 1 end
+		assert.equal(500, n, "an old client's broadcast put everything back on sale")
+		-- And the writer refuses a 501st.
+		assert.is_false(TOGBankClassic_Guild:SetNotForSale(99999, true))
+	end)
+
+	-- STORE-003: the discount, a number on the same wire.
+	it("the discount: the ONE writer bounds it, broadcasts it, a peer applies it, an old client leaves it, the shop off reads 0", function()
+		assert.equal(0, TOGBankClassic_Guild:GetStoreDiscount())
+		assert.is_false(TOGBankClassic_Guild:SetStoreDiscount(-1))
+		assert.is_false(TOGBankClassic_Guild:SetStoreDiscount(101))
+		assert.is_false(TOGBankClassic_Guild:SetStoreDiscount("half"))
+		assert.is_true(TOGBankClassic_Guild:SetStoreDiscount(50.7))
+		assert.equal(50, TOGBankClassic_Guild:GetStoreDiscount(), "not floored to a whole percent")
+		assert.is_false(TOGBankClassic_Guild:SetStoreDiscount(50), "no change was reported as one")
+		assert.truthy(infos()[#infos()]:find("Shop discount set to", 1, true))   -- the stub keeps the raw format
+		local settings, msg = lastSettingsBroadcast()
+		assert.equal(50, settings.storeDiscountPercent)
+		-- A peer applies it; garbage and an old client's broadcast leave it; the shop off reads 0
+		-- while the stored number is kept.
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings = { shopEnabled = true }
+		deliver(msg, ME)
+		assert.equal(50, TOGBankClassic_Guild:GetStoreDiscount(), "the discount did not reach the peer")
+		local v = TOGBankClassic_Guild:SettingsVersion()
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = v + 1, storeDiscountPercent = 500 } }) }, ME)
+		assert.equal(50, TOGBankClassic_Guild:GetStoreDiscount(), "an out-of-range discount was applied")
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = v + 2, maxRequestPercent = 100 } }) }, ME)
+		assert.equal(50, TOGBankClassic_Guild:GetStoreDiscount(), "a broadcast without the field cleared it")
+		TOGBankClassic_Guild.Info.settings.shopEnabled = false
+		assert.equal(0, TOGBankClassic_Guild:GetStoreDiscount())
+		assert.equal(50, TOGBankClassic_Guild.Info.settings.storeDiscountPercent, "the stored number was lost with the shop off")
+		-- Removing it says so.
+		TOGBankClassic_Guild.GetNormalizedPlayer = function() return ME end
+		TOGBankClassic_Guild.GetPlayer = function() return ME end
+		assert.is_true(TOGBankClassic_Guild:SetStoreDiscount(0))
+		assert.truthy(infos()[#infos()]:find("discount removed", 1, true))
+	end)
+
+	-- BANKER-OWNER-001: who runs each bank character, on the same wire.
+	it("banker owners: the ONE writer trims, caps and clears, broadcasts the table, a peer applies it sanitized, an old client leaves it", function()
+		local G = TOGBankClassic_Guild
+		assert.is_nil(G:GetBankerOwner(PEER))
+		assert.is_false(G:SetBankerOwner(nil, "x"))
+		assert.is_false(G:SetBankerOwner(PEER, ""), "clearing nothing was reported as a change")
+		assert.is_true(G:SetBankerOwner("Someoneelse", "  Alice  "))   -- a bare name is normalised
+		assert.equal("Alice", G:GetBankerOwner(PEER))
+		assert.equal("Alice", G:GetBankerOwner("Someoneelse"))
+		assert.is_false(G:SetBankerOwner(PEER, "Alice"), "no change was reported as one")
+		assert.truthy(infos()[#infos()]:find("is run by", 1, true))   -- the stub keeps the raw format
+		local settings = lastSettingsBroadcast()
+		assert.same({ [PEER] = "Alice" }, settings.bankerOwners)
+		-- Free text, capped at 40.
+		assert.is_true(G:SetBankerOwner(PEER, string.rep("shared account ", 5)))
+		assert.equal(40, #G:GetBankerOwner(PEER))
+		-- Clear: the entry goes, the broadcast carries an EMPTY table, not nil, and says so.
+		assert.is_true(G:SetBankerOwner(PEER, ""))
+		assert.is_nil(G:GetBankerOwner(PEER))
+		settings = lastSettingsBroadcast()
+		assert.is_table(settings.bankerOwners); assert.is_nil(next(settings.bankerOwners))
+		assert.truthy(infos()[#infos()]:find("no owner listed", 1, true))
+		-- A peer applies the delivered table, sanitized: non-string keys and values drop, text is
+		-- trimmed and capped, the count is capped at 100.
+		G:SetBankerOwner(PEER, "Alice")
+		local _, msg = lastSettingsBroadcast()
+		becomeFreshPeer()
+		G.Info.settings = {}
+		deliver(msg, ME)
+		assert.equal("Alice", G:GetBankerOwner(PEER), "the owner did not reach the peer")
+		local v = G:SettingsVersion()
+		local junk = { [PEER] = "  Bob  ", [42] = "x", ["Other-Testrealm"] = 7, ["Third-Testrealm"] = "", ["Fourth-Testrealm"] = string.rep("y", 60) }
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = v + 1, bankerOwners = junk } }) }, ME)
+		assert.equal("Bob", G:GetBankerOwner(PEER))
+		assert.is_nil(G:GetBankerOwner("Other-Testrealm")); assert.is_nil(G:GetBankerOwner("Third-Testrealm"))
+		assert.equal(40, #G:GetBankerOwner("Fourth-Testrealm"))
+		local many = {}
+		for i = 1, 150 do many["B" .. i .. "-Testrealm"] = "someone" end
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = v + 2, bankerOwners = many } }) }, ME)
+		local n = 0
+		for _ in pairs(G.Info.settings.bankerOwners) do n = n + 1 end
+		assert.equal(100, n, "the cap did not hold")
+		-- The writer refuses a 101st, and a broadcast without the field leaves the table alone.
+		assert.is_false(G:SetBankerOwner("New-Testrealm", "someone"))
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = v + 3, maxRequestPercent = 100 } }) }, ME)
+		n = 0
+		for _ in pairs(G.Info.settings.bankerOwners) do n = n + 1 end
+		assert.equal(100, n, "an old client's broadcast cleared the owners")
+	end)
+
+	it("SetStoreOpen with no Info is a no-op that says so", function()
+		local info = TOGBankClassic_Guild.Info
+		TOGBankClassic_Guild.Info = nil
+		assert.is_false(TOGBankClassic_Guild:SetStoreOpen(false))
+		assert.is_true(TOGBankClassic_Guild:IsStoreOpen())
+		TOGBankClassic_Guild.Info = info
+		-- And with Info but no settings table yet, it creates one.
+		TOGBankClassic_Guild.Info.settings = nil
+		assert.is_true(TOGBankClassic_Guild:SetStoreOpen(false))
+		assert.is_false(TOGBankClassic_Guild.Info.settings.storeOpen)
+	end)
+end)
+
+-- ─── SHOP-NOFREE-001: while the bank is selling, every request is a shop order ──
+--
+-- The operator, 2026-09-14: "when the shop tab is shown and ordering is enabled, there should be no
+-- 'free' item requests." The gate is Guild:AddRequest (the one place a request is minted); the mark
+-- is `shopOrder`, and STORE-004's estimate fields ride the record so a banker filling it sees what
+-- the member was shown. Both wires -- the togbank-rm mutation and the positional togbank-rd2 record
+-- -- carry them; the rd2 round trip had no example at all before this (REOPEN-001's arr[14] was
+-- never driven end to end either), so this is the first.
+describe("SHOP-NOFREE-001: no free requests while the bank is selling", function()
+	before_each(function()
+		env.reset(); loadRequestStack()
+		TOGBankClassic_Guild.SenderIsOfficer = function(_, n) return n == ME end
+		TOGBankClassic_Guild.SenderIsGM = function() return false end
+	end)
+
+	local SHOP = { shopOrder = true, estimate = 75, estimateBase = 151, discount = 50, estimateSource = "min buyout, Auctionator" }
+
+	it("IsShopSelling is the shop on AND ordering open, and nothing else", function()
+		assert.is_false(TOGBankClassic_Guild:IsShopSelling(), "a plain bank is selling")
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+		assert.is_true(TOGBankClassic_Guild:IsShopSelling())
+		TOGBankClassic_Guild.Info.settings.storeOpen = false
+		assert.is_false(TOGBankClassic_Guild:IsShopSelling(), "a closed shop is selling")
+		TOGBankClassic_Guild.Info.settings.shopEnabled = false
+		assert.is_false(TOGBankClassic_Guild:IsShopSelling(), "the shop off with a stale closed sign is selling")
+	end)
+
+	it("a plain bank takes a plain request, and a shop order too, with nothing on the record but what was sent", function()
+		assert.is_true(addOrder("Copper Bar", 1))
+		local plain = orderFor("Copper Bar")
+		assert.is_nil(plain.shopOrder); assert.is_nil(plain.estimate)
+		-- A shop-marked request on a plain bank is not refused: the mark is what the dialog wrote,
+		-- and the shop being turned off between the dialog and Submit is not the member's fault.
+		assert.is_true(addOrder("Tin Bar", 1, SHOP))
+		assert.is_true(orderFor("Tin Bar").shopOrder)
+	end)
+
+	it("selling: a request without the shop mark is refused and nothing goes on the wire; a shop order is minted with its estimate", function()
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+		local before = #sent
+		assert.is_false(addOrder("Copper Bar", 1), "a free request was minted while the bank was selling")
+		assert.is_false(addOrder("Copper Bar", 1, { shopOrder = "yes" }), "a non-boolean mark passed the gate")
+		assert.is_nil(orderFor("Copper Bar"))
+		assert.equal(before, #sent, "a refused request still put something on the wire")
+		assert.is_true(addOrder("Copper Bar", 3, SHOP))
+		local got = orderFor("Copper Bar")
+		assert.is_true(got.shopOrder)
+		assert.equal(75, got.estimate); assert.equal(151, got.estimateBase); assert.equal(50, got.discount)
+		assert.equal("min buyout, Auctionator", got.estimateSource)
+		-- Ordering closed: the closed sign refuses first, mark or no mark.
+		TOGBankClassic_Guild.Info.settings.storeOpen = false
+		assert.is_false(addOrder("Tin Bar", 1, SHOP))
+		-- Shop off: plain requests again.
+		TOGBankClassic_Guild.Info.settings.shopEnabled = false
+		assert.is_true(addOrder("Tin Bar", 1))
+	end)
+
+	it("the fields are sanitized: garbage numbers drop, an empty source drops, a long source is cut, false is never stored", function()
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+		assert.is_true(addOrder("Copper Bar", 1, { shopOrder = true, estimate = "lots", estimateBase = {}, discount = "half", estimateSource = "" }))
+		local got = orderFor("Copper Bar")
+		assert.is_true(got.shopOrder)
+		assert.is_nil(got.estimate); assert.is_nil(got.estimateBase); assert.is_nil(got.discount); assert.is_nil(got.estimateSource)
+		assert.is_true(addOrder("Tin Bar", 1, { shopOrder = true, estimate = "75", estimateSource = string.rep("x", 200) }))
+		got = orderFor("Tin Bar")
+		assert.equal(75, got.estimate, "a numeric string was not read as a number")
+		assert.equal(64, #got.estimateSource, "the source was not capped")
+		-- A plain request's absent mark is nil on the record, not false (an old client's request
+		-- has no mark either, and the two must read the same).
+		TOGBankClassic_Guild.Info.settings.shopEnabled = false
+		assert.is_true(addOrder("Silver Bar", 1, { shopOrder = false }))
+		assert.is_nil(orderFor("Silver Bar").shopOrder)
+	end)
+
+	it("the mark and the estimate reach a peer on the togbank-rm mutation", function()
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+		assert.is_true(addOrder("Copper Bar", 3, SHOP))
+		local msg = lastMutation("add")
+		becomeFreshPeer()
+		deliver(msg, ME)
+		local got = orderFor("Copper Bar")
+		assert.is_table(got, "the shop order did not reach the peer")
+		assert.is_true(got.shopOrder)
+		assert.equal(75, got.estimate); assert.equal(151, got.estimateBase); assert.equal(50, got.discount)
+		assert.equal("min buyout, Auctionator", got.estimateSource)
+	end)
+
+	it("the positional togbank-rd2 record carries them too, and an old client's shorter record reads as unmarked", function()
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+		assert.is_true(addOrder("Copper Bar", 3, SHOP))
+		local id = orderFor("Copper Bar").id
+		-- PEER asks ME for the record by id; the drain answers on a whisper one tick later.
+		TOGBankClassic_Guild:EnqueueRequestsById(PEER, { id })
+		env.advance(0)
+		local msg = lastSentOn("togbank-rd2")
+		assert.is_table(msg, "the by-id drain sent no record")
+		assert.equal(PEER, msg.target)
+		local ok, arr = TOGBankClassic_Core:DeserializeWithChecksum(msg.body, { sender = ME, prefix = "togbank-rd2" })
+		assert.is_true(ok)
+		assert.equal(id, arr[2])
+		assert.is_true(arr[15]); assert.equal(75, arr[16]); assert.equal(151, arr[17]); assert.equal(50, arr[18])
+		assert.equal("min buyout, Auctionator", arr[19])
+		becomeFreshPeer()
+		TOGBankClassic_Chat:OnCommReceived("togbank-rd2", msg.body, "WHISPER", ME)
+		local got = TOGBankClassic_Guild.Info.requests[id]
+		assert.is_table(got, "the rd2 record was not applied")
+		assert.is_true(got.shopOrder); assert.equal(75, got.estimate); assert.equal(151, got.estimateBase)
+		assert.equal(50, got.discount); assert.equal("min buyout, Auctionator", got.estimateSource)
+		-- A record from a client that predates the fields: fourteen slots, nothing after. Delivered
+		-- as a NEWER updatedAt so it is adopted over what the peer holds.
+		local old = {}
+		for i = 1, 14 do old[i] = arr[i] end
+		old[4] = arr[4] + 10
+		TOGBankClassic_Chat:OnCommReceived("togbank-rd2", TOGBankClassic_Core:SerializeWithChecksum(old), "WHISPER", ME)
+		got = TOGBankClassic_Guild.Info.requests[id]
+		assert.equal(old[4], got.updatedAt, "precondition: the older-format record was not adopted")
+		assert.is_nil(got.shopOrder); assert.is_nil(got.estimate); assert.is_nil(got.estimateSource)
+	end)
+
+	it("a plain request that carries no mark is not refused when it comes FROM the wire -- the gate is the minting side only", function()
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+		-- An old client's order arrives on the mutation wire; the peer's shop being on does not drop it.
+		TOGBankClassic_Guild.Info.settings.shopEnabled = false
+		assert.is_true(addOrder("Copper Bar", 1))
+		local msg = lastMutation("add")
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+		deliver(msg, ME)
+		assert.is_table(orderFor("Copper Bar"), "a received plain request was dropped by the selling gate")
+	end)
+end)
+
+-- ─── SETTINGS-002: the settings carry a version; only newer is applied ─────────
+--
+-- Found 2026-09-14 while STORE-007's rate was wired onto the same plumbing: the periodic piggyback
+-- (Events.lua SyncDeltaVersion) has every authorized client re-broadcast the settings it HOLDS, and
+-- ApplyRemoteSettings was last-writer-wins -- so a banker logging in with yesterday's settings
+-- reverted an officer's close / shop-off / not-for-sale / rate on every client within ten minutes.
+describe("SETTINGS-002: a stale client cannot revert an officer's settings", function()
+	before_each(function()
+		env.reset(); loadRequestStack()
+		TOGBankClassic_Guild.SenderIsOfficer = function(_, n) return n == ME or n == PEER end
+		TOGBankClassic_Guild.SenderIsGM = function() return false end
+		TOGBankClassic_Guild.Info.settings.shopEnabled = true
+	end)
+
+	local function lastSettingsMsg()
+		for i = #sent, 1, -1 do
+			local msg = sent[i]
+			if msg.prefix == "togbank-hl" then
+				local ok, decoded = TOGBankClassic_Core:DeserializeWithChecksum(msg.body, { sender = ME, prefix = msg.prefix })
+				if ok and type(decoded) == "table" and decoded.type == "guild-settings" then return decoded.settings, msg end
+			end
+		end
+		return nil
+	end
+
+	it("an officer's write stamps a version newer than anything held; a re-announcement does not", function()
+		assert.equal(0, TOGBankClassic_Guild:SettingsVersion())
+		assert.is_true(TOGBankClassic_Guild:SetStoreOpen(false))
+		local v1 = TOGBankClassic_Guild:SettingsVersion()
+		assert.equal(env.now, v1, "the stamp is not the server time of the write")
+		assert.equal(v1, lastSettingsMsg().version, "the broadcast did not carry the version")
+		-- Two writes in one second still order.
+		assert.is_true(TOGBankClassic_Guild:SetStoreOpen(true))
+		assert.equal(v1 + 1, TOGBankClassic_Guild:SettingsVersion())
+		-- The periodic re-announcement carries the held version and bumps nothing.
+		TOGBankClassic_Guild:BroadcastSettings()
+		assert.equal(v1 + 1, TOGBankClassic_Guild:SettingsVersion())
+		assert.equal(v1 + 1, lastSettingsMsg().version)
+	end)
+
+	it("newer then stale: the stale re-announcement is dropped WHOLE, every field", function()
+		TOGBankClassic_Guild.Info.settings.maxRequestPercent = 50
+		assert.is_true(TOGBankClassic_Guild:SetStoreOpen(false))            -- the officer closes: version N
+		local _, closeMsg = lastSettingsMsg()
+		-- A banker who logged in with yesterday's settings re-announces them (version N-100).
+		local stale = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = {
+			version = TOGBankClassic_Guild:SettingsVersion() - 100, storeOpen = true, maxRequestPercent = 100, shopEnabled = false } })
+		-- A fresh peer hears the close first, then the stale one.
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings = {}
+		deliver(closeMsg, ME)
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen())
+		assert.equal(50, TOGBankClassic_Guild.Info.settings.maxRequestPercent)
+		deliver({ prefix = "togbank-hl", body = stale }, THIRD)
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen(), "a stale re-announcement reopened the shop")
+		assert.equal(50, TOGBankClassic_Guild.Info.settings.maxRequestPercent, "a stale re-announcement changed a field")
+		assert.is_true(TOGBankClassic_Guild:IsShopEnabled(), "a stale re-announcement switched the shop off")
+	end)
+
+	it("stale then newer: the newer one is applied and its version adopted, so a later local write stamps above it", function()
+		local stale = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = 5, storeOpen = true } })
+		local newer = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = 9, storeOpen = false } })
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings = { shopEnabled = true }
+		deliver({ prefix = "togbank-hl", body = stale }, ME)
+		assert.equal(5, TOGBankClassic_Guild:SettingsVersion())
+		deliver({ prefix = "togbank-hl", body = newer }, ME)
+		assert.equal(9, TOGBankClassic_Guild:SettingsVersion())
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen())
+		deliver({ prefix = "togbank-hl", body = stale }, ME)
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen(), "the stale one applied after the newer")
+		-- The peer's own officer write is newer than 9, whatever the clock says.
+		env.now = 3
+		assert.is_true(TOGBankClassic_Guild:SetStoreOpen(true))
+		assert.equal(10, TOGBankClassic_Guild:SettingsVersion())
+	end)
+
+	it("a pre-002 client (no version) can seed a client that holds nothing, and nothing else", function()
+		local old = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { storeOpen = false, maxRequestPercent = 40 } })
+		becomeFreshPeer()
+		TOGBankClassic_Guild.Info.settings = { shopEnabled = true }
+		deliver({ prefix = "togbank-hl", body = old }, ME)
+		assert.is_false(TOGBankClassic_Guild:IsStoreOpen(), "an old client's settings did not seed an empty peer")
+		assert.equal(0, TOGBankClassic_Guild:SettingsVersion())
+		-- Once anything stamped has been held, the old client is ignored.
+		deliver({ prefix = "togbank-hl", body = TOGBankClassic_Core:SerializeWithChecksum({ type = "guild-settings", settings = { version = 7, storeOpen = true } }) }, ME)
+		assert.is_true(TOGBankClassic_Guild:IsStoreOpen())
+		deliver({ prefix = "togbank-hl", body = old }, ME)
+		assert.is_true(TOGBankClassic_Guild:IsStoreOpen(), "a pre-002 client overwrote a stamped copy")
+		assert.equal(7, TOGBankClassic_Guild:SettingsVersion())
 	end)
 end)
 

@@ -77,7 +77,7 @@ describe("CANON-TIME-001: the load-time migration never stamps our own clock", f
 	it("never advertises a canon dated later than the newest real publish it holds", function()
 		-- The property, stated the way the guild experiences it: whatever this client ends up
 		-- holding for a banker it never read, its publish time is one the AUTHOR chose.
-		env.advance(5000)                       -- our clock is now far ahead of the stored data
+		env.now = env.now + 5000                -- our clock is now far ahead of the stored data (set, not sliced)
 		local now = TOGBankClassic_Guild and GetServerTime()
 		local info = loadWith({
 			[OTHER] = { name = OTHER, money = 0, inventoryHash = 0x10, inventoryHashV2 = 0x20 },

@@ -94,7 +94,17 @@ local function authorWithTwoVersions()
 	}
 end
 
---- Stand up a REQUESTER holding v1 under canon1, with a live P2P session for the banker.
+--- The library's numbered P2P on this client's host (LIBREQ-DS-008 part 2: the session registry,
+--- the send slots and the handshake are DeltaSync's; Modules/P2P.lua is only TOGBank's hooks).
+local function p2p()
+	local lib = TOGBankClassic_P2P:Lib()
+	assert.is_table(lib, "precondition: the host has no numbered P2P")
+	return lib
+end
+
+--- Stand up a REQUESTER holding v1 under canon1, with a live P2P session for the banker -- in the
+--- library's own session shape (`key`, `sessionsByKey`), so the delivery completes it through
+--- `p2p:OnItemCompleted` exactly as in game.
 local function requesterHoldingV1(a, who)
 	client(who or "Otherguy")
 	Store:SetAltRecords(GUILD, BANKER, bigBank(5), 100)
@@ -102,10 +112,11 @@ local function requesterHoldingV1(a, who)
 		name = BANKER, money = 100, version = a.updatedAt - 60, inventoryUpdatedAt = a.updatedAt - 60,
 		inventoryHash = 0x1, inventoryHashV2 = a.canon1, mailHash = 0x11,
 	}
-	local P2P = TOGBankClassic_P2PSession
-	P2P.sessions, P2P.sessionsByAlt, P2P.activeSessions = {}, {}, 1
-	P2P.sessions["sid1"] = { altName = BANKER, peer = BANKER, state = "ACTIVE", timers = {}, candidates = {}, triedPeers = {} }
-	P2P.sessionsByAlt[BANKER] = "sid1"
+	local P2P = p2p()
+	P2P.sessions, P2P.sessionsByKey, P2P.activeSessions = {}, {}, 1
+	P2P.sessions["sid1"] = { sessionId = "sid1", key = BANKER, peer = BANKER, state = "ACTIVE", timers = {},
+		candidates = { { peer = BANKER, canon = a.canon2 } }, triedPeers = { [BANKER] = true } }
+	P2P.sessionsByKey[BANKER] = "sid1"
 	return P2P
 end
 
@@ -122,7 +133,7 @@ describe("step 3b: the author answers a held canon with the chain, and the reque
 		-- ---- THE AUTHOR ----
 		local a = authorWithTwoVersions()
 		local sent = captureHost()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = a.canon1, version = a.updatedAt - 60, keys = { alt = BANKER } })
 
 		local reply = lastResponse(sent)
@@ -137,7 +148,7 @@ describe("step 3b: the author answers a held canon with the chain, and the reque
 		-- bare name), never by the slot's Name-Realm key -- so the two cannot disagree.
 		assert.equal("Otherguy", TOGBankClassic_Core:WhisperAddress(PEER), "fixture: PEER is same-realm")
 		assert.equal(TOGBankClassic_Core:WhisperAddress(PEER), reply.target)
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(), "the slot was not released on delivery")
+		assert.equal(0, p2p():GetActiveSendTotal(), "the slot was not released on delivery")
 
 		-- THE POINT OF THE RELEASE, measured: the chain reply for a one-row change against a
 		-- twenty-row bank is under half the snapshot it replaces (measured 299 against 639 bytes
@@ -165,12 +176,12 @@ describe("step 3b: the author answers a held canon with the chain, and the reque
 		assert.equal(250, alt.money)
 		assert.is_true(Chain:Verify(Store:GetAltRecords(GUILD, BANKER), 250, a.canon2),
 			"what the requester now holds does not hash to the author's canon")
-		assert.is_nil(P2P.sessionsByAlt[BANKER], "the P2P session was not completed by the chain delivery")
+		assert.is_nil(P2P.sessionsByKey[BANKER], "the P2P session was not completed by the chain delivery")
 		assert.equal(a.canon2, Chain:Newest(GUILD, BANKER), "the requester did not keep the author's link for relay")
 
 		-- ---- THE REQUESTER AS RELAY: serves the same link on to a third client ----
 		local sent2 = captureHost()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(THIRD)
+		p2p():TryAcquireSendSlot(THIRD)
 		Sync:OnDataRequest(THIRD, { type = "inv", hash = a.canon1, keys = { alt = BANKER } })
 		local relayed = lastResponse(sent2)
 		assert.is_table(relayed)
@@ -197,7 +208,7 @@ describe("step 3b: the author answers a held canon with the chain, and the reque
 		env.reset()   -- the clock too: the author re-minted from the epoch produces the same canons
 		authorWithTwoVersions()
 		local sent2, host = captureHost()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		host:OnComm_QUERY(q.prefix, q.raw, "WHISPER", "Otherguy")
 		local reply = lastResponse(sent2)
 		assert.is_table(reply, "the author's host did not route the requester's QUERY to Sync:OnDataRequest")
@@ -205,7 +216,7 @@ describe("step 3b: the author answers a held canon with the chain, and the reque
 		-- The host handed Sync the BARE sender; the slot is keyed by the full name and released
 		-- (below), while the reply is addressed exactly as the requester's own QUERY was.
 		assert.equal(TOGBankClassic_Core:WhisperAddress(PEER), reply.target, "the reply and the request are addressed by different rules")
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal())
+		assert.equal(0, p2p():GetActiveSendTotal())
 	end)
 end)
 
@@ -216,7 +227,7 @@ describe("step 3b: what the requester REFUSES, and what it does about it", funct
 	local function authorsReply()
 		local a = authorWithTwoVersions()
 		local sent = captureHost()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = a.canon1, keys = { alt = BANKER } })
 		return a, lastResponse(sent).body
 	end
@@ -240,7 +251,7 @@ describe("step 3b: what the requester REFUSES, and what it does about it", funct
 		assert.equal(a.canon1, TOGBankClassic_Guild.Info.alts[BANKER].inventoryHashV2, "the canon moved on a refused chain")
 		assert.is_true(TOGBankClassic_Guild.forceFullRequests[BANKER] == true,
 			"the alt was not marked for a forced-full request, so the next ask names the same canon and gets the same chain")
-		assert.is_nil(P2P.sessionsByAlt[BANKER], "the session was left ACTIVE with nothing coming -- it must fail into catch-up")
+		assert.is_nil(P2P.sessionsByKey[BANKER], "the session was left ACTIVE with nothing coming -- it must fail into catch-up")
 		assert.is_nil(Chain:Newest(GUILD, BANKER), "a refused link was kept for relay")
 	end)
 
@@ -251,7 +262,7 @@ describe("step 3b: what the requester REFUSES, and what it does about it", funct
 		deliver(body)
 		assert.equal(5, countOf(1007))
 		assert.is_true(TOGBankClassic_Guild.forceFullRequests[BANKER] == true)
-		assert.is_nil(P2P.sessionsByAlt[BANKER])
+		assert.is_nil(P2P.sessionsByKey[BANKER])
 	end)
 
 	it("refuses a chain when it holds no version at all -- there is nothing to apply it to", function()
@@ -277,7 +288,7 @@ describe("step 3b: what the requester REFUSES, and what it does about it", funct
 		assert.equal(5, countOf(1007), "an older chain overwrote a newer copy")
 		assert.is_nil(TOGBankClassic_Guild.forceFullRequests and TOGBankClassic_Guild.forceFullRequests[BANKER],
 			"a stale chain is not a broken one; it must not force a full request")
-		assert.is_not_nil(P2P.sessionsByAlt[BANKER], "a stale chain failed the session")
+		assert.is_not_nil(P2P.sessionsByKey[BANKER], "a stale chain failed the session")
 	end)
 
 	it("rejects a chain from a sender the roster does not know", function()
@@ -314,7 +325,7 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 	it("a requester holding a canon outside the author's window is sent the snapshot, and applies it through the one store path", function()
 		local a = authorWithTwoVersions()
 		local sent = captureHost()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = env.canon(a.updatedAt - 9999, 0x42), keys = { alt = BANKER } })
 		local reply = lastResponse(sent)
 		assert.equal("inv-snapshot", reply.body.type)
@@ -328,7 +339,7 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 
 		assert.equal(9, countOf(1007), "the snapshot was not applied")
 		assert.equal(a.canon2, TOGBankClassic_Guild.Info.alts[BANKER].inventoryHashV2)
-		assert.is_nil(P2P.sessionsByAlt[BANKER], "the snapshot did not complete the session")
+		assert.is_nil(P2P.sessionsByKey[BANKER], "the snapshot did not complete the session")
 		assert.is_nil(Chain:Newest(GUILD, BANKER), "a chain that no longer connects to the record was kept")
 	end)
 
@@ -354,7 +365,7 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 			TOGBankClassic_Core:ComputeInventoryHash(after, nil, nil, 250), before, 250, a.canon2)
 		local canon3 = alt.inventoryHashV2
 		local sent = captureHost()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = a.canon1, keys = { alt = BANKER } })
 		local reply = lastResponse(sent)
 		assert.equal("inv-chain", reply.body.type)
@@ -385,18 +396,12 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 		assert.equal(env.canon(a.updatedAt + 600, 0x5), alt.inventoryHashV2)
 	end)
 
-	it("a delivery cancels the 15s ACK-fallback timer armed for the alt, and reports progress when not muted", function()
+	-- LIBREQ-DS-008 part 2: this example used to open with "a delivery cancels the 15s ACK-fallback
+	-- timer armed for the alt" -- the pull path's per-alt registry (Guild.pendingP2PFallbackTimeouts),
+	-- deleted with the pull path. A delivery's session bookkeeping is the library's now (the first
+	-- example above asserts the session completes); what remains here is TOGBank's own progress line.
+	it("the provider reports progress when the player has not muted it", function()
 		local a = authorWithTwoVersions()
-		local payload = Sync:SnapshotPayload(BANKER)
-		requesterHoldingV1(a)
-		local cancelled = false
-		TOGBankClassic_Guild.pendingP2PFallbackTimeouts = { [BANKER] = { Cancel = function() cancelled = true end } }
-		local host = TOGBankClassic_Core:DeltaHost()
-		host:OnComm_RESPONSE(host.prefixes.RESPONSE, host:SerializeData({ type = "inv-snapshot", alt = BANKER, payload = payload }), "WHISPER", BANKER)
-		assert.is_true(cancelled, "the ACK fallback stayed armed after a delivery and will fire AdvanceCandidate on a sync that succeeded")
-		assert.is_nil(TOGBankClassic_Guild.pendingP2PFallbackTimeouts[BANKER])
-
-		-- The provider's progress line, when the player has not muted sync progress.
 		client("Bankchar")
 		Store:SetAltRecords(GUILD, BANKER, bigBank(5), 100)
 		TOGBankClassic_Guild.Info.alts[BANKER] = { name = BANKER, money = 100, inventoryHashV2 = a.canon1, inventoryUpdatedAt = a.updatedAt - 60 }
@@ -404,7 +409,7 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 		captureHost()
 		local infos = 0
 		TOGBankClassic_Output.Info = function() infos = infos + 1 end
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = 0, keys = { alt = BANKER } })
 		assert.equal(1, infos, "no 'Sharing guild bank data' line for an unmuted player")
 	end)
@@ -413,10 +418,10 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 		local a = authorWithTwoVersions()
 		TOGBankClassic_Guild.Info.alts[BANKER] = nil   -- rows in the store, nothing to stamp them with
 		local sent = captureHost()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = a.canon1, keys = { alt = BANKER } })
 		assert.is_nil(lastResponse(sent), "something was sent for an alt with no record")
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(), "nothing-to-send kept the slot")
+		assert.equal(0, p2p():GetActiveSendTotal(), "nothing-to-send kept the slot")
 	end)
 
 	it("ignores a chain naming no alt, and a RESPONSE of a type that is not ours", function()
@@ -446,7 +451,7 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 		TOGBankClassic_Core:StampInventoryHashes(alt, Store:GetAltRecords(GUILD, BANKER), nil, nil, 250, GetServerTime() + 60)
 		assert.are_not.equal(alt.inventoryHashV2, Chain:Newest(GUILD, BANKER), "fixture: the chain still ends at the record")
 		local sent = captureHost()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = a.canon1, keys = { alt = BANKER } })
 		assert.equal("inv-snapshot", lastResponse(sent).body.type,
 			"a chain that ends before the provider's version was served; the requester would land one version short with a canon that says otherwise")
@@ -466,14 +471,14 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 		TOGBankClassic_Core.SendCommMessage = function(_, prefix, _, _, _, _, cb, arg)
 			if prefix == host.prefixes.RESPONSE then pendingCb, pendingArg = cb, arg end
 		end
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(), "precondition")
+		assert.equal(0, p2p():GetActiveSendTotal(), "precondition")
 		assert.is_true(Sync:OnDataRequest(PEER, { type = "inv", hash = a.canon1, keys = { alt = BANKER } }),
 			"the baseline type is ours; another consumer must not answer it either")
 		assert.is_function(pendingCb, "a QUERY with no accept and three free slots was dropped (CHAIN-004)")
-		assert.equal(1, TOGBankClassic_P2PSession:GetActiveSendTotal(),
+		assert.equal(1, p2p():GetActiveSendTotal(),
 			"the reply left without a slot -- a BULK send outside the cap (CHAIN-003's whole point)")
 		pendingCb(pendingArg, 1, 1, true)
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(), "the slot the query took was not released on drain")
+		assert.equal(0, p2p():GetActiveSendTotal(), "the slot the query took was not released on drain")
 	end)
 
 	it("REFUSES a QUERY with no accept when at capacity, naming the alt so the requester advances now", function()
@@ -485,21 +490,25 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 			whispers[#whispers + 1] = { prefix = prefix, body = d, target = target }
 			return true
 		end
-		TOGBankClassic_P2PSession:TryAcquireSendSlot("A-Testrealm")
-		TOGBankClassic_P2PSession:TryAcquireSendSlot("B-Testrealm")
-		TOGBankClassic_P2PSession:TryAcquireSendSlot("C-Testrealm")
+		p2p():TryAcquireSendSlot("A-Testrealm")
+		p2p():TryAcquireSendSlot("B-Testrealm")
+		p2p():TryAcquireSendSlot("C-Testrealm")
 		assert.is_true(Sync:OnDataRequest(PEER, { type = "inv", hash = a.canon1, keys = { alt = BANKER } }))
 		assert.is_nil(lastResponse(sent), "a fourth concurrent send was admitted")
-		assert.equal(3, TOGBankClassic_P2PSession:GetActiveSendTotal())
+		assert.equal(3, p2p():GetActiveSendTotal())
 		assert.equal(1, #whispers, "the requester was left to its 180-second delivery watchdog")
-		assert.equal("togbank-rr", whispers[1].prefix)
-		assert.equal("sync-busy", whispers[1].body.type)
+		-- LIBREQ-DS-008 part 2: the library has no handshake type for a refused QUERY, so this is one
+		-- of TOGBank's two own messages (P2P:SendOwn) -- `query-refused` on togbank-hl, not the retired
+		-- togbank-rr sync-busy.
+		assert.equal("togbank-hl", whispers[1].prefix)
+		assert.equal("query-refused", whispers[1].body.type)
 		assert.equal(BANKER, whispers[1].body.alt, "the refusal does not say which alt, so the requester cannot advance the right session")
 		assert.is_nil(whispers[1].body.sessionId, "a QUERY carries no session id; the refusal must not invent one")
 	end)
 
-	-- The requester's half of that refusal (P2PSession:OnQueryRefused): only the session waiting on
-	-- THAT peer advances, and only while it is ACTIVE (a DISPATCHED one has its own dispatch timeout).
+	-- The requester's half of that refusal (the library's OnQueryRefused, fed by Chat's togbank-hl
+	-- `query-refused` branch): only the session waiting on THAT peer advances, and only while it is
+	-- ACTIVE (a DISPATCHED one has its own dispatch timeout).
 	it("advances the ACTIVE session waiting on the refusing peer, and no other", function()
 		local a = authorWithTwoVersions()
 		local P2P = requesterHoldingV1(a)
@@ -528,26 +537,56 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 			if prefix == host.prefixes.RESPONSE then sends = sends + 1; pendingCb, pendingArg = cb, arg end
 		end
 		local q = { type = "inv", hash = a.canon1, keys = { alt = BANKER } }
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, q)
 		assert.equal(1, sends)
-		assert.equal(1, TOGBankClassic_P2PSession:GetActiveSendTotal(), "precondition: the reply has not drained")
+		assert.equal(1, p2p():GetActiveSendTotal(), "precondition: the reply has not drained")
 		assert.is_true(Sync:OnDataRequest(PEER, q), "still ours to refuse")
 		assert.equal(1, sends, "a second QUERY inside one accept's window earned a second BULK send")
 		-- Drain: the slot and its claim go back together; a fresh accept is answered again.
 		pendingCb(pendingArg, 1, 1, true)
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal())
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		assert.equal(0, p2p():GetActiveSendTotal())
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, q)
 		assert.equal(2, sends, "the claim was not given back with the slot")
 	end)
 
-	-- Peer review F3: the drain watcher is keyed `prefix|target`, so TWO replies to ONE requester
-	-- in one frame (two accepts, two QUERYs, both queued under AceCommQueue before either has left)
-	-- share a key. That is safe only because `host:SendData` hands the message to the transport
-	-- SYNCHRONOUSLY inside the call, where the proxy moves the watcher off the table and into that
-	-- send's own completion closure -- so the second `WatchHostSend` never overwrites the first. This
-	-- drives it: each queued reply must release exactly its own slot, in whichever order they drain.
+	it("a duplicate QUERY that arrives WITH an unclaimed accept consumes it and gives the slot back, rather than leaving it to the state-wait", function()
+		local a = authorWithTwoVersions()
+		local host = TOGBankClassic_Core:DeltaHost()
+		local pendingCb, pendingArg
+		TOGBankClassic_Core.SendCommMessage = function(_, prefix, _, _, _, _, cb, arg)
+			if prefix == host.prefixes.RESPONSE then pendingCb, pendingArg = cb, arg end
+		end
+		local q = { type = "inv", hash = a.canon1, keys = { alt = BANKER } }
+		p2p():TryAcquireSendSlot(PEER)
+		Sync:OnDataRequest(PEER, q)
+		assert.equal(1, p2p():GetActiveSendTotal(), "precondition: the reply is leaving")
+		-- A second accept lands (the requester retried its handshake) and its QUERY arrives while
+		-- the first reply is still draining: the accept is consumed and its slot released at once.
+		p2p():TryAcquireSendSlot(PEER)
+		assert.equal(2, p2p():GetActiveSendTotal())
+		assert.is_true(Sync:OnDataRequest(PEER, q))
+		assert.equal(1, p2p():GetActiveSendTotal(), "the duplicate's unclaimed accept was left to lapse on the 30 s state-wait")
+		pendingCb(pendingArg, 1, 1, true)
+		assert.equal(0, p2p():GetActiveSendTotal())
+	end)
+
+	it("forgets an in-flight mark older than the slot's own safety release, so a stuck drain cannot refuse the requester for ever", function()
+		authorWithTwoVersions()
+		Sync.inFlight = { [PEER .. "|" .. BANKER] = GetTime() }
+		assert.is_true(Sync:InFlight(PEER, BANKER))
+		env.advance(211)
+		assert.is_false(Sync:InFlight(PEER, BANKER), "a mark older than SEND_TIMEOUT still read as in flight")
+		assert.is_nil(Sync.inFlight[PEER .. "|" .. BANKER], "the stale mark was kept")
+	end)
+
+	-- Peer review F3, kept across DS-009: TWO replies to ONE requester in one frame (two accepts, two
+	-- QUERYs, both queued under AceCommQueue before either has left) must each release exactly their
+	-- own slot, in whichever order they drain. Under the old proxy that rested on a `prefix|target`
+	-- watcher being moved into the send's closure synchronously; under DeltaSync MINOR 18 each
+	-- `SendData` carries its own `onComplete` in its own context, and the library's exactly-once
+	-- guard (`ctx.completed`) is what a repeated per-chunk completion runs into.
 	it("two replies to one requester queued in one frame each release their own slot on their own drain", function()
 		local a = authorWithTwoVersions()
 		-- A second bank this client can serve: two accepts for one requester are two ALTS (a session
@@ -560,21 +599,21 @@ describe("step 3b: the snapshot on the host, and the chain window", function()
 		TOGBankClassic_Core.SendCommMessage = function(_, prefix, _, _, _, _, cb, arg)
 			if prefix == host.prefixes.RESPONSE then pending[#pending + 1] = { cb = cb, arg = arg } end
 		end
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = a.canon1, keys = { alt = BANKER } })
 		Sync:OnDataRequest(PEER, { type = "inv", hash = 0, keys = { alt = SECOND } })
 		assert.equal(2, #pending, "two accepts for one requester did not earn two replies")
-		assert.equal(2, TOGBankClassic_P2PSession:GetActiveSendTotal(), "precondition: neither reply has drained")
+		assert.equal(2, p2p():GetActiveSendTotal(), "precondition: neither reply has drained")
 		-- Drain the SECOND first: with one shared watcher it would have been the only one to fire,
 		-- and the first reply's drain below would then release nothing.
 		pending[2].cb(pending[2].arg, 1, 1, true)
-		assert.equal(1, TOGBankClassic_P2PSession:GetActiveSendTotal(), "the second reply's drain released more (or less) than its own slot")
+		assert.equal(1, p2p():GetActiveSendTotal(), "the second reply's drain released more (or less) than its own slot")
 		-- A completion that reports twice (a per-chunk transport) fires its watcher ONCE: the
 		-- release is count-based, so a second fire here would take the FIRST reply's slot.
 		pending[2].cb(pending[2].arg, 1, 1, true)
-		assert.equal(1, TOGBankClassic_P2PSession:GetActiveSendTotal(), "a repeated completion released the other reply's slot")
+		assert.equal(1, p2p():GetActiveSendTotal(), "a repeated completion released the other reply's slot")
 		pending[1].cb(pending[1].arg, 1, 1, true)
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(), "the first reply's drain found no watcher -- its slot leaked")
+		assert.equal(0, p2p():GetActiveSendTotal(), "the first reply's drain found no watcher -- its slot leaked")
 	end)
 end)

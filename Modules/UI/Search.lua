@@ -3,17 +3,21 @@ TOGBankClassic_UI_Search = {}
 local FILTER_ANY = "any"
 local RESULTS_PER_PAGE = 50
 -- The "?" icon's text, under its "How It Works" title (UI:DressWindow draws the icon).
+-- HELP-CURRENT-001 (2026-09-15): the Slot dropdown, the sister-guild tag and the shop order added.
 local SEARCH_HELP_LINES = {
-	"Type at least 3 characters in |cFFFFFFFFItem Name|r to find items across all banker alts.",
+	"Type at least 3 characters in |cFFFFFFFFItem Name|r to find items across every bank character, including a sister guild's.",
 	"You can also drag an item from your bags into the field to search by ID.",
 	" ",
 	"|cffffd100Filters|r (compact row, auto-wraps based on window width):",
 	"  • Min lvl / Max lvl — required-level range",
 	"  • Filter — pick a Type (then Subtype) or a Quality tier",
+	"  • Slot — the armour slot, once Type is Armor",
 	"  • Sort — how to order results",
 	"  • Usable — hide items above your level (needs a Type or Quality first)",
 	" ",
-	"Click any result to open the request popup. Use |cFFFFFFFF<|r and |cFFFFFFFF>|r at the bottom-right to page through results.",
+	"Click any result to open the request popup; a bank character from a sister guild is named with its guild. If the guild's Shop is on, the request is a shop order at the estimate the popup shows. Use |cFFFFFFFF<|r and |cFFFFFFFF>|r at the bottom-right to page through results.",
+	" ",
+	"The |cffffd100Guild Bank|r window (/togbank) has the same items as a filterable list, with the Bankers, Requests, Log and Shop tabs beside it.",
 }
 local SUBFILTER_LIST  = {
 	any     = "Any",
@@ -293,6 +297,19 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 		return
 	end
 
+	-- STORE-006: ordering closed by an officer. Say why rather than opening a dialog whose
+	-- Submit would fail at Guild:AddRequest; that gate is the authoritative one.
+	if not TOGBankClassic_Guild:IsStoreOpen() then
+		TOGBankClassic_Output:Warn("%s", TOGBankClassic_Guild.STORE_CLOSED_TEXT)
+		return
+	end
+	-- STORE-006: an item an officer took off the shop list.
+	if itemEntry.ID and TOGBankClassic_Guild:IsNotForSale(itemEntry.ID) then
+		local shown = itemEntry.Info.name or (itemEntry.Link and itemEntry.Link:match("%[(.-)%]")) or ("item " .. tostring(itemEntry.ID))
+		TOGBankClassic_Output:Warn(TOGBankClassic_Guild.NOT_FOR_SALE_TEXT, shown)
+		return
+	end
+
 	self:EnsureRequestDialog()
 
 	local itemName = itemEntry.Info.name or (itemEntry.Link and itemEntry.Link:match("%[(.-)%]")) or "Unknown item"
@@ -318,20 +335,38 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 	}
 
 	local itemLabel = itemEntry.Link or itemName
-	local prompt = string.format("Request how many %s from %s?", itemLabel, bankAlt)
+	-- XGUILD-LABEL-001: a sister guild's banker is named with its guild.
+	local G = TOGBankClassic_Guild
+	local bankLabel = bankAlt .. (G and G.GuildTag and G:GuildTag(bankAlt) or "")
+	local prompt = string.format("Request how many %s from %s?", itemLabel, bankLabel)
+	-- SHOP-NOFREE-001 (the operator: "when the shop tab is shown and ordering is enabled, there
+	-- should be no 'free' item requests"): with the shop on, every order this dialog builds is a
+	-- SHOP ORDER, wherever the row came from (the Shop tab, the Browse tab, the Search window, the
+	-- old Inventory window) -- the record carries the mark and the estimate the member is shown here,
+	-- and Guild:AddRequest refuses an order without the mark. The estimate is the Shop tab's own
+	-- figure (Browse:PriceOne, the same library call and discount as the rows); an unpriced item
+	-- says so and is priced by the bank character at fill, as every order is (GUILD_STORE.md 3).
+	-- IsShopEnabled rather than IsShopSelling: a closed sign was refused above.
+	-- SHOP-ORDER-API-001: the fields and the line come from Browse:ShopOrderFields, the ONE builder --
+	-- the same call other addons reach through Guild:ShopOrderFields, so a shop order placed from
+	-- TOGProfessionMaster's [Bank] button carries exactly what this dialog would have written.
+	local B = TOGBankClassic_UI_Browse
+	local shop = B and B.ShopOrderFields and B:ShopOrderFields(itemEntry.ID) or nil
+	if shop then
+		local ctx = self.requestContext
+		ctx.shopOrder      = shop.shopOrder
+		ctx.estimate       = shop.estimate
+		ctx.estimateBase   = shop.estimateBase
+		ctx.discount       = shop.discount
+		ctx.estimateSource = shop.estimateSource
+		prompt = prompt .. "\n|cffe6d98c" .. shop.prompt .. "|r"
+	end
 	self.RequestDialog.Prompt:SetText(prompt)
 	local available = self.requestContext.available
 
-	-- Apply configured percentage limit to available quantity
-	local maxRequestPercent = 100
-	if TOGBankClassic_Options and TOGBankClassic_Options.GetMaxRequestPercent then
-		maxRequestPercent = TOGBankClassic_Options:GetMaxRequestPercent()
-	end
-	local maxAllowed = math.floor(available * maxRequestPercent / 100)
-	-- Always allow at least 1 item if any are available (handles single items like gear)
-	if maxAllowed == 0 and available > 0 then
-		maxAllowed = 1
-	end
+	-- Apply configured percentage limit to available quantity -- less what this member already has on
+	-- open order of it from this bank (SETTINGS-CANON-001: Guild:AddRequest enforces the same number).
+	local maxRequestPercent, maxAllowed, openQty = self:RequestLimit(available)
 
 	local minQuantity = maxAllowed > 0 and 1 or 0
 	local maxQuantity = maxAllowed > 0 and maxAllowed or 0
@@ -342,7 +377,9 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 	self.RequestDialog.QuantityInput:SetValue(minQuantity > 0 and 1 or 0)
 	self.RequestDialog.QuantityInput:SetDisabled(maxQuantity == 0)
 	if self.RequestDialog.AvailableLabel then
-		if maxRequestPercent < 100 then
+		if maxRequestPercent < 100 and openQty > 0 then
+			self.RequestDialog.AvailableLabel:SetText(string.format("Available: %d (max %d%%, %d already on order: %d more)", available, maxRequestPercent, openQty, maxAllowed))
+		elseif maxRequestPercent < 100 then
 			self.RequestDialog.AvailableLabel:SetText(string.format("Available: %d (max %d%% = %d)", available, maxRequestPercent, maxAllowed))
 		elseif available > 0 then
 			self.RequestDialog.AvailableLabel:SetText(string.format("Available: %d", available))
@@ -363,6 +400,21 @@ function TOGBankClassic_UI_Search:ShowRequestDialog(itemEntry, bankAlt)
 		self.RequestDialog.QuantityInput.editbox:SetFocus()
 		self.RequestDialog.QuantityInput.editbox:HighlightText()
 	end
+end
+
+--- The dialog's quantity ceiling for the item it opened on: the officer's maximum request % of the
+--- row's count (at least 1 when there is any), less what this member already has on OPEN order of it
+--- from this bank -- Guild:RequestAllowance, the number Guild:AddRequest enforces (SETTINGS-CANON-001).
+--- At 100% there is no limit, and the ceiling is simply what the row holds.
+---@param available number the row's count
+---@return number pct, number maxAllowed, number openQty
+function TOGBankClassic_UI_Search:RequestLimit(available)
+	local G, ctx = TOGBankClassic_Guild, self.requestContext or {}
+	available = tonumber(available) or 0
+	if not (G and G.RequestAllowance) then return 100, available, 0 end
+	local left, _, open, pct = G:RequestAllowance(G:GetNormalizedPlayer(), ctx.bank, ctx.itemID, available)
+	if pct >= 100 then return 100, available, open end
+	return pct, left, open
 end
 
 function TOGBankClassic_UI_Search:SubmitRequest()
@@ -396,16 +448,8 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 	local quantity = tonumber(quantityInput and quantityInput:GetValue())
 	local available = tonumber(self.requestContext.available) or 0
 
-	-- Apply configured percentage limit to available quantity
-	local maxRequestPercent = 100
-	if TOGBankClassic_Options and TOGBankClassic_Options.GetMaxRequestPercent then
-		maxRequestPercent = TOGBankClassic_Options:GetMaxRequestPercent()
-	end
-	local maxAllowed = math.floor(available * maxRequestPercent / 100)
-	-- Always allow at least 1 item if any are available (handles single items like gear)
-	if maxAllowed == 0 and available > 0 then
-		maxAllowed = 1
-	end
+	-- Apply configured percentage limit to available quantity, less this member's open orders of it.
+	local maxRequestPercent, maxAllowed, openQty = self:RequestLimit(available)
 
 	if not quantity or quantity <= 0 then
 		self.RequestDialog:SetStatusText("Enter a quantity greater than 0.")
@@ -413,7 +457,9 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 	end
 	if quantity > maxAllowed then
 		if maxAllowed <= 0 then
-			if maxRequestPercent < 100 then
+			if maxRequestPercent < 100 and openQty > 0 then
+				self.RequestDialog:SetStatusText(string.format("Cannot request - you already have %d on order, the most allowed (%d%% of %d).", openQty, maxRequestPercent, available))
+			elseif maxRequestPercent < 100 then
 				self.RequestDialog:SetStatusText(string.format("Cannot request - max allowed is %d%% of %d = 0 items.", maxRequestPercent, available))
 			else
 				self.RequestDialog:SetStatusText("Cannot request - none available right now.")
@@ -451,10 +497,19 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 		quantity = quantity,
 		fulfilled = 0,
 		notes = "",
+		-- SHOP-NOFREE-001 / STORE-004: the shop mark and what this dialog showed (nil on a plain bank).
+		shopOrder      = self.requestContext.shopOrder,
+		estimate       = self.requestContext.estimate,
+		estimateBase   = self.requestContext.estimateBase,
+		discount       = self.requestContext.discount,
+		estimateSource = self.requestContext.estimateSource,
 	}
 
-	if not TOGBankClassic_Guild:AddRequest(request) then
-		self.RequestDialog:SetStatusText("Unable to send request.")
+	-- Peer Review f5e52bcf F9: the gate's own sentence (ordering closed since the dialog opened, the
+	-- item taken off sale meanwhile), not a bare "unable".
+	local ok, why = TOGBankClassic_Guild:AddRequest(request)
+	if not ok then
+		self.RequestDialog:SetStatusText(why or "Unable to send request.")
 		return
 	end
 
@@ -983,94 +1038,61 @@ function TOGBankClassic_UI_Search:BuildSearchData()
 	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
 	if not guildInfo or not roster_alts then return end
 
-	-- First pass: aggregate all items from all alts
-	local items = {}
+	-- LINK-AUDIT-001 step 6 (docs/LINK_AUDIT.md 3.6): ONE walk over the view rows GetAltItems hands
+	-- back (Store.viewRow: one row per identity per alt, `Info` filled by Resolve, mail included --
+	-- SEARCH-002). The corpus is keyed by the row's OWN name: keyed by id, the first suffix variant
+	-- seen named every variant, so "Dreadblade of the Tiger" was filed under "Dreadblade of the
+	-- Bear" and could not be found by its own name. The link-keyed `Item:Aggregate`, the async
+	-- `Item:GetItems` and the second `Info` builder `Item:GetInfo` -- which on a cold client
+	-- overwrote a LibItemDB name with "Item N" -- are gone with this.
+	local corpusSeen = {}
 	for _, player in pairs(roster_alts) do
 		local norm = TOGBankClassic_Guild:NormalizeName(player)
-		-- INV2 step 7a: one accessor, which also honours the inventoryV2 switch.
-		-- SEARCH-002: this fallback aggregated bank + bags and OMITTED mail, while the Inventory
-		-- tab's equivalent included it -- so an item sitting in a banker's mailbox was visible in
-		-- the inventory tab and invisible to search, for the same character, from the same data.
-		-- GetAltItems includes mail, which makes the two views agree.
-		items = TOGBankClassic_Item:Aggregate(items, TOGBankClassic_Guild:GetAltItems(norm))
-	end
-
-	-- Use GetItems to enrich all items with Info (handles caching properly)
-	TOGBankClassic_Item:GetItems(items, function(enrichedList)
-		-- Build Corpus: unique item names
-		local itemNames = {}
-		local corpusSeen = {}
-		for _, v in pairs(enrichedList) do
-			if v and v.ID and v.Info and v.Info.name then
-				if not itemNames[v.ID] then
-					itemNames[v.ID] = v.Info.name
+		for _, itemEntry in ipairs(TOGBankClassic_Guild:GetAltItems(norm)) do
+			local name = itemEntry.ID and itemEntry.Info and itemEntry.Info.name
+			if name then
+				if not corpusSeen[name] then
+					corpusSeen[name] = true
+					table.insert(self.SearchData.Corpus, name)
 				end
-				if not corpusSeen[v.Info.name] then
-					corpusSeen[v.Info.name] = true
-					table.insert(self.SearchData.Corpus, v.Info.name)
+				local bucket = self.SearchData.Lookup[name]
+				if not bucket then
+					bucket = {}
+					self.SearchData.Lookup[name] = bucket
 				end
-			end
-		end
-
-		-- Build Lookup: name -> [{alt, item}]
-		for _, player in pairs(roster_alts) do
-			local norm = TOGBankClassic_Guild:NormalizeName(player)
-			local alt = guildInfo.alts[norm]
-			if alt and type(alt) == "table" then
-				-- Same accessor as the corpus pass above, so the lookup cannot be built from a
-				-- different set of items than the corpus was.
-				local altItems = TOGBankClassic_Guild:GetAltItems(norm)
-
-				for _, itemEntry in pairs(altItems) do
-					local name = itemNames[itemEntry.ID]
-					if name then
-						if not self.SearchData.Lookup[name] then
-							self.SearchData.Lookup[name] = {}
-						end
-						local found = false
-						local existingEntry = nil
-						-- INV2-SUFFIX-001: identity here is ID *plus suffix*. Matching on ID alone
-						-- summed "of the Tiger" and "of the Monkey" into one row carrying a single
-						-- variant's link and both variants' counts -- so search showed a stock
-						-- figure no variant actually had, and requesting from it minted whichever
-						-- suffix happened to be seen first. REQ-003 already treats these as
-						-- different items; this makes search agree.
-						local entrySuffix = TOGBankClassic_Item:RowSuffixID(itemEntry)
-						for _, existing in pairs(self.SearchData.Lookup[name]) do
-							if existing.alt == player and existing.item.ID == itemEntry.ID
-							   and TOGBankClassic_Item:RowSuffixID(existing.item) == entrySuffix then
-								found = true
-								existingEntry = existing
-								break
-							end
-						end
-						if found and existingEntry then
-							-- Same alt has this item already - sum the counts
-							existingEntry.item.Count = (existingEntry.item.Count or 1) + (itemEntry.Count or 1)
-						else
-							-- New entry for this alt/item combo
-							local info = TOGBankClassic_Item:GetInfo(itemEntry.ID, itemEntry.Link)
-							table.insert(self.SearchData.Lookup[name], {
-								alt  = player,
-								item = {
-									ID      = itemEntry.ID,
-									Count   = itemEntry.Count,
-									-- INV2-SUFFIX-001: carried, not re-derived. This rebuilt row is
-									-- what ShowRequestDialog mints the request's suffixID from, and
-									-- dropping the field here sent it back to parsing a link that
-									-- only encodes the suffix when ItemDB resolved the id.
-									Suffix  = itemEntry.Suffix,
-									Enchant = itemEntry.Enchant,
-									Link    = itemEntry.Link,
-									Info    = info,
-								},
-							})
-						end
+				-- INV2-SUFFIX-001: identity here is ID *plus suffix* (the request's identity, REQ-003).
+				-- Matching on ID alone summed "of the Tiger" and "of the Monkey" into one row carrying
+				-- a single variant's link and both variants' counts.
+				local entrySuffix = TOGBankClassic_Item:RowSuffixID(itemEntry)
+				local existingEntry
+				for _, existing in ipairs(bucket) do
+					if existing.alt == player and existing.item.ID == itemEntry.ID
+					   and TOGBankClassic_Item:RowSuffixID(existing.item) == entrySuffix then
+						existingEntry = existing
+						break
 					end
 				end
+				if existingEntry then
+					-- Same alt, same variant (an enchant sibling): sum the counts.
+					existingEntry.item.Count = (existingEntry.item.Count or 1) + (itemEntry.Count or 1)
+				else
+					table.insert(bucket, {
+						alt  = player,
+						item = {
+							ID      = itemEntry.ID,
+							Count   = itemEntry.Count,
+							-- INV2-SUFFIX-001: carried, not re-derived. This rebuilt row is what
+							-- ShowRequestDialog mints the request's suffixID from.
+							Suffix  = itemEntry.Suffix,
+							Enchant = itemEntry.Enchant,
+							Link    = itemEntry.Link,
+							Info    = itemEntry.Info,
+						},
+					})
+				end
 			end
 		end
-	end)
+	end
 end
 
 function TOGBankClassic_UI_Search:SubFilterMatches(item)
@@ -1218,8 +1240,9 @@ function TOGBankClassic_UI_Search:DrawContent()
 	TOGBankClassic_Output:Debug("UI", "SEARCH", "Total matches: %d", totalMatches)
 
 	-- SORT-002/003: resolve required level from the live cache before sorting/filtering, retrying
-	-- while unresolved (nil OR 0) so a cold-cache 0 doesn't stick. Mirrors Item:Sort's prep so the
-	-- Search tab orders and filters by required level as reliably as the inventory tab.
+	-- while unresolved (nil OR 0) so a cold-cache 0 doesn't stick. Resolve fills `reqLevel` from
+	-- LibItemDB for every id it knows; this retry is for the id it does NOT know, whose Info came
+	-- from a `GetItemInfo` that may have been cold when the view row was built and cached.
 	for _, entry in ipairs(matchedItems) do
 		local info = entry.item and entry.item.Info
 		if info and (not info.reqLevel or info.reqLevel == 0) then

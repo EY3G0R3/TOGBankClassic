@@ -29,11 +29,52 @@ local function load()
 	env.stubOutput()
 	env.loadModules({
 		"Modules/Constants.lua",
+		"Modules/Inventory/Record.lua",   -- the needed set is keyed by Record.requestKey (LINK-AUDIT-001 step 4)
+		"Modules/Inventory/Scan.lua",     -- a slot's suffix is read by the one link parser
 		"Modules/ItemHighlight.lua",
 	})
 	H = TOGBankClassic_ItemHighlight
 	return H
 end
+
+-- LINK-AUDIT-001 step 4 (docs/LINK_AUDIT.md 3.7): the needed set is keyed by id AND suffix. Keyed
+-- by id alone, an order for "of the Bear" lit every Spiked Club in the bags, and a plain order lit
+-- the suffixed ones; a slot is matched on its own link's suffix through Scan.parseLink.
+describe("ItemHighlight: an order for one random-suffix variant lights only that variant", function()
+	local ME = "Bankchar-Testrealm"
+	local BEAR = "|cff1eff00|Hitem:4564:0:0:0:0:0:1180:0:60|h[Spiked Club of the Bear]|h|r"
+	local SPIRIT = "|cff1eff00|Hitem:4564::::::28|h[Spiked Club of Spirit]|h|r"
+	local PLAIN = "|cffffffff|Hitem:4564|h[Spiked Club]|h|r"
+
+	local function requests(suffixID)
+		env.reset(); load()
+		TOGBankClassic_UI_Requests = { bankFilter = ME }
+		TOGBankClassic_Guild = {
+			Info = { requests = { r1 = { id = "r1", bank = ME, item = "Spiked Club", itemID = 4564, suffixID = suffixID, quantity = 1, fulfilled = 0, status = "open" } } },
+			GetNormalizedPlayer = function() return ME end,
+			IsBank = function() return true end,
+			RequestQuantityNeeded = function() return 1 end,
+		}
+		assert.is_true(H:BuildNeededItemsList())
+	end
+
+	it("a suffixed order marks the slot holding that variant and no other", function()
+		requests(1180)
+		assert.is_true(H:IsItemNeeded("Spiked Club", 4564, BEAR))
+		assert.is_false(H:IsItemNeeded("Spiked Club", 4564, SPIRIT), "another variant of the base item was marked needed")
+		assert.is_false(H:IsItemNeeded("Spiked Club", 4564, PLAIN), "the plain item was marked needed for a suffixed order")
+		assert.is_false(H:IsItemNeeded("Spiked Club", 4564, nil), "a slot with no link read as the requested variant")
+	end)
+
+	it("a plain order marks the plain item only, and a legacy name-only order still matches by name", function()
+		requests(nil)
+		assert.is_true(H:IsItemNeeded("Spiked Club", 4564, PLAIN))
+		assert.is_false(H:IsItemNeeded("Spiked Club", 4564, BEAR), "a suffixed variant was marked needed for a plain order")
+		TOGBankClassic_Guild.Info.requests.r1.itemID = nil
+		assert.is_true(H:BuildNeededItemsList())
+		assert.is_true(H:IsItemNeeded("Spiked Club", 4564, BEAR), "a legacy request lost its name match")
+	end)
+end)
 
 --- Render `bag` into ContainerFrame`index` with `size` slots, exactly as the client would.
 local function renderBagInto(index, bag, size)

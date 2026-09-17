@@ -8,7 +8,14 @@ local env = require("env_togbank")
 
 local function loadBank()
 	env.stubOutput()
+	-- SPEC-ALONE-001: Bank.lua reads TOGBankClassic_Constants at file scope (it precedes Bank in both
+	-- TOCs); run alone this file had none, because an earlier spec file used to leave it behind.
+	env.loadFile("Modules/Constants.lua")
 	env.loadFile("Modules/Item.lua")
+	-- LINK-AUDIT-001 step 4: MatchContainers reads a slot's suffix through Scan.parseLink, the one
+	-- link parser (Record precedes Scan in both TOCs). Forward-order alone found this missing.
+	env.loadFile("Modules/Inventory/Record.lua")
+	env.loadFile("Modules/Inventory/Scan.lua")
 	env.loadFile("Modules/Bank.lua")
 	return TOGBankClassic_Bank
 end
@@ -61,7 +68,7 @@ describe("Bank:FindItemsByName", function()
 	it("reports the bag and slot of each match", function()
 		env.setBag(0, 2, {})
 		-- Placed directly rather than via setBag so the item lands in slot 2, not slot 1.
-		env.bags[1] = { size = 3, [2] = { itemID = 858, stackCount = 2, hyperlink = env.items[858].link } }
+		env.bags[1] = { slots = 3, [2] = { itemID = 858, count = 2, link = env.items[858].link } }
 		local results = Bank:FindItemsByName("Minor Healing Potion")
 		assert.equal(1, #results)
 		assert.equal(1, results[1].bag)
@@ -83,9 +90,9 @@ describe("Bank:FindItemsByName", function()
 		local base = "|cffffffff|Hitem:10132:0:0:0:0:0:%d:1:60|h[Spiked Club]|h|r"
 		env.defineItem(10132, { name = "Spiked Club", class = 2 })
 		env.bags[0] = {
-			size = 3,
-			[1] = { itemID = 10132, stackCount = 1, hyperlink = base:format(863) },
-			[2] = { itemID = 10132, stackCount = 1, hyperlink = base:format(865) },
+			slots = 3,
+			[1] = { itemID = 10132, count = 1, link = base:format(863) },
+			[2] = { itemID = 10132, count = 1, link = base:format(865) },
 		}
 		local results = Bank:FindItemsByName("Spiked Club", 10132, 863)
 		assert.equal(1, #results, "the suffix filter did not separate the two variants")

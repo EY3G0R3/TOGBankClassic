@@ -35,7 +35,7 @@ describe("SendCommMessage return value", function()
 	-- The bug at RequestLog.lua:1070 was reading this as if it meant something.
 	it("is nil — the verdict never arrives as a return value", function()
 		local sent = captureSend()
-		local result = TOGBankClassic_Core:SendCommMessage("togbank-rm", "x", "Guild", nil, "ALERT")
+		local result = TOGBankClassic_Core:SendCommMessage("togbank-rm", "x", "GUILD", nil, "ALERT")
 		assert.is_nil(result,
 			"SendCommMessage must return nothing; a call site reading its return value is " ..
 			"reading a value that has never existed (audit ACQ-004)")
@@ -54,7 +54,6 @@ describe("Guild send-result handling", function()
 		env.loadFile("Modules/Guild.lua")
 		captureSend()
 		TOGBankClassic_Options = { IsSyncProgressMuted = function() return true end }
-		TOGBankClassic_P2PSession = { ReleaseSendSlot = function() end }
 	end)
 
 	-- The enum comparison could never match a boolean, so the throttled counter was frozen at
@@ -81,25 +80,19 @@ describe("Guild send-result handling", function()
 			"suppressed send as a delivery error (audit ACQ-004)")
 	end)
 
-	-- FINDING 28. ReleaseSendSlot's token-less branch retires the OLDEST outstanding token for a
-	-- requester. With two sends in flight for them that token belongs to the OTHER send, so a
-	-- duplicated completion callback decrements a slot still held -- the over-release P2P-024
-	-- closed for the timer path, returning through the completion path. The guard is here rather
-	-- than in P2PSession because only the caller knows which send completed.
-	--
-	-- THIS IS A SOURCE-TEXT ASSERTION AND ITS LIMITS ARE WORTH STATING, because this board keeps
-	-- finding guards that cannot fail for the reason their name gives. CreateOnChunkSentCallback
-	-- is a `local function`, so no spec can invoke it; every guard in this describe block reads
-	-- the source for the same reason. It WILL fail if the guard is deleted, which is the
-	-- regression it exists to catch. It CANNOT tell a correct guard from a broken one.
-	it("releases the send slot at most once per send", function()
+	-- FINDING 28 pinned "releases the send slot at most once per send" here -- the completion path's
+	-- once-per-send guard on ReleaseSendSlot. LIBREQ-DS-008: this callback no longer releases a
+	-- slot at all -- its one caller is the manual GUILD share, which takes none; a whispered reply's
+	-- slot is released by Inventory/Sync on the host's own per-send completion (DS-009), where the
+	-- library's `ctx.completed` is the once-per-send guard. So the assertion inverts: a slot release
+	-- reappearing in this callback would be a release for a slot never taken.
+	it("releases no send slot -- the GUILD share takes none, and a reply's is Inventory/Sync's", function()
 		local src = io.open("Modules/Guild.lua", "rb"):read("*a")
 		local body = src:match("local function CreateOnChunkSentCallback.-\nend\n")
 		assert.is_not_nil(body, "could not find CreateOnChunkSentCallback")
-		assert.truthy(body:find("sendStats.slotReleased", 1, true),
-			"the completion path releases the send slot with no once-per-send guard. A duplicated " ..
-			"completion retires a DIFFERENT send's token and decrements a slot that send still " ..
-			"holds, so the cap admits an extra concurrent send (audit FINDING 28)")
+		assert.falsy(body:find("ReleaseSendSlot", 1, true),
+			"the GUILD share's completion callback releases a P2P send slot it never acquired " ..
+			"(LIBREQ-DS-008: the library's slots are taken on accept and released by Inventory/Sync)")
 	end)
 
 	it("no longer reports a throttled counter it cannot increment", function()
@@ -152,13 +145,38 @@ describe("collision-guard release", function()
 		end
 	end)
 
-	it("releases the guard on refusal as well as on completion", function()
-		local src = io.open("Modules/Events.lua", "rb"):read("*a")
-		local body = src:match("function TOGBankClassic_Events:SyncDeltaVersion.-\nend")
-		assert.is_not_nil(body)
-		assert.truthy(body:find("sendResult == false", 1, true),
-			"a refused broadcast must still release hashBroadcastInProgress, or the guard " ..
-			"blocks every later broadcast for the rest of the session (audit ACQ-004)")
+	-- LIBREQ-DS-008: the broadcast is the library's (p2p:Broadcast on the host's OFFER prefix) and
+	-- the guard is released by the host's onSendComplete (Core.lua -> Events:OnBroadcastComplete)
+	-- on the send's terminal verdict -- delivered, refused, or never attempted -- so this is driven
+	-- through the real host with the transport's verdict, rather than read off the source.
+	it("releases the guard on refusal and on a suppressed send as well as on completion, and holds it while the send is in flight", function()
+		env.standUpClient("Bankchar", { { name = "Bankchar-Testrealm", note = "gbank" } }, "Testguild")
+		local host = TOGBankClassic_Core:DeltaHost()
+		local pending
+		TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, _, _, _, cb, arg)
+			if prefix == host.prefixes.OFFER then pending = { cb = cb, arg = arg, bytes = #text } end
+		end
+		local Events = TOGBankClassic_Events
+		local function broadcast()
+			pending = nil
+			Events.hashBroadcastInProgress = false
+			Events:SyncDeltaVersion("NORMAL")
+			assert.is_table(pending, "no broadcast reached the transport")
+			assert.is_true(Events.hashBroadcastInProgress, "the guard was not set for a send in flight")
+		end
+		-- Delivered.
+		broadcast()
+		pending.cb(pending.arg, pending.bytes, pending.bytes, true)
+		assert.is_false(Events.hashBroadcastInProgress, "delivery did not release the guard")
+		-- Refused by the client.
+		broadcast()
+		pending.cb(pending.arg, 0, pending.bytes, false, "rejected")
+		assert.is_false(Events.hashBroadcastInProgress,
+			"a refused broadcast did not release hashBroadcastInProgress -- the guard blocks every later broadcast for the rest of the session (audit ACQ-004)")
+		-- Never attempted (Core's raid guard reports (0, 0, nil, "suppressed")).
+		broadcast()
+		pending.cb(pending.arg, 0, 0, nil, "suppressed")
+		assert.is_false(Events.hashBroadcastInProgress, "a suppressed broadcast did not release the guard")
 	end)
 end)
 

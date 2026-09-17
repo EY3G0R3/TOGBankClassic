@@ -56,6 +56,14 @@ local function captureHost()
 	return sent
 end
 
+--- The library's numbered P2P on this client's host: the send slots and the state-wait are DeltaSync's
+--- since LIBREQ-DS-008 part 2 (Modules/P2P.lua is only TOGBank's hooks).
+local function p2p()
+	local lib = TOGBankClassic_P2P:Lib()
+	assert.is_table(lib, "precondition: the host has no numbered P2P")
+	return lib
+end
+
 local function answers(sent)
 	local out = {}
 	for _, m in ipairs(sent) do
@@ -74,7 +82,7 @@ describe("HASH-CANON-010 / step 3b: the provider decides 'do they hold my versio
 	end)
 
 	local function ask(canon)
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)   -- the accept: CHAIN-003 answers nobody else
+		p2p():TryAcquireSendSlot(PEER)   -- the accept: CHAIN-003 answers nobody else
 		Sync:OnDataRequest(PEER, { type = "inv", hash = canon or 0, keys = { alt = BANKER } })
 		return answers(sent)
 	end
@@ -146,12 +154,13 @@ describe("HASH-CANON-010 / step 3b: the provider decides 'do they hold my versio
 	-- and let the state-wait release it a second time (P2P-024).
 	it("keys the slot and the state-wait by the requester's FULL name when the host gives a bare one", function()
 		hold(BANKER, C(T, 0x20), T)
-		local P2P = TOGBankClassic_P2PSession
+		local P2P = p2p()
 		P2P:TryAcquireSendSlot(PEER)
-		P2P:ArmStateWait(PEER, BANKER)
+		P2P:ArmStateWait(PEER, BANKER, "sid1")
+		assert.is_not_nil(P2P.stateWaits[PEER .. "|" .. BANKER], "precondition: no state-wait armed under the full name")
 		Sync:OnDataRequest("Otherguy", { type = "inv", hash = C(T, 0x20), keys = { alt = BANKER } })
 		assert.equal(0, P2P:GetActiveSendTotal(), "a bare-named requester's no-change did not release ITS slot")
-		assert.is_false(P2P:IsAwaitingSummary(PEER), "the state-wait armed for the full name was not cancelled by the bare-named query")
+		assert.is_nil(P2P.stateWaits[PEER .. "|" .. BANKER], "the state-wait armed for the full name was not cancelled by the bare-named query")
 	end)
 
 	-- P2P-028: the slot taken at accept (inside ask) is given back on the outcomes that send nothing.
@@ -159,7 +168,7 @@ describe("HASH-CANON-010 / step 3b: the provider decides 'do they hold my versio
 		hold(BANKER, C(T, 0x20), T)
 		local a = ask(C(T, 0x20))
 		assert.is_table(a["inv-nochange"], "precondition: not a no-change")
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(),
+		assert.equal(0, p2p():GetActiveSendTotal(),
 			"a no-change kept the slot it was accepted with; three of these and the banker is " ..
 			"'busy' to everyone for 210 seconds (P2P-028)")
 	end)
@@ -171,14 +180,14 @@ describe("HASH-CANON-010 / step 3b: the provider decides 'do they hold my versio
 		}   -- a record, NO tuple rows: nothing to ship
 		local a = ask(nil)
 		assert.is_nil(a["inv-snapshot"], "precondition: something was sent after all")
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(), "nothing-to-send kept the slot")
+		assert.equal(0, p2p():GetActiveSendTotal(), "nothing-to-send kept the slot")
 	end)
 
 	it("frees the send slot when the request names no alt at all", function()
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = 0, keys = {} })
 		assert.equal(0, #sent)
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal())
+		assert.equal(0, p2p():GetActiveSendTotal())
 	end)
 
 	-- The snapshot is a BULK send that drains over time; the slot must outlive the call and be
@@ -191,14 +200,14 @@ describe("HASH-CANON-010 / step 3b: the provider decides 'do they hold my versio
 		TOGBankClassic_Core.SendCommMessage = function(_, prefix, _, _, _, _, cb, arg)
 			if prefix == host.prefixes.RESPONSE then completion = { cb = cb, arg = arg } end
 		end
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = 0, keys = { alt = BANKER } })
 		assert.is_table(completion, "the snapshot never reached the transport")
-		assert.equal(1, TOGBankClassic_P2PSession:GetActiveSendTotal(),
+		assert.equal(1, p2p():GetActiveSendTotal(),
 			"the slot was released before the payload had left -- the cap now counts a queued send as no load")
 		-- AceCommQueue's one terminal verdict: the whole message went.
 		completion.cb(completion.arg, 300, 300, true)
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(), "delivery did not release the slot")
+		assert.equal(0, p2p():GetActiveSendTotal(), "delivery did not release the slot")
 	end)
 
 	it("releases the slot when the transport REFUSES the snapshot, and only once", function()
@@ -208,34 +217,57 @@ describe("HASH-CANON-010 / step 3b: the provider decides 'do they hold my versio
 		TOGBankClassic_Core.SendCommMessage = function(_, prefix, _, _, _, _, cb, arg)
 			if prefix == host.prefixes.RESPONSE then completion = { cb = cb, arg = arg } end
 		end
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
+		p2p():TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = 0, keys = { alt = BANKER } })
 		completion.cb(completion.arg, 0, 300, false, "rejected")
 		completion.cb(completion.arg, 0, 300, false, "rejected")
-		assert.equal(1, TOGBankClassic_P2PSession:GetActiveSendTotal(),
+		assert.equal(1, p2p():GetActiveSendTotal(),
 			"a refused send released the wrong number of slots (expected exactly one)")
 	end)
 
-	-- The host can refuse BEFORE the transport (its roster guard: the requester went offline). No
-	-- callback will ever come, so the release must happen on the false return -- and the watcher
-	-- armed for the send must be withdrawn, or the NEXT send to that peer would release a slot it
-	-- never took.
-	it("releases the slot at once when the host refuses the send, and withdraws the watcher", function()
+	-- A send that never goes out. DS-009 (DeltaSync MINOR 18): the library reports EVERY way out of a
+	-- send through the one completion -- the host's own wrapper suppressing it (Core's raid guard,
+	-- which the transport reports as (0, 0, nil, "suppressed")), or the library declining before the
+	-- transport (its roster guard, an unknown channel). The slot is released on that verdict alone;
+	-- nothing reads SendData's return, because a release there too would give the slot back twice.
+	it("releases the slot at once, exactly once, when the send is suppressed or declined -- and never on the return value", function()
 		hold(BANKER, C(T, 0x20), T)
 		local host = TOGBankClassic_Core:DeltaHost()
-		host.SendMessage = function() return false end
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		-- (a) The transport's suppression, through the REAL library: a not-attempted completion.
+		local released = {}
+		local P2P = p2p()
+		local realRelease = P2P.ReleaseSendSlot
+		P2P.ReleaseSendSlot = function(self, requester, reason) released[#released + 1] = reason; return realRelease(self, requester, reason) end
+		TOGBankClassic_Core.SendCommMessage = function(_, prefix, _, _, _, _, cb, arg)
+			if prefix == host.prefixes.RESPONSE and cb then cb(arg, 0, 0, nil, "suppressed") end
+		end
+		P2P:TryAcquireSendSlot(PEER)
 		Sync:OnDataRequest(PEER, { type = "inv", hash = 0, keys = { alt = BANKER } })
+		assert.equal(0, P2P:GetActiveSendTotal(), "a suppressed send kept its slot")
+		assert.same({ "send_complete_not_sent" }, released, "released other than once, or not as not-sent")
+		-- (b) The library declining before the transport. Its own guard reads a LibGuildRoster
+		-- instance this fixture cannot flip (see the note on 'reports a refused send' below), so the
+		-- decline is doubled at the host's seam -- HONOURING the contract: false return AND the
+		-- completion, which is what the library does (DeltaSync.lua, SendMessage's `declined`).
+		released = {}
+		host.SendMessage = function(_, _, _, _, target, _, onComplete)
+			if onComplete then onComplete({ target = target, verdict = "not-attempted", reason = "target-offline" }) end
+			return false
+		end
+		P2P:TryAcquireSendSlot(PEER)
+		assert.is_true(Sync:OnDataRequest(PEER, { type = "inv", hash = 0, keys = { alt = BANKER } }))
 		host.SendMessage = nil
-		assert.equal(0, TOGBankClassic_P2PSession:GetActiveSendTotal(), "a send the host refused kept its slot")
+		assert.equal(0, P2P:GetActiveSendTotal(), "a send the library declined kept its slot")
+		assert.same({ "send_complete_not_sent" }, released, "the false return released the slot a second time")
+		P2P.ReleaseSendSlot = realRelease
 
-		-- A later, unrelated no-change to the same peer must not trip a stale watcher.
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)
+		-- A later, unrelated no-change to the same peer releases nothing: no watcher, no stale key.
+		P2P:TryAcquireSendSlot(PEER)
+		P2P:TryAcquireSendSlot(PEER)
+		TOGBankClassic_Core.SendCommMessage = function() end
 		host:SendData(PEER, { type = "x" }, false)
-		assert.equal(2, TOGBankClassic_P2PSession:GetActiveSendTotal(),
-			"a watcher left behind by a refused send released a slot on the next send to that peer")
+		assert.equal(2, P2P:GetActiveSendTotal(), "an unrelated send to that peer released a slot")
 	end)
 end)
 

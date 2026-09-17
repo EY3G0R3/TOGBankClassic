@@ -23,6 +23,13 @@ local function stubItemDB(items, opts)
 			-- Contract order: name, quality, classID, subClassID, equipLoc, itemLevel
 			return (not d.nameless) and d.name or nil, d.quality, d.class, d.subClass, d.equipLoc, d.itemLevel
 		end,
+		-- LibItemDB-1.0.lua:307-323 / :1218: fields 2 (enchant) and 7 (property) written empty when
+		-- 0 or absent, and the bare "item:<id>" when nothing is set.
+		BuildItemString = function(_, id, prop, enchant)
+			local function f(v) v = tonumber(v); return (v and v ~= 0) and tostring(v) or "" end
+			if f(prop) == "" and f(enchant) == "" then return "item:" .. id end
+			return ("item:%d:%s:::::%s"):format(id, f(enchant), f(prop))
+		end,
 		GetSuffixLink = function(_, id, suffix, enchant)
 			local s = "item:" .. id
 			if enchant then s = ("item:%d:%d:::::%d"):format(id, enchant, suffix or 0)
@@ -233,6 +240,52 @@ describe("Resolve fallback chain", function()
 		local d = Resolve.describe(Record.new(99999, 1))
 		assert.equal("client", d.resolved)
 		assert.equal("Item 99999", d.name)
+	end)
+
+	-- LINK-AUDIT-001 step 2 (docs/LINK_AUDIT.md 3.4): the client step asked GetItemInfo for the BASE
+	-- id, so it answered the base link, and a cold cache fell to "item:<id>" -- the record's suffix and
+	-- enchant thrown away for any id LibItemDB lacks. It now asks for the variant's own item string,
+	-- written by the library, and a cold cache keeps that string as the link.
+	describe("a suffixed or enchanted record the library does not carry", function()
+		local VARIANT = "item:99999:2504:::::863"
+		local VARIANT_LINK = "|cff1eff00|H" .. VARIANT .. "|h[Patch Blade of the Bear]|h|r"
+
+		it("asks the client for the variant's own item string, and keeps its name and link", function()
+			env.defineItem(99999, { name = "Patch Blade", class = 2, subClass = 7 })
+			local asked = {}
+			_G.GetItemInfo = function(arg)
+				asked[#asked + 1] = arg
+				if arg == VARIANT then return "Patch Blade of the Bear", VARIANT_LINK, 2, 30, 25 end
+				return nil
+			end
+			local d = Resolve.describe(Record.new(99999, 1, 863, 2504))
+			assert.equal("client", d.resolved)
+			assert.equal(VARIANT, asked[1], "the client was asked for something other than the variant's item string")
+			assert.equal(VARIANT_LINK, d.link)
+			assert.equal("Patch Blade of the Bear", d.name)
+			assert.equal(2, d.quality); assert.equal(25, d.reqLevel)
+		end)
+
+		it("keeps the variant's item string as the link on a cold cache -- never the bare item:<id>", function()
+			env.defineItem(99999, { name = "Patch Blade", class = 2, subClass = 7 })
+			_G.GetItemInfo = function() return nil end   -- env.reset restores it
+			local d = Resolve.describe(Record.new(99999, 1, 863, 2504))
+			assert.equal("client", d.resolved)
+			assert.equal(VARIANT, d.link, "a cold cache dropped the suffix and enchant from the link")
+			assert.equal("Item 99999", d.name)
+		end)
+
+		it("names it from the base id when only the base is cached, and still links the variant", function()
+			env.defineItem(99999, { name = "Patch Blade", class = 2, subClass = 7 })
+			_G.GetItemInfo = function(arg)
+				if arg == 99999 then return "Patch Blade", "|cff1eff00|Hitem:99999|h[Patch Blade]|h|r", 2, 30, 25 end
+				return nil
+			end
+			local d = Resolve.describe(Record.new(99999, 1, 863))
+			assert.equal("Patch Blade", d.name)
+			assert.equal("item:99999::::::863", d.link, "the base link replaced the variant's")
+			assert.equal(2, d.quality)
+		end)
 	end)
 
 	it("falls back to a placeholder when nothing knows the item", function()

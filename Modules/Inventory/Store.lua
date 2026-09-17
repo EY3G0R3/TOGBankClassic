@@ -479,6 +479,11 @@ local function viewRow(rec)
 	}
 end
 
+--- LINK-AUDIT-001 step 3 (docs/LINK_AUDIT.md 3.6): the same row shape for a record that is NOT in
+--- the store -- an inbox attachment the Mail window draws before it is taken. One builder, so a row
+--- built at the mail edge and a row from GetAltView cannot disagree about what a row is.
+Store.ViewRowFor = viewRow
+
 function Store:GetAltView(guild, altName)
 	local key = viewKey(guild, altName)
 	local cached = viewCache[key]

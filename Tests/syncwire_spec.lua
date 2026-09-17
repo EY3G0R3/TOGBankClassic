@@ -28,7 +28,7 @@ local function loadWireStack()
 	env.stubOutput()
 	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
-	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")   -- DS-HOST-001: Core needs the host
+	env.loadDeltaSync()   -- DS-HOST-001: Core needs the host
 
 	env.loadModules({
 		"Modules/Constants.lua",
@@ -222,6 +222,9 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 		assert.is_true(TOGBankClassic_Guild:IsBank(BANKER),
 			"precondition: the roster did not come up, so every authorisation check below would " ..
 			"refuse and the assertions would be measuring the setup rather than the code")
+		-- LIBREQ-DS-008: the numbered wire names bankers by NUMBER; both clients hold the same table.
+		TOGBankClassic_BankerNumbers:Adopt({ v = 5, n = 2, t = { [BANKER] = 1 } }, PEER)
+		assert.equal("0001", TOGBankClassic_BankerNumbers:NumberOf(BANKER), "precondition: the numbers table was not adopted")
 	end
 
 	--- Capture what the addon hands the transport, without driving AceComm's chunking.
@@ -351,7 +354,7 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 		local body = TOGBankClassic_Core:SerializeWithChecksum({
 			type = "hash-list-reply", alts = { [BANKER] = summary },
 		})
-		TOGBankClassic_Chat:OnCommReceived("togbank-hlr", body, "WHISPER", sender)
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", sender)
 	end
 
 	it("asks the Inventory window to repaint on delivery, and the alt is no longer pending", function()
@@ -443,14 +446,16 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 				"the banker published a newer version and the peer does not read as behind")
 		end)
 
-		it("never lets a hash-offer strip the revision-2 hash out of a cached entry", function()
+		it("never lets a canon-bearing offer strip the revision-2 hash out of a cached entry", function()
 			local canon = peerHoldingTheCanon()
-			-- The P2P offer path writes the cache too. An offer for the SAME version must not
+			-- The P2P's canon-bearing claim path writes the cache too (LIBREQ-DS-008: the library's
+			-- ver-reply on the host, through onAdvertised). A claim of the SAME version must not
 			-- replace a full entry with one that has forgotten hashV2 -- that silently drops every
 			-- later comparison to revision 1.
-			TOGBankClassic_P2PSession:OnOffer("Relayer-Testrealm", { [BANKER] = {
-				hash = canon.hash, hashV2 = canon.hashV2, updatedAt = canon.updatedAt, mailHash = canon.mailHash,
-			} })
+			local BN = TOGBankClassic_BankerNumbers
+			local host = TOGBankClassic_Core:DeltaHost()
+			host:OnComm_HANDSHAKE(host.prefixes.HANDSHAKE, TOGBankClassic_Core:SerializeWithChecksum({ type = "ver-reply",
+				e = BN:EncodeEntries({ { number = "0001", canon = canon.hashV2 } }) }), "WHISPER", "Relayer-Testrealm")
 			assert.equal(canon.hashV2, TOGBankClassic_Guild.latestBankerHashes[BANKER].hashV2,
 				"the offer path wrote a cache entry without hashV2")
 			assert.is_false(TOGBankClassic_Guild:IsAltSyncPending(BANKER))
@@ -796,7 +801,8 @@ describe("the join: SendAltData -> OnCommReceived on another client", function()
 		-- request used to carry revision 1 only, and the responder used to call that "current" --
 		-- the exact gate that swallowed Alchemyrcp's canon on the live guild. A requester with no
 		-- canon is now sent the data; see Tests/statesummary_spec.lua.
-		TOGBankClassic_P2PSession:TryAcquireSendSlot(PEER)   -- the accept: CHAIN-003 answers nobody else
+		-- The accept: CHAIN-003 answers nobody else. The slot is the library's (LIBREQ-DS-008).
+		TOGBankClassic_P2P:Lib():TryAcquireSendSlot(PEER)
 		TOGBankClassic_Inventory_Sync:OnDataRequest(PEER, { type = "inv", hash = canon, keys = { alt = BANKER } })
 
 		-- Asserted, not guarded with `if sent then`: a no-change that was never sent would make every

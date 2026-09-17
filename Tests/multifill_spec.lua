@@ -25,6 +25,8 @@ local BOB   = "Bob-Testrealm"
 local LINEN, WOOL, SILK = 2589, 2592, 4306
 
 local credited
+local savedMailFrame
+local function restoreMailFrame() _G.MailFrame = savedMailFrame end
 
 --- The mails SendMail recorded, in order.
 local function sends()
@@ -56,6 +58,10 @@ local function load()
 	Guild.RefreshRequestsUI = function() end
 
 	env.useHarnessBags()
+	-- SPEC-ORDER-001: the harness's MailFrame is a Frame (env/frames.lua) and Mailbox.lua reads its
+	-- level; this open-mailbox stand-in is a bare table, so it is handed back after each example
+	-- (`restoreMailFrame` below) rather than left for mailbox_spec to trip on.
+	savedMailFrame = _G.MailFrame
 	_G.MailFrame = { IsShown = function() return true end }
 	Mail.batchState, Mail.batchInFlight, Mail.pendingSend, Mail.pendingSendAt = nil, false, nil, nil
 	env.harnessBag(0, 16, {})
@@ -87,6 +93,7 @@ end
 
 describe("MULTIFILL-001: the row's Fulfill icon stacks one requester's orders on one mail", function()
 	before_each(load)
+	after_each(restoreMailFrame)
 
 	it("appends a second, third and fourth order for the same requester from the first free slot, and credits each by id on send", function()
 		env.harnessBag(0, 16, { { id = LINEN, count = 20 }, { id = WOOL, count = 10 }, { id = SILK, count = 5 }, { id = LINEN, count = 20 } })
@@ -186,6 +193,7 @@ end)
 
 describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 	before_each(load)
+	after_each(restoreMailFrame)
 
 	local function click() return Mail:FulfillStep(ME) end
 
@@ -402,6 +410,152 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.is_true((click())); env.advance(0.1); assert.is_true((click())); assert.is_true((click()))
 			assert.equal(2, #sends()); assert.equal(2, sends()[2].items[1].count)
 			assert.same({ 2 }, stacksOf(AIR))
+		end)
+	end)
+
+	-- MAIL-SPLIT-MERGE-001 (the operator, 2026-09-16): "say i need 8 of an item and i have 5. the
+	-- splitter will split off another 3 and then send the stacks of 3 and 5 as 2 attachments to the
+	-- mail. this costs an extra 30c. it would be nice if the one click tool stacked the 3 and the 5 to
+	-- make 8, so it went out as one attachment."
+	describe("MAIL-SPLIT-MERGE-001: a split that fits drops onto the order's own stack", function()
+		local function stacksOf(itemID)
+			local out = {}
+			for s = 1, 16 do local it = wow.bags[0][s]; if it and it.itemID == itemID then out[#out + 1] = it.count end end
+			table.sort(out)
+			return out
+		end
+
+		it("sends 8 from a 5 and a 10 as ONE attachment of 8", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 10 } })
+			order("r1", ALICE, LINEN, 8, 1000)
+			local ok, msg = click()
+			assert.is_true(ok, msg)
+			local plan = Mail.batchState.plan
+			assert.equal(1, #plan.stacksToAttach); assert.equal(5, plan.stacksToAttach[1].count)
+			assert.equal(3, plan.splitStack.amount)
+			assert.is_table(plan.splitStack.onto, "the split was not planned onto the 5")
+			ok, msg = click()   -- split
+			assert.is_true(ok, msg)
+			assert.truthy(msg:find("onto your stack of 5", 1, true), msg)
+			-- Too fast: the 5 still reads 5, so ATTACH waits rather than attaching it short.
+			ok, msg = click()
+			assert.is_false(ok); assert.truthy(msg:find("Still placing", 1, true), msg)
+			env.advance(0.1)
+			assert.is_nil(wow.cursor, "the split was left on the cursor")
+			assert.same({ 7, 8 }, stacksOf(LINEN), "the 3 did not stack onto the 5")
+			-- The count reads 8 but the server has not released the slot yet: picking it up would do
+			-- nothing, so ATTACH still waits.
+			wow.bags[0][1].isLocked = true
+			ok, msg = click()
+			assert.is_false(ok); assert.truthy(msg:find("Still placing", 1, true), msg)
+			wow.bags[0][1].isLocked = nil
+			ok, msg = click()   -- attach
+			assert.is_true(ok, msg)
+			assert.equal(1, attachedCount(), "the order went as more than one attachment")
+			assert.equal(8, slot(1).count)
+			assert.is_true((click()))   -- send
+			assert.equal(1, #sends()); assert.equal(1, #sends()[1].items); assert.equal(8, sends()[1].items[1].count)
+			Mail:ApplyPendingSend()
+			assert.same({ "r1" }, ids(credited))
+			assert.same({ 7 }, stacksOf(LINEN))
+		end)
+
+		it("splits into a free slot as before when the item's max stack has no room for the merge", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 6 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 6 } })
+			order("r1", ALICE, LINEN, 8, 1000)
+			assert.is_true((click()))
+			assert.is_nil(Mail.batchState.plan.splitStack.onto, "planned a merge past the max stack of 6")
+			local ok, msg = click()
+			assert.is_true(ok, msg)
+			assert.truthy(msg:find("into your bags", 1, true), msg)
+			env.advance(0.1)
+			assert.is_true((click()))
+			assert.equal(2, attachedCount())
+		end)
+
+		it("needs no free bag slot when the split merges", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			local contents = { { id = LINEN, count = 5 }, { id = LINEN, count = 10 } }
+			for _ = 3, 16 do contents[#contents + 1] = { id = WOOL, count = 1 } end
+			env.harnessBag(0, 16, contents)
+			order("r1", ALICE, LINEN, 8, 1000)
+			assert.is_true((click()))
+			local ok, msg = click()
+			assert.is_true(ok, "a merging split was refused for want of a free slot: " .. tostring(msg))
+			env.advance(0.1)
+			assert.is_true((click()))
+			assert.equal(1, attachedCount()); assert.equal(8, slot(1).count)
+		end)
+
+		it("restarts rather than dropping the split onto a stack that changed since the order was picked", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 10 } })
+			order("r1", ALICE, LINEN, 8, 1000)
+			assert.is_true((click()))
+			wow.bags[0][1].count = 4   -- the banker used one
+			local ok, msg = click()
+			assert.is_false(ok); assert.truthy(msg:find("bags changed", 1, true), msg)
+			assert.is_nil(Mail.batchState)
+			assert.is_nil(wow.cursor); assert.same({ 4, 10 }, stacksOf(LINEN), "a stack was split despite restarting")
+		end)
+
+		it("counts a merged extra as its whole stacks only, so it still fits the mail", function()
+			env.defineItem(WOOL, { name = "Wool Cloth", stackCount = 20 })
+			-- r1 takes eleven 1-stacks of Linen; r2 wants 8 Wool from a 5 and a 10 -- one slot merged,
+			-- two unmerged, and one slot is left.
+			local contents = {}
+			for _ = 1, 11 do contents[#contents + 1] = { id = LINEN, count = 1 } end
+			contents[#contents + 1] = { id = WOOL, count = 5 }
+			contents[#contents + 1] = { id = WOOL, count = 10 }
+			env.harnessBag(0, 16, contents)
+			order("r1", ALICE, LINEN, 11, 1000)
+			order("r2", ALICE, WOOL, 8, 1001)
+			local ok, msg = click()
+			assert.is_true(ok, msg)
+			assert.equal(1, #Mail.batchState.extras, "the merged extra was counted as two attachments and dropped")
+			assert.is_true((click()))   -- split
+			env.advance(0.1)
+			ok, msg = click()           -- attach
+			assert.is_true(ok, msg)
+			assert.equal(12, attachedCount())
+			assert.equal(WOOL, slot(12).itemID); assert.equal(8, slot(12).count)
+			assert.is_true((click()))   -- send
+			Mail:ApplyPendingSend()
+			assert.same({ "r1", "r2" }, ids(credited))
+		end)
+
+		it("the row's Fulfill icon splits onto the stack too, so the next click attaches one stack of 8", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 10 } })
+			local r1 = order("r1", ALICE, LINEN, 8, 1000)
+			local ok, msg = Mail:PrepareFulfillMail(r1)
+			assert.is_false(ok, msg)
+			local popup = wow.popups[#wow.popups]
+			assert.equal("TOGBANK_SPLIT_STACK", popup.which)
+			assert.truthy(popup.text1:find("onto your stack of 5", 1, true), popup.text1)
+			assert.is_table(popup.data and popup.data.onto, "the popup's data carries no merge target")
+			popup.info.OnAccept(nil, popup.data)
+			env.advance(0.2)
+			assert.is_nil(wow.cursor)
+			assert.same({ 7, 8 }, stacksOf(LINEN))
+			ok, msg = Mail:PrepareFulfillMail(r1)
+			assert.is_true(ok, msg)
+			assert.equal(1, attachedCount()); assert.equal(8, slot(1).count)
+		end)
+
+		it("the popup splits into a free slot instead when the stack changed while it was open", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 10 } })
+			assert.is_false((Mail:PrepareFulfillMail(order("r1", ALICE, LINEN, 8, 1000))))
+			local popup = wow.popups[#wow.popups]
+			wow.bags[0][1].count = 4   -- the banker used one before clicking Split
+			popup.info.OnAccept(nil, popup.data)
+			env.advance(0.2)
+			assert.is_nil(wow.cursor)
+			assert.equal(3, wow.bags[0][3].count, "the split did not land in the first free slot")
+			assert.same({ 3, 4, 7 }, stacksOf(LINEN), "the split was dropped onto the changed stack")
 		end)
 	end)
 

@@ -1,497 +1,233 @@
--- env_togbank — the offline WoW environment TOGBankClassic needs on top of the shared
--- WoWAPITesting harness (`Tests/wowapi`).
+-- env_togbank -- what TOGBankClassic needs OFFLINE on top of the shared WoWAPITesting harness
+-- (`Tests/wowapi`): the addon's loaders, its fixture sugar, and the handful of client APIs the
+-- harness does not yet model.
 --
 -- ============================================================================
--- THIS FILE IS A STAGING COPY OF A PROPOSED HARNESS ADDITION.
+-- ENV MIGRATION, 2026-09-14 (the operator: "just work with the test harness and update yourself,
+-- this sounds like you could have bad tests if you're not using the harness, and you have
+-- unnecessary bloat we can get rid of").
 --
--- Almost nothing in here is TOGBank-specific: the controllable clock + timer
--- queue, the container/bag API, the guild roster API and the C_* item shims are
--- what every TOG addon that scans bags or reads the guild roster needs. The
--- intended end state is for these to live in WoWAPITesting (`env/timer.lua`,
--- `env/container.lua`, `env/guild.lua`, plus the universal globals folded into
--- `env/wow.lua`), at which point this file shrinks to the genuinely
--- addon-specific loader helpers and the specs change one line:
+-- Until this date this file REPLACED most of the harness: its own clock and timer queue, its own
+-- container, item and guild-roster APIs, its own bit library, string helpers, popups, chat frame
+-- and localized strings -- all staged in 2026-08 as a proposed harness addition, all delivered by
+-- the harness on 2026-08-07, and none of it dropped here for a month. So the suite went green on
+-- every harness pin move with zero changes, because the harness was barely being used, and every
+-- stand-in was free to diverge from the maintained model (it had: this file's GetItemInfoInstant
+-- returned the equip location in the slots the client uses for item type and sub-type).
 --
---     local env = require("env_togbank")   ->  local env = require("env.togbank")
---
--- See Tests/HARNESS_CONTRACT.md for the full contract and rationale.
+-- NOW: the harness owns every global it models. `env.wow` is reset first, `env.guild` on top of
+-- it, and `M.install()` adds ONLY what the harness lacks, each item named as a GAP below so the
+-- next reader can check whether it has since been delivered and delete it. The spec-facing names
+-- (`env.now`, `env.bags`, `env.items`, `env.roster`, `env.advance`, ...) are kept as PROXIES onto
+-- the harness's own state so ~200 call sites did not have to change, and so a spec steering
+-- `env.bags` is steering `wow.bags` -- the same table the harness's cursor, send-mail slots and
+-- container API read.
 -- ============================================================================
 --
--- DESIGN NOTES
+-- THE HARNESS'S SHAPES, which every fixture here writes:
+--   * items: `wow.items[id] = { name, link, quality, level, minLevel, itemType, subType, stackCount,
+--     equipLoc, texture, sellPrice, classID, subclassID, ... }` (GetItemInfo's 18 returns). Register
+--     through `env.defineItem`, which maps this addon's older fixture spelling onto those names.
+--   * bags: `wow.bags[bagID] = { slots = n, family = 0, [slot] = { itemID, count, link, isBound } }`.
+--   * roster: `env.guild.members`, filled by `guild.setMembers` -- `publicNote`, `officerNote`,
+--     `isOnline`, `classFileName`, `rankIndex`. `env.addGuildMember` appends in that shape.
+--   * clocks: `wow.time` is GetTime() (session uptime, starts at 0, never rewinds across files);
+--     `wow.epoch` is time() / GetServerTime() / date(). `env.now` reads and writes the EPOCH,
+--     because that is what the addon stamps records with; GetTime() is a different clock, as in
+--     the client, and a spec comparing the two is asserting something the client never guarantees.
 --
--- FAITHFULNESS OVER CONVENIENCE. Stubs honour the real API contract wherever
--- the contract is what bites. Two that matter enormously here:
---
---   * C_Timer.After returns NOTHING. Only NewTimer/NewTicker return a handle
---     with :Cancel(). This is the single most important stub in the file — the
---     addon currently stores After's result in eight places and calls :Cancel()
---     on it (audit TIMER-001). A convenience stub that returned a handle would
---     make those specs pass and hide the entire bug class.
---
---   * AceEvent dispatches handlers as fn(eventName, ...), so a registered
---     method receives the event name as its FIRST argument after self. The
---     harness's RegisterEvent mirrors that exactly (audit EVENT-001).
---
--- ISOLATION. The whole suite runs in ONE Lua state and specs are *expected* to
--- reassign globals to feed values. So every global this env owns is installed
--- by M.install(), which M.reset() calls before each test. Installing once at
--- require time is not enough: one spec nil-ing GetGuildRosterInfo, or pointing
--- GetItemInfo at a fixture, would silently corrupt every later spec FILE. That
--- class of bug is invisible in a single-file run and only shows up in a full
--- run, so the reset has to be total rather than partial.
+-- FAITHFULNESS OVER CONVENIENCE, still: C_Timer.After returns NOTHING (the harness verified it
+-- rather than assumed it -- `env/wow.lua`, TIMER-001), and AceEvent handlers receive the event name
+-- first (EVENT-001). ISOLATION, still: the whole suite runs in ONE Lua state, so `M.reset()` resets
+-- the harness and reinstalls every gap global before each test.
 
--- This env deliberately REPLACES several stubs the base harness installs
--- (UnitName, GetRealmName, CreateFrame, ...) with state-driven versions a spec
--- can steer. Overriding them is the entire point, so the duplicate-field
--- warning is noise here.
+-- The gap globals below are assigned on top of the harness's tables on purpose.
 ---@diagnostic disable: duplicate-set-field, lowercase-global, undefined-global
 -- luacheck: std lua51
 
-local wow = require("env.wow")
+local wow   = require("env.wow")
+local guild = require("env.guild")
 
-local M = { wow = wow }
+-- ACEGUI-BIND-001: AceGUI is bound to the RICH frame model here, once, before any spec runs.
+--
+-- Every AceGUI file opens with `local CreateFrame, UIParent = CreateFrame, UIParent` and Ace3 loads
+-- once per suite, so whichever file first loads it decides the model every widget in the whole run
+-- is built on (harness README, "AceGUI captures CreateFrame at load ... a suite-wide decision, not a
+-- per-spec one"). Until 2026-09-15 that file was whichever came first ALPHABETICALLY: browse_spec,
+-- which happens to install the rich model before it loads AceGUI. Run in reverse order, a hollow-
+-- model file got there first, AceGUI's core captured a HOLLOW UIParent, and 36 examples in six
+-- files died in `Release()` -- `frames.lua:692: attempt to get length of local 'list' (a function
+-- value)` -- while every one of them passes alone. The suite was green by accident of the sort.
+-- `lua Tests/run_reverse.lua` is the gate that keeps it from becoming one again.
+--
+-- Requiring env.frames installs the rich furniture (UIParent, GameTooltip, MailFrame, ...) at
+-- require time WITHOUT a reset; loading AceGUI now binds its upvalues to that. The first
+-- `M.reset()` then puts the hollow CreateFrame back for the specs that want it (wow.reset does
+-- that), which is exactly the state 80 of these files already ran in after browse_spec.
+require("env.frames")
+require("env.ace").load("AceGUI-3.0")
+
+local M = { wow = wow, guild = guild }
+M.EPOCH = wow.epoch   -- the harness's fixed epoch (2026-01-01 UTC); what `env.now` starts at
 
 -- ---------------------------------------------------------------------------
 -- State a spec may read or steer directly
 -- ---------------------------------------------------------------------------
+-- Owned HERE (the harness has no model of them):
+M.sent         = {}    -- a spec's own capture of SendCommMessage/SendWhisper (its stub appends here)
 
---- The clock behind GetTime() and GetServerTime(). CLOCK-001 (self-audit H5a, Peer Review): this
---- defaulted to 0, a server time no client ever reads, so every whole-client spec ran where any
---- `ts <= 0` / `not ts or ts == 0` guard took the branch production never takes -- a suite-wide
---- way to hide a real defect. A fixed 2026 epoch is the default; a spec that needs 0 sets 0.
-M.EPOCH      = 1757000000
-M.now        = M.EPOCH
-M.timers     = {}     -- pending {at, fn, cancelled, kind}
-M.bags       = {}     -- bagID -> { size = n, [slot] = {itemID=, stackCount=, hyperlink=} }
-M.roster     = {}     -- array of { name, rank, rankIndex, level, class, zone, note, officerNote, online }
-M.items      = {}     -- itemID -> { name, link, quality, level, reqLevel, icon, price, class, subClass, equipSlot }
-M.money      = 0
-M.playerName = "Bankchar"
-M.realmName  = "Testrealm"
-M.guildName  = "Testguild"
-M.inGuild    = true
-M.sent       = {}     -- captured SendCommMessage/SendWhisper traffic
-M.printed    = {}     -- captured chat output
-M.popups     = {}     -- captured StaticPopup_Show calls
-M.tooltipLines = {}   -- text lines a scanning tooltip should report
-M.tooltipLink  = nil  -- link GameTooltip:GetItem() should return
+-- PROXIED onto the harness, so the old spelling steers the harness's own state. `now` is the epoch
+-- clock; the rest are the harness's tables, which its reset wipes IN PLACE (so an alias would hold)
+-- except `guild.members`, which `guild.reset()` replaces -- hence a getter rather than an alias for
+-- all of them, uniformly.
+local PROXY = {
+	now        = { get = function() return wow.epoch end,          set = function(v) wow.epoch = v end },
+	money      = { get = function() return wow.money end,          set = function(v) wow.money = v end },
+	timers     = { get = function() return wow.timers end },
+	bags       = { get = function() return wow.bags end },
+	items      = { get = function() return wow.items end },
+	popups     = { get = function() return wow.popups end },
+	printed    = { get = function() return wow.chat end },
+	roster     = { get = function() return guild.members end,       set = function(v) guild.setMembers(v) end },
+	playerName = { get = function() return wow.units.player.name end, set = function(v) wow.units.player.name = v end },
+	realmName  = { get = function() return guild.realm end,         set = function(v) guild.realm = v; wow.realmName = v end },
+	guildName  = { get = function() return guild.guildName end,     set = function(v) guild.guildName = v end },
+	inGuild    = { get = function() return guild.inGuild end,       set = function(v) guild.inGuild = v end },
+}
+setmetatable(M, {
+	__index = function(_, k)
+		local p = PROXY[k]
+		if p then return p.get() end
+		return nil
+	end,
+	__newindex = function(t, k, v)
+		local p = PROXY[k]
+		if p then
+			if not p.set then error("env." .. k .. " is the harness's table; steer it in place", 2) end
+			p.set(v)
+		else
+			rawset(t, k, v)
+		end
+	end,
+})
 
 -- ---------------------------------------------------------------------------
--- Clock + timers
+-- Clock + timers: the harness's
 -- ---------------------------------------------------------------------------
 
--- Fire every timer whose deadline has passed, oldest first. Re-scanned after
--- each callback because callbacks routinely schedule more timers.
-local function fireDue()
-	local guard = 0
-	while true do
-		guard = guard + 1
-		if guard > 1000 then
-			error("env_togbank: timer storm — over 1000 timer callbacks in one advance()")
-		end
-		local nextIdx, nextAt = nil, nil
-		for i, t in ipairs(M.timers) do
-			if not t.cancelled and not t.fired and t.at <= M.now then
-				if nextAt == nil or t.at < nextAt then nextIdx, nextAt = i, t.at end
-			end
-		end
-		if not nextIdx then return end
-		local t = M.timers[nextIdx]
-		t.fired = true
-		t.fn()
-	end
-end
-
---- Advance the fake clock and run everything that comes due.
+--- Advance the fake clock and run everything that comes due -- `wow.advanceTime`. A zero advance
+--- is ONE TICK: the client fires an `After(0)` on the next frame, not inside the call, and the
+--- harness's `advanceTime(0)` runs no slice at all, so `advance(0)` used to fire nothing.
 function M.advance(seconds)
-	M.now = M.now + (seconds or 0)
-	fireDue()
+	seconds = tonumber(seconds) or 0
+	if seconds <= 0 then seconds = wow.tickInterval end
+	return wow.advanceTime(seconds)
 end
 
---- Run all pending timers regardless of their deadline (jump to the end).
-function M.flushTimers()
-	local maxAt = M.now
-	for _, t in ipairs(M.timers) do
-		if not t.cancelled and not t.fired and t.at > maxAt then maxAt = t.at end
-	end
-	M.now = maxAt
-	fireDue()
-end
+--- Drain the one-shot queue -- `wow.flushTimers`. Tickers fire as the clock crosses them but never
+--- hold the flush open (the harness's rule; a repeating ticker is never "done").
+function M.flushTimers(rounds) return wow.flushTimers(rounds) end
 
---- How many timers are still scheduled and un-fired. Lets a spec assert that a
---- cancel actually cancelled something rather than silently no-op'ing.
-function M.pendingTimerCount()
-	local n = 0
-	for _, t in ipairs(M.timers) do
-		if not t.cancelled and not t.fired then n = n + 1 end
-	end
-	return n
-end
+--- How many timers are still pending -- `wow.pendingTimerCount`.
+function M.pendingTimerCount() return wow.pendingTimerCount() end
 
 -- ---------------------------------------------------------------------------
 -- Global installation
 -- ---------------------------------------------------------------------------
 
+-- Everything the harness models is the harness's: the clock and timers, `C_Timer`, `wipe`,
+-- `strtrim`/`string.trim`/`strsplit`, `securecallfunction`/`securecall`/`hooksecurefunc`,
+-- `geterrorhandler`, `bit`, UnitName/GetRealmName, the whole item, container and guild-roster
+-- surfaces (`env/wow.lua`, `env/guild.lua`), `Item`/`ItemMixin`, `DEFAULT_CHAT_FRAME`, the chat
+-- window globals, `StaticPopup*`, the localized ERR_* strings, `C_AddOns.GetAddOnMetadata`,
+-- `BANK_CONTAINER`, `NUM_BANKGENERIC_SLOTS`/`NUM_BANKBAGSLOTS` (from the flavour's build table --
+-- 24 and 6 on Classic Era, measured 2026-09-09), `ATTACHMENTS_MAX_RECEIVE`, `NUM_BAG_SLOTS` -- and,
+-- since pin 830dab2 (2026-09-15, inbox 91731fa6), item LINKS to GetItemInfo/GetItemInfoInstant,
+-- `C_Item.GetItemNameByID` / `GetItemInventoryTypeByID`, `GetMoney` (`wow.money`), `GetClassColor`,
+-- `C_CurrencyInfo.GetCoinTextureString` + `ITEM_UNIQUE`, and the SCANNING GameTooltip
+-- (`SetHyperlink` fills `<name>TextLeft<n>` from `wow.items[id].tooltipLines`; `GetItem` answers)
+-- -- which needs `env.frames`, loaded at the top of this file. The six stand-ins this function
+-- carried for them were deleted that day.
+--
+-- What follows is ONLY what the harness does not model, each a GAP with the evidence. Delete an
+-- entry the day the harness's `README.md` Adoption log says it landed.
 function M.install()
-	-- Clock ------------------------------------------------------------------
-	_G.GetTime          = function() return M.now end
-	_G.GetServerTime    = function() return math.floor(M.now) end
-	_G.time             = function() return math.floor(M.now) end
-	-- HARNESS-DATE-001: this used to be `function(fmt) return tostring(fmt or "") end` -- it
-	-- ignored the timestamp argument entirely and handed back the FORMAT STRING. That is the
-	-- "a permissive stub PICKS the answer" class this file's own design note opens with: a spec
-	-- asserting a rendered date was asserting "%Y-%m-%d %H:%M" and passing for the wrong reason,
-	-- and `date("*t")` returned the string "*t" rather than a table. Now a real os.date driven
-	-- off this env's clock, which is the shape the harness ships (env/wow.lua:763) -- adopted
-	-- deliberately rather than by deleting the override, because this env drives its OWN clock.
-	_G.date             = function(fmt, when) return os.date(fmt, when or math.floor(M.now)) end
-	_G.debugprofilestop = function() return M.now * 1000 end
-
-	-- Timers. C_Timer.After returns NOTHING — see the design note at the top.
-	_G.C_Timer = {
-		After = function(delay, fn)
-			M.timers[#M.timers + 1] = { at = M.now + delay, fn = fn, kind = "After" }
-			-- deliberately returns nil, exactly like the real API
-		end,
-		NewTimer = function(delay, fn)
-			local rec = { at = M.now + delay, fn = fn, kind = "NewTimer" }
-			M.timers[#M.timers + 1] = rec
-			return { Cancel = function() rec.cancelled = true end, _rec = rec }
-		end,
-		NewTicker = function(delay, fn, iterations)
-			local rec = { at = M.now + delay, kind = "NewTicker", count = 0 }
-			local handle
-			rec.fn = function()
-				rec.count = rec.count + 1
-				fn(handle)
-				if not iterations or rec.count < iterations then
-					rec.fired = false
-					rec.at = M.now + delay
-				end
-			end
-			M.timers[#M.timers + 1] = rec
-			handle = { Cancel = function() rec.cancelled = true end, _rec = rec }
-			return handle
-		end,
-	}
-
-	-- Lua-ish WoW helpers ----------------------------------------------------
-	_G.wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
-	-- WoW adds strtrim() AND installs it on the string metatable, so addon code writes
-	-- `s:trim()`. Stock Lua 5.1 has neither, and a missing method is a hard error rather
-	-- than a wrong answer -- so any spec touching a trimming code path dies without this.
-	_G.strtrim = function(s, chars)
-		local set = "[" .. (chars or " \t\r\n") .. "]*"
-		return (tostring(s):gsub("^" .. set, ""):gsub(set .. "$", ""))
-	end
-	string.trim = _G.strtrim
-	_G.strsplit = function(sep, str, limit)
-		local out, start = {}, 1
-		while true do
-			if limit and #out == limit - 1 then
-				out[#out + 1] = str:sub(start)
-				break
-			end
-			local a, b = str:find(sep, start, true)
-			if not a then out[#out + 1] = str:sub(start) break end
-			out[#out + 1] = str:sub(start, a - 1)
-			start = b + 1
-		end
-		return unpack(out)
-	end
-	-- CallbackHandler-1.0 captures this as a file-scope upvalue and calls it for every
-	-- dispatch. Offline there is no secure context, so it is a plain forwarding call — but it
-	-- must EXIST before CallbackHandler loads or every callback dispatch errors.
-	_G.securecallfunction = function(fn, ...) return fn(...) end
-	_G.securecall         = _G.securecall or function(fn, ...) return fn(...) end
-	_G.hooksecurefunc = function(tbl, name, post)
-		-- Two-arg form hooks a global function.
-		if type(tbl) == "string" then tbl, name, post = _G, tbl, name end
-		local orig = tbl[name]
-		tbl[name] = function(...)
-			local r = { orig(...) }
-			post(...)
-			return unpack(r)
-		end
-	end
-
-	-- Player / realm ---------------------------------------------------------
-	_G.UnitName                = function() return M.playerName end
-	_G.GetRealmName            = function() return M.realmName end
-	_G.GetNormalizedRealmName  = function() return M.realmName end
-	_G.GetMoney                = function() return M.money end
-	-- IsInRaid / GetNumGroupMembers / IsInGroup are the harness's (pin f845a14), DERIVED from
-	-- `wow.units`; a private `M.inRaid` flag behind a stand-in here was overridden by any harness
-	-- reset run mid-spec (raidvisibility_spec re-loads env.frames). Steer the raid with M.setInRaid.
-	_G.IsInGuild               = function() return M.inGuild end
-	_G.GetGuildInfo            = function() return M.inGuild and M.guildName or nil end
-
-	--- GetClassColor(classFilename) -> r, g, b, colourString.
-	---
-	--- Four returns, and the FOURTH is the one this addon uses: `Chat.lua`'s ColorPlayerName reads
-	--- `local _, _, _, color = GetClassColor(class)` and builds `|c<color><name>|r`, so the string
-	--- is the hex WITHOUT the `|c` prefix. Returning three values, or the string in slot 1, would
-	--- make every coloured name silently fall through to the default blue -- a stub that is wrong
-	--- in a way nothing asserts.
-	---
-	--- Absent entirely until 2026-09-09, which is why no spec had ever driven ColorPlayerName: the
-	--- first one to reach it died with "attempt to call global 'GetClassColor'". Colours here are
-	--- the client's real class colours for the two classes fixtures use, and any unknown class
-	--- falls back to white rather than nil, because a nil fourth return silently disables colouring.
-	_G.GetClassColor = function(classFilename)
-		local COLOURS = {
-			WARRIOR = { 0.78, 0.61, 0.43, "ffc79c6e" },
-			MAGE    = { 0.41, 0.80, 0.94, "ff69ccf0" },
-		}
-		local c = COLOURS[classFilename] or { 1, 1, 1, "ffffffff" }
-		return c[1], c[2], c[3], c[4]
-	end
-
-	-- Guild roster -----------------------------------------------------------
-	-- Faithful positional contract:
-	--   name, rank, rankIndex, level, class, zone, note, officernote, online, ...
-	_G.GetNumGuildMembers = function() return #M.roster end
-	_G.GetGuildRosterInfo = function(i)
-		local m = M.roster[i]
-		if not m then return nil end
-		return m.name, m.rank or "Member", m.rankIndex or 4, m.level or 60,
-			m.classLocalized or "Warrior", m.zone or "Orgrimmar",
-			m.note or "", m.officerNote or "", m.online and true or false,
-			0, m.class or "WARRIOR"
-	end
-	_G.C_GuildInfo = {
-		GuildRoster        = function() M.guildRosterCalls = (M.guildRosterCalls or 0) + 1 end,
-		CanViewOfficerNote = function() return true end,
-	}
-	_G.C_AddOns = {
-		GetAddOnMetadata = function(_, key) return key == "Version" and "1.3.2" or nil end,
-	}
-	_G.C_CurrencyInfo = { GetCoinTextureString = function(c) return tostring(c) .. "c" end }
-
-	-- Containers -------------------------------------------------------------
-	_G.BANK_CONTAINER          = -1
-	-- BANKSLOT-001: MEASURED on a live Classic Era client 2026-09-09, not guessed. These are
-	-- engine-side (`Constants.InventoryConstants.NumGenericBankSlots` -> `BANK_NUM_GENERIC_SLOTS`,
-	-- which the client supplies), so no source read can produce them and the harness deliberately
-	-- ships neither -- see `Tests/wowapi/env/wow.lua:2337`. This env carried 28 for
-	-- `NUM_BANKGENERIC_SLOTS`, which was a guess and wrong by four slots; a spec asserting against
-	-- it was asserting against fiction. `NUM_BAG_SLOTS = 4` comes from the harness.
-	-- TBC is NOT known to match and must not be assumed to: this addon ships both flavours.
-	_G.NUM_BANKGENERIC_SLOTS   = 24
-	_G.NUM_BANKBAGSLOTS        = 6
-	_G.ATTACHMENTS_MAX_RECEIVE = 16
-	-- The harness's own container API is COMPLETE at this point (wow.reset() ran just before this
-	-- overlay) and reads `wow.bags` in the harness shape (`count`/`link`/`slots`). It is kept so a
-	-- spec that drives the harness's cursor and send-mail slots -- which move stacks in `wow.bags`,
-	-- not in this env's `M.bags` -- can put it back with `M.useHarnessBags()` instead of carrying a
-	-- private cursor model beside the harness's (adoption of harness 1211a3a, step 2). The env's
-	-- own readers below stay the default until the env migration moves `M.bags` onto that shape.
-	M.harnessContainer = _G.C_Container
-	_G.C_Container = {
-		GetContainerNumSlots = function(bag)
-			local b = M.bags[bag]
-			return b and b.size or 0
-		end,
-		GetContainerNumFreeSlots = function(bag)
-			local b = M.bags[bag]
-			if not b then return 0, nil end
-			local used = 0
-			for s = 1, (b.size or 0) do if b[s] then used = used + 1 end end
-			return (b.size or 0) - used, b.bagType or 0
-		end,
-		GetContainerItemInfo = function(bag, slot)
-			local b = M.bags[bag]
-			local it = b and b[slot]
-			if not it then return nil end
-			return {
-				itemID     = it.itemID,
-				stackCount = it.stackCount or 1,
-				hyperlink  = it.hyperlink,
-				quality    = it.quality,
-				-- HIDE-002: Era's ContainerItemInfo carries `isBound` (ContainerDocumentation.lua:622).
-				-- Steered per slot with `bound = true` in setBag's contents; false otherwise, as the
-				-- client reports for an unbound stack.
-				isBound    = it.isBound == true,
-			}
-		end,
-	}
-
-	-- Items ------------------------------------------------------------------
-	-- Real GetItemInfo returns nil for an uncached item; M.items is the cache.
-	local function lookup(key)
-		if type(key) == "number" then return M.items[key] end
-		if type(key) == "string" then
-			local id = tonumber(key:match("|?H?item:(%d+)")) or tonumber(key)
-			return id and M.items[id] or nil
-		end
-		return nil
-	end
-	_G.GetItemInfo = function(key)
-		local d = lookup(key)
-		if not d then return nil end
-		--    1     2      3        4       5          6      7      8  9  10     11       12       13
-		-- name, link, quality, itemLevel, reqLevel, class, subclass, _, _, icon, price, classID, subClassID
-		return d.name, d.link, d.quality or 1, d.level or 1, d.reqLevel or 0,
-			d.className or "", d.subClassName or "", 1, d.equipLoc or "",
-			d.icon or 134400, d.price or 0, d.class or 0, d.subClass or 0
-	end
-	_G.GetItemInfoInstant = function(key)
-		local d = lookup(key)
-		if not d then return nil end
-		return d.id, d.equipLoc or "", d.equipLoc or "", d.equipLoc or "",
-			d.icon or 134400, d.class or 0, d.subClass or 0
-	end
-	-- The client's per-quality colours (the same table env/wow.lua carries), not a stub that answers
-	-- white for everything: BROWSE-001 colours row names by quality, and a stub that could not tell
-	-- a legendary from linen would have passed that spec by construction. Installed here because
-	-- this env owns the item globals and reinstalls them on every reset.
-	local QUALITY_COLORS = {
-		[0] = { 0.62, 0.62, 0.62, "ff9d9d9d" }, [1] = { 1, 1, 1, "ffffffff" }, [2] = { 0.12, 1, 0, "ff1eff00" },
-		[3] = { 0, 0.44, 0.87, "ff0070dd" }, [4] = { 0.64, 0.21, 0.93, "ffa335ee" }, [5] = { 1, 0.5, 0, "ffff8000" },
-	}
-	_G.GetItemQualityColor = function(quality)
-		local c = QUALITY_COLORS[quality] or QUALITY_COLORS[1]
-		return c[1], c[2], c[3], "|c" .. c[4]
-	end
-	_G.C_Item = {
-		GetItemNameByID = function(id) local d = M.items[id]; return d and d.name or nil end,
-		GetItemInventoryTypeByID = function(id) local d = M.items[id]; return d and d.invType or 0 end,
-		GetItemInfo = _G.GetItemInfo,
-		GetItemInfoInstant = _G.GetItemInfoInstant,
-		GetItemQualityColor = _G.GetItemQualityColor,
-	}
-
-	-- ItemMixin. Faithful: CreateFromItemID yields an object carrying .itemID,
-	-- and ContinueOnItemLoad defers via the timer queue (so a spec must
-	-- advance() for the callback to land) — mirroring the real async contract.
-	_G.Item = {
-		CreateFromItemID = function(_, itemID)
-			return {
-				itemID = itemID,
-				ContinueOnItemLoad = function(_, cb) C_Timer.After(0, cb) end,
-			}
-		end,
-	}
-
-	-- Chat / UI --------------------------------------------------------------
-	_G.DEFAULT_CHAT_FRAME = {
-		AddMessage = function(_, msg) M.printed[#M.printed + 1] = msg end,
-	}
-	_G.NUM_CHAT_WINDOWS   = 10
-	_G.GetChatWindowInfo  = function() return "" end
-	_G.ITEM_UNIQUE        = "Unique"
-
-	-- Localized system-message templates. LibGuildRoster derives its online/offline/join/leave
-	-- match patterns from these at FILE SCOPE (LibGuildRoster-1.0.lua:293-306), so they must
-	-- exist BEFORE the library is loaded — setting them afterwards is a silent no-op and the
-	-- library then matches nothing at all. Building patterns from the localized strings rather
-	-- than hardcoding English is the library's design, and it is why these are required.
-	-- The online form deliberately carries the player hyperlink the real message has.
-	_G.ERR_FRIEND_ONLINE_SS = "|Hplayer:%s|h[%s]|h has come online."
-	_G.ERR_FRIEND_OFFLINE_S = "%s has gone offline."
-	_G.ERR_GUILD_JOIN_S     = "%s has joined the guild."
-	_G.ERR_GUILD_LEAVE_S    = "%s has left the guild."
-	_G.ERR_GUILD_REMOVE_SS  = "%s has been kicked out of the guild by %s."
-	_G.UIParent           = wow.newFrame()
-
-	-- CreateFrame with a "GameTooltip" type must yield something that can actually be scanned:
-	-- the base harness's catch-all no-op frame returns nil from NumLines(), which makes a
-	-- `for i = 1, tip:NumLines()` loop raise "'for' limit must be a number" — a harness artifact
-	-- that would masquerade as an addon bug. Tooltip text is driven by M.tooltipLines.
-	M.tooltipLines = M.tooltipLines or {}
-	-- Lines the ADDON adds (GameTooltip:AddLine), the other direction from tooltipLines above,
-	-- which is what a scanning tooltip reports TO the addon. Cleared by ClearLines and reset().
-	M.tooltipAdded = M.tooltipAdded or {}
-	_G.CreateFrame = function(frameType, name)
-		local f = wow.newFrame()
-		if frameType == "GameTooltip" then
-			f.NumLines    = function() return #M.tooltipLines end
-			f.ClearLines  = function() M.tooltipAdded = {} end
-			f.SetOwner    = function() end
-			f.SetHyperlink = function() end
-			f.AddLine     = function(_, text, r, g, b, wrap)
-				M.tooltipAdded[#M.tooltipAdded + 1] = { text = text, r = r, g = g, b = b, wrap = wrap }
-			end
-			f.GetItem     = function() return nil, M.tooltipLink end
-			-- Real scanning tooltips are read via the global _G[name.."TextLeftN"] font strings.
-			if name then
-				for i = 1, 30 do
-					_G[name .. "TextLeft" .. i] = {
-						GetText   = function() return M.tooltipLines[i] end,
-						IsVisible = function() return M.tooltipLines[i] ~= nil end,
-					}
-				end
-			end
-		end
-		return f
-	end
-	_G.GameTooltip = _G.CreateFrame("GameTooltip", "TestGameTooltip")
-
-	-- Modules register popups into this at load time, so it must be a real table.
-	_G.StaticPopupDialogs = {}
-	_G.StaticPopup_Show   = function(which, ...) M.popups[#M.popups + 1] = { which = which, ... } end
-	_G.StaticPopup_Hide   = function() end
-	_G.ACCEPT, _G.CANCEL, _G.YES, _G.NO, _G.CLOSE = "Accept", "Cancel", "Yes", "No", "Close"
-
-	-- Bit library (WoW ships LuaBitOp; stock Lua 5.1 has none) ---------------
-	if not _G.bit then
-		local function toSigned(n)
-			n = n % 4294967296
-			if n >= 2147483648 then n = n - 4294967296 end
-			return n
-		end
-		local function bitwise(a, b, op)
-			a, b = a % 4294967296, b % 4294967296
-			local result, place = 0, 1
-			for _ = 1, 32 do
-				local x, y = a % 2, b % 2
-				local v
-				if op == "xor" then v = (x ~= y) and 1 or 0
-				elseif op == "and" then v = (x == 1 and y == 1) and 1 or 0
-				else v = (x == 1 or y == 1) and 1 or 0 end
-				result = result + v * place
-				a, b, place = (a - x) / 2, (b - y) / 2, place * 2
-			end
-			return toSigned(result)
-		end
-		_G.bit = {
-			bxor   = function(a, b) return bitwise(a, b, "xor") end,
-			band   = function(a, b) return bitwise(a, b, "and") end,
-			bor    = function(a, b) return bitwise(a, b, "or") end,
-			bnot   = function(a) return toSigned(4294967295 - (a % 4294967296)) end,
-			lshift = function(a, n) return toSigned(a * (2 ^ n)) end,
-			rshift = function(a, n) return toSigned(math.floor((a % 4294967296) / (2 ^ n))) end,
-		}
-	end
+	-- `env/frames.lua` builds UIParent and is required at the top of this file (ACEGUI-BIND-001),
+	-- so the rich one is always there; UI modules anchor to it at load. The fallback stands for a
+	-- spec that nils it.
+	_G.UIParent = _G.UIParent or wow.newFrame()
 end
 
 -- ---------------------------------------------------------------------------
 -- Reset
 -- ---------------------------------------------------------------------------
 
+--- Functions run at the START of every reset, before the harness's own. A fixture that leaves
+--- something behind the harness reset cannot reach registers its teardown here (env_fleet: the frames
+--- its clients made outlive `wow.reset()`, which drops the clients but keeps the frames registry).
+M.resetHooks = {}
+
 --- Total per-test reset. Call from before_each. Clears every piece of steerable
 --- state AND reinstalls every global, so a spec that reassigned one cannot leak
 --- into a later spec file.
-function M.reset()
-	M.now, M.timers          = M.EPOCH, {}
-	M.bags, M.roster, M.items = {}, {}, {}
-	M.money                  = 0
-	M.playerName             = "Bankchar"
-	M.realmName              = "Testrealm"
-	M.guildName              = "Testguild"
-	M.inGuild                = true
-	M.sent, M.printed        = {}, {}
-	M.popups                 = {}
-	M.tooltipLines           = {}
-	M.tooltipLink            = nil
-	M.tooltipAdded           = {}
-	M.guildRosterCalls       = 0
-	-- The harness's own reset FIRST, then this env's overlay on top of it. The harness owns the
-	-- inbox model (wow.mail / wow.mailActions) among much else, and its reset() wipes all of it;
-	-- this env used to reinstall only its own globals, so anything a spec steered in the harness
-	-- survived into every later spec FILE. Found as mailbox_spec's inbox being read by
-	-- multipc_spec's mail scan in a FULL-SUITE run only: two extra deposits and a count of 20.
-	wow.reset()
+---
+--- `opts.frames`: reset through `env.frames` instead -- the RICH widget model for the whole
+--- example, with this addon's fixture (the player's name, the guild, the officer flag) laid on top
+--- of it. The alternative spelling, `env.reset()` and then `require("env.frames").reset()`, puts
+--- the harness's defaults BACK over that fixture (wow.reset runs inside frames.reset: the player
+--- is "Testchar" again, the addon version gone), which is fine for a spec that reads none of it
+--- and silently wrong for one that does. A rich reset must never be followed by `wow.reset()`.
+--- @param opts table|nil  { frames = true }
+function M.reset(opts)
+	for _, hook in ipairs(M.resetHooks) do hook() end
+	-- VISIBILITY-001 part 3: LibAceGUIWidgets outlives a reset (one library object for the whole
+	-- suite), and the Guild Bank window and the Requests body register a scale listener keyed by
+	-- their MODULE table. A spec file that loaded those modules leaves them listening, so a later
+	-- file's scale change re-drew a previous world's window against this world's stubs -- measured:
+	-- requestsactions_spec's scale examples failed forward-order only, on Browse:ShowTab calling a
+	-- Guild method its stub does not have. Every such module stops listening here, and the scale goes
+	-- back to 1.0. Matched by SHAPE, not by the globals: specs nil the globals in teardown and some
+	-- load a module twice, so an orphan is reachable only through the listener table -- a Browse
+	-- module is registered with its own OnUIScaleChanged, a Requests module is the table carrying
+	-- BuildBody. (The per-frame listeners -- RowLists, cells, chrome -- only re-lay frames nothing
+	-- reads any more, and a pooled library widget's own listener must survive.)
+	local W = LibStub and LibStub.libs and LibStub.libs["LibAceGUIWidgets-1.0"]
+	if W and W._scaleListeners then
+		local orphans = {}
+		for owner, fn in pairs(W._scaleListeners) do
+			if type(owner) == "table" and (fn == rawget(owner, "OnUIScaleChanged") or rawget(owner, "BuildBody")) then
+				orphans[#orphans + 1] = owner
+			end
+		end
+		for _, owner in ipairs(orphans) do W._scaleListeners[owner] = nil end
+		if W.SetScale then W:SetScale(1) end
+	end
+	-- The harness first (it owns the clock, the timers, the items, the bags, the inbox, the chat
+	-- log, the popups, ...), then the guild env on top of it (its reset does not reset env.wow, and
+	-- the order matters because wow.reset() replaces C_ChatInfo wholesale), then this file's gaps.
+	if opts and opts.frames then
+		require("env.frames").reset()   -- calls wow.reset() itself, then installs the rich model over it
+	else
+		wow.reset()
+	end
+	guild.reset()
+	-- This addon's fixture defaults, as STATE on the harness rather than stubs of it. CLOCK-001: the
+	-- epoch is the harness's fixed 2026 date, never 0 -- a zero server time is one no client reads,
+	-- and every `ts <= 0` guard would take the branch production never takes.
+	M.EPOCH               = wow.epoch
+	wow.units.player.name = "Bankchar"
+	wow.realmName         = "Testrealm"
+	guild.realm           = "Testrealm"
+	guild.guildName       = "Testguild"
+	guild.inGuild         = true
+	-- TRUE here, against the harness's false default: every officer gate in this addon reads the
+	-- bare `CanViewOfficerNote`, which `Modules/Compat.lua` aliases to the namespaced one, and the
+	-- suite was written with the officer branch as the default; a spec driving the member branch
+	-- sets it (or the bare global) itself.
+	guild.canViewOfficerNote = true
+	-- `GetAddOnMetadata("TOGBankClassic", "Version")` answered "1.3.2" for the life of the old stub.
+	wow.addonMetadata.TOGBankClassic = { Version = "1.3.2" }
+	M.sent         = {}
 	M.install()
 end
 
@@ -522,8 +258,10 @@ M.MODULE_ORDER = {
 	"Modules/Events.lua",
 	"Modules/Guild.lua",
 	"Modules/BankerNumbers.lua",
-	"Modules/P2PSession.lua",
+	"Modules/P2P.lua",
 	"Modules/RequestLog.lua",
+	"Modules/Donations.lua",
+	"Modules/PriceList.lua",
 	"Modules/Log.lua",
 	"Modules/Propagation.lua",
 	"Modules/Item.lua",
@@ -667,22 +405,28 @@ end
 --- Load Modules/UI.lua, which is `TOGBankClassic_UI = LibStub("AceGUI-3.0")` at line 1 and so
 --- cannot load without the library present.
 ---
---- The REAL AceGUI is loaded from the sibling Ace3 install, not a stub. Its core file loads
---- clean against this env — the widget files are not needed, because nothing here creates
---- widgets. A stubbed AceGUI would be a table we wrote, so a spec asserting against it would
---- only be asserting about our own stub.
+--- The REAL AceGUI, core and widgets, from the sibling Ace3 install through the harness's loader
+--- -- already loaded at the top of this file (ACEGUI-BIND-001), so this is the idempotent no-op
+--- path. It used to loadfile the core alone under whichever frame model the caller had, which is
+--- how a hollow-model spec came to bind AceGUI for the run.
 function M.loadUI()
-	if not (LibStub.libs and LibStub.libs["AceGUI-3.0"]) then
-		local ACE3 = "../Ace3/AceGUI-3.0/AceGUI-3.0.lua"
-		local chunk = loadfile(ACE3)
-		if not chunk then
-			error("AceGUI-3.0 unavailable: " .. ACE3 .. " not found. Modules/UI.lua cannot " ..
-				"load without it.", 2)
-		end
-		chunk("AceGUI-3.0", {})
-	end
+	require("env.ace").load("AceGUI-3.0")
 	M.loadFile("Modules/UI.lua")
 	return TOGBankClassic_UI
+end
+
+--- Hand back what Options:Init registered with the Blizzard options window. That registration is
+--- AceConfigDialog LIBRARY state and outlives the spec file, so a second Init in a later file
+--- raises "TOGBankClassic has already been added to the Blizzard Options Window". Call it from an
+--- `after_each` in every describe that runs the real Options:Init, so a red example still hands it
+--- back (SPEC-ORDER-001: this was spelled in two files and missing from a third -- searchbox_spec --
+--- which was fine only while it happened to sort last of the three).
+function M.releaseBlizOptions()
+	local ACD = LibStub.libs and LibStub.libs["AceConfigDialog-3.0"]
+	if not ACD then return end
+	ACD.BlizOptions["TOGBankClassic"] = nil
+	ACD.BlizOptions["TOGBankClassic/Bank"] = nil
+	ACD.BlizOptionsIDMap["TOGBankClassic"] = nil
 end
 
 --- A frame double faithful enough to assert window-chrome painting against.
@@ -741,22 +485,12 @@ end
 -- LibGuildRoster-1.0 (a required dependency as of v1.4.0)
 -- ---------------------------------------------------------------------------
 
--- LibGuildRoster does LibStub("CallbackHandler-1.0") at file scope and cannot load
--- without it. Load the REAL one from the sibling Ace3 install rather than stubbing:
--- that is the exact code that ships to players, and a stub would hide the very
--- integration bugs this suite exists to catch. Mirrors GuildRoster's own env_guild.lua
--- (see Tests/HARNESS_CONTRACT.md — env/CallbackHandler.lua is a proposed harness addition).
+-- LibGuildRoster does LibStub("CallbackHandler-1.0") at file scope and cannot load without it.
+-- The REAL one, through the harness's own Ace3 registry (`env.ace`), which knows where the
+-- sibling install lives; a second loader here was HARNESS_CONTRACT.md 4a, delivered 2026-08-07.
 local function ensureCallbackHandler()
 	if LibStub.libs and LibStub.libs["CallbackHandler-1.0"] then return end
-	-- CallbackHandler calls geterrorhandler() on every dispatch.
-	_G.geterrorhandler = _G.geterrorhandler or function() return function(err) error(err, 0) end end
-	local ACE3 = "../Ace3/CallbackHandler-1.0/CallbackHandler-1.0.lua"
-	local chunk = loadfile(ACE3)
-	if not chunk then
-		error("CallbackHandler-1.0 unavailable: " .. ACE3 .. " not found. LibGuildRoster " ..
-			"cannot load without it.", 2)
-	end
-	chunk("CallbackHandler-1.0", {})
+	require("env.ace").load("CallbackHandler-1.0")
 end
 
 -- ---------------------------------------------------------------------------
@@ -854,6 +588,21 @@ function M.holdV2(guild, alt, rows, money)
 	return Store
 end
 
+--- The real DeltaSync-1.0 (with AceCommQueue-1.0, its declared dependency) exactly as the client
+--- loads it -- all eight files of its TOC, `DeltaSyncNumbers.lua` (LIBREQ-DS-008 part 1) and
+--- `DeltaSyncP2PNumbered.lua` (part 2) included.
+---
+--- This used to load those two BY PATH after `libs.load`, because the harness manifest listed only
+--- the six files of MINOR 17 and `libs.load` therefore handed back a host with no `InitNumbers` and
+--- no numbered P2P class -- which TOGBank's adapters read as "library too old", so the version query
+--- went quiet and nine examples failed for a reason that looked like a TOGBank bug. Contract
+--- d66615e6; DELIVERED by WoWAPITesting in pin `90530f3` (`pathsOf` returns all eight in TOC order),
+--- and the stand-in list is gone. The wrapper stays because every spec that stands the Core host up
+--- calls it, and it is the one place the library's load is spelled.
+function M.loadDeltaSync()
+	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")
+end
+
 --- Stand up a WHOLE client: every module in .toc order, the real Core, the V2 store, a real
 --- LibGuildRoster roster, and the Database / Options stand-ins the sync layer reads.
 ---
@@ -880,7 +629,7 @@ function M.standUpClient(who, members, guild)
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
 	-- DS-HOST-001: Core stands up a DeltaSync-1.0 host and the wire envelope is the host's, so the
 	-- REAL library loads here exactly as it does in game (a declared hard dependency).
-	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")
+	M.loadDeltaSync()
 	M.loadModules(M.MODULE_ORDER)
 	-- Re-stub AFTER the module load, which installs the real Output over the earlier stub. The
 	-- real Output:Debug reads db.global.debugCategories/debugTags and the persistent log, none of
@@ -943,19 +692,35 @@ function M.canon(publishedAt, checksum)
 	return string.format("%010d%010d", publishedAt, checksum % 10000000000)
 end
 
---- Register an item in the fake client cache.
+--- Register an item in the harness's item cache (`wow.items`, what GetItemInfo reads).
+---
+--- Takes THIS ADDON'S fixture spelling and writes the HARNESS'S: `icon` -> `texture`, `price` ->
+--- `sellPrice`, `class`/`subClass` -> `classID`/`subclassID`, `reqLevel` -> `minLevel`,
+--- `className`/`subClassName` -> `itemType`/`subType`. Both spellings end up on the entry, so a
+--- spec that reads `def.price` back still can; the harness reads only its own. `invType` and
+--- `tooltipLines` are the harness's own fields (C_Item.GetItemInventoryTypeByID; the scanning
+--- tooltip's SetHyperlink fill) and pass through untouched.
 --- @param id number
---- @param def table  { name=, class=, subClass=, quality=, level=, reqLevel=, link=, price=, icon= }
+--- @param def table  { name=, class=, subClass=, quality=, level=, reqLevel=, link=, price=, icon=, equipLoc=, invType=, tooltipLines= }
 function M.defineItem(id, def)
 	def = def or {}
-	def.id = id
+	def.id   = id
 	def.name = def.name or ("Item " .. id)
 	def.link = def.link or ("|cffffffff|Hitem:" .. id .. ":0:0:0:0:0:0:0:60|h[" .. def.name .. "]|h|r")
-	M.items[id] = def
-	return def
+	if def.icon         ~= nil and def.texture    == nil then def.texture    = def.icon end
+	if def.price        ~= nil and def.sellPrice  == nil then def.sellPrice  = def.price end
+	if def.class        ~= nil and def.classID    == nil then def.classID    = def.class end
+	if def.subClass     ~= nil and def.subclassID == nil then def.subclassID = def.subClass end
+	if def.reqLevel     ~= nil and def.minLevel   == nil then def.minLevel   = def.reqLevel end
+	if def.className    ~= nil and def.itemType   == nil then def.itemType   = def.className end
+	if def.subClassName ~= nil and def.subType    == nil then def.subType    = def.subClassName end
+	wow.loadItem(id, def)
+	return wow.items[id]
 end
 
---- Fill a bag with items. `contents` is an array of {id, count} or plain ids.
+--- Fill a bag with items, in the harness's shape (`wow.bags[bagID] = { slots=, family=, [slot] =
+--- { itemID, count, link, isBound, name } }`), which is what `C_Container`, the harness's cursor
+--- and its send-mail slots all read. `contents` is an array of {id, count} or plain ids.
 ---
 --- `suffix` and `enchant` build a link carrying them, because that is the ONLY way a spec can
 --- express a random-suffix item: `Scan.parseLink` reads the enchant from link field 2 and the
@@ -963,16 +728,16 @@ end
 --- scanner to see it is driving nothing. That cost a green-looking end-to-end test its whole point
 --- -- two suffix variants of one base ID were written as two identical suffix-0 links and
 --- correctly aggregated into one row, which reads exactly like the collapse bug being tested for.
---- @param contents table array of ids, or of { id=, count=, suffix=, enchant=, link= }
-function M.setBag(bagID, size, contents)
-	local bag = { size = size, bagType = 0 }
+--- @param contents table array of ids, or of { id=, count=, suffix=, enchant=, link=, bound= }
+function M.setBag(bagID, slots, contents)
+	local bag = { slots = slots, family = 0 }
 	for slot, entry in ipairs(contents or {}) do
 		local tbl     = type(entry) == "table"
 		local id      = tbl and entry.id or entry
 		local count   = tbl and (entry.count or 1) or 1
 		local suffix  = tbl and entry.suffix or 0
 		local enchant = tbl and entry.enchant or 0
-		local def     = M.items[id] or M.defineItem(id, {})
+		local def     = wow.items[id] or M.defineItem(id, {})
 
 		local link = tbl and entry.link or def.link
 		if (suffix ~= 0 or enchant ~= 0) and not (tbl and entry.link) then
@@ -981,53 +746,36 @@ function M.setBag(bagID, size, contents)
 				id, enchant, suffix, def.name)
 		end
 
-		bag[slot] = { itemID = id, stackCount = count, hyperlink = link, isBound = tbl and entry.bound == true or nil }
-	end
-	M.bags[bagID] = bag
-	return bag
-end
-
---- Hand the container surface back to the harness for this example: `C_Container` becomes the
---- harness's complete table (readers, `PickupContainerItem`, `SplitContainerItem`), which reads and
---- moves stacks in `wow.bags`. Use it in a spec that drives the harness's cursor or send-mail slots
---- (`ClickSendMailItemButton`, `GetSendMailItem`, `SendMail`): those work on `wow.bags`, so a bag
---- filled with `setBag` (this env's `M.bags`) would be invisible to them. Fill bags with
---- `harnessBag` after calling this. Undone by the next `reset()`.
-function M.useHarnessBags()
-	_G.C_Container = M.harnessContainer
-	return wow.bags
-end
-
---- `setBag` for `wow.bags`: the harness shape (`slots`, `count`, `link`), with the record carrying
---- `name` so the harness's `GetSendMailItem` can answer it (its item cache is `wow.items`, not this
---- env's). Same `contents` form as `setBag`, minus `suffix`/`enchant`/`bound`, which no spec on
---- this path uses yet -- add them here when one does, not in the spec.
-function M.harnessBag(bagID, slots, contents)
-	local bag = { slots = slots }
-	for slot, entry in ipairs(contents or {}) do
-		local tbl   = type(entry) == "table"
-		local id    = tbl and entry.id or entry
-		local count = tbl and (entry.count or 1) or 1
-		local def   = M.items[id] or M.defineItem(id, {})
-		bag[slot] = { itemID = id, count = count, link = tbl and entry.link or def.link, name = def.name }
+		bag[slot] = { itemID = id, count = count, link = link, name = def.name,
+			isBound = tbl and entry.bound == true or false }
 	end
 	wow.bags[bagID] = bag
 	return bag
 end
 
---- Add a guild member. `note` carrying "gbank" makes them a banker.
+--- ENV MIGRATION: `harnessBag` and `useHarnessBags` were the bridge while this env kept its own
+--- container model beside the harness's. There is one model now; both are `setBag`.
+M.harnessBag = M.setBag
+function M.useHarnessBags() return wow.bags end
+
+--- Add a guild member to the harness's roster (`env.guild.members`). `note` carrying "gbank"
+--- makes them a banker. Takes this addon's fixture spelling (`note`, `online`, `class`) and writes
+--- the harness's (`publicNote`, `isOnline`, `classFileName`).
 function M.addGuildMember(name, opts)
 	opts = opts or {}
-	M.roster[#M.roster + 1] = {
-		name        = name,
-		note        = opts.note or "",
-		officerNote = opts.officerNote or "",
-		online      = opts.online ~= false,
-		level       = opts.level or 60,
-		class       = opts.class or "WARRIOR",
-		rankIndex   = opts.rankIndex or 4,
+	local list = {}
+	for i, m in ipairs(guild.members) do list[i] = m end
+	list[#list + 1] = {
+		name          = name,
+		publicNote    = opts.note or opts.publicNote or "",
+		officerNote   = opts.officerNote or "",
+		isOnline      = opts.online ~= false,
+		level         = opts.level or 60,
+		classFileName = opts.class or "WARRIOR",
+		rankIndex     = opts.rankIndex or 4,
 	}
-	return M.roster[#M.roster]
+	guild.setMembers(list)
+	return guild.members[#guild.members]
 end
 
 --- AceConsole-3.0's `GetArgs` -- THE REAL ONE, loaded from the sibling Ace3 install.

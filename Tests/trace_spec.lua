@@ -2,9 +2,15 @@
 -- through every gate, printing the first that says no with its inputs.
 --
 -- Driven through ChatCommand with the text a player types (CMD-001), on a WHOLE client (real Store,
--- real P2PSession, real Guild), asserting on what reaches chat. The command must call the
--- production predicates rather than copy them, so the examples set up real state -- tuple records
--- in the V2 store, a canon on the record, an advertised summary -- and read the verdicts back.
+-- real Guild), asserting on what reaches chat. The command must call the production predicates
+-- rather than copy them, so the examples set up real state -- tuple records in the V2 store, a
+-- canon on the record, an advertised summary -- and read the verdicts back.
+--
+-- LIBREQ-DS-008: the P2P half the trace prints (send slots, the state-wait, our session) is the
+-- library's instance on the DeltaSync host, read through TOGBankClassic_P2P:Lib(). The Core here is
+-- a stand-in with no host, so the instance is a DOUBLE in the library's field shape (sessionsByKey,
+-- a session's `key`, sendQueue entries' `key`); the real instance is driven end to end in
+-- fullsync_spec, and this file is about what the command prints from it.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
@@ -13,6 +19,8 @@ local T = 1757000000
 local GUILD = "Testguild"
 local BANKER, OTHER, PEER = "Bankchar-Testrealm", "Otherbanker-Testrealm", "Otherguy-Testrealm"
 
+local P2P   -- the double, fresh per example
+
 local function client(who)
 	env.standUpClient(who, {
 		{ name = BANKER, note = "gbank" }, { name = OTHER, note = "gbank" }, { name = PEER },
@@ -20,6 +28,14 @@ local function client(who)
 	env.stubCore()
 	TOGBankClassic_Core.SendWhisper = function() return true end
 	TOGBankClassic_Core.SendCommMessage = function() end
+	P2P = {
+		MAX_ACTIVE_SENDS = 3, activeSends = {}, stateWaits = {}, sendQueue = {},
+		sessions = {}, sessionsByKey = {}, pendingDispatch = {}, activeSessions = 0,
+		consultBegun = false, selfConsulted = false,
+	}
+	function P2P:GetActiveSendTotal() local n = 0 for _, c in pairs(self.activeSends) do n = n + c end return n end
+	function P2P:IsSelfConsulted() return self.selfConsulted or not self.consultBegun end
+	TOGBankClassic_P2P = { Lib = function() return P2P end }
 end
 
 --- Everything the command printed through Output:Response, joined.
@@ -35,6 +51,9 @@ end
 
 describe("/togbank dev trace", function()
 	before_each(function() env.reset(); client("Otherguy") end)
+	-- The double stands in for TOGBankClassic_P2P, a MODULE GLOBAL: handed back after every
+	-- example, or a later file that never loads P2P.lua meets the double from here.
+	after_each(function() TOGBankClassic_P2P = nil end)
 
 	it("is a dev command that needs a name", function()
 		TOGBankClassic_Chat:ChatCommand("dev trace")
@@ -131,10 +150,9 @@ describe("/togbank dev trace", function()
 
 	it("shows a live fetch session with the version the request names", function()
 		TOGBankClassic_Guild.Info.alts[OTHER] = { name = OTHER, money = 0 }
-		local P2P = TOGBankClassic_P2PSession
-		P2P.sessions["sid1"] = { sessionId = "sid1", altName = OTHER, state = "DISPATCHED", peer = BANKER,
+		P2P.sessions["sid1"] = { sessionId = "sid1", key = OTHER, state = "DISPATCHED", peer = BANKER,
 			candidates = { { peer = BANKER, canon = C(T + 60, 9), updatedAt = T + 60 } }, triedPeers = { [BANKER] = true }, timers = {} }
-		P2P.sessionsByAlt[OTHER] = "sid1"
+		P2P.sessionsByKey[OTHER] = "sid1"
 		TOGBankClassic_Chat:ChatCommand("dev trace Otherbanker")
 		local text = responses()
 		assert.truthy(text:find("session: [DISPATCHED] peer=" .. BANKER .. " candidates=1 tried=1 wanted=" .. date("%Y-%m-%d %H:%M:%S", T + 60), 1, true),

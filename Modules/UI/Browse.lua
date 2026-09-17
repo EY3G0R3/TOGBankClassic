@@ -89,8 +89,37 @@ local TABS = {
 	-- keep their places.
 	{ value = "log",      text = "Log" },
 }
+-- SHOP-TAB-001: the Shop tab exists only while the guild's shop is on (Guild:IsShopEnabled -- an
+-- officer setting, off by default). Appended last, so the four tabs in muscle memory keep their
+-- places; it is the "purchasing bit" the operator asked to have on its own tab.
+local SHOP_TAB = { value = "shop", text = "Shop" }
 local DEFAULT_TAB = TABS[1].value
 Browse.TABS = TABS
+Browse.SHOP_TAB = SHOP_TAB
+
+--- The tabs to render right now: TABS, plus Shop while the shop is on.
+function Browse:TabList()
+	local G = TOGBankClassic_Guild
+	if not (G and G.IsShopEnabled and G:IsShopEnabled()) then return TABS end
+	local out = {}
+	for i, t in ipairs(TABS) do out[i] = t end
+	out[#out + 1] = SHOP_TAB
+	return out
+end
+
+--- The shop switch moved (an officer here, or a settings broadcast): re-render the tab strip, and
+--- leave a Shop tab that no longer exists for Browse.
+function Browse:OnShopSettingChanged()
+	if not (self.isOpen and self.TabGroup) then return end
+	self.TabGroup:SetTabs(self:TabList())
+	if self.currentTab == "shop" and not (TOGBankClassic_Guild and TOGBankClassic_Guild:IsShopEnabled()) then
+		self.TabGroup:SelectTab(DEFAULT_TAB)
+	elseif self.currentTab == "shop" then
+		self:DrawShop()     -- STORE-003: the discount changed under an open Shop tab
+	elseif self.currentTab == "browse" then
+		self:DrawBrowse()   -- the not-for-sale tags come and go with the shop
+	end
+end
 -- The help icon BREATHES until the first mouseover, then never again (remembered per account):
 -- the operator, "i want to draw their attention to it, ONCE". BREATH-001: the breath is the
 -- library's (LibAceGUIWidgets W:Breathe -- full to a third over a second, BOUNCE, eased), the same
@@ -113,7 +142,10 @@ local STATE_COLOR = {
 	v1      = "ffff0000",
 	none    = "ff808080",
 }
-Browse.STATE_TEXT, Browse.STATE_COLOR = STATE_TEXT, STATE_COLOR
+-- UX-WATERFALL-001: the sort order of the sync column -- worst first, so a header click surfaces
+-- the banks that need attention.
+local STATE_RANK = { none = 0, v1 = 1, behind = 2, refused = 3, offered = 4, current = 5 }
+Browse.STATE_TEXT, Browse.STATE_COLOR, Browse.STATE_RANK = STATE_TEXT, STATE_COLOR, STATE_RANK
 
 --- TAB-STATE-003: the one sentence for the grey state, read by the Bankers row hover here and the
 --- Inventory window's tab tooltip, so the two cannot describe it differently.
@@ -197,6 +229,12 @@ function Browse:BuildRows()
 					-- Grey, with the same badge the Inventory window's own tab uses (ReadyCheck-NotReady).
 					nameText = "|TInterface\\RaidFrame\\ReadyCheck-NotReady:12:12:0:0|t |cff808080" .. name .. "|r"
 				end
+				-- STORE-006: an item an officer took off the shop list stays in the list (the guild
+				-- still holds it) with a tag after the name, so nobody clicks it to find out.
+				local notForSale = G.IsNotForSale and G:IsNotForSale(item.ID) or false
+				if notForSale then
+					nameText = nameText .. " |cffff4040(not for sale)|r"
+				end
 				rows[#rows + 1] = {
 					-- What the request dialog and HIDE-001 need, in the shape they already take.
 					ID = item.ID, Count = item.Count or 0, Suffix = item.Suffix, Enchant = item.Enchant,
@@ -206,15 +244,22 @@ function Browse:BuildRows()
 					_iconDesaturated = item.Hidden and true or nil,
 					name  = nameText,
 					count = item.Count or 0,
-					bank  = string.format("|c%s\226\128\162|r %s", STATE_COLOR[state] or STATE_COLOR.none, player)
-						.. (viewOnly and " |cff808080(view)|r" or ""),
+					-- UX-WATERFALL-001: the status dot is its OWN column beside the banker (crimsonmane's
+					-- "Sync'd Bulb"), not a prefix on the banker's name, so the eye reads it in one place.
+					sync  = string.format("|c%s\226\128\162|r", STATE_COLOR[state] or STATE_COLOR.none),
+					-- XGUILD-LABEL-001: a banker from a sister guild wears its guild's name.
+					bank  = player .. (G.GuildTag and G:GuildTag(norm) or "") .. (viewOnly and " |cff808080(view)|r" or ""),
 					type  = typeText,
 					level = tonumber(info.reqLevel) or 0,
 					-- Sort on the plain values, not the colour-coded display text.
 					_sort_name = name:lower(), _sort_bank = player:lower(), _sort_level = tonumber(info.reqLevel) or 0,
-					_id = tostring(item.ID) .. ":" .. tostring(item.Suffix or 0) .. ":" .. tostring(item.Enchant or 0) .. "@" .. norm,
+					_sort_sync = STATE_RANK[state] or STATE_RANK.none,
+					-- LINK-AUDIT-001 step 7: the identity has ONE spelling (Record.keyFor); this hand-built
+					-- `id:suffix:enchant` was the last inline one (docs/LINK_AUDIT.md section 4).
+					_id = TOGBankClassic_Inventory_Record.keyFor(item.ID, item.Suffix, item.Enchant) .. "@" .. norm,
 					-- Filter inputs.
 					plainName = name, player = player, norm = norm, state = state, viewOnly = viewOnly,
+					notForSale = notForSale,
 					class = info.class, subClass = info.subClass, quality = quality,
 					slot = slotKeyFor(info), equipLoc = equipLocFor(info), reqLevel = tonumber(info.reqLevel) or 0,
 				}
@@ -291,7 +336,14 @@ function Browse:FiltersActive(f)
 end
 
 --- The Clear button: every filter back to its start, the strip rebuilt to show it, the list redrawn.
-function Browse:ClearFilters()
+--- SHOP-FILTERS-001: `f` names which tab's filters -- the Shop tab's `shopFilter` or (the default)
+--- the Browse tab's `filters`; the tab that owns them is the one rebuilt.
+function Browse:ClearFilters(f)
+	if f ~= nil and f == self.shopFilter then
+		self.shopFilter = self:DefaultFilters()
+		if self.isOpen and self.currentTab == "shop" and self.TabGroup then self:ShowTab("shop") end
+		return
+	end
 	self.filters = self:DefaultFilters()
 	if self.isOpen and self.currentTab == "browse" and self.TabGroup then
 		self:ShowTab("browse")
@@ -316,8 +368,14 @@ function Browse:BankerRows()
 		local publishedText = (heldAt and heldAt > 0) and self:Ago(heldAt) or "never"
 		-- BANKERS-FILTER-001: what the banker stores, from the guild note beside its gbank marker.
 		local stores = G.BankerStores and G:BankerStores(norm) or ""
+		-- BANKER-OWNER-001: who runs it, as an officer wrote it (the hover shows it).
+		local owner = G.GetBankerOwner and G:GetBankerOwner(norm) or nil
+		-- XGUILD-LABEL-001: which guild the banker is in, for a sister guild's banker.
+		local guildName = G.GuildNameOf and G:GuildNameOf(norm) or ""
 		rows[#rows + 1] = {
-			name = player .. (viewOnly and " |cff808080(view only)|r" or ""),
+			owner = owner,
+			guildName = guildName,
+			name = player .. (G.GuildTag and G:GuildTag(norm) or "") .. (viewOnly and " |cff808080(view only)|r" or ""),
 			stores = stores,
 			online = online and "|cff00ff00yes|r" or "|cff808080no|r",
 			status = "|c" .. (STATE_COLOR[state] or STATE_COLOR.none) .. (STATE_TEXT[state] or state) .. "|r",
@@ -466,6 +524,156 @@ function Browse:Ago(at)
 	return math.floor(diff / 86400) .. "d ago"
 end
 
+--- STORE-001 (GUILD_STORE.md 4.1 / build-order step 5): the price library, when it can price.
+--- LibItemDB-1.0 MINOR 25 added the lookups (LIBRARY_CONTRACTS.md 7.13); feature-detected on the
+--- METHOD at call time, never a MINOR compare, so an older ItemDB simply prices nothing. Returns
+--- nil when the library cannot price -- the column stays empty and nothing else changes.
+function Browse:PriceLibrary()
+	local lib = LibStub and LibStub("LibItemDB-1.0", true)
+	if lib and type(lib.GetPrices) == "function" then return lib end
+	return nil
+end
+
+--- Price every row in one call and hang the answer on it: `value` (copper, the column), `_sort_value`
+--- and `priceInfo` (the provenance the hover prints). GUILD_STORE.md 3: everything shown before an
+--- order is filled is an ESTIMATE, and the column and the hover say so -- the banker's price at
+--- fill is the price. An unpriced row keeps nil, never 0 (3.3 / LIBREQ-PRICE-003).
+--- STORE-003: the guild's discount applied to a market estimate, in copper, floored at 0 -- a
+--- 100% discount IS 0 and the row renders "free"; what keeps a priced row apart from an unpriced
+--- one is `priced` on the row, not the number. (Peer Review f5e52bcf F10: this said "never below 1
+--- copper", which the code beside it has never done.)
+function Browse:Discounted(copper)
+	local pct = TOGBankClassic_Guild.GetStoreDiscount and TOGBankClassic_Guild:GetStoreDiscount() or 0
+	if pct <= 0 then return copper end
+	return math.max(0, math.floor(copper * (100 - pct) / 100))
+end
+
+--- STORE-002: the GUILD PRICE LIST is consulted FIRST, so every member sees the same estimate;
+--- this client's own library prices only the rows the list lacks (one bulk call over those ids).
+function Browse:PriceRows(rows)
+	local PL = TOGBankClassic_PriceList
+	local guild = PL and PL.Count and PL:Count() > 0 and PL or nil
+	local lib = self:PriceLibrary()
+	if not lib and not guild then return rows end
+	local fromGuild, ids, missing = {}, {}, 0
+	for _, r in ipairs(rows) do
+		if r.ID then
+			local p = guild and guild:SellInfo(r.ID)
+			if p then
+				fromGuild[r.ID] = p
+			else
+				ids[r.ID] = true
+				missing = missing + 1
+			end
+		end
+	end
+	local results = {}
+	if lib and missing > 0 then
+		local ok, own = pcall(lib.GetPrices, lib, ids)
+		if ok and type(own) == "table" then results = own end
+	end
+	for _, r in ipairs(rows) do
+		local p = r.ID and (fromGuild[r.ID] or results[r.ID])
+		if p and type(p.value) == "number" and p.value > 0 then
+			-- STORE-003: the column shows the DISCOUNTED figure (the operator: "apply that to the
+			-- pricing that is displayed on the shop tab"); the market figure rides beside it for
+			-- the hover. `priced` marks a row the library answered even when the discount takes the
+			-- column to 0 (100% off), so the status count and the sort still treat it as priced.
+			r.marketValue = p.value
+			r.value, r.priceInfo, r.priced = self:Discounted(p.value), p, true
+			r._sort_value = r.value
+		else
+			r._sort_value = 0
+		end
+	end
+	return rows
+end
+
+--- SHOP-NOFREE-001 / STORE-004: price ONE item, in the shape a priced row carries (`value` after
+--- the discount, `marketValue`, `priceInfo`, `priced`), or nil when nothing can price it. The
+--- request dialog takes this to write what it showed onto the order; the same call and the same
+--- discount as the rows, so the dialog cannot show a figure the Shop tab did not.
+function Browse:PriceOne(itemID)
+	itemID = tonumber(itemID)
+	if not itemID then return nil end
+	local priced = self:PriceRows({ { ID = itemID } })
+	local r = priced[1]
+	if r and r.priced then return r end
+	return nil
+end
+
+--- The statistic names the hover and the order record print. `guild` is a guild-list figure whose
+--- statistic the authority's source did not name (STORE-002).
+Browse.STAT_NAMES = { minBuyout = "min buyout", market = "market value", historical = "historical", guild = "guild figure" }
+
+--- "min buyout, Auctionator" -- where an estimate came from, as the record keeps it.
+function Browse:EstimateSourceText(priceInfo)
+	local p = priceInfo
+	if not p then return nil end
+	return string.format("%s, %s", self.STAT_NAMES[p.statistic] or tostring(p.statistic or "?"),
+		tostring(p.sourceName or p.source or "?"))
+end
+
+--- "~6g 17s (50% off ~12g 34s)", or "~12g 34s" with no discount, or "~free" at 100% off.
+function Browse:EstimateFigure(value, marketValue, pct)
+	local figure = self:Money(value)
+	if (pct or 0) > 0 and marketValue then
+		figure = string.format("%s (%d%% off ~%s)", value > 0 and figure or "free", pct, self:Money(marketValue))
+	end
+	return "~" .. figure
+end
+
+--- SHOP-ORDER-API-001: the shop-order fields for one item, or nil when the shop is off -- THE ONE
+--- BUILDER. SHOP-NOFREE-001 (the operator: "when the shop tab is shown and ordering is enabled, there
+--- should be no 'free' item requests"): with the shop on, every order is a shop order carrying the
+--- estimate its placer was shown, and Guild:AddRequest refuses one without the mark. The request
+--- dialog built these inline, so every other surface that places an order (TOGProfessionMaster's
+--- [Bank] button, thread 17a1f2c9) had no way to build one and was refused while the shop sold.
+--- Returns { shopOrder = true, estimate, estimateBase, discount, estimateSource, prompt } -- the
+--- four figures nil for an item nothing can price (the bank character prices it at fill), and
+--- `prompt` the one line to show the player. IsShopEnabled rather than IsShopSelling, as the dialog
+--- always used: a closed sign is refused by AddRequest with its own sentence.
+---@param itemID number|nil
+---@return table|nil
+function Browse:ShopOrderFields(itemID)
+	local G = TOGBankClassic_Guild
+	if not (G and G.IsShopEnabled and G:IsShopEnabled()) then return nil end
+	local out = { shopOrder = true }
+	local priced = itemID and self:PriceOne(itemID) or nil
+	if priced then
+		local pct = G.GetStoreDiscount and G:GetStoreDiscount() or 0
+		out.estimate       = priced.value
+		out.estimateBase   = priced.marketValue
+		out.discount       = pct > 0 and pct or nil
+		out.estimateSource = self:EstimateSourceText(priced.priceInfo)
+		out.prompt = string.format("Shop order -- estimated %s each (%s). The bank character sets the final price when your order is filled.",
+			self:EstimateFigure(priced.value, priced.marketValue, pct), out.estimateSource)
+	else
+		out.prompt = "Shop order -- no estimate for this item yet. The bank character sets the price when your order is filled."
+	end
+	return out
+end
+
+--- The estimate line for a hover: "Estimated ~12g 34s -- min buyout, Auctionator, 2h 14m old",
+--- and with a discount "Estimated ~6g 17s (50% off ~12g 34s) -- ...". `age` nil from a source that
+--- does not say (Auctioneer, TSM) reads "age unknown", never "fresh".
+function Browse:PriceTooltipLine(entry)
+	local p = entry.priceInfo
+	if not p or not entry.priced then return nil end
+	local lib = self:PriceLibrary()
+	local age
+	if p.age == nil then
+		age = "age unknown"
+	elseif lib and lib.FormatPriceAge then
+		age = lib:FormatPriceAge(p.age) .. " old"
+	else
+		age = self:Ago((GetServerTime() or 0) - p.age)
+	end
+	local pct = TOGBankClassic_Guild.GetStoreDiscount and TOGBankClassic_Guild:GetStoreDiscount() or 0
+	return { string.format("Estimated %s -- %s, %s", self:EstimateFigure(entry.value, entry.marketValue, pct),
+		self:EstimateSourceText(p), age), 0.9, 0.85, 0.5 }
+end
+
 --- Copper as the game's coin string when the API is there, else "12g 34s".
 function Browse:Money(copper)
 	copper = tonumber(copper) or 0
@@ -479,19 +687,48 @@ end
 
 -- ─── Column specs ──────────────────────────────────────────────────────────────
 
+-- UX-WATERFALL-001 (crimsonmane, 2026-09-14, on the v1.5.x window: "I'm looking from the far left
+-- (item name) to the middle (qty) and far right (level) zig-zagging my eyes constantly ... Columns
+-- could be (left to right) Type - Qty - Level - Item Name - Sync'd Bulb - Banker"; the operator:
+-- "lets implement it"): the fixed, narrow facts sit LEFT of the name, the name takes the room, and
+-- the status dot is its own column beside the banker. RowList chains fixed columns on both sides
+-- of the one auto column, so the name sits mid-row without a layout change.
+local ICON_COL  = { key = "icon",  header = "",     width = 16,  icon = true, sortable = false }
+local TYPE_COL  = { key = "type",  header = "Type", width = 150, headerTip = "The item's type and subtype." }
+local COUNT_COL = { key = "count", header = "Qty",  width = 44,  justify = "CENTER", headerTip = "How many that banker holds." }   -- QTY-CENTER-001: the number sits under its heading
+local LEVEL_COL = { key = "level", header = "Lvl",  width = 34,  justify = "RIGHT", format = function(v) return v and v > 0 and tostring(v) or "" end, headerTip = "Required level to use." }
+local SYNC_COL  = { key = "sync",  header = "",     width = 14,  justify = "CENTER", headerTip = "That bank's status: green current, red behind or old format, yellow an update on its way, grey a newer copy nobody current holds. Click to sort the banks that need attention first." }
+local BANK_COL  = { key = "bank",  header = "Banker", width = 130, headerTip = "Which bank character holds it. (view) marks a bank you can look at but not request from." }
+
 Browse.BROWSE_COLUMNS = {
-	{ key = "icon",  header = "",       width = 16, icon = true, sortable = false },
+	ICON_COL, TYPE_COL, COUNT_COL, LEVEL_COL,
 	-- A hidden row is not in this list at all (the accessor excludes it), so "show it again" is the
 	-- greyed row on your own tab of the main window, not here.
 	{ key = "name",  header = "Item",   headerTip = "The item. Click a row to request it. On your own bank, right-click hides it from the guild (show it again from your tab on the main window)." },
-	{ key = "count", header = "Qty",    width = 44,  justify = "RIGHT", headerTip = "How many that banker holds." },
-	{ key = "bank",  header = "Banker", width = 130, headerTip = "Which bank character holds it. The dot is that bank's status: green current, red behind or old format, yellow an update on its way." },
-	{ key = "type",  header = "Type",   width = 150, headerTip = "The item's type and subtype." },
-	{ key = "level", header = "Lvl",    width = 34,  justify = "RIGHT", format = function(v) return v and v > 0 and tostring(v) or "" end, headerTip = "Required level to use." },
+	SYNC_COL, BANK_COL,
+}
+
+-- SHOP-TAB-001 / STORE-001: the shop's catalogue. The estimate column is HERE and not on Browse --
+-- the operator: the purchasing bit is its own tab. "~" on every value and "Est." on the header,
+-- because nothing shown before an order is filled is a price (GUILD_STORE.md 3). Empty when no
+-- source can price it. The same waterfall as Browse, the estimate last.
+Browse.SHOP_COLUMNS = {
+	ICON_COL, TYPE_COL, COUNT_COL, LEVEL_COL,
+	{ key = "name",  header = "Item",   headerTip = "The item. Click a row to order it. An officer's Ctrl+right-click takes it off the shop list, or puts it back." },
+	SYNC_COL, BANK_COL,
+	{ key = "value", header = "Est.",   width = 90,  justify = "RIGHT",
+		-- RowList hands format "" for a missing value, so the type check is the guard. A priced row
+		-- the discount takes to 0 (100% off) reads "free"; an unpriced row stays blank.
+		format = function(v, row)
+			if type(v) ~= "number" then return "" end
+			if v > 0 then return "~" .. Browse:Money(v) end
+			return (type(row) == "table" and row.priced) and "free" or ""
+		end,
+		headerTip = "What the item is worth, as an ESTIMATE from your price sources (type /itemdb to choose them and scan the auction house), less the guild's shop discount when an officer has set one. Mouse over a row for where the number came from, how old it is, and the discount. The real price is set by the bank character when your order is filled." },
 }
 
 Browse.BANKER_COLUMNS = {
-	{ key = "name",      header = "Banker",    width = 150, headerTip = "Click to browse just this bank." },
+	{ key = "name",      header = "Banker",    width = 150, headerTip = "Click to browse just this bank. Mouse over a row to see who runs it; an officer right-clicks to set that." },
 	-- BANKERS-FILTER-001: the auto column, so a long description gets the room the window has.
 	{ key = "stores",    header = "Stores",    headerTip = "What this bank keeps, as written in its guild note beside the gbank marker (an officer edits the note to change it)." },
 	{ key = "online",    header = "Online",    width = 48 },
@@ -593,27 +830,53 @@ function Browse:AddHelpLines()
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine(string.format("Only the most recent %d entries are kept here, not the full history. Bank characters using TOGTools keep the long history there.", TOGBankClassic_Log and TOGBankClassic_Log.MAX_ENTRIES or 0), 0.7, 0.7, 0.7, true)
 	elseif tab == "bankers" then
-		GameTooltip:AddLine("One row per bank character. |cffffd100Stores|r is what that bank keeps, as written in its guild note beside the gbank marker (an officer edits the note to change it -- \"gbank herbs, potions\"). |cffffd100Status|r is whether your copy of that bank is the newest published: green Current, red Behind (a newer copy exists and is on its way), Old format (that banker has not published on this version yet), grey No data. |cffffd100Published|r is when its contents were last published. The search box matches the name, what it stores and the status. Click a row to browse just that bank.", 0.9, 0.9, 0.9, true)
+		-- HELP-CURRENT-001 (the operator, 2026-09-15, this tab's text: "it doesn't talk about the
+		-- tooltip on banker names showing who owns the banker, lets get all the i tooltips updated on
+		-- all the pages to be current"): every column, the hover, the officer's right-click, the tag.
+		GameTooltip:AddLine("One row per bank character, from your guild -- and, when an officer has ticked Sister-guild bank in the settings, from the sister guilds listed in Guild Roster, each of those bankers wearing its guild's name in grey after its own. Click a row to browse just that bank.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Mouse over a banker's name|r to see who runs that character, when an officer has said -- a guildmate's name, or something like \"shared account\". |cffffd100Officers:|r right-click the row to set it; start typing and guildmates' names complete, or type anything. It syncs to the whole guild.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Stores|r is what that bank keeps, as written in its guild note beside the gbank marker (an officer edits the note to change it -- \"gbank herbs, potions\"). |cffffd100Online|r is whether that character is logged in now. |cffffd100Status|r is whether your copy of that bank is the newest published: green Current, red Behind (a newer copy exists and is on its way), Old format (that banker has not published on this version yet), grey No data. |cffffd100Published|r is when its contents were last published; |cffffd100Items|r and |cffffd100Money|r are what that copy holds. (view only) marks a bank you can look at but not request from.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("The search box matches the name, what it stores and the status. Click a column header to sort.", 0.9, 0.9, 0.9, true)
+	elseif tab == "shop" then
+		-- HELP-CURRENT-001: the Shop tab had no text of its own -- it showed the Browse tab's.
+		GameTooltip:AddLine("The bank's items as a shop, for a guild bank that sells. Every row is an item a bank character holds; |cffffd100Est.|r is what it is worth, as an ESTIMATE from the guild's price list or your own price sources (type /itemdb to choose them and scan the auction house), less any guild-wide discount an officer has set -- the status line says whose list it is, how old, and the discount. \"~\" on every figure and \"free\" for an item the discount takes to nothing. Mouse over a row for where the number came from.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100To order:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("Click the row. The request dialog shows the estimate and the order remembers it -- the bank character sets the real price when they fill it. While the shop is on, every request is a shop order, whichever tab you place it from. When an officer has closed ordering, the status line says so and clicking an item tells you.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Not for sale:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("An officer can take one item off the shop with Ctrl+right-click on its row; it stays in the list marked (not for sale) so everyone can see the bank holds it, and a click on it says so. Ctrl+right-click again puts it back.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("The columns and the filters across the top are the Browse tab's -- Type, Qty and Lvl, the item, the bank's status dot and the banker -- and the filters apply as you change them; |cffffd100Clear|r puts them all back. Click a column header to sort.", 0.9, 0.9, 0.9, true)
 	else
 		-- HELP-TEXT-001: the main window's "How It Works" lives on here -- the operator: "it's
 		-- imparitive this tooltip lives on somewhere in the new main UI". What it is, how to donate,
 		-- how to request, how a banker hides -- the same four things, said for this window.
+		-- HELP-CURRENT-001: the waterfall columns, the status dot's own column, sister-guild tags
+		-- and the shop's marks, all of which the text predated.
 		GameTooltip:AddLine("This window shows the combined inventory of every guild bank character -- real in-game characters run by guild members -- including what is waiting in their mail. Every banker's stock is one list; use the search box and the filters across the top to narrow it (they apply as you change them, and |cffffd100Clear|r puts them all back), and click a column header to sort by it.", 0.9, 0.9, 0.9, true)
 		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100The columns:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("|cffffd100Type|r, |cffffd100Qty|r (how many that banker holds) and |cffffd100Lvl|r (the level needed) sit left of the item, so the short facts read before the name. Then the |cffffd100Item|r, mouse over it for its tooltip. The |cffffd100dot|r is that bank's status: green current, red behind or old format, yellow an update on its way, grey a newer copy nobody current holds -- click its header to sort the banks that need attention first. |cffffd100Banker|r is which bank character holds it; a sister guild's banker wears its guild's name in grey, and (view) marks a bank you can look at but not request from.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100To donate items:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Mail them with in-game mail directly to the bank character you want to contribute to -- the Bankers tab lists them. They show up here once that banker next logs in and publishes.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("Mail them with in-game mail directly to the bank character you want to contribute to -- the Bankers tab lists them. They show up here once that banker next logs in and publishes, and they earn you donation points (/togbank donations).", 0.9, 0.9, 0.9, true)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100To request an item:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Click its row and submit the request. A banker fulfils it when they are next online and see your request; watch the Requests tab.", 0.9, 0.9, 0.9, true)
-		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("|cffffd100Banker column:|r", 1, 1, 1, false)
-		GameTooltip:AddLine("Which bank character holds the item. The dot is that bank's status: green current, red behind or old format, yellow an update on its way. (view) marks a bank you can look at but not request from.", 0.9, 0.9, 0.9, true)
+		GameTooltip:AddLine("Click its row and submit the request. A banker fulfils it when they are next online and see your request; watch the Requests tab. If the guild's Shop is on, every request is a shop order at the estimate the dialog shows, and an item marked (not for sale) cannot be requested.", 0.9, 0.9, 0.9, true)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100Usable by me:|r", 1, 1, 1, false)
 		GameTooltip:AddLine("Hides anything your character cannot use -- too high a level, or the wrong class, race, armour or weapon type (what the item's tooltip shows in red).", 0.9, 0.9, 0.9, true)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("|cffffd100Bankers -- to hide an item from the guild:|r", 1, 1, 1, false)
 		GameTooltip:AddLine("Right-click one of your own bank's rows to hide it. It stays in your list greyed out with a red mark; to everyone else it is as if you do not have it. Right-click it again to show it.", 0.9, 0.9, 0.9, true)
+		-- HELP-CURRENT-001 / SHARE-BTN-001: the bottom row's share button.
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("|cffffd100Bankers -- to share your bank now:|r", 1, 1, 1, false)
+		GameTooltip:AddLine("The circling-arrows button beside the gear publishes your bank to the guild straight away, the same as /togbank share. It only appears on a bank character.", 0.9, 0.9, 0.9, true)
 	end
 	-- HELPNOTE-001: the officers' note for the main window applies here -- same bank, one note.
 	TOGBankClassic_UI:AppendGuildHelpNote("inventory")
@@ -626,13 +889,14 @@ end
 function Browse:DressChrome()
 	local chrome = TOGBankClassic_UI:DressWindow(self.Window, {
 		settings = Browse,
+		share = true,   -- SHARE-BTN-001: /togbank share beside the gear, on a bank character
 		onHelpEnter = function()
 			Browse:StopHelpPulse()
 			Browse:MarkHelpSeen()
 		end,
 		help = function() Browse:AddHelpLines() end,
 	})
-	self.HelpIcon, self.SettingsIcon = chrome.help, chrome.settings
+	self.HelpIcon, self.SettingsIcon, self.ShareIcon = chrome.help, chrome.settings, chrome.share
 	self:SyncHelpPulse()
 	return chrome
 end
@@ -664,7 +928,7 @@ end
 function Browse:RememberedTab()
 	local db = TOGBankClassic_Options and TOGBankClassic_Options.db
 	local saved = db and db.char and db.char.browseTab
-	for _, entry in ipairs(TABS) do
+	for _, entry in ipairs(self:TabList()) do
 		if entry.value == saved then return saved end
 	end
 	return self.currentTab or DEFAULT_TAB
@@ -698,9 +962,20 @@ function Browse:Toggle()
 end
 
 --- Repaint whatever tab is showing from the store (called when data lands; debounced by callers).
+--- Peer Review f5e52bcf F6: the Shop tab was missing here, so a banker's new scan left the shop's
+--- catalogue stale under an open Shop tab (a click then offered a stack already mailed out).
 function Browse:Refresh()
 	if not self.isOpen then return end
+	self:RedrawCurrent()
+end
+
+--- Repaint the catalogue tab that is SHOWING -- Browse or Shop -- from the store. The one call for
+--- every handler the two lists share (hide, not-for-sale): each used to call DrawBrowse, which on
+--- the Shop tab repainted the hidden Browse list and left the visible one stale (Peer Review
+--- f5e52bcf F6).
+function Browse:RedrawCurrent()
 	if self.currentTab == "browse" then self:DrawBrowse()
+	elseif self.currentTab == "shop" then self:DrawShop()
 	elseif self.currentTab == "bankers" then self:DrawBankers()
 	elseif self.currentTab == "log" then self:DrawLog() end
 end
@@ -741,7 +1016,7 @@ function Browse:DrawWindow()
 	-- fitting into the request tab page" -- and on the Browse tab it would leave the body the
 	-- filter strip's height.
 	tabs:SetAutoAdjustHeight(false)
-	tabs:SetTabs(TABS)
+	tabs:SetTabs(self:TabList())
 	tabs:SetCallback("OnGroupSelected", function(_, _, value) self:ShowTab(value) end)
 	window:AddChild(tabs)
 	self.TabGroup = tabs
@@ -750,8 +1025,6 @@ function Browse:DrawWindow()
 	-- filter strip; shown and hidden per tab rather than rebuilt.
 	local body = tabs.content
 	local browseList = CreateFrame("Frame", nil, body)
-	browseList:SetPoint("TOPLEFT",     body, "TOPLEFT",     0, -FILTER_H)
-	browseList:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", 0, 0)
 	self.BrowseList = TOGBankClassic_UI_RowList:New(browseList, {
 		columns = self.BROWSE_COLUMNS,
 		onRowClick = function(entry, _, button) self:OnBrowseRowClick(entry, button) end,
@@ -763,18 +1036,13 @@ function Browse:DrawWindow()
 
 	-- BANKERS-FILTER-001 / LOG-FILTER-001: both lists hang under their one-row strip.
 	local bankerList = CreateFrame("Frame", nil, body)
-	bankerList:SetPoint("TOPLEFT",     body, "TOPLEFT",     0, -SIMPLE_FILTER_H)
-	bankerList:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", 0, 0)
 	self.BankerList = TOGBankClassic_UI_RowList:New(bankerList, {
 		columns = self.BANKER_COLUMNS,
-		onRowClick = function(entry) self:BrowseBank(entry.norm) end,
-		-- TAB-STATE-003: the grey state needs its sentence; the others say what they are.
-		onRowEnter = function(entry)
-			if entry.state ~= "refused" then return end
-			GameTooltip:SetOwner(WorldFrame, "ANCHOR_CURSOR")
-			GameTooltip:SetText(Browse.RefusedText(entry.refusedPeer, entry.refusedVersion), 1, 1, 1, 1, true)
-			GameTooltip:Show()
+		-- BANKER-OWNER-001: a right click is the officer's "who runs this bank" dialog.
+		onRowClick = function(entry, _, button)
+			if button == "RightButton" then self:OnBankerRowRightClick(entry) else self:BrowseBank(entry.norm) end
 		end,
+		onRowEnter = function(entry) self:OnBankerRowEnter(entry) end,
 		onRowLeave = function() TOGBankClassic_UI:HideTooltip() end,
 	})
 	self.BankerList:SetSort("name", false)
@@ -782,8 +1050,6 @@ function Browse:DrawWindow()
 
 	-- LOG-TAB-001: the bank log, newest first, an item tooltip on hover.
 	local logList = CreateFrame("Frame", nil, body)
-	logList:SetPoint("TOPLEFT",     body, "TOPLEFT",     0, -SIMPLE_FILTER_H)
-	logList:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", 0, 0)
 	self.LogList = TOGBankClassic_UI_RowList:New(logList, {
 		columns = self.LOG_COLUMNS,
 		onRowEnter = function(entry)
@@ -799,6 +1065,25 @@ function Browse:DrawWindow()
 	})
 	self.LogList:SetSort("when", true)
 	logList:Hide()
+
+	-- SHOP-TAB-001: the shop's catalogue -- the same rows as Browse with the estimate beside them.
+	-- The same click and hover handlers: a click requests (or says why not), Ctrl+right-click is the
+	-- officer's not-for-sale toggle, the hover carries the estimate's provenance.
+	-- SHOP-FILTERS-001: under the two-row catalogue strip, at Browse's height.
+	local shopList = CreateFrame("Frame", nil, body)
+	self.ShopList = TOGBankClassic_UI_RowList:New(shopList, {
+		columns = self.SHOP_COLUMNS,
+		onRowClick = function(entry, _, button) self:OnBrowseRowClick(entry, button) end,
+		onRowEnter = function(entry) self:OnBrowseRowEnter(entry) end,
+		onRowLeave = function() TOGBankClassic_UI:HideTooltip() end,
+	})
+	self.ShopList:SetSort("name", false)
+	shopList:Hide()
+	self:AnchorLists()
+	-- VISIBILITY-001 part 2: the lists re-lay themselves (RowList); this window moves them under the
+	-- re-scaled strips and rebuilds the showing tab's strip. Keyed by the module, so a rebuilt window
+	-- replaces the registration rather than adding one.
+	TOGBankClassic_UI:OnUIScaleChanged(Browse, Browse.OnUIScaleChanged)
 	-- New entries repaint the tab while it is showing. Registered once, on the module (the owner
 	-- key), so a rebuilt window does not stack a second callback. The log coalesces and delivers
 	-- on a timer, so nothing click-gated runs here -- a repaint is all.
@@ -807,6 +1092,36 @@ function Browse:DrawWindow()
 			if Browse.isOpen and Browse.currentTab == "log" then Browse:DrawLog() end
 		end)
 	end
+end
+
+--- Hang each list under its tab's strip at the strip's CURRENT (scaled) height: the two catalogue
+--- tabs under the two-row strip, Bankers and Log under the one-row strip. VISIBILITY-001 part 2.
+function Browse:AnchorLists()
+	local body = self.TabGroup and self.TabGroup.content
+	if not body then return end
+	local S = function(px) return TOGBankClassic_UI:UIScaled(px) end
+	-- The strip and the gap under it are scaled apart, as BuildSimpleStrip sizes the strip.
+	local catalogue, simple = S(STRIP_H) + S(STRIP_GAP), S(SIMPLE_STRIP_H) + S(STRIP_GAP)
+	for _, pair in ipairs({ { self.BrowseList, catalogue }, { self.ShopList, catalogue },
+		{ self.BankerList, simple }, { self.LogList, simple } }) do
+		local host = pair[1] and pair[1].parent
+		if host then
+			host:ClearAllPoints()
+			host:SetPoint("TOPLEFT",     body, "TOPLEFT",     0, -pair[2])
+			host:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", 0, 0)
+		end
+	end
+end
+
+--- The scale signal (module-level, the module as owner): move the lists, and rebuild the showing
+--- tab's strip at the new sizes. VISIBILITY-001 part 3: the Requests tab's body is re-embedded --
+--- detached first, because ShowTab keeps an already-embedded body rather than rebuilding it.
+function Browse.OnUIScaleChanged(_, _, module)
+	module:AnchorLists()
+	if not (module.isOpen and module.currentTab) then return end
+	local Requests = TOGBankClassic_UI_Requests
+	if module.currentTab == "requests" and Requests and Requests.Detach then Requests:Detach() end
+	module:ShowTab(module.currentTab)
 end
 
 function Browse:ShowTab(value)
@@ -832,8 +1147,13 @@ function Browse:ShowTab(value)
 	self.BrowseList:Hide()
 	self.BankerList:Hide()
 	if self.LogList then self.LogList:Hide() end
+	if self.ShopList then self.ShopList:Hide() end
 	self:AnchorStatusBar()
-	if value == "browse" then
+	if value == "shop" then
+		self:BuildShopStrip()
+		self.ShopList:Show()
+		self:DrawShop()
+	elseif value == "browse" then
 		self:BuildFilterStrip()
 		self.BrowseList:Show()
 		self:DrawBrowse()
@@ -865,23 +1185,31 @@ end
 --- labelled dropdowns and edit boxes, the checkbox and the Clear button all sit on one line per
 --- row whatever their heights -- Flow top-aligned them and the operator saw the stagger. Rebuilt
 --- on every tab change (AceGUI releases the tab's children), so every control re-reads self.filters.
-function Browse:BuildFilterStrip()
+--- SHOP-FILTERS-001 (the operator, 2026-09-14: "the shop needs the same filters as the browse tab,
+--- to allow folks to find stuff"): ONE builder for both catalogue tabs. `f` is the tab's own
+--- BrowseFilters table (the Browse tab's `self.filters`, the Shop tab's `self.shopFilter`), so
+--- each tab narrows on its own and a bank picked on the Bankers tab still lands on Browse;
+--- `redraw` is the tab's draw; `placeholder` the search box's. Returns the strip, and the Clear
+--- button as a second value.
+---@param f BrowseFilters
+---@param redraw function
+---@param placeholder string
+---@return table strip, table clear
+function Browse:BuildCatalogueStrip(f, redraw, placeholder)
 	local F = TOGBankClassic_UI_Search.Filters
-	local f = self.filters ---@type BrowseFilters
 	-- One column per first-row widget; the second row's narrower widgets start at the same left
 	-- edges, which is the vertical alignment the operator asked for. The strip's shape is
 	-- BuildSimpleStrip's (self-audit 9bce8d86 F3: this used to set the same group up by hand).
 	local strip = self:BuildSimpleStrip({ 220, 150, 130, 140, 110 }, STRIP_H)
-	self.FilterStrip = strip
 
 	local search = TOGBankClassic_UI:Create("TOGBankSearchBox")
-	search:SetPlaceholder("Search items, bankers, types")
+	search:SetPlaceholder(placeholder)
 	search:SetMaxLetters(50)
-	search:SetWidth(220)
+	search:SetWidth(TOGBankClassic_UI:UIScaled(220))   -- VISIBILITY-001 part 2: the box's font scales
 	if f.text and f.text ~= "" then search:SetText(f.text) end
 	search:SetCallback("OnTextChanged", function(_, _, text)
 		f.text = text
-		self:DrawBrowse()
+		redraw()
 	end)
 	strip:AddChild(search)
 
@@ -894,8 +1222,9 @@ function Browse:BuildFilterStrip()
 		dd:SetCallback("OnValueChanged", function(_, _, value)
 			f[key] = value
 			if onChange then onChange(value) end
-			self:DrawBrowse()
+			redraw()
 		end)
+		TOGBankClassic_UI:ScaleStockWidget(dd)   -- VISIBILITY-001 part 3
 		strip:AddChild(dd)
 		return dd
 	end
@@ -940,8 +1269,9 @@ function Browse:BuildFilterStrip()
 		eb:SetText(f[key] and f[key] > 0 and tostring(f[key]) or "")
 		eb:SetCallback("OnTextChanged", function(_, _, text)
 			f[key] = tonumber(text) or 0
-			self:DrawBrowse()
+			redraw()
 		end)
+		TOGBankClassic_UI:ScaleStockWidget(eb)
 		strip:AddChild(eb)
 	end
 	levelBox("Min lvl", "minLevel")
@@ -953,21 +1283,29 @@ function Browse:BuildFilterStrip()
 	usable:SetValue(f.usable and true or false)
 	usable:SetCallback("OnValueChanged", function(_, _, value)
 		f.usable = value and true or false
-		self:DrawBrowse()
+		redraw()
 	end)
 	TOGBankClassic_UI:AttachTooltip(usable, "ANCHOR_TOP", "Usable by me", {
 		"Only what this character can use: level, class, race, armour and weapon type -- anything the item's tooltip would show in red is hidden.",
 	})
+	TOGBankClassic_UI:ScaleStockWidget(usable)
 	strip:AddChild(usable)
 
 	-- The operator: "we also need a clear filters button on the browse page".
 	local clear = TOGBankClassic_UI:Create("Button")
 	clear:SetText("Clear")
 	clear:SetWidth(90)
-	clear:SetCallback("OnClick", function() self:ClearFilters() end)
+	clear:SetCallback("OnClick", function() self:ClearFilters(f) end)
 	TOGBankClassic_UI:AttachTooltip(clear, "ANCHOR_TOP", "Clear filters", { "Empty the search box and put every filter back to Any." })
+	TOGBankClassic_UI:ScaleStockWidget(clear)
 	strip:AddChild(clear)
-	self.ClearButton = clear
+	return strip, clear
+end
+
+--- The Browse tab's strip: the catalogue strip on `self.filters`.
+function Browse:BuildFilterStrip()
+	self.FilterStrip, self.ClearButton = self:BuildCatalogueStrip(self.filters, function() self:DrawBrowse() end,
+		"Search items, bankers, types")
 end
 
 --- The filter strip every Browse tab hangs its list under: a Table on a group inset FILTER_INSET,
@@ -978,6 +1316,7 @@ end
 ---@param height number|nil the strip's height; SIMPLE_STRIP_H when nil
 ---@return table strip the AceGUI SimpleGroup
 function Browse:BuildSimpleStrip(columns, height)
+	local S = function(px) return TOGBankClassic_UI:UIScaled(px) end
 	local tabs = self.TabGroup
 	tabs:SetLayout("Flow")
 	local strip = TOGBankClassic_UI:Create("SimpleGroup")
@@ -985,15 +1324,20 @@ function Browse:BuildSimpleStrip(columns, height)
 	-- than taking whatever its layout measures -- and this is set BEFORE the height, because AceGUI
 	-- lays a container out again whenever its content resizes, and a layout that finishes with no
 	-- children yet would size the group to nothing.
+	-- VISIBILITY-001 part 2: every size here is a 1x value put through the accessibility scale, and
+	-- the lists hang under the strip at the same scaled height (AnchorLists). The strip is rebuilt on
+	-- a scale change (OnUIScaleChanged below), so nothing here needs to re-lay itself.
+	local scaledColumns = {}
+	for i, w in ipairs(columns) do scaledColumns[i] = S(w) end
 	strip:SetAutoAdjustHeight(false)
 	strip:SetFullWidth(true)
-	strip:SetHeight(height or SIMPLE_STRIP_H)
+	strip:SetHeight(S(height or SIMPLE_STRIP_H))
 	strip:SetLayout("Table")
-	strip:SetUserData("table", { columns = columns, spaceH = 10, spaceV = 6, alignV = "end", alignH = "start" })
+	strip:SetUserData("table", { columns = scaledColumns, spaceH = S(10), spaceV = S(6), alignV = "end", alignH = "start" })
 	if strip.content and strip.content.SetPoint then
 		strip.content:ClearAllPoints()
-		strip.content:SetPoint("TOPLEFT", FILTER_INSET, -4)
-		strip.content:SetPoint("BOTTOMRIGHT", -FILTER_INSET, 0)
+		strip.content:SetPoint("TOPLEFT", S(FILTER_INSET), -S(4))
+		strip.content:SetPoint("BOTTOMRIGHT", -S(FILTER_INSET), 0)
 	end
 	tabs:AddChild(strip)
 	return strip
@@ -1009,7 +1353,7 @@ function Browse:BuildBankerStrip()
 	local search = TOGBankClassic_UI:Create("TOGBankSearchBox")
 	search:SetPlaceholder("Search bankers, what they store")
 	search:SetMaxLetters(50)
-	search:SetWidth(260)
+	search:SetWidth(TOGBankClassic_UI:UIScaled(260))
 	if f.text and f.text ~= "" then search:SetText(f.text) end
 	search:SetCallback("OnTextChanged", function(_, _, text)
 		f.text = text
@@ -1030,7 +1374,7 @@ function Browse:BuildLogStrip()
 	local search = TOGBankClassic_UI:Create("TOGBankSearchBox")
 	search:SetPlaceholder("Search the log by name, item, action")
 	search:SetMaxLetters(50)
-	search:SetWidth(260)
+	search:SetWidth(TOGBankClassic_UI:UIScaled(260))
 	if f.text and f.text ~= "" then search:SetText(f.text) end
 	search:SetCallback("OnTextChanged", function(_, _, text)
 		f.text = text
@@ -1076,6 +1420,7 @@ function Browse:BuildLogStrip()
 				self:DrawLog()
 			end)
 			TOGBankClassic_UI:AttachTooltip(box, "ANCHOR_TOP", label, { tip, "Type a date as YYYY-MM-DD. Leave it empty for no limit." })
+			TOGBankClassic_UI:ScaleStockWidget(box)   -- the library's DatePicker scales itself
 		end
 		strip:AddChild(box)
 		return box
@@ -1091,11 +1436,58 @@ function Browse:SetStatus(text)
 	if self.Window then self.Window:SetStatusText(text) end
 end
 
+-- COL-FIT-001 (the operator, 2026-09-15, a screenshot of "Armor / Miscellaneous" ending a third of
+-- the way across a 150 px Type column: "could we get rid of some of the white space between the
+-- type/qty/lvl columns? i don't want to get rid of it completely, there is just a lot of 'wasted'
+-- space. look at the longest entries, and make it a little longer"): the Type and Qty columns are
+-- sized to the LONGEST text in the whole catalogue (every bank, before the filters -- so the
+-- columns do not jump as a filter narrows the list) plus a little, never wider than the spec's
+-- width (150 / 44, the old fixed sizes, which "Consumable / Item Enhancement" nearly fills) and
+-- never narrower than the heading needs. Measured with the cells' own font, so a wide locale's
+-- strings get their room; the Lvl column stays as it is, two digits fit it.
+Browse.FIT_SLACK      = 10   -- past the longest entry: "a little longer"
+Browse.FIT_TYPE_MIN   = 60   -- "Type" and its sort arrow
+Browse.FIT_COUNT_MIN  = 40   -- "Qty", centred, and its arrow
+
+--- The pixel width of `text` in the row cells' font. Memoised per text: FitWidths runs on every
+--- redraw (each keystroke in the search box), over every row of the catalogue, and the type texts
+--- repeat heavily -- a few dozen distinct strings across thousands of rows.
+function Browse:TextWidth(text)
+	text = text or ""
+	self.textWidths = self.textWidths or {}
+	local w = self.textWidths[text]
+	if w then return w end
+	if not self.measureFS then
+		self.measureFS = UIParent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		self.measureFS:Hide()
+	end
+	self.measureFS:SetText(text)
+	w = self.measureFS:GetStringWidth() or 0
+	self.textWidths[text] = w
+	return w
+end
+
+--- The Type and Qty widths that fit `rows`: key -> width, clamped as above.
+function Browse:FitWidths(rows)
+	local typeW, countW = 0, 0
+	for _, r in ipairs(rows or {}) do
+		local t = self:TextWidth(r.type)
+		if t > typeW then typeW = t end
+		local c = self:TextWidth(tostring(r.count or ""))
+		if c > countW then countW = c end
+	end
+	return {
+		type  = math.min(TYPE_COL.width,  math.max(self.FIT_TYPE_MIN,  math.ceil(typeW  + self.FIT_SLACK))),
+		count = math.min(COUNT_COL.width, math.max(self.FIT_COUNT_MIN, math.ceil(countW + self.FIT_SLACK))),
+	}
+end
+
 function Browse:DrawBrowse()
 	if not (self.isOpen and self.BrowseList) then return end
 	local all = self:BuildRows()
 	local rows = self:FilterRows(all, self.filters)
 	self.rowsShown = rows
+	self.BrowseList:SetColumnWidths(self:FitWidths(all))   -- COL-FIT-001: before the rows are laid out
 	self.BrowseList:SetData(rows, true)
 	local banks = self:BankCount(all)
 	self:SetStatus(#rows == #all
@@ -1125,6 +1517,66 @@ function Browse:DrawBankers()
 	end
 end
 
+-- ─── SHOP-TAB-001: the Shop tab ───────────────────────────────────────────────
+--
+-- The operator, 2026-09-14: "it should be a new tab, with a setting to turn it on/off, so folks
+-- can shut it off if their bank doesn't 'sell' items. it should be off by default". The tab
+-- exists while Guild:IsShopEnabled(); its strip is a search box; its list is the catalogue with
+-- the estimate (STORE-001) beside every row a price source knows, less the guild's discount
+-- (STORE-003). STRIP-SIGN-001: the Ordering open box that sat beside the search box (STORE-006
+-- step 1, moved here from the Requests tab's Settings panel) was REMOVED on the operator's word
+-- the same afternoon -- "the one in settings is enough" -- so the officer's controls for the shop
+-- (the switch, the sign, the discount) are all under Settings and only there.
+
+--- The Shop tab's strip. SHOP-FILTERS-001 (the operator: "the shop needs the same filters as the
+--- browse tab, to allow folks to find stuff"): the SAME strip as Browse -- search, bank, type,
+--- subtype, slot, quality, level range, usable, Clear -- on the shop's own filter table, built by
+--- the one builder so the two cannot drift. Until this it was a lone search box.
+function Browse:BuildShopStrip()
+	self.shopFilter = self.shopFilter or self:DefaultFilters()
+	self.ShopStrip, self.ShopClearButton = self:BuildCatalogueStrip(self.shopFilter, function() self:DrawShop() end,
+		"Search the shop")
+	self.ShopSearch = self.ShopStrip.children[1]
+	self.ShopOpenBox = nil   -- STRIP-SIGN-001: gone; browse_spec refuses its return
+end
+
+--- The catalogue: every row the Browse tab would show, priced in one bulk call, narrowed by the
+--- shop's filters. The status line is the shop's sign and the count.
+function Browse:DrawShop()
+	if not (self.isOpen and self.ShopList) then return end
+	local all = self:PriceRows(self:BuildRows())
+	self.shopFilter = self.shopFilter or self:DefaultFilters()
+	local rows = self:FilterRows(all, self.shopFilter)
+	self.shopRowsShown = rows
+	self.ShopList:SetColumnWidths(self:FitWidths(all))   -- COL-FIT-001
+	self.ShopList:SetData(rows, true)
+	local priced = 0
+	for _, r in ipairs(rows) do if r.priced then priced = priced + 1 end end
+	local lib = self:PriceLibrary()
+	local sign = TOGBankClassic_Guild:IsStoreOpen() and "" or "ORDERING CLOSED -- "
+	-- STORE-003: the discount is part of the sign, so nobody reads a halved figure as the market.
+	local pct = TOGBankClassic_Guild.GetStoreDiscount and TOGBankClassic_Guild:GetStoreDiscount() or 0
+	if pct > 0 then sign = sign .. string.format("%d%% OFF -- ", pct) end
+	-- SHOP-FILTERS-001: the count says "N of M" whenever the filters narrow, whatever the price
+	-- library's state -- a narrowed list with no library used to read as the whole shop.
+	local count = #rows < #all and string.format("%d of %d items", #rows, #all)
+		or string.format("%d item%s", #rows, #rows == 1 and "" or "s")
+	-- STORE-002: a held guild price list IS price data, whatever this client's own library has;
+	-- the line names it so a member knows whose figures these are.
+	local PL = TOGBankClassic_PriceList
+	local guildList = PL and PL.Held and PL:Held() or nil
+	if guildList then
+		self:SetStatus(sign .. string.format("%s, %d with an estimate -- %s, %s", count, priced,
+			PL:SourceName(guildList.publisher), self:Ago(guildList.at)))
+	elseif not lib then
+		self:SetStatus(sign .. count .. " -- no price library: update ItemDB for estimates")
+	elseif lib.HasPriceData and not lib:HasPriceData() then
+		self:SetStatus(sign .. count .. " -- no price data yet: type /itemdb to choose sources or scan the auction house")
+	else
+		self:SetStatus(sign .. string.format("%s, %d with an estimate", count, priced))
+	end
+end
+
 --- LOG-TAB-001 / LOG-PERSIST-001. The status line names the cap, because that is what the log
 --- holds -- the most recent entries, not the history.
 function Browse:DrawLog()
@@ -1142,9 +1594,224 @@ function Browse:DrawLog()
 	end
 end
 
---- A left click requests; a right click on your own bank's row hides or shows (HIDE-001).
+--- STORE-006: may this character edit the not-for-sale list? The same officer test the Requests
+--- tab's Settings panel and the help notes use.
+function Browse:CanEditShopList()
+	return (CanViewOfficerNote and CanViewOfficerNote()) and true or false
+end
+
+-- ─── BANKER-OWNER-001: who runs each bank character ──────────────────────────
+--
+-- The operator, 2026-09-14: "the ability for officers to right click on a banker in the bankers
+-- tab to assign who 'owns' the banker, that info would show on the mouseover tooltip. this should
+-- be autocomplete for the names on the roster in guild roster but it can be free text entry as
+-- some guilds like ours have a 'shared' account for the banker." The value is Guild's
+-- (`Guild:SetBankerOwner`, the one writer, guild-synced); this is the hover, the right click, the
+-- dialog and the name source its box completes from.
+
+--- The hover on a Bankers row: who runs it (when an officer has said), the grey state's sentence
+--- (TAB-STATE-003), and the officer's gesture.
+function Browse:OnBankerRowEnter(entry)
+	local lines = {}
+	-- XGUILD-LABEL-001: a sister guild's banker says which guild, first.
+	if entry.guildName and entry.guildName ~= "" then lines[#lines + 1] = { "Bank character of " .. entry.guildName, 1, 1, 1 } end
+	if entry.owner then lines[#lines + 1] = { "Run by " .. entry.owner, 1, 1, 1 } end
+	if entry.state == "refused" then
+		lines[#lines + 1] = { Browse.RefusedText(entry.refusedPeer, entry.refusedVersion), 1, 1, 1 }
+	end
+	local G = TOGBankClassic_Guild
+	local writable = not (G and G.BankerOwnerWritable) or G:BankerOwnerWritable(entry.norm)
+	if self:CanEditShopList() and writable then
+		lines[#lines + 1] = { entry.owner and "Right-click to change who runs this bank" or "Right-click to say who runs this bank", 0.6, 0.6, 0.6 }
+	end
+	if #lines == 0 then return end
+	GameTooltip:SetOwner(WorldFrame, "ANCHOR_CURSOR")
+	GameTooltip:ClearLines()
+	for i, l in ipairs(lines) do
+		if i == 1 then GameTooltip:SetText(l[1], l[2], l[3], l[4], 1, true) else GameTooltip:AddLine(l[1], l[2], l[3], l[4], true) end
+	end
+	GameTooltip:Show()
+end
+
+--- A right click on a Bankers row: the officer's dialog, or a word on the status line.
+function Browse:OnBankerRowRightClick(entry)
+	if not self:CanEditShopList() then
+		self:SetStatus("Only an officer can say who runs a bank character.")
+		return
+	end
+	-- XGUILD-OWNERS-001: a sister guild's bank character is described by that guild's officers.
+	local G = TOGBankClassic_Guild
+	if G and G.BankerOwnerWritable and not G:BankerOwnerWritable(entry.norm) then
+		self:SetStatus(string.format("%s belongs to %s -- its officers say who runs it.", entry.player or "That bank character",
+			(entry.guildName and entry.guildName ~= "") and entry.guildName or "another guild"))
+		return
+	end
+	self:ShowOwnerDialog(entry)
+end
+
+--- The names the owner box completes from: every roster the guild-roster library holds (the home
+--- guild and any sister guild), same-realm names bare, others as Name-Realm. In the client's own
+--- autocomplete-source shape -- `(text, maxResults, cursorPosition, allowFullMatch)` returning
+--- `{ { name = ..., priority = ... }, ... }` -- so AutoCompleteEditBoxTemplate drives it as it
+--- drives the mail frame's recipient box. Prefix-matched, case-blind, sorted, capped.
+function Browse:OwnerNameSource(text, maxResults)
+	local out = {}
+	text = tostring(text or ""):lower()
+	if text == "" then return out end
+	local lib = LibStub and LibStub("LibGuildRoster-1.0", true)
+	if not lib then return out end
+	local realm = lib.GetRealmName and lib:GetRealmName() or (GetNormalizedRealmName and GetNormalizedRealmName()) or nil
+	local seen, names = {}, {}
+	local function add(full)
+		if type(full) ~= "string" then return end
+		local name, r = full:match("^([^%-]+)%-(.+)$")
+		local shown = (name and r and realm and r == realm) and name or full
+		if not seen[shown] and shown:lower():sub(1, #text) == text then
+			seen[shown] = true
+			names[#names + 1] = shown
+		end
+	end
+	for _, full in ipairs(lib.GetAllMembers and lib:GetAllMembers() or {}) do add(full) end
+	if lib.GetSisterGuildKeys and lib.GetRoster then
+		for _, key in ipairs(lib:GetSisterGuildKeys() or {}) do
+			for full in pairs(lib:GetRoster(key) or {}) do add(full) end
+		end
+	end
+	table.sort(names, function(a, b) return a:lower() < b:lower() end)
+	-- The priority is the key AutoComplete_UpdateResults colours by (AUTOCOMPLETE_COLOR_KEYS, indexed
+	-- by Enum.AutoCompletePriority in the Classic Era tree; the LE_* globals are deprecation
+	-- fallbacks), and a value the table lacks raises inside Blizzard's own code -- so the enum, or
+	-- 0 (Other) where a client has none.
+	local P = Enum and Enum.AutoCompletePriority
+	local prio = P and (P.Guild or P.Other) or 0
+	for i = 1, math.min(#names, tonumber(maxResults) or #names) do
+		out[i] = { name = names[i], priority = prio }
+	end
+	return out
+end
+
+--- The dialog: one box, completing from the roster, free text allowed; Save, Clear, Cancel.
+--- Built once and re-pointed at the banker; the box is the client's AutoCompleteEditBoxTemplate
+--- when the client has it (feature-detected -- the offline harness and a client without the
+--- template get a plain InputBoxTemplate box, same text, no dropdown).
+function Browse:EnsureOwnerDialog()
+	if self.OwnerDialog then return self.OwnerDialog end
+	local dialog = TOGBankClassic_UI:Create("Frame")
+	dialog:Hide()
+	dialog:SetTitle("Who runs this bank")
+	dialog:SetLayout("List")
+	dialog:SetWidth(340)
+	dialog:SetHeight(170)
+	dialog:EnableResize(false)
+	dialog:SetCallback("OnClose", function(w) w:Hide() end)
+	TOGBankClassic_UI:ApplyThinBorder(dialog, "browse")
+
+	local prompt = TOGBankClassic_UI:Create("Label")
+	prompt:SetFullWidth(true)
+	prompt:SetJustifyH("LEFT")
+	dialog:AddChild(prompt)
+	dialog.Prompt = prompt
+
+	-- The box lives on a fixed-height group so the List layout gives it a row of its own.
+	local holder = TOGBankClassic_UI:Create("SimpleGroup")
+	holder:SetFullWidth(true)
+	holder:SetHeight(32)
+	holder:SetAutoAdjustHeight(false)
+	holder:SetLayout("Fill")
+	dialog:AddChild(holder)
+	local template = AutoCompleteEditBox_SetAutoCompleteSource and "InputBoxTemplate,AutoCompleteEditBoxTemplate" or "InputBoxTemplate"
+	local box = CreateFrame("EditBox", "TOGBankClassicOwnerBox", holder.content, template)
+	box:SetAutoFocus(false)
+	box:SetMaxLetters(40)
+	box:SetPoint("TOPLEFT", holder.content, "TOPLEFT", 8, -4)
+	box:SetPoint("BOTTOMRIGHT", holder.content, "BOTTOMRIGHT", -4, 4)
+	if AutoCompleteEditBox_SetAutoCompleteSource then
+		AutoCompleteEditBox_SetAutoCompleteSource(box, function(text, max) return self:OwnerNameSource(text, max) end)
+	end
+	box:SetScript("OnEnterPressed", function(eb)
+		-- The template's own handler takes an Enter on a highlighted completion first.
+		if AutoCompleteEditBox_OnEnterPressed and AutoCompleteEditBox_OnEnterPressed(eb) then return end
+		self:SaveOwnerDialog()
+	end)
+	box:SetScript("OnEscapePressed", function() dialog:Hide() end)
+	dialog.Box = box
+
+	local buttons = TOGBankClassic_UI:Create("SimpleGroup")
+	buttons:SetLayout("Flow")
+	buttons:SetFullWidth(true)
+	dialog:AddChild(buttons)
+	local function button(text, width, onClick)
+		local b = TOGBankClassic_UI:Create("Button")
+		b:SetText(text)
+		b:SetWidth(width)
+		b:SetCallback("OnClick", onClick)
+		buttons:AddChild(b)
+		return b
+	end
+	dialog.Save   = button("Save",   100, function() self:SaveOwnerDialog() end)
+	dialog.Clear  = button("Clear",  100, function() box:SetText(""); self:SaveOwnerDialog() end)
+	dialog.Cancel = button("Cancel", 100, function() dialog:Hide() end)
+
+	self.OwnerDialog = dialog
+	return dialog
+end
+
+--- Open the dialog for a banker row, the box holding what is set now.
+function Browse:ShowOwnerDialog(entry)
+	local dialog = self:EnsureOwnerDialog()
+	self.ownerContext = { norm = entry.norm, player = entry.player }
+	dialog.Prompt:SetText(string.format("Who runs %s? A guild member's name (start typing for the roster), or anything -- \"shared account\", \"the officers\".", entry.player))
+	-- The LIVE value, not the row's snapshot: a row built before a save still carries the old owner.
+	local G = TOGBankClassic_Guild
+	dialog.Box:SetText(G.GetBankerOwner and G:GetBankerOwner(entry.norm) or entry.owner or "")
+	dialog:SetStatusText("")
+	if self.Window and self.Window.frame and dialog.frame then
+		dialog.frame:ClearAllPoints()
+		dialog.frame:SetPoint("TOPLEFT", self.Window.frame, "TOPRIGHT", 10, 0)
+	end
+	dialog:Show()
+	TOGBankClassic_UI:ClampFrameToScreen(dialog)
+	dialog:DoLayout()
+	dialog.Box:SetFocus()
+	dialog.Box:HighlightText()
+end
+
+--- Save: through the ONE writer. An unchanged value closes quietly; a refusal says so.
+function Browse:SaveOwnerDialog()
+	local dialog, ctx = self.OwnerDialog, self.ownerContext
+	if not (dialog and ctx) then return false end
+	local G = TOGBankClassic_Guild
+	local text = dialog.Box:GetText() or ""
+	local changed = G:SetBankerOwner(ctx.norm, text)
+	if not changed and (G:GetBankerOwner(ctx.norm) or "") ~= text:gsub("^%s+", ""):gsub("%s+$", "") then
+		dialog:SetStatusText("Could not save that.")
+		return false
+	end
+	dialog:Hide()
+	self.ownerContext = nil
+	return true
+end
+
+--- The owners changed (this client's write, or a peer's broadcast): repaint an open Bankers tab.
+function Browse:OnBankerOwnerChanged()
+	if self.isOpen and self.currentTab == "bankers" then self:DrawBankers() end
+end
+
+--- A left click requests; a right click on your own bank's row hides or shows (HIDE-001); an
+--- officer's Ctrl+right-click on ANY row puts the item on or takes it off the not-for-sale list
+--- (STORE-006). Ctrl, because a plain right-click on an officer's own bank already hides.
 function Browse:OnBrowseRowClick(entry, button)
 	local G = TOGBankClassic_Guild
+	if button == "RightButton" and IsControlKeyDown and IsControlKeyDown() then
+		if not self:CanEditShopList() then
+			self:SetStatus("Only an officer can change what is for sale.")
+			return
+		end
+		if G:SetNotForSale(entry.ID, not entry.notForSale, entry.plainName) then
+			self:RedrawCurrent()   -- F6: the tab the click was on, Browse or Shop
+		end
+		return
+	end
 	if button == "RightButton" then
 		if entry.norm == G:GetNormalizedPlayer() and G:IsBank(entry.norm) and TOGBankClassic_Bank.SetHidden then
 			-- HIDE-002: a row the checkbox hid has no manual key to remove; say what governs it.
@@ -1155,7 +1822,7 @@ function Browse:OnBrowseRowClick(entry, button)
 			end
 			if TOGBankClassic_Bank:SetHidden(entry.ID, entry.Suffix, entry.Enchant, not entry.Hidden) then
 				TOGBankClassic_Output:Info((not entry.Hidden and T.noticeHidden or T.noticeShown):format(entry.plainName))
-				self:DrawBrowse()
+				self:RedrawCurrent()   -- F6
 			end
 		end
 		return
@@ -1166,6 +1833,17 @@ function Browse:OnBrowseRowClick(entry, button)
 	end
 	if entry.viewOnly then
 		self:SetStatus(entry.player .. " is a view-only bank -- its items cannot be requested.")
+		return
+	end
+	-- STORE-006: the shop is closed. The status line, not a chat warning, because a click on a row
+	-- is answered where the click was (as the view-only line above is).
+	if not TOGBankClassic_Guild:IsStoreOpen() then
+		self:SetStatus(TOGBankClassic_Guild.STORE_CLOSED_TEXT)
+		return
+	end
+	-- STORE-006: an item an officer took off the shop list -- the row already wears the tag.
+	if entry.notForSale then
+		self:SetStatus(TOGBankClassic_Guild.NOT_FOR_SALE_TEXT:format(entry.plainName))
 		return
 	end
 	-- LOG-HYGIENE-002 F3 (Peer Review db06c629): a HIDDEN row is on the list only for its owner
@@ -1189,6 +1867,29 @@ function Browse:OnBrowseRowEnter(entry)
 			local why = entry.Hidden and TOGBankClassic_Bank and TOGBankClassic_Bank.HiddenReason
 				and TOGBankClassic_Bank:HiddenReason(entry.ID, entry.Suffix, entry.Enchant) or nil
 			lines = TOGBankClassic_UI:HiddenTooltipLines(entry.Hidden and true or false, why)
+		end
+		-- STORE-006: a blocked item says so to everyone; an officer is told the gesture either way.
+		-- A NEW table when anything is added: the HIDDEN_TEXT entries above are shared by identity
+		-- with the Inventory window and are never appended to.
+		local extra
+		if entry.notForSale then
+			extra = { { "Not for sale -- an officer has taken it off the shop list", 1, 0.25, 0.25 } }
+		end
+		-- STORE-001: where the estimate came from and how old it is.
+		local priceLine = self:PriceTooltipLine(entry)
+		if priceLine then
+			extra = extra or {}
+			extra[#extra + 1] = priceLine
+		end
+		if self:CanEditShopList() then
+			extra = extra or {}
+			extra[#extra + 1] = { entry.notForSale and "Ctrl+right-click to put it back on sale" or "Ctrl+right-click to mark it not for sale", 0.6, 0.6, 0.6 }
+		end
+		if extra then
+			local merged = {}
+			for _, l in ipairs(lines or {}) do merged[#merged + 1] = l end
+			for _, l in ipairs(extra) do merged[#merged + 1] = l end
+			lines = merged
 		end
 		TOGBankClassic_UI:ShowItemTooltip(entry.Link, lines)
 	elseif entry.plainName then

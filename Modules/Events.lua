@@ -251,12 +251,18 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 	local guild = TOGBankClassic_Guild:GetGuild()
 	if not guild then return end
 
-	-- MULTIPC-001: from here on, a partial scan of our own bank waits for the guild's answer
-	-- (P2PSession.consultBegun) -- set before the collision-guard defer below, so the wait covers
-	-- the deferred send too.
-	if TOGBankClassic_P2PSession and TOGBankClassic_P2PSession.BeginConsult then
-		TOGBankClassic_P2PSession:BeginConsult()
+	-- LIBREQ-DS-008: the broadcast is the library's numbered P2P (Modules/P2P.lua). No instance --
+	-- no host yet, or a DeltaSync without the numbered class -- means nothing to sync with.
+	local p2p = TOGBankClassic_P2P and TOGBankClassic_P2P:Lib()
+	if not p2p then
+		TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: no numbered P2P on the host -- nothing broadcast")
+		return
 	end
+
+	-- MULTIPC-001: from here on, a partial scan of our own bank waits for the guild's answer
+	-- (the library's consultBegun) -- set before the collision-guard defer below, so the wait
+	-- covers the deferred send too.
+	p2p:BeginConsult()
 
 	-- RAID-CONSULT-001 (LOG-HYGIENE-002 F6, Peer Review db06c629): inside a raid the guard in
 	-- Core:SendCommMessage drops this broadcast and Chat drops every receive, so nobody hears us
@@ -302,75 +308,64 @@ function TOGBankClassic_Events:SyncDeltaVersion(priority, retryCount)
 		end
 	end
 
-	local list = TOGBankClassic_Guild:BuildBankerHashList()
-	if not list then return end
+	-- No bankers on the roster: nothing to sync, and nothing a peer could offer.
+	local banks = TOGBankClassic_Guild:GetBanks()
+	if not banks or #banks == 0 then return end
 
-	local altCount = 0
-	for _ in pairs(list) do altCount = altCount + 1 end
-	if altCount == 0 then return end
-
-	-- P2P-023: Set broadcast-in-progress flag before sending to prevent concurrent collisions
+	-- P2P-023: the guard is set BEFORE the send and released by the host's onSendComplete
+	-- (Core.lua -> OnBroadcastComplete below) when the library reports the send's terminal state --
+	-- delivered, refused, or never attempted, exactly once. A send the library declines before the
+	-- transport (the raid guard, no channel) completes synchronously inside Broadcast, which is why
+	-- the flag must already be set here and not after.
 	self.hashBroadcastInProgress = true
 	self.hashBroadcastCount = (self.hashBroadcastCount or 0) + 1
 
 	local myPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
-	-- P2P-035: the broadcast is a run of `<number><canon>` entries, 24 characters each, for every
-	-- banker we hold a SERVABLE canon for and a number for. That is ~900 bytes for 38 bankers where
-	-- the keyed table was ~5 KB / 20 chunks on the guild channel from every member, every login and
-	-- every ten minutes. A banker with no number yet, or no canon to serve, is simply absent -- a
-	-- responder offers everything we did not mention, so absence is the wipe-recovery signal too.
-	-- Sorted by number so two clients holding the same versions emit the same bytes.
-	local BN = TOGBankClassic_BankerNumbers
-	local entries, numbered = {}, 0
-	for norm, summary in pairs(list) do
-		local num = BN and BN:NumberOf(norm)
-		if num and summary.hashV2 then
-			entries[#entries + 1] = { number = num, canon = summary.hashV2 }
-			numbered = numbered + 1
-		end
+	-- P2P-035 / LIBREQ-DS-008: the broadcast is the LIBRARY'S hlb2 -- a run of `<number><canon>`
+	-- entries, 24 characters each, for every banker we hold a SERVABLE canon and a number for (its
+	-- ServableEntries: ~900 bytes for 38 bankers where the keyed table was ~5 KB / 20 chunks). A
+	-- banker with no number yet, or no canon to serve, is simply absent -- a responder offers
+	-- everything we did not mention (the library, LIBREQ-DS-008 ask 1), so absence is the
+	-- wipe-recovery signal too. The library mints numbers, opens the collect window and sends on its
+	-- OFFER prefix; TOGBank's fields ride as `extra` (P2P:BroadcastExtra, which the library's catch-up
+	-- broadcast asks for too), read by peers through the host's onOfferReceived (Modules/P2P.lua).
+	local ok, bytes = p2p:Broadcast(priority or "BULK", TOGBankClassic_P2P:BroadcastExtra())
+	if not ok then
+		-- The library could not even serialise it; nothing left and nothing will complete.
+		self.hashBroadcastInProgress = false
+		TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: the host refused the broadcast")
+		return
 	end
-	table.sort(entries, function(a, b) return a.number < b.number end)
-	local payload = {
-		type     = "hlb2",
-		v        = BN and BN:Version() or 0,
-		e        = BN and BN:EncodeEntries(entries) or "",
-		banker   = myPlayer,
-		isBanker = TOGBankClassic_Guild:IsBank(myPlayer),
-		addon    = GetAddOnMetadata("TOGBankClassic", "Version") or "dev",
-	}
-	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	local selfRef = self
-	-- ACQ-004 / DOC-001: this callback took no arguments, so it cleared the collision guard on
-	-- the FIRST chunk rather than on completion -- the comment claimed "once the final chunk is
-	-- confirmed sent by CTL" and the code could not tell. Supplying an argument-ignoring
-	-- callback is also how a caller tells AceCommQueue "I will handle the verdict myself", so
-	-- the library deliberately does not report refusals here on our behalf.
-	--
-	-- Now: release only when the whole message is accounted for, and treat a refusal as a
-	-- release too -- holding the guard after a failed send would block every later broadcast.
-	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "BULK",
-		function(_, bytesSent, totalBytes, sendResult)
-			if sendResult == false then
-				selfRef.hashBroadcastInProgress = false
-				TOGBankClassic_Output:Debug("PROTOCOL", "COLLISION-GUARD",
-					"Hash-list broadcast refused by the client - guard released so later broadcasts are not blocked")
-			elseif bytesSent and totalBytes and bytesSent >= totalBytes then
-				selfRef.hashBroadcastInProgress = false
-			end
-		end)
-	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast %d numbered canon(s) of %d roster alts (isBanker=%s, numbers v%d, %d bytes)",
-		numbered, altCount, tostring(payload.isBanker), payload.v, data and #data or 0)
+	TOGBankClassic_Output:Debug("PROTOCOL", "VERSION-BROADCAST", "SyncDeltaVersion: broadcast hlb2 over %d roster alt(s) (isBanker=%s, numbers v%d, %d bytes)",
+		#banks, tostring(TOGBankClassic_Guild:IsBank(myPlayer)), TOGBankClassic_BankerNumbers:Version(), bytes or 0)
 
 	-- SETTINGS-001: Piggyback settings broadcast for authorized senders so new joiners
 	-- and members who missed the immediate broadcast still receive guild-configured values.
 	local settingsSender = TOGBankClassic_Guild:GetNormalizedPlayer()
 	if settingsSender and (TOGBankClassic_Guild:IsBank(settingsSender) or TOGBankClassic_Guild:SenderIsOfficer(settingsSender) or TOGBankClassic_Guild:SenderIsGM(settingsSender)) then
 		TOGBankClassic_Guild:BroadcastSettings()
+		-- STORE-007: this character's donation totals ride the same cycle, for the same reason.
+		if TOGBankClassic_Donations then TOGBankClassic_Donations:Broadcast() end
 	end
+	-- STORE-002: the price authority builds its list on the same cycle -- at login, and after that
+	-- a CHANGED list at most once an hour. Nothing is sent when the figures are unchanged; the
+	-- hlb2 above already named the held version so a client behind it asks.
+	if TOGBankClassic_PriceList then TOGBankClassic_PriceList:OnCycle() end
+	-- XGUILD-SYNC-001 (D5): the GUILD broadcast above reaches one guild; a member of each listed
+	-- sister guild is asked for its hash list by whisper, and everything after is whispers.
+	if TOGBankClassic_Guild.PullFromFederation then TOGBankClassic_Guild:PullFromFederation() end
+end
 
-	-- Begin P2P collect window so incoming hash-offer responses are gathered.
-	if TOGBankClassic_P2PSession then
-		TOGBankClassic_P2PSession:BeginCollectWindow(list)
+--- P2P-023: the host reported the GUILD broadcast's terminal state (Core's onSendComplete, OFFER on
+--- GUILD -- the library's Broadcast is the only such send). The guard is released whatever the
+--- verdict: holding it after a refusal would block every later broadcast.
+---@param info table the library's completion { verdict = "delivered"|"refused"|"not-attempted", ... }
+function TOGBankClassic_Events:OnBroadcastComplete(info)
+	self.hashBroadcastInProgress = false
+	if info and info.verdict ~= "delivered" then
+		TOGBankClassic_Output:Debug("PROTOCOL", "COLLISION-GUARD",
+			"Hash-list broadcast %s (%s) - guard released so later broadcasts are not blocked",
+			tostring(info.verdict), tostring(info.reason))
 	end
 end
 

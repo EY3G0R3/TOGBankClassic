@@ -140,7 +140,9 @@ describe("Propagation: the tracker", function()
 		assert.equal(0, P:Elapsed())
 		P:OnPublished(BANKER, C(T, 0x20))
 		env.advance(42)
-		assert.equal(42, P:Elapsed())
+		-- SPEC-ORDER-001: GetTime() never rewinds across files and advance() adds 0.05 s slices, so
+		-- late in a run the difference of two large floats is 42 to a rounding error, not exactly.
+		assert.near(42, P:Elapsed(), 1e-6)
 	end)
 
 	it("warns on the logout countdown while pending or alone, and says nothing once synced", function()
@@ -251,7 +253,17 @@ describe("Propagation: surviving a relog", function()
 end)
 
 describe("Propagation: the status-bar line (every window)", function()
-	before_each(function() env.reset(); client() end)
+	-- GetTime() starts on a WHOLE second. The harness's GetTime clock (`wow.time`, not `env.now`, which
+	-- is the server epoch) never rewinds across reset(), and a spec file that ran before this one can
+	-- leave it on a fraction -- where (start + 75) - start is 74.999... in floating point, and the
+	-- floored clock text reads 1:14. Found by the reverse-order run once settingssync_spec (the
+	-- throttled wire) sorted ahead of this file. Forward only, never back.
+	before_each(function()
+		env.reset()
+		local wow = require("env.wow")
+		wow.time = math.ceil(wow.time)
+		client()
+	end)
 
 	it("is empty when idle, whatever the network-info option says", function()
 		assert.equal("", SB.BuildPropagationText())
@@ -305,7 +317,11 @@ describe("Propagation: the status-bar line (every window)", function()
 	-- shorter words and no online count, so a 560-wide bar can hold it.
 	it("has a SHORT form of every state, in the same colour, shorter than the full line", function()
 		P:OnPublished(BANKER, C(T, 0x20))
-		env.advance(75)
+		-- Half a second PAST the minute-and-a-quarter, not on it: the harness advances the clock in
+		-- 0.1 s ticks and 750 of them accumulate a float error that lands on either side of 75.0
+		-- depending on the clock value earlier files left behind (1:14 in the reverse-order run,
+		-- 1:15 forward). The line floors whole seconds; 75.5 floors to 75 whichever way it drifts.
+		env.advance(75.5)
 		local long, short = SB.BuildPropagationText(), SB.BuildPropagationText(true)
 		assert.is_truthy(short:find("^|cffff4444Update not received yet %-%- stay online %(1:15%)|r$"), short)
 		assert.is_true(#short < #long)

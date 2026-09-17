@@ -66,7 +66,7 @@ function TOGBankClassic_UI_Donations:DrawWindow()
 	donations:SetCallback("OnClose", OnClose)
 	donations:SetTitle(TOGBankClassic_UI:WindowTitle("Donations"))
 	donations:SetLayout("Flow")
-	donations:SetWidth(350)
+	donations:SetWidth(420)   -- DONATION-VALUE-001: room for the Value column
 	donations:EnableResize(false)
 	--handle keyboard events
 	donations.frame:EnableKeyboard(true)
@@ -88,12 +88,18 @@ function TOGBankClassic_UI_Donations:DrawWindow()
 				align = "CENTERRIGHT",
 			},
 			{
-				width = 0.6,
+				width = 0.45,
 				alignH = "start",
 				alignV = "middle",
 			},
 			{
 				width = 0.2,
+				alignH = "end",
+				alignV = "middle",
+			},
+			-- DONATION-VALUE-001: the gold value behind the points.
+			{
+				width = 0.3,
 				alignH = "end",
 				alignV = "middle",
 			},
@@ -115,35 +121,17 @@ function TOGBankClassic_UI_Donations:DrawContent()
 	self.Content:ReleaseChildren()
 
 	local info = TOGBankClassic_Guild.Info
-	local roster_alts = TOGBankClassic_Guild:GetRosterAlts()
-	if not info or not roster_alts then
+	if not info then
 		return
 	end
 
-	local players = {}
-	local alts = info.alts
-	for _, v in pairs(roster_alts) do
-		local norm = TOGBankClassic_Guild:NormalizeName(v)
-		local alt = alts[norm]
-		if alt and alt.ledger then
-			for p, s in pairs(alt.ledger) do
-				if not players[p] then
-					players[p] = s
-				else
-					players[p] = players[p] + s
-				end
-			end
-		end
-	end
-
-	local scoreboard = {}
-	for k, v in pairs(players) do
-		table.insert(scoreboard, { player = k, score = v })
-	end
-
-	table.sort(scoreboard, function(a, b)
-		return a.score > b.score
-	end)
+	-- STORE-007: the board is the sum of every writer's published totals (each banker's credits,
+	-- each officer's adjustments), not this client's own `alt.ledger` tables -- so a member sees
+	-- the same numbers the bankers do. Points, at the officer-set rate; the old vendor-valued
+	-- scores are each banker's opening balance.
+	local D = TOGBankClassic_Donations
+	D:MigrateOwnLedger()
+	local scoreboard = D:Scoreboard()
 
 	local header = TOGBankClassic_UI:Create("Label")
 	header:SetText("")
@@ -154,11 +142,21 @@ function TOGBankClassic_UI_Donations:DrawContent()
 	self.Content:AddChild(header)
 
 	header = TOGBankClassic_UI:Create("Label")
-	header:SetText("Score")
+	header:SetText("Points")
+	self.Content:AddChild(header)
+
+	-- DONATION-VALUE-001 (the operator: "flesh out the donation points = to gold value"): what
+	-- the points stand for, in gold -- the value the bank characters' price sources put on each
+	-- member's gifts when they arrived, summed. Blank where a balance has no value behind it (an
+	-- officer's adjustment, a score carried from before the points existed).
+	header = TOGBankClassic_UI:Create("Label")
+	header:SetText("Value")
 	self.Content:AddChild(header)
 
 	local count = 0
-	for _, v in pairs(scoreboard) do
+	-- ipairs: the board is SORTED (highest first) and `pairs` on an array is order-undefined in
+	-- principle -- the rank numbers beside the names are what the sort was for (Peer Review f5e52bcf F8).
+	for _, v in ipairs(scoreboard) do
 		count = count + 1
 
 		if count <= 25 then
@@ -179,11 +177,24 @@ function TOGBankClassic_UI_Donations:DrawContent()
 			contributor:SetText(string.format("|c%s%s|r", color, v.player))
 			self.Content:AddChild(contributor)
 
+			-- The points as they are, to two decimals. This used to be math.ceil, which showed a
+			-- member with 0.05 points as 1 -- and a board is exactly where a rounded-up number is
+			-- read as a fact.
 			local score = TOGBankClassic_UI:Create("Label")
-			score:SetText(string.format("|c%s%d|r", color, math.ceil(v.score)))
+			local p = v.points
+			score:SetText(string.format("|c%s%s|r", color, p == math.floor(p) and string.format("%d", p) or string.format("%.2f", p)))
 			self.Content:AddChild(score)
+
+			local value = TOGBankClassic_UI:Create("Label")
+			value:SetText((v.copper or 0) > 0 and string.format("|c%s%s|r", color, D:FormatGold(v.copper)) or "")
+			self.Content:AddChild(value)
 		end
 	end
 
-	self.Window:SetStatusText(count .. " Total")
+	-- Your own balance beside the count, so a donor has a receipt without finding their row.
+	local me = TOGBankClassic_Guild:GetPlayer() or ""
+	local mine, mineValue = D:PointsOf(me), D:ValueOf(me)
+	self.Window:SetStatusText(string.format("%d Total -- you have %s%s (%s per gold donated)",
+		count, D:FormatPoints(mine), mineValue > 0 and (" for " .. D:FormatGold(mineValue) .. " given") or "",
+		D:FormatPoints(D:Rate())))
 end

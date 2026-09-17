@@ -160,7 +160,9 @@ slot, `Modules/RequestLog.lua`), minted at `Search.lua:290-305`, displayed throu
   `Search.itemNames` and `ItemHighlight.neededItemIDs` and `Mailbox.WantedByOpenOrders` (`id`
   alone). Each of the id-only and id:suffix ones has a concrete wrong answer today (3.6, 3.7).
   After the release: `Record.key`, and one spec that greps `Modules/` for `":%d:"`-style
-  hand-built keys the way `INV2-ISOLATE-001` pins the writer set.
+  hand-built keys the way `INV2-ISOLATE-001` pins the writer set. _Built 2026-09-17 (step 7):
+  `Record.key` / `keyFor` / `requestKey` are the three spellings, and `wiring_spec`'s three
+  LINK-AUDIT guards read the shipped files for any other._
 - **The same behaviour implemented more than once:** two link parsers (3.2), four link builders
   (3.4), two `Info` builders (`Resolve.describe` and `Item:GetInfo`), two aggregators
   (`Record.aggregate` and `Item:Aggregate`), two item databases (3.1).
@@ -184,7 +186,7 @@ slot, `Modules/RequestLog.lua`), minted at `Search.lua:290-305`, displayed throu
 | Mail rows carry suffix and enchant | A suffixed item in a banker's inbox shows its full name and merges with the same item once taken into the bags; the log's `from` names the sender of a suffixed deposit | **One content-hash and one mail-hash change per banker** on the first mail-inclusive scan after upgrading -- a version bump each, self-correcting. Every viewer fetches that version once. |
 | Static DBs removed | 3.7 MB less parsed at every login on every client | None functionally -- nothing read them. `.luarc.json` / `.luacheckrc` globals removed. |
 | Resolve step 2 keeps the suffix | An id LibItemDB lacks still shows and links its variant | **No TOGTools cost** (corrected 2026-09-13, Peer Review on 2a82f9ad, verified in `TOGTools/Modules/GuildBankLog/GuildBankLog.lua:141-145`): `linkSig` strips a link to its itemID and `baseKey` (:176-197) deliberately excludes `name`, so a suffixed link and its base link have the SAME `itemSig`. This row used to say the sig changes; it does not. Display only. |
-| `Log:ItemLinkFor` = `Resolve.link` | Log tab and TOGTools rows are quality-coloured with the suffixed name (LOG-TAB-002) | **No TOGTools cost**, same reason: a synthetic white link and the coloured suffixed link carry the same itemID, so `itemSig` and the dedupe key are unchanged. The one line worth telling TOGTools (SUFFIX-NAME-002 already made it true): the `item` string for suffixed rows now carries the family; `itemSig` unchanged. |
+| `Log:ItemLinkFor` = `Resolve.link` | Log tab and TOGTools rows are quality-coloured with the suffixed name (LOG-TAB-002) | ~~No TOGTools cost~~ **CORRECTED 2026-09-17, this row was wrong for plain items.** `linkSig` (`GuildBankLog.lua:141-145`) needs a colon AFTER the id (pattern `Hitem:(%d+):`). LibItemDB's link for a plain item carries the bare item string `item:858` with no colon after the id (`LibItemDB-1.0.lua:313-329`), so its sig is the WHOLE LINK, not `858`, while the client link `ItemLinkFor` returns today has colons (sig = id). Collapsing to `Resolve.link` would re-key every plain item's rows and double a re-delivered version. **Held** on TOGTools contract `55e84c617342` (`linkSig` returns the id with or without a following colon). Suffixed items were never affected. |
 | `countsByKey` keys by `Record.key` | An enchant change on a stored item is a log entry | A one-off diff on the first version after upgrading where enchanted rows exist. |
 | Search corpus keyed by name | Every suffix variant is findable by its own name | None. |
 | ItemHighlight / Mailbox by `id:suffix` | Only the requested variant lights up | None. |
@@ -217,21 +219,51 @@ Coverage stays at the harness gate (`lua Tests/wowapi/coverage.lua` on every tou
 
 1. **Delete the dead weight** (3.1, `ReconstructItemLink`, `RowSuffixID`'s fallback, the two
    `row.ID` branches, the loader's async branch). Suite green with no behaviour change -- proves
-   nothing reached it.
-2. **Fix Resolve step 2** (suffix-preserving). Specs first.
+   nothing reached it. _Progress 2026-09-17: DONE except the loader's async branch (1823/0 both
+   orders) -- 3.1, `ReconstructItemLink`, both `row.ID` branches, `RowSuffixID`'s fallback. Two
+   corrections to the plan above, found by reading the call sites: (a) `ReconstructItemLink` was not
+   strictly unreachable -- a hover could still ask GetItemInfo for a base link -- so `UI:DrawItem`
+   now asks `Resolve.link` on the row's own id/suffix/enchant rather than simply losing the retry;
+   (b) `GetItems`' async branch is NOT dead: `UI/Mail.lua` builds `{ ID, Link, Count }` rows with no
+   `Info`, which take it. It goes in step 3, when those rows are built through Resolve._
+2. **Fix Resolve step 2** (suffix-preserving). Specs first. _Progress 2026-09-17: DONE --
+   `resolve_spec` +3, red first; 1826/0 both orders. A base-only cache names the base and links the
+   variant's item string._
 3. **Collapse the builders** onto `Resolve` (`ItemLinkFor`, Requests tooltip, `UI/Mail.lua`,
-   `Mailbox.lua`). LOG-TAB-002 closes here.
+   `Mailbox.lua`). LOG-TAB-002 closes here. _2026-09-17: `ItemLinkFor` is HELD on TOGTools contract
+   `55e84c617342` (section 5, corrected); the other three do not reach TOGTools and go ahead.
+   Requests tooltip, `UI/Mail.lua` (rows through `Store.ViewRowFor`, no loader) and `Mailbox.lua`
+   ("needed" and "owed" by `Mailbox.OrderKey` = id + suffix, bags counted per variant) DONE. Only
+   `ItemLinkFor` remains, held. `GetItems`' async branch now has no producer: step 6 deletes it._
 4. **Collapse the parsers** onto `Scan.parseLink` (`Bank.lua:848`, `Mail.lua:1011`,
-   `ItemHighlight`). Delete `GetSuffixID`.
+   `ItemHighlight`). Delete `GetSuffixID`. _2026-09-17: DONE. `Scan.parseLink` returns the id as a
+   third value; the two fulfil matchers read the suffix through it; `ItemHighlight`'s needed set
+   and the Mailbox's order key are `Record.requestKey` (id + suffix, enchant 0 -- a request carries
+   no enchant), so a request for "of the Bear" lights only the Bear. `GetSuffixID` deleted._
 5. **The mail edge** (3.3): `ScanMailInventory` returns records; `Bank:Scan` stores them; `senders`
    by key. This is the step that bumps hashes -- last, so everything before it ships as a no-bump
-   change if the release has to be split.
+   change if the release has to be split. _2026-09-17: DONE. `MailInventory` parses each attachment
+   once (`attachmentRecord`) and aggregates by `Record.aggregate`; `Bank:Scan` stores the records as
+   the mail source; `senders` and `takenSenders` are keyed by `Record.key`; `Log.countsByKey` and
+   `AttributeChanges` key by `Record.key` too (an enchant change is a movement). The hash bump is
+   stated in `Bank.lua` and in the CHANGELOG. Four spec fixtures still spelled the log's `who` table
+   `id:suffix` and went red for it -- moved to `Record.key`._
 6. **Search and the loader** (3.5, 3.6): delete `GetItems`, `GetInfo`, `Aggregate`,
-   `GetItemKey`, `GetItemString`; Search keyed by name.
+   `GetItemKey`, `GetItemString`; Search keyed by name. _2026-09-17: DONE. `Item.lua` is down to
+   `RowSuffixID`, `IsPlaceholderName`, `RequestDisplayName`, the `Sort` comparators (pre-pass gone)
+   and `IsUnique`. Search's corpus is keyed by the row's own name (`search_spec`, new); the
+   Inventory tab draws its view rows synchronously. `aggregate_mail_spec` retired with `Aggregate`._
 7. **One identity spec** (section 4) and the docs: `INVENTORY_V2.md` section 8 rewritten,
    `CHANGELOG.md` with the hash-bump cost stated, the player notes. (The TOGTools contract thread
    no longer needs an `itemSig` warning -- section 5 was corrected on 2026-09-13: the sig is the
-   itemID alone and does not move.)
+   itemID alone and does not move.) _2026-09-17: DONE. Three class guards in `wiring_spec` pin the
+   surviving set by reading the shipped files: exactly one `|Hitem:` parse (`Scan.parseLink`) plus
+   the held Log builder; exactly five hand-typed base-id item strings, each named with its reason;
+   no inline `id:suffix` key anywhere (Browse's row id was the last, now `Record.keyFor`). The
+   tooltip's id read goes through `Scan.parseLink`'s third return._
+
+**Whole-suite result after step 7:** see the CHANGELOG entry. **Still held:** `Log:ItemLinkFor`
+(section 5, TOGTools contract `55e84c617342`).
 
 ## 8. Not covered / least sure of
 

@@ -70,25 +70,31 @@ describe("BROWSE-008: repaint signals reach the Guild Bank window", function()
 		end)
 	end)
 
-	describe("the two sites that used to repaint the Inventory window directly", function()
-		it("the hash-broadcast batch goes through the fan-out", function()
-			TOGBankClassic_Chat.hashBroadcastQueue = { { sender = OTHER, data = { alts = {} }, distribution = "GUILD", isSenderBanker = false, altCount = 0 } }
-			TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
-			assert.equal(1, calls, "the broadcast batch repainted the old window only")
+	-- LIBREQ-DS-008: the two sites that used to repaint the Inventory window directly -- the
+	-- hash-broadcast batch (Chat:ProcessQueuedHashBroadcasts) and the collect-window dispatch
+	-- (P2PSession:Dispatch) -- no longer exist: both are the library's now, and the library repaints
+	-- nothing itself. What repaints on the P2P path is TOGBank's hooks (Modules/P2P.lua Config):
+	-- every claim the library reports through onAdvertised / onNewerOffered / onNewerCleared lands
+	-- in Guild's Note* writers, which fan out through RefreshSoon. writ-cannot: the two examples that
+	-- drove the deleted functions must not exist; these two drive the hooks that replaced them.
+	describe("the P2P hooks the library reports through", function()
+		local hooks
+		before_each(function()
+			env.loadModules({ "Modules/P2P.lua" })
+			hooks = TOGBankClassic_P2P:Config()
+			TOGBankClassic_Guild:NotePeerAddonVersion(OTHER, "TOGBankClassic-v" .. TOGBankClassic_Constants.PROTOCOL.DATA_LEG_MIN_ADDON_VERSION)
 		end)
 
-		it("the collect-window dispatch goes through the fan-out", function()
-			local P2P = TOGBankClassic_P2PSession
-			P2P.offers, P2P.isCollecting = {}, true
-			P2P:Dispatch()
-			-- Dispatch with no offers still ends the cycle and repaints. (Nothing is asserted about
-			-- what it dispatched: the fan-out is the subject.)
-			assert.equal(0, calls, "precondition: no-offer dispatch returns before the repaint; this example needs an offer")
-			TOGBankClassic_Guild:NotePeerAddonVersion(OTHER, "TOGBankClassic-v1.5.0")
-			P2P.offers = { [BANKER] = { { peer = OTHER, updatedAt = 1, hash = 0, mailHash = 0 } } }
-			P2P.isCollecting = true
-			P2P:Dispatch()
-			assert.is_true(calls >= 1, "the dispatch repainted the old window only")
+		it("a claim naming a newer version (onAdvertised) goes through the fan-out", function()
+			hooks.onAdvertised(BANKER, env.canon(1757000000, 9), OTHER)
+			assert.is_true(calls >= 1, "a peer's canon-bearing claim raised the tab and repainted nothing")
+		end)
+
+		it("a bare offer (onNewerOffered) and its clearing (onNewerCleared) go through the fan-out", function()
+			hooks.onNewerOffered(BANKER, OTHER)
+			assert.equal(1, calls, "the offer that turns the tab red repainted the old window only")
+			hooks.onNewerCleared(BANKER)
+			assert.equal(2, calls, "clearing the offer repainted nothing")
 		end)
 	end)
 end)

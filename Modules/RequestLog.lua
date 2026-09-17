@@ -99,11 +99,20 @@ local RI_VERSION  = 1
 local RD2_VERSION = 1
 
 -- togbank-rd2: positional single-record wire format (version 1)
--- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID][, suffixID][, reopenedAt]}
+-- Full record:  {RD2_VERSION, id, date, updatedAt, requester, bank, item, quantity, fulfilled, status, notes[, itemID][, suffixID][, reopenedAt][, shopOrder][, estimate][, estimateBase][, discount][, estimateSource]}
 -- Tombstone:    {RD2_VERSION, id, false, tombstoneTs}
 -- Receiver distinguishes by type(arr[3]): number = record, false = tombstone.
 -- arr[12] (itemID), arr[13] (suffixID) and arr[14] (reopenedAt) are optional; absent or false in
 -- messages from older clients. Append-only: new optional fields go on the end and tolerate false/absent.
+-- arr[15]-arr[19] are SHOP-NOFREE-001 / STORE-004 (GUILD_STORE.md 4.4): `shopOrder` (true when the
+-- request was placed while the bank was selling), and what the member was SHOWN at order time --
+-- `estimate` (copper, after the discount), `estimateBase` (the market figure before it),
+-- `discount` (the percent applied) and `estimateSource` ("min buyout, Auctionator"). A record of
+-- what was shown, never a price: the bank character's price at fill is the price (4.4, 3).
+
+-- SHOP-NOFREE-001: the longest `estimateSource` kept on a record, so a sender cannot grow the
+-- request wire without bound.
+local ESTIMATE_SOURCE_MAX = 64
 
 local function serializeRequestV1(req)
 	return {
@@ -121,6 +130,11 @@ local function serializeRequestV1(req)
 		req.itemID or false,      -- arr[12]: optional numeric item ID for same-name variant disambiguation
 		req.suffixID or false,    -- arr[13]: REQ-003 optional random-suffix ID for variant disambiguation
 		req.reopenedAt or false,  -- arr[14]: REOPEN-001 timestamp of an authorized re-open (defeats the terminal ratchet)
+		req.shopOrder == true,    -- arr[15]: SHOP-NOFREE-001 placed while the bank was selling
+		req.estimate or false,    -- arr[16]: STORE-004 the estimate shown, after the discount (copper)
+		req.estimateBase or false,   -- arr[17]: the market figure before the discount
+		req.discount or false,       -- arr[18]: the percent applied
+		req.estimateSource or false, -- arr[19]: where the estimate came from
 	}
 end
 
@@ -165,7 +179,7 @@ local function drainQueriedRequests()
 			payload = serializeRequestV1(req)
 			data    = TOGBankClassic_Core:SerializeWithChecksum(payload)
 			if target == "*" then
-				TOGBankClassic_Core:SendCommMessage("togbank-rd2", data, "Guild", nil, "NORMAL")
+				TOGBankClassic_Core:SendCommMessage("togbank-rd2", data, "GUILD", nil, "NORMAL")
 			else
 				TOGBankClassic_Core:SendWhisper("togbank-rd2", data, target, "NORMAL")
 			end
@@ -176,7 +190,7 @@ local function drainQueriedRequests()
 				payload = serializeTombstoneV1(id, ts)
 				data    = TOGBankClassic_Core:SerializeWithChecksum(payload)
 				if target == "*" then
-					TOGBankClassic_Core:SendCommMessage("togbank-rd2", data, "Guild", nil, "NORMAL")
+					TOGBankClassic_Core:SendCommMessage("togbank-rd2", data, "GUILD", nil, "NORMAL")
 				else
 					TOGBankClassic_Core:SendWhisper("togbank-rd2", data, target, "NORMAL")
 				end
@@ -321,9 +335,27 @@ local VALID_REQUEST_STATUS = {
 
 -- Expiry/prune settings are defined in Constants.lua (REQUEST_LOG table)
 
+-- SHOP-NOFREE-001: the estimate fields as ONE normalisation, shared by the rd2 decode and
+-- sanitizeRequest so the wire and a local write cannot disagree about what survives. `shopOrder`
+-- is true or nil (never false on a record: an old client's request simply has no mark); the
+-- numbers are numbers or nil; the source is a bounded non-empty string or nil.
+local function sanitizeEstimate(shopOrder, estimate, estimateBase, discount, estimateSource)
+	local source = type(estimateSource) == "string" and estimateSource or nil
+	if source == "" then source = nil end
+	if source and #source > ESTIMATE_SOURCE_MAX then source = source:sub(1, ESTIMATE_SOURCE_MAX) end
+	return shopOrder == true or nil,
+		tonumber(estimate) or nil,
+		tonumber(estimateBase) or nil,
+		tonumber(discount) or nil,
+		source
+end
+
 local function deserializeRequestV1(arr)
 	-- arr[3] is date (number) — caller must verify before calling this
 	-- arr[12]=itemID, arr[13]=suffixID, arr[14]=reopenedAt (absent in old messages → nil; false → nil)
+	-- arr[15]-arr[19]: SHOP-NOFREE-001, the same tolerance.
+	local shopOrder, estimate, estimateBase, discount, estimateSource =
+		sanitizeEstimate(arr[15], arr[16], arr[17], arr[18], arr[19])
 	return {
 		id        = arr[2],
 		date      = tonumber(arr[3]),
@@ -338,6 +370,8 @@ local function deserializeRequestV1(arr)
 		itemID    = tonumber(arr[12]) or nil,
 		suffixID  = tonumber(arr[13]) or nil,  -- REQ-003
 		reopenedAt = tonumber(arr[14]) or nil,  -- REOPEN-001
+		shopOrder = shopOrder, estimate = estimate, estimateBase = estimateBase,
+		discount = discount, estimateSource = estimateSource,
 	}
 end
 
@@ -459,6 +493,10 @@ local function sanitizeRequest(req)
 
 	local id = req.id or generateRequestId()
 
+	-- SHOP-NOFREE-001 / STORE-004: the shop mark and the estimate shown, kept as received.
+	local shopOrder, estimate, estimateBase, discount, estimateSource =
+		sanitizeEstimate(req.shopOrder, req.estimate, req.estimateBase, req.discount, req.estimateSource)
+
 	return {
 		id = id,
 		date = dateVal,
@@ -469,6 +507,8 @@ local function sanitizeRequest(req)
 		itemID = tonumber(req.itemID) or nil,    -- optional; nil for legacy requests
 		suffixID = tonumber(req.suffixID) or nil,  -- REQ-003: optional random-suffix ID; nil for legacy/plain items
 		reopenedAt = tonumber(req.reopenedAt) or nil,  -- REOPEN-001: timestamp of last authorized re-open
+		shopOrder = shopOrder, estimate = estimate, estimateBase = estimateBase,
+		discount = discount, estimateSource = estimateSource,
 		quantity = quantity,
 		fulfilled = fulfilled,
 		status = status,
@@ -1140,33 +1180,85 @@ function Guild:BroadcastRequestMutation(mutation)
 
 	TOGBankClassic_Output:Debug("SYNC", "BROADCAST", "BroadcastRequestMutation: Serialized payload, size=%d bytes, calling SendCommMessage", #data)
 
-	-- SYNC-010: Use dedicated togbank-rm prefix for request mutations
-	-- Separate throttle bucket from togbank-d prevents BULK snapshot syncs from blocking ALERT mutations
-	-- ACQ-004: SendCommMessage returns NOTHING -- neither AceComm nor AceCommQueue has a return
-	-- value. This previously did `local sendResult = ...SendCommMessage(...)` and logged it,
-	-- which had been printing `nil` since it was written while reading like a delivery result.
-	--
-	-- The delivery verdict arrives as the callback's 4th argument and nowhere else:
-	--   true = delivered, false = refused after the library's retries, nil = not attempted.
-	--
-	-- This matters more here than anywhere else in the addon: togbank-rm carries request-state
-	-- mutations at ALERT priority. A silently refused broadcast means other members' request
-	-- lists diverge from ours permanently, with nothing in any log to explain it.
-	local mutationType = tostring(mutation.type)
-	TOGBankClassic_Core:SendCommMessage("togbank-rm", data, "Guild", nil, "ALERT",
-		function(_, bytesSent, totalBytes, sendResult)
-			if sendResult == false then
-				TOGBankClassic_Output:Error(
-					"request update (%s) was refused by the client - other members will not see " ..
-					"this change until the next full sync", mutationType)
-				TOGBankClassic_Output:Debug("SYNC", "BROADCAST",
-					"BroadcastRequestMutation REFUSED type=%s bytes=%d/%d",
-					mutationType, bytesSent or 0, totalBytes or 0)
-			elseif bytesSent and totalBytes and bytesSent >= totalBytes then
-				TOGBankClassic_Output:Debug("SYNC", "BROADCAST",
-					"BroadcastRequestMutation delivered type=%s (%d bytes)", mutationType, totalBytes)
+	self:SendMutationPayload(data, tostring(mutation.type), "GUILD", nil)
+
+	-- XGUILD-SYNC-001 D7: the GUILD send above reaches the home guild alone. When the request's
+	-- banker or requester is in a SISTER guild, the same bytes are whispered to them (or to a
+	-- member of their guild when they are offline), and the receiver re-broadcasts once on its own
+	-- GUILD (ReceiveRequestMutations). `relayFor` is a local-only hint for a delete, whose entry
+	-- carries no snapshot and whose record is already gone from Info.requests by the time it is sent.
+	local request = mutation.request or mutation.relayFor
+		or (self.Info.requests and self.Info.requests[mutation.requestId])
+	for _, target in ipairs(self:FederatedRelayTargets(request)) do
+		TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "whispering %s mutation for %s to %s",
+			tostring(mutation.type), tostring(mutation.requestId), target)
+		self:SendMutationPayload(data, tostring(mutation.type), "WHISPER", target)
+	end
+end
+
+-- The one `togbank-rm` send, on GUILD or by WHISPER to `target`.
+--
+-- FILL-ALERT-001: the distribution is spelled "GUILD", as every other send in the addon spells it.
+-- This and the other request-channel sends said "Guild" for years; the live client accepts either
+-- (measured 2026-09-17: a fill's mutation sent as "Guild" was delivered and applied), but the test
+-- harness's wire routes group messages by the uppercase name and dropped every "Guild" send on the
+-- floor -- so the request channel was the one channel the throttled-wire fleet could never carry, and
+-- no end-to-end test of a fill could exist until it was one spelling.
+--
+-- SYNC-010: Use dedicated togbank-rm prefix for request mutations
+-- Separate throttle bucket from togbank-d prevents BULK snapshot syncs from blocking ALERT mutations
+-- ACQ-004: SendCommMessage returns NOTHING -- neither AceComm nor AceCommQueue has a return
+-- value. This previously did `local sendResult = ...SendCommMessage(...)` and logged it,
+-- which had been printing `nil` since it was written while reading like a delivery result.
+--
+-- The delivery verdict arrives as the callback's 4th argument and nowhere else:
+--   true = delivered, false = refused after the library's retries, nil = not attempted.
+--
+-- This matters more here than anywhere else in the addon: togbank-rm carries request-state
+-- mutations at ALERT priority. A silently refused broadcast means other members' request
+-- lists diverge from ours permanently, with nothing in any log to explain it.
+function Guild:SendMutationPayload(data, mutationType, distribution, target)
+	local function verdict(_, bytesSent, totalBytes, sendResult)
+		if sendResult == false then
+			TOGBankClassic_Output:Error(
+				"request update (%s) was refused by the client - other members will not see " ..
+				"this change until the next full sync", mutationType)
+			TOGBankClassic_Output:Debug("SYNC", "BROADCAST",
+				"BroadcastRequestMutation REFUSED type=%s via %s bytes=%d/%d",
+				mutationType, distribution, bytesSent or 0, totalBytes or 0)
+		elseif bytesSent and totalBytes and bytesSent >= totalBytes then
+			TOGBankClassic_Output:Debug("SYNC", "BROADCAST",
+				"BroadcastRequestMutation delivered type=%s via %s (%d bytes)", mutationType, distribution, totalBytes)
+		end
+	end
+	if distribution == "WHISPER" then
+		TOGBankClassic_Core:SendWhisper("togbank-rm", data, target, "ALERT", verdict)
+	else
+		TOGBankClassic_Core:SendCommMessage("togbank-rm", data, distribution, nil, "ALERT", verdict)
+	end
+end
+
+--- XGUILD-SYNC-001 D7: who a GUILD send of a mutation on `request` cannot reach -- its banker and
+--- its requester when either is federated but not a guildmate. Each is whispered directly when
+--- online, else through the federation peer for its guild (Guild:FederationPeer), so the far
+--- guild hears the mutation from someone who can re-broadcast it there. Never ourselves, never
+--- the same name twice. Empty for a request whose names are all guildmates (the common case) or
+--- for no request at all.
+function Guild:FederatedRelayTargets(request)
+	local targets, chosen = {}, {}
+	if type(request) ~= "table" then return targets end
+	local me = self:GetNormalizedPlayer()
+	for _, field in ipairs({ "bank", "requester" }) do
+		local norm = self:NormalizeName(request[field])
+		if norm and norm ~= me and not self:IsHomeMember(norm) and self:IsFederated(norm) then
+			local target = self:IsPlayerOnline(norm) and norm or self:FederationPeer(self:GuildOf(norm))
+			if target and not chosen[target] then
+				chosen[target] = true
+				targets[#targets + 1] = target
 			end
-		end)
+		end
+	end
+	return targets
 end
 
 -- After a local mutation, update version and refresh UI.
@@ -1189,9 +1281,12 @@ function Guild:TouchRequestsVersion(ts)
 end
 
 function Guild:RefreshRequestsUI()
-	TOGBankClassic_Output:Debug(string.format("RefreshRequestsUI called: isOpen=%s, requests=%d",
+	-- FILL-ALERT-001: categorised (it was a bare Debug, which the category filter never shows), so a
+	-- log of a received mutation says whether the tab was there to redraw.
+	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "RefreshRequestsUI: isOpen=%s, embedded=%s, requests=%d",
 		tostring(TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen),
-		self.Info and self.Info.requests and countRequests(self.Info.requests) or 0))
+		tostring(TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.embedded),
+		self.Info and self.Info.requests and countRequests(self.Info.requests) or 0)
 
 
 	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
@@ -1323,7 +1418,7 @@ function Guild:QueryRequestsIndex(target, priority, force)
 			return false
 		end
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, priority or "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, priority or "BULK")
 		-- REQSYNC-003: Optimistic inFlight clear for wildcard broadcasts.
 		-- SYNC-011 causes peers that already match our hash to stay silent, so
 		-- EndRequestsIndexSync() is never called on a fully-synced guild, leaving
@@ -1394,7 +1489,7 @@ local function drainIndexChunks()
 	if target and target ~= "*" then
 		TOGBankClassic_Core:SendWhisper("togbank-ri", data, target, "NORMAL", onSent)
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-ri", data, "Guild", nil, "NORMAL", onSent)
+		TOGBankClassic_Core:SendCommMessage("togbank-ri", data, "GUILD", nil, "NORMAL", onSent)
 	end
 	if pendingIndexChunks[1] then
 		pendingIndexChunksDraining = true
@@ -1653,7 +1748,7 @@ function Guild:QueryRequestsById(target, ids, priority)
 			return false
 		end
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, priority or "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, priority or "BULK")
 	end
 	return true
 end
@@ -1728,8 +1823,53 @@ function Guild:ReceiveRequestsById(payload)
 	return adopted and ADOPTION_STATUS.ADOPTED or ADOPTION_STATUS.INVALID
 end
 
--- Receive mutation entries from another player and apply them.
-function Guild:ReceiveRequestMutations(payload, sender)
+-- XGUILD-SYNC-001 D7: whose word a received mutation entry is, and whether it is ours to carry on.
+--
+-- ApplyRequestMutation checks the ENTRY'S AUTHOR against the request (the requester of an add, the
+-- banker of a complete, an officer for a reopen), and the author has to be a name the client
+-- itself vouched for -- on GUILD the sender is a guildmate by the transport, so the sender IS the
+-- author. Two more cases exist once a sister guild is in the bank, and each names its author
+-- differently:
+--
+--   WHISPER from a federated NON-guildmate: the sender is the author (client-verified) and cannot
+--     reach our guild, so we apply it AND re-broadcast it once on our GUILD with `relayed = true`
+--     and its `actor` kept. A relayed entry is never relayed again.
+--   GUILD entry marked `relayed`: the sender is a guildmate acting as courier; the author is
+--     `entry.actor`, accepted only when that actor is federated and NOT a guildmate -- a
+--     guildmate can speak for itself on GUILD, so a relayed entry naming one is refused. The
+--     courier's word is trusted exactly as far as an index reply's already is (requests-by-id
+--     from any guildmate merges with no per-request authorship check).
+--   WHISPER from a guildmate: the sender is the author and could have said it on GUILD, so it is
+--     applied and not relayed (no shipped client sends one; a roster lagging a guild move could).
+--   WHISPER from a stranger: no standing -- refused, so the whisper path cannot become a way past
+--     the GUILD transport's membership guarantee.
+--
+-- Returns the author to check the entry against (nil = refuse) and whether to relay it.
+function Guild:MutationAuthor(entry, sender, distribution)
+	if distribution == "WHISPER" then
+		if entry.relayed or not self:IsFederated(sender) then return nil, false end
+		return sender, not self:IsHomeMember(sender)
+	end
+	if not entry.relayed then return sender, false end
+	local actor = self:NormalizeName(entry.actor)
+	if not actor or self:IsHomeMember(actor) or not self:IsFederated(actor) then return nil, false end
+	return actor, false
+end
+
+--- Re-broadcast a whispered mutation on the home GUILD, once, marked so nobody relays it again.
+function Guild:RelayMutation(entry, sender)
+	local copy = {}
+	for k, v in pairs(entry) do copy[k] = v end
+	copy.relayed = true
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "requests-log", logEntries = { copy } })
+	TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "relaying %s mutation for %s from %s to the guild",
+		tostring(entry.type), tostring(entry.requestId or (entry.request and entry.request.id)), tostring(sender))
+	self:SendMutationPayload(data, tostring(entry.type), "GUILD", nil)
+end
+
+-- Receive mutation entries from another player and apply them. `distribution` is the transport
+-- they arrived on ("GUILD" / "WHISPER"); absent, a GUILD send is assumed.
+function Guild:ReceiveRequestMutations(payload, sender, distribution)
 	if not payload or type(payload) ~= "table" then
 		TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Invalid payload from %s", tostring(sender))
 		return
@@ -1756,10 +1896,15 @@ function Guild:ReceiveRequestMutations(payload, sender)
 			TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Entry %d/%d: type=%s, requestId=%s",
 				i, #entries, entryType, tostring(requestId))
 
-			if self:ApplyRequestMutation(entry, sender) then
+			local author, relay = self:MutationAuthor(entry, sender, distribution)
+			if not author then
+				TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Entry %d REFUSED (type=%s, id=%s) -- %s via %s has no standing (XGUILD-SYNC-001)",
+					i, entryType, tostring(requestId), tostring(sender), tostring(distribution))
+			elseif self:ApplyRequestMutation(entry, author) then
 				applied = applied + 1
 				TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Entry %d APPLIED (type=%s, id=%s)",
 					i, entryType, tostring(requestId))
+				if relay then self:RelayMutation(entry, sender) end
 			else
 				TOGBankClassic_Output:Debug("SYNC", "MERGE", "ReceiveRequestMutations: Entry %d REJECTED (type=%s, id=%s)",
 					i, entryType, tostring(requestId))
@@ -1792,6 +1937,79 @@ function Guild:ReceiveRequestMutations(payload, sender)
 	end
 end
 
+--- SETTINGS-CANON-001: the officer's maximum request %, 1..100 (100 = no limit), from the synced
+--- guild settings.
+---@return number
+function Guild:MaxRequestPercent()
+	local s = self.Info and self.Info.settings
+	local pct = tonumber(s and s.maxRequestPercent) or 100
+	pct = math.floor(pct)
+	if pct < 1 then return 1 end
+	if pct > 100 then return 100 end
+	return pct
+end
+
+--- SETTINGS-CANON-001: how many of `itemID` a requester already has on OPEN order from `bank` --
+--- what is still owed on each (quantity less what has been mailed).
+---@return number
+function Guild:OpenRequestedQuantity(requester, bank, itemID)
+	local requests = self.Info and self.Info.requests
+	if type(requests) ~= "table" or not requester or not bank or not itemID then return 0 end
+	local normBank = self:NormalizeName(bank) or bank
+	local total = 0
+	for _, r in pairs(requests) do
+		if type(r) == "table" and r.status == "open" and tonumber(r.itemID) == tonumber(itemID)
+			and (self:NormalizeName(r.requester) or r.requester) == requester
+			and (self:NormalizeName(r.bank) or r.bank) == normBank then
+			total = total + math.max(0, (tonumber(r.quantity) or 0) - (tonumber(r.fulfilled) or 0))
+		end
+	end
+	return total
+end
+
+--- SETTINGS-CANON-001: how many MORE of `itemID` `requester` may order from `bank` under the officer's
+--- maximum request %. The cap is that % of what the bank holds (at least 1 when it holds any, so a
+--- single piece of gear stays requestable), less what this requester already has on open order.
+--- `count` overrides the bank's total -- the request dialog passes the row it opened on (one suffix
+--- variant), which is never more than the total, so the dialog is never looser than this gate.
+---@return number left, number cap, number open, number pct, number count
+function Guild:RequestAllowance(requester, bank, itemID, count)
+	local pct = self:MaxRequestPercent()
+	count = tonumber(count) or (bank and itemID and self.GetAltItemTotal and self:GetAltItemTotal(self:NormalizeName(bank) or bank, itemID)) or 0
+	local cap = math.floor(count * pct / 100)
+	if cap == 0 and count > 0 then cap = 1 end
+	local open = self:OpenRequestedQuantity(requester, bank, itemID)
+	return math.max(0, cap - open), cap, open, pct, count
+end
+
+--- SHOP-ORDER-API-001: the fields to merge into a request placed while the shop is on --
+--- { shopOrder = true, estimate, estimateBase, discount, estimateSource, prompt } -- or nil while it is
+--- off (a plain request needs none). For other addons' request buttons: merge every field but
+--- `prompt` into the table handed to AddRequest, and show `prompt` to the player. Built by the Guild
+--- Bank window's own pricing (Browse:ShopOrderFields), the same call the request dialog reads; nil
+--- when that window's module is not loaded.
+---@param itemID number|nil
+---@return table|nil
+function Guild:ShopOrderFields(itemID)
+	local B = TOGBankClassic_UI_Browse
+	if not (B and B.ShopOrderFields) then return nil end
+	return B:ShopOrderFields(itemID)
+end
+
+--- The sentence a refused over-limit order shows the member.
+function Guild:RequestLimitText(left, cap, open, pct)
+	if cap <= 0 then
+		return "That bank holds none of this item as far as this client knows -- open the Guild Bank window to refresh, then try again."
+	end
+	if left <= 0 then
+		return string.format("You already have %d on order -- the guild's limit is %d%% of the bank's stock (%d). Wait for that order to be filled.", open, pct, cap)
+	end
+	if open > 0 then
+		return string.format("You can order %d more -- the guild's limit is %d%% of the bank's stock (%d) and you already have %d on order.", left, pct, cap, open)
+	end
+	return string.format("You can order at most %d -- the guild's limit is %d%% of the bank's stock.", left, pct)
+end
+
 -- Request mutation helpers.
 function Guild:AddRequest(request)
 	if not self.Info then
@@ -1801,14 +2019,58 @@ function Guild:AddRequest(request)
 		return false
 	end
 
+	-- Every gate below returns `false, <the sentence the player should read>` (Peer Review f5e52bcf
+	-- F9): the dialog's own checks run when it OPENS, and an officer closing ordering between the
+	-- open and the Send is exactly the race this gate exists for -- it used to answer that with
+	-- "Unable to send request." and no reason.
+
 	-- VIEWBANK-001: never accept a request targeting a view-only bank toon. This is
 	-- the authoritative gate — the Search UI also blocks it earlier for friendlier UX.
 	if request.bank and self:IsViewOnlyBank(request.bank) then
 		TOGBankClassic_Output:Debug(string.format("AddRequest: rejected request for view-only bank %s", tostring(request.bank)))
-		return false
+		return false, tostring(request.bank) .. " is a view-only bank -- its items cannot be requested."
+	end
+
+	-- STORE-006: the shop's open/closed sign, beside the view-only gate for the same reason -- the
+	-- Search UI refuses earlier with a friendlier message, but this is what actually stops a
+	-- request being minted and broadcast. Local only, like every gate here (GUILD_STORE.md 4.8):
+	-- it runs on the requester's client.
+	if not self:IsStoreOpen() then
+		TOGBankClassic_Output:Debug("AddRequest: rejected -- ordering is closed (STORE-006)")
+		return false, self.STORE_CLOSED_TEXT
+	end
+	-- STORE-006: the not-for-sale list, by itemID. A request with no itemID (a pre-REQ-001 client)
+	-- cannot be matched against it and passes, as it always has.
+	if request.itemID and self:IsNotForSale(request.itemID) then
+		TOGBankClassic_Output:Debug(string.format("AddRequest: rejected -- item %s is not for sale (STORE-006)", tostring(request.itemID)))
+		return false, self.NOT_FOR_SALE_TEXT:format(tostring(request.item or request.itemID))
+	end
+	-- SHOP-NOFREE-001: while the bank is selling, a request without the shop mark is a plain-bank
+	-- request placed past the price, and none can be minted. The request dialog marks every order it
+	-- builds while the shop is on (and writes the estimate it showed); this is what stops any other
+	-- surface, present or future, from minting one without it.
+	if self:IsShopSelling() and request.shopOrder ~= true then
+		TOGBankClassic_Output:Debug("AddRequest: rejected -- the shop is selling and this is not a shop order (SHOP-NOFREE-001)")
+		return false, "The shop is open: every request is a shop order -- open the item again to see its price."
 	end
 
 	self:EnsureRequestsInitialized()
+
+	-- SETTINGS-CANON-001: the officer's maximum request %, ENFORCED here -- it used to be checked only
+	-- by the request dialog, so every other surface that places an order (TOGProfessionMaster's
+	-- [Bank] button, Dibs, PersonalShopper call this directly) skipped it, and even the dialog
+	-- measured each order alone: a member could place the maximum again and again. The allowance
+	-- counts this requester's OPEN orders of the same item from the same bank.
+	local quantity = tonumber(request.quantity) or 0
+	if request.itemID and request.bank and quantity > 0 then
+		local requester = self:NormalizeName(request.requester) or request.requester
+		local left, cap, open, pct, count = self:RequestAllowance(requester, request.bank, request.itemID)
+		if pct < 100 and quantity > left then
+			TOGBankClassic_Output:Debug(string.format("AddRequest: rejected -- %d over the %d%% limit (count %d, cap %d, open %d) (SETTINGS-CANON-001)",
+				quantity, pct, count, cap, open))
+			return false, self:RequestLimitText(left, cap, open, pct)
+		end
+	end
 
 	local now = GetServerTime()
 	request.date = request.date or now
@@ -2083,8 +2345,9 @@ function Guild:DeleteRequest(requestId, actor)
 	self.Info.requestsTombstones = self.Info.requestsTombstones or {}
 	self.Info.requestsTombstones[requestId] = now
 
-	-- Broadcast and finalize
-	self:BroadcastRequestMutation({ type = "delete", requestId = requestId })
+	-- Broadcast and finalize. `relayFor` never reaches the wire: it is how the cross-guild whisper
+	-- (XGUILD-SYNC-001 D7) learns the banker and requester of a record this client no longer holds.
+	self:BroadcastRequestMutation({ type = "delete", requestId = requestId, relayFor = req })
 	self:FinalizeMutation(now)
 	return true
 end

@@ -18,7 +18,9 @@ local M
 local function load(isBank)
 	-- env.reset() wipes wow.mail and wow.mailActions; each example fills the inbox it wants.
 	env.stubOutput()
-	env.loadModules({ "Modules/Constants.lua", "Modules/UI/Mailbox.lua" })
+	-- Record and Scan: the rows are matched to orders on id + suffix, parsed at the edge
+	-- (LINK-AUDIT-001 step 3).
+	env.loadModules({ "Modules/Constants.lua", "Modules/Inventory/Record.lua", "Modules/Inventory/Scan.lua", "Modules/UI/Mailbox.lua" })
 	M = TOGBankClassic_UI_Mailbox
 	M.taking, M.isOpen, M.Window, M.Content = nil, nil, nil, nil
 	TOGBankClassic_Guild = {
@@ -28,6 +30,10 @@ local function load(isBank)
 		IsBank = function(_, n) return isBank and n == ME end,
 	}
 	TOGBankClassic_Bank = { HasInventorySpace = function() return true end }
+	-- SPEC-ORDER-001: TakeRow feature-detects TOGBankClassic_Mail for the donation credit, which is
+	-- donations_spec's subject. Left to whatever an earlier file loaded, a take here ran the real
+	-- credit path through a leftover Item module's cached scanning tooltip. Off, deterministically.
+	TOGBankClassic_Mail = nil
 	_G.ATTACHMENTS_MAX_RECEIVE = 16
 	return M
 end
@@ -68,6 +74,26 @@ describe("MAILUI-001: rows", function()
 		TOGBankClassic_Guild.Info.requests.r1.fulfilled = 0
 		TOGBankClassic_Guild.Info.requests.r1.status = "cancelled"
 		assert.is_false(M:BuildRows()[1].needed, "a cancelled order still marks the item")
+	end)
+
+	-- LINK-AUDIT-001 step 3 (docs/LINK_AUDIT.md 3.6): "needed" is decided on id + suffix. Keyed by id
+	-- alone, an order for "of the Bear" lit every Spiked Club in the inbox, and a request with no
+	-- suffix lit the suffixed ones -- Bank:MatchContainers' rule, which the fulfil side already applies.
+	it("marks only the requested random-suffix variant, and a plain order marks only the plain item", function()
+		wow.mail[1].items = {
+			{ name = "Spiked Club of the Bear", id = 4564, count = 1, link = "|cff1eff00|Hitem:4564:0:0:0:0:0:1180|h[Spiked Club of the Bear]|h|r" },
+			{ name = "Spiked Club of Spirit",   id = 4564, count = 1, link = "|cff1eff00|Hitem:4564::::::28|h[Spiked Club of Spirit]|h|r" },
+			{ name = "Spiked Club",             id = 4564, count = 1, link = "|cffffffff|Hitem:4564|h[Spiked Club]|h|r" },
+		}
+		TOGBankClassic_Guild.Info.requests = {
+			r1 = { id = "r1", bank = ME, itemID = 4564, suffixID = 1180, quantity = 1, fulfilled = 0, status = "open" },
+		}
+		local rows = M:BuildRows()
+		assert.same({ 1180, 28, 0 }, { rows[1].suffix, rows[2].suffix, rows[3].suffix }, "the rows do not carry the parsed suffix")
+		assert.same({ true, false, false }, { rows[1].needed, rows[2].needed, rows[3].needed }, "an order for one variant marked another")
+		TOGBankClassic_Guild.Info.requests.r1.suffixID = nil
+		rows = M:BuildRows()
+		assert.same({ false, false, true }, { rows[1].needed, rows[2].needed, rows[3].needed }, "a plain order marked a suffixed variant")
 	end)
 
 	it("carries the COD amount on every row of a COD mail and skips a GM mail entirely", function()
@@ -120,14 +146,23 @@ describe("MAILCOLLECT-001: taking what the open orders need", function()
 		}
 	end)
 
-	it("sums what this banker's open orders still owe, per item, less what the bags hold", function()
+	it("sums what this banker's open orders still owe, per item VARIANT, less what the bags hold of that variant", function()
 		bags[2589] = 12
+		local K = M.OrderKey
 		local owed = M:OwedByOpenOrders()
-		assert.equal(23, owed[2589], "30 + 5 owed, 12 in bags")
-		assert.equal(5, owed[858])
-		assert.is_nil(owed[2592], "another banker's order, or a cancelled one, counted as owed here")
+		assert.equal(23, owed[K(2589)], "30 + 5 owed, 12 in bags")
+		assert.equal(5, owed[K(858)])
+		assert.is_nil(owed[K(2592)], "another banker's order, or a cancelled one, counted as owed here")
 		bags[2589] = 100
-		assert.equal(0, M:OwedByOpenOrders()[2589], "bags beyond the orders went negative")
+		assert.equal(0, M:OwedByOpenOrders()[K(2589)], "bags beyond the orders went negative")
+		-- LINK-AUDIT-001 step 3: a suffixed order is owed under its own variant, and the bags are asked
+		-- for that variant (Bank:CountItemInBags' third argument), not for every item of the base id.
+		local askedSuffix
+		TOGBankClassic_Bank.CountItemInBags = function(_, _, id, suffix) askedSuffix = suffix; return bags[id] or 0 end
+		TOGBankClassic_Guild.Info.requests.r6 = { id = "r6", bank = ME, item = "Spiked Club", itemID = 4564, suffixID = 1180, quantity = 2, fulfilled = 0, status = "open" }
+		owed = M:OwedByOpenOrders()
+		assert.equal(2, owed[K(4564, 1180)]); assert.is_nil(owed[K(4564)], "the variant was owed under the plain item")
+		assert.equal(1180, askedSuffix, "the bags were not asked for the requested variant")
 	end)
 
 	it("picks oldest mail first, skips COD, and stops per item once the shortfall is covered -- overshooting only by the last stack", function()
@@ -281,10 +316,7 @@ describe("MAILUI-001: opening beside the mail frame", function()
 		-- file; hand the registration back so a later Init (raidvisibility_spec, searchbox_spec) is
 		-- not "already been added" -- in an after_each, so a red example still hands it back.
 		after_each(function()
-			local ACD = LibStub("AceConfigDialog-3.0")
-			ACD.BlizOptions["TOGBankClassic"] = nil
-			ACD.BlizOptions["TOGBankClassic/Bank"] = nil
-			ACD.BlizOptionsIDMap["TOGBankClassic"] = nil
+			env.releaseBlizOptions()
 			TOGBankClassic_Options = nil
 		end)
 
@@ -477,7 +509,9 @@ describe("MAILUI-002: mails", function()
 		rows = M:ViewRows(mails)   -- Alice, Bob, Bob's linen, Bob's money, Carol
 		assert.equal(7, rows[3].count)
 		assert.equal("", rows[4].count, "the money row shows a count")
-		assert.truthy(rows[4].name:find("12345", 1, true), "the money row does not show the amount")
+		-- 12345 copper is 1g 23s 45c: the client's coin string splits the figure (pin 830dab2), so
+		-- the three parts are looked for in order, not the copper total.
+		assert.truthy(rows[4].name:find("1|T.-|t.-23|T.-|t.-45|T.-|t"), "the money row does not show the amount: " .. tostring(rows[4].name))
 	end)
 
 	it("flags a mail whose attachment an open order wants, and a COD mail, on the mail row and the item row", function()
@@ -763,6 +797,20 @@ describe("MAILUI-002: the window", function()
 			assert.is_true(cell.button:IsShown(), "mail row " .. i .. " has no return envelope")
 			assert.equal(M.RETURN_ICON, cell.button:GetNormalTexture():GetTexture(), "the envelope is not the mail icon")
 		end
+		-- VISIBILITY-001 part 2: the envelope grows with the list, and comes back.
+		local W = LibStub("LibAceGUIWidgets-1.0")
+		local envelope = M.List.rows[1].cells.ret.button
+		assert.equal(14, envelope:GetWidth())
+		W:SetScale(2)
+		local ok, err = pcall(function()
+			assert.equal(28, envelope:GetWidth()); assert.equal(28, envelope:GetHeight())
+			local _, _, _, x = envelope:GetPoint(1)
+			assert.equal(4, x, "the envelope's inset did not scale")
+		end)
+		W:SetScale(1)   -- suite-wide library state: never leave it moved, even on a failure
+		assert(ok, err)
+		assert.equal(14, envelope:GetWidth())
+		M.List.parent:SetHeight(20 + 16 * 10); M.List:Refresh()
 		M.List.rows[1]:Fire("OnClick", "LeftButton")   -- open Alice: her two attachment rows appear
 		assert.is_false(M.List.rows[2].cells.ret.button:IsShown(), "an attachment row grew a return envelope")
 		assert.is_true(M.List.rows[4].cells.ret.button:IsShown(), "Bob's row lost its envelope after Alice opened")
@@ -828,11 +876,12 @@ describe("MAILUI-002: the window", function()
 		M.List.rows[2]:Fire("OnClick", "LeftButton")   -- expand Bob
 		M.List.rows[4]:Fire("OnEnter")                 -- Bob's money row
 		assert.equal(1, #calls, "a money row asked for an inbox item tooltip")
-		assert.truthy(GameTooltip.TextLeft1:GetText():find("12345", 1, true))
+		local COIN = "1|T.-|t.-23|T.-|t.-45|T.-|t"   -- 12345 copper as the client's split coin string
+		assert.truthy(GameTooltip.TextLeft1:GetText():find(COIN), GameTooltip.TextLeft1:GetText())
 		M.List.rows[2]:Fire("OnEnter")                 -- Bob's mail row
 		assert.equal("gold", GameTooltip.TextLeft1:GetText())
 		assert.truthy(GameTooltip.TextLeft3:GetText():find("Linen Cloth x7", 1, true), "the mail tooltip does not list its attachments")
-		assert.truthy(GameTooltip.TextLeft4:GetText():find("12345", 1, true))
+		assert.truthy(GameTooltip.TextLeft4:GetText():find(COIN), GameTooltip.TextLeft4:GetText())
 	end)
 
 	-- MAILBTN-001 (the operator, screenshot of the button floating under the title: "it needs to be

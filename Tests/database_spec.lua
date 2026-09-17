@@ -214,6 +214,9 @@ describe("Database:Load legacy hash migration", function()
 	--
 	-- The real property: the hash must depend on the VALUE of its inputs, never on their IDENTITY.
 	local function realHasher()
+		-- SPEC-ALONE-001: ComputeInventoryHash keys each row through Inventory/Record at call time; run
+		-- alone this file had no Record (an earlier spec file used to leave one behind).
+		env.loadFile("Modules/Inventory/Record.lua")
 		env.loadFile("Modules/DeltaComms.lua")
 		local core = { Checksum = function(_, s) return s end }
 		function core:ComputeInventoryHash(bank, bags, mailOrMoney, money)
@@ -232,8 +235,9 @@ describe("Database:Load legacy hash migration", function()
 
 		-- Structurally identical, deliberately DISTINCT tables. Two separate instances is what
 		-- makes an address observable; reusing one hides it.
-		local itemsA = { { ID = 858, Count = 5 }, { ID = 2589, Count = 20 } }
-		local itemsB = { { ID = 858, Count = 5 }, { ID = 2589, Count = 20 } }
+		-- V2 records: the revision-2 identity refuses legacy { ID, Count } rows (LINK-AUDIT-001 step 1).
+		local itemsA = { { 858, 5 }, { 2589, 20 } }
+		local itemsB = { { 858, 5 }, { 2589, 20 } }
 
 		assert.equal(core:ComputeInventoryHash(itemsA, nil, nil, 5000),
 			core:ComputeInventoryHash(itemsB, nil, nil, 5000),
@@ -248,7 +252,7 @@ describe("Database:Load legacy hash migration", function()
 	-- caught it had it driven the live form.
 	it("does not let a table in the money slot reach the hash", function()
 		local core = realHasher()
-		local items = { { ID = 858, Count = 5 }, { ID = 2589, Count = 20 } }
+		local items = { { 858, 5 }, { 2589, 20 } }
 
 		local withTable = core:ComputeInventoryHash(items, nil, nil, { items = {} })
 		local withZero  = core:ComputeInventoryHash(items, nil, nil, 0)
@@ -278,7 +282,7 @@ describe("Database:Load legacy hash migration", function()
 
 	it("changes when money changes", function()
 		local core = realHasher()
-		local items = { { ID = 858, Count = 5 }, { ID = 2589, Count = 20 } }
+		local items = { { 858, 5 }, { 2589, 20 } }
 
 		assert.is_true(core:ComputeInventoryHash(items, nil, nil, 5000)
 			~= core:ComputeInventoryHash(items, nil, nil, 9999),

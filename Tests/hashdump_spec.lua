@@ -59,6 +59,10 @@ describe("HASH-CANON-007: /togbank dev hashdump shows the canon", function()
 		env.reset()
 		Guild = loadAll()
 	end)
+	-- The sendqueue example stands a double in for TOGBankClassic_P2P, a MODULE GLOBAL: handed back
+	-- after every example, or a later file that never loads P2P.lua meets the double from here
+	-- (syncpipeline_spec died on it in Bank:CanPublish).
+	after_each(function() TOGBankClassic_P2P = nil end)
 
 	it("prints the held canon and the known canon, with the publish time readable", function()
 		holdOther({ inventoryHash = 7, inventoryHashV2 = C(T, 5) })
@@ -113,14 +117,18 @@ describe("HASH-CANON-007: /togbank dev hashdump shows the canon", function()
 
 	-- P2P-029: "put a / command in so we can see the queue data".
 	it("/togbank dev sendqueue shows slots in use, the queue with positions, and our sessions", function()
-		env.loadModules({ "Modules/P2PSession.lua" })
-		local P2P = TOGBankClassic_P2PSession
-		P2P.activeSends, P2P.sendQueue, P2P.sessions, P2P.stateWaits = {}, {}, {}, {}
-		P2P.activeSessions, P2P.pendingDispatch = 0, {}
-		P2P:TryAcquireSendSlot("Busyguy-Testrealm")
-		P2P:EnqueueSend("sid9", "Waiter-Testrealm", OTHER)
-		P2P.sessions["s1"] = { sessionId = "s1", altName = OTHER, state = "DISPATCHED", peer = "Peer-Testrealm",
-			candidates = { { peer = "Peer-Testrealm" } }, triedPeers = { ["Peer-Testrealm"] = true }, timers = {} }
+		-- LIBREQ-DS-008: the state is the library's instance on the host, in ITS field shape (a
+		-- queue entry's `key`, a session's `key`); the command reads it through TOGBankClassic_P2P:Lib().
+		-- A double in that shape here: the example is about what the command PRINTS from it.
+		local P2P = {
+			MAX_ACTIVE_SENDS = 3, activeSends = { ["Busyguy-Testrealm"] = 1 }, stateWaits = {},
+			sendQueue = { { sessionId = "sid9", requester = "Waiter-Testrealm", key = OTHER, at = 0 } },
+			sessions = { s1 = { sessionId = "s1", key = OTHER, state = "DISPATCHED", peer = "Peer-Testrealm",
+				candidates = { { peer = "Peer-Testrealm" } }, triedPeers = { ["Peer-Testrealm"] = true }, timers = {} } },
+			activeSessions = 1, pendingDispatch = {},
+		}
+		function P2P:GetActiveSendTotal() local n = 0 for _, c in pairs(self.activeSends) do n = n + c end return n end
+		TOGBankClassic_P2P = { Lib = function() return P2P end }
 
 		TOGBankClassic_Chat:ChatCommand("dev sendqueue")
 

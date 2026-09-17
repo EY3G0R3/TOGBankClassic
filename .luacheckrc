@@ -30,8 +30,8 @@ globals = {
 	"TOGBankClassic_Core", "TOGBankClassic_Compat", "TOGBankClassic_Output",
 	"TOGBankClassic_Performance", "TOGBankClassic_DeltaComms", "TOGBankClassic_Bank",
 	"TOGBankClassic_Chat", "TOGBankClassic_Database", "TOGBankClassic_Events",
-	"TOGBankClassic_Guild", "TOGBankClassic_BankerNumbers", "TOGBankClassic_P2PSession", "TOGBankClassic_RequestLog",
-	"TOGBankClassic_Log", "TOGBankClassic_Propagation",
+	"TOGBankClassic_Guild", "TOGBankClassic_BankerNumbers", "TOGBankClassic_P2P", "TOGBankClassic_RequestLog",
+	"TOGBankClassic_Log", "TOGBankClassic_Propagation", "TOGBankClassic_Donations", "TOGBankClassic_PriceList",
 	"TOGBankClassic_Item", "TOGBankClassic_ItemHighlight", "TOGBankClassic_TooltipBankerInfo",
 	"TOGBankClassic_Mail", "TOGBankClassic_MailInventory", "TOGBankClassic_Options",
 	"TOGBankClassic_UI", "TOGBankClassic_Tests",
@@ -43,8 +43,6 @@ globals = {
 	"TOGBankClassic_UI_Mail", "TOGBankClassic_UI_Minimap", "TOGBankClassic_UI_Requests",
 	"TOGBankClassic_UI_Search", "TOGBankClassic_UI_Mailbox",
 	"TOGBankClassic_UI_RowList", "TOGBankClassic_UI_Browse", "TOGBankClassic_Usable",
-	-- Static data tables
-	"TOGBankClassic_ItemDB", "TOGBankClassic_SuffixDB",
 	-- SavedVariables (see .toc)
 	"TOGBankClassicDB", "TOGBankClassicInvDB", "TOGBankClassicIconDB", "TOGBankClassicOptionDB",
 	"TOGBankClassicDB_DebugLog", "TOGBankClassic_PerfMetrics", "TOGBankClassic_PerfEnabled",
@@ -118,7 +116,7 @@ read_globals = {
 	-- Player / realm / guild
 	"UnitName", "GetRealmName", "GetNormalizedRealmName", "IsInGuild", "IsInRaid", "GetClassColor",
 	"GetGuildInfo", "GetNumGuildMembers", "GetGuildRosterInfo", "GuildRoster", "C_GuildInfo",
-	"CanViewOfficerNote", "GetMoney",
+	"CanViewOfficerNote", "GuildControlGetNumRanks", "GetMoney",
 	-- Items / containers
 	"C_Container", "C_Item", "C_CurrencyInfo", "Item", "GetItemInfo", "GetItemInfoInstant",
 	"GetItemQualityColor", "GetCoinTextureString", "PickupItem",
@@ -128,7 +126,7 @@ read_globals = {
 	-- 24, 4 and 6. ItemHighlight reads all three rather than hardcoding, because Era and TBC ship
 	-- from one source and need not agree.
 	"BANK_CONTAINER", "NUM_BANKGENERIC_SLOTS", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS",
-	"ITEM_UNIQUE", "NUM_CONTAINER_FRAMES",
+	"ITEM_UNIQUE", "ITEM_UNIQUE_MULTIPLE", "NUM_CONTAINER_FRAMES",
 	-- CHATWIN-001: the engine-side constants table. Read for ChatFrameConstants.MaxChatWindows,
 	-- because the bare `NUM_CHAT_WINDOWS` global is only assigned inside
 	-- Blizzard_DeprecatedChatInfo, behind GetCVarBool("loadDeprecationFallbacks") -- so it is nil
@@ -138,7 +136,9 @@ read_globals = {
 	-- attach/send call sites reported as an undefined variable -- 20-odd warnings that were real
 	-- signal being drowned out rather than real problems. All verified present in Blizzard's
 	-- Classic Era tree before being added here, not assumed from the name.
-	"GetInboxNumItems", "GetInboxHeaderInfo", "GetInboxItem", "GetInboxItemLink",
+	-- GetInboxText: no generated documentation in the Era tree, but Blizzard's own
+	-- Blizzard_UIPanels_Game/Classic/MailFrame.lua:373 and :502 call it (Modules/UI/Mail.lua reads the body).
+	"GetInboxNumItems", "GetInboxHeaderInfo", "GetInboxItem", "GetInboxItemLink", "GetInboxText",
 	"ATTACHMENTS_MAX_RECEIVE", "SendMail", "TakeInboxItem",
 	-- MAILRETURN-001: Era MailFrame.lua:787/:798 (OpenMail_Delete) -- the Return button's pair.
 	"InboxItemCanDelete", "ReturnInboxItem",
@@ -147,6 +147,10 @@ read_globals = {
 	-- MAILUI-001: C_Mail.IsCommandPending gates the next take (Era's MailFrame.lua:1216 calls it;
 	-- MailInfoDocumentation.lua declares it). Feature-detected at the call.
 	"C_Mail",
+	-- BANKER-OWNER-001: the client's own name-completing edit box (Blizzard_AutoComplete/
+	-- AutoComplete.lua:333 and :354 in the Classic Era tree; the mail frame's recipient box uses
+	-- the same template). Feature-detected at the call.
+	"AutoCompleteEditBox_SetAutoCompleteSource", "AutoCompleteEditBox_OnEnterPressed",
 	-- SEARCH-005: the global string SearchBoxTemplate uses as its instruction text
 	-- (Blizzard_SharedXML/Shared/InputBox/InputBoxTemplates.xml:31, `value="SEARCH" type="global"`).
 	"SEARCH",
@@ -213,5 +217,4 @@ files["Tests"] = {
 exclude_files = {
 	"Tests/wowapi",
 	"Libs",
-	"Modules/Static",   -- multi-megabyte generated data tables
 }

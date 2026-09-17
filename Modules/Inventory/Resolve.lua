@@ -206,9 +206,30 @@ function Resolve.describe(rec)
 			-- ("item id did not resolve into a descriptive name" -- a request row reading `Item
 			-- 7969`). GetItemInfo is cache-dependent, so it may still be nil here; when it answers,
 			-- its name, quality and link are the real ones and are used.
-			local name, link, quality, itemLevel, reqLevel = GetItemInfo(id)
+			--
+			-- LINK-AUDIT-001 step 2 (docs/LINK_AUDIT.md 3.4): a suffixed or enchanted record is asked
+			-- for by ITS OWN item string, which the library writes (`BuildItemString`, LibItemDB owns
+			-- the field layout), so a warm client answers the variant's name and coloured link. This
+			-- asked for the base id, and on a cold cache linked "item:<id>" -- the suffix and enchant
+			-- thrown away. A cold cache now links the variant's item string, which a tooltip renders.
+			-- A plain record is asked by id, as before. Without the library (reported above) there is
+			-- no item-string writer, so the base id is all that can be asked for.
+			local variant = (suffix ~= 0 or enchant ~= 0) and lib and lib.BuildItemString
+				and lib:BuildItemString(id, suffix, enchant) or nil
+			local name, link, quality, itemLevel, reqLevel
+			if variant then
+				name, link, quality, itemLevel, reqLevel = GetItemInfo(variant)
+				if not name then
+					-- Only the base may be cached: its name, quality and levels, the variant's link.
+					local _
+					name, _, quality, itemLevel, reqLevel = GetItemInfo(id)
+					link = nil
+				end
+			else
+				name, link, quality, itemLevel, reqLevel = GetItemInfo(id)
+			end
 			return {
-				name = name or ("Item " .. id), link = link or ("item:" .. id), icon = icon or UNKNOWN_ICON,
+				name = name or ("Item " .. id), link = link or variant or ("item:" .. id), icon = icon or UNKNOWN_ICON,
 				quality = quality or 1, itemLevel = itemLevel or 0, reqLevel = reqLevel or 0,
 				class = class or 0, subClass = subClass or 0, equipLoc = equipLoc or "",
 				resolved = "client",

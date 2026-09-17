@@ -3,8 +3,7 @@ TOGBankClassic_Guild = {}
 
 -- NS-001: aliased as file-scope locals so a foreign global of the same name cannot be read
 -- instead. See the header of Modules/Constants.lua.
-local PEER_TO_PEER = TOGBankClassic_Constants.PEER_TO_PEER
-local PROTOCOL     = TOGBankClassic_Constants.PROTOCOL
+local PROTOCOL = TOGBankClassic_Constants.PROTOCOL
 
 TOGBankClassic_Guild.Info = nil
 
@@ -26,31 +25,12 @@ TOGBankClassic_Guild.recentlySeen = {}
 -- Prevents iterating through entire guild roster on every IsBank() call
 TOGBankClassic_Guild.banksCache = nil
 
--- Pending request tracking tables
-TOGBankClassic_Guild.pendingAltRequests = {}
---- Per normalized alt: a table describing the pull-path request in flight ({ banker, requestedAt }
---- or the noBanker / bankerOffline forms below). Typed here so a spec that stubs the table cannot
---- retype every writer in this file through the language server's inference.
----@type table<string, table>
-TOGBankClassic_Guild.pendingP2PRequests = {}
-TOGBankClassic_Guild.pendingP2PTimeouts = {}   -- Track P2P broadcast timeouts for cancellation
-TOGBankClassic_Guild.lastAltQueryTime = {}
 TOGBankClassic_Guild.bankerProgressKnown = {}
-
--- P2P send queue cap. The COUNT this is enforced against lives on P2PSession (activeSends, summed
--- by GetActiveSendTotal); only the limit itself is here, because Chat.lua and the status bar both
--- read it.
---
--- P2P-025: `pendingSendCount` and `pendingSendTimeouts` were removed on 2026-09-08. They were the
--- remains of a P2P backoff path that no longer exists: four sites decremented the counter, nothing
--- incremented it, and NOTHING EVER WROTE THE REGISTRY -- so `isP2PSend` in SendAltData was
--- permanently false and `releaseP2PSlot`'s entire body was unreachable at its guard. The status bar
--- read the counter and so could never render Tx:n/3. Do not reintroduce a second counter here;
--- Tests/statusbar_spec.lua asserts this file does not carry one.
--- The cap is Constants' (PEER_TO_PEER.MAX_ACTIVE_SENDS); this name is the one Chat.lua's relay
--- and banker ACK branches read. Not a second number.
-TOGBankClassic_Guild.MAX_PENDING_SENDS = PEER_TO_PEER.MAX_ACTIVE_SENDS
-TOGBankClassic_Guild.pendingP2PFallbackTimeouts = {}  -- Track 15s peer fallback timeouts
+-- LIBREQ-DS-008: `pendingAltRequests`, `lastAltQueryTime`, `pendingP2PRequests`, `pendingP2PTimeouts`,
+-- `pendingP2PFallbackTimeouts` (the pull path's per-alt state) and `MAX_PENDING_SENDS` (the cap's
+-- second name, read by the pull path's ACK branches) were here. The send cap is Constants' PEER_TO_PEER.MAX_ACTIVE_SENDS, enforced by
+-- the library's numbered P2P on the DeltaSync host (Modules/P2P.lua); the status bar reads the
+-- library's count. Do not reintroduce a counter or a cap here (P2P-025; statusbar_spec pins it).
 
 -- Temporary in-memory error storage for when Guild.Info is not initialized
 TOGBankClassic_Guild.tempDeltaErrors = {
@@ -137,6 +117,127 @@ local function RosterLib()
 	return LibStub and LibStub("LibGuildRoster-1.0", true) or nil
 end
 TOGBankClassic_Guild.RosterLib = RosterLib
+
+-- XGUILD-SYNC-001 / XGUILD-LABEL-001 (docs/XGUILD_SYNC.md D2, D8): the FEDERATION. LibGuildRoster
+-- holds the home roster and, once an officer lists sister guilds, each sister's roster; a name in
+-- any of them is one of us. These are the ONE spelling of that question; every "is this a
+-- guildmate" gate reads them, so the bank opens to a sister guild in one place. Without the
+-- library, or before it has a sister roster, they answer for the home guild alone -- exactly
+-- what every gate answered before.
+
+--- The memberRoster entry for an already-normalised name, or nil -- and A STUB DOES NOT COUNT.
+--- A stub is the unauthenticated sighting UpdateOnlineMember makes for EVERY inbound message,
+--- before any authorisation runs; an entry's mere existence therefore proves nothing, and each
+--- predicate that once read `memberRoster[norm]` directly (IsInCurrentGuildRoster, GuildOf,
+--- IsHomeMember, SenderIsOfficer) was one more place to forget that. This is the ONE spelling.
+function TOGBankClassic_Guild:RosterEntry(norm)
+	local m = norm and self.memberRoster and self.memberRoster[norm]
+	if m and not m.isStub then return m end
+	return nil
+end
+
+-- XGUILD-SWITCH-001 (the operator, 2026-09-15: "shouldn't there be some officer configuration to
+-- turn it on or make it work? we have the sister guilds in the guildroster library"): the
+-- sister-guild bank is an OFFICER SWITCH, off by default, guild-synced like the shop switch. Guild
+-- Roster's sister list says WHICH guilds are sisters; this says whether THIS guild's bank crosses
+-- to them at all. Off, every gate below answers for the home guild alone -- no sister bankers on
+-- the tabs, no pull from a sister peer on the cycle, a sister member's whisper refused as a
+-- stranger's -- and nothing about where the record lives changes. Each guild opens its own side:
+-- a sister guild whose officers leave it off neither serves nor asks.
+function TOGBankClassic_Guild:IsSisterBankEnabled()
+	local s = self.Info and self.Info.settings
+	return s ~= nil and s.sisterBank == true
+end
+
+--- Open or close the sister-guild bank, guild-wide. The ONE writer. Returns true when it changed.
+--- The rosters are rebuilt at once so the Bankers tab and the banker column follow the switch.
+function TOGBankClassic_Guild:SetSisterBankEnabled(enabled)
+	if not self.Info then return false end
+	if not self.Info.settings then self.Info.settings = {} end
+	enabled = enabled and true or false
+	if self:IsSisterBankEnabled() == enabled then return false end
+	self.Info.settings.sisterBank = enabled
+	self:BroadcastSettings("ALERT")  -- SETTINGS-001
+	TOGBankClassic_Output:Info(enabled and "The sister-guild bank is ON -- bank characters in the guilds listed in Guild Roster join this bank (syncing to guild...)."
+		or "The sister-guild bank is OFF -- this bank is your guild's alone again (syncing to guild...).")
+	self:OnSisterBankChanged()
+	return true
+end
+
+--- Rebuild what the switch decides: the member and banker rosters, and the open window.
+function TOGBankClassic_Guild:OnSisterBankChanged()
+	self.banksCache = nil
+	if self.RefreshOnlineCache then self:RefreshOnlineCache() end
+	if self.RebuildBankerRoster then self:RebuildBankerRoster() end
+	if self.RefreshRequestsUI then self:RefreshRequestsUI() end
+	local B = TOGBankClassic_UI_Browse
+	if B and B.Refresh then B:Refresh() end
+end
+
+--- The sister guilds this bank spans: the library's listed keys while the switch is on, none
+--- otherwise. Every sister-facing walk reads this rather than the library, so the switch is one
+--- gate and not four. `lib` may be passed by a caller that already resolved it.
+function TOGBankClassic_Guild:SisterGuildKeys(lib)
+	if not self:IsSisterBankEnabled() then return {} end
+	lib = lib or RosterLib()
+	if not (lib and lib.GetSisterGuildKeys) then return {} end
+	return lib:GetSisterGuildKeys() or {}
+end
+
+--- Which roster holds `name`: the library's guild key ("Faction-Guild Name"), the home key for
+--- a guildmate, nil for a stranger. Feature-detected on the library's cross-guild methods
+--- (MINOR 6+); an older library answers only for the home guild, through memberRoster. With the
+--- sister-guild bank OFF the library's cross-guild answer is not consulted: a sister member is
+--- then a stranger, which is what every gate wants.
+function TOGBankClassic_Guild:GuildOf(name)
+	local norm = self:NormalizeName(name)
+	if not norm then return nil end
+	local lib = RosterLib()
+	if lib and lib.IsInAnyRoster and self:IsSisterBankEnabled() then
+		local key = lib:IsInAnyRoster(norm)
+		if key then return key end
+	end
+	local m = self:RosterEntry(norm)
+	if m then
+		return m.guildKey or (lib and lib.GetHomeGuildKey and lib:GetHomeGuildKey()) or "home"
+	end
+	return nil
+end
+
+--- Is `name` in the HOME guild? (The roster the client itself scans.)
+function TOGBankClassic_Guild:IsHomeMember(name)
+	local norm = self:NormalizeName(name)
+	if not norm then return false end
+	local lib = RosterLib()
+	if lib and lib.GetMember and lib:GetMember(norm) then return true end
+	local m = self:RosterEntry(norm)
+	return m ~= nil and m.guildKey == nil
+end
+
+--- Is `name` one of us -- a member of the home guild or of any listed sister guild?
+function TOGBankClassic_Guild:IsFederated(name)
+	return self:GuildOf(name) ~= nil
+end
+
+--- The display name of the guild that holds `name`: "" for a home-guild member or a stranger,
+--- the sister guild's name otherwise. The library's key is "Faction-Guild Name"; the guild name
+--- is everything after the first hyphen, spaces kept.
+function TOGBankClassic_Guild:GuildNameOf(name)
+	if self:IsHomeMember(name) then return "" end
+	local key = self:GuildOf(name)
+	if not key then return "" end
+	return key:match("^[^%-]*%-(.+)$") or key
+end
+
+--- XGUILD-LABEL-001: the tag every banker listing appends to a banker from another guild --
+--- " (Guild Name)" in grey -- and "" for one of the home guild, so the common case reads as it
+--- always did. One function so the Bankers tab, the Banker column, the tooltips, the request
+--- dialog and the Requests tab cannot spell the label three ways.
+function TOGBankClassic_Guild:GuildTag(name)
+	local guildName = self:GuildNameOf(name)
+	if guildName == "" then return "" end
+	return string.format(" |cff808080(%s)|r", guildName)
+end
 
 -- NS-001: file-scope local, published on the module table rather than as a bare global. The old
 -- spelling was `function GetPlayerWithNormalizedRealm(name)` -- a global with a name generic enough
@@ -242,6 +343,12 @@ end
 
 -- SYNC-001 fix: Check if a player is in the current guild roster
 -- Returns true if the player is a member of the current guild
+--
+-- XGUILD-SYNC-001 (docs/XGUILD_SYNC.md D2): "the current guild" now means THE FEDERATION --
+-- memberRoster carries every listed sister guild's members too (_AddSisterMembers, `guildKey`
+-- set), so a sister member passes this gate exactly as a guildmate does, and a name in no
+-- roster is still a stranger. The name is kept for its ~40 call sites; IsFederated / GuildOf
+-- are the same question asked of the library directly.
 function TOGBankClassic_Guild:IsInCurrentGuildRoster(playerName)
 	if not playerName then
 		return false
@@ -255,14 +362,12 @@ function TOGBankClassic_Guild:IsInCurrentGuildRoster(playerName)
 
 	-- PERF: O(1) memberRoster lookup instead of scanning all 500 members.
 	--
-	-- A STUB ENTRY DOES NOT COUNT. Stubs are created by UpdateOnlineMember from an inbound addon
-	-- message -- an unauthenticated claim about a name -- and Chat:OnCommReceived does that for
-	-- every message BEFORE authorisation. Treating one as membership let any sender satisfy this
-	-- check simply by sending, which is the whole roster half of IsAltDataAllowed. A stub therefore
-	-- falls through to the authoritative client roster scan below rather than answering true.
+	-- A STUB ENTRY DOES NOT COUNT (RosterEntry says why -- this is where the rule was found:
+	-- treating a stub as membership let any sender satisfy this check simply by sending, which is
+	-- the whole roster half of IsAltDataAllowed). A stub falls through to the authoritative client
+	-- roster scan below rather than answering true.
 	if self.memberRoster and next(self.memberRoster) then
-		local entry = self.memberRoster[normPlayer]
-		if entry and not entry.isStub then
+		if self:RosterEntry(normPlayer) then
 			return true
 		end
 	end
@@ -549,6 +654,31 @@ function TOGBankClassic_Guild:InvalidateBanksCache()
 	self.banksCache = nil
 end
 
+--- XGUILD-SYNC-001: the bank characters of every listed sister guild, by the `gbank` marker in
+--- the public note the library carries on a sister member (LIBREQ-GR-002; absent, none), as
+--- normalised names sorted for a stable roster. A home-guild name is never listed here (home
+--- wins in IsInAnyRoster, and the home scan already has it).
+function TOGBankClassic_Guild:_SisterBankers()
+	local lib = RosterLib()
+	local out = {}
+	if not (lib and lib.GetSisterGuildKeys and lib.GetRoster) then return out end
+	local homeKey = lib.GetHomeGuildKey and lib:GetHomeGuildKey() or nil
+	for _, key in ipairs(self:SisterGuildKeys(lib)) do   -- XGUILD-SWITCH-001: none while off
+		local roster = key ~= homeKey and lib:GetRoster(key) or nil
+		if roster then
+			for name, m in pairs(roster) do
+				local note = type(m) == "table" and m.note
+				if type(note) == "string" and note:find("gbank", 1, true) then
+					local norm = self:NormalizeName(name)
+					if norm and not (lib.GetMember and lib:GetMember(norm)) then out[#out + 1] = norm end
+				end
+			end
+		end
+	end
+	table.sort(out)
+	return out
+end
+
 -- Rebuild banker roster from local guild notes (no network communication needed)
 -- Called automatically on GUILD_ROSTER_UPDATE event
 function TOGBankClassic_Guild:RebuildBankerRoster()
@@ -573,6 +703,18 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 				self.memberRoster[norm].viewOnly = (isBank and noteIsViewOnly(publicNote, officer_note)) or false
 			end
 		end
+	end
+
+	-- XGUILD-SYNC-001 (docs/XGUILD_SYNC.md D3): the bankers of every listed sister guild join the
+	-- roster -- a sister member whose public note carries the marker. The note reaches the sister
+	-- roster as `member.note` from LibGuildRoster MINOR 19 (LIBREQ-GR-002, shipped 2026-09-15) and
+	-- is feature-detected: a roster served by an older provider carries none and contributes no
+	-- bankers, which is what it did before. Sorted so two clients holding the same rosters build
+	-- the same list.
+	for _, name in ipairs(self:_SisterBankers()) do
+		local dup = false
+		for _, b in ipairs(banks) do if self:NormalizeName(b) == name then dup = true break end end
+		if not dup then table.insert(banks, name) end
 	end
 
 	-- Update roster.alts list (roster sync is local-only, no version tracking needed)
@@ -936,13 +1078,10 @@ function TOGBankClassic_Guild:ReportBankerDataProgress(context, force)
 	end
 end
 
--- Fast-fill - Request missing banker alts on UI open
--- Compares roster bankers against local alt data and queries for missing alts
--- SYNC-001 fix: Use current guild roster instead of cached roster to prevent
--- requesting data for bankers from other guilds
-function TOGBankClassic_Guild:FastFillMissingAlts()
-	return TOGBankClassic_DeltaComms:FastFillMissingAlts(self.Info)
-end
+-- LIBREQ-DS-008: `FastFillMissingAlts` (one `alt-request` GUILD broadcast per missing banker, from
+-- /togbank sync and the window's Open) WAS HERE and in DeltaComms. A missing banker is filled by
+-- the cycle: every peer offers the bankers our broadcast did not name (DeltaSync's OnBroadcast), and
+-- the library asks one holder per bank.
 
 --- INV2 step 7a: THE one place item rows come from.
 ---
@@ -1793,10 +1932,20 @@ function TOGBankClassic_Guild:SendHashList(target)
 	end
 	local normalizedTarget = self:NormalizeName(target)
 	local list = self:BuildBankerHashList()
+	local BN = TOGBankClassic_BankerNumbers
 	local payload = {
 		type = "hash-list-reply",
 		alts = list,
 		banker = self:GetNormalizedPlayer(),
+		-- XGUILD-SYNC-001 (D5) / LIBREQ-DS-008: the numbers table rides the reply. A sister guild's
+		-- client never hears this guild's hlb2 (GUILD), so this whisper is the one place it can learn
+		-- the numbers these canons will be named by -- the receiver adopts it under the library's
+		-- rules (newer wholesale; equal-and-different from the lower-sorting sender; the two guilds'
+		-- tables converge as two minters do, H6). A guildmate already holds it: a no-op there.
+		numbers = BN and BN:Snapshot() or nil,
+		-- SETTINGS-CANON-001: the pulled sync names the guild settings too, as the hlb2 does.
+		sv = self:SettingsVersion(),
+		sh = self:SettingsCanon(),
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	local altCount = 0
@@ -1812,8 +1961,211 @@ function TOGBankClassic_Guild:SendHashList(target)
 		altCount,
 		data and #data or 0
 	)
-	local sent = TOGBankClassic_Core:SendWhisper("togbank-hlr", data, normalizedTarget, "ALERT")
+	-- LIBREQ-DS-008: a `togbank-hl` type now (the `togbank-hlr` prefix went with the pull path);
+	-- Chat:ReceiveHashListReply hands it to the library as the sender's broadcast.
+	local sent = TOGBankClassic_Core:SendWhisper("togbank-hl", data, normalizedTarget, "ALERT")
 	TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR send result: %s", tostring(sent))
+end
+
+-- XGUILD-SYNC-001 (docs/XGUILD_SYNC.md D5/D6): THE FEDERATION PULL. A broadcast reaches one guild;
+-- the copy that crosses into a sister guild is a whispered `hash-list-request` to one member of
+-- it -- the peer answers with its hash-list-reply exactly as it answers a guildmate, and the P2P
+-- session, the version query and the data leg follow as whispers already. This is the shape
+-- LibGuildRoster uses for its own sister rosters; GreenWall's bridge cannot carry it (1.1 of the
+-- design: CHANNEL sends are hardware-gated, and every leg here fires from a timer).
+
+--- How long a federation peer that never answered is left alone before it is asked again.
+TOGBankClassic_Guild.FEDERATION_SILENT_FOR = 3600
+
+--- Seconds after the hash-list ask before the requests-index ask follows it (and between the
+--- asks to a second and third sister guild's peer): past INDEX_QUERY_COOLDOWN.
+TOGBankClassic_Guild.FEDERATION_INDEX_DELAY = 70
+
+--- The member of sister guild `key` to ask: the one this client most recently heard a TOGBank
+--- message from (a proven TOGBank speaker), else one VersionCheck (or our memory of it) has seen on
+--- a TOGBank that completes the data leg, else the first the library has seen online at all; never
+--- ourselves, never one that ignored the last ask inside FEDERATION_SILENT_FOR, and never one KNOWN
+--- to run a release this build cannot sync with. nil when nobody qualifies.
+---
+--- XGUILD-PEER-001 (XGUILD-INVENTORY-001, the operator 2026-09-16: "now we need to get the inventory
+--- sync working"): the library's presence is every sister member it has seen -- most of a guild runs
+--- Guild Roster without TOGBank, or a TOGBank from CurseForge that predates this sync -- and the old
+--- pick took the first of them. Such a peer never answers the ask (or answers a data leg we refuse),
+--- so the guild's bank stayed empty for a cycle per wrong pick and an hour per silent one. The
+--- versions are already on this client for free (PeerSpeaksDataLeg: VersionCheck first, the hlb2
+--- field second); an unknown is still asked, last, because VersionCheck's answer can be lost.
+function TOGBankClassic_Guild:FederationPeer(key)
+	local lib = RosterLib()
+	if not (key and lib and lib.GetOnlineMembersScoped) then return nil end
+	local me = self:GetNormalizedPlayer()
+	local now = GetServerTime() or 0
+	self.federationSilent = self.federationSilent or {}
+	local best, bestAt, known, fallback = nil, nil, nil, nil
+	-- Sorted, so two clients with the same sightings ask the same member (the library's list is a
+	-- pairs walk).
+	local names = {}
+	for _, name in ipairs(lib:GetOnlineMembersScoped(key) or {}) do names[#names + 1] = name end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		local norm = self:NormalizeName(name)
+		local silentAt = norm and self.federationSilent[norm]
+		if norm and norm ~= me and not (silentAt and now - silentAt < self.FEDERATION_SILENT_FOR) then
+			local capable, why = true, "unknown"
+			if self.PeerSpeaksDataLeg then capable, why = self:PeerSpeaksDataLeg(norm) end
+			if capable then
+				local m = self.memberRoster and self.memberRoster[norm]
+				local spoke = m and m.spokeAt or nil
+				if spoke and (not bestAt or spoke > bestAt) then best, bestAt = norm, spoke end
+				if why ~= "unknown" then known = known or norm end
+				fallback = fallback or norm
+			else
+				TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "not asking %s (%s): it runs TOGBank %s", norm, key, tostring(why))
+			end
+		end
+	end
+	return best or known or fallback
+end
+
+--- Ask one member of every listed sister guild for its hash list, by whisper. Called on the
+--- ten-minute cycle after the GUILD broadcast (Events:SyncDeltaVersion) and by /togbank share.
+--- A peer asked on the previous cycle that never replied is marked silent and another is asked.
+--- Returns the names asked.
+function TOGBankClassic_Guild:PullFromFederation()
+	local lib = RosterLib()
+	local asked = {}
+	if not (lib and lib.GetSisterGuildKeys) then return asked end
+	self.federationAsked = self.federationAsked or {}
+	self.federationSilent = self.federationSilent or {}
+	local now = GetServerTime() or 0
+	-- XGUILD-PEER-001: an ask younger than FEDERATION_ANSWER_GRACE is still PENDING, not silence --
+	-- OnFederationPeerProven asks between cycles, and judging that ask at the next cycle a few
+	-- seconds later marked a peer that was answering silent for an hour. Its guild is not asked twice.
+	local pendingKeys = {}
+	for peer, at in pairs(self.federationAsked) do
+		local answered = self.federationAnswered and self.federationAnswered[peer] and self.federationAnswered[peer] >= at
+		if not answered and now - at < self.FEDERATION_ANSWER_GRACE then
+			local key = self.GuildOf and self:GuildOf(peer)
+			if key then pendingKeys[key] = true end
+		else
+			if not answered then
+				self.federationSilent[peer] = now
+				TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "%s did not answer the last hash-list ask; left alone for an hour", peer)
+			end
+			self.federationAsked[peer] = nil
+		end
+	end
+	local keys = self:SisterGuildKeys(lib)   -- XGUILD-SWITCH-001: none while off, so nothing is asked
+	if #keys == 0 then return asked end
+	for _, key in ipairs(keys) do
+		local peer = not pendingKeys[key] and self:FederationPeer(key) or nil
+		if pendingKeys[key] then
+			TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "an ask to %s is still out; not asking it again yet", key)
+		elseif peer then
+			self:AskFederationPeer(key, peer, asked)
+		else
+			TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "nobody online to ask in %s", key)
+		end
+	end
+	return asked
+end
+
+--- Whisper `peer` (a member of sister guild `key`) the hash-list ask, note it, and queue the
+--- requests-index ask behind it. `asked` (optional) collects the name and staggers the index asks
+--- of one cycle. Returns true when the ask left.
+function TOGBankClassic_Guild:AskFederationPeer(key, peer, asked)
+	asked = asked or {}
+	local data = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-request", requester = self:GetNormalizedPlayer() })
+	if not TOGBankClassic_Core:SendWhisper("togbank-hl", data, peer, "NORMAL") then return false end
+	self.federationAsked = self.federationAsked or {}
+	self.federationAsked[peer] = GetServerTime() or 0
+	asked[#asked + 1] = peer
+	TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "asked %s (%s) for its hash list", peer, key)
+	-- D7: the far guild's REQUESTS too -- the ones the relay never carried here because both
+	-- names were on that side. The same index query the cycle broadcasts on GUILD, whispered
+	-- to the peer, staggered past the GUILD query's cooldown (INDEX_QUERY_COOLDOWN, 60 s) so
+	-- the one-at-a-time index state machine is not asked to hold two at once; a home sync
+	-- still in flight then (a large by-id batch) skips this cycle's ask rather than forcing.
+	local delay = self.FEDERATION_INDEX_DELAY * #asked
+	C_Timer.After(delay, function()
+		if self:IsPlayerOnline(peer) and self:QueryRequestsIndex(peer, "NORMAL") then
+			TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "asked %s for its requests index", peer)
+		end
+	end)
+	return true
+end
+
+--- XGUILD-PEER-001: a member of a listed sister guild has just PROVEN it runs a TOGBank we can sync
+--- with -- it spoke TOGBank to us, or VersionCheck named its version. When that guild has had no ask
+--- out and no answer this cycle, it is asked NOW instead of on the next ten-minute cycle: presence is
+--- an event, and the first one after login is the moment a sister guild's bank can start arriving
+--- (HANDSHAKE-OVER-TIMERS-001). The cycle's own pull is unchanged and still covers a lost ask.
+---@param norm string the member, normalized
+---@return boolean asked
+function TOGBankClassic_Guild:OnFederationPeerProven(norm)
+	if not norm or norm == self:GetNormalizedPlayer() or not self.IsHomeMember or self:IsHomeMember(norm) then return false end
+	local key = self.GuildOf and self:GuildOf(norm)
+	if not key then return false end
+	local lib = RosterLib()
+	local listed = false
+	for _, k in ipairs(self:SisterGuildKeys(lib)) do if k == key then listed = true end end
+	if not listed then return false end
+	if self.PeerSpeaksDataLeg and not (self:PeerSpeaksDataLeg(norm)) then return false end
+	local now = GetServerTime() or 0
+	local silentAt = self.federationSilent and self.federationSilent[norm]
+	if silentAt and now - silentAt < self.FEDERATION_SILENT_FOR then return false end
+	-- Something already out to, or heard from, that guild inside a cycle: nothing to hurry.
+	local window = self.FEDERATION_HURRY_WINDOW
+	for peer, at in pairs(self.federationAsked or {}) do
+		if now - at < window and self:GuildOf(peer) == key then return false end
+	end
+	for peer, at in pairs(self.federationAnswered or {}) do
+		if now - at < window and self:GuildOf(peer) == key then return false end
+	end
+	TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "%s (%s) runs TOGBank; asking it now rather than on the next cycle", norm, key)
+	return self:AskFederationPeer(key, norm)
+end
+
+--- The window inside which an ask to, or an answer from, a sister guild means it is not hurried:
+--- one sync cycle -- read from the cycle's own constant, so the two cannot drift apart.
+TOGBankClassic_Guild.FEDERATION_HURRY_WINDOW = TOGBankClassic_Constants.TIMER_INTERVALS.VERSION_BROADCAST
+
+--- How long a hash-list ask stays pending before the cycle may judge it unanswered. The reply is one
+--- whispered message sent at ALERT; two minutes covers a congested sender's queue with room to spare.
+TOGBankClassic_Guild.FEDERATION_ANSWER_GRACE = 120
+
+--- A federated peer's hash-list-reply arrived: it answered. Called from the HLR receive.
+function TOGBankClassic_Guild:NoteFederationAnswer(sender)
+	local norm = self:NormalizeName(sender)
+	if not norm then return end
+	self.federationAnswered = self.federationAnswered or {}
+	self.federationAnswered[norm] = GetServerTime() or 0
+	if self.federationSilent then self.federationSilent[norm] = nil end
+end
+
+--- D6: what a federated NON-guildmate is told when it asks for the hash list -- everything the
+--- GUILD cycle would have piggybacked for it: the guild settings (when this client may
+--- broadcast them), this character's donation totals, and the price-list version held, each
+--- by whisper. Rate-limited per asker so a client asking every cycle costs one round of answers.
+TOGBankClassic_Guild.FEDERATION_ANSWER_COOLDOWN = 300
+function TOGBankClassic_Guild:AnswerFederatedAsker(asker)
+	local norm = self:NormalizeName(asker)
+	if not norm or self:IsHomeMember(norm) or not self:IsFederated(norm) then return false end
+	self.federationAnswers = self.federationAnswers or {}
+	local now = GetServerTime() or 0
+	local last = self.federationAnswers[norm]
+	if last and now - last < self.FEDERATION_ANSWER_COOLDOWN then return false end
+	self.federationAnswers[norm] = now
+	self:BroadcastSettings("NORMAL", norm)
+	if TOGBankClassic_Donations then TOGBankClassic_Donations:Broadcast("NORMAL", norm) end
+	local PL = TOGBankClassic_PriceList
+	if PL then
+		-- The authority's GUILD publish never reaches a sister guild, and only the authority
+		-- answers an ask -- so the authority hands a federated asker the whole list; anyone else
+		-- names the version and publisher they hold, and the asker asks the authority from there.
+		if PL:IsAuthority() and PL:Held() then PL:SendList(PL:Held(), norm) else PL:AnnounceTo(norm) end
+	end
+	TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "answered %s's ask with the settings, donation totals and price-list version", norm)
+	return true
 end
 
 function TOGBankClassic_Guild:RequestHashListFromBanker()
@@ -1831,52 +2183,14 @@ function TOGBankClassic_Guild:RequestHashListFromBanker()
 		end
 	end
 	if not banker then
-		-- No banker online: broadcast requests using local hashes when possible
-		local rosterAlts = self:GetBanks()
-		local pendingCount = 0
-		if rosterAlts and #rosterAlts > 0 then
-			-- DEAD SCAFFOLDING REMOVED. A `isWipeRecovery` flag was computed here by walking
-			-- every roster alt, under the comment "Bypass rate limiting for bulk requests when
-			-- user has blank DB" -- and then never read. The bypass it advertised did not exist,
-			-- so a user with a wiped database was rate-limited exactly like anyone else while the
-			-- code read as though they were not. Same class as P2P-025: a whole loop whose only
-			-- output was discarded.
-			--
-			-- If the bypass is wanted, it has to be written; do not restore the flag alone.
-			for _, altName in ipairs(rosterAlts) do
-				local norm = self:NormalizeName(altName)
-				local localAlt = self.Info and self.Info.alts and norm and self.Info.alts[norm]
-				local hasContent = localAlt and self:HasAltContent(localAlt, norm)
-				if not hasContent then
-					local localHash = localAlt and localAlt.inventoryHash or nil
-					local updatedAt = localAlt and (localAlt.inventoryUpdatedAt or localAlt.version) or nil
-					pendingCount = pendingCount + 1
-					if localHash and localHash ~= 0 then
-						-- We have hash but no content - broadcast P2P request WITH hash
-						-- Peers with matching hash will respond (PERF-005 P2P protocol)
-						TOGBankClassic_Output:Debug(
-							"PROTOCOL",
-							"HLR",
-							"HLR fallback: no banker online, broadcasting P2P for %s (expectedHash=%s, updatedAt=%s)",
-							tostring(norm),
-							tostring(localHash),
-							tostring(updatedAt)
-							)
-						self:BroadcastP2PRequest(norm, localHash, updatedAt, nil, localAlt and localAlt.inventoryHashV2)
-					else
-						-- No hash: let ScheduleCatchUp handle via next SyncDeltaVersion
-						TOGBankClassic_Output:Debug(
-							"PROTOCOL",
-							"HLR fallback: no banker online, no hash for %s - scheduling catch-up",
-							tostring(norm)
-						)
-						TOGBankClassic_P2PSession:ScheduleCatchUp("no_hash_no_banker")
-					end
-				end
-			end
-		end
-		if pendingCount > 0 then
-			TOGBankClassic_Output:Debug("PROTOCOL", "Fast-fill: No banker online, broadcasting %d requests", pendingCount)
+		-- LIBREQ-DS-008: this used to broadcast one `alt-request` per banker held without content.
+		-- With no banker to ask, the cycle is the answer -- every peer offers the bankers our
+		-- broadcast did not name -- and the library's catch-up re-broadcasts while anything is
+		-- missing.
+		local p2p = TOGBankClassic_P2P and TOGBankClassic_P2P:Lib()
+		if p2p and self:HasMissingContent() then
+			TOGBankClassic_Output:Debug("PROTOCOL", "HLR", "HLR: no capable banker online -- the P2P catch-up will re-broadcast for what is missing")
+			p2p:ScheduleCatchUp("no_banker")
 		end
 		return false
 	end
@@ -1890,183 +2204,11 @@ function TOGBankClassic_Guild:RequestHashListFromBanker()
 	return true
 end
 
---- Arm a per-alt timeout timer, cancelling whatever was already armed for that alt.
----
---- P2P-026 / AUDIT finding 24, SECOND HALF. Switching these to `C_Timer.NewTimer` fixed the ACK
---- path -- a peer answers, the stored handle is finally real, and `:Cancel()` does something. It
---- did NOT fix the path where no peer ever answers. `BroadcastP2PRequest` has no in-flight guard,
---- so a second request for the same alt inside the window armed a second timer and OVERWROTE the
---- stored handle, dropping the first on the floor with nothing left that could reach it. The first
---- timer then fired, saw the SECOND request's `pendingP2PRequests[norm]` as its own, and tore that
---- request down: pending state cleared, a banker fallback recorded against the guild, and
---- `AdvanceCandidate` called on a session it was never armed for. That is the exact failure
---- finding 24 describes, reached without any peer responding -- so making the cancels work only
---- closed the half that needed an ACK.
----
---- One spelling for all three arm sites (Chat.lua's 5s and 15s, and BroadcastP2PRequest's
---- PEER_RESPONSE_TIMEOUT below), so "at most one timer per alt per registry" is an invariant of the
---- helper rather than something three separate assignments each have to remember. The registry is
---- named rather than passed so the lazy creation lives here too.
----
---- Cancelling an already-fired handle is safe, and that is checked rather than assumed: Blizzard's
---- own `AsyncRequestMixin` cancels its timeout timer from inside that timer's own callback
---- (Blizzard_AsyncRequest.lua:60-77 -- the callback calls `StopRequest`, which calls `:Cancel()` on
---- the timer currently running), unguarded.
----@param registryName string field on this module holding the per-alt handle table
----@param norm string normalized alt name
----@param delay number seconds until the callback fires
----@param callback function
----@return table timer the new handle, also stored in the registry
-function TOGBankClassic_Guild:ArmAltTimeout(registryName, norm, delay, callback)
-	local registry = self[registryName]
-	if not registry then
-		registry = {}
-		self[registryName] = registry
-	end
-
-	local existing = registry[norm]
-	if existing then
-		existing:Cancel()
-		TOGBankClassic_Output:Debug("P2P", "TIMEOUT",
-			"[P2P-026] Replaced in-flight %s for %s -- the old timer would have torn down this request",
-			registryName, norm)
-	end
-
-	local timer = C_Timer.NewTimer(delay, callback)
-	registry[norm] = timer
-	return timer
-end
-
---- Forget a pull-path request for `norm`: the pending entry, the expected hashes, the alt-request
---- marker, and both its timers. Returns the pending entry it cleared, or nil when nothing was
---- pending (so a caller can decide whether the outcome is worth a fallback record at all).
----
---- THE ONE SPELLING (Peer Review 2026-09-12, F1): this block was written out by hand in the
---- BroadcastP2PRequest timeout below and in Chat.lua's hash-only ACK timeout, and a third caller
---- (a refusal heard with no session -- P2PSession:OnQueryRefused) would have been the third copy.
----@param norm string
----@return table|nil pending
-function TOGBankClassic_Guild:ClearPendingP2PRequest(norm)
-	local pending = self.pendingP2PRequests and self.pendingP2PRequests[norm]
-	if self.pendingP2PRequests then self.pendingP2PRequests[norm] = nil end
-	if self.pendingAltRequests then self.pendingAltRequests[norm] = nil end
-	if self.expectedHashes then self.expectedHashes[norm] = nil end
-	if self.expectedHashUpdatedAt then self.expectedHashUpdatedAt[norm] = nil end
-	for _, registryName in ipairs({ "pendingP2PTimeouts", "pendingP2PFallbackTimeouts" }) do
-		local registry = self[registryName]
-		local t = registry and registry[norm]
-		if t then
-			if type(t) == "table" and t.Cancel then t:Cancel() end
-			registry[norm] = nil
-		end
-	end
-	return pending
-end
-
---- @param expectedHashV2 string|nil the advertised canon, when the caller has one. HASH-CANON-006:
---- the "already have it" skip below must see the canon, or a pre-canon copy whose revision-1 hash
---- happens to equal the banker's current one is never requested and can never acquire a canon.
-function TOGBankClassic_Guild:BroadcastP2PRequest(altName, expectedHash, expectedUpdatedAt, bankerSender, expectedHashV2)
-	if not altName or not expectedHash then
-		return
-	end
-
-	-- Skip if requesting data for ourselves (can't P2P request your own data)
-	local norm = self:NormalizeName(altName)
-	local currentPlayer = self:GetNormalizedPlayer()
-	if norm == currentPlayer then
-		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Skipping P2P broadcast for %s (requesting own data)", altName)
-		return
-	end
-
-	-- Only broadcast for a version that can IMPROVE what we hold. P2P-034: this guard used to ask
-	-- HashesAgreeWith -- "the same version?" -- and so let through a request for any DIFFERENT
-	-- version, older ones and canon-less ones included; the guild-wide alt-request then timed out
-	-- because nobody had anything newer. Same rule as every other request path (AdvertisedImproves),
-	-- which also keeps HASH-CANON-006 (a held copy with no canon still asks for one) and PERF-005 (a
-	-- copy we already hold is not re-requested).
-	local improves, why = self:AdvertisedImproves(norm, {
-		hash = expectedHash, hashV2 = expectedHashV2, updatedAt = expectedUpdatedAt,
-	})
-	if not improves then
-		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "PERF-005: Skipping P2P broadcast for %s (%s)", altName, why)
-		return
-	end
-
-	TOGBankClassic_Output:Debug(
-		"PROTOCOL",
-		"HLR",
-		"HLR broadcast: requesting %s (expectedHash=%s, updatedAt=%s) from banker=%s",
-		tostring(altName),
-		tostring(expectedHash),
-		tostring(expectedUpdatedAt),
-		tostring(bankerSender)
-	)
-	TOGBankClassic_Output:Debug("P2P", "BROADCAST", "P2P: Broadcasting request for %s with hash=%08x (waiting for peers)", altName, expectedHash)
-
-	self.expectedHashes = self.expectedHashes or {}
-	self.expectedHashes[norm] = expectedHash
-	if expectedUpdatedAt then
-		self.expectedHashUpdatedAt = self.expectedHashUpdatedAt or {}
-		self.expectedHashUpdatedAt[norm] = expectedUpdatedAt
-	end
-	self.pendingP2PRequests = self.pendingP2PRequests or {}
-	self.pendingP2PRequests[norm] = { banker = bankerSender, requestedAt = GetTime() }
-
-	-- MAIL-SYNC: Get requester's current mailHash to detect mail changes
-	local ourAlt = self.Info and self.Info.alts and self.Info.alts[norm]
-	local ourMailHash = (ourAlt and ourAlt.mailHash) or 0
-
-	local p2pRequest = {
-		type = "alt-request",
-		name = altName,
-		requester = self:GetNormalizedPlayer(),
-		hashOnly = false,
-		expectedHash = expectedHash,
-		updatedAt = expectedUpdatedAt,
-		requesterMailHash = ourMailHash,  -- MAIL-SYNC: Include mail hash
-	}
-	local p2pData = TOGBankClassic_Core:SerializeWithChecksum(p2pRequest)
-	-- PERF-006: Use togbank-hl for P2P broadcasts so old code without hash support doesn't see them
-	if self.Info and self.Info.name then
-		TOGBankClassic_Database:RecordP2PRequestBroadcast(self.Info.name)
-	end
-	TOGBankClassic_Core:SendCommMessage("togbank-hl", p2pData, "GUILD", nil, "NORMAL")
-
-	local timeout = (PEER_TO_PEER and PEER_TO_PEER.PEER_RESPONSE_TIMEOUT) or 5
-	-- TIMER-001 / AUDIT finding 24: NewTimer (via ArmAltTimeout), so pendingP2PTimeouts[norm] holds
-	-- a real handle rather than nil. P2P-026: arming through the helper also cancels any timer this
-	-- alt already had in flight -- without that, a second request inside the window orphaned the
-	-- first timer, which then tore down this one.
-	self:ArmAltTimeout("pendingP2PTimeouts", norm, timeout, function()
-		-- One clearing (ClearPendingP2PRequest): the pending entry, the expected hashes, the
-		-- alt-request marker, the timers -- it used to be spelled out here.
-		local pending = self:ClearPendingP2PRequest(norm)
-		if pending then
-			-- Check if we have any way to get this data
-			-- Peer Review F3: this printed "(no banker online)" whenever `pending.banker` was nil --
-			-- which the fast-fill and no-banker callers always pass -- so the log claimed a fact the
-			-- code had not established, with the banker online. Say only what is known.
-			local banker = pending.banker
-			local why = banker == nil and "no banker named on this request"
-				or (self:IsPlayerOnline(banker) and ("banker " .. banker .. " online, did not answer")
-					or ("banker " .. banker .. " offline"))
-			TOGBankClassic_Output:Debug("P2P", "DISPATCH", "PERF-005: No P2P response for %s after %ds timeout (%s)", altName, timeout, why)
-			if self.Info and self.Info.name then
-				TOGBankClassic_Database:RecordP2PBankerFallback(self.Info.name)
-			end
-			-- Schedule a catch-up broadcast rather than whispering a banker.
-			if TOGBankClassic_P2PSession then
-				local sid = TOGBankClassic_P2PSession.sessionsByAlt[norm]
-				if sid then
-					TOGBankClassic_P2PSession:AdvanceCandidate(sid, "hlr_timeout")
-				else
-					TOGBankClassic_P2PSession:ScheduleCatchUp("hlr_timeout")
-				end
-			end
-		end
-	end)
-end
+-- LIBREQ-DS-008: `ArmAltTimeout`, `ClearPendingP2PRequest` and `BroadcastP2PRequest` WERE HERE --
+-- the pull path's per-alt request with its 5-second "no response" timer (P2P-026 / AUDIT finding
+-- 24 / Peer Review 2026-09-12 F1). The library's numbered P2P asks one holder per bank through a
+-- session with its own timers (DeltaSyncP2PNumbered.lua ArmSessionTimer); nothing here arms a
+-- per-alt timer any more.
 
 --- Turn "1.10.0" into a number that ORDERS correctly. Returns 0 for an unpackaged/dev build.
 ---
@@ -2185,34 +2327,19 @@ function TOGBankClassic_Guild:HookVersionCheck()
 	VC.RegisterCallback(self, "OnPeerVersion", function(_, sender, addonName, version)
 		if addonName ~= "TOGBankClassic" then return end
 		local norm = self:NormalizeName(sender)
-		if norm then self:RememberPeerAddonVersion(norm, version) end
+		if norm then
+			self:RememberPeerAddonVersion(norm, version)
+			-- XGUILD-PEER-001: VersionCheck just named a sister member's TOGBank -- ask that guild now.
+			if self.OnFederationPeerProven then self:OnFederationPeerProven(norm) end
+		end
 	end)
 	return true
 end
 
--- WIRE-SKEW-007: peers OBSERVED on the old wire, before anyone told us their version. Read off the
--- banker's log after a /reload on 2026-09-12: Garlii, Freezeplug and Venshea were ACCEPTED (nobody
--- had named their version yet, and unknown is capable), each held a slot for the whole 30-second
--- state-wait, released `no_state_summary`, and were refused as v1.4.1 only minutes later once
--- VersionCheck caught up -- three slots times thirty seconds, every login, before a capable peer
--- could be served. Two things say "old wire" without a version claim: the `togbank-state` summary a
--- v1.4.1 requester whispers after our accept (a v1.5.0 one asks on the host's QUERY channel and
--- never sends that), and silence for the whole wait. Session-only. A version claim from either real
--- source, when one arrives, outranks this: it names what the peer runs, this only names what it did.
-TOGBankClassic_Guild.peerOldWire = {}
-
---- A peer showed old-wire behaviour. Returns true the first time for this peer.
----@param sender string as it arrived on the wire
----@param how string "state-summary" | "silent"
----@return boolean noted
-function TOGBankClassic_Guild:NotePeerOldWire(sender, how)
-	local norm = self:NormalizeName(sender)
-	if not norm then return false end
-	self.peerOldWire = self.peerOldWire or {}
-	if self.peerOldWire[norm] then return false end
-	self.peerOldWire[norm] = how or "observed"
-	return true
-end
+-- WIRE-SKEW-007 (`peerOldWire` / `NotePeerOldWire`: peers OBSERVED on the old wire -- a
+-- `togbank-state` summary after our accept, or silence for the whole state-wait) WAS HERE. Both
+-- observers went with LIBREQ-DS-008: the tripwire prefix is unregistered and the state-wait is the
+-- library's. A v1.4.1 peer is refused by its version, which VersionCheck names at login.
 
 --- WIRE-SKEW-004: the version a peer runs comes from VersionCheck-1.0 FIRST, and only then from
 --- the hlb2 broadcast.
@@ -2234,18 +2361,11 @@ end
 --- than our own NormalizeName, so the two cannot disagree about a realm suffix and miss silently,
 --- which would look exactly like the bug this replaces. The raw name and our normalized form are
 --- tried after it rather than instead of it.
----@return boolean capable, string why "unknown" | "dev" | "old wire (<how>)" | the observed version
+---@return boolean capable, string why "unknown" | "dev" | the observed version
 function TOGBankClassic_Guild:PeerSpeaksDataLeg(name)
 	local norm = self:NormalizeName(name)
 	local raw = self:ObservedAddonVersion(name, norm)
-	if not raw then
-		-- WIRE-SKEW-007: no version claim, but the peer has already BEHAVED like the old wire with
-		-- us. That is not "not seen" -- the operator's line that must never be crossed -- it is seen,
-		-- doing the one thing a capable client cannot do. Refused until a real claim says otherwise.
-		local how = norm and self.peerOldWire and self.peerOldWire[norm]
-		if how then return false, "old wire (" .. tostring(how) .. ")" end
-		return true, "unknown"
-	end
+	if not raw then return true, "unknown" end
 	if self.IsDevVersion(raw) then return true, "dev" end
 	local n = self.EncodeVersion(raw)
 	-- ObservedAddonVersion never hands back a string that encodes to 0 unless it is a dev marker,
@@ -2466,184 +2586,860 @@ function TOGBankClassic_Guild:QueryAlt(player, name, version)
 	end
 	self:MarkPendingSync("alt", player, name)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "alt", name = name, version = version })
-	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "Guild", nil, "NORMAL")
+	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
 end
 
--- Query - WHISPER to banker if known, GUILD if unknown
--- `forceFull` is accepted and ignored: DELTA-ONLY means every send is a delta, so there is no
--- full-sync path left for it to select. Kept in the signature because call sites still pass it.
-function TOGBankClassic_Guild:QueryAltPullBased(name, hashOnly, _, targetPlayer)
-	if not name then
-		return
+-- LIBREQ-DS-008: `QueryAltPullBased` (the v0.8.0 `alt-request` whisper-or-broadcast, "last resort
+-- after P2P timeout") WAS HERE. It had no caller left in the shipped modules and its ACK branch is
+-- gone with the pull path; nothing sends `alt-request` any more.
+
+-- SHOP-TAB-001 (the operator, 2026-09-14: "a new tab, with a setting to turn it on/off, so folks
+-- can shut it off if their bank doesn't 'sell' items. it should be off by default"): is this guild's
+-- bank a SHOP? Officer-set, guild-synced, OFF unless an officer turned it on -- a missing value is
+-- off, the opposite of storeOpen's default, because most guilds run a plain bank. Off, the Guild
+-- Bank window has no Shop tab and every shop rule below (the open/closed sign, the not-for-sale
+-- list, the estimates) is inert.
+function TOGBankClassic_Guild:IsShopEnabled()
+	local s = self.Info and self.Info.settings
+	return s ~= nil and s.shopEnabled == true
+end
+
+--- Turn the shop on or off, guild-wide. The ONE writer. Returns true when the value changed.
+function TOGBankClassic_Guild:SetShopEnabled(enabled)
+	if not self.Info then return false end
+	if not self.Info.settings then self.Info.settings = {} end
+	enabled = enabled and true or false
+	if self:IsShopEnabled() == enabled then return false end
+	self.Info.settings.shopEnabled = enabled
+	self:BroadcastSettings("ALERT")  -- SETTINGS-001
+	TOGBankClassic_Output:Info(enabled and "The Shop is ON -- the Guild Bank window gains a Shop tab (syncing to guild...)."
+		or "The Shop is OFF -- the Guild Bank window is a plain bank again (syncing to guild...).")
+	local B = TOGBankClassic_UI_Browse
+	if B and B.OnShopSettingChanged then B:OnShopSettingChanged() end
+	return true
+end
+
+-- STORE-006 (GUILD_STORE.md 4.6, build-order step 1): the shop's open/closed sign. One officer-set,
+-- guild-synced boolean; off, no request can be created anywhere (Guild:AddRequest is the gate,
+-- the request dialog says why). A missing value reads as OPEN -- every guild ran without the sign
+-- before it existed, and a client that predates it never sends the field. SHOP-TAB-001: with the
+-- shop off the sign does not exist, and ordering is open.
+function TOGBankClassic_Guild:IsStoreOpen()
+	if not self:IsShopEnabled() then return true end
+	local s = self.Info and self.Info.settings
+	if not s or s.storeOpen == nil then return true end
+	return s.storeOpen == true
+end
+
+--- The sentence every "you cannot order" surface prints, so the request dialog, the Browse
+--- status line and the chat warning all say the same thing.
+-- SHOP-SECTION-001: says SHOP, because that is all the sign governs.
+TOGBankClassic_Guild.STORE_CLOSED_TEXT = "The shop is not taking orders right now -- an officer has closed shop ordering."
+
+-- SHOP-NOFREE-001 (the operator, 2026-09-14: "when the shop tab is shown and ordering is enabled,
+-- there should be no 'free' item requests"): is the bank SELLING right now -- the shop on AND
+-- ordering open? While it is, every request minted is a SHOP ORDER (`request.shopOrder`, with the
+-- estimate the member was shown written on the record, GUILD_STORE.md 4.4) and Guild:AddRequest
+-- refuses a request without the mark, so no surface can place a plain-bank request past the price.
+-- Shop off, or ordering closed, and this is false: the plain bank's free requests are unchanged.
+function TOGBankClassic_Guild:IsShopSelling()
+	return self:IsShopEnabled() and self:IsStoreOpen()
+end
+
+--- Open or close ordering, guild-wide. The ONE writer: the Shop tab's strip box (SHOP-TAB-001)
+--- and the Blizzard options toggle both come here, so the sync and the chat line cannot drift
+--- between them. Returns true when the value changed.
+function TOGBankClassic_Guild:SetStoreOpen(open)
+	if not self.Info then return false end
+	if not self.Info.settings then self.Info.settings = {} end
+	open = open and true or false
+	if self:IsStoreOpen() == open then return false end
+	self.Info.settings.storeOpen = open
+	self:BroadcastSettings("ALERT")  -- SETTINGS-001
+	TOGBankClassic_Output:Info(open and "Shop ordering is OPEN (syncing to guild...)."
+		or "Shop ordering is CLOSED -- members cannot place shop orders (syncing to guild...).")
+	return true
+end
+
+-- STORE-006 (GUILD_STORE.md 4.6, build-order step 2): the not-for-sale list. A per-item block on
+-- the synced settings, keyed by itemID and NOT by name -- same-name variants are a solved problem
+-- here (REQ-001) and a name-keyed list would undo it. Officer-set; off the list, an item is
+-- ordinary; on it, Guild:AddRequest refuses and every surface says why. Capped so a misbehaving
+-- sender cannot grow the settings broadcast without bound.
+local NOT_FOR_SALE_MAX = 500
+
+--- Sanitize an inbound not-for-sale table into `{ [itemID] = true }`: integer keys 1 and up only,
+--- anything else dropped, at most NOT_FOR_SALE_MAX entries. Returns a fresh table.
+local function sanitizeNotForSale(nfs)
+	local clean, n = {}, 0
+	if type(nfs) ~= "table" then return clean end
+	for k, v in pairs(nfs) do
+		local id = tonumber(k)
+		if v and id and id >= 1 and id == math.floor(id) and n < NOT_FOR_SALE_MAX then
+			clean[id] = true
+			n = n + 1
+		end
 	end
+	return clean
+end
+TOGBankClassic_Guild.SanitizeNotForSale = sanitizeNotForSale
 
-	local normName = self:NormalizeName(name)
+function TOGBankClassic_Guild:IsNotForSale(itemID)
+	if not self:IsShopEnabled() then return false end   -- SHOP-TAB-001: no shop, no shop list
+	local s = self.Info and self.Info.settings
+	local nfs = s and s.notForSale
+	itemID = tonumber(itemID)
+	return type(nfs) == "table" and itemID ~= nil and nfs[itemID] == true
+end
 
-	-- Log that we're sending a query
-	TOGBankClassic_Output:Debug("PROTOCOL", "ALT-REQUEST", "[QUERY] QueryAltPullBased called for %s (hashOnly=%s, target=%s)", normName, tostring(hashOnly or false), targetPlayer or "banker")
+--- The sentence every "you cannot order this" surface prints for a blocked item.
+TOGBankClassic_Guild.NOT_FOR_SALE_TEXT = "%s is not for sale -- an officer has taken it off the shop list."
 
-	-- Rate-limit repeated queries for the same alt to reduce stutter
-	self.lastAltQueryTime = self.lastAltQueryTime or {}
-	self.pendingAltRequests = self.pendingAltRequests or {}
-	local now = GetTime()
-	local pendingAt = self.pendingAltRequests[normName]
-	if pendingAt and (now - pendingAt) < 10 then
-		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Skipping query for %s (pending request)", normName)
-		return
-	elseif pendingAt then
-		self.pendingAltRequests[normName] = nil
-	end
-	local lastQuery = self.lastAltQueryTime[normName]
-	if lastQuery and (now - lastQuery) < 3 then
-		TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "Skipping query for %s (rate-limited)", normName)
-		return
-	end
-	self.lastAltQueryTime[normName] = now
-
-	local norm = normName
-	self.hasRequested = true
-	if self.requestCount == nil then
-		self.requestCount = 1
+--- Put an item on, or take it off, the not-for-sale list, guild-wide. The ONE writer (the Browse
+--- tab's officer gesture comes here), so the sync and the chat line cannot drift. Returns true when
+--- the list changed; false for a non-item, a full list, or no change.
+function TOGBankClassic_Guild:SetNotForSale(itemID, blocked, itemName)
+	if not self.Info then return false end
+	itemID = tonumber(itemID)
+	if not itemID or itemID < 1 or itemID ~= math.floor(itemID) then return false end
+	if not self.Info.settings then self.Info.settings = {} end
+	local s = self.Info.settings
+	if type(s.notForSale) ~= "table" then s.notForSale = {} end
+	blocked = blocked and true or false
+	if (s.notForSale[itemID] == true) == blocked then return false end
+	if blocked then
+		local n = 0
+		for _ in pairs(s.notForSale) do n = n + 1 end
+		if n >= NOT_FOR_SALE_MAX then
+			TOGBankClassic_Output:Warn("The not-for-sale list is full (%d items).", NOT_FOR_SALE_MAX)
+			return false
+		end
+		s.notForSale[itemID] = true
 	else
-		self.requestCount = self.requestCount + 1
+		s.notForSale[itemID] = nil
 	end
+	self:BroadcastSettings("ALERT")  -- SETTINGS-001
+	local label = itemName or ("item " .. tostring(itemID))
+	TOGBankClassic_Output:Info(blocked and "%s is now NOT FOR SALE -- members cannot request it (syncing to guild...)."
+		or "%s is back on sale (syncing to guild...).", label)
+	return true
+end
 
-	-- Check if we have an online banker (from guild roster, not broadcasts)
-	local banker = targetPlayer or nil
-	local bankerCount = 0
+-- STORE-003 (GUILD_STORE.md 4.3, build-order step 8; the operator, 2026-09-14, on seeing the Shop
+-- tab: "we need to set a % discount for the items. like if you want to sell all the items at 50%
+-- off, we need to apply that to the pricing that is displayed on the shop tab"): a guild-wide
+-- percentage off the shop's estimate, officer-set, synced like the sign. Applied at DISPLAY on the
+-- Shop tab (Browse:PriceRows), never stored into a price -- the banker's price at fill is the
+-- price (3), so the discount is what the member is shown, not what anyone is charged. A bare
+-- number for now; a per-rank table (4.3's extrapolation) would sit beside it, not replace it.
+--- The discount, 0..100, as an integer. 0 with the shop off, unset, or malformed.
+function TOGBankClassic_Guild:GetStoreDiscount()
+	if not self:IsShopEnabled() then return 0 end
+	local s = self.Info and self.Info.settings
+	local d = s and tonumber(s.storeDiscountPercent)
+	if not d or d ~= d or d < 0 then return 0 end
+	if d > 100 then return 100 end
+	return math.floor(d)
+end
 
-	-- If no target specified, find a banker
-	local myPlayer = self:GetNormalizedPlayer()
-	if not banker then
-		-- MAIL-012 DEBUG: Log all online bankers from guild roster
-		for member, _ in pairs(self.onlineMembers or {}) do
-			if self:IsBank(member) and member ~= myPlayer then
-				bankerCount = bankerCount + 1
-				TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Online banker from roster: %s, isOnline=%s",
-					member, tostring(self:IsPlayerOnline(member)))
-				-- Use first found banker (could randomize or prefer by name)
-				if not banker then
-					banker = member
-				end
+--- Set the discount, guild-wide. The ONE writer. Returns true when the value changed.
+function TOGBankClassic_Guild:SetStoreDiscount(pct)
+	if not self.Info then return false end
+	pct = tonumber(pct)
+	if not pct or pct ~= pct or pct < 0 or pct > 100 then return false end
+	pct = math.floor(pct)
+	if not self.Info.settings then self.Info.settings = {} end
+	if self.Info.settings.storeDiscountPercent == pct then return false end
+	self.Info.settings.storeDiscountPercent = pct
+	self:BroadcastSettings("ALERT")  -- SETTINGS-001 / 002
+	TOGBankClassic_Output:Info(pct > 0 and "Shop discount set to %d%% off every estimate (syncing to guild...)."
+		or "Shop discount removed -- estimates are shown at full value (syncing to guild...).", pct)
+	local B = TOGBankClassic_UI_Browse
+	if B and B.OnShopSettingChanged then B:OnShopSettingChanged() end
+	return true
+end
+
+-- STORE-007 (GUILD_STORE.md 4.7, build-order step 6): the donation rate, points per gold of value,
+-- "an officer-configurable rate -- 1g of value = 1 point by default, with the rate synced through
+-- Guild.Info.settings exactly like the discount". Read through TOGBankClassic_Donations:Rate(),
+-- which is what the ingest applies; a missing or malformed value reads as the default there.
+--- Set the donation rate, guild-wide. The ONE writer. Returns true when the value changed.
+function TOGBankClassic_Guild:SetDonationRate(rate)
+	local D = TOGBankClassic_Donations
+	if not self.Info or not D then return false end
+	rate = tonumber(rate)
+	if not rate or rate ~= rate or rate < D.RATE_MIN or rate > D.RATE_MAX then return false end
+	rate = math.floor(rate * 100 + 0.5) / 100
+	if not self.Info.settings then self.Info.settings = {} end
+	if D:Rate() == rate and self.Info.settings.donationRate ~= nil then return false end
+	self.Info.settings.donationRate = rate
+	self:BroadcastSettings("ALERT")  -- SETTINGS-001
+	TOGBankClassic_Output:Info("Donation credit set to %s per gold of value (syncing to guild...).", D:FormatPoints(rate))
+	return true
+end
+
+-- STORE-002 / DONATION-VALUE-001 (b) (GUILD_STORE.md 4.2.1): the guild's PRICE AUTHORITY -- the one
+-- character whose client publishes the guild price list (Modules/PriceList.lua), so every banker
+-- values a gift the same and every member is shown the same estimate. Officer-set, guild-synced
+-- with the other settings; "" (the default, and a missing value) means no authority and no list,
+-- so a guild that never picks one prices on its own sources as before. Not gated by the shop
+-- switch: a plain bank's donations are valued too.
+local PRICE_AUTHORITY_MAX_LEN = 64
+
+--- The authority's Name-Realm, or nil when none is set.
+function TOGBankClassic_Guild:GetPriceAuthority()
+	local s = self.Info and self.Info.settings
+	local a = s and s.priceAuthority
+	if type(a) ~= "string" or a == "" then return nil end
+	return a
+end
+
+--- Is the character this client is on the price authority?
+function TOGBankClassic_Guild:IsPriceAuthority()
+	local a = self:GetPriceAuthority()
+	local me = a and self:GetNormalizedPlayer()
+	return a ~= nil and me ~= nil and a == me
+end
+
+--- Name (or with "" / nil, clear) the price authority, guild-wide. The ONE writer. A bare name is
+--- normalised to Name-Realm. Returns true when the value changed.
+function TOGBankClassic_Guild:SetPriceAuthority(name)
+	if not self.Info then return false end
+	local norm = ""
+	if type(name) == "string" and not name:match("^%s*$") then
+		norm = self:NormalizeName((name:gsub("^%s+", ""):gsub("%s+$", ""))) or ""
+		if norm == "" then return false end
+		norm = norm:sub(1, PRICE_AUTHORITY_MAX_LEN)
+	end
+	if not self.Info.settings then self.Info.settings = {} end
+	if (self:GetPriceAuthority() or "") == norm then return false end
+	self.Info.settings.priceAuthority = norm
+	self:BroadcastSettings("ALERT")  -- SETTINGS-001 / 002
+	TOGBankClassic_Output:Info(norm ~= "" and "%s now publishes the guild price list -- every estimate and donation value comes from their price sources (syncing to guild...)."
+		or "The guild price list is off -- each client prices on its own sources again (syncing to guild...).", norm)
+	if TOGBankClassic_PriceList then TOGBankClassic_PriceList:OnAuthorityChanged() end
+	return true
+end
+
+-- BANKER-OWNER-001 (the operator, 2026-09-14: "the ability for officers to right click on a banker
+-- in the bankers tab to assign who 'owns' the banker, that info would show on the mouseover
+-- tooltip ... autocomplete for the names on the roster in guild roster but it can be free text
+-- entry as some guilds like ours have a 'shared' account for the banker"): who runs each bank
+-- character. `Info.settings.bankerOwners[norm] = text`, officer-set, guild-synced with the other
+-- settings, free text bounded so a misbehaving sender cannot grow the broadcast. "" clears.
+local BANKER_OWNER_MAX_LEN = 40
+local BANKER_OWNER_MAX     = 100
+
+--- Sanitize an inbound owner table into `{ [Name-Realm] = text }`: string keys and non-empty
+--- string values only, each clamped, at most BANKER_OWNER_MAX entries. Returns a fresh table.
+local function sanitizeBankerOwners(owners)
+	local clean, n = {}, 0
+	if type(owners) ~= "table" then return clean end
+	for norm, text in pairs(owners) do
+		if type(norm) == "string" and norm ~= "" and type(text) == "string" and n < BANKER_OWNER_MAX then
+			text = text:gsub("^%s+", ""):gsub("%s+$", ""):sub(1, BANKER_OWNER_MAX_LEN)
+			if text ~= "" then
+				clean[norm] = text
+				n = n + 1
 			end
 		end
-		-- Fallback: scan memberRoster for online bankers if onlineMembers cache was stale
-		if not banker then
-			GuildRoster()
-			for normRoster, member in pairs(self.memberRoster or {}) do
-				if member.isOnline and member.isBank and normRoster ~= myPlayer then
-					bankerCount = bankerCount + 1
-					banker = banker or normRoster
-					TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Online banker from memberRoster fallback: %s, isOnline=true", normRoster)
-				end
+	end
+	return clean
+end
+TOGBankClassic_Guild.SanitizeBankerOwners = sanitizeBankerOwners
+
+-- XGUILD-OWNERS-001 (the operator, 2026-09-16: "we also need to sync the right click who owns banker
+-- metadata between sister guilds"). The owners travelled as ONE settings field with ONE stamp, so
+-- across a federation whichever guild wrote last replaced the other guild's table outright: the home
+-- guild's owners for its bank characters were wiped by the sister guild's broadcast, or the sister's
+-- never landed at all because the home stamp was newer. Each ENTRY now carries its own stamp
+-- (`bankerOwnerStamps[norm]`, the server time of the write that set or cleared it), a receiver
+-- MERGES entry by entry -- newer stamp wins, a stamped absence is a clear -- and an entry for a bank
+-- character is taken from a sister guild's member only when that bank character is in the SENDER'S
+-- guild: each guild's officers say who runs their own bank characters, and a home guildmate relaying
+-- what it learned (its own settings broadcast) is trusted as the request relay's courier is (D7).
+-- Twice the owner cap: a clear keeps its stamp so an older set cannot resurrect the entry.
+local BANKER_OWNER_STAMPS_MAX = BANKER_OWNER_MAX * 2
+
+--- Sanitize an inbound per-entry stamp table into `{ [Name-Realm] = number }`, capped. Entries that
+--- name an owner in `owners` are kept first, so the cap only ever drops the stamp of a clear.
+local function sanitizeOwnerStamps(stamps, owners)
+	local clean, n = {}, 0
+	if type(stamps) ~= "table" then return clean end
+	local function take(norm, v)
+		if n < BANKER_OWNER_STAMPS_MAX and clean[norm] == nil then
+			clean[norm] = v
+			n = n + 1
+		end
+	end
+	for pass = 1, 2 do
+		for norm, v in pairs(stamps) do
+			v = tonumber(v)
+			if type(norm) == "string" and norm ~= "" and v and v > 0 and v == v then
+				local named = type(owners) == "table" and owners[norm] ~= nil
+				if (pass == 1) == named then take(norm, math.floor(v)) end
 			end
 		end
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "QueryAltPullBased for %s: %d online bankers found from guild roster", norm, bankerCount)
+	end
+	return clean
+end
+TOGBankClassic_Guild.SanitizeOwnerStamps = sanitizeOwnerStamps
+
+--- May THIS client's officers say who runs `norm`'s bank character? Only for a bank character of
+--- their own guild (XGUILD-OWNERS-001); a sister guild's are set by that guild.
+function TOGBankClassic_Guild:BankerOwnerWritable(norm)
+	norm = norm and self:NormalizeName(norm) or nil
+	if not norm then return false end
+	if self.IsHomeMember and self.GuildOf and self:GuildOf(norm) then return self:IsHomeMember(norm) end
+	return true
+end
+
+--- XGUILD-OWNERS-001: merge a received owner table entry by entry. `inOwners` / `inStamps` are the
+--- payload's; an entry is taken when its stamp is newer than the one held, or when neither side has
+--- ever stamped it and we hold nothing for it (seeding from a copy written before the stamps).
+--- `sender` must be a home guildmate, or in the same guild as the bank character the entry names.
+--- Returns true when anything changed.
+function TOGBankClassic_Guild:MergeBankerOwners(sender, inOwners, inStamps)
+	local s = self.Info.settings
+	local owners = sanitizeBankerOwners(s.bankerOwners)
+	local stamps = sanitizeOwnerStamps(s.bankerOwnerStamps, owners)
+	inOwners = sanitizeBankerOwners(inOwners)
+	inStamps = sanitizeOwnerStamps(inStamps, inOwners)
+	-- A sender is held to its own guild's bank characters only when it is KNOWN to be a sister guild's
+	-- member. ApplyRemoteSettings has already authorized it; one the rosters cannot place is treated as
+	-- the settings always treated it (BANKER-OWNER-001's whole-table adopt accepted it).
+	local senderGuild = self.GuildOf and self:GuildOf(sender) or nil
+	local fromHome = not self.IsHomeMember or self:IsHomeMember(sender) or senderGuild == nil
+	local keys = {}
+	for norm in pairs(inOwners) do keys[norm] = true end
+	for norm in pairs(inStamps) do keys[norm] = true end
+	local changed = false
+	for norm in pairs(keys) do
+		local allowed = fromHome or (senderGuild ~= nil and self:GuildOf(norm) == senderGuild)
+		local theirs, ours = inStamps[norm] or 0, stamps[norm] or 0
+		local take = theirs > ours or (theirs == 0 and ours == 0 and owners[norm] == nil and inOwners[norm] ~= nil)
+		if allowed and take then
+			if owners[norm] ~= inOwners[norm] then changed = true end
+			owners[norm] = inOwners[norm]
+			if theirs > 0 then stamps[norm] = theirs end
+		elseif not allowed and take then
+			TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "owner of %s from %s refused: %s is not that bank character's guild",
+				norm, tostring(sender), tostring(senderGuild))
+		end
+	end
+	s.bankerOwners = sanitizeBankerOwners(owners)
+	s.bankerOwnerStamps = sanitizeOwnerStamps(stamps, s.bankerOwners)
+	return changed
+end
+
+--- Who owns `norm`'s bank character, as an officer wrote it, or nil.
+function TOGBankClassic_Guild:GetBankerOwner(norm)
+	local s = self.Info and self.Info.settings
+	local owners = s and s.bankerOwners
+	if type(owners) ~= "table" or not norm then return nil end
+	local text = owners[self:NormalizeName(norm) or norm]
+	return type(text) == "string" and text ~= "" and text or nil
+end
+
+--- Set (or with "" / nil, clear) who owns a bank character, guild-wide. The ONE writer. Returns
+--- true when the value changed.
+function TOGBankClassic_Guild:SetBankerOwner(norm, text)
+	if not self.Info then return false end
+	norm = norm and self:NormalizeName(norm) or nil
+	if not norm then return false end
+	-- XGUILD-OWNERS-001: a sister guild's bank character is that guild's to describe.
+	if not self:BankerOwnerWritable(norm) then return false end
+	text = type(text) == "string" and text:gsub("^%s+", ""):gsub("%s+$", ""):sub(1, BANKER_OWNER_MAX_LEN) or ""
+	if not self.Info.settings then self.Info.settings = {} end
+	local owners = sanitizeBankerOwners(self.Info.settings.bankerOwners)
+	if (owners[norm] or "") == text then return false end
+	if text == "" then
+		owners[norm] = nil
 	else
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "QueryAltPullBased for %s: using target %s (P2P from version broadcast)", norm, banker)
+		local n = 0
+		for _ in pairs(owners) do n = n + 1 end
+		if not owners[norm] and n >= BANKER_OWNER_MAX then return false end
+		owners[norm] = text
 	end
+	-- XGUILD-OWNERS-001: this entry's own stamp, newer than whatever this client held for it.
+	local stamps = sanitizeOwnerStamps(self.Info.settings.bankerOwnerStamps, owners)
+	stamps[norm] = math.max(GetServerTime() or 0, (stamps[norm] or 0) + 1)
+	self.Info.settings.bankerOwners = owners
+	self.Info.settings.bankerOwnerStamps = sanitizeOwnerStamps(stamps, owners)
+	self:BroadcastSettings("ALERT")  -- SETTINGS-001 / 002
+	TOGBankClassic_Output:Info(text ~= "" and "%s is run by %s (syncing to guild...)." or "%s has no owner listed now (syncing to guild...).",
+		norm, text)
+	local B = TOGBankClassic_UI_Browse
+	if B and B.OnBankerOwnerChanged then B:OnBankerOwnerChanged() end
+	return true
+end
 
-	-- Build request message
-	local request = {
-		type = "alt-request",  -- v0.8.0 pull-based request
-		name = norm,
-		requester = self:GetNormalizedPlayer(),
-		hashOnly = hashOnly or false,  -- PERF-005: Request only hash for P2P distribution
-	}
+-- SETTINGS-002: the version of the guild settings this client holds (0 = never stamped).
+function TOGBankClassic_Guild:SettingsVersion()
+	local s = self.Info and self.Info.settings
+	return s and tonumber(s.version) or 0
+end
 
-	-- DELTA-014: Include requester's current hashes (even for stubs!)
-	-- P2P peers will respond ONLY if they have matching hash AND content
-	local requesterAlt = self.Info and self.Info.alts and self.Info.alts[norm]
-	if requesterAlt then
-		-- Send the hash we have (from version broadcast or actual data)
-		request.requesterInventoryHash = requesterAlt.inventoryHash or 0
-		request.requesterMailHash = requesterAlt.mailHash or 0
-		local hasContent = self:HasAltContent(requesterAlt, norm)
-		-- P2P-006: Tell sender if we have content - if not, they should send full data
-		request.requesterHasContent = hasContent
-		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-014] QueryAltPullBased for %s: requester invHash=%08x, mailHash=%08x, hasContent=%s",
-			norm, request.requesterInventoryHash, request.requesterMailHash, tostring(hasContent))
-	else
-		-- No local data at all - send hash=0
-		request.requesterInventoryHash = 0
-		request.requesterMailHash = 0
-		request.requesterHasContent = false
-		TOGBankClassic_Output:Debug("DELTA", "BUILD", "[DELTA-014] QueryAltPullBased for %s: requester invHash=0 (no local entry)", norm)
+-- SETTINGS-004 (Peer Review f5e52bcf F5): PER-FIELD STAMPS. SETTINGS-002's one version stopped a
+-- stale RE-ANNOUNCEMENT and not a stale WRITER: an officer who missed Monday's "ordering closed"
+-- and set the discount on Tuesday stamped the whole payload fresh, and every client adopted the
+-- stale `storeOpen = true` it carried with the new discount. So each field carries the server
+-- time of the write that last changed IT (`settings.stamps[key]`), a receiver adopts field by
+-- field, and a writer's stale copy of a field it did not touch keeps its old stamp and loses.
+--
+-- The stamps are minted HERE, not at the fifteen writer sites: an ALERT broadcast diffs the payload
+-- it builds against the last one this client sent or applied (`lastSettingsPayload`, a deep copy --
+-- Requests.lua mutates `cancelReasons` in place, and a reference would already carry the change),
+-- and stamps only the keys that moved. With no snapshot yet (the first write of a session before
+-- any broadcast was heard or sent) every key is stamped, which is SETTINGS-002's behaviour.
+-- A pre-004 receiver ignores `stamps` and applies whole on `version`, as it did.
+
+local function deepEqual(a, b)
+	if a == b then return true end
+	if type(a) ~= "table" or type(b) ~= "table" then return false end
+	for k, v in pairs(a) do if not deepEqual(v, b[k]) then return false end end
+	for k in pairs(b) do if a[k] == nil then return false end end
+	return true
+end
+
+local function deepCopy(v)
+	if type(v) ~= "table" then return v end
+	local out = {}
+	for k, x in pairs(v) do out[k] = deepCopy(x) end
+	return out
+end
+
+--- The stamp this client holds for one settings field: its own stamp, else the whole-payload
+--- version (a field written before SETTINGS-004 is as old as the version that carried it).
+function TOGBankClassic_Guild:SettingsStamp(key)
+	local s = self.Info and self.Info.settings
+	local st = s and s.stamps
+	local own = type(st) == "table" and tonumber(st[key]) or nil
+	return own or self:SettingsVersion()
+end
+
+--- Stamp every field of `fields` that differs from the last payload sent or applied with `v`,
+--- and remember `fields` as the new snapshot. Returns the stamps table (the held one).
+function TOGBankClassic_Guild:StampChangedFields(fields, v)
+	local s = self.Info.settings
+	if type(s.stamps) ~= "table" then s.stamps = {} end
+	local last = self.lastSettingsPayload
+	for key, val in pairs(fields) do
+		if key ~= "version" and key ~= "stamps" and (not last or not deepEqual(val, last[key])) then
+			s.stamps[key] = v
+		end
 	end
+	self.lastSettingsPayload = deepCopy(fields)
+	return s.stamps
+end
 
-	local data = TOGBankClassic_Core:SerializeWithChecksum(request)
+-- SETTINGS-CANON-001 (the operator, 2026-09-16: "we need to ensure the the request % is being synced
+-- and enforced. people are still allowed to request more than what was set. the officer setting
+-- needs to be part of EVERY sync. they should have a canon has as well and if someones is older, they
+-- need to pull the new settings as part of their sync"). Until this the settings were a PUSH only --
+-- the officer's ALERT write, and an authorized client's re-announcement on its ten-minute cycle -- so
+-- a client that missed both (offline through the write, or logged in while no banker or officer was
+-- on) held the old maximum request % with no way to learn it was behind, and its request dialog
+-- enforced the old number. Now EVERY client's sync broadcast (the hlb2 cycle and the hash-list reply)
+-- names the settings VERSION it holds and a CANON of their values; a client that hears an authorized
+-- guildmate holding newer ones -- or the same version with different values -- ASKS that guildmate by
+-- whisper and is answered with the settings (the existing payload, applied field by field under
+-- SETTINGS-004's stamps). A handshake, not a timer (HANDSHAKE-OVER-TIMERS-001).
 
-	-- QueryAltPullBased is "last resort" - WHISPER banker directly if online, GUILD broadcast if not
-	-- (P2P guild broadcast should be done via BroadcastP2PRequest first)
-	if not banker then
-		-- No banker found in roster - broadcast to GUILD hoping someone has data
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "QueryAltPullBased for %s: no banker found, broadcasting to GUILD", norm)
-		TOGBankClassic_Output:Debug("COMMS", "SEND", "Sending GUILD BROADCAST (no banker): togbank-r for alt %s", norm)
-		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
-		self:MarkPendingSync("alt", "guild", norm)
-		self.pendingAltRequests[norm] = now
-		-- Track as pending P2P request so peer ACKs are processed
-		self.pendingP2PRequests = self.pendingP2PRequests or {}
-		self.pendingP2PRequests[norm] = { noBanker = true, requestedAt = now }
-		return
+--- A deterministic string of a settings value: table keys sorted, so two clients holding the same
+--- values produce the same bytes however their tables were built.
+local function canonicalSettings(v)
+	local t = type(v)
+	if t == "table" then
+		local keys = {}
+		for k in pairs(v) do keys[#keys + 1] = k end
+		table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+		local parts = {}
+		for _, k in ipairs(keys) do parts[#parts + 1] = tostring(k) .. "=" .. canonicalSettings(v[k]) end
+		return "{" .. table.concat(parts, ";") .. "}"
+	elseif t == "string" then
+		return string.format("%q", v)
 	end
+	return tostring(v)
+end
 
-	if not self:IsPlayerOnline(banker) then
-		-- Banker exists but offline - broadcast to GUILD hoping someone else has data
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "QueryAltPullBased for %s: banker %s offline, broadcasting to GUILD", norm, banker)
-		TOGBankClassic_Output:Debug("COMMS", "SEND", "Sending GUILD BROADCAST (banker offline): togbank-r for alt %s", norm)
-		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
-		self:MarkPendingSync("alt", "guild", norm)
-		self.pendingAltRequests[norm] = now
-		-- Track as pending P2P request so peer ACKs are processed
-		self.pendingP2PRequests = self.pendingP2PRequests or {}
-		self.pendingP2PRequests[norm] = { bankerOffline = true, requestedAt = now }
-		return
+--- The seconds between two asks of one peer for one advertised (version, canon), and between two
+--- answers to one asker. A burst of broadcasts is one ask; they are not a wait for anything.
+TOGBankClassic_Guild.SETTINGS_ASK_COOLDOWN = 60
+TOGBankClassic_Guild.SETTINGS_ANSWER_COOLDOWN = 30
+
+--- SETTINGS-CANON-001: the canon of the guild settings this client holds -- a checksum of the synced
+--- VALUES (not the stamps or the version), so two clients that agree on every value agree on it.
+--- nil before the guild record exists.
+---@return string|nil
+function TOGBankClassic_Guild:SettingsCanon()
+	if not (self.Info and self.Info.settings) then return nil end
+	return self:CanonOfSettingsFields(self:SettingsFields())
+end
+
+--- The canon of a SettingsFields-shaped table -- ours, or a guild-settings payload as its sender built
+--- it (SETTINGS-FANOUT-001 records a sender's from the payload). `version` and `stamps` never count.
+---@param source table
+---@return string
+function TOGBankClassic_Guild:CanonOfSettingsFields(source)
+	local Core = TOGBankClassic_Core
+	local fields = {}
+	for k, v in pairs(source) do
+		-- SETTINGS-CANON-002 (Peer Review on 4777d14a, finding 1): the officer rank floor is left OUT.
+		-- ApplyRemoteSettings adopts it from the GM alone but takes the payload's version from any
+		-- authorized sender, so a member answered by a banker held the banker's version with its own
+		-- old floor -- equal version, different canon, forever -- and asked every banker it heard on
+		-- every sync until a GM broadcast reached it. The floor still travels on every payload; the
+		-- GM's own publish (ALERT) and its ten-minute re-announcement deliver it.
+		-- XGUILD-OWNERS-001: the owner stamps are bookkeeping, like `stamps` -- two clients holding the
+		-- same owners agree however they came by them.
+		if k ~= "version" and k ~= "stamps" and k ~= "officerRankFloor" and k ~= "bankerOwnerStamps" then fields[k] = v end
 	end
+	-- Hash the values AS A RECEIVER STORES THEM. ApplyRemoteSettings sanitizes the cancel reasons and
+	-- help notes (filling a missing window key with "", a missing presetDisabled role with {}) and
+	-- floors the two numbers; the writer's own copy keeps whatever shape its editor left. Hashing the
+	-- raw copy made an officer and every member who applied their settings disagree FOREVER -- equal
+	-- version, different canon -- so the pair re-sent the settings on every sync (self-audit finding).
+	-- The two numbers are also clamped where they are SENT (SettingsFields), because a value the
+	-- receiver refuses cannot be matched by any hash.
+	if fields.cancelReasons ~= nil and self.SanitizeCancelReasons then fields.cancelReasons = self.SanitizeCancelReasons(fields.cancelReasons) end
+	if fields.helpNotes ~= nil and self.SanitizeHelpNotes then fields.helpNotes = self.SanitizeHelpNotes(fields.helpNotes) end
+	if tonumber(fields.maxRequestPercent) then fields.maxRequestPercent = math.floor(fields.maxRequestPercent) end
+	if tonumber(fields.autoTombstoneDays) then fields.autoTombstoneDays = math.floor(fields.autoTombstoneDays) end
+	local text = canonicalSettings(fields)
+	return tostring(Core and Core.Checksum and Core:Checksum(text) or #text)
+end
 
-	-- Never whisper ourselves (WoW delivers whispers back to sender, causing self-loops)
-	if banker == myPlayer then
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "Skipping self-query for alt %s - we are the banker (%s)", norm, banker)
-		return
+--- May `sender`'s copy of the settings be adopted? The same standing ApplyRemoteSettings requires --
+--- asking a guildmate whose answer would be dropped would be a wasted whisper.
+function TOGBankClassic_Guild:SettingsSenderAuthorized(sender)
+	return sender ~= nil and (self:SenderHasGbankNote(sender) or self:SenderIsGM(sender) or self:SenderIsOfficer(sender)) and true or false
+end
+
+-- SETTINGS-FANOUT-001 (self-audit 4777d14a F2): a behind member's login hlb2 goes to the whole
+-- guild, and every client with standing that heard it answered -- six bankers and two officers
+-- online sent eight identical settings whispers where one does the job. ONE responder is picked,
+-- without a timer (HANDSHAKE-OVER-TIMERS-001): THE LOWEST-SORTING ONLINE AUTHORIZED GUILDMATE KNOWN
+-- TO HOLD SETTINGS THE ASKER LACKS ANSWERS. Every client records what each authorized guildmate
+-- said it holds -- its hlb2 / hash-list reply (`sv`, `sh`) and its own guild-settings payload, never
+-- an inference about who else heard one -- and defers when an online home guildmate sorting before it
+-- is recorded ahead of the asker. A record only ever UNDER-states what a guildmate holds (versions
+-- only grow), so a deferral is to a guildmate that really is ahead; the one at the bottom of that
+-- chain defers to nobody and answers. KNOWN COST: records refresh on each guildmate's own sync, so in
+-- the ten minutes after an officer's write the bankers' records of each other still show the old
+-- version and several may answer, as before this fix. The one way to miss -- a recorded guildmate
+-- that went offline before the roster said so, or wiped its settings -- is recovered without a timer:
+-- the behind member hears the next hlb2 of any authorized guildmate and asks it (the BEHIND branch).
+
+--- Lua 5.1 compares strings "according to the current locale" (manual §2.5.2), and every client
+--- must agree on who sorts first -- so names are compared byte by byte.
+local function byteLess(a, b)
+	local la, lb = #a, #b
+	for i = 1, math.min(la, lb) do
+		local x, y = a:byte(i), b:byte(i)
+		if x ~= y then return x < y end
 	end
+	return la < lb
+end
 
-	-- WHISPER banker as last resort (banker confirmed online)
-	TOGBankClassic_Output:Debug("COMMS", "SEND", "Sending WHISPER (last resort): togbank-r to %s for alt %s", banker, norm)
-	TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "WHISPER query for %s to banker %s (last resort after P2P timeout)", norm, banker)
+--- Does a holder of (version, canon) hold settings an asker advertising (theirs, theirCanon) lacks?
+--- OnSettingsRequest's own test. A nil canon on either side is unknown, and an unknown never counts
+--- as different.
+local function settingsAhead(version, canon, theirs, theirCanon)
+	if version > theirs then return true end
+	return version == theirs and version > 0 and canon ~= nil and theirCanon ~= nil and canon ~= theirCanon
+end
 
-	if not TOGBankClassic_Core:SendWhisper("togbank-r", data, banker, "NORMAL") then
-		TOGBankClassic_Output:Debug("PROTOCOL", "MAIL-SYNC", "WHISPER query failed for %s to %s", norm, banker)
-		return
+--- SETTINGS-FANOUT-001: record that authorized guildmate `peer` holds (version, canon). A record never
+--- moves backwards except on the peer's own advertisement, which is the truth (a wipe lowers it).
+---@param own boolean true when the peer itself said so (hlb2, hash-list reply, its own payload)
+function TOGBankClassic_Guild:NoteSettingsHeld(peer, version, canon, own)
+	if not (peer and tonumber(version)) or peer == self:GetNormalizedPlayer() then return end
+	if not self:SettingsSenderAuthorized(peer) then return end
+	self.settingsHeard = self.settingsHeard or {}
+	local rec = self.settingsHeard[peer]
+	version = tonumber(version)
+	if own or not rec or version > rec.version then
+		self.settingsHeard[peer] = { version = version, canon = canon ~= nil and tostring(canon) or nil }
 	end
+end
 
-	self:MarkPendingSync("alt", banker, norm)
-	self.pendingAltRequests[norm] = now
+--- SETTINGS-FANOUT-001: a guild-settings payload arrived from `sender`, which holds exactly what it
+--- sent. NOT inferred: that the rest of the guild heard a GUILD payload and now holds it. A receiver
+--- judges the sender's standing by its own roster view (an officer's write before the GM publishes
+--- the rank floor is dropped by clients ranked below the writer, SETTINGS-003), so that inference
+--- would defer to a guildmate that is not ahead -- a missed answer, which is worse than a spare one.
+---@param sender string normalized
+---@param settings table the payload
+function TOGBankClassic_Guild:NoteSettingsBroadcast(sender, settings)
+	if type(settings) ~= "table" then return end
+	self:NoteSettingsHeld(sender, tonumber(settings.version) or 0, self:CanonOfSettingsFields(settings), true)
+end
+
+--- SETTINGS-FANOUT-001: the online authorized home guildmate, sorting before us, known to hold
+--- settings `asker` lacks -- the one that answers it instead of us -- or nil when we answer. Records
+--- of guildmates no longer online, home or authorized are ignored rather than trusted.
+---@param asker string normalized; never a candidate (it is the one behind)
+---@param theirs number the asker's advertised version
+---@param theirCanon string|nil the asker's advertised canon
+---@return string|nil deferTo
+function TOGBankClassic_Guild:SettingsResponderBefore(asker, theirs, theirCanon)
+	local heard = self.settingsHeard
+	if type(heard) ~= "table" then return nil end
+	local me = self:GetNormalizedPlayer() or ""
+	local best = nil
+	for peer, rec in pairs(heard) do
+		if peer ~= me and peer ~= asker and byteLess(peer, best or me)
+			and settingsAhead(rec.version, rec.canon, theirs, theirCanon)
+			and self:IsPlayerOnline(peer) and (not self.IsHomeMember or self:IsHomeMember(peer))
+			and self:SettingsSenderAuthorized(peer) then
+			best = peer
+		end
+	end
+	return best
+end
+
+--- SETTINGS-CANON-001: a HOME guildmate's sync broadcast named the settings it holds (a sister
+--- guild's officers set their own guild's settings, so a sister member's are neither asked for nor
+--- answered). Both sides of the handshake start here, so whichever client holds the newer copy, the
+--- exchange happens on THIS sync rather than on somebody's next ten-minute cycle:
+---   * BEHIND it -- a newer version, or the same version with different values -- ask it by whisper,
+---     when it has the standing whose answer we would adopt;
+---   * AHEAD of it -- a member logging in with yesterday's limit -- answer it by whisper at once, when
+---     WE have that standing (OnSettingsRequest, with its own cooldown) and no online guildmate
+---     outranks us to do it (SETTINGS-FANOUT-001). `private` is an advertisement only WE heard (a
+---     hash-list reply whispered to us): nobody else can answer it, so nobody is deferred to.
+--- One (peer, version, canon) is asked once per SETTINGS_ASK_COOLDOWN.
+---@param sender string normalized
+---@param version any the advertised version (`sv`)
+---@param canon any the advertised canon (`sh`)
+---@param private boolean|nil true when the advertisement reached this client alone
+---@return boolean acted true when an ask or an answer went out
+function TOGBankClassic_Guild:OnSettingsAdvertised(sender, version, canon, private)
+	version = tonumber(version)
+	if not (version and sender and self.Info and self.Info.settings) then return false end
+	if sender == self:GetNormalizedPlayer() then return false end
+	if self.IsHomeMember and not self:IsHomeMember(sender) then return false end
+	local held, heldCanon = self:SettingsVersion(), self:SettingsCanon()
+	canon = canon ~= nil and tostring(canon) or nil
+	self:NoteSettingsHeld(sender, version, canon, true)
+	-- SETTINGS-AHEAD-001: the one rule (settingsAhead) from the sender's side; it was open-coded here
+	-- and in OnSettingsRequest with a different nil check each (Peer Review 2c807551, F3).
+	local behind = settingsAhead(version, canon, held, heldCanon)
+	if not behind then
+		if not private and settingsAhead(held, heldCanon, version, canon) then
+			local deferTo = self:SettingsResponderBefore(sender, version, canon)
+			if deferTo then
+				TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "%s advertised settings v%d it could update; %s (holding v%d) answers it, not us",
+					sender, version, deferTo, self.settingsHeard[deferTo].version)
+				return false
+			end
+		end
+		return self:OnSettingsRequest(sender, { held = version, canon = canon })
+	end
+	if not self:SettingsSenderAuthorized(sender) then return false end
+	local key = sender .. "|" .. version .. "|" .. tostring(canon)
+	self.settingsAsked = self.settingsAsked or {}
+	local now = GetServerTime() or 0
+	local last = self.settingsAsked[key]
+	if last and now - last < self.SETTINGS_ASK_COOLDOWN then return false end
+	self.settingsAsked[key] = now
+	local Core = TOGBankClassic_Core
+	local payload = { type = "settings-request", held = held, canon = heldCanon }
+	local sent = Core and Core:SendWhisper("togbank-hl", Core:SerializeWithChecksum(payload), sender, "NORMAL")
+	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "asked %s for guild settings v%d (holding v%d, canon %s vs %s): %s",
+		sender, version, held, tostring(heldCanon), tostring(canon), sent and "sent" or "not sent")
+	return sent and true or false
+end
+
+--- SETTINGS-CANON-001: a guildmate asked for our settings. Answered by whisper with the settings
+--- payload (BroadcastSettings' own, unstamped) when we hold something the asker does not -- a newer
+--- version, or the same version with different values -- at most once per asker per
+--- SETTINGS_ANSWER_COOLDOWN. BroadcastSettings refuses for a client without standing.
+---@param sender string normalized
+---@param data table { type = "settings-request", held = number, canon = string }
+---@return boolean answered
+function TOGBankClassic_Guild:OnSettingsRequest(sender, data)
+	if type(data) ~= "table" or not sender or not (self.Info and self.Info.settings) then return false end
+	local me = self:GetNormalizedPlayer()
+	if not me or sender == me or not self:SettingsSenderAuthorized(me) then return false end
+	local held, heldCanon = self:SettingsVersion(), self:SettingsCanon()
+	local theirs = tonumber(data.held) or 0
+	-- Equal versions differing in value are answered only once something has been stamped: two
+	-- never-stamped clients can hold different defaults (a field one of them has never had), and an
+	-- unstamped payload cannot settle that -- it would be re-sent on every sync for nothing.
+	local differs = settingsAhead(held, heldCanon, theirs, data.canon ~= nil and tostring(data.canon) or nil)
+	if not differs then return false end
+	self.settingsAnswered = self.settingsAnswered or {}
+	local now = GetServerTime() or 0
+	local last = self.settingsAnswered[sender]
+	if last and now - last < self.SETTINGS_ANSWER_COOLDOWN then return false end
+	self.settingsAnswered[sender] = now
+	self:BroadcastSettings(nil, sender)
+	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "answered %s's settings ask with v%d (it held v%d)", sender, held, theirs)
+	return true
+end
+
+-- SETTINGS-003 (Peer Review f5e52bcf F1): WHO IS AN OFFICER, as far as a RECEIVER can tell.
+-- memberRoster.isOfficer was built from a threshold = the LOCAL player's own rank (nil when it
+-- cannot view officer notes), so an officer's settings write, and its donation bucket, were
+-- DROPPED by every receiver ranked below the writer -- the GM's client and every member included.
+-- The shop's controls reached nobody they govern unless the writer was the GM or wore a gbank note.
+--
+-- The client's rank permissions are readable through C_GuildInfo.GuildControlGetRankFlags
+-- (classic_era GuildInfoDocumentation.lua; index 11 = View Officer Note, the same predicate the
+-- writer's CanViewOfficerNote answers). Blizzard's own Era code reads it from the Guild Control
+-- UI -- the GM's -- and nothing documents what a non-GM's client gets back, so ONLY THE GM'S client
+-- reads it: it derives the highest rank that may view officer notes and publishes that as
+-- `officerRankFloor` on the synced settings, which a receiver adopts from a GM sender alone
+-- (rankIndex 0 is the one rank every client can judge). Every client then judges a sender against
+-- a number it holds. Until the GM has logged in on this build the old threshold rule stands (a
+-- lower bound); KNOWN COST, stated in the CHANGELOG.
+TOGBankClassic_Guild.VIEW_OFFICER_NOTE_FLAG = 11
+
+--- The published floor: the highest rankIndex that counts as an officer, or nil when the GM has
+--- not published one.
+function TOGBankClassic_Guild:OfficerRankFloor()
+	local s = self.Info and self.Info.settings
+	local n = s and tonumber(s.officerRankFloor)
+	if n and n >= 0 and n == math.floor(n) then return n end
+	return nil
+end
+
+--- Read the floor from the client's rank permissions: the highest rankIndex whose flags say View
+--- Officer Note. nil when the API is absent or answers nothing (a non-GM client, or no data yet).
+function TOGBankClassic_Guild:ReadOfficerRankFloor()
+	if not (C_GuildInfo and C_GuildInfo.GuildControlGetRankFlags and GuildControlGetNumRanks) then return nil end
+	local n = tonumber(GuildControlGetNumRanks()) or 0
+	local floor = nil
+	for order = 1, n do
+		local ok, flags = pcall(C_GuildInfo.GuildControlGetRankFlags, order)
+		if ok and type(flags) == "table" and flags[self.VIEW_OFFICER_NOTE_FLAG] == true then
+			floor = order - 1
+		end
+	end
+	return floor
+end
+
+--- The GM's client publishes the floor when it differs from what the guild holds. Called after
+--- every roster rebuild; a no-op on any other client. Returns true when it broadcast.
+function TOGBankClassic_Guild:PublishOfficerRankFloor()
+	local me = self:GetNormalizedPlayer()
+	if not (me and self.Info and self:SenderIsGM(me)) then return false end
+	local floor = self:ReadOfficerRankFloor()
+	if floor == nil or floor == self:OfficerRankFloor() then return false end
+	self.Info.settings = self.Info.settings or {}
+	self.Info.settings.officerRankFloor = floor
+	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "officer rank floor read from the guild's rank permissions: rankIndex <= %d", floor)
+	self:BroadcastSettings("ALERT")
+	return true
+end
+
+--- SETTINGS-002: a local officer write happened -- stamp the settings newer than anything held,
+--- so every client that hears this broadcast prefers it to what it holds. Server time, so every
+--- client's stamps are on one clock; +1 over the held version guards two writes in one second.
+function TOGBankClassic_Guild:StampSettings()
+	if not self.Info then return 0 end
+	if not self.Info.settings then self.Info.settings = {} end
+	local v = math.max(GetServerTime() or 0, self:SettingsVersion() + 1)
+	self.Info.settings.version = v
+	return v
 end
 
 -- SETTINGS-001: Broadcast guild-wide settings to all online members.
 -- Only authorized senders (banker/officer/GM) may broadcast. Called after any settings change
 -- and piggybacked onto the periodic SyncDeltaVersion cycle (TIMER_INTERVALS.VERSION_BROADCAST)
 -- so new joiners also receive values.
-function TOGBankClassic_Guild:BroadcastSettings(priority)
+--
+-- SETTINGS-002: THE SETTINGS CARRY A VERSION, and a receiver applies only a newer one. Without it
+-- the periodic piggyback made every authorized client a writer: a banker logging in with
+-- yesterday's settings re-broadcast them on its first cycle and reverted an officer's close /
+-- shop-off / not-for-sale / rate on every client (last writer wins). The version is the server
+-- time of the officer's write, stamped HERE when the call is the write's own ALERT broadcast --
+-- every writer in the addon calls BroadcastSettings("ALERT") after mutating, and the periodic
+-- piggyback calls it with no priority, so "ALERT" is the one signal that distinguishes "I changed
+-- something" from "I am re-announcing what I hold". A re-announcement carries the version it
+-- holds and cannot overwrite a newer one; the stale client is itself corrected by the next newer
+-- broadcast it hears.
+--
+-- XGUILD-SYNC-001 (D6): with `target`, the same payload goes by WHISPER to one federated asker
+-- instead of to the guild -- never stamped (it is a re-announcement), never a write.
+function TOGBankClassic_Guild:BroadcastSettings(priority, target)
 	if not self.Info or not self.Info.settings then return end
 	local myPlayer = self:GetNormalizedPlayer()
 	if not myPlayer then return end
 	if not self:IsBank(myPlayer) and not self:SenderIsOfficer(myPlayer) and not self:SenderIsGM(myPlayer) then return end
-	local payload = {
-		type = "guild-settings",
-		settings = {
-			maxRequestPercent = self.Info.settings.maxRequestPercent,
-			autoTombstoneDays = self.Info.settings.autoTombstoneDays,
-			-- CANCELREASON-001: officer-authored custom cancel reasons + preset disable-set
-			cancelReasons = self.Info.settings.cancelReasons,
-			-- HELPNOTE-001: officer-authored per-window help-tooltip notes
-			helpNotes = self.Info.settings.helpNotes,
-		},
-	}
+	local stamped = nil
+	if priority == "ALERT" and not target then stamped = self:StampSettings() end
+	local fields = self:SettingsFields()
+	-- SETTINGS-002: always a number; 0 is "never stamped" (a client that has only ever held
+	-- defaults, or one built before the field).
+	fields.version = self:SettingsVersion()
+	local payload = { type = "guild-settings", settings = fields }
+	-- SETTINGS-004: a write stamps the fields it changed; a re-announcement (and the whisper to a
+	-- federated asker) carries the stamps it holds. Either way the snapshot moves to this payload.
+	if stamped then
+		self:StampChangedFields(payload.settings, stamped)
+	else
+		self.lastSettingsPayload = deepCopy(payload.settings)
+	end
+	payload.settings.stamps = deepCopy(self.Info.settings.stamps)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
-	TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "NORMAL")
-	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "BroadcastSettings: maxRequestPercent=%s autoTombstoneDays=%s",
-		tostring(payload.settings.maxRequestPercent), tostring(payload.settings.autoTombstoneDays))
+	if target then
+		TOGBankClassic_Core:SendWhisper("togbank-hl", data, target, priority or "NORMAL")
+	else
+		TOGBankClassic_Core:SendCommMessage("togbank-hl", data, "GUILD", nil, priority or "NORMAL")
+	end
+	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "BroadcastSettings to %s: maxRequestPercent=%s autoTombstoneDays=%s",
+		target or "guild", tostring(payload.settings.maxRequestPercent), tostring(payload.settings.autoTombstoneDays))
+end
+
+--- The synced settings VALUES, as they go on the wire -- BroadcastSettings' payload without its
+--- version and stamps, and what SettingsCanon hashes (SETTINGS-CANON-001), so the broadcast and the
+--- canon cannot name different fields.
+---@return table fields
+function TOGBankClassic_Guild:SettingsFields()
+	local s = self.Info.settings
+	return {
+		-- SETTINGS-003: the officer rank floor the GM published (nil until then).
+		officerRankFloor = self:OfficerRankFloor(),
+		-- SETTINGS-CANON-002 (Peer Review on 4777d14a): the two numbers go out in the form a receiver
+		-- STORES -- whole, the percent within 1..100, the days at least 1 -- the range the receiving gate
+		-- in ApplyRemoteSettings accepts and Guild:MaxRequestPercent enforces. A legacy stored 0 went out
+		-- raw, every receiver refused it and kept its own, and the canons never matched. nil stays nil.
+		maxRequestPercent = tonumber(s.maxRequestPercent) and math.min(100, math.max(1, math.floor(s.maxRequestPercent))) or nil,
+		autoTombstoneDays = tonumber(s.autoTombstoneDays) and math.max(1, math.floor(s.autoTombstoneDays)) or nil,
+		-- CANCELREASON-001: officer-authored custom cancel reasons + preset disable-set
+		cancelReasons = s.cancelReasons,
+		-- HELPNOTE-001: officer-authored per-window help-tooltip notes
+		helpNotes = s.helpNotes,
+		-- STORE-006: the open/closed sign. Sent as a real boolean, never nil, so a receiver that has
+		-- it can tell "closed" from "this sender predates the field".
+		storeOpen = s.storeOpen ~= false,   -- the stored sign, not the shop-gated read
+		-- STORE-006: the not-for-sale list, always a table (empty means "nothing blocked"), so a
+		-- receiver can tell "cleared" from "this sender predates the field".
+		notForSale = sanitizeNotForSale(s.notForSale),
+		-- SHOP-TAB-001: whether this guild's bank is a shop at all. A real boolean, never nil.
+		shopEnabled = self:IsShopEnabled(),
+		-- XGUILD-SWITCH-001: whether this bank spans the sister guilds. A real boolean, never nil.
+		sisterBank = self:IsSisterBankEnabled(),
+		-- STORE-003: the discount, the STORED number (0 when unset), not the shop-gated read.
+		storeDiscountPercent = tonumber(s.storeDiscountPercent) or 0,
+		-- STORE-007: points per gold of donated value. Always a number (the default when unset), so
+		-- a receiver can tell "the default" from "this sender predates the field". Guarded like the
+		-- UI modules above: a spec that loads Guild alone must not depend on a global another spec
+		-- file left behind.
+		donationRate = TOGBankClassic_Donations and TOGBankClassic_Donations:Rate() or nil,
+		-- BANKER-OWNER-001: who runs each bank character, always a table (empty means "nobody
+		-- listed"), so a receiver can tell "cleared" from "this sender predates the field".
+		bankerOwners = sanitizeBankerOwners(s.bankerOwners),
+		-- XGUILD-OWNERS-001: each owner entry's own stamp (a clear keeps one), always a table, so a
+		-- receiver merges entry by entry instead of replacing the table.
+		bankerOwnerStamps = sanitizeOwnerStamps(s.bankerOwnerStamps, s.bankerOwners),
+		-- STORE-002: the price authority, always a string ("" = none), so a receiver can tell
+		-- "cleared" from "this sender predates the field".
+		priceAuthority = self:GetPriceAuthority() or "",
+	}
 end
 
 -- CANCELREASON-001: bounds for the synced cancel-reason config (keeps the
@@ -2720,21 +3516,139 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 	end
 	if not self.Info then return end
 	if not self.Info.settings then self.Info.settings = {} end
-	if type(settings.maxRequestPercent) == "number" and settings.maxRequestPercent >= 1 and settings.maxRequestPercent <= 100 then
+	-- SETTINGS-002: a pre-004 sender (no `stamps`) carries one version for the whole payload, and
+	-- only a version at least as new as the held one is applied -- a stale client's re-announcement
+	-- (older) is dropped whole. A pre-002 sender carries no version and reads as 0: it can still
+	-- seed a client that has never held a stamped copy, and nothing else.
+	-- SETTINGS-004: a sender with `stamps` is judged FIELD BY FIELD -- each field against the stamp
+	-- this client holds for it. A field the payload carries no stamp for is of unknown age and reads
+	-- as 0: it can seed an empty client and displaces nothing (a re-announcement from a client that
+	-- has not written since the upgrade carries exactly that).
+	local incoming = tonumber(settings.version) or 0
+	local held = self:SettingsVersion()
+	local inStamps = type(settings.stamps) == "table" and settings.stamps or nil
+	if not inStamps and incoming < held then
+		TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from %s ignored: version %s is older than the held %s",
+			tostring(sender), tostring(incoming), tostring(held))
+		return
+	end
+	local adopted = {}
+	--- Is the payload's copy of `key` at least as new as ours? Records the stamp to keep when so.
+	local function adopt(key)
+		local stamp = inStamps and (tonumber(inStamps[key]) or 0) or incoming
+		if stamp < self:SettingsStamp(key) then return false end
+		adopted[key] = stamp
+		return true
+	end
+	-- The version moves even when no field below is adopted, DELIBERATELY: it names the newest write
+	-- this client has heard, and the stamps decide each value. Every field is adoptable from any
+	-- authorized sender except the officer rank floor (GM only) -- which is why SettingsCanon leaves
+	-- the floor out (SETTINGS-CANON-002): otherwise this line makes "equal version, different values".
+	if incoming > held then self.Info.settings.version = incoming end
+	if type(settings.maxRequestPercent) == "number" and settings.maxRequestPercent >= 1 and settings.maxRequestPercent <= 100
+		and adopt("maxRequestPercent") then
 		self.Info.settings.maxRequestPercent = math.floor(settings.maxRequestPercent)
 	end
-	if type(settings.autoTombstoneDays) == "number" and settings.autoTombstoneDays >= 1 then
+	if type(settings.autoTombstoneDays) == "number" and settings.autoTombstoneDays >= 1 and adopt("autoTombstoneDays") then
 		self.Info.settings.autoTombstoneDays = math.floor(settings.autoTombstoneDays)
 	end
 	-- CANCELREASON-001: apply synced cancel-reason config only when the sender
 	-- actually carried one (older clients omit the field — don't wipe local).
-	if settings.cancelReasons ~= nil then
+	if settings.cancelReasons ~= nil and adopt("cancelReasons") then
 		self.Info.settings.cancelReasons = sanitizeCancelReasons(settings.cancelReasons)
 	end
 	-- HELPNOTE-001: apply synced help notes only when present (old clients omit it).
-	if settings.helpNotes ~= nil then
+	if settings.helpNotes ~= nil and adopt("helpNotes") then
 		self.Info.settings.helpNotes = sanitizeHelpNotes(settings.helpNotes)
 	end
+	-- STORE-006: the open/closed sign, only when the sender carried it -- a pre-STORE client's
+	-- broadcast must not reopen a shop an officer closed. Anything but `true` is closed.
+	if settings.storeOpen ~= nil and adopt("storeOpen") then
+		self.Info.settings.storeOpen = settings.storeOpen == true
+	end
+	-- STORE-006: the not-for-sale list, only when carried -- an older client's broadcast must not
+	-- put every item back on sale. Sanitized: integer item ids, capped.
+	if settings.notForSale ~= nil and adopt("notForSale") then
+		self.Info.settings.notForSale = sanitizeNotForSale(settings.notForSale)
+	end
+	-- SHOP-TAB-001: the shop switch, only when carried; a change repaints the Guild Bank window's
+	-- tab strip on this client (the Shop tab appears or goes).
+	if settings.shopEnabled ~= nil and adopt("shopEnabled") then
+		local was = self:IsShopEnabled()
+		self.Info.settings.shopEnabled = settings.shopEnabled == true
+		if was ~= self:IsShopEnabled() then
+			local B = TOGBankClassic_UI_Browse
+			if B and B.OnShopSettingChanged then B:OnShopSettingChanged() end
+		end
+	end
+	-- XGUILD-SWITCH-001: the sister-guild bank switch, only when carried; a change rebuilds the
+	-- rosters on this client so the sister bankers appear or go.
+	if settings.sisterBank ~= nil and adopt("sisterBank") then
+		local was = self:IsSisterBankEnabled()
+		self.Info.settings.sisterBank = settings.sisterBank == true
+		if was ~= self:IsSisterBankEnabled() then self:OnSisterBankChanged() end
+	end
+	-- STORE-003: the discount, only when carried and a number in 0..100; a change repaints an open
+	-- Shop tab on this client.
+	local pct = tonumber(settings.storeDiscountPercent)
+	if pct and pct == pct and pct >= 0 and pct <= 100 and adopt("storeDiscountPercent") then
+		pct = math.floor(pct)
+		if self.Info.settings.storeDiscountPercent ~= pct then
+			self.Info.settings.storeDiscountPercent = pct
+			local B = TOGBankClassic_UI_Browse
+			if B and B.OnShopSettingChanged then B:OnShopSettingChanged() end
+		end
+	end
+	-- STORE-007: the donation rate, only when carried and within bounds -- an older client's
+	-- broadcast must not reset a rate an officer chose, and a garbage value is not a rate.
+	local D = TOGBankClassic_Donations
+	local rate = tonumber(settings.donationRate)
+	if D and rate and rate == rate and rate >= D.RATE_MIN and rate <= D.RATE_MAX and adopt("donationRate") then
+		self.Info.settings.donationRate = math.floor(rate * 100 + 0.5) / 100
+	end
+	-- BANKER-OWNER-001: the owners, only when carried -- an older client's broadcast must not
+	-- clear them. Sanitized and capped; a change repaints an open Bankers tab.
+	-- XGUILD-OWNERS-001: a sender that carries per-entry stamps is MERGED entry by entry (a sister
+	-- guild's entries reach us without replacing ours); a sender from before them is adopted whole on
+	-- the field's stamp, as it always was -- such a client predates the federation, so it is home.
+	if type(settings.bankerOwnerStamps) == "table" and settings.bankerOwners ~= nil then
+		-- The FIELD's stamp still moves forward (self-audit 2026-09-16): the whole-table branch below
+		-- judges a pre-stamp sender against it, and a stamp left behind let a v1.5.1 officer's
+		-- re-announcement, stamped after the held one but before this payload, replace the merged
+		-- table and wipe every sister guild's entry.
+		adopt("bankerOwners")
+		if self:MergeBankerOwners(sender, settings.bankerOwners, settings.bankerOwnerStamps) then
+			local B = TOGBankClassic_UI_Browse
+			if B and B.OnBankerOwnerChanged then B:OnBankerOwnerChanged() end
+		end
+	elseif settings.bankerOwners ~= nil and adopt("bankerOwners") then
+		self.Info.settings.bankerOwners = sanitizeBankerOwners(settings.bankerOwners)
+		local B = TOGBankClassic_UI_Browse
+		if B and B.OnBankerOwnerChanged then B:OnBankerOwnerChanged() end
+	end
+	-- STORE-002: the price authority, only when carried (a string; "" clears) -- an older client's
+	-- broadcast must not unset it. Normalised and clamped; a change re-reads the held list against
+	-- the new name, and a client that IS the new authority publishes.
+	if type(settings.priceAuthority) == "string" and adopt("priceAuthority") then
+		local a = settings.priceAuthority
+		if a ~= "" then a = (self:NormalizeName(a) or ""):sub(1, PRICE_AUTHORITY_MAX_LEN) end
+		if (self:GetPriceAuthority() or "") ~= a then
+			self.Info.settings.priceAuthority = a
+			if TOGBankClassic_PriceList then TOGBankClassic_PriceList:OnAuthorityChanged() end
+		end
+	end
+	-- SETTINGS-003: the officer rank floor, from the GM ALONE -- rankIndex 0 is the one rank every
+	-- receiver can judge for itself, and this field is what lets it judge the rest.
+	local floor = tonumber(settings.officerRankFloor)
+	if floor and floor >= 0 and floor == math.floor(floor) and self:SenderIsGM(sender) and adopt("officerRankFloor") then
+		self.Info.settings.officerRankFloor = floor
+	end
+	-- SETTINGS-004: keep the stamps of what was adopted, and let the next write diff against this.
+	if next(adopted) then
+		if type(self.Info.settings.stamps) ~= "table" then self.Info.settings.stamps = {} end
+		for key, stamp in pairs(adopted) do self.Info.settings.stamps[key] = stamp end
+	end
+	self.lastSettingsPayload = nil   -- rebuilt from the held settings by the next broadcast
 	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from %s: maxRequestPercent=%s autoTombstoneDays=%s cancelCustom=%d",
 		tostring(sender), tostring(self.Info.settings.maxRequestPercent), tostring(self.Info.settings.autoTombstoneDays),
 		(self.Info.settings.cancelReasons and self.Info.settings.cancelReasons.custom and #self.Info.settings.cancelReasons.custom) or 0)
@@ -2744,6 +3658,13 @@ end
 function TOGBankClassic_Guild:SenderHasGbankNote(sender)
 	if not sender then
 		return false
+	end
+	-- XGUILD-SYNC-001 (D3/D4): a sister guild's banker is one by the note its roster carries.
+	-- Read from memberRoster, which _AddSisterMembers filled from that note; a stub entry (an
+	-- unauthenticated sighting) has no guildKey and never answers here.
+	local m = self.memberRoster and self.memberRoster[sender]
+	if m and m.guildKey and not m.isStub and m.isBank then
+		return true
 	end
 	for i = 1, GetNumGuildMembers() do
 		local playerRealm, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
@@ -2834,6 +3755,37 @@ function TOGBankClassic_Guild:InitRosterCallbacks()
 	lib.RegisterCallback(self, "OnMemberJoined", onMembershipChanged)
 	lib.RegisterCallback(self, "OnMemberLeft",   onMembershipChanged)
 
+	-- XGUILD-BANKERS-001 (the operator, 2026-09-16: "i have the sister guild set up, and i have the
+	-- sister guild in guild roster with the info. should i not have the list of their bankers, and
+	-- should they not be populating in the bankers tab?"). A sister guild's bank characters reach
+	-- memberRoster (and so GetBanks, the Bankers tab and every banker list) only when memberRoster is
+	-- REBUILT, and nothing rebuilt it when a sister roster arrived: the library files the FIRST copy of
+	-- a sister roster as a baseline and fires no OnMemberJoined per member (SetSisterRoster,
+	-- LibGuildRoster-1.0.lua:3132-3134), a pull that only changes notes fires no join either, and the
+	-- persisted copy restored at login lands whenever it lands. So a roster that came after TOGBank's
+	-- login rebuild -- the operator's, 290 members with their gbank notes saved -- contributed no
+	-- bankers until relog happened to order things the other way. Every signal the library gives for a
+	-- sister roster (its own window repaints on the same three, :7029) now rebuilds, when the sister
+	-- bankers it names actually changed.
+	local function onSisterRosterChanged(_, key)
+		local G = TOGBankClassic_Guild
+		if not G:IsSisterBankEnabled() then return end
+		if type(key) == "string" and lib.GetHomeGuildKey and key == lib:GetHomeGuildKey() then return end
+		local names = table.concat(G:_SisterBankers(), ",")
+		if names == G._sisterBankersSeen then return end
+		G._sisterBankersSeen = names
+		TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "Sister roster changed (%s) - rebuilding the banker roster", tostring(key))
+		G:_RefreshFromRosterLib()
+		G:InvalidateBanksCache()
+		G:RebuildBankerRoster()
+		if G.RefreshRequestsUI then G:RefreshRequestsUI() end
+		local B = TOGBankClassic_UI_Browse
+		if B and B.Refresh then B:Refresh() end
+	end
+	lib.RegisterCallback(self, "OnSisterRosterUpdated", onSisterRosterChanged)
+	lib.RegisterCallback(self, "OnRosterHashChanged", onSisterRosterChanged)
+	lib.RegisterCallback(self, "OnSisterConfigChanged", function() onSisterRosterChanged(nil, nil) end)
+
 	self._rosterCallbacksBound = true
 	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "LibGuildRoster presence callbacks bound")
 	return true
@@ -2888,6 +3840,11 @@ function TOGBankClassic_Guild:_RefreshFromRosterLib()
 		localOfficerThreshold = meMember and meMember.rankIndex or nil
 	end
 
+	-- XGUILD-SYNC-001: the "spoke TOGBank to us" stamps survive the rebuild, or every refresh
+	-- would forget which sister member FederationPeer should prefer.
+	local spoke = {}
+	for n, m in pairs(self.memberRoster) do spoke[n] = m.spokeAt end
+
 	wipe(self.memberRoster)
 	wipe(self.onlineMembers)
 
@@ -2929,7 +3886,59 @@ function TOGBankClassic_Guild:_RefreshFromRosterLib()
 		end
 	end
 
+	onlineCount = onlineCount + self:_AddSisterMembers(lib, spoke)
 	return onlineCount, #names
+end
+
+--- XGUILD-SYNC-001 (docs/XGUILD_SYNC.md 4.1): the members of every listed sister guild join
+--- memberRoster with `guildKey` set, so IsPlayerOnline / IsBank / IsViewOnlyBank / the labels
+--- answer for them. A sister member is ONLINE when the library has a fresh sighting of them
+--- (GetOnlineMembersScoped: a presence stamp inside its TTL); a banker when its public note --
+--- `member.note`, carried from LibGuildRoster MINOR 19 (LIBREQ-GR-002) and feature-detected, so an
+--- older provider's roster has none -- says so; an officer
+--- only when the library marks one (it does not today, so never). A home member is never
+--- overwritten: home wins, as the library's own IsInAnyRoster rules. Returns how many sister
+--- members are online. Feature-detected on the cross-guild methods; an older library adds none.
+function TOGBankClassic_Guild:_AddSisterMembers(lib, spoke)
+	lib = lib or RosterLib()
+	spoke = spoke or {}
+	if not (lib and lib.GetSisterGuildKeys and lib.GetRoster and lib.GetOnlineMembersScoped) then return 0 end
+	local homeKey = lib.GetHomeGuildKey and lib:GetHomeGuildKey() or nil
+	local online = 0
+	for _, key in ipairs(self:SisterGuildKeys(lib)) do   -- XGUILD-SWITCH-001: none while off
+		local roster = key ~= homeKey and lib:GetRoster(key) or nil
+		if roster then
+			local seen = {}
+			for _, n in ipairs(lib:GetOnlineMembersScoped(key) or {}) do seen[n] = true end
+			for name, m in pairs(roster) do
+				local norm = self:NormalizeName(name)
+				if norm and not self.memberRoster[norm] then
+					local note = tostring(m.note or "")
+					local isBank = string.find(note, "gbank", 1, true) ~= nil
+					self.memberRoster[norm] = {
+						name        = norm,
+						class       = m.class,
+						level       = m.level or 1,
+						rankIndex   = m.rankIndex,
+						rankName    = m.rank,
+						isOnline    = seen[norm] == true,
+						isOfficer   = m.isOfficer == true,
+						isBank      = isBank,
+						viewOnly    = (isBank and noteIsViewOnly(note, "")) or false,
+						note        = isBank and note or nil,
+						guildKey    = key,
+						spokeAt     = spoke[norm],
+						lastUpdated = GetServerTime(),
+					}
+					if seen[norm] then
+						self.onlineMembers[norm] = true
+						online = online + 1
+					end
+				end
+			end
+		end
+	end
+	return online
 end
 
 --- BROWSE-008: which bankers are online right now, as `{ [name] = true }`, for the before/after
@@ -2977,6 +3986,11 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 			"Refreshed roster from LibGuildRoster: %d total, %d online (%.1f ms)",
 			libTotal, libOnline, libDuration)
 		notifyIfBankersOnlineChanged(self, before)
+		-- SETTINGS-003: the GM's client publishes the officer rank floor it can read; nobody else's
+		-- does anything here.
+		self:PublishOfficerRankFloor()
+		-- SHARE-BTN-LIVE-001: banker status may have just arrived with a window open.
+		if TOGBankClassic_UI and TOGBankClassic_UI.SyncShareButtons then TOGBankClassic_UI:SyncShareButtons() end
 		return libOnline, libTotal
 	end
 
@@ -2992,7 +4006,9 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	local onlineCount = 0
 
 	-- REQSYNC-008: Determine the officer rank threshold at cache-build time.
-	-- Classic Era has no per-rank permission API (GuildControlGetRankFlags is Retail-only).
+	-- (This said Classic Era has no per-rank permission API; C_GuildInfo.GuildControlGetRankFlags
+	-- exists there, but is read on the GM's client only -- SETTINGS-003 -- and reaches everyone
+	-- else as the published floor SenderIsOfficer unions with this threshold.)
 	-- CanViewOfficerNote() tells us whether the LOCAL player has officer-note access.
 	-- In Classic, ranks are strictly ordered: lower rankIndex = more permissions.
 	-- Therefore if the local player at rankIndex N can view officer notes, every member
@@ -3059,6 +4075,9 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 	TOGBankClassic_Output:Debug("ROSTER", "REFRESH", "[GUILD ROSTER] Refreshed online cache: %d/%d members online", onlineCount, totalMembers or 0)
 
 	notifyIfBankersOnlineChanged(self, before)   -- BROWSE-008
+	self:PublishOfficerRankFloor()               -- SETTINGS-003
+	-- SHARE-BTN-LIVE-001: banker status may have just arrived with a window open.
+	if TOGBankClassic_UI and TOGBankClassic_UI.SyncShareButtons then TOGBankClassic_UI:SyncShareButtons() end
 	return onlineCount, totalMembers
 end
 
@@ -3094,6 +4113,19 @@ function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline, source)
 		if self.memberRoster[normalized] then
 			self.memberRoster[normalized].isOnline = true
 			self.memberRoster[normalized].lastUpdated = GetServerTime()
+			-- XGUILD-SYNC-001: a TOGBank message is proof the member RUNS TOGBank -- the stamp
+			-- FederationPeer prefers over the library's sighting of any addon message. And for a
+			-- SISTER member the library is told too: its presence is stamped only by its own pull
+			-- traffic, and FederationPeer draws its candidates from that presence, so a sister
+			-- member who spoke to us would otherwise not be one until the library's next pull.
+			if source == "addon-message-received" then
+				local m = self.memberRoster[normalized]
+				m.spokeAt = GetServerTime()
+				local lib = m.guildKey and RosterLib()
+				if lib and lib.MarkOnline then lib:MarkOnline(m.guildKey, { normalized }) end
+				-- XGUILD-PEER-001: and a sister guild nobody has asked yet is asked now.
+				if m.guildKey and not m.isStub then self:OnFederationPeerProven(normalized) end
+			end
 		else
 			-- Create stub entry if member not in roster yet (shouldn't happen, but safeguard)
 			--
@@ -3183,6 +4215,19 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 		return lib:IsOnline(norm) == true
 	end
 
+	-- XGUILD-INVENTORY-001: a SISTER guild's member is online by the library's presence stamp, read
+	-- NOW. memberRoster copies that stamp only when it is rebuilt, and the stamps that matter arrive
+	-- between rebuilds (the library's pull answer, a /who, a relay's sightings): FederationPeer picked
+	-- the member the library had just seen, and SendWhisper then refused it as offline off the stale
+	-- copy -- so the sister guild's bank was never asked for. Found by Tests/xguilde2e_spec.lua.
+	local entry = self.memberRoster and self.memberRoster[norm]
+	if lib and entry and entry.guildKey and not entry.isStub and lib.GetOnlineMembersScoped and self:IsSisterBankEnabled() then
+		for _, name in ipairs(lib:GetOnlineMembersScoped(entry.guildKey) or {}) do
+			if name == norm or self:NormalizeName(name) == norm then return true end
+		end
+		return false
+	end
+
 	-- Fallback: our own cache (library absent, or not ready yet).
 	if self.memberRoster and self.memberRoster[norm] then
 		return self.memberRoster[norm].isOnline == true
@@ -3231,41 +4276,14 @@ end
 -- more -- a V2 payload resolves its rows on arrival and the UI redraws once -- so there is no
 -- stream of late completions to coalesce.
 --
--- NOT TO BE CONFUSED WITH `ReconstructItemLink` (SINGULAR), which is alive and called by
--- Modules/UI.lua:320 and :339 while drawing, for records that still carry an ItemString. The names
--- differ by one character; check the call sites before assuming that one went too.
-
--- Reconstruct single item link (immediate, synchronous only)
-function TOGBankClassic_Guild:ReconstructItemLink(item)
-	if not item or not item.ID or item.Link then
-		return
-	end
-
-	-- Try synchronous reconstruction from cache only
-	if item.ItemString then
-		local itemName = GetItemInfo(item.ID)
-		if itemName then
-			-- Strip "item:" prefix defensively (mail items may store ItemString with prefix)
-			local rawStr = item.ItemString:match("^item:(.+)$") or item.ItemString
-			item.Link = string.format("|cffffffff|Hitem:%s|h[%s]|h|r", rawStr, itemName)
-		end
-	else
-		local itemLink = select(2, GetItemInfo(item.ID))
-		if itemLink then
-			item.Link = itemLink
-		end
-	end
-	-- Note: If not in cache, link stays nil - will be reconstructed by queue
-end
+-- `ReconstructItemLink` (SINGULAR) went too, in LINK-AUDIT-001 step 1 (docs/LINK_AUDIT.md 3.4): it
+-- built a WHITE link from a `row.ItemString` no writer produces any more, else GetItemInfo's base
+-- link, suffix dropped. `UI:DrawItem` asks `Resolve.link` on the row's own id/suffix/enchant instead.
 
 -- `ReconstructItemLinks` (PLURAL) was deleted here along with `ReceiveAltData`, its only caller.
 -- It queued every link-less item from a received LEGACY payload for async link reconstruction --
 -- work that exists only because that format shipped links in the first place. V2 sends integers and
 -- the link is built from LibItemDB on arrival, so there is nothing to reconstruct in a batch.
---
--- `ReconstructItemLink` (SINGULAR) is NOT dead and must stay: Modules/UI.lua:320 and :339 call it
--- while drawing, for records that predate V2 and still carry an ItemString rather than a link. The
--- names differ by one character, so check the call sites before assuming this one went too.
 
 -- INV2 step 10: `Guild:StripDeltaLinks` was deleted here along with the DeltaComms function it
 -- delegated to. It was the wrapper for the per-item "is this link safe to drop" guess; V2 sends
@@ -3307,7 +4325,7 @@ end
 -- FIX: Prevents stats corruption when multiple P2P sends happen concurrently
 -- NOTE: AceCommQueue delivers only the final callback (when bytesSent >= totalBytes),
 -- so startTime is captured at closure creation and chunk count is estimated from byte count.
-local function CreateOnChunkSentCallback(altName, requester)
+local function CreateOnChunkSentCallback(altName)
 	-- Per-send stats (closure captures these)
 	-- startTime is recorded NOW so elapsed is measured from just before SendCommMessage.
 	-- ACQ-004: no `throttled` counter any more. It could only be incremented by the enum
@@ -3338,8 +4356,8 @@ local function CreateOnChunkSentCallback(altName, requester)
 			-- lost message rather than a transient throttle. Loud on purpose: silent loss on
 			-- an inventory send is what leaves peers with stale data and no way to tell.
 			TOGBankClassic_Output:Error(
-				"send to %s for %s was refused by the client after retries (%s) - peers may hold stale data",
-				tostring(requester or "guild"), tostring(altName), DescribeSendResult(sendResult))
+				"send to guild for %s was refused by the client after retries (%s) - peers may hold stale data",
+				tostring(altName), DescribeSendResult(sendResult))
 		end
 
 		-- Completion summary
@@ -3357,23 +4375,10 @@ local function CreateOnChunkSentCallback(altName, requester)
 				TOGBankClassic_Output:Info(summary)
 			end
 
-			-- Release the unified P2P send slot so the cap allows new sends.
-			-- P2P-025: an `elseif pendingSendCount > 0` legacy branch followed this, for
-			-- GUILD-broadcast sends with no requester. The counter it decremented was never
-			-- incremented, so the branch could not be reached with a true condition.
-			--
-			-- FINDING 28: release AT MOST ONCE per send. `ReleaseSendSlot`'s token-less branch
-			-- retires the OLDEST outstanding token for this requester -- which, with two sends in
-			-- flight for them, belongs to the OTHER send. So a duplicated completion callback
-			-- would retire send B's token and decrement B's slot, re-opening the over-release
-			-- P2P-024 closed. The token protects the TIMER path from the completion path; nothing
-			-- protected the completion path from itself. `sendStats` is already this send's own
-			-- state, so the identity is carried here rather than threaded across the two acquire
-			-- sites (Chat.lua, P2PSession.lua) and the send call chain between them.
-			if requester and TOGBankClassic_P2PSession and not sendStats.slotReleased then
-				sendStats.slotReleased = true
-				TOGBankClassic_P2PSession:ReleaseSendSlot(requester, "send_complete")
-			end
+			-- LIBREQ-DS-008: the P2P send-slot release that followed here (FINDING 28's once-per-send
+			-- guard) went with its only requester-bearing caller; the manual GUILD share is the one
+			-- send left through this callback and takes no slot. A whispered reply's slot is
+			-- released by Inventory/Sync on the host's own completion.
 
 			-- Warn on failures
 			if sendStats.failures > 0 then
@@ -3412,7 +4417,7 @@ function TOGBankClassic_Guild:SendAltData(name)
 		local payload, count = Sync:SnapshotPayload(norm)
 		if payload then
 			local body = TOGBankClassic_Core:SerializeWithChecksum(payload)
-			local onSent = CreateOnChunkSentCallback(norm, nil)
+			local onSent = CreateOnChunkSentCallback(norm)
 			if not TOGBankClassic_Options:IsSyncProgressMuted() then
 				TOGBankClassic_Output:Info("Sharing guild bank data: %d bytes in ~%d chunks...",
 					string.len(body), math.ceil(string.len(body) / 254))
@@ -3496,7 +4501,7 @@ function TOGBankClassic_Guild:Wipe(type)
 	-- SYNC-013: Migrated from dead togbank-w/wr prefixes onto togbank-hl type dispatch
 	if type ~= "reply" then
 		local hlData = TOGBankClassic_Core:SerializeWithChecksum({ type = "wipe-command", message = wipe })
-		TOGBankClassic_Core:SendCommMessage("togbank-hl", hlData, "Guild", nil, "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-hl", hlData, "GUILD", nil, "BULK")
 	end
 end
 
@@ -3612,7 +4617,7 @@ function TOGBankClassic_Guild:Share(type, _)
 	if type ~= "reply" then
 		local hlData = TOGBankClassic_Core:SerializeWithChecksum({ type = "share-request", message = share })
 		-- Use NORMAL priority for share announcement so users are notified quickly
-		TOGBankClassic_Core:SendCommMessage("togbank-hl", hlData, "Guild", nil, "NORMAL")
+		TOGBankClassic_Core:SendCommMessage("togbank-hl", hlData, "GUILD", nil, "NORMAL")
 	end
 end
 
@@ -3644,8 +4649,12 @@ end
 -- REQSYNC-001: Check if a named player's guild rank has officer-note (officer) permission.
 -- Uses the isOfficer field stored in memberRoster at cache-build time (RefreshOnlineCache).
 -- No WoW API calls at lookup time. Returns false if cache not yet populated (deny when uncertain).
--- REQSYNC-008: GuildControlGetRankFlags does not exist in Classic Era (Retail-only API).
--- Officer status is now computed in RefreshOnlineCache via CanViewOfficerNote() threshold.
+-- REQSYNC-008 said GuildControlGetRankFlags does not exist in Classic Era; the BARE global does
+-- not, C_GuildInfo.GuildControlGetRankFlags does (SETTINGS-003 above) -- but it is read on the
+-- GM's client only, and what it found reaches here as the published `officerRankFloor`.
+-- SETTINGS-003: with a floor published, any home-guild member at or above it is an officer, and
+-- the cache-time threshold (a lower bound from the LOCAL player's rank) still counts -- a union,
+-- since both are sound and the floor is absent until the GM has logged in on this build.
 function TOGBankClassic_Guild:SenderIsOfficer(player)
 	if not player then
 		return false
@@ -3657,6 +4666,10 @@ function TOGBankClassic_Guild:SenderIsOfficer(player)
 	if not member then
 		return false
 	end
-	return member.isOfficer == true
+	if member.isOfficer == true then return true end
+	local floor = self:OfficerRankFloor()
+	local real = self:RosterEntry(player)   -- a stub has no rank to judge
+	return floor ~= nil and real ~= nil and real.guildKey == nil
+		and type(real.rankIndex) == "number" and real.rankIndex <= floor
 end
 

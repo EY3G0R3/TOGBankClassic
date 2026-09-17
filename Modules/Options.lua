@@ -337,13 +337,17 @@ function TOGBankClassic_Options:Init()
 			-- login race on a fresh profile. Without a default it stays nil (falsy)
 			-- forever and the character never scans. Harmless for non-bankers, whose
 			-- scans are already gated on IsBank() independently.
-			bank = { enabled = true, donations = true },
+			bank = { enabled = true },   -- UX-WATERFALL-001: `donations` default retired with its box
 			framePositions = {},  -- Stores window positions/sizes
 			-- BROWSE-006: the Guild Bank window's last tab. Per character, beside the window
 			-- positions and for the same reason -- it is part of how this alt has that window set up.
 			browseTab = "browse",
 			sortMode = "alpha",   -- Inventory sort mode: "alpha" (A->Z) or "type" (by item type)
 			statusBarNetworkInfo = false,  -- Show sync activity in inventory status bar
+			-- VISIBILITY-001: the accessibility scale. Per character, like the window positions and
+			-- for the same reason -- it is how this player has these windows set up. The default is
+			-- the LIBRARY's normal size, read from it (see GetUIScale) rather than written as 1.
+			uiScale = TOGBankClassic_Options.SCALE_DEFAULT,
 			-- HIDE-001: this banker's "not for the guild" items, `Record.key -> true`. Per character:
 			-- it is a property of what THIS toon carries, and a hearthstone hidden on one banker
 			-- says nothing about another.
@@ -410,6 +414,10 @@ function TOGBankClassic_Options:Init()
 	if self.db.global.requests.autoTombstoneDays == nil then
 		self.db.global.requests.autoTombstoneDays = 30
 	end
+	-- VISIBILITY-001: hand the saved accessibility scale to LibAceGUIWidgets BEFORE any window is
+	-- built, so a reload comes back at the size the player set rather than at 100% until they touch
+	-- the slider. The library holds it in memory only; this is the one place it is restored.
+	self:ApplyUIScale()
 	-- Initialize logger with saved level
 	TOGBankClassic_Output:SetLevel(self.db.global.bank["logLevel"])
 	-- Initialize comm debug with saved setting
@@ -452,6 +460,27 @@ function TOGBankClassic_Options:Init()
 						get = function()
 							return self.db.char.combat["hide"]
 						end,
+					},
+					-- VISIBILITY-001, the operator: "can we add a visibility feature that makes the
+					-- font/icons/rows larger on a slider for the visually impaired?" ONE factor for
+					-- every window: LibAceGUIWidgets MINOR 29 scales every font, icon, row height,
+					-- menu, dialog and resize floor it draws, and re-lays every live widget on the
+					-- change; `Options:SetUIScale` is the one writer and `ApplyUIScale` the one
+					-- caller of the library, from here and from load. PER-CHARACTER (`db.char`),
+					-- not guild-synced: an accessibility preference of the person at the keyboard,
+					-- the only setting here about their eyes rather than about the bank.
+					["uiScale"] = {
+						order = 1.4,
+						type = "range",
+						width = "full",
+						name = "Window and Text Size",
+						desc = "Enlarges the text, icons and row height of every TOGBank window together. 100% is the normal size; raise it if the bank list is hard to read.",
+						min = TOGBankClassic_Options.SCALE_MIN,
+						max = TOGBankClassic_Options.SCALE_MAX,
+						step = 0.1,
+						isPercent = true,
+						set = function(_, v) TOGBankClassic_Options:SetUIScale(v) end,
+						get = function() return TOGBankClassic_Options:GetUIScale() end,
 					},
 					["statusBarNetworkInfo"] = {
 						order = 1.5,
@@ -715,7 +744,7 @@ function TOGBankClassic_Options:Init()
 						type = "range",
 						width = "full",
 						name = "Maximum Request Amount",
-						desc = "Limit how much of available inventory can be requested at once. Set to 100% to allow requesting everything. Lower values help share inventory among multiple guild members.\n\nExample: At 50%, if bank has 100 Copper Ore, members can request up to 50.\n\nNote: Single items (like gear) can always be requested even at low percentages.",
+						desc = "Limit how much of a bank character's stock of an item one member can have on order. Set to 100% to allow requesting everything. Lower values help share inventory among multiple guild members.\n\nExample: At 50%, if bank has 100 Copper Ore, members can request up to 50 -- and a member with 30 already on order can ask for 20 more.\n\nEnforced however the order is placed, and a member who was offline when you changed it gets the new value when they log in (a bank character or officer must be online to hand it over).\n\nNote: Single items (like gear) can always be requested even at low percentages.",
 						min = 1,
 						max = 100,
 						step = 1,
@@ -733,6 +762,150 @@ function TOGBankClassic_Options:Init()
 							TOGBankClassic_Guild:BroadcastSettings("ALERT")
 							TOGBankClassic_Output:Info("Maximum request amount set to %d%% (syncing to guild...)", v)
 						end,
+					},
+					-- SHOP-SECTION-001 (the operator, 2026-09-15, on the Ordering open box sitting under
+					-- Maximum Request Amount: "this is for shop orders correct, not for non-shop orders?
+					-- if so, we need to clarify that, as it could be confusing. maybe we make a separate
+					-- shop section in the officers tab"): the shop's settings are their OWN section, under
+					-- their own heading, after the plain bank's request settings and their example box.
+					-- The wording says "shop orders" everywhere, because that is all the sign governs:
+					-- with the shop on every order IS a shop order (SHOP-NOFREE-001); with it off the box
+					-- is greyed and the plain bank's requests never see it (Guild:IsStoreOpen).
+					["shopHeader"] = {
+						order = 3.2,
+						type = "header",
+						name = "Shop",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+					},
+					["shopDesc"] = {
+						order = 3.3,
+						type = "description",
+						name = "For a guild bank that SELLS its items. Everything here is about shop orders: with the Shop on, every order placed is a shop order at the estimate shown, and the settings below open and close that ordering and discount the estimates. With the Shop off, the bank is a plain bank -- these settings do nothing and the request settings above are all that apply.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+					},
+					-- SHOP-TAB-001 (the operator, 2026-09-14: "a setting to turn it on/off, so folks can
+					-- shut it off if their bank doesn't 'sell' items. it should be off by default"): the
+					-- shop switch. Officer-only, guild-synced, OFF by default; on, the Guild Bank window
+					-- gains a Shop tab (estimates, the open/closed sign, the not-for-sale list).
+					["shopEnabled"] = {
+						order = 3.4,
+						type = "toggle",
+						width = "full",
+						name = "Shop",
+						desc = "Turn on if your guild bank SELLS items -- members order, the bank character fills the order and sets the price. The Guild Bank window gains a Shop tab with estimated values (from your price sources: type /itemdb), and officers can close ordering or take items off the shop list. Off, the bank is a plain bank. Syncs to the whole guild.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						get = function() return TOGBankClassic_Guild:IsShopEnabled() end,
+						set = function(_, v) TOGBankClassic_Guild:SetShopEnabled(v) end,
+					},
+					-- STORE-006 (GUILD_STORE.md 4.6): the shop's open/closed sign. Officer-only like the
+					-- help notes; writes through Guild:SetStoreOpen, the single writer shared with the
+					-- Shop tab's box. Greyed while the shop is off: there is no sign to hang.
+					["storeOpen"] = {
+						order = 3.5,
+						type = "toggle",
+						width = "full",
+						name = "Shop ordering open",
+						desc = "The shop's open/closed sign. Untick to stop members placing SHOP orders -- a stocktake, an officer away, a pricing mistake; members clicking an item are told ordering is closed. Tick to reopen. Only shop orders are affected: with the Shop off this box is greyed and plain bank requests never see it. Syncs to the whole guild.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						disabled = function() return not TOGBankClassic_Guild:IsShopEnabled() end,
+						get = function() return TOGBankClassic_Guild:IsStoreOpen() end,
+						set = function(_, v) TOGBankClassic_Guild:SetStoreOpen(v) end,
+					},
+					-- STORE-003 (GUILD_STORE.md 4.3; the operator: "if you want to sell all the items at
+					-- 50% off, we need to apply that to the pricing that is displayed on the shop tab"):
+					-- the guild-wide discount off every estimate on the Shop tab. Officer-only, synced,
+					-- greyed while the shop is off. Guild:SetStoreDiscount is the one writer.
+					["storeDiscountPercent"] = {
+						order = 3.55,
+						type = "range",
+						width = "full",
+						name = "Shop discount",
+						desc = "Percent off every estimate shown on the Shop tab -- 50 shows every item at half its market estimate. 0 is no discount. The bank character still sets the real price when an order is filled. Syncs to the whole guild.",
+						min = 0,
+						max = 100,
+						step = 1,
+						isPercent = false,
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						disabled = function() return not TOGBankClassic_Guild:IsShopEnabled() end,
+						get = function() return TOGBankClassic_Guild:GetStoreDiscount() end,
+						set = function(_, v) TOGBankClassic_Guild:SetStoreDiscount(v) end,
+					},
+					-- SHOP-SECTION-001: the two below are NOT shop settings (neither is gated by the shop
+					-- switch -- the donation board and the guild price list serve a plain bank too), so
+					-- they get their own heading rather than reading as the shop's.
+					["donationsHeader"] = {
+						order = 3.58,
+						type = "header",
+						name = "Donations and pricing",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+					},
+					["donationsDesc"] = {
+						order = 3.59,
+						type = "description",
+						name = "Apply with or without the Shop: what a donation to a bank character earns, and whose price sources the whole guild values things by.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+					},
+					-- STORE-007 (GUILD_STORE.md 4.7): points per gold of donated value. Officer-only,
+					-- guild-synced, applied at the moment a donation is received and written into that
+					-- entry -- changing it changes future credits only. Not gated by the shop switch: the
+					-- donation board existed for plain banks before the store did.
+					["donationRate"] = {
+						order = 3.6,
+						type = "input",
+						width = "normal",
+						name = "Donation points per gold",
+						desc = "What a donation earns: this many points for every gold of value received by a bank character (valued when it arrives, from your price sources, never below what a vendor pays). 1 is the default. Officers can correct a member's points with /togbank donations adjust. Syncs to the whole guild.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						validate = function(_, v)
+							local D = TOGBankClassic_Donations
+							local n = tonumber(v)
+							if not n or n ~= n or n < D.RATE_MIN or n > D.RATE_MAX then
+								return string.format("Please enter a number between %s and %s.", tostring(D.RATE_MIN), tostring(D.RATE_MAX))
+							end
+							return true
+						end,
+						get = function() return tostring(TOGBankClassic_Donations:Rate()) end,
+						set = function(_, v) TOGBankClassic_Guild:SetDonationRate(tonumber(v)) end,
+					},
+					-- STORE-002 / DONATION-VALUE-001 (GUILD_STORE.md 4.2.1): the price authority --
+					-- the one character whose price sources become the guild's price list, so every
+					-- banker values a donation the same and every member sees the same estimate.
+					-- Officer-only, guild-synced; blank means no list. Not gated by the shop switch.
+					["priceAuthority"] = {
+						order = 3.65,
+						type = "input",
+						width = "normal",
+						name = "Price authority",
+						desc = "The character whose price sources (TSM, Auctionator, ItemDB's own scan) become the guild's price list. Their client publishes the list to the guild; every other client -- bank characters especially -- values donations and shows shop estimates from it, so nobody's figure depends on which price addon they run. Leave blank for no guild list (each client prices on its own sources). Syncs to the whole guild.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						get = function() return TOGBankClassic_Guild:GetPriceAuthority() or "" end,
+						set = function(_, v) TOGBankClassic_Guild:SetPriceAuthority(v) end,
+					},
+					-- XGUILD-SWITCH-001 (the operator, 2026-09-15: "shouldn't there be some officer
+					-- configuration to turn it on or make it work? we have the sister guilds in the
+					-- guildroster library"): the sister-guild bank's own section and switch. Off by
+					-- default, guild-synced; Guild:SetSisterBankEnabled is the one writer.
+					["sisterHeader"] = {
+						order = 3.7,
+						type = "header",
+						name = "Sister guilds",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+					},
+					["sisterDesc"] = {
+						order = 3.71,
+						type = "description",
+						name = "One bank across the guilds listed as sister guilds in Guild Roster's settings. On, their bank characters join this bank (tagged with their guild) and their members can browse and order from yours; each guild's officers switch on their own side. Off, this bank is your guild's alone. Bank characters in a sister guild are recognised by the gbank mark in their public note.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+					},
+					["sisterBank"] = {
+						order = 3.72,
+						type = "toggle",
+						width = "full",
+						name = "Sister-guild bank",
+						desc = "Tick to open this bank to the sister guilds listed in Guild Roster: their bank characters appear on the Bankers tab and in the Banker column, tagged with their guild, and their members can place orders with yours. Both guilds' officers must list each other in Guild Roster (a guild that lists yours without being listed back gets nothing), and the sister guild's officers must tick this on their side too. Untick and the bank is your guild's alone again. Syncs to the whole guild.",
+						hidden = function() return not (CanViewOfficerNote and CanViewOfficerNote()) end,
+						get = function() return TOGBankClassic_Guild:IsSisterBankEnabled() end,
+						set = function(_, v) TOGBankClassic_Guild:SetSisterBankEnabled(v) end,
 					},
 					-- HELPNOTE-001: officer-only per-window help-tooltip notes (GM/officers).
 					["helpNotesHeader"] = {
@@ -777,8 +950,10 @@ function TOGBankClassic_Options:Init()
 						get = function() return TOGBankClassic_Guild:GetHelpNote("inventory") end,
 						set = function(_, v) TOGBankClassic_Options:SetHelpNote("inventory", v) end,
 					},
+					-- SHOP-SECTION-001: directly under the slider it explains, so the request section ends
+					-- before the Shop heading rather than resuming after it.
 					["exampleGroup"] = {
-						order = 4,
+						order = 3.1,
 						type = "group",
 						inline = true,
 						name = "Example Calculations",
@@ -878,19 +1053,12 @@ function TOGBankClassic_Options:InitGuild()
 					return self.db.global.bank["report"]
 				end,
 			},
-			["donations"] = {
-				order = 2,
-				type = "toggle",
-				width = "full",
-				name = "Enable donations",
-				desc = "Displays donation window at mailbox",
-				set = function(_, v)
-					self.db.char.bank["donations"] = v
-				end,
-				get = function()
-					return self.db.char.bank["donations"]
-				end,
-			},
+			-- UX-WATERFALL-001: the "Enable donations" box that lived here (order 2, "Displays donation
+			-- window at mailbox") is GONE. It was a second setting for the one mailbox -- the Donation
+			-- popup's -- beside the Mailbox window's own, and a banker with both on got both windows
+			-- (crimsonmane, 2026-09-14). The Mailbox window's General setting governs the mailbox now;
+			-- the popup stands aside while that window auto-opens, and returns when it is unticked.
+			-- The saved `db.char.bank.donations` value is left in place and read by nothing.
 			-- HIDE-002 (the operator: "a setting for bankers in settings in the banker only settings,
 			-- a check box"). OFF by default: ticking it changes what this banker publishes, and an
 			-- upgrade must not do that unasked.
@@ -938,8 +1106,52 @@ function TOGBankClassic_Options:GetBankEnabled()
 	return self.db.char.bank["enabled"]
 end
 
-function TOGBankClassic_Options:GetDonationEnabled()
-	return self.db.char.bank["donations"]
+-- ---------------------------------------------------------------------------------------------
+-- VISIBILITY-001: ONE accessibility scale for every TOGBank window
+-- ---------------------------------------------------------------------------------------------
+-- The operator: *"can we add a visibility feature that makes the font/icons/rows larger on a slider
+-- for the visually impared?"* The WORK is LibAceGUIWidgets MINOR 29's -- `W:SetScale(factor)` scales
+-- every font, icon, row height, menu, dialog, header and resize floor the library draws, and re-lays
+-- every live widget -- so TOGBank's half is the setting, the load-time apply, and (in the windows)
+-- the regions TOGBank draws itself. This is the whole persistence and the ONE call site.
+--
+-- The bounds are the LIBRARY's, read from it rather than copied, so a library that widens the range
+-- widens the slider with no edit here. Against a library too old to carry the scale (or absent --
+-- it is a declared dependency, but `LibStub(..., true)` is how every other read of it is written)
+-- the bounds fall back to the same numbers and `ApplyUIScale` is a no-op: the setting is saved and
+-- does nothing, which is the right degradation for an accessibility preference.
+local WIDGETS = LibStub("LibAceGUIWidgets-1.0", true)
+TOGBankClassic_Options.SCALE_MIN     = (WIDGETS and WIDGETS.SCALE_MIN) or 0.8
+TOGBankClassic_Options.SCALE_MAX     = (WIDGETS and WIDGETS.SCALE_MAX) or 2.0
+TOGBankClassic_Options.SCALE_DEFAULT = (WIDGETS and WIDGETS.SCALE_DEFAULT) or 1.0
+
+--- The saved factor, clamped to the library's range. `SCALE_DEFAULT` before the DB is up and for a
+--- profile from before the setting existed -- nil reads as "normal size", never as 0.
+---@return number scale
+function TOGBankClassic_Options:GetUIScale()
+	local char = self.db and self.db.char
+	local v = tonumber(char and char.uiScale)
+	if not v then return self.SCALE_DEFAULT end
+	if v < self.SCALE_MIN then return self.SCALE_MIN end
+	if v > self.SCALE_MAX then return self.SCALE_MAX end
+	return v
+end
+
+--- Save the factor and apply it. THE ONE WRITER (the slider, and anything else that ever sets it).
+---@param v number
+function TOGBankClassic_Options:SetUIScale(v)
+	if not (self.db and self.db.char) then return end
+	self.db.char.uiScale = tonumber(v) or self.SCALE_DEFAULT
+	self:ApplyUIScale()
+end
+
+--- Hand the saved factor to the library. THE ONE CALLER of `W:SetScale` in this addon: from
+--- `SetUIScale` above and from `Core`'s startup, so a reload comes back at the size the player set.
+--- Silent against a library without the scale (see the header); the library clamps for itself.
+function TOGBankClassic_Options:ApplyUIScale()
+	local W = LibStub("LibAceGUIWidgets-1.0", true)
+	if not (W and W.SetScale) then return end
+	W:SetScale(self:GetUIScale())
 end
 
 --- HIDE-002: is this banker hiding every soulbound item from the guild? False before the DB is up.
@@ -1016,15 +1228,20 @@ function TOGBankClassic_Options:IsStatusBarNetworkInfoEnabled()
 end
 
 function TOGBankClassic_Options:GetMaxRequestPercent()
-	-- Read from guild-synced settings first (officer-configured, syncs to all clients)
-	if TOGBankClassic_Guild and TOGBankClassic_Guild.Info and TOGBankClassic_Guild.Info.settings then
-		return TOGBankClassic_Guild.Info.settings.maxRequestPercent or 100
+	-- REQUEST-LIMIT-ONE-RULE-001 (self-audit 4777d14a F3): the guild-synced value is read through
+	-- Guild:MaxRequestPercent, the same read Guild:AddRequest enforces -- this used to return the raw
+	-- stored number, so a stored 33.7 or 0 showed 33.7 / 0 here while the gate enforced 33 / 1, and
+	-- TOGProfessionMaster's fallback path reads THIS getter.
+	local G = TOGBankClassic_Guild
+	if G and G.Info and G.Info.settings and G.MaxRequestPercent then
+		return G:MaxRequestPercent()
 	end
-	-- Fall back to local setting if guild data not loaded yet
-	if not self.db or not self.db.global or not self.db.global.requests then
-		return 100
-	end
-	return self.db.global.requests.maxRequestPercent or 100
+	-- Fall back to the local setting if guild data is not loaded yet, clamped the same way.
+	local v = self.db and self.db.global and self.db.global.requests and tonumber(self.db.global.requests.maxRequestPercent) or 100
+	v = math.floor(v)
+	if v < 1 then return 1 end
+	if v > 100 then return 100 end
+	return v
 end
 
 function TOGBankClassic_Options:GetAutoTombstoneDays()

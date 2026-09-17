@@ -28,7 +28,13 @@ local function load()
 	return D
 end
 
+--- A V2 tuple record -- the only shape any production caller hashes.
+local function rec(id, count, suffix, enchant)
+	return { id, count, suffix, enchant }
+end
+
 --- A legacy row carrying a link, which is the only place a pre-tuple row records suffix/enchant.
+--- Only the FROZEN revision 1 still reads one; revision 2 refuses it (LINK-AUDIT-001 step 1).
 local function linked(id, count, suffix, enchant)
 	return {
 		ID = id, Count = count,
@@ -97,7 +103,7 @@ describe("ComputeLegacyInventoryHash: frozen revision 1", function()
 	end)
 
 	it("differs from revision 2 for a suffixed item, which is the entire reason both exist", function()
-		local items = { linked(10132, 1, 863) }
+		local items = { rec(10132, 1, 863) }
 		assert.is_not.equal(
 			D:ComputeLegacyInventoryHash(items, nil, nil, 0),
 			D:ComputeInventoryHash(items, nil, nil, 0))
@@ -126,7 +132,7 @@ describe("StampInventoryHashes", function()
 
 	it("writes both revisions from one item set", function()
 		local alt = {}
-		D:StampInventoryHashes(alt, { linked(10132, 1, 863) }, nil, nil, 0, 1757000000)
+		D:StampInventoryHashes(alt, { rec(10132, 1, 863) }, nil, nil, 0, 1757000000)
 		assert.is_not_nil(alt.inventoryHash)
 		assert.is_not_nil(alt.inventoryHashV2)
 		assert.is_not.equal(alt.inventoryHash, alt.inventoryHashV2)
@@ -136,7 +142,7 @@ describe("StampInventoryHashes", function()
 	-- the hash to be <dts><hash> all one long string ... so you COULD read the DTS and do
 	-- quick/easy comparison without having to pull the hash apart."
 	it("mints the canon as <dts><hash>: twenty digits, the publish time first", function()
-		local items = { linked(858, 5) }
+		local items = { rec(858, 5) }
 		local canon = D:ComputeCanonHash(items, nil, nil, 0, 1757000000)
 		assert.is_string(canon, "the canon is a STRING now, not a checksum with the date mixed in")
 		assert.equal(20, #canon)
@@ -147,19 +153,19 @@ describe("StampInventoryHashes", function()
 	end)
 
 	it("reads the publish time straight back off the canon", function()
-		local canon = D:ComputeCanonHash({ linked(858, 5) }, nil, nil, 0, 1757000000)
+		local canon = D:ComputeCanonHash({ rec(858, 5) }, nil, nil, 0, 1757000000)
 		assert.equal(1757000000, D:CanonPublishTime(canon))
 	end)
 
 	-- The comparison the whole redesign is for: a LATER publish sorts HIGHER as a plain string,
 	-- because the datestamp is fixed-width and leads. No parsing, no arithmetic.
 	it("orders two canons by publish time with a plain string compare", function()
-		local items = { linked(858, 5) }
+		local items = { rec(858, 5) }
 		local earlier = D:ComputeCanonHash(items, nil, nil, 0, 1757000000)
 		local later   = D:ComputeCanonHash(items, nil, nil, 0, 1757000001)
 		assert.is_true(earlier < later, "the later publish does not sort higher")
 		-- And a wildly different content at an earlier time still sorts LOWER: time dominates.
-		local otherEarlier = D:ComputeCanonHash({ linked(2589, 20), linked(10132, 1, 863) }, nil, nil, 99, 1700000000)
+		local otherEarlier = D:ComputeCanonHash({ rec(2589, 20), rec(10132, 1, 863) }, nil, nil, 99, 1700000000)
 		assert.is_true(otherEarlier < earlier)
 	end)
 
@@ -179,7 +185,7 @@ describe("StampInventoryHashes", function()
 	-- ComputeCanonHash that must agree with it -- NOT ComputeInventoryHash, which is the
 	-- datestamp-free CONTENT hash and is now the private change detector.
 	it("agrees with computing each revision separately", function()
-		local items = { linked(858, 5), linked(10132, 1, 863) }
+		local items = { rec(858, 5), rec(10132, 1, 863) }
 		local alt = {}
 		D:StampInventoryHashes(alt, items, nil, nil, 42, 1757000000)
 		assert.equal(D:ComputeLegacyInventoryHash(items, nil, nil, 42), alt.inventoryHash)
@@ -191,7 +197,7 @@ describe("StampInventoryHashes", function()
 	-- are two different versions and must be distinguishable, or "the newer hash wins" has nothing
 	-- to compare. This is what the datestamp is in the hashed input FOR.
 	it("gives the SAME contents a different canon at a different publish time", function()
-		local items = { linked(858, 5) }
+		local items = { rec(858, 5) }
 		assert.is_not.equal(
 			D:ComputeCanonHash(items, nil, nil, 0, 1757000000),
 			D:ComputeCanonHash(items, nil, nil, 0, 1757000001),
@@ -203,7 +209,7 @@ describe("StampInventoryHashes", function()
 	-- with time, because it is what decides whether to advance the datestamp at all. If this ever
 	-- becomes time-dependent, every scan looks like a change and republishes to the whole guild.
 	it("keeps the CONTENT hash free of the datestamp", function()
-		local items = { linked(858, 5) }
+		local items = { rec(858, 5) }
 		assert.equal(
 			D:ComputeInventoryHash(items, nil, nil, 0),
 			D:ComputeInventoryHash(items, nil, nil, 0),
@@ -216,7 +222,7 @@ describe("StampInventoryHashes", function()
 	end)
 
 	it("returns both without needing a record to write into", function()
-		local legacy, current = D:StampInventoryHashes(nil, { linked(858, 5) }, nil, nil, 0, 1757000000)
+		local legacy, current = D:StampInventoryHashes(nil, { rec(858, 5) }, nil, nil, 0, 1757000000)
 		assert.is_not_nil(legacy)
 		assert.is_not_nil(current)
 	end)
@@ -296,7 +302,7 @@ describe("CanonPublishTime / CanonFrom", function()
 			-- Pinned as a source scan: the operator's "but ONLY for v2 hashes". Every call site
 			-- passes hashV2 / inventoryHashV2; none passes hash / inventoryHash.
 			local offenders = {}
-			for _, path in ipairs({ "Modules/Guild.lua", "Modules/Chat.lua", "Modules/P2PSession.lua",
+			for _, path in ipairs({ "Modules/Guild.lua", "Modules/Chat.lua", "Modules/P2P.lua",
 				"Modules/Inventory/Wire.lua", "Modules/DeltaComms.lua" }) do
 				for lineNo, line in env.codeLines(env.readFile(path)) do
 					local arg = line:match("CanonFrom%(%s*([%w_%.]+)") or line:match("canonOrNil%(%s*([%w_%.]+)")
@@ -315,8 +321,8 @@ describe("ComputeInventoryHash: identity (finding 31)", function()
 
 	-- The finding's own worked example. Same base ID, same count, different random suffix.
 	it("distinguishes two suffix variants of one base ID", function()
-		local tiger  = D:ComputeInventoryHash({ linked(10132, 1, 863) },  nil, nil, 0)
-		local monkey = D:ComputeInventoryHash({ linked(10132, 1, 2504) }, nil, nil, 0)
+		local tiger  = D:ComputeInventoryHash({ rec(10132, 1, 863) },  nil, nil, 0)
+		local monkey = D:ComputeInventoryHash({ rec(10132, 1, 2504) }, nil, nil, 0)
 		assert.is_not_equal(tiger, monkey,
 			"a Spiked Club of the Tiger hashes identically to one of the Monkey, so a banker " ..
 			"swapping one for the other never bumps the version and NO delta is ever computed -- " ..
@@ -324,34 +330,36 @@ describe("ComputeInventoryHash: identity (finding 31)", function()
 	end)
 
 	it("distinguishes two enchant variants of one base ID", function()
-		local plain    = D:ComputeInventoryHash({ linked(10132, 1, 0, 0) },    nil, nil, 0)
-		local enchanted = D:ComputeInventoryHash({ linked(10132, 1, 0, 2504) }, nil, nil, 0)
+		local plain    = D:ComputeInventoryHash({ rec(10132, 1, 0, 0) },    nil, nil, 0)
+		local enchanted = D:ComputeInventoryHash({ rec(10132, 1, 0, 2504) }, nil, nil, 0)
 		assert.is_not_equal(plain, enchanted, "the enchant is absent from the hashed identity")
 	end)
 
 	-- Guards the other direction: the fix must not make the hash so specific that identical
 	-- inventories stop matching, which would drive a permanent re-sync instead of a permanent stall.
 	it("still matches two identical inventories", function()
-		local a = D:ComputeInventoryHash({ linked(858, 5), linked(10132, 1, 863) }, nil, nil, 42)
-		local b = D:ComputeInventoryHash({ linked(858, 5), linked(10132, 1, 863) }, nil, nil, 42)
+		local a = D:ComputeInventoryHash({ rec(858, 5), rec(10132, 1, 863) }, nil, nil, 42)
+		local b = D:ComputeInventoryHash({ rec(858, 5), rec(10132, 1, 863) }, nil, nil, 42)
 		assert.equal(a, b)
+		assert.is_not_equal(D:ComputeInventoryHash({}, nil, nil, 42), a, "the match was two empty item sets")
 	end)
 
 	it("is independent of row order", function()
-		local a = D:ComputeInventoryHash({ linked(858, 5), linked(10132, 1, 863) }, nil, nil, 0)
-		local b = D:ComputeInventoryHash({ linked(10132, 1, 863), linked(858, 5) }, nil, nil, 0)
+		local a = D:ComputeInventoryHash({ rec(858, 5), rec(10132, 1, 863) }, nil, nil, 0)
+		local b = D:ComputeInventoryHash({ rec(10132, 1, 863), rec(858, 5) }, nil, nil, 0)
 		assert.equal(a, b, "row order changed the hash, so a rescan that reorders forces a resync")
+		assert.is_not_equal(D:ComputeInventoryHash({}, nil, nil, 0), a, "the match was two empty item sets")
 	end)
 
 	it("still notices a count change", function()
-		local five = D:ComputeInventoryHash({ linked(858, 5) }, nil, nil, 0)
-		local six  = D:ComputeInventoryHash({ linked(858, 6) }, nil, nil, 0)
+		local five = D:ComputeInventoryHash({ rec(858, 5) }, nil, nil, 0)
+		local six  = D:ComputeInventoryHash({ rec(858, 6) }, nil, nil, 0)
 		assert.is_not_equal(five, six)
 	end)
 
 	it("still notices a money change", function()
-		local poor = D:ComputeInventoryHash({ linked(858, 5) }, nil, nil, 0)
-		local rich = D:ComputeInventoryHash({ linked(858, 5) }, nil, nil, 99999)
+		local poor = D:ComputeInventoryHash({ rec(858, 5) }, nil, nil, 0)
+		local rich = D:ComputeInventoryHash({ rec(858, 5) }, nil, nil, 99999)
 		assert.is_not_equal(poor, rich)
 	end)
 end)
@@ -378,32 +386,17 @@ describe("ComputeInventoryHash: tuple records (finding 32)", function()
 		assert.is_not_equal(tiger, monkey)
 	end)
 
-	-- THE PROPERTY THAT MAKES THE STORAGE SWITCH SAFE, and the reason this file exists rather than
-	-- two separate ones: a tuple and the legacy row it replaces must hash the SAME. If they did not,
-	-- flipping `inventoryV2` would change every hash at once and every client would resync against
-	-- every peer -- indistinguishable from the addon deciding all data everywhere is stale.
-	it("hashes a tuple identically to the legacy row it replaces", function()
-		local legacy = D:ComputeInventoryHash(
-			{ linked(858, 5), linked(10132, 1, 863), linked(15260, 2, 0, 2504) }, nil, nil, 4242)
-		local tuples = D:ComputeInventoryHash(
-			{ { 858, 5 }, { 10132, 1, 863 }, { 15260, 2, 0, 2504 } }, nil, nil, 4242)
-		assert.equal(legacy, tuples,
-			"the same inventory hashes differently depending on which store it came from, so " ..
-			"flipping inventoryV2 would invalidate every hash and force a guild-wide resync")
-	end)
-
-	-- A linkless legacy row (mail) records no suffix, and the tuple built from one carries 0/0.
-	-- Those must agree, or mail alone would move the hash on every format flip.
-	it("treats a linkless legacy row and its tuple the same", function()
-		local legacy = D:ComputeInventoryHash({ { ID = 11754, Count = 3 } }, nil, nil, 0)
-		local tuple  = D:ComputeInventoryHash({ { 11754, 3 } }, nil, nil, 0)
-		assert.equal(legacy, tuple)
-	end)
-
-	it("survives a mixed array of both shapes without erroring", function()
-		local mixed = D:ComputeInventoryHash({ linked(858, 5), { 10132, 1, 863 } }, nil, nil, 0)
-		assert.is_string(mixed)
-		assert.is_not_equal("", mixed)
+	-- writ-cannot: three examples here pinned that a legacy `{ ID, Count, Link }` row hashed the SAME
+	-- as its tuple -- the property that made the inventoryV2 storage switch safe. That switch is long
+	-- done (INV2-RETIRE-003) and every production caller hashes records, so LINK-AUDIT-001 step 1
+	-- deleted the legacy branch (docs/LINK_AUDIT.md 3.6). The example below pins its replacement: a
+	-- legacy row is REFUSED -- it contributes nothing and does not error -- and a record beside it
+	-- still counts, so a stray old-shape row can never silently move a canon.
+	it("refuses a legacy { ID, Count, Link } row: it contributes nothing, and a record beside it still counts", function()
+		assert.equal(D:ComputeInventoryHash({}, nil, nil, 0), D:ComputeInventoryHash({ linked(858, 5) }, nil, nil, 0),
+			"a legacy row still reaches the revision-2 identity")
+		local mixed = D:ComputeInventoryHash({ linked(858, 5), rec(10132, 1, 863) }, nil, nil, 0)
+		assert.equal(D:ComputeInventoryHash({ rec(10132, 1, 863) }, nil, nil, 0), mixed)
 	end)
 
 	it("returns a value for an empty inventory rather than erroring", function()

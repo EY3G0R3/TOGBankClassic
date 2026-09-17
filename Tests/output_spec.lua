@@ -150,7 +150,7 @@ describe("Output persistent log", function()
 	end)
 
 	it("records entries with a timestamp", function()
-		env.advance(1000)
+		env.now = env.now + 1000   -- set, not advanced: nothing here waits on a timer
 		Output:AddToPersistentLog("first")
 		assert.equal(1, #Output.persistentLog)
 		assert.equal(env.EPOCH + 1000, Output.persistentLog[1].timestamp)
@@ -173,7 +173,12 @@ describe("Output persistent log", function()
 
 	it("garbage-collects entries older than the max age", function()
 		Output:AddToPersistentLog("EXPIRED-ENTRY")
-		env.advance(Output.persistentLogMaxAge + 1)
+		-- SEVEN DAYS. Set the clock, never advance it: env.advance slices the interval at the
+		-- harness's 0.05 s tick and runs every live frame's OnUpdate per slice -- 12 million slices,
+		-- times every load-time frame the files before this one left alive. Measured 2026-09-15:
+		-- ~10 s alone, ~1 min 45 s after six files, and the whole suite went from under five
+		-- minutes to 10 min 48 s on this line (Peer Review f5e52bcf's 'the full suite hung, twice').
+		env.now = env.now + Output.persistentLogMaxAge + 1
 		Output:AddToPersistentLog("FRESH-ENTRY")
 		Output:GarbageCollectPersistentLog()
 
@@ -203,7 +208,12 @@ describe("Output persistent log", function()
 	-- own summary is no longer written into the log it collects.
 	it("does not write its own summary back into the persistent log", function()
 		Output:AddToPersistentLog("old")
-		env.advance(Output.persistentLogMaxAge + 1)
+		-- SEVEN DAYS. Set the clock, never advance it: env.advance slices the interval at the
+		-- harness's 0.05 s tick and runs every live frame's OnUpdate per slice -- 12 million slices,
+		-- times every load-time frame the files before this one left alive. Measured 2026-09-15:
+		-- ~10 s alone, ~1 min 45 s after six files, and the whole suite went from under five
+		-- minutes to 10 min 48 s on this line (Peer Review f5e52bcf's 'the full suite hung, twice').
+		env.now = env.now + Output.persistentLogMaxAge + 1
 		Output:GarbageCollectPersistentLog()
 		for _, e in ipairs(Output.persistentLog) do
 			assert.is_nil(e.message:find("Garbage collected", 1, true),

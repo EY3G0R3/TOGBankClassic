@@ -16,6 +16,10 @@ local Record, Scan
 
 local function loadScan()
 	env.stubOutput()
+	-- SPEC-ORDER-001: Scan.lua reads TOGBankClassic_Constants at load (the bag ranges). This
+	-- file passed in the full suite only on a Constants an earlier file left behind, and failed
+	-- 22/22 run alone. Load what the module reads.
+	env.loadFile("Modules/Constants.lua")
 	env.loadFile("Modules/Switches.lua")
 	env.loadFile("Modules/Inventory/Record.lua")
 	env.loadFile("Modules/Inventory/Scan.lua")
@@ -26,9 +30,11 @@ local function loadScan()
 end
 
 --- Put an item in a bag slot with an explicit link, so link parsing can be driven directly.
+--- Written in the harness's own bag shape (`slots`/`family`, `count`/`link`), which is what
+--- `C_Container` reads; the scanner sees `stackCount`/`hyperlink` on the info STRUCTURE it returns.
 local function place(bag, slot, id, count, link)
-	env.bags[bag] = env.bags[bag] or { size = 16, bagType = 0 }
-	env.bags[bag][slot] = { itemID = id, stackCount = count, hyperlink = link }
+	env.bags[bag] = env.bags[bag] or { slots = 16, family = 0 }
+	env.bags[bag][slot] = { itemID = id, count = count, link = link }
 end
 
 describe("Scan.parseLink", function()
@@ -96,8 +102,8 @@ describe("Scan:ScanBags", function()
 	end)
 
 	it("reports slot totals across all carried bags", function()
-		env.bags[0] = { size = 16, bagType = 0 }
-		env.bags[1] = { size = 10, bagType = 0 }
+		env.bags[0] = { slots = 16, family = 0 }
+		env.bags[1] = { slots = 10, family = 0 }
 		local _, used, total = Scan:ScanBags()
 		assert.equal(0, used)
 		assert.equal(26, total)
@@ -124,7 +130,7 @@ describe("Scan:ScanBank", function()
 
 	--- The vault reports a non-nil bagType only when the player is at a banker.
 	local function openBank()
-		env.bags[-1] = { size = 28, bagType = 0 }
+		env.bags[-1] = { slots = 28, family = 0 }
 	end
 
 	it("returns nil when the player is not at a banker", function()
@@ -144,7 +150,7 @@ describe("Scan:ScanBank", function()
 	it("scans the vault and its bag slots together", function()
 		openBank()
 		place(-1, 1, 858, 10, "|cffffffff|Hitem:858|h[Potion]|h|r")
-		env.bags[5] = { size = 16, bagType = 0 }
+		env.bags[5] = { slots = 16, family = 0 }
 		place(5, 1, 859, 3, "|cffffffff|Hitem:859|h[Other]|h|r")
 		local records, used = Scan:ScanBank()
 		assert.equal(2, #records)
@@ -156,7 +162,7 @@ describe("Scan:ScanAll", function()
 	before_each(function() env.reset(); loadScan() end)
 
 	it("combines bags and bank", function()
-		env.bags[-1] = { size = 28, bagType = 0 }
+		env.bags[-1] = { slots = 28, family = 0 }
 		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
 		place(-1, 1, 859, 5, "|cffffffff|Hitem:859|h[Other]|h|r")
 		local result = Scan:ScanAll()
@@ -192,7 +198,7 @@ describe("Scan:ScanAll", function()
 	end)
 
 	it("emits one tuple per occupied slot, across bags and vault", function()
-		env.bags[-1] = { size = 28, bagType = 0 }
+		env.bags[-1] = { slots = 28, family = 0 }
 		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
 		place(0, 2, 10132, 1, "|cff1eff00|Hitem:10132:0:0:0:0:0:863:1:60|h[X]|h|r")
 		place(-1, 1, 859, 5, "|cffffffff|Hitem:859|h[Other]|h|r")
@@ -210,7 +216,7 @@ describe("Scan:ScanAll", function()
 	-- The per-source split the store writes through: bags and bank kept apart on the result, and
 	-- the flat `records` is exactly their union.
 	it("splits the same walk per source, and records is their union", function()
-		env.bags[-1] = { size = 28, bagType = 0 }
+		env.bags[-1] = { slots = 28, family = 0 }
 		place(0, 1, 858, 20, "|cffffffff|Hitem:858|h[Potion]|h|r")
 		place(-1, 1, 859, 5, "|cffffffff|Hitem:859|h[Other]|h|r")
 		local result = Scan:ScanAll()

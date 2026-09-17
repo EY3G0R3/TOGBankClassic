@@ -9,22 +9,41 @@ TOGBankClassic_MailInventory = {}
 -- Flag to track if mail was accessed this session
 TOGBankClassic_MailInventory.hasUpdated = false
 
---- Who sent how many of each attachment now in the inbox, keyed the way the bank log keys a row
---- (`id:suffix`; a mail row is stored suffix-less, so `id:0`). COD mail is skipped: its items cannot
---- be taken without payment, and are not the guild's until they are.
----@return table senders { ["id:0"] = { [sender] = count } }
+--- LINK-AUDIT-001 step 5 (docs/LINK_AUDIT.md 3.3): the inbox is one of the two EDGES where the
+--- client hands over a link. Each attachment is parsed once (Scan.parseLink) into a record --
+--- `{ id, count, suffix, enchant }` -- and everything downstream keys on `Record.key`, the store's
+--- own identity. A mail row used to be stored `{ ID, Count }` with the suffix thrown away, so a
+--- "Dreadblade of the Bear" in the inbox was a different item from the same weapon in the bags,
+--- and the log's `from` (keyed `id:0`) could never match the deposit the bags-row produced.
+---@param i number mail index
+---@param j number attachment index
+---@return table|nil record nil when the slot is empty or the client has no link for it yet
+local function attachmentRecord(i, j)
+	local name, itemID, _, count = GetInboxItem(i, j)
+	if not (itemID and name) then return nil end
+	local Record, Scan = TOGBankClassic_Inventory_Record, TOGBankClassic_Inventory_Scan
+	local enchant, suffix = Scan.parseLink(GetInboxItemLink(i, j))
+	return Record.new(itemID, count or 1, suffix, enchant)
+end
+
+--- Who sent how many of each attachment now in the inbox, keyed by `Record.key` -- the key the
+--- bank log's diff uses, so a taken attachment can be matched to the rise it causes in the bags.
+--- COD mail is skipped: its items cannot be taken without payment, and are not the guild's until
+--- they are.
+---@return table senders { [Record.key] = { [sender] = count } }
 local function readInboxSenders()
 	local senders = {}
+	local Record = TOGBankClassic_Inventory_Record
 	for i = 1, (GetInboxNumItems() or 0) do
 		local _, _, sender, _, _, CODAmount, _, hasItem = GetInboxHeaderInfo(i)
 		if hasItem and (CODAmount or 0) == 0 then
 			for j = 1, ATTACHMENTS_MAX_RECEIVE do
-				local name, itemID, _, count = GetInboxItem(i, j)
-				if itemID and name then
-					local key = tostring(itemID) .. ":0"
+				local rec = attachmentRecord(i, j)
+				if rec then
+					local key = Record.key(rec)
 					local who = sender or "Unknown"
 					senders[key] = senders[key] or {}
-					senders[key][who] = (senders[key][who] or 0) + (count or 1)
+					senders[key][who] = (senders[key][who] or 0) + Record.count(rec)
 				end
 			end
 		end
@@ -41,7 +60,7 @@ end
 -- here until Bank:MintVersion attributes the rise and clears it (TakenSenders / ClearTakenSenders).
 -- Session-only: a take never mints across a reload without a scan in between.
 TOGBankClassic_MailInventory.inboxSeen    = nil   -- the last read, or nil while the mailbox is closed
-TOGBankClassic_MailInventory.takenSenders = {}    -- { ["id:0"] = { [sender] = count } } since the last mint
+TOGBankClassic_MailInventory.takenSenders = {}    -- { [Record.key] = { [sender] = count } } since the last mint
 
 --- Read the inbox (on MAIL_INBOX_UPDATE) and record what left it since the previous read.
 function TOGBankClassic_MailInventory:NoteInbox()
@@ -79,31 +98,14 @@ function TOGBankClassic_MailInventory:ClearTakenSenders()
 	self.takenSenders = {}
 end
 
---[[
-	ScanMailInventory()
-	Scans the current mailbox and returns structured mail inventory data
-	Called from Bank:Scan() when mail was accessed (hasUpdated = true)
-
-	Returns:
-		table with structure:
-			{
-				slots = 50,
-				items = {
-					[itemID] = {
-						id = itemID,
-						name = "Item Name",
-						link = "|cffffffff|Hitem:...",
-						count = total count across all mail,
-						sources = {
-							{ index, count, sender, daysLeft, subject }
-						}
-					}
-				},
-				version = timestamp,
-				lastScan = timestamp
-			}
-		nil if mail was not accessed
-]]
+--- Scan the current mailbox. Called from Bank:Scan() when mail was accessed (hasUpdated = true).
+---
+--- LINK-AUDIT-001 step 5: returns RECORDS, aggregated by `Record.key` (Record.aggregate), so the
+--- mail source is the same shape as the bag and bank sources and a suffixed attachment keeps its
+--- suffix and enchant all the way into the store, the hashes and the log. The legacy
+--- `{ ID, Count, Link, ItemString }` rows, and the two link parsers that keyed them, are gone.
+---@return table|nil { slots = { count, total }, items = { record, ... }, senders, version, lastScan }
+---   nil if mail was not accessed
 function TOGBankClassic_MailInventory:ScanMailInventory()
 	-- Only scan if mail was accessed this session
 	if not self.hasUpdated then
@@ -111,8 +113,7 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		return nil
 	end
 
-	-- Use same structure as bank/bags: aggregate by composite key, store as array
-	local mailItemsTable = {}
+	local Record = TOGBankClassic_Inventory_Record
 	-- Who sent what, as of this read (readInboxSenders, the one spelling). LOG-MAIL-001: NOT the
 	-- log's `from` any more -- that is TakenSenders, what LEFT the inbox -- but kept in the result
 	-- for a reader of the scan.
@@ -121,6 +122,7 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 
 	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Starting mailbox scan: %d mail messages", numItems)
 
+	local records = {}
 	for i = 1, numItems do
 		-- GetInboxHeaderInfo: packageIcon, stationeryIcon, sender, subject, money, CODAmount,
 		-- daysLeft, hasItem, wasRead, wasReturned, textCreated, canReply, isGM. Three are read.
@@ -129,61 +131,11 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		-- Skip COD mail (can't take items without payment)
 		if hasItem and CODAmount == 0 then
 			for j = 1, ATTACHMENTS_MAX_RECEIVE do
-				-- GetInboxItem: name, itemID, itemTexture, count, quality, canUse.
-				local name, itemID, _, count = GetInboxItem(i, j)
-
-				if itemID and name then
-					local link = GetInboxItemLink(i, j)
-					-- DO NOT fall back to GetItemInfo(itemID) for the link.
-					-- GetItemInfo by numeric ID returns the BASE item link (no suffix/enchant),
-					-- which is wrong for suffixed weapons/armor (e.g. yields "Warlords' Axe"
-					-- instead of "Warlords' Axe of the Wolf"). Storing the wrong link creates
-					-- a distinct key that Aggregate cannot dedup against the correct suffixed
-					-- bank entry, producing a ghost plain-weapon duplicate row.
-					-- Leaving link=nil lets Aggregate's ID-based linkless merge fold the count
-					-- into the correct existing bank/bags entry instead.
-					local itemString = link and TOGBankClassic_Item:GetItemString(link) or nil
-
-					-- Always store the full link, exactly like Bank.lua's ScanBag().
-					-- Link-stripping (for bandwidth) happens at transmission time in
-					-- StripItemLinks / StripDeltaLinks, where NeedsLink() is called with
-					-- the item already guaranteed to be in the client cache.
-					-- Pre-stripping here caused gear links to be permanently lost when
-					-- the item wasn't cached yet at scan time.
-					local storageLink = link
-					-- Normalize: strip "item:" prefix so format matches StripItemLinks output.
-					-- GetItemString returns "item:4306:...", but ReconstructItemLink embeds as
-					-- |Hitem:%s, so storing with the prefix produces double "item:item:" which
-					-- makes SetHyperlink silently fail and shows no tooltip.
-					local storageItemString = itemString and (itemString:match("^item:(.+)$") or itemString) or nil
-
-					-- Use NORMALIZED key for deduplication (strips unique instance ID)
-					-- This allows identical items to merge even if they have different instance IDs
-					local itemKey = TOGBankClassic_Item:GetItemKey(link)
-					local key = tostring(itemID) .. itemKey
-
-					if mailItemsTable[key] then
-						-- Item already exists, add to count
-						local item = mailItemsTable[key]
-						mailItemsTable[key] = {
-							ID = item.ID,
-							Count = item.Count + count,
-							Link = item.Link or storageLink,
-							ItemString = item.ItemString or storageItemString,
-						}
-						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-003] Item %s: MERGED (key=%s) added %d, total now %d",
-							name, key, count, mailItemsTable[key].Count)
-					else
-						-- New item
-						mailItemsTable[key] = {
-							ID = itemID,
-							Count = count,
-							Link = storageLink,
-							ItemString = storageItemString,
-						}
-						TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-003] New item in mailbox: %s (ID: %d, Count: %d, Link: %s, Key: %s)",
-							name, itemID, count, storageLink and "yes" or "no", key)
-					end
+				local rec = attachmentRecord(i, j)
+				if rec then
+					records[#records + 1] = rec
+					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-003] Attachment %d/%d: %s x%d",
+						i, j, Record.key(rec), Record.count(rec))
 				end
 			end
 		elseif hasItem and CODAmount > 0 then
@@ -192,32 +144,19 @@ function TOGBankClassic_MailInventory:ScanMailInventory()
 		end
 	end
 
-	-- Convert to array format (same as bank/bags)
+	-- One record per identity, as the bag and bank sources are (Record.aggregate merges by key).
+	local byKey = Record.aggregate(records)
 	local mailItems = {}
-	for _, item in pairs(mailItemsTable) do
-		table.insert(mailItems, item)
-	end
+	for _, rec in pairs(byKey) do mailItems[#mailItems + 1] = rec end
+	table.sort(mailItems, function(a, b) return Record.key(a) < Record.key(b) end)
 
-	-- Verify mailItems is a proper sequential array
-	TOGBankClassic_Output:Debug("MAIL", "SCAN", "Created mail items array with %d items", #mailItems)
-	for i = 1, math.min(3, #mailItems) do
-		if mailItems[i] then
-			TOGBankClassic_Output:Debug("MAIL", "SCAN", "  [%d] ID=%s, Count=%s", i, tostring(mailItems[i].ID), tostring(mailItems[i].Count))
-		end
-	end
-
-	-- Build result structure (match bank/bags format for consistency)
 	local result = {
 		slots = { count = #mailItems, total = 50 },  -- Match bank/bags structure
-		items = mailItems,  -- Now an array like bank/bags
-		senders = senders,  -- step 4: { ["id:0"] = { [sender] = count } }, for the bank log's `from`
+		items = mailItems,
+		senders = senders,  -- { [Record.key] = { [sender] = count } }, for a reader of the scan
 		version = GetServerTime(),
 		lastScan = GetServerTime()
 	}
-
-	-- Verify result structure
-	TOGBankClassic_Output:Debug("MAIL", "SCAN", "Mail result structure: items type=%s, length=%d", type(result.items), #result.items)
-	TOGBankClassic_Output:Debug("MAIL", "SCAN", "Mail result slots.count=%d", result.slots.count)
 
 	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Mail scan complete: %d unique items across %d mail messages",
 		#mailItems, numItems)

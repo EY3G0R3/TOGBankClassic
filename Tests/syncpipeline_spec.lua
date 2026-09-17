@@ -235,7 +235,7 @@ describe("sync pipeline: A scans, B applies", function()
 		env.setBag(0, 4, { { id = 11754, count = 68 } })
 		TOGBankClassic_MailInventory.hasUpdated = true
 		TOGBankClassic_MailInventory.ScanMailInventory = function()
-			return { items = { { ID = 11754, Count = 3 } }, version = 1, lastScan = 0 }
+			return { items = { { 11754, 3 } }, version = 1, lastScan = 0 }
 		end
 		local a = scanAsA()
 		assert.equal(71, a["11754:0:0"], "precondition: mail did not reach A's own store")

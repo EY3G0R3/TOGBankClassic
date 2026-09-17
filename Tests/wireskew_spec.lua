@@ -19,8 +19,39 @@ local GUILD  = "Testguild"
 local C      = env.canon
 local T      = 1757000000
 
+-- LIBREQ-DS-008 part 2 (2026-09-15): the handshake, the offer and the version query are DeltaSync's
+-- numbered P2P (`TOGBankClassic_P2P:Lib()`); TOGBank's gate (PeerSpeaksDataLeg) reaches it as the
+-- `peerCapable` hook, which the library asks at every door -- the offer, the broadcast, the queue
+-- drain, the request, every dispatch. The data leg changed AGAIN with that adoption (the whole wire
+-- moved onto the host's prefixes), so DATA_LEG_MIN_ADDON_VERSION is 1.6.0 and a v1.5.1 client is
+-- "old" here exactly as v1.4.1 was: KNOWN COST, one wire break, stated in the CHANGELOG.
+local CAPABLE = "1.6.0"
+
 local function client(who)
 	env.standUpClient(who, { { name = BANKER, note = "gbank" }, { name = OLD }, { name = NEW }, { name = MYSTERY } }, GUILD)
+	-- The numbered wire names bankers by NUMBER; every client here holds the same table.
+	TOGBankClassic_BankerNumbers:Adopt({ v = 5, n = 2, t = { [BANKER] = 1 } }, NEW)
+	assert.equal("0001", TOGBankClassic_BankerNumbers:NumberOf(BANKER), "precondition: the numbers table was not adopted")
+end
+
+--- The library's numbered P2P on this client's host.
+local function p2p()
+	local lib = TOGBankClassic_P2P:Lib()
+	assert.is_table(lib, "precondition: the host has no numbered P2P")
+	return lib
+end
+
+local function host() return TOGBankClassic_Core:DeltaHost() end
+
+--- A bare numbered offer for the banker, as a peer whispers it.
+local function bareOffer()
+	return { type = "hash-offer2", v = TOGBankClassic_BankerNumbers:Version(), n = TOGBankClassic_BankerNumbers:EncodeNumbers({ "0001" }) }
+end
+
+--- A numbered broadcast naming the banker with `canon`, as a peer on `version` sends it.
+local function hlb2(canon, version)
+	local BN = TOGBankClassic_BankerNumbers
+	return { type = "hlb2", v = BN:Version(), addon = version, e = BN:EncodeEntries({ { number = "0001", canon = canon } }) }
 end
 
 local function hold(alt, canon, at)
@@ -38,7 +69,10 @@ local function captureAll()
 	local sent = {}
 	local function record(prefix, body, dist, target)
 		local _, decoded = TOGBankClassic_Core:DeserializeWithChecksum(body, {})
-		sent[#sent + 1] = { channel = byChannel[prefix] or prefix, prefix = prefix, body = decoded, dist = dist, target = target }
+		-- The target in TOGBank's `Name-Realm` spelling whichever address rule sent it (the host's
+		-- sends are addressed by SendWhisper's rule: bare for same-realm).
+		sent[#sent + 1] = { channel = byChannel[prefix] or prefix, prefix = prefix, body = decoded, dist = dist,
+			target = target and (TOGBankClassic_Guild:NormalizeName(target) or target) or nil }
 	end
 	TOGBankClassic_Core.SendCommMessage = function(_, prefix, body, dist, target, _, cb, arg)
 		record(prefix, body, dist, target)
@@ -61,39 +95,45 @@ describe("WIRE-SKEW-001: Guild:PeerSpeaksDataLeg", function()
 	-- WIRE-SKEW-002: the string a RELEASED client puts in `addon` is the packager's substitution of
 	-- @project-version@, which is the WHOLE git tag -- not "1.4.1". The first cut of this example
 	-- drove "1.4.1", passed, and the gate refused nobody real for an afternoon.
+	-- Two real receives, because a v1.4.1-v1.5.1 client broadcasts on togbank-hl (read there for its
+	-- versions and nothing else since LIBREQ-DS-008) and a client on this build on the host's OFFER
+	-- prefix, where the library acts on it -- and TOGBank must have read the version BEFORE the
+	-- library asks the gate about that same sender (the library fires onOfferReceived first,
+	-- LIBREQ-DS-008 ask 3).
 	it("reads the version off the hlb2 broadcast, through the real receive, in the packager's tag form", function()
 		local G = TOGBankClassic_Guild
-		-- Chat:Init's state for the batched broadcast path this message falls through to.
-		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
-		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY or 0.15
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hlb2", v = 0, e = "", banker = OLD, isBanker = false, addon = "TOGBankClassic-v1.4.1" })
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "GUILD", OLD)
 		assert.equal("TOGBankClassic-v1.4.1", G.peerAddonVersions[OLD], "the broadcast's addon version was not recorded")
 		local ok, why = G:PeerSpeaksDataLeg(OLD)
 		assert.is_false(ok, "a released v1.4.1 peer was read as capable -- the tag prefix defeated the version match")
 		assert.equal("TOGBankClassic-v1.4.1", why)
+		-- The host's prefix: the version is read there too.
+		host():OnComm_OFFER(host().prefixes.OFFER, TOGBankClassic_Core:SerializeWithChecksum(hlb2(C(T, 0x20), "TOGBankClassic-v1.5.1")), "GUILD", MYSTERY)
+		assert.equal("TOGBankClassic-v1.5.1", G.peerAddonVersions[MYSTERY], "the host-prefix broadcast's addon version was not recorded")
+		assert.is_false((G:PeerSpeaksDataLeg(MYSTERY)), "a v1.5.1 peer was read as capable: the wire moved with LIBREQ-DS-008 and that release cannot complete it")
 	end)
 
-	it("is false before 1.5.0, true from 1.5.0, true for a peer never heard from, true for a dev build", function()
+	it("is false before " .. CAPABLE .. ", true from " .. CAPABLE .. ", true for a peer never heard from, true for a dev build", function()
 		local G = TOGBankClassic_Guild
 		G:NotePeerAddonVersion(OLD, "1.4.1")
-		G:NotePeerAddonVersion(NEW, "1.5.0")
+		G:NotePeerAddonVersion(NEW, CAPABLE)
 		assert.is_false(G:PeerSpeaksDataLeg(OLD))
 		assert.is_true(G:PeerSpeaksDataLeg(NEW))
 		-- The same two, as the packager spells them on a released client.
 		G:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
-		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.5.0")
+		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v" .. CAPABLE)
 		assert.is_false(G:PeerSpeaksDataLeg(OLD))
 		assert.is_true(G:PeerSpeaksDataLeg(NEW))
 		G:NotePeerAddonVersion(NEW, "1.10.0")
-		assert.is_true(G:PeerSpeaksDataLeg(NEW), "a two-digit minor ranked below 1.5.0 (PROTO-001's class)")
+		assert.is_true(G:PeerSpeaksDataLeg(NEW), "a two-digit minor ranked below " .. CAPABLE .. " (PROTO-001's class)")
 		local ok, why = G:PeerSpeaksDataLeg(MYSTERY)
 		assert.is_true(ok, "a peer we have not heard from was refused -- that refuses the operator's own clients at login")
 		assert.equal("unknown", why)
 		G:NotePeerAddonVersion(MYSTERY, "@project-version@")
 		ok, why = G:PeerSpeaksDataLeg(MYSTERY)
 		assert.is_true(ok); assert.equal("dev", why)
-		assert.equal("1.5.0", TOGBankClassic_Constants.PROTOCOL.DATA_LEG_MIN_ADDON_VERSION)
+		assert.equal(CAPABLE, TOGBankClassic_Constants.PROTOCOL.DATA_LEG_MIN_ADDON_VERSION)
 	end)
 end)
 
@@ -139,7 +179,7 @@ describe("WIRE-SKEW-004: the capability verdict reads VersionCheck-1.0", functio
 
 	it("accepts one VersionCheck saw on v1.5.0, and a dev build, with no broadcast either", function()
 		local G = TOGBankClassic_Guild
-		VC:RecordPeerVersion(NEW, "TOGBankClassic", "TOGBankClassic-v1.5.0", "REQ")
+		VC:RecordPeerVersion(NEW, "TOGBankClassic", "TOGBankClassic-v1.6.0", "REQ")
 		assert.is_true((G:PeerSpeaksDataLeg(NEW)))
 		VC:RecordPeerVersion(MYSTERY, "TOGBankClassic", "@project-version@", "REQ")
 		local ok, why = G:PeerSpeaksDataLeg(MYSTERY)
@@ -155,12 +195,12 @@ describe("WIRE-SKEW-004: the capability verdict reads VersionCheck-1.0", functio
 		local G = TOGBankClassic_Guild
 		-- Stale BROADCAST, fresh VersionCheck.
 		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.4.1")
-		VC:RecordPeerVersion(NEW, "TOGBankClassic", "TOGBankClassic-v1.5.0", "REQ")
+		VC:RecordPeerVersion(NEW, "TOGBankClassic", "TOGBankClassic-v1.6.0", "REQ")
 		assert.is_true((G:PeerSpeaksDataLeg(NEW)), "a stale broadcast refused a peer that had updated")
 		-- Stale VERSIONCHECK, fresh broadcast -- the case a VersionCheck-wins rule would get wrong,
 		-- and the one the operator's congestion note is about.
 		VC:RecordPeerVersion(MYSTERY, "TOGBankClassic", "TOGBankClassic-v1.4.1", "REQ")
-		G:NotePeerAddonVersion(MYSTERY, "TOGBankClassic-v1.5.0")
+		G:NotePeerAddonVersion(MYSTERY, "TOGBankClassic-v1.6.0")
 		assert.is_true((G:PeerSpeaksDataLeg(MYSTERY)), "a stale VersionCheck entry refused a peer that had updated")
 		-- And with nothing in VersionCheck at all, the broadcast still decides.
 		G:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
@@ -173,7 +213,7 @@ describe("WIRE-SKEW-004: the capability verdict reads VersionCheck-1.0", functio
 		local G = TOGBankClassic_Guild
 		-- A populated VersionCheck that simply has no row for this player -- not an empty library.
 		VC:RecordPeerVersion(OLD, "TOGBankClassic", "TOGBankClassic-v1.4.1", "REQ")
-		VC:RecordPeerVersion(NEW, "TOGBankClassic", "TOGBankClassic-v1.5.0", "REQ")
+		VC:RecordPeerVersion(NEW, "TOGBankClassic", "TOGBankClassic-v1.6.0", "REQ")
 		assert.is_nil(G.peerAddonVersions[MYSTERY], "precondition: no broadcast from this peer either")
 		local ok, why = G:PeerSpeaksDataLeg(MYSTERY)
 		assert.is_true(ok, "a peer VersionCheck never got an answer from was hard-blocked -- congestion is not a version")
@@ -242,10 +282,10 @@ describe("WIRE-SKEW-004: the capability verdict reads VersionCheck-1.0", functio
 		assert.equal("TOGBankClassic-v1.3.2", mem[OLD].version)
 		assert.is_number(mem[OLD].at)
 		-- The broadcast feeds it too, and an OLDER claim never overwrites a newer memory.
-		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.5.0")
-		assert.equal("TOGBankClassic-v1.5.0", mem[NEW].version)
+		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.6.0")
+		assert.equal("TOGBankClassic-v1.6.0", mem[NEW].version)
 		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.4.1")
-		assert.equal("TOGBankClassic-v1.5.0", mem[NEW].version, "an older claim rewound the memory")
+		assert.equal("TOGBankClassic-v1.6.0", mem[NEW].version, "an older claim rewound the memory")
 		-- A reload: the session sources are gone, the memory is not.
 		VC.peerVersions = {}
 		G.peerAddonVersions = {}
@@ -255,20 +295,20 @@ describe("WIRE-SKEW-004: the capability verdict reads VersionCheck-1.0", functio
 		local ok, why = G:PeerSpeaksDataLeg(OLD)
 		assert.is_true(ok, "the sync gate refused a peer on a REMEMBERED version"); assert.equal("unknown", why)
 		-- A live sighting outranks the memory and refreshes it.
-		VC:RecordPeerVersion(OLD, "TOGBankClassic", "TOGBankClassic-v1.5.0", "RSP")
+		VC:RecordPeerVersion(OLD, "TOGBankClassic", "TOGBankClassic-v1.6.0", "RSP")
 		raw, remembered = G:LastSeenAddonVersion(OLD)
-		assert.equal("TOGBankClassic-v1.5.0", raw); assert.is_false(remembered)
-		assert.equal("TOGBankClassic-v1.5.0", mem[OLD].version)
+		assert.equal("TOGBankClassic-v1.6.0", raw); assert.is_false(remembered)
+		assert.equal("TOGBankClassic-v1.6.0", mem[OLD].version)
 		-- Never seen anywhere: nil. With no guild record the live source still answers and the
 		-- memory is simply absent -- no error either way.
 		assert.is_nil((G:LastSeenAddonVersion(MYSTERY)))
 		local info = G.Info; G.Info = nil
 		raw, remembered = G:LastSeenAddonVersion(OLD)
-		assert.equal("TOGBankClassic-v1.5.0", raw); assert.is_false(remembered)
+		assert.equal("TOGBankClassic-v1.6.0", raw); assert.is_false(remembered)
 		assert.is_nil((G:LastSeenAddonVersion(MYSTERY)))
 		G:RememberPeerAddonVersion(OLD, "1.0.0")   -- no record: nothing to write to, no error
 		G.Info = info
-		assert.equal("TOGBankClassic-v1.5.0", mem[OLD].version, "a write with no record reached the memory")
+		assert.equal("TOGBankClassic-v1.6.0", mem[OLD].version, "a write with no record reached the memory")
 	end)
 
 	-- A dev build encodes as 0, which loses every numeric comparison -- so "take the newer claim"
@@ -333,21 +373,18 @@ describe("WIRE-SKEW-004: the capability verdict reads VersionCheck-1.0", functio
 	end)
 
 	it("neither version-queries nor dispatches to a holder it can never fetch from", function()
-		local P2P = TOGBankClassic_P2PSession
+		local P2P = p2p()
 		VC:RecordPeerVersion(OLD, "TOGBankClassic", "TOGBankClassic-v1.4.1", "REQ")
 		-- THE ALT NEEDS A BANKER NUMBER or BeginVersionQuery returns before it sends anything, and
 		-- both assertions below would hold for a reason that has nothing to do with the fix. Found
 		-- exactly that way: this example stayed green against the deliberately-reverted code while
 		-- its three siblings went red. Asserted, not assumed, so it cannot rot back into a skip.
-		local roster = TOGBankClassic_BankerNumbers:Table()
-		roster.numbers[BANKER] = 1
-		roster.numbersVersion = roster.numbersVersion + 1
 		assert.equal("0001", TOGBankClassic_BankerNumbers:NumberOf(BANKER),
 			"precondition: without a banker number the version query never sends and this example proves nothing")
 		local sent = captureAll()
 		-- One alt, one holder, that holder on the old release and carrying no version for the alt --
 		-- the exact shape that produced a ver-query and then a dispatch timeout.
-		P2P:DispatchOrQuery({ { altName = BANKER, candidates = { { peer = OLD, updatedAt = T } } } })
+		P2P:DispatchOrQuery({ { key = BANKER, candidates = { { peer = OLD, updatedAt = T } } } })
 		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "ver-query" end),
 			"asked an old-release peer which version it holds -- a round trip for a peer we can never fetch from")
 		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "sync-request" end),
@@ -361,9 +398,9 @@ describe("WIRE-SKEW-001: the provider", function()
 		env.reset(); client("Bankchar")
 		hold(BANKER, C(T, 0x20), T)
 		sent = captureAll()
-		P2P = TOGBankClassic_P2PSession
+		P2P = p2p()
 		TOGBankClassic_Guild:NotePeerAddonVersion(OLD, "1.4.1")
-		TOGBankClassic_Guild:NotePeerAddonVersion(NEW, "1.5.0")
+		TOGBankClassic_Guild:NotePeerAddonVersion(NEW, CAPABLE)
 	end)
 
 	-- WIRE-SKEW-005: THE SECOND DOOR INTO AcceptSend. HandleSyncRequest refuses an old requester
@@ -373,6 +410,8 @@ describe("WIRE-SKEW-001: the provider", function()
 	-- Zurayli, Groucho and Bilgoth each appear REFUSED on one line and ACCEPTED on another, and every
 	-- accept follows a ReleaseSendSlot -- which is this drain. Each one then burned the full
 	-- 30-second state-wait and released with `no_state_summary`.
+	-- LIBREQ-DS-008: the library's ServeQueue asks peerCapable again at the drain, and its busy
+	-- reason for a refused release is "version" (the one reason word for "not this candidate").
 	it("refuses an old-release requester at QUEUE DRAIN too, instead of accepting it into a slot", function()
 		P2P:EnqueueSend("sidq", OLD, BANKER)
 		P2P:ServeQueue()
@@ -380,7 +419,7 @@ describe("WIRE-SKEW-001: the provider", function()
 			"the queue drain accepted an old-release peer -- it takes a send slot and burns the 30s state-wait")
 		local busy = find(sent, function(m) return m.body and m.body.type == "sync-busy" end)
 		assert.is_table(busy, "the refused requester was told nothing, so its session hangs rather than moving on")
-		assert.equal("addon_version", busy.body.reason)
+		assert.equal("version", busy.body.reason)
 		assert.equal(0, P2P:GetActiveSendTotal(), "a send slot is held for a peer that can never complete")
 	end)
 
@@ -398,7 +437,7 @@ describe("WIRE-SKEW-001: the provider", function()
 		local busy = find(sent, function(m) return m.body and m.body.type == "sync-busy" end)
 		assert.is_table(busy, "the old requester was accepted -- it will hold the slot for the state-wait and requeue")
 		assert.equal("sid1", busy.body.sessionId)
-		assert.equal("addon_version", busy.body.reason)
+		assert.equal("version", busy.body.reason)
 		assert.equal(0, P2P:GetActiveSendTotal())
 		assert.equal(0, #(P2P.sendQueue or {}), "the old requester was queued instead")
 		-- Three old requesters at capacity are still not queued: they cannot take a turn they cannot use.
@@ -419,14 +458,14 @@ describe("WIRE-SKEW-001: the requester", function()
 	before_each(function()
 		env.reset(); client("Newguy")
 		sent = captureAll()
-		P2P = TOGBankClassic_P2PSession
-		P2P.sessions, P2P.sessionsByAlt, P2P.pendingDispatch, P2P.activeSessions = {}, {}, {}, 0
+		P2P = p2p()
+		P2P.sessions, P2P.sessionsByKey, P2P.pendingDispatch, P2P.activeSessions = {}, {}, {}, 0
 		TOGBankClassic_Guild:NotePeerAddonVersion(OLD, "1.4.1")
-		TOGBankClassic_Guild:NotePeerAddonVersion(BANKER, "1.5.0")
+		TOGBankClassic_Guild:NotePeerAddonVersion(BANKER, CAPABLE)
 	end)
 
 	it("does not ask a holder on the old release; asks the capable one; parks nothing when nobody capable holds it", function()
-		P2P:DispatchList({ { altName = BANKER, candidates = {
+		P2P:DispatchList({ { key = BANKER, candidates = {
 			{ peer = OLD, canon = C(T, 0x20), updatedAt = T + 5 },   -- freshest sidecar, would be picked first
 			{ peer = BANKER, canon = C(T, 0x20), updatedAt = T },
 		} } })
@@ -434,32 +473,29 @@ describe("WIRE-SKEW-001: the requester", function()
 		assert.is_table(req, "no sync-request went out")
 		assert.equal(BANKER, req.target, "the old-release holder was asked; it will accept and never answer the query (180s)")
 		-- Nobody capable: nothing dispatched, nothing parked, no error.
-		P2P.sessions, P2P.sessionsByAlt = {}, {}
+		P2P.sessions, P2P.sessionsByKey = {}, {}
 		local before = #sent
-		P2P:DispatchList({ { altName = "Otherbank-Testrealm", candidates = { { peer = OLD, canon = C(T, 0x21), updatedAt = T } } } })
+		P2P:DispatchList({ { key = "Otherbank-Testrealm", candidates = { { peer = OLD, canon = C(T, 0x21), updatedAt = T } } } })
 		assert.equal(before, #sent)
 		assert.equal(0, #P2P.pendingDispatch, "an alt with no capable holder was parked forever")
 	end)
 
 	it("drops an old-release holder folded into a live session when it advances", function()
-		P2P.sessions["s"] = { sessionId = "s", altName = BANKER, peer = MYSTERY, state = "DISPATCHED", timers = {},
+		P2P.sessions["s"] = { sessionId = "s", key = BANKER, peer = MYSTERY, state = "DISPATCHED", timers = {},
 			triedPeers = { [MYSTERY] = true },
 			candidates = { { peer = MYSTERY, canon = C(T, 0x20) }, { peer = OLD, canon = C(T, 0x20) }, { peer = BANKER, canon = C(T, 0x20) } } }
-		P2P.sessionsByAlt[BANKER] = "s"
+		P2P.sessionsByKey[BANKER] = "s"
 		P2P:AdvanceCandidate("s", "timeout")
 		assert.equal(BANKER, P2P.sessions["s"].peer, "the session advanced to the old-release holder")
 	end)
 
-	it("ignores a pull-path ACK from an old-release relay rather than querying it", function()
-		TOGBankClassic_Guild:BroadcastP2PRequest(BANKER, 0x10, T, nil, nil)
-		local n = #sent
-		local ack = TOGBankClassic_Core:SerializeWithChecksum({
-			type = "alt-request-reply", name = BANKER, isBanker = false, hasData = true, hashOnly = false, expectedHash = 0x10,
-		})
-		TOGBankClassic_Chat:OnCommReceived("togbank-rr", ack, "WHISPER", OLD)
-		assert.equal(n, #sent, "a QUERY went to a relay that cannot answer it")
-		assert.is_table(TOGBankClassic_Guild.pendingP2PRequests[BANKER], "the pull request was consumed by an ACK that leads nowhere")
-	end)
+	-- writ-cannot: "ignores a pull-path ACK from an old-release relay rather than querying it" WAS
+	-- HERE and must not exist any more -- the feature it covered was removed on purpose. The pull path
+	-- (Guild:BroadcastP2PRequest, the togbank-rr `alt-request-reply` ACK, Guild.pendingP2PRequests)
+	-- is deleted with LIBREQ-DS-008 part 2 (directive #12702, "strip the chaff out of TOGBank"):
+	-- nothing sends the request, the prefix is unregistered, and nothing hears the ACK, so there is
+	-- no relay to be queried. The rule it pinned -- a QUERY never goes to a release that cannot
+	-- answer it -- is the dispatch gate the two examples above pin on the library's session path.
 end)
 
 -- WIRE-SKEW-006: AN OFFER FROM AN OLD-RELEASE PEER IS NOT AN OFFER.
@@ -479,41 +515,43 @@ describe("WIRE-SKEW-006: an old-release peer's offer", function()
 		env.reset(); client("Newguy")
 		hold(BANKER, C(T, 0x20), T)
 		sent = captureAll()
-		P2P, G = TOGBankClassic_P2PSession, TOGBankClassic_Guild
-		P2P.sessions, P2P.sessionsByAlt, P2P.pendingDispatch, P2P.activeSessions = {}, {}, {}, 0
+		P2P, G = p2p(), TOGBankClassic_Guild
+		P2P.sessions, P2P.sessionsByKey, P2P.pendingDispatch, P2P.activeSessions = {}, {}, {}, 0
 		P2P.offers, P2P.versionQueries, P2P.isCollecting = {}, {}, true
 		G.newerOfferedBy = {}
 		G:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
-		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.5.0")
+		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.6.0")
 		assert.equal("current", (G:GetAltStaleness(BANKER)), "precondition: the bank we hold must start yellow")
 	end)
 
+	-- LIBREQ-DS-008: the bare offer is the library's `hash-offer2` (numbers, no canon) and the
+	-- canon-bearing claim is its hlb2 broadcast; both doors ask TOGBank's gate as `peerCapable`.
 	it("is refused at the door: no red, nothing recorded -- while a capable peer's still counts", function()
-		P2P:OnOffer(OLD, { [BANKER] = {} })
+		P2P:OnOffer(OLD, bareOffer())
 		assert.is_nil(G.newerOfferedBy[BANKER], "a v1.4.1 peer's bare offer turned the tab red for a bank we hold current")
 		assert.is_nil(P2P.offers[BANKER], "a v1.4.1 peer was recorded as a holder to ask")
 		assert.equal("current", (G:GetAltStaleness(BANKER)))
-		-- The control: the same offer from a v1.5.0 peer is the claim TABCOLOUR-003 is about.
-		P2P:OnOffer(NEW, { [BANKER] = {} })
+		-- The control: the same offer from a capable peer is the claim TABCOLOUR-003 is about.
+		P2P:OnOffer(NEW, bareOffer())
 		assert.equal(NEW, G.newerOfferedBy[BANKER], "the door refused a CAPABLE peer's offer too -- too wide")
 		assert.equal(1, #P2P.offers[BANKER])
 		assert.equal("offered", (G:GetAltStaleness(BANKER)))
 	end)
 
 	it("is not folded into a live session's candidates either", function()
-		P2P.sessions["s"] = { sessionId = "s", altName = BANKER, peer = MYSTERY, state = "DISPATCHED", timers = {},
+		P2P.sessions["s"] = { sessionId = "s", key = BANKER, peer = MYSTERY, state = "DISPATCHED", timers = {},
 			triedPeers = { [MYSTERY] = true }, candidates = { { peer = MYSTERY, canon = C(T, 0x20) } } }
-		P2P.sessionsByAlt[BANKER] = "s"
-		local newer = { hashV2 = C(T + 10, 0x21), updatedAt = T + 10 }
-		P2P:OnOffer(OLD, { [BANKER] = newer })
+		P2P.sessionsByKey[BANKER] = "s"
+		local newer = C(T + 10, 0x21)
+		P2P:OnBroadcast(OLD, hlb2(newer, "TOGBankClassic-v1.4.1"))
 		assert.equal(1, #P2P.sessions["s"].candidates, "an old-release holder was added to a live session -- it will be advanced to and time out")
-		P2P:OnOffer(NEW, { [BANKER] = newer })
+		P2P:OnBroadcast(NEW, hlb2(newer, "TOGBankClassic-v1.6.0"))
 		assert.equal(2, #P2P.sessions["s"].candidates, "the control: a capable peer's canon-bearing offer must still fold in")
 	end)
 
 	it("clears the red it raised when its version is learned only after the offer got in", function()
 		-- MYSTERY is unknown when it offers, so the door lets it through and the tab goes red.
-		P2P:OnOffer(MYSTERY, { [BANKER] = {} })
+		P2P:OnOffer(MYSTERY, bareOffer())
 		assert.equal(MYSTERY, G.newerOfferedBy[BANKER], "precondition: an unknown peer's offer must raise the red, or this proves nothing")
 		assert.equal("offered", (G:GetAltStaleness(BANKER)))
 		-- Its broadcast lands during the window: v1.4.1. The window closes.
@@ -535,68 +573,36 @@ end)
 -- three slots times thirty seconds, every login. Two things say "old wire" before any claim does:
 -- the `togbank-state` summary a v1.4.1 requester whispers after our accept (registered again,
 -- receive-only, never read -- the sender is the fact), and thirty seconds of silence.
-describe("WIRE-SKEW-007: old-wire behaviour is remembered", function()
-	local sent, P2P, G
-	before_each(function()
+--
+-- writ-cannot: the four examples that stood here -- "hears a togbank-state summary through the real
+-- receive, frees the accepted slot at once, and refuses the peer from then on", "treats thirty
+-- seconds of silence after an accept the same way", "is outranked by a real version claim, in either
+-- direction", "registers the tripwire prefix and documents it, and never sends on it" -- must not
+-- exist any more: the feature they covered was removed on purpose. LIBREQ-DS-008 part 2 (directive
+-- #12702) deleted Guild:NotePeerOldWire / Guild.peerOldWire and unregistered the `togbank-state`
+-- tripwire prefix (Modules/Guild.lua, the note above PeerSpeaksDataLeg): the state-wait is the
+-- library's, a v1.4.1 requester is refused by its VERSION (VersionCheck names it at login, its own
+-- broadcast names it, WIRE-SKEW-004), and the whole handshake now runs on the host's prefixes,
+-- where a v1.4.1 client never speaks at all. What survives of the rule is below: the retired
+-- prefix is gone from the registration and from the descriptions, and nothing is sent on it.
+describe("WIRE-SKEW-007: the old-wire tripwire is retired with the pull path", function()
+	it("does not register the tripwire prefix, does not describe it, and never sends on it", function()
 		env.reset(); client("Bankchar")
 		hold(BANKER, C(T, 0x20), T)
-		sent = captureAll()
-		P2P, G = TOGBankClassic_P2PSession, TOGBankClassic_Guild
-		G.peerOldWire = {}
-		assert.is_nil(G.peerAddonVersions[MYSTERY], "precondition: this peer's version must be unknown")
-	end)
-
-	it("hears a togbank-state summary through the real receive, frees the accepted slot at once, and refuses the peer from then on", function()
-		assert.is_true(P2P:HandleSyncRequest("sid1", MYSTERY, BANKER, C(T, 0x20)), "precondition: an unknown peer is accepted")
-		assert.equal(1, P2P:GetActiveSendTotal())
-		-- The old wire's summary, in the old wire's format -- deliberately NOT this tree's checksum
-		-- framing, because nothing in it may be read.
-		TOGBankClassic_Chat:OnCommReceived("togbank-state", "^1^Sstate-summary^^", "WHISPER", MYSTERY)
-		assert.equal(0, P2P:GetActiveSendTotal(), "the slot was held for the whole state-wait after the peer had already told us what it runs")
-		assert.is_nil(next(P2P.stateWaits or {}), "a state-wait was left armed for a slot already released")
-		local ok, why = G:PeerSpeaksDataLeg(MYSTERY)
-		assert.is_false(ok, "a peer that sent the old wire's summary was still treated as capable")
-		assert.equal("old wire (state-summary)", why)
-		local n = #sent
-		assert.is_false(P2P:HandleSyncRequest("sid2", MYSTERY, BANKER, C(T, 0x20)), "its next request took a slot")
-		local busy = find(sent, function(m) return m.body and m.body.type == "sync-busy" and m.body.sessionId == "sid2" end)
-		assert.is_table(busy, "the refused requester was told nothing"); assert.equal("addon_version", busy.body.reason)
-		assert.equal(n + 1, #sent)
-		assert.equal(0, P2P:GetActiveSendTotal())
-	end)
-
-	it("treats thirty seconds of silence after an accept the same way", function()
-		assert.is_true(P2P:HandleSyncRequest("sid3", MYSTERY, BANKER, C(T, 0x20)))
-		env.advance(31)
-		assert.equal(0, P2P:GetActiveSendTotal(), "precondition: the state-wait must have released the slot")
-		local ok, why = G:PeerSpeaksDataLeg(MYSTERY)
-		assert.is_false(ok, "a peer that answered an accept with silence was given another slot to sit in")
-		assert.equal("old wire (silent)", why)
-	end)
-
-	it("is outranked by a real version claim, in either direction", function()
-		G:NotePeerOldWire(MYSTERY, "silent")
-		assert.is_false((G:PeerSpeaksDataLeg(MYSTERY)))
-		-- The claim arrives afterwards and names a capable release: the mark only said what the
-		-- peer DID, the claim says what it RUNS.
-		G:NotePeerAddonVersion(MYSTERY, "TOGBankClassic-v1.5.0")
-		assert.is_true((G:PeerSpeaksDataLeg(MYSTERY)), "a v1.5.0 claim lost to an earlier silence -- a lost whisper refuses a capable peer for good")
-		-- And a mark on a peer already known to be old changes nothing.
-		G:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
-		G:NotePeerOldWire(OLD, "state-summary")
-		local ok, why = G:PeerSpeaksDataLeg(OLD)
-		assert.is_false(ok); assert.equal("TOGBankClassic-v1.4.1", why, "the version claim is the better answer when there is one")
-	end)
-
-	it("registers the tripwire prefix and documents it, and never sends on it", function()
-		local registered = false
-		for _, p in ipairs(TOGBankClassic_Chat.COMM_PREFIXES) do if p == "togbank-state" then registered = true end end
-		assert.is_true(registered, "togbank-state is not registered -- the old wire's summary is never heard")
-		assert.is_string(TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS["togbank-state"])
-		-- Never sent: the provider's whole handshake against an old peer produces nothing on it.
-		G:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
-		P2P:HandleSyncRequest("sid4", OLD, BANKER, C(T, 0x20))
+		local sent = captureAll()
+		for _, p in ipairs(TOGBankClassic_Chat.COMM_PREFIXES) do
+			assert.not_equal("togbank-state", p, "togbank-state is registered again -- the old wire's summary has no reader on this build")
+		end
+		assert.is_nil(TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS["togbank-state"], "a description outlived the prefix")
+		assert.is_nil(TOGBankClassic_Guild.NotePeerOldWire, "the old-wire observer is back")
+		-- The provider's whole handshake against an old peer produces nothing on it, and the old
+		-- wire's summary arriving on it reaches nothing (the prefix has no branch; no error either).
+		TOGBankClassic_Guild:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
+		p2p():HandleSyncRequest("sid4", OLD, BANKER, C(T, 0x20))
 		assert.is_nil(find(sent, function(m) return m.prefix == "togbank-state" end), "this tree sent on the retired prefix")
+		assert.has_no_error(function()
+			TOGBankClassic_Chat:OnCommReceived("togbank-state", "^1^Sstate-summary^^", "WHISPER", MYSTERY)
+		end)
 	end)
 end)
 
@@ -623,7 +629,7 @@ describe("WIRE-SKEW-008: claims from an old-release peer", function()
 		G.newestAdvertisedAt, G.newestAdvertisedBy, G.latestBankerHashes, G.refusedNewerBy = {}, {}, {}, {}
 		TOGBankClassic_Bank.newerSelf = nil
 		G:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
-		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.5.0")
+		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.6.0")
 		newer = { hashV2 = C(T + 600, 0x21), updatedAt = T + 600 }
 		assert.equal("current", (G:GetAltStaleness(BANKER)), "precondition: the bank we hold must start yellow")
 	end
@@ -677,7 +683,7 @@ describe("WIRE-SKEW-008: claims from an old-release peer", function()
 		G = TOGBankClassic_Guild
 		TOGBankClassic_Bank.newerSelf = nil
 		G:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
-		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.5.0")
+		G:NotePeerAddonVersion(NEW, "TOGBankClassic-v1.6.0")
 		local me = G:GetNormalizedPlayer()
 		assert.equal(BANKER, me, "precondition: this client is the author")
 		assert.is_false(G:NoteSelfHolder(newer.hashV2, OLD), "a v1.4.1 relay's claim about our own bank was recorded as a diff base to fetch")
@@ -691,19 +697,22 @@ describe("WIRE-SKEW-008: claims from an old-release peer", function()
 	-- second pass, turned the same claims into one BroadcastP2PRequest per alt -- a guild broadcast
 	-- each, on an old release's publish times. And RequestHashListFromBanker would pick that banker
 	-- to ask in the first place, for a reply it then ignores.
-	it("are dropped whole at the hash-list-reply handler too: no guild alt-request for what an old release claims", function()
+	it("are dropped whole at the hash-list-reply handler too: no request for what an old release claims", function()
 		local sent = captureAll()
 		local reply = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-reply", banker = OLD,
 			alts = { [BANKER] = { hash = 0x99, hashV2 = newer.hashV2, updatedAt = newer.updatedAt, mailHash = 0 } } })
-		TOGBankClassic_Chat:OnCommReceived("togbank-hlr", reply, "WHISPER", OLD)
-		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "alt-request" end),
-			"a v1.4.1 banker's hash list produced a guild alt-request -- the fast-fill burst behind the ACK storm")
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", reply, "WHISPER", OLD)
+		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "sync-request" end),
+			"a v1.4.1 banker's hash list produced a request to it -- a session that sits out the delivery watchdog")
 		assert.equal("current", (G:GetAltStaleness(BANKER)))
-		-- The control: the same reply from a capable banker asks the guild for it.
-		G:NotePeerAddonVersion(MYSTERY, "TOGBankClassic-v1.5.0")
-		TOGBankClassic_Chat:OnCommReceived("togbank-hlr", reply, "WHISPER", MYSTERY)
-		assert.is_table(find(sent, function(m) return m.body and m.body.type == "alt-request" end),
-			"the control: a capable banker's newer claim must still be requested")
+		-- The control: the same reply from a capable banker is asked for it (LIBREQ-DS-008: the
+		-- library's sync-request to the replier, not the pull path's guild alt-request).
+		G:NotePeerAddonVersion(MYSTERY, "TOGBankClassic-v1.6.0")
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", reply, "WHISPER", MYSTERY)
+		local req = find(sent, function(m) return m.body and m.body.type == "sync-request" end)
+		assert.is_table(req, "the control: a capable banker's newer claim must still be requested")
+		assert.equal(MYSTERY, req.target)
+		assert.equal(BANKER, req.body.itemKey)
 	end)
 
 	it("are not asked for a hash list when a capable banker could be asked instead", function()
@@ -726,41 +735,69 @@ describe("WIRE-SKEW-008: claims from an old-release peer", function()
 		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "hash-list-request" end),
 			"asked a v1.4.1 banker for a hash list whose reply is then ignored")
 		-- The control: once OLD is on the new release it is asked.
-		TOGBankClassic_Guild:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.5.0")
+		TOGBankClassic_Guild:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.6.0")
 		TOGBankClassic_Guild:RequestHashListFromBanker()
 		local ask = find(sent, function(m) return m.body and m.body.type == "hash-list-request" end)
 		assert.is_table(ask, "the control: a capable banker is not asked either -- the picker is broken, not gated")
 		assert.equal(OLD, ask.target)
 	end)
 
-	it("are dropped whole at the broadcast handler, through the real receive: no tab, no cache, no offer back", function()
-		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
-		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY or 0.15
-		local BN = TOGBankClassic_BankerNumbers
-		local roster = BN:Table()
-		roster.numbers[BANKER] = 1
-		roster.numbersVersion = roster.numbersVersion + 1
-		assert.equal("0001", BN:NumberOf(BANKER), "precondition: without a number the broadcast names nothing and this proves nothing")
+	-- LIBREQ-DS-008 part 2: the broadcast arrives on the host's OFFER prefix and the LIBRARY judges
+	-- it (the gate as peerCapable, the caches through onAdvertised, the offer back). The version it
+	-- carries must have been read before that judgement -- DeltaSync fires Core's onOfferReceived
+	-- first (LIBREQ-DS-008 ask 3); the first example below drives a peer
+	-- neither VersionCheck nor any earlier broadcast has named, which is the case that ordering
+	-- decides.
+	local function broadcastFrom(who, version)
+		host():OnComm_OFFER(host().prefixes.OFFER, TOGBankClassic_Core:SerializeWithChecksum(hlb2(newer.hashV2, version)), "GUILD", who)
+	end
+
+	-- TAB-STATE-003 reaches this path now: the old broadcast handler dropped the claim before any
+	-- Note* saw it (so the tab stayed YELLOW, false of what exists); the library reports every claim
+	-- through onAdvertised and the gate inside NoteAdvertisedPublishTime files a refused peer's newer
+	-- claim as GREY -- the same answer the first example of this describe pins for the reply path.
+	-- One rule for every path, which is what the rule was for.
+	it("are dropped whole at the broadcast handler, through the real receive: grey not red, no cache, no offer back, no request", function()
+		assert.equal("0001", TOGBankClassic_BankerNumbers:NumberOf(BANKER), "precondition: without a number the broadcast names nothing and this proves nothing")
 		local sent = captureAll()
-		local function broadcastFrom(who, version)
-			local body = TOGBankClassic_Core:SerializeWithChecksum({
-				type = "hlb2", v = BN:Version(), banker = who, isBanker = false, addon = version,
-				e = BN:EncodeEntries({ { number = BN:NumberOf(BANKER), canon = newer.hashV2 } }),
-			})
-			TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "GUILD", who)
-			assert.equal(1, #TOGBankClassic_Chat.hashBroadcastQueue, "precondition: the broadcast from " .. who .. " was not queued -- the path under test never ran")
-			TOGBankClassic_Chat:ProcessQueuedHashBroadcasts()
-		end
 		broadcastFrom(OLD, "TOGBankClassic-v1.4.1")
-		assert.equal("current", (G:GetAltStaleness(BANKER)), "a v1.4.1 broadcast naming a later canon turned the tab red")
+		local state, _, newestAt, peer = G:GetAltStaleness(BANKER)
+		assert.equal("refused", state, "a v1.4.1 broadcast naming a later canon turned the tab red, or left it yellow as if nothing newer existed")
+		assert.equal(0, newestAt, "a refused claim raised the newest-advertised time")
+		assert.equal(OLD, peer)
 		assert.is_nil(G.latestBankerHashes[BANKER])
 		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "hash-offer2" end),
 			"we offered our copy to a peer that cannot fetch it -- that is the sync-request we then refuse")
-		-- The control: the identical broadcast from a v1.5.0 peer does all three. MYSTERY, not NEW:
+		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "sync-request" end),
+			"we asked a peer that cannot serve us for the version it advertised")
+		-- The control: the identical broadcast from a capable peer does all of it. MYSTERY, not NEW:
 		-- this client IS Newguy, and its own broadcast is dropped at the door as our own message --
 		-- which passed the first half of this example for the wrong reason until the control caught it.
-		broadcastFrom(MYSTERY, "TOGBankClassic-v1.5.0")
+		broadcastFrom(MYSTERY, "TOGBankClassic-v1.6.0")
 		assert.equal("behind", (G:GetAltStaleness(BANKER)), "the control: a capable peer's broadcast must still raise the tab")
 		assert.is_table(G.latestBankerHashes[BANKER])
+		local req = find(sent, function(m) return m.body and m.body.type == "sync-request" end)
+		assert.is_table(req, "the control: a capable peer's newer claim must be requested from it")
+		assert.equal(MYSTERY, req.target)
+	end)
+
+	it("are dropped even when the broadcast is the FIRST word from that peer -- its own `addon` field is read before the library judges it", function()
+		-- Nobody has named OLD's version yet: not VersionCheck (a LibStub library, whose table
+		-- outlives env.reset -- the WIRE-SKEW-004 describe above recorded OLD there), not an earlier
+		-- broadcast. Both cleared for OLD to make that so.
+		G.peerAddonVersions[OLD] = nil
+		if G.Info.peerAddonVersions then G.Info.peerAddonVersions[OLD] = nil end
+		local VC = LibStub("VersionCheck-1.0", true)
+		if VC then VC.peerVersions = {} end
+		assert.is_true((G:PeerSpeaksDataLeg(OLD)), "precondition: with no version known the gate must read OLD as capable")
+		local sent = captureAll()
+		broadcastFrom(OLD, "TOGBankClassic-v1.4.1")
+		assert.is_false((G:PeerSpeaksDataLeg(OLD)), "the broadcast's own version was not read")
+		assert.equal("refused", (G:GetAltStaleness(BANKER)),
+			"the library judged the broadcast before its version was read: a v1.4.1 peer's first word turned the tab red")
+		assert.is_nil(G.latestBankerHashes[BANKER], "... and entered the fetch cache")
+		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "sync-request" end),
+			"... and was dispatched to -- a session that sits out the 180 s delivery watchdog (the WIRE-SKEW-004 hours, again)")
+		assert.is_nil(find(sent, function(m) return m.body and m.body.type == "hash-offer2" end))
 	end)
 end)

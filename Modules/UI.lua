@@ -392,13 +392,28 @@ end
 -- two had not learned that. One helper: the icons are built here, cached on the frame, the bar
 -- ends at the leftmost icon BY ANCHOR (never by arithmetic), and the whole row is lifted above the
 -- resize sizers (HITBOX-001). The Requests cluster keeps hanging left of `anchor` exactly as before.
+--
+-- SHARE-BTN-001 (the operator, 2026-09-16: "for the bankers, we need to add a button to the right of
+-- the gear wheel settings icon that is the /togbank share button. shorten the status bar to make up
+-- for the space"): on a bank character the share button takes the gear's old place (-165) and the
+-- gear moves one slot left (-193, the same 8px gap the gear keeps from the "?"). The gear stays the
+-- LEFTMOST icon either way, so the anchor the status bar and the Requests cluster hang from never
+-- changes identity -- only the gear moves, and everything anchored to it follows. The texture is the
+-- client's own circling-arrows refresh glyph, which both flavours ship (the Era and Anniversary LFG
+-- browse panels draw it), so it cannot render blank the way many Era icon files do.
 TOGBankClassic_UI.CHROME = {
 	HELP_SIZE = 24, HELP_X = -133, HELP_Y = 15,
 	GEAR_SIZE = 20, GEAR_X = -165, GEAR_Y = 17,
+	SHARE_SIZE = 20, SHARE_X = -165, SHARE_Y = 17, GEAR_X_BESIDE_SHARE = -193,
+	-- The gap between neighbouring icons, which the X values above are chained with (-133 - 24 - 8 =
+	-- -165; -165 - 20 - 8 = -193). LayoutChrome places by this chain; the X values are its 1.0 result.
+	ICON_GAP = 8,
 	STATUS_LEFT = 15, STATUS_BOTTOM = 15, STATUS_GAP = 6,
 	HELP_TEXTURE = "Interface\\Common\\help-i",
 	GEAR_TEXTURE = "Interface\\Icons\\Trade_Engineering",
+	SHARE_TEXTURE = "Interface\\Buttons\\UI-RefreshButton",
 	GEAR_TOOLTIP = "Open the addon options panel (banker/scan configuration, appearance, debug logging, minimap button).",
+	SHARE_TOOLTIP = "Publish this bank character's contents to the guild right now -- the same as typing /togbank share. TOG Bank also does this by itself every ten minutes; use it when you have just moved items and want guildmates to see them straight away.",
 }
 
 --- Put the status bar's right edge at `anchor`'s left, the one rule every window follows. Without
@@ -445,9 +460,7 @@ function TOGBankClassic_UI:DressWindow(window, opts)
 	-- never keeps a previous window's help text.
 	local help = frame.togChromeHelp
 	if not help then
-		help = CreateFrame("Frame", nil, frame)
-		help:SetSize(C.HELP_SIZE, C.HELP_SIZE)
-		help:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", C.HELP_X, C.HELP_Y)
+		help = CreateFrame("Frame", nil, frame)   -- sized and placed by LayoutChrome (SyncShareButton, below)
 		help:EnableMouse(true)
 		local tex = help:CreateTexture(nil, "OVERLAY")
 		tex:SetAllPoints(help)
@@ -471,8 +484,6 @@ function TOGBankClassic_UI:DressWindow(window, opts)
 	if opts.settings then
 		if not gear then
 			gear = CreateFrame("Button", nil, frame)
-			gear:SetSize(C.GEAR_SIZE, C.GEAR_SIZE)
-			gear:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", C.GEAR_X, C.GEAR_Y)
 			gear:EnableMouse(true)
 			gear:SetNormalTexture(C.GEAR_TEXTURE)
 			gear:SetPushedTexture(C.GEAR_TEXTURE)
@@ -510,16 +521,132 @@ function TOGBankClassic_UI:DressWindow(window, opts)
 		gear = nil
 	end
 
+	-- SHARE-BTN-001: the /togbank share button, right of the gear. Only beside a gear (it is placed
+	-- relative to it) and only for a window that asked. Built for every such window; SyncShareButton
+	-- decides whether it shows, because banker status is not known yet when a window is drawn early
+	-- in a session -- the frame's OnShow asks again every time the window opens.
+	local share = frame.togChromeShare
+	if gear and opts.share then
+		if not share then
+			share = CreateFrame("Button", nil, frame)
+			share:EnableMouse(true)
+			share:SetNormalTexture(C.SHARE_TEXTURE)
+			share:SetPushedTexture(C.SHARE_TEXTURE)
+			local pushed = share:GetPushedTexture()
+			if pushed then pushed:SetVertexColor(0.7, 0.7, 0.7) end
+			share:SetHitRectInsets(-2, -2, -2, -2)
+			share:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+			share:SetScript("OnEnter", function(f)
+				GameTooltip:SetOwner(f, "ANCHOR_TOP")
+				GameTooltip:ClearLines()
+				GameTooltip:AddLine("Share Your Bank")
+				GameTooltip:AddLine(C.SHARE_TOOLTIP, 0.9, 0.9, 0.9, true)
+				GameTooltip:Show()
+			end)
+			share:SetScript("OnLeave", function() TOGBankClassic_UI:HideTooltip() end)
+			-- The slash command's own handler, not a copy of it: the zone-in deferral, the rescan and
+			-- the chat line all come with it.
+			share:SetScript("OnClick", function()
+				if TOGBankClassic_Chat and TOGBankClassic_Chat.ChatCommand then
+					TOGBankClassic_Chat:ChatCommand("share")
+				end
+			end)
+			frame.togChromeShare = share
+		end
+		if not frame.togShareHooked then
+			frame.togShareHooked = true
+			frame:HookScript("OnShow", function(f) TOGBankClassic_UI:SyncShareButton(f) end)
+		end
+		frame.togShareWanted = true
+	else
+		frame.togShareWanted = false
+		share = nil
+	end
+
 	local icons = { help }
+	if share then icons[#icons + 1] = share end
 	if gear then icons[#icons + 1] = gear end
 	for _, f in ipairs(opts.extra or {}) do icons[#icons + 1] = f end
 
-	local chrome = { help = help, settings = gear, icons = icons, anchor = icons[#icons] }
+	local chrome = { help = help, share = share, settings = gear, icons = icons, anchor = icons[#icons] }
 	window.togChrome = chrome
 	window.togBottomIcons = icons
+	self:SyncShareButton(frame)   -- also sizes and places the row (LayoutChrome)
+	-- VISIBILITY-001 part 2: the row re-lays on the scale signal. Keyed by the frame, which the icons
+	-- are cached on; the listener is module-level and reads the frame off the owner argument.
+	self:OnUIScaleChanged(frame, TOGBankClassic_UI.Chrome_OnScaleChanged)
 	self:AnchorStatusBar(window, chrome.anchor)
 	self:KeepAboveResizeSizers(window, icons)
 	return chrome
+end
+
+--- SHARE-BTN-001: is the player a bank character? False until the roster knows (IsBank reads the
+--- roster cache, which is empty for the first moments of a session).
+---@return boolean
+function TOGBankClassic_UI:PlayerIsBanker()
+	local G = TOGBankClassic_Guild
+	if not (G and G.GetPlayer and G.IsBank) then return false end
+	local player = G:GetPlayer()
+	return player ~= nil and G:IsBank(player) == true
+end
+
+--- SHARE-BTN-LIVE-001 (self-audit 4777d14a F5): re-decide the share button on every window that has
+--- one, NOW -- called by Guild:RefreshOnlineCache after each roster refresh, because banker status can
+--- arrive while the Guild Bank window is already open, and DressWindow/OnShow alone left the button
+--- missing until the window was closed and reopened.
+function TOGBankClassic_UI:SyncShareButtons()
+	for _, module in ipairs({ TOGBankClassic_UI_Browse or false, TOGBankClassic_UI_Inventory or false }) do
+		local frame = module and module.Window and module.Window.frame
+		if frame and frame.togChromeShare then self:SyncShareButton(frame) end
+	end
+end
+
+--- SHARE-BTN-001: show the share button on a bank character and hide it otherwise, and put the gear
+--- where that leaves it -- beside the button, or back in its own place. The gear is the anchor the
+--- status bar and the Requests cluster hang from, so moving it is the whole of "shorten the status
+--- bar". A frame that never asked for the button (or a pooled one that asked before) hides it.
+---@param frame table the window's frame
+---@return boolean shown
+function TOGBankClassic_UI:SyncShareButton(frame)
+	local share, gear = frame and frame.togChromeShare, frame and frame.togChromeGear
+	local shown = (frame and frame.togShareWanted and share and gear and self:PlayerIsBanker()) and true or false
+	if share then
+		if shown then share:Show() else share:Hide() end
+	end
+	if frame then
+		frame.togShareShown = shown
+		self:LayoutChrome(frame)
+	end
+	return shown
+end
+
+--- VISIBILITY-001 part 2: size and place the bottom-row icons at the accessibility scale. The row is
+--- a CHAIN from the "?"'s right edge (HELP_X, beside AceGUI's Close button, which does not scale):
+--- each icon sits one icon-and-gap left of the one before, all centred on the same line. At 1.0 the
+--- chain reproduces CHROME's numbers exactly (-133, -165, -193; bottoms 15 and 17); scaled, each
+--- icon grows about that centre and the next one moves left by its growth. The status bar and the
+--- Requests cluster hang from the gear BY ANCHOR, so they follow without being touched here.
+---@param frame table the window's frame
+function TOGBankClassic_UI:LayoutChrome(frame)
+	local C = self.CHROME
+	local help, share, gear = frame.togChromeHelp, frame.togChromeShare, frame.togChromeGear
+	local centre = C.HELP_Y + C.HELP_SIZE / 2
+	local gap = self:UIScaled(C.ICON_GAP)
+	local function place(f, size, x)
+		local px = self:UIScaled(size)
+		f:SetSize(px, px)
+		f:ClearAllPoints()
+		f:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", x, math.floor(centre - px / 2 + 0.5))
+		return x - px - gap
+	end
+	local x = C.HELP_X
+	if help then x = place(help, C.HELP_SIZE, x) end
+	if share and frame.togShareShown then x = place(share, C.SHARE_SIZE, x) end
+	if gear then place(gear, C.GEAR_SIZE, x) end
+end
+
+function TOGBankClassic_UI.Chrome_OnScaleChanged(_, _, frame)
+	TOGBankClassic_UI:LayoutChrome(frame)
 end
 
 function TOGBankClassic_UI:Init()
@@ -613,9 +740,16 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 		slot:SetLabel(" ")
 	end
 
-	-- Generate link on-demand if needed (synchronous from cache if available)
+	-- LINK-AUDIT-001 step 1 (docs/LINK_AUDIT.md 3.4): a row with no link is asked of Resolve -- the one
+	-- link builder -- by its own id, suffix and enchant. `Guild:ReconstructItemLink` did this from a
+	-- `row.ItemString` no writer produces any more, else GetItemInfo's BASE link, dropping the suffix.
+	local function linkFromRecord()
+		local Record, Resolve = TOGBankClassic_Inventory_Record, TOGBankClassic_Inventory_Resolve
+		local rec = Record and Resolve and item.ID and Record.new(item.ID, 1, item.Suffix, item.Enchant)
+		return rec and Resolve.link(rec) or nil
+	end
 	if item.ID and not item.Link then
-		TOGBankClassic_Guild:ReconstructItemLink(item)
+		item.Link = linkFromRecord()
 	end
 
 	-- Icon should already be populated in item.Info
@@ -626,15 +760,14 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 	slot:SetWidth(size)
 	slot:SetHeight(height)
 
-	-- Always register OnEnter/OnLeave so items without a link at draw time (e.g. mail
-	-- consumables whose link is still being reconstructed async) still show tooltips.
-	-- The callback attempts a lazy reconstruction at hover time; if that also fails it
-	-- falls back to a plain-text tooltip from item.Info.name.
+	-- Always register OnEnter/OnLeave so an item with no link at draw time still shows a tooltip. The
+	-- hover asks Resolve once more (the client may have learned the item since), then falls back to a
+	-- plain-text tooltip from item.Info.name.
 	if item.ID or item.Link then
 		slot:SetCallback("OnEnter", function()
 			local link = item.Link
 			if not link and item.ID then
-				TOGBankClassic_Guild:ReconstructItemLink(item)
+				item.Link = linkFromRecord()
 				link = item.Link
 			end
 			if link then
@@ -676,7 +809,8 @@ function TOGBankClassic_UI:DrawItem(item, parent, size, height, imageSize, image
 	-- Set border color based on rarity. item.Info.rarity may be nil for uncached remote gear.
 	local rarity = item.Info and item.Info.rarity
 	if not rarity and item.Link then
-		-- Sync fallback: item may have entered the cache between GetItems and draw time.
+		-- A row Resolve could not rate (an id LibItemDB lacks, built on a cold cache): ask the
+		-- client again at draw time, since the cache may have warmed since the view row was cached.
 		local _, _, r2 = GetItemInfo(item.Link)
 		rarity = r2
 	end
@@ -949,6 +1083,139 @@ end
 -- directly (it is one CreateFrame) and the matcher degrades to a plain substring test.
 TOGBankClassic_UI.Widgets = LibStub("LibAceGUIWidgets-1.0", true)
 
+-- VISIBILITY-001 part 2: the accessibility scale for the regions TOGBank draws itself. THE ONE
+-- place the library is asked -- RowList, Requests' cells, the status bar, the bottom-row icons and
+-- the filter strips all come through these three. Resolved per call rather than from `Widgets`
+-- above: a spec can load the library after this file, and a missing or older library (no scale)
+-- must read as scale 1.0 rather than error.
+local function scaleLib()
+	local W = LibStub("LibAceGUIWidgets-1.0", true)
+	return (W and W.ScaledSize and W.ScaledFont and W.OnScaleChanged) and W or nil
+end
+
+--- `px`, a scale-1.0 size, at the current accessibility scale (px itself without the library).
+---@param px number
+---@return number
+function TOGBankClassic_UI:UIScaled(px)
+	local W = scaleLib()
+	return W and W:ScaledSize(px) or px
+end
+
+--- Put `fs` (a FontString or EditBox) on the library's scaled copy of the global font `base`. The
+--- copy is re-sized in place by the library, so this is done once per region, not on every change.
+---@param fs table
+---@param base string a global font object's name
+---@return boolean applied false without the library (or for a base it does not know)
+function TOGBankClassic_UI:UIScaledFont(fs, base)
+	local W = scaleLib()
+	local font = W and W:ScaledFont(base)
+	if font and fs and fs.SetFontObject then
+		fs:SetFontObject(font)
+		return true
+	end
+	return false
+end
+
+--- VISIBILITY-001 part 4: a UIPanelButtonTemplate button of TOGBank's OWN (not AceGUI-pooled) on the
+--- scaled copies of the template's three fonts (SecureUIPanelTemplates.xml:253-255). Once per button;
+--- the copies re-size in place.
+---@param button table
+---@return boolean applied false without the library
+function TOGBankClassic_UI:UIScaledButtonFonts(button)
+	local W = scaleLib()
+	if not (W and button and button.SetNormalFontObject) then return false end
+	button:SetNormalFontObject(W:ScaledFont("GameFontNormal"))
+	button:SetHighlightFontObject(W:ScaledFont("GameFontHighlight"))
+	button:SetDisabledFontObject(W:ScaledFont("GameFontDisable"))
+	return true
+end
+
+--- Register `fn(newScale, oldScale, owner)` for the scale signal -- one per owner, replacing. The
+--- library's table is weak-keyed, so `fn` should be module-level and read the owner argument
+--- rather than close over it. A no-op without the library.
+function TOGBankClassic_UI:OnUIScaleChanged(owner, fn)
+	local W = scaleLib()
+	if W then W:OnScaleChanged(owner, fn) end
+end
+
+-- VISIBILITY-001 part 3: AceGUI's STOCK Dropdown, EditBox, CheckBox and Button at the accessibility
+-- scale. Their template ART is fixed-size, so the frame is not scaled (AceGUI's Table layout would
+-- then mis-measure it); what grows is what reads: the text on the library's scaled copy of each base
+-- font, the FontStrings' own fixed heights so the bigger text is not clipped, the checkbox's box and
+-- the button's height (its side art stretches vertically, SecureUIPanelTemplates.xml:218-233). An
+-- EditBox's typed text is NOT scaled: InputBoxTemplate's art is 20px and a 2x ChatFontNormal would
+-- overflow it -- its label is. Bases and sizes are the widgets' own (AceGUIWidget-*.lua constructors;
+-- the dropdown's text from UIDropDownMenuTemplates.xml:257, GameFontHighlightSmall, 10px tall).
+--
+-- POOL HYGIENE: these frames go back to AceGUI's pool shared with every addon, so each change is
+-- undone on release. SetCallback holds ONE OnRelease per widget, so a widget another TOGBank site
+-- also marks for release (Requests' markForRestore) must not come through here -- the Browse strips'
+-- controls are the callers. At scale 1.0 nothing is touched, so a 1x client is byte-identical.
+local STOCK_FONTS = {
+	Dropdown = { { "label", "GameFontNormalSmall", 18 }, { "text", "GameFontHighlightSmall", 10 } },
+	EditBox  = { { "label", "GameFontNormalSmall", 18 } },
+	CheckBox = { { "text", "GameFontHighlight", 18 } },
+}
+
+local function restoreStockWidget(widget)
+	for _, f in ipairs(STOCK_FONTS[widget.type] or {}) do
+		local fs = widget[f[1]]
+		if fs then fs:SetFontObject(f[2]); fs:SetHeight(f[3]) end
+	end
+	if widget.type == "CheckBox" and widget.checkbg then
+		widget.checkbg:SetWidth(24); widget.checkbg:SetHeight(24)
+	elseif widget.type == "Button" and widget.frame.SetNormalFontObject then
+		widget.frame:SetNormalFontObject("GameFontNormal")
+		widget.frame:SetHighlightFontObject("GameFontHighlight")
+		widget.frame:SetDisabledFontObject("GameFontDisable")
+	end
+end
+TOGBankClassic_UI.RestoreStockWidget = restoreStockWidget
+
+--- Scale one stock AceGUI control (see above). Call AFTER its label/value are set -- CheckBox's
+--- SetDescription and Dropdown/EditBox SetLabel set heights and anchors of their own, which this
+--- re-derives. `onRelease`, when given, is registered INSTEAD of the stock restore and must call
+--- TOGBankClassic_UI.RestoreStockWidget itself (Requests' one release handler does). Returns the
+--- widget, and whether anything was changed (false at 1x, without the library, or for another type).
+function TOGBankClassic_UI:ScaleStockWidget(widget, onRelease)
+	local W = scaleLib()
+	if not (W and widget and widget.frame) or W:GetScale() == 1 then return widget, false end
+	local S = function(px) return W:ScaledSize(px) end
+	local t = widget.type
+	if not (STOCK_FONTS[t] or t == "Button") then return widget, false end
+	for _, f in ipairs(STOCK_FONTS[t] or {}) do
+		local fs = widget[f[1]]
+		if fs then
+			fs:SetFontObject(W:ScaledFont(f[2]) or f[2])
+			fs:SetHeight(S(f[3]))
+		end
+	end
+	-- A labelled Dropdown / EditBox hangs its box a fixed distance under the label (14 / 18 px,
+	-- AceGUIWidget-DropDown.lua:515, AceGUIWidget-EditBox.lua:172) and sizes the frame from it: the
+	-- taller label moves the box down by its growth. The next acquire's SetLabel() puts both back.
+	local labelled = widget.label and widget.label:IsShown()
+	if t == "Dropdown" and labelled and widget.dropdown then
+		widget.dropdown:SetPoint("TOPLEFT", widget.frame, "TOPLEFT", -15, -S(14))
+		widget:SetHeight(S(14) + 26)
+		widget.alignoffset = S(14) + 12
+	elseif t == "EditBox" and labelled and widget.editbox then
+		widget.editbox:SetPoint("TOPLEFT", widget.frame, "TOPLEFT", 7, -S(18))
+		widget:SetHeight(S(18) + 26)
+		widget.alignoffset = S(18) + 12
+	end
+	if t == "CheckBox" then
+		widget.checkbg:SetWidth(S(24)); widget.checkbg:SetHeight(S(24))
+		widget:SetHeight(S(24))
+	elseif t == "Button" then
+		widget.frame:SetNormalFontObject(W:ScaledFont("GameFontNormal"))
+		widget.frame:SetHighlightFontObject(W:ScaledFont("GameFontHighlight"))
+		widget.frame:SetDisabledFontObject(W:ScaledFont("GameFontDisable"))
+		widget:SetHeight(S(24))
+	end
+	widget:SetCallback("OnRelease", onRelease or restoreStockWidget)
+	return widget, true
+end
+
 --- Tokenised, case-insensitive "does every word of `query` appear somewhere in these fields".
 --- An empty query matches everything. The library's rule; the fallback is the one-token case.
 ---@param query string|nil
@@ -972,7 +1239,8 @@ do
 
 	local methods = {
 		OnAcquire = function(self)
-			self:SetHeight(24)
+			-- VISIBILITY-001 part 2: the library scales the box's font, so its frame grows with it.
+			self:SetHeight(TOGBankClassic_UI:UIScaled(24))
 			self:SetWidth(200)
 			self:SetDisabled(false)
 			self:SetText("")

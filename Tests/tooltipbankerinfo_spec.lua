@@ -104,6 +104,8 @@ local function loadAll()
 		"Modules/Inventory/Record.lua",
 		"Modules/Inventory/Resolve.lua",
 		"Modules/Inventory/Store.lua",
+		-- LINK-AUDIT-001 step 7: the hovered link's id is read by Scan.parseLink, the one parser.
+		"Modules/Inventory/Scan.lua",
 		"Modules/Guild.lua",
 		"Modules/TooltipBankerInfo.lua",
 	})

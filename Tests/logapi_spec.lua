@@ -164,7 +164,7 @@ describe("LOGAPI-001: bank transactions", function()
 		env.defineItem(10132, { name = "Revenant Helmet" })
 		local entries = Log:DiffEntries(BANKER,
 			{ Rec(858, 5), Rec(10132, 1, 863) }, { Rec(858, 2), Rec(10132, 1, 863), Rec(10132, 1, 870) }, 100, 600,
-			{ ["858:0"] = { { count = 3, to = PEER } }, ["10132:870"] = { { count = 1, from = OTHER } } })
+			{ ["858:0:0"] = { { count = 3, to = PEER } }, ["10132:870:0"] = { { count = 1, from = OTHER } } })
 		local packed = Log:PackEntries(entries)
 		assert.same({
 			{ t = "d", i = 10132, s = 870, c = 1, from = OTHER },
@@ -221,19 +221,19 @@ describe("LOGAPI-001: bank transactions", function()
 		assert.is_nil(MI:TakenSenders(), "a read with nothing gone recorded a take")
 		env.wow.mail = { { sender = OTHER, subject = "cod", cod = 500, items = { wool } } }
 		MI:NoteInbox()                                  -- after the take of the silk
-		assert.same({ ["4306:0"] = { [PEER] = 12 } }, MI:TakenSenders())
+		assert.same({ ["4306:0:0"] = { [PEER] = 12 } }, MI:TakenSenders())
 		env.wow.mail = {}
 		MI:NoteInbox()                                  -- the COD mail gone (returned, or paid elsewhere): never a candidate
-		assert.same({ ["4306:0"] = { [PEER] = 12 } }, MI:TakenSenders(), "a COD mail leaving the inbox was recorded as a take")
+		assert.same({ ["4306:0:0"] = { [PEER] = 12 } }, MI:TakenSenders(), "a COD mail leaving the inbox was recorded as a take")
 		-- A second take of the same item from the same sender adds up; a close then a reopen starts
 		-- the comparison afresh (what was in the inbox while it was closed is not observed).
 		MI:CloseInbox()
 		env.wow.mail = { { sender = PEER, subject = "more", items = { { name = "Silk Cloth", id = 4306, count = 3, link = silk.link } } } }
 		MI:NoteInbox()
-		assert.same({ ["4306:0"] = { [PEER] = 12 } }, MI:TakenSenders(), "a reopen read counted the sitting mail as taken")
+		assert.same({ ["4306:0:0"] = { [PEER] = 12 } }, MI:TakenSenders(), "a reopen read counted the sitting mail as taken")
 		env.wow.mail = {}
 		MI:NoteInbox()
-		assert.same({ ["4306:0"] = { [PEER] = 15 } }, MI:TakenSenders())
+		assert.same({ ["4306:0:0"] = { [PEER] = 15 } }, MI:TakenSenders())
 		MI:ClearTakenSenders()
 		assert.is_nil(MI:TakenSenders())
 		MI:CloseInbox()
@@ -244,10 +244,12 @@ describe("LOGAPI-001: bank transactions", function()
 		assert.equal(0, #Log:GetEntries())
 	end)
 
-	it("keeps suffix variants apart, and reads both row shapes", function()
+	-- LINK-AUDIT-001 step 1: records only. The legacy `{ ID, Count, Suffix }` row this also read has no
+	-- producer (every caller passes Store records) and its branch in countsByKey is deleted.
+	it("keeps suffix variants apart", function()
 		env.defineItem(10132, { name = "Revenant Helmet" })
 		local before = { Rec(10132, 1, 863) }
-		local after  = { { ID = 10132, Count = 1, Suffix = 863 }, { ID = 10132, Count = 1, Suffix = 870 } }
+		local after  = { Rec(10132, 1, 863), Rec(10132, 1, 870) }
 		assert.equal(1, Log:RecordInventoryChange(BANKER, before, after, 0, 0, T))
 		local d = ofType(Log:GetEntries(), "deposit")
 		assert.equal(1, #d)

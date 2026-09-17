@@ -55,7 +55,8 @@ describe("step 4: RecordInventoryChange applies a `who` it is handed", function(
 
 	it("splits a withdrawal into one entry per requester, plus the unattributed remainder", function()
 		local before, after = { Rec(14256, 20) }, { Rec(14256, 5) }
-		local who = { ["14256:0"] = { { count = 8, to = PEER }, { count = 5, to = OTHER } } }
+		-- The `who` is keyed by Record.key (id:suffix:enchant), as the sender table and the diff are.
+		local who = { ["14256:0:0"] = { { count = 8, to = PEER }, { count = 5, to = OTHER } } }
 		assert.equal(3, Log:RecordInventoryChange(BANKER, before, after, 0, 0, T, "p", "c", who))
 		local w = ofType(Log:GetEntries(), "withdraw")
 		assert.equal(3, #w)
@@ -66,7 +67,7 @@ describe("step 4: RecordInventoryChange applies a `who` it is handed", function(
 	end)
 
 	it("names the sender on a mail deposit, and only a deposit gets `from`, only a withdrawal `to`", function()
-		local who = { ["858:0"] = { { count = 3, from = OTHER, to = PEER } } }
+		local who = { ["858:0:0"] = { { count = 3, from = OTHER, to = PEER } } }
 		Log:RecordInventoryChange(BANKER, {}, { Rec(858, 3) }, 0, 0, T, nil, "c", who)
 		local d = ofType(Log:GetEntries(), "deposit")
 		assert.equal(1, #d)
@@ -75,7 +76,7 @@ describe("step 4: RecordInventoryChange applies a `who` it is handed", function(
 	end)
 
 	it("ignores an attribution that claims MORE than moved -- the two records disagree", function()
-		local who = { ["14256:0"] = { { count = 30, to = PEER } } }
+		local who = { ["14256:0:0"] = { { count = 30, to = PEER } } }
 		Log:RecordInventoryChange(BANKER, { Rec(14256, 20) }, { Rec(14256, 5) }, 0, 0, T, "p", "c", who)
 		local w = ofType(Log:GetEntries(), "withdraw")
 		assert.equal(1, #w)
@@ -99,7 +100,7 @@ describe("step 4: AttributeChanges -- what the author's client knows", function(
 		local id = place("Felcloth", 14256, 20)
 		assert.equal(8, Guild:FulfillRequestById(id, 8, BANKER))
 		local who = Log:AttributeChanges(BANKER, { Rec(14256, 20) }, { Rec(14256, 12) }, nil)
-		assert.same({ ["14256:0"] = { { count = 8, to = PEER } } }, who)
+		assert.same({ ["14256:0:0"] = { { count = 8, to = PEER } } }, who)
 		-- The same fill is not claimed by the next version.
 		assert.is_nil(Log:AttributeChanges(BANKER, { Rec(14256, 12) }, { Rec(14256, 4) }, nil),
 			"a fill already attributed to one version was attributed to the next as well")
@@ -112,19 +113,26 @@ describe("step 4: AttributeChanges -- what the author's client knows", function(
 		Guild:FulfillRequestById(b, 3, BANKER)
 		Guild:FulfillRequestById(a, 2, BANKER)
 		local who = Log:AttributeChanges(BANKER, { Rec(14256, 20), Rec(858, 9) }, { Rec(14256, 10), Rec(858, 2) }, nil)
-		assert.same({ { count = 7, to = PEER }, { count = 3, to = OTHER } }, who["14256:0"])
-		assert.is_nil(who["858:0"], "a withdrawal with no fill behind it was attributed")
+		assert.same({ { count = 7, to = PEER }, { count = 3, to = OTHER } }, who["14256:0:0"])
+		assert.is_nil(who["858:0:0"], "a withdrawal with no fill behind it was attributed")
 	end)
 
 	it("attributes a mail deposit to the inbox sender", function()
-		local senders = { ["858:0"] = { [OTHER] = 4 } }
+		local senders = { ["858:0:0"] = { [OTHER] = 4 } }
 		local who = Log:AttributeChanges(BANKER, { Rec(858, 1) }, { Rec(858, 5) }, senders)
-		assert.same({ ["858:0"] = { { count = 4, from = OTHER } } }, who)
+		assert.same({ ["858:0:0"] = { { count = 4, from = OTHER } } }, who)
+		-- LINK-AUDIT-001 step 5: a SUFFIXED deposit is attributed under its own key -- the inbox
+		-- sender table and the held-set diff agree on Record.key, so "of the Bear" matches "of the
+		-- Bear" and not the plain item's arrival.
+		local bear = { ["4564:1180:0"] = { [PEER] = 1 } }
+		who = Log:AttributeChanges(BANKER, {}, { Rec(4564, 1, 1180) }, bear)
+		assert.same({ ["4564:1180:0"] = { { count = 1, from = PEER } } }, who)
+		assert.is_nil(Log:AttributeChanges(BANKER, {}, { Rec(4564, 1) }, bear), "a plain arrival was credited to a suffixed attachment's sender")
 	end)
 
 	it("answers nil when it knows nothing, and never for a first version", function()
 		assert.is_nil(Log:AttributeChanges(BANKER, { Rec(858, 1) }, { Rec(858, 5) }, nil))
-		assert.is_nil(Log:AttributeChanges(BANKER, nil, { Rec(858, 5) }, { ["858:0"] = { [OTHER] = 5 } }))
+		assert.is_nil(Log:AttributeChanges(BANKER, nil, { Rec(858, 5) }, { ["858:0:0"] = { [OTHER] = 5 } }))
 	end)
 
 	it("does not claim a fill for a different item, a different banker, or a suffix variant", function()
@@ -151,11 +159,37 @@ describe("step 4: the inbox scan reports who sent what", function()
 		MI.hasUpdated = true
 		local data = MI:ScanMailInventory()
 		assert.is_table(data)
-		assert.same({ [PEER] = 4, [OTHER] = 6 }, data.senders["858:0"])
-		assert.same({ [PEER] = 2 }, data.senders["14256:0"], "a COD mail's attachment was counted as a deposit")
+		assert.same({ [PEER] = 4, [OTHER] = 6 }, data.senders["858:0:0"])
+		assert.same({ [PEER] = 2 }, data.senders["14256:0:0"], "a COD mail's attachment was counted as a deposit")
+		-- LINK-AUDIT-001 step 5: the items are RECORDS, one per identity.
+		local R = TOGBankClassic_Inventory_Record
 		local counts = {}
-		for _, it in ipairs(data.items) do counts[it.ID] = it.Count end
+		for _, rec in ipairs(data.items) do assert.is_true(R.isValid(rec), "a mail item is not a record"); counts[R.id(rec)] = R.count(rec) end
 		assert.same({ [858] = 10, [14256] = 2 }, counts)
+		assert.equal(2, data.slots.count)
+		env.wow.mail = {}
+	end)
+
+	-- LINK-AUDIT-001 step 5 (docs/LINK_AUDIT.md 3.3, the operator's Dreadblade): an attachment keeps
+	-- its suffix and enchant -- parsed at the inbox edge, the one parser -- so a "Dreadblade of the
+	-- Bear" in the mail is the same record as the one in the bags, two of one variant merge, two
+	-- variants stay apart, and the sender is keyed by that record.
+	it("keeps a suffixed and an enchanted attachment's variant, merges one variant across mails and keeps two apart", function()
+		local function suffixed(sender, id, count, suffix, enchant)
+			return { sender = sender, subject = "x", cod = 0, items = { { name = "Dreadblade", id = id, count = count,
+				link = ("|cff1eff00|Hitem:%d:%d:0:0:0:0:%d:0:60|h[Dreadblade]|h|r"):format(id, enchant or 0, suffix or 0) } } }
+		end
+		env.wow.mail = { suffixed(PEER, 17240, 1, 1196), suffixed(OTHER, 17240, 1, 1196), suffixed(PEER, 17240, 1, 1195), suffixed(OTHER, 17240, 1, 0, 2504) }
+		local MI = TOGBankClassic_MailInventory
+		MI.hasUpdated = true
+		local data = MI:ScanMailInventory()
+		local R = TOGBankClassic_Inventory_Record
+		local byKey = {}
+		for _, rec in ipairs(data.items) do byKey[R.key(rec)] = R.count(rec) end
+		assert.same({ ["17240:1196:0"] = 2, ["17240:1195:0"] = 1, ["17240:0:2504"] = 1 }, byKey,
+			"the mail records lost the variant, or did not merge one variant across two mails")
+		assert.same({ [PEER] = 1, [OTHER] = 1 }, data.senders["17240:1196:0"])
+		assert.is_nil(data.senders["17240:0"], "the senders are still keyed suffix-less")
 		env.wow.mail = {}
 	end)
 
@@ -176,7 +210,7 @@ describe("step 4: the `who` rides the chain link and comes back on apply", funct
 		local before, after = { Rec(14256, 20) }, { Rec(14256, 12) }
 		local parent = DC:ComputeCanonHash(before, nil, nil, 0, T)
 		local canon  = DC:ComputeCanonHash(after,  nil, nil, 0, T + 60)
-		local who = { ["14256:0"] = { { count = 8, to = PEER } } }
+		local who = { ["14256:0:0"] = { { count = 8, to = PEER } } }
 		local delta = Chain:Record(GUILD, BANKER, { records = before, money = 0 }, { records = after, money = 0 }, parent, canon, who)
 		assert.same(who, delta.who)
 		local links = Chain:Links(GUILD, BANKER)

@@ -1,9 +1,9 @@
 # Guild Store — pricing, donation credit and C.O.D. fulfillment
 
-**Status:** design, not started. Deferred until the INV2 tuple rework and the DeltaSync migration
-are finished — see [INVENTORY_V2.md](INVENTORY_V2.md). Everything here should be re-read against
-the code once that lands, because several of the assumptions below are about code that is
-currently being replaced.
+**Status:** design; un-deferred 2026-09-14 (the operator: _"can we not do this work now?"_). The
+deferral was on section 6 question 1, which is now answered below from TOGProfessionMaster's
+source. Steps 1-6 of the build order (section 5) need neither INV2 nor the DeltaSync migration;
+only STORE-002 onward waits for the tuple store, per [INVENTORY_V2.md](INVENTORY_V2.md).
 
 **Ticket prefix:** `STORE-`.
 
@@ -347,10 +347,14 @@ Sketch, to be negotiated properly in that document rather than assumed here.
 - **Realm and faction scoping**, stated explicitly. Price data that silently crosses realms is
   wrong in a way nobody notices until the numbers are strange.
 
-**Open, and genuinely unknown to me:** what TOGPM exposes today, how entangled its adapters are with
-its scan storage, and how much of a scanner already exists there versus needing to be written. Those
-decide whether §4.1 is a fortnight or a season. Question 1 in §6; nothing here is settled until it
-is answered.
+**Was open, answered 2026-09-14 -- and the answer moved the library:** the adapters already live
+in `LibItemDB-1.0` (public, standalone, a declared dependency of both consumers); only the AH
+scanner is TOGPM-private, and it is complete and spec-covered. So "the library" is **ItemDB,
+extended** -- the scanner and its realm/faction store move there beside the adapters it already
+has, the `itemID`-keyed / named-statistic / bulk lookup is added over both, and TOGPM retires its
+duplicate adapters. Decided with the operator the same day ("we can move it into a library that
+makes sense so it's centralized, probably ItemDB? ... should we move it?" -- yes). The reading is
+under question 1 in §6; the contract in LIBRARY_CONTRACTS.md §7 is now addressed to ItemDB.
 
 ### 4.2 STORE-002 — the published estimate list
 
@@ -366,6 +370,98 @@ mean building it twice.
 The list needs its own refresh cadence, tied to when the banker's AH data refreshes rather than to
 inventory changes — stock and prices move independently. Every entry carries its age, and the UI
 shows it: "est. ~12g (2 days old)" is honest, "12g" is not.
+
+#### 4.2.1 Decided 2026-09-14 -- DONATION-VALUE-001: ONE guild price list, published by the guild's price authority
+
+The operator, on seeing two bankers value the same donation differently: _"we need a way to
+determine what the value is so any banker applies the same value. need some way for me with TSM to
+sync my TSM values with other folks that don't sync up. especially the bankers, so we're all using
+the same value"_ -- and _"this may need to be a contract with ItemDB."_ STORE-001 as built prices on
+each VIEWER'S OWN ItemDB sources, so a banker without TSM values a gift at its own scan or the
+vendor floor while the operator's client would have said something else; and the ledger is
+permanent (4.7), so the disagreement is forever. STORE-002 is therefore not "after INV2" any more;
+it is the next build, in this shape:
+
+- **A price authority, officer-chosen.** One character, `Guild.Info.settings.priceAuthority`
+  (`Name-Realm`), set through the shop settings like the discount and synced the same way
+  (SETTINGS-002 stamped). Only that character's client PUBLISHES a price list; every other client
+  applies what it receives. Unset (the default), there is no guild list and every client prices
+  on its own sources as today -- nothing changes for a guild that never picks one.
+- **What the list carries.** For every distinct `itemID` any banker holds (the store's union, the
+  same set the Shop tab prices): `{ sell, value, at }` -- `sell` is the authority's default
+  statistic (what the Shop tab's Est. column shows), `value` its conservative ladder (min buyout,
+  then historical, 4.7 -- what a donation is valued at), `at` the authority's observation time,
+  both copper, either nil where the authority's sources have nothing. Two figures on purpose: the
+  sell side and the value side are different statistics (LIBREQ-PRICE-003) and one list must
+  serve both.
+- **The wire.** A new prefix `togbank-pl`, GUILD, BULK, positional chunks with a version (the
+  authority's `GetServerTime()` at publish) and the publisher's name; a receiver applies only a
+  newer version from the named authority (a relay cannot speak for it) and stores it in
+  `Guild.Info.priceList = { version, publisher, at, items }` (SavedVariables, so a member who logs
+  in while the authority is away still has the last list). Published at the authority's login,
+  when its ItemDB fires `LibItemDB_ScanComplete` or `LibItemDB_PriceSettingsChanged`, and at most
+  once an hour otherwise; a client holding no list (or one older than the authority announces in
+  its login broadcast) asks for it by whisper (`togbank-plq`) and is answered by whisper. ~1,500
+  items is 25-40 KB serialized -- a snapshot's weight, once a session; a delta form rides the
+  DeltaSync host later if it ever matters.
+- **Who reads it, and in what order.** `Browse:PriceRows` / `PriceOne` (the Shop tab, the request
+  dialog's estimate) and `Donations:Value` consult the guild list FIRST and their own ItemDB only
+  for an item the list lacks; provenance says so -- `{ source = "guild", sourceName = <authority>,
+  statistic, age }` -- so a hover and a ledger entry read "guild list (Pimptasty), min buyout, 3h
+  old". The vendor floor still applies to a valuation.
+- **The ItemDB contract (filed to ItemDB's inbox the same day).** The consult-first-then-own
+  order above is TOGBank's reference implementation and ships first. The cleaner home is ONE
+  ladder: ItemDB gains a FED source -- `lib:StoreExternalPrices(sourceID, sourceName, entries)`
+  where `entries = { [itemID] = { <statistic> = copper, ..., at = epoch } }`, held per realm +
+  faction like the own scan, listed in `GetPriceSources()` with `detected` true while it holds
+  data, in the user's precedence (default FIRST when present), answered by `GetPrice` /
+  `GetPrices` with `provenance.source = sourceID`, shown in the `/itemdb` window, cleared by
+  `lib:ClearExternalPrices(sourceID)`. Then TOGBank feeds the received list in and every ItemDB
+  consumer on the machine (TOGPM's crafting costs, PersonalShopper) sees the guild's figure
+  through the one API, and TOGBank's own consult-first shim goes. ItemDB's boundary holds: the
+  library still reports a market figure with provenance and never a policy -- the guild list IS a
+  source, named, aged and scoped, not a discount.
+- **KNOWN COST.** The authority's absence freezes the list at its last publish; every entry
+  carries `at` and the hover says the age, which is the honest state. A guild with two officers
+  on different price addons picks one; that is the point.
+
+**BUILT 2026-09-14 (STORE-002, `Modules/PriceList.lua`), to the shape above, with these departures
+stated rather than hidden:**
+
+- The consumer-facing call is `TOGBankClassic_PriceList:SellInfo(itemID)` / `:ValueInfo(itemID)`
+  (two figures, two readers), not a `Guild:GuildEstimate`. The module is the one home for the list;
+  Guild carries only the setting (`GetPriceAuthority` / `IsPriceAuthority` / `SetPriceAuthority`).
+- Each wire item carries SIX slots -- id, sell, sell's statistic code, value, value's statistic
+  code, age -- so the provenance is per item ("min buyout" for the value, "market value" for the
+  sell), not one statistic for the whole list. ~30 bytes per item serialized, ~45 KB for 1,500.
+- The announce rides the existing hlb2 login/version broadcast as one field (`pl`, the authority's
+  held version), not a message of its own; the ask (`togbank-plq`) is answered by whisper at most
+  once a minute per asker, and a client asks for one announced version at most every five minutes.
+- An UNCHANGED list is never re-sent, at login or on the cycle: the version peers hold is the
+  version they would receive. "At most once an hour" therefore bounds a CHANGED list on the
+  ten-minute cycle; a login, an ItemDB scan or source change, or being made the authority publishes
+  a changed list at once.
+- A held list is the guild's list only while its `publisher` is the CURRENT authority; a former
+  authority's list stops being consulted the moment the setting changes, and comes back if the
+  setting does. Version numbers are compared only within one publisher.
+- The ItemDB feed (`StoreExternalPrices`, feature-detected; delivered by ItemDB as MINOR 26 on
+  2026-09-15 and pinned against the real library the same day -- `LIBRARY_CONTRACTS.md` 7.14) is
+  never made on the authority's own client: its sources ARE the list, and a fed copy ranked first
+  would have the next build read yesterday's figures back as today's.
+- **CORRECTION 2026-09-15 -- the consult-first shim does NOT go.** The plan above said TOGBank's own
+  consult-first order would be retired once the fed source existed. Read against the delivered
+  ladder, it cannot be: the library's `best` walks a fed source min buyout first, so the Shop's sell
+  figure (the authority's default statistic) would come back as the value figure; its ladder is
+  per statistic, so an item the list holds only a historical figure for would be valued by the
+  banker's own scan's min buyout before the guild's number -- two bankers disagreeing again; and a
+  banker can switch the fed source off in `/itemdb`. So `Browse:PriceRows` / `PriceOne` and
+  `Donations:Value` keep reading `PriceList:SellInfo` / `:ValueInfo` first; the feed is for the
+  other ItemDB consumers on the machine and the `/itemdb` window. The 7.14 record has the three
+  counts with line references.
+- Offline: `Tests/pricelist_spec.lua` (21 examples on the real Guild + Chat dispatch + Core
+  envelope, two of them against the REAL installed LibItemDB; `Modules/PriceList.lua` at 100%
+  lines). The Shop tab's status line naming the list is not specced (it needs the window); the
+  Browse and Donations consult-first paths are.
 
 ### 4.3 STORE-003 — the discount
 
@@ -426,6 +522,13 @@ All three of Adestar's asks, all living in `Guild.Info.settings` and all enforce
   of a boolean.
 
 ### 4.7 STORE-007 — donation credit
+
+_Correction, 2026-09-14, from reading `Mail:Open` before building: the paragraph below was wrong.
+Donations WERE valued -- at the vendor sell price plus one copper, in gold, summed per sender into
+the receiving banker's own `alt.ledger`, which never left that banker's SavedVariables. So the
+Donations window showed a banker their own scores and a member nothing. STORE-007 is therefore
+"value them from the price library at a rate, lock each value, and publish the totals" -- and the
+old scores are each banker's opening balance, per the no-retroactive-valuation rule below._
 
 Today donations are tracked but not valued: the addon records that someone gave something, and
 nothing more. With a price source in the picture, a donation can be valued and converted to
@@ -516,21 +619,65 @@ Deliberately not the order the features were asked in. Each step is independentl
 of them strand the next.
 
 1. **STORE-006 shop open/closed.** No pricing, no protocol change, one synced boolean. Ships in
-   days, wanted immediately.
+   days, wanted immediately. **BUILT 2026-09-14** (v1.6.0, CHANGELOG STORE-006): `storeOpen` on
+   the synced settings, `Guild:IsStoreOpen` / `Guild:SetStoreOpen`, the gate in `Guild:AddRequest`,
+   the Ordering open box and the shared `STORE_CLOSED_TEXT` on the status line and the request
+   dialog. No free-text reason. **Moved the same day (SHOP-TAB-001), then narrowed
+   (STRIP-SIGN-001):** the box lived briefly on the Shop tab's strip; the operator removed it
+   ("the one in settings is enough"), so the sign's one control is the toggle under _Shop_ in the
+   options; the sign only applies while the guild's shop is on (see step 5). SETTINGS-002 the same
+   evening: the settings carry a version, so a stale client's re-announcement cannot revert it.
 2. **STORE-006 not-for-sale list.** Still no pricing. Direct extension of `VIEWBANK-001`.
+   **BUILT 2026-09-14** (v1.6.0, CHANGELOG STORE-006 step 2): `notForSale = { [itemID] = true }`
+   on the synced settings (sanitized, capped at 500, replaced only when the sender carried it),
+   `Guild:IsNotForSale` / `Guild:SetNotForSale`, the gate in `Guild:AddRequest`, the red
+   `(not for sale)` tag on the Browse row, the officer's Ctrl+right-click toggle, the status line,
+   dialog and hover through `NOT_FOR_SALE_TEXT`. No per-item reason. Rank floors are step 10.
+   The rows are shared by the Browse and Shop tabs, so the tag shows on both; with the shop off
+   (step 5) `Guild:IsNotForSale` answers false and the list is kept but inert.
 3. **The price contract** (§4.1.1), agreed in `LIBRARY_CONTRACTS.md` first. Everything from here
    down is blocked on it, and agreeing it early is what lets TOGBank be written against it in
-   parallel with the library rather than after.
+   parallel with the library rather than after. **FILED 2026-09-14** as `LIBRARY_CONTRACTS.md`
+   section 7.13 (LIBREQ-PRICE-001..010, ItemDB contracts thread `4be86da0e59c`).
 4. **The library** (§4.1): the adapters extracted out of TOGPM, the AH scanner, the source
    configuration panel, and TOGPM converted to a consumer of it. Not TOGBank work, but squarely on
    TOGBank's critical path — and by some distance the largest single item on this list.
+   **DELIVERED 2026-09-14** by ItemDB as `LibItemDB-1.0` MINOR 25 / v0.8.0 (`GetPrice` with a named
+   statistic, bulk `GetPrices`, provenance, scan control, the `/itemdb` sources window) -- in
+   ItemDB's working tree, not yet committed or seen in a client. TOGPM's consume-and-delete is
+   deferred by the operator until ItemDB is confirmed working in game (TOGPM thread `d828d8a0`).
 5. **STORE-001 estimate lookup, banker-local.** No sync yet — a banker can see resolved values in
    their own UI and sanity-check them against reality before anyone is charged or credited.
+   **BUILT 2026-09-14** (v1.6.0, CHANGELOG SHOP-TAB-001 / STORE-001), and not banker-local after
+   all: the operator's SHOP-TAB-001 put the whole purchasing side on its own **Shop tab** of the
+   Guild Bank window, behind a guild-synced, officer-set `shopEnabled` (off by default -- off, no
+   tab, and `IsStoreOpen` / `IsNotForSale` answer as if the shop did not exist). The tab is the
+   Browse catalogue with an **Est.** column, priced in one `GetPrices` call
+   (`Browse:PriceRows`, feature-detected on the method, nil-not-zero), the hover naming statistic,
+   source and age, and the Ordering open box on its strip. Not yet: an estimate in the request
+   dialog itself.
 6. **STORE-007 donation credit.** Deliberately ahead of the storefront: it needs a price source but
    not the published list, so it is reachable much sooner, and it is the half members feel good
-   about rather than the half they pay for.
-7. **STORE-002 the published estimate list.** Needs INV2 done.
-8. **STORE-003 the discount** and **STORE-004 the estimate on the order**.
+   about rather than the half they pay for. **BUILT 2026-09-14** (v1.6.0, CHANGELOG STORE-007):
+   `Modules/Donations.lua` -- valued at ingest in `Mail:Open` from `GetPrice` minBuyout then
+   historical, floored at the vendor sell price, locked into an entry; `donationRate` on the synced
+   settings (`Guild:SetDonationRate`); one ledger per writer (`Info.donationLedger[writer]`, this
+   account's characters only), one published bucket per writer (`donation-points` on `togbank-hl`,
+   `Info.donationPoints[writer]`), a balance the sum across writers; `/togbank donations` with
+   `adjust <name> <points> <reason>` for officers; the old `alt.ledger` scores migrated into each
+   banker's opening balance on that character's first login. Not the shop's: works with the shop
+   switch off. Not built: spending, a not-accepted-for-points list, a review threshold.
+7. **STORE-002 the published estimate list.** **BUILT 2026-09-14** (v1.6.0, CHANGELOG STORE-002)
+   in the 4.2.1 shape: one officer-named price authority publishes `togbank-pl` chunks, every
+   client applies only that name's newer list, Browse and Donations consult it first. INV2 was done
+   by then, so the "needs INV2" gate had already opened.
+8. **STORE-003 the discount** and **STORE-004 the estimate on the order**. **STORE-003 BUILT
+   2026-09-14** (v1.6.0, CHANGELOG STORE-003), pulled ahead of step 7 on the operator's word the
+   moment the Shop tab was seen in game -- it is a number applied at display, not a published
+   list: `storeDiscountPercent` on the synced settings, `Guild:SetStoreDiscount` the one writer,
+   `Browse:Discounted` on the Shop tab's Est. column with the market figure on the hover and the
+   "N% OFF" sign on the status line. A bare number; a per-rank table (4.3's extrapolation) would
+   sit beside it. STORE-004 still waits.
 9. **STORE-005 C.O.D.**, once §7 is resolved.
 10. **STORE-006 rank floors**, last, because they interact with everything above and are the easiest
     to get subtly wrong.
@@ -551,6 +698,44 @@ guessing.
    written? That is the difference between a fortnight and a season, and it is the only thing that
    could reopen the versioned-TOGPM-API route as a stopgap. Also needed: is any of it public today,
    is the data realm- and faction-scoped, and does a bulk form exist?
+
+   > **Answered 2026-09-14, from the source of all three places it could live** -- and the
+   > premise of this section was HALF WRONG: the price-addon adapters are NOT only in TOGPM, they
+   > are already in a LIBRARY. The operator caught it ("are you sure it's in TOGPM and not in PDB
+   > or IDB? i'm pretty sure it's in a library?"). **Still a fortnight, and a smaller one.**
+   >
+   > **ItemDB (`LibItemDB-1.0`, `Integrations.lua`) -- public, standalone, already a declared
+   > dependency of BOTH TOGBank and TOGPM.** `lib:GetExternalPrices(itemLink)` reads TSM (every
+   > money source TSM registers -- 32 on the installed client -- with TSM's own localized labels)
+   > and Auctionator (`GetAuctionPriceByItemLink`, vendor, disenchant); `GetVendorBasePrice` /
+   > `GetVendorSellPrice` answer the static vendor side. Feature-detected at call time,
+   > pcall-wrapped, never a hard dependency. MISSING against 4.1.1: no AH scanner, no price storage
+   > of its own, keyed by LINK rather than `itemID`, no named-statistic ladder, no bulk form.
+   >
+   > **TOGPM (`Modules/Price.lua` 810 lines, `Modules/AHScanner.lua` 885 lines, spec-covered by
+   > `ahfullscan_spec`, `ahscanner_spec`, `price_spec`, `integrations_spec`) -- addon-private.**
+   > The WORKING AH scanner: legacy `getAll` on Era/TBC (`QueryAuctionItems(..., getAll=true)`,
+   > gated on `CanSendAuctionQuery`'s second return, other `AUCTION_ITEM_LIST_UPDATE` frames
+   > silenced for the payload as Auctionator does, 500 rows per frame) and
+   > `C_AuctionHouse.ReplicateItems` on modern clients; stores per-item lowest UNIT buyout with a
+   > timestamp into `Ace.db.factionrealm.ahPrices` -- realm- and faction-scoped already. A targeted
+   > per-item scanner with progress and cancel beside it. `Price.Get(itemId)` returns
+   > `copper, source, ageSeconds`, nil for no data. It ALSO carries its own Auctionator, Auctioneer
+   > and TSM adapters -- a DUPLICATE of ItemDB's, and TOGPM already depends on ItemDB (it calls
+   > `GetVendorBasePrice`). Nothing here is public: `addon.Price` is in TOGPM's private
+   > `local _, addon = ...` table.
+   >
+   > **PersonalShopper (`Modules/AHScanner.lua`)** -- a THIRD per-item targeted scanner, for its
+   > shopping list; no price storage. **ProfessionDB** -- the search found nothing price-related.
+   >
+   > **What this changes about the plan.** The adapters do not need extracting -- they have a home.
+   > The library of 4.1 is ItemDB, extended: (a) move TOGPM's getAll scanner and its
+   > realm/faction store into ItemDB, which already owns a TOC and SavedVariables, so
+   > `LIBREQ-PRICE-008` (standalone only) is met for free and no fourth repo is needed; (b) add the
+   > `itemID`-keyed, named-statistic, bulk lookup over `GetExternalPrices` + the scan store;
+   > (c) TOGPM retires its duplicate adapters and its private scanner in favour of ItemDB's;
+   > (d) PersonalShopper's targeted scanner can follow later. The `LibItemValue-1.0` working name
+   > in LIBRARY_CONTRACTS.md section 7 is superseded by "ItemDB, MINOR bump".
 2. **Price statistic — and whose choice is it?** Market value, historical, minimum buyout and
    region average give very different numbers for the same item, and the difference is the whole
    business model of the shop. But since TOGBank never touches the price addons directly (§4.1),
@@ -570,6 +755,10 @@ guessing.
    proportionally? Who decides? This is where a real shop's edge cases live.
 7. **Unpriced items.** Blocked from ordering, orderable at a banker-set price, or orderable free?
    And on the donation side: accepted for zero points, or refused?
+   > _The donation half, settled in the STORE-007 build (2026-09-14) rather than asked: credited
+   > at the vendor sell price, which is the floor for every donation anyway, so "unpriced" only
+   > means "no auction figure". An item with no vendor value either (a quest item) is logged at 0
+   > points so the receipt exists. Nothing is refused. The order half is still open._
 8. **Donation points: one list or two?** Is the not-accepted-for-points set the same as the
    not-for-sale set (§4.7)? They overlap but are not obviously identical — a bank may be glad to
    sell something it does not want more of.

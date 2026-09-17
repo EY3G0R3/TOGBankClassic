@@ -3,6 +3,11 @@ TOGBankClassic_Mail = {
 	splitState = nil  -- {bag, slot, amount, attachmentSlot, request}
 }
 
+-- STORE-007: how long after crediting a mail's money the same sender + amount is still that mail
+-- (Mail:Open re-enters itself on a 1 s timer; the server usually clears the money well inside
+-- this). Seconds.
+local MONEY_CREDIT_WINDOW = 10
+
 --- First empty slot in containers `first`..`last`, as (bag, slot), or nil.
 ---
 --- THE ONE empty-slot walk. Three copies existed -- the split popup below, tog_findEmptyBagSlot and
@@ -44,6 +49,41 @@ local function tog_emptyBagSlots(n)
 	return out
 end
 
+--- MAIL-SPLIT-MERGE-001 (the operator, 2026-09-16: "say i need 8 of an item and i have 5. the
+--- splitter will split off another 3 and then send the stacks of 3 and 5 as 2 attachments to the
+--- mail. this costs an extra 30c"): the stack in `attachList` a split of `amount` from `src` can be
+--- dropped ONTO, so the order goes as one attachment. Nil when none has room under the item's max
+--- stack (GetItemInfo's 8th return), when that size is unknown, or when the slots no longer hold
+--- the same item -- a name-matched legacy order can mix same-name variants, which never stack.
+--- Returns a copy carrying the target's `itemID`, so a later click can confirm the slot is unchanged.
+local function tog_mergeTarget(attachList, src, amount)
+	local srcInfo = C_Container.GetContainerItemInfo(src.bag, src.slot)
+	local itemID = srcInfo and srcInfo.itemID
+	local maxStack = itemID and tonumber((select(8, GetItemInfo(itemID))))
+	if not maxStack then return nil end
+	for _, stack in ipairs(attachList) do
+		if stack.count + amount <= maxStack then
+			local info = C_Container.GetContainerItemInfo(stack.bag, stack.slot)
+			if info and info.itemID == itemID then
+				return { bag = stack.bag, slot = stack.slot, count = stack.count, itemID = itemID }
+			end
+		end
+	end
+	return nil
+end
+
+--- Whether the merge target recorded by tog_mergeTarget still holds what the plan saw.
+local function tog_mergeTargetIntact(onto)
+	local info = C_Container.GetContainerItemInfo(onto.bag, onto.slot)
+	return info ~= nil and info.itemID == onto.itemID and (info.stackCount or 1) == onto.count
+end
+
+--- Attachment slots a plan takes: its whole stacks, plus one for a split that is not merged onto
+--- one of them (MAIL-SPLIT-MERGE-001).
+local function tog_planSlots(plan)
+	return #(plan.stacksToAttach or {}) + ((plan.splitStack and not plan.splitStack.onto) and 1 or 0)
+end
+
 -- Initialize split stack popup dialog
 if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 	StaticPopupDialogs["TOGBANK_SPLIT_STACK"] = {
@@ -53,8 +93,14 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 		OnAccept = function(_, data)
 			if not data then return end
 			ClearCursor()
-			-- Find an empty bag slot to place the split items
-			local emptyBag, emptySlot = tog_findEmptyBagSlot()
+			-- MAIL-SPLIT-MERGE-001: drop the split onto the order's partial stack when the plan found
+			-- one and it is unchanged since the popup opened; otherwise into an empty bag slot.
+			local emptyBag, emptySlot
+			if data.onto and tog_mergeTargetIntact(data.onto) then
+				emptyBag, emptySlot = data.onto.bag, data.onto.slot
+			else
+				emptyBag, emptySlot = tog_findEmptyBagSlot()
+			end
 			if not emptyBag then
 				return
 			end
@@ -142,7 +188,16 @@ function TOGBankClassic_Mail:CheckForFulfilledRequest(itemName, _, sender)
 end
 
 function TOGBankClassic_Mail:Scan()
-	if not TOGBankClassic_Options:GetDonationEnabled() then
+	-- UX-WATERFALL-001 (crimsonmane, 2026-09-14: "we see the original plus the new window pops up.
+	-- the two windows are two separate settings"): the Mailbox window, when it opens by itself, IS
+	-- the mailbox -- it takes, and it credits donations through the same rule this path uses
+	-- (IsDonation / CreditMoney / CreditItem). So the per-mail Donation popup below stands aside
+	-- whenever the Mailbox window auto-opens, and the ONE setting that governs the mailbox is the
+	-- Mailbox window's own ("Open the Mailbox window at a mailbox"). Untick that and this popup
+	-- is the mailbox again, as it was before v1.5.0. The old per-character "Enable donations" box
+	-- is gone: it was the second setting, and two settings for one mailbox is the bug reported.
+	local Mailbox = TOGBankClassic_UI_Mailbox
+	if Mailbox and Mailbox.AutoOpens and Mailbox:AutoOpens() then
 		return
 	end
 
@@ -200,12 +255,16 @@ function TOGBankClassic_Mail:Scan()
 				return
 			end
 
+			-- Peer Review f5e52bcf F3: the Roster is keyed `Name-Realm` and the header carries the BARE
+			-- name for a same-realm sender, so the bare lookup never matched and the popup opened for
+			-- a bank-to-bank transfer (IsDonation, normalising, is what kept the CREDIT out).
+			local senderNorm = TOGBankClassic_Guild:NormalizeName(sender) or sender
 			if
 				CODAmount == 0
 				and not wasReturned
 				and not isGM
 				and canReply
-				and not self.Roster[sender]
+				and not self.Roster[senderNorm]
 				and (money > 0 or (itemCount and itemCount > 0))
 			then
 				local hasNonUnique = nil
@@ -464,8 +523,77 @@ function TOGBankClassic_Mail:OnTimer()
 	TOGBankClassic_Mail:Scan()
 end
 
+--- STORE-007 / UX-WATERFALL-001: is a take from `sender`'s mail a DONATION to credit? The ONE
+--- rule, read by both takers -- the Donation popup's Open below and the Mailbox window's TakeRow --
+--- so they cannot drift: this character is a bank character, the sender is NOT one (a transfer
+--- between bank characters is stock moving, not a gift), and the mail was not returned to us.
+--- The sender is normalised first: the inbox header carries the BARE name for a same-realm
+--- sender, and the banker set is keyed `Name-Realm`, so the old bare lookup never matched and a
+--- banker's transfer was credited as a donation (found lifting this, 2026-09-14). `score` is the
+--- popup's "Add to score" box, true when the caller has no such box.
+---@param sender string as the inbox header spells it
+---@param wasReturned boolean|nil the header's returned flag
+---@param score boolean|nil
+---@return boolean
+function TOGBankClassic_Mail:IsDonation(sender, wasReturned, score)
+	if score == false or wasReturned then return false end
+	local G = TOGBankClassic_Guild
+	if not (G and G.Info and sender) then return false end
+	local me = G:GetNormalizedPlayer()
+	if not (me and G:IsBank(me)) then return false end
+	local from = G:NormalizeName(sender)
+	if from and G:IsBank(from) then return false end
+	return true
+end
+
+--- STORE-007: credit the money of one mail, ONCE. Open takes one thing and re-enters itself a
+--- second later (RetryOpen) so the server can act in between; if the server has not cleared the
+--- money by then the header still shows it and the branch runs again -- the take is harmless (the
+--- server refuses), the credit is not. So the same sender and amount inside the window is the
+--- same mail, not a second gift. The Mailbox window takes money once per row and shares the rule
+--- at no cost.
+function TOGBankClassic_Mail:CreditMoney(sender, money)
+	local key = tostring(sender) .. "|" .. tostring(money)
+	local last = self.lastMoneyCredit
+	local nowTs = GetServerTime()
+	if last and last.key == key and nowTs - last.at <= MONEY_CREDIT_WINDOW then return false end
+	self.lastMoneyCredit = { key = key, at = nowTs }
+	TOGBankClassic_Donations:Credit({ donor = sender, kind = "money", copper = money, source = "mail", statistic = "money" })
+	return true
+end
+
+--- STORE-007: credit one attachment -- valued NOW and written once: the conservative statistic
+--- of the price library, floored at what a vendor pays (`price`, GetItemInfo's sell price), never
+--- re-priced later. A unique item is not credited: the client may refuse the take when one is
+--- already held, and a credit for a stack still in the mail is a credit for nothing.
+---
+--- Peer Review f5e52bcf F4: the SAME retry that CreditMoney guards against runs for items -- Open
+--- credits, takes, and re-enters a second later; a slow server still shows the attachment and the
+--- branch credited it AGAIN. So the same mail slot, link and count from the same sender inside the
+--- window is the same stack, not a second gift (`slot` = "mailId:attachmentIndex"; the Mailbox
+--- window's rows pass none and take once). KNOWN COST, the money guard's: two identical gifts in
+--- two mails taken inside ten seconds credit once.
+function TOGBankClassic_Mail:CreditItem(sender, link, name, quantity, price, slot)
+	if TOGBankClassic_Item:IsUnique(link) then return false end
+	if slot then
+		local key = tostring(sender) .. "|" .. tostring(slot) .. "|" .. tostring(link) .. "|" .. tostring(quantity)
+		local last = self.lastItemCredit
+		local nowTs = GetServerTime()
+		if last and last.key == key and nowTs - last.at <= MONEY_CREDIT_WINDOW then return false end
+		self.lastItemCredit = { key = key, at = nowTs }
+	end
+	local D = TOGBankClassic_Donations
+	local itemID = GetItemInfoInstant and GetItemInfoInstant(link) or nil
+	local copper, valued = D:Value(itemID, quantity, price)
+	D:Credit({
+		donor = sender, kind = "item", itemID = itemID, name = name, count = quantity,
+		copper = copper, source = valued.source, statistic = valued.statistic, age = valued.age,
+	})
+	return true
+end
+
 function TOGBankClassic_Mail:Open(mailId)
-	local _, _, sender, _, money, _, _, itemCount, _, _, _, _, _, _ = GetInboxHeaderInfo(mailId)
+	local _, _, sender, _, money, _, _, itemCount, _, wasReturned, _, _, _, _ = GetInboxHeaderInfo(mailId)
 	if not sender then
 		TOGBankClassic_Mail:RetryOpen(mailId)
 		return
@@ -475,46 +603,16 @@ function TOGBankClassic_Mail:Open(mailId)
 	if not info then
 		return
 	end
-	local player = TOGBankClassic_Guild:GetPlayer()
-	local norm = TOGBankClassic_Guild:GetNormalizedPlayer(player)
 
-	if not info.alts then
-		info.alts = {}
-	end
-
-	if info.alts and not info.alts[norm] then
-		info.alts[norm] = {}
-	end
-
-	local alt = info.alts[norm]
-
-	if not alt.ledger then
-		alt.ledger = {}
-	end
-
-	local ledger = alt.ledger
-
-	local current_score = 0
-	if ledger[sender] then
-		current_score = ledger[sender]
-	end
-
-	-- Was `local score = 0`, and luacheck was right that the 0 is never read. Both readers --
-	-- the money ledger below and the item ledger in the attachment loop -- sit inside a branch that
-	-- assigns `score` first, so the initialiser could not be observed. Dropping it changes no
-	-- behaviour; checked by reading both call sites rather than by trusting the warning.
-	local score
+	-- STORE-007: the credit is written by TOGBankClassic_Donations (this character's own ledger,
+	-- valued and locked here at ingest), not into `alt.ledger` any more. The "Add to score" box on
+	-- the Donation window is honoured through IsDonation.
+	local credit = self:IsDonation(sender, wasReturned, TOGBankClassic_UI_Mail.ScoreMail)
 	if money > 0 then
-		-- convert from copper to gold
-		score = money / 10000
-
 		if TOGBankClassic_Options:GetBankReporting() then
-			TOGBankClassic_Output:Info("Received %s gold from %s", score, sender)
+			TOGBankClassic_Output:Info("Received %s gold from %s", money / 10000, sender)
 		end
-
-		if TOGBankClassic_UI_Mail.ScoreMail and not self.Roster[sender] then
-			ledger[sender] = current_score + score
-		end
+		if credit then self:CreditMoney(sender, money) end
 
 		TakeInboxMoney(mailId)
 		if itemCount and itemCount > 0 then
@@ -539,8 +637,6 @@ function TOGBankClassic_Mail:Open(mailId)
 				end
 
 				if not TOGBankClassic_Item:IsUnique(link) then
-					score = ((price + 1) / 10000) * quantity
-
 					if TOGBankClassic_Options:GetBankReporting() then
 						TOGBankClassic_Output:Info("Received %s (%d) from %s", name, quantity, sender)
 					end
@@ -562,9 +658,7 @@ function TOGBankClassic_Mail:Open(mailId)
 						end
 					end
 
-					if TOGBankClassic_UI_Mail.ScoreMail and not self.Roster[sender] then
-						ledger[sender] = current_score + score
-					end
+					if credit then self:CreditItem(sender, link, name, quantity, price, mailId .. ":" .. attachmentIndex) end
 
 					TakeInboxItem(mailId, attachmentIndex)
 					if itemCount > 1 then
@@ -736,15 +830,20 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 		end
 
 		if splitCandidate then
+			-- MAIL-SPLIT-MERGE-001: `onto` is the attached stack the split drops onto, when one has room.
+			local onto = tog_mergeTarget(attachList, splitCandidate, remaining)
 			return {
 				canFulfill = true,
-				reason = string.format("Split %d from stack of %d.", remaining, splitCandidate.count),
+				reason = onto
+					and string.format("Split %d from stack of %d onto the stack of %d.", remaining, splitCandidate.count, onto.count)
+					or string.format("Split %d from stack of %d.", remaining, splitCandidate.count),
 				stacksToAttach = attachList,
 				splitStack = {
 					bag = splitCandidate.bag,
 					slot = splitCandidate.slot,
 					count = splitCandidate.count,
-					amount = remaining
+					amount = remaining,
+					onto = onto,
 				},
 				totalAttachable = accumulated,
 				requiresMailbox = true
@@ -974,19 +1073,19 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- If plan requires split, show popup FIRST without attaching anything
 	if plan.splitStack then
 		local splitInfo = plan.splitStack
-		local popupText = string.format("Split %d from stack of %d %s?",
-			splitInfo.amount, splitInfo.count, itemName)
-		local dialog = StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText)
-		if dialog then
-			dialog.data = {
-				bag = splitInfo.bag,
-				slot = splitInfo.slot,
-				amount = splitInfo.amount,
-				attachmentSlot = 1,  -- Will be set after attaching plan stacks
-				itemName = itemName,
-				requester = requester
-			}
-		end
+		local popupText = splitInfo.onto
+			and string.format("Split %d from stack of %d %s onto your stack of %d?",
+				splitInfo.amount, splitInfo.count, itemName, splitInfo.onto.count)
+			or string.format("Split %d from stack of %d %s?", splitInfo.amount, splitInfo.count, itemName)
+		-- StaticPopup_Show's 4th argument is the dialog's data (StaticPopup.lua:278/376, Era and TBC).
+		StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText, nil, {
+			bag = splitInfo.bag,
+			slot = splitInfo.slot,
+			amount = splitInfo.amount,
+			onto = splitInfo.onto,   -- MAIL-SPLIT-MERGE-001
+			itemName = itemName,
+			requester = requester
+		})
 
 		local message = string.format("Click Split to prepare %d %s for mailing.",
 			splitInfo.amount, itemName)
@@ -1079,11 +1178,12 @@ local function tog_linkMatchesReq(link, req)
 	if not link then return false end
 	local targetID = tonumber(req.itemID)
 	if targetID then
-		local lid = GetItemInfoInstant(link)
+		-- LINK-AUDIT-001 step 4: id and suffix from the one link parser, no client call.
+		local _, linkSuffix, lid = TOGBankClassic_Inventory_Scan.parseLink(link)
 		if lid ~= targetID then return false end
 		local targetSuffix = tonumber(req.suffixID)
 		if targetSuffix then
-			return TOGBankClassic_Item:GetSuffixID(link) == targetSuffix
+			return linkSuffix == targetSuffix
 		end
 		return true
 	end
@@ -1180,7 +1280,7 @@ end
 --- MULTIFILL-002 (the operator, 2026-09-13, four 1x orders from four 5-stacks sent as FOUR mails:
 --- "it should do all the splitting first for ONE recipient, create the mail, attach everything to
 --- one mail, then send it"): an extra that needs a SPLIT rides too. Its split takes one attachment
---- slot and claims its SOURCE stack, the same way IDLE claims the first order's -- so a second order
+--- slot (none when it merges onto one of its own stacks, MAIL-SPLIT-MERGE-001) and claims its SOURCE stack, the same way IDLE claims the first order's -- so a second order
 --- wanting to split the same stack finds it claimed and waits for the next mail (its plan is built
 --- on the unclaimed stacks only, and none is left). The SPLIT phase performs every split in one
 --- click.
@@ -1221,7 +1321,7 @@ function TOGBankClassic_Mail:FindMoreOrdersFor(normActor, requester, excludeId, 
 		end
 		if total >= qtyNeeded then
 			local plan = self:CalculateFulfillmentPlan(free, qtyNeeded, total)
-			local needSlots = #plan.stacksToAttach + (plan.splitStack and 1 or 0)
+			local needSlots = tog_planSlots(plan)
 			if plan.canFulfill and needSlots <= slotsLeft then
 				for _, st in ipairs(plan.stacksToAttach) do claimed[st.bag .. ":" .. st.slot] = true end
 				if plan.splitStack then claimed[plan.splitStack.bag .. ":" .. plan.splitStack.slot] = true end
@@ -1536,7 +1636,7 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 		-- The split's SOURCE stack too (self-audit): the split takes from it before ATTACH runs, so
 		-- an extra planned on its full count would attach the remainder and be credited the plan.
 		if plan.splitStack then claimed[plan.splitStack.bag .. ":" .. plan.splitStack.slot] = true end
-		local used = #(plan.stacksToAttach or {}) + (plan.splitStack and 1 or 0)
+		local used = tog_planSlots(plan)
 		local extras = self:FindMoreOrdersFor(normActor, req.requester, req.id, claimed, (ATTACHMENTS_MAX_SEND or 12) - used)
 		-- MULTIFILL-002: every split the mail needs -- the first order's and each extra's -- is one
 		-- list, performed together by the SPLIT phase. `extra = nil` marks the first order's.
@@ -1567,17 +1667,40 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 	-- pickup from inside its split's callback: the same sequence with no nesting to get wrong. The
 	-- empty slots are enumerated up front: a split that has not been picked up yet is invisible to
 	-- the container API, so a per-split search would hand every split the same slot.
+	--
+	-- MAIL-SPLIT-MERGE-001: a split whose plan found room on one of its order's own stacks (`src.onto`)
+	-- drops onto that stack instead, needs no free slot, and ATTACH waits for the stack to read the
+	-- merged count. If the target changed since the order was picked, the batch restarts rather than
+	-- dropping the split onto something else.
 	if st.phase == "split" then
-		local empties = tog_emptyBagSlots(#st.splits)
-		if #empties < #st.splits then
-			if #st.splits == 1 then
+		local needFree = 0
+		for _, s in ipairs(st.splits) do
+			if s.src.onto then
+				if not tog_mergeTargetIntact(s.src.onto) then
+					self.batchState = nil
+					return false, "Your bags changed since the order was picked — click to start it again."
+				end
+			else
+				needFree = needFree + 1
+			end
+		end
+		local empties = tog_emptyBagSlots(needFree)
+		if #empties < needFree then
+			if needFree == 1 then
 				return false, "Need one free bag slot to split into — make room, then click again."
 			end
-			return false, string.format("Need %d free bag slots to split into — make room, then click again.", #st.splits)
+			return false, string.format("Need %d free bag slots to split into — make room, then click again.", needFree)
 		end
-		local total = 0
+		local total, nextEmpty = 0, 1
 		for i, s in ipairs(st.splits) do
-			local dst = empties[i]
+			local dst
+			if s.src.onto then
+				dst = s.src.onto
+				s.merged, s.expect = true, dst.count + s.src.amount
+			else
+				dst = empties[nextEmpty]
+				nextEmpty = nextEmpty + 1
+			end
 			s.bag, s.slot = dst.bag, dst.slot
 			total = total + s.src.amount
 			local at = (i - 1) * 0.25
@@ -1593,7 +1716,11 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 		st.phase = "attach"
 		if #st.splits == 1 then
 			local s = st.splits[1]
-			return true, string.format("Split %d %s into your bags. Click to ATTACH.", total, (s.extra and s.extra.req or st.req).item)
+			local item = (s.extra and s.extra.req or st.req).item
+			if s.merged then
+				return true, string.format("Split %d %s onto your stack of %d. Click to ATTACH.", total, item, s.src.onto.count)
+			end
+			return true, string.format("Split %d %s into your bags. Click to ATTACH.", total, item)
 		end
 		return true, string.format("Splitting %d stacks (%d items) into your bags. Click to ATTACH.", #st.splits, total)
 	end
@@ -1602,7 +1729,12 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 	-- the first order, then each extra.
 	if st.phase == "attach" then
 		for _, s in ipairs(st.splits or {}) do
-			if s.bag and not C_Container.GetContainerItemInfo(s.bag, s.slot) then
+			local landed = s.bag and C_Container.GetContainerItemInfo(s.bag, s.slot)
+			-- MAIL-SPLIT-MERGE-001: a merged split has landed only once its target reads the merged count,
+			-- and any split only once the server has released the slot's lock -- picking up a locked
+			-- stack does nothing, and the mail would go without it.
+			if s.bag and not (landed and not landed.isLocked
+				and (not s.merged or (landed.stackCount or 1) == s.expect)) then
 				-- A split hasn't committed to the bag yet (clicked too fast).
 				return false, "Still placing the split — click ATTACH again."
 			end
@@ -1616,7 +1748,8 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 		end
 		local function attachOrder(plan, extra)
 			local s = splitFor(extra)
-			if s then
+			-- A merged split rides on its target, which the whole-stack loop below attaches.
+			if s and not s.merged then
 				ClearCursor()
 				C_Container.PickupContainerItem(s.bag, s.slot)
 				ClickSendMailItemButton(slot)
@@ -1637,7 +1770,8 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 		-- the next mail (its split stack, if any, simply sits in the bags).
 		local attachedExtras = {}
 		for _, extra in ipairs(st.extras or {}) do
-			local need = #extra.plan.stacksToAttach + (splitFor(extra) and 1 or 0)
+			local es = splitFor(extra)
+			local need = #extra.plan.stacksToAttach + ((es and not es.merged) and 1 or 0)
 			if slot + need - 1 <= maxSlots then
 				attachOrder(extra.plan, extra)
 				attachedExtras[#attachedExtras + 1] = extra

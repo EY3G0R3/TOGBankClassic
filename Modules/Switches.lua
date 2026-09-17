@@ -41,17 +41,10 @@ Switches.registry = {
 		description = "Emit tuple payloads on the wire. The legacy link format is gone, so off means send nothing",
 		retire      = "together with the switch machinery, once V2 has been default for three releases",
 	},
-	-- N6 (P2P-035 follow-up). The KEYED `hash-list-broadcast` / `hash-offer` forms are what v1.4.0
-	-- and earlier sent; v1.4.1+ sends only the numbered hlb2 / hash-offer2, so their receive
-	-- branches in Chat.lua are the last consumer. The operator, 2026-09-11: "i'm ok with commenting
-	-- it out first, then if nothing happens over a week or two, we can delete it." This is the
-	-- comment-out that can be undone in game: OFF by default; `/togbank dev switches
-	-- legacyKeyedReceive on` if an old-build peer turns up during the grace period.
-	legacyKeyedReceive = {
-		default     = false,
-		description = "Accept the pre-v1.4.1 KEYED hash-list-broadcast / hash-offer from old-build peers",
-		retire      = "a week or two after v1.5.0 ships with nobody needing it: delete the two branches and this switch",
-	},
+	-- N6 `legacyKeyedReceive` ("accept the pre-v1.4.1 KEYED hash-list-broadcast / hash-offer") was
+	-- registered here 2026-09-11 as the comment-out that could be undone in game, and RETIRED
+	-- 2026-09-14 on its own retire line -- the operator: "then we can do this work". The keyed
+	-- receive branches in Chat.lua went with it; a keyed form is now dropped at the door.
 }
 
 local function store()

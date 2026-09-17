@@ -36,8 +36,10 @@ end
 
 local function load()
 	env.stubOutput()
+	env.loadFile("Modules/Constants.lua")
 	env.loadFile("Modules/Item.lua")
 	env.loadFile("Modules/Inventory/Record.lua")
+	env.loadFile("Modules/Inventory/Scan.lua")
 	env.loadFile("Modules/Inventory/Resolve.lua")
 	env.loadFile("Modules/Inventory/Store.lua")
 	Item   = TOGBankClassic_Item
@@ -73,7 +75,7 @@ describe("INV2-SUFFIX-001: Store:GetAltView carries the suffix", function()
 	it("reports the suffix even though the rebuilt Link has lost it", function()
 		Store:SetAltRecords("Testguild", "Bob", { Record.new(SPIKED_CLUB, 1, TIGER, 0) })
 		local row = Store:GetAltView("Testguild", "Bob")[1]
-		assert.is_nil(Item:GetSuffixID(row.Link),
+		assert.equal(0, select(2, TOGBankClassic_Inventory_Scan.parseLink(row.Link)),
 			"fixture is not exercising the defect: the link still encodes the suffix")
 		assert.equal(TIGER, Item:RowSuffixID(row))
 	end)
@@ -115,16 +117,16 @@ describe("Item:RowSuffixID", function()
 		assert.equal(TIGER, Item:RowSuffixID({ Suffix = TIGER, Link = link("10132:0:0:0:0:0:0:1:60") }))
 	end)
 
-	-- The distinction the whole helper exists for. A V2 row saying 0 means "definitely no
-	-- suffix"; a LEGACY row with no field at all means "unknown, ask the link". Collapsing these
-	-- into `tonumber(row.Suffix) or GetSuffixID(row.Link)` would make legacy suffixed gear
-	-- unmatchable, because 0 is truthy in Lua and would short-circuit the fallback away.
+	-- A V2 row saying 0 means "definitely no suffix", whatever its link says.
 	it("treats a stored 0 as definitely no suffix, without consulting the link", function()
 		assert.is_nil(Item:RowSuffixID({ Suffix = 0, Link = link("10132:0:0:0:0:0:863:1:60") }))
 	end)
 
-	it("falls back to the link when the row has no Suffix field at all", function()
-		assert.equal(TIGER, Item:RowSuffixID({ Link = link("10132:0:0:0:0:0:863:1:60") }))
+	-- writ-cannot: "falls back to the link when the row has no Suffix field at all" was DELETED with
+	-- the fallback (LINK-AUDIT-001 step 1): no production row lacks the field -- Search and Requests
+	-- read Guild:GetAltItems view rows, and the legacy Log caller is gone. The link is never read now.
+	it("never reads the link: a row with no Suffix field has no suffix", function()
+		assert.is_nil(Item:RowSuffixID({ Link = link("10132:0:0:0:0:0:863:1:60") }))
 	end)
 
 	it("preserves a negative suffix, which indexes the random-property table", function()

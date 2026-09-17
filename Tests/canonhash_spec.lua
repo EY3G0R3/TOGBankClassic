@@ -293,7 +293,9 @@ describe("CANON RULE 3: the datestamp is inside the hashed input", function()
 		D = TOGBankClassic_DeltaComms
 	end)
 
-	local function items() return { { ID = 858, Count = 5 } } end
+	-- V2 records: the revision-2 identity refuses a legacy { ID, Count } row (LINK-AUDIT-001 step 1),
+	-- so a legacy fixture here would compare two EMPTY item sets and pass for the wrong reason.
+	local function items() return { { 858, 5 } } end
 
 	it("gives identical contents a DIFFERENT canon at a different publish time", function()
 		assert.is_not.equal(
@@ -313,8 +315,8 @@ describe("CANON RULE 3: the datestamp is inside the hashed input", function()
 
 	it("gives different contents a different canon at the same publish time", function()
 		assert.is_not.equal(
-			D:ComputeCanonHash({ { ID = 858, Count = 5 } }, nil, nil, 0, 1757000000),
-			D:ComputeCanonHash({ { ID = 858, Count = 6 } }, nil, nil, 0, 1757000000),
+			D:ComputeCanonHash({ { 858, 5 } }, nil, nil, 0, 1757000000),
+			D:ComputeCanonHash({ { 858, 6 } }, nil, nil, 0, 1757000000),
 			"a change in contents did not change the canon, so a real change syncs as 'no change'")
 	end)
 

@@ -53,9 +53,11 @@ local function syncedTo(viewer, banker)
 	assert.equal(theirs.inventoryUpdatedAt, ours.inventoryUpdatedAt, viewer.name .. " does not hold the author's publish time")
 end
 
+--- LIBREQ-DS-008: the P2P state is the library's instance on the client's host.
 local function quiet(c)
-	local P2P = c.G.TOGBankClassic_P2PSession
-	assert.same({}, P2P.sessionsByAlt, c.name .. " still has a P2P session open")
+	local P2P = c.G.TOGBankClassic_P2P:Lib()
+	assert.is_table(P2P, c.name .. " has no numbered P2P on its host")
+	assert.same({}, P2P.sessionsByKey, c.name .. " still has a P2P session open")
 	assert.equal(0, P2P:GetActiveSendTotal(), c.name .. " still holds a send slot")
 	assert.equal(0, #(P2P.sendQueue or {}), c.name .. " still has requesters queued")
 end
@@ -99,35 +101,48 @@ describe("FULL SYNC: a banker publishes, a viewer that holds nothing ends up hol
 		assert.equal(1, #F.sent({ type = "inv", from = V1 }), "the viewer did not ask on the host's QUERY channel")
 		assert.equal(1, #F.sent({ type = "inv-snapshot", from = BANK, to = V1 }), "a viewer holding nothing was not sent the snapshot")
 		assert.equal(0, #F.sent({ type = "inv-chain" }))
-		-- Data never rides the GUILD channel in a P2P sync; only the two broadcasts did.
+		-- Data never rides the GUILD channel in a P2P sync; only the two broadcasts did, and what
+		-- the cycle piggybacks on them (the guild settings, SETTINGS-001 -- the fleet's guild record
+		-- carries a settings table as Database:Init's does).
+		local CYCLE = { hlb2 = true, ["guild-settings"] = true, ["donation-points"] = true }
 		for _, m in ipairs(F.sent({ dist = "GUILD" })) do
-			assert.equal("hlb2", m.type, "something other than a hash-list broadcast went to GUILD: " .. tostring(m.type))
+			assert.is_true(CYCLE[m.type] == true, "something other than the cycle's broadcasts went to GUILD: " .. tostring(m.type))
 		end
 		quiet(A); quiet(V)
 		noErrors(A); noErrors(V)
 	end)
 
-	it("viewer online first: the first round learns nothing but the numbers; catch-up converges", function()
+	it("viewer online first: the banker's table travels AHEAD of its offer, so the first round converges", function()
+		-- LIBREQ-DS-008: this used to pin "the first round learns nothing but the numbers; catch-up
+		-- converges" -- the offer named numbers the viewer could not yet resolve and was dropped, and
+		-- the second cycle (45 s catch-up + a 60 s window) did the work. The fleet showed the same
+		-- ordering with the library's synchronous offer, so the offer of what it left out now sends the table
+		-- FIRST to a broadcaster behind on it (its own request draws a second copy); the offer that
+		-- follows resolves, and the viewer holds the bank at the end of ITS OWN login window.
 		local c = guild({ V1 })
 		local A, V = c[BANK], c[V1]
 		F.scan(A, bank(5), { bank = {}, money = 100 })
 
 		F.login(V)
 		F.tick(3)
-		-- The banker offered, by numbers the viewer could not yet name; the viewer requested the
-		-- table and got it. Nothing could be fetched in this round.
-		assert.equal(1, #F.sent({ type = "hash-offer2", from = BANK, to = V1 }))
-		assert.equal(1, #F.sent({ type = "numbers-reply", from = BANK, to = V1 }))
-		assert.equal(0, #F.sent({ type = "sync-request" }))
+		local replies = F.sent({ type = "numbers-reply", from = BANK, to = V1 })
+		assert.is_true(#replies >= 1, "the banker did not send its table")
+		local offer = F.sent({ type = "hash-offer2", from = BANK, to = V1 })
+		assert.equal(1, #offer)
+		-- The FIRST reply left before the offer did (F.log is the send order).
+		local firstReplyAt, offerAt
+		for i, m in ipairs(F.log) do
+			if m == replies[1] then firstReplyAt = i end
+			if m == offer[1] then offerAt = i end
+		end
+		assert.is_true(firstReplyAt < offerAt, "the offer left before the table it names")
+		assert.equal(0, #F.sent({ type = "sync-request" }), "nothing is requested inside the collect window")
 
-		F.tick(60)   -- the window closes empty
-		assert.equal(0, #F.sent({ type = "sync-request" }), "a request went out with no offer to act on")
-		F.tick(50)   -- catch-up (45s) re-broadcasts; the offer now names numbers the viewer holds
-		assert.equal(2, #F.sent({ type = "hlb2", from = V1 }), "the catch-up cycle did not re-broadcast")
-		F.tick(70)   -- its window, query, handshake, data
-
+		F.tick(70)   -- the window closes with the offer resolved: query, handshake, data
+		assert.equal(1, #F.sent({ type = "sync-request", from = V1 }), "the viewer did not act on the offer in its first round")
 		syncedTo(V, A)
 		assert.equal(1, #F.sent({ type = "inv-snapshot", from = BANK, to = V1 }))
+		assert.equal(1, #F.sent({ type = "hlb2", from = V1 }), "a catch-up broadcast went out though the first round converged")
 		quiet(A); quiet(V)
 		noErrors(A); noErrors(V)
 	end)
@@ -427,7 +442,7 @@ describe("FULL SYNC: the delta on the wire, relays, and the send queue", functio
 
 		local queued = F.sent({ type = "sync-queued", from = BANK })
 		assert.equal(1, #queued, "with three slots and four requesters, exactly one should have been queued")
-		local P2P = A.G.TOGBankClassic_P2PSession
+		local P2P = A.G.TOGBankClassic_P2P:Lib()
 		assert.equal(3, P2P:GetActiveSendTotal(), "the provider is not holding three slots while three snapshots drain")
 
 		F.tick(30)   -- the drains complete, the queue is served, its drain completes
@@ -834,7 +849,7 @@ describe("FULL SYNC: a guild mid-upgrade -- an old client cannot starve the ones
 		assert.equal(0, #F.sent({ type = "sync-accept", from = BANK, to = V2 }),
 			"the banker accepted a client that cannot complete the data leg")
 		quiet(A)
-		assert.equal(0, A.G.TOGBankClassic_P2PSession:GetActiveSendTotal(),
+		assert.equal(0, A.G.TOGBankClassic_P2P:Lib():GetActiveSendTotal(),
 			"the banker is still holding a send slot for a peer that can never finish")
 		noErrors(A); noErrors(V)
 	end)

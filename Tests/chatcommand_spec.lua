@@ -28,26 +28,27 @@ local function loadChat()
 end
 
 -- INV2-RETIRE-003: the live string that exposed CMD-001 was `dev switches inventoryV2 on`; that
--- switch is retired, so these drive `legacyKeyedReceive` -- OFF by default, which is what makes
--- "on" an observable change -- and the dependency example registers its own parent/child pair,
--- since no shipped switch carries `requires` any more.
+-- switch is retired, and so (N6, 2026-09-14) is `legacyKeyedReceive` which drove these next. They
+-- drive `sendV2Wire` now -- ON by default, which is what makes "off" the observable change -- and
+-- the dependency example registers its own parent/child pair, since no shipped switch carries
+-- `requires` any more.
 describe("CMD-001: /togbank argument plumbing", function()
 	before_each(function() env.reset(); loadChat() end)
 
 	-- The same shape as the exact string that exposed this from a live client.
 	it("delivers both arguments of a dev subcommand", function()
-		assert.is_false(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"), "precondition: defaults off")
-		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive on")
-		assert.is_true(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"),
+		assert.is_true(TOGBankClassic_Switches:IsEnabled("sendV2Wire"), "precondition: defaults on")
+		TOGBankClassic_Chat:ChatCommand("dev switches sendV2Wire off")
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("sendV2Wire"),
 			"the switch did not change, so the arguments never reached the handler -- ChatCommand " ..
 			"tokenized them away and the command fell through to its no-argument branch, which " ..
 			"prints the list and looks exactly like success (CMD-001)")
 	end)
 
-	it("turns a switch back off through the same path", function()
-		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive on")
-		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive off")
-		assert.is_false(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"))
+	it("turns a switch back on through the same path", function()
+		TOGBankClassic_Chat:ChatCommand("dev switches sendV2Wire off")
+		TOGBankClassic_Chat:ChatCommand("dev switches sendV2Wire on")
+		assert.is_true(TOGBankClassic_Switches:IsEnabled("sendV2Wire"))
 	end)
 
 	-- Ordering matters to the operator: a dependent switch reports OFF while its parent is off, so
@@ -112,10 +113,10 @@ describe("CMD-001: /togbank argument plumbing", function()
 		local seen = {}
 		local original = TOGBankClassic_Chat.ChatCommand
 		assert.is_not_nil(original)
-		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive on")
-		-- legacyKeyedReceive must be the switch name, not "legacyKeyedReceive on".
-		assert.is_not_nil(TOGBankClassic_Switches.registry["legacyKeyedReceive"])
-		assert.is_nil(TOGBankClassic_Switches.registry["legacyKeyedReceive on"],
+		TOGBankClassic_Chat:ChatCommand("dev switches sendV2Wire off")
+		-- sendV2Wire must be the switch name, not "sendV2Wire off".
+		assert.is_not_nil(TOGBankClassic_Switches.registry["sendV2Wire"])
+		assert.is_nil(TOGBankClassic_Switches.registry["sendV2Wire off"],
 			"the name and its value were concatenated, so the remainder replaced the token " ..
 			"instead of being passed alongside it")
 		seen[#seen + 1] = true

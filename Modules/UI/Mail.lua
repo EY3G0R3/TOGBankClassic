@@ -83,8 +83,7 @@ function TOGBankClassic_UI_Mail:DrawContent()
 	self.Content:ReleaseChildren()
 	self.Content:ResumeLayout()
 
-	local _, _, sender, subject, money, CODAmount, _, itemCount, _, wasReturned, _, _, _, _ =
-		GetInboxHeaderInfo(self.MailId)
+	local _, _, sender, subject, money = GetInboxHeaderInfo(self.MailId)
 	if not sender then
 		TOGBankClassic_UI_Mail:RedrawContent()
 		return
@@ -155,23 +154,27 @@ function TOGBankClassic_UI_Mail:DrawContent()
 	itemGroup:SetLayout("Flow")
 	itemGroup:SetFullWidth(true)
 
+	-- LINK-AUDIT-001 step 3 (docs/LINK_AUDIT.md 3.6): an attachment is one of the two EDGES where the
+	-- client hands over a link. It is parsed once (Scan.parseLink), becomes a record, and is drawn as
+	-- the same view row the inventory windows draw (Store.ViewRowFor) -- synchronously, since Resolve
+	-- answers at once. This used to build `{ ID, Link, Count }` rows and hand them to the async
+	-- loader, whose only remaining reason to exist was these rows.
+	local Record, Scan, Store = TOGBankClassic_Inventory_Record, TOGBankClassic_Inventory_Scan, TOGBankClassic_Inventory_Store
 	local showItems = false
-	local items = {}
+	local rows = {}
 	for attachmentIndex = 1, ATTACHMENTS_MAX_RECEIVE do
-		local mail = GetInboxItem(self.MailId, attachmentIndex)
-		if mail ~= nil then
+		local _, itemID, _, quantity = GetInboxItem(self.MailId, attachmentIndex)
+		if itemID then
 			local link = GetInboxItemLink(self.MailId, attachmentIndex)
 			if link then
-				if not showItems then
-					showItems = true
-				end
-
+				showItems = true
 				if not TOGBankClassic_Item:IsUnique(link) then
-					local id = GetItemInfoInstant(link)
-					local _, _, _, quantity, _ = GetInboxItem(self.MailId, attachmentIndex)
-					table.insert(items, { ID = id, Link = link, Count = quantity })
+					local enchant, suffix = Scan.parseLink(link)
+					local rec = Record.new(itemID, quantity or 1, suffix, enchant)
+					if rec then rows[#rows + 1] = Store.ViewRowFor(rec) end
 				end
 			else
+				-- The link arrives a moment after the header; draw again shortly.
 				self:RedrawContent()
 				return
 			end
@@ -180,11 +183,9 @@ function TOGBankClassic_UI_Mail:DrawContent()
 
 	if showItems then
 		self.Content:AddChild(itemGroup)
-		TOGBankClassic_Item:GetItems(items, function(list)
-			for _, item in pairs(list) do
-				TOGBankClassic_UI:DrawItem(item, itemGroup, 30, 35, 30, 30, 0, 5)
-			end
-		end)
+		for _, row in ipairs(rows) do
+			TOGBankClassic_UI:DrawItem(row, itemGroup, 30, 35, 30, 30, 0, 5)
+		end
 	end
 
 	self.ScoreMail = true
@@ -209,7 +210,7 @@ function TOGBankClassic_UI_Mail:DrawContent()
 end
 
 function TOGBankClassic_UI_Mail:RedrawContent()
-	TOGBankClassic_Core:ScheduleTimer(function(...)
+	TOGBankClassic_Core:ScheduleTimer(function()
 		TOGBankClassic_UI_Mail:OnTimer()
 	end, 0.25)
 end

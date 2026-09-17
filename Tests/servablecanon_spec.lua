@@ -99,53 +99,39 @@ describe("HASH-CANON-009: advertisers carry only a servable canon", function()
 	end)
 end)
 
-describe("HASH-CANON-009: a relay answers a request only with a version it can deliver", function()
-	local sent
+-- LIBREQ-DS-008: this used to drive the pull path's relay ACK (an `alt-request` on togbank-r
+-- answered on togbank-rr), which is retired. A relay is asked through the library's numbered P2P
+-- now, and the library decides "can this peer serve it" through TWO hooks TOGBank supplies
+-- (Modules/P2P.lua Config): `servableCanon(key)` is what it advertises and answers a version query
+-- with, `canServe(key)` is what HandleSyncRequest gates the accept on (its own suite pins that a
+-- false answer is a sync-busy). The examples drive those hooks with the same three holdings.
+describe("HASH-CANON-009: a relay serves a request only with a version it can deliver", function()
+	local hooks
 
-	local function requestFrom(sender, alt, expectedHash)
-		sent = {}
-		TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, dist, target)
-			local ok, data = TOGBankClassic_Core:DeserializeWithChecksum(text)
-			sent[#sent + 1] = { prefix = prefix, data = ok and data or nil, dist = dist, target = target }
-		end
-		local body = TOGBankClassic_Core:SerializeWithChecksum({
-			type = "alt-request", name = alt, requester = sender, hashOnly = false,
-			expectedHash = expectedHash, requesterMailHash = 0,
-		})
-		TOGBankClassic_Chat:OnCommReceived("togbank-r", body, "GUILD", sender)
-		env.advance(1)   -- the 0-500ms responder backoff
-	end
+	before_each(function()
+		env.reset(); client("Otherguy")
+		hooks = TOGBankClassic_P2P:Config()
+	end)
 
-	local function acked()
-		for _, m in ipairs(sent) do
-			if m.prefix == "togbank-rr" and m.data and m.data.type == "alt-request-reply" then return m end
-		end
-		return nil
-	end
-
-	before_each(function() env.reset(); client("Otherguy") end)
-
-	it("answers when it holds tuple records with a canon", function()
+	it("serves when it holds tuple records with a canon", function()
 		hold(OTHER, C(T, 0x20), T)
-		requestFrom(STALE, OTHER, 0x10)
-		assert.is_table(acked(), "a relay holding a deliverable version did not answer")
+		assert.is_true(hooks.canServe(OTHER), "a relay holding a deliverable version would refuse the request")
+		assert.equal(C(T, 0x20), hooks.servableCanon(OTHER))
 	end)
 
 	-- The Alchemyrcp case from the live guild: a peer holding the Sep-5 copy -- same revision-1
-	-- hash as the banker, no canon -- would win the race to answer, SendAltData would ship its
-	-- tuples with no canon, and the requester would be left on "v1" red having been "answered".
-	it("stays silent when its copy has no readable canon, even though revision 1 matches", function()
+	-- hash as the banker, no canon -- would win the race to answer, ship its tuples with no canon,
+	-- and leave the requester on "v1" red having been "answered".
+	it("advertises nothing when its copy has no readable canon, even though revision 1 matches", function()
 		hold(OTHER, nil, T)
-		requestFrom(STALE, OTHER, 0x10)
-		assert.is_nil(acked(),
-			"a relay with no canon answered a request; its delivery cannot carry a version " ..
-			"(HASH-CANON-009)")
+		assert.is_nil(hooks.servableCanon(OTHER),
+			"a relay with no canon advertised a version; its delivery cannot carry one (HASH-CANON-009)")
 	end)
 
-	it("stays silent when its canon sits beside legacy-only content", function()
+	it("refuses when its canon sits beside legacy-only content", function()
 		hold(OTHER, C(T, 0x20), T, true)
-		requestFrom(STALE, OTHER, 0x10)
-		assert.is_nil(acked(),
-			"a relay answered with a canon it has no tuple records for; SendAltData would send nothing")
+		assert.is_false(hooks.canServe(OTHER),
+			"a relay would accept a request for a canon it has no tuple records for; the reply would be empty")
+		assert.is_nil(hooks.servableCanon(OTHER))
 	end)
 end)

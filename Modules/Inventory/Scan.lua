@@ -32,14 +32,19 @@ local bankBagRange    = TOGBankClassic_Constants.BankBagRange
 --- valid and mean the same thing. That equivalence is exactly what link-keying got wrong -- the
 --- two spellings produced different keys for one item -- and parsing to integers here is what
 --- makes the distinction stop existing.
+---
+--- LINK-AUDIT-001 step 4: THE one link parser (docs/LINK_AUDIT.md 3.2). The third return is the
+--- item id (field 1), nil for no link, so a caller matching a live link against a request never
+--- needs a second call or a second parser -- `Item:GetSuffixID` was that second parser and is gone.
+---@return number enchant, number suffix, number|nil itemID
 function Scan.parseLink(link)
-	if type(link) ~= "string" then return 0, 0 end
+	if type(link) ~= "string" then return 0, 0, nil end
 	local body = link:match("|Hitem:([%-%d:]+)") or link:match("^item:([%-%d:]+)")
-	if not body then return 0, 0 end
+	if not body then return 0, 0, nil end
 	local fields = {}
 	for field in (body .. ":"):gmatch("([^:]*):") do fields[#fields + 1] = field end
 	-- fields[1] is the itemID; enchant is 2, suffix is 7.
-	return tonumber(fields[2]) or 0, tonumber(fields[7]) or 0
+	return tonumber(fields[2]) or 0, tonumber(fields[7]) or 0, tonumber(fields[1])
 end
 
 --- Walk one container, appending tuples to `records`. Returns the number of occupied slots seen.

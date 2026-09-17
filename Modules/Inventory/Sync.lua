@@ -38,17 +38,20 @@
 --
 -- THE SEND SLOT (P2P-024/028): the provider took a slot when it ACCEPTED and must give it back when
 -- the reply has LEFT -- not when it was queued, or three queued snapshots would count as no load and
--- the cap that spreads a busy guild across holders would admit a fourth. DeltaSync exposes no
--- per-send completion (LIBREQ-DS-009, filed); Core's transport proxy does (`Core:WatchHostSend`), and
--- the release rides it. A no-change releases at once -- there is nothing to wait for.
+-- the cap that spreads a busy guild across holders would admit a fourth. The release rides
+-- DeltaSync's per-send completion (`SendData`'s `onComplete`, MINOR 18, LIBREQ-DS-009). A no-change
+-- releases at once -- there is nothing to wait for.
 --
 -- WHICH ALT A PAYLOAD IS FOR IS IN THE PAYLOAD. The host's callbacks carry only the sender, so the
 -- QUERY baseline names the alt in `keys.alt` and every reply names it in `alt`. `keys` is the
 -- library's own baseline field for "what the requester holds"; the alt name is exactly that.
 --
--- LIBREQ-DS-008: when the numbered handshake moves into DeltaSync, THIS file is what its data leg
--- calls -- OnDataRequest to answer, OnDataReceived to apply. It is deliberately independent of
--- P2PSession's internals beyond the slot and the completion, so the handshake can be swapped under it.
+-- LIBREQ-DS-008 (adopted 2026-09-15): the numbered handshake IS DeltaSync's now (Modules/P2P.lua),
+-- and THIS file is what its data leg calls -- `onDeliver` -> RequestFrom to ask, the host's
+-- onDataRequest -> OnDataRequest to answer, onDataReceived -> OnDataReceived to apply. The send
+-- slot the library took on accept is claimed here on the QUERY (`p2p:QueryArrived`) and given back
+-- when the reply has drained (`p2p:ReleaseSendSlot` from SendData's completion) or at once for a
+-- no-change (`p2p:ReplyNoChange`); the session completes on store (`p2p:OnItemCompleted`).
 
 TOGBankClassic_Inventory_Sync = {}
 local Sync = TOGBankClassic_Inventory_Sync
@@ -66,9 +69,15 @@ local function Dbg(tag, fmt, ...)
 	TOGBankClassic_Output:Debug("DELTA", tag, fmt, ...)
 end
 
+--- The library's numbered P2P, or nil (no host, or a spec's Core stand-in without one).
+local function p2p()
+	local P2P = TOGBankClassic_P2P
+	return P2P and P2P:Lib() or nil
+end
+
 local function releaseSlot(requester, reason)
-	local P2P = TOGBankClassic_P2PSession
-	if P2P and P2P.ReleaseSendSlot then P2P:ReleaseSendSlot(requester, reason) end
+	local lib = p2p()
+	if lib then lib:ReleaseSendSlot(requester, reason) end
 end
 
 --- The sender in TOGBank's one spelling. The host hands its callbacks the sender as AceComm gave it
@@ -77,11 +86,13 @@ end
 --- `Name-Realm` from the handshake payload. Chat:OnCommReceived normalises the same way for every
 --- TOGBank prefix; missing it here would leak the slot the accept took (P2P-028) and let the
 --- state-wait release it a second time 30 seconds later (P2P-024). It also marks the sender online,
---- as Chat does: a peer that just spoke to us is online whatever the roster says yet.
+--- as Chat does and with the same source: a peer that just spoke to us on TOGBank's host prefixes
+--- is online whatever the roster says yet, and runs TOGBank (the stamp the federation peer picker
+--- prefers, XGUILD-SYNC-001).
 local function normSender(sender)
 	local G = TOGBankClassic_Guild
 	local norm = G:NormalizeName(sender) or sender
-	if G.UpdateOnlineMember then G:UpdateOnlineMember(norm, true, "host-message-received") end
+	if G.UpdateOnlineMember then G:UpdateOnlineMember(norm, true, "addon-message-received") end
 	return norm
 end
 
@@ -138,27 +149,36 @@ end
 
 -- ─── Provider ──────────────────────────────────────────────────────────────────
 
---- Send one reply and give the send slot back when it has left. A refused send (the host's roster
---- guard: the requester logged off) releases at once -- nothing will ever complete. The slot is
---- keyed by the requester's `Name-Realm`; the send (and the watch on it, which keys on what the
---- transport sees) is addressed by the one address rule, exactly as the handshake was.
+--- Send one reply and give the send slot back when it has left. The slot is keyed by the
+--- requester's `Name-Realm`; the send is addressed by the one address rule, exactly as the
+--- handshake was.
+---
+--- DS-009 (DeltaSync MINOR 18, delivered 2026-09-15 on TOGBank's LIBREQ-DS-009): the release rides
+--- `SendData`'s own trailing `onComplete(info)` -- ONE completion per send, whatever happened to it.
+--- `info.verdict` is "delivered" (every chunk accepted), "refused" (the client refused after the
+--- queue's retries), or "not-attempted" (the host's raid guard, or the library declining before the
+--- transport -- the requester logged off and its roster guard said so). The not-attempted case is
+--- why nothing here reads SendData's return: the library reports every way out through the
+--- callback, so a release on `false` as well would give the slot back twice. Core's transport proxy
+--- (`WatchHostSend`), which stood in for this while the library had no completion, is gone.
 local function reply(requester, payload, priority, slotReason, norm, canon)
 	local h = host()
-	local prefix = h.prefixes and h.prefixes.RESPONSE
 	local addr = TOGBankClassic_Core:WhisperAddress(requester)
 	-- CHAIN-004: ONE reply per requester per alt in flight. Peer review A1's rule ("one accept is one
 	-- reply") is kept by this mark rather than by the accept claim alone, because a QUERY can now be
-	-- answered without an accept (OnDataRequest) -- and a requester's two paths (a session accept
-	-- and the pull-path ACK, both calling RequestFrom for the same bank) would otherwise earn two
-	-- BULK sends of the same snapshot. Cleared when the send has left, or was never taken -- and
+	-- answered without an accept (OnDataRequest) -- and a requester asking twice for the same bank
+	-- inside the drain would otherwise earn two BULK sends of the same snapshot. Cleared when the
+	-- send has left, or was never taken -- and
 	-- stamped, so a transport that never reports (the slot's own 210-second safety release covers
 	-- that case) cannot leave the pair refused for the rest of the session: InFlight reads it.
 	Sync.inFlight = Sync.inFlight or {}
 	local flightKey = requester .. "|" .. tostring(norm)
 	Sync.inFlight[flightKey] = GetTime()
-	TOGBankClassic_Core:WatchHostSend(prefix, addr, function(delivered)
+	local SUFFIX = { delivered = "", refused = "_refused", ["not-attempted"] = "_not_sent" }
+	return h:SendData(addr, payload, false, priority, function(info)
 		Sync.inFlight[flightKey] = nil
-		releaseSlot(requester, delivered and slotReason or (slotReason .. "_refused"))
+		local delivered = info and info.verdict == "delivered"
+		releaseSlot(requester, slotReason .. (SUFFIX[info and info.verdict] or "_refused"))
 		-- SYNCED-001: a DELIVERED reply carrying `canon` of `norm` left this client whole -- the
 		-- transport's verdict, counted as SENT; the requester's own next message is what makes it
 		-- SEEN. Only the tracker's own version registers.
@@ -166,17 +186,10 @@ local function reply(requester, payload, priority, slotReason, norm, canon)
 			TOGBankClassic_Propagation:NoteHolder(norm, canon, requester, "sent")
 		end
 	end)
-	local ok = h:SendData(addr, payload, false, priority)
-	if not ok then
-		TOGBankClassic_Core:UnwatchHostSend(prefix, addr)
-		Sync.inFlight[flightKey] = nil
-		releaseSlot(requester, slotReason .. "_not_sent")
-	end
-	return ok
 end
 
--- The send slot's own safety release (P2PSession SEND_TIMEOUT); a mark older than this belongs to a
--- send the slot has already given up on.
+-- The send slot's own safety release (the library's SEND_TIMEOUT); a mark older than this belongs
+-- to a send the slot has already given up on.
 local IN_FLIGHT_TTL = 210
 
 --- Is a reply to `requester` for `norm` still leaving? A stale mark (see reply) reads as no.
@@ -215,37 +228,34 @@ end
 function Sync:OnDataRequest(sender, baseline)
 	if type(baseline) ~= "table" or baseline.type ~= self.BASELINE_TYPE then return false end
 	local G, Chain = TOGBankClassic_Guild, TOGBankClassic_Inventory_Chain
-	local P2P = TOGBankClassic_P2PSession
+	local lib = p2p()
 	sender = normSender(sender)
 	local norm = type(baseline.keys) == "table" and baseline.keys.alt or nil
 	if type(norm) == "string" then norm = G:NormalizeName(norm) or norm end
-	-- CHAIN-004: a reply for this requester and alt is already leaving -- a second QUERY for it (the
-	-- session accept and the pull-path ACK both ask; a retry inside the drain) earns nothing more.
-	-- Peer review A1's "one accept is one reply", kept here now that a QUERY can be its own accept.
+	-- CHAIN-004: a reply for this requester and alt is already leaving -- a second QUERY for it (a
+	-- retry inside the drain) earns nothing more. Peer review A1's "one accept is one reply", kept
+	-- here now that a QUERY can be its own accept.
 	if type(norm) == "string" and self:InFlight(sender, norm) then
 		Dbg("WIRE", "[SYNC] %s asked for %s again while our reply is still leaving -- ignored", sender, norm)
 		-- Peer Review (LOW): if this duplicate arrived WITH an unclaimed accept, consume it now and
 		-- give the slot back, rather than leaving that reservation to lapse on the 30s state-wait.
-		if P2P and P2P.ClaimSendSlot and P2P:ClaimSendSlot(sender) then
-			if P2P.StateSummaryArrived then P2P:StateSummaryArrived(sender, norm) end
+		if lib and lib:QueryArrived(sender, norm) then
 			releaseSlot(sender, "duplicate_query")
 		end
 		return true
 	end
 	-- CHAIN-003 (peer review F2 / A1), REVISED as CHAIN-004: the send-slot cap is enforced when the
-	-- sync-request is ACCEPTED, and the claim is consumed here on the QUERY and given back with the
-	-- slot on drain. A QUERY with NO unclaimed accept used to be dropped on the floor. Read off both
-	-- of the operator's clients on 2026-09-12: (1) the banker's pull-path ACK (Chat.lua, alt-request)
-	-- never took a slot, so every bank only the banker authored was ACKed and then never delivered
-	-- -- "Galdof-OldBlanchy sent a QUERY with no unclaimed accept -- ignored", and a Bankers tab
-	-- of 'Old format / never' rows; (2) a QUERY that arrived after the 30-second state-wait had released the
-	-- accept was dropped the same way, and the requester then sat out the full 180-second delivery
-	-- watchdog ("FAILED (delivery_timeout)" x15 in one screen). What the gate is FOR is the cap --
-	-- a BULK send outside it, and releases for a slot never taken. So a QUERY with no accept is its
-	-- OWN accept when there is room: it takes a slot here and the releases below balance; and when
-	-- there is no room it is REFUSED OUT LOUD (sync-busy naming the alt), so the requester's session
-	-- advances to its next holder now rather than after the watchdog. Ours either way (true): the
-	-- baseline type is TOGBank's alone.
+	-- sync-request is ACCEPTED (the library's HandleSyncRequest), and the claim is consumed here on
+	-- the QUERY (`QueryArrived`: ends the state-wait, marks the accepted slot serving) and given back
+	-- with the slot on drain. A QUERY with NO unclaimed accept used to be dropped on the floor. Read
+	-- off both of the operator's clients on 2026-09-12: a QUERY that arrived after the 30-second
+	-- state-wait had released the accept was dropped, and the requester then sat out the full
+	-- 180-second delivery watchdog ("FAILED (delivery_timeout)" x15 in one screen). What the gate is
+	-- FOR is the cap -- a BULK send outside it, and releases for a slot never taken. So a QUERY with
+	-- no accept is its OWN accept when there is room: it takes a slot here and the releases below
+	-- balance; and when there is no room it is REFUSED OUT LOUD (`query-refused` naming the alt --
+	-- the requester's `OnQueryRefused`), so its session advances to its next holder now rather than
+	-- after the watchdog. Ours either way (true): the baseline type is TOGBank's alone.
 	--
 	-- WHY THIS REFUSES WHERE HandleSyncRequest QUEUES (P2P-029, the operator: "buffers all requests
 	-- ... so nothing gets dropped"; Peer Review 2026-09-12 raised the contradiction). A DELIBERATE
@@ -256,12 +266,11 @@ function Sync:OnDataRequest(sender, baseline)
 	-- "cannot serve you" reply in this handshake is (busy (version), nothing servable): advance to the
 	-- next holder, bounded by AdvanceCandidate's retry cycle. Nothing is dropped -- the request lives
 	-- on in the session. KNOWN COST: one hop of the P2P-029 shape, once per lapsed accept.
-	if P2P and P2P.ClaimSendSlot and not P2P:ClaimSendSlot(sender) then
-		if not (P2P.TryAcquireSendSlot and P2P:TryAcquireSendSlot(sender) and P2P:ClaimSendSlot(sender)) then
+	if lib and not lib:QueryArrived(sender, norm) then
+		if not (lib:TryAcquireSendSlot(sender) and lib:QueryArrived(sender, norm)) then
 			Dbg("WIRE", "[SYNC] %s sent a QUERY with no unclaimed accept and we are at capacity -- refused", sender)
 			if type(norm) == "string" then
-				-- Through the handshake sender (prefix and priority live there, Peer Review c6819531 F2).
-				P2P:SendHandshake(sender, { type = "sync-busy", alt = norm, reason = "no_slot" })
+				TOGBankClassic_P2P:SendOwn(sender, { type = "query-refused", alt = norm, reason = "no_slot" })
 			end
 			return true
 		end
@@ -272,8 +281,6 @@ function Sync:OnDataRequest(sender, baseline)
 		releaseSlot(sender, "bad_request")
 		return true
 	end
-	-- The accept armed a short wait for exactly this message (P2P-028); it has arrived.
-	if P2P and P2P.StateSummaryArrived then P2P:StateSummaryArrived(sender, norm) end
 
 	if not G:CanServe(norm) then
 		Dbg("WIRE", "[SYNC] %s asked for %s but we cannot serve it -- slot released", sender, norm)
@@ -291,7 +298,7 @@ function Sync:OnDataRequest(sender, baseline)
 	if held and mine and (held == mine or G:CanonIsNewer(held, mine)) then
 		Dbg("WIRE", "[SYNC] %s holds %s for %s%s -- no-change", sender, held, norm,
 			held == mine and " (ours)" or " (newer than ours)")
-		releaseSlot(sender, "no_change")
+		if lib then lib:ReplyNoChange(sender, norm) end
 		-- SYNCED-001: a requester that already holds our version has received it.
 		if held == mine and TOGBankClassic_Propagation then TOGBankClassic_Propagation:NoteHolder(norm, mine, sender) end
 		host():SendData(TOGBankClassic_Core:WhisperAddress(sender), {
@@ -447,29 +454,21 @@ function Sync:StoreDelivery(sender, norm, records, money, meta, len)
 	-- TABCOLOUR-003: the offer that turned the tab red has been answered by a delivery.
 	if G.ClearNewerOffered then G:ClearNewerOffered(norm) end
 
-	-- INV2-SESSION-001: CLOSE THE SYNC OFF -- the inbound metric, the ACK fallback timer, the session.
+	-- INV2-SESSION-001: CLOSE THE SYNC OFF -- the inbound metric and the session.
 	local isFromBanker = G:IsBank(sender) or false
 	TOGBankClassic_Database:RecordDeltaReceived(guild, len or 0, isFromBanker)
-	local fallbacks = G.pendingP2PFallbackTimeouts
-	if fallbacks and fallbacks[norm] then
-		fallbacks[norm]:Cancel()
-		fallbacks[norm] = nil
-		TOGBankClassic_Output:Debug("P2P", "COMPLETE", "Cancelled fallback timeout for %s (tuples received)", norm)
-	end
-	if TOGBankClassic_P2PSession then TOGBankClassic_P2PSession:OnAltCompleted(norm, sender) end
+	local lib = p2p()
+	if lib then lib:OnItemCompleted(norm, sender) end
 
 	-- SYNCED-001 (peer review B1): THE RECEIPT. A drained reply only proves the data left the
 	-- provider; nothing on the wire said "I hold it now" until the receiver's next broadcast, which
 	-- may be its next login. So a delivery that was applied and stamped with a canon tells its
-	-- sender so -- ~60 bytes on the handshake prefix at ALERT, the one message the provider's
+	-- sender so -- ~60 bytes by whisper at ALERT (P2P:SendOwn), the one message the provider's
 	-- "has my update reached anyone" line can turn green on. A lossy delivery sends none: it was not
-	-- the author's version.
-	-- Through P2P:SendHandshake (the prefix and the priority live there, Peer Review c6819531 F2);
-	-- a spec's Core stand-in may carry the envelope alone, hence the guard on its SendWhisper.
-	local P2P = TOGBankClassic_P2PSession
+	-- the author's version. A spec's Core stand-in may carry the envelope alone; SendOwn guards.
 	if (meta.dropped or 0) == 0 and type(meta.hashV2) == "string" and sender ~= G:GetNormalizedPlayer()
-			and P2P and P2P.SendHandshake and TOGBankClassic_Core.SendWhisper then
-		P2P:SendHandshake(G:NormalizeName(sender) or sender, { type = "sync-done", alt = norm, canon = meta.hashV2 })
+			and TOGBankClassic_P2P then
+		TOGBankClassic_P2P:SendOwn(G:NormalizeName(sender) or sender, { type = "sync-done", alt = norm, canon = meta.hashV2 })
 	end
 
 	-- TABCOLOUR-001: the data has landed, so this is the moment a red tab turns back. Not routed
@@ -496,12 +495,12 @@ function Sync:ReceiveSnapshot(data, sender, len)
 	-- it completes like any other. A lossy decode is not the author's version and is not taken.
 	local Bank = TOGBankClassic_Bank
 	if norm == G:GetNormalizedPlayer() and Bank and Bank.awaitingDiffBase and Chat:IsAltDataAllowed(sender, norm) then
-		local P2P = TOGBankClassic_P2PSession
+		local lib = p2p()
 		local taken, why = false, nil
 		if (dropped or 0) == 0 then taken, why = Bank:ReceiveDiffBase(records, money, hashV2) end
 		if taken then
 			G:ConsumePendingSync("alt", sender, norm)
-			if P2P then P2P:OnAltCompleted(norm, sender) end
+			if lib then lib:OnItemCompleted(norm, sender) end
 			return true
 		end
 		Dbg("VALIDATE", "[MULTIPC-002] a delivery for our own character from %s was not taken as the diff base (canon %s, %d dropped)",
@@ -512,7 +511,7 @@ function Sync:ReceiveSnapshot(data, sender, len)
 		-- RequestDiffBase refuses to ask while a session for our own name is live.
 		if why == "moved" then
 			G:ConsumePendingSync("alt", sender, norm)
-			if P2P then P2P:OnAltCompleted(norm, sender) end
+			if lib then lib:OnItemCompleted(norm, sender) end
 			Bank:RequestDiffBase()
 		end
 		return false
@@ -548,7 +547,7 @@ end
 ---@return boolean applied
 function Sync:ReceiveChain(sender, data, len)
 	local G, Store, Chain, Chat = TOGBankClassic_Guild, TOGBankClassic_Inventory_Store, TOGBankClassic_Inventory_Chain, TOGBankClassic_Chat
-	local P2P = TOGBankClassic_P2PSession
+	local lib = p2p()
 	local norm = type(data.alt) == "string" and G:NormalizeName(data.alt) or nil
 	if not norm then return false end
 	local ok, why = authorised(sender, norm)
@@ -561,8 +560,9 @@ function Sync:ReceiveChain(sender, data, len)
 		Dbg("CHAIN", "[CHAIN] refused %s's chain for %s: %s -- asking for the snapshot", tostring(sender), norm, reason)
 		G.forceFullRequests = G.forceFullRequests or {}
 		G.forceFullRequests[norm] = true
-		local sid = P2P and P2P.sessionsByAlt and P2P.sessionsByAlt[norm]
-		if sid and P2P.OnFailed then P2P:OnFailed(sid, "chain_refused") end
+		-- The library takes the item key as well as a session id; a delivery no session asked for
+		-- (a banker's manual share) is a no-op there.
+		if lib then lib:OnItemFailed(norm, "chain_refused") end
 		return false
 	end
 

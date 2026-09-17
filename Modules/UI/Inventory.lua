@@ -103,19 +103,26 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	-- the shared bottom row (UI:DressWindow). Only the help text is this window's.
 	TOGBankClassic_UI:DressWindow(window, {
 		settings = TOGBankClassic_UI_Inventory,
+		share = true,   -- SHARE-BTN-001: /togbank share beside the gear, on a bank character
 		help = function()
 			GameTooltip:AddLine("Guild Bank — How It Works")
 			GameTooltip:AddLine(" ")
-			GameTooltip:AddLine("This window shows the combined inventory of all guild banker alts and their mail inventory. Each tab represents one banker character, which is a real in-game character.", 0.9, 0.9, 0.9, true)
+			-- HELP-CURRENT-001 (2026-09-15): this is the OLD window (/togbank legacy) since v1.5.1; say so,
+			-- and where the new one is.
+			GameTooltip:AddLine("This window shows the combined inventory of all guild banker alts and their mail inventory. Each tab represents one banker character, which is a real in-game character. This is the older tab-per-banker view (/togbank legacy); the |cffffd100Guild Bank|r window (/togbank, or the Browse button below) shows the same items as one filterable list with the Bankers, Requests, Log and Shop tabs.", 0.9, 0.9, 0.9, true)
 			GameTooltip:AddLine(" ")
 			GameTooltip:AddLine("|cffffd100To donate items:|r", 1, 1, 1, false)
-			GameTooltip:AddLine("Mail the item using in-game mail directly to the banker character shown in the tab you want to contribute to.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine("Mail the item using in-game mail directly to the banker character shown in the tab you want to contribute to. Donations earn points (/togbank donations).", 0.9, 0.9, 0.9, true)
 			GameTooltip:AddLine(" ")
 			GameTooltip:AddLine("|cffffd100To request items:|r", 1, 1, 1, false)
-			GameTooltip:AddLine("Open the Search window to search for an item, click on it to open the submit request popup and submit the request. Alternatively, you can click on the item directly in the banker tabs to open the request popup. A banker will fulfil it when they are next online and see your request.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine("Open the Search window to search for an item, click on it to open the submit request popup and submit the request. Alternatively, you can click on the item directly in the banker tabs to open the request popup. A banker will fulfil it when they are next online and see your request. If the guild's Shop is on, every request is a shop order at the estimate the popup shows.", 0.9, 0.9, 0.9, true)
 			GameTooltip:AddLine(" ")
 			GameTooltip:AddLine("|cffffd100Bankers -- to hide an item from the guild:|r", 1, 1, 1, false)
 			GameTooltip:AddLine("On your own tab, right-click an item to hide it. It stays on your tab greyed out with a red mark; to everyone else it is as if you do not have it. Right-click it again to show it.", 0.9, 0.9, 0.9, true)
+			-- HELP-CURRENT-001 / SHARE-BTN-001: the bottom row's share button.
+			GameTooltip:AddLine(" ")
+			GameTooltip:AddLine("|cffffd100Bankers -- to share your bank now:|r", 1, 1, 1, false)
+			GameTooltip:AddLine("The circling-arrows button beside the gear publishes your bank to the guild straight away, the same as /togbank share. It only appears on a bank character.", 0.9, 0.9, 0.9, true)
 			TOGBankClassic_UI:AppendGuildHelpNote("inventory")  -- HELPNOTE-001
 		end,
 	})
@@ -440,7 +447,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 			return
 		end
 		self.currentTab = tab
-		self.tabLoaded = false  -- Will be set to true after GetItems completes
+		self.tabLoaded = false  -- set true once the rows are drawn (synchronously, below)
 
 		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Loading tab %s", tab)
 
@@ -479,12 +486,8 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: aggregated to %d unique items",
 			tab, #items)
 
-		-- Show loading indicator immediately
-		local loadingLabel = TOGBankClassic_UI:Create("Label")
-		loadingLabel:SetText("|cff808080Loading items...|r")
-		loadingLabel:SetFullWidth(true)
-		scroll:AddChild(loadingLabel)
-
+		-- LINK-AUDIT-001 step 6: no "Loading items..." label. It covered the async loader's wait;
+		-- the rows below draw in this same call, so the label was created and released in one frame.
 		if items and #items > 0 then
 			-- Debug: Check for duplicate item IDs with different links
 			local itemsByID = {}
@@ -505,7 +508,7 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 				end
 			end
 
-			-- Validate and filter items before passing to GetItems
+			-- Validate and filter items before drawing
 			local validItems = {}
 			for i, item in ipairs(items) do
 				if item and item.ID and item.ID > 0 then
@@ -516,17 +519,15 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 				end
 			end
 
-			TOGBankClassic_Item:GetItems(validItems, function(list)
-				-- Prevent callback from running twice on same scroll container
-				if scroll.callbackProcessed then
-					TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Ignoring duplicate callback for tab %s", tab)
-					return
-				end
-				scroll.callbackProcessed = true
+			-- LINK-AUDIT-001 step 6 (docs/LINK_AUDIT.md 3.5): the rows are Store view rows with `Info`
+			-- already filled by Resolve, drawn synchronously. `Item:GetItems` -- the async loader this
+			-- handed them to, with its 10 s watchdog and its duplicate-callback guard -- is gone; a
+			-- placeholder row (Resolve step 3) draws at once with its question-mark icon.
+			do
+				local list = validItems
 				self.tabLoaded = true  -- Mark tab as fully loaded
 
-				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: GetItems callback received %d items",
-					tab, list and #list or 0)
+				TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Inventory tab %s: drawing %d items", tab, #list)
 
 				-- Clear previous items before adding new ones
 				scroll:ReleaseChildren()
@@ -561,11 +562,10 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 						end)
 					end
 				end
-			end)
+			end
 		else
-			-- SCAN-001: with no items there is no GetItems callback to release the loading
-			-- label, so it used to sit on "Loading items..." forever and read as a hang
-			-- rather than an empty record. Say what is actually true and how to fix it.
+			-- SCAN-001: an empty record used to sit on the loader's "Loading items..." forever and read
+			-- as a hang. Say what is actually true and how to fix it.
 			scroll:ReleaseChildren()
 			self.tabLoaded = true
 

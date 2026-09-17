@@ -118,6 +118,9 @@ function TOGBankClassic_Core:OnInitialize()
     TOGBankClassic_Chat:Init()
     TOGBankClassic_Options:Init()
     TOGBankClassic_Chat:RegisterAliasCommands()
+    -- STORE-002: bind ItemDB's scan / source events so the price authority republishes after a
+    -- scan. Only registers callbacks; publishing waits for the guild record and the cycle.
+    if TOGBankClassic_PriceList then TOGBankClassic_PriceList:Init() end
     -- ROSTER-003: bind LibGuildRoster's presence callbacks before events register, so no
     -- online/offline transition is missed during login. Idempotent and safe if the library
     -- is absent (falls back to the legacy roster scan).
@@ -183,13 +186,14 @@ end
 -- literal captured from Core's OWN implementation before the delegation, so "byte-identical" is
 -- proven rather than reasoned -- every peer on every prior version parses this exact framing.
 --
--- What the host carries: the envelope and the checksum (DS-HOST-001), and since step 3b the DATA
--- LEG of every sync -- a requester's QUERY naming the canon it holds (`host:RequestData`), and the
+-- What the host carries: the envelope and the checksum (DS-HOST-001); since step 3b the DATA LEG
+-- of every sync -- a requester's QUERY naming the canon it holds (`host:RequestData`), and the
 -- provider's RESPONSE carrying the delta chain, the snapshot or a no-change (`host:SendData`;
--- Modules/Inventory/Sync.lua). Its seven comm prefixes are registered at creation. The numbered
--- handshake (P2P-035) is still TOGBank's own layer on `togbank-rr` until LIBREQ-DS-008 moves it into
--- the library; the host's InitP2P is deliberately NOT called, because per-item hash offers are the
--- design banker numbers replaced.
+-- Modules/Inventory/Sync.lua); and since LIBREQ-DS-008 the NUMBERED P2P itself -- the banker-number
+-- table (`host.numbers`, Modules/BankerNumbers.lua) and the broadcast / offer / version-query /
+-- handshake loop (`host.p2p`, Modules/P2P.lua, `InitP2P({ mode = "numbered" })` on first use). Its
+-- seven comm prefixes are registered at creation; TOGBank's own `togbank-rr` handshake prefix is
+-- gone with the layer it carried.
 --
 -- DEBUG: the host gets a LOGGER (LIBREQ-DS-003's shape), so DeltaSync claims no chat tab and does
 -- no filtering of its own. Every library line lands in Output:Debug under the DELTASYNC category,
@@ -217,32 +221,14 @@ local function DeltaSyncLogger(fmt, ...)
 end
 
 -- ---------------------------------------------------------------------------------------------
--- DS-HOST-002: THE TRANSPORT PROXY, and the one thing it adds -- a per-send completion.
+-- DS-HOST-002: THE TRANSPORT. DeltaSync sends through `aceAddon:SendCommMessage` and receives
+-- through `aceAddon:RegisterComm`; that is the whole of what it asks of the object, and both go to
+-- Core unchanged (the raid guard, the queue, the SEND log). Until DeltaSync MINOR 18 this object
+-- also chained the delivery callback into a per-send watcher (`Core:WatchHostSend`), because the
+-- library had no completion of its own and the P2P send slot must be released when a reply has
+-- DRAINED, not when it was queued. LIBREQ-DS-009 delivered that as `SendData`'s trailing
+-- `onComplete` (2026-09-15); Inventory/Sync rides it and the watcher is gone.
 -- ---------------------------------------------------------------------------------------------
--- DeltaSync sends through `aceAddon:SendCommMessage` and receives through `aceAddon:RegisterComm`;
--- that is the whole of what it asks of the object. It exposes no "this send has LEFT" hook -- its
--- `onSendFailed` fires only for a refusal, and `sendsDelivered` is a counter with no identity. The
--- P2P send slot (P2P-024/028) must be released when the reply has drained, not when it was queued,
--- or three queued snapshots count as no load and the cap admits a fourth. LIBREQ-DS-009 asks the
--- library for the callback; until it ships, this proxy is the reference implementation: it forwards
--- both methods to Core unchanged and, on the way through, chains the delivery callback so a watcher
--- registered for (prefix, target) hears the whole-message verdict exactly once.
---
--- A watcher is CONSUMED by the first send matching its key. `host:SendData` sends synchronously
--- inside the call, so "register, then SendData" cannot be interleaved by another send to the same
--- target; a send the library refuses before reaching the proxy (its roster online-guard) never
--- consumes the watcher, which is why callers Unwatch on a false return.
-local hostSendWatchers = {}
-
---- Hear the verdict of the NEXT host send on `prefix` to `target`: fn(delivered, reason).
-function TOGBankClassic_Core:WatchHostSend(prefix, target, fn)
-    hostSendWatchers[tostring(prefix) .. "|" .. tostring(target)] = fn
-end
-
-function TOGBankClassic_Core:UnwatchHostSend(prefix, target)
-    hostSendWatchers[tostring(prefix) .. "|" .. tostring(target)] = nil
-end
-
 local function HostTransport()
     local Core = TOGBankClassic_Core
     return {
@@ -253,23 +239,7 @@ local function HostTransport()
             return Core:RegisterComm(prefix, handler)
         end,
         SendCommMessage = function(_, prefix, text, distribution, target, prio, callbackFn, callbackArg)
-            local key = tostring(prefix) .. "|" .. tostring(target)
-            local watcher = hostSendWatchers[key]
-            hostSendWatchers[key] = nil
-            local function onResult(arg, sent, total, delivered, reason)
-                if callbackFn then callbackFn(arg, sent, total, delivered, reason) end
-                -- TERMINAL means the message's fate is known: it all went (sent >= total), or it
-                -- did not go at all -- refused (`false`), or never attempted (`nil`: the raid
-                -- guard above reports (0, 0, nil)). Under AceCommQueue there is exactly one
-                -- callback and it is terminal whatever it says; the `delivered ~= true` half is
-                -- what keeps a refusal terminal if a per-chunk transport ever reports one early.
-                if watcher and (delivered ~= true or (total or 0) == 0 or (sent or 0) >= total) then
-                    local fn = watcher
-                    watcher = nil
-                    fn(delivered == true, reason)
-                end
-            end
-            return Core:SendCommMessage(prefix, text, distribution, target, prio, onResult, callbackArg)
+            return Core:SendCommMessage(prefix, text, distribution, target, prio, callbackFn, callbackArg)
         end,
     }
 end
@@ -296,6 +266,22 @@ function TOGBankClassic_Core:DeltaHost()
             local Sync = TOGBankClassic_Inventory_Sync
             if Sync then Sync:OnDataReceived(sender, data, len) end
         end,
+        -- LIBREQ-DS-008: every OFFER message, after the library's own P2P has acted on it. An hlb2
+        -- names its sender's addon version and price-list version, and -- by omission -- the bankers
+        -- it holds nothing for (Modules/P2P.lua OnOfferReceived).
+        onOfferReceived = function(sender, data)
+            local P2P = TOGBankClassic_P2P
+            if P2P then P2P:OnOfferReceived(sender, data) end
+        end,
+        -- P2P-023: the collision guard on the GUILD broadcast (one hlb2 in flight per sender, or
+        -- AceComm's multipart spool corrupts the second) is released when the library's send
+        -- reaches its terminal state -- delivered, refused, or never attempted -- never before.
+        onSendComplete = function(info)
+            if info and info.channelType == "OFFER" and info.distribution == "GUILD"
+                    and TOGBankClassic_Events and TOGBankClassic_Events.OnBroadcastComplete then
+                TOGBankClassic_Events:OnBroadcastComplete(info)
+            end
+        end,
         -- A send the client REFUSED -- the message never left. Worth a warning-level line: it is
         -- the failure that otherwise looks like a quiet peer.
         onSendFailed = function(info)
@@ -305,6 +291,12 @@ function TOGBankClassic_Core:DeltaHost()
                 tostring(info and info.target), tostring(info and info.bytes))
         end,
     })
+    -- LIBREQ-DS-008: the numbered P2P is stood up WITH the host, not on the first broadcast. The
+    -- library routes an OFFER or HANDSHAKE to `host.p2p` only when the instance exists, so a
+    -- client that has received before it has sent -- every receiver at login -- would drop the
+    -- peer's broadcast on the floor. The instance is `deltaHost`'s own (P2P:Lib reads it back
+    -- through this function, which now returns), and initialising it calls none of the hooks.
+    if TOGBankClassic_P2P then TOGBankClassic_P2P:Lib() end
     return deltaHost
 end
 

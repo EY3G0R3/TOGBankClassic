@@ -9,11 +9,45 @@
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
+-- VISIBILITY-001 part 2: the status bar's three sections read at the accessibility scale. The left
+-- one is AceGUI's own FontString on a POOLED Frame, so it must go back to its base font on release.
+describe("VISIBILITY-001 part 2: the status bar's text", function()
+	it("puts all three sections on the scaled font, and hands AceGUI's own line its base font back on release", function()
+		env.reset(); env.stubOutput()
+		_G.TOGBankClassic_Guild = nil
+		require("env.frames").reset()
+		require("env.ace").load("AceGUI-3.0")
+		require("env.libs").load("LibAceGUIWidgets-1.0")
+		local UI = env.loadUI()
+		env.loadFile("Modules/Constants.lua")
+		env.loadFile("Modules/UI/StatusBar.lua")
+		_G.GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor or function() end
+		local W = LibStub("LibAceGUIWidgets-1.0")
+		local win = UI:Create("Frame")
+		win:Hide()
+		TOGBankClassic_UI_StatusBar:Attach(win)
+		local scaled = W:ScaledFont("GameFontNormal")
+		assert.is_not_nil(scaled)
+		assert.equal(scaled, win.statusCenter:GetFontObject())
+		assert.equal(scaled, win.statusRight:GetFontObject())
+		assert.equal(scaled, win.statustext:GetFontObject(), "AceGUI's status line is not on the scaled font")
+		local statustext = win.statustext
+		win:Release()
+		assert.equal("GameFontNormal", statustext:GetFontObject(), "the pooled frame went back to AceGUI still on our scaled font")
+	end)
+end)
+
 describe("WINDOW-CHROME-001: UI:DressWindow", function()
 	local UI, window, wow
 
 	before_each(function()
 		env.reset(); env.stubOutput()
+		-- SPEC-ALONE-001: this file never uses the real Guild module, and the share button asks it
+		-- "am I a bank character?" whenever the (pooled) window SHOWS -- including while this setup
+		-- builds the window, before SHARE-BTN-001's stand-in exists. A real Guild an earlier file left
+		-- (optionslayout_spec loads one with no Bank module) then errored in Guild:GetPlayer. Absent,
+		-- the ask answers "not a banker", which is what every example outside SHARE-BTN-001 expects.
+		_G.TOGBankClassic_Guild = nil
 		-- The rich frame model and the REAL AceGUI Frame widget (the whole of AceGUI, widgets
 		-- included -- env.loadUI alone registers no widget types and Create("Frame") answers nil).
 		require("env.frames").reset()
@@ -185,6 +219,148 @@ describe("WINDOW-CHROME-001: UI:DressWindow", function()
 		-- Nothing to anchor: says so rather than erroring.
 		assert.is_false(UI:AnchorStatusBar({ frame = CreateFrame("Frame") }))
 		assert.is_false(UI:AnchorStatusBar(nil))
+	end)
+
+	-- SHARE-BTN-001 (the operator, 2026-09-16: "for the bankers, we need to add a button to the right
+	-- of the gear wheel settings icon that is the /togbank share button. shorten the status bar to
+	-- make up for the space").
+	describe("SHARE-BTN-001: the share button beside the gear", function()
+		local savedGuild, savedChat, banker
+
+		before_each(function()
+			savedGuild, savedChat = _G.TOGBankClassic_Guild, _G.TOGBankClassic_Chat
+			banker = true
+			_G.TOGBankClassic_Guild = {
+				GetPlayer = function() return "Banker-Realm" end,
+				IsBank = function(_, name) return banker and name == "Banker-Realm" end,
+			}
+		end)
+
+		after_each(function()
+			_G.TOGBankClassic_Guild, _G.TOGBankClassic_Chat = savedGuild, savedChat
+		end)
+
+		local function x(f)
+			local _, _, _, px = f:GetPoint(1)
+			return px
+		end
+
+		it("on a bank character: share at the gear's old place, the gear one slot left, the bar ending at the gear", function()
+			local C = UI.CHROME
+			local chrome = UI:DressWindow(window, { settings = { isOpen = false }, share = true, help = function() end })
+			assert.is_not_nil(chrome.share)
+			assert.is_true(chrome.share:IsShown())
+			assert.equal(window.frame, chrome.share:GetParent())
+			assert.equal(-165, x(chrome.share)); assert.equal(C.SHARE_X, x(chrome.share))
+			assert.equal(20, chrome.share:GetWidth())
+			assert.equal(-193, x(chrome.settings), "the gear did not move left of the share button")
+			-- Same 8px gap on both sides: gear | share | "?".
+			assert.equal(C.GEAR_X_BESIDE_SHARE + C.SHARE_SIZE + 8, C.SHARE_X)
+			assert.equal(C.SHARE_X + 8 + C.HELP_SIZE, C.HELP_X)
+			assert.same({ chrome.help, chrome.share, chrome.settings }, chrome.icons)
+			assert.equal(chrome.settings, chrome.anchor, "the gear is no longer the leftmost icon")
+			local _, rel = window.statustext:GetParent():GetPoint(2)
+			assert.equal(chrome.settings, rel, "the status bar does not end at the moved gear")
+			assert.equal(chrome.icons, window.frame.togHitboxButtons, "the share button is not in the lift set")
+		end)
+
+		it("on any other character: no share button, the gear in its own place", function()
+			banker = false
+			local chrome = UI:DressWindow(window, { settings = { isOpen = false }, share = true, help = function() end })
+			assert.is_false(chrome.share:IsShown())
+			assert.equal(UI.CHROME.GEAR_X, x(chrome.settings))
+			assert.equal(chrome.settings, chrome.anchor)
+		end)
+
+		-- VISIBILITY-001 part 2: the row follows the accessibility scale -- each icon grows about the
+		-- row's centre line and the chain moves left by the growth, so nothing overlaps the "?" or
+		-- AceGUI's Close button (which does not scale). Real LibAceGUIWidgets.
+		it("re-lays the row on the scale signal: sizes, the gap and the chain double at 2x, and come back at 1x", function()
+			require("env.libs").load("LibAceGUIWidgets-1.0")
+			local W = LibStub("LibAceGUIWidgets-1.0")
+			W:SetScale(1)
+			local chrome = UI:DressWindow(window, { settings = { isOpen = false }, share = true, help = function() end })
+			local function y(f) local _, _, _, _, py = f:GetPoint(1) return py end
+			local ok, err = pcall(function()
+				W:SetScale(2)
+				assert.equal(48, chrome.help:GetWidth());     assert.equal(-133, x(chrome.help)); assert.equal(3, y(chrome.help))
+				assert.equal(40, chrome.share:GetWidth());    assert.equal(-133 - 48 - 16, x(chrome.share)); assert.equal(7, y(chrome.share))
+				assert.equal(40, chrome.settings:GetWidth()); assert.equal(-197 - 40 - 16, x(chrome.settings)); assert.equal(7, y(chrome.settings))
+				W:SetScale(1)
+				assert.equal(24, chrome.help:GetWidth()); assert.equal(-133, x(chrome.help)); assert.equal(15, y(chrome.help))
+				assert.equal(UI.CHROME.SHARE_X, x(chrome.share)); assert.equal(UI.CHROME.SHARE_Y, y(chrome.share))
+				assert.equal(UI.CHROME.GEAR_X_BESIDE_SHARE, x(chrome.settings)); assert.equal(UI.CHROME.GEAR_Y, y(chrome.settings))
+			end)
+			W:SetScale(1)   -- the library's scale is suite-wide state: never leave it moved, even on a failure
+			assert(ok, err)
+		end)
+
+		it("asks again every time the window shows, so a banker the roster learns about later gets the button", function()
+			banker = false
+			local chrome = UI:DressWindow(window, { settings = { isOpen = false }, share = true, help = function() end })
+			assert.is_false(chrome.share:IsShown())
+			banker = true
+			window:Show()
+			assert.is_true(chrome.share:IsShown(), "OnShow did not re-check banker status")
+			assert.equal(UI.CHROME.GEAR_X_BESIDE_SHARE, x(chrome.settings))
+			window:Hide()
+			banker = false
+			window:Show()
+			assert.is_false(chrome.share:IsShown())
+			assert.equal(UI.CHROME.GEAR_X, x(chrome.settings))
+		end)
+
+		it("SHARE-BTN-LIVE-001: a roster refresh re-decides it on an OPEN window, without a reopen", function()
+			local savedBrowse, savedInv = _G.TOGBankClassic_UI_Browse, _G.TOGBankClassic_UI_Inventory
+			banker = false
+			local chrome = UI:DressWindow(window, { settings = { isOpen = false }, share = true, help = function() end })
+			window:Show()
+			assert.is_false(chrome.share:IsShown())
+			_G.TOGBankClassic_UI_Browse, _G.TOGBankClassic_UI_Inventory = { Window = window }, nil
+			banker = true                       -- the roster just recognised the player
+			UI:SyncShareButtons()               -- what Guild:RefreshOnlineCache calls
+			assert.is_true(chrome.share:IsShown(), "the open window did not get the button")
+			assert.equal(UI.CHROME.GEAR_X_BESIDE_SHARE, x(chrome.settings))
+			-- A module with no window yet is skipped, not an error.
+			_G.TOGBankClassic_UI_Inventory = {}
+			UI:SyncShareButtons()
+			_G.TOGBankClassic_UI_Browse, _G.TOGBankClassic_UI_Inventory = savedBrowse, savedInv
+			-- And Guild:RefreshOnlineCache calls it on both of its return paths.
+			local _, calls = env.readFile("Modules/Guild.lua"):gsub("TOGBankClassic_UI:SyncShareButtons%(%)", "")
+			assert.equal(2, calls, "RefreshOnlineCache does not re-sync the share button on both of its return paths")
+		end)
+
+		it("a click runs the /togbank share command itself", function()
+			local ran = {}
+			_G.TOGBankClassic_Chat = { ChatCommand = function(_, input) ran[#ran + 1] = input end }
+			local chrome = UI:DressWindow(window, { settings = { isOpen = false }, share = true, help = function() end })
+			chrome.share:GetScript("OnClick")(chrome.share)
+			assert.same({ "share" }, ran)
+			chrome.share:GetScript("OnEnter")(chrome.share)
+			assert.equal("Share Your Bank\n" .. UI.CHROME.SHARE_TOOLTIP, tipText())
+			chrome.share:GetScript("OnLeave")()
+			assert.is_false(GameTooltip:IsShown())
+		end)
+
+		it("is never built without a gear or without the ask, and a pooled frame dressed without it hides it", function()
+			local noGear = UI:DressWindow(window, { share = true, help = function() end })
+			assert.is_nil(noGear.share)
+			local first = UI:DressWindow(window, { settings = { isOpen = false }, share = true, help = function() end })
+			assert.is_true(first.share:IsShown())
+			local again = UI:DressWindow(window, { settings = { isOpen = false }, share = true, help = function() end })
+			assert.equal(first.share, again.share, "a second share button was built under the first")
+			local plain = UI:DressWindow(window, { settings = { isOpen = false }, help = function() end })
+			assert.is_nil(plain.share)
+			assert.is_false(first.share:IsShown(), "the previous window's share button stayed showing")
+			assert.equal(UI.CHROME.GEAR_X, x(plain.settings))
+			assert.same({ plain.help, plain.settings }, plain.icons)
+		end)
+
+		it("the Guild Bank window and the legacy window both ask for it", function()
+			for _, path in ipairs({ "Modules/UI/Browse.lua", "Modules/UI/Inventory.lua" }) do
+				assert.truthy(env.readFile(path):find("share = true", 1, true), path .. " does not ask for the share button")
+			end
+		end)
 	end)
 
 	-- The drift this exists to stop: a window growing its own copy of the row again.

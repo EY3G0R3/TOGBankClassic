@@ -191,6 +191,12 @@ end
 local function restoreWidgetOnRelease(widget)
 	local frame = widget and widget.frame
 	if not frame then return end
+	-- VISIBILITY-001 part 3: the accessibility scale's fonts and sizes on a stock control -- the same
+	-- one handler, because SetCallback keeps a single OnRelease (see above).
+	if widget.togScaledStock then
+		widget.togScaledStock = nil
+		TOGBankClassic_UI.RestoreStockWidget(widget)
+	end
 	if frame.togRequestsHidden then
 		frame.Show = frame.togRequestsOrigShow
 		frame.togRequestsHidden = false
@@ -206,6 +212,13 @@ end
 
 local function markForRestore(widget)
 	if widget and widget.SetCallback then widget:SetCallback("OnRelease", restoreWidgetOnRelease) end
+end
+
+--- VISIBILITY-001 part 3: scale a stock control on this body, through the one release handler.
+local function scaleStock(widget)
+	local _, applied = TOGBankClassic_UI:ScaleStockWidget(widget, restoreWidgetOnRelease)
+	if applied then widget.togScaledStock = true end   -- a no-op at 1x marks nothing
+	return widget
 end
 
 local function setWidgetShown(widget, shown)
@@ -253,15 +266,41 @@ local function lockRowHighlight(cell, on)
 	end
 end
 
-local ACTION_ICON_SIZE = 16
+local ACTION_ICON_SIZE, ACTION_ICON_GAP = 16, 2
+
+--- VISIBILITY-001 part 2: a `|Tpath:w:h...|t` escape's explicit pixel size at the accessibility
+--- scale. The icon glyphs are texture escapes in a FontString, so their size is in the TEXT, not the
+--- font; a `:0` (font-height) escape and plain text are left as they are.
+local function scaledIconMarkup(text)
+	return (tostring(text or ""):gsub("|T([^:|]+):(%d+):(%d+)", function(path, w, h)
+		return "|T" .. path .. ":" .. TOGBankClassic_UI:UIScaled(tonumber(w)) .. ":" .. TOGBankClassic_UI:UIScaled(tonumber(h))
+	end))
+end
+
+--- Size and place one action icon at the current scale, and re-apply its glyph from the 1x markup.
+local function layoutActionIcon(btn)
+	local size = TOGBankClassic_UI:UIScaled(ACTION_ICON_SIZE)
+	btn:SetSize(size, size)
+	btn:ClearAllPoints()
+	btn:SetPoint("LEFT", btn:GetParent(), "LEFT", (btn.togSlot - 1) * (size + TOGBankClassic_UI:UIScaled(ACTION_ICON_GAP)), 0)
+	btn.icon:SetText(scaledIconMarkup(btn.togIconBase))
+end
+
+--- Set an action icon's glyph. The 1x markup is kept so a scale change can re-derive it.
+local function setActionIconText(btn, iconText)
+	btn.togIconBase = iconText
+	btn.icon:SetText(scaledIconMarkup(iconText))
+end
+
 local function newActionIcon(cell, slot, iconText, title, detail, onClick)
 	local btn = CreateFrame("Button", nil, cell)
-	btn:SetSize(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
-	btn:SetPoint("LEFT", cell, "LEFT", (slot - 1) * (ACTION_ICON_SIZE + 2), 0)
+	btn.togSlot = slot
 	local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	TOGBankClassic_UI:UIScaledFont(fs, "GameFontHighlightSmall")
 	fs:SetPoint("CENTER", btn, "CENTER", 0, 0)
-	fs:SetText(iconText)
 	btn.icon = fs
+	btn.togIconBase = iconText
+	layoutActionIcon(btn)
 	btn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 	btn.togTooltipTitle, btn.togTooltipDetail = title, detail
 	btn:SetScript("OnEnter", function(self)
@@ -1007,8 +1046,17 @@ end
 function TOGBankClassic_UI_Requests:AddHelpLines()
 	GameTooltip:AddLine("Guild Requests — How to Use")
 	GameTooltip:AddLine(" ")
+	-- HELP-CURRENT-001 (the operator, 2026-09-15: "lets get all the i tooltips updated on all the
+	-- pages to be current"): the sub-tabs and filters, the guild tag, the shop order's estimate on
+	-- the date hover, the stale-version mark and the two bottom-row buttons, none of which the text
+	-- mentioned.
+	GameTooltip:AddLine("Every request placed with a bank character, one row each. |cffffd100Requests|r is what is open; |cffffd100Archive|r is what has been filled or cancelled (older than the archive threshold); officers also see |cffffd100Settings|r. Narrow the list with the search box (every word must appear somewhere in the row) and the |cffffd100Requester|r and |cffffd100Bank|r dropdowns; click a column header to sort. A banker from a sister guild wears its guild's name in grey.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Date column:|r", 1, 1, 1, false)
-	GameTooltip:AddLine("Mouseover any row's date to see a timeline tooltip showing when the request was submitted and, if applicable, when it was filled or cancelled. A cancelled request's date breathes with a soft glow; if a reason was given, mouse over it to read why.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine("Mouseover any row's date to see a timeline tooltip showing when the request was submitted and, if applicable, when it was filled or cancelled -- and, for a shop order, the estimate you were shown when you placed it. A cancelled request's date breathes with a soft glow; if a reason was given, mouse over it to read why.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine(" ")
+	GameTooltip:AddLine("|cffffd100Requester column:|r", 1, 1, 1, false)
+	GameTooltip:AddLine("An amber version beside a name means that guildmate is on an old TOG Bank that cannot receive current bank contents -- they requested from an old copy, and the item may be long gone. Ask them to update.", 0.9, 0.9, 0.9, true)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Action icons (right side of each row -- mouse over one for its name):|r", 1, 1, 1, false)
 	GameTooltip:AddLine(" ")
@@ -1020,6 +1068,9 @@ function TOGBankClassic_UI_Requests:AddHelpLines()
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Cancel:|r", 1, 1, 1, false)
 	GameTooltip:AddLine("Opens a dialog to select a cancellation reason before cancelling. The reason is stored with the request and shown in the date tooltip. Cancelled requests move to the Archive tab.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine(" ")
+	GameTooltip:AddLine("|cffffd100Bottom row (bankers and officers):|r", 1, 1, 1, false)
+	GameTooltip:AddLine("The envelope is |cffffd100Fulfill Oldest|r -- at a mailbox each click advances the oldest order you can fully fill, and at the bank the same button collects what the orders need out of the vault. The broom is |cffffd100Cancel Stale|r, which cancels every open request older than the threshold in Settings. Mouse over either for the details.", 0.9, 0.9, 0.9, true)
 	TOGBankClassic_UI:AppendGuildHelpNote("requests")  -- HELPNOTE-001
 end
 
@@ -1112,6 +1163,25 @@ function TOGBankClassic_UI_Requests:OnBankerRosterChanged()
 	if wasBanker ~= nowBanker then self:DrawContent() end
 end
 
+local CLUSTER_ICON_SIZE, CLUSTER_ICON_GAP = 22, 8
+
+--- VISIBILITY-001 part 2: a bottom-cluster button's size and its gap from the frame it hangs left of
+--- (`btn.togClusterRight`), at the accessibility scale. At build and on the scale signal; module-level,
+--- reading the button off the owner argument (the library's table is weak-keyed).
+local function layoutClusterButton(_, _, btn)
+	local size = TOGBankClassic_UI:UIScaled(CLUSTER_ICON_SIZE)
+	btn:SetSize(size, size)
+	btn:ClearAllPoints()
+	btn:SetPoint("RIGHT", btn.togClusterRight, "LEFT", -TOGBankClassic_UI:UIScaled(CLUSTER_ICON_GAP), 0)
+end
+
+--- Place a new cluster button left of `right` and keep it placed across scale changes.
+local function placeClusterButton(btn, right)
+	btn.togClusterRight = right
+	layoutClusterButton(nil, nil, btn)
+	TOGBankClassic_UI:OnUIScaleChanged(btn, layoutClusterButton)
+end
+
 function TOGBankClassic_UI_Requests:BuildBottomCluster(chrome, anchor)
 	local frame = chrome.frame
 	local actor = TOGBankClassic_Guild:GetNormalizedPlayer()
@@ -1144,9 +1214,8 @@ function TOGBankClassic_UI_Requests:BuildBottomCluster(chrome, anchor)
 	self.CancelStaleBtn = nil
 	if isOfficerOrBanker then
 		local cancelStaleBtn = CreateFrame("Button", nil, frame)
-		cancelStaleBtn:SetSize(22, 22)
 		cancelStaleBtn:SetFrameLevel(frame:GetFrameLevel() + 10)  -- HITBOX-001
-		cancelStaleBtn:SetPoint("RIGHT", anchor, "LEFT", -8, 0)
+		placeClusterButton(cancelStaleBtn, anchor)
 		cancelStaleBtn:SetNormalTexture("Interface\\AddOns\\TOGBankClassic\\Textures\\broom")
 		cancelStaleBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 		cancelStaleBtn:SetScript("OnClick", function()
@@ -1184,9 +1253,8 @@ function TOGBankClassic_UI_Requests:BuildBottomCluster(chrome, anchor)
 	self.FulfillOldestBtn = nil
 	if isBanker then
 		local fulfillBtn = CreateFrame("Button", nil, frame)
-		fulfillBtn:SetSize(22, 22)
 		fulfillBtn:SetFrameLevel(frame:GetFrameLevel() + 10)  -- HITBOX-001
-		fulfillBtn:SetPoint("RIGHT", self.CancelStaleBtn or anchor, "LEFT", -8, 0)
+		placeClusterButton(fulfillBtn, self.CancelStaleBtn or anchor)
 		fulfillBtn:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
 		fulfillBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 		fulfillBtn:SetScript("OnClick", function()
@@ -1266,7 +1334,19 @@ end
 --- as children of `host`; the icon cluster and the officer settings overlay on `chrome`, the
 --- cluster hung left of `anchor`. Standalone, host and chrome are the window; embedded, the
 --- Guild Bank window's tab group and the window.
+--- VISIBILITY-001 part 3: the scale moved. The STANDALONE window is rebuilt at the new sizes (an
+--- open one closed and reopened; a closed one released, so its next open builds fresh). The body
+--- embedded in the Guild Bank window is that window's to rebuild (Browse.OnUIScaleChanged).
+local function Requests_OnUIScaleChanged(_, _, R)
+	if R.embedded or not R.Window then return end
+	local wasOpen = R.isOpen
+	if wasOpen then R:Close() end
+	R:ReleaseWindow()
+	if wasOpen then R:Open() end
+end
+
 function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
+	TOGBankClassic_UI:OnUIScaleChanged(TOGBankClassic_UI_Requests, Requests_OnUIScaleChanged)
 	self.Host, self.Chrome = host, chrome
 	hookChromeFrame(chrome.frame)
 	self:BuildBottomCluster(chrome, anchor)
@@ -1358,16 +1438,19 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		-- right of the search box above them): the search box and the two dropdowns are ONE ROW --
 		-- Browse's search-then-dropdowns row exactly -- so nothing sits under the search to misalign
 		-- with it; the banker's checkbox is the second row.
+		-- VISIBILITY-001 part 3: every size below is a 1x value through the accessibility scale; the
+		-- body is rebuilt on a scale change (OnUIScaleChanged), so nothing here re-lays itself.
+		local S = function(px) return TOGBankClassic_UI:UIScaled(px) end
 		local strip = TOGBankClassic_UI:Create("SimpleGroup")
 		strip:SetLayout("Table")
 		strip:SetUserData("table", {
-			columns = { 220, 200, 200 },
-			spaceH = 10, spaceV = 6, alignV = "end", alignH = "start",
+			columns = { S(220), S(200), S(200) },
+			spaceH = S(10), spaceV = S(6), alignV = "end", alignH = "start",
 		})
 		if strip.content and strip.content.SetPoint then
 			strip.content:ClearAllPoints()
-			strip.content:SetPoint("TOPLEFT", FILTER_INSET, 0)
-			strip.content:SetPoint("BOTTOMRIGHT", -FILTER_INSET, 0)
+			strip.content:SetPoint("TOPLEFT", S(FILTER_INSET), 0)
+			strip.content:SetPoint("BOTTOMRIGHT", -S(FILTER_INSET), 0)
 		end
 		strip:SetFullWidth(true)
 		host:AddChild(strip)
@@ -1378,7 +1461,7 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		searchBox:SetPlaceholder("Search requests...")
 		-- A query is a word or two; the operator on the full-width cut: "the search bar doesn't
 		-- need to be this big, it's a waste of space".
-		searchBox:SetWidth(220)
+		searchBox:SetWidth(S(220))
 		searchBox:SetText(self.searchText or "")
 		searchBox:SetCallback("OnTextChanged", function(_, _, text) self:SetSearch(text) end)
 		TOGBankClassic_UI:AttachTooltip(searchBox, "ANCHOR_BOTTOM", "Search requests", {
@@ -1396,7 +1479,7 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		local requesterLabelHit = CreateFrame("Frame", nil, requesterFilter.frame)
 		requesterLabelHit:SetPoint("TOPLEFT", requesterFilter.frame, "TOPLEFT", 3, 0)
 		requesterLabelHit:SetPoint("TOPRIGHT", requesterFilter.frame, "TOPRIGHT", 0, 0)
-		requesterLabelHit:SetHeight(18)
+		requesterLabelHit:SetHeight(S(18))
 		requesterLabelHit:EnableMouse(true)
 		requesterLabelHit:SetScript("OnEnter", function(self)
 			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1408,10 +1491,11 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		requesterLabelHit:SetScript("OnLeave", function()
 			TOGBankClassic_UI:HideTooltip()
 		end)
-		requesterFilter:SetWidth(200)   -- REQUESTS-STRIP-001: a column of Browse's row, not full width
+		requesterFilter:SetWidth(S(200))   -- REQUESTS-STRIP-001: a column of Browse's row, not full width
 		requesterFilter:SetCallback("OnValueChanged", function(widget, _, value)
 			handleFilterChange(self, "requester", widget, value)
 		end)
+		scaleStock(requesterFilter)
 		filterGroup:AddChild(requesterFilter)
 		self.FilterRequester = requesterFilter
 		SetupClickOutsideHandler(requesterFilter)
@@ -1424,7 +1508,7 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		local bankLabelHit = CreateFrame("Frame", nil, bankFilter.frame)
 		bankLabelHit:SetPoint("TOPLEFT", bankFilter.frame, "TOPLEFT", 3, 0)
 		bankLabelHit:SetPoint("TOPRIGHT", bankFilter.frame, "TOPRIGHT", 0, 0)
-		bankLabelHit:SetHeight(18)
+		bankLabelHit:SetHeight(S(18))
 		bankLabelHit:EnableMouse(true)
 		bankLabelHit:SetScript("OnEnter", function(self)
 			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1436,10 +1520,11 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		bankLabelHit:SetScript("OnLeave", function()
 			TOGBankClassic_UI:HideTooltip()
 		end)
-		bankFilter:SetWidth(200)
+		bankFilter:SetWidth(S(200))
 		bankFilter:SetCallback("OnValueChanged", function(widget, _, value)
 			handleFilterChange(self, "bank", widget, value)
 		end)
+		scaleStock(bankFilter)
 		filterGroup:AddChild(bankFilter)
 		self.FilterBank = bankFilter
 		SetupClickOutsideHandler(bankFilter)
@@ -1472,10 +1557,13 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 			end,
 		})
 		local empty = listHost:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-		empty:SetPoint("TOP", listHost, "TOP", 0, -(TOGBankClassic_UI_RowList.HEADER_HEIGHT + 12))
+		TOGBankClassic_UI:UIScaledFont(empty, "GameFontHighlight")   -- VISIBILITY-001 part 2
 		empty:Hide()
 		listHost.togEmpty = empty
 	end
+	-- Under the list's header at its CURRENT height (VISIBILITY-001 part 2), re-pointed every draw.
+	listHost.togEmpty:ClearAllPoints()
+	listHost.togEmpty:SetPoint("TOP", listHost, "TOP", 0, -(listHost.togList.headerHeight + 12))
 	listHost:ClearAllPoints()
 	listHost:SetPoint("TOPLEFT",     self.FilterGroup.frame, "BOTTOMLEFT",  0, -LIST_GAP)
 	listHost:SetPoint("BOTTOMRIGHT", content,                "BOTTOMRIGHT", 0, 0)
@@ -1550,6 +1638,7 @@ function TOGBankClassic_UI_Requests:BuildSettingsPanel()
 		overlay:SetPoint("TOPLEFT", self.TabGroup.frame, "BOTTOMLEFT", 4, -4)
 		overlay:SetPoint("BOTTOMRIGHT", self.Host.content, "BOTTOMRIGHT", 0, 0)
 		overlay:Hide()
+		self:LayoutSettingsPanel()   -- VISIBILITY-001 part 4: a rebuild on the scale signal lands here
 		return
 	end
 
@@ -1564,6 +1653,12 @@ function TOGBankClassic_UI_Requests:BuildSettingsPanel()
 		insets = { left = 4, right = 4, top = 4, bottom = 4 },
 	})
 	overlay:EnableMouse(true)  -- swallow clicks so they don't reach the list behind
+	-- VISIBILITY-001 part 4: a window resized with the tab up re-decides the fields' wrap. Read through
+	-- the global at call time: the overlay outlives the body that built it (found again per chrome frame).
+	overlay:SetScript("OnSizeChanged", function()
+		local R = TOGBankClassic_UI_Requests
+		if R and R.SettingsOverlay == overlay and overlay:IsShown() then R:LayoutSettingsPanel() end
+	end)
 	overlay:Hide()
 	self.SettingsOverlay = overlay
 
@@ -1571,14 +1666,11 @@ function TOGBankClassic_UI_Requests:BuildSettingsPanel()
 	-- descriptions live on each label's hover tooltip (not the edit box, so the
 	-- tooltip doesn't get in the way while typing). No "Request Settings" title —
 	-- the tab already says Settings.
-	local FIELD_Y = -20
-	local function compactField(prevEB, gap, labelText, tipTitle, tipBody, commit)
+	-- VISIBILITY-001 part 4: sizes and anchors are LayoutSettingsPanel's, at the current scale.
+	overlay.togLayout = { fields = {} }
+	local function compactField(labelText, tipTitle, tipBody, commit)
 		local lbl = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-		if prevEB then
-			lbl:SetPoint("LEFT", prevEB, "RIGHT", gap, 0)
-		else
-			lbl:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20, FIELD_Y)
-		end
+		TOGBankClassic_UI:UIScaledFont(lbl, "GameFontNormal")
 		lbl:SetText(labelText)
 		attachLabelTooltip(overlay, lbl, tipTitle, tipBody .. "\n\nPress Enter to apply.")
 
@@ -1586,16 +1678,17 @@ function TOGBankClassic_UI_Requests:BuildSettingsPanel()
 		eb:SetAutoFocus(false)
 		eb:SetNumeric(true)
 		eb:SetMaxLetters(4)
-		eb:SetSize(42, 20)
-		eb:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
+		TOGBankClassic_UI:UIScaledFont(eb, "ChatFontNormal")
 		eb:SetJustifyH("CENTER")
+		local fields = overlay.togLayout.fields
+		fields[#fields + 1] = { label = lbl, box = eb }
 		eb:SetScript("OnEnterPressed", function(box) commit(box) box:ClearFocus() end)
 		eb:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
 		eb:SetScript("OnEditFocusLost", function(box) commit(box) end)
 		return eb
 	end
 
-	self.SettingsArchiveEB = compactField(nil, 0,
+	self.SettingsArchiveEB = compactField(
 		"Archive (days):",
 		"Archive threshold (days)",
 		"Requests older than this many days move to the Archive tab.",
@@ -1614,7 +1707,7 @@ function TOGBankClassic_UI_Requests:BuildSettingsPanel()
 			self:PopulateSettings()
 		end)
 
-	self.SettingsTombstoneEB = compactField(self.SettingsArchiveEB, 18,
+	self.SettingsTombstoneEB = compactField(
 		"Auto-cancel (days):",
 		"Auto-cancel stale (days)",
 		"Open requests older than this are auto-cancelled on sync. Syncs guild-wide.",
@@ -1638,10 +1731,10 @@ function TOGBankClassic_UI_Requests:BuildSettingsPanel()
 			self:PopulateSettings()
 		end)
 
-	self.SettingsMaxPctEB = compactField(self.SettingsTombstoneEB, 18,
+	self.SettingsMaxPctEB = compactField(
 		"Max request (%):",
 		"Maximum request amount (%)",
-		"Caps how much of available inventory anyone can request at once (1-100). Syncs guild-wide.",
+		"Caps how much of a bank's stock of an item one member can have on order, their open orders included (1-100). Syncs guild-wide, and reaches members who were offline when they log in.",
 		function(box)
 			local n = tonumber(box:GetText())
 			local current = (TOGBankClassic_Options and TOGBankClassic_Options:GetMaxRequestPercent()) or 100
@@ -1662,12 +1755,17 @@ function TOGBankClassic_UI_Requests:BuildSettingsPanel()
 			self:PopulateSettings()
 		end)
 
+	-- STORE-006's "Ordering open" box sat at the end of this row for an hour on 2026-09-14; it is
+	-- the SHOP's sign, so SHOP-TAB-001 moved it to the Shop tab's strip (Modules/UI/Browse.lua
+	-- BuildShopStrip), with the shop switch itself in the Blizzard options.
+
 	-- CANCELREASON-001: custom cancel-reason editor below the numeric settings.
 	self:BuildReasonsEditor(overlay)
 
 	overlay.togRefs = {}
 	for _, key in ipairs(SETTINGS_REFS) do overlay.togRefs[key] = self[key] end
 	chrome.frame.togRequestsSettings = overlay
+	self:LayoutSettingsPanel()
 end
 
 -- ---------------------------------------------------------------------------
@@ -1698,58 +1796,130 @@ function TOGBankClassic_UI_Requests:_EnsureReasonConfig()
 	return cr
 end
 
+-- VISIBILITY-001 part 4: InputBoxTemplate's three art pieces are a fixed 20px tall, centred on the
+-- box (SecureUIPanelTemplates.xml:45-63), so a taller box needs its art made taller with it. These
+-- are TOGBank's own frames, not AceGUI's pool, so nothing is undone on release.
+local INPUT_H = 20
+local function sizeInputBox(eb, S)
+	eb:SetHeight(S(INPUT_H))
+	for _, key in ipairs({ "Left", "Right", "Middle" }) do
+		if eb[key] and eb[key].SetHeight then eb[key]:SetHeight(S(INPUT_H)) end
+	end
+end
+
+--- VISIBILITY-001 part 4: every size and anchor on the Settings panel, at the current accessibility
+--- scale. Run when the panel is built, when it is found again (the body is rebuilt on the scale
+--- signal, which is how a slider change reaches it) and when it is shown -- the numeric fields wrap
+--- onto a second line only when they are wider than the panel, and the panel only has a width once
+--- it is up. Fonts are the library's scaled copies, set once at build; the copies re-size in place.
+--- The scroll frame's right and bottom insets stay 1x: they are room for the template's own scroll
+--- bar, which does not grow.
+function TOGBankClassic_UI_Requests:LayoutSettingsPanel()
+	local overlay = self.SettingsOverlay
+	local L = overlay and overlay.togLayout
+	if not L then return end
+	local S = function(px) return TOGBankClassic_UI:UIScaled(px) end
+
+	-- The numeric fields, left to right from (20, -20), each hung off the box before it; one that
+	-- would pass the panel's right edge starts a new line instead. The widths are measured only to
+	-- decide that -- the anchors themselves are the chain.
+	local avail = overlay:GetWidth() or 0
+	local lineStep = S(INPUT_H + 8)
+	local left, lines, x = S(20), 1, 0
+	for i, f in ipairs(L.fields) do
+		local w = (f.label:GetStringWidth() or 0) + S(8) + S(42)
+		f.label:ClearAllPoints()
+		if i > 1 and not (avail > 0 and left + x + S(18) + w > avail - S(20)) then
+			f.label:SetPoint("LEFT", L.fields[i - 1].box, "RIGHT", S(18), 0)
+			x = x + S(18)
+		else
+			if i > 1 then lines, x = lines + 1, 0 end
+			f.label:SetPoint("TOPLEFT", overlay, "TOPLEFT", left, -(S(20) + (lines - 1) * lineStep))
+		end
+		f.box:ClearAllPoints()
+		f.box:SetPoint("LEFT", f.label, "RIGHT", S(8), 0)
+		f.box:SetWidth(S(42))
+		sizeInputBox(f.box, S)
+		x = x + w
+	end
+	-- Everything below moves down by the extra lines; at one line these are the old -52/-78/-100/-126.
+	local top = S(20) + (lines - 1) * lineStep
+	local headerY, colY, inputY, scrollY = top + S(32), top + S(58), top + S(80), top + S(106)
+
+	L.header:ClearAllPoints()
+	L.header:SetPoint("TOPLEFT", overlay, "TOPLEFT", left, -headerY)
+	L.memberHeader:ClearAllPoints()
+	L.memberHeader:SetPoint("TOPLEFT", overlay, "TOPLEFT", left + S(REASON_MEMBER_X - 2), -colY)
+	L.bankerHeader:ClearAllPoints()
+	L.bankerHeader:SetPoint("TOPLEFT", overlay, "TOPLEFT", left + S(REASON_BANKER_X - 2), -colY)
+	L.reasonHeader:ClearAllPoints()
+	L.reasonHeader:SetPoint("TOPLEFT", overlay, "TOPLEFT", left + S(REASON_TEXT_X), -colY)
+
+	local cb = S(REASON_ROW_H)
+	self.ReasonNewMember:SetSize(cb, cb)
+	self.ReasonNewMember:ClearAllPoints()
+	self.ReasonNewMember:SetPoint("TOPLEFT", overlay, "TOPLEFT", left + S(REASON_MEMBER_X - 4), -inputY)
+	self.ReasonNewBanker:SetSize(cb, cb)
+	self.ReasonNewBanker:ClearAllPoints()
+	self.ReasonNewBanker:SetPoint("TOPLEFT", overlay, "TOPLEFT", left + S(REASON_BANKER_X - 4), -inputY)
+	-- UIPanelButtonTemplate's side art is anchored top and bottom, so it stretches with the height.
+	self.ReasonSaveBtn:SetSize(S(54), S(22))
+	self.ReasonSaveBtn:ClearAllPoints()
+	self.ReasonSaveBtn:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", -S(16), -inputY + S(1))
+	sizeInputBox(self.ReasonInput, S)
+	self.ReasonInput:ClearAllPoints()
+	self.ReasonInput:SetPoint("TOPLEFT", overlay, "TOPLEFT", left + S(REASON_TEXT_X + 6), -inputY)
+	self.ReasonInput:SetPoint("RIGHT", self.ReasonSaveBtn, "LEFT", -S(10), 0)
+
+	self.ReasonScroll:ClearAllPoints()
+	self.ReasonScroll:SetPoint("TOPLEFT", overlay, "TOPLEFT", left, -scrollY)
+	self.ReasonScroll:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", -28, 14)
+end
+
 function TOGBankClassic_UI_Requests:BuildReasonsEditor(overlay)
+	-- VISIBILITY-001 part 4: every size and anchor here is LayoutSettingsPanel's; this builds.
+	local L = overlay.togLayout
 	local header = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	header:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20, -52)
+	TOGBankClassic_UI:UIScaledFont(header, "GameFontNormal")
 	header:SetText("Custom Cancel Reasons")
+	L.header = header
 	-- The how-to text lives on the header's hover tooltip rather than a visible line.
 	attachLabelTooltip(overlay, header, "Custom Cancel Reasons",
 		"Reasons offered when cancelling a request, on top of the built-in ones. Tick Member and/or Banker to choose where each reason appears. Type a reason and press Save (or Enter) to add it; click a custom row to edit it, or the X to delete it. Built-in reasons are locked (greyed) but can be un-ticked to stop offering them. Everything here syncs to the whole guild.")
 
 	-- Column headers
-	local colY = -78
-	local mHdr = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	mHdr:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_MEMBER_X - 2, colY)
-	mHdr:SetText("Mbr")
-	attachLabelTooltip(overlay, mHdr, "Member",
+	local function columnHeader(text, tipTitle, tipBody)
+		local fs = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		TOGBankClassic_UI:UIScaledFont(fs, "GameFontHighlightSmall")
+		fs:SetText(text)
+		attachLabelTooltip(overlay, fs, tipTitle, tipBody)
+		return fs
+	end
+	L.memberHeader = columnHeader("Mbr", "Member",
 		"Tick to offer this reason in the dropdown a member sees when cancelling their own request.")
-	local bHdr = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	bHdr:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_BANKER_X - 2, colY)
-	bHdr:SetText("Bnk")
-	attachLabelTooltip(overlay, bHdr, "Banker",
+	L.bankerHeader = columnHeader("Bnk", "Banker",
 		"Tick to offer this reason in the dropdown a banker sees when cancelling someone else's request.")
-	local rHdr = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	rHdr:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_TEXT_X, colY)
-	rHdr:SetText("Reason")
-	attachLabelTooltip(overlay, rHdr, "Reason",
+	L.reasonHeader = columnHeader("Reason", "Reason",
 		"The cancellation message shown to the requester. Built-in reasons are greyed and can't be edited; your custom reasons can be clicked to edit or deleted with the X.")
 
 	-- Input strip
-	local inputY = -100
 	local newMember = CreateFrame("CheckButton", nil, overlay, "UICheckButtonTemplate")
-	newMember:SetSize(REASON_ROW_H, REASON_ROW_H)
-	newMember:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_MEMBER_X - 4, inputY)
 	newMember:SetChecked(true)
 	self.ReasonNewMember = newMember
 
 	local newBanker = CreateFrame("CheckButton", nil, overlay, "UICheckButtonTemplate")
-	newBanker:SetSize(REASON_ROW_H, REASON_ROW_H)
-	newBanker:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_BANKER_X - 4, inputY)
 	newBanker:SetChecked(true)
 	self.ReasonNewBanker = newBanker
 
 	local saveBtn = CreateFrame("Button", nil, overlay, "UIPanelButtonTemplate")
-	saveBtn:SetSize(54, 22)
-	saveBtn:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", -16, inputY + 1)
+	TOGBankClassic_UI:UIScaledButtonFonts(saveBtn)
 	saveBtn:SetText("Save")
 	self.ReasonSaveBtn = saveBtn
 
 	local input = CreateFrame("EditBox", nil, overlay, "InputBoxTemplate")
 	input:SetAutoFocus(false)
 	input:SetMaxLetters(REASON_MAX_LEN)
-	input:SetHeight(20)
-	input:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20 + REASON_TEXT_X + 6, inputY)
-	input:SetPoint("RIGHT", saveBtn, "LEFT", -10, 0)
+	TOGBankClassic_UI:UIScaledFont(input, "ChatFontNormal")
 	self.ReasonInput = input
 
 	local function doSaveReason()
@@ -1787,11 +1957,9 @@ function TOGBankClassic_UI_Requests:BuildReasonsEditor(overlay)
 
 	-- Scrolling list
 	local scroll = CreateFrame("ScrollFrame", "TOGBankClassicReasonsScroll", overlay, "UIPanelScrollFrameTemplate")
-	scroll:SetPoint("TOPLEFT", overlay, "TOPLEFT", 20, -126)
-	scroll:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", -28, 14)
 	scroll:EnableMouseWheel(true)
 	scroll:SetScript("OnMouseWheel", function(f, delta)
-		local newv = f:GetVerticalScroll() - delta * (REASON_ROW_H * 3)
+		local newv = f:GetVerticalScroll() - delta * TOGBankClassic_UI:UIScaled(REASON_ROW_H * 3)
 		local maxv = f:GetVerticalScrollRange()
 		if newv < 0 then newv = 0 elseif newv > maxv then newv = maxv end
 		f:SetVerticalScroll(newv)
@@ -1809,8 +1977,8 @@ end
 -- Create one reusable reason row (checkboxes + text + delete). Handlers read
 -- row._entry so the same frame can be rebound across refreshes.
 function TOGBankClassic_UI_Requests:_BuildReasonRow()
+	-- Sizes and anchors are layoutReasonRow's, re-applied on every refresh (VISIBILITY-001 part 4).
 	local row = CreateFrame("Button", nil, self.ReasonContent)
-	row:SetHeight(REASON_ROW_H)
 
 	local bg = row:CreateTexture(nil, "BACKGROUND")
 	bg:SetAllPoints(row)
@@ -1818,25 +1986,18 @@ function TOGBankClassic_UI_Requests:_BuildReasonRow()
 	row.bg = bg
 
 	local mcb = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-	mcb:SetSize(REASON_ROW_H, REASON_ROW_H)
-	mcb:SetPoint("LEFT", row, "LEFT", REASON_MEMBER_X, 0)
 	row.memberCB = mcb
 
 	local bcb = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-	bcb:SetSize(REASON_ROW_H, REASON_ROW_H)
-	bcb:SetPoint("LEFT", row, "LEFT", REASON_BANKER_X, 0)
 	row.bankerCB = bcb
 
 	local del = CreateFrame("Button", nil, row)
-	del:SetSize(14, 14)
-	del:SetPoint("RIGHT", row, "RIGHT", -4, 0)
 	del:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
 	del:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 	row.deleteBtn = del
 
 	local txt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	txt:SetPoint("LEFT", row, "LEFT", REASON_TEXT_X, 0)
-	txt:SetPoint("RIGHT", del, "LEFT", -6, 0)
+	TOGBankClassic_UI:UIScaledFont(txt, "GameFontHighlightSmall")
 	txt:SetJustifyH("LEFT")
 	txt:SetWordWrap(false)
 	row.text = txt
@@ -1929,6 +2090,25 @@ function TOGBankClassic_UI_Requests:_OnReasonEdit(index)
 	self.ReasonInput:SetFocus()
 end
 
+-- VISIBILITY-001 part 4: one row's sizes and anchors at the current scale. Rows are pooled across
+-- refreshes and across a rebuild (the overlay is found again), so this runs on every refresh.
+local function layoutReasonRow(row, S)
+	local h = S(REASON_ROW_H)
+	row:SetHeight(h)
+	row.memberCB:SetSize(h, h)
+	row.memberCB:ClearAllPoints()
+	row.memberCB:SetPoint("LEFT", row, "LEFT", S(REASON_MEMBER_X), 0)
+	row.bankerCB:SetSize(h, h)
+	row.bankerCB:ClearAllPoints()
+	row.bankerCB:SetPoint("LEFT", row, "LEFT", S(REASON_BANKER_X), 0)
+	row.deleteBtn:SetSize(S(14), S(14))
+	row.deleteBtn:ClearAllPoints()
+	row.deleteBtn:SetPoint("RIGHT", row, "RIGHT", -S(4), 0)
+	row.text:ClearAllPoints()
+	row.text:SetPoint("LEFT", row, "LEFT", S(REASON_TEXT_X), 0)
+	row.text:SetPoint("RIGHT", row.deleteBtn, "LEFT", -S(6), 0)
+end
+
 -- Rebuild the reason rows: banker presets, member presets, then custom reasons.
 function TOGBankClassic_UI_Requests:RefreshReasonsList()
 	if not self.ReasonContent or not self.ReasonScroll then return end
@@ -1947,10 +2127,12 @@ function TOGBankClassic_UI_Requests:RefreshReasonsList()
 		end
 	end
 
+	local S = function(px) return TOGBankClassic_UI:UIScaled(px) end
+	local rowH = S(REASON_ROW_H)
 	local width = self.ReasonScroll:GetWidth()
 	if not width or width < 10 then width = 200 end
 	self.ReasonContent:SetWidth(width)
-	self.ReasonContent:SetHeight(math.max(1, #entries * REASON_ROW_H))
+	self.ReasonContent:SetHeight(math.max(1, #entries * rowH))
 
 	for i, entry in ipairs(entries) do
 		local row = self.ReasonRows[i]
@@ -1958,8 +2140,9 @@ function TOGBankClassic_UI_Requests:RefreshReasonsList()
 			row = self:_BuildReasonRow()
 			self.ReasonRows[i] = row
 		end
+		layoutReasonRow(row, S)
 		row:ClearAllPoints()
-		row:SetPoint("TOPLEFT", self.ReasonContent, "TOPLEFT", 0, -((i - 1) * REASON_ROW_H))
+		row:SetPoint("TOPLEFT", self.ReasonContent, "TOPLEFT", 0, -((i - 1) * rowH))
 		row:SetPoint("RIGHT", self.ReasonContent, "RIGHT", 0, 0)
 		self:_ConfigureReasonRow(row, entry, i)
 		row:Show()
@@ -2004,8 +2187,10 @@ function TOGBankClassic_UI_Requests:ShowSettings(show)
 	if show then
 		if not self.SettingsOverlay then return end
 		self:PopulateSettings()
-		self:RefreshReasonsList()
 		self.SettingsOverlay:Show()
+		-- After Show: the fields' wrap reads the panel's width, and the rows the scroll frame's.
+		self:LayoutSettingsPanel()
+		self:RefreshReasonsList()
 		if self.CancelStaleBtn then self.CancelStaleBtn:Hide() end
 		self:SetStatusText("Officer settings — changes to the last two sync guild-wide.")
 	else
@@ -2166,12 +2351,27 @@ end
 
 local function cellFontString(cell, justify)
 	local fs = cell:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	TOGBankClassic_UI:UIScaledFont(fs, "GameFontHighlightSmall")   -- VISIBILITY-001 part 2
 	fs:SetPoint("LEFT",  cell, "LEFT",  0, 0)
 	fs:SetPoint("RIGHT", cell, "RIGHT", 0, 0)
 	fs:SetJustifyH(justify or "LEFT")
 	fs:SetWordWrap(false)
 	fs:SetMaxLines(1)
 	return fs
+end
+
+--- SHOP-NOFREE-001 / STORE-004: the shop-order line of the timeline tooltip, from the record's own
+--- fields -- "estimated ~6g 17s each (50% off ~12g 34s) -- min buyout, Auctionator, at order time",
+--- or "no estimate at order time -- priced by the bank character at fill". A function on the
+--- module so the spec can read it without a tooltip.
+function TOGBankClassic_UI_Requests.ShopOrderText(d)
+	local B = TOGBankClassic_UI_Browse
+	if d.estimate and B and B.EstimateFigure then
+		return string.format("estimated %s each%s, at order time",
+			B:EstimateFigure(d.estimate, d.estimateBase, d.discount),
+			d.estimateSource and (" -- " .. d.estimateSource) or "")
+	end
+	return "no estimate at order time -- priced by the bank character at fill"
 end
 
 --- The date cell: the status glyph and the date, the timeline tooltip (submitted / filled /
@@ -2211,6 +2411,11 @@ local function buildDateCell(row)
 				GameTooltip:AddLine("Reason:  " .. d.notes, 1, 0.65, 0.65, true)
 			end
 		end
+		-- SHOP-NOFREE-001 / STORE-004: a shop order says what the member was shown when they placed
+		-- it -- the record of the estimate, never the price (the bank character's at fill is).
+		if d.shopOrder then
+			GameTooltip:AddLine("Shop order:  " .. TOGBankClassic_UI_Requests.ShopOrderText(d), 0.9, 0.85, 0.5, true)
+		end
 		GameTooltip:Show()
 	end)
 	cell:SetScript("OnLeave", function(f)
@@ -2229,6 +2434,7 @@ local function buildItemCell(row)
 
 	local eb = CreateFrame("EditBox", nil, cell)
 	eb:SetFontObject("GameFontHighlightSmall")
+	TOGBankClassic_UI:UIScaledFont(eb, "GameFontHighlightSmall")   -- VISIBILITY-001 part 2
 	eb:SetMaxLetters(0)
 	eb:SetMultiLine(false)
 	eb:EnableMouse(true)
@@ -2271,41 +2477,19 @@ local function buildItemCell(row)
 		local itemName = self._itemName
 		if not itemName or itemName == "" then return end
 
-		-- If the request carries an explicit itemID, use it directly so we
-		-- show the correct same-name variant (e.g. Druid vs Warrior Voodoo Doll).
-		-- REQ-003: when a suffixID is present, prefer the inventory entry whose suffix
-		-- matches so random-suffix siblings ("of the Tiger" vs "of the Monkey") resolve
-		-- to the requested one rather than the first item sharing the base ID.
-		-- LINK-AUDIT-001 (docs/LINK_AUDIT.md 3.4): this lookup and the hand-built item string
-		-- below are the link layer's and change with it, not here.
+		-- A request carrying an itemID (and a suffixID for a random-suffix variant, REQ-003) names
+		-- exactly one item. LINK-AUDIT-001 step 3 (docs/LINK_AUDIT.md 3.4): its link is asked of
+		-- Resolve, the one builder -- coloured, with the variant's name. This used to walk every
+		-- banker's every row on hover for a row whose link Resolve had built anyway, and else
+		-- hand-typed `item:%d:0:0:0:0:0:%d`, a fourth spelling of the item-string layout. A nil link
+		-- (nothing can name the id) shows the name line below rather than an empty tooltip.
 		local requestItemID = self._itemID
 		local requestSuffix = self._suffixID
 		local itemLink, itemID
 		if requestItemID then
-			-- Search inventory for an entry with this exact ID (and suffix, when set) to get its full link
-			local info = TOGBankClassic_Guild.Info
-			if info and info.alts then
-				-- INV2 step 7a: keyed by name so the rows come from GetAltItems, which
-				-- honours the inventoryV2 switch. Reading alt.items directly here
-				-- would have kept this lookup on the legacy store after the switch.
-				for altName in pairs(info.alts) do
-					for _, item in ipairs(TOGBankClassic_Guild:GetAltItems(altName)) do
-						if item.ID == requestItemID
-						   -- INV2-SUFFIX-001: read the row's stored Suffix, not the rebuilt
-						   -- Link -- the link only carries it when ItemDB resolved the id.
-						   and (not requestSuffix or TOGBankClassic_Item:RowSuffixID(item) == requestSuffix) then
-							itemLink = item.Link
-							itemID   = item.ID
-							break
-						end
-					end
-					if itemLink or itemID then break end
-				end
-			end
-			-- Fall back to a bare/suffixed item string if no inventory entry found
-			if not itemLink and not itemID then
-				itemID = requestItemID
-			end
+			local Record, Resolve = TOGBankClassic_Inventory_Record, TOGBankClassic_Inventory_Resolve
+			local rec = Record and Resolve and Record.new(requestItemID, 1, requestSuffix or 0)
+			itemLink = rec and Resolve.link(rec) or nil
 		else
 			-- Legacy request (no itemID): search by name, take first match
 			local info = TOGBankClassic_Guild.Info
@@ -2325,17 +2509,8 @@ local function buildItemCell(row)
 			end
 		end
 
-		-- Build hyperlink from link string, or fall back to an item:ID string.
-		-- REQ-003: when only the ID is known but a suffix was requested, encode the suffix
-		-- (item:ID:0:0:0:0:0:suffixID) so the tooltip shows the requested random-suffix variant.
-		local hyperlink = itemLink
-		if not hyperlink and itemID then
-			if requestSuffix then
-				hyperlink = string.format("item:%d:0:0:0:0:0:%d", itemID, requestSuffix)
-			else
-				hyperlink = "item:" .. itemID
-			end
-		end
+		-- A legacy (name-only) request's match with no link falls back to the bare item string.
+		local hyperlink = itemLink or (itemID and ("item:" .. itemID)) or nil
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		if hyperlink then
 			GameTooltip:SetHyperlink(hyperlink)
@@ -2358,6 +2533,14 @@ end
 --- -- so an icon sits in the same column on every row whatever else that row shows. Which are
 --- shown, and the fulfil icon's state, are _PopulateRow's; the clicks read `cell.req` and
 --- `cell.actor` off the cell.
+local ACTION_SLOTS = { "fulfill", "complete", "cancel", "delete", "reopen" }
+-- Module-level, reading the cell off the owner argument: the library's listener table is weak-keyed.
+local function ActionsCell_OnScaleChanged(_, _, cell)
+	for _, key in ipairs(ACTION_SLOTS) do
+		if cell[key] then layoutActionIcon(cell[key]) end
+	end
+end
+
 local function buildActionsCell(row)
 	local cell = CreateFrame("Frame", nil, row)
 	local R = TOGBankClassic_UI_Requests
@@ -2378,6 +2561,9 @@ local function buildActionsCell(row)
 	cell.reopen = newActionIcon(cell, 5, REOPEN_ICON, "Re-open order",
 		"Re-open this finished order back to open (clears its Sent count), in case it was marked filled by mistake. Banker/officer/GM only.",
 		function(req) confirmReopenRequest(req, cell.actor) end)
+	-- VISIBILITY-001 part 2: the five icons re-size and re-space on the scale signal (the RowList
+	-- gives the cell its height and width; what is inside is this cell's).
+	TOGBankClassic_UI:OnUIScaleChanged(cell, ActionsCell_OnScaleChanged)
 	return cell
 end
 
@@ -2628,6 +2814,7 @@ function TOGBankClassic_UI_Requests:EnsureHighlightCheckbox()
 	highlightCheckbox:SetCallback("OnLeave", function()
 		TOGBankClassic_UI:HideTooltip()
 	end)
+	scaleStock(highlightCheckbox)   -- VISIBILITY-001 part 3
 	self.FilterGroup:AddChild(highlightCheckbox)
 	self.HighlightCheckbox = highlightCheckbox
 	TOGBankClassic_Output:Debug("UI", "FILTER", "EnsureHighlightCheckbox: highlight checkbox created for banker %s", tostring(currentPlayer))
@@ -2883,7 +3070,7 @@ local function applyFulfillState(button, req, canFulfill, fulfillReason, itemsIn
 	else
 		icon = FULFILL_ICON_NOT_IN_BAGS; tooltipDetail = "Pick up items from bank first."
 	end
-	button.icon:SetText(icon)
+	setActionIconText(button, icon)
 	updateFulfillButtonTooltip(button, "Fulfill request", tooltipDetail)
 end
 
@@ -2917,12 +3104,15 @@ local function entryFor(req)
 	local stale = staleRequesterVersion(req)
 	local requesterText = colorize(requester, reqStatus)
 	if stale then requesterText = requesterText .. " |cffff9900v" .. stale .. "|r" end
+	-- XGUILD-LABEL-001: a sister guild's banker wears its guild's name in the Bank column.
+	local G = TOGBankClassic_Guild
+	local bankTag = (bank ~= "" and G and G.GuildTag) and G:GuildTag(bank) or ""
 	return {
 		req = req, status = reqStatus, completed = completed, itemName = itemName, staleClient = stale,
 		_id = string.format("%010.0f:%s", 9999999999 - ts, tostring(req.id)),
 		date      = glyph .. colorize(dateText, reqStatus),         _sort_date      = ts,
 		requester = requesterText,                                   _sort_requester = requester:lower(),
-		bank      = colorize(bank, reqStatus),                       _sort_bank      = bank:lower(),
+		bank      = colorize(bank, reqStatus) .. bankTag,            _sort_bank      = bank:lower(),
 		quantity  = colorize(qtyText, reqStatus),                    _sort_quantity  = tonumber(qty) or 0,
 		item      = colorize(itemName, reqStatus),                   _sort_item      = itemName:lower(),
 		fulfilled = colorize(tostring(req.fulfilled or ""), reqStatus), _sort_fulfilled = tonumber(req.fulfilled) or 0,
@@ -2944,7 +3134,10 @@ function TOGBankClassic_UI_Requests:_PopulateRow(row, entry)
 	local dateCell = row.cells.date
 	if dateCell then
 		dateCell.label:SetText(entry.date)
-		dateCell._tipData = { date = req.date, updatedAt = req.updatedAt, status = reqStatus, notes = req.notes }
+		dateCell._tipData = { date = req.date, updatedAt = req.updatedAt, status = reqStatus, notes = req.notes,
+			-- SHOP-NOFREE-001: the shop mark and the estimate shown at order time ride the tooltip.
+			shopOrder = req.shopOrder, estimate = req.estimate, estimateBase = req.estimateBase,
+			discount = req.discount, estimateSource = req.estimateSource }
 		-- CANCEL-REASON-001: the reason has always been in this cell's tooltip and nobody knew to
 		-- hover. The operator: "make some way to show why things were cancelled, folks can't see why
 		-- easily ... maybe a background glow or something". A cancelled request gets a soft glow on

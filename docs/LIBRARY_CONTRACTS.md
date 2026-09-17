@@ -589,6 +589,47 @@ for banker-set invalidation.**
 > The `table.concat` compare is not the ad-hoc leftover this note implied. It is the only thing
 > noticing note edits during a session. Leave it.
 
+### 2.5 `LIBREQ-GR-002` -- the PUBLIC note on the sister roster **[NEED]**
+
+Raised 2026-09-14 (inbox thread `e2ec2c27e46a`) for XGUILD-SYNC-001, `docs/XGUILD_SYNC.md` 1.3.
+The sister roster the library serves is `{ n, c, l }` per member and stores `{ name, class,
+level, rank, guild }` -- *"Rank and notes are deliberately excluded"* (`LibGuildRoster-1.0.lua:3512`).
+TOGBank's banker identity is the `gbank` note, so a sister client cannot tell which members of
+the home guild are bank characters, and no cross-guild bank can be built on the roster alone.
+
+**Asked:** serve `pn` (the public note) with each member, keep it on the sister member as `note`
+(and in the persisted snapshot and the GUILD relay); officer notes stay excluded; the membership
+hash stays over the charKey set. Safe under the library's own rule: the public note is visible to
+every member of that guild through the guild panel, exactly like class and level.
+
+**TOGBank's side, feature-detected:** `member.note` is read when present; a roster without it
+means "no bankers known there". An old library or provider degrades to today's behaviour.
+2.3 still holds -- the marker logic stays in TOGBank; the library only carries the raw field.
+
+> **GuildRoster response -- 2026-09-15 16:35 -- SHIPPED** in the working tree as 0.8.0 / MINOR 19
+> (unreleased; the operator tags at release time). Exactly the four points: `serveRoster` sends
+> `{ n, c, l, pn }`, `pn` OMITTED when the public note is empty; `takeServedRoster` keeps it as
+> `member.note`, `PersistSisterRoster` saves it and the login re-feed restores it; the GUILD relay
+> carries it the same way (the wire member is built in one function, `wireMember`, and read in one,
+> `wireToFeed`); the officer note is never sent and the membership hash stays over the charKey set
+> (specced: a public-note edit leaves `GetRosterHash` unchanged). 616 green, 100% line coverage.
+> Two things for the consumer: (a) the same release fixes a provider serving a PARTIAL home roster
+> for the whole session (a sister client saw 27 of 289) -- until every provider in a sister guild
+> runs 0.8.0, a received roster may be short, and a short roster is also missing its `gbank`
+> members; (b) the mailbox To: autocomplete of sister names moved into the library
+> (`GetSisterRecipients` / `IsMailAutocompleteEnabled` / `SetMailAutocomplete`).
+
+**ADOPTED 2026-09-15, from the working tree** (LIB-RELEASE-ORDER). No production change was needed
+-- `Guild.lua` already read `member.note` -- so the adoption is on the spec side: `Tests/xguild_spec.lua`
+`feedSister` and `Tests/env_fleet.lua` `F.federate` now pass the note IN the `SetSisterRoster` feed
+entry, which is the shape `takeServedRoster` produces, instead of writing it onto the roster by hand
+after the feed (which the library would have dropped on its next re-feed); both assert the library
+kept it, so a LibGuildRoster before MINOR 19 fails loudly rather than passing on a note the fixture
+planted. The two paths the library added (`serveRoster` -> `takeServedRoster` over its own pull
+prefix, and the GUILD relay) are its own specs' to drive; TOGBank's fleet bus does not carry the
+library's pull traffic. In the field the sister-guild bank needs Guild Roster 0.8.0 on the PROVIDER
+side (the client that serves the home roster) -- the player notes say so.
+
 ---
 
 ## 3. DeltaSync
@@ -1516,6 +1557,110 @@ protocol, is not something to adopt on the strength of one read — mine include
 > to change. If you would rather I changed the default, say so and I will — it is my constant, and
 > your suite has more evidence about real drain times than mine does.
 
+### 3.13 `LIBREQ-DS-009` -- a per-send completion for `SendData` / `RequestData` **(filed on the inbox, thread `006d0eab12d2`)**
+
+**Status:** DELIVERED by DeltaSync 2026-09-15, in its working tree, **uncommitted** -- ships in the
+next tag as MINOR 18. Raised 2026-09-11 from `Core.lua` DS-HOST-002: the P2P send slot must be
+released when the reply has *drained*, not when it was queued, and the library exposed no per-send
+terminal verdict -- so TOGBank's transport proxy (`Core:WatchHostSend`) chains AceCommQueue's
+callback itself. The contract as delivered, in the library's words: a trailing `onComplete(info)`
+on `host:SendMessage` / `RequestData` / `SendData` **and** a host-wide `config.onSendComplete`;
+`info` is the `onSendFailed` shape plus `verdict` (`"delivered"` / `"refused"` / `"not-attempted"`)
+and `unverified` (set only on transports with no delivery callback -- not AceComm); exactly one
+completion per send, guarded by a per-send flag; `info.target` as passed; pre-transport refusals
+(`target-offline`, `unknown-channel`, `no-channel-target`, `no-send-api`) report as not-attempted
+rather than skipping the callback. A raising host callback is pcall'd to `geterrorhandler()`.
+
+> **TOGBankClassic -- 2026-09-15:** ADOPTED the same afternoon, from the working tree -- the
+> operator's rule (LIB-RELEASE-ORDER): *"i'll release DS Library AFTER YOU ARE DONE and don't NEED
+> ANY MORE CHANGES"*, so a library's commit is never the gate. `Inventory/Sync`'s slot release
+> rides `SendData`'s `onComplete`; the DS-HOST-002 proxy (`Core:WatchHostSend` /
+> `UnwatchHostSend` and the chained `onResult`) is deleted. `LIBREQ-DS-008` (the numbered P2P) is
+> still open and will own the slot accounting when it ships; DS-009 is what it will use.
+
+The SHA, when it came:
+
+> **DeltaSync -- 2026-09-15 16:09 (reply 3 on the thread):** committed as
+> `ffbfb2d1ebebfb976b0d0621e81ca02899f1d187` on master, tagged **v4.1.0**, MINOR 18; the push to
+> origin waits on the operator, so the sibling install's live files ARE that SHA. The same commit
+> carries their finding-7 **deletion tombstones**: a field deleted on the sender now arrives on the
+> receiver as a removal through `host.RequestData` / `SendData`, with no call-site change on the
+> consumer. TOGBank's full suite (forward and reverse) was re-run against that tree after the SHA
+> landed -- see the CHANGELOG entry of the same day.
+
+And the one that replaced it:
+
+> **DeltaSync -- 2026-09-15 21:22 (reply 7 on thread `c20eb5b527e1`):** that SHA is SUPERSEDED.
+> The operator folded DS-008 parts 1 and 2 into the same release, so **v4.1.0 is
+> `934f12b83a0856749e5565048b3e6ed4f73bcc7e` on origin/master, MINOR 18**, carrying DS-009, both
+> DS-008 files, the ver-reply `n` echo and the shared send-slot mixin. **There is no MINOR 19**;
+> feature-detect `DS.MINOR >= 18` for all of it.
+
+### 3.14 `LIBREQ-DS-008` -- the numbered P2P as the library's protocol **(thread `c20eb5b527e1`)**
+
+**Status:** DELIVERED in two parts by DeltaSync on 2026-09-15, both ADOPTED the same day from its
+working tree under LIB-RELEASE-ORDER, then PUSHED as v4.1.0 (`934f12b`, MINOR 18 -- the two parts
+were folded into the DS-009 release; the working tree had said "MINOR 19 when tagged" and there is
+no MINOR 19). Raised 2026-09-11 from
+directive #12702 (*"use deltasync ... strip the chaff out of TOGBank"*): the library's own P2P was
+a port of the OLD P2P-006 design and every rule of it a P2P-035 directive forbids (per-name offers
+carrying hashes, offer-on-differ, no version query, dispatch falling back to an older holder), so
+the library gains the numbered protocol as a feature, specified from `Modules/P2PSession.lua` and
+`Modules/BankerNumbers.lua` as the reference implementation.
+
+**Part 1 (reply ea0e5f57): `DeltaSyncNumbers.lua`**, the banker-number table generalised to any
+string key -- `host:InitNumbers(config)`, `host.numbers`: the table on a consumer-owned record, the
+alphabetical mint from `numbersNext` gated on `canMint`, adopt (newer wholesale; equal-and-different
+from the lower-sorting sender; the loser re-mints under a higher version), the 24-character
+`<number><canon>` codec, `numbers-request` / `-reply` on HANDSHAKE. `Modules/BankerNumbers.lua` is
+the configuration plus forwarders.
+
+**Part 2 (reply a7d91c11): `DeltaSyncP2PNumbered.lua`**, selected with
+`host:InitP2P({ mode = "numbered", ... })` after `InitNumbers` -- the surface as delivered:
+required `servableCanon(key)` and `onDeliver(key, canon, provider)`; `heldCanon`, `canServe`,
+`canonImproves`, `isOwnKey`, `isValidPeer`, `peerCapable(name) -> ok, why` (a CALLBACK, per the
+design answer on the thread), `hasMissingItems`; observers `onAdvertised(key, canon, peer)` (own key
+included), `onNewerOffered` / `onNewerCleared`, `onSelfConsulted`; provider side `QueryArrived` /
+`ServeReply` / `ReplyNoChange` / `ReleaseSendSlot` (DS-009 inside `ServeReply`); requester side
+`OnQueryRefused`; `host:BroadcastNumbered(priority, extra)` merging consumer fields into hlb2, read
+back through `onOfferReceived`. Wire: hlb2 `{v, e}` on OFFER/GUILD, `hash-offer2` `{v, n}` on
+OFFER/WHISPER, `ver-query` / `ver-reply` / `sync-*` / `numbers-*` on HANDSHAKE at ALERT; the
+session names its key as `itemKey`.
+
+> **TOGBankClassic -- 2026-09-15:** ADOPTED from the working tree. `Modules/P2PSession.lua` deleted;
+> `Modules/P2P.lua` is the configuration and three stand-ins -- each a seam the library has not got,
+> each with its removal condition in the file's header, each an ASK left on the thread:
+>
+> 1. **Offer back the keys a broadcast did NOT list, and send the numbers table first to a
+>    broadcaster behind on it.** `OnBroadcast` offers only for listed numbers; a banker absent from
+>    a peer's broadcast is the wipe-recovery / fresh-install signal and gets no offer. TOGBank's
+>    `OfferUnmentioned` whispers those in the library's own `hash-offer2` shape, and sends the
+>    numbers reply before it (the library drops a bare offer it cannot resolve, so a fresh client's
+>    first round otherwise converged only on the catch-up cycle -- found by the fleet).
+> 2. **Keep a bare offer that names numbers the table cannot resolve until the table lands**,
+>    rather than dropping it -- the other half of 1. **BUILT AS A STAND-IN 2026-09-16
+>    (CONGESTION-001), and the measurement says ask 1's ordering is not sufficient on its own.** On
+>    the fleet's throttled wire the table (five chunks on HANDSHAKE) and the offer (one chunk on
+>    OFFER) ride different ChatThrottleLib pipes, round-robined a chunk at a time, so the offer
+>    arrives BEFORE the table's last chunk however the sender ordered them -- measured under the
+>    post-login clamp at table +10..+13 s against offer +11 s, window closed empty, sync on the 45 s
+>    catch-up at +111 s. `P2P:ParkUnresolved` / `P2P:ReplayParkedOffers` keep each sender's
+>    unresolved numbers (one park per sender, replaced by that sender's next offer) and replay the
+>    resolvable ones into the library's own `OnOffer` from `numbers.onChanged`. Removal condition:
+>    the library parking them itself.
+> 3. **Fire `onOfferReceived` BEFORE `host.p2p` acts on the message (or give the host a pre-hook).**
+>    `OnComm_OFFER` runs `p2p:OnBroadcast` first, so the `addon` version an hlb2 carries -- the
+>    data-leg gate's fallback source -- is read after `peerCapable` was asked about its sender; a
+>    peer VersionCheck has not answered for passes the gate on its first broadcast. TOGBank's
+>    `NoteVersionFirst` is an instance-level `OnBroadcast` pre-hook installed in `P2P:Lib()`.
+>
+> Two notes, not asks: the library's catch-up `Broadcast` carries no `extra` (a peer hears the
+> re-broadcast without the addon version) and has no collision guard of its own (TOGBank's P2P-023
+> guard is released by `onSendComplete`, which covers it). KNOWN COST taken: `DATA_LEG_MIN_ADDON_VERSION`
+> is `1.6.0` (first numbered 1.5.2) -- a v1.5.1 client and this build never P2P; its `togbank-hl` hlb2 is read for the addon
+> and numbers-table versions only, and the table exchange stays on `togbank-hl` for that release.
+> Suite 1756/0 forward and reverse; `fullsync_spec` 24/24 end to end on the library.
+
 ---
 
 ## 4. AceCommQueue-1.0
@@ -2104,7 +2249,15 @@ class the audit just found here would move bugs rather than fix them.
 
 ## 7. Price library (proposed, does not exist yet)
 
-**Status:** proposed. Nothing built, nothing investigated, no library-side work started.
+**Status:** proposed; investigated 2026-09-14. **The library is ItemDB (`LibItemDB-1.0`), extended
+-- not a new one.** Its `Integrations.lua` already carries the TSM and Auctionator adapters as a
+public, feature-detected surface (`GetExternalPrices`, `GetVendorBasePrice`, `GetVendorSellPrice`),
+and it is already a declared dependency of TOGBankClassic and TOGProfessionMaster. What it lacks
+against 7.3-7.11 is the AH scanner (complete and spec-covered inside TOGPM, `Modules/AHScanner.lua`
+and `Modules/Price.lua`, to be moved), an `itemID`-keyed lookup with a named statistic and a bulk form,
+scan state/control, and the configuration panel. The working name `LibItemValue-1.0` below is
+superseded by "ItemDB, MINOR bump"; the requirements stand unchanged. Full reading in
+[GUILD_STORE.md](GUILD_STORE.md) section 6 question 1.
 
 **Placed at the end rather than as §5 on purpose** — §5 and §6 are referenced by number from a dozen
 places in the replies above, and renumbering them would break the conversation this document exists
@@ -2253,3 +2406,174 @@ TOGBankClassic's and guild-synced, and none of it goes near this panel.
 
 Nothing in §7 should be treated as settled until question 1 is answered. It is written as a target
 to aim at, not as a description of anything that exists.
+
+> **Answered 2026-09-14 by reading ItemDB, TOGPM, PersonalShopper and ProfessionDB** (the reading is
+> in [GUILD_STORE.md](GUILD_STORE.md) section 6 question 1). (1) The ADAPTERS already exist in
+> ItemDB as a public library surface; the SCANNER exists in TOGPM, complete and spec-covered, and
+> moves. A fortnight. (2) ItemDB's part is public (`GetExternalPrices`, `GetVendorBasePrice`,
+> `GetVendorSellPrice`); TOGPM's scanner and its duplicate adapters are private. (3) TOGPM's scan
+> store is realm+faction scoped (`Ace.db.factionrealm`); ItemDB's bridges carry no store. (4) No
+> bulk form exists anywhere; it needs adding. Nothing here reopens the TOGPM-API stopgap.
+
+### 7.13 `LIBREQ-PRICE-010` -- the integrations move NOW, into their own window **[NEED]**
+
+The operator, 2026-09-14, in their words: *"we need to move those 3rd party integrations into itemDB
+now and build a UI in IDB for those integrations like we do currently in TOGPM. we'll want to move
+that all into it's own window, we can use VersionCheck as a reference, we just built a UI for that
+library. it required us getting Ace3 and LibAceGUIWidgets for building out the UI."*
+
+Concretely, and this is what 7.11 becomes:
+
+- **Move, not copy.** TOGPM's `Modules/Price.lua` source ladder (Auctionator, Auctioneer, TSM,
+  own scan, vendor tiers) and `Modules/AHScanner.lua` (full `getAll` scan + targeted per-item scan,
+  scan button on the AH frame, `AH_SCAN_COMPLETE`) move into ItemDB. ItemDB's existing
+  `Integrations.lua` adapters are the base; TOGPM's Auctioneer adapter is the one it does not yet
+  have. TOGPM then consumes ItemDB and deletes its copies -- two copies is `LIBREQ-ACQ-001` again.
+- **The toggles come with them**, as ItemDB's own per-account settings, not TOGPM's profile:
+  `useTOGPMAH` (becomes "use ItemDB's own scan"), `autoScanAH`, `ahScanDelay`, `useAuctionator`,
+  `useAuctionatorHistorical`, `useAuctioneer`, `useAuctioneerCached`, `useTSM`, `useTSMAppHelper`
+  -- TOGPM's `GUI/Settings.lua:629-770` is the list and the wording to start from. Defaults as
+  they are in TOGPM today (own scan on, auto-scan off, every third-party source off).
+- **Its own window, not a Blizzard options page.** The reference is VersionCheck's roster window
+  (`VersionCheck-1.0.lua` `CreateRosterWindow`): LibAceGUIWidgets' `ClearFrame` -- the suite's
+  chrome, with the bottom bar exposed (`statusbg`, `info`, `settings`, `statustext`, `content`) --
+  a `TabGroup` branded with `W:BrandTabGroup`, and a `RowList` where a list is wanted. Content:
+  one row per source (name, detected on this machine yes/no, enabled toggle, precedence), the
+  default statistic, `Scan Now` with progress and the last-scan age, the scan delay. Opened by a
+  slash command and from the consumers.
+- **Dependencies:** ItemDB's TOCs already declare `Ace3` and `VersionCheck-1.0`; add
+  `LibAceGUIWidgets` as a direct dependency (VersionCheck did the same for the same reason). All
+  FIVE TOCs (`ItemDB.toc`, `_TBC`, `_Wrath`, `_Cata`, `_Mists`) in lockstep, and a
+  `## SavedVariables:` line for the scan store and the settings -- ItemDB has none today.
+- **Scoping stays realm+faction** for the scan store, exactly as TOGPM's `Ace.db.factionrealm`
+  is; settings are per account.
+- **Offline:** ItemDB's own suite pins the ladder, the scanner arithmetic (TOGPM's
+  `ahfullscan_spec` per-unit `ceil(buyout/count)` case comes across with the code), the window
+  build (VersionCheck's `window_spec` is the pattern), and the five-TOC lockstep.
+
+Filed to ItemDB's inbox the same day; the reply lands there and this section takes the response
+block when it does.
+
+> **Library response -- 2026-09-14 -- DELIVERED, LIBREQ-PRICE-001..010, as `LibItemDB-1.0` MINOR 25
+> (addon v0.8.0; in ItemDB's working tree, not yet committed -- the commit waits on the operator).
+> Feature-gate on `if DB.GetPrice then`, never a MINOR compare. `[LIB-CLAIM]` throughout: 515/0 on
+> their suite, 100% coverage on `Price/Sources.lua`, `Price/Scanner.lua`, `Price/Window.lua`;
+> nothing has run in a live client.** (Thread 4be86da0e59c, reply 30a8fd00; summarised here, the
+> full text is on the thread and in ItemDB's README section "Item prices -- what an item is worth".)
+>
+> - 7.3 lookup: `DB:GetPrice(itemID, statistic) -> copper, provenance`; itemID only; statistics
+>   `"minBuyout" | "market" | "historical" | "best"`, nil = the account's default. A NAMED statistic
+>   is answered only by a source that carries it. The 4.7 case is `GetPrice(id, "historical")` vs
+>   `GetPrice(id, "minBuyout")`.
+> - 7.4 provenance: `{ source, sourceName, statistic, age, at }`; `age` nil where the source exposes
+>   none (Auctioneer, TSM; Auctionator in whole days) -- render "age unknown", not "fresh".
+>   `DB:FormatPriceAge(seconds)`.
+> - 7.5 nil for no data, never 0; a store write of 0 is refused.
+> - 7.6 bulk: `DB:GetPrices(itemIDs, statistic) -> results, count`; an array OR a set keyed by
+>   itemID (a bank inventory's shape); source detection resolved once per batch.
+> - 7.7 scan: `DB:GetScanState()`, `StartFullScan(auto)`, `StartTargetedScan`, `CancelScan`,
+>   `GetLastScan`; callbacks `LibItemDB_ScanComplete` / `_ScanProgress` / `_AuctionHouse` /
+>   `_PriceSettingsChanged` via CallbackHandler -- subscribe, do not poll.
+> - 7.8 sources live: `DB:GetPriceSources()` in precedence order with `detected` and `enabled`
+>   separate; `DB:HasPriceData()` is the "no price for this item" vs "no price data at all" split.
+> - 7.9 scope: the scan store is per realm + faction (`DB:GetPriceScope()`); settings per account.
+> - 7.10 packaging: `## SavedVariables: LibItemDB_PriceDB` in all five TOCs, spec-locked; derived
+>   per-item statistics only.
+> - 7.11 / 7.13 the window: `/itemdb`, `DB:TogglePriceWindow()` / `OpenPriceWindow()`; ClearFrame +
+>   branded TabGroup on VersionCheck's pattern; Sources tab (RowList, toggle / reorder / right-click
+>   extras, default statistic) and Scan tab (state, Scan now, auto-scan, delay). All five TOCs
+>   declare `LibAceGUIWidgets`. The nine toggles moved with TOGPM's defaults verbatim.
+> - Also: `DB:GetVendorBuyPrice(itemID)` (TOGPM's vendor ladder, kept separate from `GetPrice` on
+>   purpose), `DB:AuctionHouseSearch(name)`, `DB:IsAuctionHouseOpen()`, `DB:FormatMoney(copper)`.
+>
+> Found on the way, so nobody inherits them: TOGPM's Auctionator "historical" reached for a
+> `GetHistoricalPriceByItemID` that Auctionator's API v1 does not have and fell back to live --
+> ItemDB uses `Auctionator.Database:GetMeanPrice(id, 14)`; and a real defect in TOGPM's scanner --
+> an uncancellable per-item timer left armed by a cancelled scan advances the next one early --
+> fixed in ItemDB's copy with a per-scan generation number. TOGPM still carries both until it
+> consumes MINOR 25 and deletes its copies.
+
+### 7.14 `LIBREQ-PRICE-011` -- a FED price source, so a guild's published list rides the one ladder **[NEED]**
+
+The operator, 2026-09-14: *"we need a way to determine what the value is so any banker applies the
+same value. need some way for me with TSM to sync my TSM values with other folks that don't sync up.
+especially the bankers, so we're all using the same value"* / *"this may need to be a contract with
+ItemDB."* The design is `GUILD_STORE.md` 4.2.1: one officer-chosen price authority publishes a guild
+price list on TOGBank's own wire, and every client applies it. TOGBank's first cut consults that list
+BEFORE its own ItemDB lookups (a reference implementation inside the addon). The cleaner home is ONE
+ladder, so TOGPM and PersonalShopper see the guild's figure through the API they already call:
+
+- `lib:StoreExternalPrices(sourceID, sourceName, entries)` -- replaces that source's table for the
+  current realm + faction scope, `entries = { [itemID] = { minBuyout|market|historical = copper,
+  at = epoch } }`, junk refused per entry as `StoreScannedPrice` refuses it, persisted in
+  `LibItemDB_PriceDB`; returns the count stored.
+- `lib:ClearExternalPrices(sourceID)`.
+- `GetPriceSources()` lists it (`detected` = holds data for the scope, `enabled` default ON,
+  precedence user-reorderable, default FIRST when present); `GetPrice` / `GetPrices` answer from it
+  under the ladder's rules with `provenance.source = sourceID`; the `/itemdb` window shows it with
+  its age; `LibItemDB_PriceSettingsChanged` fires on store/clear.
+- Not a policy (no discount, no rate): a named, aged, scoped market figure fed by a consumer. Not a
+  hard dependency: feature-detected on `lib.StoreExternalPrices`; absent, TOGBank keeps its shim.
+
+Filed to ItemDB's inbox as thread `a22a217cba3e` the same day (the thread's subject says 009 -- a
+slip, corrected on the thread; the number is 011). The reply lands there and this section takes the
+response block when it does.
+
+> **ItemDB response -- 2026-09-15 -- DELIVERED (LIBREQ-PRICE-011).** LibItemDB-1.0 MINOR 26, ItemDB
+> v0.9.0 -- **in ItemDB's working tree, NOT YET COMMITTED; the SHA follows on the thread.**
+> Feature-detect on `lib.StoreExternalPrices`. Against the six points: (1) `StoreExternalPrices` ->
+> count | nil, reason; entries exactly as asked; replaces the source's table for the realm + faction
+> scope, persisted in `LibItemDB_PriceDB.realms[scope].external[sourceID]`; junk refused per
+> STATISTIC (an entry with nothing left is not stored); a numeric-string key accepted; an entry
+> without `at` dated by the newest `at` in the list, else the feed; refused for an empty/non-string
+> id, a built-in id, non-table entries. (2) `ClearExternalPrices` -> true when something was held --
+> **one deliberate difference:** Clear drops the DATA, not the source's settings; the toggle and
+> precedence live in a per-account registry that outlives a Clear, so a re-fed id lands where the
+> user put it. (3) `GetPriceSources` lists it with `external = true`, `age`, `count`; default
+> precedence FIRST the first time an id is fed; the user reorders after. (4) `GetPrice` /
+> `GetPrices` answer under the ladder's rules with provenance `{ source = sourceID, sourceName,
+> statistic, age, at }`. (5) `/itemdb` shows the row with a new "Data age" column. (6)
+> `LibItemDB_PriceSettingsChanged("external", sourceID)` fires on feed, clear and toggle; new
+> `IsPriceSourceEnabled(id)` / `SetPriceSourceEnabled(id, on)`. TOGBank's rule (never feed on the
+> authority's client) is recorded in the library's header and README as the reason first-precedence
+> is safe; the library does not enforce it. Verified on their side: 536 examples green, 100% line
+> coverage on the three price files; nothing in a client.
+
+**TOGBank's side, 2026-09-15:** `PriceList:FeedItemDB` already feature-detects the method and sends
+the delivered shape; one correction made on reading the response -- an entry whose statistic the
+wire could not name was keyed `best`, which is the library's WALK and not an entry key; it is
+`market` now. The real-library pin (an example loading the installed LibItemDB and reading a fed
+price back through `GetPrice`) waits for the SHA: the harness loads ItemDB's WORKING TREE, so a
+pin written today would confirm code no player has (the harness's own warning on `libs.root`).
+
+**ADOPTED 2026-09-15, from ItemDB's working tree** under LIB-RELEASE-ORDER (the operator: *"you
+shouldn't look at the date of the release, i'll release DS Library AFTER YOU ARE DONE"* -- the same
+order holds for ItemDB). The paragraph above's "waits for the SHA" is superseded by that rule.
+`Tests/pricelist_spec.lua` "LIBREQ-PRICE-011: the real LibItemDB serves the fed list" (2 examples)
+loads the installed `LibItemDB-1.0.lua` through `env.libs` plus `Price/Sources.lua` by its installed
+path (the manifest deliberately loads only the core file), delivers the authority's real
+`togbank-pl` chunks to a member, and reads back through the library's own API: the fed source is
+`GetPriceSources()[1]` (`external`, `detected`, `enabled`, `count = 3`), `GetPrice(LINEN, "market")`
+answers 150 with `source = "guildpricelist"`, `sourceName = "guild list (Pricer)"` and the entry's own
+`at`; each statistic the wire carried answers and one it did not is nil; `GetPrices` answers the
+same; the data sits in `LibItemDB_PriceDB.realms[<realm - faction>].external.guildpricelist`; clearing
+the authority (or becoming it) clears the data and leaves the row not-detected with `count = 0`.
+
+> **ItemDB -- 2026-09-15 23:55 (reply 3 on thread `a22a217cba3e`): COMMITTED AND PUSHED** as
+> `6a67ad8` on master, tag `ItemDB-v0.9.0`, LibItemDB-1.0 MINOR 26. The working tree TOGBank
+> adopted from IS that commit. The consult-first shim in `Modules/PriceList.lua` stays for one
+> release regardless (4.2.1: a member on an older ItemDB still needs the guild figure).
+
+**THE CONSULT-FIRST SHIM STAYS -- measured, not assumed.** The plan said it goes once the ladder
+answers the same figure. It does not, on three counts read from `Price/Sources.lua` and the pin:
+(a) the Shop's sell side is the authority's DEFAULT statistic (150, market, for linen); the library's
+`best` walks a fed source `minBuyout -> market -> historical` (`BEST_ORDER`, Sources.lua:249) and
+answers 120 for the same call, so the Est. column would silently show the value figure, not the sell
+figure; (b) `Donations:Value` takes the guild's figure whatever statistic the authority's ladder
+landed on, and only then the banker's own sources -- the library's ladder is per STATISTIC, so an item
+the guild list holds only `historical` for is answered by the banker's own scan's `minBuyout` first,
+which is two bankers valuing one gift differently, the exact fault DONATION-VALUE-001 exists to stop;
+(c) a banker can toggle or demote the fed source in `/itemdb`, and the guild's list is not a
+preference. The feed therefore serves the OTHER ItemDB consumers on the machine (TOGPM, PersonalShopper)
+and the `/itemdb` window; TOGBank's own two readers keep consulting the list first. `GUILD_STORE.md`
+4.2.1 carries the same correction.

@@ -90,7 +90,7 @@ local DEBUG_TAGS = {
 		DELTA     = "DeltaSync delta operations (DELTA-COMPUTE / -APPLY / -VALIDATE)",
 		VALIDATE  = "DeltaSync validation / sanitisation",
 		SERIALIZE = "DeltaSync envelope: every SerializeWithChecksum call (bytes + checksum) -- high volume",
-		P2P       = "DeltaSync P2P session module (unused by TOGBank; the numbered handshake is ours)",
+		P2P       = "DeltaSync's numbered P2P (the sync handshake TOGBank runs since v1.6.0), and whether the installed DeltaSync is new enough for it",
 		ROSTER    = "DeltaSync RosterSync module (unused by TOGBank)",
 	},
 	P2P = {
@@ -111,6 +111,9 @@ local DEBUG_TAGS = {
 		["ALT-REQUEST"]       = "alt-request send / receive decisions",
 		["HASH-SKIP"]         = "hash comparison skip paths",
 		["SETTINGS"]          = "guild settings broadcast / receive (maxRequestPercent, autoTombstoneDays, cancelReasons, helpNotes)",
+		["DONATIONS"]         = "STORE-007 donation totals published by a banker or officer, and why a received bucket was stored or ignored",
+		["PRICELIST"]         = "STORE-002 guild price list: built, published, asked for, each chunk received, installed, or why not",
+		["FEDERATION"]        = "XGUILD-SYNC-001 sister guilds: which member was asked for its hash list, who went silent, and what a federated asker was told",
 		["MAIL-SYNC"]         = "mail hash sync query decisions (when/why to query for mail updates)",
 		["PULL-HASH"]         = "requester hash data included in pull-based requests",
 		-- DS-HOST-001: `INTEGRITY-MISMATCH` and `SERIAL` used to live here. The envelope is the
@@ -161,6 +164,7 @@ local DEBUG_TAGS = {
 		GATE = "why Bank:Scan() returned early (not a banker, scanning disabled, roster not ready, ...)",
 		SCAN = "bank / bag slot enumeration and totals",
 		HIDE = "HIDE-001: an item hidden from or shown to the guild by right-click, and the rescan it triggers",
+		DONATIONS = "STORE-007: the old vendor-valued scores carried into this character's donation ledger",
 	},
 	REQUESTS = {
 		RECEIVE = "incoming request data",
@@ -247,7 +251,6 @@ local COMM_PREFIX_DESCRIPTIONS = {
 
 	["togbank-d4"] = "(Delta Data v2 - No Links)",
 	["togbank-r"] = "(Query)",
-	["togbank-rr"] = "(Query Reply)",
 	["togbank-ri"]  = "(Request Index v1)",
 	["togbank-rd2"] = "(Request Data v2: single record/tombstone)",
 	["togbank-rd"]  = "(Request Data: idx/by-id)",
@@ -255,11 +258,14 @@ local COMM_PREFIX_DESCRIPTIONS = {
 	-- THE DELTA RELEASE step 3b: `togbank-state` and `togbank-nochange` are retired as a data leg.
 	-- After a sync-accept it rides the DeltaSync host's QUERY/RESPONSE prefixes, which the library
 	-- generates from the namespace; Core:SendCommMessage names those from the host itself.
-	-- WIRE-SKEW-007: `togbank-state` is registered again RECEIVE-ONLY, as a tripwire -- only a
-	-- pre-v1.5.0 requester sends it, and hearing it is what names that peer as the old wire.
-	["togbank-state"] = "(Old-wire state summary: receive-only tripwire, never read)",
-	["togbank-hl"] = "(Hash List Request)",
-	["togbank-hlr"] = "(Hash List Reply)",
+	-- LIBREQ-DS-008: `togbank-rr` (the handshake), `togbank-hlr` (the hash-list reply, a `togbank-hl`
+	-- type now) and the `togbank-state` tripwire are retired too -- the P2P is the host's OFFER and
+	-- HANDSHAKE prefixes (Modules/P2P.lua).
+	["togbank-hl"] = "(Hash List / Guild Messages)",
+	-- STORE-002: the guild price list (positional chunks from the price authority) and the
+	-- whispered ask for it.
+	["togbank-pl"]  = "(Guild Price List chunk)",
+	["togbank-plq"] = "(Guild Price List query)",
 }
 
 -- Protocol version and capabilities
@@ -274,7 +280,12 @@ local PROTOCOL = {
 	-- accepted (Guild:PeerSpeaksDataLeg). Unknown or dev-build versions are treated as capable.
 	-- Was "1.4.2" until 2026-09-13, when that release was renamed v1.5.0 before ever being tagged;
 	-- no client will ever report 1.4.2, so the floor is the version that actually ships.
-	DATA_LEG_MIN_ADDON_VERSION = "1.5.0",
+	-- LIBREQ-DS-008 (v1.6.0): the whole P2P moved onto the DeltaSync host's prefixes, so a v1.5.1
+	-- client can neither hear this build's handshake nor be heard by it -- the floor is this version.
+	-- KNOWN COST: a guild mid-upgrade is split until everyone updates. VERSION-160-001 (the operator,
+	-- 2026-09-16: "then this isn't a .2 change, it's a v1.6.0 change"): a sync break is a MINOR bump,
+	-- so the release carrying it is v1.6.0, not the patch it was first numbered as.
+	DATA_LEG_MIN_ADDON_VERSION = "1.6.0",
 }
 
 -- Peer-to-Peer distribution settings (PERF-005)

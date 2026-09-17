@@ -24,7 +24,7 @@ local R, G, calls
 --- size GetNumGuildMembers reports (0 = "not loaded yet").
 local function load(opts)
 	opts = opts or {}
-	env.reset()
+	env.reset()   -- also stops the replaced Requests module's scale listener (env_togbank, VISIBILITY-001 part 3)
 	frames.reset()
 	env.stubOutput()
 	require("env.libs").load("LibAceGUIWidgets-1.0")
@@ -68,6 +68,15 @@ local function load(opts)
 			return opts.expired or 0
 		end,
 		BroadcastSettings = rec("BroadcastSettings"),
+		-- STORE-006: the sign, with the real functions' shape -- nil reads open, SetStoreOpen is
+		-- the one writer and reports whether anything changed (recorded like the other mutators).
+		IsStoreOpen = function(self) return self.Info.settings.storeOpen ~= false end,
+		SetStoreOpen = function(self, open)
+			calls[#calls + 1] = { "SetStoreOpen", open }
+			if self:IsStoreOpen() == open then return false end
+			self.Info.settings.storeOpen = open
+			return true
+		end,
 		PeerSpeaksDataLeg = function() return true end,
 		GetAltItems = function() return {} end,
 	}
@@ -681,43 +690,131 @@ describe("REQUESTS-ACTIONS: the filter dropdowns, the fulfil icon's states, dock
 		assert.is_nil(state(false, "in mail"):find("is on v1.3.2", 1, true))
 	end)
 
-	it("the item cell's hover shows the bank's own link for the requested variant, else a suffixed item string, else the name", function()
+	-- VISIBILITY-001 part 3: the Requests body's own filter strip. The standalone window is rebuilt on
+	-- the scale signal; its stock dropdowns come up on the scaled fonts, and the ones it released go
+	-- back to AceGUI's shared pool at their base fonts -- through this body's ONE release handler, so
+	-- the fulfil dim and hidden-Show marks it also undoes are not dropped.
+	it("rebuilds the standalone window's filter strip at the new scale, and releases the old controls at their base fonts", function()
+		addReq({ quantity = 5 })
+		R:Open()
+		local W = LibStub("LibAceGUIWidgets-1.0")
+		W:SetScale(1)
+		local ok, err = pcall(function()
+			assert.equal("GameFontNormalSmall", R.FilterRequester.label:GetFontObject() or "GameFontNormalSmall")
+			-- The library runs listeners under pcall and hands a raise to the error handler: a
+			-- rebuild that errored would otherwise look like a rebuild that did nothing.
+			local raised = {}
+			local savedHandler = _G.geterrorhandler
+			_G.geterrorhandler = function() return function(e) raised[#raised + 1] = tostring(e) end end
+			W:SetScale(2)
+			_G.geterrorhandler = savedHandler
+			assert.same({}, raised, "a scale listener raised")
+			assert.is_true(R.isOpen, "the window did not come back after the rebuild")
+			local req2x = R.FilterRequester
+			assert.equal(W:ScaledFont("GameFontNormalSmall"), req2x.label:GetFontObject(), "the requester dropdown's label is not scaled")
+			assert.equal(W:ScaledFont("GameFontNormalSmall"), R.FilterBank.label:GetFontObject())
+			assert.equal(400, req2x.frame:GetWidth())
+			assert.is_true(req2x.togScaledStock)
+			W:SetScale(1)
+			assert.is_true(R.isOpen)
+			assert.equal("GameFontNormalSmall", req2x.label:GetFontObject(), "a released 2x dropdown kept our scaled font")
+			assert.equal(18, req2x.label:GetHeight())
+			assert.is_nil(req2x.togScaledStock)
+			assert.equal(200, R.FilterRequester.frame:GetWidth())
+		end)
+		W:SetScale(1)   -- suite-wide library state: never leave it moved, even on a failure
+		assert(ok, err)
+	end)
+
+	-- VISIBILITY-001 part 2: the cells the Requests body builds into the RowList scale with it -- the
+	-- five action icons (their size, their spacing and the texture escapes that ARE their glyphs) and
+	-- the cell text. Real LibAceGUIWidgets (loaded by `load`).
+	it("the action icons, their glyphs and the cell text follow the accessibility scale, and come back at 1x", function()
+		addReq({ quantity = 5 })
+		R:Open()
+		local W = LibStub("LibAceGUIWidgets-1.0")
+		W:SetScale(1)
+		local actions = row().cells.actions
+		local ok, err = pcall(function()
+			assert.equal(16, actions.cancel:GetWidth())
+			assert.truthy(actions.cancel.icon:GetText():find(":14:14:", 1, true), actions.cancel.icon:GetText())
+			assert.equal(W:ScaledFont("GameFontHighlightSmall"), row().cells.item.label:GetFontObject(), "the item text is not on the scaled font")
+			W:SetScale(2)
+			assert.equal(32, actions.cancel:GetWidth()); assert.equal(32, actions.cancel:GetHeight())
+			local _, _, _, x = actions.cancel:GetPoint(1)
+			assert.equal(2 * (32 + 4), x, "the third icon did not move right by the scaled icon and gap")
+			assert.truthy(actions.cancel.icon:GetText():find(":28:28:", 1, true), actions.cancel.icon:GetText())
+			-- A state glyph set AFTER the change is scaled as it is set.
+			TOGBankClassic_Mail.CanFulfillRequest = function() return false, "in mail", 0 end
+			R:_RefreshFulfillButtons(ME, true, false)
+			assert.truthy(actions.fulfill.icon:GetText():find(":28:28:", 1, true), actions.fulfill.icon:GetText())
+			-- The bottom cluster (this viewer is a banker: the broom and the envelope) grows and re-spaces.
+			assert.equal(44, R.CancelStaleBtn:GetWidth()); assert.equal(44, R.FulfillOldestBtn:GetWidth())
+			local _, rel, _, gx = R.FulfillOldestBtn:GetPoint(1)
+			assert.equal(R.CancelStaleBtn, rel); assert.equal(-16, gx, "the cluster gap did not scale")
+			W:SetScale(1)
+			assert.equal(22, R.CancelStaleBtn:GetWidth())
+			_, _, _, gx = R.CancelStaleBtn:GetPoint(1)
+			assert.equal(-8, gx)
+			assert.equal(16, actions.cancel:GetWidth())
+			assert.truthy(actions.fulfill.icon:GetText():find("INV_Letter_06:14:14:", 1, true), "the state glyph was not re-derived at 1x: " .. actions.fulfill.icon:GetText())
+		end)
+		W:SetScale(1)   -- suite-wide library state: never leave it moved, even on a failure
+		assert(ok, err)
+	end)
+
+	-- LINK-AUDIT-001 step 3 (docs/LINK_AUDIT.md 3.4): a request with an itemID takes its hover link
+	-- from Resolve on the request's own id and suffix -- no walk of every banker's rows, no
+	-- hand-typed `item:%d:0:0:0:0:0:%d`. Resolve is stood in here so the example pins WHAT is asked
+	-- for; resolve_spec pins what Resolve answers.
+	it("the item cell's hover shows Resolve's link for the requested variant, else the name", function()
 		local req = addReq({ itemID = 4564, suffixID = 1180, item = "Spiked Club" })
-		G.Info.alts = { [ME] = {} }
-		G.GetAltItems = function() return {
-			{ ID = 4564, Link = "|cff1eff00|Hitem:4564:0:0:0:0:0:28|h[Spiked Club of Spirit]|h|r" },
-			{ ID = 4564, Link = "|cff1eff00|Hitem:4564:0:0:0:0:0:1180|h[Spiked Club of the Bear]|h|r" },
-		} end
-		TOGBankClassic_Item.RowSuffixID = function(_, item) return tonumber(item.Link:match("item:%d+:%d*:%d*:%d*:%d*:%d*:(%d+)")) end
+		env.loadFile("Modules/Inventory/Record.lua")
+		local Rec = TOGBankClassic_Inventory_Record
+		local realResolve = TOGBankClassic_Inventory_Resolve
+		local asked = {}
+		---@type string|nil
+		local answer = "|cff1eff00|Hitem:4564::::::1180|h[Spiked Club of the Bear]|h|r"
+		TOGBankClassic_Inventory_Resolve = {
+			link = function(rec) asked[#asked + 1] = Rec.key(rec); return answer end,
+			-- The row's request NAME is drawn through Resolve.name too; that is not what is under test.
+			name = function(rec) return realResolve and realResolve.name(rec) or "Spiked Club" end,
+		}
+		G.GetAltItems = function() error("the hover walked the bankers' rows for a request that names its item") end
 		local links = {}
 		rawset(GameTooltip, "SetHyperlink", function(_, l) links[#links + 1] = l end)
 		R:Open()
 		local eb = row().cells.item.editbox
 		eb:Fire("OnEnter", eb)
-		assert.truthy(links[1]:find("[Spiked Club of the Bear]", 1, true), "the hover did not pick the requested variant's own link: " .. tostring(links[1]))
+		assert.same({ Rec.keyFor(4564, 1180, 0) }, asked, "Resolve was not asked for the requested variant")
+		assert.equal(answer, links[1])
 		eb:Fire("OnLeave")
-		-- No bank holds it: a suffixed item string is built for the tooltip.
-		G.GetAltItems = function() return {} end
-		eb:Fire("OnEnter", eb)
-		assert.equal("item:4564:0:0:0:0:0:1180", links[2])
-		-- No suffix on the request: the bare item string.
+		-- No suffix on the request: the base item.
 		req.suffixID = nil
 		R:DrawRows()
 		eb:Fire("OnEnter", eb)
-		assert.equal("item:4564", links[3])
+		assert.equal(Rec.keyFor(4564, 0, 0), asked[2])
+		-- Nothing can name it (Resolve has no link): the name line, no hyperlink.
+		answer = nil
+		eb:Fire("OnEnter", eb)
+		assert.equal(2, #links, "a nil link was handed to SetHyperlink")
+		assert.truthy(tipText():find("Spiked Club", 1, true))
+		TOGBankClassic_Inventory_Resolve = realResolve
 		-- A legacy request (no itemID) searches by name and shows the name when nothing matches.
+		G.Info.alts = { [ME] = {} }
+		G.GetAltItems = function() return {} end
 		req.itemID = nil
 		R:DrawRows()
 		eb:Fire("OnEnter", eb)
-		assert.equal(3, #links, "a nameless lookup set a hyperlink")
+		assert.equal(2, #links, "a nameless lookup set a hyperlink")
 		assert.truthy(tipText():find("Spiked Club", 1, true))
 		G.GetAltItems = function() return { { ID = 4564, Link = "|cff1eff00|Hitem:4564|h[Spiked Club]|h|r", Info = { name = "Spiked Club" } } } end
 		eb:Fire("OnEnter", eb)
-		assert.truthy(links[4]:find("[Spiked Club]", 1, true), "the legacy name lookup did not find the bank's link")
+		assert.truthy(links[3]:find("[Spiked Club]", 1, true), "the legacy name lookup did not find the bank's link")
 		-- Nothing to name: no tooltip work at all.
 		eb._itemName = ""
 		eb:Fire("OnEnter", eb)
-		assert.equal(4, #links)
+		assert.equal(3, #links)
 	end)
 
 	it("Toggle opens and closes; a window opened beside the Inventory window docks to its right edge; a role change rebuilds it", function()
@@ -889,6 +986,16 @@ describe("REQUESTS-ACTIONS: the officer Settings panel", function()
 		assert.truthy(R.CancelDropdown.list.policy:find("33%", 1, true))
 	end)
 
+	-- STORE-006 step 1 put the shop's "Ordering open" box at the end of this row for an hour on
+	-- 2026-09-14; SHOP-TAB-001 (the operator: the purchasing bit is its own tab) moved it to the Shop
+	-- tab's strip, pinned in browse_spec. writ-cannot: the example that drove the box HERE cannot
+	-- stand -- the widget was moved on purpose; this one refuses it coming back.
+	it("carries no Ordering open box -- that is the Shop tab's (SHOP-TAB-001)", function()
+		openSettings()
+		assert.is_nil(R.SettingsStoreOpenCB, "the shop's sign is back on the Requests panel")
+		assert.equal(0, #named("SetStoreOpen"))
+	end)
+
 	it("the settings survive a tab revisit on the same frame: one overlay, found again", function()
 		openSettings()
 		local overlay = R.SettingsOverlay
@@ -900,6 +1007,85 @@ describe("REQUESTS-ACTIONS: the officer Settings panel", function()
 		R.TabGroup:SelectTab("settings")
 		assert.equal(overlay, R.SettingsOverlay, "a second overlay was built on the pooled frame")
 		assert.equal(overlay.togRefs.SettingsArchiveEB, R.SettingsArchiveEB, "the found-again overlay's fields were not re-pointed")
+	end)
+
+	-- VISIBILITY-001 part 4: the panel follows the accessibility scale. The standalone window is rebuilt
+	-- on the signal and the overlay is FOUND AGAIN on its frame, so the sizes must come from the layout
+	-- pass that runs on the found-again path -- not from the one-time build. Real LibAceGUIWidgets.
+	it("follows the accessibility scale: fields, reason editor and rows grow, and the fields wrap on a narrow panel", function()
+		local W = LibStub("LibAceGUIWidgets-1.0")
+		W:SetScale(1)
+		local ok, err = pcall(function()
+			openSettings()
+			local overlay = R.SettingsOverlay
+			local L = overlay.togLayout
+			local function y(region) local _, _, _, _, py = region:GetPoint(1); return py end
+			-- 1x: the old literal geometry, and every text already on the library's scaled copies. An
+			-- InputBoxTemplate box starts on ChatFontNormal (harness a9328c3, thread c58cf6b3), so a box
+			-- left on the template's font reads differently from one put on the scaled copy.
+			assert.equal(W:ScaledFont("GameFontNormal"), L.fields[1].label:GetFontObject())
+			for _, box in ipairs({ R.SettingsArchiveEB, R.SettingsTombstoneEB, R.SettingsMaxPctEB, R.ReasonInput }) do
+				assert.equal(W:ScaledFont("ChatFontNormal"), box:GetFontObject(), "an input box was not put on the scaled ChatFontNormal")
+				assert.equal(20, box.Left:GetHeight())
+			end
+			assert.equal(W:ScaledFont("GameFontHighlightSmall"), L.reasonHeader:GetFontObject())
+			assert.equal(W:ScaledFont("GameFontHighlightSmall"), R.ReasonRows[1].text:GetFontObject())
+			assert.equal(W:ScaledFont("GameFontNormal"), R.ReasonSaveBtn:GetNormalFontObject())
+			assert.equal(42, R.SettingsArchiveEB:GetWidth()); assert.equal(20, R.SettingsArchiveEB:GetHeight())
+			assert.equal(-52, y(L.header)); assert.equal(-78, y(L.reasonHeader)); assert.equal(-126, y(R.ReasonScroll))
+			assert.equal(18, R.ReasonRows[1]:GetHeight()); assert.equal(18, R.ReasonNewMember:GetWidth())
+
+			local raised = {}
+			local savedHandler = _G.geterrorhandler
+			_G.geterrorhandler = function() return function(e) raised[#raised + 1] = tostring(e) end end
+			W:SetScale(2)
+			_G.geterrorhandler = savedHandler
+			assert.same({}, raised, "a scale listener raised")
+			assert.is_true(R.isOpen, "the window did not come back after the rebuild")
+			assert.equal(overlay, R.SettingsOverlay, "the rebuild built a second overlay instead of finding the first")
+			assert.is_true(overlay:IsShown(), "the Settings tab did not come back up")
+			local eb = R.SettingsArchiveEB
+			assert.equal(84, eb:GetWidth()); assert.equal(40, eb:GetHeight())
+			for _, key in ipairs({ "Left", "Middle", "Right" }) do
+				assert.equal(40, eb[key]:GetHeight(), "the input box's " .. key .. " art stayed 20px under a 40px box")
+			end
+			assert.equal(40, R.ReasonInput:GetHeight())
+			assert.equal(108, R.ReasonSaveBtn:GetWidth()); assert.equal(44, R.ReasonSaveBtn:GetHeight())
+			assert.equal(36, R.ReasonNewBanker:GetWidth())
+			local row = R.ReasonRows[1]
+			assert.equal(36, row:GetHeight(), "a pooled row kept its 1x height through the rebuild")
+			assert.equal(36, row.bankerCB:GetWidth()); assert.equal(28, row.deleteBtn:GetWidth())
+			local shown = 0
+			for _, r in ipairs(R.ReasonRows) do if r:IsShown() then shown = shown + 1 end end
+			assert.is_true(shown > 0)
+			assert.equal(shown * 36, R.ReasonContent:GetHeight(), "the list's height is not the scaled row height")
+
+			-- Wide: one line, each field hung off the box before it; the editor starts at 2x the old -52.
+			overlay:SetWidth(4000)
+			R:LayoutSettingsPanel()
+			local _, rel2, relPoint2, gap2 = L.fields[2].label:GetPoint(1)
+			assert.equal(L.fields[1].box, rel2); assert.equal("RIGHT", relPoint2); assert.equal(36, gap2)
+			assert.equal(-104, y(L.header))
+			-- Narrow: every field on its own line, and the editor moved down by the two extra lines. Re-laid
+			-- by the panel's own size change -- a window resized with the tab up -- not by a call here.
+			overlay:SetWidth(120)
+			overlay:Fire("OnSizeChanged", overlay, 120, overlay:GetHeight())
+			for i, f in ipairs(L.fields) do
+				local p, rel = f.label:GetPoint(1)
+				assert.equal("TOPLEFT", p); assert.equal(overlay, rel, "field " .. i .. " did not wrap")
+				assert.equal(-(40 + (i - 1) * 56), y(f.label))
+			end
+			assert.equal(-(40 + 2 * 56 + 64), y(L.header))
+			assert.equal(-(40 + 2 * 56 + 212), y(R.ReasonScroll))
+
+			-- Back to 1x: the literal geometry again.
+			W:SetScale(1)
+			assert.equal(overlay, R.SettingsOverlay)
+			assert.equal(42, R.SettingsArchiveEB:GetWidth()); assert.equal(20, R.SettingsArchiveEB.Left:GetHeight())
+			assert.equal(18, R.ReasonRows[1]:GetHeight())
+		end)
+		W:SetScale(1)   -- suite-wide library state: never leave it moved, even on a failure
+		assert(ok, err)
 	end)
 end)
 

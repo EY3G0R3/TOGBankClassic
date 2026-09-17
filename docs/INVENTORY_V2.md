@@ -320,16 +320,22 @@ deleted live features.
 | Seven `Guild:` wrappers delegating to the above | -- |
 | `Modules/Tests.lua` and `/togbank test` | An in-game harness written entirely against those functions |
 
-**KEPT, and deleting these removes FEATURES rather than complexity:**
+**KEPT at the time, and then deleted by `LINK-AUDIT-001` (docs/LINK_AUDIT.md, 2026-09-12 to
+2026-09-17) once ItemDB was a required dependency and a link had become derived data:**
 
-| Kept | Why it is NOT wire code |
-| --- | --- |
-| `Item:GetSuffixID` | Four live consumers read **client** links: bank scanning, mail fulfilment matching, search, request matching |
-| `Item:GetItemString` | Backs `MailInventory` |
-| `Item:GetItemKey` | Still used by `Item:GetItems` aggregation for the legacy store |
-| `Item:ItemClassNeedsLink` | The **receive-side** check, still used by `PurgeLinklessGearGhosts` |
-| `Database:PurgeLinklessGearGhosts` | Repairs damage **already in players' SavedVariables**; runs at load |
-| `Item:GetItems`' async fan-in, `Item:Sort`'s `reqLevel` retries | Still reached; pending `INV2-IDB-002` |
+| Was kept | Why it was kept | What happened to it |
+| --- | --- | --- |
+| `Item:GetSuffixID` | Four live consumers read **client** links | A second parser of the same field `Scan.parseLink` reads, with a different pattern. **Deleted, step 4**; every live-link read is `Scan.parseLink` (which now returns the id too) |
+| `Item:GetItemString` | Backed `MailInventory` | Computed into a field `Bank:Scan` threw away. **Deleted, step 5**; the inbox edge parses each attachment into a record |
+| `Item:GetItemKey` | `Item:GetItems` / `Item:Aggregate` keyed on it | A 7-field link substring as identity. **Deleted, step 6** with `Aggregate`; the identity is `Record.key` |
+| ~~`Item:ItemClassNeedsLink`~~ | -- | **Deleted, step 1** with `GetClass` and the static item databases (3.7 MB read by nothing) |
+| ~~`Database:PurgeLinklessGearGhosts`~~ | -- | **Deleted** in INV2-RETIRE-003 with the legacy item arrays it walked |
+| `Item:GetItems`' async fan-in, `Item:Sort`'s `reqLevel` pre-pass | "Still reached; pending `INV2-IDB-002`" | Reached only by rows that predated Resolve. **Deleted, step 6**; every row the UI draws is a `Store.viewRow` with `Info` filled, drawn synchronously |
+
+What is left in `Modules/Item.lua`: `RowSuffixID` (reads the view row's field), `IsPlaceholderName`,
+`RequestDisplayName`, the `Sort` comparators and `IsUnique` (a scanning tooltip over a live link).
+`wiring_spec`'s LINK-AUDIT guards pin the surviving parser, builder and identity set by reading the
+shipped files.
 
 ---
 

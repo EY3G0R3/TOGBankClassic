@@ -15,25 +15,40 @@
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
+-- LIBREQ-DS-008: the live counts are the library's numbered P2P's (`TOGBankClassic_P2P:Lib()` --
+-- the send slots the cap is enforced against, and the sessions). The stand-in here is the
+-- library's OWN accounting shape (`activeSends` per requester summed by GetActiveSendTotal, the
+-- shared send-slot mixin; `activeSessions`), reached the way production reaches it.
+local p2pStub
 local function loadStatusBar()
 	env.stubOutput()
 	env.loadFile("Modules/Constants.lua")
-	TOGBankClassic_Guild = { MAX_PENDING_SENDS = 3 }
-	TOGBankClassic_P2PSession = {
+	TOGBankClassic_Guild = {}
+	p2pStub = {
 		activeSends = {},
+		activeSessions = 0,
 		GetActiveSendTotal = function(self)
 			local total = 0
 			for _, c in pairs(self.activeSends) do total = total + c end
 			return total
 		end,
 	}
+	TOGBankClassic_P2P = { Lib = function() return p2pStub end }
 	env.loadFile("Modules/UI/StatusBar.lua")
 	return TOGBankClassic_UI_StatusBar
+end
+
+--- The whole suite runs in ONE Lua state and `TOGBankClassic_P2P` is a module global: a stub left
+--- here is what Bank:Scan finds in a later file that never loads P2P.lua (syncpipeline_spec died
+--- on `IsSelfConsulted` of this stub). Every describe below hands the global back.
+local function unloadStatusBar()
+	TOGBankClassic_P2P = nil
 end
 
 describe("StatusBar.NetTxText", function()
 	local SB
 	before_each(function() env.reset(); SB = loadStatusBar() end)
+	after_each(unloadStatusBar)
 
 	it("renders nothing when no send is in flight", function()
 		assert.equal("", SB.NetTxText())
@@ -41,7 +56,7 @@ describe("StatusBar.NetTxText", function()
 
 	-- The assertion the old implementation could not satisfy at any input.
 	it("renders the count once a send is in flight", function()
-		TOGBankClassic_P2PSession.activeSends = { Requester = 1 }
+		p2pStub.activeSends = { Requester = 1 }
 		local text = SB.NetTxText()
 		assert.is_not_nil(text:find("Tx:1/3", 1, true),
 			"the indicator did not render with a send in flight -- it read a counter that nothing " ..
@@ -50,22 +65,26 @@ describe("StatusBar.NetTxText", function()
 	end)
 
 	it("sums sends across every requester, as the cap does", function()
-		TOGBankClassic_P2PSession.activeSends = { A = 1, B = 2 }
+		p2pStub.activeSends = { A = 1, B = 2 }
 		assert.is_not_nil(SB.NetTxText():find("Tx:3/3", 1, true))
 	end)
 
 	it("warns in red once the cap is reached", function()
-		TOGBankClassic_P2PSession.activeSends = { A = 1 }
+		p2pStub.activeSends = { A = 1 }
 		assert.is_not_nil(SB.NetTxText():find("ffff9900", 1, true), "an under-cap send was not amber")
-		TOGBankClassic_P2PSession.activeSends = { A = 3 }
+		p2pStub.activeSends = { A = 3 }
 		assert.is_not_nil(SB.NetTxText():find("ffff4444", 1, true), "at the cap the indicator was not red")
 	end)
 
-	-- The status bar is built during UI construction, which can beat P2PSession's file scope on a
-	-- cold load. An indicator that errors takes the whole window with it.
-	it("renders nothing rather than erroring before P2PSession exists", function()
-		TOGBankClassic_P2PSession = nil
+	-- The status bar is built during UI construction, which can beat the host's creation on a cold
+	-- load (P2P:Lib() is nil until then). An indicator that errors takes the whole window with it.
+	it("renders nothing rather than erroring before the numbered P2P exists", function()
+		TOGBankClassic_P2P = { Lib = function() return nil end }
 		assert.equal("", SB.NetTxText())
+		assert.equal("", SB.NetRxText())
+		TOGBankClassic_P2P = nil
+		assert.equal("", SB.NetTxText())
+		assert.equal("", SB.NetRxText())
 	end)
 end)
 
@@ -75,6 +94,7 @@ end)
 describe("StatusBar.FormatMoney", function()
 	local SB
 	before_each(function() env.reset(); SB = loadStatusBar() end)
+	after_each(unloadStatusBar)
 
 	it("renders zero, nil and a negative amount as the grey 0c", function()
 		assert.equal("|cff7f7f7f0c|r", SB.FormatMoney(0))
@@ -97,6 +117,7 @@ end)
 describe("StatusBar.GetSlotColor / FormatSlots", function()
 	local SB
 	before_each(function() env.reset(); SB = loadStatusBar() end)
+	after_each(unloadStatusBar)
 
 	it("steps white, green, yellow, orange, red at 25 / 50 / 75 / 90 percent, each bound inclusive", function()
 		assert.equal("ffffffff", SB.GetSlotColor(0))
@@ -121,6 +142,7 @@ describe("StatusBar.BuildInventorySummary", function()
 		env.reset(); SB = loadStatusBar()
 		TOGBankClassic_Guild.NormalizeName = function(_, n) return n end
 	end)
+	after_each(unloadStatusBar)
 
 	it("sums money and bank + bag slots over the roster, skipping alts with no record or no slot data", function()
 		local info = { alts = {
@@ -151,6 +173,7 @@ describe("StatusBar.BuildAltDetail", function()
 		-- SecondsToTime is Blizzard_SharedXML/TimeUtil.lua:309; the harness does not model it.
 		_G.SecondsToTime = function(s) return s .. " Sec" end
 	end)
+	after_each(unloadStatusBar)
 
 	it("says so for a missing record and for one that has never synced", function()
 		assert.equal("No data available", SB.BuildAltDetail(nil, "Alt-Realm"))
@@ -182,6 +205,7 @@ describe("StatusBar network parts: Bcast, r:, Rx, Req", function()
 		env.reset(); SB = loadStatusBar()
 		TOGBankClassic_Guild.GetQueriedRequestsCount = function() return 0 end
 	end)
+	after_each(unloadStatusBar)
 
 	it("Bcast is empty without a queue and shows its depth with one", function()
 		TOGBankClassic_Chat = nil
@@ -204,11 +228,11 @@ describe("StatusBar network parts: Bcast, r:, Rx, Req", function()
 		assert.equal("|cff87ceebr:0/10|r", SB.NetReqSyncText(), "an unsent batch did not read as 0 sent")
 	end)
 
-	it("Rx counts the pending P2P fetches, empty when there are none", function()
+	-- LIBREQ-DS-008: the library's live sessions (dispatched or active), where this counted the pull
+	-- path's pending requests.
+	it("Rx counts the P2P sessions in flight, empty when there are none", function()
 		assert.equal("", SB.NetRxText())
-		TOGBankClassic_Guild.pendingP2PRequests = {}
-		assert.equal("", SB.NetRxText())
-		TOGBankClassic_Guild.pendingP2PRequests = { A = { requestedAt = 0 }, B = { requestedAt = 0 } }
+		p2pStub.activeSessions = 2
 		assert.equal("|cff87ceebRx:2|r", SB.NetRxText())
 	end)
 
@@ -238,14 +262,13 @@ describe("P2P-025: one source for the send total", function()
 	end)
 
 	-- The sum was hand-written at four call sites before P2P-025; each copy is a place the next
-	-- change has to be remembered.
-	it("has one implementation of the sum, on P2PSession", function()
-		for _, path in ipairs({ "Modules/Chat.lua", "Modules/UI/StatusBar.lua" }) do
-			local fh = assert(io.open(path, "rb"))
-			local src = fh:read("*a"); fh:close()
-			assert.is_nil(src:find("pairs(TOGBankClassic_P2PSession.activeSends)", 1, true),
-				path .. " sums activeSends by hand instead of calling " ..
-				"TOGBankClassic_P2PSession:GetActiveSendTotal() (P2P-025)")
+	-- change has to be remembered. LIBREQ-DS-008: the one implementation is the library's
+	-- GetActiveSendTotal (DeltaSync's send-slot mixin), reached through TOGBankClassic_P2P:Lib().
+	it("has one implementation of the sum, the library's", function()
+		for _, path in ipairs({ "Modules/Chat.lua", "Modules/UI/StatusBar.lua", "Modules/Inventory/Sync.lua", "Modules/P2P.lua" }) do
+			local src = env.readFile(path)
+			assert.is_nil(src:find(".activeSends)", 1, true),
+				path .. " sums activeSends by hand instead of calling the library's GetActiveSendTotal() (P2P-025)")
 		end
 	end)
 end)

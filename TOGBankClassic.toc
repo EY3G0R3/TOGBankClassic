@@ -16,8 +16,6 @@ Modules/Compat.lua
 Modules/Constants.lua
 Modules/Output.lua
 Modules/Performance.lua
-Modules/Static/ItemDB.lua
-Modules/Static/SuffixDB.lua
 Modules/DeltaComms.lua
 Modules/Bank.lua
 Modules/Chat.lua
@@ -25,8 +23,10 @@ Modules/Database.lua
 Modules/Events.lua
 Modules/Guild.lua
 Modules/BankerNumbers.lua
-Modules/P2PSession.lua
+Modules/P2P.lua
 Modules/RequestLog.lua
+Modules/Donations.lua
+Modules/PriceList.lua
 Modules/Log.lua
 Modules/Propagation.lua
 Modules/Item.lua

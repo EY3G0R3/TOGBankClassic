@@ -31,9 +31,12 @@ end
 --- Load Bank plus the INV2 chain and stand up the collaborators Bank:Scan reaches for.
 local function loadWiring()
 	env.stubOutput()
+	-- Constants before Bank, as the TOC has it: Bank.lua reads a constant at load. This file used to
+	-- load them the other way round and passed only because every spec file sorting before it left
+	-- the Constants global behind -- run alone or first, all 26 examples died at Bank.lua:9.
+	env.loadFile("Modules/Constants.lua")
 	env.loadFile("Modules/Item.lua")
 	env.loadFile("Modules/Bank.lua")
-	env.loadFile("Modules/Constants.lua")
 	env.loadFile("Modules/Switches.lua")
 	env.loadFile("Modules/Inventory/Record.lua")
 	env.loadFile("Modules/Inventory/Resolve.lua")
@@ -129,11 +132,11 @@ describe("Bank:Scan INV2 mirror", function()
 	it("mirrors mail into the V2 store, not just bags and bank", function()
 		env.defineItem(11754, { name = "Black Diamond", class = 7 })
 		env.setBag(0, 4, { { id = 11754, count = 68 } })
-		-- What MailInventory produces: an array of linkless {ID, Count}, already scanned into the
-		-- alt record by the time the mirror runs.
+		-- What MailInventory produces: an array of records (LINK-AUDIT-001 step 5), already scanned
+		-- into the alt record by the time the mirror runs.
 		TOGBankClassic_MailInventory.hasUpdated = true
 		TOGBankClassic_MailInventory.ScanMailInventory = function()
-			return { items = { { ID = 11754, Count = 3 } }, version = 1, lastScan = 0 }
+			return { items = { { 11754, 3 } }, version = 1, lastScan = 0 }
 		end
 
 		Bank:Scan()
@@ -249,7 +252,7 @@ describe("Bank:Scan INV2 mirror", function()
 		env.bags[-1] = nil
 		TOGBankClassic_MailInventory.hasUpdated = true
 		TOGBankClassic_MailInventory.ScanMailInventory = function()
-			return { items = { { ID = 11754, Count = 3 } }, version = 1, lastScan = 0 }
+			return { items = { { 11754, 3 } }, version = 1, lastScan = 0 }
 		end
 		Bank:Scan()
 
@@ -272,7 +275,7 @@ describe("Bank:Scan INV2 mirror", function()
 
 		TOGBankClassic_MailInventory.hasUpdated = true
 		TOGBankClassic_MailInventory.ScanMailInventory = function()
-			return { items = { { ID = 11754, Count = 3 } }, version = 1, lastScan = 0 }
+			return { items = { { 11754, 3 } }, version = 1, lastScan = 0 }
 		end
 		Bank:Scan()
 
@@ -415,17 +418,17 @@ describe("/togbank dev switches", function()
 		end
 	end)
 
-	-- INV2-RETIRE-003: driven on `legacyKeyedReceive` (defaults OFF, so "on" is observable) now
-	-- that `inventoryV2` is retired.
-	it("turns a switch on", function()
-		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive on")
-		assert.is_true(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"))
+	-- INV2-RETIRE-003 then N6 (2026-09-14): `inventoryV2` and `legacyKeyedReceive` are both retired,
+	-- so these drive `sendV2Wire` (defaults ON, so "off" is the observable change).
+	it("turns a switch off", function()
+		TOGBankClassic_Chat:ChatCommand("dev switches sendV2Wire off")
+		assert.is_false(TOGBankClassic_Switches:IsEnabled("sendV2Wire"))
 	end)
 
-	it("turns a switch off again", function()
-		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
-		TOGBankClassic_Chat:ChatCommand("dev switches legacyKeyedReceive off")
-		assert.is_false(TOGBankClassic_Switches:IsEnabled("legacyKeyedReceive"))
+	it("turns a switch on again", function()
+		TOGBankClassic_Switches:Set("sendV2Wire", false)
+		TOGBankClassic_Chat:ChatCommand("dev switches sendV2Wire on")
+		assert.is_true(TOGBankClassic_Switches:IsEnabled("sendV2Wire"))
 	end)
 
 	it("reports a typo as an unknown switch", function()
@@ -667,6 +670,109 @@ describe("INV2-ISOLATE-001: legacy data cannot reach the V2 store", function()
 		assert.is_not_nil(found["Modules/Bank.lua"],
 			"Bank.lua no longer mints a hash, so either the author's stamp was removed or this " ..
 			"guard's detection broke -- and a guard that finds nothing passes")
+	end)
+
+	-- LINK-AUDIT-001 step 7 (docs/LINK_AUDIT.md section 4): ONE link parser, ONE link builder, ONE
+	-- identity. The audit found the same item spelled seven ways (`id`, `id:0`, `id:suffix`, a
+	-- 7-field link substring, an inline `id:suffix:enchant` ...), two parsers of the item string's
+	-- seventh field with different patterns, and four builders of a link -- each with a concrete
+	-- wrong answer (a request for "of the Bear" lighting every Dreadblade; a suffixed weapon in the
+	-- inbox stored as a different item from the same one in the bags). These three guards pin the
+	-- set that survives, by reading the shipped files the way the writer guard above does, so a new
+	-- site has to come here and say what it is. Comments are stripped so history can name the dead.
+	local function codeLines(path)
+		local out = {}
+		for line in (readFile(path) .. "\n"):gmatch("([^\n]*)\n") do
+			out[#out + 1] = line:match("^(.-)%-%-") or line
+		end
+		return out
+	end
+
+	local function countSites(needles)
+		local found = {}
+		for _, path in ipairs(env.shippedModules()) do
+			for _, code in ipairs(codeLines(path)) do
+				for _, needle in ipairs(needles) do
+					if code:find(needle, 1, true) then
+						found[path] = (found[path] or 0) + 1
+						break
+					end
+				end
+			end
+		end
+		return found
+	end
+
+	local function assertExactly(found, allowed, what)
+		for path, n in pairs(found) do
+			assert.is_not_nil(allowed[path], string.format(
+				"%s %s (%d line(s)) and is not a known site. %s", path, what, n,
+				"Read docs/LINK_AUDIT.md section 2: parse at the edge with Scan.parseLink, build from " ..
+				"the record with Resolve.describe, key with Record.key/keyFor/requestKey. If this is " ..
+				"genuinely a new edge, add it to the table here with the reason stated"))
+		end
+		for path, spec in pairs(allowed) do
+			assert.equal(spec.lines, found[path] or 0, string.format(
+				"%s: expected %d line(s) that %s (%s), found %d -- a site moved, was added or was " ..
+				"removed; update this table so the pinned set is the real one", path, spec.lines, what,
+				spec.why, found[path] or 0))
+		end
+	end
+
+	it("has exactly ONE link parser: every read of a link's fields is Scan.parseLink", function()
+		-- `|Hitem:` in code is a pattern over a link's body. Scan.parseLink is the parser; the Log's
+		-- builder verifies the client's answer with a regex while it is HELD (below).
+		local found = countSites({ "Hitem:" })
+		assertExactly(found, {
+			["Modules/Inventory/Scan.lua"] = { lines = 1, why = "THE parser (docs/LINK_AUDIT.md 3.2)" },
+			["Modules/Log.lua"] = { lines = 2, why = "ItemLinkFor, HELD on TOGTools contract 55e84c617342: " ..
+				"its regex check of the seventh field and its white synthetic link go when the hold lifts" },
+		}, "reads or writes a link's fields by hand")
+		assert.is_true(readFile("Modules/Inventory/Scan.lua"):find("function Scan.parseLink", 1, true) ~= nil,
+			"Scan.parseLink is gone, so the one parser this guard pins does not exist")
+	end)
+
+	it("has exactly ONE link builder: a hand-typed item string exists only where no record can", function()
+		-- `"item:` in code is an item string typed rather than built from a record through Resolve.
+		-- Every survivor is a BASE-id string for a row that carries no suffix or enchant at all -- a
+		-- placeholder Resolve could not name, a name-only legacy request, a restriction check -- or
+		-- the held Log builder. A suffixed record must never reach one (docs/LINK_AUDIT.md 3.4).
+		local found = countSites({ '"item:', "'item:" })
+		assertExactly(found, {
+			["Modules/Log.lua"] = { lines = 1, why = "ItemLinkFor, HELD on TOGTools contract 55e84c617342" },
+			["Modules/Inventory/Resolve.lua"] = { lines = 1, why = "step 3: a link for an id nothing can name (a variant's own item string is built by the library in step 2)" },
+			["Modules/UI/Requests.lua"] = { lines = 1, why = "a legacy name-only request's tooltip, matched by name to a row with no link" },
+			["Modules/UI/Search.lua"] = { lines = 1, why = "equip-slot lookup for a row with no link (base id; the slot is per base item)" },
+			["Modules/Usable.lua"] = { lines = 1, why = "class/race restriction tooltip by base id (restrictions are per base item)" },
+		}, "hand-types an item string")
+		assert.is_true(readFile("Modules/Inventory/Resolve.lua"):find("GetSuffixLink", 1, true) ~= nil,
+			"Resolve no longer asks LibItemDB for the suffixed link, so the one builder this guard pins is not building")
+	end)
+
+	it("has exactly ONE identity: no code builds an id:suffix key by hand", function()
+		-- A line that concatenates ":" next to a suffix or enchant operand is an inline key. The
+		-- last one was Browse's row id; every consumer now goes through Record.key / keyFor /
+		-- requestKey, which are the only three spellings.
+		local found = {}
+		for _, path in ipairs(env.shippedModules()) do
+			for _, code in ipairs(codeLines(path)) do
+				if code:find('":"', 1, true) and (code:find("uffix", 1, true) or code:find("nchant", 1, true)) then
+					found[#found + 1] = path .. ": " .. code:gsub("^%s+", "")
+				end
+			end
+		end
+		assert.same({}, found, "an id:suffix(:enchant) key is built inline instead of by Record.keyFor -- " ..
+			"the audit's seven spellings of one identity are how a request for one variant lit every variant")
+		local record = readFile("Modules/Inventory/Record.lua")
+		for _, fn in ipairs({ "function Record.key(", "function Record.keyFor(", "function Record.requestKey(" }) do
+			assert.is_true(record:find(fn, 1, true) ~= nil, fn .. " is gone from Record.lua; the one identity this guard pins has no home")
+		end
+		-- And the consumers the audit moved are on it, by name, so a revert reads as one.
+		assert.is_true(readFile("Modules/UI/Browse.lua"):find("Record.keyFor(", 1, true) ~= nil, "Browse's row id is no longer Record.keyFor")
+		assert.is_true(readFile("Modules/UI/Mailbox.lua"):find("Record.requestKey", 1, true) ~= nil, "the Mailbox's order key is no longer Record.requestKey")
+		assert.is_true(readFile("Modules/ItemHighlight.lua"):find("Record.requestKey(", 1, true) ~= nil, "ItemHighlight's needed set is no longer keyed by Record.requestKey")
+		assert.is_true(readFile("Modules/Log.lua"):find("Record.key(row)", 1, true) ~= nil, "the bank log's countsByKey is no longer keyed by Record.key")
+		assert.is_true(readFile("Modules/MailInventory.lua"):find("Record.key(rec)", 1, true) ~= nil, "the inbox senders are no longer keyed by Record.key")
 	end)
 
 	-- The behavioural half: the gate the guard above assumes is real, driven rather than read.

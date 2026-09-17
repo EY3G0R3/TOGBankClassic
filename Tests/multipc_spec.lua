@@ -26,8 +26,20 @@ local GUILD  = "Testguild"
 local C      = env.canon
 local T      = env.EPOCH
 
--- Whispers go nowhere but are recorded, so a version query or a sync-request is visible.
+-- Sends go nowhere but are recorded, so a version query or a sync-request is visible. LIBREQ-DS-008
+-- part 2: the handshake is the library's and leaves through the host (Core:SendCommMessage on the
+-- host's HANDSHAKE prefix), while TOGBank's own messages leave through Core:SendWhisper -- both land
+-- here, the target in TOGBank's `Name-Realm` spelling whichever address rule sent it.
 local whispers = {}
+
+--- The library's numbered P2P on this client's host (Modules/P2P.lua is only TOGBank's hooks).
+local function p2p()
+	local lib = TOGBankClassic_P2P:Lib()
+	assert.is_table(lib, "precondition: the host has no numbered P2P")
+	return lib
+end
+
+local function host() return TOGBankClassic_Core:DeltaHost() end
 
 local function client()
 	env.standUpClient("Bankchar", {
@@ -37,11 +49,23 @@ local function client()
 	env.defineItem(858,   { name = "Minor Healing Potion", class = 0 })
 	env.defineItem(15260, { name = "Stone Hammer", class = 2 })
 	whispers = {}
-	TOGBankClassic_Core.SendWhisper = function(_, prefix, text, target)
+	local function record(prefix, text, target)
 		local ok, data = TOGBankClassic_Core:DeserializeWithChecksum(text)
-		whispers[#whispers + 1] = { prefix = prefix, data = ok and data or nil, target = target }
+		whispers[#whispers + 1] = { prefix = prefix, data = ok and data or nil,
+			target = target and (TOGBankClassic_Guild:NormalizeName(target) or target) or nil }
+	end
+	TOGBankClassic_Core.SendWhisper = function(_, prefix, text, target)
+		record(prefix, text, target)
 		return true   -- the real one returns true for an online target, and callers branch on it
 	end
+	TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, _, target, _, cb, arg)
+		record(prefix, text, target)
+		if cb then cb(arg, #text, #text, true) end   -- an instant transport: delivered in the same call
+	end
+	-- The numbered wire names bankers by NUMBER: this client holds the guild's table (BANKER 0001,
+	-- OTHER 0002), so a peer's claim about our own bank resolves to a key.
+	TOGBankClassic_BankerNumbers:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
+	assert.equal("0001", TOGBankClassic_BankerNumbers:NumberOf(BANKER), "precondition: the numbers table was not adopted")
 end
 
 local function whispered(kind)
@@ -75,17 +99,27 @@ local function storedBagCount()
 end
 local function canonAt(alt) return alt and TOGBankClassic_DeltaComms:CanonPublishTime(alt.inventoryHashV2) end
 
---- A peer names a version of OUR bank through the real hash-list reply path.
+--- A peer names a version of OUR bank through the real hash-list reply path (`hash-list-reply` on
+--- togbank-hl since LIBREQ-DS-008; Chat hands it to the library as a broadcast).
 local function peerNames(publishedAt)
 	local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-reply", alts = {
 		[BANKER] = { hash = 0x10, hashV2 = C(publishedAt, 0x21), updatedAt = publishedAt, mailHash = 0 },
 	} })
-	TOGBankClassic_Chat:OnCommReceived("togbank-hlr", body, "WHISPER", PEER)
+	TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", PEER)
 end
 
---- The login broadcast's collect window, as SyncDeltaVersion opens it.
+--- The login broadcast's consult and collect window, as SyncDeltaVersion opens them (the library's
+--- Broadcast does both; here without the send).
 local function askTheGuild()
-	TOGBankClassic_P2PSession:BeginCollectWindow({})
+	local lib = p2p()
+	lib:BeginConsult()
+	lib:BeginCollectWindow()
+end
+
+--- A new session's P2P state: the consult neither begun nor settled.
+local function newSession()
+	local lib = p2p()
+	lib.selfConsulted, lib.consultBegun = false, false
 end
 
 --- MULTIPC-002 (docs/DELTA_RELEASE.md section 3.5): the newer version of OUR OWN bank, delivered by
@@ -111,7 +145,7 @@ describe("MULTIPC-001: a single PC is untouched", function()
 	it("publishes a bags-only scan at once after the login cycle answered with nothing newer", function()
 		askTheGuild()
 		env.advance(61)   -- the collect window closes: nobody offered anything
-		assert.is_true(TOGBankClassic_P2PSession:IsSelfConsulted(), "precondition: the cycle did not settle")
+		assert.is_true(p2p():IsSelfConsulted(), "precondition: the cycle did not settle")
 		local alt = scan()
 		assert.is_string(alt.inventoryHashV2)
 	end)
@@ -158,7 +192,7 @@ describe("MULTIPC-001: before the guild has answered, a partial read waits", fun
 		assert.is_string(parent)
 		assert.is_nil(TOGBankClassic_Options.db.char.deferredPublish, "a publish left a save behind")
 		-- New session: the consult has not settled; a changed bag scan is held.
-		TOGBankClassic_P2PSession.selfConsulted, TOGBankClassic_P2PSession.consultBegun = false, nil
+		newSession()
 		askTheGuild()
 		env.advance(7)
 		scan({ bags = { { id = 858, count = 9 } } })
@@ -173,7 +207,7 @@ describe("MULTIPC-001: before the guild has answered, a partial read waits", fun
 
 		-- /reload: every module's session state is gone; the SavedVariables and the store stay.
 		Bank.deferred, Bank.deferredFallbackArmed = nil, nil
-		TOGBankClassic_P2PSession.selfConsulted, TOGBankClassic_P2PSession.consultBegun = false, nil
+		newSession()
 		env.advance(30)
 		assert.is_true(Bank:RestoreDeferred(), "the hold did not come back")
 		assert.is_false(Bank:RestoreDeferred(), "restored twice")
@@ -216,7 +250,7 @@ describe("MULTIPC-001: before the guild has answered, a partial read waits", fun
 		local Bank = TOGBankClassic_Bank
 		askTheGuild(); scan(); env.advance(61)          -- published: 5 potions
 		local parent = held().inventoryHashV2
-		TOGBankClassic_P2PSession.selfConsulted, TOGBankClassic_P2PSession.consultBegun = false, nil
+		newSession()
 		askTheGuild()
 		Bank.shareOnMint = true                         -- what SetHidden sets before its rescan
 		scan({ bags = { { id = 858, count = 4 } } })    -- the hide: held
@@ -276,7 +310,7 @@ describe("MULTIPC-001: before the guild has answered, a partial read waits", fun
 	it("publishes anyway after the fallback if the cycle never settles", function()
 		askTheGuild()
 		-- Stop the collect timer so Dispatch never fires: the cycle is stuck.
-		TOGBankClassic_P2PSession.collectTimer:Cancel()
+		p2p().collectTimer:Cancel()
 		scan()
 		assert.is_nil(held().inventoryHashV2, "precondition")
 		env.advance(179)
@@ -351,18 +385,18 @@ describe("MULTIPC-001: a PC that is BEHIND on its own character", function()
 		assert.equal(T, canonAt(held()), "published before the newer version was fetched as the diff base")
 		local req = whispered("sync-request")
 		assert.is_table(req, "the re-read did not ask the peer that named the newer version for it")
-		assert.equal(BANKER, req.data.altName, "the fetch is for OUR OWN bank")
+		assert.equal(BANKER, req.data.itemKey, "the fetch is for OUR OWN bank")
 		assert.equal(C(T + 60, 0x21), req.data.canon, "the fetch does not name the version the peer said it holds")
 		assert.equal(PEER, req.target)
 
 		-- The peer accepts; the session asks on the host; the snapshot of the newer version lands.
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, PEER)
+		p2p():OnSyncAccept(req.data.sessionId, PEER)
 		peerDelivers({ { 858, 7 }, { 15260, 2 } }, 0, C(T + 60, 0x21))
 		assert.equal(T + 200, canonAt(held()), "every source re-read and the base fetched: this PC is the author again")
 		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
 		-- NEVER STORED: the store still holds what THIS PC read (bags 9), not the peer's copy (7).
 		assert.equal(9, storedBagCount(), "the fetched version was written into the store -- MULTIPC-001's double count")
-		assert.same({}, TOGBankClassic_P2PSession.sessionsByAlt, "the fetch's session was not completed")
+		assert.same({}, p2p().sessionsByKey, "the fetch's session was not completed")
 	end)
 
 	it("publishes a full re-read even when the contents came out identical to its OLD copy", function()
@@ -370,7 +404,7 @@ describe("MULTIPC-001: a PC that is BEHIND on its own character", function()
 		-- and stay red against the newer one for ever.
 		scan({ vault = { { id = 15260, count = 1 } }, mail = true })
 		local req = whispered("sync-request")
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, PEER)
+		p2p():OnSyncAccept(req.data.sessionId, PEER)
 		peerDelivers({ { 858, 7 }, { 15260, 1 } }, 0, C(T + 60, 0x21))
 		assert.equal(T + 200, canonAt(held()))
 		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
@@ -381,7 +415,7 @@ describe("MULTIPC-001: a PC that is BEHIND on its own character", function()
 		local n = #TOGBankClassic_Log:GetEntries()
 		scan({ bags = { { id = 858, count = 9 } }, vault = { { id = 15260, count = 1 } }, mail = true })
 		local req = whispered("sync-request")
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, PEER)
+		p2p():OnSyncAccept(req.data.sessionId, PEER)
 		-- The other PC's version: 858 x7. This PC now holds 9, so ITS move is +2, not the +4 from 5.
 		peerDelivers({ { 858, 7 }, { 15260, 1 } }, 0, C(T + 60, 0x21))
 		local entries = TOGBankClassic_Log:GetEntries()               -- newest first
@@ -407,22 +441,19 @@ describe("MULTIPC-001: a PC that is BEHIND on its own character", function()
 	end)
 
 	it("takes the base from a broadcast's holder too, and only a version NEWER than the one awaited", function()
-		-- A second peer's broadcast names an even newer version: it becomes the one to fetch.
-		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-broadcast", alts = {
-			[BANKER] = { hash = 0x10, hashV2 = C(T + 90, 0x22), updatedAt = T + 90, mailHash = 0 },
-		}, banker = OTHER, isBanker = true })
-		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
-		-- standUpClient does not run Chat:Init; the broadcast batcher's queue and delay come from it.
-		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
-		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = 0.15
-		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "GUILD", OTHER)
-		env.advance(1)
+		-- A second peer's broadcast names an even newer version: it becomes the one to fetch. N6
+		-- (2026-09-14): the numbered hlb2 -- and since LIBREQ-DS-008 part 2 it arrives on the host's
+		-- OFFER prefix, where the library reads it and tells TOGBank through onAdvertised.
+		local BN = TOGBankClassic_BankerNumbers
+		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hlb2", v = BN:Version(), banker = OTHER, isBanker = true,
+			e = BN:EncodeEntries({ { number = BN:Format(1), canon = C(T + 90, 0x22) } }) })
+		host():OnComm_OFFER(host().prefixes.OFFER, body, "GUILD", OTHER)
 		assert.equal(C(T + 90, 0x22), TOGBankClassic_Bank.newerSelf.canon)
 		scan({ bags = { { id = 858, count = 9 } }, vault = { { id = 15260, count = 1 } }, mail = true })
 		local req = whispered("sync-request")
 		assert.equal(C(T + 90, 0x22), req.data.canon)
 		assert.equal(OTHER, req.target, "the fetch did not go to the holder of the newest version")
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, OTHER)
+		p2p():OnSyncAccept(req.data.sessionId, OTHER)
 		-- An OLDER copy arriving from somebody is not taken as the base.
 		peerDelivers({ { 858, 6 } }, 0, C(T + 60, 0x21), PEER)
 		assert.equal(T, canonAt(held()), "an older version than the one awaited was taken as the diff base")
@@ -445,7 +476,7 @@ describe("MULTIPC-001: a PC that is BEHIND on its own character", function()
 		local first = whispered("sync-request")
 		assert.is_table(first, "no fetch went out at all")
 		assert.equal(C(T + 60, 0x21), first.data.canon)
-		TOGBankClassic_P2PSession:OnSyncAccept(first.data.sessionId, PEER)
+		p2p():OnSyncAccept(first.data.sessionId, PEER)
 
 		TOGBankClassic_Bank:NoteNewerSelfVersion(C(T + 90, 0x22), { OTHER })
 		assert.equal(C(T + 90, 0x22), TOGBankClassic_Bank.newerSelf.canon)
@@ -463,7 +494,7 @@ describe("MULTIPC-001: a PC that is BEHIND on its own character", function()
 		-- session with PEER for our own name was still live when X was refused, and RequestDiffBase
 		-- refuses to ask while one is -- so OTHER was still never asked. The refused delivery ends
 		-- that session (PEER delivered what it had) and the re-ask goes to OTHER for Y.
-		local P2P = TOGBankClassic_P2PSession
+		local P2P = p2p()
 		local second = whispered("sync-request")
 		assert.is_table(second, "the holder of the newer version was never asked")
 		assert.equal(OTHER, second.target)
@@ -533,7 +564,7 @@ describe("MULTIPC-001: a PC that is BEHIND on its own character", function()
 		scan({ bags = { { id = 858, count = 9 } }, vault = { { id = 15260, count = 2 } } })
 		local req = whispered("sync-request")
 		assert.is_table(req, "vault + bags re-read on a record with no mail block must pass the gate and fetch the base")
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, PEER)
+		p2p():OnSyncAccept(req.data.sessionId, PEER)
 		peerDelivers({ { 858, 7 } }, 0, C(T + 60, 0x21))
 		assert.equal(T + 200, canonAt(held()), "vault + bags re-read on a record with no mail block must publish")
 	end)
@@ -565,9 +596,9 @@ describe("MULTIPC-003: a PC that re-read everything BEFORE it learned it was beh
 		peerNames(T + 60)
 		local req = whispered("sync-request")
 		assert.is_table(req, "learning it was behind did not release a publish -- the tab stays red until something rescans")
-		assert.equal(BANKER, req.data.altName)
+		assert.equal(BANKER, req.data.itemKey)
 		assert.equal(C(T + 60, 0x21), req.data.canon)
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, PEER)
+		p2p():OnSyncAccept(req.data.sessionId, PEER)
 		peerDelivers({ { 858, 5 }, { 15260, 1 } }, 0, C(T + 60, 0x21))
 		assert.equal(T + 200, canonAt(held()), "the fetched base landed but nothing was published")
 		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
@@ -576,7 +607,7 @@ describe("MULTIPC-003: a PC that re-read everything BEFORE it learned it was beh
 	it("publishes what THIS PC read, not the copy it fetched to diff from", function()
 		peerNames(T + 60)
 		local req = whispered("sync-request")
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, PEER)
+		p2p():OnSyncAccept(req.data.sessionId, PEER)
 		peerDelivers({ { 858, 7 }, { 15260, 1 } }, 0, C(T + 60, 0x21))
 		assert.equal(5, storedBagCount(), "the fetched version was written into the store")
 	end)
@@ -595,7 +626,7 @@ describe("MULTIPC-003: a PC that re-read everything BEFORE it learned it was beh
 		scan({ vault = { { id = 15260, count = 1 } }, mail = true })
 		local req = whispered("sync-request")
 		assert.is_table(req, "the re-read after the news did not release the publish")
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, PEER)
+		p2p():OnSyncAccept(req.data.sessionId, PEER)
 		peerDelivers({ { 858, 5 }, { 15260, 1 } }, 0, C(T + 300, 0x21))
 		assert.equal(T + 400, canonAt(held()))
 	end)
@@ -621,8 +652,8 @@ describe("MULTIPC-001: the consult begins when the login broadcast is CALLED", f
 		-- Peer Review, self-audit F2: the gap used to run until the collect window OPENED.
 		TOGBankClassic_Events.hashBroadcastInProgress = true   -- the guard will defer the send by 16s
 		TOGBankClassic_Events:SyncDeltaVersion("NORMAL")
-		assert.is_false(TOGBankClassic_P2PSession.isCollecting, "precondition: the send was deferred, no window yet")
-		assert.is_false(TOGBankClassic_P2PSession:IsSelfConsulted(), "the gate opened before the guild was asked")
+		assert.is_false(p2p().isCollecting, "precondition: the send was deferred, no window yet")
+		assert.is_false(p2p():IsSelfConsulted(), "the gate opened before the guild was asked")
 		local alt = scan()
 		assert.is_nil(alt.inventoryHashV2, "a partial read published in the gap between the call and the send")
 	end)
@@ -635,15 +666,15 @@ describe("MULTIPC-001: the consult begins when the login broadcast is CALLED", f
 	it("does not settle the own-bank check on a login broadcast the raid guard suppressed -- the hold runs to the fallback", function()
 		env.setInRaid(true)
 		TOGBankClassic_Events:SyncDeltaVersion("NORMAL")
-		assert.is_true(TOGBankClassic_P2PSession.consultBegun, "the consult did not begin")
-		assert.is_false(TOGBankClassic_P2PSession:IsSelfConsulted())
+		assert.is_true(p2p().consultBegun, "the consult did not begin")
+		assert.is_false(p2p():IsSelfConsulted())
 		env.advance(61)   -- where a collect window would close on "no offers"
-		assert.is_false(TOGBankClassic_P2PSession.selfConsulted, "a window nobody could answer settled the own-bank check")
+		assert.is_false(p2p().selfConsulted, "a window nobody could answer settled the own-bank check")
 		local alt = scan()
 		assert.is_nil(alt.inventoryHashV2, "a partial read published on the strength of a broadcast nobody heard")
 		env.advance(181)  -- DEFERRED_PUBLISH_FALLBACK
 		assert.is_true(canonAt(held()) > T, "the fallback did not release the deferred publish")
-		assert.is_true(TOGBankClassic_P2PSession:IsSelfConsulted())
+		assert.is_true(p2p():IsSelfConsulted())
 	end)
 
 	-- LOG-HYGIENE-002 F6, the other half: EVERY writer of the hold, enumerated. HIDE-SYNC-001 was
@@ -664,7 +695,7 @@ describe("MULTIPC-001: the consult begins when the login broadcast is CALLED", f
 			return n
 		end
 		assert.equal(4, writersIn("Modules/Bank.lua"), "the writer set of Bank.deferred changed -- name the new site here or remove the old one")
-		for _, path in ipairs({ "Core.lua", "Modules/Guild.lua", "Modules/P2PSession.lua", "Modules/Chat.lua",
+		for _, path in ipairs({ "Core.lua", "Modules/Guild.lua", "Modules/P2P.lua", "Modules/Chat.lua",
 			"Modules/Events.lua", "Modules/DeltaComms.lua", "Modules/Inventory/Sync.lua", "Modules/Inventory/Store.lua" }) do
 			assert.equal(0, writersIn(path), path .. " writes Bank.deferred -- the hold has a writer outside Bank.lua")
 		end
@@ -679,7 +710,7 @@ describe("MULTIPC-001: a WIPED PC on the shared account", function()
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-reply", alts = {
 			[BANKER] = { hash = 0x10, hashV2 = C(T + 60, 0x21), updatedAt = T + 60, mailHash = 0 },
 		} })
-		TOGBankClassic_Chat:OnCommReceived("togbank-hlr", body, "WHISPER", OTHER)
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", OTHER)
 		assert.is_nil(held(), "a stub carrying the peer's canon was seeded for OUR OWN character -- this PC would read as current and publish a bags-only scan over the real copy")
 		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
 
@@ -692,7 +723,7 @@ describe("MULTIPC-001: a WIPED PC on the shared account", function()
 		local req = whispered("sync-request")
 		assert.is_table(req, "the wiped PC did not fetch the version it was told about")
 		assert.equal(OTHER, req.target)
-		TOGBankClassic_P2PSession:OnSyncAccept(req.data.sessionId, OTHER)
+		p2p():OnSyncAccept(req.data.sessionId, OTHER)
 		peerDelivers({ { 858, 5 }, { 15260, 1 } }, 0, C(T + 60, 0x21), OTHER)
 		assert.equal(T + 200, canonAt(held()))
 		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
@@ -702,22 +733,23 @@ end)
 describe("MULTIPC-001: learning it from the offer path", function()
 	before_each(function()
 		env.reset(); client()
-		TOGBankClassic_BankerNumbers:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
 		scan({ vault = { { id = 15260, count = 1 } }, mail = true })
 		env.advance(200)
 	end)
 
-	local function bareOfferForUs()
+	-- The library's wire (LIBREQ-DS-008 part 2): a bare offer on the host's OFFER prefix, a version
+	-- reply on its HANDSHAKE prefix, both through the host's own receive handlers.
+	local function bareOfferForUs(from)
 		local BN = TOGBankClassic_BankerNumbers
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer2", v = 5, n = BN:EncodeNumbers({ "0001" }) })
-		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", PEER)
+		host():OnComm_OFFER(host().prefixes.OFFER, body, "WHISPER", from or PEER)
 	end
 
 	local function peerAnswers(publishedAt)
 		local BN = TOGBankClassic_BankerNumbers
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "ver-reply",
-			e = BN:EncodeEntries({ { number = "0001", canon = C(publishedAt, 0x21) } }) })
-		TOGBankClassic_Chat:OnCommReceived("togbank-rr", body, "WHISPER", PEER)
+			e = BN:EncodeEntries({ { number = "0001", canon = C(publishedAt, 0x21) } }), n = BN:EncodeNumbers({ "0001" }) })
+		host():OnComm_HANDSHAKE(host().prefixes.HANDSHAKE, body, "WHISPER", PEER)
 	end
 
 	it("asks a peer that offers OUR OWN number what version it holds, and goes red on the answer", function()
@@ -728,11 +760,11 @@ describe("MULTIPC-001: learning it from the offer path", function()
 		local q = whispered("ver-query")
 		assert.is_table(q, "the offer for our own number was dropped instead of queried -- this PC never learns it is behind")
 		assert.equal(PEER, q.target)
-		assert.is_false(TOGBankClassic_P2PSession:IsSelfConsulted(), "the cycle settled before the query was answered")
+		assert.is_false(p2p():IsSelfConsulted(), "the cycle settled before the query was answered")
 
 		peerAnswers(T + 60)
 		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
-		assert.is_true(TOGBankClassic_P2PSession:IsSelfConsulted())
+		assert.is_true(p2p():IsSelfConsulted())
 		assert.is_nil(whispered("sync-request"), "the query led to a FETCH of our own bank")
 	end)
 
@@ -747,26 +779,31 @@ describe("MULTIPC-001: learning it from the offer path", function()
 		bareOfferForUs()
 		env.advance(61)                        -- the query goes out
 		env.advance(6)                         -- VERSION_QUERY_WINDOW closes with no reply
-		assert.is_false(TOGBankClassic_P2PSession:IsSelfConsulted(), "an unanswered query for our own number opened the gate")
+		assert.is_false(p2p():IsSelfConsulted(), "an unanswered query for our own number opened the gate")
 		local alt = scan({ bags = { { id = 858, count = 9 } } })
 		assert.equal(T, canonAt(alt), "a partial read published on the strength of silence")
 		env.advance(181)                       -- DEFERRED_PUBLISH_FALLBACK: the bound
 		assert.is_true(canonAt(held()) > T, "the fallback did not release the deferred publish")
-		assert.is_true(TOGBankClassic_P2PSession:IsSelfConsulted())
+		assert.is_true(p2p():IsSelfConsulted())
 	end)
 
 	-- HIDE-SYNC-001. Read off the operator's banker: `consult: begun=true settled=false` fifteen
 	-- minutes into a session, a right-click hide held the whole fallback, CanServe refusing our own
 	-- record meanwhile. A v1.4.1 peer offers numbers but cannot answer a version query, so it sat
-	-- queried-and-silent for ever. A peer the addon KNOWS runs the old wire has answered by being one.
-	it("settles the cycle when the silent offerer is a known old-wire peer -- it cannot answer, and that is its answer", function()
+	-- queried-and-silent for ever. LIBREQ-DS-008 part 2: the old-wire OBSERVER (NotePeerOldWire) went
+	-- with the tripwire prefix; the rule is now the data-leg gate at the offer's door -- a peer on a
+	-- release that cannot complete the data leg (VersionCheck names it at login) is never queried, so
+	-- its silence cannot hold the check open.
+	it("settles the cycle when the offerer runs a release that cannot complete the data leg -- it is never asked, so it cannot be silent", function()
 		TOGBankClassic_Bank.readThisSession = {}
-		assert.is_true(TOGBankClassic_Guild:NotePeerOldWire(PEER, "state-summary"))
+		TOGBankClassic_Guild:NotePeerAddonVersion(PEER, "1.5.1")
+		assert.is_false((TOGBankClassic_Guild:PeerSpeaksDataLeg(PEER)), "precondition: v1.5.1 still speaks this build's data leg")
 		askTheGuild()
 		bareOfferForUs()
-		env.advance(61)                        -- the query goes out
-		env.advance(6)                         -- VERSION_QUERY_WINDOW closes with no reply
-		assert.is_true(TOGBankClassic_P2PSession:IsSelfConsulted(), "an old-wire peer's silence held the own-bank check open")
+		env.advance(61)                        -- the window closes: nothing was recorded from that peer
+		assert.is_nil(whispered("ver-query"), "a peer we cannot fetch from was asked which version it holds")
+		env.advance(6)                         -- VERSION_QUERY_WINDOW, for symmetry with the example above
+		assert.is_true(p2p():IsSelfConsulted(), "an incapable peer's offer held the own-bank check open")
 		-- And the partial scan that follows publishes at once rather than after the 180 s fallback.
 		local alt = scan({ bags = { { id = 858, count = 9 } } })
 		assert.is_true(canonAt(alt) > T, "the hide-shaped partial scan was deferred behind a peer that can never answer")
@@ -778,7 +815,7 @@ describe("MULTIPC-001: learning it from the offer path", function()
 		env.advance(61)
 		peerAnswers(T)
 		assert.equal("current", (TOGBankClassic_Guild:GetAltStaleness(BANKER)))
-		assert.is_true(TOGBankClassic_P2PSession:IsSelfConsulted())
+		assert.is_true(p2p():IsSelfConsulted())
 	end)
 
 	it("never marks our own tab 'offered' -- a bare offer for us is settled by the query, not the flag", function()
@@ -795,16 +832,16 @@ describe("MULTIPC-001: learning it from the offer path", function()
 		askTheGuild()
 		-- A bare offer for OTHER's number only; the query that goes out is about OTHER.
 		local BN = TOGBankClassic_BankerNumbers
-		TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum(
+		host():OnComm_OFFER(host().prefixes.OFFER, TOGBankClassic_Core:SerializeWithChecksum(
 			{ type = "hash-offer2", v = 5, n = BN:EncodeNumbers({ "0002" }) }), "WHISPER", PEER)
 		env.advance(61)
 		local q = whispered("ver-query")
 		assert.is_table(q, "precondition: no version query went out")
 		-- The reply says nothing servable for OTHER (no entry) but names OUR number, newer than this
 		-- PC's copy -- a reply to a query that was never about us.
-		TOGBankClassic_Chat:OnCommReceived("togbank-rr", TOGBankClassic_Core:SerializeWithChecksum({ type = "ver-reply",
-			e = BN:EncodeEntries({ { number = "0001", canon = C(T + 60, 0x21) } }) }), "WHISPER", PEER)
-		assert.is_nil(TOGBankClassic_P2PSession.sessionsByAlt[OTHER], "precondition: nothing to fetch for OTHER, so PEER is free")
+		host():OnComm_HANDSHAKE(host().prefixes.HANDSHAKE, TOGBankClassic_Core:SerializeWithChecksum({ type = "ver-reply",
+			e = BN:EncodeEntries({ { number = "0001", canon = C(T + 60, 0x21) } }), n = BN:EncodeNumbers({ "0002" }) }), "WHISPER", PEER)
+		assert.is_nil(p2p().sessionsByKey[OTHER], "precondition: nothing to fetch for OTHER, so PEER is free")
 		assert.equal("behind", (TOGBankClassic_Guild:GetAltStaleness(BANKER)), "precondition: the reply raised our newest time")
 		local newer = TOGBankClassic_Bank.newerSelf
 		assert.is_table(newer, "the replier was not recorded as holding our newer version")
@@ -814,7 +851,7 @@ describe("MULTIPC-001: learning it from the offer path", function()
 		scan({ bags = { { id = 858, count = 9 } }, vault = { { id = 15260, count = 1 } }, mail = true })
 		local req = whispered("sync-request")
 		assert.is_table(req, "behind with a known holder, and nothing was asked for the diff base")
-		assert.equal(BANKER, req.data.altName)
+		assert.equal(BANKER, req.data.itemKey)
 		assert.equal(PEER, req.target)
 	end)
 end)

@@ -289,17 +289,14 @@ function TOGBankClassic_Bank:Scan()
 		result.bankScanned and "included" or "skipped - not at a bank")
 
 	-- Mail, when the mailbox was read. INV2-MAIL-001: it can only be read while the mailbox is
-	-- open, so it arrives through MailInventory rather than a container walk. Its rows go into the
-	-- store as tuples -- MailInventory hands over {ID, Count, Link}, and the tuple is built from ID
-	-- and Count ONLY: every mail row is stored suffix-less. KNOWN WRONG, NOT FIXED HERE (LINK-AUDIT-001):
-	-- the line below used to be justified by "suffix and enchant are unknowable for a mail attachment
-	-- because GetInboxItem does not report them", which is false -- `GetInboxItemLink` is read two
-	-- lines up in MailInventory and carries both. The operator, on a Dreadblade of the Bear read in
-	-- the inbox: "some items are loosing suffixes ... it's showing up as dreadblade". A suffix-less
-	-- mail row is a DIFFERENT KEY from the same item once it is in the bags, and the log's `from`
-	-- (keyed id:suffix) can never match it. The operator stopped a one-line fix here on 2026-09-12:
-	-- this is one symptom of the link-era identity logic (stripping, reconstruction, keys) that the
-	-- LINK-AUDIT-001 overhaul covers whole, and it is fixed there. `alt.mail` keeps the metadata only.
+	-- open, so it arrives through MailInventory rather than a container walk. LINK-AUDIT-001 step 5
+	-- (docs/LINK_AUDIT.md 3.3): MailInventory hands over RECORDS -- id, count, suffix AND enchant --
+	-- parsed at the inbox edge. Until then the tuple was built from ID and Count only, so a
+	-- "Dreadblade of the Bear" read in the inbox was stored as a different item from the same
+	-- weapon in the bags (the operator: "some items are loosing suffixes ... it's showing up as
+	-- dreadblade"), and the log's `from` could never match the deposit. KNOWN COST, once per banker:
+	-- the first mail-inclusive scan on this build moves the content hash and the mail hash for a
+	-- suffixed attachment -- one version bump, self-correcting. `alt.mail` keeps the metadata only.
 	TOGBankClassic_Output:Debug("MAIL", "SCAN", "[MAIL-002] Bank:Scan() for player '%s', hasUpdated=%s",
 		player, tostring(TOGBankClassic_MailInventory.hasUpdated))
 	local mailRecords, mailSkipped, mailRead = nil, 0, false
@@ -307,9 +304,8 @@ function TOGBankClassic_Bank:Scan()
 		local mailData = TOGBankClassic_MailInventory:ScanMailInventory()
 		if mailData then
 			mailRecords, mailRead = {}, true
-			for _, item in ipairs(mailData.items or {}) do
-				local rec = Record.new(item.ID, item.Count or 1)
-				if rec then
+			for _, rec in ipairs(mailData.items or {}) do
+				if Record.isValid(rec) then
 					mailRecords[#mailRecords + 1] = rec
 				else
 					mailSkipped = mailSkipped + 1
@@ -440,8 +436,8 @@ function TOGBankClassic_Bank:Scan()
 	-- This allows receivers to detect when mail data exists and has changed
 	-- mailHash is computed whenever mail is scanned (even if empty) to track all mail state changes
 	-- nil mailHash = "never scanned mail" vs hash value = "mail scanned" (could be empty or full)
-	-- INV2-RETIRE-003: computed over the mail TUPLES this scan read. A mail row is linkless in both
-	-- shapes (suffix/enchant 0), so the value is identical to what the legacy rows produced.
+	-- INV2-RETIRE-003: computed over the mail records this scan read. LINK-AUDIT-001 step 5: those
+	-- records now carry the suffix and enchant, so a suffixed attachment hashes as its variant.
 	if mailRead then
 		-- Compute hash even for empty mail - this allows detecting empty→full and full→empty transitions
 		local currentMailHash = TOGBankClassic_Core:ComputeInventoryHash(mailRecords, nil, nil, nil)
@@ -538,8 +534,8 @@ function TOGBankClassic_Bank:CanPublish(alt)
 		if alt and alt.mail and (tonumber(alt.mail.lastScan) or 0) < newer then return false, "stale:mail" end
 		return true, "reread"
 	end
-	local P2P = TOGBankClassic_P2PSession
-	if P2P and P2P.IsSelfConsulted and not P2P:IsSelfConsulted() then
+	local p2p = TOGBankClassic_P2P and TOGBankClassic_P2P:Lib()
+	if p2p and not p2p:IsSelfConsulted() then
 		local r = self.readThisSession or {}
 		if r.bank and r.bags and r.mail then return true, "full read" end
 		return false, "unconsulted"
@@ -861,29 +857,31 @@ function TOGBankClassic_Bank:HasDiffBase()
 end
 
 --- Ask a holder for the newest version of OUR OWN bank, through the normal handshake -- the same
---- session, slot and queue rules as any fetch (P2PSession:DispatchList) -- so the provider needs
+--- session, slot and queue rules as any fetch (the library's DispatchList) -- so the provider needs
 --- nothing special. Sync routes the delivery to ReceiveDiffBase because `awaitingDiffBase` is set.
 --- True when a fetch is in hand -- asked now, or asked earlier and still waiting; false when there
 --- is nothing to ask: nobody was recorded holding a newer version.
 ---@return boolean fetching
 function TOGBankClassic_Bank:RequestDiffBase()
-	local G, P2P, DC = TOGBankClassic_Guild, TOGBankClassic_P2PSession, TOGBankClassic_DeltaComms
+	local G, DC = TOGBankClassic_Guild, TOGBankClassic_DeltaComms
+	local p2p = TOGBankClassic_P2P and TOGBankClassic_P2P:Lib()
 	local newer = self.newerSelf
-	if not (newer and P2P and P2P.DispatchList) then return false end
+	if not (newer and p2p) then return false end
 	if self.awaitingDiffBase then return true end
 	local me = G:GetNormalizedPlayer()
 	-- ASSUMPTION (peer review F5): the only session ever opened for OUR OWN name is this fetch --
-	-- AdvertisedImproves never improves self, and IsAltSyncPending answers false for self -- so a
-	-- live session for `me` IS the fetch in flight. If something else ever opens one, this would
-	-- wait the fallback out (180s) on an unrelated session; give HasActiveSession a reason then.
-	if P2P.HasActiveSession and P2P:HasActiveSession(me) then return true end
+	-- the library never dispatches for a key it authors (isOwnKey), so a live session for `me` IS
+	-- the fetch in flight. If something else ever opens one, this would wait the fallback out
+	-- (180s) on an unrelated session; give HasActiveSession a reason then.
+	if p2p:HasActiveSession(me) then return true end
 	local candidates = {}
 	for _, peer in ipairs(newer.holders) do
 		candidates[#candidates + 1] = { peer = peer, canon = newer.canon, updatedAt = DC:CanonPublishTime(newer.canon) or 0 }
 	end
 	if #candidates == 0 then return false end
 	self.awaitingDiffBase = newer.canon
-	P2P:DispatchList({ { altName = me, candidates = candidates } })
+	-- The library's dispatch list item: `key` (not altName) and the canon the session names.
+	p2p:DispatchList({ { key = me, canon = newer.canon, candidates = candidates } })
 	TOGBankClassic_Output:Debug("SYNC", "HASH-MATCH", "[MULTIPC-002] asking %d holder(s) for %s's newer version %s as the diff base",
 		#candidates, me, newer.canon)
 	return true
@@ -994,10 +992,11 @@ function TOGBankClassic_Bank:ArmDeferredPublishFallback()
 	self.deferredFallbackArmed = true
 	C_Timer.After(DEFERRED_PUBLISH_FALLBACK, function()
 		TOGBankClassic_Bank.deferredFallbackArmed = nil
-		local P2P = TOGBankClassic_P2PSession
-		if P2P and P2P.MarkSelfConsulted then
-			-- Marking it releases the deferred publish through the same path a real answer does.
-			P2P:MarkSelfConsulted("no answer within " .. DEFERRED_PUBLISH_FALLBACK .. "s")
+		local p2p = TOGBankClassic_P2P and TOGBankClassic_P2P:Lib()
+		if p2p then
+			-- Marking it releases the deferred publish through the same path a real answer does
+			-- (the library's onSelfConsulted -> PublishIfDeferred).
+			p2p:MarkSelfConsulted("no answer within " .. DEFERRED_PUBLISH_FALLBACK .. "s")
 		end
 		-- MULTIPC-002: a publish still held for a diff base nobody delivered goes out without one.
 		TOGBankClassic_Bank:PublishIfDeferred(true)
@@ -1041,9 +1040,11 @@ local function MatchContainers(results, first, last, targetID, targetName, targe
 					local name = GetItemInfo(itemInfo.hyperlink)
 					matched = name and string.lower(name) == targetName
 				end
-				-- REQ-003: enforce suffix equality when the request carries one.
+				-- REQ-003: enforce suffix equality when the request carries one. The slot's suffix is read
+				-- by the one link parser (LINK-AUDIT-001 step 4): 0 for a plain item.
 				if matched and targetSuffix then
-					matched = (TOGBankClassic_Item:GetSuffixID(itemInfo.hyperlink) == targetSuffix)
+					local _, slotSuffix = TOGBankClassic_Inventory_Scan.parseLink(itemInfo.hyperlink)
+					matched = (slotSuffix == targetSuffix)
 				end
 				if matched then
 					table.insert(results, {

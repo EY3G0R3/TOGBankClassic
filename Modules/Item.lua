@@ -1,204 +1,41 @@
 TOGBankClassic_Item = {}
 
--- Item classes that require Link to be preserved (for suffix differentiation)
--- Class 2 = Weapons, Class 4 = Armor (includes all equippable gear)
-local ITEM_CLASSES_NEEDING_LINK = {
-	[2] = true,  -- Weapon
-	[4] = true,  -- Armor (chest, legs, trinkets, rings, necks, etc)
-}
-
--- Resolve an item's class via the most reliable source available.
--- Tier 1: TOGBankClassic_ItemDB (static DB shipped with the addon, generated
---         by tools/build-itemdb.py from wago.tools DB2 dumps). Authoritative,
---         covers every item in Classic Era, never cold.
--- Tier 2: GetItemInfo (WoW client cache). Reliable when warm; nil immediately after
---         login while the cache hydrates. We do NOT trust nil as "non-gear" — see Tier 3.
--- Tier 3: nil — caller's decision. Callers that drive wire-format decisions MUST
---         treat nil as "preserve the link, do not strip" (default-deny stripping).
---         This eliminates the cold-cache gear-stripping bug that caused linkless
---         gear ghosts to land in peers' SavedVariables.
-function TOGBankClassic_Item:GetClass(itemID)
-	if not itemID then return nil end
-
-	-- Tier 1: static DB
-	if TOGBankClassic_ItemDB and TOGBankClassic_ItemDB[itemID] then
-		return TOGBankClassic_ItemDB[itemID].class
-	end
-
-	-- Tier 2: WoW client cache
-	local _, _, _, _, _, _, _, _, _, _, _, itemClassId = GetItemInfo(itemID)
-	if itemClassId then
-		return itemClassId
-	end
-
-	-- Tier 3: unknown
-	return nil
-end
-
--- INV2 step 10: `Item:NeedsLink` was deleted here. It answered the SEND-side question "is this
--- link safe to strip?", and `StripDeltaLinks` was its only caller. Nothing strips links any more --
--- V2 sends integers and the receiver rebuilds the link from LibItemDB -- so the question no longer
--- has a caller or a meaning.
+-- WHAT THIS FILE IS NOW, and what it was. Until LINK-AUDIT-001 (docs/LINK_AUDIT.md, 2026-09-17) this
+-- was the addon's item-identity layer: link parsers (`GetItemString`, `GetItemKey`, `GetSuffixID`),
+-- a link-keyed aggregator (`Aggregate`), a 280-line async loader (`GetItems`) with its cache-warming
+-- watchdog, a second `Info` builder (`GetInfo`), and a sort pre-pass that fabricated `Info` from a
+-- link's brackets. All of it was written for a wire that shipped links and stripped them, and for a
+-- client whose item cache had to be waited on. Neither is true any more: V2 stores
+-- `{ id, count, suffix, enchant }`, `Scan.parseLink` is the one parser at the two edges where the
+-- client hands over a link, `Record.key` / `Record.aggregate` are the one identity and the one
+-- merge, and `Resolve.describe` (LibItemDB) answers at once -- so every row the UI draws is a
+-- `Store.viewRow` that already carries `Info` and `Link`. What is left here is what is not about
+-- links: the request's display name, the sort comparators, and the scanning tooltip.
 --
--- `ItemClassNeedsLink` below is NOT the same function and deliberately survives: it is the
--- RECEIVE-side check, and it is what stops a linkless gear row arriving from an unmigrated peer
--- being stored as a ghost. Deleting it would break exactly the backwards compatibility this rework
--- is careful to keep.
+-- INV2 step 10 deleted `Item:NeedsLink` (the send-side "is this link safe to strip?"). Step 1 of the
+-- audit deleted its receive-side twin `ItemClassNeedsLink` and `GetClass`, the only reader of the
+-- static `Modules/Static/ItemDB.lua` (3.7 MB parsed at every login, read by nothing since
+-- `Database:PurgeLinklessGearGhosts` went in INV2-RETIRE-003). Step 4 deleted `GetSuffixID`, the
+-- second parser of the item string's seventh field. Step 6 deleted the rest named above.
 
--- Receive-side variant: caller has an itemID (not a link) and wants to know whether
--- this item REQUIRES a Link to be considered well-formed. Used by ITEM-003 guards in
--- ApplyItemDelta to reject linkless gear payloads.
+-- INV2-SUFFIX-001: the suffix of an INVENTORY ROW, read from its stored field, nil for none.
 --
--- Returns true  = gear (link required; linkless payload is invalid)
--- Returns false = non-gear (linkless payload is fine)
--- Returns nil   = unknown (caller's choice; ITEM-003 currently treats nil as "block if
---                 any linked entry exists for this ID, otherwise allow")
-function TOGBankClassic_Item:ItemClassNeedsLink(itemID)
-	if not itemID then return nil end
-	local classId = self:GetClass(itemID)
-	if classId == nil then return nil end
-	return ITEM_CLASSES_NEEDING_LINK[classId] == true
-end
-
--- Extract ItemString from item link (full, unmodified)
--- Example: "[Revenant Helmet of the Bear]" -> "item:10132:0:0:0:0:0:0:0:863"
--- If link is nil/empty, returns empty string
-function TOGBankClassic_Item:GetItemString(link)
-	if not link or link == "" then
-		return ""
-	end
-
-	-- Extract ItemString from link format: |cFFFFFFFF|Hitem:...|h[Name]|h|r
-	local itemString = link:match("|Hitem:([^|]+)|h")
-	if itemString then
-		return "item:" .. itemString
-	end
-
-	-- Fallback: try to extract just the numeric part
-	local numericPart = link:match("item:([%d:]+)")
-	if numericPart then
-		return "item:" .. numericPart
-	end
-
-	-- Last resort: return the whole link
-	return link
-end
-
--- Get normalized item key for deduplication (strips unique instance ID)
--- Items with same ID+suffix but different instance IDs will have same key
--- Format: itemID:enchant:gem1:gem2:gem3:gem4:suffixID (7 parts)
-function TOGBankClassic_Item:GetItemKey(link)
-	if not link or link == "" then
-		return ""
-	end
-
-	local itemString = link:match("|Hitem:([^|]+)|h")
-	if not itemString then
-		itemString = link:match("item:([%d:]+)")
-	end
-	-- DUPLICATION-FIX: Handle raw itemStrings without "item:" prefix (e.g., "929::::::::1::::::::::")
-	if not itemString and link:match("^%d+:") then
-		itemString = link
-	end
-
-	if itemString then
-		-- Split into parts, PRESERVING empty parts between colons
-		-- Item format: itemID:enchant:gem1:gem2:gem3:gem4:suffixID:uniqueID:level:...
-		-- We want to keep parts 1-7 (itemID through suffixID), stripping uniqueID (part 8), level (part 9), etc.
-
-		-- Use simpler approach: manually split by colons
-		local parts = {}
-		local current = ""
-		for i = 1, #itemString do
-			local char = itemString:sub(i, i)
-			if char == ":" then
-				table.insert(parts, current)
-				current = ""
-			else
-				current = current .. char
-			end
-		end
-		-- Add final part after last colon
-		table.insert(parts, current)
-
-		-- Keep first 7 parts only (itemID through suffixID, strip uniqueID/level/etc)
-		-- Parts 8+ (uniqueID, level) cause the same item to appear as different keys
-		if #parts >= 7 then
-			local normalized = {}
-			for i = 1, 7 do
-				normalized[i] = parts[i]
-			end
-			local result = "item:" .. table.concat(normalized, ":")
-			-- DEBUG: Log key normalization for items that might have level variations
-			if parts[9] and parts[9] ~= "" and parts[9] ~= "0" then
-				TOGBankClassic_Output:Debug("ITEM", "LOAD", "[DEDUP] GetItemKey: ID=%s level=%s -> key=%s", parts[1], parts[9], result)
-			end
-			return result
-		else
-			return "item:" .. itemString
-		end
-	end
-
-	return link
-end
-
--- REQ-003: Extract the random-suffix ID from an item link / item string.
--- This is part 7 of the item string (itemID:enchant:gem1:gem2:gem3:gem4:suffixID), the same
--- field GetItemKey preserves. Random-property gear ("Spiked Club of the Tiger" vs "...of the
--- Monkey") shares one base itemID and differs ONLY by this suffix, so matching on itemID alone
--- treats the variants as identical. Returns a signed number, or nil when there is no suffix
--- (suffixID 0/absent) or the link can't be parsed.
-function TOGBankClassic_Item:GetSuffixID(link)
-	if not link or link == "" then
-		return nil
-	end
-	local itemString = link:match("|Hitem:([%d:%-]+)|h")
-	if not itemString then
-		itemString = link:match("item:([%d:%-]+)")
-	end
-	if not itemString and link:match("^%d+:") then
-		itemString = link
-	end
-	if not itemString then
-		return nil
-	end
-	-- 7th colon-delimited field of the prefix-stripped string is the suffixID.
-	local suffix = select(7, strsplit(":", itemString, 8))
-	local n = tonumber(suffix)
+-- Rows from the V2 store (Inventory/Store.lua GetAltView) carry Suffix as a first-class number
+-- where 0 means "no suffix". This once fell back to parsing `row.Link` for a legacy row with no
+-- field; LINK-AUDIT-001 step 1 deleted that -- every caller (Search, Requests) reads Guild:GetAltItems
+-- view rows, which always carry the field, and the legacy log path that did not is gone. Parsing a
+-- link is lossy anyway (Resolve's fallback steps drop the suffix).
+function TOGBankClassic_Item:RowSuffixID(row)
+	local n = row and tonumber(row.Suffix)
 	if n and n ~= 0 then
 		return n
 	end
 	return nil
 end
 
--- INV2-SUFFIX-001: the suffix of an INVENTORY ROW, preferring the stored field over the link.
---
--- Rows from the V2 store (Inventory/Store.lua GetAltView) carry Suffix as a first-class number
--- where 0 means "no suffix". Rows from the legacy store have no such field at all, and there nil
--- means "unknown, ask the link" rather than "no suffix" -- which is why the two cases cannot be
--- collapsed into `tonumber(row.Suffix) or GetSuffixID(row.Link)`.
---
--- Parsing the link was the old behaviour everywhere, and it is lossy: Resolve.describe only
--- preserves the suffix in its FIRST step, so a viewer whose ItemDB lacks the id gets a bare
--- "item:<id>" (or no link) and the variant match silently fails. Use this for anything that came
--- out of Guild:GetAltItems; keep GetSuffixID for LIVE client links, which always encode it.
-function TOGBankClassic_Item:RowSuffixID(row)
-	if not row then
-		return nil
-	end
-	if row.Suffix ~= nil then
-		local n = tonumber(row.Suffix)
-		if n and n ~= 0 then
-			return n
-		end
-		return nil
-	end
-	return self:GetSuffixID(row.Link)
-end
-
 --- Is this the stand-in a resolver hands back when it has no name? These three spellings are the
---- ones the addon produces (Inventory/Resolve.lua, Item.lua, UI/Search.lua); a real item is never
---- called any of them.
+--- ones the addon produces (Inventory/Resolve.lua, UI/Search.lua); a real item is never called any
+--- of them.
 ---@param name string|nil
 ---@return boolean
 function TOGBankClassic_Item:IsPlaceholderName(name)
@@ -238,377 +75,13 @@ function TOGBankClassic_Item:RequestDisplayName(request)
 	return stored or "Unknown"
 end
 
-function TOGBankClassic_Item:GetItems(items, callback)
-	if not items or type(items) ~= "table" then
-		callback({})
-		return
-	end
-
-	-- Only consider items that have a valid ID
-	local total = 0
-	local validItems = {}
-	for idx, item in pairs(items) do
-		-- Log every item we encounter to identify corrupted data
-		if not item then
-			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping nil item at index %s", tostring(idx))
-		elseif type(item) ~= "table" then
-			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping non-table item at index %s (type=%s)", tostring(idx), type(item))
-		elseif not item.ID then
-			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping item with nil ID at index %s", tostring(idx))
-		elseif type(item.ID) ~= "number" then
-			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping item with non-number ID at index %s (ID=%s, type=%s)",
-				tostring(idx), tostring(item.ID), type(item.ID))
-		elseif item.ID <= 0 or item.ID < 100 then
-			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-FILTER] Skipping corrupted item with invalid ID at index %s (ID=%d)", tostring(idx), item.ID)
-		else
-			-- Valid item - add to processing list
-			total = total + 1
-			table.insert(validItems, {
-				original = item,
-				id = item.ID,
-				link = item.Link
-			})
-		end
-	end
-
-	local list = {}
-	local count = 0
-	local processed = 0  -- Track total items processed (success + failures)
-	local callbackFired = false  -- Ensure callback only fires once
-	local pendingAsync = 0  -- Track items waiting for async load
-
-	-- If there are no valid items to load, return an empty list immediately
-	if total == 0 then
-		callback(list)
-		return
-	end
-
-	local function checkComplete()
-		if not callbackFired and processed >= total and pendingAsync == 0 then
-			callbackFired = true
-			callback(list)
-		end
-	end
-
-	-- ITEM-005: watchdog for the other way this stalls. Even with every abandon path now
-	-- releasing its slot, an item whose ContinueOnItemLoad is accepted but never fires -- an id
-	-- the server never resolves -- leaves pendingAsync above zero with nothing to decrement it.
-	-- There is no error and no timeout in the Blizzard API, so without this the window waits
-	-- forever.
-	--
-	-- Deliver what did load rather than nothing: a partial inventory is strictly better than a
-	-- permanent "Loading items...", and the missing rows reappear on the next refresh once the
-	-- client has cached them.
-	local ASYNC_TIMEOUT = 10
-	C_Timer.After(ASYNC_TIMEOUT, function()
-		if callbackFired then return end
-		TOGBankClassic_Output:Debug("ITEM", "LOAD",
-			"[ITEM-005] Async load timed out after %ds with %d item(s) still pending - " ..
-			"delivering %d of %d", ASYNC_TIMEOUT, pendingAsync, #list, total)
-		callbackFired = true
-		callback(list)
-	end)
-
-	for _, wrapper in ipairs(validItems) do
-		local itemID = wrapper.id
-		local itemLink = wrapper.link
-		local item = wrapper.original
-
-		-- Debug: Log what we're about to process
-		TOGBankClassic_Output:Debug("ITEM", "LOAD", "[ITEM-DEBUG] Processing wrapper: id=%s, link=%s, original.ID=%s",
-			tostring(itemID), tostring(itemLink), tostring(item and item.ID or "nil item"))
-
-		-- Final safety check before calling Blizzard API
-		if not itemID or type(itemID) ~= "number" or itemID <= 0 then
-			TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-DEBUG] SKIPPING INVALID: itemID=%s (type=%s)",
-				tostring(itemID), type(itemID))
-			processed = processed + 1
-			checkComplete()
-		else
-			-- Capture itemID in local scope to prevent closure corruption
-			local capturedItemID = itemID
-			local capturedItemLink = itemLink
-			local capturedItem = item
-
-			-- Double-check captured values
-			if not capturedItemID or type(capturedItemID) ~= "number" or capturedItemID <= 0 then
-				TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[ITEM-DEBUG] CRITICAL: itemID validation failed after capture!")
-				processed = processed + 1
-				checkComplete()
-			else
-				-- BRANCH 1: Item has link - just use it directly, no GetItemInfo calls
-				if capturedItemLink then
-					TOGBankClassic_Output:Debug("ITEM", "LOAD", "[ITEM-DEBUG] Item %d has link, using directly", capturedItemID)
-					-- Only extract icon if Info doesn't already exist
-					if not capturedItem.Info then
-						-- Use GetItemInfo (not GetItemInfoInstant) so we get rarity and all fields.
-						-- Since the item link came from the client's own bank scan, data is already
-						-- in the WoW client cache — this is not a server query.
-						local name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemLink)
-						if name then
-							local equip = C_Item.GetItemInventoryTypeByID(capturedItemID)
-							capturedItem.Info = {
-								icon = icon,
-								name = name,
-								rarity = rarity,
-								level = level,        -- item level
-								reqLevel = reqLevel,  -- SORT-002: required-to-use level (GetItemInfo #5); drives the Level sort
-								price = price,
-								class = itemClassId,
-								subClass = itemSubClassId,
-								equipId = equip,
-							}
-						else
-							-- Fallback: item somehow not in cache, extract what we can
-							-- GetItemInfoInstant works without cache and returns class/subclass too
-							-- ITEM-007: these MUST be the values GetItemInfoInstant just returned. They
-							-- used to be named `itemClassId`/`itemSubClassId`, shadowing the outer pair
-							-- from GetItemInfo -- which are nil here BY DEFINITION, because a nil `name`
-							-- from that call is what put us in this branch. So the fallback threw away
-							-- the class and subclass it had just successfully fetched and stored nils,
-							-- and every item that reached it lost its type. Silent: the row still
-							-- rendered, it just sorted and filtered as untyped.
-							local _, _, _, _, iconID, instantClassId, instantSubClassId = GetItemInfoInstant(capturedItemLink)
-							if iconID then
-								capturedItem.Info = {
-									icon = iconID,
-									name = capturedItemLink:match("%[(.-)%]") or ("Item " .. tostring(capturedItemID)),
-									class = instantClassId,
-									subClass = instantSubClassId,
-								}
-							end
-						end
-					end
-					-- SORT-002/003: backfill required level on Info tables that predate the reqLevel
-					-- field (item data synced from older clients or loaded from saved data). Retry
-					-- while unresolved (nil OR 0) and only write a positive value, so a 0 written
-					-- during a cold-cache window doesn't stick and break the Level / By-Type ordering.
-					if capturedItem.Info and (capturedItem.Info.reqLevel == nil or capturedItem.Info.reqLevel == 0) then
-						local _, _, _, _, reqLevel = GetItemInfo(capturedItemLink)
-						if reqLevel and reqLevel > 0 then
-							capturedItem.Info.reqLevel = reqLevel
-						end
-					end
-					table.insert(list, capturedItem)
-					count = count + 1
-					processed = processed + 1
-					-- Don't call checkComplete here - will batch check after loop
-				-- BRANCH 2: No link - need to load item data
-				else
-					-- Check if item data is already cached (fast path)
-					local name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(capturedItemID)
-					if name then
-						-- Item data is cached, build Info directly without calling GetInfo (avoids redundant GetItemInfo call)
-						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[ITEM-DEBUG] Item %d already cached", capturedItemID)
-						local equip = C_Item.GetItemInventoryTypeByID(capturedItemID)
-						capturedItem.Info = {
-						class = itemClassId,
-						subClass = itemSubClassId,
-						equipId = equip,
-						rarity = rarity,
-						name = name,
-						level = level,        -- item level
-						reqLevel = reqLevel,  -- SORT-002: required-to-use level (GetItemInfo #5)
-						price = price,
-						icon = icon,
-					}
-					table.insert(list, capturedItem)
-					count = count + 1
-					processed = processed + 1
-					-- Don't call checkComplete here - will batch check after loop
-				else
-					-- Item not cached, need async load
-					TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-1] Item %d not cached, calling CreateFromItemID", capturedItemID)
-
-					pendingAsync = pendingAsync + 1  -- Track this async operation
-
-					-- ITEM-005: a single owner for giving up on an async slot.
-					--
-					-- Every branch below previously did `processed = processed + 1; checkComplete()`
-					-- and left `pendingAsync` incremented. Since checkComplete requires
-					-- `pendingAsync == 0`, ONE item taking any of those seven paths wedged the
-					-- counter above zero permanently and the callback never fired -- for the WHOLE
-					-- batch, not just that item. The symptom was the Inventory window sitting on
-					-- "Loading items..." forever with every healthy item in the batch discarded
-					-- alongside the bad one.
-					--
-					-- Routing every abandon through one function is the point: adding an eighth
-					-- failure branch can no longer reintroduce the leak by forgetting a line.
-					local function abandonAsync()
-						pendingAsync = pendingAsync - 1
-						processed = processed + 1
-						checkComplete()
-					end
-
-					local success, itemData = pcall(Item.CreateFromItemID, Item, capturedItemID)
-
-					TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-2] CreateFromItemID result: success=%s, itemData=%s, type=%s",
-						tostring(success), tostring(itemData), type(itemData))
-
-					if not success then
-						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-3] CreateFromItemID pcall failed: %s", tostring(itemData))
-						abandonAsync()
-					elseif not itemData then
-						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-4] CreateFromItemID returned nil")
-						abandonAsync()
-					elseif type(itemData) ~= "table" then
-						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-5] CreateFromItemID returned non-table: %s", type(itemData))
-						abandonAsync()
-					else
-						-- Got an Item object, now inspect its internal state
-						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-6] Inspecting Item object for ID %d", capturedItemID)
-
-						-- Try to access internal fields safely
-						local objectItemID = nil
-						local accessSuccess = pcall(function()
-							objectItemID = itemData.itemID
-						end)
-
-						TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-7] Internal field access: accessSuccess=%s, itemData.itemID=%s, type=%s",
-							tostring(accessSuccess), tostring(objectItemID), type(objectItemID))
-
-						-- Check if itemID matches what we expect
-						if not accessSuccess then
-							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-8] Cannot access itemData.itemID (protected?)")
-							abandonAsync()
-						elseif objectItemID == nil then
-							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-9] itemData.itemID is nil for requested ID %d - skipping this item", capturedItemID)
-							abandonAsync()
-						elseif type(objectItemID) ~= "number" then
-							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-10] itemData.itemID is not a number: %s", type(objectItemID))
-							abandonAsync()
-						elseif objectItemID ~= capturedItemID then
-							TOGBankClassic_Output:Debug("ITEM", "VALIDATE", "[TRACE-11] itemData.itemID mismatch: expected %d, got %d", capturedItemID, objectItemID)
-							abandonAsync()
-						else
-							-- Everything looks good, try ContinueOnItemLoad
-							TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-12] Item object valid (itemID=%d), calling ContinueOnItemLoad", objectItemID)
-
-							local callbackSuccess, callbackError = pcall(function()
-								itemData:ContinueOnItemLoad(function()
-										TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-13] ContinueOnItemLoad callback fired for ID %d", capturedItemID)
-									capturedItem.Info = self:GetInfo(capturedItemID, capturedItemLink)
-									table.insert(list, capturedItem)
-									count = count + 1
-									pendingAsync = pendingAsync - 1  -- Async operation completed
-									checkComplete()
-								end)
-							end)
-
-							TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-14] ContinueOnItemLoad pcall result: success=%s, error=%s",
-								tostring(callbackSuccess), tostring(callbackError))
-
-							processed = processed + 1
-
-							if not callbackSuccess then
-								TOGBankClassic_Output:Debug("ITEM", "LOAD", "[TRACE-15] ContinueOnItemLoad pcall FAILED for ID %d: %s",
-									capturedItemID, tostring(callbackError))
-								pendingAsync = pendingAsync - 1  -- Async operation failed
-								checkComplete()
-							end
-						end
-					end
-				end
-			end
-		end
-		end  -- close else from line 168
-	end  -- close for loop from line 153
-
-	-- After processing all items, check if we can fire callback
-	-- (handles case where all items had links and were processed synchronously)
-	checkComplete()
-end
-
-function TOGBankClassic_Item:GetInfo(id, link)
-	local name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId
-
-	-- Try link first if available
-	if link and link ~= "" then
-		name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(link)
-	end
-
-	-- Fallback to ID if link didn't work
-	if not name and id and id > 0 then
-		name, _, rarity, level, reqLevel, _, _, _, _, icon, price, itemClassId, itemSubClassId = GetItemInfo(id)
-	end
-
-	-- If still no data, return basic info with ID only
-	if not name then
-		return {
-			class = 0,
-			subClass = 0,
-			equipId = 0,
-			rarity = 1,
-			name = "Item " .. tostring(id or "?"),
-			level = 1,
-			reqLevel = 0,
-			price = 0,
-			icon = 134400, -- Default grey question mark icon
-		}
-	end
-
-	local equip = C_Item.GetItemInventoryTypeByID(id)
-
-	return {
-		class = itemClassId,
-		subClass = itemSubClassId,
-		equipId = equip,
-		rarity = rarity,
-		name = name,
-		level = level,        -- item level
-		reqLevel = reqLevel,  -- SORT-002: required-to-use level (GetItemInfo #5)
-		price = price,
-		icon = icon,
-	}
-end
-
 -- NOTE: Sort was adapted from ElvUI.
 -- mode: "alpha" (default) = A-Z by name; "type" = grouped by item class/slot/subclass then name
+--
+-- LINK-AUDIT-001 step 6: the pre-pass that fabricated `Info` from a link's brackets and re-asked
+-- GetItemInfo for `reqLevel` is gone. Every row sorted here is a Store.viewRow, whose `Info` Resolve
+-- filled (reqLevel from LibItemDB's GetRequiredLevel) -- there is nothing to backfill.
 function TOGBankClassic_Item:Sort(items, mode)
-	-- Ensure all items have Info with required fields for sorting
-	for _, item in ipairs(items) do
-		if not item.Info then
-			-- No Info at all - create minimal
-			item.Info = {
-				class = 0,
-				subClass = 0,
-				equipId = 0,
-				rarity = 1,
-				name = item.Link and item.Link:match("%[(.-)%]") or ("Item " .. tostring(item.ID or "?")),
-				level = 1,
-				reqLevel = 0,
-				price = 0,
-				icon = 134400,
-			}
-		elseif not item.Info.class then
-			-- Info exists but missing sort fields (linked items) - add defaults
-			item.Info.class = item.Info.class or 0
-			item.Info.subClass = item.Info.subClass or 0
-			item.Info.equipId = item.Info.equipId or 0
-			-- Do NOT default rarity here — nil rarity means "not yet known from GetItemInfo".
-			-- DrawItem uses nil rarity to trigger its sync/async fallback lookups.
-			-- The sort comparator at line ~477 already handles nil via (a.Info.rarity or 0).
-			item.Info.level = item.Info.level or 1
-			item.Info.reqLevel = item.Info.reqLevel or 0
-			item.Info.price = item.Info.price or 0
-			item.Info.name = item.Info.name or (item.Link and item.Link:match("%[(.-)%]")) or ("Item " .. tostring(item.ID or "?"))
-		end
-
-		-- SORT-002/003: resolve required level from the live item cache at sort time (warm by the
-		-- time items are on screen). Retry whenever it's unresolved (nil OR 0) so a value written
-		-- during a cold-cache window doesn't stick at 0 and break the level ordering. Only a
-		-- positive result is written back; genuine no-requirement items stay 0 (cheaply re-checked).
-		if not item.Info.reqLevel or item.Info.reqLevel == 0 then
-			local src = item.Link or item.ID
-			if src then
-				local _, _, _, _, mreq = GetItemInfo(src)
-				if mreq and mreq > 0 then
-					item.Info.reqLevel = mreq
-				end
-			end
-		end
-	end
-
 	if mode == "type" then
 		-- SORT-001: By Type groups by item class (armor/weapon/consumable/etc.), then by
 		-- subclass/material (all cloth together, all leather together, all swords together).
@@ -693,77 +166,27 @@ function TOGBankClassic_Item:Sort(items, mode)
 	end
 end
 
--- INV2-SUFFIX-002: the aggregated row carries EVERYTHING that identifies the variant, not just
--- ID/Count/Link. This used to rebuild rows as { ID, Count, Link, ItemString, ForceLink } and drop
--- Suffix, Enchant and Info on the floor -- harmless only because UI/Search.lua used Aggregate's
--- output solely for its name corpus. The moment a request-carrying row went through here,
--- INV2-SUFFIX-001 (two "of the ..." variants merged into one request) came straight back with no
--- test to catch it. A merge keeps the first non-nil of each.
-local function mergeRow(into, v)
-	into.Count      = (into.Count or 1) + (v.Count or 1)
-	into.Link       = into.Link or v.Link
-	into.ItemString = into.ItemString or v.ItemString
-	into.ForceLink  = into.ForceLink or v.ForceLink
-	into.Suffix     = into.Suffix or v.Suffix
-	into.Enchant    = into.Enchant or v.Enchant
-	into.Info       = into.Info or v.Info
-end
-
-local function newRow(v)
-	return { ID = v.ID, Count = v.Count or 1, Link = v.Link, ItemString = v.ItemString,
-		ForceLink = v.ForceLink, Suffix = v.Suffix, Enchant = v.Enchant, Info = v.Info }
-end
-
-function TOGBankClassic_Item:Aggregate(a, b)
-	local items = {}
-	-- Build ID index to avoid O(n²) lookups for linkless deduplication
-	local itemsByID = {}
-
-	-- One walk for both sources. This was two byte-identical loops (peer review's "same behaviour
-	-- implemented more than once" class); the order matters -- `a` first, so a linkless `b` row
-	-- (mail) can merge into a linked `a` row (bank/bags), see MAIL-015.
-	local function absorb(src)
-		for _, v in pairs(src) do
-			-- Only require ID field (Link is optional for v0.8.0 link-less data); a malformed
-			-- entry with no ID is skipped. Written as a positive test rather than an empty
-			-- `if ... then -- skip` branch, which reads as an unfinished thought.
-			if v and v.ID then
-				-- Use NORMALIZED key (strips unique instance ID) for deduplication
-				-- This allows identical items with different instance IDs to merge
-				local itemKey = self:GetItemKey(v.Link or v.ItemString)
-				local key = tostring(v.ID) .. itemKey
-				local idStr = tostring(v.ID)
-
-				-- If no Link, also check if there's an existing entry with same ID but with link
-				-- This handles deduplication between linked (bank/bags) and linkless (mail) items
-				if not v.Link and itemKey == "" then
-					local existingKeys = itemsByID[idStr]
-					if existingKeys and #existingKeys > 0 then
-						-- Found item(s) with same ID - merge into first entry
-						mergeRow(items[existingKeys[1]], v)
-						key = nil  -- Signal that we already merged
-					end
-				end
-
-				if key then
-					if items[key] then
-						mergeRow(items[key], v)
-					else
-						items[key] = newRow(v)
-						if not itemsByID[idStr] then
-							itemsByID[idStr] = {}
-						end
-						table.insert(itemsByID[idStr], key)
-					end
-				end
-			end
-		end
-	end
-
-	if a then absorb(a) end
-	if b then absorb(b) end
-
-	return items
+--- The tooltip line the client prints for a soulbound-count limit: "Unique" or "Unique (%d)"
+--- (`ITEM_UNIQUE` / `ITEM_UNIQUE_MULTIPLE`, both localized). UNIQUE-EQUIPPED-001 (the operator,
+--- 2026-09-15): a Unique-EQUIPPED item ("Unique-Equipped", `ITEM_UNIQUE_EQUIPPABLE`) is NOT one of
+--- these -- it limits what you can wear, not what you can carry, so a bank can hold several and it
+--- is taken, collected and credited like any other item. Only a truly Unique item is left to sit
+--- in the mail and counted from there. The old substring test caught "Unique-Equipped" too (in
+--- English; other locales differ), which is why the match is the WHOLE line now.
+local function isUniqueLine(l)
+	if l == ITEM_UNIQUE then return true end
+	local multiple = ITEM_UNIQUE_MULTIPLE
+	if type(multiple) ~= "string" then return false end
+	-- "Unique (%d)" -> a plain-text prefix and suffix around the number, matched without patterns
+	-- so a locale's magic characters cannot break it.
+	local at = multiple:find("%d", 1, true)
+	if not at then return l == multiple end
+	local head, tail = multiple:sub(1, at - 1), multiple:sub(at + 2)
+	if #l <= #head + #tail then return false end
+	if l:sub(1, #head) ~= head then return false end
+	if tail ~= "" and l:sub(-#tail) ~= tail then return false end
+	local middle = l:sub(#head + 1, #l - #tail)
+	return middle:match("^%d+$") ~= nil
 end
 
 function TOGBankClassic_Item:IsUnique(link)
@@ -789,10 +212,7 @@ function TOGBankClassic_Item:IsUnique(link)
 		local line = _G["TOGBankClassicScanTooltipTextLeft" .. i]
 		if line and line:IsVisible() then
 			local l = line:GetText()
-			-- ITEM_UNIQUE is a LOCALIZED string, so it must be matched plainly. As a Lua pattern
-			-- any magic character in a locale's wording (a "%" or a "-") would silently stop it
-			-- matching, and the item would just never be reported as unique.
-			if l and l:find(ITEM_UNIQUE, 1, true) then
+			if l and isUniqueLine(l) then
 				return true
 			end
 		end

@@ -120,6 +120,40 @@ describe("BROWSE-001: the row list (FGI's, ported)", function()
 		assert.is_nil(rl.headerCells.icon.btn:GetScript("OnClick"))
 	end)
 
+	-- QTY-CENTER-001 / HEADER-ALIGN-001 (the operator, on the Shop tab: "the qty is WAY to the
+	-- right, can you have it centered UNDER the Qty header?"; then "qty aligns, but the Lvl doesn't";
+	-- and on the Bankers tab: "the same with the items and money column data and headers, they don't
+	-- align"): a heading sits over its cells -- it takes the column's justify unless headerJustify
+	-- says otherwise -- and the sort arrow sits beside the text wherever the text is.
+	it("aligns a heading with its cells (LEFT, CENTER or RIGHT), headerJustify overriding, and places the sort arrow beside the text", function()
+		local cols = {
+			{ key = "icon", header = "", width = 16, icon = true, sortable = false },
+			{ key = "name", header = "Item" },
+			{ key = "qty",  header = "Qty", width = 44, justify = "CENTER" },
+			{ key = "lvl",  header = "Lvl", width = 34, justify = "RIGHT" },
+			{ key = "odd",  header = "Odd", width = 34, justify = "RIGHT", headerJustify = "LEFT" },
+		}
+		local rl = RowList:New(parent, { columns = cols })
+		rl:SetData(rows(2))
+		assert.equal("LEFT",   rl.headerCells.name.fs:GetJustifyH())
+		assert.equal("CENTER", rl.headerCells.qty.fs:GetJustifyH());  assert.equal("CENTER", rl.rows[1].cells.qty:GetJustifyH())
+		assert.equal("RIGHT",  rl.headerCells.lvl.fs:GetJustifyH(), "a RIGHT column's heading did not follow its cells")
+		assert.equal("RIGHT",  rl.rows[1].cells.lvl:GetJustifyH())
+		assert.equal("LEFT",   rl.headerCells.odd.fs:GetJustifyH(), "headerJustify did not override the column's justify")
+		-- The arrow: after the text for LEFT; past the centred text's right edge for CENTER; before
+		-- the text, hung from the right edge, for RIGHT.
+		rl.headerCells.name.btn:Fire("OnClick")
+		local p, _, _, x = rl.headerCells.name.arrow:GetPoint(1)
+		assert.equal("LEFT", p); assert.equal((rl.headerCells.name.fs:GetStringWidth() or 0) + 3, x)
+		rl.headerCells.qty.btn:Fire("OnClick")
+		p, _, _, x = rl.headerCells.qty.arrow:GetPoint(1)
+		assert.equal("LEFT", p); assert.equal((44 + (rl.headerCells.qty.fs:GetStringWidth() or 0)) / 2 + 3, x)
+		assert.is_true(x > 22, "the centred heading's arrow sits left of the column's middle")
+		rl.headerCells.lvl.btn:Fire("OnClick")
+		p, _, _, x = rl.headerCells.lvl.arrow:GetPoint(1)
+		assert.equal("RIGHT", p); assert.equal(-((rl.headerCells.lvl.fs:GetStringWidth() or 0) + 3), x)
+	end)
+
 	it("with no auto column, chains every column from the right edge, rightmost first", function()
 		local rl = RowList:New(parent, { columns = {
 			{ key = "a", header = "A", width = 50 },
@@ -163,6 +197,90 @@ describe("BROWSE-001: the row list (FGI's, ported)", function()
 		assert.equal(3, rl.listOffset, "the offset was not clamped to the shorter data")
 		rl:SetData(rows(12))
 		assert.equal(0, rl.listOffset, "a plain SetData did not return to the top")
+	end)
+end)
+
+-- VISIBILITY-001 part 2 (the operator, 2026-09-15: "can we add a visibility feature that makes the
+-- font/icons/rows larger on a slider for the visually impared?"): part 1 scaled what the LIBRARY
+-- draws; every TOGBank list tab is this RowList, which did not follow. Real LibAceGUIWidgets.
+describe("VISIBILITY-001 part 2: the row list follows the accessibility scale", function()
+	local RowList, parent, W
+
+	before_each(function()
+		env.reset(); env.stubOutput()
+		require("env.frames").reset()
+		require("env.libs").load("LibAceGUIWidgets-1.0")
+		W = LibStub("LibAceGUIWidgets-1.0")
+		W:SetScale(1)
+		env.loadUI()   -- the scale helpers RowList asks through
+		env.loadFile("Modules/UI/RowList.lua")
+		RowList = TOGBankClassic_UI_RowList
+		parent = CreateFrame("Frame", nil, UIParent)
+		parent:SetSize(400, 20 + 16 * 5)
+	end)
+	-- The library's scale is module state and the whole suite is one Lua state: never leave it moved.
+	after_each(function() if W then W:SetScale(1) end end)
+
+	local COLS = {
+		{ key = "icon", header = "", width = 16, icon = true, sortable = false },
+		{ key = "name", header = "Item" },
+		{ key = "qty",  header = "Qty", width = 40, justify = "RIGHT" },
+	}
+	local function rows(n)
+		local out = {}
+		for i = 1, n do out[i] = { icon = 100 + i, name = "Item " .. i, qty = i, _id = tostring(i) } end
+		return out
+	end
+
+	it("re-lays rows, header, fonts, columns and icons at 2x, fits the pool to the taller rows, and comes back at 1x", function()
+		local rl = RowList:New(parent, { columns = COLS })
+		rl:SetData(rows(12))
+		rl.headerCells.qty.btn:Fire("OnClick")
+		assert.equal(5, rl.visibleRowCount)
+		assert.equal(W:ScaledFont("GameFontHighlightSmall"), rl.rows[1].cells.name:GetFontObject(), "a cell is not on the library's scaled font")
+		assert.equal(W:ScaledFont("GameFontNormalSmall"), rl.headerCells.name.fs:GetFontObject(), "a heading is not on the library's scaled font")
+
+		W:SetScale(2)
+		assert.equal(32, rl.rows[1]:GetHeight())
+		assert.equal(40, rl.header:GetHeight())
+		assert.equal(40, rl.headerCells.qty.btn:GetHeight())
+		local _, _, _, _, y2 = rl.rows[2]:GetPoint(1)
+		assert.equal(-(40 + 32), y2, "row 2 was not moved under the taller header and row 1")
+		assert.equal(80, rl.rows[1].cells.qty:GetWidth(), "a fixed column did not double")
+		assert.equal(80, rl.headerCells.qty.btn:GetWidth())
+		local _, _, _, x = rl.rows[1].cells.qty:GetPoint(1)
+		assert.equal(-8, x, "the column gap did not scale")
+		_, _, _, x = rl.rows[1].cells.name:GetPoint(1)
+		assert.equal(12 + 32 + 8, x, "the auto column's left edge did not follow the scaled pad, icon and gap")
+		assert.equal(30, rl.rows[1].cells.icon:GetHeight(), "the icon did not grow with the row")
+		assert.equal(30, rl.headerCells.qty.arrow:GetWidth())
+		local _, _, _, _, sbY = rl.scrollbar:GetPoint(1)
+		assert.equal(-(40 + RowList.SCROLLBAR_BTN), sbY, "the scrollbar lane did not start under the taller header")
+		-- 100 px tall parent: the 40 px header leaves room for one whole 32 px row, not five.
+		assert.equal(1, rl.visibleRowCount, "the pool was not re-fitted to the taller rows")
+		assert.equal("Item 1", rl.rows[1].cells.name:GetText())
+		-- COL-FIT-001 while scaled: the width written is a 1x value and lands doubled, not quadrupled.
+		assert.is_true(rl:SetColumnWidths({ qty = 30 }))
+		assert.equal(60, rl.rows[1].cells.qty:GetWidth())
+		assert.equal(30, rl.columns[3].width, "the stored width was not kept at 1x")
+
+		W:SetScale(1)
+		assert.equal(16, rl.rows[1]:GetHeight())
+		assert.equal(20, rl.header:GetHeight())
+		assert.equal(30, rl.rows[1].cells.qty:GetWidth())
+		assert.equal(14, rl.rows[1].cells.icon:GetHeight())
+		assert.equal(5, rl.visibleRowCount)
+	end)
+
+	it("stops listening when nothing references the list any more", function()
+		local weak = setmetatable({}, { __mode = "v" })
+		weak[1] = RowList:New(parent, { columns = COLS })
+		collectgarbage("collect"); collectgarbage("collect")
+		-- The parent's hooked scripts close over the list, so drop the parent too.
+		parent = nil
+		require("env.frames").reset()
+		collectgarbage("collect"); collectgarbage("collect")
+		assert.is_nil(W._scaleListeners[weak[1] or {}], "a list nobody holds is still a scale listener")
 	end)
 end)
 
@@ -239,6 +357,30 @@ local function loadBrowse(opts)
 		GetNormalizedPlayer = function() return opts.me or "Someone-Testrealm" end,
 		IsBank = function(_, n) return n == ALICE or n == BOB or n == VIEW end,
 		IsViewOnlyBank = function(_, n) return n == VIEW end,
+		-- STORE-006: the shop's sign; `opts.storeClosed` shuts it. The text is the real constant.
+		IsStoreOpen = function() return not opts.storeClosed end,
+		STORE_CLOSED_TEXT = "The shop is not taking orders right now -- an officer has closed shop ordering.",
+		-- SHOP-TAB-001: the shop switch, steerable; SetStoreOpen records like the real writer.
+		shopEnabled = opts.shop or false,
+		IsShopEnabled = function(self) return self.shopEnabled end,
+		SetStoreOpen = function(self, open)
+			self.setStoreOpenCalls = self.setStoreOpenCalls or {}
+			self.setStoreOpenCalls[#self.setStoreOpenCalls + 1] = open
+			opts.storeClosed = not open
+			return true
+		end,
+		-- STORE-006 step 2: the not-for-sale list, steerable per example; SetNotForSale has the real
+		-- writer's shape (returns whether anything changed) and records its calls.
+		notForSale = opts.notForSale or {},
+		IsNotForSale = function(self, id) return self.notForSale[tonumber(id)] == true end,
+		SetNotForSale = function(self, id, blocked, name)
+			self.setNotForSaleCalls = self.setNotForSaleCalls or {}
+			self.setNotForSaleCalls[#self.setNotForSaleCalls + 1] = { id, blocked, name }
+			if (self.notForSale[id] == true) == blocked then return false end
+			self.notForSale[id] = blocked or nil
+			return true
+		end,
+		NOT_FOR_SALE_TEXT = "%s is not for sale -- an officer has taken it off the shop list.",
 		IsPlayerOnline = function(_, n) return online[n] == true end,
 		GetAltStaleness = function(_, n)
 			local s = states[n] or { "current", 1757000000, 1757000000 }
@@ -249,6 +391,11 @@ local function loadBrowse(opts)
 	}
 	TOGBankClassic_Bank = TOGBankClassic_Bank or {}
 	TOGBankClassic_Options = { db = { global = {}, char = {} } }
+	-- STORE-006: the officer test and the modifier, reset HERE rather than at the tail of the example
+	-- that sets them -- a red example never reaches its tail, and the leak then reads as the next
+	-- example's failure.
+	_G.CanViewOfficerNote = nil
+	_G.IsControlKeyDown = nil
 	Browse:Init()
 	Browse.filters = { bank = "any", type = "any", subtype = "any", slot = "any", quality = "any" }
 	return Browse
@@ -301,10 +448,13 @@ describe("BROWSE-001: the rows", function()
 		assert.equal(1, tf.count)
 		assert.equal("Weapon / Sword (1H)", tf.type)
 		assert.equal(60, tf.level)
-		assert.truthy(tf.bank:find("|cff00ff00", 1, true), "a current bank's dot is not green")
-		assert.truthy(tf.bank:find("Alice-Testrealm", 1, true))
+		-- UX-WATERFALL-001: the dot is the `sync` column, the banker cell is the name alone.
+		assert.truthy(tf.sync:find("|cff00ff00", 1, true), "a current bank's dot is not green")
+		assert.equal("Alice-Testrealm", tf.bank)
+		assert.equal(5, tf._sort_sync)
 		local club = byName["Spiked Club@Bob-Testrealm"]
-		assert.truthy(club.bank:find("|cffff0000", 1, true), "a behind bank's dot is not red")
+		assert.truthy(club.sync:find("|cffff0000", 1, true), "a behind bank's dot is not red")
+		assert.equal(2, club._sort_sync, "behind does not sort before current")
 		assert.equal(863, club.Suffix, "the suffix the request dialog mints from was dropped")
 		assert.equal("Weapon / Mace (1H)", club.type)
 		local cloth = byName["Linen Cloth@Viewonly-Testrealm"]
@@ -392,7 +542,8 @@ describe("BROWSE-001: the rows", function()
 		assert.equal("|cffff0000Behind|r", by[BOB].status)
 		assert.equal(3, by[ALICE].items)
 		assert.equal(12345, by[ALICE].moneyCopper)
-		assert.truthy(by[ALICE].money:find("1g", 1, true) or by[ALICE].money:find("12345", 1, true))
+		-- 12345 copper as the client's split coin string: 1 gold, 23 silver, 45 copper, each with its icon.
+		assert.truthy(by[ALICE].money:find("1|T.-|t.-23|T.-|t.-45|T.-|t"), by[ALICE].money)
 		assert.equal("|cff808080no|r", by[ALICE].online)
 		assert.truthy(by[ALICE].published:find("ago", 1, true))
 		assert.truthy(by[VIEW].name:find("(view only)", 1, true))
@@ -477,7 +628,27 @@ describe("BROWSE-001: the window", function()
 		assert.equal(7, #Browse.rowsShown)
 		assert.is_true(Browse.BrowseList.parent:IsShown())
 		assert.is_false(Browse.BankerList.parent:IsShown())
-		assert.equal("Item", Browse.BROWSE_COLUMNS[2].header)
+		-- UX-WATERFALL-001 (crimsonmane: "Type - Qty - Level - Item Name - Sync'd Bulb - Banker"): the
+		-- narrow facts left of the name, the name the one auto column, the dot its own column beside
+		-- the banker; the Shop tab is the same waterfall with the estimate last.
+		local function keys(cols) local out = {} for i, c in ipairs(cols) do out[i] = c.key end return out end
+		assert.same({ "icon", "type", "count", "level", "name", "sync", "bank" }, keys(Browse.BROWSE_COLUMNS))
+		assert.same({ "icon", "type", "count", "level", "name", "sync", "bank", "value" }, keys(Browse.SHOP_COLUMNS))
+		-- QTY-CENTER-001: the quantity is centred on both catalogue tabs (the heading follows).
+		for _, cols in ipairs({ Browse.BROWSE_COLUMNS, Browse.SHOP_COLUMNS }) do
+			local auto = 0
+			for _, c in ipairs(cols) do
+				if c.key == "count" then assert.equal("CENTER", c.justify) end
+				if c.key == "sync" then assert.equal("CENTER", c.justify); assert.is_number(c.width) end
+				if not c.width then auto = auto + 1 end
+			end
+			assert.equal(1, auto, "the name is not the one auto column")
+		end
+		-- The list renders the dot in its own cell and the banker's name alone in the next.
+		local row = Browse.BrowseList.rows[1]
+		assert.is_table(row, "no row rendered")
+		assert.truthy(row.cells.sync:GetText():find("\226\128\162", 1, true), "the sync cell carries no dot")
+		assert.is_nil(row.cells.bank:GetText():find("\226\128\162", 1, true), "the banker cell still carries the dot")
 		-- Wired like every other window: its transparency key and the shared status bar.
 		local found
 		for _, e in ipairs(TOGBankClassic_UI.ALPHA_WINDOWS) do if e.key == "browse" then found = e end end
@@ -496,6 +667,130 @@ describe("BROWSE-001: the window", function()
 		assert.truthy(Browse.statusText:find("7 items across 3 banks", 1, true))
 	end)
 
+	-- VISIBILITY-001 part 2: what this window sizes itself -- the strips, their columns and the offset
+	-- each list hangs at -- follows the accessibility scale; the showing tab's strip is rebuilt on the
+	-- signal, and the lists move under it. Real LibAceGUIWidgets (loadBrowse loads it).
+	it("rebuilds the showing tab's strip and re-hangs the lists at the new scale, and comes back at 1x", function()
+		local W = LibStub("LibAceGUIWidgets-1.0")
+		W:SetScale(1)
+		Browse:Open("browse")
+		local function top(list) local _, _, _, _, y = list.parent:GetPoint(1) return y end
+		-- AceGUI's Table layout rewrites each column number into { width = n } in place.
+		local function widths(strip)
+			local out = {}
+			for i, c in ipairs(strip:GetUserData("table").columns) do out[i] = type(c) == "table" and c.width or c end
+			return out
+		end
+		assert.equal(-Browse.FILTER_H, top(Browse.BrowseList))
+		assert.equal(-Browse.SIMPLE_FILTER_H, top(Browse.BankerList))
+		assert.equal(Browse.STRIP_H, Browse.FilterStrip.frame:GetHeight())
+		local ok, err = pcall(function()
+			W:SetScale(2)
+			assert.equal(-2 * Browse.FILTER_H, top(Browse.BrowseList), "the list did not move under the taller strip")
+			assert.equal(-2 * Browse.FILTER_H, top(Browse.ShopList))
+			assert.equal(-2 * Browse.SIMPLE_FILTER_H, top(Browse.BankerList))
+			assert.equal(-2 * Browse.SIMPLE_FILTER_H, top(Browse.LogList))
+			assert.equal(2 * Browse.STRIP_H, Browse.FilterStrip.frame:GetHeight(), "the strip was not rebuilt at the new height")
+			assert.same({ 440, 300, 260, 280, 220 }, widths(Browse.FilterStrip))
+			assert.equal(32, Browse.BrowseList.rowHeight)
+			-- VISIBILITY-001 part 3: the strip's STOCK controls -- text on the scaled fonts, the
+			-- label-to-box offsets and heights grown with it; the box art itself stays 1x.
+			local dd, eb, cb
+			for _, child in ipairs(Browse.FilterStrip.children) do
+				if child.type == "Dropdown" and not dd then dd = child end
+				if child.type == "EditBox" and not eb then eb = child end
+				if child.type == "CheckBox" then cb = child end
+			end
+			assert.is_table(dd); assert.is_table(eb); assert.is_table(cb)
+			assert.equal(W:ScaledFont("GameFontNormalSmall"), dd.label:GetFontObject(), "a dropdown's label is not scaled")
+			assert.equal(W:ScaledFont("GameFontHighlightSmall"), dd.text:GetFontObject(), "a dropdown's value is not scaled")
+			assert.equal(36, dd.label:GetHeight()); assert.equal(20, dd.text:GetHeight())
+			assert.equal(28 + 26, dd.frame:GetHeight(), "the dropdown did not make room for its taller label")
+			assert.equal(W:ScaledFont("GameFontNormalSmall"), eb.label:GetFontObject())
+			assert.equal(36 + 26, eb.frame:GetHeight())
+			assert.equal(W:ScaledFont("GameFontHighlight"), cb.text:GetFontObject())
+			assert.equal(48, cb.checkbg:GetWidth()); assert.equal(48, cb.frame:GetHeight())
+			assert.equal(W:ScaledFont("GameFontNormal"), Browse.ClearButton.frame:GetNormalFontObject())
+			assert.equal(48, Browse.ClearButton.frame:GetHeight())
+			W:SetScale(1)
+			-- The rebuild released those controls to AceGUI's shared pool: each went back at its base.
+			assert.equal("GameFontNormalSmall", dd.label:GetFontObject(), "a released dropdown kept our scaled font")
+			assert.equal(18, dd.label:GetHeight()); assert.equal(10, dd.text:GetHeight())
+			assert.equal("GameFontHighlight", cb.text:GetFontObject())
+			assert.equal(24, cb.checkbg:GetWidth())
+			assert.equal(-Browse.FILTER_H, top(Browse.BrowseList))
+			assert.equal(Browse.STRIP_H, Browse.FilterStrip.frame:GetHeight())
+			assert.same({ 220, 150, 130, 140, 110 }, widths(Browse.FilterStrip))
+		end)
+		W:SetScale(1)   -- suite-wide library state: never leave it moved, even on a failure
+		assert(ok, err)
+	end)
+
+	-- COL-FIT-001 (the operator, 2026-09-15: "get rid of some of the white space between the
+	-- type/qty/lvl columns ... look at the longest entries, and make it a little longer").
+	it("sizes the Type and Qty columns to the longest entry in the whole catalogue plus a little, on both tabs, and never wider than before", function()
+		local frames = require("env.frames")
+		-- Declared widths, so the fit is arithmetic on known numbers rather than on the harness's
+		-- per-character model (under which this fixture's longest type is already past the ceiling).
+		local all = Browse:BuildRows()
+		local widest
+		for i, r in ipairs(all) do
+			frames.setStringWidth(r.type, 60 + i)
+			widest = r
+		end
+		frames.setStringWidth(widest.type, 96)
+		Browse:Open()
+		local longestType, longestCount = 0, 0
+		for _, r in ipairs(all) do
+			longestType  = math.max(longestType,  Browse:TextWidth(r.type))
+			longestCount = math.max(longestCount, Browse:TextWidth(tostring(r.count)))
+		end
+		assert.equal(96, longestType)
+		local function width(list, key)
+			for _, c in ipairs(list.columns) do if c.key == key then return c.width end end
+		end
+		local fitted = math.ceil(longestType + Browse.FIT_SLACK)
+		assert.equal(fitted, width(Browse.BrowseList, "type"))
+		assert.is_true(fitted < 150, "the Type column did not close up")
+		assert.equal(math.max(Browse.FIT_COUNT_MIN, math.ceil(longestCount + Browse.FIT_SLACK)), width(Browse.BrowseList, "count"))
+		-- The heading and every rendered cell are that wide too: the chain closed up behind it.
+		assert.equal(fitted, Browse.BrowseList.headerCells.type.btn:GetWidth())
+		assert.equal(fitted, Browse.BrowseList.rows[1].cells.type:GetWidth())
+		local _, _, _, countX = Browse.BrowseList.rows[1].cells.count:GetPoint(1)
+		assert.equal(TOGBankClassic_UI_RowList.LEFT_PAD + 16 + 4 + fitted + 4, countX, "the Qty cell did not move up behind the narrower Type")
+		-- The spec tables are untouched: each list fits its own copy.
+		assert.equal(150, Browse.BROWSE_COLUMNS[2].width); assert.equal(44, Browse.BROWSE_COLUMNS[3].width)
+		-- A filter that hides the longest entry does not move the column: the whole catalogue decides.
+		Browse.filters.type = "2"; Browse:DrawBrowse()
+		assert.is_true(#Browse.rowsShown < #all)
+		assert.equal(fitted, width(Browse.BrowseList, "type"))
+		Browse.filters.type = "any"
+		-- Widths are memoised per text (a redraw per keystroke over every row); a text's width never
+		-- changes in a session, so the memo is wiped here where this example changes the declared ones.
+		-- The old width is the ceiling: a type text wider than the column was never pushes the name away.
+		frames.setStringWidth(widest.type, 400); Browse.textWidths = nil
+		Browse:DrawBrowse()
+		assert.equal(150, width(Browse.BrowseList, "type"))
+		frames.setStringWidth(widest.type, nil)
+		-- And the floor is the heading: a catalogue of one short type keeps room for "Type" and its arrow.
+		for _, r in ipairs(all) do frames.setStringWidth(r.type, 8) end
+		Browse.textWidths = nil
+		Browse:DrawBrowse()
+		assert.equal(Browse.FIT_TYPE_MIN, width(Browse.BrowseList, "type"))
+		for i, r in ipairs(all) do frames.setStringWidth(r.type, 60 + i) end
+		frames.setStringWidth(widest.type, 96); Browse.textWidths = nil
+		-- Memoised: a second measurement of the same text does not touch the FontString.
+		assert.equal(96, Browse:TextWidth(widest.type))
+		Browse.measureFS.SetText = function() error("measured a memoised text again") end
+		assert.equal(96, Browse:TextWidth(widest.type))
+		Browse.measureFS.SetText = nil
+		-- The Shop tab fits its own list the same way.
+		TOGBankClassic_Guild.shopEnabled = true
+		Browse:ShowTab("shop")
+		assert.equal(fitted, width(Browse.ShopList, "type"))
+		assert.equal(fitted, Browse.ShopList.headerCells.type.btn:GetWidth())
+	end)
+
 	it("switches to the Bankers tab, and a banker row click browses that bank", function()
 		Browse:Open("bankers")
 		assert.equal("bankers", Browse.currentTab)
@@ -507,6 +802,105 @@ describe("BROWSE-001: the window", function()
 		assert.equal("browse", Browse.currentTab)
 		assert.equal(BOB, Browse.filters.bank)
 		assert.equal(3, #Browse.rowsShown)
+	end)
+
+	-- BANKER-OWNER-001 (the operator, 2026-09-14: "officers ... right click on a banker in the bankers
+	-- tab to assign who 'owns' the banker, that info would show on the mouseover tooltip ...
+	-- autocomplete for the names on the roster in guild roster but it can be free text").
+	it("a Bankers row hovers who runs it, a member's right click is refused, an officer's opens the dialog whose Save goes through the ONE writer", function()
+		local G = TOGBankClassic_Guild
+		local owners = { [ALICE] = "Carol" }
+		G.GetBankerOwner = function(_, n) return owners[n] end
+		local writes = {}
+		G.SetBankerOwner = function(_, n, text) writes[#writes + 1] = { n, text }; owners[n] = text ~= "" and text or nil; return true end
+		Browse:Open("bankers")
+		local byNorm = {}
+		for _, r in ipairs(Browse.BankerList.data) do byNorm[r.norm] = r end
+		assert.equal("Carol", byNorm[ALICE].owner)
+		assert.is_nil(byNorm[BOB].owner)
+		-- The hover: "Run by Carol" on Alice; nothing on Bob for a member; the gesture for an officer.
+		Browse:OnBankerRowEnter(byNorm[ALICE])
+		assert.equal("Run by Carol", GameTooltip._lines[1].left)
+		GameTooltip:Hide(); GameTooltip:ClearLines()
+		Browse:OnBankerRowEnter(byNorm[BOB])
+		assert.equal(0, #GameTooltip._lines, "a member saw a tooltip on a bank with no owner")
+		_G.CanViewOfficerNote = function() return true end
+		Browse:OnBankerRowEnter(byNorm[BOB])
+		assert.equal("Right-click to say who runs this bank", GameTooltip._lines[1].left)
+		Browse:OnBankerRowEnter(byNorm[ALICE])
+		assert.equal("Run by Carol", GameTooltip._lines[1].left)
+		assert.equal("Right-click to change who runs this bank", GameTooltip._lines[2].left)
+		GameTooltip:Hide()
+		-- A member's right click: the status line, no dialog.
+		_G.CanViewOfficerNote = nil
+		Browse.OwnerDialog = nil
+		Browse:OnBankerRowRightClick(byNorm[BOB])
+		assert.is_nil(Browse.OwnerDialog)
+		assert.truthy(Browse.statusText:find("Only an officer", 1, true))
+		-- An officer's: the dialog, the box holding what is set, Save through Guild:SetBankerOwner.
+		_G.CanViewOfficerNote = function() return true end
+		Browse:OnBankerRowRightClick(byNorm[ALICE])
+		assert.is_table(Browse.OwnerDialog, "no dialog for an officer")
+		assert.is_true(Browse.OwnerDialog:IsShown())
+		assert.equal("Carol", Browse.OwnerDialog.Box:GetText())
+		assert.truthy(Browse.OwnerDialog.Prompt.label:GetText():find("Who runs Alice-Testrealm?", 1, true))
+		Browse.OwnerDialog.Box:SetText("shared account")
+		assert.is_true(Browse:SaveOwnerDialog())
+		assert.same({ { ALICE, "shared account" } }, writes)
+		assert.is_false(Browse.OwnerDialog:IsShown())
+		-- Clear: the box emptied and saved as "", which the writer reads as clearing.
+		Browse:OnBankerRowRightClick(byNorm[ALICE])
+		assert.equal("shared account", Browse.OwnerDialog.Box:GetText())
+		Browse.OwnerDialog.Clear:Fire("OnClick")
+		assert.same({ ALICE, "" }, writes[2])
+		assert.is_nil(owners[ALICE])
+		-- The writer refusing (a 101st owner, say) keeps the dialog open with a line.
+		G.SetBankerOwner = function() return false end
+		Browse:OnBankerRowRightClick(byNorm[BOB])
+		Browse.OwnerDialog.Box:SetText("someone")
+		assert.is_false(Browse:SaveOwnerDialog())
+		assert.is_true(Browse.OwnerDialog:IsShown())
+		assert.equal("Could not save that.", Browse.OwnerDialog.statustext:GetText())
+		Browse.OwnerDialog:Hide()
+		-- XGUILD-OWNERS-001: a SISTER guild's bank character is that guild's to describe -- no gesture on
+		-- the hover, and an officer's right click says whose it is instead of opening the dialog.
+		local writable = G.BankerOwnerWritable
+		G.BankerOwnerWritable = function(_, n) return n ~= BOB end
+		local sisterRow = setmetatable({ guildName = "Sister Guild" }, { __index = byNorm[BOB] })
+		GameTooltip:Hide(); GameTooltip:ClearLines()
+		Browse:OnBankerRowEnter(sisterRow)
+		for _, line in ipairs(GameTooltip._lines) do
+			assert.is_nil(line.left:find("Right-click", 1, true), "a sister guild's bank character offered the owner gesture")
+		end
+		GameTooltip:Hide()
+		Browse:OnBankerRowRightClick(sisterRow)
+		assert.is_false(Browse.OwnerDialog:IsShown(), "the owner dialog opened for a sister guild's bank character")
+		assert.truthy(Browse.statusText:find("belongs to Sister Guild", 1, true), Browse.statusText)
+		G.BankerOwnerWritable = writable
+		-- A change arriving from a peer repaints the open tab.
+		owners[BOB] = "Dave"
+		Browse:OnBankerOwnerChanged()
+		for _, r in ipairs(Browse.BankerList.data) do if r.norm == BOB then assert.equal("Dave", r.owner) end end
+		Browse.OwnerDialog:Hide()
+	end)
+
+	it("the owner box completes from every roster the guild-roster library holds, same-realm names bare, in the client's source shape", function()
+		LibStub.libs["LibGuildRoster-1.0"] = {
+			GetRealmName = function() return "Testrealm" end,
+			GetAllMembers = function() return { "Alice-Testrealm", "Albert-Testrealm", "Bob-Testrealm", "alfie-Otherrealm" } end,
+			GetSisterGuildKeys = function() return { "Sister" } end,
+			GetRoster = function(_, key) return key == "Sister" and { ["Alma-Testrealm"] = {}, ["Alice-Testrealm"] = {} } or {} end,
+		}
+		LibStub.minors["LibGuildRoster-1.0"] = 6
+		local r = Browse:OwnerNameSource("al", 10)
+		local names = {}
+		for i, e in ipairs(r) do names[i] = e.name; assert.is_number(e.priority) end
+		assert.same({ "Albert", "alfie-Otherrealm", "Alice", "Alma" }, names)
+		assert.equal(2, #Browse:OwnerNameSource("AL", 2), "the cap was ignored")
+		assert.same({}, Browse:OwnerNameSource("", 10))
+		assert.same({}, Browse:OwnerNameSource("zz", 10))
+		LibStub.libs["LibGuildRoster-1.0"], LibStub.minors["LibGuildRoster-1.0"] = nil, nil
+		assert.same({}, Browse:OwnerNameSource("al", 10), "no library, yet names came back")
 	end)
 
 	-- BANKERS-FILTER-001: the operator, 2026-09-13: "add some filters to the top of the bankers tab
@@ -559,8 +953,8 @@ describe("BROWSE-001: the window", function()
 		local Log = TOGBankClassic_Log
 		Log.callbacks = Log.callbacks or {}
 		env.now = 1757003600   -- 2025-09-04 16:33 UTC-ish; the day boundary is what the dates test
-		Log:RecordInventoryChange(BOB, { { ID = 2589, Count = 5 } }, { { ID = 2589, Count = 25 } }, 0, 0, 1757000000, nil, nil,
-			{ ["2589:0"] = { { count = 20, from = "Donor-Testrealm" } } })
+		Log:RecordInventoryChange(BOB, { { 2589, 5 } }, { { 2589, 25 } }, 0, 0, 1757000000, nil, nil,
+			{ ["2589:0:0"] = { { count = 20, from = "Donor-Testrealm" } } })
 		Log:RecordRequestTransition(nil, { id = "r1", date = 1757003600, requester = "Asker-Testrealm", bank = BOB, item = "Linen Cloth", itemID = 2589, quantity = 3, fulfilled = 0, notes = "" })
 		Log:RecordRequestTransition(nil, { id = "r2", date = 1756800000, requester = "Asker-Testrealm", bank = ALICE, item = "Wool Cloth", itemID = 2592, quantity = 1, fulfilled = 0, notes = "" })
 		Browse:Open("log")
@@ -647,8 +1041,9 @@ describe("BROWSE-001: the window", function()
 		Log.callbacks = Log.callbacks or {}
 		env.now = 1757003600
 		-- A deposit of 20 Linen Cloth and 100c on Bob, published an hour ago; a request placed now.
-		local n = Log:RecordInventoryChange(BOB, { { ID = 2589, Count = 5 } }, { { ID = 2589, Count = 25 } }, 0, 100, 1757000000, nil, nil,
-			{ ["2589:0"] = { { count = 20, from = "Donor-Testrealm" } } })
+		-- The before/after sets are V2 records ({ id, count }), the only shape Bank:MintVersion passes.
+		local n = Log:RecordInventoryChange(BOB, { { 2589, 5 } }, { { 2589, 25 } }, 0, 100, 1757000000, nil, nil,
+			{ ["2589:0:0"] = { { count = 20, from = "Donor-Testrealm" } } })
 		assert.equal(2, n, "precondition: the deposit and the money were not recorded")
 		Log:RecordRequestTransition(nil, { id = "r1", date = 1757003600, requester = "Asker-Testrealm", bank = BOB, item = "Linen Cloth", itemID = 2589, quantity = 3, fulfilled = 0, notes = "" })
 		local tab = false
@@ -681,7 +1076,7 @@ describe("BROWSE-001: the window", function()
 		for _, r in ipairs(rows) do if r.entry.type == "money-deposit" then money = r end end
 		assert.is_table(money); assert.equal("", money.count, "a money row has no quantity")
 		-- A new entry lands through the log's own callback and the tab repaints itself.
-		Log:RecordInventoryChange(BOB, { { ID = 2589, Count = 25 } }, { { ID = 2589, Count = 5 } }, 100, 100, 1757003700, nil, nil, nil)
+		Log:RecordInventoryChange(BOB, { { 2589, 25 } }, { { 2589, 5 } }, 100, 100, 1757003700, nil, nil, nil)
 		-- The log's coalescing timer. TWO clocks can own C_Timer in a full-suite run -- env_togbank's
 		-- and the harness's (env.frames re-installs env.wow's) -- and which one Notify's After landed
 		-- on depends on what loaded before this file. Passed alone, failed in the suite. Both are
@@ -807,6 +1202,38 @@ describe("BROWSE-001: the window", function()
 		assert.is_true(breathing(Browse.HelpIcon), "the Bankers tab's unread help does not breathe")
 	end)
 
+	-- HELP-CURRENT-001 (the operator, 2026-09-15, the Bankers tab's text: "it doesn't talk about the
+	-- tooltip on banker names showing who owns the banker, lets get all the i tooltips updated on all
+	-- the pages to be current"): each tab's "?" names the things that tab actually has.
+	it("each tab's help text is current: the owner hover and the officer's right-click, the status dot column and the guild tag, the Shop's own text", function()
+		Browse:Open()
+		local function help(tab)
+			Browse.currentTab = tab
+			GameTooltip:ClearLines()
+			Browse:AddHelpLines()
+			local text = {}
+			for _, l in ipairs(GameTooltip:GetLines()) do text[#text + 1] = l.left or "" end
+			return table.concat(text, "\n")
+		end
+		local bankers = help("bankers")
+		for _, phrase in ipairs({ "who runs that character", "right-click the row to set it", "sister guild", "Online", "Items", "Money", "Stores", "Published" }) do
+			assert.truthy(bankers:find(phrase, 1, true), "the Bankers help does not say: " .. phrase)
+		end
+		local browse = help("browse")
+		for _, phrase in ipairs({ "Type", "Qty", "Lvl", "dot", "sister guild", "(view)", "shop order", "(not for sale)", "donation points", "Clear", "hide it" }) do
+			assert.truthy(browse:find(phrase, 1, true), "the Browse help does not say: " .. phrase)
+		end
+		local shop = help("shop")
+		assert.is_not_equal(browse, shop, "the Shop tab shows the Browse tab's help")
+		for _, phrase in ipairs({ "Est.", "ESTIMATE", "discount", "closed ordering", "Ctrl+right-click", "(not for sale)", "shop order", "Clear" }) do
+			assert.truthy(shop:find(phrase, 1, true), "the Shop help does not say: " .. phrase)
+		end
+		local log = help("log")
+		for _, phrase in ipairs({ "Since", "Until", "From", "To" }) do
+			assert.truthy(log:find(phrase, 1, true), "the Log help does not say: " .. phrase)
+		end
+	end)
+
 	-- The first cut stored ONE boolean for the window. An account that hovered it that day has
 	-- `helpSeen.browse = true`; that reads as the Browse tab seen and nothing else -- the other two
 	-- tabs' text was never in front of them.
@@ -876,6 +1303,464 @@ describe("BROWSE-001: the window", function()
 		assert.is_nil(hidden, "a right click on ANOTHER banker's row tried to hide it")
 		Browse:OnBrowseRowClick(by["Thunderfury@Alice-Testrealm"], "RightButton")
 		assert.same({ 19019, 0, 0, true }, hidden)
+		-- STORE-006: with ordering closed by an officer, a left click on ANY requestable row opens no
+		-- dialog and the status line says why -- the same sentence Guild carries.
+		TOGBankClassic_Guild.IsStoreOpen = function() return false end
+		requested = nil
+		Browse:OnBrowseRowClick(by["Spiked Club@Bob-Testrealm"], "LeftButton")
+		assert.is_nil(requested, "the shop is closed and a request dialog still opened")
+		assert.equal(TOGBankClassic_Guild.STORE_CLOSED_TEXT, Browse.statusText)
+	end)
+
+	-- STORE-006 step 2: the not-for-sale list on the Browse tab -- the tag on the row, the status
+	-- line on a click, the officer's Ctrl+right-click through the one writer, and the hover.
+	it("tags a not-for-sale row, refuses its click, and lets an officer toggle it with Ctrl+right-click", function()
+		TOGBankClassic_Guild.notForSale = { [10132] = true }
+		local requested
+		TOGBankClassic_UI_Search.ShowRequestDialog = function(_, item, bank) requested = { item.ID, bank } end
+		Browse:Open()
+		local by = {}
+		for _, r in ipairs(Browse.rowsShown) do by[r.plainName .. "@" .. r.player] = r end
+		local club = by["Spiked Club@Bob-Testrealm"]
+		assert.is_true(club.notForSale)
+		assert.truthy(club.name:find("(not for sale)", 1, true), "the row carries no tag")
+		assert.is_nil(by["Linen Cloth@Bob-Testrealm"].name:find("not for sale", 1, true), "an ordinary row got the tag")
+		-- A left click says why and opens nothing.
+		Browse:OnBrowseRowClick(club, "LeftButton")
+		assert.is_nil(requested, "a not-for-sale item opened the request dialog")
+		assert.equal("Spiked Club is not for sale -- an officer has taken it off the shop list.", Browse.statusText)
+		-- Ctrl+right-click: a member is refused; an officer toggles through Guild:SetNotForSale.
+		_G.IsControlKeyDown = function() return true end
+		_G.CanViewOfficerNote = function() return false end
+		Browse:OnBrowseRowClick(club, "RightButton")
+		assert.is_nil(TOGBankClassic_Guild.setNotForSaleCalls, "a non-officer changed the shop list")
+		assert.truthy(Browse.statusText:find("Only an officer", 1, true))
+		_G.CanViewOfficerNote = function() return true end
+		Browse:OnBrowseRowClick(club, "RightButton")
+		assert.same({ 10132, false, "Spiked Club" }, TOGBankClassic_Guild.setNotForSaleCalls[1])
+		-- The list was redrawn: the tag is gone and a left click requests again.
+		for _, r in ipairs(Browse.rowsShown) do by[r.plainName .. "@" .. r.player] = r end
+		club = by["Spiked Club@Bob-Testrealm"]
+		assert.is_false(club.notForSale)
+		Browse:OnBrowseRowClick(club, "LeftButton")
+		assert.same({ 10132, BOB }, requested)
+		-- Back on the list from the same gesture; a plain right-click on another banker's row is
+		-- still the no-op it was (HIDE-001 owns plain right-click on your own rows).
+		Browse:OnBrowseRowClick(club, "RightButton")
+		assert.same({ 10132, true, "Spiked Club" }, TOGBankClassic_Guild.setNotForSaleCalls[2])
+		_G.IsControlKeyDown = function() return false end
+		Browse:OnBrowseRowClick(by["Linen Cloth@Bob-Testrealm"], "RightButton")
+		assert.equal(2, #TOGBankClassic_Guild.setNotForSaleCalls, "a plain right-click touched the shop list")
+		-- Hover: the block line for anyone, the gesture line for an officer only, and the shared
+		-- HIDDEN_TEXT tables are never appended to (HIDDEN-TEXT-001 identity).
+		local tips = {}
+		TOGBankClassic_UI.ShowItemTooltip = function(_, link, lines) tips[#tips + 1] = { link, lines } end
+		for _, r in ipairs(Browse:BuildRows()) do by[r.plainName .. "@" .. r.player] = r end
+		club = by["Spiked Club@Bob-Testrealm"]
+		Browse:OnBrowseRowEnter(club)
+		assert.matches("Not for sale", tips[1][2][1][1])
+		assert.matches("Ctrl%+right%-click to put it back on sale", tips[1][2][2][1])
+		_G.CanViewOfficerNote = function() return false end
+		Browse:OnBrowseRowEnter(club)
+		assert.equal(1, #tips[2][2], "a member was told the officer gesture")
+		Browse:OnBrowseRowEnter(by["Linen Cloth@Bob-Testrealm"])
+		assert.is_nil(tips[3][2], "an ordinary row grew tooltip lines for a member")
+		_G.CanViewOfficerNote = function() return true end
+		TOGBankClassic_Bank.HiddenReason = function() return "manual" end
+		Browse:OnBrowseRowEnter(by["Linen Cloth@Alice-Testrealm"])   -- the officer's OWN bank row
+		local T = TOGBankClassic_UI.HIDDEN_TEXT
+		assert.is_not_equal(T.tooltipShown, tips[4][2], "the shared HIDDEN_TEXT table was handed out with an extra line")
+		assert.equal(T.tooltipShown[1], tips[4][2][1], "the hide hint was lost from an own row")
+		assert.equal(1, #T.tooltipShown, "the shared HIDDEN_TEXT table was appended to")
+		assert.matches("mark it not for sale", tips[4][2][2][1])
+		_G.CanViewOfficerNote = nil
+		_G.IsControlKeyDown = nil
+	end)
+
+	-- SHOP-TAB-001 (the operator, 2026-09-14: "it should be a new tab, with a setting to turn it
+	-- on/off ... off by default"): the Shop tab exists only while the guild's shop is on.
+	it("has no Shop tab with the shop off, gains one when it is on, and drops it again when it goes off under an open window", function()
+		assert.equal(4, #Browse:TabList())
+		for _, t in ipairs(Browse:TabList()) do assert.is_not_equal("shop", t.value) end
+		for _, c in ipairs(Browse.BROWSE_COLUMNS) do
+			assert.is_not_equal("value", c.key, "the Browse tab carries the estimate column -- it is the Shop tab's")
+		end
+		Browse:Open()
+		assert.equal(4, #Browse.TabGroup.tablist, "the strip rendered a tab the guild does not have")
+		-- A saved "shop" tab from a session when the shop was on falls back to the default.
+		TOGBankClassic_Options.db.char.browseTab = "shop"
+		assert.equal("browse", Browse:RememberedTab())
+		-- On: the tab appears at the end, the remembered tab is honoured, and a settings receipt
+		-- re-renders the strip on the open window.
+		TOGBankClassic_Guild.shopEnabled = true
+		assert.equal("shop", Browse:TabList()[5].value)
+		assert.equal("shop", Browse:RememberedTab())
+		Browse:OnShopSettingChanged()
+		assert.equal(5, #Browse.TabGroup.tablist)
+		Browse.TabGroup:SelectTab("shop")
+		assert.equal("shop", Browse.currentTab)
+		assert.is_true(Browse.ShopList.parent:IsShown(), "the Shop list is not showing on its tab")
+		assert.is_false(Browse.BrowseList.parent:IsShown(), "the Browse list is still showing under the Shop tab")
+		-- Off under the open window: the strip loses the tab and Browse takes over.
+		TOGBankClassic_Guild.shopEnabled = false
+		Browse:OnShopSettingChanged()
+		assert.equal(4, #Browse.TabGroup.tablist)
+		assert.equal("browse", Browse.currentTab, "the window stayed on a tab that no longer exists")
+	end)
+
+	-- STORE-001 (GUILD_STORE.md build-order step 5), on the Shop tab: the estimate column, over
+	-- LibItemDB MINOR 25's bulk lookup (LIBRARY_CONTRACTS.md 7.13). Feature-detected on the METHOD:
+	-- this fixture's ItemDB stub is MINOR 15 with no GetPrices, so the column is empty until the stub
+	-- grows the method with the delivered shape.
+	it("the Shop tab prices the catalogue in ONE bulk call, shows ~ estimates, says its sign and count, and the hover gives source, statistic and age", function()
+		local lib = LibStub.libs["LibItemDB-1.0"]
+		assert.is_nil(Browse:PriceLibrary(), "precondition: a library without GetPrices was taken as a price library")
+		TOGBankClassic_Guild.shopEnabled = true
+		Browse:Open()
+		Browse.TabGroup:SelectTab("shop")
+		-- No library: rows, no values, and the status line says what to do.
+		assert.truthy(Browse.statusText:find("no price library", 1, true), Browse.statusText)
+		local calls = 0
+		lib.GetPrices = function(_, ids, statistic)
+			calls = calls + 1
+			assert.is_nil(statistic, "the consumer forced a statistic instead of the account default")
+			assert.is_true(ids[2589] and ids[19019] and true or false, "the set of ids did not carry the rows' items")
+			return {
+				[2589]  = { value = 150,   source = "auctionator", sourceName = "Auctionator", statistic = "minBuyout", age = 8040 },
+				[19019] = { value = 50000, source = "tsm",         sourceName = "TSM",         statistic = "market",    age = nil },
+			}, 2
+		end
+		lib.FormatPriceAge = function(_, s) return s == 8040 and "2h 14m" or tostring(s) end
+		lib.HasPriceData = function() return false end
+		assert.equal(lib, Browse:PriceLibrary())
+		Browse:DrawShop()
+		assert.equal(1, calls, "the rows were priced one call per row, or not at all")
+		assert.truthy(Browse.statusText:find("no price data yet", 1, true), Browse.statusText)
+		lib.HasPriceData = function() return true end
+		Browse:DrawShop()
+		-- Linen Cloth is held by three bankers, so four rows price.
+		assert.truthy(Browse.statusText:find("7 items, 4 with an estimate", 1, true), Browse.statusText)
+		local by = {}
+		for _, r in ipairs(Browse.shopRowsShown) do by[r.plainName .. "@" .. r.player] = r end
+		assert.equal(150, by["Linen Cloth@Bob-Testrealm"].value)
+		assert.equal(150, by["Linen Cloth@Bob-Testrealm"]._sort_value)
+		assert.equal(50000, by["Thunderfury@Alice-Testrealm"].value)
+		assert.is_nil(by["Spiked Club@Bob-Testrealm"].value, "an unpriced row got a value")
+		assert.equal(0, by["Spiked Club@Bob-Testrealm"]._sort_value, "an unpriced row sorts as something other than 0")
+		-- The column: "~" on every figure, nothing on an unpriced row, and the header says estimate.
+		local col
+		for _, c in ipairs(Browse.SHOP_COLUMNS) do if c.key == "value" then col = c end end
+		assert.is_table(col, "no Est. column")
+		assert.equal("Est.", col.header)
+		assert.equal("~" .. Browse:Money(150), col.format(150))
+		assert.equal("", col.format(""))   -- RowList hands "" for a missing value
+		assert.equal("", col.format(0))
+		assert.matches("ESTIMATE", col.headerTip)
+		-- The search box narrows; the sign shows on the status line when closed.
+		Browse.shopFilter.text = "linen"
+		Browse:DrawShop()
+		assert.truthy(Browse.statusText:find("of 7 items", 1, true), Browse.statusText)
+		Browse.shopFilter.text = ""
+		TOGBankClassic_Guild.IsStoreOpen = function() return false end
+		Browse:DrawShop()
+		assert.truthy(Browse.statusText:find("^ORDERING CLOSED"), Browse.statusText)
+		TOGBankClassic_Guild.IsStoreOpen = function() return true end
+		-- The hover: source, statistic and age; "age unknown" for a source that gives none.
+		local tips = {}
+		TOGBankClassic_UI.ShowItemTooltip = function(_, link, lines) tips[#tips + 1] = { link, lines } end
+		Browse:OnBrowseRowEnter(by["Linen Cloth@Bob-Testrealm"])
+		assert.matches("^Estimated ~", tips[1][2][1][1])
+		assert.matches("min buyout, Auctionator, 2h 14m old", tips[1][2][1][1])
+		Browse:OnBrowseRowEnter(by["Thunderfury@Alice-Testrealm"])
+		assert.matches("market value, TSM, age unknown", tips[2][2][#tips[2][2]][1])
+		Browse:OnBrowseRowEnter(by["Spiked Club@Bob-Testrealm"])
+		assert.is_nil(tips[3][2], "an unpriced row grew a price line")
+		-- The Browse tab's rows are NOT priced: the estimate is the Shop tab's.
+		for _, r in ipairs(Browse:BuildRows()) do assert.is_nil(r.value, "a Browse row carried an estimate") end
+		-- A library that raises prices nothing and breaks nothing.
+		lib.GetPrices = function() error("boom") end
+		for _, r in ipairs(Browse:PriceRows(Browse:BuildRows())) do assert.is_nil(r.value) end
+		lib.GetPrices, lib.FormatPriceAge, lib.HasPriceData = nil, nil, nil
+	end)
+
+	-- STRIP-SIGN-001 (the operator, 2026-09-14, on a screenshot of the strip: "we can remove the
+	-- ordering open check box here, the one in settings is enough"): the sign's ONLY control is the
+	-- Options toggle. The strip is the search box, for a member and an officer alike.
+	it("the Shop tab's strip is the search box only -- no Ordering open box, not even for an officer", function()
+		TOGBankClassic_Guild.shopEnabled = true
+		Browse:Open()
+		Browse.TabGroup:SelectTab("shop")
+		assert.is_nil(Browse.ShopOpenBox)
+		_G.CanViewOfficerNote = function() return true end
+		Browse.TabGroup:SelectTab("browse")
+		Browse.TabGroup:SelectTab("shop")
+		assert.is_nil(Browse.ShopOpenBox, "the Ordering open box came back to the strip")
+		for _, w in ipairs(Browse.ShopStrip.children) do
+			local label = w.type == "CheckBox" and w.text and w.text.GetText and w.text:GetText() or ""
+			assert.is_not_equal("Ordering open", label, "the Ordering open box came back to the strip")
+		end
+		assert.same({}, TOGBankClassic_Guild.setStoreOpenCalls or {})
+	end)
+
+	-- Peer Review f5e52bcf F6: Refresh() (what every "data landed" signal fans to) skipped the Shop
+	-- tab, and the two row handlers the lists share repainted the hidden Browse list from it.
+	it("the Shop tab is repainted when data lands, and a row handler used on it repaints the SHOP list", function()
+		TOGBankClassic_Guild.shopEnabled = true
+		Browse:Open()
+		Browse.TabGroup:SelectTab("shop")
+		assert.equal(7, #Browse.shopRowsShown)
+		-- The catalogue changes under the open tab (a banker's scan landed): Refresh repaints the shop.
+		local drewShop, drewBrowse = 0, 0
+		local DrawShop, DrawBrowse = Browse.DrawShop, Browse.DrawBrowse
+		Browse.DrawShop = function(self, ...) drewShop = drewShop + 1 return DrawShop(self, ...) end
+		Browse.DrawBrowse = function(self, ...) drewBrowse = drewBrowse + 1 return DrawBrowse(self, ...) end
+		Browse:Refresh()
+		assert.equal(1, drewShop, "data landing did not repaint the open Shop tab")
+		assert.equal(0, drewBrowse, "data landing repainted the hidden Browse list instead")
+		-- An officer's Ctrl+right-click on a Shop row: the Shop list is what repaints.
+		_G.CanViewOfficerNote = function() return true end
+		_G.IsControlKeyDown = function() return true end
+		local before = TOGBankClassic_Guild.SetNotForSale
+		TOGBankClassic_Guild.SetNotForSale = function() return true end
+		Browse:OnBrowseRowClick(Browse.shopRowsShown[1], "RightButton")
+		assert.equal(2, drewShop, "the not-for-sale click did not repaint the Shop tab")
+		assert.equal(0, drewBrowse)
+		TOGBankClassic_Guild.SetNotForSale = before
+		_G.IsControlKeyDown = nil
+		Browse.DrawShop, Browse.DrawBrowse = DrawShop, DrawBrowse
+	end)
+
+	-- SHOP-FILTERS-001 (the operator, 2026-09-14: "the shop needs the same filters as the browse tab,
+	-- to allow folks to find stuff"): the Shop tab's strip IS the Browse strip -- the same widgets in
+	-- the same order from the one builder -- on the shop's own filter table, so narrowing the shop
+	-- leaves Browse alone and a Clear on the shop clears the shop.
+	it("the Shop tab carries the Browse tab's filters, on its own table, from the one builder", function()
+		TOGBankClassic_Guild.shopEnabled = true
+		Browse:Open()
+		Browse.TabGroup:SelectTab("browse")
+		local function shape(strip)
+			local out = {}
+			for i, w in ipairs(strip.children) do out[i] = w.type .. ":" .. tostring(w.label and w.label.GetText and w.label:GetText() or w.text and w.text.GetText and w.text:GetText() or "") end
+			return out
+		end
+		local browseShape = shape(Browse.FilterStrip)
+		assert.is_true(#browseShape >= 9, "the Browse strip lost widgets: " .. table.concat(browseShape, ","))
+		Browse.TabGroup:SelectTab("shop")
+		assert.same(browseShape, shape(Browse.ShopStrip), "the Shop strip is not the Browse strip")
+		assert.equal(Browse.STRIP_H, Browse.ShopStrip.frame:GetHeight(), "the shop strip is not the two-row height")
+		assert.equal(7, #Browse.shopRowsShown)
+		-- Narrow the shop by type: only the shop narrows.
+		Browse.shopFilter.type = "2"
+		Browse:DrawShop()
+		assert.equal(2, #Browse.shopRowsShown)
+		assert.truthy(Browse.statusText:find("2 of 7 items", 1, true), Browse.statusText)
+		assert.equal("any", Browse.filters.type, "narrowing the shop narrowed Browse")
+		-- Level range and the search box, through the same FilterRows the Browse tab uses.
+		Browse.shopFilter.type = "any"; Browse.shopFilter.minLevel = 20
+		Browse:DrawShop()
+		for _, r in ipairs(Browse.shopRowsShown) do assert.is_true(r.reqLevel >= 20, r.plainName) end
+		Browse.shopFilter.minLevel = 0; Browse.shopFilter.text = "linen"
+		Browse:DrawShop()
+		assert.equal(4, #Browse.shopRowsShown, "three Linen Cloth rows and the Red Linen Shirt")
+		-- Clear on the shop: the shop's table reset, the strip rebuilt, every row back; Browse untouched.
+		Browse.filters.type = "4"
+		Browse.ShopClearButton:Fire("OnClick")
+		assert.same(Browse:DefaultFilters(), Browse.shopFilter)
+		assert.equal(7, #Browse.shopRowsShown)
+		assert.equal("4", Browse.filters.type, "clearing the shop cleared Browse")
+		-- And the other way: Browse's Clear leaves the shop's filters alone.
+		Browse.shopFilter.text = "cloth"
+		Browse.TabGroup:SelectTab("browse")
+		Browse.ClearButton:Fire("OnClick")
+		assert.equal("any", Browse.filters.type)
+		assert.equal("cloth", Browse.shopFilter.text, "clearing Browse cleared the shop")
+	end)
+
+	-- STORE-003 (GUILD_STORE.md 4.3; the operator: "if you want to sell all the items at 50% off, we
+	-- need to apply that to the pricing that is displayed on the shop tab"): the discount at display.
+	it("the discount halves the Est. column, the hover says so with the market figure, the status line wears it, and 100% off reads free", function()
+		local lib = LibStub.libs["LibItemDB-1.0"]
+		lib.GetPrices = function()
+			return {
+				[2589]  = { value = 151,   source = "auctionator", sourceName = "Auctionator", statistic = "minBuyout", age = 8040 },
+				[19019] = { value = 50000, source = "tsm",         sourceName = "TSM",         statistic = "market",    age = nil },
+			}, 2
+		end
+		lib.FormatPriceAge = function(_, s) return tostring(s) end
+		lib.HasPriceData = function() return true end
+		local pct = 50
+		TOGBankClassic_Guild.GetStoreDiscount = function() return pct end
+		TOGBankClassic_Guild.shopEnabled = true
+		Browse:Open()
+		Browse.TabGroup:SelectTab("shop")
+		local by = {}
+		for _, r in ipairs(Browse.shopRowsShown) do by[r.plainName .. "@" .. r.player] = r end
+		local linen = by["Linen Cloth@Bob-Testrealm"]
+		assert.equal(75, linen.value, "151 at 50% off is 75, floored")
+		assert.equal(151, linen.marketValue)
+		assert.equal(75, linen._sort_value)
+		assert.is_true(linen.priced)
+		assert.is_nil(by["Spiked Club@Bob-Testrealm"].priced, "an unpriced row was marked priced")
+		assert.truthy(Browse.statusText:find("50% OFF -- 7 items, 4 with an estimate", 1, true), Browse.statusText)
+		local tips = {}
+		TOGBankClassic_UI.ShowItemTooltip = function(_, link, lines) tips[#tips + 1] = { link, lines } end
+		Browse:OnBrowseRowEnter(linen)
+		assert.truthy(tips[1][2][1][1]:find("Estimated ~" .. Browse:Money(75) .. " (50% off ~" .. Browse:Money(151) .. ") -- min buyout, Auctionator", 1, true), tips[1][2][1][1])
+		-- No discount: the plain line and no sign.
+		pct = 0
+		Browse:DrawShop()
+		assert.equal(151, Browse.shopRowsShown[1].marketValue and by["Linen Cloth@Bob-Testrealm"].marketValue)
+		for _, r in ipairs(Browse.shopRowsShown) do if r.priced then assert.equal(r.marketValue, r.value) end end
+		assert.is_nil(Browse.statusText:find("OFF", 1, true), Browse.statusText)
+		-- 100% off: the column reads "free" on a priced row and stays blank on an unpriced one; the
+		-- row still counts as having an estimate.
+		pct = 100
+		Browse:DrawShop()
+		local col
+		for _, c in ipairs(Browse.SHOP_COLUMNS) do if c.key == "value" then col = c end end
+		for _, r in ipairs(Browse.shopRowsShown) do by[r.plainName .. "@" .. r.player] = r end
+		assert.equal(0, by["Linen Cloth@Bob-Testrealm"].value)
+		assert.equal("free", col.format(0, by["Linen Cloth@Bob-Testrealm"]))
+		assert.equal("", col.format("", by["Spiked Club@Bob-Testrealm"]))
+		assert.equal("", col.format(0, {}))
+		assert.truthy(Browse.statusText:find("100% OFF -- 7 items, 4 with an estimate", 1, true), Browse.statusText)
+		tips = {}
+		Browse:OnBrowseRowEnter(by["Linen Cloth@Bob-Testrealm"])
+		assert.truthy(tips[1][2][1][1]:find("Estimated ~free (100% off ~", 1, true), tips[1][2][1][1])
+		-- The setting changing under the open Shop tab redraws it.
+		pct = 25
+		Browse:OnShopSettingChanged()
+		assert.truthy(Browse.statusText:find("25% OFF", 1, true), Browse.statusText)
+		lib.GetPrices, lib.FormatPriceAge, lib.HasPriceData = nil, nil, nil
+		TOGBankClassic_Guild.GetStoreDiscount = nil
+	end)
+
+	-- STORE-006: the REAL request dialog (Search.lua, the one Browse hands the row to) refuses a
+	-- closed shop before building anything, with the same sentence as a chat warning -- the old
+	-- Inventory window's rows reach it with no status line to write to.
+	it("the request dialog itself refuses a closed shop with the shared sentence, and builds nothing", function()
+		local S = TOGBankClassic_UI_Search
+		S.RequestDialog = nil
+		TOGBankClassic_Guild.IsStoreOpen = function() return false end
+		local entry
+		for _, r in ipairs(Browse:BuildRows()) do if r.player == BOB and r.plainName == "Spiked Club" then entry = r end end
+		assert.is_table(entry)
+		S:ShowRequestDialog(entry, BOB)
+		assert.is_nil(S.RequestDialog, "a closed shop still built the request dialog")
+		local warn = TOGBankClassic_Output.calls[#TOGBankClassic_Output.calls]
+		assert.equal("Warn", warn.level)
+		assert.equal(TOGBankClassic_Guild.STORE_CLOSED_TEXT, warn[2])
+		-- STORE-006 step 2: and a not-for-sale item, with the item named.
+		TOGBankClassic_Guild.IsStoreOpen = function() return true end
+		TOGBankClassic_Guild.notForSale = { [10132] = true }
+		S:ShowRequestDialog(entry, BOB)
+		assert.is_nil(S.RequestDialog, "a not-for-sale item still built the request dialog")
+		warn = TOGBankClassic_Output.calls[#TOGBankClassic_Output.calls]
+		assert.equal("Warn", warn.level)
+		assert.equal(TOGBankClassic_Guild.NOT_FOR_SALE_TEXT, warn[1])
+		assert.equal("Spiked Club", warn[2])
+	end)
+
+	-- SHOP-NOFREE-001 (the operator, 2026-09-14: "when the shop tab is shown and ordering is enabled,
+	-- there should be no 'free' item requests"): the REAL dialog, built and submitted -- the first
+	-- example to drive Search:SubmitRequest at all. With the shop on, every order it builds carries
+	-- the shop mark and the estimate it showed, from the same call the Shop tab prices with; the
+	-- prompt says so. With the shop off, nothing is added and the prompt is the plain question.
+	it("the request dialog marks a shop order and writes the estimate it shows; a plain bank adds nothing", function()
+		local S = TOGBankClassic_UI_Search
+		S.RequestDialog = nil
+		local lib = LibStub.libs["LibItemDB-1.0"]
+		lib.GetPrices = function(_, ids)
+			local out = {}
+			if ids[2589] then out[2589] = { value = 151, source = "auctionator", sourceName = "Auctionator", statistic = "minBuyout", age = 8040 } end
+			return out, 1
+		end
+		TOGBankClassic_Guild.GetStoreDiscount = function() return 50 end
+		local added
+		TOGBankClassic_Guild.AddRequest = function(_, req) added = req; return true end
+		TOGBankClassic_Options.GetMaxRequestPercent = function() return 100 end
+		local rows = {}
+		for _, r in ipairs(Browse:BuildRows()) do rows[r.plainName .. "@" .. r.player] = r end
+		-- The shop on: a priced item.
+		TOGBankClassic_Guild.shopEnabled = true
+		S:ShowRequestDialog(rows["Linen Cloth@Bob-Testrealm"], BOB)
+		assert.is_table(S.RequestDialog, "the dialog was not built")
+		local prompt = S.RequestDialog.Prompt.label:GetText()
+		assert.truthy(prompt:find("Shop order -- estimated ~" .. Browse:Money(75) .. " (50% off ~" .. Browse:Money(151) .. ") each (min buyout, Auctionator)", 1, true), prompt)
+		assert.truthy(prompt:find("sets the final price when your order is filled", 1, true), prompt)
+		S.RequestDialog.QuantityInput:SetValue(3)
+		S:SubmitRequest()
+		assert.is_table(added, "Submit did not reach AddRequest")
+		assert.is_true(added.shopOrder)
+		assert.equal(75, added.estimate); assert.equal(151, added.estimateBase); assert.equal(50, added.discount)
+		assert.equal("min buyout, Auctionator", added.estimateSource)
+		assert.equal(3, added.quantity); assert.equal(2589, added.itemID); assert.equal(BOB, added.bank)
+		-- SHOP-ORDER-API-001: what another addon gets from the ONE builder is what the dialog wrote,
+		-- field for field, and the line it shows is the dialog's line.
+		local fields = Browse:ShopOrderFields(2589)
+		for _, k in ipairs({ "shopOrder", "estimate", "estimateBase", "discount", "estimateSource" }) do
+			assert.equal(added[k], fields[k], "ShopOrderFields disagrees with the dialog on " .. k)
+		end
+		assert.truthy(prompt:find(fields.prompt, 1, true), "the dialog did not show the builder's line")
+		assert.is_false(S.RequestDialog:IsShown(), "the dialog stayed open after a successful submit")
+		-- An unpriced item: still a shop order, no estimate, and the prompt says it is priced at fill.
+		added = nil
+		S:ShowRequestDialog(rows["Spiked Club@Bob-Testrealm"], BOB)
+		prompt = S.RequestDialog.Prompt.label:GetText()
+		assert.truthy(prompt:find("Shop order -- no estimate for this item yet", 1, true), prompt)
+		S:SubmitRequest()
+		assert.is_true(added.shopOrder)
+		assert.is_nil(added.estimate); assert.is_nil(added.estimateBase); assert.is_nil(added.discount); assert.is_nil(added.estimateSource)
+		-- No discount: the plain figure.
+		TOGBankClassic_Guild.GetStoreDiscount = function() return 0 end
+		S:ShowRequestDialog(rows["Linen Cloth@Bob-Testrealm"], BOB)
+		prompt = S.RequestDialog.Prompt.label:GetText()
+		assert.truthy(prompt:find("estimated ~" .. Browse:Money(151) .. " each (min buyout, Auctionator)", 1, true), prompt)
+		S:SubmitRequest()
+		assert.equal(151, added.estimate); assert.is_nil(added.discount)
+		-- The shop off: a plain request, the plain prompt, none of the fields.
+		added = nil
+		TOGBankClassic_Guild.shopEnabled = false
+		S:ShowRequestDialog(rows["Linen Cloth@Bob-Testrealm"], BOB)
+		prompt = S.RequestDialog.Prompt.label:GetText()
+		assert.is_nil(prompt:find("Shop order", 1, true), prompt)
+		S:SubmitRequest()
+		assert.is_nil(added.shopOrder); assert.is_nil(added.estimate); assert.is_nil(added.estimateSource)
+		assert.is_nil(Browse:ShopOrderFields(2589), "a plain bank got shop-order fields")
+		-- AddRequest refusing (the gate) keeps the dialog open with the status line, not a chat error --
+		-- and with the GATE'S sentence when it gives one (Peer Review f5e52bcf F9: ordering closed
+		-- between the dialog opening and the Send).
+		TOGBankClassic_Guild.AddRequest = function() return false end
+		S:ShowRequestDialog(rows["Linen Cloth@Bob-Testrealm"], BOB)
+		S:SubmitRequest()
+		assert.is_true(S.RequestDialog:IsShown())
+		assert.equal("Unable to send request.", S.RequestDialog.statustext:GetText())
+		TOGBankClassic_Guild.AddRequest = function() return false, TOGBankClassic_Guild.STORE_CLOSED_TEXT end
+		S:SubmitRequest()
+		assert.equal(TOGBankClassic_Guild.STORE_CLOSED_TEXT, S.RequestDialog.statustext:GetText(), "the gate's reason was not shown")
+		lib.GetPrices = nil
+		TOGBankClassic_Guild.GetStoreDiscount = nil
+	end)
+
+	-- Browse:PriceOne is the rows' pricing for ONE id: nil when nothing prices it, the discounted
+	-- shape when something does, and nil for a bad id.
+	it("PriceOne answers the row shape for a priced id and nil otherwise", function()
+		assert.is_nil(Browse:PriceOne(2589), "no library data, yet something was priced")
+		assert.is_nil(Browse:PriceOne("cloth"))
+		local lib = LibStub.libs["LibItemDB-1.0"]
+		lib.GetPrices = function(_, ids)
+			return ids[2589] and { [2589] = { value = 151, source = "tsm", sourceName = "TSM", statistic = "market" } } or {}, 1
+		end
+		TOGBankClassic_Guild.GetStoreDiscount = function() return 25 end
+		local p = Browse:PriceOne(2589)
+		assert.equal(113, p.value, "151 at 25% off is 113, floored")
+		assert.equal(151, p.marketValue)
+		assert.is_true(p.priced)
+		assert.equal("market value, TSM", Browse:EstimateSourceText(p.priceInfo))
+		assert.is_nil(Browse:PriceOne(19019))
+		assert.is_nil(Browse:EstimateSourceText(nil))
+		lib.GetPrices = nil
+		TOGBankClassic_Guild.GetStoreDiscount = nil
 	end)
 
 	-- HIDE-003. The operator, on the Guild Bank window: "by default right click on an item it 'just
@@ -1153,6 +2038,39 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 			end
 	end)
 
+	-- VISIBILITY-001 part 4, embedded: the Guild Bank window re-embeds the Requests body on the scale
+	-- signal, and the officer Settings overlay on THIS window's frame is found again and re-laid at the
+	-- new scale -- the path requestsactions_spec drives for the standalone window, here for the tab.
+	it("an officer's Settings tab, open on the Requests tab, is re-laid at the new scale and back at 1x", function()
+		_G.CanViewOfficerNote = function() return true end
+		local W = LibStub("LibAceGUIWidgets-1.0")
+		W:SetScale(1)
+		local ok, err = pcall(function()
+			Browse:Open("requests")
+			R.TabGroup:SelectTab("settings")
+			local overlay = R.SettingsOverlay
+			assert.is_table(overlay, "no Settings overlay on the embedded body")
+			assert.equal(Browse.Window.frame, overlay:GetParent(), "the overlay is not on the Guild Bank window's frame")
+			assert.is_true(overlay:IsShown())
+			assert.equal(42, R.SettingsArchiveEB:GetWidth())
+			assert.equal(18, R.ReasonRows[1]:GetHeight())
+			W:SetScale(2)
+			assert.is_true(R.embedded, "the body came back standalone")
+			assert.equal(overlay, R.SettingsOverlay, "a second overlay was built on the Guild Bank window's frame")
+			assert.equal("settings", R.currentTab)
+			assert.is_true(overlay:IsShown(), "the Settings tab did not come back up after the rebuild")
+			assert.equal(84, R.SettingsArchiveEB:GetWidth()); assert.equal(40, R.SettingsArchiveEB:GetHeight())
+			assert.equal(36, R.ReasonRows[1]:GetHeight(), "a pooled reason row kept its 1x height")
+			assert.equal(108, R.ReasonSaveBtn:GetWidth())
+			W:SetScale(1)
+			assert.equal(overlay, R.SettingsOverlay)
+			assert.equal(42, R.SettingsArchiveEB:GetWidth())
+			assert.equal(18, R.ReasonRows[1]:GetHeight())
+		end)
+		W:SetScale(1)   -- suite-wide library state: never leave it moved, even on a failure
+		assert(ok, err)
+	end)
+
 	-- SCROLLBAR-002 ("the reopen order button is overlapping the scroll bar") is the RowList's to
 	-- keep now: its rows stop a gutter short of the host's right edge and its bar lives in that
 	-- gutter, the same geometry the Browse tab has. REQUESTS-ROWLIST-001: the whole body is that
@@ -1307,7 +2225,9 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 		end
 		G.LastSeenAddonVersion = function(_, name)
 			if name == "Gone-Testrealm" then return "TOGBankClassic-v1.4.1", true end
-			if name == "Fine-Testrealm" then return "TOGBankClassic-v1.5.0", true end
+			-- A CURRENT version is whatever the data-leg floor is (1.6.0 since LIBREQ-DS-008), read
+			-- from the constant so this example does not go stale with the next floor.
+			if name == "Fine-Testrealm" then return "TOGBankClassic-v" .. TOGBankClassic_Constants.PROTOCOL.DATA_LEG_MIN_ADDON_VERSION, true end
 			return nil, false
 		end
 		G.CanCancelRequest = function() return false end
@@ -1365,10 +2285,13 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 		G.Info.requests = {
 			r1 = { id = "r1", date = now - 30, updatedAt = now - 10, requester = "Someone-Testrealm", bank = ALICE,
 				item = "Linen Cloth", itemID = 2589, quantity = 2, fulfilled = 0, status = "cancelled", notes = "gone" },
+			-- SHOP-NOFREE-001 / STORE-004: r2 is a shop order with the estimate it was placed at; r3 a
+			-- shop order for an item nothing could price.
 			r2 = { id = "r2", date = now - 20, updatedAt = now - 5, requester = "Someone-Testrealm", bank = ALICE,
-				item = "Linen Cloth", itemID = 2589, quantity = 1, fulfilled = 1, status = "open" },
+				item = "Linen Cloth", itemID = 2589, quantity = 1, fulfilled = 1, status = "open",
+				shopOrder = true, estimate = 75, estimateBase = 151, discount = 50, estimateSource = "min buyout, Auctionator" },
 			r3 = { id = "r3", date = 0, requester = "Someone-Testrealm", bank = ALICE,
-				item = "Old Request", quantity = 1, fulfilled = 0, status = "open" },
+				item = "Old Request", quantity = 1, fulfilled = 0, status = "open", shopOrder = true },
 		}
 		G.CanCancelRequest = function() return true end
 		G.CanCompleteRequest = function() return true end
@@ -1408,10 +2331,18 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 		filled.cells.date:Fire("OnEnter")
 		assert.equal("Filled:  " .. date("%Y-%m-%d %H:%M", now - 5), GameTooltip._lines[3].left)
 		assert.equal("Item arrives approx. 1 hour after sending.", GameTooltip._lines[4].left)
+		-- SHOP-NOFREE-001: a shop order's timeline says what the member was shown when they placed it.
+		assert.equal("Shop order:  estimated ~" .. Browse:Money(75) .. " (50% off ~" .. Browse:Money(151) .. ") each -- min buyout, Auctionator, at order time",
+			GameTooltip._lines[5].left)
 		filled.cells.date:Fire("OnLeave")
-		-- A request with no date says so.
+		-- The cancelled row is a plain request: no shop line.
+		cancelled.cells.date:Fire("OnEnter")
+		assert.equal(4, #GameTooltip._lines, "a plain request's timeline grew a shop line")
+		cancelled.cells.date:Fire("OnLeave")
+		-- A request with no date says so; an unpriced shop order says it is priced at fill.
 		byId.r3.cells.date:Fire("OnEnter")
 		assert.equal("Submitted:  Unknown", GameTooltip._lines[2].left)
+		assert.equal("Shop order:  no estimate at order time -- priced by the bank character at fill", GameTooltip._lines[3].left)
 		byId.r3.cells.date:Fire("OnLeave")
 		-- The item cell: hover shows the store's link for the request's itemID, from the copy overlay.
 		local eb = cancelled.cells.item.editbox

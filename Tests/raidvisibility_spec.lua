@@ -135,12 +135,7 @@ describe("RAID-VISIBILITY-001: the raid guard says so", function()
 		-- outlives this file; a second Init in a later spec file (searchbox_spec) raises "already
 		-- been added". Hand the registration back -- in an after_each, so a RED example above still
 		-- hands it back rather than turning one failure into two (the harness pin 292f625 did that).
-		after_each(function()
-			local ACD = LibStub("AceConfigDialog-3.0")
-			ACD.BlizOptions["TOGBankClassic"] = nil
-			ACD.BlizOptions["TOGBankClassic/Bank"] = nil
-			ACD.BlizOptionsIDMap["TOGBankClassic"] = nil
-		end)
+		after_each(env.releaseBlizOptions)
 
 		it("when on: sends go out, nothing is printed, and the status bar shows no pause", function()
 			TOGBankClassic_Options.IsSyncInRaidEnabled = function() return true end

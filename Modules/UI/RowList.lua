@@ -23,7 +23,9 @@
 -- raised as such, not moved from here (the library is authored from its own session).
 --
 -- Column spec: { key, header, width|nil, justify = "LEFT"|"RIGHT"|"CENTER", icon = true,
---   sortable = false, font = "<font object name>", format = function(value) -> text,
+--   headerJustify = "LEFT"|"RIGHT"|"CENTER" (the heading's own alignment; absent, the heading
+--     takes the column's `justify` -- HEADER-ALIGN-001; this used to say "LEFT otherwise"),
+--   sortable = false, font = "<font object name>", format = function(value, entry) -> text,
 --   build = function(rowFrame) -> frame }.
 -- Entry rows are plain tables keyed by column key; a column's sort value may be overridden with
 -- `entry["_sort_" .. key]` (numbers sort numerically, everything else case-insensitively).
@@ -35,10 +37,33 @@
 -- owner paints it from `onRowRender(entry, rowFrame)`, called after the plain cells of a row are
 -- set, with `rowFrame.cells[key]` holding the built frame. `onSortChanged(key, desc)` fires after a
 -- header click has changed the sort, so an owner that rebuilds its body can put the sort back.
+--
+-- VISIBILITY-001 part 2: the list follows LibAceGUIWidgets' accessibility scale, the way the
+-- library's own RowList does. Every size here -- the constants below, `opts.rowHeight`, each
+-- column's `width` (and what SetColumnWidths writes) -- is a SCALE-1.0 value; the live pixels are
+-- derived by `_applyMetrics` and every header cell and pooled row is re-laid on the library's
+-- signal. Fonts are the library's scaled copies of the same base fonts. A built cell (`build`) gets
+-- its height and anchors; what it draws inside is its owner's to scale. The scrollbar lane is NOT
+-- scaled -- the library's own known cost, kept identical so the two lists look alike.
 
 TOGBankClassic_UI_RowList = {}
 local RowList = TOGBankClassic_UI_RowList
 RowList.__index = RowList
+
+local HEADER_FONT, CELL_FONT = "GameFontNormalSmall", "GameFontHighlightSmall"
+local ARROW_W, ARROW_H, ARROW_GAP = 15, 11, 3
+
+-- The scale is asked through UI.lua's helpers (the one place the library is resolved). A spec that
+-- loads this file without UI.lua gets scale 1.0.
+local function S(px)
+	local UI = TOGBankClassic_UI
+	return (UI and UI.UIScaled) and UI:UIScaled(px) or px
+end
+
+local function scaleFont(fs, base)
+	local UI = TOGBankClassic_UI
+	if UI and UI.UIScaledFont then UI:UIScaledFont(fs, base) end
+end
 
 RowList.ROW_HEIGHT       = 16
 RowList.HEADER_HEIGHT    = 20
@@ -58,9 +83,17 @@ RowList.HEADER_COLOR     = "ffffd100"   -- the addon's gold, where FGI uses its 
 function RowList.New(_, parent, opts)
 	opts = opts or {}
 	local self = setmetatable({}, RowList)
-	self.parent     = parent
-	self.rowHeight  = opts.rowHeight or RowList.ROW_HEIGHT
-	self.columns    = opts.columns or {}
+	self.parent        = parent
+	self.baseRowHeight = opts.rowHeight or RowList.ROW_HEIGHT
+	-- COL-FIT-001: this list's OWN copy of each column spec. Browse and Shop share their specs
+	-- (one TYPE_COL table in both lists), and SetColumnWidths below writes `width` -- on a shared
+	-- table one list's fit would silently become the other's next layout.
+	self.columns = {}
+	for i, col in ipairs(opts.columns or {}) do
+		local own = {}
+		for k, v in pairs(col) do own[k] = v end
+		self.columns[i] = own
+	end
 	self.onRowClick = opts.onRowClick
 	self.onRowEnter = opts.onRowEnter
 	self.onRowLeave = opts.onRowLeave
@@ -72,12 +105,17 @@ function RowList.New(_, parent, opts)
 	for _, col in ipairs(self.columns) do
 		if col.header then self.hasHeader = true break end
 	end
-	self.headerHeight = self.hasHeader and RowList.HEADER_HEIGHT or 0
+	self:_applyMetrics()
 	if self.hasHeader then self:_buildHeader() end
 
 	self:_buildScrollbar()
 
 	parent:HookScript("OnSizeChanged", function() self:Refresh() end)
+	-- VISIBILITY-001 part 2: a module-level listener taking the list as its owner argument, not a
+	-- closure over `self` -- the library's listener table is weak-keyed (its own RowList's reason).
+	if TOGBankClassic_UI and TOGBankClassic_UI.OnUIScaleChanged then
+		TOGBankClassic_UI:OnUIScaleChanged(self, RowList._onScaleChanged)
+	end
 	parent:EnableMouseWheel(true)
 	parent:HookScript("OnMouseWheel", function(_, delta)
 		if #self.data == 0 then return end
@@ -86,6 +124,35 @@ function RowList.New(_, parent, opts)
 		self.scrollbar:SetValue(math.max(0, math.min(maxOffset, self.scrollbar:GetValue() - delta)))
 	end)
 	return self
+end
+
+--- The live metrics, from the scale-1.0 values at the current scale. At construction and on every
+--- scale change, before anything is laid out against them.
+function RowList:_applyMetrics()
+	self.rowHeight    = S(self.baseRowHeight)
+	self.headerHeight = self.hasHeader and S(RowList.HEADER_HEIGHT) or 0
+	self.leftPad      = S(RowList.LEFT_PAD)
+	self.colGap       = S(RowList.COL_GAP)
+end
+
+--- A fixed column's live width. `col.width` stays the scale-1.0 value (COL-FIT-001 writes one too),
+--- so a scale change never compounds on a width already scaled.
+function RowList:_colWidth(col)
+	return S(col.width)
+end
+
+--- Re-lay everything at the new scale: metrics, the header, every pooled row, the scrollbar's top,
+--- then the pool re-fitted to the parent at the new row height. The fonts have already followed.
+function RowList:_applyScale()
+	self:_applyMetrics()
+	if self.header then self:_layoutHeader() end
+	for i, row in ipairs(self.rows) do self:_layoutRow(row, i) end
+	self:_anchorScrollbar()
+	self:Refresh()
+end
+
+function RowList._onScaleChanged(_, _, list)
+	list:_applyScale()
 end
 
 --- The index of the one auto-width column, or nil.
@@ -101,20 +168,20 @@ end
 --- (the auto column). The header and every row share this so their columns cannot drift apart.
 function RowList:_placeColumns(place)
 	local autoIdx = self:_autoIndex()
-	local leftOffset = RowList.LEFT_PAD
+	local leftOffset = self.leftPad
 	if autoIdx then
 		for ci = 1, autoIdx - 1 do
 			local col = self.columns[ci]
-			place(col, { leftOffset = leftOffset })
-			leftOffset = leftOffset + col.width + RowList.COL_GAP
+			place(col, { leftOffset = leftOffset, width = self:_colWidth(col) })
+			leftOffset = leftOffset + self:_colWidth(col) + self.colGap
 		end
 	end
-	local rightOffset = RowList.COL_GAP
+	local rightOffset = self.colGap
 	for ci = #self.columns, (autoIdx and autoIdx + 1 or 1), -1 do
 		local col = self.columns[ci]
 		if col.width then
-			place(col, { rightOffset = rightOffset })
-			rightOffset = rightOffset + col.width + RowList.COL_GAP
+			place(col, { rightOffset = rightOffset, width = self:_colWidth(col) })
+			rightOffset = rightOffset + self:_colWidth(col) + self.colGap
 		end
 	end
 	if autoIdx then
@@ -122,22 +189,22 @@ function RowList:_placeColumns(place)
 	end
 end
 
-local function anchorCell(widget, parent, col, anchor)
+local function anchorCell(widget, parent, anchor)
+	widget:ClearAllPoints()
 	if anchor.leftOffset and anchor.rightOffset then
 		widget:SetPoint("LEFT",  parent, "LEFT",  anchor.leftOffset, 0)
 		widget:SetPoint("RIGHT", parent, "RIGHT", -anchor.rightOffset, 0)
 	elseif anchor.leftOffset then
-		widget:SetWidth(col.width)
+		widget:SetWidth(anchor.width)
 		widget:SetPoint("LEFT", parent, "LEFT", anchor.leftOffset, 0)
 	else
-		widget:SetWidth(col.width)
+		widget:SetWidth(anchor.width)
 		widget:SetPoint("RIGHT", parent, "RIGHT", -anchor.rightOffset, 0)
 	end
 end
 
 function RowList:_buildHeader()
 	local h = CreateFrame("Frame", nil, self.parent)
-	h:SetHeight(RowList.HEADER_HEIGHT)
 	h:SetPoint("TOPLEFT",  self.parent, "TOPLEFT",  0, 0)
 	h:SetPoint("TOPRIGHT", self.parent, "TOPRIGHT", -RowList.SCROLLBAR_GUTTER, 0)
 	local bg = h:CreateTexture(nil, "BACKGROUND")
@@ -150,19 +217,23 @@ function RowList:_buildHeader()
 	rule:SetColorTexture(1, 0.82, 0, 0.4)
 
 	self.headerCells = {}
-	self:_placeColumns(function(col, anchor)
+	for _, col in ipairs(self.columns) do
 		local btn = CreateFrame("Button", nil, h)
 		btn:EnableMouse(true)
-		btn:SetHeight(RowList.HEADER_HEIGHT)
-		anchorCell(btn, h, col, anchor)
-		local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+		local fs = btn:CreateFontString(nil, "OVERLAY", HEADER_FONT)
+		scaleFont(fs, HEADER_FONT)
 		fs:SetAllPoints(btn)
-		fs:SetJustifyH("LEFT")
+		-- QTY-CENTER-001 / HEADER-ALIGN-001: a heading sits over its cells -- it takes the column's
+		-- `justify` unless `headerJustify` says otherwise. Every heading used to be LEFT while the
+		-- cells honoured `justify`, so a right-aligned number in a narrow column sat a column's width
+		-- from its heading (the operator, on the Shop tab: "the qty is WAY to the right, can you have
+		-- it centered UNDER the Qty header?", and on the Bankers tab: "the same with the items and
+		-- money column data and headers, they don't align").
+		fs:SetJustifyH(col.headerJustify or col.justify or "LEFT")
 		fs:SetWordWrap(false)
 		fs:SetMaxLines(1)
 		local arrow = btn:CreateTexture(nil, "OVERLAY")
 		arrow:SetTexture("Interface\\Calendar\\MoreArrow")
-		arrow:SetSize(15, 11)
 		arrow:Hide()
 		self.headerCells[col.key] = { btn = btn, fs = fs, arrow = arrow, col = col }
 		if col.header and col.sortable ~= false then
@@ -181,9 +252,22 @@ function RowList:_buildHeader()
 		if col.headerTip and TOGBankClassic_UI and TOGBankClassic_UI.AttachTooltip then
 			TOGBankClassic_UI:AttachTooltip(btn, "ANCHOR_TOP", col.header, { col.headerTip })
 		end
-	end)
-	self:_updateHeaders()
+	end
 	self.header = h
+	self:_layoutHeader()
+end
+
+--- The header's geometry at the current metrics: its height, each cell's height and place along the
+--- chains, the arrow's size. At build, on SetColumnWidths, and on every scale change.
+function RowList:_layoutHeader()
+	self.header:SetHeight(self.headerHeight)
+	self:_placeColumns(function(col, anchor)
+		local cell = self.headerCells[col.key]
+		cell.btn:SetHeight(self.headerHeight)
+		anchorCell(cell.btn, self.header, anchor)
+		cell.arrow:SetSize(S(ARROW_W), S(ARROW_H))
+	end)
+	self:_updateHeaders()   -- the sort arrow's offset is measured from the button's width and the text
 end
 
 function RowList:_updateHeaders()
@@ -197,7 +281,18 @@ function RowList:_updateHeaders()
 				cell.arrow:SetTexCoord(0.0, 0.9375, 0.6875, 0.0)
 			end
 			cell.arrow:ClearAllPoints()
-			cell.arrow:SetPoint("LEFT", cell.btn, "LEFT", (cell.fs:GetStringWidth() or 0) + 3, 0)
+			-- The arrow sits beside the heading's text: after it for a LEFT heading, past the centred
+			-- text's right edge for CENTER, and BEFORE the text for RIGHT, where the text is already
+			-- against the column's edge (QTY-CENTER-001 / HEADER-ALIGN-001).
+			local textW, gap = cell.fs:GetStringWidth() or 0, S(ARROW_GAP)
+			local j = cell.col.headerJustify or cell.col.justify or "LEFT"
+			if j == "RIGHT" then
+				cell.arrow:SetPoint("RIGHT", cell.btn, "RIGHT", -(textW + gap), 0)
+			elseif j == "CENTER" then
+				cell.arrow:SetPoint("LEFT", cell.btn, "LEFT", ((cell.btn:GetWidth() or 0) + textW) / 2 + gap, 0)
+			else
+				cell.arrow:SetPoint("LEFT", cell.btn, "LEFT", textW + gap, 0)
+			end
 			cell.arrow:Show()
 		else
 			cell.arrow:Hide()
@@ -209,8 +304,6 @@ function RowList:_buildScrollbar()
 	local parent = self.parent
 	local sb = CreateFrame("Slider", nil, parent)
 	sb:SetOrientation("VERTICAL")
-	sb:SetPoint("TOPRIGHT",    parent, "TOPRIGHT",    -1, -(self.headerHeight + RowList.SCROLLBAR_BTN))
-	sb:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -1, RowList.SCROLLBAR_BTN)
 	sb:SetWidth(RowList.SCROLLBAR_WIDTH)
 	sb:SetMinMaxValues(0, 0)
 	sb:SetValueStep(1)
@@ -250,14 +343,19 @@ function RowList:_buildScrollbar()
 	end)
 	sb:Hide()
 	self.scrollbar = sb
+	self:_anchorScrollbar()
+end
+
+--- The lane starts under the header, which moves with the scale. Its own width is not scaled.
+function RowList:_anchorScrollbar()
+	local sb, parent = self.scrollbar, self.parent
+	sb:ClearAllPoints()
+	sb:SetPoint("TOPRIGHT",    parent, "TOPRIGHT",    -1, -(self.headerHeight + RowList.SCROLLBAR_BTN))
+	sb:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -1, RowList.SCROLLBAR_BTN)
 end
 
 function RowList:_buildRow(i)
 	local row = CreateFrame("Button", nil, self.parent)
-	row:SetHeight(self.rowHeight)
-	local y = -(self.headerHeight + (i - 1) * self.rowHeight)
-	row:SetPoint("TOPLEFT",  self.parent, "TOPLEFT",  0, y)
-	row:SetPoint("TOPRIGHT", self.parent, "TOPRIGHT", -RowList.SCROLLBAR_GUTTER, y)
 	if i % 2 == 0 then
 		local band = row:CreateTexture(nil, "BACKGROUND")
 		band:SetAllPoints(row)
@@ -266,28 +364,23 @@ function RowList:_buildRow(i)
 	row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
 
 	local cells = {}
-	self:_placeColumns(function(col, anchor)
+	for _, col in ipairs(self.columns) do
 		if col.build then
-			local f = col.build(row)
-			f:SetHeight(self.rowHeight)
-			anchorCell(f, row, col, anchor)
-			cells[col.key] = f
+			cells[col.key] = col.build(row)
 		elseif col.icon then
-			local tex = row:CreateTexture(nil, "ARTWORK")
-			tex:SetSize(self.rowHeight - 2, self.rowHeight - 2)
-			anchorCell(tex, row, col, anchor)
-			cells[col.key] = tex
+			cells[col.key] = row:CreateTexture(nil, "ARTWORK")
 		else
-			local fs = row:CreateFontString(nil, "OVERLAY", col.font or "GameFontHighlightSmall")
-			fs:SetHeight(self.rowHeight)
+			local base = col.font or CELL_FONT
+			local fs = row:CreateFontString(nil, "OVERLAY", base)
+			scaleFont(fs, base)
 			fs:SetJustifyH(col.justify or "LEFT")
 			fs:SetWordWrap(false)
 			fs:SetMaxLines(1)
-			anchorCell(fs, row, col, anchor)
 			cells[col.key] = fs
 		end
-	end)
+	end
 	row.cells = cells
+	self:_layoutRow(row, i)
 
 	row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	row:SetScript("OnClick", function(_, button)
@@ -304,6 +397,27 @@ function RowList:_buildRow(i)
 	end)
 	row:Hide()
 	return row
+end
+
+--- Row `i`'s geometry at the current metrics: its height and place under the header, and each cell's
+--- height (an icon's size) and place along the chains. At build, on SetColumnWidths, and on every
+--- scale change -- so a row pooled at one scale is re-laid at the next.
+function RowList:_layoutRow(row, i)
+	local rowH = self.rowHeight
+	row:SetHeight(rowH)
+	row:ClearAllPoints()
+	local y = -(self.headerHeight + (i - 1) * rowH)
+	row:SetPoint("TOPLEFT",  self.parent, "TOPLEFT",  0, y)
+	row:SetPoint("TOPRIGHT", self.parent, "TOPRIGHT", -RowList.SCROLLBAR_GUTTER, y)
+	self:_placeColumns(function(col, anchor)
+		local cell = row.cells[col.key]
+		if col.icon then
+			cell:SetSize(rowH - 2, rowH - 2)
+		else
+			cell:SetHeight(rowH)
+		end
+		anchorCell(cell, row, anchor)
+	end)
 end
 
 --- The data in the current sort order; cached until the data or the sort changes.
@@ -345,6 +459,27 @@ function RowList:SetData(data, preserveScroll)
 	end
 	self._sorted = nil
 	self:Refresh()
+end
+
+--- COL-FIT-001 (the operator, 2026-09-15, on the Browse tab: "could we get rid of some of the white
+--- space between the type/qty/lvl columns? ... look at the longest entries, and make it a little
+--- longer"): change fixed columns' widths after the list is built. `widths` is key -> width; a key
+--- not listed, or the auto column, is untouched. Every header cell and every row cell is
+--- re-anchored through the one placement walk, so the chain closes up behind a narrower column.
+--- Returns true when anything changed.
+function RowList:SetColumnWidths(widths)
+	local changed = false
+	for _, col in ipairs(self.columns) do
+		local w = widths and widths[col.key]
+		if w and col.width and col.width ~= w then
+			col.width = w
+			changed = true
+		end
+	end
+	if not changed then return false end
+	if self.header then self:_layoutHeader() end
+	for i, row in ipairs(self.rows) do self:_layoutRow(row, i) end
+	return true
 end
 
 --- Set the sort without a header click (the initial order).

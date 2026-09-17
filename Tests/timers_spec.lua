@@ -80,7 +80,7 @@ describe("TIMER-001 as a class, across every scheduling module", function()
 		-- The three the audit named, and the two the hand-written list missed. If the parse regressed
 		-- in a way the count above tolerates, these are the files whose absence actually costs.
 		for _, path in ipairs({
-			"Modules/Chat.lua", "Modules/Guild.lua", "Modules/P2PSession.lua",
+			"Modules/Chat.lua", "Modules/Guild.lua", "Modules/P2P.lua",
 			"Modules/Database.lua", "Modules/UI/StatusBar.lua", "Core.lua",
 		}) do
 			assert.is_true(seen[path] == true,
@@ -112,46 +112,23 @@ describe("TIMER-001 as a class, across every scheduling module", function()
 			"\n    " .. table.concat(offenders, "\n    "))
 	end)
 
-	-- The three sites finding 24 named, pinned individually. The sweep above would catch them, but
-	-- a named assertion is what tells the next reader these were the regression, not a hypothetical.
-	--
-	-- P2P-026 UPDATED THE SHAPE THIS LOOKS FOR, and deliberately rather than to make a red example
-	-- green: all three sites now arm through Guild:ArmAltTimeout, which holds the single
-	-- C_Timer.NewTimer call and cancels whatever the alt already had in flight. That is a STRONGER
-	-- invariant than "each site uses NewTimer" -- NewTimer alone only fixed the path where a peer
-	-- ACKs, because the second of two requests overwrote the first's handle and orphaned it. The
-	-- behaviour is driven in Tests/p2ptimeout_spec.lua; this pins the shape so a hand-written
-	-- arm site cannot quietly reappear beside the helper.
-	it("arms the three sites audit finding 24 named through ArmAltTimeout", function()
-		local chat  = readFile("Modules/Chat.lua")
-		local guild = readFile("Modules/Guild.lua")
-
-		assert.is_not_nil(chat:find('ArmAltTimeout%("pendingP2PTimeouts", norm, 5,'),
-			"Chat.lua's 5s peer timeout must arm through the helper: without the replace-and-cancel " ..
-			"it does, a second request for the same alt inside the window is torn down by the FIRST " ..
-			"request's orphaned timer")
-		assert.is_not_nil(chat:find('ArmAltTimeout%("pendingP2PFallbackTimeouts", norm, 15,'),
-			"Chat.lua's 15s ACK fallback must arm through the helper. This is the worse of the two " ..
-			"-- 15s is a long window and its callback calls AdvanceCandidate on whatever session " ..
-			"owns the alt when it fires, which need not be the session it was armed for")
-		assert.is_not_nil(guild:find('ArmAltTimeout%("pendingP2PTimeouts", norm, timeout,'),
-			"Guild.lua's PEER_RESPONSE_TIMEOUT must arm through the helper")
-
-		assert.is_not_nil(guild:find("local timer = C_Timer%.NewTimer%(delay, callback%)"),
-			"ArmAltTimeout itself must use NewTimer -- it is now the ONLY place these three sites " ..
-			"get a handle from, so an After here would re-empty both registries at a stroke")
-	end)
-
-	-- The registries the finding is really about. Both are declared as cancellation registries and
-	-- were permanently empty; this asserts nothing writes an un-cancellable value into them again.
-	it("only stores cancellable handles in the P2P timeout registries", function()
+	-- The three sites finding 24 named (Chat.lua's 5 s and 15 s pull-path timers, Guild.lua's
+	-- PEER_RESPONSE_TIMEOUT) and the ArmAltTimeout helper they were made to arm through (P2P-026)
+	-- WERE pinned individually here, as "arms the three sites audit finding 24 named through
+	-- ArmAltTimeout". writ-cannot: that example must not exist any more -- LIBREQ-DS-008 deleted the
+	-- pull path and the helper with it (the feature it covered was removed on purpose): the library's
+	-- numbered P2P arms its session timers through ArmSessionTimer (DeltaSyncP2PNumbered.lua, its own
+	-- suite), and nothing in this addon keeps a per-alt timer registry. The sweep above is what
+	-- guards the class now; the example below pins that the registries do not come back.
+	it("keeps no per-alt P2P timer registry (the pull path's went with LIBREQ-DS-008)", function()
 		for _, path in ipairs({ "Modules/Chat.lua", "Modules/Guild.lua" }) do
 			local src = readFile(path)
 			for registry in ("pendingP2PTimeouts pendingP2PFallbackTimeouts"):gmatch("%S+") do
-				-- Any assignment INTO the registry whose right-hand side is a direct After call.
-				assert.is_nil(src:find(registry .. "%[[%w_]+%]%s*=%s*C_Timer%.After"),
-					path .. " writes C_Timer.After's nil return straight into " .. registry ..
-					", so the key is never created and the registry stays empty (TIMER-001)")
+				for _, line in env.codeLines(src) do
+					assert.is_nil(line:find(registry .. "%["),
+						path .. " indexes " .. registry .. " again -- the pull path's per-alt timers were " ..
+						"retired with LIBREQ-DS-008; a session timer belongs to the library's ArmSessionTimer")
+				end
 			end
 		end
 	end)
@@ -171,11 +148,12 @@ end)
 -- survive the next edit.
 --
 -- THE FIVE SHAPES THAT ARE SAFE, all of which exist in this codebase today:
---   1. `:Cancel()` on the same slot immediately before  (P2PSession ArmSessionTimer)
+--   1. `:Cancel()` on the same slot immediately before  (was P2PSession's ArmSessionTimer; the
+--                                                        library's DeltaSyncP2PNumbered.lua has it now)
 --   2. a named stop method called first                 (UI/StatusBar StartTicker -> StopTicker)
 --   3. a latch guard, `if not <slot> then`              (Chat hashBroadcastTimer)
 --   4. a fresh `local` per call, self-cancelling        (Guild's player-name ticker)
---   5. unreachable while live, PROVEN and marked TIMER-SAFE with the reasoning  (P2PSession:154)
+--   5. unreachable while live, PROVEN and marked TIMER-SAFE with the reasoning  (was P2PSession:154)
 --
 -- Shape 5 is the escape hatch and it is deliberately expensive: it costs a comment that has to say
 -- WHY, and what would break it. A site that cannot justify itself in a sentence is a site that
@@ -274,12 +252,15 @@ describe("P2P-026/027 as a class: no live timer handle is overwritten", function
 		for _, path in ipairs(MODULES) do
 			total = total + #(timerAssignments(path))
 		end
-		assert.is_true(total >= 7,
+		-- Lowered deliberately, 2026-09-15: LIBREQ-DS-008 part 2 deleted Modules/P2PSession.lua, whose
+		-- session, state-wait, collect and catch-up timers (five of the sites) are the library's now
+		-- (DeltaSyncP2PNumbered.lua ArmSessionTimer et al., under its own suite). Four remain here.
+		assert.is_true(total >= 4,
 			"found only " .. total .. " cancellable timer assignments across the shipped modules. " ..
-			"There were 9 when this guard was written -- 7 via C_Timer.NewTimer/NewTicker and 2 " ..
-			"via Core:ScheduleTimer. If they have genuinely gone, lower this number deliberately; " ..
-			"a sudden drop means a pattern stopped matching and the guard above is now checking " ..
-			"less than it appears to")
+			"There were 9 when this guard was written (7 via C_Timer.NewTimer/NewTicker, 2 via " ..
+			"Core:ScheduleTimer) and 4 after the P2P moved into DeltaSync. If they have genuinely " ..
+			"gone, lower this number deliberately; a sudden drop means a pattern stopped matching " ..
+			"and the guard above is now checking less than it appears to")
 
 		-- BOTH SPELLINGS MUST BE FOUND, not just enough of one to clear the total. The AceTimer
 		-- sites are the ones a C_Timer-only sweep misses, which is precisely the gap that made

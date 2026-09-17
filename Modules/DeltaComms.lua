@@ -32,7 +32,10 @@ local FEATURES = TOGBankClassic_Constants.FEATURES
 --- AUDIT FINDING 32 (HIGH): the guard was `if item and item.ID then`. A tuple record is positional
 --- and has no `.ID`, so once records become tuples EVERY row fails that guard, `sorted` stays empty,
 --- and the hash collapses to money-only -- every inventory change hashing the same as no change,
---- silently. Accepting both shapes here is what stops that arriving with the switch.
+--- silently. LINK-AUDIT-001 step 1 then deleted the legacy `item.ID` branch that had accepted both
+--- shapes: every caller (Bank's scan, mail and held hashes, Chain, Chat's hash dump) passes records,
+--- so the hash of a record no longer depends on a code path nothing reaches. A legacy row now
+--- contributes nothing, which is the refusal rather than a guess.
 ---
 --- Identity comes from Record.keyFor, so the hash and the delta agree on what "the same item" is by
 --- construction rather than by two functions being kept in step.
@@ -41,23 +44,13 @@ local function hashInventoryItems(itemsArray)
 		return ""
 	end
 	local Record = TOGBankClassic_Inventory_Record
-	local Scan   = TOGBankClassic_Inventory_Scan
 
 	local sorted = {}
 	for _, item in ipairs(itemsArray) do
 		if type(item) == "table" then
 			local id, count, suffix, enchant
 
-			if item.ID then
-				-- Legacy row. Suffix and enchant live in the link, the only place a pre-tuple row
-				-- records them; a linkless row (mail) reads 0/0, which is exactly the tuple a
-				-- linkless row produces, so the two shapes agree rather than merely coexisting.
-				id, count = tonumber(item.ID), tonumber(item.Count) or 0
-				local link = item.Link or item.ItemString
-				if link and Scan and Scan.parseLink then
-					enchant, suffix = Scan.parseLink(link)
-				end
-			elseif type(item[1]) == "number" then
+			if type(item[1]) == "number" then
 				-- Tuple record {id, count, suffix, enchant}.
 				id, count, suffix, enchant = item[1], item[2] or 0, item[3], item[4]
 			end
@@ -492,10 +485,8 @@ end
 -- `Record.keyFor` -- one function, shared with the hash, so there is no second index to keep in
 -- step and no ghost class to guard against.
 --
--- `Item:ItemClassNeedsLink` does NOT go with it, and an earlier draft of this note wrongly said it
--- did. The ITEM-003 guards here were not its last callers: `Database:PurgeLinklessGearGhosts` still
--- uses it to repair linkless gear ALREADY SITTING in players' SavedVariables from earlier versions,
--- and that runs at load. Deleting it would abandon that repair for anyone who has not loaded since.
+-- `Item:ItemClassNeedsLink` outlived it only for `Database:PurgeLinklessGearGhosts`; that went in
+-- INV2-RETIRE-003, and the function with the static item database in LINK-AUDIT-001 step 1.
 
 -- ERROR TRACKING FUNCTIONS --
 
@@ -662,153 +653,7 @@ function TOGBankClassic_DeltaComms:ClearOfflineErrorCounters(guildName)
 	end
 end
 
--- PULL-BASED PROTOCOL FUNCTIONS --
-
--- Fast-fill missing alts using pull-based protocol (v0.8.0)
-function TOGBankClassic_DeltaComms:FastFillMissingAlts(guildInfo)
-	if not guildInfo then
-		return
-	end
-
-	-- HASH-REFORM: Do not fast-fill while the P2PSession collect window is open.
-	-- Fast-fill uses whatever hashes are in latestBankerHashes right now, which may
-	-- only reflect the first peer to respond. The collect window gathers ALL peer offers
-	-- and picks the best (newest updatedAt) before dispatching. Firing early locks us
-	-- into stale hashes and causes same-timestamp/different-hash mismatches.
-	if TOGBankClassic_P2PSession and TOGBankClassic_P2PSession.isCollecting then
-		TOGBankClassic_Output:Debug("DELTA", "FAST-FILL", "Fast-fill suppressed: P2PSession collect window is open (waiting for all peer offers)")
-		return
-	end
-
-	-- SYNC-001 fix: Get live banker roster from current guild instead of using
-	-- cached roster.alts which may contain stale cross-guild data
-	local rosterAlts = TOGBankClassic_Guild:GetBanks()
-	if not rosterAlts or #rosterAlts == 0 then
-		return
-	end
-
-	local missing = {}
-	local missingDebug = {}
-	local missingInfo = {}
-	TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "FastFill: Starting check of %d roster alts", #rosterAlts)
-	for _, altName in ipairs(rosterAlts) do
-		local norm = TOGBankClassic_Guild:NormalizeName(altName)
-		local localAlt = guildInfo.alts and norm and guildInfo.alts[norm]
-		local hasEntry = localAlt ~= nil
-		local hasContent = hasEntry and TOGBankClassic_Guild:HasAltContent(localAlt, norm)
-
-		-- Check for hash mismatch (stale data)
-		local bankerCache = TOGBankClassic_Guild.latestBankerHashes and TOGBankClassic_Guild.latestBankerHashes[norm]
-		local hashMismatch = false
-		local mismatchReason = nil
-		if bankerCache and hasEntry and localAlt then
-			-- HASH-CANON-006: through the ONE comparison. This was a fourth inline spelling of
-			-- revision-1 equality (after HashesAgreeWith, the HLR compare and BroadcastP2PRequest),
-			-- and every one of them called a pre-canon copy "in sync" with the banker's canon when
-			-- the revision-1 numbers happened to agree -- so the copy was never replaced.
-			local agree, localHash, localMailHash = TOGBankClassic_Guild:HashesAgreeWith(localAlt, bankerCache)
-			if not agree then
-				hashMismatch = true
-				mismatchReason = string.format("version mismatch (local=%s/%s canon=%s, banker=%s/%s canon=%s)",
-					tostring(localHash), tostring(localMailHash), tostring(localAlt.inventoryHashV2),
-					tostring(bankerCache.hash), tostring(bankerCache.mailHash), tostring(bankerCache.hashV2))
-			end
-		end
-
-		-- DEBUG: Log every alt to see what's happening
-		TOGBankClassic_Output:Debug("PROTOCOL", "HLR-COMPARE", "FastFill check: %s hasEntry=%s hasContent=%s hashMismatch=%s",
-			tostring(norm), tostring(hasEntry), tostring(hasContent), tostring(hashMismatch))
-
-		-- Check if we need to request this alt: no entry, no content, OR hash mismatch
-		if not hasEntry or not hasContent or hashMismatch then
-			table.insert(missing, norm)
-			local hasRaw = guildInfo.alts and guildInfo.alts[altName] ~= nil
-			local reason = mismatchReason or (hasEntry and "no content" or "no entry")
-			missingInfo[norm] = {
-				reason = reason,
-				hash = (bankerCache and bankerCache.hash) or (localAlt and localAlt.inventoryHash) or nil,
-				hashV2 = (bankerCache and bankerCache.hashV2) or nil,
-				updatedAt = (bankerCache and bankerCache.updatedAt) or (localAlt and (localAlt.inventoryUpdatedAt or localAlt.version)) or nil,
-			}
-			table.insert(
-				missingDebug,
-				string.format("%s (norm=%s, rawKey=%s, reason=%s)", tostring(altName), tostring(norm), tostring(hasRaw), reason)
-			)
-		end
-	end
-
-	if #missing == 0 then
-		TOGBankClassic_Output:Debug("DELTA", "APPLY", "Fast-fill: All %d roster alts present locally", #rosterAlts)
-		return
-	end
-
-	local haveCount, totalCount = TOGBankClassic_Guild:GetBankerDataProgress()
-	TOGBankClassic_Output:Debug("DELTA", "FAST-FILL", "Fast-fill: Requesting %d missing alts (have %d/%d)", #missing, haveCount, totalCount)
-	TOGBankClassic_Guild:ReportBankerDataProgress("fast-fill", true)
-	if #missingDebug > 0 then
-		TOGBankClassic_Output:Debug("DELTA", "APPLY", "Fast-fill missing alts: %s", table.concat(missingDebug, ", "))
-	end
-
-	local hasOnlineBanker = false
-	for member, _ in pairs(TOGBankClassic_Guild.onlineMembers or {}) do
-		if TOGBankClassic_Guild:IsBank(member) and TOGBankClassic_Guild:IsPlayerOnline(member) then
-			hasOnlineBanker = true
-			break
-		end
-	end
-	if not hasOnlineBanker then
-		GuildRoster()
-		for i = 1, GetNumGuildMembers() do
-			local rosterName, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
-			if rosterName and online then
-				local normRoster = TOGBankClassic_Guild:NormalizeName(rosterName)
-				if TOGBankClassic_Guild:IsBank(normRoster) then
-					hasOnlineBanker = true
-					break
-				end
-			end
-		end
-	end
-
-	-- NOTHING CONSUMES THIS ANSWER, and that is worth stating rather than quietly deleting.
-	-- The two passes above -- including a GuildRoster() server refresh and a full
-	-- GetNumGuildMembers() scan on the miss path -- compute whether any banker is online, and the
-	-- loop below then queries every missing alt regardless. The flag clearly used to gate
-	-- something (peer-vs-banker routing, most likely) and that gate is gone.
-	--
-	-- Kept rather than removed because GuildRoster() is a SIDE EFFECT on the server, and whether
-	-- the refresh is still wanted here is a decision, not a cleanup. Logging it makes the computed
-	-- fact visible instead of discarded, and changes no control flow.
-	TOGBankClassic_Output:Debug("DELTA", "FAST-FILL",
-		"Fast-fill proceeding for %d alt(s); banker online = %s (advisory only, nothing gates on it)",
-		#missing, tostring(hasOnlineBanker))
-
-	-- Query each missing alt using pull-based protocol
-	for _, norm in ipairs(missing) do
-		local info = missingInfo[norm]
-		TOGBankClassic_Output:Debug(
-			"PROTOCOL",
-			"HLR-COMPARE",
-			"Fast-fill processing: %s (info=%s, hash=%s, hasHash=%s, hashNotZero=%s)",
-			tostring(norm),
-			tostring(info ~= nil),
-			tostring(info and info.hash),
-			tostring(info and info.hash and true or false),
-			tostring(info and info.hash and info.hash ~= 0 or false)
-		)
-		-- PERF-006: Use P2P whenever we have a hash, regardless of banker online status
-		if info and info.hash and info.hash ~= 0 then
-			-- We have hash but no content - broadcast P2P request (GUILD → timeout → banker fallback)
-			TOGBankClassic_Output:Debug(
-				"PROTOCOL",
-				"HLR-COMPARE",
-				"Fast-fill P2P broadcast: requesting %s (expectedHash=%s, updatedAt=%s)",
-				tostring(norm),
-				tostring(info.hash),
-				tostring(info.updatedAt)
-			)
-			TOGBankClassic_Guild:BroadcastP2PRequest(norm, info.hash, info.updatedAt, nil, info.hashV2)
-		-- No hash: skip; will be acquired in next SyncDeltaVersion cycle
-		end
-	end
-end
+-- LIBREQ-DS-008: `FastFillMissingAlts` (the v0.8.0 pull: one `alt-request` GUILD broadcast per
+-- roster banker held without content or with a mismatched hash) WAS HERE. The numbered P2P fills
+-- a client from the cycle -- every peer offers the bankers its broadcast did not name, and one
+-- holder per bank is asked -- so there is no second request path to run beside it.

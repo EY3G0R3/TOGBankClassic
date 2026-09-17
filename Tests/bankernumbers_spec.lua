@@ -15,26 +15,75 @@ local LIGHT = { "Modules/Constants.lua", "Modules/Item.lua", "Modules/DeltaComms
 
 local A, B, Cc, D = "Alpha-Testrealm", "Beta-Testrealm", "Charlie-Testrealm", "Delta-Testrealm"
 
+--- The light fixture: the modules above plus the REAL Core and DeltaSync host -- since LIBREQ-DS-008
+--- part 1 the table, the mint, the adopt and the codec are the library's (`host.numbers`), and
+--- BankerNumbers is the configuration over it, so a stub Core with no host would number nothing.
+--- The two sends BankerNumbers makes are captured on the real Core, the envelope replaced by the
+--- identity so an example reads the payload directly.
+local function loadLight()
+	env.reset(); env.stubOutput()
+	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
+		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
+	env.loadDeltaSync()
+	env.loadModules(LIGHT)
+	local AceAddon = LibStub("AceAddon-3.0")
+	if AceAddon and AceAddon.addons then
+		AceAddon.addons["TOGBankClassic"] = nil
+		if AceAddon.addonstatus then AceAddon.addonstatus["TOGBankClassic"] = nil end
+	end
+	env.loadFile("Core.lua")
+	env.sent = {}
+	TOGBankClassic_Core.SerializeWithChecksum = function(_, t) return t end
+	TOGBankClassic_Core.SendWhisper = function(_, prefix, data, target, prio)
+		env.sent[#env.sent + 1] = { prefix = prefix, data = data, target = target, prio = prio }
+		return true
+	end
+	return TOGBankClassic_BankerNumbers, TOGBankClassic_Guild
+end
+
 describe("BankerNumbers: the table on the roster", function()
 	local BN, Guild
 	local banks
 
 	before_each(function()
-		env.reset(); env.stubOutput()
-		env.loadModules(LIGHT)
-		BN, Guild = TOGBankClassic_BankerNumbers, TOGBankClassic_Guild
+		BN, Guild = loadLight()
 		Guild.Info = { name = GUILD, alts = {} }
 		banks = { Cc, A, B }   -- deliberately unsorted
 		Guild.GetBanks = function() return banks end
 		Guild.IsBank = function(_, n) for _, b in ipairs(banks) do if b == n then return true end end return false end
-		env.sent = {}
-		TOGBankClassic_Core = {
-			SerializeWithChecksum = function(_, t) return t end,
-			SendWhisper = function(_, prefix, data, target, prio)
-				env.sent[#env.sent + 1] = { prefix = prefix, data = data, target = target, prio = prio }
-				return true
-			end,
-		}
+	end)
+
+	it("is the LIBRARY's table: BankerNumbers configures DeltaSync's host.numbers and forwards to it", function()
+		local n = BN:Lib()
+		assert.is_table(n, "no numbers instance on the host -- DeltaSyncNumbers.lua did not load")
+		assert.equal(n, TOGBankClassic_Core:DeltaHost().numbers)
+		assert.equal(BN.MAX, n.MAX); assert.equal(BN.WIDTH, n.WIDTH); assert.equal(BN.ENTRY_WIDTH, n.ENTRY_WIDTH)
+		assert.equal(BN:Table(), n:Table())
+		-- Against a DeltaSync without the module, every forwarder answers "nothing numbered".
+		local host = TOGBankClassic_Core:DeltaHost()
+		local saved = rawget(host, "numbers")
+		-- InitNumbers resolves through the host's __index to the library; an OWN false shadows it.
+		host.numbers = false; host.InitNumbers = false
+		assert.is_nil(BN:Lib())
+		assert.is_nil(BN:NumberOf(A)); assert.equal(0, BN:Version()); assert.equal(0, BN:Mint())
+		assert.equal("", BN:EncodeEntries({ { number = "0001", canon = C(T, 1) } }))
+		assert.same({}, BN:DecodeEntries("0001" .. C(T, 1)))
+		local alts, unknown = BN:EntriesToAlts({ { number = "0001", canon = C(T, 1) } })
+		assert.same({}, alts); assert.equal(1, unknown)
+		assert.is_false(BN:Adopt({ v = 1, n = 2, t = { [A] = 1 } }, "x"))
+		host.numbers = saved; host.InitNumbers = nil   -- the own field gone, __index answers again
+		assert.equal(n, BN:Lib(), "the instance did not come back once the module was there again")
+	end)
+
+	it("repaints the Bankers tab when the library's table changes -- a mint as well as an adopt", function()
+		local repaints = 0
+		TOGBankClassic_UI_Inventory = { RefreshSoon = function() repaints = repaints + 1 end }
+		Guild.Info.alts[A] = { name = A, items = { { ID = 1, Count = 1 } }, inventoryContentHash = 12345 }   -- owns A
+		assert.equal(3, BN:Mint())
+		assert.equal(1, repaints, "a mint did not repaint (the old BankerNumbers repainted on adopt only)")
+		assert.is_true(BN:Adopt({ v = BN:Version() + 1, n = 4, t = { [A] = 1, [B] = 2, [Cc] = 3 } }, "Peer-Testrealm"))
+		assert.equal(2, repaints)
+		TOGBankClassic_UI_Inventory = nil
 	end)
 
 	--- This account owns `name`: a record only a local scan writes.
@@ -125,9 +174,7 @@ describe("BankerNumbers: adopting a peer's table", function()
 	local banks
 
 	before_each(function()
-		env.reset(); env.stubOutput()
-		env.loadModules(LIGHT)
-		BN, Guild = TOGBankClassic_BankerNumbers, TOGBankClassic_Guild
+		BN, Guild = loadLight()
 		Guild.Info = { name = GUILD, alts = {} }
 		banks = { A, B }
 		Guild.GetBanks = function() return banks end
@@ -195,22 +242,12 @@ describe("BankerNumbers: adopting a peer's table", function()
 	end)
 end)
 
-describe("BankerNumbers: sync", function()
+describe("BankerNumbers: sync -- on togbank-hl, the channel every shipped client speaks", function()
 	local BN, Guild
 
 	before_each(function()
-		env.reset(); env.stubOutput()
-		env.loadModules(LIGHT)
-		BN, Guild = TOGBankClassic_BankerNumbers, TOGBankClassic_Guild
+		BN, Guild = loadLight()
 		Guild.Info = { name = GUILD, alts = {}, roster = { alts = {}, numbers = { [A] = 1 }, numbersNext = 2, numbersVersion = 10 } }
-		env.sent = {}
-		TOGBankClassic_Core = {
-			SerializeWithChecksum = function(_, t) return t end,
-			SendWhisper = function(_, prefix, data, target, prio)
-				env.sent[#env.sent + 1] = { prefix = prefix, data = data, target = target, prio = prio }
-				return true
-			end,
-		}
 	end)
 
 	it("asks the sender for the table when it advertises a HIGHER version, once per cooldown", function()
@@ -230,11 +267,28 @@ describe("BankerNumbers: sync", function()
 	it("answers a request with the whole table, and adopts a reply", function()
 		assert.is_true(BN:HandleRequest("Asker-Testrealm"))
 		local m = env.sent[1]
+		assert.equal("togbank-hl", m.prefix, "the reply left TOGBank's channel -- a v1.5.1 asker would never hear it")
 		assert.equal("numbers-reply", m.data.type)
 		assert.equal(10, m.data.numbers.v)
 		assert.equal(1, m.data.numbers.t[A])
 		assert.is_true(BN:HandleReply("Peer-Testrealm", { v = 12, n = 3, t = { [A] = 1, [B] = 2 } }))
 		assert.equal("0002", BN:NumberOf(B))
+	end)
+
+	it("the library's own HANDSHAKE transport is NOT used for these two messages this release", function()
+		-- The one-release rule in BankerNumbers.lua's header: the shape is the library's Snapshot,
+		-- the channel is togbank-hl. Nothing here calls host.numbers:OnAdvertisedVersion or
+		-- :HandleRequest, which would whisper on DeltaSync's HANDSHAKE prefix instead.
+		local host = TOGBankClassic_Core:DeltaHost()
+		local handshakes = 0
+		local saved = host.SendHandshake
+		host.SendHandshake = function(...) handshakes = handshakes + 1; return saved(...) end
+		assert.is_true(BN:OnAdvertisedVersion("Peer-Testrealm", 11))
+		assert.is_true(BN:HandleRequest("Asker-Testrealm"))
+		host.SendHandshake = nil
+		assert.equal(0, handshakes)
+		assert.equal(2, #env.sent)
+		for _, m in ipairs(env.sent) do assert.equal("togbank-hl", m.prefix) end
 	end)
 end)
 
@@ -242,9 +296,7 @@ describe("BankerNumbers: the fixed-width wire", function()
 	local BN
 
 	before_each(function()
-		env.reset(); env.stubOutput()
-		env.loadModules(LIGHT)
-		BN = TOGBankClassic_BankerNumbers
+		BN = loadLight()
 		TOGBankClassic_Guild.Info = { name = GUILD, alts = {}, roster = { alts = {}, numbers = { [A] = 1, [B] = 2 }, numbersNext = 3, numbersVersion = 1 } }
 	end)
 
@@ -303,31 +355,47 @@ describe("BankerNumbers through the real wire", function()
 	end
 
 	local sent
+	local function host() return TOGBankClassic_Core:DeltaHost() end
+	--- Every send, TOGBank's own (SendWhisper) and the host's (the library's offer, handshake and
+	--- numbers messages leave through Core:SendCommMessage), the target in `Name-Realm` spelling.
 	local function capture()
 		sent = {}
-		TOGBankClassic_Chat.hashBroadcastQueue = TOGBankClassic_Chat.hashBroadcastQueue or {}
-		TOGBankClassic_Chat.HASH_BROADCAST_BATCH_DELAY = 0.15
-		TOGBankClassic_Core.SendWhisper = function(_, prefix, text, target)
+		local function record(prefix, text, target)
 			local ok, data = TOGBankClassic_Core:DeserializeWithChecksum(text)
-			sent[#sent + 1] = { prefix = prefix, data = ok and data or nil, target = target }
+			sent[#sent + 1] = { prefix = prefix, data = ok and data or nil,
+				target = target and (TOGBankClassic_Guild:NormalizeName(target) or target) or nil }
+		end
+		TOGBankClassic_Core.SendWhisper = function(_, prefix, text, target)
+			record(prefix, text, target)
 			return true   -- the real one returns true for an online target, and callers branch on it
 		end
+		TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, _, target, _, cb, arg)
+			record(prefix, text, target)
+			if cb then cb(arg, #text, #text, true) end
+		end
 	end
+	--- LIBREQ-DS-008 part 2: the v1.5.1 OVERLAP -- a client on that release still asks for and
+	--- answers the numbers table on togbank-hl (BankerNumbers.lua's transport section).
 	local function whisperFrom(sender, payload)
 		local body = TOGBankClassic_Core:SerializeWithChecksum(payload)
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", sender)
 	end
-	local function broadcastFrom(sender, payload)
+	local function oldWireBroadcastFrom(sender, payload)
 		local body = TOGBankClassic_Core:SerializeWithChecksum(payload)
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "GUILD", sender)
+	end
+	--- The numbered broadcast of a client on this build: the host's OFFER prefix, the library reads it.
+	local function broadcastFrom(sender, payload)
+		local body = TOGBankClassic_Core:SerializeWithChecksum(payload)
+		host():OnComm_OFFER(host().prefixes.OFFER, body, "GUILD", sender)
 	end
 
 	before_each(function() env.reset(); client("Otherguy"); capture() end)
 
-	it("a broadcast from a client on a newer table makes us ask for it, and the reply is adopted", function()
+	it("a v1.5.1 broadcast from a client on a newer table makes us ask for it on togbank-hl, and the reply is adopted", function()
 		local BN = TOGBankClassic_BankerNumbers
 		-- The client is Otherguy; broadcasts come from Bankchar (its own echo would be discarded).
-		broadcastFrom(BANKER, { type = "hlb2", v = 5, e = "", banker = BANKER, isBanker = true })
+		oldWireBroadcastFrom(BANKER, { type = "hlb2", v = 5, e = "", banker = BANKER, isBanker = true })
 		local req
 		for _, m in ipairs(sent) do if m.data and m.data.type == "numbers-request" then req = m end end
 		assert.is_table(req, "a higher table version went by and we did not ask for the table")
@@ -335,6 +403,13 @@ describe("BankerNumbers through the real wire", function()
 		whisperFrom(BANKER, { type = "numbers-reply", numbers = { v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } } })
 		assert.equal("0002", BN:NumberOf(OTHER))
 		assert.equal(5, BN:Version())
+		-- And a v1.5.1 client's ASK on togbank-hl is answered there, with the table.
+		whisperFrom(BANKER, { type = "numbers-request" })
+		local reply
+		for _, m in ipairs(sent) do if m.prefix == "togbank-hl" and m.data and m.data.type == "numbers-reply" then reply = m end end
+		assert.is_table(reply, "a v1.5.1 client's numbers-request on togbank-hl was not answered there")
+		assert.equal(BANKER, reply.target)
+		assert.equal(5, reply.data.numbers.v)
 	end)
 
 	it("decodes a numbered broadcast into the advertised-hash cache and the tab's newest time", function()
@@ -377,15 +452,15 @@ describe("BankerNumbers through the real wire", function()
 			name = OTHER, items = { { ID = 1, Count = 1 } }, money = 0,
 			inventoryHash = 0x10, inventoryHashV2 = C(T, 0x20), inventoryUpdatedAt = T, mailHash = 0,
 		}
-		assert.is_false(TOGBankClassic_P2PSession.isCollecting, "precondition: no collect window is open")
+		assert.is_false(TOGBankClassic_P2P:Lib().isCollecting, "precondition: no collect window is open")
 		broadcastFrom(BANKER, { type = "hlb2", v = 5, banker = BANKER, isBanker = true,
 			e = BN:EncodeEntries({ { number = "0002", canon = C(T + 60, 0x21) } }) })
 		env.advance(1)
 		local req
-		for _, m in ipairs(sent) do if m.prefix == "togbank-rr" and m.data and m.data.type == "sync-request" then req = m end end
+		for _, m in ipairs(sent) do if m.prefix == host().prefixes.HANDSHAKE and m.data and m.data.type == "sync-request" then req = m end end
 		assert.is_table(req, "a broadcast advertising a newer version was not treated as an offer")
 		assert.equal(BANKER, req.target)
-		assert.equal(OTHER, req.data.altName)
+		assert.equal(OTHER, req.data.itemKey)
 		assert.equal(C(T + 60, 0x21), req.data.canon, "the request did not name the advertised version")
 	end)
 

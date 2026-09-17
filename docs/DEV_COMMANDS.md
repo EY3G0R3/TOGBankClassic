@@ -100,8 +100,13 @@ See [INVENTORY_V2.md](INVENTORY_V2.md) for the design these two operate on.
   storage format -- the legacy item rows are neither written by the scan nor kept in the
   SavedVariables (they are stripped on load) -- so there is nothing for either switch to choose
   between. A stale value for them in an older `db.global.switches` is ignored, and setting them
-  now reports `Unknown switch`. What remains: `sendV2Wire` (the wire diagnostic) and
-  `legacyKeyedReceive` (the N6 grace-period switch).
+  now reports `Unknown switch`. What remains: `sendV2Wire` (the wire diagnostic).
+
+  **Retired (N6, v1.6.0):** `legacyKeyedReceive`, the grace-period switch that let a pre-v1.4.1
+  peer's KEYED `hash-list-broadcast` / `hash-offer` through the door. It shipped OFF in v1.5.0 as
+  the "comment it out first"; on 2026-09-14 the operator said delete it, and the two receive
+  branches went with it. A keyed form is now dropped at the door with one `P2P.BROADCAST` debug
+  line; there is no switch to reopen it.
 
 - **`/togbank dev compare` -- retired (INV2-RETIRE-003, v1.5.0).** It diffed the V2 tuple store
   against the legacy item rows on live data, per item ID, and existed for the dual-write period:
@@ -173,31 +178,13 @@ See [INVENTORY_V2.md](INVENTORY_V2.md) for the design these two operate on.
 
   *Note*: top-level `/togbank wipe` (own-DB-only) remains user-facing and should be the first recommendation when a player reports issues. `wipeall` is dev-only specifically to prevent officers from firing it casually.
 
-## Regenerating the static item / suffix DB
+## Item data
 
-The shipped `Modules/Static/ItemDB.lua` (~24,000 items) and `Modules/Static/SuffixDB.lua` (~2,000 random-suffix fragments) are generated from Blizzard's actual DB2 dumps via [wago.tools](https://wago.tools). The pipeline lives in `tools/build-itemdb.py`. Regenerate when a new patch ships and adds items (Anniversary, SoD content drops, etc.) — the addon's runtime depends on these files being current enough that strip/sync decisions don't fall back to GetItemInfo on cold cache.
-
-**Workflow:**
-
-```sh
-# Optional: --refresh to ignore cached CSVs and re-fetch from wago.tools
-# Optional: --build 1.15.X.YYYYY to target a specific build (default in script)
-# Optional: --dry-run to see counts without overwriting Modules/Static/*.lua
-
-python3 tools/build-itemdb.py
-```
-
-The script fetches four DB2 tables (`ItemSparse`, `Item`, `ItemRandomProperties`, `ItemRandomSuffix`), joins on item ID, filters suffix junk (requires fragment to start with "of "), and writes ready-to-commit Lua source. Total runtime ~10–60s depending on cache state. CSV downloads cache under `tools/wago_cache/` (gitignored — regenerable via `--refresh`).
-
-**After regeneration:**
-
-1. Review the diff on `Modules/Static/*.lua` (look at the class breakdown the script prints — should still be ~3000 weapons, ~12000 armor, ~2000 recipes, etc.).
-2. `/reload` in-game to verify the addon loads the new file size without freezing.
-3. Commit.
-
-There is no in-game scraper — an earlier attempt at one (`Modules/Dev/BuildDB.lua`, `/togbank dev builddb`) was removed because WoW's multi-tier item cache made the runtime approach fundamentally unreliable. The wago.tools path is the authoritative source.
-
-**Pattern reference:** the wago.tools fetch pattern is the same one [TOGProfessionMaster's `tools/wago_probe.py`](https://github.com/EY3G0R3/TOGProfessionMaster) uses. Keep the two tools' approaches aligned — patches that work for one usually work for the other.
+TOGBank ships no item database of its own. Names, qualities, classes and suffixed links come from the
+required `ItemDB` addon (LibItemDB-1.0) through `Modules/Inventory/Resolve.lua`. The static
+`Modules/Static/ItemDB.lua` / `SuffixDB.lua` and their generator `tools/build-itemdb.py` were
+deleted in LINK-AUDIT-001 step 1 (`docs/LINK_AUDIT.md` 3.1): nothing had read them since the
+linkless-gear ghost purge was retired. New items are an `ItemDB` data update, not a TOGBank change.
 
 ## Adding a new dev command
 

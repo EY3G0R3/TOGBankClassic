@@ -200,11 +200,11 @@ end
 -- P2P sends in flight: "Tx:1/3"
 -- P2P-025: this read TOGBankClassic_Guild.pendingSendCount, a legacy counter that four sites
 -- DECREMENT and nothing increments -- so it was pinned at 0 and the `sends == 0` early return
--- meant this indicator could never render, at any load. The live count is P2PSession's, which is
--- also the one the cap is actually enforced against.
+-- meant this indicator could never render, at any load. The live count is the library's numbered
+-- P2P's (LIBREQ-DS-008, Modules/P2P.lua), which is also the one the cap is enforced against.
 function TOGBankClassic_UI_StatusBar.NetTxText()
-	local sends = TOGBankClassic_P2PSession
-		and TOGBankClassic_P2PSession:GetActiveSendTotal() or 0
+	local p2p = TOGBankClassic_P2P and TOGBankClassic_P2P:Lib()
+	local sends = p2p and p2p:GetActiveSendTotal() or 0
 	if sends == 0 then return "" end
 	local max = TOGBankClassic_Constants.PEER_TO_PEER.MAX_ACTIVE_SENDS   -- the one spelling; no literal fallback
 	local c = (sends >= max) and "ffff4444" or "ffff9900"
@@ -229,12 +229,11 @@ function TOGBankClassic_UI_StatusBar.NetReqSyncText()
 	return "|cff87ceebr:ids|r"
 end
 
--- P2P fetches in flight: "Rx:2"
+-- P2P fetches in flight: "Rx:2" -- LIBREQ-DS-008: the library's own sessions (dispatched or
+-- active), where this used to count the pull path's pending requests.
 function TOGBankClassic_UI_StatusBar.NetRxText()
-	local fetches = 0
-	if TOGBankClassic_Guild.pendingP2PRequests then
-		for _ in pairs(TOGBankClassic_Guild.pendingP2PRequests) do fetches = fetches + 1 end
-	end
+	local p2p = TOGBankClassic_P2P and TOGBankClassic_P2P:Lib()
+	local fetches = p2p and p2p.activeSessions or 0
 	if fetches == 0 then return "" end
 	return string.format("|cff87ceebRx:%d|r", fetches)
 end
@@ -492,8 +491,14 @@ function TOGBankClassic_UI_StatusBar:Attach(window)
 	-- etc. are). Older clients silently ignored the bad flag; the current client validates
 	-- strictly and errors. The text has always rendered non-italic anyway, so re-apply with no
 	-- flags to preserve appearance and stop the error. (True italic needs an italic font file.)
-	local scFont, scSize = statusCenter:GetFont()
-	statusCenter:SetFont(scFont, scSize, "")
+	-- VISIBILITY-001 part 2: with the accessibility scale available the line takes the library's
+	-- scaled GameFontNormal INSTEAD -- an object derived from the base's own flags, so no invalid flag
+	-- reaches it either -- rather than an explicit SetFont that a SetFontObject would have to override.
+	local UI = TOGBankClassic_UI   -- absent only where a spec loads this file without UI.lua
+	if not (UI and UI.UIScaledFont and UI:UIScaledFont(statusCenter, "GameFontNormal")) then
+		local scFont, scSize = statusCenter:GetFont()
+		statusCenter:SetFont(scFont, scSize, "")
+	end
 	window.statusCenter = statusCenter
 
 	local statusRight = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -502,6 +507,15 @@ function TOGBankClassic_UI_StatusBar:Attach(window)
 	statusRight:SetJustifyH("RIGHT")
 	statusRight:SetText("")
 	window.statusRight = statusRight
+
+	-- VISIBILITY-001 part 2: all three sections on the library's scaled GameFontNormal, which the
+	-- library re-sizes in place, so nothing re-lays here on a change. The LEFT one is AceGUI's own
+	-- FontString on a POOLED frame: it gets its base font back on release (below), or the next addon
+	-- to Create a Frame would inherit our scale. The bar's 24px background is AceGUI's and stays.
+	if UI and UI.UIScaledFont then
+		UI:UIScaledFont(statusRight, "GameFontNormal")
+		UI:UIScaledFont(window.statustext, "GameFontNormal")
+	end
 
 	-- STATUSBAR-002: the window's own left-text writes go through the bar. While the bar is YIELDING
 	-- the left to the urgent propagation line (RefreshSides), a write is parked rather than painted
@@ -523,6 +537,7 @@ function TOGBankClassic_UI_StatusBar:Attach(window)
 	end
 	window:SetCallback("OnRelease", function(w)
 		w.SetStatusText, w.togStatusBar, w.togRawSetStatusText = raw, nil, nil
+		if w.statustext and w.statustext.SetFontObject then w.statustext:SetFontObject("GameFontNormal") end
 	end)
 
 	-- Auto-stop the ticker whenever the window is hidden (covers both

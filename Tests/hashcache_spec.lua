@@ -362,29 +362,38 @@ describe("the writers, through the real receive paths", function()
 		}, GUILD)
 		assert.is_true(TOGBankClassic_Guild:IsBank(BANKER) and TOGBankClassic_Guild:IsBank(OTHER),
 			"precondition: the roster did not come up; every path below would refuse silently")
+		-- LIBREQ-DS-008: the numbered wire names bankers by NUMBER, so every client here holds the
+		-- same table (BANKER 0001, OTHER 0002) and a claim resolves to a key on receipt.
+		TOGBankClassic_BankerNumbers:Adopt({ v = 5, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
+		assert.equal("0002", TOGBankClassic_BankerNumbers:NumberOf(OTHER), "precondition: the numbers table was not adopted")
 	end
 
+	local function host() return TOGBankClassic_Core:DeltaHost() end
+
+	--- `hash-list-reply` on togbank-hl (LIBREQ-DS-008 part 2: Chat hands it to the library as one
+	--- broadcast, and the library's onAdvertised is the cache's writer).
 	local function hashListReplyFrom(sender, alts)
 		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-reply", alts = alts })
-		TOGBankClassic_Chat:OnCommReceived("togbank-hlr", body, "WHISPER", sender)
-	end
-
-	--- A peer's hash-OFFER (its answer to our broadcast), which is what feeds P2PSession:OnOffer
-	--- and, through it, the cache. (A hash-list-BROADCAST does not write the cache: it only makes
-	--- the receiver build offers back to the sender.)
-	local function hashOfferFrom(sender, alts)
-		-- Inside the collect window an offer accumulates for Dispatch; outside it (P2P-034) a
-		-- useful one opens a session at once. These examples are about the CACHE, so the window is
-		-- opened as the broadcast would have, and nothing here dispatches.
-		TOGBankClassic_P2PSession:BeginCollectWindow({})
-		-- N6: the KEYED offer is what old-build peers send; off by default since v1.5.0 and
-		-- accepted only under this switch. These examples are about the cache the offer feeds.
-		TOGBankClassic_Switches:Set("legacyKeyedReceive", true)
-		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-offer", alts = alts })
 		TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", sender)
 	end
 
-	describe("the hash-list reply (togbank-hlr)", function()
+	--- A peer's canon-bearing OFFER, on the library's wire: the `ver-reply` (a peer answering "this
+	--- is the version I hold") on the host's HANDSHAKE prefix, whose every entry the library reports
+	--- through onAdvertised -- the cache's one writer -- whether or not a query asked for it. N6 /
+	--- LIBREQ-DS-008: the KEYED `hash-offer` is deleted and the numbered `hash-offer2` carries bare
+	--- numbers and no canons, so neither can feed a cache example. A claim with NO canon is not on
+	--- the numbered wire at all (an entry is `<number><canon>`) and is left out here.
+	local function hashOfferFrom(sender, alts)
+		local BN = TOGBankClassic_BankerNumbers
+		local entries = {}
+		for name, claim in pairs(alts) do
+			if claim.hashV2 ~= nil then entries[#entries + 1] = { number = BN:NumberOf(name), canon = claim.hashV2 } end
+		end
+		local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "ver-reply", e = BN:EncodeEntries(entries) })
+		host():OnComm_HANDSHAKE(host().prefixes.HANDSHAKE, body, "WHISPER", sender)
+	end
+
+	describe("the hash-list reply (togbank-hl)", function()
 		before_each(function() env.reset() end)
 
 		-- HLR-CRASH-001, the reproduction. The reply carries no isBanker field in the client
@@ -427,10 +436,12 @@ describe("the writers, through the real receive paths", function()
 
 		-- P2P-034, the reproduction: 26 `No P2P response ... after 5s timeout` lines from one reply,
 		-- Togweapons and Toglowweap among them -- banks the viewer held with the author's canon.
+		-- LIBREQ-DS-008 part 2: the ask is the library's sync-request to the replier by whisper on the
+		-- host's HANDSHAKE prefix (the pull path's GUILD alt-request is gone); the count is of those.
 		local function guildRequestsAfter(sender, alts)
 			local sent = {}
-			TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, dist)
-				if prefix == "togbank-hl" and dist == "GUILD" and text:find("alt%-request") then
+			TOGBankClassic_Core.SendCommMessage = function(_, prefix, text)
+				if prefix == host().prefixes.HANDSHAKE and text:find("sync%-request") then
 					sent[#sent + 1] = text
 				end
 			end
@@ -440,7 +451,7 @@ describe("the writers, through the real receive paths", function()
 
 		-- INV2-RETIRE-003: "we hold" means the V2 store holds records; the alt record carries the
 		-- version metadata. env.holdV2 seeds the store beside each record below.
-		it("does NOT broadcast a request for a bank we hold with a canon when a reply carries only a differing revision-1 hash", function()
+		it("does NOT ask for a bank we hold with a canon when a reply carries only a differing revision-1 hash", function()
 			client("Otherguy")
 			TOGBankClassic_Guild.Info.alts[OTHER] = {
 				name = OTHER, money = 0,
@@ -474,6 +485,43 @@ describe("the writers, through the real receive paths", function()
 			env.holdV2(GUILD, OTHER)
 			assert.equal(1, guildRequestsAfter(BANKER, { [OTHER] = { hash = 0x10, hashV2 = C(100, 0x20), updatedAt = 100, mailHash = 0 } }),
 				"revision 1 agreed, so the canon was never requested (HASH-CANON-006)")
+		end)
+
+		-- XGUILD-SYNC-001 (D5) / LIBREQ-DS-008: a sister guild's client never hears this guild's
+		-- hlb2, so the reply carries the replier's numbers table and the receiver adopts it; and a
+		-- banker NEITHER table numbers is still judged -- by name, through the same caches and the
+		-- library's session path (which names its key). Found by the two-guild fleet.
+		it("adopts the numbers on a reply, and asks BY NAME for a banker neither table numbers", function()
+			client("Otherguy")
+			local BN = TOGBankClassic_BankerNumbers
+			-- Our table loses OTHER; the replier's (same version, lower-sorting sender: adopted) never had it.
+			BN:Adopt({ v = 6, n = 3, t = { [BANKER] = 1, [OTHER] = 2 } }, PEER)
+			TOGBankClassic_Guild.Info.roster.numbers[OTHER] = nil
+			assert.is_nil(BN:NumberOf(OTHER), "precondition")
+			local sent = {}
+			TOGBankClassic_Core.SendCommMessage = function(_, prefix, text)
+				local ok, d = TOGBankClassic_Core:DeserializeWithChecksum(text)
+				if ok then sent[#sent + 1] = { prefix = prefix, data = d } end
+			end
+			local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-reply", banker = BANKER,
+				numbers = { v = 6, n = 2, t = { [BANKER] = 1 } },
+				alts = { [OTHER] = { hash = 0x10, hashV2 = C(100, 0x20), updatedAt = 100, mailHash = 0 } } })
+			TOGBankClassic_Chat:OnCommReceived("togbank-hl", body, "WHISPER", BANKER)
+			assert.equal(6, BN:Version(), "the reply's table was not adopted")
+			assert.is_nil(BN:NumberOf(OTHER), "precondition: the adopted table numbered OTHER after all, so the by-name path never ran")
+			assert.equal(C(100, 0x20), (TOGBankClassic_Guild.latestBankerHashes[OTHER] or {}).hashV2, "an unnumbered banker's canon did not reach the cache")
+			assert.equal(100, TOGBankClassic_Guild.newestAdvertisedAt[OTHER], "... nor the tab's newest time")
+			local req
+			for _, m in ipairs(sent) do if m.data.type == "sync-request" then req = m end end
+			assert.is_table(req, "an unnumbered banker the replier holds newer was not asked for")
+			assert.equal(host().prefixes.HANDSHAKE, req.prefix)
+			assert.equal(OTHER, req.data.itemKey, "the session names its key by NAME -- no number needed")
+			assert.equal(C(100, 0x20), req.data.canon)
+			-- A STRANGER's reply carrying a newer table renumbers nothing: numbers are the guild's.
+			TOGBankClassic_Chat:OnCommReceived("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum({ type = "hash-list-reply",
+				numbers = { v = 99, n = 5, t = { [BANKER] = 3, [OTHER] = 4 } }, alts = {} }), "WHISPER", "Stranger-Elsewhere")
+			assert.equal(6, BN:Version(), "a stranger's whisper renumbered the guild")
+			assert.equal("0001", BN:NumberOf(BANKER))
 		end)
 
 		it("ignores what a peer advertises about OUR OWN character", function()
@@ -527,7 +575,7 @@ describe("the writers, through the real receive paths", function()
 		end)
 	end)
 
-	describe("the hash-offer (togbank-hl -> P2PSession:OnOffer)", function()
+	describe("the canon-bearing offer (the library's ver-reply on the host -> onAdvertised)", function()
 		before_each(function() env.reset() end)
 
 		-- The client is Bankchar throughout: an offer FROM the character this client plays is its
@@ -540,11 +588,13 @@ describe("the writers, through the real receive paths", function()
 			assert.equal(C(100, 0x20), cached.hashV2, "the offer path dropped hashV2 while copying the entry")
 		end)
 
-		it("does not let a revision-1-only offer with a newer time displace a V2 entry", function()
+		-- The numbered wire cannot carry a revision-1-only claim (an entry is `<number><canon>`), so
+		-- the rule this path can exercise is the same-revision one: an OLDER publish does not displace.
+		it("does not let an older canon displace a V2 entry", function()
 			client("Bankchar")
 			hashOfferFrom(PEER, { [OTHER] = { hash = 0x10, hashV2 = C(100, 0x20), updatedAt = 100, mailHash = 0 } })
 			assert.equal(C(100, 0x20), TOGBankClassic_Guild.latestBankerHashes[OTHER].hashV2, "precondition")
-			hashOfferFrom(STALE, { [OTHER] = { hash = 0xDEAD, updatedAt = 100 + 86400, mailHash = 0 } })
+			hashOfferFrom(STALE, { [OTHER] = { hash = 0xDEAD, hashV2 = C(99, 0x19), updatedAt = 99, mailHash = 0 } })
 			assert.equal(C(100, 0x20), TOGBankClassic_Guild.latestBankerHashes[OTHER].hashV2)
 			-- ANTI-VACUOUS: the stale sender CAN write when the rule allows it, so the line above
 			-- is the rule refusing and not the sender being dropped as unknown.
@@ -556,8 +606,8 @@ describe("the writers, through the real receive paths", function()
 		it("ignores an offer's claim about our own character, while still taking the others", function()
 			client("Bankchar")
 			hashOfferFrom(PEER, {
-				[BANKER] = { hash = 0xDEAD, hashV2 = 0xBEEF, updatedAt = 99999, mailHash = 0 },
-				[OTHER]  = { hash = 0x10, hashV2 = 0x20, updatedAt = 100, mailHash = 0 },
+				[BANKER] = { hash = 0xDEAD, hashV2 = C(99999, 0xBEEF), updatedAt = 99999, mailHash = 0 },
+				[OTHER]  = { hash = 0x10, hashV2 = C(100, 0x20), updatedAt = 100, mailHash = 0 },
 			})
 			-- ANTI-VACUOUS: the other alt proves the offer was processed at all, so the nil below
 			-- is a refusal and not a path that never ran.

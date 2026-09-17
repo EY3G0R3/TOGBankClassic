@@ -17,8 +17,10 @@ local function loadCore()
 	env.stubOutput()
 	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
-	require("env.libs").load("AceCommQueue-1.0", "DeltaSync-1.0")
-	env.loadModules({ "Modules/Constants.lua", "Modules/DeltaComms.lua" })
+	env.loadDeltaSync()
+	-- SPEC-ALONE-001: BankerNumbers and P2P too -- Core:DeltaHost stands the numbered P2P up only when
+	-- TOGBankClassic_P2P exists, and run alone this file had neither (earlier files left them behind).
+	env.loadModules({ "Modules/Constants.lua", "Modules/DeltaComms.lua", "Modules/BankerNumbers.lua", "Modules/P2P.lua" })
 	-- AceAddon refuses a second NewAddon for the same name and the suite shares one Lua state.
 	local AceAddon = LibStub("AceAddon-3.0")
 	if AceAddon and AceAddon.addons then
@@ -117,8 +119,25 @@ describe("DS-HOST-001: the host itself", function()
 		assert.equal(7, n)
 	end)
 
-	it("does NOT run the library's P2P module -- the numbered handshake is TOGBank's own", function()
-		assert.is_false(Core:DeltaHost().p2p, "InitP2P was called; per-item hash offers are the design P2P-035 replaced")
+	-- LIBREQ-DS-008 part 2: this used to pin the opposite ("does NOT run the library's P2P module --
+	-- the numbered handshake is TOGBank's own"). The numbered handshake IS the library's now, on the
+	-- host as `host.p2p`, stood up WITH the host -- not on the first broadcast -- because the library
+	-- routes an OFFER or HANDSHAKE to `host.p2p` only when it exists, and a receiver at login has
+	-- received before it has sent (the fleet found a receiver dropping every peer's OFFER).
+	it("stands the library's NUMBERED P2P up with the host, with TOGBank's hooks, so a receiver can act before it ever sends", function()
+		local host = Core:DeltaHost()
+		local p2p = rawget(host, "p2p")
+		assert.is_table(p2p, "the host has no P2P instance at creation")
+		assert.equal(LibStub("DeltaSync-1.0")._P2PNumberedClass, getmetatable(p2p).__index,
+			"the host's P2P is the hash protocol, not the numbered one (InitP2P mode='numbered')")
+		assert.equal(p2p, TOGBankClassic_P2P:Lib(), "P2P:Lib() hands back a different instance from the host's")
+		assert.is_function(p2p.cb and p2p.cb.servableCanon, "the hooks were not installed")
+		assert.is_function(p2p.cb.onDeliver)
+		assert.is_function(p2p.cb.peerCapable)
+		-- LIBREQ-DS-008 ask 3 (2026-09-16): the library fires onOfferReceived first, so TOGBank no
+		-- longer wraps the instance's OnBroadcast; the catch-up broadcast asks for TOGBank's fields.
+		assert.is_nil(rawget(p2p, "OnBroadcast"), "a TOGBank pre-hook is still on the instance")
+		assert.is_function(p2p.cb.broadcastExtra, "the catch-up broadcast has no broadcastExtra hook")
 	end)
 
 	-- The logger: the library's (category, tag, fmt) / (category, fmt) / (fmt) forms all land in

@@ -185,7 +185,9 @@ describe("HIDE-001: Bank:SetHidden re-reads, and the scan publishes without the 
 		-- HIDE-SHARE-001: MintVersion shares through Events; in a full-suite run the REAL Events
 		-- module survives from an earlier file and reaches for Guild:GetGuild, which this stub lacks.
 		TOGBankClassic_Events = { SyncDeltaVersion = function() end }
-		TOGBankClassic_P2PSession = nil
+		-- LIBREQ-DS-008: Bank's publish gate reads the library's P2P through TOGBankClassic_P2P:Lib();
+		-- no instance here means no consult gate, which is what a single-PC scan wants.
+		TOGBankClassic_P2P = { Lib = function() return nil end }
 		-- A content hash that depends on the records, so "hiding changes what is published" is a
 		-- real assertion rather than one the constant stub would pass by construction.
 		TOGBankClassic_Core = env.coreHashStub(nil, {
@@ -205,6 +207,9 @@ describe("HIDE-001: Bank:SetHidden re-reads, and the scan publishes without the 
 		env.defineItem(858,  { name = "Minor Healing Potion", class = 0 })
 		env.setBag(0, 4, { { id = 6948, count = 1 }, { id = 858, count = 5 } })
 	end)
+	-- TOGBankClassic_P2P is a MODULE GLOBAL and the doubles above stand in for it: handed back after
+	-- every example, or a later file that never loads P2P.lua meets a double from here.
+	after_each(function() TOGBankClassic_P2P = nil end)
 
 	it("answers an empty list before the options DB exists, and never errors", function()
 		TOGBankClassic_Options.db = nil
@@ -255,13 +260,15 @@ describe("HIDE-001: Bank:SetHidden re-reads, and the scan publishes without the 
 		assert.equal(2, #shared, "a hide that changed nothing shared anyway")
 		assert.is_nil(Bank.shareOnMint, "the flag lingered past a no-change scan")
 		-- A DEFERRED hide (the publish gate says no) shares when the deferred publish mints.
-		TOGBankClassic_P2PSession = { BeginConsult = function() end, IsSelfConsulted = function() return false end }
+		local consulted = false
+		local p2p = { BeginConsult = function() end, IsSelfConsulted = function() return consulted end }
+		TOGBankClassic_P2P = { Lib = function() return p2p end }
 		Bank.readThisSession = {}
 		assert.is_true(Bank:SetHidden(858, 0, 0, true))
 		assert.equal(2, #shared, "a deferred hide shared before anything was minted")
 		assert.is_true(Bank.shareOnMint, "the deferred hide dropped the share flag")
 		assert.is_table(Bank.deferred, "the hide was not deferred -- the example is not testing the deferred path")
-		TOGBankClassic_P2PSession.IsSelfConsulted = function() return true end
+		consulted = true
 		assert.is_true(Bank:PublishIfDeferred())
 		assert.equal(3, #shared, "the deferred publish minted without sharing")
 		assert.is_nil(Bank.shareOnMint)
@@ -370,8 +377,29 @@ describe("HIDE-001: the slot, the tooltip and the right click", function()
 		require("env.ace").load("AceGUI-3.0")
 		UI = env.loadUI()
 		TOGBankClassic_Options = { db = { global = {}, char = {} } }
-		TOGBankClassic_Guild = TOGBankClassic_Guild or {}
-		TOGBankClassic_Guild.ReconstructItemLink = function() end
+	end)
+
+	-- LINK-AUDIT-001 step 1: a row drawn with no link asks Resolve -- the one link builder -- by the
+	-- row's own id, suffix and enchant, at draw and again at hover. Guild:ReconstructItemLink, which
+	-- this replaced, answered GetItemInfo's BASE link and dropped the suffix.
+	it("a linkless row takes its link from Resolve on its own id, suffix and enchant", function()
+		env.loadFile("Modules/Inventory/Record.lua")
+		local asked = {}
+		local answer = nil
+		TOGBankClassic_Inventory_Resolve = { link = function(rec) asked[#asked + 1] = rec; return answer end }
+		local parent = UI:Create("SimpleGroup")
+		local item = { ID = 4564, Count = 1, Suffix = 1180, Enchant = 0, Info = { name = "Spiked Club of the Bear", icon = 1, rarity = 2 } }
+		local slot = UI:DrawItem(item, parent)
+		assert.equal(1, #asked, "the draw did not ask Resolve for the missing link")
+		local R = TOGBankClassic_Inventory_Record
+		assert.equal(R.keyFor(4564, 1180, 0), R.key(asked[1]), "Resolve was asked for the base item, not the row's variant")
+		assert.is_nil(slot.link)
+		-- The client learns the item later: the hover asks again and shows that link.
+		answer = "|cff1eff00|Hitem:4564::::::1180|h[Spiked Club of the Bear]|h|r"
+		slot:Fire("OnEnter")
+		assert.equal(2, #asked)
+		assert.equal(answer, item.Link, "the hover did not keep the link Resolve built")
+		TOGBankClassic_Inventory_Resolve = nil
 	end)
 
 	local function row(hidden)
@@ -427,23 +455,28 @@ end)
 
 describe("HIDE-001: the tooltip hint", function()
 	local UI
-	-- env_togbank's own GameTooltip (SetHyperlink stubbed, AddLine recorded), not the rich frame
-	-- model, which has no SetHyperlink.
-	before_each(function() env.reset(); env.stubOutput(); UI = env.loadUI() end)
+	-- The harness's scanning GameTooltip (pin 830dab2): SetHyperlink fills the item's own lines
+	-- from `tooltipLines`, and the addon's AddLine lands BELOW them, counted by GetLines.
+	before_each(function()
+		env.reset(); env.stubOutput()
+		require("env.frames").reset()
+		UI = env.loadUI()
+		env.defineItem(6948, { name = "Hearthstone", tooltipLines = { "Hearthstone", "Unique" } })
+	end)
 
 	it("appends the hint lines under the item tooltip", function()
 		UI.currentTooltipLink = nil
 		UI:ShowItemTooltip("|Hitem:6948|h", { { "Hidden from the guild -- right-click to show it", 1, 0.3, 0.3 } })
-		local lines = env.tooltipAdded
-		assert.equal(1, #lines)
-		assert.equal("Hidden from the guild -- right-click to show it", lines[1].text)
-		assert.equal(1, lines[1].r)
-		assert.is_true(lines[1].wrap, "a long hint line is not wrapped")
+		local lines = GameTooltip:GetLines()
+		assert.equal(3, #lines, "the item's two lines, then the hint")
+		assert.equal("Hearthstone", lines[1].left)
+		assert.equal("Hidden from the guild -- right-click to show it", lines[3].left)
+		assert.equal(1, lines[3].r)
+		assert.is_true(lines[3].wrap, "a long hint line is not wrapped")
 		-- And none without the argument.
 		UI.currentTooltipLink = nil
-		env.tooltipAdded = {}
 		UI:ShowItemTooltip("|Hitem:6948|h")
-		assert.equal(0, #env.tooltipAdded)
+		assert.equal(2, #GameTooltip:GetLines(), "a hint line survived a plain show")
 	end)
 end)
 

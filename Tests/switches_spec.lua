@@ -6,9 +6,14 @@
 --
 -- INV2-RETIRE-003 (2026-09-11): `inventoryV2` and `dualWrite` are RETIRED -- the V2 store is the
 -- only storage format, the legacy rows are neither written nor kept, and the accessors have no
--- fallback. Every example below that named them is re-pinned on the switches that remain
--- (`sendV2Wire`, `legacyKeyedReceive`); the dependency rule, which no shipped switch uses any more
--- but which `IsEnabled` still implements, is pinned through a pair registered by the example.
+-- fallback. Every example below that named them is re-pinned on the switch that remains
+-- (`sendV2Wire`); the dependency rule, which no shipped switch uses any more but which `IsEnabled`
+-- still implements, is pinned through a pair registered by the example.
+--
+-- N6 (2026-09-14): `legacyKeyedReceive` retired too, on its own retire line, on the operator's
+-- "then we can do this work" -- the keyed receive branches in Chat.lua went with it. Sorting and
+-- the sorted listing are now pinned on the two-entry pair the example registers, since one shipped
+-- switch cannot show an order.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
 
@@ -35,15 +40,16 @@ end
 describe("Switches registry", function()
 	before_each(function() env.reset(); loadSwitches() end)
 
-	it("declares the wire switch and the N6 grace-period switch, and nothing retired", function()
-		for _, name in ipairs({ "sendV2Wire", "legacyKeyedReceive" }) do
-			assert.is_table(Switches.registry[name], name .. " is not registered")
-		end
+	it("declares the wire switch, and nothing retired", function()
+		assert.is_table(Switches.registry.sendV2Wire, "sendV2Wire is not registered")
 		for _, name in ipairs({ "inventoryV2", "dualWrite" }) do
 			assert.is_nil(Switches.registry[name],
 				name .. " is registered again -- it was retired by INV2-RETIRE-003 when the V2 " ..
 				"store became the only storage format, and nothing reads it")
 		end
+		assert.is_nil(Switches.registry.legacyKeyedReceive,
+			"legacyKeyedReceive is registered again -- N6 deleted it and the keyed receive branches " ..
+			"on 2026-09-14; a keyed form is dropped at the door with no switch to reopen it")
 	end)
 
 	-- A switch that outlives its rework is a bug, not a feature. FEATURES.FORCE_DELTA_SYNC and
@@ -92,10 +98,13 @@ describe("Switches state", function()
 	-- A switch may be queried before Database:Init has run.
 	it("falls back to defaults with no database", function()
 		env.reset(); loadSwitches(true)
-		-- The assertion is "it reports the DEFAULT", not "it reports false".
+		-- The assertion is "it reports the DEFAULT", not "it reports false": one switch that
+		-- defaults on, and one the example registers that defaults off.
+		Switches.registry.specOff = { default = false, description = "spec", retire = "spec" }
 		assert.is_true(Switches:IsEnabled("sendV2Wire"))
-		assert.is_false(Switches:IsEnabled("legacyKeyedReceive"))
+		assert.is_false(Switches:IsEnabled("specOff"))
 		assert.is_false(Switches:Set("sendV2Wire", true))
+		Switches.registry.specOff = nil
 	end)
 end)
 
@@ -147,17 +156,27 @@ describe("Switches:GetAll", function()
 	before_each(function() env.reset(); loadSwitches() end)
 
 	it("returns every switch, sorted by name", function()
+		assert.equal(1, #Switches:GetAll())
+		assert.equal("sendV2Wire", Switches:GetAll()[1].name)
+		-- One shipped switch shows no order; a registered pair does.
+		Switches.registry.aaaSpec = { default = false, description = "spec", retire = "spec" }
 		local all = Switches:GetAll()
 		assert.equal(2, #all)
-		assert.equal("legacyKeyedReceive", all[1].name)
+		assert.equal("aaaSpec", all[1].name)
 		assert.equal("sendV2Wire", all[2].name)
+		Switches.registry.aaaSpec = nil
 	end)
 
-	-- N6: the operator's "comment it out first, delete in a week or two if nothing happens". Off
-	-- by default is the comment-out; the switch is what makes it undoable in game.
-	it("ships legacyKeyedReceive OFF, with a retire note naming the deletion", function()
-		assert.is_false(Switches:IsEnabled("legacyKeyedReceive"))
-		assert.truthy(Switches.registry.legacyKeyedReceive.retire:find("delete", 1, true))
+	-- N6: the operator's "comment it out first, delete in a week or two if nothing happens". The
+	-- comment-out shipped as `legacyKeyedReceive` OFF; the deletion its retire note named happened
+	-- on 2026-09-14 ("then we can do this work"). writ-cannot: the example that pinned the switch
+	-- shipping OFF with a retire note naming the deletion cannot stand -- the feature it covered was
+	-- removed on purpose, on its own schedule; what replaces it is the "nothing retired" example
+	-- above, which refuses the switch coming back, and chat_spec's door-drop of the keyed forms.
+	it("carries no grace-period switch: the keyed forms are dropped without one", function()
+		assert.is_nil(Switches.registry.legacyKeyedReceive)
+		assert.is_false(Switches:IsEnabled("legacyKeyedReceive"), "an unregistered name reads on")
+		assert.is_false(Switches:Set("legacyKeyedReceive", true), "an unregistered name could be set")
 	end)
 
 	-- Distinguishes "the user set this" from "this is inherited", which is the first question

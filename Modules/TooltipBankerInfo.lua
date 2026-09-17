@@ -18,8 +18,12 @@ local TooltipBankerInfo = TOGBankClassic_TooltipBankerInfo
 -- Reusable table to avoid per-hover allocations
 local found = {}
 
+-- LINK-AUDIT-001 step 7: the hovered link is a client link (an edge), read by the one parser --
+-- its third return is the id. This was a private `|Hitem:(%d+):` match, a third spelling of the
+-- link layout beside Scan.parseLink and the held Log builder (docs/LINK_AUDIT.md section 4).
 local function GetItemIDFromLink(link)
-	return link and tonumber(link:match("|Hitem:(%d+):"))
+	if not link then return nil end
+	return select(3, TOGBankClassic_Inventory_Scan.parseLink(link))
 end
 
 --- Draw the "Bankers:" block into a tooltip the caller owns.
@@ -73,7 +77,9 @@ function TooltipBankerInfo:AppendTo(tooltip, itemID)
 			if total > 0 then
 				-- Strip realm suffix for display ("Bankchar-Realm" → "Bankchar")
 				local shortName = altName:match("^([^%-]+)") or altName
-				found[#found + 1] = { name = shortName, count = total }
+				-- XGUILD-LABEL-001: a sister guild's banker wears its guild's name.
+				local tag = TOGBankClassic_Guild.GuildTag and TOGBankClassic_Guild:GuildTag(altName) or ""
+				found[#found + 1] = { name = shortName .. tag, count = total }
 			end
 		end
 	end

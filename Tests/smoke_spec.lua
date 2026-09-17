@@ -11,13 +11,18 @@ describe("harness", function()
 
 	-- CLOCK-001: the clock starts at a realistic epoch, never 0 -- a live client never reads a
 	-- server time of 0, and a suite that did let every `ts <= 0` guard take the branch production
-	-- never takes.
+	-- never takes. The harness keeps TWO clocks, as the client does: `time()`/`GetServerTime()`
+	-- read the epoch, `GetTime()` is session uptime and never rewinds across files. One `advance`
+	-- moves both by the same amount; asserting they are EQUAL was the old env's merged clock.
 	it("provides a controllable clock that starts at a real epoch, not 0", function()
-		assert.equal(env.EPOCH, GetTime())
+		assert.equal(env.EPOCH, env.now)
+		assert.equal(env.EPOCH, time())
+		assert.equal(env.EPOCH, GetServerTime())
 		assert.is_true(env.EPOCH > 1700000000, "the default clock is not a real epoch")
+		local uptime = GetTime()
 		env.advance(5)
-		assert.equal(env.EPOCH + 5, GetTime())
 		assert.equal(env.EPOCH + 5, GetServerTime())
+		assert.equal(uptime + 5, GetTime())
 	end)
 
 	it("runs a C_Timer.After callback only once its delay has elapsed", function()
@@ -45,7 +50,7 @@ describe("harness", function()
 	end)
 
 	it("resets state between tests", function()
-		assert.equal(env.EPOCH, GetTime())
+		assert.equal(env.EPOCH, GetServerTime())
 		assert.equal(0, env.pendingTimerCount())
 	end)
 end)
@@ -66,7 +71,7 @@ describe("module loading", function()
 		env.loadModules(env.MODULE_ORDER)
 		for _, name in ipairs({
 			"TOGBankClassic_Bank", "TOGBankClassic_Guild", "TOGBankClassic_Item",
-			"TOGBankClassic_Database", "TOGBankClassic_Events", "TOGBankClassic_P2PSession",
+			"TOGBankClassic_Database", "TOGBankClassic_Events", "TOGBankClassic_P2P",
 		}) do
 			assert.is_table(_G[name], name .. " was not published as a global")
 		end

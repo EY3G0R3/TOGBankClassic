@@ -72,6 +72,14 @@ function Record.keyFor(id, suffix, enchant)
 	return string.format("%d:%d:%d", id, tonumber(suffix) or 0, tonumber(enchant) or 0)
 end
 
+--- The identity a REQUEST names: item id + random suffix, with the enchant slot at 0 because a
+--- request carries no enchant. The one spelling for "does this slot / attachment / row satisfy this
+--- order" (LINK-AUDIT-001 step 4, docs/LINK_AUDIT.md section 4) -- ItemHighlight, the Mailbox and
+--- the fulfil matchers all key on it, so a request with no suffixID is the plain item (suffix 0).
+function Record.requestKey(itemID, suffixID)
+	return Record.keyFor(itemID, suffixID or 0, 0)
+end
+
 --- Structural validity. Deliberately strict: a malformed record reaching the store is how
 --- corruption spreads, and every field is cheap to check.
 function Record.isValid(rec)

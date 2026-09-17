@@ -7,7 +7,7 @@ local ItemHighlight = TOGBankClassic_ItemHighlight
 -- State
 ItemHighlight.enabled = false
 ItemHighlight.neededItems = {}   -- {itemName: quantityNeeded} — legacy requests (no itemID) and Bagnon search
-ItemHighlight.neededItemIDs = {} -- {itemID: quantityNeeded} — new requests with explicit itemID
+ItemHighlight.neededItemIDs = {} -- {Record.requestKey (id:suffix:0): { id, qty }} — requests with an itemID
 ItemHighlight.overlays = {} -- Texture overlays for dimming items
 ItemHighlight.lastBagnonSearch = nil -- Cache last Bagnon search string to avoid redundant signals
 
@@ -211,8 +211,13 @@ function ItemHighlight:BuildNeededItemsList()
 
 			if qtyNeeded > 0 then
 				if request.itemID then
-					-- New request: key by numeric ID for precise variant matching
-					self.neededItemIDs[request.itemID] = (self.neededItemIDs[request.itemID] or 0) + qtyNeeded
+					-- LINK-AUDIT-001 step 4 (docs/LINK_AUDIT.md 3.7): keyed by Record.requestKey -- id AND
+					-- suffix -- so an order for "of the Bear" no longer lights every variant of the base
+					-- item in the bags. The value carries the id for the search-terms walk below.
+					local key = TOGBankClassic_Inventory_Record.requestKey(request.itemID, request.suffixID)
+					local e = self.neededItemIDs[key] or { id = tonumber(request.itemID), qty = 0 }
+					e.qty = e.qty + qtyNeeded
+					self.neededItemIDs[key] = e
 				else
 					-- Legacy request: key by name (existing behaviour)
 					self.neededItems[itemName] = (self.neededItems[itemName] or 0) + qtyNeeded
@@ -229,11 +234,13 @@ function ItemHighlight:BuildNeededItemsList()
 end
 
 -- Check if an item is needed.
--- When itemID is provided, ID-based matching is used (precise; handles same-name variants).
+-- When itemID is provided, ID-based matching is used (precise; handles same-name variants), on the
+-- slot's id + suffix (`link` is the slot's hyperlink; a nil link reads as the plain item).
 -- Falls back to name-based matching for legacy requests that lack an itemID.
-function ItemHighlight:IsItemNeeded(itemName, itemID)
+function ItemHighlight:IsItemNeeded(itemName, itemID, link)
 	if itemID then
-		if self.neededItemIDs[itemID] then return true end
+		local _, suffix = TOGBankClassic_Inventory_Scan.parseLink(link)
+		if self.neededItemIDs[TOGBankClassic_Inventory_Record.requestKey(itemID, suffix)] then return true end
 		-- ID not in the ID table; still check legacy name table in case an old
 		-- request for the same item exists without an ID.
 		return itemName and self.neededItems[itemName] ~= nil
@@ -469,8 +476,9 @@ function ItemHighlight:SetupBaganatorWidget()
 		if not details or not details.itemID then
 			return false
 		end
-		-- Fast path: ID-keyed requests need no item cache at all.
-		if ItemHighlight.neededItemIDs[details.itemID] then
+		-- Fast path: ID-keyed requests need no item cache at all -- the id and the link's suffix.
+		local _, suffix = TOGBankClassic_Inventory_Scan.parseLink(details.itemLink)
+		if ItemHighlight.neededItemIDs[TOGBankClassic_Inventory_Record.requestKey(details.itemID, suffix)] then
 			return true
 		end
 		-- Legacy name-keyed requests need the item name. A cold cache returns nil, which
@@ -594,8 +602,8 @@ function ItemHighlight:UpdateBagnonHighlighting()
 		table.insert(searchTerms, cleanName)
 	end
 	-- Include names for ID-keyed entries (from new requests with itemID)
-	for itemID, _ in pairs(self.neededItemIDs) do
-		local name = C_Item.GetItemNameByID(itemID)
+	for _, e in pairs(self.neededItemIDs) do
+		local name = C_Item.GetItemNameByID(e.id)
 		if name and not seenNames[name] then
 			seenNames[name] = true
 			local cleanName = stripRecipePrefix(name)
@@ -710,7 +718,7 @@ function ItemHighlight:UpdateDefaultBagHighlighting()
 				local itemInfo = C_Container.GetContainerItemInfo(bag, apiSlot)
 				if itemInfo then
 					local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
-					if not self:IsItemNeeded(itemName, itemInfo.itemID) then
+					if not self:IsItemNeeded(itemName, itemInfo.itemID, itemInfo.hyperlink) then
 						-- Item not needed - grey it out
 						self:ApplyOverlay(button)
 					end
@@ -756,7 +764,7 @@ function ItemHighlight:UpdateBankHighlighting()
 			local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
 			local button = self:GetBankSlotButton(slot)
 			if button then
-				if self:IsItemNeeded(itemName, itemInfo.itemID) then
+				if self:IsItemNeeded(itemName, itemInfo.itemID, itemInfo.hyperlink) then
 					self:RemoveOverlay(button)
 				else
 					self:ApplyOverlay(button)
@@ -777,7 +785,7 @@ function ItemHighlight:UpdateBankHighlighting()
 				local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
 				local button = self:GetBagSlotButton(bag, slot)
 				if button then
-					if self:IsItemNeeded(itemName, itemInfo.itemID) then
+					if self:IsItemNeeded(itemName, itemInfo.itemID, itemInfo.hyperlink) then
 						self:RemoveOverlay(button)
 					else
 						self:ApplyOverlay(button)

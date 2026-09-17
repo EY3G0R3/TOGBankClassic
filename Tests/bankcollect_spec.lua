@@ -10,23 +10,22 @@
 -- This path shipped with NO spec and was twice claimed covered when it was not (self-audit
 -- ed18e977db05). Every function below is driven here for the first time.
 --
--- The container model is deliberately FAITHFUL about one thing the code must survive either way:
--- moving a stack out of the bank MAY merge it into a partial stack already in bags (the client
--- auto-stacks). The surplus arithmetic is asserted with merging on AND off, because the addon cannot
--- know which happened and must be right regardless.
+-- The container is the HARNESS's (WoWAPITesting): `wow.bags`, `wow.cursor`, and its
+-- `C_Container.UseContainerItem` / `SplitContainerItem` / `PickupContainerItem` and `ClearCursor`.
+-- The client behaviour the code must survive either way -- moving a stack out of the bank MAY merge
+-- it into a partial stack already in bags -- is the harness's `wow.bankAutoStack`, and the surplus
+-- arithmetic is asserted with it on AND off, because the addon cannot know which happened.
 --
--- WHY THIS MODEL IS STILL HERE after the harness shipped its cursor (WoWAPITesting 1211a3a, which
--- multifill_spec adopted on 2026-09-13): (1) the move the whole file turns on, `UseContainerItem`
--- on a bank slot with the bank open, was not in the harness -- DELIVERED at f787c81 (pinned
--- 55b0c88, same day) with `wow.bankOpen` / `wow.bankAutoStack`, so this reason is gone; (2) the
--- harness's swap leaves the displaced stack ON THE CURSOR, while this fixture -- and COLLECT-002's
--- code, Mail.lua's "the client exchanges the two" -- has it return to the slot the addon picked up
--- from. Which the client does is unmeasured (the harness now says so in its own comment); the
--- operator's BANKFILL in-game check answers it, and the fixture follows the client, not the
--- harness. Thread b14ca32272f3 on WoWAPITesting's inbox is where the reading lands. Lift this file
--- once the swap question is settled by a client -- that is the only condition left.
+-- BANKFILL-SWAP-001: this file carried a PRIVATE copy of those three moves until 2026-09-17, for
+-- one reason -- the harness put a swapped-out stack ON THE CURSOR, while COLLECT-002 (Mail.lua,
+-- "the client exchanges the two") has it return to the slot the addon picked up from. The operator
+-- answered "i believe the bank" (the origin slot -- a belief, not a measurement); the harness
+-- adopted that rule at f463acd, and the private moves are gone. What stays here is a RECORDING
+-- wrapper: the call order and the swaps are what several examples assert, and the one thing the
+-- addon must never do -- drop a stack onto the SAME item, which merges -- is still refused loudly.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
+local wow = env.wow
 
 local Mail, Bank, Guild, Events
 
@@ -34,104 +33,43 @@ local ME      = "Bankchar-Testrealm"
 local ALICE   = "Alice-Testrealm"
 local LINEN   = 2589
 local WOOL    = 2592
-local STACK   = 20     -- stack ceiling the merge model uses for every item
+local STACK   = 20     -- the items' stack size: the harness's auto-stack reads `stackCount`
 local VAULT   = -1     -- BANK_CONTAINER
 local BANKBAG = 5      -- first bank bag: NUM_BAG_SLOTS + 1
 
 --- Every container-moving API call, in order, as { name, ... }.
 local calls
---- Whatever SplitContainerItem left on the cursor, until PickupContainerItem drops it.
-local cursor
---- Whether UseContainerItem merges into partial stacks of the same item first (client behaviour).
-local mergeOnMove
---- COLLECT-002: the slot the cursor stack was picked up from, and every swap the client performed.
-local pickedFrom, swaps
+--- COLLECT-002: every swap the addon made, as { bag, slot, put, took }.
+local swaps
 
-local function bagSlots(first, last)
-	local out = {}
-	for b = first, last do
-		local bag = env.bags[b]
-		for s = 1, (bag and bag.size or 0) do out[#out + 1] = { bag = bag, b = b, s = s } end
+--- Record the calls around the harness's own moves (installed by env.reset, captured per load).
+local function recordMoves()
+	local use, split, pickup, clear = C_Container.UseContainerItem, C_Container.SplitContainerItem,
+		C_Container.PickupContainerItem, _G.ClearCursor
+	C_Container.UseContainerItem = function(bag, slot)
+		calls[#calls + 1] = { "UseContainerItem", bag, slot }
+		return use(bag, slot)
 	end
-	return out
-end
-
---- Model the client moving a bank stack into bags: merge into partial stacks first when the fixture
---- says the client does that, then the first empty carried slot. What does not fit stays banked.
-local function useContainerItem(bag, slot)
-	calls[#calls + 1] = { "UseContainerItem", bag, slot }
-	local src = env.bags[bag] and env.bags[bag][slot]
-	if not src then return end
-	local remaining = src.stackCount
-	if mergeOnMove then
-		for _, c in ipairs(bagSlots(0, NUM_BAG_SLOTS)) do
-			local it = c.bag[c.s]
-			if it and it.itemID == src.itemID and it.stackCount < STACK and remaining > 0 then
-				local moved = math.min(STACK - it.stackCount, remaining)
-				it.stackCount = it.stackCount + moved
-				remaining = remaining - moved
-			end
-		end
+	C_Container.SplitContainerItem = function(bag, slot, amount)
+		calls[#calls + 1] = { "SplitContainerItem", bag, slot, amount }
+		return split(bag, slot, amount)
 	end
-	if remaining > 0 then
-		for _, c in ipairs(bagSlots(0, NUM_BAG_SLOTS)) do
-			if not c.bag[c.s] then
-				c.bag[c.s] = { itemID = src.itemID, stackCount = remaining, hyperlink = src.hyperlink }
-				remaining = 0
-				break
-			end
-		end
-	end
-	if remaining == 0 then
-		env.bags[bag][slot] = nil
-	else
-		src.stackCount = remaining
-	end
-end
-
-local function splitContainerItem(bag, slot, amount)
-	calls[#calls + 1] = { "SplitContainerItem", bag, slot, amount }
-	local src = env.bags[bag] and env.bags[bag][slot]
-	assert(src, string.format("split from an EMPTY slot %d/%d", bag, slot))
-	assert(amount > 0 and amount < src.stackCount, string.format(
-		"split %d out of a stack of %d -- the client refuses that", amount, src.stackCount))
-	assert(cursor == nil, "split with something already on the cursor -- the client refuses that")
-	src.stackCount = src.stackCount - amount
-	cursor = { itemID = src.itemID, stackCount = amount, hyperlink = src.hyperlink }
-end
-
-local function pickupContainerItem(bag, slot)
-	calls[#calls + 1] = { "PickupContainerItem", bag, slot }
-	local tbl = env.bags[bag]
-	assert(tbl and slot >= 1 and slot <= tbl.size,
-		string.format("pickup targeted a slot that does not exist: %d/%d", bag, tostring(slot)))
-	if cursor then
-		-- Dropping onto an EMPTY slot places the cursor stack. Dropping onto an OCCUPIED slot is the
-		-- client's SWAP: the two change places and the cursor is empty afterwards (a same-item drop
-		-- would merge instead; the code never does that -- it swaps a stack of a DIFFERENT item, and
-		-- the fixture says so rather than modelling a merge it never sees). COLLECT-002 relies on
-		-- the swap; before it, this fixture asserted the addon never dropped on an occupied slot.
+	C_Container.PickupContainerItem = function(bag, slot)
+		calls[#calls + 1] = { "PickupContainerItem", bag, slot }
+		local tbl, held = wow.bags[bag], wow.cursor
+		assert(tbl and slot >= 1 and slot <= tbl.slots,
+			string.format("pickup targeted a slot that does not exist: %d/%s", bag, tostring(slot)))
 		local there = tbl[slot]
-		if there then
-			assert(there.itemID ~= cursor.itemID, string.format(
+		if held and there then
+			assert(there.itemID ~= held.itemID, string.format(
 				"dropped a stack onto the SAME item at %d/%d -- that merges, and the addon must not rely on it", bag, slot))
-			swaps[#swaps + 1] = { bag = bag, slot = slot, put = cursor.itemID, took = there.itemID }
+			swaps[#swaps + 1] = { bag = bag, slot = slot, put = held.itemID, took = there.itemID }
 		end
-		tbl[slot] = cursor
-		cursor = there
-		if there then
-			-- The swapped-out stack rides the cursor back into the slot the addon picked up from.
-			local from = pickedFrom
-			assert(from, "a swap with no origin slot: the addon dropped without picking up first")
-			assert(not env.bags[from.bag][from.slot], "the origin slot was refilled before the swap landed")
-			env.bags[from.bag][from.slot] = there
-			cursor = nil
-		end
-		pickedFrom = nil
-	else
-		cursor = tbl[slot]
-		tbl[slot] = nil
-		pickedFrom = cursor and { bag = bag, slot = slot } or nil
+		return pickup(bag, slot)
+	end
+	_G.ClearCursor = function()
+		calls[#calls + 1] = { "ClearCursor" }
+		return clear()
 	end
 end
 
@@ -144,17 +82,15 @@ local function load()
 	Mail, Bank, Guild, Events = TOGBankClassic_Mail, TOGBankClassic_Bank, TOGBankClassic_Guild,
 		TOGBankClassic_Events
 
-	env.defineItem(LINEN, { name = "Linen Cloth" })
-	env.defineItem(WOOL,  { name = "Wool Cloth" })
+	env.defineItem(LINEN, { name = "Linen Cloth", stackCount = STACK })
+	env.defineItem(WOOL,  { name = "Wool Cloth", stackCount = STACK })
 	Guild.Info = { name = "Testguild", alts = {}, requests = {} }
 	Guild.IsBank = function(_, n) return n == ME end
 
-	calls, cursor, mergeOnMove = {}, nil, true
-	pickedFrom, swaps = nil, {}
-	C_Container.UseContainerItem    = useContainerItem
-	C_Container.SplitContainerItem  = splitContainerItem
-	C_Container.PickupContainerItem = pickupContainerItem
-	_G.ClearCursor = function() calls[#calls + 1] = { "ClearCursor" }; cursor = nil end
+	calls, swaps = {}, {}
+	wow.bankAutoStack = true
+	recordMoves()
+	-- The harness reads the bank as open while a `BankFrame` global reports shown.
 	_G.BankFrame = { shown = true, IsShown = function(self) return self.shown end }
 
 	-- Carried bags: one 16-slot backpack is plenty. Vault: 24 slots, empty until a case fills it.
@@ -425,7 +361,7 @@ describe("Mail:BankCollectStep", function()
 			assert.equal(0, inBank())
 			assert.equal(1, Bank:CountItemInBank(nil, WOOL), "the spare wool did not go into the bank")
 			assert.equal(15, Bank:CountItemInBags(nil, WOOL))
-			assert.is_nil(cursor, "something was left on the cursor")
+			assert.is_nil(wow.cursor, "something was left on the cursor")
 			assert.is_nil(Mail.bankCollectState, "an exact swap has nothing to return")
 		end)
 
@@ -565,7 +501,7 @@ describe("Mail:BankCollectStep", function()
 			assert.equal(7, inBags(), "bags hold exactly the order")
 			assert.equal(13, inBank(), "the bank gets exactly the surplus back")
 			assert.is_nil(Mail.bankCollectState)
-			assert.is_nil(cursor, "the split stack must not be left on the cursor")
+			assert.is_nil(wow.cursor, "the split stack must not be left on the cursor")
 			assert.equal(1, callsNamed("SplitContainerItem"))
 			assert.equal(1, callsNamed("PickupContainerItem"))
 		end)
@@ -581,7 +517,7 @@ describe("Mail:BankCollectStep", function()
 			click()
 			local ok, msg = click()
 			assert.is_true(ok, msg)
-			assert.equal(13, env.bags[VAULT][24].stackCount)
+			assert.equal(13, env.bags[VAULT][24].count)
 			assert.equal(7, inBags())
 		end)
 
@@ -618,7 +554,7 @@ describe("Mail:BankCollectStep", function()
 				local label = string.format("bags {%s} + vault {%s}, need %d, merge=%s",
 					table.concat(L.bags, ","), table.concat(L.vault, ","), L.need, tostring(merge))
 				it(label, function()
-					mergeOnMove = merge
+					wow.bankAutoStack = merge
 					bags(unpack(L.bags))
 					vault(unpack(L.vault))
 					order("r1", L.need)
@@ -631,7 +567,7 @@ describe("Mail:BankCollectStep", function()
 					assert.equal(L.need, inBags(), label .. ": bags do not hold exactly the order")
 					assert.equal(bankBefore - (L.need - bagsBefore), inBank(),
 						label .. ": the bank did not get exactly the surplus back")
-					assert.is_nil(cursor, label .. ": something was left on the cursor")
+					assert.is_nil(wow.cursor, label .. ": something was left on the cursor")
 					assert.is_nil(Mail.bankCollectState, label .. ": state left armed")
 				end)
 			end
@@ -702,7 +638,7 @@ describe("Mail:BankCollectStep", function()
 			order("r1", 5)
 			assert.is_true((click()))
 			assert.equal(LINEN, env.bags[0][1].itemID)
-			assert.equal(20, env.bags[VAULT][1].stackCount, "the look-alike stays banked")
+			assert.equal(20, env.bags[VAULT][1].count, "the look-alike stays banked")
 		end)
 
 		it("pulls only the suffix variant the order names (REQ-003)", function()
@@ -713,7 +649,7 @@ describe("Mail:BankCollectStep", function()
 			order("r1", 5, { suffixID = 864 })
 			assert.is_true((click()))
 			assert.is_nil(env.bags[VAULT][2], "the 864 stack is the one that moved")
-			assert.equal(5, env.bags[VAULT][1].stackCount)
+			assert.equal(5, env.bags[VAULT][1].count)
 		end)
 	end)
 end)
