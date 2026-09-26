@@ -164,6 +164,10 @@ function TOGBankClassic_Core:OnInitialize()
             TOGBankClassic_Output:Debug("PROTOCOL", "INIT", "VersionCheck-1.0 integration enabled (v%s)", hostAddon.Version)
         end
     end
+
+    -- XGUILD-SYNC-001 step 7: listen for sister-guild nudges on GreenWall's bridge when GreenWall is
+    -- loaded (an OptionalDep, so it has loaded first). Registers a handler; sends nothing.
+    if TOGBankClassic_GreenWall then TOGBankClassic_GreenWall:Init() end
 end
 
 function TOGBankClassic_Core:OnEnable()

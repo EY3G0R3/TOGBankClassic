@@ -471,6 +471,7 @@ function TOGBankClassic_Guild:Init(name)
 	if self.Info then
 		self:EnsureRequestsInitialized()
 		self:ReencodeHeldCanons()
+		self:SnapshotSettings()   -- SETTINGS-STALE-001: the first write diffs against what is held
 		-- PROP-PERSIST-001: the record is loaded now, so the saved "bank update not received" tracker
 		-- can be judged against the held canon. The roster-init call can run before this point and
 		-- must not be the only one.
@@ -2009,7 +2010,9 @@ function TOGBankClassic_Guild:FederationPeer(key)
 	for _, name in ipairs(names) do
 		local norm = self:NormalizeName(name)
 		local silentAt = norm and self.federationSilent[norm]
-		if norm and norm ~= me and not (silentAt and now - silentAt < self.FEDERATION_SILENT_FOR) then
+		-- XGUILD-BOUNCE-001: a sighting the server has since contradicted is not a candidate.
+		if norm and norm ~= me and not (silentAt and now - silentAt < self.FEDERATION_SILENT_FOR)
+			and self:SisterSightingHolds(lib, key, norm) then
 			local capable, why = true, "unknown"
 			if self.PeerSpeaksDataLeg then capable, why = self:PeerSpeaksDataLeg(norm) end
 			if capable then
@@ -2125,6 +2128,94 @@ function TOGBankClassic_Guild:OnFederationPeerProven(norm)
 	return self:AskFederationPeer(key, norm)
 end
 
+--- SSYNC-001 (the operator, 2026-09-25: "do we have a /togbank command to start a cross guild sync?
+--- i need that, especially for testing, and if i could do /togbank ssync <name> that would be
+--- helpful. it could do a roster lookup so i can be lazy with the realm"). The sister-guild members
+--- `input` names: an exact `Name-Realm`, or a bare name matched case-insensitively against every
+--- sister guild's roster -- so the realm can be left off. Several when a bare name is on more than one
+--- realm; empty when nobody matches.
+---@param input string
+---@return table matches array of { name = "Name-Realm", key = guild key }
+function TOGBankClassic_Guild:FindSisterMembers(input)
+	local out = {}
+	if type(input) ~= "string" or input == "" then return out end
+	local want = input:lower()
+	local wantFull = want:find("-", 1, true) ~= nil
+	for norm, m in pairs(self.memberRoster or {}) do
+		if type(m) == "table" and m.guildKey and not m.isStub then
+			local base = (norm:match("^(.-)%-") or norm):lower()
+			if (wantFull and norm:lower() == want) or (not wantFull and base == want) then
+				out[#out + 1] = { name = norm, key = m.guildKey }
+			end
+		end
+	end
+	table.sort(out, function(a, b) return a.name < b.name end)
+	return out
+end
+
+--- SSYNC-001: start a sister-guild sync NOW, for testing and troubleshooting. With no name, every
+--- listed sister guild's usual peer is asked, past the pending and silent-for-an-hour waits the cycle
+--- honours. With a name, THAT member is asked -- the hash-list ask and the requests index behind it,
+--- the same ask the cycle sends (AskFederationPeer) -- and any "left alone" mark on it is cleared.
+--- Returns the lines to print; nothing is sent when the answer is a refusal.
+---@param input string|nil
+---@return table lines
+function TOGBankClassic_Guild:SisterSyncCommand(input)
+	local lines = {}
+	if not self:IsSisterBankEnabled() then
+		lines[1] = "The Sister-guild bank is OFF for your guild, so there is nobody to sync with. An officer turns it on in Settings > Sister guilds."
+		return lines
+	end
+	local lib = RosterLib()
+	local keys = self:SisterGuildKeys(lib)
+	if #keys == 0 then
+		lines[1] = "No sister guilds are listed in Guild Roster's settings, so there is nobody to sync with."
+		return lines
+	end
+	self.federationSilent = self.federationSilent or {}
+	self.federationAsked = self.federationAsked or {}
+	if input == nil or input == "" then
+		local asked = {}
+		for _, key in ipairs(keys) do
+			local peer = self:FederationPeer(key)
+			if not peer then
+				-- The cycle's waits are for its own pacing; asked by hand, a silent member is tried again.
+				for name in pairs(self.federationSilent) do if self:GuildOf(name) == key then self.federationSilent[name] = nil end end
+				peer = self:FederationPeer(key)
+			end
+			if peer and self:AskFederationPeer(key, peer, asked) then
+				lines[#lines + 1] = string.format("Asked %s (%s) for its bank and requests.", peer, key)
+			else
+				lines[#lines + 1] = string.format("Nobody in %s is online to ask.", key)
+			end
+		end
+		return lines
+	end
+	local found = self:FindSisterMembers(input)
+	if #found == 0 then
+		lines[1] = string.format("%s is not a member of a sister guild (checked every sister guild's roster).", input)
+		return lines
+	end
+	if #found > 1 then
+		local names = {}
+		for _, f in ipairs(found) do names[#names + 1] = f.name end
+		lines[1] = string.format("%s matches more than one character: %s. Add the realm.", input, table.concat(names, ", "))
+		return lines
+	end
+	local target = found[1]
+	if not self:IsPlayerOnline(target.name) then
+		lines[1] = string.format("%s (%s) is not online.", target.name, target.key)
+		return lines
+	end
+	self.federationSilent[target.name] = nil
+	if self:AskFederationPeer(target.key, target.name) then
+		lines[1] = string.format("Asked %s (%s) for its bank and requests.", target.name, target.key)
+	else
+		lines[1] = string.format("Could not whisper %s.", target.name)
+	end
+	return lines
+end
+
 --- The window inside which an ask to, or an answer from, a sister guild means it is not hurried:
 --- one sync cycle -- read from the cycle's own constant, so the two cannot drift apart.
 TOGBankClassic_Guild.FEDERATION_HURRY_WINDOW = TOGBankClassic_Constants.TIMER_INTERVALS.VERSION_BROADCAST
@@ -2132,6 +2223,62 @@ TOGBankClassic_Guild.FEDERATION_HURRY_WINDOW = TOGBankClassic_Constants.TIMER_IN
 --- How long a hash-list ask stays pending before the cycle may judge it unanswered. The reply is one
 --- whispered message sent at ALERT; two minutes covers a congested sender's queue with room to spare.
 TOGBankClassic_Guild.FEDERATION_ANSWER_GRACE = 120
+
+-- XGUILD-BOUNCE-001: A SISTER MEMBER WHO LOGGED OFF. Guild Roster never hears "X has gone offline."
+-- for another guild's member; its presence for one is a sighting stamp that only AGES OUT
+-- (PRESENCE_TTL, 900 s) -- and its roster relay carries every name still inside that window and the
+-- receiver re-stamps them at receive time (LibGuildRoster-1.0.lua:3976, :4194, :3297), on a
+-- 270 s relay interval, so a member who logged off reads online for as long as two guildmates keep
+-- relaying. The one authoritative "not online" this client ever gets for them is the server's own
+-- bounce of a whisper: ERR_CHAT_PLAYER_NOT_FOUND_S ("No player named 'X' is currently playing."),
+-- which Events:CHAT_MSG_SYSTEM turns into UpdateOnlineMember(X, false) -- and until this, that set a
+-- flag on memberRoster that IsPlayerOnline, FederationPeer and the Bankers tab never read for a
+-- sister member. Found by Tests/xguildlive_spec.lua step 8: the sister viewer whispered its ask to the
+-- home banker who had just logged off, and waited a whole cycle (then judged them silent for an hour)
+-- while the other home member sat online holding the bank.
+
+--- How long a bounce outranks the library's sighting when the library does not say how long its own
+--- window is: Guild Roster's PRESENCE_TTL, the time an un-refreshed stamp takes to age out anyway.
+TOGBankClassic_Guild.SISTER_BOUNCE_HOLD = 900
+
+--- Does the library's sighting of sister member `norm` (roster `key`) still stand against this
+--- client's last bounce for them? True with no bounce on record, and again once the bounce is older
+--- than the library's presence window (`lib.PRESENCE_TTL`, else SISTER_BOUNCE_HOLD): the library's
+--- answer stands alone from then on, and if the member is still offline the next ask bounces again.
+--- A TOGBank message FROM the member clears the bounce at once (UpdateOnlineMember) -- that is this
+--- client's own sighting. The library's stamps are deliberately NOT compared against the bounce:
+--- its guild relay re-stamps a relayed name at receive time, so a stamp newer than the bounce was
+--- measured arriving within the minute (Tests/xguildlive_spec.lua step 8) and proves nothing.
+function TOGBankClassic_Guild:SisterSightingHolds(lib, key, norm)   -- luacheck: no unused args
+	local bounced = self.sisterBounced and self.sisterBounced[norm]
+	if not bounced then return true end
+	local hold = (lib and tonumber(lib.PRESENCE_TTL)) or self.SISTER_BOUNCE_HOLD
+	if (GetTime() or 0) - bounced > hold then
+		self.sisterBounced[norm] = nil
+		return true
+	end
+	return false
+end
+
+--- The server has just said sister member `norm` (roster `key`) is not playing. Remembered so the
+--- sighting is outranked (SisterSightingHolds); if our hash-list ask was out to them, it is
+--- withdrawn, they are left alone for FEDERATION_SILENT_FOR, and their guild is asked through its
+--- next member NOW -- the cycle's own pull still covers a lost ask. Returns whether a new ask left.
+function TOGBankClassic_Guild:OnSisterMemberBounced(norm, key)
+	self.sisterBounced = self.sisterBounced or {}
+	self.sisterBounced[norm] = GetTime()
+	if not (self.federationAsked and self.federationAsked[norm]) then return false end
+	self.federationAsked[norm] = nil
+	self.federationSilent = self.federationSilent or {}
+	self.federationSilent[norm] = GetServerTime() or 0
+	local peer = self:FederationPeer(key)
+	if not peer then
+		TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "%s is not playing (the ask bounced); nobody else online to ask in %s", norm, key)
+		return false
+	end
+	TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "%s is not playing (the ask bounced); asking %s instead", norm, peer)
+	return self:AskFederationPeer(key, peer)
+end
 
 --- A federated peer's hash-list-reply arrived: it answered. Called from the HLR receive.
 function TOGBankClassic_Guild:NoteFederationAnswer(sender)
@@ -2155,7 +2302,10 @@ function TOGBankClassic_Guild:AnswerFederatedAsker(asker)
 	local last = self.federationAnswers[norm]
 	if last and now - last < self.FEDERATION_ANSWER_COOLDOWN then return false end
 	self.federationAnswers[norm] = now
-	self:BroadcastSettings("NORMAL", norm)
+	-- XGUILD-SETTINGS-001: the owners alone, from any client -- officer settings never cross between
+	-- guilds (ApplyRemoteSettings), and a plain member holds the owners as well as an officer does.
+	-- Before, only a bank character or officer answered, with the whole settings payload.
+	self:SendBankerOwnersTo(norm)
 	if TOGBankClassic_Donations then TOGBankClassic_Donations:Broadcast("NORMAL", norm) end
 	local PL = TOGBankClassic_PriceList
 	if PL then
@@ -2899,6 +3049,27 @@ end
 --- ever stamped it and we hold nothing for it (seeding from a copy written before the stamps).
 --- `sender` must be a home guildmate, or in the same guild as the bank character the entry names.
 --- Returns true when anything changed.
+--- OWNERS-STAMP-001 (Peer Review, inbox 31294783: "two computations of one field stamp, each passing
+--- its own spec"): after an owners MERGE, move the `bankerOwners` field stamp to the newest of the
+--- payload's field stamp and its entry stamps, never backwards. The one spelling for both the home
+--- path and the sister-guild branch of ApplyRemoteSettings. Without it an older pre-stamp whole-table
+--- payload, judged against the field stamp, would replace the merged table.
+---@param settings table the received guild-settings payload (carries `bankerOwnerStamps`)
+---@return boolean moved
+function TOGBankClassic_Guild:AdvanceOwnersStamp(settings)
+	if not (self.Info and type(settings) == "table") then return false end
+	local newest = tonumber(type(settings.stamps) == "table" and settings.stamps.bankerOwners) or 0
+	for _, v in pairs(type(settings.bankerOwnerStamps) == "table" and settings.bankerOwnerStamps or {}) do
+		v = tonumber(v)
+		if v and v > newest then newest = v end
+	end
+	if newest <= self:SettingsStamp("bankerOwners") then return false end
+	self.Info.settings = self.Info.settings or {}
+	if type(self.Info.settings.stamps) ~= "table" then self.Info.settings.stamps = {} end
+	self.Info.settings.stamps.bankerOwners = newest
+	return true
+end
+
 function TOGBankClassic_Guild:MergeBankerOwners(sender, inOwners, inStamps)
 	local s = self.Info.settings
 	local owners = sanitizeBankerOwners(s.bankerOwners)
@@ -2930,6 +3101,32 @@ function TOGBankClassic_Guild:MergeBankerOwners(sender, inOwners, inStamps)
 	s.bankerOwners = sanitizeBankerOwners(owners)
 	s.bankerOwnerStamps = sanitizeOwnerStamps(stamps, s.bankerOwners)
 	return changed
+end
+
+--- XGUILD-SETTINGS-001: whisper `target` (a sister guild's member) who runs each bank character, and
+--- nothing else of the settings. Sent by ANY client -- a plain member holds the owners its officers
+--- wrote exactly as they do -- because the sister side takes only this from us. Returns true when sent.
+---@param target string normalized
+---@return boolean
+function TOGBankClassic_Guild:SendBankerOwnersTo(target)
+	local s = self.Info and self.Info.settings
+	if not (target and s) then return false end
+	local owners = sanitizeBankerOwners(s.bankerOwners)
+	local stamps = sanitizeOwnerStamps(s.bankerOwnerStamps, owners)
+	-- Peer Review on 31294783 (F4): never the receiver's OWN guild's entries -- its officers wrote
+	-- them, MergeBankerOwners refuses them from us, and each one was a wasted entry plus a debug line.
+	local theirs = self.GuildOf and self:GuildOf(target) or nil
+	if theirs then
+		for norm in pairs(stamps) do
+			if self:GuildOf(norm) == theirs then owners[norm], stamps[norm] = nil, nil end
+		end
+		for norm in pairs(owners) do
+			if self:GuildOf(norm) == theirs then owners[norm] = nil end
+		end
+	end
+	if next(owners) == nil and next(stamps) == nil then return false end
+	local payload = { type = "guild-settings", settings = { bankerOwners = owners, bankerOwnerStamps = stamps } }
+	return TOGBankClassic_Core:SendWhisper("togbank-hl", TOGBankClassic_Core:SerializeWithChecksum(payload), target, "NORMAL") and true or false
 end
 
 --- Who owns `norm`'s bank character, as an officer wrote it, or nil.
@@ -2990,8 +3187,9 @@ end
 -- The stamps are minted HERE, not at the fifteen writer sites: an ALERT broadcast diffs the payload
 -- it builds against the last one this client sent or applied (`lastSettingsPayload`, a deep copy --
 -- Requests.lua mutates `cancelReasons` in place, and a reference would already carry the change),
--- and stamps only the keys that moved. With no snapshot yet (the first write of a session before
--- any broadcast was heard or sent) every key is stamped, which is SETTINGS-002's behaviour.
+-- and stamps only the keys that moved. The snapshot is taken when the record is bound and whenever
+-- settings are applied (SETTINGS-STALE-001, below); a write that still finds none diffs against the
+-- defaults, never "stamp every key" -- that was how a stale default reached the whole guild.
 -- A pre-004 receiver ignores `stamps` and applies whole on `version`, as it did.
 
 local function deepEqual(a, b)
@@ -3018,18 +3216,53 @@ function TOGBankClassic_Guild:SettingsStamp(key)
 	return own or self:SettingsVersion()
 end
 
+--- SETTINGS-STALE-001 (the operator, 2026-09-25, after the Sister-guild bank was found unticked
+--- guild-wide: "we need to make sure someone logging on for the first time doesn't uncheck it, as
+--- that's the default. how do we guard this?"). The snapshot a write diffs against was EMPTY at two
+--- moments -- a session's first write before any settings were sent or heard, and any write after
+--- settings were RECEIVED (ApplyRemoteSettings cleared it) -- and an empty snapshot stamped EVERY
+--- field as freshly written. So an officer whose client still held the default "off" (a first login,
+--- or one that missed the tick) changed the discount and pushed "off", newest, to the whole guild.
+--- Now the snapshot is the HELD settings from the moment the record is bound or settings are
+--- applied, tied to that settings table (a snapshot of another table is no snapshot); and should a
+--- write still find none, it diffs against the DEFAULTS, so a default value can never be stamped by
+--- a write that did not change it.
+
+--- The synced fields as a client that has never held settings would send them.
+---@return table
+function TOGBankClassic_Guild:DefaultSettingsFields()
+	local held = self.Info.settings
+	self.Info.settings = {}
+	local ok, fields = pcall(self.SettingsFields, self)
+	self.Info.settings = held
+	return ok and fields or {}
+end
+
+--- Remember the settings this client holds now as the baseline the next write diffs against.
+function TOGBankClassic_Guild:SnapshotSettings()
+	local s = self.Info and self.Info.settings
+	if type(s) ~= "table" then
+		self.lastSettingsPayload, self.lastSettingsFor = nil, nil
+		return
+	end
+	self.lastSettingsPayload = deepCopy(self:SettingsFields())
+	self.lastSettingsFor = s
+end
+
 --- Stamp every field of `fields` that differs from the last payload sent or applied with `v`,
 --- and remember `fields` as the new snapshot. Returns the stamps table (the held one).
 function TOGBankClassic_Guild:StampChangedFields(fields, v)
 	local s = self.Info.settings
 	if type(s.stamps) ~= "table" then s.stamps = {} end
-	local last = self.lastSettingsPayload
+	local last = self.lastSettingsFor == s and self.lastSettingsPayload or nil
+	if not last then last = self:DefaultSettingsFields() end   -- SETTINGS-STALE-001
 	for key, val in pairs(fields) do
 		if key ~= "version" and key ~= "stamps" and (not last or not deepEqual(val, last[key])) then
 			s.stamps[key] = v
 		end
 	end
 	self.lastSettingsPayload = deepCopy(fields)
+	self.lastSettingsFor = s
 	return s.stamps
 end
 
@@ -3382,6 +3615,7 @@ function TOGBankClassic_Guild:BroadcastSettings(priority, target)
 		self:StampChangedFields(payload.settings, stamped)
 	else
 		self.lastSettingsPayload = deepCopy(payload.settings)
+		self.lastSettingsFor = self.Info.settings
 	end
 	payload.settings.stamps = deepCopy(self.Info.settings.stamps)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
@@ -3510,6 +3744,29 @@ end
 -- Validates sender auth and bounds-checks values before writing to Guild.Info.settings.
 function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 	if not settings or type(settings) ~= "table" then return end
+	-- XGUILD-SETTINGS-001. The operator, 2026-09-25: "we should NOT be syncing the officer settings
+	-- between sister guilds, this would allow any guild to target another guild and force it into
+	-- being a sister." Every gate below passed for a sister guild's bank characters (SenderHasGbankNote
+	-- reads the sister roster's note), its officers (isOfficer from its roster) and its GM (rank 0), so
+	-- its request limit, shop, discount, Sister-guild bank switch and rank floor were adopted as OURS
+	-- whenever its stamp was newer. From another guild the ONE thing taken is who runs that guild's
+	-- own bank characters ("the banker metadata isn't syncing though"), merged entry by entry and
+	-- from ANY member -- the entry stamps are its officers' writes, a plain member (the one a
+	-- federation pull usually asks) holds them as well as an officer does, and MergeBankerOwners holds
+	-- the sender to its own guild's bank characters. This supersedes docs/XGUILD_SYNC.md D1/D4.
+	if sender and self.IsHomeMember and not self:IsHomeMember(sender) and self.GuildOf and self:GuildOf(sender) then
+		if self.Info and type(settings.bankerOwnerStamps) == "table" and settings.bankerOwners ~= nil then
+			if not self.Info.settings then self.Info.settings = {} end
+			if self:MergeBankerOwners(sender, settings.bankerOwners, settings.bankerOwnerStamps) then
+				local B = TOGBankClassic_UI_Browse
+				if B and B.OnBankerOwnerChanged then B:OnBankerOwnerChanged() end
+			end
+			self:AdvanceOwnersStamp(settings)   -- the version is ours and is not touched
+			self:SnapshotSettings()   -- SETTINGS-STALE-001: the baseline follows what is held
+		end
+		TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from sister-guild member %s: bank character owners only", tostring(sender))
+		return
+	end
 	if not self:SenderHasGbankNote(sender) and not self:SenderIsGM(sender) and not self:SenderIsOfficer(sender) then
 		TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings: sender %s not authorized, ignoring", tostring(sender))
 		return
@@ -3615,8 +3872,9 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 		-- The FIELD's stamp still moves forward (self-audit 2026-09-16): the whole-table branch below
 		-- judges a pre-stamp sender against it, and a stamp left behind let a v1.5.1 officer's
 		-- re-announcement, stamped after the held one but before this payload, replace the merged
-		-- table and wipe every sister guild's entry.
-		adopt("bankerOwners")
+		-- table and wipe every sister guild's entry. OWNERS-STAMP-001: the same method the sister
+		-- branch above uses, so the two cannot drift.
+		self:AdvanceOwnersStamp(settings)
 		if self:MergeBankerOwners(sender, settings.bankerOwners, settings.bankerOwnerStamps) then
 			local B = TOGBankClassic_UI_Browse
 			if B and B.OnBankerOwnerChanged then B:OnBankerOwnerChanged() end
@@ -3648,7 +3906,9 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 		if type(self.Info.settings.stamps) ~= "table" then self.Info.settings.stamps = {} end
 		for key, stamp in pairs(adopted) do self.Info.settings.stamps[key] = stamp end
 	end
-	self.lastSettingsPayload = nil   -- rebuilt from the held settings by the next broadcast
+	-- SETTINGS-STALE-001: the baseline is what this client holds NOW, not nothing -- an empty one
+	-- made the next write stamp every field, stale ones included.
+	self:SnapshotSettings()
 	TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from %s: maxRequestPercent=%s autoTombstoneDays=%s cancelCustom=%d",
 		tostring(sender), tostring(self.Info.settings.maxRequestPercent), tostring(self.Info.settings.autoTombstoneDays),
 		(self.Info.settings.cancelReasons and self.Info.settings.cancelReasons.custom and #self.Info.settings.cancelReasons.custom) or 0)
@@ -3915,13 +4175,15 @@ function TOGBankClassic_Guild:_AddSisterMembers(lib, spoke)
 				if norm and not self.memberRoster[norm] then
 					local note = tostring(m.note or "")
 					local isBank = string.find(note, "gbank", 1, true) ~= nil
+					-- XGUILD-BOUNCE-001: a sighting the server has since contradicted is not online.
+					local isOnline = seen[norm] == true and self:SisterSightingHolds(lib, key, norm)
 					self.memberRoster[norm] = {
 						name        = norm,
 						class       = m.class,
 						level       = m.level or 1,
 						rankIndex   = m.rankIndex,
 						rankName    = m.rank,
-						isOnline    = seen[norm] == true,
+						isOnline    = isOnline,
 						isOfficer   = m.isOfficer == true,
 						isBank      = isBank,
 						viewOnly    = (isBank and noteIsViewOnly(note, "")) or false,
@@ -3930,7 +4192,7 @@ function TOGBankClassic_Guild:_AddSisterMembers(lib, spoke)
 						spokeAt     = spoke[norm],
 						lastUpdated = GetServerTime(),
 					}
-					if seen[norm] then
+					if isOnline then
 						self.onlineMembers[norm] = true
 						online = online + 1
 					end
@@ -4118,9 +4380,13 @@ function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline, source)
 			-- SISTER member the library is told too: its presence is stamped only by its own pull
 			-- traffic, and FederationPeer draws its candidates from that presence, so a sister
 			-- member who spoke to us would otherwise not be one until the library's next pull.
-			if source == "addon-message-received" then
+			-- XGUILD-SYNC-001 step 7: a nudge heard on GreenWall's bridge is a TOGBank message from
+			-- them too (Modules/GreenWall.lua), and leaves the same sighting.
+			if source == "addon-message-received" or source == "greenwall-nudge" then
 				local m = self.memberRoster[normalized]
 				m.spokeAt = GetServerTime()
+				-- XGUILD-BOUNCE-001: they spoke to us -- whatever the server said earlier is stale.
+				if self.sisterBounced then self.sisterBounced[normalized] = nil end
 				local lib = m.guildKey and RosterLib()
 				if lib and lib.MarkOnline then lib:MarkOnline(m.guildKey, { normalized }) end
 				-- XGUILD-PEER-001: and a sister guild nobody has asked yet is asked now.
@@ -4172,6 +4438,10 @@ function TOGBankClassic_Guild:UpdateOnlineMember(memberName, isOnline, source)
 				markedOffline = true
 				TOGBankClassic_Output:Debug("ROSTER", "ONLINE", "[OFFLINE-UPDATE] %s marked OFFLINE (matched base: %s, source: %s)",
 					cachedName, baseName, source)
+				-- XGUILD-BOUNCE-001: for a SISTER member this flag is not what IsPlayerOnline reads
+				-- (the library's sighting is); the bounce has to outrank that sighting, and an ask
+				-- out to them has to move to someone else.
+				if memberData.guildKey and not memberData.isStub then self:OnSisterMemberBounced(cachedName, memberData.guildKey) end
 			end
 		end
 
@@ -4223,7 +4493,8 @@ function TOGBankClassic_Guild:IsPlayerOnline(playerName)
 	local entry = self.memberRoster and self.memberRoster[norm]
 	if lib and entry and entry.guildKey and not entry.isStub and lib.GetOnlineMembersScoped and self:IsSisterBankEnabled() then
 		for _, name in ipairs(lib:GetOnlineMembersScoped(entry.guildKey) or {}) do
-			if name == norm or self:NormalizeName(name) == norm then return true end
+			-- XGUILD-BOUNCE-001: unless the server has said otherwise since that sighting.
+			if name == norm or self:NormalizeName(name) == norm then return self:SisterSightingHolds(lib, entry.guildKey, norm) end
 		end
 		return false
 	end

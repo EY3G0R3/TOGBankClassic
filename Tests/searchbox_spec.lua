@@ -170,7 +170,9 @@ describe("Requests: ONE search across every column", function()
 	local R
 
 	before_each(function()
-		env.reset(); env.stubOutput()
+		-- The rich layer: the help example fills the real GameTooltip, a frame-layer global the hollow
+		-- reset evicts since the harness's 2026-09-20 change (it used to find one an earlier file left).
+		env.reset({ frames = true }); env.stubOutput()
 		loadUIWithLibrary()
 		env.loadModules({ "Modules/Constants.lua", "Modules/Item.lua" })
 		env.loadFile("Modules/UI/Requests.lua")

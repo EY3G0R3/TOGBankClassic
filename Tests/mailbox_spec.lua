@@ -19,7 +19,9 @@ local function load(isBank)
 	-- env.reset() wipes wow.mail and wow.mailActions; each example fills the inbox it wants.
 	env.stubOutput()
 	-- Record and Scan: the rows are matched to orders on id + suffix, parsed at the edge
-	-- (LINK-AUDIT-001 step 3).
+	-- (LINK-AUDIT-001 step 3). The UI module, as the TOC loads it first: the window's close path
+	-- hands Escape back through it (ESC-001).
+	env.loadUI()
 	env.loadModules({ "Modules/Constants.lua", "Modules/Inventory/Record.lua", "Modules/Inventory/Scan.lua", "Modules/UI/Mailbox.lua" })
 	M = TOGBankClassic_UI_Mailbox
 	M.taking, M.isOpen, M.Window, M.Content = nil, nil, nil, nil
@@ -961,7 +963,7 @@ end)
 
 describe("MAILUI-001: shipping", function()
 	it("is listed in both TOCs after UI.lua and RowList.lua, and registered for a transparency slider", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local src = env.readFile(toc)
 			local ui, mb = src:find("Modules/UI.lua", 1, true), src:find("Modules/UI/Mailbox.lua", 1, true)
 			local rl = src:find("Modules/UI/RowList.lua", 1, true)

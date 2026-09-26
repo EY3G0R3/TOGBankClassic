@@ -75,9 +75,14 @@ end
 
 local function load()
 	env.reset(); env.stubOutput()
+	-- LINK-AUDIT-001 step 4: Bank's matchers read a slot's suffix through Scan.parseLink (Record
+	-- precedes Scan in both TOCs). Run alone, or first in a forward-order run (NTFS lists this file
+	-- before bank_spec), this file had neither and REQ-003 raised on a nil global -- it passed in the
+	-- declared halves only on a Scan an earlier file left behind (SPEC-ALONE-001's class).
 	env.loadModules({
-		"Modules/Constants.lua", "Modules/Item.lua", "Modules/Guild.lua",
-		"Modules/Bank.lua", "Modules/Mail.lua", "Modules/Events.lua",
+		"Modules/Constants.lua", "Modules/Item.lua",
+		"Modules/Inventory/Record.lua", "Modules/Inventory/Scan.lua",
+		"Modules/Guild.lua", "Modules/Bank.lua", "Modules/Mail.lua", "Modules/Events.lua",
 	})
 	Mail, Bank, Guild, Events = TOGBankClassic_Mail, TOGBankClassic_Bank, TOGBankClassic_Guild,
 		TOGBankClassic_Events

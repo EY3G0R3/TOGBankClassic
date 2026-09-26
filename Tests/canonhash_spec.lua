@@ -496,6 +496,10 @@ describe("CANON RULE 6: the wire carries the author's canon, stored verbatim", f
 
 		TOGBankClassic_Guild.IsAltDataAllowed = function() return true end
 		TOGBankClassic_Guild.ConsumePendingSync = function() return true end
+		-- The receive path is Inventory/Sync's (Chat.lua hands a tuple payload to ReceiveSnapshot), which
+		-- the TOC always loads. This example used to pass only when an earlier spec FILE had loaded it:
+		-- run alone it raised (WoWAPITesting inbox 6223b7a7, 2026-09-25).
+		env.loadFile("Modules/Inventory/Sync.lua")
 		env.loadFile("Modules/Chat.lua")
 		TOGBankClassic_Chat.IsAltDataAllowed = function() return true end
 

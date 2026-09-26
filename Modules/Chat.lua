@@ -572,6 +572,17 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			return
 		end
 
+		-- REQ-GATE-001 (Peer Review on self-audit 31294783, F5): a requests query was answered for ANY
+		-- whisperer, so a stranger could pull the guild's whole request history. Answered only for the
+		-- same peers the inventory sync serves (P2P.lua isValidPeer): a guildmate, or a sister guild's
+		-- member while the Sister-guild bank is on (IsInCurrentGuildRoster reads the federation then).
+		if (data.type == "requests-index" or data.type == "requests-by-id")
+			and not TOGBankClassic_Guild:IsInCurrentGuildRoster(sender) then
+			TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "%s query from %s dropped: not a guildmate or sister-guild member",
+				tostring(data.type), tostring(sender))
+			return
+		end
+
 		-- Legacy request handling
 		if data.player then
 			-- Use REQUESTS category for request-related queries, SYNC for alt queries
@@ -1134,6 +1145,17 @@ local COMMAND_REGISTRY = {
 		help = "manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically",
 		handler = function()
 			TOGBankClassic_Chat:PerformSync()
+		end,
+	},
+	{
+		-- SSYNC-001: a sister-guild sync by hand, for testing and troubleshooting.
+		name = "ssync",
+		usage = "[<name>]",
+		help = "sync with the sister guilds now; with a name (realm optional), ask that sister-guild member",
+		handler = function(arg1)
+			for _, line in ipairs(TOGBankClassic_Guild:SisterSyncCommand(arg1)) do
+				TOGBankClassic_Output:Response("%s", line)
+			end
 		end,
 	},
 	{

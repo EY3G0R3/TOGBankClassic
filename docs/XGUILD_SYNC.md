@@ -143,6 +143,16 @@ write the shared settings (SETTINGS-002's version resolves two writers); a banke
 its own bank; donation ledgers are per writer as now. Nothing here needs a "home" guild to be
 declared -- the federation is symmetric, which is what the sister list already is.
 
+_SUPERSEDED 2026-09-25 (XGUILD-SETTINGS-001), for D1's "and the settings", D4's shared settings
+and D6's settings answer._ The operator: _"we should NOT be syncing the officer settings between
+sister guilds, this would allow any guild to target another guild and force it into being a
+sister."_ Each guild's officer settings (request limit, shop, discount, Sister-guild bank switch,
+rank floor, everything else) stay in that guild. The ONE thing that crosses is who runs each bank
+character, merged entry by entry and held to the sender's own guild's bank characters, from ANY
+member of that guild, because a plain member (the one a pull usually asks) holds the owners as its
+officers wrote them. `Guild:ApplyRemoteSettings` takes only the owners from a sister member;
+`Guild:AnswerFederatedAsker` whispers only the owners (`Guild:SendBankerOwnersTo`).
+
 **D5. The broadcast legs stay on GUILD; the cross-guild copy is a whisper PULL from a peer.**
 Copying LibGuildRoster (1.2): on its cycle, a client whose federation has another guild picks a
 FEDERATION PEER per foreign guild -- the freshest-seen online member of it
@@ -189,6 +199,26 @@ authorship check -- so the relay opens nothing the request sync did not already 
 `Faction-GuildName` spelling. Applied on the Bankers tab row, the Browse / Shop Banker column, the
 banker tooltips, the request dialog's "from X" line and the Requests tab's Bank column. Own-guild
 bankers untagged; the operator's call at build.
+
+**D9. A sister member who logged off is offline the moment the server says so (XGUILD-BOUNCE-001,
+added 2026-09-17).** Guild Roster never hears "X has gone offline." for another guild's member: its
+presence for one is a sighting stamp that only ages out (`PRESENCE_TTL`, 900 s), and its roster relay
+carries every name still inside that window and the receiver re-stamps them at receive time, on a
+270 s interval -- so a member who logged off reads online for as long as two guildmates keep
+relaying (a Guild Roster finding, filed to its inbox the same day). The one authoritative "not
+online" this client gets for them is the server bouncing a whisper, `ERR_CHAT_PLAYER_NOT_FOUND_S`,
+which `Events:CHAT_MSG_SYSTEM` already turned into `UpdateOnlineMember(X, false)` -- a flag on
+`memberRoster` that nothing read for a sister member. Now the bounce is remembered
+(`Guild.sisterBounced`, the frame clock) and outranks the library's sighting for the library's own
+presence window (`lib.PRESENCE_TTL`, 900 s) -- `Guild:SisterSightingHolds`, read by `IsPlayerOnline`,
+`FederationPeer` and `_AddSisterMembers`, so the Bankers tab agrees. The library's stamps are NOT
+compared against the bounce: a relay re-stamps within the minute, so "stamp newer than bounce" was
+measured true for a member who was offline. A TOGBank message from the member clears the bounce at
+once (this client's own sighting); after the window the library's answer stands alone again, and a
+member still offline bounces the next ask. And when the bounced whisper was our hash-list ask, the ask is
+withdrawn, the member is left alone for `FEDERATION_SILENT_FOR`, and their guild is asked through
+`FederationPeer`'s next choice NOW (`Guild:OnSisterMemberBounced`) instead of a cycle later.
+Measured by `Tests/xguildlive_spec.lua` step 8 on the real transport stack.
 
 ## 3. Wire changes, in full
 
@@ -260,6 +290,20 @@ federated client hearing it treats it as a sighting of the sender and pulls from
 instead of on the next cycle. Saves up to ten minutes of latency on first contact; costs nothing
 when GreenWall is absent. Not part of the build below.
 
+**BUILT 2026-09-17** (`Modules/GreenWall.lua`, `TOGBankClassic_GreenWall`), with two departures from
+the sketch above. The line carries the sender's ADDON VERSION, not a numbers version: the receiver's
+peer picker reads a version (`Guild:PeerSpeaksDataLeg`), and the hash-list reply it draws already
+carries the numbers. And the send is gated on GreenWall's guild channel being JOINED (channel number
+non-zero through `GetChannelNumbers`), because a segment GreenWall cannot send is parked for its next
+flush, which may run from its timer -- outside the hardware event. The send site is `Browse:Toggle`
+alone (the minimap button, `/togbank`, the legacy window's Browse button), never `Browse:Open`, which
+Events and Requests reach from handlers. One nudge per cycle. The receive side is
+`Guild:UpdateOnlineMember(sender, true, "greenwall-nudge")` -- the same sighting an addon whisper
+leaves, so `OnFederationPeerProven` asks that guild now -- after the sender is placed in a LISTED
+sister roster by Guild Roster (GreenWall's confederation and the library's sister list may disagree;
+the channel's word is a claim). Offline: `Tests/xguild_spec.lua` step 7 (three examples, the API's
+signatures pinned against the installed GreenWall). Not seen in a client.
+
 ## 5. Offline spec plan
 
 - `Tests/env_fleet.lua` grows a SECOND guild key: two clients in different guilds, LibGuildRoster's
@@ -282,7 +326,7 @@ when GreenWall is absent. Not part of the build below.
 4. The federation pull on the cycle (D5) and the whispered answers (D6).
 5. The request relay (D7).
 6. Fleet spec (section 5), docs, CHANGELOG, CurseForge, README.
-7. (4.6) the GreenWall nudge, if wanted after the rest is seen in game.
+7. (4.6) the GreenWall nudge, if wanted after the rest is seen in game. **BUILT 2026-09-17** (4.6).
 
 **Where it stands (2026-09-14 23:30):** step 1 filed (thread `e2ec2c27e46a`); steps 2, 3 and 4
 BUILT (`Guild:GuildOf` / `IsHomeMember` / `IsFederated` / `GuildNameOf` / `GuildTag`,

@@ -192,7 +192,7 @@ describe("de-vendored AceCommQueue", function()
 	-- where the whole-message verdict and the retry/backoff arrived. Trusting argument 4 while
 	-- shipping MINOR 2 would be trusting a signal that copy does not send.
 	it("is declared in both TOCs rather than vendored", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local src = read(toc)
 			assert.truthy(src:match("## Dependencies:[^\n]*AceCommQueue%-1%.0"),
 				toc .. " does not declare AceCommQueue-1.0 as a dependency")
@@ -204,5 +204,35 @@ describe("de-vendored AceCommQueue", function()
 	it("is listed in .pkgmeta so CurseForge installs it", function()
 		assert.truthy(read(".pkgmeta"):find("acecommqueue", 1, true),
 			".pkgmeta must list the slug 'acecommqueue' under required-dependencies")
+	end)
+end)
+
+-- LIBDBICON-DEP-001 (TOGTools contract 1eab38f9, 2026-09-25): an embedded LibDBIcon only updates
+-- for players of the addon that shipped it, so it is a required dependency instead. LibDataBroker
+-- stays bundled on the operator's word ("change it to not get rid of libdatabroker").
+describe("de-vendored LibDBIcon-1.0", function()
+	before_each(function() env.reset() end)
+
+	local function read(p)
+		local fh = io.open(p, "rb"); if not fh then return "" end
+		local s = fh:read("*a"); fh:close(); return s
+	end
+
+	it("is declared in both TOCs rather than vendored, and LibDataBroker is still bundled", function()
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+			local src = read(toc)
+			assert.truthy(src:match("## Dependencies:[^\n]*LibDBIcon%-1%.0"),
+				toc .. " does not declare LibDBIcon-1.0 as a dependency")
+			assert.falsy(src:find("Libs/LibDBIcon", 1, true),
+				toc .. " still loads a vendored LibDBIcon copy")
+			assert.truthy(src:find("Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua", 1, true),
+				toc .. " no longer loads the bundled LibDataBroker-1.1")
+		end
+	end)
+
+	it("is listed in .pkgmeta so CurseForge installs it", function()
+		assert.truthy(read(".pkgmeta"):find("  - libdbicon-1-0\n", 1, true)
+			or read(".pkgmeta"):find("  - libdbicon-1-0\r\n", 1, true),
+			".pkgmeta must list the slug 'libdbicon-1-0' under required-dependencies")
 	end)
 end)

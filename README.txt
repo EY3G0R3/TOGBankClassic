@@ -1,8 +1,8 @@
 ================================================================================
-TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era & TBC
+TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era, TBC & MoP
 ================================================================================
 
-Version: 1.6.0
+Version: 1.6.1
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -19,9 +19,11 @@ addition to) the guild vault system.
 SUPPORTED GAME VERSIONS:
 - WoW Classic Era
 - WoW The Burning Crusade
+- WoW Mists of Pandaria Classic (new in 1.6.1 -- it loads, but the guild
+  features have not been tested there yet; please report anything odd)
 
-Both are published from the same source, so the features, commands and
-interface are identical on either version. CurseForge serves the correct
+All are published from the same source, so the features, commands and
+interface are identical on every version. CurseForge serves the correct
 build automatically for whichever version you install it under.
 
 KEY FEATURES:
@@ -30,7 +32,8 @@ KEY FEATURES:
   usable by me), plus Bankers, Requests and Log tabs - and a Shop tab for a
   guild bank that sells
 - A "Window and Text Size" slider (80% to 200%) that enlarges every TOGBank
-  window's writing, icons and rows together
+  window's writing, icons and rows together (below 100% the writing shrinks;
+  a window's smallest size stays what it is at 100%)
 - A guild shop: estimates from your price sources, shop orders, an officer's
   open/closed sign and a percentage discount, single items taken off sale
 - Donation points: what you mail to a bank character earns points on a board
@@ -38,7 +41,11 @@ KEY FEATURES:
 - One guild price list, published by an officer-named price authority, so
   everyone values the same item the same way
 - One bank across sister guilds (listed in the Guild Roster addon): their
-  bank characters, orders and fills cross between the guilds on their own
+  bank characters, orders and fills cross between the guilds on their own;
+  each guild keeps its own officer settings, a sister member who logs off is
+  replaced by the next one online at once, and /togbank ssync syncs now
+- Escape closes every open TOG Bank window (a setting turns that off)
+- Shift-click and Ctrl-click on items work as they do everywhere in the game
 - Officers can say who runs each bank character; everyone sees it on hover
 - Search across all bank characters simultaneously
 - Request items from guild banks via in-game mail
@@ -80,8 +87,9 @@ The easiest and most reliable way to install and keep TOGBankClassic updated:
 
 2. Open the CurseForge App and go to "World of Warcraft"
 
-3. Select your game version from the dropdown -- either
-   "World of Warcraft Classic Era" or "World of Warcraft Burning Crusade"
+3. Select your game version from the dropdown -- "World of Warcraft
+   Classic Era", "World of Warcraft Burning Crusade" or "World of Warcraft
+   Mists of Pandaria Classic"
 
 4. Go to the "Get More Addons" section
 
@@ -115,9 +123,12 @@ Only use this method if you cannot use the CurseForge App:
 3. Copy the TOGBankClassic folder to your WoW addons directory:
    Classic Era:      World of Warcraft\_classic_era_\Interface\AddOns\
    Burning Crusade:  World of Warcraft\_anniversary_\Interface\AddOns\
+   MoP Classic:      World of Warcraft\_classic_\Interface\AddOns\
 
    Download the file matching your game version -- CurseForge lists a
-   separate Classic Era and Burning Crusade build on the Files page.
+   separate Classic Era, Burning Crusade and MoP Classic build on the Files
+   page. Install LibDBIcon-1.0 and the other required libraries (see
+   Libraries Used at the end) the same way; the app does this for you.
 
 4. Restart World of Warcraft (or type /reload if already in-game)
 
@@ -194,6 +205,18 @@ say who runs their own bank characters). Three things to know:
   version 0.8.0. The member of each guild who SERVES its roster to the other
   needs that version or newer; until they have it, the sister guild's members
   see no bank characters from yours.
+- /togbank ssync asks the sister guilds for their bank right now, instead of
+  waiting for the next automatic sync. /togbank ssync <name> asks one sister
+  guild member directly - the realm can be left off. Handy for troubleshooting.
+- Each guild's officer settings stay its own: request limits, the shop, the
+  discount and the "Sister-guild bank" switch are never changed by the other
+  guild.
+- If the sister-guild member you were getting the bank from logs off, the
+  next online member of that guild is asked straight away, and the Bankers
+  tab shows them offline.
+- If your guilds share chat through GreenWall (optional), opening the Guild
+  Bank window tells the other guilds, so their copy of your bank updates
+  within seconds instead of on the next 10-minute cycle.
 
 ================================================================================
 BASIC USAGE
@@ -220,6 +243,12 @@ SEARCHING FOR ITEMS:
 REQUESTING ITEMS:
   Click an item's row to open the request dialog and send a mail request to
   the bank character. They'll see your request the next time they log in.
+
+  Shift-click an item (a row here, or an item in the Inventory or Search
+  windows) to put its link in your chat box - or the auction house search
+  box, or a macro you are editing - and Ctrl-click to preview it in the
+  dressing room: the same keys as everywhere else in the game, and your own
+  "chat link" and "dress up" key bindings apply.
 
   NOTE: Guild officers can configure maximum request limits to ensure fair
   distribution of resources. If a percentage limit is set, you may not be
@@ -270,6 +299,9 @@ MANUAL SYNC:
   /togbank sync
     Manually requests the latest inventory data from all online guild
     members who have the addon installed.
+  /togbank ssync [<name>]
+    Asks the sister guilds for their bank contents and requests now. With a
+    name (realm optional), asks that sister guild member directly.
 
 SHARING YOUR DATA:
   /togbank share
@@ -380,6 +412,10 @@ BASIC COMMANDS:
 /togbank sync
   Manually sync to receive latest data from online users
   (Automatic sync happens every 10 minutes)
+
+/togbank ssync [<name>]
+  Sync with the sister guilds now; with a name (realm optional), ask that
+  sister guild member
 
 /togbank share
   Manually announce your bank character's current version to the guild.
@@ -796,8 +832,9 @@ OPTIONS PANEL:
     "Mailbox window on non-bank characters" (off by default; the window
     opens by itself only on bank characters until you tick this)
   - Appearance: how see-through each window is, "Reset All Windows to
-    Solid", "Recenter All Windows" (for a window lost off screen) and
-    "Pulsing glow on cancelled requests" (on by default)
+    Solid", "Recenter All Windows" (for a window lost off screen), "Close
+    windows with Escape" (on by default) and "Pulsing glow on cancelled
+    requests" (on by default)
   - Bank (bank characters only): "Enable for <character>" - the one switch
     that governs whether this bank is scanned and shared - "Hide soulbound
     items from the guild", and the donation options
@@ -899,6 +936,34 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.6.1:
+--------------
+NEW FEATURES:
+- Mists of Pandaria Classic build (loads; guild features not yet tested)
+- Escape closes the Guild Bank window and every other TOG Bank window;
+  "Close windows with Escape" under Appearance turns it off
+- /togbank ssync [<name>] asks the sister guilds for their bank now
+- The Bankers search matches a guild's name
+- With GreenWall, opening the Guild Bank window speeds up sister guilds'
+  updates
+
+CHANGED:
+- LibDBIcon-1.0 (the minimap button) is a separate required addon now
+
+BUG FIXES:
+- A sister guild could overwrite your officer settings; who runs each bank
+  character rarely reached the sister guild
+- A logged-off sister-guild bank character stayed "online" and was asked for
+  the bank for a whole sync cycle before anyone else was tried
+- An officer changing one setting could reset another guild-wide (how the
+  Sister-guild bank switch got turned off)
+- Players outside the guild could ask for the guild's order history
+- Shift/Ctrl-click on items did not follow the game's own behaviour
+- Below 100% size a window at its minimum overflowed; a size change pulled
+  docked windows away, or resized another addon's window
+- Escape did not close the Guild Bank window opened on its own
+- The Requests window's broom and envelope could be left on another window
 
 Version 1.6.0:
 --------------
@@ -1133,10 +1198,15 @@ Installed automatically alongside TOGBankClassic (required):
 - ItemDB - the offline item database bank contents are named from (v1.4.0+)
 - DeltaSync - shared sync library (v1.4.0+)
 - LibAceGUIWidgets - the shared search box and window widgets (v1.5.0+)
+- LibDBIcon-1.0 - the minimap button (v1.6.1+; bundled inside the addon
+    before that, so it only updated when TOGBank did)
+
+Optional, used when installed:
+- GreenWall - when your guilds share chat through it, sister guilds hear
+    that you opened the Guild Bank window and update sooner (v1.6.1+)
 
 Bundled with the addon:
 - LibDataBroker-1.1
-- LibDBIcon-1.0
 - ChatThrottleLib (ships with Ace3's AceComm)
 
 ================================================================================

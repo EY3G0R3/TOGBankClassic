@@ -23,6 +23,7 @@ Mail inventory tracking is now fully integrated into TOGBankClassic, allowing us
 ## Recent Fixes (February 17, 2026)
 
 ### Issue #7: Mail-Only Change Sync Abort ✅ FIXED
+
 **Problem:** When mail changed but inventory didn't, and no snapshot was available, `ComputeDelta()` returned `nil`, causing complete sync failure. Requesters with matching inventory but outdated mail would never receive updates.  
 **Root Cause:** Line 567 in DeltaComms.lua returned `nil` instead of falling back to empty baseline like the general hash mismatch case.  
 **Solution:** Changed to use same fallback as inventory mismatch: `previous = { items = {}, money = 0, mailHash = 0, bank = { items = {} }, bags = { items = {} }, mail = { items = {} } }`. Delta still contains all items as additions (against empty baseline), but sync succeeds. *Note: Updated Feb 18 with [DELTA-017] to include complete bank/bags/mail structures.*  
@@ -34,27 +35,32 @@ Mail inventory tracking is now fully integrated into TOGBankClassic, allowing us
 The following critical issues were resolved to make mail a true first-class inventory component:
 
 ### Issue #1: Mail Hash Not Checked During Sync ✅ FIXED
+
 **Problem:** Version broadcasts only compared `inventoryHash`, ignoring `mailHash`  
 **Solution:** Modified `ProcessVersionBroadcast()` in [Chat.lua](../Modules/Chat.lua#L506-L518) to compare both hashes  
 **Result:** Mail changes now trigger delta syncs immediately
 
 ### Issue #2: Mail Links Not Stripped ✅ FIXED
+
 **Problem:** Full item links sent for all mail items (bandwidth waste)  
 **Solution:** Enhanced `StripAltLinks()` in [Guild.lua](../Modules/Guild.lua#L1842-L1862) to strip mail links  
 **Result:** Only gear/weapon links sent, 70%+ bandwidth reduction for mail data
 
 ### Issue #3: mailHash Computed But Not Used ✅ FIXED
+
 **Problem:** `mailHash` calculated but not passed through sync pipeline  
 **Solution:** Added `requesterMailHash` to P2P requests, state summaries, delta computation  
 **Files:** [Guild.lua](../Modules/Guild.lua#L873-L884), [Chat.lua](../Modules/Chat.lua#L1026-L1036), [DeltaComms.lua](../Modules/DeltaComms.lua#L547-L567)  
 **Result:** Full mail hash tracking through entire sync protocol
 
 ### Issue #4: Search Double-Counted Mail ✅ FIXED
+
 **Problem:** Mail aggregated twice in search (once in alt.items, once manually)  
 **Solution:** Removed duplicate mail merging in [Search.lua](../Modules/UI/Search.lua#L444-L445)  
 **Result:** Mail items counted correctly in search corpus
 
 ### Issue #6: No Mail-Specific Change Detection ✅ FIXED
+
 **Problem:** Could not distinguish mail-only changes from inventory changes  
 **Solution:** Three-way hash detection in `ComputeDelta()` ([DeltaComms.lua](../Modules/DeltaComms.lua#L547-L567))  
 **Result:** Can send mail-only deltas, better debugging visibility
@@ -69,6 +75,7 @@ The following critical issues were resolved to make mail a true first-class inve
 ## Use Cases
 
 ### Use Case 1: Banker Viewing Mail Inventory
+
 **Actor:** Guild Banker
 **Goal:** See what items are currently in their mailbox without opening mail UI
 
@@ -89,6 +96,7 @@ Inventory Status for Metals-Azuresong:
 ```
 
 ### Use Case 2: Requester Sees Items in Mail
+
 **Actor:** Guild Member requesting items
 **Goal:** Know that requested items are ready and waiting in banker's mail
 
@@ -100,6 +108,7 @@ Inventory Status for Metals-Azuresong:
 5. Member can contact Metals to retrieve and send
 
 ### Use Case 3: Banker Priority Queue
+
 **Actor:** Guild Banker
 **Goal:** Prioritize fulfilling requests where items are already in mail
 
@@ -114,6 +123,7 @@ Inventory Status for Metals-Azuresong:
 ### Data Model
 
 #### Mail Inventory Structure (Actual Implementation)
+
 ```lua
 -- Alt data structure with mail
 alt.mail = {
@@ -150,6 +160,7 @@ alt.mailHash = 12345       -- Separate hash for mail-only changes
 - Mail treated as **first-class inventory** - changes trigger delta syncs
 
 #### Request Enhancement
+
 ```lua
 -- Add to request data structure
 request.fulfillment = {
@@ -448,6 +459,7 @@ end
 Mail inventory is **fully integrated** as first-class inventory in the delta sync system. Key implementation details:
 
 #### Hash-Based Change Detection
+
 ```lua
 -- Guild.lua: ComputeStateSummary()
 local summary = {
@@ -458,6 +470,7 @@ local summary = {
 ```
 
 #### Version Broadcast Comparison
+
 ```lua
 -- Chat.lua: ProcessVersionBroadcast()
 -- Compare BOTH hashes to determine if sync needed
@@ -470,6 +483,7 @@ end
 ```
 
 #### P2P Request Propagation
+
 ```lua
 -- Guild.lua: BroadcastP2PRequest()
 -- Include both hashes in P2P requests
@@ -480,6 +494,7 @@ Chat:SendAddonMessage("togbank-r", string.format(
 ```
 
 #### Three-Way Delta Detection
+
 ```lua
 -- DeltaComms.lua: ComputeDelta()
 -- Can detect three scenarios:
@@ -489,6 +504,7 @@ Chat:SendAddonMessage("togbank-r", string.format(
 ```
 
 #### Link Stripping for Bandwidth
+
 ```lua
 -- Guild.lua: StripAltLinks()
 -- Mail links stripped for non-gear items (same as bank/bags)
@@ -545,28 +561,34 @@ end
 ## Edge Cases
 
 ### Edge Case 1: Mail Expires
+
 **Problem:** Items in mail for 30 days, expire before retrieval
 **Solution:** Show days remaining in tooltip, highlight urgent (<3 days) in red
 
 ### Edge Case 2: Stale Mail Data
+
 **Problem:** Mail data from yesterday, items already taken
 **Solution:** Show age of scan. Mail data persists indefinitely like bank/bags data. User must rescan mailbox to update if items are taken.
 
 ### Edge Case 3: Multiple Bankers
+
 **Problem:** Two bankers both have requested items in mail
 **Solution:** Show all sources with mail counts, let requester choose
 
 ### Edge Case 4: Mail Inbox Changes
+
 **Problem:** Taking/deleting items while mailbox is open
 **Solution:** Scan on MAIL_CLOSED captures final state (same as bank)
 
 ### Edge Case 5: Offline Mail Scan
+
 **Problem:** Banker logs out, guild can't see their mail
 **Solution:** Broadcast last mail scan via delta sync, show age in UI
 
 ## Implementation Plan
 
 ### Phase 1: Data Collection (Week 1)
+
 - [ ] Add `mail` field to alt data structure
 - [ ] Add `hasUpdated` flag to Mail module
 - [ ] Implement `ScanMailInventory()` in Mail.lua
@@ -577,12 +599,14 @@ end
 - [ ] Test mail scanning with various mail contents
 
 ### Phase 2: Core API (Week 2)
+
 - [ ] Implement `GetItemsWithMail()` in Item.lua
 - [ ] Implement `CheckMailFulfillment()` in RequestLog.lua
 - [ ] Add mail inventory to `GetInventorySummary()`
 - [ ] Test API functions with mock data
 
 ### Phase 3: UI - Inventory Display (Week 3)
+
 - [ ] Update Inventory.lua tooltip to show mail items
 - [ ] Add mail section to inventory status bar
 - [ ] Update Search.lua to include mail results
@@ -590,6 +614,7 @@ end
 - [ ] Test inventory display with mail data
 
 ### Phase 4: UI - Request Indicators (Week 4)
+
 - [ ] Add mail icon to request rows
 - [ ] Implement mail icon tooltip
 - [ ] Add "Items in Mail" filter option
@@ -597,6 +622,7 @@ end
 - [ ] Test request UI with various scenarios
 
 ### Phase 5: Testing & Polish (Week 5)
+
 - [ ] Test full workflow: mail → scan → display → fulfill
 - [ ] Test edge cases (expired mail, stale data, etc.)
 - [ ] Performance testing with 50 mail items
@@ -607,6 +633,7 @@ end
 ## Testing Scenarios
 
 ### Test 1: Basic Mail Scan
+
 1. Send 10 different items to banker (50 total stacks)
 2. Open mailbox
 3. Verify all items appear in mail inventory
@@ -614,6 +641,7 @@ end
 5. Reopen, verify update triggers
 
 ### Test 2: Request Fulfillment
+
 1. Create request for 50 Iron Ore
 2. Mail 50 Iron Ore to banker
 3. Open banker's mailbox
@@ -621,6 +649,7 @@ end
 5. Verify tooltip shows "50 available in mail"
 
 ### Test 3: Delta Sync
+
 1. Banker opens mailbox (triggers scan)
 2. Verify `alt.mail` data updated locally
 3. Verify standard delta sync broadcasts to guild
@@ -628,12 +657,14 @@ end
 5. Take items from mail, verify delta sync updates
 
 ### Test 4: Search Integration
+
 1. Search for "Iron Ore"
 2. Verify results show bank, bags, AND mail locations
 3. Verify mail results have ✉ icon
 4. Click mail result, verify tooltip shows mail details
 
 ### Test 5: Mail Data Persistence
+
 1. Scan mail at time T
 2. Wait 25 hours
 3. Verify UI shows age ("25 hours ago")

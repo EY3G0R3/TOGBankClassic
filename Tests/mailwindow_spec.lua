@@ -73,7 +73,11 @@ end
 
 describe("MAILWINDOW: the attachment rows are view rows built at the edge", function()
 	before_each(load)
-	after_each(function() TOGBankClassic_Item = nil end)
+	after_each(function()
+		TOGBankClassic_Item = nil
+		-- SUITE-HEAP-002: each example draws a fresh window; hand it back.
+		if Mail and Mail.Window then env.releaseWindow(Mail.Window); Mail.Window, Mail.Content = nil, nil end
+	end)
 
 	it("draws each attachment as the record it is -- suffix, enchant and count intact -- through Resolve, with no async loader", function()
 		wow.mail[1] = { sender = "Alice", subject = "donation", money = 0, cod = 0, daysLeft = 29, items = {

@@ -31,6 +31,7 @@ local function OnClose(_)
 	TOGBankClassic_UI_Donations:Close()
 	TOGBankClassic_UI_Requests:Close()
 	TOGBankClassic_UI_Search:Close()
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 function TOGBankClassic_UI_Inventory:Toggle()
@@ -60,11 +61,7 @@ function TOGBankClassic_UI_Inventory:Open()
 		TOGBankClassic_Chat:PerformSync()
 	end
 
-	if _G["TOGBankClassic"] then
-		_G["TOGBankClassic"]:Show()
-	else
-		TOGBankClassic_UI:Controller()
-	end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 function TOGBankClassic_UI_Inventory:Close()
@@ -549,15 +546,13 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 							local why = item.Hidden and TOGBankClassic_Bank:HiddenReason(item.ID, item.Suffix, item.Enchant) or nil
 							itemWidget.tooltipLines = TOGBankClassic_UI:HiddenTooltipLines(item.Hidden and true or false, why)
 						end
-						itemWidget:SetCallback("OnClick", function(widget, event, button)
+						itemWidget:SetCallback("OnClick", function(widget, _, button)
 							if button == "RightButton" then
 								if ownTab then self:ToggleHidden(item, tab) end
 								return
 							end
-							if IsShiftKeyDown() or IsControlKeyDown() then
-								TOGBankClassic_UI:EventHandler(widget, event, button)
-								return
-							end
+							-- LINKCLICK-001: a chat-link or dress-up click does what the game does with it.
+							if TOGBankClassic_UI:HandleLinkClick(widget.link) then return end
 							TOGBankClassic_UI_Search:ShowRequestDialog(item, tab)
 						end)
 					end

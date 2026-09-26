@@ -393,14 +393,16 @@ function Browse:BankerRows()
 	return rows
 end
 
---- BANKERS-FILTER-001: the Bankers rows whose name, Stores text or status contain every word of
---- `text` (the addon's one search rule, SearchMatch). Empty text keeps every row.
+--- BANKERS-FILTER-001: the Bankers rows whose name, Stores text, status or GUILD contain every word
+--- of `text` (the addon's one search rule, SearchMatch). Empty text keeps every row.
+--- XGUILD-SEARCH-001 (the operator, 2026-09-25: "the guild tag name needs to be searchable, so i can
+--- search for bankers in the sister guild"): a sister guild's banker matches on its guild's name.
 function Browse:FilterBankerRows(rows, text)
 	local q = text and text:match("^%s*(.-)%s*$") or ""
 	if q == "" then return rows end
 	local out = {}
 	for _, r in ipairs(rows) do
-		if TOGBankClassic_UI:SearchMatch(q, r.player, r.stores, r.plainStatus) then out[#out + 1] = r end
+		if TOGBankClassic_UI:SearchMatch(q, r.player, r.stores, r.plainStatus, r.guildName) then out[#out + 1] = r end
 	end
 	return out
 end
@@ -768,6 +770,10 @@ local function OnClose(_)
 	-- the window); its bottom icons and settings overlay on our frame are hidden.
 	if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.Detach then TOGBankClassic_UI_Requests:Detach() end
 	if Browse.Window then Browse.Window:Hide() end
+	-- ESC-001 (self-audit 35130c29 F1): the "Who runs this bank" dialog is this window's; it must not
+	-- stay on screen alone once the window is gone, by Escape or by the close button.
+	if Browse.OwnerDialog then Browse.OwnerDialog:Hide() end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 --- Has this account hovered the help icon ON THIS TAB before? The breath is a one-time
@@ -949,7 +955,7 @@ function Browse:Open(tab)
 	self.isOpen = true
 	self.Window:Show()
 	self.TabGroup:SelectTab(tab or self:RememberedTab())
-	if _G["TOGBankClassic"] then _G["TOGBankClassic"]:Show() end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001: this window used to get Escape only if another had made it
 end
 
 function Browse:Close()
@@ -958,7 +964,15 @@ function Browse:Close()
 end
 
 function Browse:Toggle()
-	if self.isOpen then self:Close() else self:Open() end
+	if self.isOpen then
+		self:Close()
+	else
+		self:Open()
+		-- XGUILD-SYNC-001 step 7: this open is a click or a keypress (the minimap button, /togbank, the
+		-- legacy window's Browse button) -- the one hardware event the GreenWall nudge may ride. Not in
+		-- Open(), which Events and Requests reach from handlers that are neither.
+		if TOGBankClassic_GreenWall and TOGBankClassic_GreenWall.Nudge then TOGBankClassic_GreenWall:Nudge() end
+	end
 end
 
 --- Repaint whatever tab is showing from the store (called when data lands; debounced by callers).
@@ -1827,10 +1841,9 @@ function Browse:OnBrowseRowClick(entry, button)
 		end
 		return
 	end
-	if IsShiftKeyDown and IsShiftKeyDown() and entry.Link then
-		ChatEdit_InsertLink(entry.Link)
-		return
-	end
+	-- LINKCLICK-001: a chat-link click inserts the link where the client puts one, a dress-up click
+	-- previews the item -- the player's bindings, the game's dispatcher -- and neither requests.
+	if TOGBankClassic_UI:HandleLinkClick(entry.Link) then return end
 	if entry.viewOnly then
 		self:SetStatus(entry.player .. " is a view-only bank -- its items cannot be requested.")
 		return

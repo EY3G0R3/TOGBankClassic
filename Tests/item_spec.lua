@@ -57,7 +57,7 @@ end)
 
 describe("LINK-AUDIT-001 step 1: the static item databases are gone", function()
 	it("neither TOC loads Modules/Static, and loading Item.lua defines no classifier", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local text = env.readFile(toc)
 			assert.truthy(text:find("## Interface:", 1, true), toc .. " could not be read (readFile answers \"\" for a missing file)")
 			assert.is_nil(text:find("Modules/Static/", 1, true), toc .. " still loads a static item database")

@@ -1,16 +1,15 @@
-## Interface: 20506
+## Interface: 50504
 ## Title: TOGBankClassic
 ## Notes: A simple way to aggregate, view and request items from the inventories of multiple guild bank alts.
 ## Author: Dominion-Myzrael, GrumpyPlayers (also known as <SG>Soul), Lothsahn, Huntmehuntme-Myzrael, Pimptasty
 ## Version: @project-version@
 
 ## SavedVariables: TOGBankClassicDB, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog, TOGBankClassic_PerfMetrics, TOGBankClassic_PerfEnabled, TOGBankClassic_DebugLogEnabled, TOGBankClassicInvDB
-## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0, ItemDB, DeltaSync, LibAceGUIWidgets
-## OptionalDeps: Bagnon, TOGTools
+## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0, ItemDB, DeltaSync, LibAceGUIWidgets, LibDBIcon-1.0
+## OptionalDeps: Bagnon, TOGTools, GreenWall
 ## X-Curse-Project-ID: 1400244
 
 Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua
-Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua
 
 Modules/Compat.lua
 Modules/Constants.lua
@@ -22,6 +21,7 @@ Modules/Chat.lua
 Modules/Database.lua
 Modules/Events.lua
 Modules/Guild.lua
+Modules/GreenWall.lua
 Modules/BankerNumbers.lua
 Modules/P2P.lua
 Modules/RequestLog.lua

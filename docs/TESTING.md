@@ -1,10 +1,11 @@
-﻿# TOGBankClassic Testing Scenarios
+# TOGBankClassic Testing Scenarios
 
 ## P2P-023: Hash-List Broadcast Collision Guard
 
 **Test Objective:** Verify `hashBroadcastInProgress` flag prevents concurrent hash-list broadcasts from same sender, eliminating INTEGRITY-MISMATCH errors.
 
 ### TC-001: Periodic Timer Does Not Stack Sends (BULK Priority)
+
 **Setup:** Banker with 36 bank alts, periodic `OnShareTimer` active (3-minute cycle).
 **Steps:**
 1. Wait for `OnShareTimer` to fire → observe "Broadcasting hash-list" in debug log
@@ -27,6 +28,7 @@
 ---
 
 ### TC-002: Manual HashUpdate Defers If Timer In Progress (NORMAL Priority)
+
 **Setup:** Banker logged in with active guild, periodic timer recently fired (broadcast in progress).
 **Steps:**
 1. Trigger periodic broadcast via `/togbank share` or wait for `OnShareTimer`
@@ -50,6 +52,7 @@
 ---
 
 ### TC-003: Login Broadcast Works During Zone-In Cooldown (NORMAL Priority)
+
 **Setup:** Logout, wait 30 seconds, log back in as banker.
 **Steps:**
 1. Log in and immediately check debug output
@@ -71,6 +74,7 @@
 ---
 
 ### TC-004: Flag Timeout Clears After 15 Seconds
+
 **Setup:** Banker with hash broadcast capability.
 **Steps:**
 1. Trigger hash broadcast via `/togbank hashupdate`
@@ -93,6 +97,7 @@
 ---
 
 ### TC-005: Forced Send After Max Retries (NORMAL Priority)
+
 **Setup:** Simulate stuck flag scenario (manually set `TOGBankClassic_Events.hashBroadcastInProgress = true` in console, or use very long message + rapid commands).
 **Steps:**
 1. Set `hashBroadcastInProgress = true` manually via `/run TOGBankClassic_Events.hashBroadcastInProgress = true`
@@ -114,6 +119,7 @@
 ---
 
 ### TC-006: Telemetry Displays Collision Statistics
+
 **Setup:** Banker with collision guard active, trigger at least one collision.
 **Steps:**
 1. Trigger hash broadcast collision (TC-001 or TC-002 scenario)
@@ -135,6 +141,7 @@
 ---
 
 ### TC-007: Multiple Bankers Can Broadcast Simultaneously
+
 **Setup:** 2+ bankers online in same guild.
 **Steps:**
 1. Banker A triggers `/togbank hashupdate`
@@ -155,6 +162,7 @@
 ---
 
 ### TC-008: Backwards Compatibility With Unfixed Clients
+
 **Setup:** Fixed banker broadcasts to guild with mix of fixed/unfixed clients.
 **Steps:**
 1. Fixed banker triggers hash broadcast (no concurrent sends)
@@ -178,7 +186,7 @@
 ## Test Execution Log
 
 | TC-ID | Date | Tester | Result | Notes |
-|-------|------|--------|--------|-------|
+| ----- | ---- | ------ | ------ | ----- |
 | TC-001 | - | - | Not Tested | Periodic timer collision (BULK skip) |
 | TC-002 | - | - | Not Tested | Manual command defer+retry (NORMAL) |
 | TC-003 | - | - | Not Tested | Login broadcast during zone cooldown |
@@ -189,4 +197,3 @@
 | TC-008 | - | - | Not Tested | Backwards compatibility validation |
 
 ---
-

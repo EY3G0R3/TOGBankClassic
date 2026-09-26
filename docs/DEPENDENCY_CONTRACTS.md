@@ -142,8 +142,8 @@ have no item — that constraint does not apply to bank contents.)
 Recorded so it is not re-derived. TOGPM's Shopping List called
 `TOGBankClassic.RequestItem(itemId)` behind a
 `if TOGBankClassic and TOGBankClassic.RequestItem then` guard. `_G.TOGBankClassic`
-is this addon's UI controller **frame** (`Modules/UI.lua:244`) and has never
-carried such a field — the only `RequestItem*` symbol anywhere in this repo is
+was this addon's UI controller **frame** (removed in v1.6.1 by ESC-001, so it is
+now nil) and never carried such a field — the only `RequestItem*` symbol anywhere in this repo is
 Baganator's `RequestItemButtonsRefresh` in `Modules/ItemHighlight.lua`.
 
 So the guard was never true and those buttons did nothing, silently, because the

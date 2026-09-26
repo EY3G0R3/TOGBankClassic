@@ -70,6 +70,56 @@ require("env.ace").load("AceGUI-3.0")
 local M = { wow = wow, guild = guild }
 M.EPOCH = wow.epoch   -- the harness's fixed epoch (2026-01-01 UTC); what `env.now` starts at
 
+-- SUITE-HEAP-001 (WoWAPITesting inbox 6223b7a7, 2026-09-25): windows an example builds and never
+-- releases stay alive for the rest of the run -- AceGUI names every TabGroup tab as a global and
+-- the tab's parent chain holds its window. TWO BLANKET FIXES HERE WERE TRIED AND BOTH CHANGED WHAT
+-- THE SPECS TEST, so neither stayed: (1) releasing every live window at reset reused pooled frames
+-- that carry TOG Bank's frame-side caches (the Requests list on its tab body, Requests.lua:1544)
+-- into the next example, built by the previous example's load of the module; (2) dropping the
+-- `AceGUI...` globals at reset broke windows still in use, because AceGUI's own Tab_OnShow looks
+-- its highlight up BY NAME (AceGUIContainer-TabGroup.lua:215), and in the client those names are
+-- never cleared. What remains is per spec: a spec that builds a fresh window for every example
+-- releases it in its own `after_each` (`M.releaseWindow`).
+
+--- The Requests body caches frames on the frames it is built on and finds them again on the next
+--- build: its list on the host's content (`content.togRequestsListHost`), its broom/envelope
+--- cluster and officer settings overlay on the chrome frame (`togRequestsCluster`,
+--- `togRequestsSettings`). In the client that is right: each module loads once, so the scripts on
+--- those frames close over the one module table. Here every example reloads the modules, so a
+--- cache left on a pooled frame belongs to the PREVIOUS example's load -- its envelope writes the
+--- previous module's status line, browse_spec's "same RowList as the Browse tab" check sees the
+--- previous RowList. Parked and dropped on release, walking the child widgets, because in the
+--- Guild Bank window the list's host is the TabGroup inside it.
+local function forgetFrameCaches(widget)
+	local content, frame = widget.content, widget.frame
+	if content and content.togRequestsListHost then
+		content.togRequestsListHost:Hide()
+		content.togRequestsListHost = nil
+	end
+	if frame and frame.togRequestsCluster then
+		for _, f in ipairs(frame.togRequestsCluster.frames) do f:Hide() end
+		frame.togRequestsCluster = nil
+	end
+	if frame and frame.togRequestsSettings then
+		frame.togRequestsSettings:Hide()
+		frame.togRequestsSettings = nil
+	end
+	for _, child in ipairs(widget.children or {}) do forgetFrameCaches(child) end
+end
+
+--- Release an AceGUI window a spec is done with, the way production releases one: the persisted
+--- window's scale listener first (`UI:ForgetPersistedWindow`, SCALE-FLOOR-001), then AceGUI's
+--- Release, which returns the widget and its named tabs to the pool for the next Create.
+function M.releaseWindow(window)
+	if not (window and window.frame) then return false end
+	if TOGBankClassic_UI and TOGBankClassic_UI.ForgetPersistedWindow then
+		TOGBankClassic_UI:ForgetPersistedWindow(window)
+	end
+	forgetFrameCaches(window)
+	LibStub("AceGUI-3.0"):Release(window)
+	return true
+end
+
 -- ---------------------------------------------------------------------------
 -- State a spec may read or steer directly
 -- ---------------------------------------------------------------------------
@@ -156,6 +206,8 @@ function M.install()
 	-- so the rich one is always there; UI modules anchor to it at load. The fallback stands for a
 	-- spec that nils it.
 	_G.UIParent = _G.UIParent or wow.newFrame()
+	-- `GetClassColor` / `RAID_CLASS_COLORS` had a stand-in here until harness pin 23d11b1 (inbox
+	-- 324d7447) moved them to the hollow layer, where the client has them.
 end
 
 -- ---------------------------------------------------------------------------
@@ -257,6 +309,7 @@ M.MODULE_ORDER = {
 	"Modules/Database.lua",
 	"Modules/Events.lua",
 	"Modules/Guild.lua",
+	"Modules/GreenWall.lua",
 	"Modules/BankerNumbers.lua",
 	"Modules/P2P.lua",
 	"Modules/RequestLog.lua",

@@ -112,6 +112,11 @@ end
 
 local function unload()
 	if R and R.isOpen then R:Close() end
+	-- SUITE-HEAP-002: every example builds a fresh window (and one builds an Inventory frame to
+	-- dock beside); hand them back so the run's heap does not keep all of them.
+	if R and R.Window then env.releaseWindow(R.Window); R.Window = nil end
+	local inv = _G.TOGBankClassic_UI_Inventory
+	if inv and inv.Window then env.releaseWindow(inv.Window); inv.Window = nil end
 	_G.TOGBankClassic_UI_Requests = nil
 	_G.TOGBankClassic_UI_StatusBar = nil
 	_G.TOGBankClassic_UI_Inventory = nil
@@ -446,6 +451,24 @@ describe("REQUESTS-ACTIONS: the Cancel Stale broom and the Fulfill Oldest envelo
 		R.FulfillOldestBtn:Fire("OnEnter", R.FulfillOldestBtn)
 		assert.is_true(GameTooltip:IsShown())
 		R.FulfillOldestBtn:Fire("OnLeave")
+	end)
+
+	-- POOL-CLUSTER-001: AceGUI's frame pool is library-wide. A standalone window released with its
+	-- cluster (or the officer overlay) showing handed the next window -- anyone's -- a live broom
+	-- and envelope. Embed (the body moving into the Guild Bank tab) releases exactly this way.
+	it("releases the standalone window with the broom, the envelope and the settings overlay hidden", function()
+		load({ officer = true })
+		R:Open()
+		local frame = R.Window.frame
+		local cluster = frame.togRequestsCluster
+		assert.is_table(cluster.CancelStaleBtn); assert.is_table(cluster.FulfillOldestBtn)
+		assert.is_true(cluster.CancelStaleBtn:IsShown()); assert.is_true(cluster.FulfillOldestBtn:IsShown())
+		frame.togRequestsSettings:Show()   -- as if the officer was on the Settings tab
+		R:ReleaseWindow()
+		assert.is_nil(R.Window)
+		assert.is_false(cluster.CancelStaleBtn:IsShown(), "the broom went back to the pool showing")
+		assert.is_false(cluster.FulfillOldestBtn:IsShown(), "the envelope went back to the pool showing")
+		assert.is_false(frame.togRequestsSettings:IsShown(), "the settings overlay went back to the pool showing")
 	end)
 
 	it("a member has neither; an officer who is not a banker has the broom only", function()

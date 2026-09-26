@@ -147,6 +147,7 @@ local function OnClose(_)
 	if TOGBankClassic_UI_Requests.Window then
 		TOGBankClassic_UI_Requests.Window:Hide()
 	end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 -- BROWSE-001 fold-in. The operator: "requests isn't a separate window, it's just another tab".
@@ -828,6 +829,21 @@ end
 function TOGBankClassic_UI_Requests:ReleaseWindow()
 	if not self.Window then return end
 	TOGBankClassic_UI:ClearWindowAlpha(self.Window)
+	-- SCALE-FLOOR-001: and the accessibility-scale registration, for the same reason the alpha is
+	-- cleared -- the pool is library-wide, and a listener left on a released frame would re-apply
+	-- this window's size, position and SAVED TABLE to whoever acquires it next.
+	TOGBankClassic_UI:ForgetPersistedWindow(self.Window)
+	-- POOL-CLUSTER-001: the broom/envelope cluster and the officer settings overlay are plain
+	-- frames on this window's frame, cached there for the next build (BuildBottomCluster,
+	-- BuildSettingsPanel). Released SHOWING, they came back on whatever window acquired the frame
+	-- next -- another TOG window or another addon's -- still wired to cancel stale requests and
+	-- send mail. Hidden here; the next build on this frame shows them again.
+	local frame = self.Window.frame
+	local cluster = frame.togRequestsCluster
+	if cluster then
+		for _, f in ipairs(cluster.frames) do f:Hide() end
+	end
+	if frame.togRequestsSettings then frame.togRequestsSettings:Hide() end
 	self.Window:Release()
 	self.Window = nil
 	self:ForgetBody()
@@ -875,10 +891,7 @@ function TOGBankClassic_UI_Requests:Open()
 	end
 
 	-- Dock beside the Inventory window when it is open.
-	if TOGBankClassic_UI_Inventory and TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
-		self.Window:ClearAllPoints()
-		self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
-	end
+	TOGBankClassic_UI:DockBesideInventory(self.Window, "RIGHT")
 
 	-- Ensure window stays within screen bounds
 	TOGBankClassic_UI:ClampFrameToScreen(self.Window)
@@ -891,11 +904,7 @@ function TOGBankClassic_UI_Requests:Open()
 	-- Show window AFTER content is drawn and laid out to prevent initial sizing issue
 	self.Window:Show()
 
-	if _G["TOGBankClassic"] then
-		_G["TOGBankClassic"]:Show()
-	else
-		TOGBankClassic_UI:Controller()
-	end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 --- BROWSE-001: render the body inside the Guild Bank window's Requests tab. `host` is that
@@ -979,10 +988,6 @@ function TOGBankClassic_UI_Requests:Close()
 	end
 
 	OnClose(self.Window)
-
-	if TOGBankClassic_UI_Inventory.isOpen == false then
-		_G["TOGBankClassic"]:Hide()
-	end
 end
 
 -- REQUESTS-ROWLIST-001: ApplyColumnWidths / UpdateColumnLayout / HandleResize / AdjustTableHeight
@@ -1123,6 +1128,11 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	-- status table and a SetResizeBounds/SetMinResize pair beside it.
 	local floor = minWidth()
 	TOGBankClassic_UI:PersistWindow(window, "requests", floor, 500, floor, 200)
+	-- SCALE-DOCK-001: this window docks to the Inventory window in Open(), which the status table
+	-- knows nothing about, so a scale change would otherwise re-point it away from the cluster.
+	TOGBankClassic_UI:SetPersistedAnchor(window, function(w)
+		TOGBankClassic_UI:DockBesideInventory(w, "RIGHT")
+	end)
 
 	self.Window = window
 	self.embedded = false

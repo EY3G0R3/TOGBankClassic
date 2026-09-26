@@ -12,6 +12,13 @@
 --
 -- This does not re-implement the runner: it builds the reversed list the way run.lua discovers
 -- it (same roots, same exclusion) and hands it to run.lua as its argument list.
+--
+-- REVERSE-GATE-001: `lua Tests/run_reverse.lua <part> <parts>` runs one contiguous slice of the
+-- reversed list (part 1 is the z end). The whole run outgrew the desk's 15-minute budget on
+-- 2026-09-25, as the forward run had; the slices are declared as writ suites "reverse 1/3" .. "3/3".
+-- KNOWN COST: an order dependency that crosses a slice boundary is not seen -- the same trade the
+-- forward split makes. No arguments still runs the whole list.
+local part, parts = tonumber(arg and arg[1]), tonumber(arg and arg[2])
 package.path = "./Tests/wowapi/?.lua;" .. package.path
 local paths = require("runner_paths")
 local sep = package.config:sub(1, 1)
@@ -35,8 +42,17 @@ for _, r in ipairs(paths.ROOTS) do
 end
 table.sort(files)
 
+local all = {}
+for i = #files, 1, -1 do all[#all + 1] = files[i] end
+local first, last = 1, #all
+if part and parts then
+	assert(parts >= 1 and part >= 1 and part <= parts and part % 1 == 0 and parts % 1 == 0,
+		"usage: lua Tests/run_reverse.lua [<part> <parts>]")
+	first = math.floor((part - 1) * #all / parts) + 1
+	last = math.floor(part * #all / parts)
+end
 local reversed = { [0] = "Tests/wowapi/run.lua" }
-for i = #files, 1, -1 do reversed[#reversed + 1] = files[i] end
-io.write("run_reverse: " .. #files .. " spec file(s), z to a\n")
+for i = first, last do reversed[#reversed + 1] = all[i] end
+io.write(("run_reverse: %d of %d spec file(s), z to a (%d..%d)\n"):format(#reversed, #all, first, last))
 _G.arg = reversed
 assert(loadfile("Tests/wowapi/run.lua"))()

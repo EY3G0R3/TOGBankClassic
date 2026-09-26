@@ -57,9 +57,18 @@ function TOGBankClassic_Events:RegisterEvents()
 	self:RegisterEvent("MERCHANT_SHOW")
 	self:RegisterEvent("MERCHANT_CLOSED")
 	self:RegisterEvent("PLAYER_REGEN_DISABLED")
-	hooksecurefunc("ChatEdit_InsertLink", function(link)
-		TOGBankClassic_UI:OnInsertLink(link)
-	end)
+	-- LINKCLICK-001: the client inserts a linked item through `ChatFrameUtil.InsertLink` -- the bare
+	-- `ChatEdit_InsertLink` this used to hook is, on both clients this addon ships, a deprecation
+	-- alias of it (Blizzard_DeprecatedChatInfo/Deprecated_ChatFrame.lua:43, behind
+	-- `loadDeprecationFallbacks`) that NOTHING in the client calls -- so the hook never saw a shift-click
+	-- on a bag item or a chat line, only this addon's own slots, and with the fallbacks off the global
+	-- was nil and this line raised. Hook the function the client calls; the alias only as a fallback.
+	local function onInsertLink(link) TOGBankClassic_UI:OnInsertLink(link) end
+	if ChatFrameUtil and type(ChatFrameUtil.InsertLink) == "function" then
+		hooksecurefunc(ChatFrameUtil, "InsertLink", onInsertLink)
+	elseif type(ChatEdit_InsertLink) == "function" then
+		hooksecurefunc("ChatEdit_InsertLink", onInsertLink)
+	end
 
 	-- Filter out "No player named X is currently playing" and "Player not found" errors from chat
 	-- These are detected and handled by CHAT_MSG_SYSTEM event handler

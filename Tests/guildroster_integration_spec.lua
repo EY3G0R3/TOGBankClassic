@@ -399,7 +399,7 @@ describe("LibGuildRoster packaging", function()
 	-- this library, and each is silently wrong in its own way: a bad slug skips auto-install,
 	-- a bad folder name breaks load order.
 	it("declares the folder name GuildRoster in both TOCs", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local deps = read(toc):match("## Dependencies:([^\n]*)")
 			assert.is_not_nil(deps, toc .. " has no Dependencies line")
 			assert.truthy(deps:find("GuildRoster", 1, true),
@@ -414,10 +414,12 @@ describe("LibGuildRoster packaging", function()
 			"required-dependencies, or CurseForge will not auto-install it")
 	end)
 
-	it("keeps the two TOC dependency lines identical", function()
+	it("keeps every TOC's dependency line identical", function()
 		local a = read("TOGBankClassic.toc"):match("## Dependencies:([^\n]*)")
-		local b = read("TOGBankClassic_BCC.toc"):match("## Dependencies:([^\n]*)")
-		assert.equal(a, b, "the TOC lockstep rule requires both flavours declare the same deps")
+		for _, toc in ipairs({ "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+			local b = read(toc):match("## Dependencies:([^\n]*)")
+			assert.equal(a, b, "the TOC lockstep rule requires every flavour declare the same deps (" .. toc .. ")")
+		end
 	end)
 end)
 

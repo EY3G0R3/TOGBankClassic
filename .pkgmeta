@@ -3,7 +3,8 @@ package-as: TOGBankClassic
 
 curseforge-project-id: 1400244
 
-# Both flavour TOCs (TOGBankClassic.toc @ 11509, TOGBankClassic_BCC.toc @ 20506)
+# All three flavour TOCs (TOGBankClassic.toc @ 11509, TOGBankClassic_TBC.toc @ 20506,
+# TOGBankClassic_Mists.toc @ 50504)
 # are checked in and maintained by hand, so the packager must not generate them.
 enable-toc-creation: no
 enable-nolib-creation: yes
@@ -27,8 +28,11 @@ required-dependencies:
   - libitemdb
   - deltasync
   - libaceguiwidgets
+  - libdbicon-1-0
 
-# External dependencies (Ace3, VersionCheck) are handled via required-dependencies above
+# External dependencies (Ace3, VersionCheck) are handled via required-dependencies above.
+# libdbicon-1-0 ships in folder LibDBIcon-1.0. LibDataBroker-1.1 stays bundled in Libs/ on
+# purpose (operator, 2026-09-25); LibStub keeps whichever copy has the higher MINOR.
 
 # Ignore syntax is unforgiving and fails SILENTLY -- a malformed entry matches
 # nothing and the file ships anyway. Rules:

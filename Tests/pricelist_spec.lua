@@ -753,7 +753,7 @@ end)
 
 describe("STORE-002: shipping", function()
 	it("both TOCs load Modules/PriceList.lua after Donations.lua; the two prefixes are registered", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local text = env.readFile(toc)
 			local d, p = text:find("Modules/Donations.lua", 1, true), text:find("Modules/PriceList.lua", 1, true)
 			assert.is_true(d ~= nil and p ~= nil and p > d, toc .. " does not load PriceList after Donations")

@@ -209,6 +209,45 @@ describe("SETTINGS-004: per-field stamps -- a stale writer's untouched fields lo
 		assert.is_true(after > before, "an in-place mutation of a nested setting was not stamped")
 		assert.equal(T1, settingsSent()[1].stamps.storeOpen, "an untouched field's stamp moved")
 	end)
+
+	-- SETTINGS-STALE-001 (the operator, 2026-09-25: "we need to make sure someone logging on for the
+	-- first time doesn't uncheck it, as that's the default"). Found live: the Sister-guild bank was
+	-- unticked guild-wide, and a session's FIRST write with no snapshot stamped every field.
+	it("a first write of the session, before any settings were sent or heard, stamps only the field it changed -- never the default Sister-guild bank off", function()
+		me = GM
+		Guild.lastSettingsPayload, Guild.lastSettingsFor = nil, nil
+		assert.is_false(Guild:IsSisterBankEnabled(), "precondition: this client holds the default, off")
+		clearSent()
+		assert.is_true(Guild:SetStoreDiscount(25))
+		local out = settingsSent()
+		assert.equal(1, #out)
+		assert.equal(out[1].version, out[1].stamps.storeDiscountPercent, "the changed field was not stamped")
+		assert.is_nil(out[1].stamps.sisterBank, "the default 'off' was stamped as a write the GM never made")
+		assert.is_false(out[1].sisterBank)
+		-- The receiving side of the same payload: a client that holds the switch ON, stamped by the
+		-- officer who ticked it, keeps it ON and takes the discount.
+		local T1 = env.now - 100
+		me = MEMBER
+		Guild.Info.settings = { shopEnabled = true, sisterBank = true, version = T1, stamps = { sisterBank = T1, shopEnabled = T1 } }
+		hear(GM, out[1])
+		assert.is_true(Guild:IsSisterBankEnabled(), "a writer that never held the switch turned it off guild-wide")
+		assert.equal(25, Guild.Info.settings.storeDiscountPercent)
+	end)
+
+	it("a write straight after settings were RECEIVED stamps only the field it changed (receiving no longer empties the baseline)", function()
+		local T1 = env.now - 100
+		me = OFFICER
+		hear(GM, { version = T1, officerRankFloor = 1, storeOpen = false, sisterBank = true, storeDiscountPercent = 0,
+			stamps = { officerRankFloor = T1, storeOpen = T1, sisterBank = T1, storeDiscountPercent = T1 } })
+		assert.is_true(Guild:IsSisterBankEnabled())
+		clearSent()
+		assert.is_true(Guild:SetStoreDiscount(30))
+		local out = settingsSent()
+		assert.equal(1, #out)
+		assert.equal(out[1].version, out[1].stamps.storeDiscountPercent)
+		assert.equal(T1, out[1].stamps.storeOpen, "a field just received was re-stamped as this officer's write")
+		assert.equal(T1, out[1].stamps.sisterBank, "the switch just received was re-stamped as this officer's write")
+	end)
 end)
 
 -- SETTINGS-CANON-001 (the operator, 2026-09-16: "we need to ensure the the request % is being synced

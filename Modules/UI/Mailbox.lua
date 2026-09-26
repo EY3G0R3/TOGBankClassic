@@ -537,6 +537,7 @@ local function OnClose(_)
 	Mailbox.expanded = nil
 	Mailbox:StopTaking()
 	if Mailbox.Window then Mailbox.Window:Hide() end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 --- Should the window open by itself when this character opens a mailbox? Two General settings
@@ -616,6 +617,7 @@ function Mailbox:Open()
 	self.isOpen = true
 	self.Window:Show()
 	self:DrawContent()
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 function Mailbox:Close()

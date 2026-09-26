@@ -401,6 +401,15 @@ local function loadBrowse(opts)
 	return Browse
 end
 
+--- SUITE-HEAP-002: hand back the windows an example built (the Guild Bank window, and Search's if
+--- it opened one). The whole Browse window, never its tab body alone -- env.releaseWindow drops the
+--- Requests list the tab body caches, which the next example's reload of RowList.lua must not see.
+local function releaseWindows()
+	for _, module in ipairs({ TOGBankClassic_UI_Browse, TOGBankClassic_UI_Search }) do
+		if module and module.Window then env.releaseWindow(module.Window); module.Window = nil end
+	end
+end
+
 local function stock()
 	Store:SetAltRecords(G, ALICE, { Record.new(2589, 40), Record.new(19019, 1), Record.new(2575, 2) }, 12345)
 	Store:SetAltRecords(G, BOB,   { Record.new(2589, 5),  Record.new(10132, 1, 863), Record.new(7048, 1) }, 0)
@@ -426,6 +435,11 @@ describe("BROWSE-001: the rows", function()
 		require("env.frames").reset()
 		loadBrowse({ states = { [BOB] = { "behind", 1756000000, 1757000000 } } })
 		stock()
+	end)
+	-- USABLE-LIBITEMDB-001: one example registers the real LibItemDB; it must not outlive this file.
+	after_each(function()
+		releaseWindows()
+		require("env.libs").forget("LibItemDB-1.0")
 	end)
 
 	it("is one row per banker per item variant, from the same accessor every window reads", function()
@@ -510,9 +524,17 @@ describe("BROWSE-001: the rows", function()
 	-- they pinned no longer exists; its replacement, the data-driven gate in Modules/Usable.lua, is
 	-- pinned by Tests/usable_spec.lua, and its join into the filter by the example below.
 	it("usable-by-me is the class's proficiency, not the level alone: a hunter sees no mace, nor does a mage", function()
+		-- USABLE-LIBITEMDB-001: the proficiency rules are the INSTALLED LibItemDB's. The rows are built
+		-- FIRST, from this file's stubbed item data (the real library does not know these fixtures);
+		-- then the real library answers the gate, its item-tag layer (ClassUsable) set aside so this
+		-- example measures the proficiency join alone.
+		local libs = require("env.libs")
+		if not libs.available("LibItemDB-1.0") then pending("ItemDB is not installed beside this addon") end
 		_G.UnitLevel = function() return 60 end
 		_G.UnitClass = function() return "Hunter", "HUNTER", 3 end
 		local all = Browse:BuildRows()
+		libs.fresh("LibItemDB-1.0")
+		LibStub("LibItemDB-1.0").ClassUsable = function() return true end
 		local base = { bank = "any", type = "any", subtype = "any", slot = "any", quality = "any", usable = true }
 		local shown = names(Browse:FilterRows(all, base))
 		assert.equal(6, #shown)
@@ -615,6 +637,7 @@ describe("BROWSE-001: the window", function()
 	end)
 
 	after_each(function()
+		releaseWindows()
 		TOGBankClassic_UI_Browse = nil
 		TOGBankClassic_UI_Requests = nil
 		TOGBankClassic_UI_StatusBar = nil
@@ -940,6 +963,21 @@ describe("BROWSE-001: the window", function()
 		Browse.BankerSearch:Fire("OnTextChanged", "")
 		assert.equal(3, #Browse.BankerList.data)
 		assert.truthy(Browse.statusText:find("3 bankers, 2 current", 1, true))
+	end)
+
+	-- XGUILD-SEARCH-001 (the operator, 2026-09-25: "the guild tag name needs to be searchable, so i
+	-- can search for bankers in the sister guild").
+	it("the Bankers search matches a sister guild's name, and a home banker (no guild name) is not matched by it", function()
+		local G = TOGBankClassic_Guild
+		G.BankerStores = function() return "" end
+		local savedNameOf = G.GuildNameOf
+		G.GuildNameOf = function(_, n) return n == BOB and "The Old Gods" or "" end
+		Browse:Open("bankers")
+		Browse.BankerSearch:Fire("OnTextChanged", "old gods")
+		assert.equal(1, #Browse.BankerList.data, "the guild name was not searched")
+		assert.equal(BOB, Browse.BankerList.data[1].norm)
+		Browse.BankerSearch:Fire("OnTextChanged", "")
+		G.GuildNameOf = savedNameOf
 	end)
 
 	-- LOG-FILTER-001: "the filter search bar add it to the top of the logs as well, we'll need to
@@ -1310,6 +1348,36 @@ describe("BROWSE-001: the window", function()
 		Browse:OnBrowseRowClick(by["Spiked Club@Bob-Testrealm"], "LeftButton")
 		assert.is_nil(requested, "the shop is closed and a request dialog still opened")
 		assert.equal(TOGBankClassic_Guild.STORE_CLOSED_TEXT, Browse.statusText)
+	end)
+
+	-- LINKCLICK-001: a chat-link or dress-up click on a row does what the game does with a link -- by
+	-- the player's BINDINGS, through the client's own dispatcher -- and opens no request. Until this a
+	-- Ctrl-click on a row REQUESTED the item, and Shift read the key rather than the binding.
+	it("a chat-link click on a row inserts the link where the client puts one, a dress-up click previews it, and neither requests", function()
+		local wow = require("env.wow")
+		local requested
+		TOGBankClassic_UI_Search.ShowRequestDialog = function(_, item, bank) requested = { item.ID, bank } end
+		Browse:Open()
+		local by = {}
+		for _, r in ipairs(Browse.rowsShown) do by[r.plainName .. "@" .. r.player] = r end
+		local club = by["Spiked Club@Bob-Testrealm"]
+		assert.is_string(club.Link, "precondition: the row carries no link")
+		local insertedBefore, dressedBefore = #wow.insertedLinks, #wow.dressUps
+		wow.modifiedClicks.CHATLINK = true
+		wow.activeChatWindow = { Insert = function() end }
+		Browse:OnBrowseRowClick(club, "LeftButton")
+		assert.is_nil(requested, "a chat-link click opened the request dialog")
+		assert.equal(insertedBefore + 1, #wow.insertedLinks, "the row's link was not inserted")
+		assert.equal(club.Link, wow.insertedLinks[#wow.insertedLinks])
+		wow.modifiedClicks.CHATLINK, wow.activeChatWindow = nil, nil
+		wow.modifiedClicks.DRESSUP = true
+		Browse:OnBrowseRowClick(club, "LeftButton")
+		assert.is_nil(requested, "a dress-up click opened the request dialog")
+		assert.equal(dressedBefore + 1, #wow.dressUps, "the row's item was not sent to the dressing room")
+		wow.modifiedClicks.DRESSUP = nil
+		-- Neither modifier: the plain click still requests.
+		Browse:OnBrowseRowClick(club, "LeftButton")
+		assert.same({ 10132, BOB }, requested)
 	end)
 
 	-- STORE-006 step 2: the not-for-sale list on the Browse tab -- the tag on the row, the status
@@ -1828,15 +1896,17 @@ describe("BROWSE-001: the window", function()
 		local toggled = {}
 		TOGBankClassic_UI_Browse.Toggle = function() toggled.browse = (toggled.browse or 0) + 1 end
 		TOGBankClassic_UI_Inventory = { Toggle = function() toggled.inventory = (toggled.inventory or 0) + 1 end }
-		-- The minimap button: a stand-in LibDBIcon/LDB that hands back the data object, the real
-		-- AceDB it registers its position with, and the Options shape Init reads.
-		local dataObject
-		LibStub.libs["LibDBIcon-1.0"] = { Register = function() end, Show = function() end, Hide = function() end }
-		LibStub.libs["LibDataBroker-1.1"] = { NewDataObject = function(_, _, obj) dataObject = obj return obj end }
+		-- The minimap button: the REAL standalone LibDBIcon-1.0 the TOC declares, with its
+		-- LibDataBroker (harness pin d57d724; these were stand-in tables written into LibStub.libs
+		-- and never taken out), the real AceDB it registers its position with, and the Options
+		-- shape Init reads.
+		require("env.libs").load("LibDBIcon-1.0")
 		require("env.ace").load("AceDB-3.0")
 		TOGBankClassic_Options = { db = { char = { minimap = { enabled = true } } }, Open = function() toggled.options = (toggled.options or 0) + 1 end }
 		env.loadFile("Modules/UI/Minimap.lua")
 		TOGBankClassic_UI_Minimap:Init()
+		local dataObject = LibStub("LibDataBroker-1.1"):GetDataObjectByName("TOGBankClassicIcon")
+		assert.is_table(dataObject, "Init registered no data object with LibDataBroker")
 		_G.IsShiftKeyDown = function() return false end
 		dataObject.OnClick(nil, "LeftButton")
 		assert.equal(1, toggled.browse, "the minimap click did not open the Guild Bank window")
@@ -1872,9 +1942,11 @@ describe("BROWSE-001: the window", function()
 		assert.truthy(chat:find('help = "open the old Inventory window', 1, true), "the legacy help text does not say which window")
 		local inv = env.readFile("Modules/UI/Inventory.lua")
 		assert.truthy(inv:find('browseButton:SetText("Browse")', 1, true), "no Browse button on the Inventory window")
-		local ui = env.readFile("Modules/UI.lua")
-		assert.truthy(ui:find("TOGBankClassic_UI_Browse:Close()", 1, true), "Escape does not close the Guild Bank window")
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }) do
+		-- Escape: this used to find "TOGBankClassic_UI_Browse:Close()" in UI.lua's text, and passed
+		-- the whole time the Guild Bank window opened on its own had no Escape at all (ESC-001) --
+		-- the text was there, only reachable once another window had built the frame. escape_spec
+		-- presses Escape on the real window instead.
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local src = env.readFile(toc)
 			local search, rowlist, browse = src:find("Modules/UI/Search.lua", 1, true), src:find("Modules/UI/RowList.lua", 1, true), src:find("Modules/UI/Browse.lua", 1, true)
 			assert.is_not_nil(rowlist, toc .. " does not load RowList.lua")
@@ -1953,6 +2025,7 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 	end)
 
 	after_each(function()
+		releaseWindows()
 		TOGBankClassic_UI_Browse = nil
 		TOGBankClassic_UI_Requests = nil
 		TOGBankClassic_UI_StatusBar = nil

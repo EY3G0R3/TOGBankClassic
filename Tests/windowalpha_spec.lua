@@ -20,6 +20,18 @@ describe("TOGBankClassic_UI.ALPHA_WINDOWS", function()
 	local UI
 	before_each(function() env.reset(); UI = loadUI() end)
 
+	-- UI-OWN-TABLE-001 (Peer Review, inbox 35130c29): the module was the AceGUI-3.0 library table
+	-- itself, so every field of ours was written into a library every addon shares.
+	it("is its own table, reading through to AceGUI, and writes nothing onto the shared library", function()
+		local AceGUI = LibStub("AceGUI-3.0")
+		assert.are_not.equal(AceGUI, UI, "TOGBankClassic_UI is the shared AceGUI table again")
+		assert.equal(AceGUI.Create, UI.Create, "the AceGUI factory is not reachable through the module")
+		for _, name in ipairs({ "ALPHA_WINDOWS", "CHROME", "SyncEscape", "WindowTitle", "FILTER_INSET" }) do
+			assert.is_nil(rawget(AceGUI, name), "TOGBank's " .. name .. " was written onto AceGUI-3.0")
+			assert.is_not_nil(rawget(UI, name), "the module lost its own " .. name)
+		end
+	end)
+
 	it("covers every window the addon opens", function()
 		local keys = {}
 		for _, entry in ipairs(UI.ALPHA_WINDOWS) do keys[entry.key] = true end
@@ -342,7 +354,7 @@ describe("ApplyThinBorder alpha integration", function()
 	end)
 
 	it("keeps both TOCs in the load order this depends on", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local fh = assert(io.open(toc, "rb"))
 			local src = fh:read("*a"); fh:close()
 			local options = src:find("Modules/Options.lua", 1, true)

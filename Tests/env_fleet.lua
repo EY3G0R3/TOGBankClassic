@@ -201,6 +201,30 @@ function F.newClient(name, opts)
 		-- and sister-roster callbacks (XGUILD-BANKERS-001's rebuild on a sister roster lives there).
 		G.TOGBankClassic_Guild:InitRosterCallbacks()
 		G.TOGBankClassic_Chat:Init()
+		-- XGUILD-BOUNCE-001 / XGUILD-LIVE-001 item 2, ADOPTED at pin `4ffccf4`: the server answers the
+		-- SENDER of a whisper to a logged-out character with ERR_CHAT_PLAYER_NOT_FOUND_S, and the harness
+		-- now fires that as CHAT_MSG_SYSTEM on the sender's frames alone. A fleet client does not run
+		-- `Events:RegisterEvents` (events_spec owns that wiring), so nothing here would hear it: this
+		-- frame is the one line of routing that puts the harness's event into the addon's handler, the
+		-- way env_togbank drives the roster library's own frame. It replaces `F.bounceIfOffline`, which
+		-- MANUFACTURED the bounce; the bounce is now real and only its delivery is wired here.
+		-- `c.sysLines` is every CHAT_MSG_SYSTEM this client was handed, so a spec can assert the SERVER
+		-- said something rather than only that the addon reacted -- the two failed separately while
+		-- this was being adopted.
+		-- HELD ON THE CLIENT, not in a local: the frames registry keeps its candidate lists WEAK, so a
+		-- frame nothing else references is collected and silently stops hearing its event. As a local
+		-- this frame received nothing at all, which reads exactly like the harness not firing.
+		c.sysLines = {}
+		c.sysFrame = G.CreateFrame("Frame")
+		local sysFrame = c.sysFrame
+		sysFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+		sysFrame:SetScript("OnEvent", function(_, event, line)
+			if event ~= "CHAT_MSG_SYSTEM" then return end
+			c.sysLines[#c.sysLines + 1] = line
+			if G.TOGBankClassic_Events and G.TOGBankClassic_Events.CHAT_MSG_SYSTEM then
+				G.TOGBankClassic_Events:CHAT_MSG_SYSTEM(event, line)
+			end
+		end)
 		G.TOGBankClassic_Core:DeltaHost()
 		G.TOGBankClassic_Bank.eventsRegistered = false
 		G.TOGBankClassic_MailInventory.hasUpdated = false
@@ -212,6 +236,7 @@ function F.newClient(name, opts)
 			-- AceCommQueue reports once per message, when its last chunk left.
 			local queued = G.TOGBankClassic_Core.SendCommMessage
 			G.TOGBankClassic_Core.SendCommMessage = function(self, prefix, text, dist, target, prio, cb, cbArg)
+				if c.isOnline == false then return false end   -- a logged-out client sends nothing; see F.offline
 				local entry = F.logMessage(c, prefix, text, dist, target, prio)
 				entry.sentAt = env.now
 				local function terminal(arg, sent, total, verdict, reason)
@@ -224,6 +249,11 @@ function F.newClient(name, opts)
 			end
 		else
 			G.TOGBankClassic_Core.SendCommMessage = function(_, prefix, text, dist, target, prio, cb, cbArg)
+				-- The ORDERED bus is TOGBank's own and never reaches the harness's send seams, so the
+				-- harness's offline gate (XGUILD-LIVE-001, pin 4ffccf4) cannot see it: this is that rule
+				-- for this wire. On the throttled wire the harness gates the seams itself and the guard
+				-- above only keeps the message-level log honest.
+				if c.isOnline == false then return false end
 				F.enqueue(c, prefix, text, dist, target, prio, cb, cbArg)
 			end
 		end
@@ -530,15 +560,34 @@ end
 
 --- Take a client off the network: the rest of its guild gets "Name has gone offline.", the wire drops
 --- what is sent to it and it hears no broadcast. Its state is kept -- it is a player who logged out,
---- not a wipe. Its timers still fire (the harness's rule).
+--- not a wipe. Its timers still fire (the harness's rule) -- AND NOTHING THEY SEND LEAVES IT.
+---
+--- XGUILD-LIVE-001, ADOPTED at harness pin `4ffccf4` (`58ff098`): the harness now gates all three of
+--- its send seams -- `SendAddonMessage`, `SendAddonMessageLogged`, `C_BattleNet.SendGameData` -- on
+--- the SENDER being online, so a logged-out client echoes nothing, routes nothing and puts nothing on
+--- `wow.wire` (the call is kept on `wow.sent` marked `dropped = "offline"`, because the addon really
+--- did make it). This file's stand-in -- shadowing each client's own `C_ChatInfo` table while it was
+--- offline -- is deleted with the adoption.
+---
+--- Why it mattered enough to contract for: the harness always dropped what was sent TO an offline
+--- client, but not what its still-firing timers SENT. LibGuildRoster's rounds kept whispering a sister
+--- banker its pull and relaying its roster for the whole ten minutes after the home banker "logged
+--- off" (measured: six library sends in 660 s), and **a broadcast is a sighting** -- each one
+--- re-stamped the logged-out banker's presence on the clients that heard it, so the failover cycle
+--- asked the banker who was gone. The env was not missing an edge, it was manufacturing evidence for
+--- the wrong answer.
+--- `c.isOnline` IS THE ONLY FLAG, and this used to set a second one. `c.offline` was written here,
+--- cleared in F.online and set by hand in one spec, and read NOWHERE -- one concept with two
+--- spellings, the write-only one being the plausible-looking one. A future guard written against it
+--- would have been true for a client taken offline through here and FALSE for one created with
+--- `opts.offline` (which sets only `isOnline`), and nothing would have caught that. Peer Review
+--- 8e933d44 asked for the deletion; `wow.setOnline`, through F.presence, owns the flag.
 function F.offline(c)
-	c.offline = true
 	F.presence(c, false)
 end
 
 --- Bring it back. The client is exactly as it was when it left.
 function F.online(c)
-	c.offline = nil
 	F.presence(c, true)
 end
 
@@ -569,15 +618,17 @@ function F.presence(c, isOnline)
 	for _, r in ipairs(F.clients) do
 		F.with(r, function()
 			-- A sister guild's client never gets that system line; its presence for a sister member is
-			-- a sighting stamp, cleared here on offline (the library has no "un-sight").
+			-- a sighting stamp. Coming back is a sighting (the player's first message would be one);
+			-- going away is NOT un-stamped here -- the library has no "un-sight" and neither has the
+			-- game: the stamp ages out (PRESENCE_TTL) or a whisper to them bounces (the harness's own
+			-- ERR_CHAT_PLAYER_NOT_FOUND_S since pin `4ffccf4`), and a spec that logs a sister member off
+			-- meets exactly what a live client meets.
+			-- (XGUILD-LIVE-001: this used to clear `lib.presence` by hand, which let the failover leg
+			-- pass without the bounce the addon actually has to act on.)
 			local lib = r.G.LibStub("LibGuildRoster-1.0")
-			if c.guildName and c.guildName ~= r.guildName then
-				if isOnline and lib.IsInAnyRoster and lib.MarkOnline then
-					local key = lib:IsInAnyRoster(c.norm)
-					if key then lib:MarkOnline(key, { c.norm }) end
-				elseif not isOnline and lib.presence then
-					for _, p in pairs(lib.presence) do p[c.norm] = nil end
-				end
+			if isOnline and c.guildName and c.guildName ~= r.guildName and lib.IsInAnyRoster and lib.MarkOnline then
+				local key = lib:IsInAnyRoster(c.norm)
+				if key then lib:MarkOnline(key, { c.norm }) end
 			end
 			r.G.TOGBankClassic_Guild:RefreshOnlineCache()
 		end)

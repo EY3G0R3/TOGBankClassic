@@ -299,6 +299,19 @@ local function BuildAppearanceArgs()
 		end,
 	}
 
+	-- ESC-001: whether Escape closes the windows. Beside Recenter because both are about how the
+	-- windows behave as windows, not what they show.
+	args["closeOnEscape"] = {
+		order = 120,
+		type  = "toggle",
+		width = "full",
+		name  = "Close windows with Escape",
+		desc  = "Pressing Escape closes every open TOG Bank window, like the game's own windows. Turn "
+			.. "this off to keep them open; Escape then goes straight to the game menu.",
+		get   = function() return TOGBankClassic_UI:CloseOnEscape() end,
+		set   = function(_, v) TOGBankClassic_UI:SetCloseOnEscape(v) end,
+	}
+
 	-- CANCEL-REASON-001: the pulsing glow that marks a cancelled request as having a reason to
 	-- read. On by default; here so the people it annoys can switch it off.
 	args["glowSpacer"] = { order = 200, type = "description", name = " " }
@@ -370,6 +383,9 @@ function TOGBankClassic_Options:Init()
 			-- the operator: "some folks will whine about it ... folks can turn it off if they want".
 			-- Account-wide for the same reason as windowAlpha: a display preference, set once.
 			cancelGlow = true,
+			-- ESC-001: Escape closes TOG Bank's windows. ON by default -- the operator: "it should
+			-- have esc close the window by default". Account-wide, a display preference like the two above.
+			closeOnEscape = true,
 			-- BROWSE-001: which windows' help icons this account has hovered once. The Guild Bank
 			-- window's icon breathes until then ("draw their attention to it, ONCE").
 			helpSeen = {},

@@ -347,6 +347,54 @@ describe("XGUILD-SYNC-001 step 4: the federation pull on the cycle, and what a f
 		assert.equal(0, #captured("togbank-hl"))
 	end)
 
+	-- XGUILD-BOUNCE-001: Guild Roster never hears "gone offline" for another guild's member -- its
+	-- presence is a sighting stamp that ages out, and its relay re-stamps it -- so the server bouncing
+	-- our whisper ("No player named 'X' is currently playing.", Events:CHAT_MSG_SYSTEM ->
+	-- UpdateOnlineMember(X, false, "wow-error-not-online"); events_spec covers that wiring) is the one
+	-- "not online" this client gets. Found by xguildlive_spec step 8, where the flag it set was read
+	-- by nothing for a sister member.
+	it("a whisper the server bounced marks a sister member offline for the library's window, moves an ask out to them to the next member at once, and a message from them clears it", function()
+		feedSister(nil, { SIS_MEMBER, SIS_BANKER })
+		Guild:RefreshOnlineCache()
+		-- Proven speaker, asked at once (XGUILD-PEER-001).
+		Guild:UpdateOnlineMember(SIS_BANKER, true, "addon-message-received")
+		local asks = captured("togbank-hl")
+		assert.equal(1, #asks); assert.matches("^Sisbank", asks[1].msg.target)
+		assert.is_number(Guild.federationAsked[SIS_BANKER])
+		clearSent()
+		-- The server bounces it, by the bare name the system line carries.
+		Guild:UpdateOnlineMember("Sisbank", false, "wow-error-not-online")
+		assert.is_false(Guild:IsPlayerOnline(SIS_BANKER), "the bounced member still reads online")
+		assert.is_true(Guild:IsPlayerOnline(SIS_MEMBER), "the bounce reached a member it did not name")
+		assert.is_nil(Guild.federationAsked[SIS_BANKER], "the ask to the bounced member is still out")
+		assert.is_number(Guild.federationSilent[SIS_BANKER], "the bounced member was not left alone")
+		asks = captured("togbank-hl")
+		assert.equal(1, #asks, "the guild was not asked through its next member at once")
+		assert.matches("^Sismember", asks[1].msg.target)
+		assert.is_number(Guild.federationAsked[SIS_MEMBER])
+		-- The rebuild agrees (the Bankers tab reads memberRoster), and FederationPeer skips them.
+		Guild:RefreshOnlineCache()
+		assert.is_false(Guild.memberRoster[SIS_BANKER].isOnline, "the rebuild put the bounced member back online")
+		assert.equal(SIS_MEMBER, Guild:FederationPeer(sisterKey))
+		-- The library re-stamps them inside the window (its relay does exactly this): still offline.
+		lib:MarkOnline(sisterKey, { SIS_BANKER })
+		assert.is_false(Guild:IsPlayerOnline(SIS_BANKER), "a re-stamp inside the window put the bounced member back online")
+		-- They speak TOGBank to us: this client's own sighting, online at once.
+		Guild:UpdateOnlineMember(SIS_BANKER, true, "addon-message-received")
+		assert.is_true(Guild:IsPlayerOnline(SIS_BANKER), "a message from the member did not clear the bounce")
+		-- Bounced again with no ask out: nothing sent, and after the library's window its answer
+		-- stands alone -- the old stamp has aged out, a fresh sighting is online.
+		clearSent()
+		Guild:UpdateOnlineMember("Sisbank", false, "wow-error-not-online")
+		assert.equal(0, #captured("togbank-hl"), "a bounce with no ask out sent something")
+		assert.is_false(Guild:IsPlayerOnline(SIS_BANKER))
+		env.advance((lib.PRESENCE_TTL or Guild.SISTER_BOUNCE_HOLD) + 1)
+		assert.is_false(Guild:IsPlayerOnline(SIS_BANKER), "an aged-out sighting read online")
+		lib:MarkOnline(sisterKey, { SIS_BANKER })
+		assert.is_true(Guild:IsPlayerOnline(SIS_BANKER), "after the window a fresh sighting did not count")
+		assert.is_nil(Guild.sisterBounced[SIS_BANKER], "an expired bounce was kept")
+	end)
+
 	-- XGUILD-PEER-001: most of a sister guild runs Guild Roster without TOGBank, or a CurseForge
 	-- TOGBank that predates this sync; the old pick took the first sighted member whatever it ran.
 	it("never asks a sister member known to run a TOGBank too old to sync, and prefers one known to run a current one over an unknown", function()
@@ -385,11 +433,54 @@ describe("XGUILD-SYNC-001 step 4: the federation pull on the cycle, and what a f
 		assert.is_true(Guild:OnFederationPeerProven(SIS_MEMBER))
 	end)
 
-	it("a federated non-guildmate's hash-list-request is answered with the hash list AND, by whisper, the settings (unstamped), the donation totals and the price-list version -- once per five minutes; a guildmate gets the hash list alone", function()
+	-- SSYNC-001 (the operator, 2026-09-25: "if i could do /togbank ssync <name> that would be helpful.
+	-- it could do a roster lookup so i can be lazy with the realm").
+	it("/togbank ssync <name> finds the sister member without its realm, in any case, and asks them now; refuses a stranger, an offline member, an ambiguous name and a closed switch without sending", function()
+		feedSister(nil, { SIS_MEMBER, SIS_BANKER })
+		Guild:RefreshOnlineCache()
+		clearSent()
+		local lines = Guild:SisterSyncCommand("sismember")
+		local asks = captured("togbank-hl")
+		assert.equal(1, #asks, "the named member was not asked")
+		assert.equal("WHISPER", asks[1].msg.dist); assert.matches("^Sismember", asks[1].msg.target)
+		assert.same({ type = "hash-list-request", requester = ME }, asks[1].data)
+		assert.matches("Asked Sismember%-Testrealm", lines[1])
+		-- Asked by hand again at once, and with the realm: a troubleshooting ask is not paced.
+		Guild.federationSilent[SIS_MEMBER] = env.now
+		clearSent()
+		Guild:SisterSyncCommand("SISMEMBER-testrealm")
+		assert.equal(1, #captured("togbank-hl"), "a hand ask to a member marked silent was withheld")
+		assert.is_nil(Guild.federationSilent[SIS_MEMBER])
+		-- Refusals send nothing and say why.
+		clearSent()
+		assert.matches("not a member of a sister guild", Guild:SisterSyncCommand("Nobody")[1])
+		assert.matches("not a member of a sister guild", Guild:SisterSyncCommand("Regular")[1], "a home guildmate was treated as a sister member")
+		assert.matches("is not online", Guild:SisterSyncCommand("sisview")[1])
+		Guild.memberRoster["Sismember-Otherrealm"] = { name = "Sismember-Otherrealm", guildKey = sisterKey }
+		assert.matches("more than one character", Guild:SisterSyncCommand("sismember")[1])
+		Guild.memberRoster["Sismember-Otherrealm"] = nil
+		assert.equal(0, #captured("togbank-hl"), "a refused ssync sent something")
+		-- With no name: every listed sister guild is asked now, past the cycle's pending wait.
+		Guild:SisterSyncCommand("sismember")
+		clearSent()
+		lines = Guild:SisterSyncCommand()
+		assert.equal(1, #captured("togbank-hl"), "the no-name form did not ask the sister guild")
+		assert.matches("^Asked ", lines[1])
+		-- The switch off: nothing to sync with, said plainly.
+		Guild.Info.settings.sisterBank = false
+		clearSent()
+		assert.matches("Sister%-guild bank is OFF", Guild:SisterSyncCommand("sismember")[1])
+		assert.equal(0, #captured("togbank-hl"))
+	end)
+
+	it("a federated non-guildmate's hash-list-request is answered with the hash list AND, by whisper, who runs each bank character (never the officer settings), the donation totals and the price-list version -- once per five minutes; a guildmate gets the hash list alone", function()
 		feedSister(nil, { SIS_MEMBER })
 		Guild:RefreshOnlineCache()
 		Guild:RebuildBankerRoster()
 		Guild.Info.settings.version = 500
+		Guild.Info.settings.maxRequestPercent = 40
+		Guild.Info.settings.bankerOwners = { [ME] = "Alice" }
+		Guild.Info.settings.bankerOwnerStamps = { [ME] = 450 }
 		Guild.Info.settings.priceAuthority = ME
 		Guild.Info.priceList = { version = 777, publisher = ME, at = env.now, items = { [2589] = { sell = 5 } } }
 		TOGBankClassic_Donations:Credit({ donor = "Giver", kind = "money", copper = 10000 })
@@ -404,8 +495,11 @@ describe("XGUILD-SYNC-001 step 4: the federation pull on the cycle, and what a f
 		-- LIBREQ-DS-008: the hash list is a togbank-hl type now (the togbank-hlr prefix went with the
 		-- pull path), by whisper like the rest.
 		assert.is_table(types["hash-list-reply"], "the hash list was not whispered to the federated asker")
-		assert.is_table(types["guild-settings"], "the settings were not whispered to the federated asker")
-		assert.equal(500, types["guild-settings"].settings.version, "a re-announcement was stamped as a write")
+		-- XGUILD-SETTINGS-001 (the operator: "we should NOT be syncing the officer settings between
+		-- sister guilds"): the owners alone.
+		assert.is_table(types["guild-settings"], "who runs each bank character was not whispered to the federated asker")
+		assert.same({ bankerOwners = { [ME] = "Alice" }, bankerOwnerStamps = { [ME] = 450 } }, types["guild-settings"].settings,
+			"something other than the owners crossed to the sister guild")
 		assert.equal(500, Guild.Info.settings.version)
 		assert.is_table(types["donation-points"], "the donation totals were not whispered")
 		assert.equal(ME, TOGBankClassic_Donations:WriterCharacter(types["donation-points"].writer))   -- LEDGER-PC-001: Name@machine
@@ -461,6 +555,38 @@ describe("XGUILD-SYNC-001 step 4: the federation pull on the cycle, and what a f
 		assert.equal(1, #asks)
 		assert.matches("^Authority", asks[1].msg.target, "the ask did not go to the authority")
 		assert.same({ type = "pl-query", held = 0 }, asks[1].data)
+	end)
+end)
+
+-- REQ-GATE-001 (Peer Review on self-audit 31294783, F5): a requests query is answered only for a
+-- guildmate or, while the Sister-guild bank is on, a sister guild's member -- never a stranger.
+describe("REQ-GATE-001: who a requests query is answered for", function()
+	before_each(function()
+		env.reset()
+		env.addGuildMember(ME, { note = "gbank", online = true, rankIndex = 1 })
+		env.addGuildMember("Regular-Testrealm", { note = "", online = true, rankIndex = 4 })
+		loadWire()
+	end)
+
+	it("answers a guildmate and a sister-guild member (switch on); drops a stranger, and the sister member once the switch is off", function()
+		feedSister(nil, { SIS_MEMBER })
+		Guild:RefreshOnlineCache()
+		local answered = {}
+		Guild.EnqueueRequestsById = function(_, who) answered[#answered + 1] = who end
+		local function ask(from)
+			local body = TOGBankClassic_Core:SerializeWithChecksum({ type = "requests-by-id", player = "*", ids = { "x" } })
+			TOGBankClassic_Chat:OnCommReceived("togbank-r", body, "WHISPER", from)
+		end
+		ask(STRANGER)
+		assert.equal(0, #answered, "a stranger was answered with the guild's requests")
+		ask("Regular-Testrealm")
+		assert.equal(1, #answered, "a guildmate was refused")
+		ask(SIS_MEMBER)
+		assert.equal(2, #answered, "a sister-guild member was refused with the switch on")
+		Guild.Info.settings.sisterBank = false
+		Guild:RefreshOnlineCache()
+		ask(SIS_MEMBER)
+		assert.equal(2, #answered, "a sister-guild member was answered with the Sister-guild bank off")
 	end)
 end)
 
@@ -742,6 +868,69 @@ describe("XGUILD-OWNERS-001: who runs each bank character crosses between sister
 		assert.equal("Alice", Guild:GetBankerOwner(HOME_BANKER))
 	end)
 
+	-- OWNERS-STAMP-001 (Peer Review, inbox 31294783): the home path and the sister branch moved the
+	-- field's stamp by two separate computations -- the home one read the field stamp only. One
+	-- method now; both routes take the newest ENTRY stamp too, and neither moves it backwards.
+	it("the home and sister routes move the owners field's stamp the same way: to the newest entry stamp, never back", function()
+		Guild.Info.settings.stamps = { bankerOwners = 100 }
+		-- A home guildmate's payload whose entry is newer than its own field stamp.
+		Guild:ApplyRemoteSettings("Homeother-Testrealm", { version = 150, bankerOwners = { [HOME_BANKER] = "Alice" },
+			bankerOwnerStamps = { [HOME_BANKER] = 700 }, stamps = { bankerOwners = 150 } })
+		assert.equal(700, Guild:SettingsStamp("bankerOwners"), "the home route ignored the entry stamp")
+		-- The sister route, the same shape.
+		Guild:ApplyRemoteSettings(SIS_BANKER, { version = 150, bankerOwners = { [SIS_BANKER] = "Sally" },
+			bankerOwnerStamps = { [SIS_BANKER] = 900 }, stamps = { bankerOwners = 150 } })
+		assert.equal(900, Guild:SettingsStamp("bankerOwners"), "the sister route ignored the entry stamp")
+		-- Older stamps on either route leave it where it is.
+		Guild:ApplyRemoteSettings("Homeother-Testrealm", { version = 150, bankerOwners = { [HOME_BANKER] = "Bob" },
+			bankerOwnerStamps = { [HOME_BANKER] = 200 }, stamps = { bankerOwners = 200 } })
+		Guild:ApplyRemoteSettings(SIS_BANKER, { version = 150, bankerOwners = { [SIS_BANKER] = "Sam" },
+			bankerOwnerStamps = { [SIS_BANKER] = 300 }, stamps = { bankerOwners = 300 } })
+		assert.equal(900, Guild:SettingsStamp("bankerOwners"), "an older payload moved the stamp backwards")
+		assert.equal("Alice", Guild:GetBankerOwner(HOME_BANKER))
+		assert.equal("Sally", Guild:GetBankerOwner(SIS_BANKER))
+	end)
+
+	-- XGUILD-SETTINGS-001 (the operator, 2026-09-25: "the banker metadata isn't syncing though").
+	it("a sister guild's payload changes NOTHING of our officer settings -- even from its bank character, even newer-stamped -- only its own bank characters' owners", function()
+		Guild.Info.settings.version = 100
+		Guild.Info.settings.maxRequestPercent = 40
+		Guild.Info.settings.storeOpen = true
+		Guild.Info.settings.sisterBank = true
+		Guild.Info.settings.officerRankFloor = 2
+		Guild.Info.settings.stamps = { maxRequestPercent = 100, storeOpen = 100, sisterBank = 100, officerRankFloor = 100 }
+		Guild:ApplyRemoteSettings(SIS_BANKER, { version = 9000, maxRequestPercent = 5, storeOpen = false, sisterBank = false, officerRankFloor = 0,
+			bankerOwners = { [SIS_BANKER] = "Sally" }, bankerOwnerStamps = { [SIS_BANKER] = 9000 },
+			stamps = { maxRequestPercent = 9000, storeOpen = 9000, sisterBank = 9000, officerRankFloor = 9000, bankerOwners = 9000 } })
+		assert.equal(40, Guild.Info.settings.maxRequestPercent, "the sister guild's request limit became ours")
+		assert.is_true(Guild.Info.settings.storeOpen, "the sister guild closed our shop")
+		assert.is_true(Guild:IsSisterBankEnabled(), "the sister guild switched our sister-guild bank off")
+		assert.equal(2, Guild.Info.settings.officerRankFloor, "the sister guild's rank floor became ours")
+		assert.equal(100, Guild:SettingsVersion(), "the sister guild's version became ours")
+		assert.equal("Sally", Guild:GetBankerOwner(SIS_BANKER), "its own bank character's owner did not arrive")
+	end)
+
+	it("the owners arrive from a PLAIN sister-guild member (the one usually asked), held to that guild's bank characters", function()
+		Guild:ApplyRemoteSettings(SIS_MEMBER, { bankerOwners = { [SIS_BANKER] = "Sally", [HOME_BANKER] = "Forged" },
+			bankerOwnerStamps = { [SIS_BANKER] = 200, [HOME_BANKER] = 999 } })
+		assert.equal("Sally", Guild:GetBankerOwner(SIS_BANKER), "a plain sister member's owners were refused")
+		assert.is_nil(Guild:GetBankerOwner(HOME_BANKER), "a sister member described a home bank character")
+		-- And the sending side: any client answers with the owners alone.
+		local sentTo, body
+		TOGBankClassic_Core = TOGBankClassic_Core or {}
+		local savedSW, savedSer = TOGBankClassic_Core.SendWhisper, TOGBankClassic_Core.SerializeWithChecksum
+		TOGBankClassic_Core.SerializeWithChecksum = function(_, t) return t end
+		TOGBankClassic_Core.SendWhisper = function(_, _, data, target) sentTo, body = target, data return true end
+		-- A home bank character's owner goes; the receiver's OWN guild's entry does not (Peer Review F4).
+		Guild.Info.settings.bankerOwners[HOME_BANKER] = "Alice"
+		Guild.Info.settings.bankerOwnerStamps[HOME_BANKER] = 150
+		assert.is_true(Guild:SendBankerOwnersTo(SIS_MEMBER))
+		TOGBankClassic_Core.SendWhisper, TOGBankClassic_Core.SerializeWithChecksum = savedSW, savedSer
+		assert.equal(SIS_MEMBER, sentTo)
+		assert.same({ type = "guild-settings", settings = { bankerOwners = { [HOME_BANKER] = "Alice" }, bankerOwnerStamps = { [HOME_BANKER] = 150 } } }, body,
+			"the sister guild was sent its own bank character's owner, or not ours")
+	end)
+
 	it("a sender from before the per-entry stamps is adopted whole on the field's stamp, as it always was", function()
 		Guild.Info.settings.bankerOwners = { [HOME_BANKER] = "Alice" }
 		Guild:ApplyRemoteSettings("Homeother-Testrealm", { version = 6000, bankerOwners = { ["Homeother-Testrealm"] = "Zed" } })
@@ -785,5 +974,157 @@ describe("XGUILD-LABEL-001: every banker listing names a sister guild's banker's
 		assert.is_truthy(browse:find("bank  = player .. (G.GuildTag and G:GuildTag(norm) or \"\")", 1, true))
 		assert.is_truthy(browse:find("name = player .. (G.GuildTag and G:GuildTag(norm) or \"\")", 1, true))
 		assert.is_truthy(browse:find('"Bank character of " .. entry.guildName', 1, true), "the Bankers row hover does not name the guild")
+	end)
+end)
+
+-- ─── Step 7: the GreenWall nudge (XGUILD_SYNC.md 4.6) ────────────────────────
+--
+-- One short line on GreenWall's bridge from the Guild Bank window's open (a click); a federated client
+-- hearing it treats it as a TOGBank message from the sender and asks that guild at once. GreenWall
+-- itself needs a joined custom channel and a configured confederation, neither of which the harness
+-- models, so the SEAM is its API's three functions -- their signatures read from the installed
+-- GreenWall (../GreenWall/API.lua) and pinned by the last example.
+describe("XGUILD-SYNC-001 step 7: the GreenWall nudge -- one line from a click, and a sighting on hearing one", function()
+	local api
+
+	--- A stand-in for GreenWall's transport API: the calls TOGBank makes and the channel query it gates
+	--- on, plus `hear`, which does what GreenWall's dispatcher does with a line heard on the channel
+	--- (gw.APIDispatcher: every handler registered for that addon, or for '*').
+	local function fakeGreenWall(channels)
+		api = { sent = {}, handlers = {}, channels = channels or { 7 } }
+		function api.SendMessage(addon, message) api.sent[#api.sent + 1] = { addon = addon, message = message } end
+		function api.AddMessageHandler(fn, addon, priority)
+			api.handlers[#api.handlers + 1] = { fn = fn, addon = addon, priority = priority }
+			return "id" .. #api.handlers
+		end
+		function api.GetChannelNumbers() return api.channels end
+		function api.hear(addon, sender, message, echo, isOwnGuild)
+			local acted = false
+			for _, h in ipairs(api.handlers) do
+				if h.addon == addon or h.addon == "*" then acted = h.fn(addon, sender, message, echo, isOwnGuild) or acted end
+			end
+			return acted
+		end
+		_G.GreenWallAPI = api
+		return api
+	end
+
+	before_each(function()
+		env.reset()
+		env.addGuildMember(ME, { note = "gbank", online = true, rankIndex = 1 })
+		env.addGuildMember("Regular-Testrealm", { note = "", online = true, rankIndex = 4 })
+		loadWire()
+		env.loadFile("Modules/GreenWall.lua")
+		TOGBankClassic_GreenWall.lastNudge, TOGBankClassic_GreenWall.handlerId = nil, nil
+		fakeGreenWall()
+	end)
+	after_each(function() _G.GreenWallAPI = nil end)
+
+	it("the window's open sends one short line carrying this client's version -- once per cycle, only with the sister bank on and GreenWall's channel joined", function()
+		feedSister(nil, { SIS_MEMBER })
+		Guild:RefreshOnlineCache()
+		local GW = TOGBankClassic_GreenWall
+		assert.is_true(GW:Nudge())
+		assert.equal(1, #api.sent)
+		assert.equal("TOGBankClassic", api.sent[1].addon, "GreenWall validates the sender against its TOC name")
+		assert.equal("hlq:" .. (GetAddOnMetadata("TOGBankClassic", "Version") or ""), api.sent[1].message)
+		assert.is_true(#api.sent[1].message < 100, "the line must fit GreenWall's 255-byte segment with its framing")
+		-- Within the cycle: nothing more. A cycle on: one more.
+		assert.same({ false, "cooldown" }, { GW:Nudge() })
+		assert.equal(1, #api.sent)
+		env.now = env.now + GW.NUDGE_COOLDOWN
+		assert.is_true(GW:Nudge()); assert.equal(2, #api.sent)
+		-- The channel not joined (number 0: GreenWall would PARK the segment for a later, non-hardware
+		-- flush), no channel, GreenWall absent, the sister bank off: refused, nothing sent.
+		GW.lastNudge = nil
+		api.channels = { 0 }
+		assert.same({ false, "no bridge" }, { GW:Nudge() })
+		api.channels = {}
+		assert.same({ false, "no bridge" }, { GW:Nudge() })
+		_G.GreenWallAPI = nil
+		assert.same({ false, "no bridge" }, { GW:Nudge() })
+		_G.GreenWallAPI = api; api.channels = { 7 }
+		Guild.Info.settings.sisterBank = false
+		assert.same({ false, "no sister guilds" }, { GW:Nudge() })
+		assert.equal(2, #api.sent)
+	end)
+
+	-- Peer Review 8e933d44: an officer-only confederation reaches SendMessage and ALWAYS fails there
+	-- (GreenWall indexes a nil `gw.config.channel.guild`), so without a stamp on the refusal it would
+	-- pay a failed call and a debug line on every single window open, forever. Stamping bounds it to
+	-- once per cycle -- but ONLY on this path: a refusal BEFORE the send must not make a client whose
+	-- GreenWall finished loading a moment later wait a whole cycle for its first nudge.
+	it("a refusal FROM GreenWall starts the cooldown, and a refusal before the send does not", function()
+		feedSister(nil, { SIS_MEMBER })
+		Guild:RefreshOnlineCache()
+		local GW = TOGBankClassic_GreenWall
+		api.SendMessage = function() error("no guild channel") end
+		assert.same({ false, "refused" }, { GW:Nudge() })
+		assert.is_number(GW.lastNudge, "a refusal from GreenWall left the cooldown unstamped -- it will retry on every open")
+		assert.same({ false, "cooldown" }, { GW:Nudge() }, "the second open called SendMessage again")
+		-- A cycle on it tries once more, and succeeds when GreenWall has come good.
+		env.now = env.now + GW.NUDGE_COOLDOWN
+		api.SendMessage = function(addon, message) api.sent[#api.sent + 1] = { addon = addon, message = message } end
+		assert.is_true(GW:Nudge())
+		assert.equal(1, #api.sent)
+		-- A refusal that never reached GreenWall leaves the cooldown alone.
+		GW.lastNudge = nil
+		_G.GreenWallAPI = nil
+		assert.same({ false, "no bridge" }, { GW:Nudge() })
+		assert.is_nil(GW.lastNudge, "a refusal before the send started the cooldown, delaying the first real nudge by a cycle")
+		_G.GreenWallAPI = api
+		Guild.Info.settings.sisterBank = false
+		assert.same({ false, "no sister guilds" }, { GW:Nudge() })
+		assert.is_nil(GW.lastNudge)
+	end)
+
+	it("a nudge heard from a listed sister member is a TOGBank sighting: their version is noted, they read online, their guild is asked at once; echo, a home guildmate, a stranger, another addon's line and a plain line are not", function()
+		feedSister(nil, { SIS_MEMBER })
+		Guild:RefreshOnlineCache()
+		local GW = TOGBankClassic_GreenWall
+		assert.is_true(GW:Init())
+		assert.equal(1, #api.handlers); assert.equal("TOGBankClassic", api.handlers[1].addon)
+		assert.is_true(GW:Init()); assert.equal(1, #api.handlers, "a second Init registered a second handler")
+		local current = "TOGBankClassic-v" .. TOGBankClassic_Constants.PROTOCOL.DATA_LEG_MIN_ADDON_VERSION
+		-- SIS_VIEW has never been sighted by the library: the nudge IS the sighting.
+		assert.is_false(Guild:IsPlayerOnline(SIS_VIEW))
+		assert.is_true(api.hear("TOGBankClassic", SIS_VIEW, "hlq:" .. current, false, false))
+		assert.equal(current, Guild.peerAddonVersions[SIS_VIEW], "the version on the line was not noted")
+		assert.is_true(Guild:IsPlayerOnline(SIS_VIEW), "the nudge did not count as a sighting")
+		local asks = captured("togbank-hl")
+		assert.equal(1, #asks, "the nudging member's guild was not asked at once")
+		assert.equal("WHISPER", asks[1].msg.dist); assert.matches("^Sisview", asks[1].msg.target)
+		assert.same({ type = "hash-list-request", requester = ME }, asks[1].data)
+		clearSent()
+		-- Ignored: our own echo; a home guildmate (its guild has its own cycle), whether GreenWall calls
+		-- it our guild or not; a stranger GreenWall's confederation carries but Guild Roster does not
+		-- list; another addon's line; a line that is not a nudge. Nothing sent, nothing stamped.
+		assert.is_false(api.hear("TOGBankClassic", ME, "hlq:" .. current, true, true))
+		assert.is_false(api.hear("TOGBankClassic", "Regular-Testrealm", "hlq:" .. current, false, true))
+		assert.is_false(api.hear("TOGBankClassic", "Regular-Testrealm", "hlq:" .. current, false, false))
+		assert.is_false(api.hear("TOGBankClassic", STRANGER, "hlq:" .. current, false, false))
+		assert.is_false(GW:OnMessage("OtherAddon", SIS_MEMBER, "hlq:" .. current, false, false))
+		assert.is_false(api.hear("TOGBankClassic", SIS_MEMBER, "hello", false, false))
+		assert.equal(0, #captured("togbank-hl"))
+		assert.is_false(Guild:IsPlayerOnline(STRANGER)); assert.is_nil(Guild.peerAddonVersions[STRANGER])
+		assert.is_nil(Guild.peerAddonVersions[SIS_MEMBER])
+	end)
+
+	it("the send rides the window's Toggle alone (a click), never Open, and the installed GreenWall's API is the one this module calls", function()
+		local browse = env.readFile("Modules/UI/Browse.lua")
+		local toggle = browse:match("\nfunction Browse:Toggle%(%)(.-)\nend")
+		assert.is_string(toggle)
+		assert.is_truthy(toggle:find("TOGBankClassic_GreenWall:Nudge()", 1, true), "Toggle does not nudge")
+		local open = browse:match("\nfunction Browse:Open%(tab%)(.-)\nend")
+		assert.is_string(open)
+		assert.is_falsy(open:find("Nudge", 1, true), "Open() nudges -- Events and Requests reach it from handlers that are not hardware events")
+		assert.is_truthy(env.readFile("Core.lua"):find("TOGBankClassic_GreenWall:Init()", 1, true), "Core never registers the handler")
+		local fh = io.open("../GreenWall/API.lua", "r")
+		assert.is_truthy(fh, "the installed GreenWall is not beside this addon; its API cannot be checked")
+		local gw = fh:read("*a"); fh:close()
+		assert.is_truthy(gw:find("function GreenWallAPI.SendMessage(addon, message)", 1, true))
+		assert.is_truthy(gw:find("function GreenWallAPI.AddMessageHandler(handler, addon, priority)", 1, true))
+		assert.is_truthy(gw:find("function GreenWallAPI.GetChannelNumbers()", 1, true))
+		assert.is_truthy(gw:find("e[4](addon, sender, message, echo, guild)", 1, true), "GreenWall's handler signature moved")
 	end)
 end)

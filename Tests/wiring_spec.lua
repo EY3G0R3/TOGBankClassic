@@ -471,7 +471,7 @@ end)
 describe("INV2 library dependencies", function()
 	before_each(function() env.reset() end)
 
-	local TOCS = { "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }
+	local TOCS = { "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }
 
 	it("declares ItemDB as a dependency in both TOCs", function()
 		for _, toc in ipairs(TOCS) do
@@ -504,10 +504,25 @@ describe("INV2 library dependencies", function()
 	-- The TOC lockstep rule. There is a sibling of this in guildroster_integration_spec.lua;
 	-- kept here too because this file is where a new INV2 dependency gets added, and the
 	-- failure it catches (adding to one flavour only) is silent on the flavour you did not test.
-	it("keeps the two TOC dependency lines identical", function()
+	it("keeps every TOC's dependency line identical", function()
 		local a = readFile("TOGBankClassic.toc"):match("## Dependencies:([^\n]*)")
-		local b = readFile("TOGBankClassic_BCC.toc"):match("## Dependencies:([^\n]*)")
-		assert.equal(a, b, "the TOC lockstep rule requires both flavours declare the same deps")
+		for i = 2, #TOCS do
+			local b = readFile(TOCS[i]):match("## Dependencies:([^\n]*)")
+			assert.equal(a, b, "the TOC lockstep rule requires every flavour declare the same deps (" .. TOCS[i] .. ")")
+		end
+	end)
+
+	-- TOC-LOCKSTEP-001: the whole-file form of the rule. Every flavour TOC is the Era TOC with only
+	-- its `## Interface:` line changed, so a module added to one and not the others fails here
+	-- instead of silently not loading on the flavour nobody tested.
+	it("keeps every TOC identical apart from its Interface line", function()
+		local function body(p) return (readFile(p):gsub("\r", ""):gsub("^## Interface:[^\n]*\n", "")) end
+		local era = body("TOGBankClassic.toc")
+		for i = 2, #TOCS do
+			assert.equal(era, body(TOCS[i]), TOCS[i] .. " has drifted from TOGBankClassic.toc")
+		end
+		assert.truthy(readFile("TOGBankClassic_TBC.toc"):match("^## Interface: 20506\r?\n"))
+		assert.truthy(readFile("TOGBankClassic_Mists.toc"):match("^## Interface: 50504\r?\n"))
 	end)
 end)
 

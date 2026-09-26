@@ -597,7 +597,9 @@ describe("HIDE-001: the Inventory window's toggle", function()
 		-- The right button now reaches EVERY slot's OnClick (DrawItem registers it). The Search
 		-- window's own handler must drop it, or a right click there opens the request dialog.
 		local search = env.readFile("Modules/UI/Search.lua")
-		local handler = search:match('itemWidget:SetCallback%("OnClick", function%(widget, event, button%)(.-)end%)')
+		-- The unused second parameter is `_` since LINKCLICK-001 (the handler no longer forwards to
+		-- EventHandler); its name is not the point, the third argument is.
+		local handler = search:match('itemWidget:SetCallback%("OnClick", function%(widget, [%w_]+, button%)(.-)end%)')
 		assert.is_not_nil(handler, "Search's slot OnClick does not take the button argument")
 		assert.truthy(handler:find('if button == "RightButton" then return end', 1, true),
 			"a right click on a Search result opens the request dialog")

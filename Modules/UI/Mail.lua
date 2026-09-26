@@ -7,6 +7,7 @@ end
 local function OnClose(_)
 	TOGBankClassic_UI_Mail.isOpen = false
 	TOGBankClassic_UI_Mail.Window:Hide()
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 function TOGBankClassic_UI_Mail:Open()
@@ -24,6 +25,7 @@ function TOGBankClassic_UI_Mail:Open()
 
 	-- NOTE: Call the delayed version to give time for inbox data to be fetched
 	self:RedrawContent()
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 function TOGBankClassic_UI_Mail:Close()

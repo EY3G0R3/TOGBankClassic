@@ -2,11 +2,23 @@
 --
 -- The operator, a level-60 hunter on the Guild Bank window: "the usable by me filter still isn't
 -- working. as a hunter i can't use hammers, you may want to use some of what dibs did for the
--- filtering". Four layers: level, LibItemDB's class obtainability, the proficiency tables, the
--- tooltip's Classes:/Races: tags. The tables are a COPY of Dibs/Data/ItemSources.lua's and this file
--- pins their VALUES, so a drift in either addon shows up here.
+-- filtering". Four layers: level, LibItemDB's class obtainability, the proficiency rules, the
+-- tooltip's Classes:/Races: tags. USABLE-LIBITEMDB-001: the proficiency rules are LibItemDB's
+-- (ItemDB v0.10.0, MINOR 27), no longer a copy here, so the proficiency examples run against the
+-- INSTALLED library. ItemDB's own suite pins the table values (ported from this file); what stays
+-- here is TOGBank's behaviour through it.
 package.path = "./Tests/?.lua;" .. package.path
 local env = require("env_togbank")
+local libs = require("env.libs")
+
+--- The real LibItemDB, registered fresh; pending when ItemDB is not installed beside this addon.
+local function realItemDB()
+	if not libs.available("LibItemDB-1.0") then pending("ItemDB is not installed beside this addon") end
+	libs.fresh("LibItemDB-1.0")
+	local lib = LibStub("LibItemDB-1.0")
+	assert.is_function(lib.ClassProficient, "the installed ItemDB is older than MINOR 27 -- no ClassProficient")
+	return lib
+end
 
 local WARRIOR, PALADIN, HUNTER, ROGUE, PRIEST, SHAMAN, MAGE, WARLOCK, DRUID = 1, 2, 3, 4, 5, 7, 8, 9, 11
 local ARMOR, WEAPON = 4, 2
@@ -15,12 +27,16 @@ local AXE1, MACE1, MACE2, POLEARM, SWORD1, STAFF, DAGGER, WAND, BOW = 0, 4, 5, 6
 
 local U
 
-describe("Usable.ClassProficient -- Dibs' rules, the same values", function()
+describe("Usable.ClassProficient -- LibItemDB's rules, through TOGBank", function()
 	before_each(function()
 		env.reset()
 		env.loadFile("Modules/Usable.lua")
 		U = TOGBankClassic_Usable
+		realItemDB()
 	end)
+	-- The real library must not outlive this file (SPEC-ORDER-001): another spec that feature-detects
+	-- LibItemDB would silently find it.
+	after_each(function() libs.forget("LibItemDB-1.0") end)
 
 	it("a hunter cannot wield a mace (the report), a wand either; can wield axes, bows, swords, polearms", function()
 		assert.is_false(U.ClassProficient(HUNTER, WEAPON, MACE1, "INVTYPE_WEAPON"))
@@ -65,16 +81,13 @@ describe("Usable.ClassProficient -- Dibs' rules, the same values", function()
 	end)
 
 	it("mail and plate are trained at 40: a level-13 hunter cannot wear mail, a level-39 warrior cannot wear plate", function()
-		assert.equal(2, U.ArmorCap(HUNTER, 13))
-		assert.equal(3, U.ArmorCap(HUNTER, 40))
-		assert.equal(3, U.ArmorCap(HUNTER, nil), "no level means the trained cap")
-		assert.equal(3, U.ArmorCap(WARRIOR, 39))
-		assert.equal(4, U.ArmorCap(WARRIOR, 60))
-		assert.equal(2, U.ArmorCap(ROGUE, 5), "leather is never level-gated")
-		assert.is_nil(U.ArmorCap(99))
 		assert.is_false(U.ClassProficient(HUNTER, ARMOR, MAIL, "INVTYPE_CHEST", 13))
+		assert.is_true(U.ClassProficient(HUNTER, ARMOR, MAIL, "INVTYPE_CHEST", 40))
+		assert.is_true(U.ClassProficient(HUNTER, ARMOR, MAIL, "INVTYPE_CHEST"), "no level means the trained cap")
 		assert.is_true(U.ClassProficient(HUNTER, ARMOR, LEATHER, "INVTYPE_CHEST", 13))
 		assert.is_false(U.ClassProficient(WARRIOR, ARMOR, PLATE, "INVTYPE_HEAD", 39))
+		assert.is_true(U.ClassProficient(WARRIOR, ARMOR, PLATE, "INVTYPE_HEAD", 60))
+		assert.is_true(U.ClassProficient(ROGUE, ARMOR, LEATHER, "INVTYPE_LEGS", 5), "leather is never level-gated")
 	end)
 
 	it("has no opinion on what it does not know: no class, a class off the table, trade goods, string ids", function()
@@ -85,21 +98,39 @@ describe("Usable.ClassProficient -- Dibs' rules, the same values", function()
 		assert.is_false(U.ClassProficient(HUNTER, "2", "4", "INVTYPE_WEAPON"), "the store's ids arrive as strings sometimes")
 	end)
 
-	it("pins the tables Dibs keeps: armour caps, shield classes, every weapon list", function()
-		assert.same({ [1] = 4, [2] = 4, [3] = 3, [7] = 3, [4] = 2, [11] = 2, [5] = 1, [8] = 1, [9] = 1 }, U.CLASS_ARMOR)
-		assert.same({ [1] = true, [2] = true, [7] = true }, U.CLASS_SHIELD)
-		local function ids(set) local out = {} for k in pairs(set) do out[#out + 1] = k end table.sort(out) return out end
-		assert.same({ 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 15, 16, 18 }, ids(U.CLASS_WEAPONS[WARRIOR]))
-		assert.same({ 0, 1, 4, 5, 6, 7, 8 }, ids(U.CLASS_WEAPONS[PALADIN]))
-		assert.same({ 0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18 }, ids(U.CLASS_WEAPONS[HUNTER]))
-		assert.same({ 0, 2, 3, 4, 7, 13, 15, 16, 18 }, ids(U.CLASS_WEAPONS[ROGUE]))
-		assert.same({ 4, 10, 15, 19 }, ids(U.CLASS_WEAPONS[PRIEST]))
-		assert.same({ 0, 1, 4, 5, 10, 13, 15 }, ids(U.CLASS_WEAPONS[SHAMAN]))
-		assert.same({ 7, 10, 15, 19 }, ids(U.CLASS_WEAPONS[MAGE]))
-		assert.same({ 7, 10, 15, 19 }, ids(U.CLASS_WEAPONS[WARLOCK]))
-		assert.same({ 4, 5, 6, 10, 13, 15 }, ids(U.CLASS_WEAPONS[DRUID]))
-		assert.same({ "INVTYPE_CHEST", "INVTYPE_FEET", "INVTYPE_HAND", "INVTYPE_HEAD", "INVTYPE_LEGS", "INVTYPE_ROBE", "INVTYPE_SHOULDER", "INVTYPE_WAIST", "INVTYPE_WRIST" },
-			(function() local out = {} for k in pairs(U.BODY_ARMOR_LOC) do out[#out + 1] = k end table.sort(out) return out end)())
+	it("subclass 0 is a real value (a one-handed axe), and a nil subclass is 'cannot say', allowed", function()
+		assert.is_false(U.ClassProficient(PRIEST, WEAPON, 0, "INVTYPE_WEAPON"), "a priest was allowed a 1H axe: 0 read as unknown")
+		assert.is_true(U.ClassProficient(PRIEST, WEAPON, nil, "INVTYPE_WEAPON"))
+		assert.is_true(U.ClassProficient(MAGE, ARMOR, nil, "INVTYPE_CHEST"))
+	end)
+
+	-- The one answer the switch changed, on purpose (LibItemDB-1.0.lua:2121-2125): TOGBank's copy
+	-- said a class off the table could not hold a shield while allowing it everything else.
+	it("a class the tables do not know may hold a shield, like everything else it is not refused", function()
+		assert.is_true(U.ClassProficient(99, ARMOR, SHIELD, "INVTYPE_SHIELD"))
+		assert.is_false(U.ClassProficient(MAGE, ARMOR, SHIELD, "INVTYPE_SHIELD"), "a known class without shields was allowed one")
+	end)
+
+	it("keeps no copy of the rules: the module holds no proficiency tables of its own", function()
+		for _, name in ipairs({ "CLASS_ARMOR", "CLASS_SHIELD", "CLASS_WEAPONS", "BODY_ARMOR_LOC", "ArmorCap" }) do
+			assert.is_nil(U[name], "Usable still carries " .. name)
+		end
+	end)
+end)
+
+describe("Usable.ClassProficient without LibItemDB's rules", function()
+	before_each(function()
+		env.reset()
+		env.loadFile("Modules/Usable.lua")
+		U = TOGBankClassic_Usable
+	end)
+	after_each(function() LibStub.libs["LibItemDB-1.0"] = nil end)
+
+	it("allows everything when the library is missing or older than MINOR 27 -- a browse never hides on missing data", function()
+		LibStub.libs["LibItemDB-1.0"] = nil
+		assert.is_true(U.ClassProficient(HUNTER, WEAPON, MACE1, "INVTYPE_WEAPON"))
+		LibStub.libs["LibItemDB-1.0"] = { ClassUsable = function() return true end }
+		assert.is_true(U.ClassProficient(HUNTER, WEAPON, MACE1, "INVTYPE_WEAPON"))
 	end)
 end)
 
@@ -113,6 +144,8 @@ describe("Usable.CanUse -- the four layers, and the seams they read through", fu
 		U.TooltipTexts = function() return nil end
 		LibStub.libs["LibItemDB-1.0"] = nil
 	end)
+	-- One example registers the real library; it must not outlive this file (SPEC-ORDER-001).
+	after_each(function() libs.forget("LibItemDB-1.0") end)
 
 	it("level first: an item above the character's level is out before any other question is asked", function()
 		local asked = false
@@ -124,6 +157,9 @@ describe("Usable.CanUse -- the four layers, and the seams they read through", fu
 	end)
 
 	it("proficiency: the mace the report was about", function()
+		local lib = realItemDB()
+		-- Isolate the proficiency layer: the real ClassUsable would ask the item data for ids 2 and 3.
+		lib.ClassUsable = function() return true end
 		assert.is_false(U.CanUse({ ID = 2, class = WEAPON, subClass = MACE1, equipLoc = "INVTYPE_WEAPON", reqLevel = 50 }, hunter))
 		assert.is_true(U.CanUse({ ID = 3, class = WEAPON, subClass = AXE1, equipLoc = "INVTYPE_WEAPON", reqLevel = 50 }, hunter))
 	end)
@@ -223,7 +259,7 @@ describe("Usable.CanUse -- the four layers, and the seams they read through", fu
 	end)
 
 	it("is loaded by both TOCs before the UI files that read it", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_BCC.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local src = env.readFile(toc)
 			local usable, ui = src:find("Modules/Usable.lua", 1, true), src:find("Modules/UI.lua", 1, true)
 			assert.is_not_nil(usable, toc .. " does not load Usable.lua")

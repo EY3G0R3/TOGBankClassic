@@ -1,4 +1,12 @@
-TOGBankClassic_UI = LibStub("AceGUI-3.0")
+-- UI-OWN-TABLE-001 (Peer Review, inbox 35130c29): this module used to BE the AceGUI-3.0 library
+-- table (`TOGBankClassic_UI = LibStub("AceGUI-3.0")`), so its ~60 methods and fields were written
+-- into a library every addon shares, and any other addon -- or a future AceGUI -- using one of those
+-- names would silently replace ours or have its own replaced. It is its own table now, reading
+-- through to AceGUI, so `TOGBankClassic_UI:Create(...)` (all this addon calls) still works: Create
+-- and GetWidgetVersion read AceGUI's upvalues, not `self` (AceGUI-3.0.lua:138, :603). Do NOT call
+-- AceGUI's self-WRITING methods through this table (SetFocus, ClearFocus, GetNextWidgetNum -- they
+-- would record their state here instead of on the library); reach the library directly for those.
+TOGBankClassic_UI = setmetatable({}, { __index = LibStub("AceGUI-3.0") })
 
 -- Tooltip throttling to prevent performance issues
 TOGBankClassic_UI.tooltipThrottle = 0
@@ -250,6 +258,124 @@ end
 --- only resolves the per-character slot, which the library cannot know. A library too old to carry
 --- it gets the same rule spelled here. WINDOW-PERSIST-002: every window -- Inventory, Search,
 --- Requests, Browse, Mailbox -- comes through here; none carries its own SetStatusTable line.
+--- SCALE-FLOOR-001 (a player's report against v1.6.0, 2026-09-17: "Window size at minimum has widget
+--- overflow after resizing/reloading text in config", with the slider at 80%): the library MULTIPLIES a
+--- window's floor by the accessibility scale -- right for a window made of its own widgets, whose every
+--- region scales -- but these floors are sums of FIXED widths too: the game's stock dropdowns, edit
+--- boxes, checkbox and button in the Browse strip (their template art is fixed, ScaleStockWidget grows
+--- only their text), the frame's insets, RowList's gutter. Under 100% the floor shrank to 80% while
+--- those stayed put, so a window dragged to its minimum (or reloaded at a saved size the floor no
+--- longer raised) had its strip past the border. The pixel floor is therefore never below the
+--- normal-size floor: `minW x max(1, scale)`, handed to the library as `minW x max(1, scale) / scale`
+--- so its own multiply lands there. KNOWN COST: under 100% a window cannot be dragged smaller than at
+--- 100%; the text shrinks, the minimum does not.
+--- And the library re-applies a floor on a scale change only through a resize HANDLE, which an AceGUI
+--- Frame has none of (finding filed to LibAceGUIWidgets 2026-09-17), so the bounds set at draw time
+--- stayed at the old scale until the next reload: a window at the 100% minimum kept it at 200% with
+--- twice the text inside. Every window now re-runs this on the scale signal (a persistent record on
+--- the window is the listener's owner; the listener is module-level and reads it off the argument).
+local function libraryFloor(W, px)
+	local s = (W and W.GetScale and tonumber(W:GetScale())) or 1
+	if s > 0 and s < 1 then return px / s end
+	return px
+end
+
+local function Persist_OnScaleChanged(_, _, rec)
+	local UI = TOGBankClassic_UI
+	if not (UI and UI.PersistWindow and rec and rec.window) then return end
+	UI:PersistWindow(rec.window, rec.key, rec.defW, rec.defH, rec.minW, rec.minH)
+	-- SCALE-DOCK-001: and then give the window its own position back. See SetPersistedAnchor.
+	if rec.reanchor then rec.reanchor(rec.window) end
+end
+
+--- SCALE-DOCK-001 (Peer Review handed this back on inbox thread 593238c3 as the residual of
+--- SCALE-FLOOR-001: "ApplyStatus runs ClearAllPoints unconditionally on every scale change, so any
+--- persisted window that TOGBank itself anchors would be yanked to the centre of its parent the
+--- first time the player moves the slider"). It is real, and it is two of the five: the Search and
+--- Requests windows DOCK to the Inventory window's edge by hand in their Open(), and a dock is a
+--- position that the AceGUI status table knows nothing about. LibAceGUIWidgets says the hazard
+--- outright at LibAceGUIWidgets-1.0.lua:760 -- "PersistWindow owns an AceGUI window's position
+--- through its status table, and two owners of one position would fight". These two windows have
+--- both owners, and on a scale change the status table wins: ApplyStatus clears the dock anchor and
+--- re-points the window to its saved top/left, or to CENTER when it has never been dragged. The
+--- Inventory window stays put, so the cluster comes apart under the player's cursor and stays apart
+--- until the window is closed and reopened.
+---
+--- The fix is to let the second owner speak last rather than to take it away: a window that anchors
+--- itself declares HOW, once, and the scale listener re-runs that immediately after re-applying the
+--- status table. `ForgetPersistedWindow` clears the whole record, so the callback cannot outlive the
+--- window into AceGUI's shared pool -- which is the defect this one is a sibling of.
+---@param window table AceGUI Frame, already through PersistWindow
+---@param fn fun(window: table)|nil re-apply this window's own position; nil removes it
+---@return boolean registered false when the window was never persisted
+function TOGBankClassic_UI:SetPersistedAnchor(window, fn)
+	local rec = window and window._togPersist
+	if not rec then return false end
+	rec.reanchor = fn
+	return true
+end
+
+--- The one spelling of "sit against the Inventory window's edge", which the Requests, Search and
+--- Donations windows each open-coded. Returns false when there is nothing to dock to, so the caller
+--- can leave the window wherever it already is.
+---@param window table AceGUI Frame
+---@param side string "RIGHT" to sit on the Inventory window's right, "LEFT" for its left
+---@return boolean docked
+function TOGBankClassic_UI:DockBesideInventory(window, side)
+	local inventory = TOGBankClassic_UI_Inventory
+	if not (window and inventory and inventory.isOpen and inventory.Window and inventory.Window.frame) then
+		return false
+	end
+	window:ClearAllPoints()
+	if side == "LEFT" then
+		window:SetPoint("TOPRIGHT", inventory.Window.frame, "TOPLEFT", 0, 0)
+	else
+		window:SetPoint("TOPLEFT", inventory.Window.frame, "TOPRIGHT", 0, 0)
+	end
+	return true
+end
+
+--- SCALE-FLOOR-001, found by this session's own audit: DROP the scale registration before an AceGUI
+--- window goes back to the pool. AceGUI's frame pool is LIBRARY-WIDE -- `Requests:ReleaseWindow`
+--- says so itself -- so a released Frame can be handed to another addon. The record above lives on
+--- the widget, so without this the listener survives the release and the next scale change re-applies
+--- TOGBank's saved status table and geometry to a frame that is no longer ours: it would resize and
+--- move that addon's window, and hand it OUR saved table, so its drags would write into TOGBank's
+--- SavedVariables and ours into its. Call this immediately before `widget:Release()`.
+---@param window table|nil AceGUI Frame
+---@return boolean forgotten false when the window was never persisted
+function TOGBankClassic_UI:ForgetPersistedWindow(window)
+	local rec = window and window._togPersist
+	if not rec then return false end
+	self:OnUIScaleChanged(rec, nil)   -- the library removes a listener when fn is nil
+	-- SCALE-FLOOR-002: LibAceGUIWidgets' resize handle registers its OWN scale listener, which raises
+	-- the frame to handle.minW/minH (LibAceGUIWidgets-Resize.lua Resize_OnScaleChanged), and our
+	-- PersistWindow raised those to TOGBank's floor. The handle lives on the FRAME and goes into the
+	-- pool with it, so the NEXT owner of the frame would be held to our floor. Its bounds go back to
+	-- what they were before we touched them (recorded in PersistWindow). NOT Destroy: the handle is
+	-- made once, in the widget's constructor (ClearFrame's MakeResizable), so a destroyed one leaves
+	-- the pooled frame with no grips for whoever acquires it next -- found by this session's audit.
+	local W = self.Widgets
+	local handle = W and W.GetResizeHandle and W:GetResizeHandle(window)
+	if handle and handle._togOrigBounds then
+		local o = handle._togOrigBounds
+		handle:SetBounds(o[1], o[2], handle.maxW, handle.maxH)
+		handle._togOrigBounds = nil
+	end
+	-- And the library's PersistWindow record (`widget._lagwPersist`, LibAceGUIWidgets-1.0.lua:996),
+	-- whose Persist_OnScaleChanged raises the frame to the floor too. The library has no call to
+	-- forget a persisted window (asked of it on its inbox); until it does, the record's listener is
+	-- removed through the public OnScaleChanged(owner, nil). Delete this when that call lands.
+	local lagw = window._lagwPersist
+	if lagw then
+		self:OnUIScaleChanged(lagw, nil)
+		window._lagwPersist = nil
+	end
+	rec.window = nil
+	window._togPersist = nil
+	return true
+end
+
 ---@param window table AceGUI Frame
 ---@param key string framePositions key
 ---@param defW number default width
@@ -264,8 +390,19 @@ function TOGBankClassic_UI:PersistWindow(window, key, defW, defH, minW, minH)
 	local W = self.Widgets
 	if W and W.PersistWindow then
 		if positions then positions[key] = positions[key] or {} end
+		local rec = window._togPersist
+		if not rec then
+			rec = { window = window }
+			window._togPersist = rec
+		end
+		rec.key, rec.defW, rec.defH, rec.minW, rec.minH = key, defW, defH, minW, minH
+		-- SCALE-FLOOR-002: the handle's own bounds, before the library's PersistWindow re-points them
+		-- to ours, so ForgetPersistedWindow can hand the pooled frame back as it found it.
+		local handle = W.GetResizeHandle and W:GetResizeHandle(window)
+		if handle and not handle._togOrigBounds then handle._togOrigBounds = { handle.minW, handle.minH } end
+		self:OnUIScaleChanged(rec, Persist_OnScaleChanged)
 		return W:PersistWindow(window, positions and positions[key] or nil,
-			{ width = defW, height = defH, minWidth = minW, minHeight = minH })
+			{ width = defW, height = defH, minWidth = libraryFloor(W, minW), minHeight = libraryFloor(W, minH) })
 	end
 	if positions then
 		positions[key] = positions[key] or { width = defW, height = defH }
@@ -439,7 +576,7 @@ end
 --- window's text is its own. `opts.onHelpEnter`, when given, runs first (the Guild Bank window
 --- stops its breath and marks the tab read). `opts.settings` is the window module the gear
 --- reopens after Blizzard's options panel takes focus: the panel can close other top-level frames
---- as it opens (this window is on UISpecialFrames through the controller), so the click remembers
+--- as it opens (this window is on UISpecialFrames through the ESC stand-in), so the click remembers
 --- whether the window was open and puts it back on the next frame; without it there is no gear.
 --- `opts.extra` are further bottom-row frames the window built itself, LEFTMOST LAST -- the status
 --- bar ends at the last one.
@@ -658,15 +795,136 @@ function TOGBankClassic_UI:Init()
 	TOGBankClassic_UI_Mail:Init()
 end
 
-function TOGBankClassic_UI:Controller()
-	local controller = CreateFrame("Frame", "TOGBankClassic", UIParent)
-	controller:SetScript("OnHide", function()
-		TOGBankClassic_UI_Inventory:Close()
-		-- BROWSE-001: Escape closes the Guild Bank window the same way.
-		if TOGBankClassic_UI_Browse and TOGBankClassic_UI_Browse.isOpen then TOGBankClassic_UI_Browse:Close() end
+--- ESC-001 (a player, 2026-09-25: "Bank doesnt close with esc press, but togpm does"; the operator:
+--- "the esc behaviour needs to be a setting ... it should have esc close the window by default").
+---
+--- Escape reaches addon windows through UISpecialFrames: Blizzard's CloseSpecialWindows hides EVERY
+--- shown frame named there and reports whether it found one, and the game menu opens only when
+--- nothing was found (Blizzard_UIParentPanelManager/Shared/UIParentPanelManager.lua:1041). The
+--- AceGUI windows themselves cannot go on that list -- it holds GLOBAL NAMES, and AceGUI pools its
+--- frames across every addon, so a name pinned to one of ours would later name someone else's.
+--- So one small named stand-in goes on the list instead: shown while any TOGB window is open (and
+--- the setting is on), and ESC hiding it closes them all.
+---
+--- This replaces a "controller" frame that was only CREATED by the first open of the Inventory,
+--- Search, Requests or Donations window. The Guild Bank window -- what /togbank and the minimap
+--- button open -- only showed it if it already existed, so a player who went straight to the Guild
+--- Bank never had Escape at all. It was also never hidden again when the last window closed, so the
+--- next Escape "found" it and swallowed the game menu, and closing the Inventory window hid it and
+--- took the Guild Bank window down too.
+local ESC_PROXY_NAME = "TOGBankClassicEscProxy"
+-- File locals: private state, which no other file has any business reading. (They were written
+-- when TOGBankClassic_UI still WAS the shared AceGUI-3.0 table -- see UI-OWN-TABLE-001 at the top.)
+local escProxy, escClosing
+
+--- Does Escape close TOGB windows? On unless the player turned it off (Appearance settings).
+---@return boolean
+function TOGBankClassic_UI:CloseOnEscape()
+	local db = TOGBankClassic_Options and TOGBankClassic_Options.db
+	local stored = db and db.global and db.global.closeOnEscape
+	return stored ~= false
+end
+
+--- Store the Escape setting and apply it to the windows open right now.
+---@param on boolean
+function TOGBankClassic_UI:SetCloseOnEscape(on)
+	local db = TOGBankClassic_Options and TOGBankClassic_Options.db
+	if not (db and db.global) then return false end
+	db.global.closeOnEscape = on and true or false
+	self:SyncEscape()
+	return true
+end
+
+--- Is any TOGB window open? ALPHA_WINDOWS is the window registry (every module with `.isOpen`).
+local function anyWindowOpen()
+	for _, entry in ipairs(TOGBankClassic_UI.ALPHA_WINDOWS) do
+		local module = _G[entry.module]
+		if module and module.isOpen then return true end
+	end
+	return false
+end
+
+--- The stand-in, created on first need and put on UISpecialFrames once.
+function TOGBankClassic_UI:EscapeProxy()
+	if escProxy then return escProxy end
+	local proxy = CreateFrame("Frame", ESC_PROXY_NAME, UIParent)
+	proxy:Hide()
+	proxy:SetScript("OnHide", function(f)
+		-- Our own quiet hide (the last window closed, or the setting went off).
+		if f.togQuiet then return end
+		-- Hidden with its PARENT (Alt+Z hides UIParent): IsShown stays true, and nothing was asked.
+		if f:IsShown() then return end
+		TOGBankClassic_UI:CloseAllWindows()
 	end)
-	--insert to global escape table
-	table.insert(UISpecialFrames, "TOGBankClassic")
+	table.insert(UISpecialFrames, ESC_PROXY_NAME)
+	escProxy = proxy
+	return proxy
+end
+
+--- Show the stand-in while a window is open and the setting is on; hide it quietly otherwise, so an
+--- Escape with no TOGB window up opens the game menu as it should. Every window's Open and close
+--- path calls this.
+function TOGBankClassic_UI:SyncEscape()
+	if escClosing then return end
+	if self:CloseOnEscape() and anyWindowOpen() then
+		self:EscapeProxy():Show()
+	elseif escProxy and escProxy:IsShown() then
+		escProxy.togQuiet = true
+		escProxy:Hide()
+		escProxy.togQuiet = nil
+	end
+end
+
+--- Close every open TOGB window -- what Escape does. Each module's own Close, so every window's
+--- teardown (listeners, overlays, the embedded Requests tab) runs exactly as for its Close button.
+function TOGBankClassic_UI:CloseAllWindows()
+	escClosing = true
+	for _, entry in ipairs(self.ALPHA_WINDOWS) do
+		local module = _G[entry.module]
+		if module and module.isOpen and module.Close then module:Close() end
+	end
+	escClosing = nil
+	self:SyncEscape()
+end
+
+--- LINKCLICK-001: put `link` where the client puts a linked item -- the open chat box, else the
+--- auction house's search box, else a macro being edited (`ChatFrameUtil.InsertLink`,
+--- Blizzard_ChatFrameBase/Classic/ChatFrameUtilOverrides.lua:1, on both clients this addon ships).
+--- The bare `ChatEdit_InsertLink` this used to call exists on both ONLY as a deprecation alias
+--- (Blizzard_DeprecatedChatInfo/Deprecated_ChatFrame.lua:43, behind `loadDeprecationFallbacks`), so
+--- it is the fallback and nil is "nowhere to put it". Returns whether something took the link.
+function TOGBankClassic_UI:InsertLink(link)
+	if not link then return false end
+	local insert = (ChatFrameUtil and ChatFrameUtil.InsertLink) or ChatEdit_InsertLink
+	if type(insert) ~= "function" then return false end
+	return insert(link) and true or false
+end
+
+--- LINKCLICK-001 (the operator, 2026-09-17: "what shift+click and ctrl+click does to the links in
+--- the addon? i'd like it to mirror game functionality"): a MODIFIED click on an item link does
+--- exactly what it does on a link in chat or an item in a bag, decided by the PLAYER'S bindings and
+--- not by a key this file names -- `IsModifiedClick("CHATLINK")` (Shift by default) inserts the link
+--- (InsertLink above), `IsModifiedClick("DRESSUP")` (Ctrl by default) previews it in the dressing
+--- room. Both clients define the game's own dispatcher, `HandleModifiedItemClick`
+--- (Blizzard_ItemButton/Classic/ItemButtonTemplate.lua:137), and it is what runs; the branch under it
+--- is the same logic spelled out for a client without it. Returns true when a link modifier was HELD,
+--- whether or not anything took the link (Shift with no box open), so a caller's plain-click action --
+--- the request dialog, picking the item up -- never runs under a modifier, as the game's own buttons
+--- never do. Until this the slots read IsShiftKeyDown / IsControlKeyDown (a player who rebound "chat
+--- link" got nothing), and the Browse and Shop rows had no dress-up at all.
+function TOGBankClassic_UI:HandleLinkClick(link)
+	if type(IsModifiedClick) ~= "function" then return false end
+	local chatLink, dressUp = IsModifiedClick("CHATLINK"), IsModifiedClick("DRESSUP")
+	if not (chatLink or dressUp) then return false end
+	if not link then return true end
+	if type(HandleModifiedItemClick) == "function" then
+		HandleModifiedItemClick(link)
+	elseif chatLink then
+		self:InsertLink(link)
+	elseif type(DressUpItemLink) == "function" then
+		DressUpItemLink(link)
+	end
+	return true
 end
 
 --- Click / drag on an item slot drawn by DrawItem. `widget` is the AceGUI Icon carrying `.link`;
@@ -676,16 +934,9 @@ function TOGBankClassic_UI:EventHandler(widget, event, button)
 		-- HIDE-001: slots take right clicks now (the banker's hide/show); a right click that reaches
 		-- this default handler must not pick the item up.
 		if button == "RightButton" then return end
-		if IsShiftKeyDown() then
-			ChatEdit_InsertLink(widget.link)
-		elseif IsControlKeyDown() then
-			if widget.link then
-				DressUpItemLink(widget.link)
-			end
-		else
-			if widget.link then
-				PickupItem(widget.link)
-			end
+		if self:HandleLinkClick(widget.link) then return end   -- LINKCLICK-001
+		if widget.link then
+			PickupItem(widget.link)
 		end
 	end
 	if event == "OnDragStart" then
@@ -1235,7 +1486,9 @@ end
 
 do
 	local Type, Version = "TOGBankSearchBox", 1
-	local AceGUI = TOGBankClassic_UI
+	-- The REAL library, not TOGBankClassic_UI (UI-OWN-TABLE-001): widget code is the one place that
+	-- may reach AceGUI's self-writing methods (SetFocus/ClearFocus record FocusedWidget on `self`).
+	local AceGUI = LibStub("AceGUI-3.0")
 
 	local methods = {
 		OnAcquire = function(self)

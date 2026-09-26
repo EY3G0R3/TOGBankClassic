@@ -92,8 +92,8 @@ end
 --- The real modules behind the tooltip, loaded fresh per example. Both describes use this: the
 --- hook describe used to load only TooltipBankerInfo.lua and worked because the Guild and Store
 --- globals LEAKED from the describe before it -- a spec that passes on another spec's leftovers.
-local function loadAll()
-	env.reset(); env.stubOutput()
+local function loadAll(resetOpts)
+	env.reset(resetOpts); env.stubOutput()
 	env.loadModules({
 		"Modules/Constants.lua",
 		"Modules/Switches.lua",
@@ -287,7 +287,9 @@ end)
 
 describe("TooltipBankerInfo's own hook", function()
 	local TBI
-	before_each(function() TBI = loadAll() end)
+	-- The hook is installed on the real GameTooltip, a frame-layer global: on the hollow layer it is
+	-- absent since the harness's 2026-09-20 eviction (this used to find one an earlier file left).
+	before_each(function() TBI = loadAll({ frames = true }) end)
 
 	-- One implementation of the layout, reached two ways. If the hook grew its own copy this
 	-- would still pass on the hook and silently drift from what TOGProfessionMaster renders.

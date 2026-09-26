@@ -789,7 +789,10 @@
 			"GUILDCONTROL_BANK_PERMISSIONS",
 			"AUTHENTICATOR_GUILD_RANK_CHANGE",
 			"ITEM_UNIQUE_MULTIPLE",
-			"ERR_CHAT_PLAYER_NOT_FOUND_S"
+			"ERR_CHAT_PLAYER_NOT_FOUND_S",
+			"FauxScrollFrame_Update",
+			"FauxScrollFrame_GetOffset",
+			"FauxScrollFrame_OnVerticalScroll"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

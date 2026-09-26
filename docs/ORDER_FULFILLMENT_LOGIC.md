@@ -19,6 +19,7 @@ This document details the complete flow from button click to mail preparation.
 ## Entry Points
 
 ### 1. Fulfill Button Click
+
 **File:** `Modules/UI/Requests.lua:1180-1195`
 
 When banker clicks fulfill button:
@@ -36,6 +37,7 @@ end)
 ```
 
 ### 2. Tooltip Calculation
+
 **File:** `Modules/Mail.lua:395-510`
 
 Before button is even shown, `CanFulfillRequest()` determines button state:
@@ -48,6 +50,7 @@ Before button is even shown, `CanFulfillRequest()` determines button state:
 ## The Problem: Using Stack of 1 in Greedy Algorithm
 
 ### Current Behavior (WRONG)
+
 Given: **5 stacks: [1, 20, 20, 20, 20]** needing **90 items**
 
 **Current greedy algorithm:**
@@ -64,6 +67,7 @@ Given: **5 stacks: [1, 20, 20, 20, 20]** needing **90 items**
 - **Wrong:** Uses `[20, 20, 20, 20, 1] + split 9`
 
 ### Desired Behavior (CORRECT)
+
 **Should be:**
 1. Ignore stack of 1 entirely from greedy calculation
 2. Accumulate only useful stacks: `20 + 20 + 20 + 20 = 80`
@@ -80,6 +84,7 @@ Given: **5 stacks: [1, 20, 20, 20, 20]** needing **90 items**
 ## Current Implementation Flow
 
 ### Phase 1: Tooltip Calculation (`CanFulfillRequest`)
+
 **Purpose:** Determine button icon/state without side effects
 
 ```
@@ -122,6 +127,7 @@ Given: **5 stacks: [1, 20, 20, 20, 20]** needing **90 items**
 ```
 
 ### Phase 2: Mail Preparation (`PrepareFulfillMail`)
+
 **Purpose:** Actually attach items or show split dialog
 
 ```
@@ -184,6 +190,7 @@ Given: **5 stacks: [1, 20, 20, 20, 20]** needing **90 items**
 ## The Issue: Useful Stacks Filter
 
 ### Current Filter Logic (Lines 568-593)
+
 ```lua
 -- FIRST PASS: Determine what we need and filter out stacks that are too small to be useful
 local usefulStacks = {}
@@ -240,6 +247,7 @@ end
 ## Proposed Solution: Two-Stage Logic
 
 ### Stage 1: Pure Greedy (No Splits)
+
 **Goal:** Find largest combination without splitting
 
 ```
@@ -256,6 +264,7 @@ end
 ```
 
 ### Stage 2: Smart Split Decision
+
 **Goal:** Determine optimal split strategy
 
 ```
@@ -277,6 +286,7 @@ end
 ```
 
 ### Stage 3: Ignore Tiny Stacks Heuristic
+
 **Goal:** Don't use stacks smaller than split amount
 
 ```
@@ -377,6 +387,7 @@ end
 ## Implementation Plan
 
 ### Step 1: Simplify Useful Stacks Filter
+
 Remove complex filter logic, use simple "can this stack contribute?" check:
 
 ```lua
@@ -390,6 +401,7 @@ end
 ```
 
 ### Step 2: Pure Greedy Pass
+
 Accumulate only stacks that fit within qtyNeeded:
 
 ```lua
@@ -409,6 +421,7 @@ end
 ```
 
 ### Step 3: Split Decision (Separate)
+
 Only consider splitting if greedy didn't get exact match:
 
 ```lua
@@ -426,6 +439,7 @@ end
 ```
 
 ### Step 4: Ignore Tiny Stacks Optimization
+
 Before final decision, check if removing tiny stacks improves result:
 
 ```lua
@@ -445,21 +459,25 @@ end
 ## Testing Scenarios
 
 ### Scenario 1: Exact Match (No Split Needed)
+
 **Given:** `[20, 20, 20, 20, 10]` need 90
 **Expected:** Use `[20, 20, 20, 20, 10]`, no split
 **Result:** ✅ Attach 5 stacks, send mail
 
 ### Scenario 2: Simple Split (Ignore Tiny Stack)
+
 **Given:** `[20, 20, 20, 20, 1]` need 90
 **Expected:** Use `[20, 20, 20, 20]`, split 10 from 5th stack of 20
 **Result:** ✅ Attach 4 stacks, split popup appears for 10
 
 ### Scenario 3: Complex Split Decision
+
 **Given:** `[20, 20, 15, 10, 5, 3, 1]` need 50
 **Expected:** Use `[20, 20]`, split 10 from next 15
 **Result:** ✅ Don't use 5+3+1 (too many small stacks)
 
 ### Scenario 4: Borderline Tiny Stack
+
 **Given:** `[20, 20, 20, 8]` need 70
 **Expected:** Use `[20, 20, 20]`, split 10 from next 20
 **Alternative:** Use `[20, 20, 20, 8]`, split 2 from next 20

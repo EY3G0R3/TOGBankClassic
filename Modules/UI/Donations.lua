@@ -7,6 +7,7 @@ end
 local function OnClose(_)
 	TOGBankClassic_UI_Donations.isOpen = false
 	TOGBankClassic_UI_Donations.Window:Hide()
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 function TOGBankClassic_UI_Donations:Toggle()
@@ -28,21 +29,14 @@ function TOGBankClassic_UI_Donations:Open()
 	end
 
 	self.Window:Show()
-	if TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
-		self.Window:ClearAllPoints()
-		self.Window:SetPoint("TOPLEFT", TOGBankClassic_UI_Inventory.Window.frame, "TOPRIGHT", 0, 0)
-	end
+	TOGBankClassic_UI:DockBesideInventory(self.Window, "RIGHT")
 
 	-- Ensure window stays within screen bounds
 	TOGBankClassic_UI:ClampFrameToScreen(self.Window)
 
 	self:DrawContent()
 
-	if _G["TOGBankClassic"] then
-		_G["TOGBankClassic"]:Show()
-	else
-		TOGBankClassic_UI:Controller()
-	end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 function TOGBankClassic_UI_Donations:Close()
@@ -54,10 +48,6 @@ function TOGBankClassic_UI_Donations:Close()
 	end
 
 	OnClose(self.Window)
-
-	if TOGBankClassic_UI_Inventory.isOpen == false then
-		_G["TOGBankClassic"]:Hide()
-	end
 end
 
 function TOGBankClassic_UI_Donations:DrawWindow()

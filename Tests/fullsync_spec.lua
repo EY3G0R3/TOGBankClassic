@@ -861,8 +861,7 @@ describe("FULL SYNC: a guild mid-upgrade -- an old client cannot starve the ones
 		F.scan(A, bank(5), { money = 100 })
 		F.login(A); F.login(OLD)
 		F.tick(70)
-		A.offline = true
-		F.presence(A, false)
+		F.offline(A)
 
 		F.login(V)
 		F.tick(70)

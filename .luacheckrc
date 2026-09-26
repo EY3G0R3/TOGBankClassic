@@ -30,7 +30,7 @@ globals = {
 	"TOGBankClassic_Core", "TOGBankClassic_Compat", "TOGBankClassic_Output",
 	"TOGBankClassic_Performance", "TOGBankClassic_DeltaComms", "TOGBankClassic_Bank",
 	"TOGBankClassic_Chat", "TOGBankClassic_Database", "TOGBankClassic_Events",
-	"TOGBankClassic_Guild", "TOGBankClassic_BankerNumbers", "TOGBankClassic_P2P", "TOGBankClassic_RequestLog",
+	"TOGBankClassic_Guild", "TOGBankClassic_GreenWall", "TOGBankClassic_BankerNumbers", "TOGBankClassic_P2P", "TOGBankClassic_RequestLog",
 	"TOGBankClassic_Log", "TOGBankClassic_Propagation", "TOGBankClassic_Donations", "TOGBankClassic_PriceList",
 	"TOGBankClassic_Item", "TOGBankClassic_ItemHighlight", "TOGBankClassic_TooltipBankerInfo",
 	"TOGBankClassic_Mail", "TOGBankClassic_MailInventory", "TOGBankClassic_Options",
@@ -88,6 +88,15 @@ read_globals = {
 	"Settings",
 	-- Modifier keys and the client's stack dumper (Modules/UI/Inventory.lua)
 	"IsShiftKeyDown", "IsControlKeyDown", "debugstack",
+	-- LINKCLICK-001 (Modules/UI.lua, Modules/Events.lua): the player's modified-click bindings, the
+	-- client's own dispatcher for a modified click on an item link, and the table the client inserts
+	-- links through. All three verified in BOTH the Classic Era and TBC trees:
+	-- Blizzard_ItemButton/Classic/ItemButtonTemplate.lua:137 and
+	-- Blizzard_ChatFrameBase/Classic/ChatFrameUtilOverrides.lua:1. Feature-detected at every call.
+	"IsModifiedClick", "HandleModifiedItemClick", "ChatFrameUtil",
+	-- XGUILD-SYNC-001 step 7 (Modules/GreenWall.lua): GreenWall's transport API, an OptionalDep.
+	-- Read through _G and feature-detected at every call.
+	"GreenWallAPI",
 	-- Cursor drag-and-drop, unit level, and the localized "Close" string (Modules/UI/Search.lua)
 	"GetCursorInfo", "ClearCursor", "UnitLevel", "CLOSE",
 	-- BROWSE-004 (Modules/Usable.lua): the character's class and race, the tooltip-data API

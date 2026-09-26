@@ -191,6 +191,7 @@ local function OnClose(_)
 	if TOGBankClassic_UI_Search.RequestDialog then
 		TOGBankClassic_UI_Search.RequestDialog:Hide()
 	end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 -- Build (once) and show the request dialog for clicking search results
@@ -552,10 +553,7 @@ function TOGBankClassic_UI_Search:Open()
 	end
 
 	self.Window:Show()
-	if TOGBankClassic_UI_Inventory.isOpen and TOGBankClassic_UI_Inventory.Window then
-		self.Window:ClearAllPoints()
-		self.Window:SetPoint("TOPRIGHT", TOGBankClassic_UI_Inventory.Window.frame, "TOPLEFT", 0, 0)
-	end
+	TOGBankClassic_UI:DockBesideInventory(self.Window, "LEFT")
 
 	-- Ensure window stays within screen bounds
 	TOGBankClassic_UI:ClampFrameToScreen(self.Window)
@@ -564,11 +562,7 @@ function TOGBankClassic_UI_Search:Open()
 
 	self.searchField:SetFocus()
 
-	if _G["TOGBankClassic"] then
-		_G["TOGBankClassic"]:Show()
-	else
-		TOGBankClassic_UI:Controller()
-	end
+	TOGBankClassic_UI:SyncEscape()   -- ESC-001
 end
 
 function TOGBankClassic_UI_Search:Close()
@@ -580,10 +574,6 @@ function TOGBankClassic_UI_Search:Close()
 	end
 
 	OnClose(self.Window)
-
-	if TOGBankClassic_UI_Inventory.isOpen == false then
-		_G["TOGBankClassic"]:Hide()
-	end
 end
 
 function TOGBankClassic_UI_Search:DrawWindow()
@@ -598,6 +588,11 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	-- WINDOW-PERSIST-002: the one spelling every window uses (UI:PersistWindow -> the library's),
 	-- floor 200x200 included; this used to open-code the table and the SetResizeBounds beside it.
 	TOGBankClassic_UI:PersistWindow(searchWindow, "search", 250, 400, 200, 200)
+	-- SCALE-DOCK-001: the snap above is a position the status table knows nothing about, so a scale
+	-- change would otherwise re-point this window away from the cluster until it was reopened.
+	TOGBankClassic_UI:SetPersistedAnchor(searchWindow, function(w)
+		TOGBankClassic_UI:DockBesideInventory(w, "LEFT")
+	end)
 
 	self.Window = searchWindow
 	self.StatusBar = TOGBankClassic_UI_StatusBar:AttachSides(searchWindow)   -- SYNCED-001
@@ -1346,14 +1341,12 @@ function TOGBankClassic_UI_Search:DrawContent()
 
 		local itemWidget = TOGBankClassic_UI:DrawItem(resultItem, self.Results, 30, 35, 30, 30, 0, 5)
 		if itemWidget then
-			itemWidget:SetCallback("OnClick", function(widget, event, button)
+			itemWidget:SetCallback("OnClick", function(widget, _, button)
 				-- HIDE-001 registered the right button on every slot (the banker's hide/show on the
 				-- Inventory tab); here it means nothing, and must not open the request dialog.
 				if button == "RightButton" then return end
-				if IsShiftKeyDown() or IsControlKeyDown() then
-					TOGBankClassic_UI:EventHandler(widget, event, button)
-					return
-				end
+				-- LINKCLICK-001: a chat-link or dress-up click does what the game does with it.
+				if TOGBankClassic_UI:HandleLinkClick(widget.link) then return end
 				TOGBankClassic_UI_Search:ShowRequestDialog(resultItem, bankAlt)
 			end)
 

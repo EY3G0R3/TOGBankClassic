@@ -21,6 +21,7 @@ The mail inventory feature was implemented to track items in a banker's mailbox 
 ## Investigation Timeline
 
 ### Initial Problem Statement
+
 - User reported: "disappearing items in the UI that were loaded through the mail"
 - Later clarified: Items were "always showing up in the UI"
 - **UNCLEAR:** What exactly was the reproducible problem?
@@ -28,6 +29,7 @@ The mail inventory feature was implemented to track items in a banker's mailbox 
 ### Technical Findings
 
 #### 1. SavedVariables Location (RESOLVED)
+
 **Problem:** Was checking wrong account folder
 **Root Cause:** WoW uses account-specific folders: `Account\981197530#1\` vs `Account\IANPLAMONDON\`
 **Resolution:** Identified correct file location
@@ -97,6 +99,7 @@ end
 ## Current State
 
 ### What's Working
+
 ✅ Mail scanning and detection (44 items found)
 ✅ Data persistence to SavedVariables
 ✅ Correct data structure in memory
@@ -104,12 +107,14 @@ end
 ✅ Debug logging throughout the flow
 
 ### What's Unclear
+
 ❓ Are mail items actually disappearing from UI?
 ❓ If so, under what conditions?
 ❓ Is the aggregate merge working correctly?
 ❓ Are there display/rendering issues in UI components?
 
 ### What Needs Testing
+
 1. Open mailbox with items → close → check UI immediately
 2. Open mailbox → close → /reload → check UI
 3. Open mailbox → close → logout → login → check UI
@@ -120,12 +125,14 @@ end
 ## Files Modified
 
 ### Core Mail Implementation
+
 - `Modules/MailInventory.lua` - Mail scanning logic (structure fixes)
 - `Modules/Bank.lua` - Persistence to info.alts
 - `Modules/Events.lua` - MAIL_SHOW/MAIL_CLOSED event handling
 - `Modules/Database.lua` - Structure initialization
 
 ### Display/Aggregation (Potential Issues)
+
 - `Modules/Guild.lua` - Merges mail items into bank.items aggregate
 - `Modules/UI/Inventory.lua` - Displays inventory in UI
 - `Modules/UI/Search.lua` - Search functionality
@@ -133,24 +140,28 @@ end
 ## Next Steps
 
 ### 1. Clarify Problem Statement
+
 - [ ] Get reproducible test case from user
 - [ ] Define "disappearing" - when exactly does it happen?
 - [ ] Confirm: Does UI show mail items initially after scan?
 - [ ] Confirm: Do items disappear after specific action?
 
 ### 2. Verify Aggregate Merge
+
 - [ ] Add debug logging to Guild.lua line 1246 loop
 - [ ] Check if loop iterates mail items correctly
 - [ ] Verify items are added to bank.items with correct IDs
 - [ ] Test with array vs dict iteration
 
 ### 3. Verify UI Display
+
 - [ ] Check if UI components read from aggregate or raw mail data
 - [ ] Verify inventory counts include mail items
 - [ ] Check search functionality includes mail items
 - [ ] Look for any filters that might hide mail items
 
 ### 4. Test Scenarios
+
 Create systematic test:
 ```lua
 1. Start fresh (no existing mail data)
@@ -165,21 +176,25 @@ Create systematic test:
 ## Theories to Investigate
 
 ### Theory 1: Array/Dict Iteration Mismatch
+
 **Hypothesis:** Guild.lua line 1246 treats array as dict, causing wrong IDs in aggregate
 **Test:** Add debug logging to show itemID values during iteration
 **Status:** Speculative - need to confirm aggregate is actually used for display
 
 ### Theory 2: UI Filter/Display Issue
+
 **Hypothesis:** Mail items exist in data but UI component filters/hides them
 **Test:** Check UI code for mail-specific filtering logic
 **Status:** Not yet investigated
 
 ### Theory 3: Timing/Race Condition
+
 **Hypothesis:** UI renders before mail data loads or aggregates
 **Test:** Check initialization order and event sequencing
 **Status:** Unlikely - data persists, so timing shouldn't matter on reload
 
 ### Theory 4: No Actual Bug
+
 **Hypothesis:** User confusion about what "disappearing" means
 **Test:** Get clear reproduction steps
 **Status:** Possible - need clarification
@@ -187,6 +202,7 @@ Create systematic test:
 ## Documentation
 
 ### Data Flow
+
 ```
 1. User opens mailbox
    ↓
