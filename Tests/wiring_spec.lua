@@ -524,6 +524,21 @@ describe("INV2 library dependencies", function()
 		assert.truthy(readFile("TOGBankClassic_TBC.toc"):match("^## Interface: 20506\r?\n"))
 		assert.truthy(readFile("TOGBankClassic_Mists.toc"):match("^## Interface: 50504\r?\n"))
 	end)
+
+	-- MODULE-ORDER-001 (Peer Review F6 on self-audit 13180dbf): Tests/env_togbank.lua's MODULE_ORDER,
+	-- which builds every whole-client test, is a hand copy of the TOC's non-UI modules -- everything
+	-- before Modules/Options.lua. It had drifted twice (no CraftList.lua, so fleet clients silently
+	-- dropped a heard shopping list; no Usable.lua), with nothing to say so. The Era TOC stands for all
+	-- three: TOC-LOCKSTEP-001 above fails if the TBC or Mists TOC differs from it in any line but Interface.
+	it("builds whole-client tests from exactly the TOC's non-UI modules, in the TOC's order", function()
+		local want = {}
+		for line in readFile("TOGBankClassic.toc"):gsub("\r", ""):gmatch("[^\n]+") do
+			if line == "Modules/Options.lua" then break end
+			if line:match("^Modules/.+%.lua$") then want[#want + 1] = line end
+		end
+		assert.is_true(#want > 20, "the TOC was not read")
+		assert.same(want, env.MODULE_ORDER)
+	end)
 end)
 
 -- INV2-ISOLATE-001 -- THE LEGACY STORE MUST NEVER BE A SOURCE FOR THE V2 STORE.

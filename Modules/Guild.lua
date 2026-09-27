@@ -615,6 +615,27 @@ local function noteIsViewOnly(note1, note2)
 	return noteHasViewMarker(note1) or noteHasViewMarker(note2)
 end
 
+--- GSL-BANK-001 (the operator 2026-09-26: "we also need what is on the GSL player (bank/bags/mail)
+--- just like a banker. they are the 'special' banker for the shopping list"): THE ONE RULE for what
+--- a guild note makes a character. `gbank` in either note makes a banker, as always. GuildShoppingList's
+--- `[GSL]` in the PUBLIC note (the note CraftList:IsGSLPlayer reads) makes one too, flagged `gsl`, so
+--- its bags, bank and mail are scanned, published and synced by the banker pipeline with no second
+--- copy of it. A [GSL] character is VIEW-ONLY unless its note also says `gbank`: the guild sends
+--- items TO it, and does not order the shopping list's stock back out of it. Every site that used to
+--- test for `gbank` itself asks this instead, so the roster, the scan gate and the sister roster
+--- cannot disagree about who is a banker.
+---@return boolean isBank, boolean viewOnly, boolean gsl
+local function noteBankRole(publicNote, officerNote)
+	local pub = type(publicNote) == "string" and publicNote or ""
+	local off = type(officerNote) == "string" and officerNote or ""
+	local gbank = pub:find("gbank", 1, true) ~= nil or off:find("gbank", 1, true) ~= nil
+	local gsl = pub:find("[GSL]", 1, true) ~= nil
+	local isBank = gbank or gsl
+	local viewOnly = isBank and (noteIsViewOnly(pub, off) or not gbank) or false
+	return isBank, viewOnly, gsl
+end
+TOGBankClassic_Guild.NoteBankRole = noteBankRole
+
 function TOGBankClassic_Guild:GetBanks()
 	-- Return cached banks list if available
 	if self.banksCache ~= nil then
@@ -633,11 +654,8 @@ function TOGBankClassic_Guild:GetBanks()
 		-- Fallback: memberRoster not yet populated (very early in login sequence)
 		for i = 1, GetNumGuildMembers() do
 			local name, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
-			if name then
-				if (publicNote and publicNote:find("gbank", 1, true))
-				or (officer_note and officer_note:find("gbank", 1, true)) then
-					table.insert(banks, name)
-				end
+			if name and noteBankRole(publicNote, officer_note) then   -- GSL-BANK-001
+				table.insert(banks, name)
 			end
 		end
 	end
@@ -669,7 +687,7 @@ function TOGBankClassic_Guild:_SisterBankers()
 		if roster then
 			for name, m in pairs(roster) do
 				local note = type(m) == "table" and m.note
-				if type(note) == "string" and note:find("gbank", 1, true) then
+				if type(note) == "string" and noteBankRole(note, "") then   -- GSL-BANK-001
 					local norm = self:NormalizeName(name)
 					if norm and not (lib.GetMember and lib:GetMember(norm)) then out[#out + 1] = norm end
 				end
@@ -691,17 +709,16 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 	for i = 1, GetNumGuildMembers() do
 		local name, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
 		if name then
-			-- PERF: plain-text find is orders of magnitude faster than (.*)gbank(.*) pattern
-			local isBank = (publicNote and publicNote:find("gbank", 1, true) ~= nil)
-				or (officer_note and officer_note:find("gbank", 1, true) ~= nil)
+			local isBank, viewOnly, gsl = noteBankRole(publicNote, officer_note)   -- GSL-BANK-001
 			if isBank then
 				table.insert(banks, name)
 			end
-			-- Keep memberRoster.isBank / .viewOnly in sync if the entry already exists
+			-- Keep memberRoster.isBank / .viewOnly / .gsl in sync if the entry already exists
 			local norm = self:NormalizeName(name)
 			if norm and self.memberRoster and self.memberRoster[norm] then
-				self.memberRoster[norm].isBank = isBank or false
-				self.memberRoster[norm].viewOnly = (isBank and noteIsViewOnly(publicNote, officer_note)) or false
+				self.memberRoster[norm].isBank = isBank
+				self.memberRoster[norm].viewOnly = viewOnly
+				self.memberRoster[norm].gsl = gsl
 			end
 		end
 	end
@@ -1212,10 +1229,23 @@ function TOGBankClassic_Guild:IsViewOnlyBank(player)
 	for i = 1, GetNumGuildMembers() do
 		local name, _, _, _, _, _, publicNote, officer_note = GetGuildRosterInfo(i)
 		if name and (self:NormalizeName(name) or name) == norm then
-			return noteIsViewOnly(publicNote, officer_note)
+			-- The view-only marker alone answers here, as it always has (a "GBANK VIEWONLY" note is
+			-- view-only though the case-sensitive gbank test does not call it a banker); GSL-BANK-001
+			-- adds a [GSL]-only note on top.
+			local _, viewOnly = noteBankRole(publicNote, officer_note)
+			return noteIsViewOnly(publicNote, officer_note) or viewOnly
 		end
 	end
 	return false
+end
+
+--- GSL-BANK-001: is `player` the shopping list's banker -- a `[GSL]` public note (noteBankRole)?
+--- O(1) through memberRoster, like IsBank and IsViewOnlyBank.
+function TOGBankClassic_Guild:IsGSLBank(player)
+	if not player then return false end
+	local norm = self:NormalizeName(player) or player
+	local m = self.memberRoster and self.memberRoster[norm]
+	return m ~= nil and m.gsl == true
 end
 
 --- BANKERS-FILTER-001 (operator 2026-09-13: "it might be nice to be able to provide metadata for
@@ -1232,7 +1262,7 @@ function TOGBankClassic_Guild:BankerStores(player)
 	local note = m and m.note
 	if type(note) ~= "string" or note == "" then return "" end
 	local s = note
-	for _, marker in ipairs({ "gbankro", "gbank", "view-only", "viewonly", "read-only", "readonly" }) do
+	for _, marker in ipairs({ "gbankro", "gbank", "[gsl]", "view-only", "viewonly", "read-only", "readonly" }) do
 		local at = s:lower():find(marker, 1, true)
 		while at do
 			s = s:sub(1, at - 1) .. " " .. s:sub(at + #marker)
@@ -3088,7 +3118,12 @@ function TOGBankClassic_Guild:MergeBankerOwners(sender, inOwners, inStamps)
 	for norm in pairs(keys) do
 		local allowed = fromHome or (senderGuild ~= nil and self:GuildOf(norm) == senderGuild)
 		local theirs, ours = inStamps[norm] or 0, stamps[norm] or 0
-		local take = theirs > ours or (theirs == 0 and ours == 0 and owners[norm] == nil and inOwners[norm] ~= nil)
+		-- SETTINGS-TIE-001 (Peer Review on 3197046a, F2): on an equal stamp the greater name wins and a
+		-- cleared owner counts as "", so two officers' same-second writes settle on one in either order.
+		-- KNOWN COST: a clear in the same second as someone else's set loses; the owner stays listed.
+		local take = theirs > ours
+			or (theirs == ours and theirs > 0 and (inOwners[norm] or "") > (owners[norm] or ""))
+			or (theirs == 0 and ours == 0 and owners[norm] == nil and inOwners[norm] ~= nil)
 		if allowed and take then
 			if owners[norm] ~= inOwners[norm] then changed = true end
 			owners[norm] = inOwners[norm]
@@ -3296,6 +3331,25 @@ local function canonicalSettings(v)
 	return tostring(v)
 end
 
+--- SETTINGS-TIE-001 (Peer Review on the GSL step-2 self-audit, F1): the ONE rule for taking a received
+--- settings field. A newer stamp wins and an older one loses. On an EQUAL stamp -- two writes in the
+--- same second -- it used to be whichever payload arrived last, so two clients holding different
+--- values at one stamp each took the other's and never agreed. Now the greater canonical value wins:
+--- every client picks the same winner whatever order the payloads arrive in. An unset field is
+--- seeded. The caller judges fields BEFORE it moves the held version: a field with no stamp of its
+--- own is as old as that version, and moved first it read as exactly the payload's stamp -- a tie on
+--- every one (the first cut of this rule refused a GM's percent that way; settings_spec caught it).
+--- KNOWN COST: a tie seen by a plain member while the writer holding the greater value is offline
+--- makes that member ask the other writer once per SETTINGS_ASK_COOLDOWN until the two writers meet.
+--- `value` is the field as it would be stored.
+local function adoptSettingsField(self, key, stamp, value)
+	local held = self:SettingsStamp(key)
+	if stamp ~= held then return stamp > held end
+	local current = self.Info.settings[key]
+	if current == nil then return true end
+	return canonicalSettings(value) > canonicalSettings(current)
+end
+
 --- The seconds between two asks of one peer for one advertised (version, canon), and between two
 --- answers to one asker. A burst of broadcasts is one ask; they are not a wait for anything.
 TOGBankClassic_Guild.SETTINGS_ASK_COOLDOWN = 60
@@ -3326,7 +3380,16 @@ function TOGBankClassic_Guild:CanonOfSettingsFields(source)
 		-- GM's own publish (ALERT) and its ten-minute re-announcement deliver it.
 		-- XGUILD-OWNERS-001: the owner stamps are bookkeeping, like `stamps` -- two clients holding the
 		-- same owners agree however they came by them.
-		if k ~= "version" and k ~= "stamps" and k ~= "officerRankFloor" and k ~= "bankerOwnerStamps" then fields[k] = v end
+		-- GSL-MERGE-001: the shopping list is left OUT as well. A v1.6.1 client's payload has no such
+		-- fields, so hashing them here would make every v1.6.1 / v1.7.0 pair disagree forever -- equal
+		-- version, different canon -- and ask each other on every sync. The list reaches a client that
+		-- missed it by the version a write moves, the entry merge on every payload heard, and the
+		-- ten-minute re-announcement. KNOWN COST: two writes of the same second on two clients are
+		-- only reconciled by the next payload either hears, not by a canon ask.
+		if k ~= "version" and k ~= "stamps" and k ~= "officerRankFloor" and k ~= "bankerOwnerStamps"
+			and k ~= "craftList" and k ~= "craftListStamps" and k ~= "gatherStart" and k ~= "gatherEnd" then
+			fields[k] = v
+		end
 	end
 	-- Hash the values AS A RECEIVER STORES THEM. ApplyRemoteSettings sanitizes the cancel reasons and
 	-- help notes (filling a missing window key with "", a missing presetDisabled role with {}) and
@@ -3345,8 +3408,17 @@ end
 
 --- May `sender`'s copy of the settings be adopted? The same standing ApplyRemoteSettings requires --
 --- asking a guildmate whose answer would be dropped would be a wasted whisper.
+---
+--- XGUILD-SETTINGS-002 (Peer Review F4 on self-audit 13180dbf): never a member of ANOTHER guild. The
+--- three sender helpers answer true for a sister guild's bank characters, officers and GM (each reads
+--- that guild's own roster), which is right where they authorize a sister guild's bank data and wrong
+--- here: a sister guild's officer is not ours. ApplyRemoteSettings' sister branch was the only wall
+--- between another guild and every officer setting; this is the second, on the same test that branch
+--- uses (placed in a guild, and not the home one). The helpers are left as they are.
 function TOGBankClassic_Guild:SettingsSenderAuthorized(sender)
-	return sender ~= nil and (self:SenderHasGbankNote(sender) or self:SenderIsGM(sender) or self:SenderIsOfficer(sender)) and true or false
+	if sender == nil then return false end
+	if self.IsHomeMember and self.GuildOf and self:GuildOf(sender) and not self:IsHomeMember(sender) then return false end
+	return (self:SenderHasGbankNote(sender) or self:SenderIsGM(sender) or self:SenderIsOfficer(sender)) and true or false
 end
 
 -- SETTINGS-FANOUT-001 (self-audit 4777d14a F2): a behind member's login hlb2 goes to the whole
@@ -3601,7 +3673,10 @@ function TOGBankClassic_Guild:BroadcastSettings(priority, target)
 	if not self.Info or not self.Info.settings then return end
 	local myPlayer = self:GetNormalizedPlayer()
 	if not myPlayer then return end
-	if not self:IsBank(myPlayer) and not self:SenderIsOfficer(myPlayer) and not self:SenderIsGM(myPlayer) then return end
+	-- GSL-MERGE-001: the `[GSL]`-tagged member writes the shopping list and must be able to send it;
+	-- a receiver takes only the list from them (ApplyRemoteSettings).
+	if not self:IsBank(myPlayer) and not self:SenderIsOfficer(myPlayer) and not self:SenderIsGM(myPlayer)
+		and not (TOGBankClassic_CraftList and TOGBankClassic_CraftList:IsGSLPlayer(myPlayer)) then return end
 	local stamped = nil
 	if priority == "ALERT" and not target then stamped = self:StampSettings() end
 	local fields = self:SettingsFields()
@@ -3673,7 +3748,29 @@ function TOGBankClassic_Guild:SettingsFields()
 		-- STORE-002: the price authority, always a string ("" = none), so a receiver can tell
 		-- "cleared" from "this sender predates the field".
 		priceAuthority = self:GetPriceAuthority() or "",
+		-- GSL-MERGE-001 (v1.7.0): the shopping list, always a table (empty means "nothing wanted"), with
+		-- each entry's own stamp so a receiver merges entry by entry, and the gather window as two
+		-- strings ("" = unset). Guarded like the Donations read above.
+		craftList = TOGBankClassic_CraftList and TOGBankClassic_CraftList.SanitizeList(s.craftList) or nil,
+		craftListStamps = TOGBankClassic_CraftList and TOGBankClassic_CraftList.SanitizeStamps(s.craftListStamps, s.craftList) or nil,
+		gatherStart = TOGBankClassic_CraftList and (TOGBankClassic_CraftList.SanitizeDate(s.gatherStart) or "") or nil,
+		gatherEnd = TOGBankClassic_CraftList and (TOGBankClassic_CraftList.SanitizeDate(s.gatherEnd) or "") or nil,
 	}
+end
+
+--- GSL-MERGE-001: take the shopping list from a received settings payload -- the entries merged
+--- entry by entry on their own stamps, the gather window field by field through `adopt` (the
+--- caller's per-field stamp test). The caller has authorized the sender for the list. Returns
+--- nothing; changes land in Info.settings.
+local function applyCraftListFields(self, settings, adopt)
+	local CL = TOGBankClassic_CraftList
+	if not CL then return end
+	if settings.craftList ~= nil and type(settings.craftListStamps) == "table" then
+		CL:Merge(settings.craftList, settings.craftListStamps)
+	end
+	local start, finish = CL.SanitizeDate(settings.gatherStart), CL.SanitizeDate(settings.gatherEnd)
+	if start and adopt("gatherStart", start) then self.Info.settings.gatherStart = start end
+	if finish and adopt("gatherEnd", finish) then self.Info.settings.gatherEnd = finish end
 end
 
 -- CANCELREASON-001: bounds for the synced cancel-reason config (keeps the
@@ -3767,7 +3864,28 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 		TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from sister-guild member %s: bank character owners only", tostring(sender))
 		return
 	end
-	if not self:SenderHasGbankNote(sender) and not self:SenderIsGM(sender) and not self:SenderIsOfficer(sender) then
+	if not self:SettingsSenderAuthorized(sender) then   -- XGUILD-SETTINGS-002: home members only
+		-- GSL-MERGE-001: the `[GSL]`-tagged member may write the shopping list and nothing else. Their
+		-- payload's other fields (and its version) are ignored; the list's own stamps decide it.
+		local CL = TOGBankClassic_CraftList
+		if self.Info and CL and CL:IsGSLPlayer(sender) then
+			if not self.Info.settings then self.Info.settings = {} end
+			local inStamps = type(settings.stamps) == "table" and settings.stamps or {}
+			local taken = {}
+			applyCraftListFields(self, settings, function(key, value)
+				local stamp = tonumber(inStamps[key]) or 0
+				if not adoptSettingsField(self, key, stamp, value) then return false end   -- SETTINGS-TIE-001
+				taken[key] = stamp
+				return true
+			end)
+			if next(taken) then
+				if type(self.Info.settings.stamps) ~= "table" then self.Info.settings.stamps = {} end
+				for key, stamp in pairs(taken) do self.Info.settings.stamps[key] = stamp end
+			end
+			self:SnapshotSettings()
+			TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings from [GSL] member %s: shopping list only", tostring(sender))
+			return
+		end
 		TOGBankClassic_Output:Debug("PROTOCOL", "SETTINGS", "ApplyRemoteSettings: sender %s not authorized, ignoring", tostring(sender))
 		return
 	end
@@ -3790,47 +3908,46 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 		return
 	end
 	local adopted = {}
-	--- Is the payload's copy of `key` at least as new as ours? Records the stamp to keep when so.
-	local function adopt(key)
+	--- Does the payload's `value` for `key` win (SETTINGS-TIE-001)? Records the stamp to keep when so.
+	local function adopt(key, value)
 		local stamp = inStamps and (tonumber(inStamps[key]) or 0) or incoming
-		if stamp < self:SettingsStamp(key) then return false end
+		if not adoptSettingsField(self, key, stamp, value) then return false end
 		adopted[key] = stamp
 		return true
 	end
-	-- The version moves even when no field below is adopted, DELIBERATELY: it names the newest write
-	-- this client has heard, and the stamps decide each value. Every field is adoptable from any
-	-- authorized sender except the officer rank floor (GM only) -- which is why SettingsCanon leaves
-	-- the floor out (SETTINGS-CANON-002): otherwise this line makes "equal version, different values".
-	if incoming > held then self.Info.settings.version = incoming end
 	if type(settings.maxRequestPercent) == "number" and settings.maxRequestPercent >= 1 and settings.maxRequestPercent <= 100
-		and adopt("maxRequestPercent") then
+		and adopt("maxRequestPercent", math.floor(settings.maxRequestPercent)) then
 		self.Info.settings.maxRequestPercent = math.floor(settings.maxRequestPercent)
 	end
-	if type(settings.autoTombstoneDays) == "number" and settings.autoTombstoneDays >= 1 and adopt("autoTombstoneDays") then
+	if type(settings.autoTombstoneDays) == "number" and settings.autoTombstoneDays >= 1
+		and adopt("autoTombstoneDays", math.floor(settings.autoTombstoneDays)) then
 		self.Info.settings.autoTombstoneDays = math.floor(settings.autoTombstoneDays)
 	end
 	-- CANCELREASON-001: apply synced cancel-reason config only when the sender
 	-- actually carried one (older clients omit the field — don't wipe local).
-	if settings.cancelReasons ~= nil and adopt("cancelReasons") then
-		self.Info.settings.cancelReasons = sanitizeCancelReasons(settings.cancelReasons)
+	if settings.cancelReasons ~= nil then
+		local cr = sanitizeCancelReasons(settings.cancelReasons)
+		if adopt("cancelReasons", cr) then self.Info.settings.cancelReasons = cr end
 	end
 	-- HELPNOTE-001: apply synced help notes only when present (old clients omit it).
-	if settings.helpNotes ~= nil and adopt("helpNotes") then
-		self.Info.settings.helpNotes = sanitizeHelpNotes(settings.helpNotes)
+	if settings.helpNotes ~= nil then
+		local hn = sanitizeHelpNotes(settings.helpNotes)
+		if adopt("helpNotes", hn) then self.Info.settings.helpNotes = hn end
 	end
 	-- STORE-006: the open/closed sign, only when the sender carried it -- a pre-STORE client's
 	-- broadcast must not reopen a shop an officer closed. Anything but `true` is closed.
-	if settings.storeOpen ~= nil and adopt("storeOpen") then
+	if settings.storeOpen ~= nil and adopt("storeOpen", settings.storeOpen == true) then
 		self.Info.settings.storeOpen = settings.storeOpen == true
 	end
 	-- STORE-006: the not-for-sale list, only when carried -- an older client's broadcast must not
 	-- put every item back on sale. Sanitized: integer item ids, capped.
-	if settings.notForSale ~= nil and adopt("notForSale") then
-		self.Info.settings.notForSale = sanitizeNotForSale(settings.notForSale)
+	if settings.notForSale ~= nil then
+		local nfs = sanitizeNotForSale(settings.notForSale)
+		if adopt("notForSale", nfs) then self.Info.settings.notForSale = nfs end
 	end
 	-- SHOP-TAB-001: the shop switch, only when carried; a change repaints the Guild Bank window's
 	-- tab strip on this client (the Shop tab appears or goes).
-	if settings.shopEnabled ~= nil and adopt("shopEnabled") then
+	if settings.shopEnabled ~= nil and adopt("shopEnabled", settings.shopEnabled == true) then
 		local was = self:IsShopEnabled()
 		self.Info.settings.shopEnabled = settings.shopEnabled == true
 		if was ~= self:IsShopEnabled() then
@@ -3840,7 +3957,7 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 	end
 	-- XGUILD-SWITCH-001: the sister-guild bank switch, only when carried; a change rebuilds the
 	-- rosters on this client so the sister bankers appear or go.
-	if settings.sisterBank ~= nil and adopt("sisterBank") then
+	if settings.sisterBank ~= nil and adopt("sisterBank", settings.sisterBank == true) then
 		local was = self:IsSisterBankEnabled()
 		self.Info.settings.sisterBank = settings.sisterBank == true
 		if was ~= self:IsSisterBankEnabled() then self:OnSisterBankChanged() end
@@ -3848,7 +3965,7 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 	-- STORE-003: the discount, only when carried and a number in 0..100; a change repaints an open
 	-- Shop tab on this client.
 	local pct = tonumber(settings.storeDiscountPercent)
-	if pct and pct == pct and pct >= 0 and pct <= 100 and adopt("storeDiscountPercent") then
+	if pct and pct == pct and pct >= 0 and pct <= 100 and adopt("storeDiscountPercent", math.floor(pct)) then
 		pct = math.floor(pct)
 		if self.Info.settings.storeDiscountPercent ~= pct then
 			self.Info.settings.storeDiscountPercent = pct
@@ -3860,7 +3977,8 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 	-- broadcast must not reset a rate an officer chose, and a garbage value is not a rate.
 	local D = TOGBankClassic_Donations
 	local rate = tonumber(settings.donationRate)
-	if D and rate and rate == rate and rate >= D.RATE_MIN and rate <= D.RATE_MAX and adopt("donationRate") then
+	if D and rate and rate == rate and rate >= D.RATE_MIN and rate <= D.RATE_MAX
+		and adopt("donationRate", math.floor(rate * 100 + 0.5) / 100) then
 		self.Info.settings.donationRate = math.floor(rate * 100 + 0.5) / 100
 	end
 	-- BANKER-OWNER-001: the owners, only when carried -- an older client's broadcast must not
@@ -3879,28 +3997,39 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 			local B = TOGBankClassic_UI_Browse
 			if B and B.OnBankerOwnerChanged then B:OnBankerOwnerChanged() end
 		end
-	elseif settings.bankerOwners ~= nil and adopt("bankerOwners") then
-		self.Info.settings.bankerOwners = sanitizeBankerOwners(settings.bankerOwners)
-		local B = TOGBankClassic_UI_Browse
-		if B and B.OnBankerOwnerChanged then B:OnBankerOwnerChanged() end
+	elseif settings.bankerOwners ~= nil then
+		local owners = sanitizeBankerOwners(settings.bankerOwners)
+		if adopt("bankerOwners", owners) then
+			self.Info.settings.bankerOwners = owners
+			local B = TOGBankClassic_UI_Browse
+			if B and B.OnBankerOwnerChanged then B:OnBankerOwnerChanged() end
+		end
 	end
 	-- STORE-002: the price authority, only when carried (a string; "" clears) -- an older client's
 	-- broadcast must not unset it. Normalised and clamped; a change re-reads the held list against
 	-- the new name, and a client that IS the new authority publishes.
-	if type(settings.priceAuthority) == "string" and adopt("priceAuthority") then
-		local a = settings.priceAuthority
-		if a ~= "" then a = (self:NormalizeName(a) or ""):sub(1, PRICE_AUTHORITY_MAX_LEN) end
-		if (self:GetPriceAuthority() or "") ~= a then
-			self.Info.settings.priceAuthority = a
+	local authority = type(settings.priceAuthority) == "string" and settings.priceAuthority or nil
+	if authority and authority ~= "" then authority = (self:NormalizeName(authority) or ""):sub(1, PRICE_AUTHORITY_MAX_LEN) end
+	if authority and adopt("priceAuthority", authority) then
+		if (self:GetPriceAuthority() or "") ~= authority then
+			self.Info.settings.priceAuthority = authority
 			if TOGBankClassic_PriceList then TOGBankClassic_PriceList:OnAuthorityChanged() end
 		end
 	end
+	-- GSL-MERGE-001: the shopping list, entry by entry, and the gather window, field by field.
+	applyCraftListFields(self, settings, adopt)
 	-- SETTINGS-003: the officer rank floor, from the GM ALONE -- rankIndex 0 is the one rank every
 	-- receiver can judge for itself, and this field is what lets it judge the rest.
 	local floor = tonumber(settings.officerRankFloor)
-	if floor and floor >= 0 and floor == math.floor(floor) and self:SenderIsGM(sender) and adopt("officerRankFloor") then
+	if floor and floor >= 0 and floor == math.floor(floor) and self:SenderIsGM(sender) and adopt("officerRankFloor", floor) then
 		self.Info.settings.officerRankFloor = floor
 	end
+	-- The version moves even when no field above was adopted, DELIBERATELY: it names the newest write
+	-- this client has heard, and the stamps decide each value. Every field is adoptable from any
+	-- authorized sender except the officer rank floor (GM only) -- which is why SettingsCanon leaves
+	-- the floor out (SETTINGS-CANON-002): otherwise this line makes "equal version, different values".
+	-- SETTINGS-TIE-001: it moves AFTER the fields are judged, never before (see adoptSettingsField).
+	if incoming > held then self.Info.settings.version = incoming end
 	-- SETTINGS-004: keep the stamps of what was adopted, and let the next write diff against this.
 	if next(adopted) then
 		if type(self.Info.settings.stamps) ~= "table" then self.Info.settings.stamps = {} end
@@ -3914,16 +4043,19 @@ function TOGBankClassic_Guild:ApplyRemoteSettings(sender, settings)
 		(self.Info.settings.cancelReasons and self.Info.settings.cancelReasons.custom and #self.Info.settings.cancelReasons.custom) or 0)
 end
 
--- returns true if the given normalized sender has a public or officer note containing 'gbank'
+-- returns true if the given normalized sender has a public or officer note containing 'gbank'.
+-- GSL-BANK-001: deliberately `gbank` ONLY, not noteBankRole. This gates settings and donation
+-- authority, and a [GSL] character is a banker for the shopping list's stock, not a guild authority.
 function TOGBankClassic_Guild:SenderHasGbankNote(sender)
 	if not sender then
 		return false
 	end
 	-- XGUILD-SYNC-001 (D3/D4): a sister guild's banker is one by the note its roster carries.
 	-- Read from memberRoster, which _AddSisterMembers filled from that note; a stub entry (an
-	-- unauthenticated sighting) has no guildKey and never answers here.
+	-- unauthenticated sighting) has no guildKey and never answers here. isBank is also true for a
+	-- [GSL]-only note, so the note itself is re-read for `gbank`.
 	local m = self.memberRoster and self.memberRoster[sender]
-	if m and m.guildKey and not m.isStub and m.isBank then
+	if m and m.guildKey and not m.isStub and m.isBank and tostring(m.note or ""):find("gbank", 1, true) then
 		return true
 	end
 	for i = 1, GetNumGuildMembers() do
@@ -4116,8 +4248,7 @@ function TOGBankClassic_Guild:_RefreshFromRosterLib()
 			-- find (not a pattern) is orders of magnitude faster than "(.*)gbank(.*)".
 			local note        = tostring(m.publicNote or "")
 			local officernote = tostring(m.officerNote or "")
-			local isBank = (string.find(note, "gbank", 1, true) ~= nil)
-				or (string.find(officernote, "gbank", 1, true) ~= nil)
+			local isBank, viewOnly, gsl = noteBankRole(note, officernote)   -- GSL-BANK-001
 			local isOfficer = (m.rankIndex == 0)
 				or (localOfficerThreshold ~= nil and m.rankIndex ~= nil
 					and m.rankIndex <= localOfficerThreshold)
@@ -4130,9 +4261,10 @@ function TOGBankClassic_Guild:_RefreshFromRosterLib()
 				rankName    = m.rankName,
 				isOnline    = m.isOnline or false,
 				isOfficer   = isOfficer,
-				isBank      = isBank or false,
+				isBank      = isBank,
 				-- VIEWBANK-001: the view-only marker is only meaningful on a banker.
-				viewOnly    = (isBank and noteIsViewOnly(note, officernote)) or false,
+				viewOnly    = viewOnly,
+				gsl         = gsl,
 				-- BANKERS-FILTER-001: the public note, kept for what it says BESIDE the gbank marker
 				-- ("gbank herbs & potions") -- the Bankers tab's "Stores" text. Bankers only.
 				note        = isBank and note or nil,
@@ -4174,7 +4306,7 @@ function TOGBankClassic_Guild:_AddSisterMembers(lib, spoke)
 				local norm = self:NormalizeName(name)
 				if norm and not self.memberRoster[norm] then
 					local note = tostring(m.note or "")
-					local isBank = string.find(note, "gbank", 1, true) ~= nil
+					local isBank, viewOnly, gsl = noteBankRole(note, "")   -- GSL-BANK-001
 					-- XGUILD-BOUNCE-001: a sighting the server has since contradicted is not online.
 					local isOnline = seen[norm] == true and self:SisterSightingHolds(lib, key, norm)
 					self.memberRoster[norm] = {
@@ -4186,7 +4318,8 @@ function TOGBankClassic_Guild:_AddSisterMembers(lib, spoke)
 						isOnline    = isOnline,
 						isOfficer   = m.isOfficer == true,
 						isBank      = isBank,
-						viewOnly    = (isBank and noteIsViewOnly(note, "")) or false,
+						viewOnly    = viewOnly,
+						gsl         = gsl,
 						note        = isBank and note or nil,
 						guildKey    = key,
 						spokeAt     = spoke[norm],
@@ -4251,6 +4384,8 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 		-- SETTINGS-003: the GM's client publishes the officer rank floor it can read; nobody else's
 		-- does anything here.
 		self:PublishOfficerRankFloor()
+		-- GSL-MERGE-001 step 5: the role is readable now, so a writer can bring GuildShoppingList's list over.
+		if TOGBankClassic_CraftList and TOGBankClassic_CraftList.ImportGSL then TOGBankClassic_CraftList:ImportGSL() end
 		-- SHARE-BTN-LIVE-001: banker status may have just arrived with a window open.
 		if TOGBankClassic_UI and TOGBankClassic_UI.SyncShareButtons then TOGBankClassic_UI:SyncShareButtons() end
 		return libOnline, libTotal
@@ -4301,11 +4436,8 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 				-- officer notes AND this member's rank is at or above the local player's rank.
 				local isOfficer = (rankIndex == 0) or
 					(localOfficerThreshold ~= nil and rankIndex <= localOfficerThreshold)
-				-- PERF: plain-text find is orders of magnitude faster than (.*)gbank(.*) pattern
-				local isBank = (note and note:find("gbank", 1, true) ~= nil)
-					or (officernote and officernote:find("gbank", 1, true) ~= nil)
-				-- VIEWBANK-001: view-only flag only meaningful for bankers
-				local viewOnly = isBank and noteIsViewOnly(note, officernote)
+				-- GSL-BANK-001: the one rule (gbank, [GSL], view-only); VIEWBANK-001 inside it.
+				local isBank, viewOnly, gsl = noteBankRole(note, officernote)
 				-- Store full member data
 				self.memberRoster[normalized] = {
 					name = normalized,
@@ -4315,8 +4447,9 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 					rankName = rankName,
 					isOnline = isOnline or false,
 					isOfficer = isOfficer,
-					isBank = isBank or false,
-					viewOnly = viewOnly or false,
+					isBank = isBank,
+					viewOnly = viewOnly,
+					gsl = gsl,
 					note = isBank and note or nil,   -- BANKERS-FILTER-001, as the library path keeps it
 					lastUpdated = GetServerTime()
 				}
@@ -4338,6 +4471,7 @@ function TOGBankClassic_Guild:RefreshOnlineCache()
 
 	notifyIfBankersOnlineChanged(self, before)   -- BROWSE-008
 	self:PublishOfficerRankFloor()               -- SETTINGS-003
+	if TOGBankClassic_CraftList and TOGBankClassic_CraftList.ImportGSL then TOGBankClassic_CraftList:ImportGSL() end   -- GSL-MERGE-001 step 5
 	-- SHARE-BTN-LIVE-001: banker status may have just arrived with a window open.
 	if TOGBankClassic_UI and TOGBankClassic_UI.SyncShareButtons then TOGBankClassic_UI:SyncShareButtons() end
 	return onlineCount, totalMembers

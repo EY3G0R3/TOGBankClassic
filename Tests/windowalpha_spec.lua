@@ -26,7 +26,7 @@ describe("TOGBankClassic_UI.ALPHA_WINDOWS", function()
 		local AceGUI = LibStub("AceGUI-3.0")
 		assert.are_not.equal(AceGUI, UI, "TOGBankClassic_UI is the shared AceGUI table again")
 		assert.equal(AceGUI.Create, UI.Create, "the AceGUI factory is not reachable through the module")
-		for _, name in ipairs({ "ALPHA_WINDOWS", "CHROME", "SyncEscape", "WindowTitle", "FILTER_INSET" }) do
+		for _, name in ipairs({ "ALPHA_WINDOWS", "ESCAPE_WINDOWS", "CHROME", "SyncEscape", "WindowTitle", "FILTER_INSET" }) do
 			assert.is_nil(rawget(AceGUI, name), "TOGBank's " .. name .. " was written onto AceGUI-3.0")
 			assert.is_not_nil(rawget(UI, name), "the module lost its own " .. name)
 		end
@@ -35,8 +35,27 @@ describe("TOGBankClassic_UI.ALPHA_WINDOWS", function()
 	it("covers every window the addon opens", function()
 		local keys = {}
 		for _, entry in ipairs(UI.ALPHA_WINDOWS) do keys[entry.key] = true end
-		for _, expected in ipairs({ "inventory", "search", "requests", "donations", "mail", "mailbox", "browse" }) do
+		for _, expected in ipairs({ "inventory", "search", "requests", "donations", "mail", "mailbox", "browse", "tracker" }) do
 			assert.is_true(keys[expected] == true, "no transparency slider for the " .. expected .. " window")
+		end
+	end)
+
+	-- ESC-SPLIT-001 (Peer Review, inbox a0556886): the Escape list is its own table, every window
+	-- but the Reagent Tracker is on it, and each entry names the same module as its slider row.
+	it("puts every window but the Reagent Tracker on Escape", function()
+		local alpha = {}
+		for _, entry in ipairs(UI.ALPHA_WINDOWS) do alpha[entry.key] = entry.module end
+		local esc = {}
+		for _, entry in ipairs(UI.ESCAPE_WINDOWS) do
+			esc[entry.key] = true
+			assert.equal(alpha[entry.key], entry.module, entry.key .. " names a different module on the two lists")
+		end
+		for key in pairs(alpha) do
+			if key == "tracker" then
+				assert.is_nil(esc[key], "the Reagent Tracker is on Escape")
+			else
+				assert.is_true(esc[key] == true, "the " .. key .. " window is not on Escape")
+			end
 		end
 	end)
 
@@ -53,6 +72,7 @@ describe("TOGBankClassic_UI.ALPHA_WINDOWS", function()
 			mail      = "Modules/UI/Mail.lua",
 			mailbox   = "Modules/UI/Mailbox.lua",
 			browse    = "Modules/UI/Browse.lua",
+			tracker   = "Modules/UI/CraftTracker.lua",
 		}
 		for _, entry in ipairs(UI.ALPHA_WINDOWS) do
 			local path = sources[entry.key]

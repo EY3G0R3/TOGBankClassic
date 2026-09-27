@@ -48,6 +48,21 @@ TOGBankClassic_UI.ALPHA_WINDOWS = {
 	{ key = "mail",      label = "Mail Viewer", module = "TOGBankClassic_UI_Mail"      },
 	{ key = "mailbox",   label = "Mailbox",     module = "TOGBankClassic_UI_Mailbox"   },
 	{ key = "browse",    label = "Guild Bank (Browse)", module = "TOGBankClassic_UI_Browse" },
+	{ key = "tracker",   label = "Reagent Tracker", module = "TOGBankClassic_UI_CraftTracker" },
+}
+
+-- ESC-SPLIT-001 (Peer Review, inbox a0556886): the windows Escape closes (ESC-001). This used to
+-- be ALPHA_WINDOWS doing both jobs, and the Reagent Tracker is the first window that wants one and
+-- not the other: a transparency slider like every window, but NOT Escape -- it stays up while you
+-- play, and a window the Escape stand-in counted would swallow every Escape pressed in the world.
+TOGBankClassic_UI.ESCAPE_WINDOWS = {
+	{ key = "inventory", module = "TOGBankClassic_UI_Inventory" },
+	{ key = "search",    module = "TOGBankClassic_UI_Search"    },
+	{ key = "requests",  module = "TOGBankClassic_UI_Requests"  },
+	{ key = "donations", module = "TOGBankClassic_UI_Donations" },
+	{ key = "mail",      module = "TOGBankClassic_UI_Mail"      },
+	{ key = "mailbox",   module = "TOGBankClassic_UI_Mailbox"   },
+	{ key = "browse",    module = "TOGBankClassic_UI_Browse"    },
 }
 
 -- Blizzard's BackdropTemplate mixin draws the backdrop with textures parented to the frame under
@@ -569,6 +584,37 @@ function TOGBankClassic_UI:AnchorStatusBar(window, anchor)
 	return true
 end
 
+--- POOL-CHROME-001 (Peer Review on the GSL step-2 self-audit, F5): run `fn(window)` when this AceGUI
+--- window is released, under `key` (a second registration under one key replaces the first).
+--- AceGUI keeps ONE OnRelease callback per widget, so the status bar and the chrome, which both have
+--- to tidy a pooled frame, share this dispatcher instead of displacing each other. AceGUI clears a
+--- widget's callbacks on release, so each life registers again, and the list goes with it.
+---@param window table AceGUI widget
+---@param key string
+---@param fn function
+function TOGBankClassic_UI:OnWindowRelease(window, key, fn)
+	if type(window.togReleaseHooks) ~= "table" then window.togReleaseHooks = {} end
+	window.togReleaseHooks[key] = fn
+	window:SetCallback("OnRelease", function(w)
+		local hooks = w.togReleaseHooks
+		w.togReleaseHooks = nil
+		for _, hook in pairs(hooks or {}) do hook(w) end
+	end)
+end
+
+--- POOL-CHROME-001: what a released window must not hand the next acquirer of its frame -- AceGUI
+--- pools Frames across EVERY addon. The icons are cached on the frame and were left shown, so the
+--- next Frame (another addon's too) carried our "?" with our help text and a working gear, and the
+--- share button's OnShow hook still read `togShareWanted` and showed it on a bank character.
+local function undressWindow(window)
+	local frame = window.frame
+	for _, key in ipairs({ "togChromeHelp", "togChromeGear", "togChromeShare" }) do
+		if frame[key] then frame[key]:Hide() end
+	end
+	frame.togShareWanted, frame.togShareShown = false, false
+	window.togChrome, window.togBottomIcons = nil, nil
+end
+
 --- The shared bottom row on an AceGUI Frame. Call once per DrawWindow, after the status bar is
 --- attached and after any of the window's OWN bottom icons exist.
 ---
@@ -708,6 +754,7 @@ function TOGBankClassic_UI:DressWindow(window, opts)
 	local chrome = { help = help, share = share, settings = gear, icons = icons, anchor = icons[#icons] }
 	window.togChrome = chrome
 	window.togBottomIcons = icons
+	self:OnWindowRelease(window, "chrome", undressWindow)
 	self:SyncShareButton(frame)   -- also sizes and places the row (LayoutChrome)
 	-- VISIBILITY-001 part 2: the row re-lays on the scale signal. Keyed by the frame, which the icons
 	-- are cached on; the listener is module-level and reads the frame off the owner argument.
@@ -835,9 +882,9 @@ function TOGBankClassic_UI:SetCloseOnEscape(on)
 	return true
 end
 
---- Is any TOGB window open? ALPHA_WINDOWS is the window registry (every module with `.isOpen`).
+--- Is any window Escape closes open? ESCAPE_WINDOWS lists them (every module with `.isOpen`).
 local function anyWindowOpen()
-	for _, entry in ipairs(TOGBankClassic_UI.ALPHA_WINDOWS) do
+	for _, entry in ipairs(TOGBankClassic_UI.ESCAPE_WINDOWS) do
 		local module = _G[entry.module]
 		if module and module.isOpen then return true end
 	end
@@ -879,7 +926,7 @@ end
 --- teardown (listeners, overlays, the embedded Requests tab) runs exactly as for its Close button.
 function TOGBankClassic_UI:CloseAllWindows()
 	escClosing = true
-	for _, entry in ipairs(self.ALPHA_WINDOWS) do
+	for _, entry in ipairs(self.ESCAPE_WINDOWS) do
 		local module = _G[entry.module]
 		if module and module.isOpen and module.Close then module:Close() end
 	end
@@ -1465,6 +1512,17 @@ function TOGBankClassic_UI:ScaleStockWidget(widget, onRelease)
 	end
 	widget:SetCallback("OnRelease", onRelease or restoreStockWidget)
 	return widget, true
+end
+
+--- `name` in the colour of item quality `quality` (white without GetItemQualityColor or a quality).
+--- The one spelling for the Browse rows and the shopping list's (self-audit 3197046a F5).
+---@param name string
+---@param quality number|nil
+---@return string
+function TOGBankClassic_UI:QualityText(name, quality)
+	local r, g, b = 1, 1, 1
+	if GetItemQualityColor and quality then r, g, b = GetItemQualityColor(quality) end
+	return string.format("|cff%02x%02x%02x%s|r", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5), name)
 end
 
 --- Tokenised, case-insensitive "does every word of `query` appear somewhere in these fields".

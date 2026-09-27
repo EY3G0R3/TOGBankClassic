@@ -129,6 +129,50 @@ describe("XGUILD-SYNC-001 fleet: a sister guild's member syncs the home guild's 
 		assert.equal(1, #F.sent({ from = SV, type = "requests-index", dist = "WHISPER", to = HB }), "the index ask did not follow")
 	end)
 
+	-- GSL-MERGE-001 step 5 (docs/GSL_MERGE.md section 6): each guild's shopping list is its own
+	-- (XGUILD-SETTINGS-001). The home bank character carries the [GSL] tag, so its list is a writer's.
+	it("a guild's shopping list stays in its guild: the home viewer takes it; neither a whisper of it nor a federation pull puts it in the sister guild", function()
+		local c = F.new({
+			{ name = HB, note = "gbank [GSL]", client = true, money = 100, guild = HOME },
+			{ name = HV, client = true, guild = HOME },
+			{ name = SB, note = "gbank", client = true, guild = SIS },
+			{ name = SV, client = true, guild = SIS },
+		})
+		F.federate(HOME, SIS)
+		local hb, hv, sv = c[HB], c[HV], c[SV]
+		local OWN = { ["i2589"] = { i = 2589, n = 3 } }
+		F.with(sv, function()
+			local s = sv.G.TOGBankClassic_Guild.Info.settings
+			s.craftList, s.craftListStamps = { ["i2589"] = { i = 2589, n = 3 } }, { ["i2589"] = 100 }
+		end)
+		assert.is_true(F.with(hb, function() return hb.G.TOGBankClassic_CraftList:SetItem(10457, 5) end), "the [GSL] bank character could not write its guild's list")
+		F.tick(2)
+		assert.same({ ["i10457"] = { i = 10457, n = 5 } }, F.with(hv, function() return hv.G.TOGBankClassic_CraftList:GetList() end),
+			"the home viewer did not take its own guild's list")
+		assert.same(OWN, F.with(sv, function() return sv.G.TOGBankClassic_CraftList:GetList() end), "a GUILD send reached the sister guild")
+		-- The same payload, whispered straight to the sister guild's client.
+		local heard = F.sent({ from = HB, type = "guild-settings", dist = "GUILD" })
+		assert.is_true(#heard >= 1)
+		F.with(sv, function()
+			sv.G.TOGBankClassic_Chat:OnCommReceived("togbank-hl", sv.G.TOGBankClassic_Core:SerializeWithChecksum(heard[#heard].body), "WHISPER", hb.norm)
+		end)
+		-- And the federation pull, which answers with what does cross (the owners).
+		F.scan(hb, bank(), { bank = {}, money = 100 })
+		F.sighted(sv, hb)
+		F.with(sv, function() return sv.G.TOGBankClassic_Guild:PullFromFederation() end)
+		F.tick(10)
+		assert.same(OWN, F.with(sv, function() return sv.G.TOGBankClassic_CraftList:GetList() end), "the home guild's list reached the sister guild")
+		-- XGUILD-SETTINGS-002 (Peer Review F4): the second wall. From the sister client the home bank
+		-- character carries a gbank note -- right for its bank data -- and still holds no settings authority.
+		F.with(sv, function()
+			local G = sv.G.TOGBankClassic_Guild
+			assert.is_true(G:SenderHasGbankNote(hb.norm), "precondition: the sister client does not see the home bank character's note")
+			assert.is_false(G:SettingsSenderAuthorized(hb.norm), "another guild's bank character may set this guild's settings")
+			assert.is_true(G:SettingsSenderAuthorized(c[SB].norm), "the sister client's own bank character lost its standing")
+		end)
+		noErrors(hb); noErrors(hv); noErrors(sv)
+	end)
+
 	it("a request from the sister viewer against the home banker crosses by whisper, is relayed once per guild, and its completion comes back the same way", function()
 		local c = federation()
 		local hb, hv, sb, sv = c[HB], c[HV], c[SB], c[SV]

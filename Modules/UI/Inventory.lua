@@ -278,6 +278,17 @@ function TOGBankClassic_UI_Inventory:RefreshSoon()
 			Browse:Refresh()
 		end)
 	end
+	-- GSL-MERGE-001 step 4: the Reagent Tracker's Bank column reads the same data, and the tracker
+	-- is often up with neither window open, so it takes the signal on its own debounce.
+	local Tracker = TOGBankClassic_UI_CraftTracker
+	if Tracker and Tracker.isOpen and not Tracker.refreshPending then
+		Tracker.refreshPending = true
+		-- writ:internal coalesces the tracker's repaint across a burst of bank deliveries; touches only the addon's own window
+		C_Timer.After(0.5, function()
+			Tracker.refreshPending = nil
+			Tracker:Refresh()
+		end)
+	end
 	if not self.isOpen or self.refreshPending then return end
 	self.refreshPending = true
 	C_Timer.After(0.5, function()

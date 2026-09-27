@@ -97,21 +97,42 @@ local DEFAULT_TAB = TABS[1].value
 Browse.TABS = TABS
 Browse.SHOP_TAB = SHOP_TAB
 
---- The tabs to render right now: TABS, plus Shop while the shop is on.
+--- The tabs to render right now: TABS, plus Shop while the shop is on, then GSL-MERGE-001's
+--- Shopping List for everyone and its List Setup for the list's writers (the GM, officers, the
+--- `[GSL]` tag). Appended after Shop, so every tab already in muscle memory keeps its place.
 function Browse:TabList()
 	local G = TOGBankClassic_Guild
-	if not (G and G.IsShopEnabled and G:IsShopEnabled()) then return TABS end
+	local UICL, CL = TOGBankClassic_UI_CraftList, TOGBankClassic_CraftList
 	local out = {}
 	for i, t in ipairs(TABS) do out[i] = t end
-	out[#out + 1] = SHOP_TAB
+	if G and G.IsShopEnabled and G:IsShopEnabled() then out[#out + 1] = SHOP_TAB end
+	if UICL and CL then
+		out[#out + 1] = UICL.TAB
+		if CL:CanEditHere() then out[#out + 1] = UICL.SETUP_TAB end
+	end
 	return out
+end
+
+--- Give the tab group the tabs TabList names, when that set differs from the one it last got (Peer
+--- Review on 3197046a, F6: Open calls this every time, and AceGUI rebuilds every tab button on a
+--- SetTabs). Returns true when the strip was re-rendered.
+function Browse:SyncTabs()
+	if not self.TabGroup then return false end
+	local tabs = self:TabList()
+	local values = {}
+	for i, t in ipairs(tabs) do values[i] = t.value end
+	local key = table.concat(values, ",")
+	if self.TabGroup == self.tabsFor and key == self.tabsKey then return false end
+	self.TabGroup:SetTabs(tabs)
+	self.tabsFor, self.tabsKey = self.TabGroup, key
+	return true
 end
 
 --- The shop switch moved (an officer here, or a settings broadcast): re-render the tab strip, and
 --- leave a Shop tab that no longer exists for Browse.
 function Browse:OnShopSettingChanged()
 	if not (self.isOpen and self.TabGroup) then return end
-	self.TabGroup:SetTabs(self:TabList())
+	self:SyncTabs()
 	if self.currentTab == "shop" and not (TOGBankClassic_Guild and TOGBankClassic_Guild:IsShopEnabled()) then
 		self.TabGroup:SelectTab(DEFAULT_TAB)
 	elseif self.currentTab == "shop" then
@@ -221,10 +242,8 @@ function Browse:BuildRows()
 				local info = item.Info or {}
 				local name = info.name or ("Item " .. tostring(item.ID))
 				local quality = tonumber(info.rarity) or 1
-				local r, g, b = 1, 1, 1
-				if GetItemQualityColor then r, g, b = GetItemQualityColor(quality) end
 				local typeText = self:TypeText(info)
-				local nameText = string.format("|cff%02x%02x%02x%s|r", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5), name)
+				local nameText = TOGBankClassic_UI:QualityText(name, quality)
 				if item.Hidden then
 					-- Grey, with the same badge the Inventory window's own tab uses (ReadyCheck-NotReady).
 					nameText = "|TInterface\\RaidFrame\\ReadyCheck-NotReady:12:12:0:0|t |cff808080" .. name .. "|r"
@@ -827,6 +846,11 @@ function Browse:AddHelpLines()
 		TOGBankClassic_UI_Requests:AddHelpLines()
 		return
 	end
+	local UICL = TOGBankClassic_UI_CraftList
+	if UICL and UICL.IsOurTab(tab) then
+		UICL:AddHelpLines(tab)
+		return
+	end
 	GameTooltip:AddLine("Guild Bank — How It Works")
 	GameTooltip:AddLine(" ")
 	if tab == "log" then
@@ -934,10 +958,14 @@ end
 function Browse:RememberedTab()
 	local db = TOGBankClassic_Options and TOGBankClassic_Options.db
 	local saved = db and db.char and db.char.browseTab
-	for _, entry in ipairs(self:TabList()) do
-		if entry.value == saved then return saved end
+	-- GSL-MERGE-001: the fallback is validated too -- List Setup leaves the strip when its holder
+	-- loses the role, and the tab they were on must not be selected into a blank body.
+	for _, want in ipairs({ saved, self.currentTab }) do
+		for _, entry in ipairs(self:TabList()) do
+			if entry.value == want then return want end
+		end
 	end
-	return self.currentTab or DEFAULT_TAB
+	return DEFAULT_TAB
 end
 
 --- Record the tab for next time. Per character, beside the window position, for the same reason
@@ -954,6 +982,9 @@ function Browse:Open(tab)
 	if not self.Window then self:DrawWindow() end
 	self.isOpen = true
 	self.Window:Show()
+	-- GSL-MERGE-001: who may set up the shopping list moves with the roster (a promotion, a [GSL]
+	-- note), so the strip is checked on every open rather than only when the window is built.
+	self:SyncTabs()
 	self.TabGroup:SelectTab(tab or self:RememberedTab())
 	TOGBankClassic_UI:SyncEscape()   -- ESC-001: this window used to get Escape only if another had made it
 end
@@ -979,6 +1010,12 @@ end
 --- Peer Review f5e52bcf F6: the Shop tab was missing here, so a banker's new scan left the shop's
 --- catalogue stale under an open Shop tab (a click then offered a stack already mailed out).
 function Browse:Refresh()
+	-- GSL-MERGE-001 step 4: the direct callers of this are roster changes (the sister-guild switch
+	-- and a sister roster landing), which change whose bank the Reagent Tracker's Bank column sums --
+	-- and the tracker is often up with this window closed. Bank CONTENTS reach the tracker through
+	-- UI_Inventory:RefreshSoon's fan-out instead.
+	local T = TOGBankClassic_UI_CraftTracker
+	if T and T.isOpen then T:Refresh() end
 	if not self.isOpen then return end
 	self:RedrawCurrent()
 end
@@ -991,7 +1028,10 @@ function Browse:RedrawCurrent()
 	if self.currentTab == "browse" then self:DrawBrowse()
 	elseif self.currentTab == "shop" then self:DrawShop()
 	elseif self.currentTab == "bankers" then self:DrawBankers()
-	elseif self.currentTab == "log" then self:DrawLog() end
+	elseif self.currentTab == "log" then self:DrawLog()
+	elseif TOGBankClassic_UI_CraftList and TOGBankClassic_UI_CraftList.IsOurTab(self.currentTab) then
+		TOGBankClassic_UI_CraftList:Draw(self.currentTab)   -- GSL-MERGE-001: the bank moved under In bank / Bank
+	end
 end
 
 function Browse:DrawWindow()
@@ -1030,10 +1070,10 @@ function Browse:DrawWindow()
 	-- fitting into the request tab page" -- and on the Browse tab it would leave the body the
 	-- filter strip's height.
 	tabs:SetAutoAdjustHeight(false)
-	tabs:SetTabs(self:TabList())
+	self.TabGroup = tabs
+	self:SyncTabs()
 	tabs:SetCallback("OnGroupSelected", function(_, _, value) self:ShowTab(value) end)
 	window:AddChild(tabs)
-	self.TabGroup = tabs
 
 	-- The two row lists live on plain frames anchored inside the tab body, under the AceGUI
 	-- filter strip; shown and hidden per tab rather than rebuilt.
@@ -1093,6 +1133,8 @@ function Browse:DrawWindow()
 	})
 	self.ShopList:SetSort("name", false)
 	shopList:Hide()
+	-- GSL-MERGE-001: the Shopping List and List Setup tabs' lists, on the same body.
+	if TOGBankClassic_UI_CraftList then TOGBankClassic_UI_CraftList:Build(body) end
 	self:AnchorLists()
 	-- VISIBILITY-001 part 2: the lists re-lay themselves (RowList); this window moves them under the
 	-- re-scaled strips and rebuilds the showing tab's strip. Keyed by the module, so a rebuilt window
@@ -1116,8 +1158,12 @@ function Browse:AnchorLists()
 	local S = function(px) return TOGBankClassic_UI:UIScaled(px) end
 	-- The strip and the gap under it are scaled apart, as BuildSimpleStrip sizes the strip.
 	local catalogue, simple = S(STRIP_H) + S(STRIP_GAP), S(SIMPLE_STRIP_H) + S(STRIP_GAP)
-	for _, pair in ipairs({ { self.BrowseList, catalogue }, { self.ShopList, catalogue },
-		{ self.BankerList, simple }, { self.LogList, simple } }) do
+	local lists = { { self.BrowseList, catalogue }, { self.ShopList, catalogue },
+		{ self.BankerList, simple }, { self.LogList, simple } }
+	-- GSL-MERGE-001: the shopping list's lists hang under their one-row strips.
+	local UICL = TOGBankClassic_UI_CraftList
+	for _, l in ipairs(UICL and UICL.Lists and UICL:Lists() or {}) do lists[#lists + 1] = { l, simple } end
+	for _, pair in ipairs(lists) do
 		local host = pair[1] and pair[1].parent
 		if host then
 			host:ClearAllPoints()
@@ -1125,6 +1171,8 @@ function Browse:AnchorLists()
 			host:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", 0, 0)
 		end
 	end
+	-- SETUP-SPLIT-001: List Setup's on-list box sits over its search results.
+	if UICL and UICL.AnchorSetup then UICL:AnchorSetup(body, simple) end
 end
 
 --- The scale signal (module-level, the module as owner): move the lists, and rebuild the showing
@@ -1162,8 +1210,12 @@ function Browse:ShowTab(value)
 	self.BankerList:Hide()
 	if self.LogList then self.LogList:Hide() end
 	if self.ShopList then self.ShopList:Hide() end
+	local UICL = TOGBankClassic_UI_CraftList
+	if UICL and UICL.HideLists then UICL:HideLists() end
 	self:AnchorStatusBar()
-	if value == "shop" then
+	if UICL and UICL.IsOurTab(value) then
+		UICL:Show(value)   -- GSL-MERGE-001
+	elseif value == "shop" then
 		self:BuildShopStrip()
 		self.ShopList:Show()
 		self:DrawShop()

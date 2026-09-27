@@ -319,6 +319,8 @@ M.MODULE_ORDER = {
 	"Modules/Propagation.lua",
 	"Modules/Item.lua",
 	"Modules/ItemHighlight.lua",
+	"Modules/Usable.lua",
+	"Modules/CraftList.lua",   -- GSL-MERGE-001: without it a whole client silently drops every heard list
 	"Modules/Switches.lua",
 	"Modules/Inventory/Record.lua",
 	"Modules/Inventory/Resolve.lua",

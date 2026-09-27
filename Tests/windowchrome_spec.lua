@@ -37,6 +37,55 @@ describe("VISIBILITY-001 part 2: the status bar's text", function()
 	end)
 end)
 
+-- POOL-CHROME-001 (Peer Review, F5): AceGUI pools Frames across every addon. A released TOGBank
+-- window left its "?", its gear and its status-bar sections shown on the frame, and each Attach built
+-- another set of sections on top of the last.
+describe("POOL-CHROME-001: a released window hands its frame back clean", function()
+	it("hides the chrome and the status-bar sections on release, and the next life reuses them", function()
+		env.reset(); env.stubOutput()
+		_G.TOGBankClassic_Guild = nil
+		require("env.frames").reset()
+		require("env.ace").load("AceGUI-3.0")
+		require("env.libs").load("LibAceGUIWidgets-1.0")
+		local UI = env.loadUI()
+		env.loadFile("Modules/Constants.lua")
+		env.loadFile("Modules/UI/StatusBar.lua")
+		_G.GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor or function() end
+		TOGBankClassic_Options = { db = { global = {}, char = {} } }
+
+		local win = UI:Create("Frame")
+		win:Hide()
+		TOGBankClassic_UI_StatusBar:Attach(win)
+		UI:DressWindow(win, { settings = { isOpen = false }, help = function() end, share = true })
+		win:Show()
+		local frame, host, right = win.frame, win.statusCenterHost, win.statusRight
+		right:SetText("3 online")
+		assert.is_true(frame.togChromeHelp:IsShown()); assert.is_true(frame.togChromeGear:IsShown())
+		win:Release()
+
+		-- The next acquirer -- another addon's plain Frame -- sees none of it.
+		local other = UI:Create("Frame")
+		assert.equal(frame, other.frame, "the pool did not hand the same frame back; this example proves nothing")
+		other:Show()
+		assert.is_false(frame.togChromeHelp:IsShown(), "our '?' rode along on the next window")
+		assert.is_false(frame.togChromeGear:IsShown(), "our gear rode along on the next window")
+		assert.is_false(frame.togShareWanted)
+		assert.is_false(host:IsShown(), "our status-bar centre rode along on the next window")
+		assert.is_false(right:IsShown()); assert.equal("", right:GetText())
+		assert.is_nil(other.togStatusBar)
+		other:Release()
+
+		-- A TOGBank window on the frame again reuses the sections rather than stacking new ones.
+		local again = UI:Create("Frame")
+		assert.equal(frame, again.frame)
+		TOGBankClassic_UI_StatusBar:Attach(again)
+		assert.equal(host, again.statusCenterHost); assert.equal(right, again.statusRight)
+		assert.is_true(host:IsShown()); assert.is_true(right:IsShown())
+		again:Release()
+		_G.TOGBankClassic_Options = nil
+	end)
+end)
+
 describe("WINDOW-CHROME-001: UI:DressWindow", function()
 	local UI, window, wow
 

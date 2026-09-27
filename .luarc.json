@@ -76,6 +76,7 @@
         "CreateFrame",
         "C_Container",
         "C_Item",
+        "C_TradeSkillUI",
         "C_Mail",
         "SEARCH",
         "BankFrame",
@@ -175,6 +176,9 @@
         "TOGBankClassic_Inventory_Store",
         "TOGBankClassic_Inventory_Scan",
         "TOGBankClassic_Inventory_Wire",
+        "TOGBankClassic_CraftList",
+        "TOGBankClassic_UI_CraftList",
+        "TOGBankClassic_UI_CraftTracker",
         "TOGBankClassicInvDB"
     ],
     "runtime.version": "Lua 5.1",

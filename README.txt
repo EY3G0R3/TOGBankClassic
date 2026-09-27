@@ -2,7 +2,7 @@
 TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era, TBC & MoP
 ================================================================================
 
-Version: 1.6.1
+Version: 1.7.0
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -29,8 +29,13 @@ build automatically for whichever version you install it under.
 KEY FEATURES:
 - One Guild Bank window: every bank character's items as one sortable list,
   with filters across the top (search, bank, type, slot, quality, level,
-  usable by me), plus Bankers, Requests and Log tabs - and a Shop tab for a
-  guild bank that sells
+  usable by me), plus Bankers, Requests, Log and Shopping List tabs - a List
+  Setup tab for whoever edits the shopping list, and a Shop tab for a guild
+  bank that sells
+- A guild shopping list (replaces the GuildShoppingList addon): what the
+  guild wants crafted or gathered, every reagent it takes, what the bank and
+  the [GSL] character already hold and what is still missing; click a row to
+  order it, and a Reagent Tracker window to gather by
 - A "Window and Text Size" slider (80% to 200%) that enlarges every TOGBank
   window's writing, icons and rows together (below 100% the writing shrinks;
   a window's smallest size stays what it is at 100%)
@@ -173,6 +178,17 @@ the Public/Officer Note to:  gbank viewonly
 Also accepted: "gbank readonly", "gbank read-only", or the compact "gbankro".
 Type /reload after changing the note.
 
+THE SHOPPING-LIST CHARACTER ([GSL]):
+------------------------------------
+The character the guild sends gathered materials to. Put [GSL] in its PUBLIC
+note (the same marker GuildShoppingList used). That character can edit the
+shopping list, its name is shown on the Shopping List tab under "Send items
+to", and it is treated as a view-only bank character: its bags, bank and mail
+are shared with the guild, so the list can show what it already has. Its
+player needs this version (1.7.0 or later) for that; open its bank and a
+mailbox once so everything it holds is counted. Put gbank in the note as well
+("[GSL] gbank") to make it an ordinary bank character people can order from.
+
 FOR REGULAR GUILD MEMBERS:
 ---------------------------
 1. Just install the addon - no configuration needed!
@@ -225,8 +241,9 @@ BASIC USAGE
 OPENING THE INTERFACE:
   Click the minimap button (shift-click it for the options).
     Opens the Guild Bank window: every bank character's items as ONE
-    sortable list, with Browse, Bankers, Requests and Log tabs. The ? beside
-    Close explains each tab.
+    sortable list, with Browse, Bankers, Requests, Log and Shopping List
+    tabs (plus List Setup for whoever edits the shopping list, and Shop for
+    a guild bank that sells). The ? beside Close explains each tab.
   /togbank
     The same as the minimap button: opens the Guild Bank window.
   /togbank legacy
@@ -383,6 +400,47 @@ THE GUILD PRICE LIST (one set of prices for everyone):
   authority is offline everyone keeps the last list they received. Blank
   the field and each client prices on its own again.
 
+THE GUILD SHOPPING LIST:
+  The Shopping List tab shows what the guild wants crafted or gathered, how
+  many the guild bank already holds, and how many are still needed; the +
+  in front of a crafted item shows the reagents the rest of it takes.
+  Underneath is every reagent the whole list takes - Needed, what the guild
+  Bank holds, what the GSL character already has, what You hold (bags and
+  bank; on the GSL character itself, the same bags, bank and mail as the GSL
+  column), and what the GSL character is still Missing - which is what the
+  guild still has to send them.
+  The GSL character (the one with [GSL] in their public note) is treated
+  like a bank character: their bags, bank and mail are shared with the
+  guild, and they show on the Bankers tab as a view-only bank. Put gbank in
+  the note as well to make them an ordinary, orderable bank character too. Click a row in
+  either view to request that item from the bank character holding the most
+  of it - the same request window and limits as the Browse tab.
+  The guild master, officers and a member with [GSL] in their public note
+  also get a List Setup tab. The box at the top is what is on the list now:
+  - and + change a count, the red x takes it off, and a click on a crafted
+  item (the + in front of it) shows the reagents it takes. Under it, search
+  any recipe or any item by name - items stay searchable whichever
+  profession is picked - left-click a result to add it (or set its count)
+  at the "How many" number, right-click to take it off. List Setup also sets
+  the dates the guild is gathering for.
+  The Shopping List tab's "Send items to" line names the guild's [GSL]
+  character, online first: mail what you gather for the list to them. On the
+  Shopping List tab, a Still
+  needed number above zero gently pulses, and so does the bottom line while
+  it shows the gather dates. Changes reach everyone online at
+  once and anyone offline when they next log in.
+  The Reagent Tracker (the Tracker button on the Shopping List tab, or
+  /togbank tracker) is a small window of the reagents still to gather that
+  stays up while you play and updates as you loot. Escape leaves it open.
+
+  COMING FROM GUILDSHOPPINGLIST: TOG Bank replaces it. The guild's list and
+  gather dates are copied across automatically, once, the first time the
+  guild master, an officer or the [GSL] member logs in with BOTH addons
+  enabled - the copy can only read GuildShoppingList's list while that addon
+  is turned on. Anything it cannot match to a recipe or item is named in
+  chat so it can be added by hand. After that login, GuildShoppingList can
+  be removed.
+
 THE BANK LOG:
   The Log tab shows what has moved in and out of the guild bank, newest
   first: deposits and withdrawals as each bank character publishes, money,
@@ -416,6 +474,10 @@ BASIC COMMANDS:
 /togbank ssync [<name>]
   Sync with the sister guilds now; with a name (realm optional), ask that
   sister guild member
+
+/togbank tracker
+  Open or close the Reagent Tracker: the shopping list's reagents to gather,
+  in a small window that stays up while you play
 
 /togbank share
   Manually announce your bank character's current version to the guild.
@@ -717,6 +779,13 @@ update DeltaSync with it - this version needs its latest release and says so
 once in chat if yours is out of date. The sister-guild bank also needs the
 latest Guild Roster on both guilds' clients.
 
+v1.7.0 changes nothing about how bank contents travel: it and v1.6.x exchange
+bank contents, requests and settings as before. A guildmate on v1.6.x does not
+see the Shopping List, and does not receive the [GSL] character's stock (to
+that version it is not a bank character). The [GSL] character's own player
+needs v1.7.0 for its bags, bank and mail to be shared at all. ProfessionDB is
+a new required addon; the CurseForge app installs it.
+
 DEBUG LOGGING:
 --------------
 v0.8.0 introduces persistent debug logging:
@@ -858,7 +927,8 @@ OPTIONS PANEL:
 WINDOW TRANSPARENCY:
 --------------------------------------
 The "Appearance" tab has an opacity slider for every window - Guild Bank,
-Mailbox, Inventory, Search, Requests, Donations and the Mail viewer - so you
+Mailbox, Inventory, Search, Requests, Donations, the Mail viewer and the
+Reagent Tracker - so you
 can fade the ones you leave open and keep the rest solid.
 
 Only the window frame fades. Item icons, stack counts and text stay fully
@@ -936,6 +1006,36 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.7.0:
+--------------
+NEW FEATURES:
+- GuildShoppingList is built in: a Shopping List tab (what the guild wants,
+  what the bank holds, and every reagent the list takes with Needed, Bank,
+  GSL, You and Missing) and, for the guild master, officers and the [GSL]
+  member, a List Setup tab to search any recipe or item and set counts and
+  gather dates
+- The [GSL] character's bags, bank and mail are shared like a view-only bank
+  character's; Missing is what that character still needs; the tab names who
+  to send items to
+- Click a row on the Shopping List tab to order that item from the bank
+- A + on a crafted item shows the reagents it takes
+- The Reagent Tracker window and /togbank tracker
+- GuildShoppingList's list and gather dates are copied across once, the
+  first time a list editor logs in with both addons enabled
+
+CHANGED:
+- ProfessionDB is a new required addon
+
+BUG FIXES:
+- A closed TOG Bank window's help, gear, share button and status text could
+  turn up on the next addon window that opened
+- Two officers changing one setting at the same moment could leave members
+  switching between the two values
+
+COMPATIBILITY: no change to how bank contents travel; v1.6.x and v1.7.0
+exchange them normally. v1.6.x players do not see the Shopping List or the
+[GSL] character's stock until they update.
 
 Version 1.6.1:
 --------------
@@ -1198,6 +1298,7 @@ Installed automatically alongside TOGBankClassic (required):
 - ItemDB - the offline item database bank contents are named from (v1.4.0+)
 - DeltaSync - shared sync library (v1.4.0+)
 - LibAceGUIWidgets - the shared search box and window widgets (v1.5.0+)
+- ProfessionDB - the recipe database behind the Shopping List (v1.7.0+)
 - LibDBIcon-1.0 - the minimap button (v1.6.1+; bundled inside the addon
     before that, so it only updated when TOGBank did)
 

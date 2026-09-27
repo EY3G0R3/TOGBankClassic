@@ -1141,6 +1141,14 @@ local COMMAND_REGISTRY = {
 		end,
 	},
 	{
+		-- GSL-MERGE-001 step 4 (D5): the detached Reagent Tracker.
+		name = "tracker",
+		help = "open or close the Reagent Tracker: the shopping list's reagents to gather, in a small window that stays up while you play",
+		handler = function()
+			TOGBankClassic_UI_CraftTracker:Toggle()
+		end,
+	},
+	{
 		name = "sync",
 		help = "manually receive the latest data from other online users with guild bank data; this is done every 10 minutes automatically",
 		handler = function()
@@ -2381,6 +2389,27 @@ local COMMAND_REGISTRY = {
 			if name == "" then Out:Response("Usage: /togbank dev trace <banker>"); return end
 			if not (G and G.Info) then Out:Error("No guild data loaded"); return end
 			local norm = G:NormalizeName(name) or name
+			-- TRACE-REALM-001: a bare name normalises to the PLAYER's realm, so on a connected realm
+			-- "trace Togcloth" typed from Old Blanchy traced Togcloth-OldBlanchy, a character that does
+			-- not exist, and reported a real Azuresong banker as "NO". A bare name resolves against
+			-- the bankers first, then the roster; the first realm-qualified match that is unique wins.
+			if not name:find("-", 1, true) and not (G.memberRoster and G.memberRoster[norm]) then
+				local prefix = name:lower() .. "-"
+				local function unique(list)
+					local hit
+					for _, n in ipairs(list) do
+						if n:lower():sub(1, #prefix) == prefix then
+							if hit and hit ~= n then return nil end
+							hit = n
+						end
+					end
+					return hit
+				end
+				local members = {}
+				for n in pairs(G.memberRoster or {}) do members[#members + 1] = n end
+				local hit = unique(G:GetBanks() or {}) or unique(members)
+				if hit then norm = G:NormalizeName(hit) or hit end
+			end
 			local YES, NO = "|cff00ff00yes|r", "|cffff4444NO|r"
 
 			Out:Response("|cffffff00=== trace %s ===|r", norm)

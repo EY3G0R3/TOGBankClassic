@@ -45,6 +45,49 @@ local function load()
 	SB.BuildPropagationText = function() return urgent and propLine or "" end
 end
 
+-- GATHER-BREATH-001 (the operator 2026-09-26, of the Shopping List tab's "3 wanted -- gathering
+-- 2026-09-26 to 2026-10-03": "the date isn't breathing"): a window can ask the bar to breathe its
+-- LEFT text. The left text is AceGUI's own FontString on a pooled frame, so it is moved onto a
+-- frame of the bar's own for the breath and handed back to the status background on release.
+describe("GATHER-BREATH-001: the left text breathes when the window asks", function()
+	local w, sb
+	before_each(function()
+		env.reset(); load()
+		urgent = false
+		SB.BuildPropagationText = function() return "" end
+		w = window(800)
+		sb = SB:AttachSides(w)
+		w:SetStatusText("3 wanted -- gathering 2026-09-26 to 2026-10-03")
+		sb:DrawSides()
+	end)
+
+	it("breathes the left text on its own frame, and stops at full alpha when asked", function()
+		local W = TOGBankClassic_UI.Widgets
+		local statusbg = w.statustext:GetParent()
+		sb:SetLeftBreathing(true)
+		local host = w.statusLeftHost
+		assert.is_not_nil(host, "the left text has no frame of its own to breathe")
+		assert.equal(host, w.statustext:GetParent())
+		assert.equal(statusbg, host:GetParent())
+		assert.is_true(W:IsBreathing(host), "the left text is not breathing")
+		assert.equal("3 wanted -- gathering 2026-09-26 to 2026-10-03", w.statustext:GetText())
+		sb:SetLeftBreathing(false)
+		assert.is_false(W:IsBreathing(host))
+		assert.equal(1, host:GetAlpha())
+	end)
+
+	it("hands the text back to the status background, still, when the pooled window is released", function()
+		local W = TOGBankClassic_UI.Widgets
+		local statusbg = w.statustext:GetParent()
+		sb:SetLeftBreathing(true)
+		local host = w.statusLeftHost
+		w.callbacks.OnRelease(w)
+		assert.equal(statusbg, w.statustext:GetParent(), "the pooled frame kept our text on our frame")
+		assert.is_false(W:IsBreathing(host), "the breath outlived the window")
+		assert.is_nil(w.statusLeftHost)
+	end)
+end)
+
 describe("STATUSBAR-002: the window's left text yields to the urgent line and stays yielded", function()
 	local w, sb
 	local LEFT = "Showing 47 requests out of 1717 total"

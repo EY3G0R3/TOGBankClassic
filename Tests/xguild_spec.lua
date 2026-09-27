@@ -131,6 +131,18 @@ describe("XGUILD-SYNC-001: the federation", function()
 		assert.same({ HOME_BANKER, SIS_BANKER, SIS_VIEW }, Guild.Info.roster.alts)
 	end)
 
+	-- GSL-BANK-001: a sister guild's [GSL] character is a view-only bank (noteBankRole), but a
+	-- [GSL] note is not `gbank`, so it carries no settings or donation authority -- the same as a
+	-- home [GSL] character, whose note SenderHasGbankNote's home loop reads for `gbank` alone.
+	it("a sister member noted [GSL] is a view-only bank and SenderHasGbankNote says no; [GSL] plus gbank says yes", function()
+		feedSister({ [SIS_MEMBER] = "[GSL] shopping", [SIS_VIEW] = "[GSL] gbank" })
+		Guild:RefreshOnlineCache()
+		assert.is_true(Guild.memberRoster[SIS_MEMBER].isBank, "a sister [GSL] character is not a bank")
+		assert.is_true(Guild:IsViewOnlyBank(SIS_MEMBER))
+		assert.is_false(Guild:SenderHasGbankNote(SIS_MEMBER), "a [GSL] note granted settings authority")
+		assert.is_true(Guild:SenderHasGbankNote(SIS_VIEW))
+	end)
+
 	-- XGUILD-BANKERS-001 (the operator, 2026-09-16: "should i not have the list of their bankers, and
 	-- should they not be populating in the bankers tab?"): the sister roster arrives AFTER TOGBank built
 	-- its member cache -- a login where the persisted copy or the first pull lands late -- and nothing

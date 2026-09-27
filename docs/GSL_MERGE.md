@@ -198,6 +198,17 @@ dropped silently. The two GSL bag
 and bank caches are NOT migrated: they are a snapshot of one player's containers keyed by item name,
 and the bank the addon already tracks supersedes them.
 
+**SETTLED 2026-09-25 by the operator, and it governs every build step:** _"ensure while you're doing
+this, you use the frameworks togb already has, the itemdb integration, we may want to pull in
+professiondb as well. i don't want to build new stuff as much as possible i want to use the
+libraries. ensure we're using the widgets library for the layout, like we did with the rest of the
+addon."_ In practice: recipes and reagents from LibProfessionDB-1.0 (a required dependency from
+v1.7.0); every item named, linked and iconned through `Inventory/Resolve` (LibItemDB first); bank
+holdings from `Guild:GetAltItemTotal`; the list on the existing settings sync; the tabs built as the
+Guild Bank window's other tabs are -- `UI/RowList` rows, the shared strip, LibAceGUIWidgets' search
+box and DatePicker, `UI:PersistWindow` for the tracker. Anything that would be new machinery needs a
+reason written here first.
+
 ## 3. What it looks like to a player
 
 **SETTLED 2026-09-25 by the operator:** _"make a tab for the shopping list itself, and then an
@@ -295,17 +306,59 @@ Named so a later session does not read the absence as an oversight:
    Miscellaneous bucket. D3 stands, D9 gained two fallbacks, and no contract to ProfessionDB is
    needed.
 2. **The model** (`Modules/CraftList.lua`) and its settings fields, with `craftlist_spec`. Buildable
-   and provable with no UI at all.
-3. **The tab** (`Modules/UI/CraftList.lua`, the Browse wiring) with `craftlistwindow_spec`.
-4. **The tracker overlay** (`Modules/UI/CraftTracker.lua`).
-5. **The migration** (D9) and the federated example in `xguildfleet_spec`.
+   and provable with no UI at all. **DONE 2026-09-25** (20 examples on the real ProfessionDB Alchemy
+   data). Two things differ from the text above, deliberately: the list fields are left OUT of
+   `SettingsCanon` (a v1.6.1 client's payload lacks them, so hashing them would make every mixed pair
+   disagree forever), and a sister guild's list never crosses (XGUILD-SETTINGS-001 superseded D1's
+   "federated whisper for free").
+3. **The tab** (`Modules/UI/CraftList.lua`, the Browse wiring) with `craftlistwindow_spec`. **DONE
+   2026-09-25** (10 examples). As built: TWO tabs, per the operator's ruling in section 3 --
+   Shopping List (a Show dropdown between the wanted list and the reagent roll-up; section 3's
+   separate "Reagents view" -- REPLACED 2026-09-26 by SHOPLIST-SPLIT-001: the wanted items in a box
+   on top with a + per crafted item, the full roll-up always under it, no dropdown) and List Setup (search, profession, How many, the gather window; a
+   left-click adds or sets a count, a right-click removes). The row menu and its "order this" (D6)
+   are step 7; the profession column's name and icon are the client's
+   `C_TradeSkillUI.GetTradeSkillDisplayName` / `GetTradeSkillTexture`, since LibProfessionDB carries
+   no profession names.
+4. **The tracker overlay** (`Modules/UI/CraftTracker.lua`). **DONE 2026-09-25** (5 examples in
+   `craftlistwindow_spec`). A small AceGUI Frame persisted as `tracker`, showing
+   `UI_CraftList:ReagentRows` with the same columns. It repaints on a list change, on
+   `BAG_UPDATE_DELAYED` while shown, and on the Inventory `RefreshSoon` fan-out when bank data lands.
+   It opens from a Tracker button on the Shopping List tab and from `/togbank tracker`. The minimap
+   right-click section 3 mentions is NOT wired: the button's click handling was not changed. It is
+   deliberately NOT on Escape: a gathering overlay the Escape stand-in counted would swallow every
+   Escape pressed in the world. It does have its own transparency slider: Escape reads
+   `UI.ESCAPE_WINDOWS`, split from `UI.ALPHA_WINDOWS` for exactly this window (ESC-SPLIT-001).
+5. **The migration** (D9) and the federated example in `xguildfleet_spec`. **DONE 2026-09-25.**
+   `CraftList:ImportGSL`, in `Modules/CraftList.lua` rather than `Modules/Database.lua` (it writes
+   through the list's own gate, stamps and publish), run from `Guild:RefreshOnlineCache`, the first
+   point a client can tell whether its player may edit the list. The name match is D9's three
+   spellings plus a fourth, a plain item by exact name through LibItemDB, which brings the
+   Miscellaneous turn-in items across as wanted-item rows; a spelling two recipes or items share
+   maps to neither. The gather dates come too. GuildShoppingList's variables are account-wide, so
+   it runs once per account (`db.global.gslImport`), and only while GuildShoppingList is still
+   enabled, since the client loads an addon's saved variables only with the addon -- which is what
+   D8's final GuildShoppingList release has to tell people.
 6. **Docs, changelog, the CurseForge page and README**, and the final GuildShoppingList release
-   pointing at TOGBank (D8).
-7. **The order-from-a-row join** (D6), last, because the list is useful without it.
+   pointing at TOGBank (D8). **TOGBank half DONE 2026-09-26:** a "Guild Shopping List" section in
+   the CurseForge page's Core Features (with the keep-GuildShoppingList-enabled instruction), the
+   Shopping List tab in its tab lists, and a "THE GUILD SHOPPING LIST" section in `README.txt`.
+   The GuildShoppingList release is that addon's own work: requested through its inbox (contract
+   `27dae11a3e42`), to ship with or after TOGBank v1.7.0.
+7. **The order-from-a-row join** (D6), last, because the list is useful without it. **DONE
+   2026-09-26** (8 examples in `craftlistwindow_spec`). As built it is a plain left click on a
+   Shopping List row in either view, not the right-click menu section 3 describes: the rows had no
+   click of their own, and a menu would have been new machinery for one entry. The click opens the
+   Browse tab's request dialog (`Browse:OnBrowseRowClick`, so every gate is the same) on the
+   requestable bank character holding the most of the row's item (`UI_CraftList:OrderSource`, over
+   `Browse:BuildRows`). The Reagent Tracker's rows do not order; it is a gathering overlay.
 
-**Where it stands (2026-09-25):** **step 1 is done** (1.5) and nothing else is built. The two open
+**Where it stands (2026-09-26):** **steps 1 to 7 are built** and green offline, except
+GuildShoppingList's own final release (step 6's other half, requested from that addon, contract
+`27dae11a3e42`); nothing has run in a game client. What follows is the status as it read when only step 1 was done. The two open
 decisions are answered: D2 (writers: GM, officers and the `[GSL]` tag) and the Miscellaneous
 bucket (a plain wanted-item row). **Timing, SETTLED by the operator the same day:** _"we aren't doign
 the work yet right? i want to push out what we've done, then start a new major patch version for the
 GSL integration"_ -- v1.6.1 ships first, and this merge is the next version after it, not part of
-v1.6.1. The version number is chosen when that release is committed.
+v1.6.1. v1.6.1 shipped 2026-09-25 (`53288e9`, tag `TOGBankClassic-v1.6.1`); the operator, the same
+day: _"ok, we can do the gsl integration in v1.7.0"_. **This merge is v1.7.0.**

@@ -469,11 +469,99 @@ function TOGBankClassic_UI_StatusBar:Attach(window)
 	-- help icon are the same call) -- while the line is one the banker must not miss
 	-- (PropagationIsUrgent). A FontString cannot host the breath offline (the harness gives
 	-- CreateAnimationGroup to Frames only), which is why the text sits on a frame of its own.
+	-- POOL-CHROME-001: the centre host and the right text are cached on the POOLED bar and reused, as
+	-- DressWindow's icons are. Built fresh on every Attach, each window life left another pair on the
+	-- frame, still shown with its last text, under whichever window -- ours or another addon's --
+	-- acquired the frame next.
+	local centerHost = statusbg.togCenterHost
+	if centerHost then
+		centerHost:Show()
+		window.statusCenterHost, window.statusCenter, window.statusRight = centerHost, statusbg.togCenterText, statusbg.togStatusRight
+		window.statusCenter:SetText("")
+		window.statusRight:SetText("")
+		window.statusRight:Show()
+	else
+		self:BuildSections(window, statusbg)
+	end
+
+	-- VISIBILITY-001 part 2: all three sections on the library's scaled GameFontNormal, which the
+	-- library re-sizes in place, so nothing re-lays here on a change. The LEFT one is AceGUI's own
+	-- FontString on a POOLED frame: it gets its base font back on release (below), or the next addon
+	-- to Create a Frame would inherit our scale -- so it is scaled again on every Attach. The bar's
+	-- 24px background is AceGUI's and stays.
+	local UI = TOGBankClassic_UI   -- absent only where a spec loads this file without UI.lua
+	if UI and UI.UIScaledFont then UI:UIScaledFont(window.statustext, "GameFontNormal") end
+
+	-- STATUSBAR-002: the window's own left-text writes go through the bar. While the bar is YIELDING
+	-- the left to the urgent propagation line (RefreshSides), a write is parked rather than painted
+	-- -- read off the banker's Requests window on 2026-09-12, "Showing 47 requests out of 1717 total"
+	-- drawn straight under the red "stay online" line: DrawContent wrote the count between two
+	-- ticks (every incoming request merge redraws), and the bar only re-hid it on the next one.
+	-- The newest parked text is what comes back when the line goes green or empty.
+	-- POOL HYGIENE (Requests.lua's rule): the Frame goes back to AceGUI's shared pool with its
+	-- instance fields intact, so the hook wraps the PRISTINE method (never a previous life's hook,
+	-- whose bar might be yielding forever) and is taken off again on release -- a dialog that never
+	-- attaches a bar must not inherit a SetStatusText that parks everything it is told.
+	local raw = window.togRawSetStatusText or window.SetStatusText
+	window.togRawSetStatusText = raw
+	sb.rawSetStatusText = raw
+	window.togStatusBar = sb
+	window.SetStatusText = function(w, text)
+		local bar = w.togStatusBar
+		if bar and bar.yielding then bar.parkedLeft = text or "" else raw(w, text) end
+	end
+	local function release(w)
+		sb:StopTicker()
+		local W = UI and UI.Widgets
+		if W and W.StopBreathing and w.statusCenterHost then W:StopBreathing(w.statusCenterHost) end
+		-- GATHER-BREATH-001: AceGUI's left text goes back to its own status background, still.
+		local leftHost = w.statusLeftHost
+		if leftHost then
+			if W and W.StopBreathing then W:StopBreathing(leftHost) end
+			if w.statustext and w.statustext.SetParent then w.statustext:SetParent(leftHost:GetParent()) end
+			leftHost:Hide()
+			w.statusLeftHost = nil
+		end
+		if w.statusCenterHost then w.statusCenterHost:Hide() end
+		if w.statusRight then w.statusRight:SetText(""); w.statusRight:Hide() end
+		w.SetStatusText, w.togStatusBar, w.togRawSetStatusText = raw, nil, nil
+		if w.statustext and w.statustext.SetFontObject then w.statustext:SetFontObject("GameFontNormal") end
+	end
+	if UI and UI.OnWindowRelease then
+		UI:OnWindowRelease(window, "statusbar", release)
+	else
+		window:SetCallback("OnRelease", release)   -- a spec that loads this file without UI.lua
+	end
+
+	-- Auto-stop the ticker whenever the window is hidden (covers both the close button and any
+	-- programmatic Hide() call). A sides-only bar (DrawSides) restarts itself when its persistent
+	-- window is shown again; the Inventory bar is redrawn by DrawContent on every open.
+	-- POOL-CHROME-001: hooked ONCE per pooled frame and reading the frame's CURRENT bar -- a hook per
+	-- Attach kept every earlier life's bar alive, redrawing its sides on each show of the frame.
+	local frame = window.frame
+	if not frame.togStatusHooked then
+		frame.togStatusHooked = true
+		frame:HookScript("OnHide", function(f)
+			local bar = f.obj and f.obj.togStatusBar
+			if bar then bar:StopTicker() end
+		end)
+		frame:HookScript("OnShow", function(f)
+			local bar = f.obj and f.obj.togStatusBar
+			if bar and bar.sidesOnly then bar:DrawSides() end
+		end)
+	end
+
+	return sb
+end
+
+--- Build the centre host, its text and the right text on a bar that has never carried them.
+function TOGBankClassic_UI_StatusBar:BuildSections(window, statusbg)
 	local centerHost = CreateFrame("Frame", nil, statusbg)
 	centerHost:SetPoint("LEFT", statusbg, "LEFT", CENTER_INSET, 0)
 	centerHost:SetPoint("RIGHT", statusbg, "RIGHT", -CENTER_INSET, 0)
 	centerHost:SetHeight(20)
 	window.statusCenterHost = centerHost
+	statusbg.togCenterHost = centerHost
 
 	local statusCenter = centerHost:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	-- STATUSBAR-003: anchored to BOTH edges of the bar, not by its centre. A centre-only anchor has
@@ -494,12 +582,13 @@ function TOGBankClassic_UI_StatusBar:Attach(window)
 	-- VISIBILITY-001 part 2: with the accessibility scale available the line takes the library's
 	-- scaled GameFontNormal INSTEAD -- an object derived from the base's own flags, so no invalid flag
 	-- reaches it either -- rather than an explicit SetFont that a SetFontObject would have to override.
-	local UI = TOGBankClassic_UI   -- absent only where a spec loads this file without UI.lua
+	local UI = TOGBankClassic_UI
 	if not (UI and UI.UIScaledFont and UI:UIScaledFont(statusCenter, "GameFontNormal")) then
 		local scFont, scSize = statusCenter:GetFont()
 		statusCenter:SetFont(scFont, scSize, "")
 	end
 	window.statusCenter = statusCenter
+	statusbg.togCenterText = statusCenter
 
 	local statusRight = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	statusRight:SetPoint("RIGHT", statusbg, "RIGHT", -7, 0)
@@ -507,47 +596,8 @@ function TOGBankClassic_UI_StatusBar:Attach(window)
 	statusRight:SetJustifyH("RIGHT")
 	statusRight:SetText("")
 	window.statusRight = statusRight
-
-	-- VISIBILITY-001 part 2: all three sections on the library's scaled GameFontNormal, which the
-	-- library re-sizes in place, so nothing re-lays here on a change. The LEFT one is AceGUI's own
-	-- FontString on a POOLED frame: it gets its base font back on release (below), or the next addon
-	-- to Create a Frame would inherit our scale. The bar's 24px background is AceGUI's and stays.
-	if UI and UI.UIScaledFont then
-		UI:UIScaledFont(statusRight, "GameFontNormal")
-		UI:UIScaledFont(window.statustext, "GameFontNormal")
-	end
-
-	-- STATUSBAR-002: the window's own left-text writes go through the bar. While the bar is YIELDING
-	-- the left to the urgent propagation line (RefreshSides), a write is parked rather than painted
-	-- -- read off the banker's Requests window on 2026-09-12, "Showing 47 requests out of 1717 total"
-	-- drawn straight under the red "stay online" line: DrawContent wrote the count between two
-	-- ticks (every incoming request merge redraws), and the bar only re-hid it on the next one.
-	-- The newest parked text is what comes back when the line goes green or empty.
-	-- POOL HYGIENE (Requests.lua's rule): the Frame goes back to AceGUI's shared pool with its
-	-- instance fields intact, so the hook wraps the PRISTINE method (never a previous life's hook,
-	-- whose bar might be yielding forever) and is taken off again on release -- a dialog that never
-	-- attaches a bar must not inherit a SetStatusText that parks everything it is told.
-	local raw = window.togRawSetStatusText or window.SetStatusText
-	window.togRawSetStatusText = raw
-	sb.rawSetStatusText = raw
-	window.togStatusBar = sb
-	window.SetStatusText = function(w, text)
-		local bar = w.togStatusBar
-		if bar and bar.yielding then bar.parkedLeft = text or "" else raw(w, text) end
-	end
-	window:SetCallback("OnRelease", function(w)
-		w.SetStatusText, w.togStatusBar, w.togRawSetStatusText = raw, nil, nil
-		if w.statustext and w.statustext.SetFontObject then w.statustext:SetFontObject("GameFontNormal") end
-	end)
-
-	-- Auto-stop the ticker whenever the window is hidden (covers both
-	-- the close button and any programmatic Hide() call).
-	window.frame:HookScript("OnHide", function() sb:StopTicker() end)
-	-- A sides-only bar (DrawSides) restarts itself when its persistent window is shown again; the
-	-- Inventory bar is redrawn by DrawContent on every open and needs nothing here.
-	window.frame:HookScript("OnShow", function() if sb.sidesOnly then sb:DrawSides() end end)
-
-	return sb
+	statusbg.togStatusRight = statusRight
+	if UI and UI.UIScaledFont then UI:UIScaledFont(statusRight, "GameFontNormal") end
 end
 
 -- Attach for a window that OWNS ITS LEFT SECTION -- every window but Inventory writes its own
@@ -713,6 +763,35 @@ function Instance:SetLeft(text)
 	self.window.statusRight:SetText("")
 	local host, W = self.window.statusCenterHost, TOGBankClassic_UI.Widgets
 	if host and W and W.StopBreathing then W:StopBreathing(host) end
+end
+
+-- GATHER-BREATH-001 (the operator 2026-09-26, of the Shopping List tab's "3 wanted -- gathering
+-- 2026-09-26 to 2026-10-03": "the date isn't breathing"): breathe the LEFT text, the library's breath
+-- (W:Breathe) as the centre's stay-online line does. The left text is AceGUI's FontString on the
+-- pooled status background, and a FontString cannot host the breath offline (BREATH-001), so it is
+-- moved onto a frame of the bar's own covering the background -- cached on the pooled background,
+-- as the centre host is (POOL-CHROME-001) -- and handed back on release. Only moved when first
+-- asked, so a window that never breathes its left text never has it moved.
+function Instance:SetLeftBreathing(on)
+	local w = self.window
+	local W = TOGBankClassic_UI and TOGBankClassic_UI.Widgets
+	local fs = w and w.statustext
+	if not (fs and W and W.Breathe) then return end
+	local host = w.statusLeftHost
+	if not host then
+		if not on then return end
+		local statusbg = fs:GetParent()
+		host = statusbg.togLeftHost
+		if not host then
+			host = CreateFrame("Frame", nil, statusbg)
+			host:SetAllPoints(statusbg)
+			statusbg.togLeftHost = host
+		end
+		host:Show()
+		fs:SetParent(host)
+		w.statusLeftHost = host
+	end
+	if on then W:Breathe(host) else W:StopBreathing(host) end
 end
 
 -- Controls whether Refresh() is a no-op.

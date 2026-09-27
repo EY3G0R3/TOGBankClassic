@@ -792,7 +792,8 @@
 			"ERR_CHAT_PLAYER_NOT_FOUND_S",
 			"FauxScrollFrame_Update",
 			"FauxScrollFrame_GetOffset",
-			"FauxScrollFrame_OnVerticalScroll"
+			"FauxScrollFrame_OnVerticalScroll",
+			"UIErrorsFrame"
 		],
 		"Lua.diagnostics.disable": [
 			"assign-type-mismatch"

@@ -21,10 +21,10 @@ local BANKER, OTHER, PEER = "Bankchar-Testrealm", "Otherbanker-Testrealm", "Othe
 
 local P2P   -- the double, fresh per example
 
-local function client(who)
-	env.standUpClient(who, {
-		{ name = BANKER, note = "gbank" }, { name = OTHER, note = "gbank" }, { name = PEER },
-	}, GUILD)
+local function client(who, extra)
+	local members = { { name = BANKER, note = "gbank" }, { name = OTHER, note = "gbank" }, { name = PEER } }
+	for _, m in ipairs(extra or {}) do members[#members + 1] = m end
+	env.standUpClient(who, members, GUILD)
 	env.stubCore()
 	TOGBankClassic_Core.SendWhisper = function() return true end
 	TOGBankClassic_Core.SendCommMessage = function() end
@@ -58,6 +58,16 @@ describe("/togbank dev trace", function()
 	it("is a dev command that needs a name", function()
 		TOGBankClassic_Chat:ChatCommand("dev trace")
 		assert.truthy(responses():find("Usage: /togbank dev trace", 1, true))
+	end)
+
+	-- TRACE-REALM-001 (the operator's trace, 2026-09-26): "trace Togcloth" typed on Old Blanchy traced
+	-- Togcloth-OldBlanchy, which does not exist, and printed the real Togcloth-Azuresong as "NO".
+	it("resolves a bare name to the banker on another connected realm, not to the player's own realm", function()
+		env.reset(); client("Otherguy", { { name = "Farbank-Farrealm", note = "gbank" } })
+		TOGBankClassic_Chat:ChatCommand("dev trace Farbank")
+		local text = responses()
+		assert.truthy(text:find("=== trace Farbank-Farrealm ===", 1, true), "the bare name kept the player's realm")
+		assert.truthy(text:find("1. banker on the roster: |cff00ff00yes|r", 1, true))
 	end)
 
 	-- INV2-RETIRE-003: this was "for a banker we hold only legacy rows for". There are no legacy rows

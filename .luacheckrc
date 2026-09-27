@@ -43,6 +43,8 @@ globals = {
 	"TOGBankClassic_UI_Mail", "TOGBankClassic_UI_Minimap", "TOGBankClassic_UI_Requests",
 	"TOGBankClassic_UI_Search", "TOGBankClassic_UI_Mailbox",
 	"TOGBankClassic_UI_RowList", "TOGBankClassic_UI_Browse", "TOGBankClassic_Usable",
+	-- GSL-MERGE-001 (v1.7.0): the shopping list's model and its tab.
+	"TOGBankClassic_CraftList", "TOGBankClassic_UI_CraftList", "TOGBankClassic_UI_CraftTracker",
 	-- SavedVariables (see .toc)
 	"TOGBankClassicDB", "TOGBankClassicInvDB", "TOGBankClassicIconDB", "TOGBankClassicOptionDB",
 	"TOGBankClassicDB_DebugLog", "TOGBankClassic_PerfMetrics", "TOGBankClassic_PerfEnabled",
@@ -129,6 +131,8 @@ read_globals = {
 	-- Items / containers
 	"C_Container", "C_Item", "C_CurrencyInfo", "Item", "GetItemInfo", "GetItemInfoInstant",
 	"GetItemQualityColor", "GetCoinTextureString", "PickupItem",
+	-- GSL-MERGE-001: profession names and icons by skill line id (UI/CraftList.lua)
+	"C_TradeSkillUI",
 	-- BANKSLOT-001: the bank/bag geometry constants. All three are ENGINE-SIDE (Constants.lua
 	-- assigns them from Constants.InventoryConstants, which the client supplies), so they cannot be
 	-- read from Blizzard's source and had to be measured on a live client: on Classic Era they are

@@ -29,8 +29,11 @@ required-dependencies:
   - deltasync
   - libaceguiwidgets
   - libdbicon-1-0
+  - libprofessiondb
 
 # External dependencies (Ace3, VersionCheck) are handled via required-dependencies above.
+# libprofessiondb ships in folder ProfessionDB (GSL-MERGE-001, v1.7.0: the shopping list's
+# recipe data; the same slug TOGProfessionMaster's .pkgmeta uses).
 # libdbicon-1-0 ships in folder LibDBIcon-1.0. LibDataBroker-1.1 stays bundled in Libs/ on
 # purpose (operator, 2026-09-25); LibStub keeps whichever copy has the higher MINOR.
 

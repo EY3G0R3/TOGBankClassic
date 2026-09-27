@@ -5,7 +5,7 @@
 ## Version: @project-version@
 
 ## SavedVariables: TOGBankClassicDB, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog, TOGBankClassic_PerfMetrics, TOGBankClassic_PerfEnabled, TOGBankClassic_DebugLogEnabled, TOGBankClassicInvDB
-## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0, ItemDB, DeltaSync, LibAceGUIWidgets, LibDBIcon-1.0
+## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0, ItemDB, DeltaSync, LibAceGUIWidgets, LibDBIcon-1.0, ProfessionDB
 ## OptionalDeps: Bagnon, TOGTools, GreenWall
 ## X-Curse-Project-ID: 1400244
 
@@ -32,6 +32,7 @@ Modules/Propagation.lua
 Modules/Item.lua
 Modules/ItemHighlight.lua
 Modules/Usable.lua
+Modules/CraftList.lua
 
 Modules/Switches.lua
 
@@ -57,5 +58,7 @@ Modules/UI/Search.lua
 Modules/UI/RowList.lua
 Modules/UI/Mailbox.lua
 Modules/UI/Browse.lua
+Modules/UI/CraftList.lua
+Modules/UI/CraftTracker.lua
 
 Core.lua

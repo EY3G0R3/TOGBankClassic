@@ -553,8 +553,7 @@ describe("STORE-007: publishing totals and receiving them", function()
 	end)
 
 	it("the rate travels with the guild settings: the ONE writer, bounds, an old client leaves it alone", function()
-		TOGBankClassic_Guild.SenderIsOfficer = function(_, n) return n == ME or n == OFFICER end
-		assert.is_false(TOGBankClassic_Guild:SetDonationRate(0))
+		TOGBankClassic_Guild.SenderIsOfficer = function(_, n) return n == ME or n == OFFICER end		assert.is_false(TOGBankClassic_Guild:SetDonationRate(0))
 		assert.is_false(TOGBankClassic_Guild:SetDonationRate("x"))
 		assert.is_false(TOGBankClassic_Guild:SetDonationRate(5000))
 		assert.is_true(TOGBankClassic_Guild:SetDonationRate(2.5))
