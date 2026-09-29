@@ -382,7 +382,15 @@ describe("STORE-002: the authority publishes", function()
 		clearSent()
 		PRICES[LINEN].market = 160
 		env.now = env.now + 5
+		-- Hold the debounce timer so the latch can be seen set, then released.
+		local queued = {}
+		TOGBankClassic_Core.ScheduleTimer = function(_, fn) queued[#queued + 1] = fn end
 		lib.handlers["LibItemDB_PriceSettingsChanged"]("LibItemDB_PriceSettingsChanged", "order", {})
+		lib.handlers["LibItemDB_PriceSettingsChanged"]("LibItemDB_PriceSettingsChanged", "order", {})
+		assert.is_true(PL.libraryTimer, "a source change did not set the debounce latch")
+		assert.equal(1, #queued, "a second change inside the debounce scheduled another publish")
+		assert.equal(0, #captured("togbank-pl"), "a source change published before the debounce")
+		queued[1]()
 		assert.is_true(#captured("togbank-pl") > 0, "a source change did not republish")
 		assert.is_nil(PL.libraryTimer, "the debounce latch was not released")
 	end)
@@ -406,6 +414,7 @@ describe("STORE-002: a member receives the list", function()
 		LibStub.libs["LibItemDB-1.0"] = nil
 		deliver(chunks[1].msg, ME)
 		assert.is_nil(PL:Held(), "installed on the first of two chunks")
+		assert.is_not_nil(PL.pending, "the first of two chunks was not held as pending")
 		assert.equal(1, PL.pending.received)
 		deliver(chunks[2].msg, ME)
 		local held = PL:Held()
@@ -753,7 +762,7 @@ end)
 
 describe("STORE-002: shipping", function()
 	it("both TOCs load Modules/PriceList.lua after Donations.lua; the two prefixes are registered", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local text = env.readFile(toc)
 			local d, p = text:find("Modules/Donations.lua", 1, true), text:find("Modules/PriceList.lua", 1, true)
 			assert.is_true(d ~= nil and p ~= nil and p > d, toc .. " does not load PriceList after Donations")

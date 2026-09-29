@@ -374,7 +374,7 @@ describe("ApplyThinBorder alpha integration", function()
 	end)
 
 	it("keeps both TOCs in the load order this depends on", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local fh = assert(io.open(toc, "rb"))
 			local src = fh:read("*a"); fh:close()
 			local options = src:find("Modules/Options.lua", 1, true)

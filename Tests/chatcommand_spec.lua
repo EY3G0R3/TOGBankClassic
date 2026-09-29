@@ -113,10 +113,11 @@ describe("CMD-001: /togbank argument plumbing", function()
 		local seen = {}
 		local original = TOGBankClassic_Chat.ChatCommand
 		assert.is_not_nil(original)
-		TOGBankClassic_Chat:ChatCommand("dev switches sendV2Wire off")
+		local NAME = "sendV2Wire"
+		TOGBankClassic_Chat:ChatCommand("dev switches " .. NAME .. " off")
 		-- sendV2Wire must be the switch name, not "sendV2Wire off".
-		assert.is_not_nil(TOGBankClassic_Switches.registry["sendV2Wire"])
-		assert.is_nil(TOGBankClassic_Switches.registry["sendV2Wire off"],
+		assert.is_not_nil(TOGBankClassic_Switches.registry[NAME])
+		assert.is_nil(TOGBankClassic_Switches.registry[NAME .. " off"],
 			"the name and its value were concatenated, so the remainder replaced the token " ..
 			"instead of being passed alongside it")
 		seen[#seen + 1] = true

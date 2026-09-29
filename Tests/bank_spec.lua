@@ -191,20 +191,30 @@ describe("Bank:Scan gating", function()
 
 	it("does not scan when guild data has not loaded", function()
 		TOGBankClassic_Guild.Info = nil
+		-- Every field the guild table had, before and after: a scan that rebuilt Info (or wrote
+		-- anything else onto the table) adds a key.
+		local function fields()
+			local t = {}
+			for k in pairs(TOGBankClassic_Guild) do t[#t + 1] = tostring(k) end
+			table.sort(t)
+			return t
+		end
+		local before = fields()
 		Bank:Scan()
-		assert.is_nil(TOGBankClassic_Guild.Info)
+		assert.same(before, fields(), "the scan wrote to the guild table without guild data loaded")
 	end)
 
+	-- The fixture's alts table starts empty, so "no record was written" is the whole table staying empty.
 	it("does not scan when the player is not a banker", function()
 		TOGBankClassic_Guild.GetBanks = function() return { "SomeoneElse-Testrealm" } end
 		Bank:Scan()
-		assert.is_nil(TOGBankClassic_Guild.Info.alts["Bankchar-Testrealm"])
+		assert.same({}, TOGBankClassic_Guild.Info.alts, "a non-banker's scan wrote a record")
 	end)
 
 	it("does not scan when bank scanning is disabled for this character", function()
 		TOGBankClassic_Options.GetBankEnabled = function() return false end
 		Bank:Scan()
-		assert.is_nil(TOGBankClassic_Guild.Info.alts["Bankchar-Testrealm"])
+		assert.same({}, TOGBankClassic_Guild.Info.alts, "a scan with scanning disabled wrote a record")
 	end)
 
 	-- INV2-RETIRE-003: the scan writes the V2 store and leaves the record's sub-tables as

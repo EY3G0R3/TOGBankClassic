@@ -108,7 +108,12 @@ read_globals = {
 	-- Localized button captions used by the StaticPopupDialogs entries (Modules/UI/Requests.lua)
 	"YES", "CANCEL",
 	-- Frames / UI
-	"CreateFrame", "UIParent", "GameTooltip", "GameFontNormal", "GameFontNormalSmall", "GameFontHighlightSmall", "BackdropTemplateMixin",
+	-- TooltipDataProcessor: the item-tooltip hook on clients without OnTooltipSetItem (WoW Forever, FOREVER-002).
+	-- RegionalUniqueNamesEnabled: Forever-only; names carry no realm there (FOREVER-NAME-002).
+	"RegionalUniqueNamesEnabled",
+	-- C_Bank: Forever's bank-tab API, the character bank's containers there (FOREVER-BANK-001).
+	"C_Bank",
+	"CreateFrame", "UIParent", "GameTooltip", "TooltipDataProcessor", "GameFontNormal", "GameFontNormalSmall", "GameFontHighlightSmall", "BackdropTemplateMixin",
 	-- Modules/UI.lua reads these four; all verified in the Era tree (WorldFrame is the engine's
 	-- root frame; UISpecialFrames in UIParentPanelManager.lua; GameTooltip_SetDefaultAnchor in
 	-- Blizzard_GameTooltip/Classic/GameTooltip.lua; DressUpItemLink in Classic/DressUpFrames.lua).
@@ -118,7 +123,8 @@ read_globals = {
 	-- registering a dialog means WRITING a named field into it. Listing it in both made the
 	-- read-only entry win, and every one of Requests.lua's four registrations reported W122
 	-- "setting read-only field" -- the exact warning the `globals` entry exists to prevent.
-	"StaticPopup_Show", "SlashCmdList", "BankFrame",
+	"StaticPopup_Show", "SlashCmdList", "BankFrame", "BankPanel",
+	"ContainerFrameCombinedBags", "ContainerFrameContainer",
 	"DEFAULT_CHAT_FRAME", "NUM_CHAT_WINDOWS", "GetChatWindowInfo",
 	"ChatFrame1", "ChatFrame_AddMessageEventFilter", "ChatFrame_RemoveAllMessageGroups",
 	"ChatFrame_RemoveAllChannels", "ChatEdit_InsertLink", "FCF_SetWindowName",

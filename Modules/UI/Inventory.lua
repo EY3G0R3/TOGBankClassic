@@ -359,7 +359,8 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 	-- tabs take minutes to settle and paint current bankers red.
 	local function IsStale(norm)
 		local state = TOGBankClassic_Guild:GetAltStaleness(norm)
-		return state ~= "current"
+		-- PENDING-STATE-001: our own freshly-read bank waiting to publish is not stale.
+		return state ~= "current" and state ~= "pending"
 	end
 
 	local tabs = {}
@@ -405,6 +406,12 @@ function TOGBankClassic_UI_Inventory:DrawContent()
 		if state == "refused" then   -- TAB-STATE-003: the one sentence, Browse's
 			GameTooltip:AddLine("|cffa0a0a0Newer Copy Unreachable|r")
 			GameTooltip:AddLine(TOGBankClassic_UI_Browse.RefusedText(offeredBy, peerVersion), 1, 1, 1, true)
+			GameTooltip:Show()
+			return
+		end
+		if state == "pending" then   -- PENDING-STATE-001: stored, publish held; not outdated
+			GameTooltip:AddLine("|cffffff00Not Published Yet|r")
+			GameTooltip:AddLine("Your bank was read and saved. It goes out to the guild once guildmates answer, or after a short wait if nobody does.", 1, 1, 1, true)
 			GameTooltip:Show()
 			return
 		end

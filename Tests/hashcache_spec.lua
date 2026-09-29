@@ -59,12 +59,19 @@ describe("Guild:NoteAdvertisedHashes -- the one writer", function()
 			assert.is_false(Guild:NoteAdvertisedHashes(nil, V2(10)))
 			assert.is_false(Guild:NoteAdvertisedHashes(OTHER, nil))
 			assert.is_false(Guild:NoteAdvertisedHashes(OTHER, "junk"))
-			assert.is_nil(Guild.latestBankerHashes and Guild.latestBankerHashes[OTHER])
+			-- Then one it accepts: the cache holds exactly that one, so none of the refusals wrote.
+			assert.is_true(Guild:NoteAdvertisedHashes(OTHER, V2(10)))
+			local held = {}
+			for k in pairs(Guild.latestBankerHashes) do held[#held + 1] = k end
+			assert.same({ OTHER }, held, "a refused summary reached the cache")
 		end)
 
 		it("refuses an alt that is not a current banker (stale ex-banker entries in a peer's SV)", function()
 			assert.is_false(Guild:NoteAdvertisedHashes("Exbanker-Testrealm", V2(10)))
-			assert.is_nil(Guild.latestBankerHashes and Guild.latestBankerHashes["Exbanker-Testrealm"])
+			assert.is_true(Guild:NoteAdvertisedHashes(OTHER, V2(10)))
+			local held = {}
+			for k in pairs(Guild.latestBankerHashes) do held[#held + 1] = k end
+			assert.same({ OTHER }, held, "the ex-banker's entry reached the cache")
 		end)
 
 		-- Rule 1. The report: "for the banker that is on, it should probably NEVER be red".
@@ -680,8 +687,7 @@ describe("the writers, through the real receive paths", function()
 			assert.equal(2, reencoded)
 			assert.equal(1, cleared)
 			assert.equal(C(20, 2), TOGBankClassic_Guild.Info.alts.b.inventoryHashV2)
-			assert.equal(5, TOGBankClassic_Guild.Info.alts.e.inventoryHash, "a revision-1 hash was touched")
-			assert.is_nil(TOGBankClassic_Guild.Info.alts.e.inventoryHashV2)
+			assert.same({ inventoryHash = 5 }, TOGBankClassic_Guild.Info.alts.e, "a revision-1-only record was touched")
 		end)
 	end)
 end)

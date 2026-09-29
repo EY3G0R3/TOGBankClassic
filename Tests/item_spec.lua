@@ -57,14 +57,18 @@ end)
 
 describe("LINK-AUDIT-001 step 1: the static item databases are gone", function()
 	it("neither TOC loads Modules/Static, and loading Item.lua defines no classifier", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local text = env.readFile(toc)
 			assert.truthy(text:find("## Interface:", 1, true), toc .. " could not be read (readFile answers \"\" for a missing file)")
 			assert.is_nil(text:find("Modules/Static/", 1, true), toc .. " still loads a static item database")
 		end
 		env.reset(); env.stubOutput(); env.loadFile("Modules/Item.lua")
-		assert.is_nil(TOGBankClassic_Item.ItemClassNeedsLink, "ItemClassNeedsLink is back")
-		assert.is_nil(TOGBankClassic_Item.GetClass, "GetClass is back")
+		-- Enumerated rather than named: ItemClassNeedsLink / GetClass under any spelling is a classifier.
+		local classifiers = {}
+		for k in pairs(TOGBankClassic_Item) do
+			if type(k) == "string" and k:find("Class", 1, true) then classifiers[#classifiers + 1] = k end
+		end
+		assert.same({}, classifiers, "Item.lua defines an item classifier again")
 		assert.is_nil(env.readFile("Modules/Item.lua"):find("TOGBankClassic_ItemDB", 1, true), "Item.lua reads the static database again")
 	end)
 end)

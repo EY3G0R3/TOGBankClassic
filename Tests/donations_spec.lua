@@ -318,11 +318,11 @@ describe("STORE-007: the writer's own ledger", function()
 
 	it("carries the old vendor-valued scores of THIS character into its opening balance, once", function()
 		TOGBankClassic_Guild.Info.alts[ME] = { ledger = { Alice = 12.345, Bob = 0, Carl = "x" } }
+		assert.is_not_nil(TOGBankClassic_Guild.Info.alts[ME].ledger)
 		assert.is_true(D:MigrateOwnLedger())
 		local L = TOGBankClassic_Guild.Info.donationLedger[W]
-		assert.equal(12.35, L.opening.Alice)
-		assert.is_nil(L.opening.Bob, "a zero score was carried")
-		assert.is_nil(L.opening.Carl)
+		-- Only Alice carries: Bob's zero and Carl's junk are not scores.
+		assert.same({ Alice = 12.35 }, L.opening, "a zero or non-numeric score was carried")
 		assert.is_nil(TOGBankClassic_Guild.Info.alts[ME].ledger, "the old table was left behind to be counted twice")
 		assert.is_false(D:MigrateOwnLedger(), "a second migration found something to move")
 		assert.equal(12.35, D:PointsOf("Alice"))
@@ -423,8 +423,7 @@ describe("STORE-007: publishing totals and receiving them", function()
 		D:Credit({ donor = "Carol", kind = "money", copper = 100 })
 		assert.equal(2, #L.entries)
 		assert.same({ Alice = 25500, Bob = 10000, Carol = 100 }, D:LedgerValues(L))
-		assert.equal(25500, L.openingValue.Alice)
-		assert.is_nil(L.openingValue.Bob, "a credit still in the log was rolled")
+		assert.same({ Alice = 25500 }, L.openingValue, "a credit still in the log was rolled")
 		assert.same({ Alice = 25500, Bob = 10000, Carol = 100 }, D:Values())
 		-- The wire: values beside totals; a member sums the banker's values with nothing of its own;
 		-- a pre-VALUE sender's bucket is valueless, never zero-valued.
@@ -468,8 +467,9 @@ describe("STORE-007: publishing totals and receiving them", function()
 		deliver(bucket(99, { Alice = 500 }, OFFICER), ME)
 		assert.is_nil(info.donationPoints[OFFICER], "a banker spoke for the officer's bucket")
 		-- A plain member's publication is refused.
-		deliver(bucket(99, { Alice = 500 }, "Someone-Testrealm"), "Someone-Testrealm")
-		assert.is_nil(info.donationPoints["Someone-Testrealm"])
+		local SOMEONE = "Someone-Testrealm"
+		deliver(bucket(99, { Alice = 500 }, SOMEONE), SOMEONE)
+		assert.is_nil(info.donationPoints[SOMEONE], "a plain member's publication was taken")
 		-- An officer's own is accepted.
 		deliver(bucket(1, { Alice = -1 }, OFFICER), OFFICER)
 		assert.same({ Alice = -1 }, info.donationPoints[OFFICER].totals)
@@ -689,7 +689,7 @@ describe("STORE-007: a donation received at the mailbox is credited once, valued
 		wow.mail[1] = { sender = "Alice", subject = "gift", money = 10000, cod = 0 }
 		TOGBankClassic_UI_Mail.ScoreMail = false
 		TOGBankClassic_Mail:Open(1)
-		assert.is_nil(TOGBankClassic_Guild.Info.donationLedger)
+		assert.same({}, D:Entries(), "an unticked 'Add to score' credited the mail")
 		assert.equal("takeMoney", wow.mailActions[1].action, "the money was not taken")
 		TOGBankClassic_UI_Mail.ScoreMail = true
 		-- The inbox header spells a same-realm sender BARE. This example used to hand Open the
@@ -699,11 +699,11 @@ describe("STORE-007: a donation received at the mailbox is credited once, valued
 		TOGBankClassic_Guild.IsBank = function(_, n) return n == ME or n == "Otherbanker-Testrealm" end
 		wow.mail[2] = { sender = "Otherbanker", subject = "transfer", money = 10000, cod = 0 }
 		TOGBankClassic_Mail:Open(2)
-		assert.is_nil(TOGBankClassic_Guild.Info.donationLedger, "a transfer from another bank character was credited as a donation")
+		assert.same({}, D:Entries(), "a transfer from another bank character was credited as a donation")
 		-- A mail of ours that bounced back is not a gift.
 		wow.mail[3] = { sender = "Alice", subject = "returned", money = 10000, cod = 0, wasReturned = true }
 		TOGBankClassic_Mail:Open(3)
-		assert.is_nil(TOGBankClassic_Guild.Info.donationLedger, "a returned mail was credited")
+		assert.same({}, D:Entries(), "a returned mail was credited")
 		-- And not on a character that is not a bank character at all.
 		TOGBankClassic_Guild.IsBank = function() return false end
 		assert.is_false(TOGBankClassic_Mail:IsDonation("Alice", false, true))
@@ -761,7 +761,11 @@ describe("STORE-007: a donation received at the mailbox is credited once, valued
 		TOGBankClassic_Mail:Scan()
 		assert.equal(1, opened, "with the Mailbox window's auto-open off, the popup did not return")
 		-- The retired setting is read by nothing: no Options accessor for it remains.
-		assert.is_nil(TOGBankClassic_Options.GetDonationEnabled)
+		local accessors = {}
+		for k in pairs(TOGBankClassic_Options) do
+			if type(k) == "string" and k:find("DonationEnabled", 1, true) then accessors[#accessors + 1] = k end
+		end
+		assert.same({}, accessors, "an Options accessor for the retired donations setting is back")
 		assert.is_nil(env.readFile("Modules/Options.lua"):find('["donations"] = {', 1, true), "the 'Enable donations' box is back")
 	end)
 

@@ -47,8 +47,9 @@ describe("Switches registry", function()
 				name .. " is registered again -- it was retired by INV2-RETIRE-003 when the V2 " ..
 				"store became the only storage format, and nothing reads it")
 		end
-		assert.is_nil(Switches.registry.legacyKeyedReceive,
-			"legacyKeyedReceive is registered again -- N6 deleted it and the keyed receive branches " ..
+		local KEYED = "legacyKeyedReceive"
+		assert.is_nil(Switches.registry[KEYED],
+			KEYED .. " is registered again -- N6 deleted it and the keyed receive branches " ..
 			"on 2026-09-14; a keyed form is dropped at the door with no switch to reopen it")
 	end)
 
@@ -174,9 +175,11 @@ describe("Switches:GetAll", function()
 	-- removed on purpose, on its own schedule; what replaces it is the "nothing retired" example
 	-- above, which refuses the switch coming back, and chat_spec's door-drop of the keyed forms.
 	it("carries no grace-period switch: the keyed forms are dropped without one", function()
-		assert.is_nil(Switches.registry.legacyKeyedReceive)
-		assert.is_false(Switches:IsEnabled("legacyKeyedReceive"), "an unregistered name reads on")
-		assert.is_false(Switches:Set("legacyKeyedReceive", true), "an unregistered name could be set")
+		-- One name for the registry lookup and both calls, so they cannot disagree about the spelling.
+		local KEYED = "legacyKeyedReceive"
+		assert.is_nil(Switches.registry[KEYED])
+		assert.is_false(Switches:IsEnabled(KEYED), "an unregistered name reads on")
+		assert.is_false(Switches:Set(KEYED, true), "an unregistered name could be set")
 	end)
 
 	-- Distinguishes "the user set this" from "this is inherited", which is the first question

@@ -103,8 +103,10 @@ describe("HASH-CANON-010 / step 3b: the provider decides 'do they hold my versio
 		hold(BANKER, C(T, 0x20), T)
 		local a = ask(C(T, 0x20))
 		assert.is_table(a["inv-nochange"], "the same version was re-sent in full")
-		assert.is_nil(a["inv-snapshot"])
-		assert.is_nil(a["inv-chain"])
+		-- The ONLY answer is the no-change: no snapshot and no chain alongside it.
+		local kinds = {}
+		for k in pairs(a) do kinds[#kinds + 1] = k end
+		assert.same({ "inv-nochange" }, kinds, "a data leg went out beside the no-change")
 		assert.equal(BANKER, a["inv-nochange"].alt)
 	end)
 

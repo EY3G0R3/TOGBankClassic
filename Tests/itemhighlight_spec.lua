@@ -280,6 +280,133 @@ describe("ItemHighlight: clearing overlays on anonymous buttons (finding 10)", f
 	end)
 end)
 
+-- FOREVER-HIGHLIGHT-001: WoW Forever's bank is the tabbed BankPanel, a pool of buttons each knowing
+-- its tab (a container id) and slot -- no BankFrameItemN, no BANK_CONTAINER. The panel here carries
+-- exactly the surface the addon reads (IsVisible, EnumerateValidItems, GenerateItemSlotsForSelectedTab,
+-- and each button's GetBankTabID / GetContainerSlotID), per Forever's BankFrameTemplates.lua.
+describe("FOREVER-HIGHLIGHT-001: the bank tabs on WoW Forever", function()
+	local TAB = 6
+	local CLUB, LINEN = 4564, 2589
+	local panel, buttons, contents
+
+	local function bankButton(slot)
+		local b = slotButton(nil)
+		b.GetBankTabID = function() return TAB end
+		b.GetContainerSlotID = function() return slot end
+		return b
+	end
+
+	before_each(function()
+		env.reset()
+		load()
+		H.overlays = {}
+		_G.BANK_CONTAINER = nil
+		contents = { [1] = CLUB, [2] = LINEN }
+		buttons = { bankButton(1), bankButton(2), bankButton(3) }
+		panel = {
+			IsVisible = function() return true end,
+			EnumerateValidItems = function()
+				local i = 0
+				return function() i = i + 1; return buttons[i] end
+			end,
+			GenerateItemSlotsForSelectedTab = function() end,
+		}
+		_G.BankPanel = panel
+		_G.C_Container.GetContainerItemInfo = function(bag, slot)
+			if bag ~= TAB or not contents[slot] then return nil end
+			return { itemID = contents[slot], hyperlink = "|Hitem:" .. contents[slot] .. "|h[x]|h" }
+		end
+		H.neededItems = {}
+		H.neededItemIDs = { [TOGBankClassic_Inventory_Record.requestKey(CLUB, nil)] = { id = CLUB, qty = 1 } }
+	end)
+	after_each(function() _G.BankPanel = nil end)
+
+	it("dims every item the orders do not need, by the button's own tab and slot, and leaves empty slots alone", function()
+		H:UpdateBankHighlighting()
+		assert.equal(1, buttons[1].icon.r, "the ordered item was dimmed")
+		assert.equal(0.2, buttons[2].icon.r, "an item no order needs was left bright")
+		assert.equal(1, buttons[3].icon.r, "an empty slot was dimmed")
+	end)
+
+	it("does nothing while the bank panel is hidden, and never walks the Classic vault", function()
+		panel.IsVisible = function() return false end
+		local asked = {}
+		local read = _G.C_Container.GetContainerItemInfo
+		_G.C_Container.GetContainerItemInfo = function(bag, slot) asked[#asked + 1] = bag; return read(bag, slot) end
+		H:UpdateBankHighlighting()
+		assert.same({}, asked, "a hidden bank panel was read, or the Classic -1 vault was walked on Forever")
+		assert.equal(1, buttons[2].icon.r)
+	end)
+
+	it("re-highlights after a tab switch, which re-inits the pooled buttons with no bag event", function()
+		H:UpdateBankHighlighting()
+		local refreshed = 0
+		H.RefreshHighlighting = function() refreshed = refreshed + 1 end
+		H.enabled = true
+		panel:GenerateItemSlotsForSelectedTab()
+		assert.equal(1, refreshed, "a tab switch did not refresh the highlight")
+		H.enabled = false
+		panel:GenerateItemSlotsForSelectedTab()
+		assert.equal(1, refreshed, "a tab switch refreshed with highlighting off")
+	end)
+end)
+
+-- FOREVER-HIGHLIGHT-002: Forever's bags are the modern container frames (Combined Backpack and the
+-- per-bag frames), which enumerate pooled buttons that know their bag and slot. With no order open
+-- every item in them must grey out (the operator's screenshot, 2026-09-29: ticked, nothing greyed).
+describe("FOREVER-HIGHLIGHT-002: the Combined Backpack on WoW Forever", function()
+	local contents, buttons
+
+	local function bagButton(bag, slot)
+		local b = slotButton(nil)
+		b.GetBagID = function() return bag end
+		b.GetID = function() return slot end
+		return b
+	end
+
+	local function frameOf(list, shown)
+		return {
+			IsShown = function() return shown end,
+			EnumerateValidItems = function() return ipairs(list) end,
+		}
+	end
+
+	before_each(function()
+		env.reset()
+		load()
+		H.overlays = {}
+		contents = { ["0:1"] = 4564, ["0:2"] = 2589, ["1:1"] = 2589 }
+		buttons = { bagButton(0, 1), bagButton(0, 2), bagButton(0, 3), bagButton(1, 1) }
+		_G.C_Container.GetContainerItemInfo = function(bag, slot)
+			local id = contents[bag .. ":" .. slot]
+			return id and { itemID = id, hyperlink = "|Hitem:" .. id .. "|h[x]|h" } or nil
+		end
+		H.neededItems, H.neededItemIDs = {}, {}
+	end)
+	after_each(function() _G.ContainerFrameCombinedBags = nil; _G.ContainerFrameContainer = nil end)
+
+	it("greys every item in the Combined Backpack when no order needs anything, and leaves empty slots alone", function()
+		_G.ContainerFrameCombinedBags = frameOf(buttons, true)
+		H:UpdateDefaultBagHighlighting()
+		assert.equal(0.2, buttons[1].icon.r); assert.equal(0.2, buttons[2].icon.r); assert.equal(0.2, buttons[4].icon.r)
+		assert.equal(1, buttons[3].icon.r, "an empty slot was greyed")
+	end)
+
+	it("keeps an ordered item bright, and reads the per-bag frames as well as the combined one", function()
+		H.neededItemIDs = { [TOGBankClassic_Inventory_Record.requestKey(4564, nil)] = { id = 4564, qty = 1 } }
+		_G.ContainerFrameCombinedBags = frameOf({}, false)
+		_G.ContainerFrameContainer = { ContainerFrames = { frameOf({ buttons[1], buttons[2] }, true), frameOf({ buttons[4] }, false) } }
+		H:UpdateDefaultBagHighlighting()
+		assert.equal(1, buttons[1].icon.r, "the ordered item was greyed")
+		assert.equal(0.2, buttons[2].icon.r, "an unneeded item in an open bag frame stayed bright")
+		assert.equal(1, buttons[4].icon.r, "a closed bag frame was greyed")
+	end)
+
+	it("on a client without the modern frames (Classic Era, TBC, MoP) it answers false and the Classic path runs", function()
+		assert.is_false(H:UpdateModernBagHighlighting())
+	end)
+end)
+
 -- BANKSLOT-001, the cross-file half.
 --
 -- Four shipped files walk the bank's bag slots: ItemHighlight.lua (highlighting), Bank.lua (the
@@ -308,14 +435,20 @@ describe("BANKSLOT-001: one spelling of the bank-bag range", function()
 	-- ANTI-VACUOUS, and it earns its place: this is a source scan, and a pattern that matches
 	-- nothing passes every assertion built on it while reading no code at all. If this fails, the
 	-- scan below is broken and its green result means nothing.
+	-- FOREVER-BANK-001: Constants.BankContainers (the vault then BankBagRange on Classic, the character
+	-- bank tabs on Forever) is the same one spelling one level up -- it calls BankBagRange itself --
+	-- and Bank.lua and Mail.lua now walk it. Either helper satisfies the guard; a site with neither
+	-- has gone back to deriving the range.
 	it("finds the shared bank-bag range in each of the four files", function()
 		for _, path in ipairs(SITES) do
 			local src = env.readFile(path)
 			assert.truthy(#src > 0, path .. " read as empty -- the scan cannot see it")
-			assert.truthy(src:find("BankBagRange", 1, true),
-				path .. " does not call BankBagRange, so either it stopped walking bank bags or it " ..
-				"derives the range itself again")
+			assert.truthy(src:find("BankBagRange", 1, true) or src:find("BankContainers", 1, true),
+				path .. " calls neither BankBagRange nor BankContainers, so either it stopped walking " ..
+				"bank bags or it derives the range itself again")
 		end
+		assert.truthy(env.readFile("Modules/Constants.lua"):find("local first, last = BankBagRange()", 1, true),
+			"Constants.BankContainers no longer builds its Classic list from BankBagRange")
 	end)
 
 	-- The arithmetic lives in exactly one file. A second `NUM_BANKBAGSLOTS` read anywhere else is a

@@ -7,7 +7,7 @@ TOGBankClassic_Bank = {}
 
 -- BANKSLOT-001: the one spelling of the container geometry, read at call time (see Constants.lua).
 local CarriedBagRange = TOGBankClassic_Constants.CarriedBagRange
-local BankBagRange    = TOGBankClassic_Constants.BankBagRange
+local BankContainers  = TOGBankClassic_Constants.BankContainers   -- FOREVER-BANK-001
 
 local function HasUpdated()
 	return TOGBankClassic_Bank.hasUpdated
@@ -1112,9 +1112,12 @@ function TOGBankClassic_Bank:FindItemsInBank(itemName, itemID, suffixID)
 
 	-- The vault itself is a single container id, then the bank bags -- the same geometry
 	-- Bank:Scan walks, read from the client (BANKSLOT-001) rather than hardcoded.
-	MatchContainers(results, BANK_CONTAINER, BANK_CONTAINER, targetID, targetName, targetSuffix)
-	local firstBankBag, lastBankBag = BankBagRange()
-	MatchContainers(results, firstBankBag, lastBankBag, targetID, targetName, targetSuffix)
+	-- FOREVER-BANK-001: through the one list (Constants.BankContainers) -- on Classic the same ids in
+	-- the same order as before; on Forever the character bank tabs, where BANK_CONTAINER is nil and
+	-- this used to raise "'for' initial value must be a number".
+	for _, bag in ipairs(BankContainers()) do
+		MatchContainers(results, bag, bag, targetID, targetName, targetSuffix)
+	end
 	return results
 end
 

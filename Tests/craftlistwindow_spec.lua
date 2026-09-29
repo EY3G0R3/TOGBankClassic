@@ -559,7 +559,7 @@ describe("GSL-MERGE-001 step 4: the Reagent Tracker", function()
 		CL:SetItem(TURNIN, 2)
 		assert.equal(4, #Tracker.rowsShown, "a list write did not reach the open tracker")
 		stockBank({ [FORTITUDE_ITEM] = 2, [STEELBLOOM] = 5, [TURNIN] = 2 })
-		assert.is_falsy(Browse.isOpen)
+		assert.is_true(not (Browse.Window and Browse.Window.frame:IsShown()), "the Guild Bank window is open")
 		-- The "data landed" signal every sync path raises (BROWSE-008), on its real debounce. The
 		-- legacy window is not open either: the tracker must take the signal on its own.
 		env.loadFile("Modules/UI/Inventory.lua")

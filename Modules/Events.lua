@@ -73,7 +73,14 @@ function TOGBankClassic_Events:RegisterEvents()
 	-- Filter out "No player named X is currently playing" and "Player not found" errors from chat
 	-- These are detected and handled by CHAT_MSG_SYSTEM event handler
 	-- Use fast plain-text check before pattern matching for performance
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function(_, _, message)
+	-- FOREVER-EVENTS-001: the bare ChatFrame_AddMessageEventFilter is, on Era and Forever alike, a
+	-- deprecation alias of ChatFrameUtil.AddMessageEventFilter (Blizzard_DeprecatedChatInfo/
+	-- Deprecated_ChatFrame.lua:51) that exists only while `loadDeprecationFallbacks` is on. On the
+	-- operator's Forever client it was nil, this line raised, and RegisterEvents stopped here: no
+	-- mailbox hooks, no share timer, eventsRegistered never set. Call the real function; the alias
+	-- is only the fallback for a client without ChatFrameUtil.
+	local addMessageFilter = (ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter) or ChatFrame_AddMessageEventFilter
+	addMessageFilter("CHAT_MSG_SYSTEM", function(_, _, message)
 		if message then
 			-- Check for Classic Era pattern
 			if message:find("No player named ", 1, true) then
@@ -594,11 +601,16 @@ function TOGBankClassic_Events:GUILD_RANKS_UPDATE(_)
 end
 
 function TOGBankClassic_Events:BANKFRAME_OPENED(_)
+	-- FOREVER-BANK-002: the bank-tab scan (Inventory/Scan.lua ScanBankTabs) reads the tabs only while
+	-- this is set -- the tab system has no "vault unreachable" answer to lean on the way the Classic
+	-- BANK_CONTAINER check does. Set on open, cleared after the close's scan below.
+	TOGBankClassic_Bank.atBank = true
 	TOGBankClassic_Bank:OnUpdateStart()
 end
 
 function TOGBankClassic_Events:BANKFRAME_CLOSED(_)
 	TOGBankClassic_Bank:OnUpdateStop()
+	TOGBankClassic_Bank.atBank = false   -- FOREVER-BANK-002: after the close's own scan
 	-- BANKFILL-001 self-audit: the bank-collect state machine has a "return the surplus" phase that
 	-- can only be left by finding the pulled stack in bags. Walking away from the bank with that
 	-- phase armed -- and then using, mailing or banking the item -- left it armed forever: every

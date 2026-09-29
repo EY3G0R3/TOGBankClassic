@@ -57,6 +57,72 @@ describe("Guild:NormalizeName", function()
 	end)
 end)
 
+-- FOREVER-NAME-001: on WoW Forever UnitName("player") returns (first name, surname) and the guild
+-- roster lists "First Surname". Using only the first value made the player "First-Realm", which
+-- matched no roster key, so a banker was not a banker to itself and the Bank settings never
+-- appeared. FOREVER-NAME-002: Forever runs regional unique names (RegionalUniqueNamesEnabled, a
+-- Forever-only function) -- the full name IS the identity, with no realm, which is how the guild
+-- roster, Forever's AceDB and LibGuildRoster (whose roster TOGBank's memberRoster is keyed by) all
+-- spell it. The fakes below are the Forever client (the switch on, the engine separator present)
+-- and the other flavours (no switch at all).
+describe("Guild names on WoW Forever (FOREVER-NAME-001, FOREVER-NAME-002)", function()
+	local Guild, savedConstants, savedUnitName, savedBank, savedRegional
+	before_each(function()
+		env.reset(); Guild = loadGuild()
+		savedConstants, savedUnitName, savedBank = _G.Constants, _G.UnitName, _G.TOGBankClassic_Bank
+		savedRegional = _G.RegionalUniqueNamesEnabled
+		_G.TOGBankClassic_Bank = {}
+	end)
+	after_each(function()
+		_G.Constants, _G.UnitName, _G.TOGBankClassic_Bank = savedConstants, savedUnitName, savedBank
+		_G.RegionalUniqueNamesEnabled = savedRegional
+	end)
+
+	local function forever()
+		_G.Constants = { CharacterNameSeparatorConsts = { CHARACTERNAME_SURNAME_SEPARATOR = " " } }
+		_G.RegionalUniqueNamesEnabled = function() return true end
+	end
+
+	it("names the player by the full name with no realm, the key LibGuildRoster's roster uses", function()
+		forever()
+		_G.UnitName = function() return "Quebeldorf", "Flamehammer" end
+		Guild.memberRoster = { ["Quebeldorf Flamehammer"] = { name = "Quebeldorf Flamehammer", isBank = true } }
+		assert.equal("Quebeldorf Flamehammer", Guild:GetPlayer())
+		assert.equal("Quebeldorf Flamehammer", Guild:GetNormalizedPlayer())
+		assert.is_true(Guild:IsBank(Guild:GetPlayer()))
+	end)
+
+	it("keeps a bare name bare and drops a realm suffix, as the library does", function()
+		forever()
+		assert.equal("Quebeldorf Flamehammer", Guild:NormalizeName("Quebeldorf Flamehammer"))
+		assert.equal("Quebeldorf Flamehammer", Guild:NormalizeName("Quebeldorf Flamehammer-Testrealm"))
+		assert.equal("Quebeldorf Flamehammer", Guild:NormalizeName("  Quebeldorf Flamehammer - Otherrealm "))
+		assert.equal("Unknown", Guild:NormalizeName("unknown"))
+	end)
+
+	it("does not double a surname the first slot already carries", function()
+		forever()
+		_G.UnitName = function() return "Quebeldorf Flamehammer", "Flamehammer" end
+		assert.equal("Quebeldorf Flamehammer", Guild:GetPlayer())
+	end)
+
+	it("changes nothing on a client without regional names (Era/TBC/MoP): the second value is a realm", function()
+		_G.RegionalUniqueNamesEnabled = nil
+		_G.Constants = { CharacterNameSeparatorConsts = { CHARACTERNAME_SURNAME_SEPARATOR = " " } }
+		_G.UnitName = function() return "Bankchar", "Flamehammer" end
+		assert.equal("Bankchar-Testrealm", Guild:GetPlayer())
+		assert.equal("Bob-Testrealm", Guild:NormalizeName("Bob"))
+		assert.equal("Bob-Otherrealm", Guild:NormalizeName("Bob-Otherrealm"))
+	end)
+
+	it("treats a switch that answers false like no switch", function()
+		_G.RegionalUniqueNamesEnabled = function() return false end
+		_G.UnitName = function() return "Bankchar", "Flamehammer" end
+		assert.equal("Bankchar-Testrealm", Guild:GetPlayer())
+		assert.equal("Bob-Otherrealm", Guild:NormalizeName("Bob-Otherrealm"))
+	end)
+end)
+
 -- Peer review F2 / delta release step 5: "units still owed" had seven spellings across Mail,
 -- ItemHighlight and the Requests window. This is the one; the sites call it.
 -- BANKERS-FILTER-001: what a banker stores is whatever the officer wrote in the guild note beside

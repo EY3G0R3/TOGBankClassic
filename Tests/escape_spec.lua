@@ -83,7 +83,12 @@ describe("ESC-001: Escape and the Guild Bank window", function()
 	end)
 
 	it("is on by default: nothing stored reads as 'Escape closes'", function()
-		assert.is_nil(TOGBankClassic_Options.db.global.closeOnEscape)
+		-- Nothing Escape-related is stored at all, found by scanning rather than by naming the key.
+		local stored = {}
+		for k in pairs(TOGBankClassic_Options.db.global) do
+			if type(k) == "string" and k:lower():find("escape", 1, true) then stored[#stored + 1] = k end
+		end
+		assert.same({}, stored, "an Escape setting is stored before the player chose one")
 		assert.is_true(UI:CloseOnEscape())
 	end)
 

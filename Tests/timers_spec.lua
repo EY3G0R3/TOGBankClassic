@@ -90,8 +90,12 @@ describe("TIMER-001 as a class, across every scheduling module", function()
 				"omitted -- they are named here so the same omission cannot recur silently)")
 		end
 
-		assert.is_nil(seen["Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua"],
-			"vendored libraries are deliberately out of scope -- see the comment on shippedModules")
+		-- Any vendored library, found by prefix rather than by naming one file.
+		local libs = {}
+		for path in pairs(seen) do
+			if path:find("^Libs/") then libs[#libs + 1] = path end
+		end
+		assert.same({}, libs, "vendored libraries are deliberately out of scope -- see the comment on shippedModules")
 	end)
 
 	-- The assertion is on the ASSIGNMENT, not on `:Cancel()`. See the header: the cancel site is

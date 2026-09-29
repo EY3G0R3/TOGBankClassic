@@ -118,6 +118,7 @@ describe("MULTIFILL-001: the row's Fulfill icon stacks one requester's orders on
 		Mail:OnSendMail(ALICE)
 		assert.is_nil(p.extraItems)
 		-- MAIL_SEND_SUCCESS: every order credited against ITS id, with its own quantity.
+		assert.is_not_nil(Mail.pendingSend, "precondition: the send is pending")
 		Mail:ApplyPendingSend()
 		assert.same({ "r1", "r2", "r3", "r4" }, ids(credited))
 		for _, c in ipairs(credited) do
@@ -482,6 +483,7 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			env.harnessBag(0, 16, contents)
 			order("r1", ALICE, LINEN, 8, 1000)
 			assert.is_true((click()))
+			assert.is_not_nil(Mail.batchState.plan.splitStack.onto, "a split with room to merge planned no merge")
 			local ok, msg = click()
 			assert.is_true(ok, "a merging split was refused for want of a free slot: " .. tostring(msg))
 			env.advance(0.1)
@@ -494,6 +496,7 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 10 } })
 			order("r1", ALICE, LINEN, 8, 1000)
 			assert.is_true((click()))
+			assert.is_not_nil(Mail.batchState, "precondition: the batch is running")
 			wow.bags[0][1].count = 4   -- the banker used one
 			local ok, msg = click()
 			assert.is_false(ok); assert.truthy(msg:find("bags changed", 1, true), msg)

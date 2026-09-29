@@ -343,12 +343,16 @@ describe("Database snapshots (deleted)", function()
 		DB = loadDatabase()
 	end)
 
+	-- Enumerated, not named: a snapshot helper under ANY name is the surface coming back.
 	it("exposes no snapshot surface", function()
-		assert.is_nil(DB.SaveSnapshot)
-		assert.is_nil(DB.GetSnapshot)
-		assert.is_nil(DB.ValidateSnapshot)
-		assert.is_nil(DB.DeepCopy)
-		assert.is_nil(TOGBankClassic_Constants.PROTOCOL.DELTA_SNAPSHOT_MAX_AGE)
+		local found = {}
+		for k in pairs(DB) do
+			if type(k) == "string" and (k:find("Snapshot", 1, true) or k:find("DeepCopy", 1, true)) then found[#found + 1] = k end
+		end
+		for k in pairs(TOGBankClassic_Constants.PROTOCOL) do
+			if type(k) == "string" and k:find("SNAPSHOT", 1, true) then found[#found + 1] = "PROTOCOL." .. k end
+		end
+		assert.same({}, found, "the deleted snapshot surface is back")
 	end)
 end)
 
@@ -436,10 +440,12 @@ describe("Database:Load strips the legacy item rows (INV2-RETIRE-003)", function
 	it("strips every guild record in the faction scope at Init time, not only the one being loaded", function()
 		DB.db.faction["Current"] = { name = "Current", alts = { ["Bob-Testrealm"] = legacyRecord() } }
 		DB.db.faction["Former"]  = { name = "Former",  alts = { ["Old-Testrealm"] = legacyRecord() } }
+		local former = DB.db.faction["Former"].alts["Old-Testrealm"]
+		assert.is_not_nil(former.items, "precondition: the legacy record has rows")
+		assert.is_not_nil(former.bank.items)
 		assert.equal(8, DB:StripAllLegacyItemRows())
-		assert.is_nil(DB.db.faction["Former"].alts["Old-Testrealm"].items,
-			"a guild Load never runs for kept its legacy rows")
-		assert.is_nil(DB.db.faction["Former"].alts["Old-Testrealm"].bank.items)
+		assert.is_nil(former.items, "a guild Load never runs for kept its legacy rows")
+		assert.is_nil(former.bank.items)
 		assert.equal(0, DB:StripAllLegacyItemRows())
 		DB.db = nil
 		assert.equal(0, DB:StripAllLegacyItemRows(), "no database is zero rows, not an error")

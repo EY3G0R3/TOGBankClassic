@@ -1,5 +1,248 @@
 # TOGBankClassic Changelog
 
+## [v1.7.1] (2026-09-29) - WoW Forever
+
+TOG Bank on WoW Forever, the fourth supported client. Checked in a Forever client by the operator on
+2026-09-29: *"everything seems to be working right now ... the display and everything is working, no
+more lua errors"*, and order highlighting *"works now as intended"*. What that session could NOT
+check, for lack of other guild members running the addon: sync between players on Forever, and
+other players' names arriving over addon messages there.
+
+### New Features
+
+- **FOREVER-001: WoW Forever is a supported flavour** (`TOGBankClassic_Camelot.toc`, new, Interface
+  16001; the operator, 2026-09-28: *"i have wow forever now, we need to onboard to make that a
+  supporeted version with it's own .toc and updating the .ps1"*). The fourth TOC is the Era TOC with
+  one deliberate difference: LibDBIcon-1.0 is not published for Forever (it is absent from the
+  `_classic_beta_` install; TOGProfessionMaster's Forever TOC embeds it for the same reason), so a
+  hard `## Dependencies:` entry would stop the whole addon loading there. That TOC lists it under
+  `## OptionalDeps:` instead and loads a bundled `Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua` (MINOR 56,
+  the copy TOGProfessionMaster ships) straight after LibDataBroker; LibStub keeps the higher MINOR
+  if a standalone copy is also installed. TEMPORARY: once LibDBIcon-1.0 ships for Forever, make it a
+  dependency again and delete the bundled copy. Every other dependency (Ace3, AceCommQueue-1.0,
+  VersionCheck-1.0, DeltaSync, LibAceGUIWidgets, GuildRoster, ItemDB, ProfessionDB) already
+  declares Interface 16001 or ships a `_Camelot` TOC. **Not yet checked against the Forever client
+  API** (`F:\Blizzard API Docs\wow-ui-source-forever`) and not yet run in a Forever client.
+- **FOREVER-HIGHLIGHT-001: order highlighting reaches the WoW Forever bank.** `Modules/ItemHighlight.lua`
+  looked only for Classic's `BankFrameItemN` buttons and the `-1` vault, neither of which Forever has.
+  Its bank is the tabbed `BankPanel` (Forever `Camelot/BankFrame.xml:85`), which draws one tab from a
+  pool of buttons. `UpdateBankPanelHighlighting` walks `BankPanel:EnumerateValidItems()` and reads each
+  button's own `GetBankTabID()` / `GetContainerSlotID()`. A tab switch re-inits the pooled buttons with
+  no bag event (`GenerateItemSlotsForSelectedTab`), so that is hooked to refresh, and the refresh clears
+  every button it dimmed first. The dim-or-clear step for one slot is now one helper,
+  `HighlightBankButton`, which the Classic vault and bank-bag loops also use. Spec'd in
+  `Tests/itemhighlight_spec.lua`. **Not run in a Forever client.** The icon key on Forever's bank item
+  button (`icon` or `Icon`) was not found in the Forever source; both are tried, and a button with
+  neither is left undimmed rather than raising.
+- **FOREVER-HIGHLIGHT-002: the bags too.** The operator, on Forever with no orders open, ticked
+  "Highlight needed items" and nothing in the Combined Backpack greyed. That is not a Forever
+  difference in what is needed: every item should grey. The bag path looked up Classic's
+  `ContainerFrameNItemM` buttons, and Forever's modern container frames (`ContainerFrameCombinedBags`,
+  and `ContainerFrameContainer.ContainerFrames` for split bags) draw pooled buttons with no such names.
+  `UpdateModernBagHighlighting` walks each shown frame's `EnumerateValidItems()` and reads each button's
+  `GetBagID()` / `GetID()` (Forever `Mainline/ContainerFrame.lua:560`, `:566-567`). It answers false on
+  a client without those frames, so Classic Era, TBC and MoP keep the Classic path unchanged.
+  **Not run in a Forever client.** Whether Forever's own button refresh resets the grey before our
+  next refresh is not known.
+
+### Bug Fixes
+
+- **FOREVER-002: TOG Bank raised a Lua error at login on WoW Forever** (the operator, from game,
+  2026-09-28: `bad argument #2 to '?' (Usage: local success = self:HookScript(scriptTypeName, script
+  [, bindingType]))` at `Modules/TooltipBankerInfo.lua:117`). The Forever client's GameTooltip has no
+  `OnTooltipSetItem` script -- nothing in `wow-ui-source-forever` references it -- and builds item
+  tooltips through `TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, ...)`
+  (`Blizzard_SharedXMLGame/Tooltip/TooltipDataHandler.lua:199`). `TooltipBankerInfo:Initialize` now tries
+  the old hook under `pcall` first, so every client that has it keeps exactly its behaviour, and falls
+  back to the item post-call, limited to GameTooltip (the only tooltip the old hook reached). `pcall`
+  rather than `HasScript`: the offline harness does not claim the client's `HasScript` semantics.
+  `Tests/tooltipbankerinfo_spec.lua`: a client refusing the script gets the post-call, which renders
+  through `AppendTo` on GameTooltip and leaves any other tooltip alone. `TooltipDataProcessor` added to
+  `.luacheckrc` and `.luarc.json`. Not yet re-run in a Forever client.
+- **FOREVER-NAME-001: a banker on WoW Forever was not a banker to itself, so the Bank settings page
+  never appeared** (the operator, 2026-09-28: *"i set myself as gbank, and show up on the roster ...
+  but i don't have the options in the settings menu to make myself visible as a banker"*; `/togbank`
+  listed them as `Quebeldorf Flamehammer`). Forever characters have a first name and a surname: the
+  roster lists `First Surname`, and `UnitName("player")` returns the two as separate values (Blizzard's
+  `Blizzard_FrameXMLUtil/Camelot/NameUtil.lua:4-12` joins them with
+  `Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR`). `Guild:GetPlayer` used only
+  the first, so the player was `Quebeldorf-Realm`, matched no roster key, `IsBank(self)` was false and
+  `Options:InitGuild` never registered the page. The same wrong name reached every self-check (own
+  scans, own requests, own-echo guards). New `Guild:GetPlayerFullName()` (`Modules/Guild.lua`) appends
+  the second value as a surname only on a client that has that separator constant and only when it is
+  not the realm (the documented second return is `unitServer`, and `UnitPopupUtils.lua:126` shows the
+  slot can carry either); it is used by `GetPlayer` and the request dialog's fallback
+  (`Modules/UI/Search.lua`). Era, TBC and MoP have no such constant and keep the bare name.
+  `Tests/guild_spec.lua`: four examples (surname joined and IsBank true; realm in the second slot
+  ignored; a surname already in the first slot not doubled; no constant, second value ignored).
+  `Constants` added to `.luarc.json`. Not yet re-run in a Forever client, and other players' names
+  arriving over addon messages on Forever have not been checked for the same split.
+- **PENDING-STATE-001: a banker's own bank read "Old format" between its scan and its first
+  publish** (the operator, 2026-09-29, on a brand-new Forever banker's Bankers tab: *"there is only
+  one format of data on newer clients, right?"*). `Guild:GetAltStaleness` returns `"v1"` for any held
+  copy with no canon, and a canon is minted only AT publish -- so a banker whose scan was stored but
+  held by the MULTIPC-001 publish gate (the guild had not answered yet; the status bar's countdown)
+  was labelled old-format. New state `"pending"`: our OWN bank, no canon, and `Bank.deferred` set.
+  The Bankers tab says "Not published yet" in yellow (`Modules/UI/Browse.lua` STATE_TEXT /
+  STATE_COLOR / STATE_RANK), the Inventory tab is not painted red and its tooltip explains the hold
+  (`Modules/UI/Inventory.lua`). A later version named by another PC still wins ("behind"), and
+  anyone else's canon-less copy is still "v1". Every flavour, not only Forever -- any new banker in
+  a quiet guild saw it. `Tests/tabstaleness_spec.lua`: one example walking pending -> behind wins ->
+  another banker stays v1 -> published is current.
+- **FOREVER-BANK-001: on WoW Forever every bank-character scan raised an error, so a banker's items
+  never reached the Guild Bank window** (the operator, 2026-09-29, with BANK debug on: `OnUpdateStop
+  called` / `Calling Scan()` and nothing after, then `Inventory/Scan.lua:77: bad argument #1 to
+  'GetContainerNumFreeSlots'` from `Bank:Scan` on closing the bank). Forever has no `BANK_CONTAINER`,
+  `NUM_BANKGENERIC_SLOTS` or `NUM_BANKBAGSLOTS` -- the Forever tree defines only `NUM_BAG_SLOTS` --
+  because its bank is the modern bank-TAB system: each purchased character tab is a container whose
+  id comes from `C_Bank.FetchPurchasedBankTabData(Enum.BankType.Character)`, which is how Forever's own
+  `Blizzard_UIPanels_Game/Camelot/BankFrame.lua:91-98` counts them. New
+  `TOGBankClassic_Constants.BankContainers()` (`Modules/Constants.lua`) is the one list of the
+  character's bank containers: on Classic Era, TBC and MoP the vault then the bank-bag range, the
+  same ids in the same order as before; on Forever the character tabs. The ACCOUNT (warband) bank
+  is left out on purpose -- it is shared by every character on the account, so each alt would
+  publish the same items as its own. `Inventory/Scan.lua` walks the tabs when there is no
+  `BANK_CONTAINER` (`Scan:ScanBankTabs`; the Classic branch is untouched) and treats tabs reporting no
+  slots as "bank out of sight", keeping the stored bank rather than emptying it (INV2-VAULT-001).
+  `Bank:FindItemsInBank` and `Mail:FindEmptyBankSlot` walk the same list; on Forever both would have
+  raised the same way. `Tests/scan_spec.lua`: four examples (both character tabs read and the account
+  bank not; no tab or no slots returns nil; a whole ScanAll completes; the Classic list is the vault
+  then BankBagRange). `Tests/itemhighlight_spec.lua`'s BANKSLOT-001 one-spelling guard accepts
+  `BankContainers` as the shared spelling and pins that it is built on `BankBagRange`. `C_Bank` added
+  to `.luacheckrc` and `.luarc.json`. FOREVER-BANK-002 (the same session's self-audit): the tabs are
+  read only while the bank window is open (`Bank.atBank`, set on `BANKFRAME_OPENED`, cleared after the
+  close's own scan in `Modules/Events.lua`), because a tab reporting slots is not proof its contents
+  are readable away from the bank, and an empty read there would have replaced the stored bank on the
+  next vendor or mailbox scan; `scan_spec` pins nil away from the bank. Item highlighting on
+  Forever's bank followed as FOREVER-HIGHLIGHT-001, above.
+- **FOREVER-NAME-002: on WoW Forever a character's name carries no realm, and TOG Bank added one**
+  (the operator, 2026-09-28: *"could it have something to do with the fact that Forever doesn't
+  have <name><realm> it has <first name><last name>"*). Forever runs regional unique names
+  (`RegionalUniqueNamesEnabled()`, which exists only in the Forever tree): the full name is the
+  identity, with no realm. The guild roster returns it bare, Forever's own AceDB keys the character
+  as `First Surname` (`AceDB-3.0.lua:263-278` in the `_classic_beta_` install), and LibGuildRoster
+  keys its roster by the bare full name (`LibGuildRoster-1.0.lua:1264`, `:1345`, `:1659`). TOGBank's
+  `memberRoster` is keyed by the library's names (`Guild:_RefreshFromRosterLib`), but every lookup
+  went through `NormalizeName`, which appended `-<realm>`, so on Forever every direct roster lookup
+  (IsBank's fast path, IsInCurrentGuildRoster, IsPlayerOnline's fallback, whisper targets) missed.
+  On a regional-names client `NormalizeName` now keeps a bare name bare and drops a realm suffix,
+  and `GetPlayer` is the bare full name -- the library's rule, in the library's words. The earlier
+  FOREVER-NAME-001 surname join is now gated on the same switch instead of on the separator
+  constant. Era, TBC and MoP have no `RegionalUniqueNamesEnabled` and take the old path unchanged.
+  `Tests/guild_spec.lua`: five examples (the player is the bare full name and IsBank finds them under
+  the library's key; a realm suffix is dropped; a surname already in the first slot is not doubled;
+  no switch, or a switch answering false, changes nothing). The zero-data banker record saved under
+  the old `-ClassicBetaPvE` key is removed by the existing stale-stub cleanup at the next roster
+  rebuild. Not yet re-run in a Forever client.
+- **FOREVER-EVENTS-001: on WoW Forever the addon stopped half-way through setting up its event
+  handling, so a banker's bags were never stored and the Guild Bank window stayed empty** (the
+  operator, 2026-09-28: bags full, Guild Bank window "0 items across 0 banks", no debug output with
+  BANK and uncategorized debug on). `Events:RegisterEvents` called the bare
+  `ChatFrame_AddMessageEventFilter`, which on Era and Forever alike is only a deprecation alias of
+  `ChatFrameUtil.AddMessageEventFilter` (`Blizzard_DeprecatedChatInfo/Deprecated_ChatFrame.lua:51`,
+  loaded only while the `loadDeprecationFallbacks` CVar is on). On the operator's Forever client it
+  was nil, so the call raised and everything after it was skipped: the mailbox hooks, the share
+  timer and `eventsRegistered`. It now calls `ChatFrameUtil.AddMessageEventFilter`, the same
+  function the alias points at on Era, TBC and MoP (`ChatFrameFilters.lua:195` in each tree), with
+  the alias only as the fallback. A sweep of every global Forever defines only in its
+  `Blizzard_Deprecated*` files found two more, both in the debug chat tab (`Modules/Output.lua`):
+  `ChatFrame_RemoveAllMessageGroups` and `ChatFrame_RemoveAllChannels`, now called as the chat
+  frame's own `ChatFrameMixin` methods, present on all four clients. `Tests/events_spec.lua`:
+  RegisterEvents finishes with the alias absent and installs the offline-whisper filter through
+  `ChatFrameUtil`. Not yet re-run in a Forever client; whether this is the whole reason the scan
+  stored nothing there is NOT established -- the empty debug output is consistent with it, but the
+  scan's own path was not shown to raise.
+
+### Internal
+
+- **FOREVER-001: the lockstep specs cover the Forever TOC.** `Tests/wiring_spec.lua` pins it as the
+  Era TOC with only its Interface line and the LibDBIcon difference changed, so a module added to
+  one TOC only still fails; the per-TOC "is this module loaded" examples in `browse`, `item`,
+  `logapi`, `mailbox`, `pricelist`, `sendresult`, `togtoolsbridge`, `usable`, `windowalpha` and
+  `guildroster_integration` now include it. LIBDBICON-DEP-001's "not vendored" example keeps the
+  three other TOCs and names Forever as the exception.
+- **`wow-version-replication.ps1` also mirrors into `_classic_beta_`**, the WoW Forever install.
+- **Harness pin `ee56a45` -> `a49127f`; `frames.setScreenSize` adopted.** `Tests/browsepersist_spec.lua`'s
+  `standUp` now makes one `frames.setScreenSize(2560, 1440)` call. It replaces three hand writes, one of
+  them into the harness's private `UIParent._fixedRect` (harness thread `36d5a55f`). The undragged-window
+  scale example is back at scale 2. Its 1.25 workaround was hiding a gap in my own hand-rolled resize,
+  not a harness defect.
+- **REVERSE-TIMEOUT-001: the reverse runner passes `--timeout=240`.** This pin brings in a 60 s
+  per-file CPU limit. In the a-end reverse slice, `browse_spec` took 97 s where it takes 9 s alone,
+  because every `frames.reset()` fully collects what earlier files left alive (~450 MB, ~150k frames
+  by then). All 696 examples passed once the limit was raised. `Tests/run_reverse.lua` now also forwards
+  flags after `<part> <parts>` to `run.lua` (`--times`), so a slice can be measured. The timeout was
+  escaping as `(error object is not a string)` with no file named; reported to WoWAPITesting on thread
+  `5f29b50a` and fixed there in `2b63397` (now a named `TIMEOUT` line and one failure). The harness's
+  new `.pkgmeta` checker (`pkgmeta.lua`) reports no FAIL here; its six WARNs are the defensive ignore
+  entries that match no tracked file today (`tmpclaude-*`, `*.bak` and the like), kept on purpose. KNOWN COST: a file that slows down in reverse order is now caught at 240 s, not 60. The
+  retained heap is still SUITE-HEAP-001's.
+- **SPEC-NIL-001: 19 weak `is_nil` assertions strengthened** in the five spec files above that
+  writ's new spec-shape check flagged (Writ inbox thread `004cbf2f`: `is_nil` on a literal key passes
+  for ever if the literal is misspelt). Removed members are now pinned by an enumerated key set
+  (`browse`, `item`); a state that is cleared is first asserted present (`mailbox`, `pricelist`,
+  `guildroster_integration`). The PriceList debounce example now holds the timer, so it sees the
+  latch set, one publish per burst, and the latch released -- it previously ran the timer
+  synchronously and never observed the latch at all. The remaining 59 sites in 22 more spec files
+  followed the same day, so writ's spec-shape check is clean repo-wide (`Tests/wowapi` excepted, per the
+  thread). The method, in order of preference: a whole-table `assert.same` where the table should hold
+  exactly something (`L.opening`, `info.alts`, the answer kinds a responder sent); an enumeration of keys
+  by pattern where a removed member must not come back under any name (snapshot helpers, the Escape and
+  store settings, the old-wire observer, vendored libraries); an `assert.is_not_nil` on the same
+  expression BEFORE the state that clears it (batch state, pending sends, the legacy rows); a local
+  constant shared by fixture and check for bracketed string keys, which the checker does not pair; and
+  the public API where one answers the question (`D:Entries()`, `Guild:IsBank`, `Switches:IsEnabled`).
+- **LAGW-PERSIST-SCALE-001 + LAGW-FORGET-001: TOGBank's window-scale stand-ins retired onto
+  LibAceGUIWidgets MINOR 35/36** (released as v0.2.7). The library's `PersistWindow` follows a live
+  scale change itself for an AceGUI Frame and re-evaluates a FUNCTION floor on each change, so
+  `UI:PersistWindow` now hands it the max(1, scale) floor rule as `floorAt(px)` and registers no
+  listener of its own; `Persist_OnScaleChanged`, the `window._togPersist` record and
+  `UI:SetPersistedAnchor` (SCALE-DOCK-001's re-dock hook, and its two callers in `Requests.lua` and
+  `Search.lua`) are deleted. The re-dock hook existed only because the old listener re-ran
+  `PersistWindow`, whose `ApplyStatus` cleared a hand-made dock; the library's listener raises size and
+  bounds only, so a docked window keeps its anchor with nothing registered. `UI:ForgetPersistedWindow`
+  is now `W:ForgetWindow` (which also restores a ClearFrame handle's own floor, SCALE-FLOOR-002).
+  An older library copy without `ForgetWindow` keeps the pre-35 hand-removal of the library record,
+  and gets NO floor (LAGW-OLD-FLOOR-001, below).
+  `browsepersist_spec`: the live-scale examples pass unchanged on the library's listener alone; the
+  released-window example checks the library's record; SCALE-DOCK-001's three examples now pin a dock
+  surviving a scale change with nothing registered, a control proving `ApplyStatus` would clear it, and
+  a released docked window left alone by the next scale change. **Not run in a client.**
+- **DS-422-001 / CLAMP-SCREEN-001: 11 offline failures fixed, all from two sibling-library releases
+  the specs had not caught up with** (the addon code was right in each case). Whole suite now
+  1939 forward and 1939 reverse, 0 failed.
+  - *DeltaSync v4.4.0 (MINOR 22) parks a broadcast whose numbers a listener cannot yet resolve and
+    replays it once the table lands.* A viewer now requests straight from the banker's replayed login
+    broadcast, with no offer and no version query, seconds after adopting the table. `fullsync_spec`
+    pinned the old offer + query round (4 examples): the first-sync example now asserts the shorter
+    path and that it goes to the author; "four cold viewers" counts the slots while they drain; "already
+    current" counts offers from the second broadcast on; SYNCED-001 reads "pending" as the broadcast
+    leaves, not two seconds later when the receipt has genuinely arrived. `congestion_spec`'s park
+    example stamped its offer `v = 99`, and a table version is a timestamp, so 99 now reads as a table
+    BEHIND the viewer's and is dropped rather than parked; it uses the viewer's own version.
+  - *LibAceGUIWidgets v0.2.7 (MINOR 36): `PersistWindow` clamps a saved window to the screen.*
+    `browsepersist_spec` saved windows 1200-2000 wide on the harness's 1024x768 screen (6 examples).
+    Its fixture now stands up a 2560x1440 screen (tunable, size AND the anchor rectangle, guarded by
+    `screenMismatch`), saved tops sit on-screen, and the undragged-window example uses a 1.25 scale:
+    that window's CENTER still resolved against a 1024x768 parent after the resize (cause not
+    established), so at 2x it hung off the left edge and the clamp correctly moved it. TOGBank's own
+    scale listeners were searched for the cause: only the standalone Requests window re-runs
+    `PersistWindow` (`Requests_OnUIScaleChanged`, `Modules/UI/Requests.lua:1345`); Browse's
+    (`Browse.lua:1181`) only re-lays its lists. A harness helper that resizes the screen coherently is
+    requested on WoWAPITesting's inbox (harness thread `36d5a55f`). Delivered and adopted later in
+    this release (the harness-pin entry above): the `_fixedRect` write and the 1.25 scale are gone.
+  - *Coverage moved, stated so nobody looks for it here:* `fullsync_spec`'s "four cold viewers" now
+    drives four requesters through DeltaSync's replay path, so the simultaneous-login-broadcast storm
+    is covered only by `congestion_spec`'s storm example.
+- **LAGW-OLD-FLOOR-001: an outdated LibAceGUIWidgets (no `ForgetWindow`, before MINOR 35) is handed no
+  window floor** (Peer Review on self-audit `587af509`, finding 2). Such a copy never gives a released
+  ClearFrame's resize handle its own floor back, and AceGUI's frame pool is shared by every addon, so
+  TOGBank's floor would have ridden a pooled frame into another addon's window. With no floor set there
+  is nothing to leak. KNOWN COST: on an outdated library TOGBank windows can be dragged below their
+  minimum; `UI:PersistWindow` prints one warning per session asking the player to update the library.
+  `browsepersist_spec`: an outdated stand-in is handed width and height only and warns once across two
+  windows; the control shows a current library still gets the floor as a function.
+
 ## [v1.7.0] (2026-09-26) - The Shopping List
 
 GuildShoppingList merged into TOG Bank (GSL-MERGE-001; the operator, 2026-09-25: *"ok, we can do the gsl

@@ -219,6 +219,8 @@ describe("REQUESTS-ACTIONS: the cancel-reason dialog", function()
 		addReq()
 		R:Open()
 		row().cells.actions.cancel:Fire("OnClick")
+		-- A banker is offered the banker presets: the positive half of the member example below.
+		assert.is_not_nil(R.CancelDropdown.list.unavailable, "the banker was not offered the banker presets")
 		button("Cancel Request"):Fire("OnClick")
 		assert.equal("Unable to cancel request.", status())
 	end)
@@ -459,6 +461,7 @@ describe("REQUESTS-ACTIONS: the Cancel Stale broom and the Fulfill Oldest envelo
 	it("releases the standalone window with the broom, the envelope and the settings overlay hidden", function()
 		load({ officer = true })
 		R:Open()
+		assert.is_not_nil(R.Window)
 		local frame = R.Window.frame
 		local cluster = frame.togRequestsCluster
 		assert.is_table(cluster.CancelStaleBtn); assert.is_table(cluster.FulfillOldestBtn)
@@ -998,6 +1001,7 @@ describe("REQUESTS-ACTIONS: the officer Settings panel", function()
 		assert.equal("100", R.SettingsMaxPctEB:GetText(), "the field was not re-filled with the clamped value")
 		commit(R.SettingsMaxPctEB, "0")
 		assert.equal(1, G.Info.settings.maxRequestPercent)
+		assert.is_not_nil(TOGBankClassic_Options.db.global.requests.maxRequestPercent, "a real change was not written to the local copy")
 		assert.equal(1, #named("BroadcastSettings"))
 		commit(R.SettingsMaxPctEB, "33.9")
 		assert.equal(33, G.Info.settings.maxRequestPercent)
@@ -1015,7 +1019,11 @@ describe("REQUESTS-ACTIONS: the officer Settings panel", function()
 	-- stand -- the widget was moved on purpose; this one refuses it coming back.
 	it("carries no Ordering open box -- that is the Shop tab's (SHOP-TAB-001)", function()
 		openSettings()
-		assert.is_nil(R.SettingsStoreOpenCB, "the shop's sign is back on the Requests panel")
+		local found = {}
+		for k in pairs(R) do
+			if type(k) == "string" and k:find("StoreOpen", 1, true) then found[#found + 1] = k end
+		end
+		assert.same({}, found, "the shop's sign is back on the Requests panel")
 		assert.equal(0, #named("SetStoreOpen"))
 	end)
 

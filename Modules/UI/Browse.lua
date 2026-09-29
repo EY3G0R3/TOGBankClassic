@@ -152,6 +152,7 @@ local STATE_TEXT = {
 	behind  = "Behind",
 	offered = "Update offered",
 	refused = "Newer copy unreachable",   -- TAB-STATE-003
+	pending = "Not published yet",        -- PENDING-STATE-001: our own bank, publish held
 	v1      = "Old format",
 	none    = "No data",
 }
@@ -160,12 +161,13 @@ local STATE_COLOR = {
 	behind  = "ffff0000",
 	offered = "ffffff00",
 	refused = "ffa0a0a0",   -- TAB-STATE-003: grey -- nothing is on its way
+	pending = "ffffff00",   -- PENDING-STATE-001: yellow -- on its way, like an offer
 	v1      = "ffff0000",
 	none    = "ff808080",
 }
 -- UX-WATERFALL-001: the sort order of the sync column -- worst first, so a header click surfaces
 -- the banks that need attention.
-local STATE_RANK = { none = 0, v1 = 1, behind = 2, refused = 3, offered = 4, current = 5 }
+local STATE_RANK = { none = 0, v1 = 1, behind = 2, refused = 3, pending = 4, offered = 4, current = 5 }
 Browse.STATE_TEXT, Browse.STATE_COLOR, Browse.STATE_RANK = STATE_TEXT, STATE_COLOR, STATE_RANK
 
 --- TAB-STATE-003: the one sentence for the grey state, read by the Bankers row hover here and the

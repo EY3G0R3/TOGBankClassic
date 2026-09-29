@@ -235,7 +235,10 @@ describe("Guild roster build via LibGuildRoster", function()
 		assert.is_true(Guild.memberRoster["Banker-Testrealm"].isOnline)
 		assert.is_false(Guild.memberRoster["Raidbank-Testrealm"].isOnline)
 		assert.is_true(Guild.onlineMembers["Banker-Testrealm"])
-		assert.is_nil(Guild.onlineMembers["Raidbank-Testrealm"])
+		-- Every roster member, by the roster's own keys: online ones are in onlineMembers, offline ones are not.
+		for name, m in pairs(Guild.memberRoster) do
+			assert.equal(m.isOnline and true or nil, Guild.onlineMembers[name], name .. " disagrees between the two caches")
+		end
 	end)
 
 	it("keeps IsBank and IsViewOnlyBank working off the rebuilt cache", function()
@@ -365,20 +368,23 @@ describe("Guild presence transition counters", function()
 	-- ignored once init completes), so a kicked banker stayed a banker until relog EVEN WHEN the
 	-- system message arrived. This drives the callback alone, no manual refresh.
 	it("a banker whose departure is announced in chat stops being a banker, with no manual refresh", function()
-		env.addGuildMember("Kicked-Testrealm", { note = "gbank", online = true })
+		-- One constant names the member in the fixture and in every assertion, so they cannot disagree.
+		local KICKED = "Kicked-Testrealm"
+		env.addGuildMember(KICKED, { note = "gbank", online = true })
 		lib = env.freshGuildRoster()
 		env.readyGuildRoster(lib)
 		Guild._rosterCallbacksBound = nil
 		assert.is_true(Guild:InitRosterCallbacks())
 		Guild:RefreshOnlineCache()
-		assert.is_true(Guild:IsBank("Kicked-Testrealm"), "precondition: not a banker before the kick")
+		assert.is_true(Guild:IsBank(KICKED), "precondition: not a banker before the kick")
+		assert.is_not_nil(Guild.memberRoster[KICKED], "precondition: not in memberRoster before the kick")
 
-		env.fireGuildRosterEvent(lib, "CHAT_MSG_SYSTEM", "Kicked has been kicked out of the guild by Bob.")
+		env.fireGuildRosterEvent(lib, "CHAT_MSG_SYSTEM", KICKED:match("^[^-]+") .. " has been kicked out of the guild by Bob.")
 
-		assert.is_nil(Guild.memberRoster["Kicked-Testrealm"], "the departed member survived in memberRoster (ROSTER-005)")
-		assert.is_false(Guild:IsBank("Kicked-Testrealm"), "a kicked banker is still a banker")
+		assert.is_nil(Guild.memberRoster[KICKED], "the departed member survived in memberRoster (ROSTER-005)")
+		assert.is_false(Guild:IsBank(KICKED), "a kicked banker is still a banker")
 		for _, name in ipairs(Guild:GetBanks() or {}) do
-			assert.is_not_equal("Kicked-Testrealm", name, "GetBanks re-derived the departed banker from a stale memberRoster")
+			assert.is_not_equal(KICKED, name, "GetBanks re-derived the departed banker from a stale memberRoster")
 		end
 	end)
 end)
@@ -399,7 +405,7 @@ describe("LibGuildRoster packaging", function()
 	-- this library, and each is silently wrong in its own way: a bad slug skips auto-install,
 	-- a bad folder name breaks load order.
 	it("declares the folder name GuildRoster in both TOCs", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local deps = read(toc):match("## Dependencies:([^\n]*)")
 			assert.is_not_nil(deps, toc .. " has no Dependencies line")
 			assert.truthy(deps:find("GuildRoster", 1, true),

@@ -1,15 +1,18 @@
-## Interface: 50504
+## Interface: 16001
 ## Title: |cffFF8000TOGBankClassic|r
 ## Notes: A simple way to aggregate, view and request items from the inventories of multiple guild bank alts.
 ## Author: Dominion-Myzrael, GrumpyPlayers (also known as <SG>Soul), Lothsahn, Huntmehuntme-Myzrael, Pimptasty
 ## Version: @project-version@
 
 ## SavedVariables: TOGBankClassicDB, TOGBankClassicIconDB, TOGBankClassicOptionDB, TOGBankClassicDB_DebugLog, TOGBankClassic_PerfMetrics, TOGBankClassic_PerfEnabled, TOGBankClassic_DebugLogEnabled, TOGBankClassicInvDB
-## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0, ItemDB, DeltaSync, LibAceGUIWidgets, LibDBIcon-1.0, ProfessionDB
-## OptionalDeps: Bagnon, TOGTools, GreenWall
+## Dependencies: Ace3, VersionCheck-1.0, GuildRoster, AceCommQueue-1.0, ItemDB, DeltaSync, LibAceGUIWidgets, ProfessionDB
+## OptionalDeps: Bagnon, TOGTools, GreenWall, LibDBIcon-1.0
 ## X-Curse-Project-ID: 1400244
 
 Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua
+# FOREVER-001, TEMPORARY, WoW Forever only: LibDBIcon-1.0 is not published for Forever yet, so this
+# TOC embeds it instead of depending on it. LibStub keeps whichever copy has the higher MINOR.
+Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua
 
 Modules/Compat.lua
 Modules/Constants.lua

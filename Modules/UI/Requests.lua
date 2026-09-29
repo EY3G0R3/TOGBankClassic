@@ -1128,11 +1128,6 @@ function TOGBankClassic_UI_Requests:DrawWindow()
 	-- status table and a SetResizeBounds/SetMinResize pair beside it.
 	local floor = minWidth()
 	TOGBankClassic_UI:PersistWindow(window, "requests", floor, 500, floor, 200)
-	-- SCALE-DOCK-001: this window docks to the Inventory window in Open(), which the status table
-	-- knows nothing about, so a scale change would otherwise re-point it away from the cluster.
-	TOGBankClassic_UI:SetPersistedAnchor(window, function(w)
-		TOGBankClassic_UI:DockBesideInventory(w, "RIGHT")
-	end)
 
 	self.Window = window
 	self.embedded = false

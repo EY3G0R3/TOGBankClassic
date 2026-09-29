@@ -1000,8 +1000,16 @@ describe("BROWSE-001: the window", function()
 		for _, w in ipairs({ "LogSearch", "LogSince", "LogUntil" }) do
 			assert.is_table(Browse[w], "no " .. w .. " on the Log strip")
 		end
-		assert.is_nil(Browse.LogFrom); assert.is_nil(Browse.LogTo)
-		assert.is_nil(Browse.LogNames); assert.is_nil(Browse.FillLogNameDropdown)
+		-- The whole Log surface, by enumeration rather than by naming the removed From/To/Names
+		-- members: a misspelt removed name would pass for ever, an unexpected new one cannot.
+		local logKeys = {}
+		for k in pairs(Browse) do
+			if type(k) == "string" and k:find("Log", 1, true) then logKeys[#logKeys + 1] = k end
+		end
+		table.sort(logKeys)
+		assert.same({ "BuildLogStrip", "DrawLog", "FilterLogRows", "LogList", "LogRows", "LogSearch",
+			"LogSince", "LogStrip", "LogUntil" }, logKeys,
+			"the Log tab grew a member beyond search, Since and Until (the From/To/Names filters are gone)")
 		assert.equal(3, #Browse.LogStrip.children, "the Log strip holds more than search, Since and Until")
 		local _, _, _, _, ly = Browse.LogList.parent:GetPoint(1)
 		assert.equal(-Browse.SIMPLE_FILTER_H, ly, "the log list does not start under the strip")
@@ -1232,7 +1240,8 @@ describe("BROWSE-001: the window", function()
 		assert.equal("REQUESTS HELP", GameTooltip:GetLines()[1].left)
 		assert.is_false(breathing(Browse.HelpIcon))
 		assert.is_true(TOGBankClassic_Options.db.global.helpSeen.browse.requests)
-		assert.is_nil(TOGBankClassic_Options.db.global.helpSeen.browse.bankers, "the Bankers tab was marked seen without ever being shown")
+		assert.same({ browse = true, requests = true }, TOGBankClassic_Options.db.global.helpSeen.browse,
+			"only the two tabs whose help was hovered are marked seen -- the Bankers tab was never shown")
 		-- Back to a seen tab: still. On to an unseen one: breathing.
 		Browse.TabGroup:SelectTab("browse")
 		assert.is_false(breathing(Browse.HelpIcon), "a seen tab's icon breathed again on return")
@@ -1400,8 +1409,9 @@ describe("BROWSE-001: the window", function()
 		-- Ctrl+right-click: a member is refused; an officer toggles through Guild:SetNotForSale.
 		_G.IsControlKeyDown = function() return true end
 		_G.CanViewOfficerNote = function() return false end
+		TOGBankClassic_Guild.setNotForSaleCalls = {}
 		Browse:OnBrowseRowClick(club, "RightButton")
-		assert.is_nil(TOGBankClassic_Guild.setNotForSaleCalls, "a non-officer changed the shop list")
+		assert.same({}, TOGBankClassic_Guild.setNotForSaleCalls, "a non-officer changed the shop list")
 		assert.truthy(Browse.statusText:find("Only an officer", 1, true))
 		_G.CanViewOfficerNote = function() return true end
 		Browse:OnBrowseRowClick(club, "RightButton")
@@ -1558,11 +1568,19 @@ describe("BROWSE-001: the window", function()
 		TOGBankClassic_Guild.shopEnabled = true
 		Browse:Open()
 		Browse.TabGroup:SelectTab("shop")
-		assert.is_nil(Browse.ShopOpenBox)
+		-- By scan, not by the old field's name: no checkbox on the Browse module, under any key.
+		local function checkBoxKeys()
+			local found = {}
+			for k, v in pairs(Browse) do
+				if type(v) == "table" and v.type == "CheckBox" then found[#found + 1] = tostring(k) end
+			end
+			return found
+		end
+		assert.same({}, checkBoxKeys(), "a checkbox is held on the Browse module")
 		_G.CanViewOfficerNote = function() return true end
 		Browse.TabGroup:SelectTab("browse")
 		Browse.TabGroup:SelectTab("shop")
-		assert.is_nil(Browse.ShopOpenBox, "the Ordering open box came back to the strip")
+		assert.same({}, checkBoxKeys(), "the Ordering open box came back to the strip")
 		for _, w in ipairs(Browse.ShopStrip.children) do
 			local label = w.type == "CheckBox" and w.text and w.text.GetText and w.text:GetText() or ""
 			assert.is_not_equal("Ordering open", label, "the Ordering open box came back to the strip")
@@ -1946,7 +1964,7 @@ describe("BROWSE-001: the window", function()
 		-- the whole time the Guild Bank window opened on its own had no Escape at all (ESC-001) --
 		-- the text was there, only reachable once another window had built the frame. escape_spec
 		-- presses Escape on the real window instead.
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local src = env.readFile(toc)
 			local search, rowlist, browse = src:find("Modules/UI/Search.lua", 1, true), src:find("Modules/UI/RowList.lua", 1, true), src:find("Modules/UI/Browse.lua", 1, true)
 			assert.is_not_nil(rowlist, toc .. " does not load RowList.lua")
@@ -2513,7 +2531,13 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 		-- not the sort -- and the list keeps the clicked order.
 		R:DrawRows()
 		assert.equal(R.currentTab, R._cachedTabFilter)
-		assert.is_nil(R._cachedSortColumn, "the tab-filter cache is keyed on a sort the list owns")
+		local cacheKeys = {}
+		for k in pairs(R) do
+			if type(k) == "string" and k:find("^_cached") then cacheKeys[#cacheKeys + 1] = k end
+		end
+		table.sort(cacheKeys)
+		assert.same({ "_cachedTabFilter", "_cachedTabFiltered", "_cachedTotal" }, cacheKeys,
+			"the tab-filter cache is keyed on a sort the list owns")
 		assert.equal(3, R.List.rows[1].togEntry.req.quantity, "a redraw lost the clicked sort")
 		-- Leaving the tab and coming back hands the list the body's sort, not the default.
 		Browse.TabGroup:SelectTab("browse")

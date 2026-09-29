@@ -284,50 +284,19 @@ end
 --- normal-size floor: `minW x max(1, scale)`, handed to the library as `minW x max(1, scale) / scale`
 --- so its own multiply lands there. KNOWN COST: under 100% a window cannot be dragged smaller than at
 --- 100%; the text shrinks, the minimum does not.
---- And the library re-applies a floor on a scale change only through a resize HANDLE, which an AceGUI
---- Frame has none of (finding filed to LibAceGUIWidgets 2026-09-17), so the bounds set at draw time
---- stayed at the old scale until the next reload: a window at the 100% minimum kept it at 200% with
---- twice the text inside. Every window now re-runs this on the scale signal (a persistent record on
---- the window is the listener's owner; the listener is module-level and reads it off the argument).
-local function libraryFloor(W, px)
-	local s = (W and W.GetScale and tonumber(W:GetScale())) or 1
-	if s > 0 and s < 1 then return px / s end
-	return px
-end
-
-local function Persist_OnScaleChanged(_, _, rec)
-	local UI = TOGBankClassic_UI
-	if not (UI and UI.PersistWindow and rec and rec.window) then return end
-	UI:PersistWindow(rec.window, rec.key, rec.defW, rec.defH, rec.minW, rec.minH)
-	-- SCALE-DOCK-001: and then give the window its own position back. See SetPersistedAnchor.
-	if rec.reanchor then rec.reanchor(rec.window) end
-end
-
---- SCALE-DOCK-001 (Peer Review handed this back on inbox thread 593238c3 as the residual of
---- SCALE-FLOOR-001: "ApplyStatus runs ClearAllPoints unconditionally on every scale change, so any
---- persisted window that TOGBank itself anchors would be yanked to the centre of its parent the
---- first time the player moves the slider"). It is real, and it is two of the five: the Search and
---- Requests windows DOCK to the Inventory window's edge by hand in their Open(), and a dock is a
---- position that the AceGUI status table knows nothing about. LibAceGUIWidgets says the hazard
---- outright at LibAceGUIWidgets-1.0.lua:760 -- "PersistWindow owns an AceGUI window's position
---- through its status table, and two owners of one position would fight". These two windows have
---- both owners, and on a scale change the status table wins: ApplyStatus clears the dock anchor and
---- re-points the window to its saved top/left, or to CENTER when it has never been dragged. The
---- Inventory window stays put, so the cluster comes apart under the player's cursor and stays apart
---- until the window is closed and reopened.
----
---- The fix is to let the second owner speak last rather than to take it away: a window that anchors
---- itself declares HOW, once, and the scale listener re-runs that immediately after re-applying the
---- status table. `ForgetPersistedWindow` clears the whole record, so the callback cannot outlive the
---- window into AceGUI's shared pool -- which is the defect this one is a sibling of.
----@param window table AceGUI Frame, already through PersistWindow
----@param fn fun(window: table)|nil re-apply this window's own position; nil removes it
----@return boolean registered false when the window was never persisted
-function TOGBankClassic_UI:SetPersistedAnchor(window, fn)
-	local rec = window and window._togPersist
-	if not rec then return false end
-	rec.reanchor = fn
-	return true
+--- LAGW-PERSIST-SCALE-001: the library follows a live scale change itself, for an AceGUI Frame too
+--- (LibAceGUIWidgets MINOR 31+, re-evaluating a FUNCTION floor on every change), so the rule is handed
+--- over as a function of the scale and TOGBank registers no listener of its own. The stand-in that did
+--- (Persist_OnScaleChanged, re-running this whole call on the scale signal) is gone, and with it
+--- SCALE-DOCK-001's re-dock hook: re-running PersistWindow re-applied the status table, whose
+--- ApplyStatus cleared a hand-made dock; the library's listener only raises the size and the bounds,
+--- so a docked window keeps its anchor with nothing registered.
+local function floorAt(px)
+	return function(scale)
+		scale = tonumber(scale) or 1
+		if scale > 0 and scale < 1 then return px / scale end
+		return px
+	end
 end
 
 --- The one spelling of "sit against the Inventory window's edge", which the Requests, Search and
@@ -350,44 +319,25 @@ function TOGBankClassic_UI:DockBesideInventory(window, side)
 	return true
 end
 
---- SCALE-FLOOR-001, found by this session's own audit: DROP the scale registration before an AceGUI
---- window goes back to the pool. AceGUI's frame pool is LIBRARY-WIDE -- `Requests:ReleaseWindow`
---- says so itself -- so a released Frame can be handed to another addon. The record above lives on
---- the widget, so without this the listener survives the release and the next scale change re-applies
---- TOGBank's saved status table and geometry to a frame that is no longer ours: it would resize and
---- move that addon's window, and hand it OUR saved table, so its drags would write into TOGBank's
---- SavedVariables and ours into its. Call this immediately before `widget:Release()`.
+--- SCALE-FLOOR-001: DROP the scale registration before an AceGUI window goes back to the pool. AceGUI's
+--- frame pool is LIBRARY-WIDE -- `Requests:ReleaseWindow` says so itself -- so a released Frame can be
+--- handed to another addon, and a listener that survived the release would raise that addon's window to
+--- TOGBank's floor on the next scale change. Call this immediately before `widget:Release()`.
+--- LAGW-FORGET-001: the library's own `W:ForgetWindow` (MINOR 35) does all of it -- drops its record and
+--- scale listener and hands a ClearFrame's resize handle back with its pre-persist floor (SCALE-FLOOR-002:
+--- restored, never Destroyed, so the pooled frame keeps its grips). It also runs on Release by itself;
+--- calling it first is harmless. An older library copy has no ForgetWindow: its record's listener is
+--- removed through the public OnScaleChanged(owner, nil), as TOGBank did by hand before MINOR 35.
 ---@param window table|nil AceGUI Frame
 ---@return boolean forgotten false when the window was never persisted
 function TOGBankClassic_UI:ForgetPersistedWindow(window)
-	local rec = window and window._togPersist
-	if not rec then return false end
-	self:OnUIScaleChanged(rec, nil)   -- the library removes a listener when fn is nil
-	-- SCALE-FLOOR-002: LibAceGUIWidgets' resize handle registers its OWN scale listener, which raises
-	-- the frame to handle.minW/minH (LibAceGUIWidgets-Resize.lua Resize_OnScaleChanged), and our
-	-- PersistWindow raised those to TOGBank's floor. The handle lives on the FRAME and goes into the
-	-- pool with it, so the NEXT owner of the frame would be held to our floor. Its bounds go back to
-	-- what they were before we touched them (recorded in PersistWindow). NOT Destroy: the handle is
-	-- made once, in the widget's constructor (ClearFrame's MakeResizable), so a destroyed one leaves
-	-- the pooled frame with no grips for whoever acquires it next -- found by this session's audit.
+	if type(window) ~= "table" then return false end
 	local W = self.Widgets
-	local handle = W and W.GetResizeHandle and W:GetResizeHandle(window)
-	if handle and handle._togOrigBounds then
-		local o = handle._togOrigBounds
-		handle:SetBounds(o[1], o[2], handle.maxW, handle.maxH)
-		handle._togOrigBounds = nil
-	end
-	-- And the library's PersistWindow record (`widget._lagwPersist`, LibAceGUIWidgets-1.0.lua:996),
-	-- whose Persist_OnScaleChanged raises the frame to the floor too. The library has no call to
-	-- forget a persisted window (asked of it on its inbox); until it does, the record's listener is
-	-- removed through the public OnScaleChanged(owner, nil). Delete this when that call lands.
-	local lagw = window._lagwPersist
-	if lagw then
-		self:OnUIScaleChanged(lagw, nil)
-		window._lagwPersist = nil
-	end
-	rec.window = nil
-	window._togPersist = nil
+	if W and type(W.ForgetWindow) == "function" then return W:ForgetWindow(window) == true end
+	local lagw = rawget(window, "_lagwPersist")
+	if not lagw then return false end
+	self:OnUIScaleChanged(lagw, nil)
+	window._lagwPersist = nil
 	return true
 end
 
@@ -405,19 +355,24 @@ function TOGBankClassic_UI:PersistWindow(window, key, defW, defH, minW, minH)
 	local W = self.Widgets
 	if W and W.PersistWindow then
 		if positions then positions[key] = positions[key] or {} end
-		local rec = window._togPersist
-		if not rec then
-			rec = { window = window }
-			window._togPersist = rec
+		---@type function|nil, function|nil
+		local fw, fh = floorAt(minW), floorAt(minH)
+		-- LAGW-OLD-FLOOR-001 (Peer Review on self-audit 587af509): a library older than MINOR 35 has no
+		-- ForgetWindow, so nothing hands a ClearFrame's resize handle back with its own floor on Release,
+		-- and AceGUI's pool is shared -- TOGBank's floor would ride the frame into ANOTHER addon's window.
+		-- So that copy gets no floor at all: nothing set, nothing to leak. KNOWN COST: on an outdated
+		-- library TOGBank windows can be dragged below their minimum; the player is told once to update.
+		if type(W.ForgetWindow) ~= "function" then
+			fw, fh = nil, nil
+			if not self._warnedOldWidgets then
+				self._warnedOldWidgets = true
+				if TOGBankClassic_Output then
+					TOGBankClassic_Output:Warn("LibAceGUIWidgets-1.0 is out of date; update it so TOG Bank windows keep their minimum size.")
+				end
+			end
 		end
-		rec.key, rec.defW, rec.defH, rec.minW, rec.minH = key, defW, defH, minW, minH
-		-- SCALE-FLOOR-002: the handle's own bounds, before the library's PersistWindow re-points them
-		-- to ours, so ForgetPersistedWindow can hand the pooled frame back as it found it.
-		local handle = W.GetResizeHandle and W:GetResizeHandle(window)
-		if handle and not handle._togOrigBounds then handle._togOrigBounds = { handle.minW, handle.minH } end
-		self:OnUIScaleChanged(rec, Persist_OnScaleChanged)
 		return W:PersistWindow(window, positions and positions[key] or nil,
-			{ width = defW, height = defH, minWidth = libraryFloor(W, minW), minHeight = libraryFloor(W, minH) })
+			{ width = defW, height = defH, minWidth = fw, minHeight = fh })
 	end
 	if positions then
 		positions[key] = positions[key] or { width = defW, height = defH }

@@ -56,6 +56,8 @@ describe("env_fleet: F.new resets every state field the fixture owns", function(
 	end)
 
 	it("after the reset a fleet is empty and the bus is quiet", function()
+		F.active = {}
+		assert.is_not_nil(F.active)
 		F.new({})
 		assert.same({}, F.clients)
 		assert.same({}, F.byName)

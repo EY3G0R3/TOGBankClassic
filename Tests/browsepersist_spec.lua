@@ -25,7 +25,19 @@ describe("BROWSE-006: the Guild Bank window persists its position, size and tab"
 		-- SUITE-HEAP-001: an example that stands up a second world releases the first world's window.
 		if Browse and Browse.Window then env.releaseWindow(Browse.Window); Browse.Window = nil end
 		env.reset()
-		require("env.frames").reset()
+		local frames = require("env.frames")
+		frames.reset()
+		-- CLAMP-SCREEN-001: LibAceGUIWidgets' PersistWindow shrinks a saved window to fit the screen
+		-- (MINOR 36, shipped in v0.2.7), and the harness screen is 1024x768 -- smaller than the saved
+		-- sizes these examples persist (1200, 1568, 2000 wide). A 2560x1440 screen holds them, so the
+		-- examples still test persistence and the floor, not the library's screen clamp.
+		-- setScreenSize moves GetScreenWidth/Height, UIParent's rect and WorldFrame together (harness
+		-- b47f112, delivered on thread 36d5a55f); setting the tunables alone left anchors resolving
+		-- against a 1024x768 parent inside a 2560x1440 screen, and the clamp moved the window.
+		frames.setScreenSize(2560, 1440)
+		assert(frames.screenMismatch() == nil, "the harness screen disagrees with itself")
+		assert(UIParent:GetRight() == frames.screenWidth and UIParent:GetTop() == frames.screenHeight,
+			"UIParent's rectangle did not follow the screen size")
 		env.stubOutput()
 		require("env.libs").load("LibAceGUIWidgets-1.0")
 		env.loadFile("Modules/Constants.lua")
@@ -136,12 +148,12 @@ describe("BROWSE-006: the Guild Bank window persists its position, size and tab"
 
 			-- A second window built against a table the player has already resized and moved must
 			-- keep those values -- this is the reopen-after-logout case, and the whole feature.
-			standUp({ browse = { width = 1200, height = 800, top = 700, left = 250 } })
+			standUp({ browse = { width = 1200, height = 800, top = 1000, left = 250 } })
 			Browse:DrawWindow()
 			local kept = TOGBankClassic_Options.db.char.framePositions.browse
 			assert.equal(1200, kept.width, "the saved width was overwritten by the default")
 			assert.equal(800, kept.height, "the saved height was overwritten by the default")
-			assert.equal(700, kept.top, "the saved position was discarded")
+			assert.equal(1000, kept.top, "the saved position was discarded")
 			assert.equal(250, kept.left)
 		end)
 
@@ -263,15 +275,14 @@ describe("BROWSE-006: the Guild Bank window persists its position, size and tab"
 		-- another addon's window"). A listener left behind would re-apply this window's size, position
 		-- and saved table to whoever acquired that frame next -- so their drags would write into
 		-- TOGBank's SavedVariables and ours into theirs.
+		-- LAGW-FORGET-001: the record is the LIBRARY's (`_lagwPersist`, LibAceGUIWidgets MINOR 35's
+		-- ForgetWindow drops it); TOGBank keeps none of its own since LAGW-PERSIST-SCALE-001.
 		it("drops the scale registration when a window is released, so a pooled frame is never re-applied to", function()
 			Browse:DrawWindow()
 			local window = Browse.Window
-			local rec = window._togPersist
-			assert.is_table(rec, "the window carries no persistence record, so this proves nothing")
-			assert.equal(window, rec.window)
+			assert.is_not_nil(window._lagwPersist, "the window carries no persistence record, so this proves nothing")
 			assert.is_true(TOGBankClassic_UI:ForgetPersistedWindow(window))
-			assert.is_nil(window._togPersist, "the record is still on the widget going back to the pool")
-			assert.is_nil(rec.window, "the record still points at the released widget")
+			assert.is_nil(window._lagwPersist, "the record is still on the widget going back to the pool")
 			-- The listener is gone: a scale change must not touch the frame through it. Driven by
 			-- moving the scale for real and checking the frame was left alone.
 			local w, h = window.frame:GetWidth(), window.frame:GetHeight()
@@ -306,30 +317,35 @@ describe("BROWSE-006: the Guild Bank window persists its position, size and tab"
 		-- they are not. So a scale change must not move a window the player has dragged, and must not
 		-- move one they have never dragged either (it is already centred). Asserted rather than reasoned.
 		it("a scale change does not move a window: a dragged one keeps its saved position, an undragged one stays centred", function()
-			standUp({ browse = { width = 1200, height = 800, top = 700, left = 250 } })
+			standUp({ browse = { width = 1200, height = 800, top = 1000, left = 250 } })
 			env.loadFile("Modules/UI/Requests.lua")
 			Browse:DrawWindow()
+			assert.is_not_nil(TOGBankClassic_Options.db.char.framePositions.browse.top, "precondition: the dragged window has a saved top")
 			local saved = TOGBankClassic_Options.db.char.framePositions.browse
 			W:SetScale(2)
-			assert.equal(700, saved.top, "the scale change lost the saved top")
+			assert.equal(1000, saved.top, "the scale change lost the saved top")
 			assert.equal(250, saved.left, "the scale change lost the saved left")
 			W:SetScale(1)
-			assert.equal(700, saved.top); assert.equal(250, saved.left)
+			assert.equal(1000, saved.top); assert.equal(250, saved.left)
 
 			-- No saved position: the point before and after must be the same one.
 			standUp()
 			env.loadFile("Modules/UI/Requests.lua")
 			Browse:DrawWindow()
 			local frame = Browse.Window.frame
-			local before = { frame:GetPoint(1) }
+			-- The anchor without its relative frame: comparing UIParent itself dumps the whole frame tree.
+			local function anchor()
+				local p, rel, rp, x, y = frame:GetPoint(1)
+				return { p, rel == UIParent, rp, x, y, frame:GetNumPoints() }
+			end
+			local before = anchor()
 			assert.is_nil(TOGBankClassic_Options.db.char.framePositions.browse.top, "precondition: this window must have no saved position")
 			W:SetScale(2)
-			assert.same(before, { frame:GetPoint(1) },
-				"a scale change moved a window the player had never dragged")
+			assert.same(before, anchor(), "a scale change moved a window the player had never dragged")
 		end)
 
 		it("re-applies the floor on a live scale change, raises a window sitting under it, and never shrinks one", function()
-			standUp({ browse = { width = R:MinWidth(), height = 380, top = 700, left = 250 } })
+			standUp({ browse = { width = R:MinWidth(), height = 380, top = 1000, left = 250 } })
 			env.loadFile("Modules/UI/Requests.lua")
 			R = TOGBankClassic_UI_Requests
 			Browse:DrawWindow()
@@ -343,7 +359,7 @@ describe("BROWSE-006: the Guild Bank window persists its position, size and tab"
 			assert.equal(760, frame:GetHeight())
 			local saved = TOGBankClassic_Options.db.char.framePositions.browse
 			assert.equal(2 * R:MinWidth(), saved.width, "the raise did not reach the saved size, so a reload would undo it")
-			assert.equal(700, saved.top, "the position was lost in the re-apply"); assert.equal(250, saved.left)
+			assert.equal(1000, saved.top, "the position was lost in the re-apply"); assert.equal(250, saved.left)
 			W:SetScale(1)
 			minW, minH = frame:GetResizeBounds()
 			assert.equal(R:MinWidth(), minW); assert.equal(380, minH)
@@ -413,17 +429,16 @@ describe("BROWSE-006: the Guild Bank window persists its position, size and tab"
 			end)
 		end)
 
-		-- The fix itself, driven by moving the scale for real: the dock is re-applied AFTER the status
-		-- table, so it is the anchor that survives rather than the saved top/left.
-		it("re-applies the window's own anchor after the status table, so the dock survives", function()
+		-- LAGW-PERSIST-SCALE-001: the scale change is the library's listener now, which raises the size and
+		-- the bounds and never re-applies the status table -- so a docked window keeps its dock with
+		-- NOTHING registered. (The re-dock hook SCALE-DOCK-001 added existed only because TOGBank's own
+		-- listener re-ran PersistWindow, and its ApplyStatus cleared the anchor.)
+		it("keeps a docked window on the Inventory window across a scale change, with nothing registered", function()
 			-- Wider than the doubled floor, so the width asserted below is the status table's and not
 			-- the floor raise (at scale 2 a 1200-wide window is correctly raised to 2 * MinWidth).
-			standUp({ browse = { width = 2000, height = 800, top = 700, left = 250 } })
+			standUp({ browse = { width = 2000, height = 800, top = 1000, left = 250 } })
 			Browse:DrawWindow()
 			local window, frame = Browse.Window, Browse.Window.frame
-			assert.is_true(TOGBankClassic_UI:SetPersistedAnchor(window, function(w)
-				TOGBankClassic_UI:DockBesideInventory(w, "RIGHT")
-			end))
 			assert.is_true(TOGBankClassic_UI:DockBesideInventory(window, "RIGHT"))
 
 			W:SetScale(2)
@@ -432,35 +447,90 @@ describe("BROWSE-006: the Guild Bank window persists its position, size and tab"
 				"the scale change tore the window off the Inventory window and re-pointed it at the saved position")
 			assert.equal("TOPLEFT", point)
 			assert.equal("TOPRIGHT", relPoint)
-
-			-- The status table is still applied: this is an addition to the re-apply, not a bypass of it.
 			assert.equal(2000, TOGBankClassic_Options.db.char.framePositions.browse.width)
 		end)
 
-		-- The control for the example above: without a registered anchor the window really is
-		-- re-pointed, so the assertion there is testing the fix and not the harness.
-		it("still re-points a window that has NOT registered an anchor -- the defect, unfixed", function()
-			standUp({ browse = { width = 1200, height = 800, top = 700, left = 250 } })
+		-- The control for the example above: re-applying the status table really does tear a dock off in
+		-- this harness, so the example is testing that nothing re-applies it, not a harness that cannot.
+		it("the control: re-applying the status table would clear the dock (what the old listener did)", function()
+			standUp({ browse = { width = 1200, height = 800, top = 1000, left = 250 } })
 			Browse:DrawWindow()
 			local window, frame = Browse.Window, Browse.Window.frame
-			assert.is_nil(window._togPersist.reanchor, "precondition: this window must have no anchor registered")
 			assert.is_true(TOGBankClassic_UI:DockBesideInventory(window, "RIGHT"))
-
-			W:SetScale(2)
+			window:SetStatusTable(TOGBankClassic_Options.db.char.framePositions.browse)
 			local _, relativeTo = frame:GetPoint(1)
 			assert.not_equal(inventoryFrame, relativeTo,
-				"ApplyStatus did not clear the hand-made anchor, so SCALE-DOCK-001 is not the bug it was filed as")
+				"ApplyStatus did not clear the hand-made anchor, so the example above proves nothing")
 		end)
 
-		it("drops the anchor with the record when a window is released, so a pooled frame is never re-anchored", function()
+		it("leaves nothing behind on a released docked window that moves or resizes the pooled frame", function()
 			Browse:DrawWindow()
-			local window = Browse.Window
-			TOGBankClassic_UI:SetPersistedAnchor(window, function() error("the anchor outlived the window") end)
+			local window, frame = Browse.Window, Browse.Window.frame
+			assert.is_true(TOGBankClassic_UI:DockBesideInventory(window, "RIGHT"))
 			assert.is_true(TOGBankClassic_UI:ForgetPersistedWindow(window))
-			assert.is_nil(window._togPersist)
-			assert.is_false(TOGBankClassic_UI:SetPersistedAnchor(window, function() end),
-				"an anchor can be registered on a window that is no longer persisted")
-			W:SetScale(2)   -- the erroring anchor must not run
+			local w = frame:GetWidth()
+			local _, relBefore = frame:GetPoint(1)
+			W:SetScale(2)
+			assert.equal(w, frame:GetWidth(), "a released window was raised by the scale signal")
+			local _, relAfter = frame:GetPoint(1)
+			assert.equal(relBefore, relAfter, "a released window was re-pointed by the scale signal")
+		end)
+	end)
+
+	-- LAGW-OLD-FLOOR-001 (Peer Review on self-audit 587af509): a LibAceGUIWidgets older than MINOR 35 has
+	-- no ForgetWindow, so nothing gives a released ClearFrame's resize handle its own floor back, and
+	-- AceGUI's pool is shared with every addon. Such a copy is handed NO floor, so there is nothing to
+	-- leak, and the player is told once. The stand-in is the real library minus ForgetWindow, recording
+	-- what PersistWindow was handed.
+	describe("LAGW-OLD-FLOOR-001: an outdated LibAceGUIWidgets gets no floor to leak", function()
+		local realW, handed, warnings, savedWarn
+
+		before_each(function()
+			realW = TOGBankClassic_UI.Widgets
+			handed, warnings = {}, {}
+			TOGBankClassic_UI.Widgets = setmetatable({
+				ForgetWindow = false,
+				PersistWindow = function(_, _, saved, opts) handed[#handed + 1] = opts; return saved end,
+			}, { __index = realW })
+			savedWarn = TOGBankClassic_Output.Warn
+			TOGBankClassic_Output.Warn = function(_, msg) warnings[#warnings + 1] = msg end
+			TOGBankClassic_UI._warnedOldWidgets = nil
+		end)
+
+		after_each(function()
+			TOGBankClassic_UI.Widgets = realW
+			TOGBankClassic_Output.Warn = savedWarn
+			TOGBankClassic_UI._warnedOldWidgets = nil
+		end)
+
+		it("passes no floor and warns once, however many windows are persisted", function()
+			TOGBankClassic_UI:PersistWindow({}, "oldlib1", 1200, 800, 600, 380)
+			TOGBankClassic_UI:PersistWindow({}, "oldlib2", 1200, 800, 600, 380)
+			assert.equal(2, #handed)
+			for i, opts in ipairs(handed) do
+				assert.equal(1200, opts.width, "call " .. i .. " lost its default size")
+				assert.equal(800, opts.height)
+				assert.same({ "height", "width" }, (function()
+					local keys = {}
+					for k in pairs(opts) do keys[#keys + 1] = k end
+					table.sort(keys)
+					return keys
+				end)(), "call " .. i .. " handed the outdated library a floor it cannot hand back")
+			end
+			assert.equal(1, #warnings, "the out-of-date warning did not print exactly once")
+			assert.truthy(warnings[1]:find("LibAceGUIWidgets", 1, true))
+		end)
+
+		it("the control: a current library (ForgetWindow present) is handed the floor as a function", function()
+			TOGBankClassic_UI.Widgets = setmetatable({
+				ForgetWindow = function() end,
+				PersistWindow = function(_, _, saved, opts) handed[#handed + 1] = opts; return saved end,
+			}, { __index = realW })
+			TOGBankClassic_UI:PersistWindow({}, "newlib", 1200, 800, 600, 380)
+			assert.is_function(handed[1].minWidth)
+			assert.equal(600, handed[1].minWidth(1))
+			assert.equal(380, handed[1].minHeight(1))
+			assert.equal(0, #warnings)
 		end)
 	end)
 end)

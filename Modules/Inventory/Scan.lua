@@ -96,6 +96,11 @@ end
 --- empty scan is how a character's whole vault disappears from the guild's view.
 --- @return table|nil records, number slotsUsed, number slotsTotal, table|nil boundKeys
 function Scan:ScanBank()
+	-- FOREVER-BANK-001: a client with no BANK_CONTAINER (WoW Forever) keeps its bank in purchased
+	-- bank TABS. The branch below is the Classic one, byte for byte; this one walks the tabs.
+	if BANK_CONTAINER == nil then
+		return self:ScanBankTabs()
+	end
 	if not bankAvailable() then return nil, 0, 0, nil end
 	local records, bound = {}, {}
 	local used = scanContainer(BANK_CONTAINER, records, bound)
@@ -104,6 +109,31 @@ function Scan:ScanBank()
 	for bag = firstBankBag, lastBankBag do
 		used = used + scanContainer(bag, records, bound)
 		total = total + (C_Container.GetContainerNumSlots(bag) or 0)
+	end
+	return records, used, total, bound
+end
+
+--- FOREVER-BANK-001: the character bank on a bank-tab client -- every purchased character tab
+--- (Constants.BankContainers). "Unreachable" is the same rule as the Classic vault check: when the
+--- client reports no tab, or tabs with no slots, the bank is out of sight, and nil is returned so
+--- the stored bank is KEPT rather than replaced with nothing (INV2-VAULT-001).
+--- @return table|nil records, number slotsUsed, number slotsTotal, table|nil boundKeys
+function Scan:ScanBankTabs()
+	-- FOREVER-BANK-002 (this session's own audit): a tab reporting slots is NOT proof the contents
+	-- are readable -- whether Forever answers tab sizes away from the bank with the items unloaded
+	-- is not established, and a vendor-close scan that read empty tabs would store an empty bank
+	-- over the real one (INV2-VAULT-001). So the tabs are read only while the bank window is open
+	-- (Events BANKFRAME_OPENED .. the close's scan); every other scan keeps the stored bank.
+	if not (TOGBankClassic_Bank and TOGBankClassic_Bank.atBank) then return nil, 0, 0, nil end
+	local containers = TOGBankClassic_Constants.BankContainers()
+	local total = 0
+	for _, bag in ipairs(containers) do
+		total = total + (C_Container.GetContainerNumSlots(bag) or 0)
+	end
+	if total == 0 then return nil, 0, 0, nil end
+	local records, bound, used = {}, {}, 0
+	for _, bag in ipairs(containers) do
+		used = used + scanContainer(bag, records, bound)
 	end
 	return records, used, total, bound
 end

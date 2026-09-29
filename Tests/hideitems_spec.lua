@@ -136,6 +136,8 @@ describe("HIDE-001: the store splits hidden rows at the write", function()
 	it("leaves the receive path (SetAltRecords) untouched: no hidden bucket, nothing carried", function()
 		Store:SetAltSources(G, BOB, { bank = { Record.new(6948, 1) } }, 0, { [HS] = true })
 		assert.equal(1, #Store:GetAltHiddenRecords(G, BOB))
+		-- The positive half of every "no hidden table" assertion in this file: this is the field's name.
+		assert.is_not_nil(TOGBankClassicInvDB.faction[G].alts[BOB].hidden, "a hidden row wrote no hidden table")
 		Store:SetAltRecords(G, BOB, { Record.new(858, 3) }, 10)
 		assert.same({ 858 }, ids(Store:GetAltRecords(G, BOB)))
 		assert.same({}, Store:GetAltHiddenRecords(G, BOB))
@@ -307,10 +309,13 @@ describe("HIDE-001: Bank:SetHidden re-reads, and the scan publishes without the 
 			assert.same({ 858, SWORD, 6948 }, ids(Store:GetAltRecords(G, BOB)))
 			assert.same({}, Store:GetAltHiddenRecords(G, BOB))
 			-- The bound keys are remembered regardless, so ticking the box later needs no re-read.
-			assert.is_true(TOGBankClassic_Options.db.char.boundKeys.bags[HS])
-			assert.is_true(TOGBankClassic_Options.db.char.boundKeys.bags["2011:0:0"])
-			assert.is_nil(TOGBankClassic_Options.db.char.boundKeys.bags["858:0:0"], "an unbound slot was remembered as bound")
-			assert.is_nil(TOGBankClassic_Options.db.char.boundKeys.bank, "the vault was not read, yet a bank entry was written")
+			-- Exactly the two bound bag slots, keyed the way the scan keys them, and no bank bucket.
+			local bound = TOGBankClassic_Options.db.char.boundKeys
+			local function key(id) return id .. ":0:0" end
+			assert.same({ [HS] = true, [key(SWORD)] = true }, bound.bags, "an unbound slot was remembered as bound")
+			local buckets = {}
+			for k in pairs(bound) do buckets[#buckets + 1] = k end
+			assert.same({ "bags" }, buckets, "the vault was not read, yet a bank entry was written")
 		end)
 
 		it("hides every bound slot when ticked, and answers 'soulbound' as the reason", function()
@@ -513,6 +518,8 @@ describe("HIDE-001: the Inventory window's toggle", function()
 	end)
 
 	it("flips the flag through Bank:SetHidden and reloads the tab so the row moves", function()
+		Inv.currentTab = "Bob"   -- the tab the player is looking at
+		assert.is_not_nil(Inv.currentTab)
 		Inv:ToggleHidden({ ID = 6948, Suffix = 0, Enchant = 0, Info = { name = "Hearthstone" } }, "Bob")
 		assert.same({ 6948, 0, 0, true }, calls[1])
 		assert.equal("Bob", calls.selected, "the tab was not reloaded")

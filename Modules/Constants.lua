@@ -331,6 +331,35 @@ local function BankBagRange()
 	return carried + 1, carried + (NUM_BANKBAGSLOTS or 6)
 end
 
+--- FOREVER-BANK-001: every container id that is this CHARACTER's bank, in walk order.
+---
+--- Classic Era / TBC / MoP: BANK_CONTAINER (the vault) then the bank-bag range -- exactly the ids
+--- and order every caller walked before this existed. WoW Forever has neither BANK_CONTAINER nor
+--- NUM_BANKBAGSLOTS/NUM_BANKGENERIC_SLOTS (the Forever tree defines only NUM_BAG_SLOTS); its bank is
+--- the modern bank-TAB system, each purchased character tab a container whose id comes from
+--- C_Bank.FetchPurchasedBankTabData(Enum.BankType.Character) -- how Forever's own
+--- Blizzard_UIPanels_Game/Camelot/BankFrame.lua:91-98 counts them. The operator's Forever client
+--- raised `bad argument #1 to 'GetContainerNumFreeSlots'` from Inventory/Scan.lua on every bank
+--- close because BANK_CONTAINER was nil, so no scan ever stored anything. The ACCOUNT (warband) bank
+--- is deliberately left out: it is shared by every character on the account, so each alt would
+--- publish the same items as its own. Read at call time, like the ranges above.
+---@return number[] containers
+local function BankContainers()
+	local list = {}
+	if BANK_CONTAINER ~= nil then
+		list[1] = BANK_CONTAINER
+		local first, last = BankBagRange()
+		for bag = first, last do list[#list + 1] = bag end
+		return list
+	end
+	if C_Bank and C_Bank.FetchPurchasedBankTabData and Enum and Enum.BankType and Enum.BankType.Character then
+		for _, tab in ipairs(C_Bank.FetchPurchasedBankTabData(Enum.BankType.Character) or {}) do
+			if type(tab) == "table" and tab.ID then list[#list + 1] = tab.ID end
+		end
+	end
+	return list
+end
+
 --- BRAND-001 / VERSION-TEXT-001: THE ONE PLACE THE ADDON NAMES AND VERSIONS ITSELF TO A PLAYER.
 ---
 --- The operator, 2026-09-12: "i've rebranded as TOG Bank and removed the classic" -- and every
@@ -397,6 +426,7 @@ TOGBankClassic_Constants = {
 	FEATURES                 = FEATURES,
 	CarriedBagRange          = CarriedBagRange,
 	BankBagRange             = BankBagRange,
+	BankContainers           = BankContainers,
 	SyncPausedByRaid         = SyncPausedByRaid,
 	BRAND                    = BRAND,
 	VersionText              = VersionText,

@@ -697,8 +697,37 @@ local function findContainerFrame(bag)
 	return nil, 0
 end
 
+--- FOREVER-HIGHLIGHT-002: the modern bag frames -- WoW Forever's Combined Backpack
+--- (ContainerFrameCombinedBags) and its per-bag frames (ContainerFrameContainer.ContainerFrames).
+--- They draw pooled item buttons, not Classic's ContainerFrameNItemM, so the name lookup below found
+--- none and ticking "Highlight needed items" greyed nothing (the operator, 2026-09-29, on Forever with
+--- no orders open). Each frame enumerates its own buttons and each button knows its bag and slot
+--- (Forever Mainline/ContainerFrame.lua: EnumerateValidItems :560, used with GetBagID()/GetID() at
+--- :566-567). Returns false when the client has no such frames (Classic Era, TBC, MoP).
+function ItemHighlight:UpdateModernBagHighlighting()
+	local frames = {}
+	if ContainerFrameCombinedBags then frames[#frames + 1] = ContainerFrameCombinedBags end
+	local container = ContainerFrameContainer
+	for _, f in ipairs(container and container.ContainerFrames or {}) do frames[#frames + 1] = f end
+	local found = false
+	for _, frame in ipairs(frames) do
+		if frame.EnumerateValidItems then
+			found = true
+			if frame:IsShown() then
+				for _, button in frame:EnumerateValidItems() do
+					local bag = button.GetBagID and button:GetBagID()
+					local slot = button:GetID()
+					if bag and slot then self:HighlightBankButton(button, bag, slot) end
+				end
+			end
+		end
+	end
+	return found
+end
+
 -- Update highlighting for default WoW bags
 function ItemHighlight:UpdateDefaultBagHighlighting()
+	if self:UpdateModernBagHighlighting() then return end
 	-- Iterate through all bags. BANKSLOT-001: the carried range comes from the client too, the same
 	-- way the bank range below does -- this was the one literal the first pass left behind.
 	for bag = 0, (NUM_BAG_SLOTS or 4) do
@@ -728,8 +757,46 @@ function ItemHighlight:UpdateDefaultBagHighlighting()
 	end
 end
 
+--- Dim or clear one bank button from what its container slot holds.
+function ItemHighlight:HighlightBankButton(button, bag, slot)
+	local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
+	if not (button and itemInfo) then return end
+	local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
+	if self:IsItemNeeded(itemName, itemInfo.itemID, itemInfo.hyperlink) then
+		self:RemoveOverlay(button)
+	else
+		self:ApplyOverlay(button)
+	end
+end
+
+-- FOREVER-HIGHLIGHT-001: WoW Forever has no BankFrameItemN buttons and no BANK_CONTAINER. Its bank
+-- is the modern tabbed BankPanel (Forever's Camelot/BankFrame.xml:85 names it `BankPanel`), which
+-- draws ONE tab at a time from a button pool. Each active button knows its own tab (a container id)
+-- and slot, so we walk the buttons rather than derive names (Mainline/BankFrameTemplates.lua:
+-- EnumerateValidItems 1152, GetBankTabID 480, GetContainerSlotID 507).
+local bankPanelHooked = false
+function ItemHighlight:UpdateBankPanelHighlighting()
+	local panel = BankPanel
+	if not (panel and panel.EnumerateValidItems and panel:IsVisible()) then return end
+	-- A tab switch releases the pool and re-inits the buttons (GenerateItemSlotsForSelectedTab,
+	-- :1062) with no bag event, so a pooled button would keep the last tab's dimming. Refresh after it;
+	-- RefreshHighlighting clears every button it dimmed before re-applying.
+	if not bankPanelHooked and panel.GenerateItemSlotsForSelectedTab then
+		hooksecurefunc(panel, "GenerateItemSlotsForSelectedTab", function()
+			if ItemHighlight.enabled then ItemHighlight:RefreshHighlighting() end
+		end)
+		bankPanelHooked = true
+	end
+	for button in panel:EnumerateValidItems() do
+		local bag = button.GetBankTabID and button:GetBankTabID()
+		local slot = button.GetContainerSlotID and button:GetContainerSlotID()
+		if bag and slot then self:HighlightBankButton(button, bag, slot) end
+	end
+end
+
 -- Update highlighting for bank slots
 function ItemHighlight:UpdateBankHighlighting()
+	if BANK_CONTAINER == nil then return self:UpdateBankPanelHighlighting() end
 	if not BankFrame or not BankFrame:IsVisible() then return end
 
 	-- BANKSLOT-001: ASK THE CLIENT. Both loops in this function hardcoded numbers, and MEASUREMENT
@@ -759,18 +826,7 @@ function ItemHighlight:UpdateBankHighlighting()
 	-- Blizzard_FrameXMLBase sets the globals. TBC may differ and that costs nothing: each client
 	-- reads its own constant, so the fallback is never the cross-flavour answer.
 	for slot = 1, (NUM_BANKGENERIC_SLOTS or 24) do
-		local itemInfo = C_Container.GetContainerItemInfo(-1, slot)
-		if itemInfo then
-			local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
-			local button = self:GetBankSlotButton(slot)
-			if button then
-				if self:IsItemNeeded(itemName, itemInfo.itemID, itemInfo.hyperlink) then
-					self:RemoveOverlay(button)
-				else
-					self:ApplyOverlay(button)
-				end
-			end
-		end
+		self:HighlightBankButton(self:GetBankSlotButton(slot), -1, slot)
 	end
 	-- BANKSLOT-001: bank bags are the containers AFTER the carried bags, and both ends come from the
 	-- client -- the one spelling in Constants.lua. This said `5, 11` -- a hardcoded start that
@@ -780,18 +836,7 @@ function ItemHighlight:UpdateBankHighlighting()
 	for bag = firstBankBag, lastBankBag do
 		local numSlots = C_Container.GetContainerNumSlots(bag)
 		for slot = 1, numSlots do
-			local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
-			if itemInfo then
-				local itemName = C_Item.GetItemNameByID(itemInfo.itemID)
-				local button = self:GetBagSlotButton(bag, slot)
-				if button then
-					if self:IsItemNeeded(itemName, itemInfo.itemID, itemInfo.hyperlink) then
-						self:RemoveOverlay(button)
-					else
-						self:ApplyOverlay(button)
-					end
-				end
-			end
+			self:HighlightBankButton(self:GetBagSlotButton(bag, slot), bag, slot)
 		end
 	end
 end

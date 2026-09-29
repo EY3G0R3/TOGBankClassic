@@ -158,6 +158,81 @@ describe("Scan:ScanBank", function()
 	end)
 end)
 
+-- FOREVER-BANK-001: WoW Forever has no BANK_CONTAINER (nor NUM_BANKGENERIC_SLOTS / NUM_BANKBAGSLOTS);
+-- the bank is purchased CHARACTER TABS whose container ids come from
+-- C_Bank.FetchPurchasedBankTabData(Enum.BankType.Character) (Forever's Camelot/BankFrame.lua:91-98).
+-- The operator's client raised `bad argument #1 to 'GetContainerNumFreeSlots'` from the vault check
+-- on every bank close, so no scan ever stored. The stand-in is that client: no BANK_CONTAINER, a
+-- C_Bank answering with tab ids, and the ACCOUNT bank present but never walked.
+describe("Scan:ScanBank on a bank-tab client (FOREVER-BANK-001)", function()
+	local saved
+	local CHAR, ACCOUNT = 0, 2
+	local tabsFor
+
+	before_each(function()
+		env.reset(); loadScan()
+		saved = { container = _G.BANK_CONTAINER, cbank = _G.C_Bank, enum = _G.Enum, bank = _G.TOGBankClassic_Bank }
+		_G.BANK_CONTAINER = nil
+		_G.TOGBankClassic_Bank = { atBank = true }   -- FOREVER-BANK-002: at the bank unless an example says not
+		tabsFor = { [CHAR] = { { ID = 6 }, { ID = 7 } }, [ACCOUNT] = { { ID = 12 } } }
+		_G.C_Bank = { FetchPurchasedBankTabData = function(bankType) return tabsFor[bankType] or {} end }
+		_G.Enum = setmetatable({ BankType = { Character = CHAR, Account = ACCOUNT } }, { __index = saved.enum })
+	end)
+
+	after_each(function()
+		_G.BANK_CONTAINER, _G.C_Bank, _G.Enum = saved.container, saved.cbank, saved.enum
+		_G.TOGBankClassic_Bank = saved.bank
+	end)
+
+	it("returns nil away from the bank even when the tabs report slots and items (FOREVER-BANK-002)", function()
+		env.bags[6] = { slots = 98, family = 0 }
+		place(6, 1, 858, 10, "|cffffffff|Hitem:858|h[Potion]|h|r")
+		TOGBankClassic_Bank.atBank = false
+		assert.is_nil((Scan:ScanBank()), "a scan away from the bank read the tabs")
+		TOGBankClassic_Bank.atBank = true
+		assert.is_table((Scan:ScanBank()), "precondition: at the bank the same tabs are read")
+	end)
+
+	it("walks every purchased character tab, and never the account bank", function()
+		env.bags[6] = { slots = 98, family = 0 }
+		env.bags[7] = { slots = 98, family = 0 }
+		env.bags[12] = { slots = 98, family = 0 }
+		place(6, 1, 858, 10, "|cffffffff|Hitem:858|h[Potion]|h|r")
+		place(7, 4, 859, 3, "|cffffffff|Hitem:859|h[Other]|h|r")
+		place(12, 1, 860, 1, "|cffffffff|Hitem:860|h[Warband]|h|r")
+		local records, used, total = Scan:ScanBank()
+		local ids = {}
+		for _, rec in ipairs(records) do ids[#ids + 1] = Record.id(rec) end
+		table.sort(ids)
+		assert.same({ 858, 859 }, ids, "the character tabs were not both read, or the account bank was")
+		assert.equal(2, used)
+		assert.equal(196, total)
+	end)
+
+	it("returns nil (unknown, keep the stored bank) when the tabs report no slots", function()
+		assert.is_nil((Scan:ScanBank()), "tabs with no slots were read as an empty bank")
+		tabsFor[CHAR] = {}
+		assert.is_nil((Scan:ScanBank()), "no purchased tab was read as an empty bank")
+	end)
+
+	it("lets a whole scan through instead of raising", function()
+		env.bags[6] = { slots = 98, family = 0 }
+		place(0, 1, 861, 2, "|cffffffff|Hitem:861|h[Bag]|h|r")
+		place(6, 1, 858, 10, "|cffffffff|Hitem:858|h[Potion]|h|r")
+		local result = Scan:ScanAll()
+		assert.is_true(result.bankScanned)
+		assert.equal(2, #result.records)
+	end)
+
+	it("keeps the Classic list unchanged: the vault, then the bank-bag range", function()
+		_G.BANK_CONTAINER = -1
+		local first, last = TOGBankClassic_Constants.BankBagRange()
+		local expected = { -1 }
+		for bag = first, last do expected[#expected + 1] = bag end
+		assert.same(expected, TOGBankClassic_Constants.BankContainers())
+	end)
+end)
+
 describe("Scan:ScanAll", function()
 	before_each(function() env.reset(); loadScan() end)
 

@@ -612,7 +612,7 @@ end)
 
 describe("LOGAPI-001: shipping", function()
 	it("is listed in both TOCs, after RequestLog", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local src = env.readFile(toc)
 			local rl, lg = src:find("Modules/RequestLog.lua", 1, true), src:find("Modules/Log.lua", 1, true)
 			assert.truthy(lg, toc .. " does not ship Modules/Log.lua")

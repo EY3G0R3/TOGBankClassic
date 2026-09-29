@@ -214,6 +214,24 @@ describe("Events registration symmetry", function()
 			"these events are registered but never unregistered, so they keep firing after " ..
 			"OnDisable (audit EVENT-002)")
 	end)
+
+	-- FOREVER-EVENTS-001: the bare ChatFrame_AddMessageEventFilter is a deprecation alias that is nil
+	-- when `loadDeprecationFallbacks` is off (the operator's Forever client). It raised mid-way, so
+	-- RegisterEvents never finished and eventsRegistered stayed false.
+	it("finishes on a client without the deprecated chat-filter alias, through ChatFrameUtil", function()
+		local savedUtil = _G.ChatFrameUtil
+		local filtered = {}
+		_G.ChatFrame_AddMessageEventFilter = nil
+		_G.ChatFrameUtil = { AddMessageEventFilter = function(event, fn) filtered[#filtered + 1] = { event, fn } end }
+		local ok, err = pcall(TOGBankClassic_Events.RegisterEvents, TOGBankClassic_Events)
+		_G.ChatFrameUtil = savedUtil
+		assert.is_true(ok, "RegisterEvents raised without the alias: " .. tostring(err))
+		assert.is_true(TOGBankClassic_Bank.eventsRegistered, "RegisterEvents did not reach its end")
+		assert.equal(1, #filtered, "the system-message filter was not installed")
+		assert.equal("CHAT_MSG_SYSTEM", filtered[1][1])
+		assert.is_true(filtered[1][2](nil, nil, "No player named Bob is currently playing."),
+			"the installed filter is not the one that suppresses the offline-whisper error")
+	end)
 end)
 
 -- BROWSE-005. The operator, 2026-09-12, on the standalone Requests window popping at the mailbox

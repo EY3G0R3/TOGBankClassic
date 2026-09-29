@@ -192,7 +192,7 @@ describe("de-vendored AceCommQueue", function()
 	-- where the whole-message verdict and the retry/backoff arrived. Trusting argument 4 while
 	-- shipping MINOR 2 would be trusting a signal that copy does not send.
 	it("is declared in both TOCs rather than vendored", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local src = read(toc)
 			assert.truthy(src:match("## Dependencies:[^\n]*AceCommQueue%-1%.0"),
 				toc .. " does not declare AceCommQueue-1.0 as a dependency")
@@ -218,6 +218,8 @@ describe("de-vendored LibDBIcon-1.0", function()
 		local s = fh:read("*a"); fh:close(); return s
 	end
 
+	-- The WoW Forever TOC is the one exception (FOREVER-001, pinned in wiring_spec.lua): LibDBIcon-1.0
+	-- is not published for Forever, so that TOC embeds it until it is.
 	it("is declared in both TOCs rather than vendored, and LibDataBroker is still bundled", function()
 		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
 			local src = read(toc)

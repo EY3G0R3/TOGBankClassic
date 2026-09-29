@@ -113,8 +113,9 @@ describe("step 4: AttributeChanges -- what the author's client knows", function(
 		Guild:FulfillRequestById(b, 3, BANKER)
 		Guild:FulfillRequestById(a, 2, BANKER)
 		local who = Log:AttributeChanges(BANKER, { Rec(14256, 20), Rec(858, 9) }, { Rec(14256, 10), Rec(858, 2) }, nil)
-		assert.same({ { count = 7, to = PEER }, { count = 3, to = OTHER } }, who["14256:0:0"])
-		assert.is_nil(who["858:0:0"], "a withdrawal with no fill behind it was attributed")
+		-- The whole answer: the Felcloth fills, and nothing for the plain 858 withdrawal.
+		assert.same({ ["14256:0:0"] = { { count = 7, to = PEER }, { count = 3, to = OTHER } } }, who,
+			"a withdrawal with no fill behind it was attributed")
 	end)
 
 	it("attributes a mail deposit to the inbox sender", function()
@@ -189,7 +190,10 @@ describe("step 4: the inbox scan reports who sent what", function()
 		assert.same({ ["17240:1196:0"] = 2, ["17240:1195:0"] = 1, ["17240:0:2504"] = 1 }, byKey,
 			"the mail records lost the variant, or did not merge one variant across two mails")
 		assert.same({ [PEER] = 1, [OTHER] = 1 }, data.senders["17240:1196:0"])
-		assert.is_nil(data.senders["17240:0"], "the senders are still keyed suffix-less")
+		local senderKeys = {}
+		for k in pairs(data.senders) do senderKeys[#senderKeys + 1] = k end
+		table.sort(senderKeys)
+		assert.same({ "17240:0:2504", "17240:1195:0", "17240:1196:0" }, senderKeys, "the senders are not keyed by the full record key")
 		env.wow.mail = {}
 	end)
 

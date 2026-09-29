@@ -57,13 +57,14 @@ if (-not $DryRun) {
 #   _classic_era_  Classic Era  (TOGBankClassic.toc,       Interface 11509)
 #   _anniversary_  TBC          (TOGBankClassic_TBC.toc,   Interface 20506)
 #   _classic_      MoP Classic  (TOGBankClassic_Mists.toc, Interface 50504)
+#   _classic_beta_ WoW Forever  (TOGBankClassic_Camelot.toc, Interface 16001; FOREVER-001)
 #
 # _retail_ is deliberately absent: there is no TOC for it, so a copy there would
 # sit in the AddOns list permanently flagged "out of date" and never load. Adding
 # a flavour here without also adding its .toc just litters that install. The
 # script copies into every listed version directory that exists on disk, except
 # the one the source tree already lives in (avoids copying onto itself).
-$WowVersions = @("_classic_era_", "_anniversary_", "_classic_")
+$WowVersions = @("_classic_era_", "_anniversary_", "_classic_", "_classic_beta_")
 
 # Build list of addon install directories that actually exist on disk
 $Destinations = foreach ($ver in $WowVersions) {
@@ -211,6 +212,12 @@ function Sync-File([string]$fullPath, [string]$verb) {
             Write-Host "[skip] $rel" -ForegroundColor DarkGray
         }
         return
+    }
+
+    # A save-by-replace can look like a delete for an instant; never remove the replicas of a file
+    # the source still has (TOGProfessionMaster peer review c366fdb9, 2026-09-27).
+    if ($verb -eq "Deleted" -and (Test-Path -LiteralPath $fullPath)) {
+        $verb = "Changed"
     }
 
     $ts = Get-Date -Format "HH:mm:ss"

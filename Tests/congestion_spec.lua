@@ -218,15 +218,20 @@ describe("CONGESTION-001: the numbers table and the offer that names it", functi
 	it("a parked number that a later table STILL cannot resolve stays parked; a later offer from the same peer replaces its park", function()
 		local _, A, V = race()
 		local p2p = V.G.TOGBankClassic_P2P:Lib()
-		-- A stranger-to-the-table number from the banker: the library parks it.
-		F.with(V, function() p2p:OnOffer(A.norm, { type = "hash-offer2", v = 99, n = "9999" }) end)
+		-- A stranger-to-the-table number from the banker, stamped with the viewer's OWN table version: the
+		-- library parks it. DS-422-001: this used a literal v = 99, and a table version is a timestamp, so
+		-- under DeltaSync MINOR 22 (numbers read only through the table that minted them) 99 is a table
+		-- BEHIND ours, whose offer is dropped and answered with our table -- not parked.
+		local v = F.with(V, function() return p2p._host.numbers:Version() end)
+		F.with(V, function() p2p:OnOffer(A.norm, { type = "hash-offer2", v = v, n = "9999" }) end)
+		assert.is_not_nil(p2p.parkedOffers[A.norm], "the unresolvable number was not parked")
 		assert.same({ "9999" }, p2p.parkedOffers[A.norm].numbers)
 		-- A table change that does not name 9999 replays nothing and keeps it.
 		F.with(V, function() p2p:OnNumbersChanged("adopt") end)
 		assert.same({ "9999" }, p2p.parkedOffers[A.norm].numbers)
 		-- The same peer's next offer, fully resolvable, is its current word: the park goes.
 		local num = V.G.TOGBankClassic_BankerNumbers:NumberOf(A.norm)
-		F.with(V, function() p2p:OnOffer(A.norm, { type = "hash-offer2", v = 99, n = num }) end)
+		F.with(V, function() p2p:OnOffer(A.norm, { type = "hash-offer2", v = v, n = num }) end)
 		assert.is_nil(p2p.parkedOffers[A.norm])
 		noErrors(V)
 	end)

@@ -259,7 +259,7 @@ describe("Usable.CanUse -- the four layers, and the seams they read through", fu
 	end)
 
 	it("is loaded by both TOCs before the UI files that read it", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local src = env.readFile(toc)
 			local usable, ui = src:find("Modules/Usable.lua", 1, true), src:find("Modules/UI.lua", 1, true)
 			assert.is_not_nil(usable, toc .. " does not load Usable.lua")

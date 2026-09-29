@@ -244,7 +244,29 @@ end
 -- that any other addon declaring one would have silently replaced ours, changing how every player
 -- name in this addon is normalised with no error anywhere. Same class as the Grouper DEBUG_CATEGORY
 -- collision documented in Modules/Constants.lua, which did happen.
+-- FOREVER-NAME-002: WoW Forever runs REGIONAL UNIQUE NAMES -- a character is "First Surname" with no
+-- realm, and that full name is the identity (Forever's own AceDB keys the character that way,
+-- AceDB-3.0.lua:263-278, and the guild roster returns it bare). LibGuildRoster already keys its
+-- roster by the bare full name there (LibGuildRoster-1.0.lua:1264 RegionalNames, :1345 and :1659),
+-- and TOGBank appended "-<realm>" to everything, so every memberRoster lookup, every roster gate
+-- and every whisper target disagreed with the library that fills them. On such a client a name
+-- is kept bare and a realm suffix is dropped -- the library's rule, in the library's words.
+-- RegionalUniqueNamesEnabled exists only in the Forever tree, so Era/TBC/MoP never enter it.
+local function regionalNames()
+	return type(RegionalUniqueNamesEnabled) == "function" and RegionalUniqueNamesEnabled() == true
+end
+
+local function surnameSeparator()
+	local consts = Constants and Constants.CharacterNameSeparatorConsts
+	local sep = consts and consts.CHARACTERNAME_SURNAME_SEPARATOR
+	if type(sep) == "string" and sep ~= "" then return sep end
+	return " "
+end
+
 local function GetPlayerWithNormalizedRealm(name)
+	if regionalNames() and surnameSeparator() ~= "-" then
+		return string.match(name, "^(.-)%-") or name
+	end
 	if string.match(name, "(.*)%-(.*)") then
 		return name
 	end
@@ -276,7 +298,8 @@ local function NormalizePlayerName(name)
 			return "Unknown"
 		end
 		if right ~= "" then
-			return normalized
+			-- FOREVER-NAME-002: a realm suffix on a regional-names client is dropped, as the library does.
+			return GetPlayerWithNormalizedRealm(normalized)
 		end
 		normalized = left
 	end
@@ -307,14 +330,41 @@ function TOGBankClassic_Guild:GetNormalizedPlayer(name)
 	return self:NormalizeName(name or self:GetPlayer())
 end
 
+-- FOREVER-NAME-001: the player's name as the guild roster spells it. On WoW Forever characters
+-- have a first name AND a surname, the roster lists "First Surname", and UnitName("player")
+-- returns them as two values -- Blizzard's own Camelot NameUtil.FormatUnitNameForDisplay joins
+-- them with Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR. Using only the
+-- first value made this character "First-Realm", which matched no roster key, so IsBank(self) was
+-- false and the Bank settings page never registered. FOREVER-NAME-002: the second slot is taken as
+-- a surname only on a regional-names client (RegionalUniqueNamesEnabled, Forever-only) -- the rule
+-- LibGuildRoster's UnitKeyName uses (LibGuildRoster-1.0.lua:1284), so the two spell this character
+-- identically. Everywhere else the second slot is a realm and the bare name is returned.
+function TOGBankClassic_Guild:GetPlayerFullName()
+	local name, second = UnitName("player")
+	if not name or name == "" then
+		return nil
+	end
+	local sep = surnameSeparator()
+	if regionalNames() and type(second) == "string" and second ~= ""
+		and not string.find(name, sep, 1, true) then
+		return name .. sep .. second
+	end
+	return name
+end
+
 function TOGBankClassic_Guild:GetPlayer()
 	if TOGBankClassic_Bank.player then
 		return TOGBankClassic_Bank.player
 	end
 
-	-- The below code should never be called, but is here for safety
+	-- Bank.player has no other setter: this is the path that runs on the first call.
 	local function try()
-		local name, realm = UnitName("player"), GetNormalizedRealmName()
+		local name, realm = TOGBankClassic_Guild:GetPlayerFullName(), GetNormalizedRealmName()
+		-- FOREVER-NAME-002: the bare full name IS the identity on a regional-names client.
+		if name and regionalNames() then
+			TOGBankClassic_Bank.player = name
+			return true
+		end
 		if name and realm then
 			TOGBankClassic_Bank.player = name .. "-" .. realm
 			return true
@@ -1647,6 +1697,8 @@ end
 ---   "refused" -- a newer copy exists, but the ONLY peer claiming it cannot send it to this release
 ---                (TAB-STATE-003). Grey: nothing is on its way. Gone the moment a capable peer claims
 ---                the same or newer (red), or the copy we hold catches up.
+---   "pending" -- OUR OWN bank, scanned and stored, whose first publish is being held
+---                (PENDING-STATE-001). Yellow: it is on its way, not stale.
 ---   "current" -- nobody has mentioned anything newer. Yellow.
 --- MULTIPC-001: our own character CAN be "behind" -- another PC on the same account published a
 --- later version than the copy this PC holds -- and for our own name that state wins over "none"
@@ -1677,6 +1729,14 @@ function TOGBankClassic_Guild:GetAltStaleness(norm)
 	-- The time is read off the CANON, not off a sidecar field: a record whose revision-2 slot
 	-- holds no readable canon has no version we can place in time, whatever else it carries.
 	local heldAt = TOGBankClassic_DeltaComms:CanonPublishTime(alt.inventoryHashV2)
+	-- PENDING-STATE-001: our OWN bank, scanned and stored, with its first publish held back (the
+	-- MULTIPC-001 gate: the guild has not answered yet, or a diff base is being fetched). It has no
+	-- canon only because the canon is minted AT publish -- it is not an old-format copy, and "Old
+	-- format" is what the Bankers tab said (the operator, 2026-09-29, on a brand-new Forever banker:
+	-- "there is only one format of data on newer clients, right?"). Nothing about the data is stale.
+	if not heldAt and isSelf and TOGBankClassic_Bank and TOGBankClassic_Bank.deferred then
+		return "pending", 0, newestAt
+	end
 	if not heldAt then
 		return "v1", 0, newestAt
 	end

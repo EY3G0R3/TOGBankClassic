@@ -89,7 +89,16 @@ describe("XGUILD-SYNC-001: the federation", function()
 		assert.is_true(m.isOnline); assert.is_true(m.isBank); assert.is_false(m.isOfficer)
 		assert.is_false(Guild.memberRoster[SIS_MEMBER].isOnline, "an unsighted sister member read as online")
 		assert.is_false(Guild.memberRoster[SIS_MEMBER].isBank)
-		assert.is_nil(Guild.memberRoster[HOME_BANKER].guildKey, "a home member was given a guild key")
+		-- Exactly the sister guild's members carry a guild key; no home member does.
+		local keyed = {}
+		for name, member in pairs(Guild.memberRoster) do
+			if member.guildKey ~= nil then keyed[name] = member.guildKey end
+		end
+		assert.equal(sisterKey, keyed[SIS_BANKER], "the sister banker has no guild key")
+		for name, key in pairs(keyed) do
+			assert.equal(sisterKey, key, name .. " carries a guild key that is not the sister guild's")
+			assert.is_false(Guild:IsHomeMember(name), "a home member was given a guild key: " .. name)
+		end
 		-- The membership gate every receive path reads: federated names pass, a stranger does not.
 		assert.is_true(Guild:IsInCurrentGuildRoster(SIS_MEMBER))
 		assert.is_true(Guild:IsInCurrentGuildRoster(HOME_BANKER))
@@ -170,7 +179,7 @@ describe("XGUILD-SYNC-001: the federation", function()
 		Guild.Info.settings.sisterBank = false
 		feedSister({ [SIS_BANKER] = "gbank herbs", [SIS_VIEW] = "gbank", [SIS_MEMBER] = "gbank" })
 		lib.callbacks:Fire("OnSisterRosterUpdated", sisterKey, "pull")
-		assert.is_nil(Guild.memberRoster[SIS_MEMBER] and Guild.memberRoster[SIS_MEMBER].isBank or nil)
+		assert.is_false(Guild:IsBank(SIS_MEMBER), "with the sister bank switched off, a sister note made a banker")
 	end)
 
 	it("without the note (the library before LIBREQ-GR-002) a sister roster contributes members but no bankers", function()
@@ -517,7 +526,12 @@ describe("XGUILD-SYNC-001 step 4: the federation pull on the cycle, and what a f
 		assert.equal(ME, TOGBankClassic_Donations:WriterCharacter(types["donation-points"].writer))   -- LEDGER-PC-001: Name@machine
 		-- This client IS the price authority: the asker gets the LIST itself (its GUILD publish
 		-- never reached the sister guild), not a version line it could only ask the authority for.
-		assert.is_nil(types["pl-version"], "the authority named its version instead of sending the list")
+		-- Every type that went: a version line among them is the authority naming instead of sending.
+		local kinds = {}
+		for k in pairs(types) do kinds[#kinds + 1] = k end
+		table.sort(kinds)
+		assert.same({ "donation-points", "guild-settings", "hash-list-reply", "hash-list-request" }, kinds,
+			"the authority named its version instead of sending the list")
 		local chunks = captured("togbank-pl")
 		assert.equal(1, #chunks); assert.equal("WHISPER", chunks[1].msg.dist); assert.matches("^Sismember", chunks[1].msg.target)
 		assert.equal(777, chunks[1].data[2]); assert.equal(ME, chunks[1].data[3])
@@ -738,19 +752,21 @@ describe("XGUILD-SYNC-001 step 5: a request mutation crosses into a sister guild
 		Guild:UpdateOnlineMember(STRANGER, true, "addon-message-received")
 		clearSent()
 		-- A guildmate can speak for itself on GUILD: an entry "relayed" in its name is a forgery.
-		hearMutation("Regular-Testrealm", mutationFrom(ME, "add", requestFrom(ME, "Regular-Testrealm", "z1"), true), "GUILD")
-		assert.is_nil(Guild.Info.requests["z1"])
+		-- One id per entry, shared by the request and its check, so a typo cannot pass a check vacuously.
+		local Z1, Z2, Z4 = "z1", "z2", "z4"
+		hearMutation("Regular-Testrealm", mutationFrom(ME, "add", requestFrom(ME, "Regular-Testrealm", Z1), true), "GUILD")
+		assert.is_nil(Guild.Info.requests[Z1])
 		-- Relayed entries travel on GUILD only.
-		hearMutation(SIS_MEMBER, mutationFrom(SIS_MEMBER, "add", requestFrom(SIS_MEMBER, ME, "z2"), true), "WHISPER")
-		assert.is_nil(Guild.Info.requests["z2"])
+		hearMutation(SIS_MEMBER, mutationFrom(SIS_MEMBER, "add", requestFrom(SIS_MEMBER, ME, Z2), true), "WHISPER")
+		assert.is_nil(Guild.Info.requests[Z2])
 		-- A guildmate's whisper is its own word (it could have said it on GUILD): applied, not relayed.
 		hearMutation("Regular-Testrealm", mutationFrom("Regular-Testrealm", "add", requestFrom("Regular-Testrealm", ME, "z3")), "WHISPER")
 		assert.is_table(Guild.Info.requests["z3"])
 		assert.equal(0, #captured("togbank-rm"), "a guildmate's whisper was relayed")
 		-- A stranger has no standing on any transport -- and the STUB its message created (an
 		-- unauthenticated sighting) does not make it one of us, on either predicate.
-		hearMutation(STRANGER, mutationFrom(STRANGER, "add", requestFrom(STRANGER, ME, "z4")), "WHISPER")
-		assert.is_nil(Guild.Info.requests["z4"])
+		hearMutation(STRANGER, mutationFrom(STRANGER, "add", requestFrom(STRANGER, ME, Z4)), "WHISPER")
+		assert.is_nil(Guild.Info.requests[Z4])
 		assert.is_true(Guild.memberRoster[STRANGER].isStub)
 		assert.is_false(Guild:IsFederated(STRANGER)); assert.is_false(Guild:IsHomeMember(STRANGER))
 		assert.equal(0, #captured("togbank-rm"), "a refused entry was relayed")

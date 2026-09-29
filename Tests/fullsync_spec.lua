@@ -63,7 +63,7 @@ local function quiet(c)
 end
 
 describe("FULL SYNC: a banker publishes, a viewer that holds nothing ends up holding it", function()
-	it("banker online first: the viewer's login broadcast draws the offer and the snapshot lands", function()
+	it("banker online first: the banker's broadcast is replayed once the viewer holds the table, and the snapshot lands", function()
 		local c = guild({ V1 })
 		local A, V = c[BANK], c[V1]
 
@@ -88,13 +88,18 @@ describe("FULL SYNC: a banker publishes, a viewer that holds nothing ends up hol
 		F.tick(70)   -- collect window (60) + version query (5) + handshake + data
 
 		syncedTo(V, A)
-		assert.equal(1, #F.sent({ type = "hash-offer2", from = BANK, to = V1 }), "the banker did not offer by number")
-		-- A bare offer names WHO, not WHAT: the version query settles what is held before any request.
-		assert.equal(1, #F.sent({ type = "ver-query", from = V1, to = BANK }), "the viewer did not ask which version the offerer holds")
-		assert.equal(1, #F.sent({ type = "ver-reply", from = BANK, to = V1 }))
+		-- DS-422-001: DeltaSync v4.4.0 (MINOR 22, Questbook inbox 12ca628b) PARKS a broadcast whose numbers
+		-- the listener cannot resolve and replays it once the table is adopted. So the banker's own
+		-- login broadcast -- heard before the viewer had the table -- is read the moment the table
+		-- lands, and it names the author's canon: the viewer requests from the author at once, with no
+		-- offer and no version query (the author-advertised rule). Before MINOR 22 that broadcast was
+		-- dropped, and the viewer's login drew an offer plus a query round instead.
+		assert.equal(0, #F.sent({ type = "hash-offer2", from = BANK, to = V1 }), "the banker offered what its replayed broadcast had already named")
+		assert.equal(0, #F.sent({ type = "ver-query", from = V1 }), "the viewer queried a version the author had advertised")
 		local req = F.sent({ type = "sync-request", from = V1 })
 		assert.equal(1, #req, "the viewer did not request")
-		assert.equal(rec.inventoryHashV2, req[1].body.canon, "the request did not name the version the query established")
+		assert.equal(BANK .. "-Testrealm", req[1].target, "the viewer did not request from the author")
+		assert.equal(rec.inventoryHashV2, req[1].body.canon, "the request did not name the canon the author broadcast")
 		assert.same({}, F.output(V, "Warn"), "the viewer warned during a clean sync")
 		assert.same({}, F.output(A, "Warn"), "the banker warned during a clean sync")
 		assert.equal(1, #F.sent({ type = "sync-accept", from = BANK }))
@@ -433,19 +438,21 @@ describe("FULL SYNC: the delta on the wire, relays, and the send queue", functio
 		local c = guild({ V1, V2, V3, V4 })
 		local A = c[BANK]
 		F.scan(A, bank(5), { bank = { { id = 2000, count = 3 } }, money = 100 })
-		F.login(A)
-		F.tick(2)
 		-- A BULK send takes time to drain on a real client; here it holds the slot 10 seconds.
 		F.bulkDrain = 10
-		for _, v in ipairs({ V1, V2, V3, V4 }) do F.login(c[v]) end
-		F.tick(66)
+		-- DS-422-001: under DeltaSync MINOR 22 each viewer replays the banker's parked login broadcast
+		-- as soon as it adopts the table and requests at once, so all four ask inside these seconds --
+		-- not after their own 60-second login windows -- and the slots are counted while they drain.
+		F.login(A)
+		F.tick(2)
 
 		local queued = F.sent({ type = "sync-queued", from = BANK })
 		assert.equal(1, #queued, "with three slots and four requesters, exactly one should have been queued")
 		local P2P = A.G.TOGBankClassic_P2P:Lib()
 		assert.equal(3, P2P:GetActiveSendTotal(), "the provider is not holding three slots while three snapshots drain")
 
-		F.tick(30)   -- the drains complete, the queue is served, its drain completes
+		for _, v in ipairs({ V1, V2, V3, V4 }) do F.login(c[v]) end
+		F.tick(90)   -- the drains complete, the queue is served, its drain completes, the logins settle
 		for _, v in ipairs({ V1, V2, V3, V4 }) do syncedTo(c[v], A) end
 		assert.equal(4, #F.sent({ type = "inv-snapshot", from = BANK }))
 		quiet(A)
@@ -776,11 +783,12 @@ describe("FULL SYNC: the delta on the wire, relays, and the send queue", functio
 		for i = before + 1, #F.log do
 			assert.are_not.equal("sync-request", F.log[i].type, "a current viewer requested the version it holds")
 		end
-		-- And the viewer's own broadcast draws no offer from the banker.
+		-- And the viewer's own broadcast draws no offer from the banker. Counted from here, not over the
+		-- whole log: under DeltaSync MINOR 22 the first sync itself needs no offer (DS-422-001).
+		local offersBefore = #F.sent({ type = "hash-offer2", from = BANK, to = V1 })
 		F.login(V)
 		F.tick(70)
-		-- One offer in the whole log: the one from the first sync. The second broadcast drew none.
-		assert.equal(1, #F.sent({ type = "hash-offer2", from = BANK, to = V1 }), "the banker offered a version the viewer already holds")
+		assert.equal(offersBefore, #F.sent({ type = "hash-offer2", from = BANK, to = V1 }), "the banker offered a version the viewer already holds")
 		syncedTo(V, A)
 		quiet(A); quiet(V)
 		noErrors(A); noErrors(V)
@@ -911,8 +919,11 @@ describe("FULL SYNC: the banker knows when its update has reached someone (SYNCE
 		assert.equal(F.record(A, BANK).inventoryHashV2, cur.canon, "the tracker is not on the version just minted")
 		assert.is_truthy(line(A):find("stay online", 1, true), "the status line does not tell the banker to stay: " .. line(A))
 
-		F.login(A); F.tick(2)
+		-- Read as the broadcast leaves, before any tick: under DeltaSync MINOR 22 the viewer replays it,
+		-- requests and stores inside the next two seconds (DS-422-001), so a later read is a real receipt.
+		F.login(A)
 		assert.equal("pending", (status(A)), "a broadcast going out is not a receipt")
+		F.tick(2)
 		F.login(V); F.tick(70)
 		syncedTo(V, A)
 		state, cur = status(A)

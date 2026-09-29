@@ -3,8 +3,8 @@ package-as: TOGBankClassic
 
 curseforge-project-id: 1400244
 
-# All three flavour TOCs (TOGBankClassic.toc @ 11509, TOGBankClassic_TBC.toc @ 20506,
-# TOGBankClassic_Mists.toc @ 50504)
+# All four flavour TOCs (TOGBankClassic.toc @ 11509, TOGBankClassic_TBC.toc @ 20506,
+# TOGBankClassic_Mists.toc @ 50504, TOGBankClassic_Camelot.toc @ 16001 for WoW Forever)
 # are checked in and maintained by hand, so the packager must not generate them.
 enable-toc-creation: no
 enable-nolib-creation: yes
@@ -36,6 +36,8 @@ required-dependencies:
 # recipe data; the same slug TOGProfessionMaster's .pkgmeta uses).
 # libdbicon-1-0 ships in folder LibDBIcon-1.0. LibDataBroker-1.1 stays bundled in Libs/ on
 # purpose (operator, 2026-09-25); LibStub keeps whichever copy has the higher MINOR.
+# Libs/LibDBIcon-1.0 is loaded ONLY by the WoW Forever TOC, until LibDBIcon ships for Forever
+# (FOREVER-001).
 
 # Ignore syntax is unforgiving and fails SILENTLY -- a malformed entry matches
 # nothing and the file ships anyway. Rules:

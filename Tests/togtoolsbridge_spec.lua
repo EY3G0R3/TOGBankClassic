@@ -245,7 +245,7 @@ describe("LOGAPI-002: the TOGTools bridge", function()
 	end)
 
 	it("declares TOGTools as an OPTIONAL dependency in both TOCs, never a required one", function()
-		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }) do
+		for _, toc in ipairs({ "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }) do
 			local src = env.readFile(toc)
 			local opt = src:match("## OptionalDeps:([^\n]*)")
 			assert.truthy(opt and opt:find("TOGTools", 1, true), toc .. " does not list TOGTools under OptionalDeps")

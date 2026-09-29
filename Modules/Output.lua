@@ -146,6 +146,16 @@ local function numChatWindows()
 	return tonumber(c) or tonumber(NUM_CHAT_WINDOWS) or 10
 end
 
+-- FOREVER-EVENTS-001: the bare ChatFrame_RemoveAllMessageGroups / ChatFrame_RemoveAllChannels are
+-- deprecation aliases (Blizzard_DeprecatedChatInfo/Deprecated_ChatFrame.lua:104-105) that exist only
+-- while `loadDeprecationFallbacks` is on, and are nil on the operator's Forever client. Every chat
+-- frame carries ChatFrameMixin on all four clients (ChatFrame.xml:3), whose methods the aliases
+-- forward to (Shared/ChatFrame.lua:130 and :192), so call those; the alias is the fallback only.
+local function clearChatFrame(frame)
+	if frame.RemoveAllMessageGroups then frame:RemoveAllMessageGroups() else ChatFrame_RemoveAllMessageGroups(frame) end
+	if frame.RemoveAllChannels then frame:RemoveAllChannels() else ChatFrame_RemoveAllChannels(frame) end
+end
+
 -- Create or get dedicated debug chat frame
 function TOGBankClassic_Output:GetDebugFrame()
 	-- Return cached frame if we have it
@@ -188,8 +198,7 @@ function TOGBankClassic_Output:CreateDebugTab()
 			self.debugFrame:SetFading(false)
 			FCF_SetLocked(self.debugFrame, false)
 			-- Remove all message filters
-			ChatFrame_RemoveAllMessageGroups(self.debugFrame)
-			ChatFrame_RemoveAllChannels(self.debugFrame)
+			clearChatFrame(self.debugFrame)
 
 			-- Hook OnShow to redraw messages when tab becomes visible
 			if not self.debugFrame.togbankHooked then
@@ -245,8 +254,7 @@ function TOGBankClassic_Output:CreateDebugTab()
 	frame:SetFont(fontFile, 12, fontFlags)
 
 	-- Clear all message groups and channels
-	ChatFrame_RemoveAllMessageGroups(frame)
-	ChatFrame_RemoveAllChannels(frame)
+	clearChatFrame(frame)
 
 	-- Configure message history
 	frame:SetMaxLines(1000)

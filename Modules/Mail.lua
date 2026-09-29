@@ -1552,11 +1552,13 @@ end
 --- First empty slot in the bank vault or its bags, or nil. BANKFILL-001.
 --- @return table|nil { bag = number, slot = number }
 function TOGBankClassic_Mail:FindEmptyBankSlot()
-	local bag, slot = tog_firstEmptySlot(BANK_CONTAINER, BANK_CONTAINER)
-	if not bag then
-		bag, slot = tog_firstEmptySlot(TOGBankClassic_Constants.BankBagRange())   -- BANKSLOT-001
+	-- FOREVER-BANK-001: the one list of bank containers -- the vault then the bank bags on Classic,
+	-- same order as before; the character bank tabs on Forever, where BANK_CONTAINER is nil.
+	for _, container in ipairs(TOGBankClassic_Constants.BankContainers()) do
+		local bag, slot = tog_firstEmptySlot(container, container)
+		if bag then return { bag = bag, slot = slot } end
 	end
-	return bag and { bag = bag, slot = slot } or nil
+	return nil
 end
 
 -- Advance the stepped batch fulfillment one action. Returns (ok, message).

@@ -1,8 +1,9 @@
 ================================================================================
-TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era, TBC & MoP
+TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era, TBC, MoP
+                 and WoW Forever
 ================================================================================
 
-Version: 1.7.0
+Version: 1.7.1
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -21,6 +22,9 @@ SUPPORTED GAME VERSIONS:
 - WoW The Burning Crusade
 - WoW Mists of Pandaria Classic (new in 1.6.1 -- it loads, but the guild
   features have not been tested there yet; please report anything odd)
+- WoW Forever (new in 1.7.1 -- checked on one bank character; syncing
+  between several players there has not been tried yet, so please report
+  anything odd). The minimap button library comes built in on WoW Forever.
 
 All are published from the same source, so the features, commands and
 interface are identical on every version. CurseForge serves the correct
@@ -60,6 +64,8 @@ KEY FEATURES:
   what open orders need, return a mail to its sender
 - Bank characters can hide items from the guild (right-click), or every
   soulbound item at once
+- "Highlight needed items" greys out everything in a bank character's bags
+  and bank that no open order needs
 - A bank log: deposits, withdrawals, money and every request event, with who
   was on each side - and handed to TOGTools for the long history
 - Guild-wide request limits for fair resource distribution (officers only),
@@ -93,8 +99,8 @@ The easiest and most reliable way to install and keep TOGBankClassic updated:
 2. Open the CurseForge App and go to "World of Warcraft"
 
 3. Select your game version from the dropdown -- "World of Warcraft
-   Classic Era", "World of Warcraft Burning Crusade" or "World of Warcraft
-   Mists of Pandaria Classic"
+   Classic Era", "World of Warcraft Burning Crusade", "World of Warcraft
+   Mists of Pandaria Classic", or WoW Forever
 
 4. Go to the "Get More Addons" section
 
@@ -129,10 +135,11 @@ Only use this method if you cannot use the CurseForge App:
    Classic Era:      World of Warcraft\_classic_era_\Interface\AddOns\
    Burning Crusade:  World of Warcraft\_anniversary_\Interface\AddOns\
    MoP Classic:      World of Warcraft\_classic_\Interface\AddOns\
+   WoW Forever:      the Interface\AddOns folder of your WoW Forever install
 
    Download the file matching your game version -- CurseForge lists a
-   separate Classic Era, Burning Crusade and MoP Classic build on the Files
-   page. Install LibDBIcon-1.0 and the other required libraries (see
+   separate Classic Era, Burning Crusade, MoP Classic and WoW Forever build
+   on the Files page. Install LibDBIcon-1.0 and the other required libraries (see
    Libraries Used at the end) the same way; the app does this for you.
 
 4. Restart World of Warcraft (or type /reload if already in-game)
@@ -595,11 +602,16 @@ DEBUG COMMANDS:
 BAG ADDON COMPATIBILITY (v1.3.2+)
 ================================================================================
 
-The "Highlight needed items" option (available to bank characters in the
-Requests window) marks the items in your bags that are needed to fill open
-orders. It works with the default Blizzard bags and with the three most common
-bag replacements, but the VISUAL DIFFERS depending on which one you use --
-this is a limitation of what each addon lets other addons change, not a bug.
+The "Highlight needed items" option (available to bank characters on the
+Requests tab) greys out everything in your bags and bank that no open order
+needs, so the items to send stand out. With no open orders at all, everything
+is greyed. For items with a random suffix, only the exact variant ordered stays
+lit. The setting is remembered between sessions. It works with the default
+Blizzard bags (on WoW Forever that includes the Combined Backpack and the bank
+tabs, and it follows you as you switch bank tabs) and with the three most
+common bag replacements, but the VISUAL DIFFERS depending on which one you
+use -- this is a limitation of what each addon lets other addons change, not a
+bug.
 
 SUPPORTED BAG ADDONS:
 ---------------------
@@ -640,8 +652,9 @@ TROUBLESHOOTING:
 If the checkbox does nothing:
 - Confirm your character is a bank character (its guild note contains
   "gbank"); the option is only offered to bank characters.
-- Confirm there are open orders assigned to that bank character. With
-  nothing to fill, there is nothing to highlight.
+- Look at your bags with the Requests tab's bank filter on this character:
+  the orders shown there are the ones highlighting follows. With none open,
+  every item should be greyed.
 - Enable /togbank debug and look for REQUESTS category messages -- the
   addon logs which bag addon it detected and chose.
 
@@ -701,6 +714,9 @@ Hover it for who said what:
 - NEWER COPY UNREACHABLE (grey): the only newer copy is held by a guildmate
   whose addon is too old to send it. It goes Behind as soon as someone on
   the current version has it.
+- NOT PUBLISHED YET (yellow): your OWN bank, read but not yet sent to the
+  guild -- the addon waits a moment for the guild to answer first (the
+  bottom bar counts it down). It goes Current once it has gone out.
 - NO DATA (grey): nobody online has published that bank yet.
 Only someone who can actually supply a newer copy can turn a bank red; a
 claim from a guildmate on an older version is ignored. Your OWN bank can go
@@ -1007,6 +1023,21 @@ When reporting bugs, please include:
 CHANGELOG HIGHLIGHTS
 ================================================================================
 
+Version 1.7.1:
+--------------
+NEW FEATURES:
+- WoW Forever build (checked on one bank character; multi-player sync there
+  not yet tried)
+- On WoW Forever, "Highlight needed items" covers the Combined Backpack and
+  the bank tabs
+
+BUG FIXES:
+- A bank character's own bank read "Old format" between being read and being
+  sent to the guild; it now says "Not published yet" in yellow
+
+COMPATIBILITY: no change to how bank contents travel; v1.7.0 and v1.7.1
+exchange everything normally.
+
 Version 1.7.0:
 --------------
 NEW FEATURES:
@@ -1300,7 +1331,8 @@ Installed automatically alongside TOGBankClassic (required):
 - LibAceGUIWidgets - the shared search box and window widgets (v1.5.0+)
 - ProfessionDB - the recipe database behind the Shopping List (v1.7.0+)
 - LibDBIcon-1.0 - the minimap button (v1.6.1+; bundled inside the addon
-    before that, so it only updated when TOGBank did)
+    before that, so it only updated when TOGBank did). On WoW Forever it is
+    not published, so the Forever build carries its own copy (v1.7.1+)
 
 Optional, used when installed:
 - GreenWall - when your guilds share chat through it, sister guilds hear

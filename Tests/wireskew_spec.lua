@@ -590,11 +590,16 @@ describe("WIRE-SKEW-007: the old-wire tripwire is retired with the pull path", f
 		env.reset(); client("Bankchar")
 		hold(BANKER, C(T, 0x20), T)
 		local sent = captureAll()
+		local RETIRED = "togbank-state"
 		for _, p in ipairs(TOGBankClassic_Chat.COMM_PREFIXES) do
-			assert.not_equal("togbank-state", p, "togbank-state is registered again -- the old wire's summary has no reader on this build")
+			assert.not_equal(RETIRED, p, RETIRED .. " is registered again -- the old wire's summary has no reader on this build")
 		end
-		assert.is_nil(TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS["togbank-state"], "a description outlived the prefix")
-		assert.is_nil(TOGBankClassic_Guild.NotePeerOldWire, "the old-wire observer is back")
+		assert.is_nil(TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS[RETIRED], "a description outlived the prefix")
+		local observers = {}
+		for k in pairs(TOGBankClassic_Guild) do
+			if type(k) == "string" and k:find("OldWire", 1, true) then observers[#observers + 1] = k end
+		end
+		assert.same({}, observers, "the old-wire observer is back")
 		-- The provider's whole handshake against an old peer produces nothing on it, and the old
 		-- wire's summary arriving on it reaches nothing (the prefix has no branch; no error either).
 		TOGBankClassic_Guild:NotePeerAddonVersion(OLD, "TOGBankClassic-v1.4.1")
@@ -690,6 +695,7 @@ describe("WIRE-SKEW-008: claims from an old-release peer", function()
 		assert.is_nil(TOGBankClassic_Bank.newerSelf)
 		assert.is_nil(G:NewerSelfVersionAt())
 		assert.is_true(G:NoteSelfHolder(newer.hashV2, NEW), "the control")
+		assert.is_not_nil(TOGBankClassic_Bank.newerSelf, "the control recorded no newer self")
 		assert.equal(newer.hashV2, TOGBankClassic_Bank.newerSelf.canon)
 	end)
 

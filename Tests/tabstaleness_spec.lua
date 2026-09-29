@@ -188,6 +188,29 @@ describe("Guild:GetAltStaleness", function()
 		Guild.Info.alts[BANKER] = nil
 		assert.equal("none", (Guild:GetAltStaleness(BANKER)))
 	end)
+
+	-- PENDING-STATE-001: the operator's brand-new Forever banker read "Old format" on the Bankers tab
+	-- right after its first scan. The copy had no canon only because the canon is minted AT publish,
+	-- and the publish was held (the guild had not answered yet). That is a copy on its way, not an
+	-- old one.
+	it("is 'pending' on our own character while a scanned copy waits to publish", function()
+		local savedBank = TOGBankClassic_Bank
+		finally(function() TOGBankClassic_Bank = savedBank end)
+		TOGBankClassic_Bank = { deferred = { why = "unconsulted" } }
+		hold(BANKER, nil)
+		assert.equal("pending", (Guild:GetAltStaleness(BANKER)))
+		-- Only our own bank: someone else's canon-less copy is still an old-format one.
+		hold(OTHER, nil)
+		assert.equal("v1", (Guild:GetAltStaleness(OTHER)))
+		-- A named later version still wins -- its tooltip is the one that says what fixes it.
+		Guild.newestAdvertisedAt[BANKER] = T + 60
+		assert.equal("behind", (Guild:GetAltStaleness(BANKER)))
+		-- Published (the hold released, a canon minted): current.
+		Guild.newestAdvertisedAt[BANKER] = nil
+		TOGBankClassic_Bank.deferred = nil
+		hold(BANKER, C(T, 5))
+		assert.equal("current", (Guild:GetAltStaleness(BANKER)))
+	end)
 end)
 
 describe("Guild:NoteAdvertisedPublishTime", function()
@@ -343,7 +366,9 @@ describe("the tab colour through the real receive paths", function()
 	it("DROPS a keyed hash-offer and hash-list broadcast at the door, with no switch to reopen them (N6)", function()
 		client("Bankchar")
 		holdCurrent(OTHER, T)
-		assert.is_nil(TOGBankClassic_Switches.registry.legacyKeyedReceive, "the grace-period switch is back")
+		local KEYED = "legacyKeyedReceive"
+		assert.is_nil(TOGBankClassic_Switches.registry[KEYED], "the grace-period switch is back")
+		assert.is_false(TOGBankClassic_Switches:IsEnabled(KEYED), "the grace-period switch reads on")
 		local newer = { [OTHER] = { hash = 0x10, hashV2 = C(T + 60, 0x21), updatedAt = T + 60, mailHash = 0 } }
 		local P2P = p2p()
 		P2P:BeginCollectWindow()

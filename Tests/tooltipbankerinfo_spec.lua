@@ -335,4 +335,41 @@ describe("TooltipBankerInfo's own hook", function()
 		fireHook(tip)  -- a raise here fails the test, which is the assertion
 		assert.equal(0, #tip.lines)
 	end)
+
+	-- FOREVER-002: the WoW Forever client refuses OnTooltipSetItem ("bad argument #2 ... HookScript",
+	-- reported by the operator from game, 2026-09-28) and hooks items through TooltipDataProcessor.
+	it("on a client without OnTooltipSetItem, hooks item tooltips through TooltipDataProcessor, GameTooltip only", function()
+		installGuild({ ["Bank1-Realm"] = { items = { { ID = 2589, Count = 20 } } } })
+		local realHook, realTDP, realEnum = GameTooltip.HookScript, _G.TooltipDataProcessor, _G.Enum
+		local registered = {}
+		GameTooltip.HookScript = function()
+			error("bad argument #2 to '?' (Usage: local success = self:HookScript(scriptTypeName, script [, bindingType]))")
+		end
+		_G.Enum = setmetatable({ TooltipDataType = { Item = 0 } }, { __index = realEnum })
+		_G.TooltipDataProcessor = {
+			AddTooltipPostCall = function(kind, fn) registered[#registered + 1] = { kind = kind, fn = fn } end,
+		}
+		local ok, hooked = pcall(TBI.Initialize, TBI)
+		GameTooltip.HookScript, _G.TooltipDataProcessor, _G.Enum = realHook, realTDP, realEnum
+		assert.is_true(ok, "Initialize raised on a client without OnTooltipSetItem: " .. tostring(hooked))
+		assert.is_true(hooked)
+		assert.equal(1, #registered)
+		assert.equal(0, registered[1].kind, "the post-call is not for item tooltips")
+		-- Another tooltip (ItemRefTooltip, a shopping tooltip) is left alone, as the old hook left it.
+		local other = fakeTooltip()
+		function other:GetItem() return "Copper Bar", "|cffffffff|Hitem:2589:0:0:0:0:0:0|h[Copper Bar]|h|r" end
+		registered[1].fn(other, { id = 2589 })
+		assert.equal(0, #other.lines, "a tooltip other than GameTooltip got the banker lines")
+		-- GameTooltip itself gets them, through the same AppendTo.
+		-- GameTooltip itself gets them, through the same AppendTo. The post-call reads the global at call
+		-- time, so a fake stands in for it for the one call.
+		local realGT = _G.GameTooltip
+		local gt = fakeTooltip()
+		function gt:GetItem() return "Copper Bar", "|cffffffff|Hitem:2589:0:0:0:0:0:0|h[Copper Bar]|h|r" end
+		_G.GameTooltip = gt
+		local ok2, err = pcall(registered[1].fn, gt, { id = 2589 })
+		_G.GameTooltip = realGT
+		assert.is_true(ok2, tostring(err))
+		assert.equal("Bankers:", gt.lines[3].text, "GameTooltip did not get the banker lines")
+	end)
 end)

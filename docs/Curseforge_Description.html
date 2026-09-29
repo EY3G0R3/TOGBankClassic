@@ -1,4 +1,4 @@
-<h1>TOGBankClassic - Guild Bank Management for Classic Era, TBC &amp; Mists of Pandaria Classic</h1>
+<h1>TOGBankClassic - Guild Bank Management for Classic Era, TBC, Mists of Pandaria Classic &amp; WoW Forever</h1>
 
 <p>Are you tired of logging into multiple bank alts to find items? Does your guild rely on character banks instead of the guild vault? TOGBankClassic is the solution!</p>
 
@@ -112,7 +112,7 @@
 <li><strong>Tiny messages.</strong> Every bank character has a permanent four-digit number, the same on everyone's screen, so a guild-wide check-in is a few hundred bytes and a &quot;I have newer copies of these&quot; reply is a single message however many banks it covers.</li>
 <li><strong>No single bottleneck.</strong> Data comes from whichever guild member has the freshest copy, not from one designated player who has to be online. Downloads from different guildmates run at the same time, and the short back-and-forth that sets them up travels on a fast lane of its own, so it is answered even while the other player is busy sending to someone else.</li>
 <li><strong>Nobody is refused.</strong> A player sends to three people at a time; anyone else is told their place in the queue and waits their turn, or asks someone else who has the same bank.</li>
-<li><strong>The colour tells you where you stand.</strong> On the Bankers tab each bank's <strong>Status</strong> is green Current, red Behind (a newer copy exists and is on its way), Old format (that bank has not published on this version yet), grey No data or Newer copy unreachable (the only newer copy is on a guildmate whose addon is too old to send it); the old Inventory window's tabs are coloured the same way. Hover for who said what.</li>
+<li><strong>The colour tells you where you stand.</strong> On the Bankers tab each bank's <strong>Status</strong> is green Current, red Behind (a newer copy exists and is on its way), yellow Not published yet (your own bank, read but not sent to the guild yet), Old format (that bank has not published on this version yet), grey No data or Newer copy unreachable (the only newer copy is on a guildmate whose addon is too old to send it); the old Inventory window's tabs are coloured the same way. Hover for who said what.</li>
 <li><strong>Log in and catch up.</strong> Anything you missed while offline arrives shortly after you log in, without you asking.</li>
 <li><strong>Built to stay quiet.</strong> Traffic is queued and paced so a busy guild chat doesn't get flooded and messages don't arrive garbled. In a raid group it pauses altogether, so raid addons have the chat channel to themselves &mdash; the bottom bar says so, and a setting lets you keep syncing anyway.</li>
 <li><strong>Shared accounts handled.</strong> A bank character played from more than one computer never publishes a stale vault over the guild's newer copy: that computer's own tab goes red, says what to open, and publishes only once it has caught up.</li>
@@ -125,7 +125,6 @@
 
 <ul>
 <li>Minimap Button: Quick access to the Guild Bank window—toggle visibility in options</li>
-<li>Bag Highlighting: items needed for open orders are marked in your bags &mdash; only the exact variant ordered, for items with a random suffix &mdash; and it works with the default bags, Bagnon, ElvUI and Baganator</li>
 <li>Request History: View your past requests with fulfillment status</li>
 <li>Fair Distribution: Officer-configured limits ensure equitable access to guild resources &mdash; enforced however an order is placed, and your own open orders count towards them</li>
 <li>Donation Points: what you mail to the bank earns points on a board the whole guild shares; your balance is on the Donations window's status line</li>
@@ -142,6 +141,7 @@
 <li>Automatic Detection: Add "gbank" to Public Note or Officer Note&mdash;addon handles the rest. Write what the bank keeps beside it (&quot;gbank herbs, potions&quot;) and it shows in the Bankers tab's <strong>Stores</strong> column</li>
 <li>Auto-Scan: Configure to scan bank/bags/mail automatically when opened</li>
 <li>Mail Fulfillment: Receive requests, click Fulfill, send mail&mdash;streamlined 3-step process, with the recipient filled in for you</li>
+<li>Highlight Needed Items: tick <strong>Highlight needed items</strong> on the Requests tab and everything in your bags and bank that no open order needs is greyed out, so what to send stands out &mdash; only the exact variant ordered, for items with a random suffix. It works with the default bags (on WoW Forever the Combined Backpack and the bank tabs too), Bagnon, ElvUI and Baganator, and is remembered between sessions</li>
 <li>Bank Collection: click the same Fulfill button at your bank to pull out what open orders need before you head to the mailbox &mdash; and when your bags are full, it swaps something no order needs into the bank to make room</li>
 <li>Hide Items From The Guild: right-click any item on your own tab to hide it &mdash; your hearthstone, stock you are holding back, old gear. It stays on your tab greyed with a red mark; to everyone else it is as if you do not have it. Right-click again to show it. A Bank setting hides every soulbound item at once</li>
 <li>Numbered Automatically: every bank character gets a permanent four-digit number the first time its bank is scanned &mdash; nothing to type, and it shows beside the name in <code>/togbank roster</code></li>
@@ -315,7 +315,7 @@
 <li><strong>DeltaSync</strong> &mdash; the shared guild-sync engine</li>
 <li><strong>LibAceGUIWidgets</strong> &mdash; the shared search box, date picker and window widgets</li>
 <li><strong>ProfessionDB</strong> &mdash; the recipe database the Shopping List's recipes and reagents come from</li>
-<li><strong>LibDBIcon-1.0</strong> &mdash; the minimap button</li>
+<li><strong>LibDBIcon-1.0</strong> &mdash; the minimap button (on WoW Forever it comes built in, since it is not published there)</li>
 </ul>
 
 <h3>Optional &mdash; GreenWall</h3>
@@ -324,7 +324,7 @@
 
 <h3>Optional &mdash; bag addons</h3>
 
-<p>The "Highlight needed items" option works with the default Blizzard bags and with the bag addons below. <strong>The look differs depending on which one you use</strong> &mdash; that is a limit of what each addon lets others change, not a bug:</p>
+<p>The "Highlight needed items" option (for bank characters, on the Requests tab) works with the default Blizzard bags and with the bag addons below. <strong>The look differs depending on which one you use</strong> &mdash; that is a limit of what each addon lets others change, not a bug:</p>
 
 <ul>
 <li><strong>Bagnon</strong> &mdash; dims the items you don't need. Limited to the first 20 distinct items.</li>
@@ -338,6 +338,7 @@
 <li>World of Warcraft Classic Era (Interface 11509)</li>
 <li>World of Warcraft The Burning Crusade (Interface 20506)</li>
 <li>World of Warcraft Mists of Pandaria Classic (Interface 50504) &mdash; new and not yet tested with a guild; please report anything that looks wrong</li>
+<li>World of Warcraft Forever (Interface 16001) &mdash; new: checked on one bank character, but syncing between several players there has not been tried yet; please report anything that looks wrong</li>
 <li>Works alongside other guild management addons</li>
 <li>Other bag addons are not interfered with, but item highlighting only supports the four listed above &mdash; everything else in the addon works normally regardless of which bag addon you run</li>
 </ul>
@@ -374,6 +375,19 @@
 <p>In practice that means a fix to the shared sync layer benefits every TOG addon at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
 
 <h2>Recent Updates</h2>
+
+<h3>v1.7.1 - WoW Forever</h3>
+
+<p><strong>New</strong></p>
+<ul>
+<li>TOG Bank now installs on <strong>WoW Forever</strong> as well as Classic Era, The Burning Crusade and Mists of Pandaria Classic. It has been checked on one bank character, but syncing between several players there has not been tried yet, so please report anything that looks wrong. The minimap button comes built in on WoW Forever, so nothing extra needs installing for it there.</li>
+<li>On WoW Forever, order highlighting now works: with it switched on, a bank character's bags (including the Combined Backpack) and bank tabs are greyed out apart from the items open orders still need. It follows you as you switch bank tabs.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>A bank character's own bank no longer shows as "Old format" on the Bankers tab in the moments after it is first read. It now says "Not published yet" in yellow until it goes out to the guild.</li>
+</ul>
 
 <h3>v1.7.0 - The Shopping List</h3>
 

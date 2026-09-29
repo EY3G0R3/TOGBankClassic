@@ -479,7 +479,7 @@ function TOGBankClassic_UI_Search:SubmitRequest()
 
 	local requester = TOGBankClassic_Guild:GetNormalizedPlayer()
 	if not requester then
-		local name, realm = UnitName("player"), GetNormalizedRealmName()
+		local name, realm = TOGBankClassic_Guild:GetPlayerFullName(), GetNormalizedRealmName()
 		if name then
 			requester = realm and (name .. "-" .. realm) or name
 			requester = TOGBankClassic_Guild:NormalizeName(requester)
@@ -588,11 +588,6 @@ function TOGBankClassic_UI_Search:DrawWindow()
 	-- WINDOW-PERSIST-002: the one spelling every window uses (UI:PersistWindow -> the library's),
 	-- floor 200x200 included; this used to open-code the table and the SetResizeBounds beside it.
 	TOGBankClassic_UI:PersistWindow(searchWindow, "search", 250, 400, 200, 200)
-	-- SCALE-DOCK-001: the snap above is a position the status table knows nothing about, so a scale
-	-- change would otherwise re-point this window away from the cluster until it was reopened.
-	TOGBankClassic_UI:SetPersistedAnchor(searchWindow, function(w)
-		TOGBankClassic_UI:DockBesideInventory(w, "LEFT")
-	end)
 
 	self.Window = searchWindow
 	self.StatusBar = TOGBankClassic_UI_StatusBar:AttachSides(searchWindow)   -- SYNCED-001

@@ -556,7 +556,12 @@ describe("STORE-006: the open/closed sign", function()
 	end)
 
 	it("is OPEN when the setting has never been written -- every guild ran without the sign", function()
-		assert.is_nil(TOGBankClassic_Guild.Info.settings.storeOpen)
+		-- Nothing store-related is stored, found by scanning rather than by naming the key.
+		local stored = {}
+		for k in pairs(TOGBankClassic_Guild.Info.settings) do
+			if type(k) == "string" and k:lower():find("store", 1, true) then stored[#stored + 1] = k end
+		end
+		assert.same({}, stored, "precondition: a store setting is already written")
 		assert.is_true(TOGBankClassic_Guild:IsStoreOpen())
 		-- SHOP-NOFREE-001: open with the shop on is SELLING, so the order carries the shop mark.
 		assert.is_true(addOrder("Copper Bar", 1, { shopOrder = true }))

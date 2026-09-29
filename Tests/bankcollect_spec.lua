@@ -669,6 +669,7 @@ describe("ResetFulfillStep", function()
 		Mail.batchState = { phase = "attach" }
 		Mail.collectState = { pulled = 1 }
 		Mail.bankCollectState = { phase = "return", surplus = 1 }
+		assert.is_not_nil(Mail.batchState); assert.is_not_nil(Mail.collectState); assert.is_not_nil(Mail.bankCollectState)
 		Mail:ResetFulfillStep()
 		assert.is_nil(Mail.batchState)
 		assert.is_nil(Mail.collectState)

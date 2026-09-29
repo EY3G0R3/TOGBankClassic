@@ -471,10 +471,13 @@ end)
 describe("INV2 library dependencies", function()
 	before_each(function() env.reset() end)
 
+	-- The lockstep TOCs. TOGBankClassic_Camelot.toc (WoW Forever) is held to the same rule by the
+	-- FOREVER-001 spec below, less the one documented LibDBIcon difference.
 	local TOCS = { "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc" }
+	local ALL_TOCS = { "TOGBankClassic.toc", "TOGBankClassic_TBC.toc", "TOGBankClassic_Mists.toc", "TOGBankClassic_Camelot.toc" }
 
 	it("declares ItemDB as a dependency in both TOCs", function()
-		for _, toc in ipairs(TOCS) do
+		for _, toc in ipairs(ALL_TOCS) do
 			local deps = readFile(toc):match("## Dependencies:([^\n]*)")
 			assert.is_not_nil(deps, toc .. " has no Dependencies line")
 			assert.truthy(deps:find("ItemDB", 1, true),
@@ -484,7 +487,7 @@ describe("INV2 library dependencies", function()
 	end)
 
 	it("declares DeltaSync as a dependency in both TOCs", function()
-		for _, toc in ipairs(TOCS) do
+		for _, toc in ipairs(ALL_TOCS) do
 			local deps = readFile(toc):match("## Dependencies:([^\n]*)")
 			assert.is_not_nil(deps, toc .. " has no Dependencies line")
 			assert.truthy(deps:find("DeltaSync", 1, true),
@@ -523,6 +526,30 @@ describe("INV2 library dependencies", function()
 		end
 		assert.truthy(readFile("TOGBankClassic_TBC.toc"):match("^## Interface: 20506\r?\n"))
 		assert.truthy(readFile("TOGBankClassic_Mists.toc"):match("^## Interface: 50504\r?\n"))
+	end)
+
+	-- FOREVER-001: the WoW Forever TOC is the Era TOC with exactly one difference besides its
+	-- Interface line. LibDBIcon-1.0 is not published for Forever, so a hard dependency on it would
+	-- stop the whole addon loading there; that TOC instead moves it to OptionalDeps and embeds
+	-- Libs/LibDBIcon-1.0 straight after LibDataBroker (which LibDBIcon errors without). Anything
+	-- else that drifts -- a module added to the Era TOC only -- still fails here.
+	it("keeps the Forever TOC identical to the Era TOC apart from Interface and the embedded LibDBIcon", function()
+		local function body(p)
+			local s = readFile(p):gsub("\r", ""):gsub("^## Interface:[^\n]*\n", "")
+			return (s:gsub("\n#[^#][^\n]*", ""))
+		end
+		local want = body("TOGBankClassic.toc")
+		local n
+		want, n = want:gsub("(## Dependencies:[^\n]*), LibDBIcon%-1%.0", "%1")
+		assert.equal(1, n, "the Era TOC no longer declares LibDBIcon-1.0; revisit FOREVER-001")
+		want, n = want:gsub("(## OptionalDeps:[^\n]*)", "%1, LibDBIcon-1.0")
+		assert.equal(1, n)
+		want, n = want:gsub("(Libs/LibDataBroker%-1%.1/LibDataBroker%-1%.1%.lua\n)", "%1Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua\n")
+		assert.equal(1, n)
+		assert.equal(want, body("TOGBankClassic_Camelot.toc"), "TOGBankClassic_Camelot.toc has drifted from TOGBankClassic.toc")
+		assert.truthy(readFile("TOGBankClassic_Camelot.toc"):match("^## Interface: 16001\r?\n"))
+		assert.truthy(readFile("Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua"):find('"LibDBIcon-1.0"', 1, true),
+			"the Forever TOC loads Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua, which must exist")
 	end)
 
 	-- MODULE-ORDER-001 (Peer Review F6 on self-audit 13180dbf): Tests/env_togbank.lua's MODULE_ORDER,

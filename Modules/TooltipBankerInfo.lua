@@ -113,6 +113,20 @@ local function OnTooltipSetItem(tooltip)
 	TooltipBankerInfo:AppendTo(tooltip, GetItemIDFromLink(link))
 end
 
+-- FOREVER-002: the WoW Forever client has no OnTooltipSetItem script on GameTooltip -- HookScript
+-- raises "bad argument #2" there, at login -- and builds item tooltips through TooltipDataProcessor
+-- instead (wow-ui-source-forever Blizzard_SharedXMLGame/Tooltip/TooltipDataHandler.lua:199; Blizzard's
+-- own PTR feedback addon hooks items that way). The old hook is tried first so every client that has
+-- it keeps exactly its behaviour; the post-call is limited to GameTooltip, the only tooltip the old
+-- hook ever reached. pcall rather than HasScript: whether HasScript answers "supported" or "set" is
+-- the one thing the offline harness says it has not verified.
 function TooltipBankerInfo:Initialize()
-	GameTooltip:HookScript("OnTooltipSetItem", OnTooltipSetItem)
+	if pcall(GameTooltip.HookScript, GameTooltip, "OnTooltipSetItem", OnTooltipSetItem) then return true end
+	if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then
+		TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip)
+			if tooltip == GameTooltip then OnTooltipSetItem(tooltip) end
+		end)
+		return true
+	end
+	return false
 end
