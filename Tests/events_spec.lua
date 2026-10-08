@@ -171,7 +171,8 @@ describe("Events:CHAT_MSG_SYSTEM", function()
 	end)
 
 	-- The harness's assert table has has_error but no has_no_error, so this is spelled out.
-	-- See Tests/HARNESS_CONTRACT.md — has_no_error is a proposed harness addition.
+	-- has_no_error was proposed to the harness on the old Tests/HARNESS_CONTRACT.md board (now in git
+	-- history; harness requests go to WoWAPITesting's inbox).
 	it("does not error on an empty message", function()
 		local ok, err = pcall(fire, handlers, "CHAT_MSG_SYSTEM", "")
 		assert.is_true(ok, "handler raised on an empty message: " .. tostring(err))

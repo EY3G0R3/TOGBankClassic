@@ -293,9 +293,9 @@
 <h3>Key Settings</h3>
 
 <ul>
-<li>General: Minimap button, hide in combat, <strong>Window and Text Size</strong> (80% to 200%, per character), chat message volume, sounds, <strong>Keep syncing in a raid group</strong> (off by default), <strong>Open the Mailbox window at a mailbox</strong> (on by default) and <strong>Mailbox window on non-bank characters</strong> (off by default)</li>
+<li>General: Minimap button, hide in combat, <strong>Window and Text Size</strong> (80% to 200%, per character), chat message volume, sounds, <strong>Keep syncing in a raid group</strong> (off by default), <strong>Open the Mailbox window at a mailbox</strong> (on by default) and <strong>Mailbox window on non-bank characters</strong> (off by default) and <strong>Show bank stock in item tooltips</strong> (on by default)</li>
 <li>Appearance: A transparency slider for each window, <strong>Reset All Windows to Solid</strong>, <strong>Recenter All Windows</strong> for a window lost off screen, <strong>Close windows with Escape</strong> (on by default), and <strong>Pulsing glow on cancelled requests</strong> (on by default)</li>
-<li>Bank (bank characters only): <strong>Enable for &lt;character&gt;</strong> &mdash; the one switch that governs whether this bank is scanned and shared &mdash; <strong>Hide soulbound items from the guild</strong>, and the donation options</li>
+<li>Bank (bank characters only): <strong>Enable for &lt;character&gt;</strong> &mdash; the one switch that governs whether this bank is scanned and shared &mdash; <strong>Enable donations</strong> (the Donation window at the mailbox for each gift; off by default), <strong>Hide soulbound items from the guild</strong>, and the donation options</li>
 <li>Officer, in three sections: <em>Request settings</em> &mdash; request limits and how long requests stay open; <em>Shop</em> &mdash; <strong>Shop</strong> turns the Shop tab on for a guild bank that sells (off by default), <strong>Shop ordering open</strong> is the shop's open/closed sign, <strong>Shop discount</strong> a percentage off every estimate on the Shop tab; <em>Donations and pricing</em> &mdash; <strong>Donation points per gold</strong>, what a donation earns (1 by default), and <strong>Price authority</strong>, the character whose price sources become the guild's one price list; <em>Sister guilds</em> &mdash; <strong>Sister-guild bank</strong>, which opens this bank to the guilds listed as sisters in Guild Roster (off by default; both guilds' officers must list each other there, or nothing is shared)</li>
 <li>Debug: Persistent logging and debug categories</li>
 </ul>
@@ -375,6 +375,24 @@
 <p>In practice that means a fix to the shared sync layer benefits every TOG addon at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
 
 <h2>Recent Updates</h2>
+
+<h3>v1.8.0 - Donations Setting</h3>
+
+<p><strong>New</strong></p>
+<ul>
+<li>A new General setting, "Show bank stock in item tooltips", lets you turn off the list of bank characters and counts that TOG Bank adds when you point at an item. It is on by default.</li>
+</ul>
+
+<p><strong>Changed</strong></p>
+<ul>
+<li>The "Enable donations" setting is back in the Bank settings, and it is now off by default. Tick it if you want the Donation window to pop up at the mailbox for each gift.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>On bank characters, the Donation window popped up at every mailbox whenever "Open the Mailbox window at a mailbox" was unticked, with no way to stop it. It now opens only when "Enable donations" is ticked.</li>
+<li>On Classic Era, The Burning Crusade and Mists of Pandaria, TOG Bank's download wrongly told the CurseForge app that LibDBIcon (the minimap button library) came built in, so the app did not install it. It is listed as a required download again.</li>
+</ul>
 
 <h3>v1.7.1 - WoW Forever</h3>
 

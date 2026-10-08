@@ -126,7 +126,7 @@ describe("TOGBankClassic_Core stand-ins match the real surface", function()
 	end)
 
 	it("env.stubCore installs nothing the real Core lacks", function()
-		TOGBankClassic_Core = nil
+		rawset(_G, "TOGBankClassic_Core", nil)
 		local stub, extras = env.stubCore(), {}
 		for name in pairs(stub) do
 			if not real[name] then extras[#extras + 1] = name end
@@ -141,7 +141,7 @@ describe("TOGBankClassic_Core stand-ins match the real surface", function()
 	-- and honours quotes. It is now the installed library; these two inputs are the ones the
 	-- re-implementation got wrong, so they go red if anyone stands a copy in again.
 	it("env.stubCore's GetArgs IS AceConsole's: quotes and startpos behave as in the client", function()
-		TOGBankClassic_Core = nil
+		rawset(_G, "TOGBankClassic_Core", nil)
 		local stub = env.stubCore()
 		local a, b, nextpos = stub:GetArgs('dev "two words" tail', 2)
 		assert.equal("dev", a)

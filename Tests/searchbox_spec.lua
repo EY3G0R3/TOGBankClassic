@@ -269,7 +269,9 @@ describe("Requests: ONE search across every column", function()
 		require("env.frames").reset()
 		local frame = CreateFrame("Frame")
 		frame:SetFrameLevel(5)
-		local fs = frame:CreateFontString()
+		-- A font, as every real cell has: the client (and the harness since pin c2fd446) refuses
+		-- SetText on a FontString with none -- "FontString:SetText(): Font not set".
+		local fs = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 		fs:SetJustifyH("LEFT")
 		fs:SetText("|cffff66662026-09-11 18:10|r")
 		local calls = {}
@@ -375,7 +377,7 @@ describe("Requests: ONE search across every column", function()
 	it("is ON by default and OFF at the Appearance-tab switch, which also puts out a glow already on screen", function()
 		require("env.frames").reset()
 		local frame = CreateFrame("Frame")
-		local fs = frame:CreateFontString()
+		local fs = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 		fs:SetText("2026-09-11 18:10")
 		fs.SetShadowColor  = function() end
 		fs.SetShadowOffset = function() end

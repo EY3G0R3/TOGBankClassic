@@ -314,7 +314,8 @@ and nothing tells either side.
 
 The ecosystem already has the right answer and uses it four times over — ItemDB, GuildRoster,
 DeltaSync and AceCommQueue all publish a documented contract that consumers code against. This gets
-the same treatment, written in [LIBRARY_CONTRACTS.md](LIBRARY_CONTRACTS.md) alongside the other four.
+the same treatment, written in `LIBRARY_CONTRACTS.md` alongside the other four (that board is now in
+git history; its items moved to the inbox on 2026-10-07).
 
 **Write the contract before the library is built, not after.** It is the same shape whichever
 mechanism ships, so agreeing it first unblocks TOGBank's design, gives the extraction a target, and

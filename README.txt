@@ -3,7 +3,7 @@ TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era, TBC, MoP
                  and WoW Forever
 ================================================================================
 
-Version: 1.7.1
+Version: 1.8.0
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -915,14 +915,17 @@ OPTIONS PANEL:
     at a mailbox" (on by default; untick it if you would rather open the
     window yourself with /togbank mailbox or the mail frame's button) and
     "Mailbox window on non-bank characters" (off by default; the window
-    opens by itself only on bank characters until you tick this)
+    opens by itself only on bank characters until you tick this) and
+    "Show bank stock in item tooltips" (on by default; untick it to stop
+    item tooltips listing which bank characters hold the item)
   - Appearance: how see-through each window is, "Reset All Windows to
     Solid", "Recenter All Windows" (for a window lost off screen), "Close
     windows with Escape" (on by default) and "Pulsing glow on cancelled
     requests" (on by default)
   - Bank (bank characters only): "Enable for <character>" - the one switch
-    that governs whether this bank is scanned and shared - "Hide soulbound
-    items from the guild", and the donation options
+    that governs whether this bank is scanned and shared - "Enable
+    donations" (the Donation window at the mailbox for each gift; off by
+    default), "Hide soulbound items from the guild", and the donation options
   - Debug: persistent logging and the debug categories (tick LOG to watch
     the bank log being written)
   - (OFFICERS ONLY) Officer tab: guild-wide request limits, how long a
@@ -1022,6 +1025,26 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.8.0:
+--------------
+NEW FEATURES:
+- "Show bank stock in item tooltips" (General settings, on by default):
+  untick it to stop item tooltips listing which bank characters hold the item.
+
+CHANGES:
+- The "Enable donations" setting is back in the Bank settings, off by
+  default. Tick it to have the Donation window pop up at the mailbox for each
+  gift.
+
+BUG FIXES:
+- On bank characters, the Donation window popped up at every mailbox when
+  "Open the Mailbox window at a mailbox" was unticked, with no way to stop it
+- On Classic Era, TBC and MoP the CurseForge app did not install LibDBIcon
+  (the minimap button library); it is listed as a required download again
+
+COMPATIBILITY: no change to how anything travels between players; v1.8.0
+works with v1.7.0 and v1.7.1.
 
 Version 1.7.1:
 --------------

@@ -35,6 +35,12 @@ end
 function TooltipBankerInfo:AppendTo(tooltip, itemID)
 	if type(tooltip) ~= "table" or type(tooltip.AddLine) ~= "function" then return false end
 	if type(itemID) ~= "number" then return false end
+	-- TOOLTIP-TOGGLE-001: the player's "Show bank stock in item tooltips" switch. Checked here, not
+	-- only in the hook, so it also covers TOGProfessionMaster's recipe tooltips, which call AppendTo.
+	local options = TOGBankClassic_Options
+	if options and options.IsItemTooltipBankersEnabled and not options:IsItemTooltipBankersEnabled() then
+		return false
+	end
 
 	local info = TOGBankClassic_Guild and TOGBankClassic_Guild.Info
 	if not info or not info.alts then return false end

@@ -188,16 +188,15 @@ function TOGBankClassic_Mail:CheckForFulfilledRequest(itemName, _, sender)
 end
 
 function TOGBankClassic_Mail:Scan()
-	-- UX-WATERFALL-001 (crimsonmane, 2026-09-14: "we see the original plus the new window pops up.
-	-- the two windows are two separate settings"): the Mailbox window, when it opens by itself, IS
-	-- the mailbox -- it takes, and it credits donations through the same rule this path uses
-	-- (IsDonation / CreditMoney / CreditItem). So the per-mail Donation popup below stands aside
-	-- whenever the Mailbox window auto-opens, and the ONE setting that governs the mailbox is the
-	-- Mailbox window's own ("Open the Mailbox window at a mailbox"). Untick that and this popup
-	-- is the mailbox again, as it was before v1.5.0. The old per-character "Enable donations" box
-	-- is gone: it was the second setting, and two settings for one mailbox is the bug reported.
-	local Mailbox = TOGBankClassic_UI_Mailbox
-	if Mailbox and Mailbox.AutoOpens and Mailbox:AutoOpens() then
+	-- DONATIONS-BOX-001 (the operator, 2026-10-07): the per-mail Donation popup opens only when
+	-- this character's Bank setting "Enable donations" is ticked, default off. History: v1.5.2's
+	-- UX-WATERFALL-001 removed that box and let the Mailbox window's setting govern the popup
+	-- instead (it stood aside while the window auto-opened), so unticking the window brought the
+	-- popup back with no way to stop it (GUNNEY, Discord, the same day). Both settings are now
+	-- independent; a banker who ticks both gets both windows, which is what they asked for. Gifts
+	-- taken through the Mailbox window are credited either way (Mail:IsDonation).
+	local O = TOGBankClassic_Options
+	if not (O and O.GetDonationEnabled and O:GetDonationEnabled()) then
 		return
 	end
 

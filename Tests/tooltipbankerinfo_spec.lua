@@ -275,6 +275,48 @@ describe("TooltipBankerInfo:AppendTo", function()
 		assert.is_false(TBI:AppendTo(fakeTooltip(), "2589"))
 	end)
 
+	-- TOOLTIP-TOGGLE-001 (the operator, 2026-10-07: "someone asked to be able to turn it off" / "have
+	-- it on by default"). The real Options file, so the default and the switch are the shipped ones.
+	describe("the 'Show bank stock in item tooltips' setting", function()
+		-- The real file replaces the global; put back whatever was there, so an unticked switch
+		-- cannot leak into a later spec file's tooltips.
+		local saved
+		before_each(function() saved = _G.TOGBankClassic_Options end)
+		after_each(function() _G.TOGBankClassic_Options = saved end)
+
+		local function options(bank)
+			env.loadFile("Modules/Options.lua")
+			TOGBankClassic_Options.db = bank and { global = { bank = bank } } or nil
+		end
+
+		it("is on by default: no DB yet, and a profile saved before the setting, both draw the block", function()
+			installGuild({ ["Bank1-Realm"] = { items = { { ID = 2589, Count = 20 } } } })
+			options(nil)
+			assert.is_true(TBI:AppendTo(fakeTooltip(), 2589), "no DB yet hid the block")
+			options({})
+			assert.is_true(TBI:AppendTo(fakeTooltip(), 2589), "a profile without the key hid the block")
+			options({ itemTooltipBankers = true })
+			assert.is_true(TBI:AppendTo(fakeTooltip(), 2589))
+		end)
+
+		it("unticked, draws nothing and reports false, so a caller's tooltip is left as it was", function()
+			installGuild({ ["Bank1-Realm"] = { items = { { ID = 2589, Count = 20 } } } })
+			options({ itemTooltipBankers = false })
+			local tip = fakeTooltip()
+			tip:AddLine("someone else's line")
+			assert.is_false(TBI:AppendTo(tip, 2589))
+			assert.equal(1, #tip.lines)
+		end)
+
+		it("is a General-settings toggle whose shipped default is ON", function()
+			local src = env.readFile("Modules/Options.lua")
+			local box = src:match('%["itemTooltipBankers"%] = (%b{})')
+			assert.is_not_nil(box, "the toggle is missing from the settings")
+			assert.is_not_nil(box:find('name = "Show bank stock in item tooltips"', 1, true))
+			assert.is_not_nil(src:find("itemTooltipBankers = true }", 1, true), "the AceDB default is not ON")
+		end)
+	end)
+
 	it("leaves a tooltip it declines exactly as it found it", function()
 		installGuild({ ["Bank1-Realm"] = { items = { { ID = 999, Count = 20 } } } })
 		local tip = fakeTooltip()
@@ -360,7 +402,6 @@ describe("TooltipBankerInfo's own hook", function()
 		function other:GetItem() return "Copper Bar", "|cffffffff|Hitem:2589:0:0:0:0:0:0|h[Copper Bar]|h|r" end
 		registered[1].fn(other, { id = 2589 })
 		assert.equal(0, #other.lines, "a tooltip other than GameTooltip got the banker lines")
-		-- GameTooltip itself gets them, through the same AppendTo.
 		-- GameTooltip itself gets them, through the same AppendTo. The post-call reads the global at call
 		-- time, so a fake stands in for it for the one call.
 		local realGT = _G.GameTooltip

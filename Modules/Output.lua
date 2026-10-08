@@ -484,6 +484,10 @@ function TOGBankClassic_Output:GarbageCollectPersistentLog()
 		end
 	end
 
+	-- LOG-001, decided 2026-10-07: this summary lands in the log it just collected, on purpose. It is
+	-- one current entry per pass (never itself due for collection), and it is the only record in an
+	-- exported log of when a collection ran and how much it took. The same holds for the save line in
+	-- SavePersistentLog. output_spec pins it.
 	if removed > 0 then
 		TOGBankClassic_Output:Debug("SYSTEM", "Garbage collected %d old debug log entries (older than %d days)", removed, self.persistentLogMaxAge / 86400)
 	end

@@ -1,5 +1,85 @@
 # TOGBankClassic Changelog
 
+## [v1.8.0] (2026-10-08) - Donations Setting
+
+The "Enable donations" setting is back, off by default, and the Donation popup can be turned off
+again. Checked in a game client by the operator on 2026-10-08 (the Donation popup, the tooltip
+toggle and the outstanding in-game checks from earlier releases all passed).
+
+### New Features
+
+- **TOOLTIP-TOGGLE-001: a setting to turn the bank stock off in item tooltips.** The operator,
+  2026-10-07: *"someone asked to be able to turn it off"* / *"we need to add one to settings, and have
+  it on by default"*. There was no such setting: `Modules/TooltipBankerInfo.lua` drew its "Bankers:"
+  block on every item tooltip unconditionally. General settings gain "Show bank stock in item
+  tooltips" (`db.global.bank.itemTooltipBankers`, account-wide like the Mailbox switches, AceDB default
+  `true`; `Options:IsItemTooltipBankersEnabled` also reads a missing key or no DB as on). The check is
+  in `TooltipBankerInfo:AppendTo`, the one renderer, so it also covers TOGProfessionMaster's recipe
+  tooltips, which call it. `Tests/tooltipbankerinfo_spec.lua` pins the default, the off state and the
+  shipped toggle.
+
+### Bug Fixes
+
+- **MAILBOX-POPUP-001: the Donation popup could not be stopped on a bank character.** GUNNEY,
+  Discord 2026-10-07: *"donation window pops up on all bankers even when unchecked and I cannot get
+  it to stop poping up"*. Confirmed in the code: `Mail:Scan` (`Modules/Mail.lua`) stood aside only
+  while the Mailbox window auto-opened, so unticking the General setting "Open the Mailbox window at
+  a mailbox" (a global setting, so every banker at once) brought the per-mail Donation popup back in
+  its place on every mailbox visit -- and v1.5.2 (UX-WATERFALL-001) had removed the per-character
+  "Enable donations" box that used to turn the popup off. The only remaining off switch was "Enable
+  for <player>", which also stops bank scanning. That "the popup returns when unticked" rule was my
+  design choice in UX-WATERFALL-001, not a request, and it contradicted the setting's own
+  description ("Untick to stop that").
+- **DONATIONS-BOX-001: the "Enable donations" setting is back, unticked by default.** The operator,
+  2026-10-07: *"we should have the setting to enable/disable donations back where it was, and have
+  it unchecked by default."* The per-character box returns to the Bank panel at its old place (order
+  2, `db.char.bank.donations`, `Options:GetDonationEnabled`), and it alone decides whether the
+  Donation popup opens at a mailbox: `Mail:Scan` no longer consults the Mailbox window's setting or
+  verdict, so the two settings are independent. The AceDB default changes from `true` to `false`;
+  AceDB never wrote the old default to disk, so every character that never touched the box starts
+  unticked. This replaces the first fix above, which had tied the popup to the Mailbox window's
+  setting a second way. KNOWN COST: a banker who ticks both gets both windows, as before v1.5.2;
+  gifts taken through the Mailbox window are credited either way. `Tests/donations_spec.lua` pins
+  the popup following the box alone, the box's place, key and OFF default, and the real accessor.
+
+- **PKG-EMBED-001: the CurseForge app stopped installing LibDBIcon for Classic Era, TBC and MoP.**
+  The copy of LibDBIcon bundled for WoW Forever in v1.7.1 (`Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua`,
+  taken from TOGProfessionMaster) began with the packager's `--@curseforge-project-slug:
+  libdbicon-1-0@` marker. The BigWigs packager greps every packaged `.lua` for that marker and records
+  the slug as `embeddedLibrary` (release.sh:1882-1889), overriding `.pkgmeta`'s required dependency,
+  so the upload told CurseForge LibDBIcon was embedded and the app did not install the standalone
+  addon -- while the Era, TBC and MoP TOCs list it under `## Dependencies` and never load the bundled
+  copy. Marker removed; the harness `.pkgmeta` checker now reports `libdbicon-1-0=requiredDependency`
+  for the upload, and `Tests/wiring_spec.lua` fails if the marker comes back. Whether v1.7.1's
+  CurseForge file actually shows LibDBIcon as embedded was not checked on the site (not verified).
+  The design is the operator's (2026-10-07): bundled ONLY for WoW Forever, an external required
+  dependency everywhere else. `.pkgmeta` also lost all its comments, per the operator's no-comments
+  rule of 2026-10-03; release.sh skips whole-line comments, so that change alters nothing uploaded.
+
+### Internal
+
+- **HARNESS-PIN c2fd446: Tests/wowapi moved from a49127f.** Taken for WoWAPITesting's fix to
+  harness thread `1a91c3ca`. Under load the runner's per-file TIMEOUT used to escape as a bare
+  `lua.exe: (error object is not a string)`, with no file named; it is now a named failure.
+  Adoption fix: two `Tests/searchbox_spec.lua` fixtures built a FontString with no font, which the
+  harness now refuses as the client does (`FontString:SetText(): Font not set`); they use
+  `GameFontHighlightSmall`, the real cells' font. Production was already right (`Requests.lua`
+  gives every glow copy a font object).
+- **GATE-LOAD-001: the gate survives a busy machine.** run.lua's per-file limit is wall time on
+  Windows (WoWAPITesting, same thread), so it tripped whenever other desk runs shared the machine.
+  Every forward part now passes `--timeout=240`, and `Tests/run_reverse.lua` passes `--timeout=600`
+  (browse_spec ran past 240 s late in the reverse order with three other runs in flight, and passed
+  697/0 at 600 s). Forward B2 is split into B3a and B3b, because under load its 52 files outran the
+  desk's 15 minutes. `CLAUDE.md` names the new parts.
+- **BOARDS-REMOVED-001: the last boards are gone.** `docs/LIBRARY_CONTRACTS.md`,
+  `docs/DEPENDENCY_CONTRACTS.md`, `Tests/HARNESS_CONTRACT.md`, `docs/contracts.md` and
+  `docs/AUDIT.md` were imported into the writ inbox and deleted. Writ, 2026-10-07: the operator's
+  directive is "the boards should be removed after a migration"; git history keeps them. All 81
+  imported items were triaged the same day: 79 were already delivered, fixed or board prose. The
+  other two were closed with a comment-level change: LOG-001's self-logging is kept on purpose and
+  now says so (`Modules/Output.lua`), and Q1's false "nil when there is no link" claim was
+  corrected (`Modules/MailInventory.lua`).
+
 ## [v1.7.1] (2026-09-29) - WoW Forever
 
 TOG Bank on WoW Forever, the fourth supported client. Checked in a Forever client by the operator on

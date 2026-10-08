@@ -812,10 +812,11 @@ function TOGBankClassic_Guild:RebuildBankerRoster()
 		--
 		-- LIBREQ-GR-001 asked LibGuildRoster for a `CanViewOfficerNotes()` accessor to close
 		-- this. NOT A GAP, established 2026-09-09 by reading the library: `lib:IsOfficer()` with
-		-- NO argument already is that accessor -- LibGuildRoster-1.0.lua:2361-2363 returns
+		-- NO argument already is that accessor -- LibGuildRoster-1.0.lua's `lib:IsOfficer` returns
 		-- `C_GuildInfo.CanViewOfficerNote()` for the player. It is named for the privilege rather
 		-- than the visibility, which is why it was missed. The per-member half of that request is
-		-- genuinely unbuildable (no client API answers another member's permissions, :2350-2359)
+		-- genuinely unbuildable (no client API answers another member's permissions; IsOfficer
+		-- answers nil for anyone but the player, and its header comment says why)
 		-- and TOGBank never needed it -- "can *I* read officer notes" is the whole question.
 		--
 		-- Feature-detected because the library's own header requires it: IsOfficer arrived in

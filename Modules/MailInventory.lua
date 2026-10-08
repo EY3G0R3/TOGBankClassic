@@ -17,7 +17,11 @@ TOGBankClassic_MailInventory.hasUpdated = false
 --- and the log's `from` (keyed `id:0`) could never match the deposit the bags-row produced.
 ---@param i number mail index
 ---@param j number attachment index
----@return table|nil record nil when the slot is empty or the client has no link for it yet
+--- Peer Review Q1: with NO link yet (the client sends it a moment after the header), parseLink answers
+--- 0, 0 and the record keys as the base item -- right for a plain item, wrong for a suffixed one
+--- ("of the Bear" keys as the bare weapon) until a later scan sees the link. Returning nil there
+--- instead would drop every plain attachment whose link is late, which is worse.
+---@return table|nil record nil when the slot is empty
 local function attachmentRecord(i, j)
 	local name, itemID, _, count = GetInboxItem(i, j)
 	if not (itemID and name) then return nil end

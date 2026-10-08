@@ -350,7 +350,8 @@ function TOGBankClassic_Options:Init()
 			-- login race on a fresh profile. Without a default it stays nil (falsy)
 			-- forever and the character never scans. Harmless for non-bankers, whose
 			-- scans are already gated on IsBank() independently.
-			bank = { enabled = true },   -- UX-WATERFALL-001: `donations` default retired with its box
+			-- DONATIONS-BOX-001: `donations` (the Donation popup at the mailbox) defaults OFF.
+			bank = { enabled = true, donations = false },
 			framePositions = {},  -- Stores window positions/sizes
 			-- BROWSE-006: the Guild Bank window's last tab. Per character, beside the window
 			-- positions and for the same reason -- it is part of how this alt has that window set up.
@@ -372,7 +373,8 @@ function TOGBankClassic_Options:Init()
 				-- MAILBOX-TOGGLE-001: mailboxAutoOpen ON by default -- v1.5.0 shipped the auto-open.
 				-- MAILBOX-TOGGLE-002: mailboxAutoOpenNonBankers OFF by default -- "on by default for
 				-- bankers only" (the operator, 2026-09-14).
-				bank = { report = true, logLevel = LOG_LEVEL.INFO, commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true, syncInRaid = false, mailboxAutoOpen = true, mailboxAutoOpenNonBankers = false },
+				-- TOOLTIP-TOGGLE-001: itemTooltipBankers ON by default (the operator, 2026-10-07).
+				bank = { report = true, logLevel = LOG_LEVEL.INFO, commDebug = false, integrityCheckDiagnostics = false, registerBankCommand = true, registerGbankCommand = true, syncInRaid = false, mailboxAutoOpen = true, mailboxAutoOpenNonBankers = false, itemTooltipBankers = true },
 			-- ALPHA-001: per-window chrome transparency, 0..1, keyed by TOGBankClassic_UI.ALPHA_WINDOWS.
 			-- Account-wide rather than per-character: it is a pure display preference with no
 			-- per-character meaning, and setting it once per alt is exactly the chore the request
@@ -596,6 +598,22 @@ function TOGBankClassic_Options:Init()
 						end,
 						get = function()
 							return self:IsMailboxAutoOpenForNonBankersEnabled()
+						end,
+					},
+					-- TOOLTIP-TOGGLE-001 (the operator, 2026-10-07: "someone asked to be able to turn it off"
+					-- / "we need to add one to settings, and have it on by default"). Account-wide like the
+					-- mailbox switches: a display preference with no per-character meaning.
+					["itemTooltipBankers"] = {
+						order = 2.68,
+						type = "toggle",
+						width = "full",
+						name = "Show bank stock in item tooltips",
+						desc = "When you point at an item anywhere in the game, its tooltip lists which bank characters hold it and how many. Untick to keep item tooltips free of it.",
+						set = function(_, v)
+							self.db.global.bank["itemTooltipBankers"] = v and true or false
+						end,
+						get = function()
+							return self:IsItemTooltipBankersEnabled()
 						end,
 					},
 					["muteWarnings"] = {
@@ -1069,12 +1087,26 @@ function TOGBankClassic_Options:InitGuild()
 					return self.db.global.bank["report"]
 				end,
 			},
-			-- UX-WATERFALL-001: the "Enable donations" box that lived here (order 2, "Displays donation
-			-- window at mailbox") is GONE. It was a second setting for the one mailbox -- the Donation
-			-- popup's -- beside the Mailbox window's own, and a banker with both on got both windows
-			-- (crimsonmane, 2026-09-14). The Mailbox window's General setting governs the mailbox now;
-			-- the popup stands aside while that window auto-opens, and returns when it is unticked.
-			-- The saved `db.char.bank.donations` value is left in place and read by nothing.
+			-- DONATIONS-BOX-001 (the operator, 2026-10-07: "we should have the setting to enable/disable
+			-- donations back where it was, and have it unchecked by default"): v1.5.2's UX-WATERFALL-001
+			-- removed this box and let the Mailbox window's setting govern the popup, which left a
+			-- banker no way to turn the popup off (GUNNEY, Discord, the same day). It is back at its
+			-- old place and key, and it alone decides whether the Donation popup opens at a mailbox.
+			-- Default OFF; AceDB never saved the old `true` default, so every character that never
+			-- touched the box starts unticked.
+			["donations"] = {
+				order = 2,
+				type = "toggle",
+				width = "full",
+				name = "Enable donations",
+				desc = "Displays the Donation window at the mailbox for each gift from a guild member, with an 'Add to score' box. Off by default; the Mailbox window (General settings) also takes and credits gifts.",
+				set = function(_, v)
+					self.db.char.bank["donations"] = v and true or false
+				end,
+				get = function()
+					return self:GetDonationEnabled()
+				end,
+			},
 			-- HIDE-002 (the operator: "a setting for bankers in settings in the banker only settings,
 			-- a check box"). OFF by default: ticking it changes what this banker publishes, and an
 			-- upgrade must not do that unasked.
@@ -1120,6 +1152,13 @@ end
 
 function TOGBankClassic_Options:GetBankEnabled()
 	return self.db.char.bank["enabled"]
+end
+
+--- DONATIONS-BOX-001: does the Donation popup open at a mailbox on this character? Off unless
+--- ticked; false before the DB is up.
+function TOGBankClassic_Options:GetDonationEnabled()
+	local bank = self.db and self.db.char and self.db.char.bank
+	return (bank and bank["donations"]) == true
 end
 
 -- ---------------------------------------------------------------------------------------------
@@ -1197,6 +1236,15 @@ end
 function TOGBankClassic_Options:IsMailboxAutoOpenForNonBankersEnabled()
 	local bank = self.db and self.db.global and self.db.global.bank
 	return (bank and bank["mailboxAutoOpenNonBankers"]) == true
+end
+
+--- TOOLTIP-TOGGLE-001: does the "Bankers:" block go into item tooltips? True unless unticked;
+--- true before the DB is up and for a profile saved before the setting existed.
+function TOGBankClassic_Options:IsItemTooltipBankersEnabled()
+	local bank = self.db and self.db.global and self.db.global.bank
+	local v = bank and bank["itemTooltipBankers"]
+	if v == nil then return true end
+	return v == true
 end
 
 function TOGBankClassic_Options:GetLogLevel()

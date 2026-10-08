@@ -746,7 +746,9 @@ describe("STORE-007: a donation received at the mailbox is credited once, valued
 		assert.is_true(Mailbox:TakeRow(rows[4]))
 		assert.is_true(Mailbox:TakeRow(rows[5]))
 		assert.equal(2, #L.entries, "a COD, returned or banker-to-banker take was credited")
-		-- The popup's Scan stands aside while the Mailbox window auto-opens, and runs when it does not.
+		-- DONATIONS-BOX-001: the popup's Scan follows the Bank setting "Enable donations" ALONE --
+		-- not the Mailbox window's setting or verdict (MAILBOX-POPUP-001: unticking the window used to
+		-- bring the popup back with no way to stop it).
 		local opened = 0
 		TOGBankClassic_UI_Mail.SetMailId = function() end
 		TOGBankClassic_UI_Mail.Open = function() opened = opened + 1 end
@@ -754,19 +756,34 @@ describe("STORE-007: a donation received at the mailbox is credited once, valued
 		TOGBankClassic_Mail.isScanning = false
 		TOGBankClassic_Options.GetBankReporting = function() return false end
 		wow.mail[5] = { sender = "Carol", subject = "gift", money = 100, cod = 0 }
-		Mailbox.AutoOpens = function() return true end
-		TOGBankClassic_Mail:Scan()
-		assert.equal(0, opened, "the Donation popup opened beside an auto-opening Mailbox window")
+		local donationsTicked = false
+		TOGBankClassic_Options.GetDonationEnabled = function() return donationsTicked end
+		TOGBankClassic_Options.IsMailboxAutoOpenEnabled = function() return false end
 		Mailbox.AutoOpens = function() return false, "off" end
 		TOGBankClassic_Mail:Scan()
-		assert.equal(1, opened, "with the Mailbox window's auto-open off, the popup did not return")
-		-- The retired setting is read by nothing: no Options accessor for it remains.
-		local accessors = {}
-		for k in pairs(TOGBankClassic_Options) do
-			if type(k) == "string" and k:find("DonationEnabled", 1, true) then accessors[#accessors + 1] = k end
-		end
-		assert.same({}, accessors, "an Options accessor for the retired donations setting is back")
-		assert.is_nil(env.readFile("Modules/Options.lua"):find('["donations"] = {', 1, true), "the 'Enable donations' box is back")
+		assert.equal(0, opened, "the Donation popup opened with 'Enable donations' unticked")
+		donationsTicked = true
+		TOGBankClassic_Mail:Scan()
+		assert.equal(1, opened, "with 'Enable donations' ticked, the Donation popup did not open")
+	end)
+
+	it("DONATIONS-BOX-001: 'Enable donations' is back in the Bank panel at order 2, per character, default OFF", function()
+		local src = env.readFile("Modules/Options.lua")
+		local box = src:match('%["donations"%] = (%b{})')
+		assert.is_not_nil(box, "the 'Enable donations' box is missing from the Bank panel")
+		assert.is_not_nil(box:find('name = "Enable donations"', 1, true))
+		assert.is_not_nil(box:find("order = 2,", 1, true))
+		assert.is_not_nil(box:find('self.db.char.bank["donations"]', 1, true), "the box no longer writes the per-character key")
+		assert.is_not_nil(src:find("bank = { enabled = true, donations = false }", 1, true), "the default is not OFF")
+		-- The real accessor, read from the real file: true only when ticked, false before the DB is up.
+		local stub = TOGBankClassic_Options
+		env.loadFile("Modules/Options.lua")
+		local get = TOGBankClassic_Options.GetDonationEnabled
+		TOGBankClassic_Options = stub
+		assert.is_false(get({}))
+		assert.is_false(get({ db = { char = { bank = {} } } }))
+		assert.is_false(get({ db = { char = { bank = { donations = false } } } }))
+		assert.is_true(get({ db = { char = { bank = { donations = true } } } }))
 	end)
 
 	-- Audit a228508b F3: every example above stubs IsUnique false, so nothing drove a take through the

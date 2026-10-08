@@ -51,13 +51,17 @@ if part and parts then
 	first = math.floor((part - 1) * #all / parts) + 1
 	last = math.floor(part * #all / parts)
 end
--- REVERSE-TIMEOUT-001: the harness's per-file limit (60 s CPU, from pin e6b42c3) is too short for
+-- REVERSE-TIMEOUT-001: the harness's per-file limit (60 s, from pin e6b42c3) is too short for
 -- the a-end slice. Every frames.reset() runs a full collect over whatever earlier files left alive,
 -- and by browse_spec that is ~450 MB and ~150k frames, so a file that takes 9 s alone took 97 s
--- there (measured 2026-09-29, --times; all 696 passed with the limit raised). 240 s leaves room
--- under the desk's 15-minute budget and still stops a real hang. KNOWN COST: a file that slows
--- down in this order is caught at 240 s, not 60. The retention itself is SUITE-HEAP-001's.
-local reversed = { [0] = "Tests/wowapi/run.lua", "--timeout=240" }
+-- there (measured 2026-09-29, --times; all 696 passed with the limit raised). The limit is WALL
+-- time on Windows, not CPU (WoWAPITesting, harness thread 1a91c3ca, 2026-10-07: os.clock is the
+-- CRT's wall clock), so it also scales with how busy the machine is: on 2026-10-07, with three
+-- other desk runs in flight, browse_spec ran past 240 s here twice at the same example and
+-- passed 697/0 at 600 s. 600 s still stops a real hang well inside the desk's 15-minute budget.
+-- KNOWN COST: a file that slows down in this order is caught at 600 s, not 60. The retention
+-- itself is SUITE-HEAP-001's.
+local reversed = { [0] = "Tests/wowapi/run.lua", "--timeout=600" }
 -- Anything after <part> <parts> is handed to run.lua as a flag (--times, --timeout=N), so a slice
 -- can be measured without re-listing its files by hand.
 for i = 3, #(arg or {}) do reversed[#reversed + 1] = arg[i] end

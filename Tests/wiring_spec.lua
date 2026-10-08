@@ -550,6 +550,12 @@ describe("INV2 library dependencies", function()
 		assert.truthy(readFile("TOGBankClassic_Camelot.toc"):match("^## Interface: 16001\r?\n"))
 		assert.truthy(readFile("Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua"):find('"LibDBIcon-1.0"', 1, true),
 			"the Forever TOC loads Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua, which must exist")
+		-- PKG-EMBED-001: the copy taken from TOGProfessionMaster carried the packager's
+		-- `@curseforge-project-slug: libdbicon-1-0@` embed marker. The packager then lists LibDBIcon as
+		-- an EMBEDDED library for the whole upload, overriding .pkgmeta's requiredDependency, so the
+		-- CurseForge app stops installing it for Era, TBC and MoP, whose TOCs need it to load at all.
+		assert.is_nil(readFile("Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua"):find("@curseforge-project-slug", 1, true),
+			"the bundled LibDBIcon carries the packager's embed marker again; remove it")
 	end)
 
 	-- MODULE-ORDER-001 (Peer Review F6 on self-audit 13180dbf): Tests/env_togbank.lua's MODULE_ORDER,

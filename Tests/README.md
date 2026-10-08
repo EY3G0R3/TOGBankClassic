@@ -48,7 +48,6 @@ git submodule update --init --recursive
 | `Tests/env_togbank.lua` | The fake WoW environment this addon needs on top of the harness |
 | `Tests/wowapi/coverage.lua` | Zero-dependency line coverage, from Lua 5.1 bytecode debug info. **Lives in the harness** -- a local `Tests/coverage.lua` was deleted on 2026-09-08 as the stale fork it had become (209 lines against the harness's maintained 489) |
 | `Tests/*_spec.lua` | The specs |
-| `Tests/HARNESS_CONTRACT.md` | Proposed harness additions, staged locally — hand upstream |
 
 `Tests` is in `.pkgmeta`'s `ignore` list, so none of this reaches players.
 
