@@ -1160,8 +1160,9 @@ end
 -- and bag state settle between actions; doing it all in one click raced the send
 -- ahead of the split. The banker spams the envelope icon to walk the oldest
 -- fully-fillable order through: select -> (split) -> attach -> send, then the next
--- click selects the next-oldest. Decisions: oldest-first (FIFO by date); skip
--- partials (only orders we can fully fill from bags). The split is attached
+-- click selects the next-oldest. Decisions: oldest-first (FIFO by date); no
+-- partials (only orders we can fully fill from bags); an unfillable order still
+-- holds its place for its item (FCFS-001, see FindOldestServiceableOrder). The split is attached
 -- directly off the cursor, so no free bag slot or async timers are needed.
 local function tog_copyItems(items)
 	local out = {}
@@ -1228,45 +1229,70 @@ function TOGBankClassic_Mail:TakeOneInboxItemFor(req)
 	return false
 end
 
+-- The pool an order draws from: item id + suffix, or the lowercased name for a legacy order with no
+-- id. Every order with the same key competes for the same stacks.
+local function tog_orderKey(req)
+	return TOGBankClassic_Inventory_Record.requestKey(req.itemID, req.suffixID)
+		or ("n:" .. string.lower(tostring(req.item)))
+end
+
+-- Oldest = smallest date, with a stable id tiebreak so same-second orders resolve deterministically.
+-- The one definition of "oldest" every fulfillment search sorts by.
+local function tog_olderFirst(a, b)
+	local da, db = tonumber(a.date) or 0, tonumber(b.date) or 0
+	if da ~= db then return da < db end
+	return tostring(a.id) < tostring(b.id)
+end
+
+-- This banker's open orders that still need something, oldest first.
+local function tog_openOrdersOldestFirst(normActor)
+	local open = {}
+	local info = TOGBankClassic_Guild.Info
+	local requests = info and info.requests
+	if not requests then return open end
+	for _, req in pairs(requests) do
+		if (req.status or "open") == "open"
+			and req.bank and TOGBankClassic_Guild:NormalizeName(req.bank) == normActor
+			and TOGBankClassic_Guild:RequestQuantityNeeded(req) > 0 then
+			open[#open + 1] = req
+		end
+	end
+	table.sort(open, tog_olderFirst)
+	return open
+end
+
 -- Oldest open order for normActor serviceable from bags, or from bags + the mail
 -- inbox. Returns (req, bagsReady, plan, qtyNeeded). bagsReady=true → can be fully
 -- attached from bags now (plan computed); false → some of its items are in the
 -- mail and need pulling into bags first.
+--
+-- FCFS-001 (the operator, 2026-10-09, on crimsonmane's Discord report that Fulfill Oldest "does not
+-- fulfill the oldest order first": "you are supposed to fill the oldest order first. first come first
+-- server"): an order that cannot be filled yet still holds its place in the queue for ITS item. It
+-- used to be skipped, and the next order that fit went out -- so a newer order for fewer of the same
+-- item was mailed ahead of the older one, spending the stock the older order was waiting on. Now the
+-- first unfillable order for an item blocks every newer order for that item; orders for OTHER items
+-- are unaffected, because they do not compete for the same stacks.
 function TOGBankClassic_Mail:FindOldestServiceableOrder(normActor)
-	local info = TOGBankClassic_Guild.Info
-	local requests = info and info.requests
-	if not requests then return nil end
-	local best, bestBagsReady, bestPlan, bestQty
-	for _, req in pairs(requests) do
-		if (req.status or "open") == "open"
-			and req.bank and TOGBankClassic_Guild:NormalizeName(req.bank) == normActor then
+	local blocked = {}
+	for _, req in ipairs(tog_openOrdersOldestFirst(normActor)) do
+		local key = tog_orderKey(req)
+		if not blocked[key] then
 			local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(req)
-			if qtyNeeded > 0 then
-				local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
-				local bagsReady, plan, serviceable = false, nil, false
-				if totalInBags >= qtyNeeded then
-					plan = self:CalculateFulfillmentPlan(tog_copyItems(items), qtyNeeded, totalInBags)
-					if plan.canFulfill then bagsReady, serviceable = true, true end
-				end
-				if not serviceable and totalInBags < qtyNeeded then
-					local inboxQty = tog_inboxQtyFor(req)
-					if inboxQty > 0 and (totalInBags + inboxQty) >= qtyNeeded then
-						serviceable = true  -- bags + mail can cover it; pull the mail items first
-					end
-				end
-				if serviceable then
-					-- Oldest = smallest date, with a stable id tiebreak so same-second
-					-- orders resolve deterministically (not jump around the list).
-					local d  = tonumber(req.date) or 0
-					local bd = best and (tonumber(best.date) or 0) or nil
-					if not best or d < bd or (d == bd and tostring(req.id) < tostring(best.id)) then
-						best, bestBagsReady, bestPlan, bestQty = req, bagsReady, plan, qtyNeeded
-					end
+			local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
+			if totalInBags >= qtyNeeded then
+				local plan = self:CalculateFulfillmentPlan(tog_copyItems(items), qtyNeeded, totalInBags)
+				if plan.canFulfill then return req, true, plan, qtyNeeded end
+			else
+				local inboxQty = tog_inboxQtyFor(req)
+				if inboxQty > 0 and (totalInBags + inboxQty) >= qtyNeeded then
+					return req, false, nil, qtyNeeded  -- bags + mail can cover it; pull the mail items first
 				end
 			end
+			blocked[key] = true
 		end
 	end
-	return best, bestBagsReady, bestPlan, bestQty
+	return nil
 end
 
 --- MULTIFILL-001: the SAME requester's other open orders for this banker that the bags can fill,
@@ -1291,41 +1317,35 @@ end
 ---@return table extras array of { req=, plan=, qty= }, oldest first
 function TOGBankClassic_Mail:FindMoreOrdersFor(normActor, requester, excludeId, claimed, slotsLeft)
 	local extras = {}
-	local info = TOGBankClassic_Guild.Info
-	local requests = info and info.requests
-	if not requests or slotsLeft <= 0 then return extras end
-	local candidates = {}
-	for _, req in pairs(requests) do
-		if req.id ~= excludeId and (req.status or "open") == "open" and req.requester == requester
-			and req.bank and TOGBankClassic_Guild:NormalizeName(req.bank) == normActor
-			and TOGBankClassic_Guild:RequestQuantityNeeded(req) > 0 then
-			candidates[#candidates + 1] = req
-		end
-	end
-	table.sort(candidates, function(a, b)
-		local da, db = tonumber(a.date) or 0, tonumber(b.date) or 0
-		if da ~= db then return da < db end
-		return tostring(a.id) < tostring(b.id)
-	end)
-	for _, req in ipairs(candidates) do
-		if slotsLeft <= 0 then break end
-		local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(req)
-		local _, items = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
-		local free, total = {}, 0
-		for _, it in ipairs(items or {}) do
-			if not claimed[it.bag .. ":" .. it.slot] then
-				free[#free + 1] = { bag = it.bag, slot = it.slot, count = it.count }
-				total = total + it.count
+	if slotsLeft <= 0 then return extras end
+	-- FCFS-001: what OTHER people's older orders still need of each item. Their claim on the bags comes
+	-- first, so an extra rides only on stock left over after them -- riding along must not let this
+	-- requester's newer order jump someone else's older one.
+	local reservedBefore = {}
+	for _, req in ipairs(tog_openOrdersOldestFirst(normActor)) do
+		if req.requester ~= requester then
+			local key = tog_orderKey(req)
+			reservedBefore[key] = (reservedBefore[key] or 0) + TOGBankClassic_Guild:RequestQuantityNeeded(req)
+		elseif req.id ~= excludeId and slotsLeft > 0 then
+			local key = tog_orderKey(req)
+			local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(req)
+			local _, items = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
+			local free, total = {}, 0
+			for _, it in ipairs(items or {}) do
+				if not claimed[it.bag .. ":" .. it.slot] then
+					free[#free + 1] = { bag = it.bag, slot = it.slot, count = it.count }
+					total = total + it.count
+				end
 			end
-		end
-		if total >= qtyNeeded then
-			local plan = self:CalculateFulfillmentPlan(free, qtyNeeded, total)
-			local needSlots = tog_planSlots(plan)
-			if plan.canFulfill and needSlots <= slotsLeft then
-				for _, st in ipairs(plan.stacksToAttach) do claimed[st.bag .. ":" .. st.slot] = true end
-				if plan.splitStack then claimed[plan.splitStack.bag .. ":" .. plan.splitStack.slot] = true end
-				slotsLeft = slotsLeft - needSlots
-				extras[#extras + 1] = { req = req, plan = plan, qty = qtyNeeded }
+			if total - (reservedBefore[key] or 0) >= qtyNeeded then
+				local plan = self:CalculateFulfillmentPlan(free, qtyNeeded, total)
+				local needSlots = tog_planSlots(plan)
+				if plan.canFulfill and needSlots <= slotsLeft then
+					for _, st in ipairs(plan.stacksToAttach) do claimed[st.bag .. ":" .. st.slot] = true end
+					if plan.splitStack then claimed[plan.splitStack.bag .. ":" .. plan.splitStack.slot] = true end
+					slotsLeft = slotsLeft - needSlots
+					extras[#extras + 1] = { req = req, plan = plan, qty = qtyNeeded }
+				end
 			end
 		end
 	end
@@ -1358,36 +1378,31 @@ end
 --- can, which is a regression in the existing button dressed up as a feature.
 --- @return table|nil req, number shortfall how many more are needed than bags hold
 function TOGBankClassic_Mail:FindOldestBankFillableOrder(normActor)
-	local info = TOGBankClassic_Guild.Info
-	local requests = info and info.requests
-	if not requests then return nil, 0 end
-	local best, bestShort
-	for _, req in pairs(requests) do
-		if (req.status or "open") == "open"
-			and req.bank and TOGBankClassic_Guild:NormalizeName(req.bank) == normActor then
-			local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(req)
-			if qtyNeeded > 0 then
-				local inBags = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
-				local shortfall = qtyNeeded - inBags
-				if shortfall > 0 then
-					local inBank = TOGBankClassic_Bank:CountItemInBank(req.item, req.itemID, req.suffixID)
-					if inBank > 0 then
-						-- Oldest first, with the same stable id tiebreak the mailbox search uses so
-						-- the two agree about what "oldest" means.
-						local d  = tonumber(req.date) or 0
-						local bd = best and (tonumber(best.date) or 0) or nil
-						if not best or d < bd or (d == bd and tostring(req.id) < tostring(best.id)) then
-							-- The TRUE shortfall, not capped at what the bank holds: the pick below already
-							-- takes the largest stack when nothing covers it, and the status message
-							-- reports "of the N needed" from this number, so capping it under-reported N.
-							best, bestShort = req, shortfall
-						end
-					end
-				end
-			end
+	-- Oldest first, by the same ordering the mailbox search uses so the two agree about what "oldest"
+	-- means.
+	local open = tog_openOrdersOldestFirst(normActor)
+	-- BANKCOLLECT-SHARE-001 (Discord, crimsonmane 2026-10-08: Fulfill Oldest "does not fulfill the
+	-- oldest order first"): the bags are ONE pool shared by every order for the same item. Each order
+	-- used to be measured against the whole bag count, so the stack pulled for an older order also
+	-- "covered" a newer order of the same item, and the newer one was never collected for. The bags
+	-- are now handed out oldest-first, and each order's shortfall is what is left after the older
+	-- orders' share.
+	local given = {}
+	for _, req in ipairs(open) do
+		local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(req)
+		local key = tog_orderKey(req)
+		local inBags = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
+		local free = math.max(0, inBags - (given[key] or 0))
+		given[key] = (given[key] or 0) + math.min(free, qtyNeeded)
+		local shortfall = qtyNeeded - free
+		if shortfall > 0 and TOGBankClassic_Bank:CountItemInBank(req.item, req.itemID, req.suffixID) > 0 then
+			-- The TRUE shortfall, not capped at what the bank holds: the pick below already takes the
+			-- largest stack when nothing covers it, and the status message reports "of the N needed"
+			-- from this number, so capping it under-reported N.
+			return req, shortfall
 		end
 	end
-	return best, bestShort
+	return nil, 0
 end
 
 --- COLLECT-002: everything this banker's OPEN orders ask for -- by id, and by lowercased name for

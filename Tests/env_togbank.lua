@@ -110,13 +110,44 @@ end
 --- Release an AceGUI window a spec is done with, the way production releases one: the persisted
 --- window's scale listener first (`UI:ForgetPersistedWindow`, SCALE-FLOOR-001), then AceGUI's
 --- Release, which returns the widget and its named tabs to the pool for the next Create.
+---
+--- SUITE-SPEED-001 (2026-10-09): after the Release, every raw frame still parented to a container's
+--- content frame is DETACHED, not just hidden. AceGUI's Release re-parents its own child widgets but
+--- leaves the frames TOG Bank built on a tab body (RowList rows, cells, the list host) where they
+--- are, and the pooled TabGroup is handed to the next example, which builds a fresh body beside the
+--- old one. Measured: one pooled Guild Bank TabGroup held 15,500 objects after browse_spec alone,
+--- the suite reached ~91,600 live frames, and every later spec file ran 50-100x slower (guild_spec
+--- 0.46 s alone, 42.6 s in the run). In the client the module loads once and finds its body again,
+--- so nothing accumulates there; this is the harness reloading modules per example.
+local function contentsOf(widget, out)
+	if widget.content then out[#out + 1] = widget.content end
+	for _, child in ipairs(widget.children or {}) do contentsOf(child, out) end
+	return out
+end
+
 function M.releaseWindow(window)
 	if not (window and window.frame) then return false end
 	if TOGBankClassic_UI and TOGBankClassic_UI.ForgetPersistedWindow then
 		TOGBankClassic_UI:ForgetPersistedWindow(window)
 	end
 	forgetFrameCaches(window)
+	-- The Guild Bank window registers its module with the bank log (Browse.lua, keyed by the module so
+	-- a rebuild replaces it). Here the log outlives the example's Browse load, so the dead module --
+	-- and through its lists every frame of the window -- stayed reachable from the log's callbacks.
+	local Log = TOGBankClassic_Log
+	if Log and type(Log.callbacks) == "table" then
+		for owner in pairs(Log.callbacks) do
+			if type(owner) == "table" and rawget(owner, "Window") == window then Log.callbacks[owner] = nil end
+		end
+	end
+	local contents = contentsOf(window, {})
 	LibStub("AceGUI-3.0"):Release(window)
+	for _, content in ipairs(contents) do
+		local kids = { content:GetChildren() }
+		for _, kid in ipairs(kids) do
+			if not kid.obj then kid:Hide(); kid:SetParent(nil) end
+		end
+	end
 	return true
 end
 
@@ -232,6 +263,84 @@ M.resetHooks = {}
 --- @param opts table|nil  { frames = true }
 function M.reset(opts)
 	for _, hook in ipairs(M.resetHooks) do hook() end
+	-- SUITE-SPEED-001: the mixin libraries keep a STRONG `embeds` set of every object ever embedded
+	-- into them, read only when a newer copy of the library loads over the old one (to re-embed). Ace3
+	-- loads once per run while every example builds a new addon, so each example's whole world --
+	-- addon, modules, roster library, windows -- stayed reachable from AceComm.embeds: ~57,000 objects
+	-- after three spec files, and every reset's full collection walked them all again.
+	if LibStub and LibStub.libs then
+		for _, major in ipairs({ "AceComm-3.0", "AceEvent-3.0", "AceTimer-3.0", "AceConsole-3.0",
+			"AceSerializer-3.0", "AceHook-3.0", "AceBucket-3.0" }) do
+			local lib = LibStub.libs[major]
+			if lib and type(lib.embeds) == "table" then
+				for target in pairs(lib.embeds) do lib.embeds[target] = nil end
+			end
+		end
+		-- The same for the handler registries: a previous example's addon was still REGISTERED for its
+		-- comm prefixes and events (AceComm.callbacks, AceEvent.events/.messages, all CallbackHandler,
+		-- keyed by the registering object), so it stayed alive and would still have been handed a later
+		-- example's traffic. Its timers went with the harness's timer reset; AceTimer's own table of
+		-- them did not.
+		local function wipeRegistry(registry)
+			if type(registry) == "table" and type(registry.events) == "table" then
+				for event in pairs(registry.events) do registry.events[event] = nil end
+			end
+		end
+		local AceComm, AceEvent, AceTimer = LibStub.libs["AceComm-3.0"], LibStub.libs["AceEvent-3.0"], LibStub.libs["AceTimer-3.0"]
+		if AceComm then wipeRegistry(AceComm.callbacks) end
+		if AceEvent then wipeRegistry(AceEvent.events); wipeRegistry(AceEvent.messages) end
+		if AceTimer and type(AceTimer.activeTimers) == "table" then
+			for handle in pairs(AceTimer.activeTimers) do AceTimer.activeTimers[handle] = nil end
+		end
+		-- AceAddon queues every NewAddon until ADDON_LOADED / PLAYER_LOGIN, which most examples never
+		-- fire, so the queues held every example's addon. An entry is dead once a later NewAddon of the
+		-- same name has replaced it in AceAddon.addons; the current one stays queued.
+		local AceAddon = LibStub.libs["AceAddon-3.0"]
+		if AceAddon and type(AceAddon.addons) == "table" then
+			for _, queueName in ipairs({ "initializequeue", "enablequeue" }) do
+				local queue = AceAddon[queueName]
+				if type(queue) == "table" then
+					for i = #queue, 1, -1 do
+						local entry = queue[i]
+						if type(entry) == "table" and entry.name and AceAddon.addons[entry.name] ~= entry then
+							table.remove(queue, i)
+						end
+					end
+				end
+			end
+			-- Its `embeds` (addon -> the libraries mixed into it) is keyed by the addon object the same way.
+			if type(AceAddon.embeds) == "table" then
+				for addon in pairs(AceAddon.embeds) do
+					if type(addon) == "table" and addon.name and AceAddon.addons[addon.name] ~= addon then
+						AceAddon.embeds[addon] = nil
+					end
+				end
+			end
+		end
+		-- VersionCheck outlives the example too, and every example's Guild module (Guild:HookVersionCheck)
+		-- and every example's freshly loaded LibGuildRoster (lib:RegisterWithVersionCheck) registers for
+		-- OnPeerVersion, keyed by itself -- one dead world per example, ~380 objects each. Matched by
+		-- SHAPE; the live Guild module and the current LibGuildRoster are spared for a spec that loads
+		-- them once per file. LibGuildRoster's `vcRegistered` is swept too, in case it is not the
+		-- current VersionCheck.
+		local live = rawget(_G, "TOGBankClassic_Guild")
+		local LGR = LibStub.libs["LibGuildRoster-1.0"]
+		for _, VC in ipairs({ LibStub.libs["VersionCheck-1.0"] or false, LGR and LGR.vcRegistered or false }) do
+			local registry = VC and type(VC.callbacks) == "table" and VC.callbacks.events
+			if type(registry) == "table" then
+				for _, handlers in pairs(registry) do
+					if type(handlers) == "table" then
+						for owner in pairs(handlers) do
+							if type(owner) == "table" and owner ~= live and owner ~= LGR
+								and (rawget(owner, "HookVersionCheck") or rawget(owner, "RegisterWithVersionCheck")) then
+								handlers[owner] = nil
+							end
+						end
+					end
+				end
+			end
+		end
+	end
 	-- VISIBILITY-001 part 3: LibAceGUIWidgets outlives a reset (one library object for the whole
 	-- suite), and the Guild Bank window and the Requests body register a scale listener keyed by
 	-- their MODULE table. A spec file that loaded those modules leaves them listening, so a later

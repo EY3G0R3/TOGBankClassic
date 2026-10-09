@@ -1075,7 +1075,7 @@ function TOGBankClassic_UI_Requests:AddHelpLines()
 	GameTooltip:AddLine("Opens a dialog to select a cancellation reason before cancelling. The reason is stored with the request and shown in the date tooltip. Cancelled requests move to the Archive tab.", 0.9, 0.9, 0.9, true)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Bottom row (bankers and officers):|r", 1, 1, 1, false)
-	GameTooltip:AddLine("The envelope is |cffffd100Fulfill Oldest|r -- at a mailbox each click advances the oldest order you can fully fill, and at the bank the same button collects what the orders need out of the vault. The broom is |cffffd100Cancel Stale|r, which cancels every open request older than the threshold in Settings. Mouse over either for the details.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine("The envelope is |cffffd100Fulfill Oldest|r -- at a mailbox each click advances the oldest order, first come first served, and at the bank the same button collects what the orders need out of the vault. The broom is |cffffd100Cancel Stale|r, which cancels every open request older than the threshold in Settings. Mouse over either for the details.", 0.9, 0.9, 0.9, true)
 	TOGBankClassic_UI:AppendGuildHelpNote("requests")  -- HELPNOTE-001
 end
 
@@ -1252,8 +1252,8 @@ function TOGBankClassic_UI_Requests:BuildBottomCluster(chrome, anchor)
 	end
 
 	-- Fulfill Oldest Order (envelope) — bankers only. One click sends the oldest
-	-- order you can fully fill from bags to its requester (auto split + attach +
-	-- send); spam it to drain the queue oldest-first. FILLALL-001. Sits left of the
+	-- order to its requester (auto split + attach + send), first come first served
+	-- per item (FCFS-001); spam it to drain the queue oldest-first. FILLALL-001. Sits left of the
 	-- broom (a banker always also has the broom, since banker implies the cluster).
 	self.FulfillOldestBtn = nil
 	if isBanker then
@@ -1279,7 +1279,7 @@ function TOGBankClassic_UI_Requests:BuildBottomCluster(chrome, anchor)
 			GameTooltip:SetOwner(f, "ANCHOR_TOP")
 			GameTooltip:ClearLines()
 			GameTooltip:AddLine("Fulfill Oldest Order")
-			GameTooltip:AddLine("Click to advance the oldest order you can fully fill, one step per click: select, then split, then attach, then send; then the next-oldest. If the needed items are sitting in your mail, it pulls them into your bags first (one per click). Watch the status bar for the next step. Requires an open mailbox; orders you can't fully cover (from bags + mail) are skipped.", 0.9, 0.9, 0.9, true)
+			GameTooltip:AddLine("Click to advance the oldest order you can fully fill, one step per click: select, then split, then attach, then send; then the next-oldest. If the needed items are sitting in your mail, it pulls them into your bags first (one per click). Watch the status bar for the next step. Requires an open mailbox. First come, first served: an order you can't fully cover yet (from bags + mail) keeps its place, and newer orders for the same item wait behind it; orders for other items still go.", 0.9, 0.9, 0.9, true)
 			GameTooltip:AddLine(" ")
 			GameTooltip:AddLine("At the BANK the same button collects instead: each click pulls what an order still needs out of your bank, and if the stack is bigger than the order it puts the spare back. If your bags are full, the click swaps something no order needs into the bank to make room. Mash it at the bank to gather everything, then go to a mailbox and mash it again to send.", 0.9, 0.9, 0.9, true)
 			GameTooltip:Show()

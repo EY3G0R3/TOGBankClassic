@@ -61,7 +61,7 @@
 <li>Optimal Stack Selection: Intelligent bin-packing algorithm selects best stack combinations</li>
 <li>Visual Indicators: Button icons change to show split needed vs. ready to mail</li>
 <li>One Mail Per Person: several orders for the same guildmate go in one mail &mdash; click Fulfill on each and they are added to the mail already open for them, then Send once</li>
-<li>Fulfill Oldest: one envelope button that works the queue oldest-first &mdash; at the mailbox it picks the oldest order you can fill, adds that person's other orders, does every stack split at once, attaches and sends; at the bank the same button collects what the open orders need, swapping unneeded stacks into the bank when your bags are full</li>
+<li>Fulfill Oldest: one envelope button that works the queue oldest-first &mdash; at the mailbox it sends orders first come, first served (a newer order never jumps an older one for the same item), adds that person's other orders, does every stack split at once, attaches and sends; at the bank the same button collects what the open orders need, swapping unneeded stacks into the bank when your bags are full</li>
 <li>Mailbox Window: a striped-row view of your inbox that opens beside the mail frame &mdash; one row per mail, click to see each attachment with its tooltip, filter by item, sender or subject, take a needed item with a click, <strong>Take Needed</strong> to collect only what the open orders are short of, and an envelope on each row to return a mail to its sender</li>
 <li>Stay-Online Line: after filling orders, the bottom bar of every window tells a bank character whether the update has reached anyone yet &mdash; red until it has been sent, amber once someone has it, green when a guildmate confirms &mdash; so nobody logs off leaving the guild seeing stock that is already gone</li>
 <li>Instant Updates: the moment a bank character fills an order, every guildmate's Requests tab shows it &mdash; the fill travels ahead of the bulk sync</li>
@@ -375,6 +375,14 @@
 <p>In practice that means a fix to the shared sync layer benefits every TOG addon at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
 
 <h2>Recent Updates</h2>
+
+<h3>v1.8.1 - Oldest Order First</h3>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>At the bank, the Fulfill Oldest button now gathers enough for every order. When two people asked for the same item, the stack it pulled for the first person also counted toward the second, so the second person's share was never collected and their order could not be sent from the mailbox.</li>
+<li>At the mailbox, orders are now sent first come, first served. If the oldest order for an item cannot be filled from what you are carrying, a newer order for the same item waits behind it instead of going out first. Orders for other items are not held up.</li>
+</ul>
 
 <h3>v1.8.0 - Donations Setting</h3>
 

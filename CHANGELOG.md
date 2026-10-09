@@ -1,5 +1,48 @@
 # TOGBankClassic Changelog
 
+## [v1.8.1] (2026-10-09) - Oldest Order First
+
+### Bug Fixes
+
+- **BANKCOLLECT-SHARE-001: at the bank, Fulfill Oldest skipped a newer order for the same item.**
+  crimsonmane, Discord 2026-10-08: Fulfill Oldest *"does not fulfill the oldest order first"* when a
+  second player orders the same item plus more. `Mail:FindOldestBankFillableOrder`
+  (`Modules/Mail.lua`) measured every order against the whole bag count, so the stack I pulled for
+  the older order also "covered" a newer order of the same item, and the newer one was never
+  collected for -- it then could not be filled at the mailbox, and only that player's other items
+  went out. The bags are now handed to open orders oldest-first, and each order's shortfall is what
+  is left after the older orders' share. `Tests/bankcollect_spec.lua` pins both the search and the
+  click-through. Not yet checked in a game client.
+- **FCFS-001: at the mailbox, Fulfill Oldest mailed a newer order ahead of an older one for the same
+  item.** The operator, 2026-10-09: *"you are supposed to fill the oldest order first. first come
+  first server"*. `Mail:FindOldestServiceableOrder` (`Modules/Mail.lua`) picked the oldest order the
+  bags could fully fill and skipped any it could not, so a newer, smaller order for the same item went
+  out first and spent the stock the older order was waiting on. I had described that skip as by design
+  in this entry and in my Discord reply to crimsonmane; it contradicted the operator's rule. Now the
+  first order for an item that cannot be filled yet holds its place: no newer order for that item is
+  sent until it is. Orders for other items still go out, since they do not use the same stacks.
+  `Mail:FindMoreOrdersFor` (the same person's other orders riding on one mail) now leaves the stock
+  other people's older orders need, so riding along cannot jump the queue either. The three
+  fulfillment searches share one "oldest" ordering and one item key. The envelope's tooltip and the
+  Requests "?" help in `Modules/UI/Requests.lua` said unfillable orders "are skipped"; both now
+  describe the first-come-first-served rule, as does the Fulfill Oldest feature line on the
+  CurseForge page. Four examples in
+  `Tests/bankcollect_spec.lua`, including crimsonmane's case. Not yet checked in a game client.
+
+### Internal
+
+- **SUITE-SPEED-001: the whole forward test run fits in one run again.** Every spec builds a fresh
+  copy of the addon, and libraries that load once per run (AceComm, AceEvent and the other Ace
+  mixins, AceAddon's queue of addons waiting to load, VersionCheck's listener list) kept a strong
+  reference to every earlier copy, so the run held tens of thousands of dead frames and each reset's
+  garbage collection grew slower; late files took 40 seconds or more that take under one alone.
+  `env.reset` in `Tests/env_togbank.lua` now clears those references, and a test window's close
+  releases its tab contents instead of only hiding them. Measured: objects left after `browse_spec`
+  30,800 to 5,400. The forward run passes whole (1970 examples, 2026-10-09) and matches the three
+  reverse parts (545 + 722 + 703). Clearing the handler lists means no spec can rely on an addon copy
+  from an earlier file still hearing messages; the reverse parts passing is the check on that. No
+  addon code changed.
+
 ## [v1.8.0] (2026-10-08) - Donations Setting
 
 The "Enable donations" setting is back, off by default, and the Donation popup can be turned off

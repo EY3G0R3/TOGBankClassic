@@ -285,6 +285,37 @@ describe("Mail:FindOldestBankFillableOrder", function()
 		bags(20)
 		assert.equal("a", (Mail:FindOldestServiceableOrder(ME)).id)
 	end)
+
+	-- BANKCOLLECT-SHARE-001 (Discord, crimsonmane 2026-10-08): the bags are one pool for every order
+	-- of the same item. Measuring each order against the whole bag count let the stack pulled for the
+	-- older order "cover" the newer one too, so the newer one was never collected for.
+	it("hands the bags to the older order first, so a newer order of the same item is still collected for", function()
+		vault(20, 20)
+		bags(5)
+		order("old", 5, { date = 100 })
+		order("new", 5, { date = 200 })
+		local req, short = Mail:FindOldestBankFillableOrder(ME)
+		assert.equal("new", req.id, "the 5 in the bags belong to the older order, so the newer one is short")
+		assert.equal(5, short)
+		-- Bags covering both: nothing left to collect.
+		bags(5, 5)
+		assert.is_nil(Mail:FindOldestBankFillableOrder(ME))
+	end)
+
+	it("collects for the older order, then the newer one, clicking through at the bank", function()
+		vault(20)
+		order("old", 5, { date = 100 })
+		order("new", 5, { date = 200 })
+		click()   -- pulls the 20 for the older order
+		click()   -- puts the spare 15 back
+		assert.equal(5, inBags())
+		local req, short = Mail:FindOldestBankFillableOrder(ME)
+		assert.equal("new", req.id, "the newer order was treated as covered by the older order's stack")
+		assert.equal(5, short)
+		click(); click()
+		assert.equal(10, inBags(), "the bags did not end holding both orders")
+		assert.equal(10, inBank())
+	end)
 end)
 
 -- (11) A bank-only order is NOT serviceable at the mailbox. The two searches are separate on
@@ -300,6 +331,62 @@ describe("the mailbox search does not count bank stock", function()
 		local req, short = Mail:FindOldestBankFillableOrder(ME)
 		assert.equal("r1", req.id)
 		assert.equal(5, short)
+	end)
+end)
+
+-- FCFS-001 (the operator, 2026-10-09, on crimsonmane's Discord report: "you are supposed to fill the
+-- oldest order first. first come first server"). The mailbox search used to SKIP an order it could
+-- not fill yet and mail the next one that fit -- so a newer, smaller order for the same item went
+-- out first and spent the stock the older order was waiting on.
+describe("the mailbox fills orders first come, first served", function()
+	local BOB = "Bob-Testrealm"
+	before_each(load)
+
+	local function carry(linen, wool)
+		local contents = {}
+		if linen then contents[#contents + 1] = { id = LINEN, count = linen } end
+		if wool then contents[#contents + 1] = { id = WOOL, count = wool } end
+		env.setBag(0, 16, contents)
+	end
+
+	it("never sends a newer order for the same item ahead of an older one it cannot fill yet", function()
+		carry(5)
+		order("old", 10, { date = 100 })
+		order("new", 5,  { date = 200 }).requester = BOB
+		assert.is_nil(Mail:FindOldestServiceableOrder(ME),
+			"the newer 5x order jumped the older 10x order for the same item")
+	end)
+
+	it("sends the older order once the bags cover it", function()
+		carry(10)
+		order("old", 10, { date = 100 })
+		order("new", 5,  { date = 200 }).requester = BOB
+		assert.equal("old", (Mail:FindOldestServiceableOrder(ME)).id)
+	end)
+
+	it("still sends an order for a DIFFERENT item while an older one waits", function()
+		carry(5, 5)
+		order("old",  10, { date = 100 })
+		order("wool", 5,  { date = 200, name = "Wool Cloth", itemID = WOOL }).requester = BOB
+		assert.equal("wool", (Mail:FindOldestServiceableOrder(ME)).id,
+			"orders for other items do not compete for the same stacks and must not be held up")
+	end)
+
+	it("does not let a requester's newer order ride along ahead of someone else's older one", function()
+		carry(5, 5)
+		order("first", 5, { date = 100, name = "Wool Cloth", itemID = WOOL })   -- Alice, oldest
+		order("bobs",  5, { date = 200 }).requester = BOB                         -- Bob's linen
+		order("extra", 5, { date = 300 })                                        -- Alice's linen
+		local req = Mail:FindOldestServiceableOrder(ME)
+		assert.equal("first", req.id)
+		local extras = Mail:FindMoreOrdersFor(ME, ALICE, "first", {}, 11)
+		assert.equal(0, #extras, "Alice's newer linen order took the 5 linen Bob's older order needs")
+
+		-- With enough for both, Alice's extra rides along.
+		carry(10, 5)
+		extras = Mail:FindMoreOrdersFor(ME, ALICE, "first", {}, 11)
+		assert.equal(1, #extras)
+		assert.equal("extra", extras[1].req.id)
 	end)
 end)
 
