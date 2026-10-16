@@ -30,8 +30,9 @@ local function window(barWidth)
 end
 
 local function load()
+	-- Real harness frames (CreateFontString and GetStringWidth are live): every caller resets with
+	-- env.reset({ frames = true }) first.
 	env.stubOutput()
-	require("env.frames").reset()   -- real harness frames: CreateFontString and GetStringWidth are live
 	env.loadFile("Modules/Constants.lua")
 	-- BREATH-001: the bar's breath is the library's (W:Breathe), reached through UI.Widgets.
 	require("env.libs").load("LibAceGUIWidgets-1.0")
@@ -52,7 +53,8 @@ end
 describe("GATHER-BREATH-001: the left text breathes when the window asks", function()
 	local w, sb
 	before_each(function()
-		env.reset(); load()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); load()
 		urgent = false
 		SB.BuildPropagationText = function() return "" end
 		w = window(800)
@@ -93,7 +95,8 @@ describe("STATUSBAR-002: the window's left text yields to the urgent line and st
 	local LEFT = "Showing 47 requests out of 1717 total"
 
 	before_each(function()
-		env.reset(); load()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); load()
 		w = window(200)   -- far too narrow for both
 		sb = SB:AttachSides(w)
 		w:SetStatusText(LEFT)
@@ -199,7 +202,8 @@ describe("STATUSBAR-003: the centre line can never be wider than the bar", funct
 		end
 	end
 
-	before_each(function() env.reset(); load(); withShort() end)
+	-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+	before_each(function() env.reset({ frames = true }); load(); withShort() end)
 
 	--- The bar placed on screen, so the centre's anchors resolve to a real rectangle: an unplaced
 	--- bar resolves to nothing and a FontString on it reports 0 wide, which would pass any bound.

@@ -391,10 +391,17 @@ function TOGBankClassic_Options:Init()
 			-- BROWSE-001: which windows' help icons this account has hovered once. The Guild Bank
 			-- window's icon breathes until then ("draw their attention to it, ONCE").
 			helpSeen = {},
+			-- ACCOUNT-MODE-001 (Discord, Terra 2026-10-15: "an 'account mode' ... so that all requests
+			-- per-account are shown in the requests window regardless of which toon you're on"): every
+			-- character that has logged in on this account, Name-Realm -> true. Account-wide by nature.
+			accountCharacters = {},
 			requests = {
 				maxRequestPercent = 100,  -- Maximum % of available items that can be requested (100 = no limit)
 				archiveDays = 30,  -- Requests older than this many days are moved to the Archive tab
 				autoTombstoneDays = 30,  -- Stale open requests older than this are auto-cancelled on receive
+				-- ACCOUNT-MODE-001: the Requester filter opens on "My characters" on every character. Set by
+				-- picking that entry, cleared by picking anything else -- the choice IS the mode.
+				accountMode = false,
 			},
 		},
 	}
@@ -1318,6 +1325,31 @@ function TOGBankClassic_Options:GetAutoTombstoneDays()
 		return self.db.global.requests.autoTombstoneDays or 30
 	end
 	return 30
+end
+
+--- ACCOUNT-MODE-001: remember that `name` (Name-Realm) is one of this account's characters.
+function TOGBankClassic_Options:NoteAccountCharacter(name)
+	local g = self.db and self.db.global
+	if not g or type(name) ~= "string" or name == "" then return end
+	if type(g.accountCharacters) ~= "table" then g.accountCharacters = {} end
+	g.accountCharacters[name] = true
+end
+
+--- ACCOUNT-MODE-001: this account's characters, Name-Realm -> true. Never nil.
+function TOGBankClassic_Options:GetAccountCharacters()
+	local g = self.db and self.db.global
+	return (g and type(g.accountCharacters) == "table") and g.accountCharacters or {}
+end
+
+--- ACCOUNT-MODE-001: does the Requester filter open on "My characters"?
+function TOGBankClassic_Options:IsAccountModeEnabled()
+	local g = self.db and self.db.global
+	return (g and g.requests and g.requests.accountMode) == true
+end
+
+function TOGBankClassic_Options:SetAccountMode(on)
+	local g = self.db and self.db.global
+	if g and g.requests then g.requests.accountMode = on and true or false end
 end
 
 -- HELPNOTE-001: write an officer help note for a window into the guild-synced

@@ -136,8 +136,8 @@ describe("Item:IsUnique", function()
 	-- `<name>TextLeft<n>` from the item's `tooltipLines`, which is the direction IsUnique reads.
 	-- Until then this addon's env stubbed the fill and no example ever saw a "Unique" line.
 	before_each(function()
-		env.reset(); env.stubOutput()
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		env.loadFile("Modules/Item.lua"); Item = TOGBankClassic_Item
 		env.defineItem(858, { name = "Lesser Healing Potion" })
 		env.defineItem(6948, { name = "Hearthstone", tooltipLines = { "Hearthstone", ITEM_UNIQUE, "Binds when picked up" } })

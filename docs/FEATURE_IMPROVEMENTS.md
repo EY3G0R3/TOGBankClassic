@@ -1724,7 +1724,7 @@ UI/Requests.lua:OnAddButtonClick()
 
 **Flow:**
 
-1. Player calls `Guild:CancelRequest()` or `Guild:CompleteRequest()`
+1. Player calls `Guild:CancelRequest()` or `Guild:FulfillRequestById()` (which closes the order as complete once Sent reaches the quantity)
 2. Permission checked (requester can cancel, bankers can complete)
 3. Log entry created with type "cancel" or "complete"
 4. Entry broadcast and applied locally

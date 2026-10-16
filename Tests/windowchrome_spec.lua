@@ -13,9 +13,9 @@ local env = require("env_togbank")
 -- one is AceGUI's own FontString on a POOLED Frame, so it must go back to its base font on release.
 describe("VISIBILITY-001 part 2: the status bar's text", function()
 	it("puts all three sections on the scaled font, and hands AceGUI's own line its base font back on release", function()
-		env.reset(); env.stubOutput()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		_G.TOGBankClassic_Guild = nil
-		require("env.frames").reset()
 		require("env.ace").load("AceGUI-3.0")
 		require("env.libs").load("LibAceGUIWidgets-1.0")
 		local UI = env.loadUI()
@@ -42,9 +42,9 @@ end)
 -- another set of sections on top of the last.
 describe("POOL-CHROME-001: a released window hands its frame back clean", function()
 	it("hides the chrome and the status-bar sections on release, and the next life reuses them", function()
-		env.reset(); env.stubOutput()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		_G.TOGBankClassic_Guild = nil
-		require("env.frames").reset()
 		require("env.ace").load("AceGUI-3.0")
 		require("env.libs").load("LibAceGUIWidgets-1.0")
 		local UI = env.loadUI()
@@ -90,16 +90,16 @@ describe("WINDOW-CHROME-001: UI:DressWindow", function()
 	local UI, window, wow
 
 	before_each(function()
-		env.reset(); env.stubOutput()
+		-- The rich frame model and the REAL AceGUI Frame widget (the whole of AceGUI, widgets
+		-- included -- env.loadUI alone registers no widget types and Create("Frame") answers nil).
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		-- SPEC-ALONE-001: this file never uses the real Guild module, and the share button asks it
 		-- "am I a bank character?" whenever the (pooled) window SHOWS -- including while this setup
 		-- builds the window, before SHARE-BTN-001's stand-in exists. A real Guild an earlier file left
 		-- (optionslayout_spec loads one with no Bank module) then errored in Guild:GetPlayer. Absent,
 		-- the ask answers "not a banker", which is what every example outside SHARE-BTN-001 expects.
 		_G.TOGBankClassic_Guild = nil
-		-- The rich frame model and the REAL AceGUI Frame widget (the whole of AceGUI, widgets
-		-- included -- env.loadUI alone registers no widget types and Create("Frame") answers nil).
-		require("env.frames").reset()
 		require("env.ace").load("AceGUI-3.0")
 		wow = package.loaded["env.wow"]
 		UI = env.loadUI()

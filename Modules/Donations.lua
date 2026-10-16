@@ -123,7 +123,7 @@ function D:Value(itemID, count, vendorSell)
 	else
 		copper, prov = self:OwnValue(itemID)
 	end
-	if copper and copper > unit then
+	if copper and prov and copper > unit then
 		unit, info = copper, prov
 	end
 	if unit <= 0 then info = { source = "none", statistic = "none" } end

@@ -40,8 +40,8 @@ describe("ESC-001: Escape and the Guild Bank window", function()
 	local Browse, UI
 
 	before_each(function()
-		env.reset()
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true })
 		env.stubOutput()
 		require("env.libs").load("LibAceGUIWidgets-1.0")
 		env.loadFile("Modules/Constants.lua")

@@ -314,10 +314,17 @@ FULFILLING ORDERS (bank characters):
 
 FINDING A REQUEST:
   The Requests tab has ONE search box beside the Requester and Bank
-  dropdowns. Type part of a name, an item or a date; every word you type
-  must appear somewhere in the row's date, requester, bank or item, and it
+  dropdowns. Type part of a name, an item, a date, a quantity (such as 3x),
+  a status word (open, fulfilled, cancelled) or a sister guild's name;
+  every word you type must appear somewhere in what the row shows, and it
   narrows on top of the dropdowns. The X in the box clears it. A cancelled
   request's date glows gently - mouse over it for the reason.
+
+  If you play more than one character, the Requester dropdown has
+  "(N) My characters" at the top: it lists the requests of all your
+  characters together. Once you pick it, the Requests tab opens that way on
+  every character until you pick a single requester again. A character is
+  added the first time it logs in with TOG Bank installed.
 
 MANUAL SYNC:
   /togbank sync
@@ -1025,6 +1032,30 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.9.0:
+--------------
+NEW FEATURES:
+- "My characters" in the Requests tab's Requester list: see the requests of
+  all your characters together, on whichever one you are logged in as
+
+CHANGES:
+- The Requests search box matches every column: quantity, number sent,
+  open / fulfilled / cancelled, and a sister guild's name
+- When nothing can be sent, the mailbox names the order holding the queue
+
+BUG FIXES:
+- An order over twelve stacks is mailed in parts and credited only for what
+  each mail carried
+- A mail sent to someone else no longer fills the first person's order
+- Fulfill Oldest no longer pulls an extra stack out of the mail, and no
+  longer lets one person's newer order go out ahead of their older one
+- In a guild with players on different game languages, mailed orders are
+  credited correctly
+- A refused mail send frees Fulfill straight away, in any language
+
+COMPATIBILITY: no change to how anything travels between players; v1.9.0
+works with v1.8.x.
 
 Version 1.8.0:
 --------------

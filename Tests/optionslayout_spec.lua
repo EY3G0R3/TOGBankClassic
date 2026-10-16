@@ -10,9 +10,10 @@ describe("SHOP-SECTION-001: the Officer tab's sections", function()
 	local officer
 
 	before_each(function()
-		env.reset(); env.stubOutput()
+		-- Real frames: AceConfigDialog builds its popup at load.
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		TOGBankClassic_Options = nil
-		require("env.frames").reset()   -- real frames: AceConfigDialog builds its popup at load
 		require("env.ace").load("AceDB-3.0", "AceConfig-3.0", "AceConfigDialog-3.0")
 		env.loadUI()
 		env.loadModules({ "Modules/Constants.lua", "Modules/Guild.lua", "Modules/Donations.lua" })
@@ -44,6 +45,35 @@ describe("SHOP-SECTION-001: the Officer tab's sections", function()
 		TOGBankClassic_Options.db.global.requests.maxRequestPercent = 40.9
 		assert.equal(40, TOGBankClassic_Options:GetMaxRequestPercent())
 		TOGBankClassic_Guild.Info = info
+	end)
+
+	-- ACCOUNT-MODE-001: the account's characters and the account-mode flag, account-wide, defaulting
+	-- to none and off; a login notes the character.
+	it("keeps this account's characters and the account-mode flag, and a login notes the character", function()
+		local O = TOGBankClassic_Options
+		assert.same({}, O:GetAccountCharacters())
+		assert.is_false(O:IsAccountModeEnabled())
+		O:NoteAccountCharacter("Alt-Testrealm")
+		O:NoteAccountCharacter(nil); O:NoteAccountCharacter("")
+		assert.same({ ["Alt-Testrealm"] = true }, O:GetAccountCharacters())
+		O:SetAccountMode(true)
+		assert.is_true(O.db.global.requests.accountMode)
+		assert.is_true(O:IsAccountModeEnabled())
+		O:SetAccountMode(false)
+		assert.is_false(O:IsAccountModeEnabled())
+		-- A table lost from the saved variables is rebuilt rather than erroring.
+		O.db.global.accountCharacters = nil
+		assert.same({}, O:GetAccountCharacters())
+		O:NoteAccountCharacter("Alt-Testrealm")
+		assert.is_true(O:GetAccountCharacters()["Alt-Testrealm"])
+
+		env.loadFile("Modules/Events.lua")
+		_G.TOGBankClassic_Bank = {}   -- Guild:GetPlayer caches the name on it
+		TOGBankClassic_Events:PLAYER_LOGIN()
+		local me = TOGBankClassic_Guild:GetNormalizedPlayer()
+		_G.TOGBankClassic_Bank = nil
+		assert.is_string(me)
+		assert.is_true(O:GetAccountCharacters()[me], "the logged-in character was not noted")
 	end)
 
 	--- The entries in the order the panel draws them.
@@ -104,9 +134,9 @@ describe("VISIBILITY-001: the Window and Text Size slider", function()
 	local general, W
 
 	before_each(function()
-		env.reset(); env.stubOutput()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		TOGBankClassic_Options = nil
-		require("env.frames").reset()
 		require("env.ace").load("AceDB-3.0", "AceConfig-3.0", "AceConfigDialog-3.0")
 		-- The REAL library, as the client loads it: its bounds are what the slider declares, and the
 		-- round trip below is the feature. A stub with the same three constants would pass the first

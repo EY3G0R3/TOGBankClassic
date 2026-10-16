@@ -19,7 +19,8 @@ local Guild, CL, UICL, Browse, me
 
 local function loadStack()
 	env.stubOutput()
-	require("env.frames").reset()   -- the rich frame model BEFORE the widget library (browse_spec's reason)
+	-- The rich frame model is already up BEFORE the widget library (browse_spec's reason): roster(),
+	-- which every caller runs first, resets through it.
 	require("env.ace").load("AceAddon-3.0", "AceComm-3.0", "AceConsole-3.0",
 		"AceEvent-3.0", "AceSerializer-3.0", "AceTimer-3.0")
 	env.loadDeltaSync()
@@ -83,7 +84,8 @@ local function loadStack()
 end
 
 local function roster()
-	env.reset()
+	-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+	env.reset({ frames = true })
 	env.addGuildMember(GM, { rankIndex = 0, online = true })
 	env.addGuildMember(MEMBER, { rankIndex = 4, online = true, note = "" })
 	env.addGuildMember(BANKER, { rankIndex = 4, online = true, note = "gbank herbs" })

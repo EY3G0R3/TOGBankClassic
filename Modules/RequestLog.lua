@@ -333,6 +333,22 @@ local VALID_REQUEST_STATUS = {
 	complete = true,
 }
 
+-- Statuses set on purpose (a cancel, a hand-off closed by hand) that a later fill must never
+-- overwrite with "fulfilled", even when the Sent count reaches the quantity.
+local CLOSED_STATUS = {
+	cancelled = true,
+	complete = true,
+}
+
+-- FINISHED-001 (Peer Review 2073754c, G3): the one answer to "is this order done". A closed status
+-- counts whatever its Sent count -- a peer's 'complete' or an older release can close one short --
+-- and so does a Sent count at the quantity. Cancel, reopen and the untargeted mail spill all ask this.
+function Guild.IsRequestFinished(req)
+	local qty = tonumber(req.quantity or 0) or 0
+	local fulfilled = tonumber(req.fulfilled or 0) or 0
+	return CLOSED_STATUS[req.status] == true or req.status == "fulfilled" or (qty > 0 and fulfilled >= qty)
+end
+
 -- Expiry/prune settings are defined in Constants.lua (REQUEST_LOG table)
 
 -- SHOP-NOFREE-001: the estimate fields as ONE normalisation, shared by the rd2 decode and
@@ -419,6 +435,13 @@ local function generateRequestId()
 	return string.format("%06x%06x%02x", hi, lo, tail)
 end
 
+-- REQ-AGE-001 (Peer Review ca7dc86f): when an order last changed, for every age decision (prune,
+-- stale sweep, /reqscan, duplicate pick). Each field converts on its own, so a non-numeric updatedAt
+-- falls back to date instead of aging the order from 0.
+local function requestAgeTs(req)
+	return tonumber(req.updatedAt) or tonumber(req.date) or 0
+end
+
 -- Normalize incoming request data and ensure required fields exist.
 local function sanitizeRequest(req)
 	if not req or type(req) ~= "table" then
@@ -487,7 +510,7 @@ local function sanitizeRequest(req)
 	if not VALID_REQUEST_STATUS[status] then
 		status = "open"
 	end
-	if quantity > 0 and fulfilled >= quantity and status ~= "cancelled" and status ~= "complete" then
+	if quantity > 0 and fulfilled >= quantity and not CLOSED_STATUS[status] then
 		status = "fulfilled"
 	end
 
@@ -591,13 +614,10 @@ end
 
 -- Merge a single request using last-writer-wins.
 -- Returns: "added", "updated", "kept", "tombstoned", or nil on error
+-- COVERAGE-MAIL-001: an "invalid input" guard (nil id or nil record) stood here and could not run:
+-- the only two callers -- ApplyRequestSnapshot (`if req and req.id`) and ApplyRequestMutation (which
+-- refuses a missing requestId and merges only `if entry.request`) -- never pass either. Deleted.
 local function mergeRequest(requests, tombstones, id, incoming)
-	if not incoming or not id then
-		TOGBankClassic_Output:Debug("SYNC", "MERGE", "mergeRequest: Invalid input (id=%s, incoming=%s)",
-			tostring(id), tostring(incoming ~= nil))
-		return nil
-	end
-
 	local clean = sanitizeRequest(incoming)
 	if not clean then
 		TOGBankClassic_Output:Debug("SYNC", "MERGE", "mergeRequest: sanitizeRequest failed for id=%s", tostring(id))
@@ -793,8 +813,8 @@ function Guild:NormalizeRequestList()
 			else
 				local existing = normalized[clean.id]
 				if existing then
-					local existingUpdated = tonumber(existing.updatedAt or existing.date or 0) or 0
-					local incomingUpdated = tonumber(clean.updatedAt or clean.date or 0) or 0
+					local existingUpdated = requestAgeTs(existing)
+					local incomingUpdated = requestAgeTs(clean)
 					if incomingUpdated > existingUpdated then
 						normalized[clean.id] = clean
 						TOGBankClassic_Output:Debug("DATABASE", "NORMALIZE", "NormalizeRequestList: Updated duplicate id=%s", clean.id)
@@ -944,14 +964,8 @@ function Guild:PruneRequests()
 	TOGBankClassic_Output:Debug("DATABASE", "PRUNE", "PruneRequests: Starting with %d requests", before)
 
 	for id, req in pairs(self.Info.requests) do
-		local updated = tonumber(req.updatedAt or req.date or 0) or 0
-		local quantity = tonumber(req.quantity or 0) or 0
-		local fulfilled = tonumber(req.fulfilled or 0) or 0
-		local isDone = req.status == "fulfilled"
-			or req.status == "complete"
-			or req.status == "cancelled"
-			or (quantity > 0 and fulfilled >= quantity)
-		local tooOld = isDone and (now - updated) > REQUEST_LOG.EXPIRY_SECONDS
+		local updated = requestAgeTs(req)
+		local tooOld = Guild.IsRequestFinished(req) and (now - updated) > REQUEST_LOG.EXPIRY_SECONDS
 		if tooOld then
 			self.Info.requests[id] = nil
 			prunedCount = prunedCount + 1
@@ -1079,7 +1093,7 @@ function Guild:ApplyRequestMutation(entry, sender)
 		local qty = tonumber(req.quantity or 0) or 0
 		if qty > 0 then
 			req.fulfilled = math.min(req.fulfilled, qty)
-			if req.fulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
+			if req.fulfilled >= qty and not CLOSED_STATUS[req.status] then
 				req.status = "fulfilled"
 			end
 		end
@@ -1300,7 +1314,6 @@ function Guild:EnsureRequestsIndexSyncState()
 	if not self.requestsIndexSync then
 		self.requestsIndexSync = {
 			lastQueryAt = 0,
-			perSender = {},
 			inFlight = nil,
 			inFlightSince = 0,
 			awaitingById = false,
@@ -1308,7 +1321,8 @@ function Guild:EnsureRequestsIndexSyncState()
 	end
 end
 
-function Guild:CanQueryRequestsIndex(sender)
+--- The sender argument callers pass is no longer read (the per-sender cooldown is gone, see below).
+function Guild:CanQueryRequestsIndex(_)
 	self:EnsureRequestsIndexSyncState()
 	local now = GetServerTime()
 	local state = self.requestsIndexSync
@@ -1322,15 +1336,12 @@ function Guild:CanQueryRequestsIndex(sender)
 		state.awaitingById = false
 	end
 
+	-- COVERAGE-MAIL-001: a per-sender cooldown check followed this, against a `perSender` map written
+	-- beside `lastQueryAt` on every query. It could never refuse: both stamps are written together,
+	-- so a sender's stamp is never later than `lastQueryAt`, and once the global cooldown has passed
+	-- every sender's has too. The check and the map were deleted; the global cooldown is the gate.
 	if (now - (state.lastQueryAt or 0)) < REQUESTS_SYNC.INDEX_QUERY_COOLDOWN then
 		return false
-	end
-
-	if sender and sender ~= "" then
-		local last = state.perSender[sender]
-		if last and (now - last) < REQUESTS_SYNC.INDEX_QUERY_COOLDOWN then
-			return false
-		end
 	end
 
 	return true
@@ -1343,9 +1354,6 @@ function Guild:BeginRequestsIndexSync(sender, force)
 	self:EnsureRequestsIndexSyncState()
 	local now = GetServerTime()
 	self.requestsIndexSync.lastQueryAt = now
-	if sender and sender ~= "" then
-		self.requestsIndexSync.perSender[sender] = now
-	end
 	self.requestsIndexSync.inFlight = sender or "*"
 	self.requestsIndexSync.inFlightSince = now
 	self.requestsIndexSync.awaitingById = false
@@ -2200,16 +2208,9 @@ function Guild:CancelRequest(requestId, actor, reason)
 		return false
 	end
 
-	-- Can't cancel if already in terminal state
-	local quantity = tonumber(req.quantity or 0) or 0
-	local fulfilled = tonumber(req.fulfilled or 0) or 0
-	if req.status == "cancelled" or req.status == "complete" then
-		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Already in terminal state (status=%s)", req.status)
-		return false
-	end
-	if req.status == "fulfilled" or (quantity > 0 and fulfilled >= quantity) then
-		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Already fulfilled (status=%s, fulfilled=%d, quantity=%d)",
-			req.status, fulfilled, quantity)
+	if Guild.IsRequestFinished(req) then
+		TOGBankClassic_Output:Debug("SYNC", "VALIDATE", "CancelRequest FAILED: Already finished (status=%s, fulfilled=%s, quantity=%s)",
+			tostring(req.status), tostring(req.fulfilled), tostring(req.quantity))
 		return false
 	end
 
@@ -2241,43 +2242,6 @@ function Guild:CancelRequest(requestId, actor, reason)
 	return true
 end
 
-function Guild:CompleteRequest(requestId, actor)
-	if not self.Info or not self.Info.requests or not requestId then
-		return false
-	end
-
-	local req = self.Info.requests[requestId]
-	if not req then
-		return false
-	end
-
-	-- Can't complete if already in terminal state
-	local quantity = tonumber(req.quantity or 0) or 0
-	local fulfilled = tonumber(req.fulfilled or 0) or 0
-	if req.status == "cancelled" or req.status == "complete" then
-		return false
-	end
-	if req.status == "fulfilled" or (quantity > 0 and fulfilled >= quantity) then
-		return false
-	end
-
-	if not self:CanCompleteRequest(req, actor or self:GetPlayer()) then
-		return false
-	end
-
-	-- Apply mutation directly
-	local now = GetServerTime()
-	local before = snapshotRequest(req)   -- LOGAPI-001
-	req.status = "complete"
-	req.updatedAt = now
-	logTransition(before, req)
-
-	-- Broadcast and finalize
-	self:BroadcastRequestMutation({ type = "complete", requestId = requestId, request = req })
-	self:FinalizeMutation(now)
-	return true
-end
-
 -- REOPEN-001: re-open a finished order (filled, complete, or cancelled) back to open, in case it
 -- was marked done by mistake. Banker/officer/GM only (CanManageRequests). Clears the Sent count and
 -- any cancel reason, and stamps reopenedAt so the change defeats the terminal ratchet during sync
@@ -2293,11 +2257,7 @@ function Guild:ReopenRequest(requestId, actor)
 	end
 
 	-- Only a finished order can be re-opened; an order that's already open is a no-op.
-	local qty = tonumber(req.quantity or 0) or 0
-	local fulfilled = tonumber(req.fulfilled or 0) or 0
-	local isDone = req.status == "cancelled" or req.status == "complete" or req.status == "fulfilled"
-		or (qty > 0 and fulfilled >= qty)
-	if not isDone then
+	if not Guild.IsRequestFinished(req) then
 		return false
 	end
 
@@ -2379,12 +2339,10 @@ function Guild:ExpireStaleRequests(actor)
 	local expiredIds = {}
 
 	for id, req in pairs(self.Info.requests) do
-		local ts = tonumber(req.updatedAt or req.date or 0) or 0
-		local isOpen = (req.status or "open") == "open"
-		local qty = tonumber(req.quantity or 0) or 0
-		local fulfilled = tonumber(req.fulfilled or 0) or 0
-		local isFullyFulfilled = qty > 0 and fulfilled >= qty
-		if isOpen and not isFullyFulfilled and ts > 0 and (now - ts) > thresholdSec then
+		local ts = requestAgeTs(req)
+		-- FINISHED-001: only a live order goes stale. sanitizeRequest maps an unknown status to "open",
+		-- so this is the same set the old status == "open" and not-yet-filled pair selected.
+		if not Guild.IsRequestFinished(req) and ts > 0 and (now - ts) > thresholdSec then
 			tombstones[id] = now
 			self.Info.requests[id] = nil
 			table.insert(expiredIds, id)
@@ -2409,7 +2367,14 @@ function Guild:ExpireStaleRequests(actor)
 end
 
 -- Increment fulfillment for matching requests; returns amount applied.
-function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
+-- LOCALE-SENDTRIM-001 (Peer Review f6aa732c, F3/F4): `itemName` is the mail slot's name, in the
+-- BANKER's locale, and an order's stored name is in the REQUESTER's, so in a mixed-locale guild a
+-- hand-built mail or a hand-added extra matched no order. When `itemID` is given and the order has
+-- one, they match on id; otherwise on the lowercased name as before. Random-suffix siblings share a
+-- base id, so every order matching id AND name is served before any order matching id alone.
+-- Orders are served oldest first (Guild.RequestOlderFirst), not in hash order, so a partial mail
+-- completes the older of a requester's orders for one item rather than whichever pairs() reached.
+function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId, itemID)
 	if not self.Info or not self.Info.requests or not bank or not requester or not itemName or not count or count <= 0 then
 		return 0
 	end
@@ -2428,17 +2393,43 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 	-- discard later updates as "not newer" when a peer already holds any version at ts=now.
 	local mutationCount = 0
 
+	local wantID = tonumber(itemID)
+	local function itemMatches(req, exact)
+		local reqItem = req.item and string.lower(req.item) or ""
+		local reqID = tonumber(req.itemID)
+		if wantID and reqID then
+			return reqID == wantID and (not exact or reqItem == targetItem)
+		end
+		return reqItem == targetItem
+	end
+
+	local ordered = {}
 	for _, req in pairs(self.Info.requests) do
+		-- If targetRequestId specified, only fulfill that specific request
+		-- An untargeted spill skips finished orders (FINISHED-001): sorted oldest first, a cancelled
+		-- or short-closed order would otherwise take the credit ahead of the open order it was for.
+		if ((not targetRequestId and not Guild.IsRequestFinished(req)) or (req.id == targetRequestId))
+			and req.bank == normBank and req.requester == normRequester then
+			ordered[#ordered + 1] = req
+		end
+	end
+	table.sort(ordered, Guild.RequestOlderFirst)
+
+	-- Exact (id and name) matches first, then id-only; an order in both is skipped once filled.
+	local queue = {}
+	for _, exact in ipairs({ true, false }) do
+		for _, req in ipairs(ordered) do
+			if itemMatches(req, exact) then queue[#queue + 1] = req end
+		end
+	end
+
+	for _, req in ipairs(queue) do
 		if count <= 0 then break end
 
-		local reqItem = req.item and string.lower(req.item) or ""
 		local qty = tonumber(req.quantity or 0) or 0
 		local fulfilled = tonumber(req.fulfilled or 0) or 0
 
-		-- If targetRequestId specified, only fulfill that specific request
-		local matchesTarget = (not targetRequestId) or (req.id == targetRequestId)
-
-		if matchesTarget and req.bank == normBank and req.requester == normRequester and reqItem == targetItem and fulfilled < qty then
+		if fulfilled < qty then
 			local remaining = qty - fulfilled
 			local delta = math.min(remaining, count)
 			count = count - delta
@@ -2457,7 +2448,7 @@ function Guild:FulfillRequest(bank, requester, itemName, count, targetRequestId)
 			TOGBankClassic_Output:Debug("FULFILL", "Request %s: fulfilled=%d->%d, qty=%d, status=%s",
 				req.id or "unknown", fulfilled, targetFulfilled, qty, tostring(req.status))
 
-			if qty > 0 and targetFulfilled >= qty and req.status ~= "cancelled" and req.status ~= "complete" then
+			if qty > 0 and targetFulfilled >= qty and not CLOSED_STATUS[req.status] then
 				req.status = "fulfilled"
 				TOGBankClassic_Output:Debug("FULFILL", "Set status to FULFILLED (fulfilled %d >= qty %d)", targetFulfilled, qty)
 			else
@@ -2517,7 +2508,7 @@ function Guild:FulfillRequestById(requestId, count, actor)
 		return 0
 	end
 
-	if req.status == "cancelled" or req.status == "complete" then
+	if CLOSED_STATUS[req.status] then
 		return 0
 	end
 
@@ -2616,27 +2607,24 @@ function Guild:ReqScan()
 		local status = req.status or "nil"
 		statusCounts[status] = (statusCounts[status] or 0) + 1
 
-		local quantity  = tonumber(req.quantity or 0) or 0
-		local fulfilled = tonumber(req.fulfilled or 0) or 0
-		local isDone = status == "fulfilled" or status == "complete"
-			or status == "cancelled"
-			or (quantity > 0 and fulfilled >= quantity)
-
-		if isDone then
+		-- FINISHED-001 (Peer Review 7b5e912d): the same "done" set PruneRequests drops, so the count
+		-- this diagnostic reports cannot drift from the one the prune acts on.
+		if Guild.IsRequestFinished(req) then
 			done = done + 1
-			local updated = tonumber(req.updatedAt or 0) or 0
 			local dateTs  = tonumber(req.date or 0) or 0
-			if updated == 0 then noUpdatedAt = noUpdatedAt + 1 end
+			if (tonumber(req.updatedAt or 0) or 0) == 0 then noUpdatedAt = noUpdatedAt + 1 end
 			if dateTs  == 0 then noDate = noDate + 1 end
 			if type(req.updatedAt) == "string" and tonumber(req.updatedAt) == nil then updatedAtString = updatedAtString + 1 end
 			if type(req.date) == "string" and tonumber(req.date) == nil then dateString = dateString + 1 end
 
+			-- Peer Review aa437aa8 B2: age by the prune's own helper (updatedAt, then date), so
+			-- "expired" here is exactly what PruneRequests would drop.
+			local updated = requestAgeTs(req)
 			if (now - updated) > expiry then expired = expired + 1 end
 
-			-- Age distribution by updatedAt
 			local ageDays = updated > 0 and ((now - updated) / DAY) or nil
 			if ageDays == nil then
-				ageBuckets[5] = ageBuckets[5] + 1  -- no updatedAt
+				ageBuckets[5] = ageBuckets[5] + 1  -- neither timestamp: counted as oldest, as the prune does
 			elseif ageDays < 0 then
 				ageBuckets[6] = ageBuckets[6] + 1  -- future timestamp
 			elseif ageDays < 7 then
@@ -2655,12 +2643,12 @@ function Guild:ReqScan()
 		end
 	end
 
-	TOGBankClassic_Output:Response("ReqScan: %d total, %d done, %d done+expired (by updatedAt)", total, done, expired)
+	TOGBankClassic_Output:Response("ReqScan: %d total, %d done, %d done+expired (by updatedAt, else date)", total, done, expired)
 	TOGBankClassic_Output:Response("  Status breakdown:")
 	for s, n in pairs(statusCounts) do
 		TOGBankClassic_Output:Response("    %s: %d", s, n)
 	end
-	TOGBankClassic_Output:Response("  Completed-at age (updatedAt):")
+	TOGBankClassic_Output:Response("  Completed-at age (updatedAt, else date):")
 	TOGBankClassic_Output:Response("    0-7d: %d  7-14d: %d  14-21d: %d  21-30d: %d  >30d: %d  future: %d",
 		ageBuckets[1], ageBuckets[2], ageBuckets[3], ageBuckets[4], ageBuckets[5], ageBuckets[6])
 	TOGBankClassic_Output:Response("  Done requests missing fields: updatedAt=%d, date=%d", noUpdatedAt, noDate)

@@ -717,7 +717,8 @@ Address one at a time; mark each as Fixed when resolved.
 `ReceiveRequestMutations` → `ApplyRequestMutation` applies incoming `cancel`, `complete`,
 `delete`, and `fulfill` operations without verifying the sender had permission to perform them.
 
-The local mutation functions (`CancelRequest`, `CompleteRequest`, `DeleteRequest`) all gate on
+The local mutation functions (`CancelRequest`, `CompleteRequest` -- since replaced by
+`FulfillRequestById`, FINISHED-001 -- and `DeleteRequest`) all gate on
 `CanCancelRequest`, `CanCompleteRequest`, and `CanDeleteRequest` respectively, but those checks
 are bypassed entirely when the mutation arrives over the wire.
 

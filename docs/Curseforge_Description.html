@@ -37,7 +37,8 @@
 
 <ul>
 <li>In-Game Requests: Guild members request items directly through the addon—no whispers needed</li>
-<li>Request Tracking: View all pending, fulfilled, and completed orders on the Requests tab, in the same striped-row style as the rest of the window, with one search box that matches the date, requester, bank or item</li>
+<li>Request Tracking: View all pending, fulfilled, and completed orders on the Requests tab, in the same striped-row style as the rest of the window, with one search box that matches anything shown in a row: the date, requester, bank, item, quantity, number sent, whether it is open, fulfilled or cancelled, and a sister guild's name</li>
+<li>My Characters: play more than one character? Pick "My characters" in the Requester list to see all of their requests together, on whichever one you are logged in as</li>
 <li>Timeline Tooltips: Hover any request's date to see when it was submitted, filled, or cancelled (with reason)</li>
 <li>Cancel Reasons: Bankers select a reason before cancelling; reason is stored and shown to the requester, and a cancelled request's date glows gently so you know to look</li>
 <li>Out-Of-Date Requesters: a request from a guildmate whose addon is too old to see the current bank contents shows their version beside their name, so a banker knows why an item may not be where they expect</li>
@@ -375,6 +376,34 @@
 <p>In practice that means a fix to the shared sync layer benefits every TOG addon at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
 
 <h2>Recent Updates</h2>
+
+<h3>v1.9.0 - My Characters</h3>
+
+<p><strong>New</strong></p>
+<ul>
+<li>The Requests window's Requester list has a new "My characters" choice when you play more than one character. It shows the requests of all your characters together, and once you pick it the list opens that way on every character. A character joins the list the first time you log in on it.</li>
+</ul>
+
+<p><strong>Changed</strong></p>
+<ul>
+<li>When nothing can be sent because the oldest order for an item is still waiting, the mailbox now tells you whose order it is and what it needs.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>An order spread over more than twelve stacks no longer gets marked as filled when only twelve fit in the mail. The first mail carries twelve stacks and counts only those, the mailbox tells you it is only part of the order, and the next click sends the rest.</li>
+<li>When one person has several orders for the same item, a newer one no longer goes out ahead of their own older one.</li>
+<li>An order for one version of an item (such as "of the Bear") and an older order that takes any version of it now wait their turn behind each other, first come first served. Orders for two different versions still never hold each other up. Very old orders saved by an earlier version of TOG Bank take their turn the same way.</li>
+<li>TOG Bank now notes what is attached to a mail as you attach it, so an order sent from the mailbox is still counted if the game has already cleared the mail by the time TOG Bank checks what went.</li>
+<li>Fulfill Oldest no longer takes an extra stack out of your mail for an order when it served another order while the first stack was still on its way to your bags.</li>
+<li>In a guild where players use the game in different languages, an order is now counted as filled whether you send it with the Fulfill buttons, build the mail yourself, or add an extra stack to a Fulfill mail. Before, it could be missed when the item's name in the requester's language did not match the name in yours.</li>
+<li>When one mail covers only part of several of a person's orders for the same item, the oldest order is now filled first. Orders that are already cancelled or closed are skipped, so the items count toward the order that is still open.</li>
+<li>When the game refuses to send a mail, Fulfill can be clicked again straight away, whatever language your game is in, instead of saying it is waiting for the last order for a few seconds. Trying to take an expired item or delete a mail in your inbox no longer lets Fulfill go again before the last send has gone through.</li>
+<li>Fulfill Oldest no longer starts the next order early when you send two mails a couple of seconds apart and the second one is slow to be confirmed.</li>
+<li>If you set up an order with Fulfill and then change the name on the mail, or send a mail by hand just after a Fulfill Oldest mail failed, the first person's order is no longer marked as filled by a mail that went to someone else.</li>
+<li>Adding another of a person's orders to a mail that has run out of room now tells you that order is only partly attached and to fulfill again after sending, instead of saying it is complete.</li>
+<li>The Requests search box now searches every column: the quantity, the number sent, whether an order is open, fulfilled or cancelled, and a sister guild's name, as well as the date, names and item.</li>
+</ul>
 
 <h3>v1.8.1 - Oldest Order First</h3>
 

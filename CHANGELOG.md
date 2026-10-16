@@ -1,5 +1,378 @@
 # TOGBankClassic Changelog
 
+## [v1.9.0] (2026-10-16) - My Characters
+
+### New Features
+
+- **ACCOUNT-MODE-001: "My characters" in the Requests window's Requester filter.** Discord, Terra
+  2026-10-15: *"curious if an 'account mode' can be added so that all requests per-account are shown
+  in the requests window regardless of which toon you're on."* Every character that logs in is noted
+  account-wide (`accountCharacters` in `TOGBankClassicOptionDB.global`, written by
+  `Events:PLAYER_LOGIN` and again whenever the Requests filters update). When the account has more
+  than one, the Requester dropdown offers "(N) My characters" at the top, and it shows the requests of
+  all of them. Picking it turns account mode on (`requests.accountMode`), so the list opens there on
+  every character; picking any other requester turns it off. Bankers still open on their own Bank
+  filter. `Modules/Options.lua` (`NoteAccountCharacter`, `GetAccountCharacters`,
+  `IsAccountModeEnabled`, `SetAccountMode`), `Modules/UI/Requests.lua`, `Modules/Events.lua`; the
+  Requester label tooltip and the "?" help describe it. Specs in `Tests/requestsactions_spec.lua` and
+  `Tests/optionslayout_spec.lua`. A character only counts once it has logged in with this version.
+  Checked in the Classic Era client by the operator, 2026-10-16.
+
+### Bug Fixes
+
+- **SEARCH-007: the Requests search box now matches every column.** The operator, 2026-10-15:
+  *"the search requests needs to filter off the data in any column, right now it doesn't"*. SEARCH-006
+  matched only Date, Requester, Bank and Item, so a quantity, a sent count or the status shown by the
+  date's glyph found nothing. `#` and `Sent` are now marked `search = true` in `COLUMNS`, and
+  `ColumnText` returns what each column shows: the quantity as `3x`, the date followed by its status
+  word (open / fulfilled / cancelled, matching the glyph), and the banker followed by the sister-guild
+  name XGUILD-LABEL-001 prints beside it. Only Actions, a row of buttons, is not searched.
+  `Modules/UI/Requests.lua`; `Tests/searchbox_spec.lua` (its old assertion that the quantity was not
+  searched is reversed, and it now loads the real Guild and RequestLog modules for the status and
+  guild name). Checked in the Classic Era client by the operator, 2026-10-16.
+
+- **LOCALE-SENDTRIM-001: in a guild with players on different client languages, an order mailed
+  with the Fulfill buttons could go uncredited.** Peer Review 4d7fc1c4. At send time
+  `Mail:OnSendMail` (`Modules/Mail.lua`) cuts each order on the mail to what is really attached, and
+  it matched the attachment by name: the slot's name from `GetSendMailItem` is in the banker's
+  language, the order's is in the requester's, so a German requester's order on an English banker's
+  mail matched nothing and was dropped. The send slots now record their item id
+  (`GetSendMailItem`'s second return), each order on the mail carries its request's `itemID`
+  (`PrepareFulfillMail` and `FulfillStep`), and the cut matches by id. Random-suffix variants share
+  one base id, so every order first takes the slots matching its id AND name, and only then what is
+  left by id alone; otherwise, with one variant detached by hand, its order took its sibling's slot
+  and the wrong order was credited (found in this fix's self-audit, specced). An order with no stored id
+  (from a pre-REQ-001 client) still matches by name, which is safe because such an order was found
+  in the banker's bags by that same name. `GetSendMailItem` returns the id second in every flavour's
+  UI source (Classic Era, TBC, MoP, Forever; Peer Review f6aa732c). `Tests/multifill_spec.lua`, red
+  with the name match.
+  The same bug sat one call further on (Peer Review f6aa732c, F3/F4): `Guild:FulfillRequest`
+  (`Modules/RequestLog.lua`) matched orders only by lowercased name, so a mail the banker built by
+  hand, or a stack hand-added to an addon mail, credited nothing when the two clients' languages
+  differed (a German banker mailing 20 Teufelsstoff left an English order for 20 Felcloth open).
+  `FulfillRequest` now takes an optional item id and matches on it when the order has one, serving
+  every order that matches id AND name before any that matches id alone, for the suffix reason above.
+  `Mail:ApplyPendingSend` passes the slot's id from both of its loops, and the hand-added extras are
+  grouped by id rather than by the banker's name for them. `Mail:DebugSendMailState` now reads the
+  slots through the same `tog_readSendSlots` as the send hook (F5). Decided with it: when one mail
+  covers part of several of a person's orders for one item, the OLDEST is filled first
+  (`Guild.RequestOlderFirst`, moved to `Modules/Guild.lua` from Mail.lua's `tog_olderFirst`, which
+  now calls it); it used to be whichever order `pairs()` reached first, so a partial mail could
+  complete a newer order and leave the older one open. Because of that sort, a spill with no target
+  order now skips cancelled orders (found in this round's self-audit): the old loop never skipped
+  them either, but oldest first made a cancelled order left short the likeliest to take the credit
+  ahead of the open order the items were for. A targeted send still credits its own order whatever
+  its state, as before. FINISHED-001 (Peer Review 2073754c) widened that skip to every finished
+  order: an order closed short as `complete` (a peer's `complete` mutation is applied after only a
+  permission check, and the load-time normaliser keeps it) took the spill the same way. "Is this
+  order finished" is now one function, `Guild.IsRequestFinished`, used by the spill, `CancelRequest`
+  and `ReopenRequest`, and the three "a fill must not overwrite this status" checks read one
+  `CLOSED_STATUS` table; there were seven hand-written copies, and the cancelled-only skip already
+  disagreed with the rest. `Guild:CompleteRequest` had no caller outside the specs since
+  COMPLETEQTY-001 moved the hand-off button to `FulfillRequestById`, so it is removed and its four
+  spec uses (`requestchain_spec`, `xguild_spec`, `xguildfleet_spec`) call `FulfillRequestById`.
+  `Tests/localefill_spec.lua`, each example red
+  first (no id match and no sort: the manual mail, the extra and the oldest-first examples; the exact
+  pass ignoring the name: the suffix example; the cancelled filter off: the cancelled example; the
+  cancelled-only skip: the short-`complete` example). The oldest-first example keys its two orders
+  under ids `pairs()` walks newer first and asserts that walk as a precondition, so a change in
+  Lua's hash order fails it rather than letting it pass unsorted.
+  One residual, LOW: in a MIXED-language guild, two suffix variants on one mail (for example "of the
+  Bear" and "of the Monkey" bracers, which share a base id) can still be credited to each other's
+  orders, because the id-and-name pass needs equal names and the id-alone pass takes them in order.
+  `GetSendMailItemLink` carries the suffix and is the named remedy; not done. Not checked in a game
+  client: a mixed-language guild was not available, and the operator closed it without one
+  (2026-10-16, *"mark the language stuff as done, i'm not going to test it"*).
+- **COLLECT-LAG-001: Fulfill Oldest could pull one stack too many from the mail.** Peer Review
+  bf89d59d. Taking an item out of the mail is not instant: the inbox drops it before the bags show
+  it. In that moment the order being collected for reads short, and Fulfill Oldest serves another
+  order. The count of what had already been pulled was one shared `collectState`, replaced then; when
+  the first order came back it was recomputed from the bag count, which did not yet include the
+  stack on its way, and that stack was pulled again. `FulfillStep` (`Modules/Mail.lua`) now keeps the
+  count per order (`collectStates[req.id]`), drops an order's entry once its bags cover it, and drops
+  them all when the mailbox closes. One consequence kept on purpose: if the banker moves a pulled
+  stack away before the order is sent, that order says it is waiting until the mailbox is closed and
+  reopened, as the single shared count already did for the order in front. `Tests/bankcollect_spec.lua`,
+  red without the fix (three stacks pulled for an order that needed two).
+- **MAIL-SLOTCAP-001: an order needing more than twelve stacks was mailed short and credited in
+  full.** Peer Review bf89d59d, finding B1. `CalculateFulfillmentPlan` never looks at the mail's
+  twelve attachment slots, and `Mail:FindOldestServiceableOrder` (`Modules/Mail.lua`) accepted the
+  plan whatever its size; ATTACH stopped at slot 12, and SEND credited the full quantity. An order
+  for 13 Linen held as 13 single stacks went out with 12 and was marked filled for 13. Now a plan
+  that does not fit is cut to its twelve largest whole stacks (`tog_capPlanToMail`), the mail is
+  credited what those stacks hold, and the order stays open and oldest so the next click mails the
+  rest. ATTACH also returns what it actually attached and SEND credits no more than that. The
+  mailbox message says the mail is part of the order ("Order: 12 of 13x Linen Cloth for Alice ...
+  (one mail holds 12 stacks; the rest goes next)"; the capped plan carries `cappedFrom`; self-audit
+  9da6eefd F2). `Tests/multifill_spec.lua` drives the two-mail case end to end, through the real
+  send hook `Mail:OnSendMail` before each send (F1). Checked in the Classic Era client by the
+  operator, 2026-10-16. The twelve-slot
+  cap is now one helper, `tog_mailCap`, at all nine sites that spelled it out, and the capped plan's
+  never-shown `reason` text is gone (Peer Review 024ada6d F2).
+- **SEND-SNAPSHOT-001: an addon send could credit nothing if the client empties the attachment slots
+  inside `SendMail`.** Peer Review 024ada6d F1. The send hook is a `hooksecurefunc` post-hook and read
+  what went from `GetSendMailItem`; when the client empties those slots is not in its UI source
+  (`MAIL_SEND_SUCCESS` only resets the name, subject and body boxes). The slots are now also recorded
+  on `MAIL_SEND_INFO_UPDATE` (`Mail:OnSendInfoUpdate`, wired in `Modules/Events.lua`), and
+  `Mail:SendAttachments` uses that record when the hook finds the slots empty -- but only when they
+  went empty in the same frame as the send (`GetTime()` is frozen within a frame), so stacks the
+  banker took off the mail earlier are never credited. The record is consumed by each send and
+  dropped on `MAIL_CLOSED`. A MAIL debug line in the hook says how many slots it saw and whether it
+  used the record. `Tests/multifill_spec.lua` sends the capped mail through the real hook with the
+  slots emptied before the hook and still full in it (both credit 12), and a hand-detached mail
+  (credits nothing); each guard was switched off once and went red. Those examples fire
+  `MAIL_SEND_INFO_UPDATE` and `MAIL_CLOSED` through the real `Events:RegisterEvents` registration, so
+  dropping either wiring line fails them (Peer Review 1aa094de F2). Measured in the Classic Era
+  client by the operator, 2026-10-16, over three Fulfill sends in a row: the hook found 1, 2 and 3
+  slots still attached, the recorded update agreed each time, every order was credited, and no
+  "Mail sent." reached the mail-error path. So on Classic Era the slots are still full inside the
+  post-hook, and the record is a fallback for a case not seen in game (Peer Review c46172df). The
+  test harness pin moved to WoWAPITesting `be92d12` (inbox
+  da34acf1): its `SendMail` now keeps the slots until `wow.completeMailSend()`, the stand-in for the
+  server's confirmation, so `Tests/multifill_spec.lua` confirms each batch send through a
+  `confirmSend` helper instead of relying on the send click to empty them. The "slots still full"
+  example now uses the harness's own `SendMail`; the "already empty" one installs its own. The
+  manual `MAIL_SEND_INFO_UPDATE` fires stay, because that describe registers the addon's handlers
+  into a captured table the harness's event never reaches. The pin then moved on to `9f4d90a`
+  (`f6e5fde`: a second `SendMail` before the first is answered now raises, and `SetPoint` binds a
+  frame name at call time). The four `Tests/multifill_spec.lua` examples the harness named as at
+  risk already pass, because `confirmSend` answers every send; the whole suite stayed green with no
+  spec change.
+- **SUFFIX-KEY-001: an order with no random suffix and an "of the Bear" order of the same item did
+  not hold each other's place in the queue.** Peer Review bf89d59d. An order with no suffix counts
+  every variant of its item in the bags, but it was keyed apart from the Bear order, so first come,
+  first served did not apply between them: a newer Bear order could take the stack an older
+  any-variant order was waiting on, and the other way round. Such orders still exist (stored before
+  INV2-SUFFIX-001, from an older client, or placed by another addon through `Guild:AddRequest`; the
+  addon's own request dialog always carries the suffix). `Modules/Mail.lua` now measures each order
+  against a pool of its competitors (`tog_newPool`/`tog_poolAdd`/`tog_poolFor`): two orders compete
+  when they share a key, or share an item id and either has no suffix. The mailbox hold, the
+  ride-along reservation and the bank shortfall all use it; Bear and Tiger orders still never hold
+  each other up. At the bank the error is toward pulling a stack too many for a suffixed order, never
+  toward leaving one short. `Tests/bankcollect_spec.lua`, red without the fix. `Tests/multifill_spec.lua`
+  now loads `Modules/Inventory/Record.lua`, which it needed and had only been inheriting from an
+  earlier spec file.
+- **NAME-POOL-001: an order with no item id and an order with one did not hold each other's place.**
+  Peer Review 1aa094de F1, the same class as SUFFIX-KEY-001. An order with no item id (stored before
+  REQ-001, or from an old client) counts its item in the bags by name, so it takes every item of that
+  name, but it was pooled only with other no-id orders. The pool now also sums by lowercased name
+  (`tog_nameKey`): a no-id order competes with every order of its name, and every id order with the
+  no-id orders of its name. Where two items share a name it over-holds; where the stored names match
+  it never under-holds (two orders placed from clients in different languages store different names
+  and still do not hold each other, deferred with the other locale work). At the bank the over-hold
+  is toward pulling a stack too many for an id order, never toward leaving one short. An order with
+  no usable name pools by name with nothing: the key used to be `tostring(item)`, so every nameless
+  order shared the key `"nil"` and a nameless no-id order held every nameless order behind it (Peer
+  Review 104ff6f7 N1). How many no-id orders still exist is not known, so the path is kept rather
+  than deleted. `Tests/bankcollect_spec.lua`, three of the first four new examples red without the
+  fix (the fourth, a different name, passes either way by design), plus one for the nameless case.
+  `Tests/multifill_spec.lua`'s event-wiring examples now put back the `TOGBankClassic_Core` methods
+  and the addon globals they set, and assert it (Peer Review 104ff6f7 F3).
+- **FCFS-SELF-001: one requester's newer order could ride along on stock their own older order
+  needed.** Peer Review bf89d59d. `Mail:FindMoreOrdersFor` reserved stock only for other people's
+  orders; an order of the same requester that could not ride now reserves its quantity too.
+  `Tests/bankcollect_spec.lua`.
+- **The mailbox now says which order is holding the queue.** When Fulfill Oldest has nothing it can
+  send because the oldest order for an item cannot be covered yet, the message names that order's
+  requester, quantity and item instead of a bare "no orders" (Peer Review bf89d59d, B2).
+- **MAIL-ADDPARTIAL-001: adding an order to a mail that ran out of slots said "Click Send to
+  complete".** Found by COVERAGE-MAIL-001. When a banker added a second order to a mail already open
+  for the same person, `Mail:PrepareFulfillMail` (`Modules/Mail.lua`) replaced its message with the
+  "N orders on this mail. Click Send to complete." line whatever was attached, so an order of 20 with
+  only 10 slots' worth attached read as done. It now says "Attached 10 of 20 ... (partial) -- N
+  orders on this mail. Click Send, then fulfill again." when the order is short. The credit was
+  always right (the pending send carries what was really attached); only the message was wrong.
+  `Tests/mailcoverage_spec.lua`. That example was not confirmed red on the old code.
+- **EVENTS-UIERR-001: a failed mail send left Fulfill answering "waiting for the last order" for up
+  to five seconds.** Found by COVERAGE-EVENTS-001. `TOGBankClassic_Events:UI_ERROR_MESSAGE`
+  (`Modules/Events.lua`) took `(_, message)`, but the event's payload is `(errorType, message)` on
+  every flavour this addon ships (`Blizzard_APIDocumentationGenerated/SystemDocumentation.lua`,
+  `UiErrorMessage`, read in the classic_era, classic_anniversary, classic and forever trees). So
+  `message` was the numeric error type, no mail error ever matched, and `Mail.batchInFlight` was only
+  cleared by the 5 s safety timer `Mail` starts with each batch send (`Modules/Mail.lua`, after
+  `SendMail` in the batch path). An earlier draft of this entry said "until a reload"; that was
+  wrong. It now takes `(_, _, message)`. `Tests/eventscoverage_spec.lua` fires
+  the event with both values; that example was not run against the old code, the failure there is by
+  reading.
+  Follow-up, EVENTS-UIERR-002 (Peer Review 511e37b8, L1): the message is the client's own localized
+  text, and the test was `message:lower():find("mail")`, so a mail failure on a non-English client
+  still left the batch blocked. A file-local `isMailError` in `Modules/Events.lua` now decides by the
+  error's id: `GetGameMessageInfo(errorType)` returns the error's string name
+  (`Blizzard_APIDocumentationGenerated/GameErrorDocumentation.lua`; Blizzard's own
+  `UIErrorsFrame.lua` calls it with the same index), and a name starting `ERR_MAIL_` is a mail
+  error, in any language. The English word is only the fallback when the function is absent or knows
+  no name for the index (it is documented `MayReturnNothing`). Peer Review 6639c74e (R1) proposed
+  this; the first draft of the fix matched the text against every `ERR_MAIL_*` string in `_G`
+  instead, which walked all of `_G` on the first UI error of a session (combat included) and could
+  never match a template string. The handler now names its second parameter `errorType`. Which
+  error names exist and which indexes map to them is not verified (GlobalStrings are not in the
+  local source trees); `GetGameMessageInfo` is documented in the classic_era tree read here and, per
+  Peer Review, in classic, classic_anniversary and forever. `Tests/eventscoverage_spec.lua` stubs
+  it: index 3 names `ERR_OUT_OF_RANGE` with a text that says "mail" and leaves the batch alone,
+  index 51 names `ERR_MAIL_DATABASE_ERROR` with a German text and frees it, and an unknown index
+  falls back to the English word. Not run against the old code. `GetGameMessageInfo` is added to
+  `.luarc.json` and `.luacheckrc` (read-only for the addon, writable for the Tests).
+  Follow-up, EVENTS-UIERR-004 (Peer Review 030b8a0a, F2): any mail error cleared the batch flag,
+  including one from an inbox action. The flag is set only by a batch send and cleared on its
+  confirmation or by its 5 s safety timer, so the exposure was an inbox error landing while a send
+  was unconfirmed: it freed the next click early. `UI_ERROR_MESSAGE` now leaves the flag set for the
+  two `ERR_MAIL_*` names that can only come from the inbox, by their enUS text in the classic_era
+  GlobalStrings (Ketho/BlizzardInterfaceResources, `Resources/GlobalStrings/enUS.lua`, read on the
+  web because GlobalStrings are not in the local trees): `ERR_MAIL_ATTACHMENT_EXPIRED` ("That item
+  has expired.") and `ERR_MAIL_DELETE_ITEM_ERROR` ("You can't delete that."). The text of
+  `ERR_MAIL_DATABASE_ERROR` names no side, so it may come from either and still frees the batch: a
+  wrong free costs one early click, a wrong block costs the 5 s timer on every failed send. Inbox
+  errors without the `ERR_MAIL_` prefix (a full bag) were already ignored. Only the flag skips the
+  two: they still write the MAIL debug line and put "Mail error: ..." in an open Requests window's
+  status bar, so a failed take is still reported (Peer Review ca15a538, U1; the first cut skipped
+  that whole branch).
+  The English-text fallback cannot tell the sides apart and is unchanged. A gate on
+  `Mail.pendingSend` was built and then removed (Peer Review 7562cf08, G1): whenever the flag is set,
+  `pendingSend` is set too, so the gate never changed an outcome. `MAIL_FAILED` was not used: Blizzard's
+  own Open All listens for it during inbox takes too (`Blizzard_UIPanels_Game/Classic/MailFrame.lua`),
+  so it has the same breadth. `Tests/eventscoverage_spec.lua` fires both inbox-only ids with a batch
+  pending and the flag stays set; confirmed red with the exclusion removed. Which index each name has
+  in a client, and whether those two are ever raised during a send, is not verified in a client.
+- **BATCH-TIMER-001: an earlier send's safety timer could free Fulfill Oldest while a later send was
+  unconfirmed.** Peer Review 030b8a0a (N1). Every batch send in `Mail:FulfillStep`
+  (`Modules/Mail.lua`) starts a 5 s timer that cleared `batchInFlight` unconditionally. Send A
+  confirms, send B starts two seconds later, A's timer fires and frees a third click before B
+  confirms. Each send now stamps `Mail.sendGen`, and its timer clears the flag only if no later send
+  has stamped it since. How often a confirmation takes long enough for this to matter in a client is
+  not measured. `Tests/multifill_spec.lua` drives two sends two seconds apart on the harness clock;
+  confirmed red with the unguarded timer put back.
+
+- **SEND-RECIPIENT-001: a mail to one person could credit another person's order.** Peer Review
+  f4c6a142 (R1). `Mail:OnSendMail` (`Modules/Mail.lua`) kept any pending send under 10 s old without
+  checking who the mail was going to. Two ways in: a Fulfill Oldest send that failed leaves its pending
+  send behind (nothing clears it on failure), and after a row's Fulfill the banker can retype the name
+  box. Either way, a mail to Bob carrying the same item credited Alice's orders, and any extra stacks
+  spilled to Alice's other orders. The pending send is now kept only when the mail goes to the same
+  person, compared without case because the client sends to a name typed in any case; otherwise the
+  mail is tracked as a hand-built mail to its real recipient. `NormalizePlayerName` does not fold case,
+  and Lua's `lower` folds only ASCII, so a name whose accented capital is typed in lower case falls to
+  the hand-built path: the order loses its id targeting but nobody is wrongly credited.
+  `Tests/multifill_spec.lua`: a row Fulfill for Alice mailed to Bob credits Alice nothing, and the same
+  name typed in lower case still credits the prepared order. The first was confirmed red without the
+  check. Checked in the Classic Era client by the operator, 2026-10-16 (a row Fulfill mailed to
+  another name, and the right name typed in lower case).
+
+### Internal
+
+- **COVERAGE-MAIL-001: `Modules/Mail.lua` and `Modules/RequestLog.lua` at 100% line coverage.**
+  Peer Review 074cdad6 and 5bd709cf. Mail.lua went from 86.90% to 1138/1138 lines and RequestLog.lua
+  from about 79% to 1560/1560, measured with the harness's `coverage.lua` over the whole forward run
+  (2094 passing). New `Tests/mailcoverage_spec.lua` and `Tests/requestlogcoverage_spec.lua`, 85
+  examples between them. Three blocks that could not run were deleted rather than covered, each
+  checked against its callers: `mergeRequest`'s nil-id/nil-record guard (both callers,
+  `ApplyRequestSnapshot` and `ApplyRequestMutation`, refuse those first); the per-sender cooldown in
+  `CanQueryRequestsIndex` and its `perSender` map (written in the same step as `lastQueryAt`, the only
+  writer of either, so it could never refuse when the global cooldown had passed); and the "single
+  large stack" branch at the end of Mail.lua's fulfillment plan (for a positive need PHASE 3 already
+  splits from the largest stack, and a need of 0 returns at PHASE 1; only a negative need reached it,
+  and it planned a negative split, which now fails closed). No production caller can pass a negative
+  need: all four take it from `RequestQuantityNeeded`, which never returns below 0.
+
+- **COVERAGE-EVENTS-001: `Modules/Events.lua` at 100% line coverage.** Peer Review 074cdad6. It went
+  from 56.28% to 100%, measured with the harness's `coverage.lua` over the whole forward run: 420/420
+  lines, with Mail.lua at 1144/1144 after BATCH-TIMER-001 and SEND-RECIPIENT-001 (2137 passing;
+  reverse parts 569 + 809 + 759 = 2137). After EVENTS-UIERR-004 the gate is 2138 forward and
+  569 + 809 + 760 = 2138 reverse, with Events.lua at 423/423. New `Tests/eventscoverage_spec.lua`. It found
+  EVENTS-UIERR-001 above.
+
+- **Changelog archive:** the whole v1.6.1 section moved to `CHANGELOG_ARCHIVE.md` (Peer Review
+  e1e13df8). This file was 115,152 characters, 4,848 under the 120,000 ceiling.
+
+- **FORWARD-PARTS-001: the fallback forward parts find new spec files by themselves.** Peer Review
+  e1e13df8. The four forward parts (A8a, A6c, B3a, B3b) were writ suites listing their spec files by
+  hand, and `mailcoverage_spec`, `requestlogcoverage_spec` and `localefill_spec` were in none of
+  them, so a forward run split into parts skipped them. New `Tests/run_forward.lua <part> <parts>`
+  slices the sorted spec glob the way `Tests/run_reverse.lua` always has; both now share the
+  discovery and slicing in new `Tests/run_parts.lua`. Declared as writ suites `forward 1/4` ..
+  `4/4`; the old hand-listed parts and their superseded predecessors (A, A2-A5b, A7a, B) were
+  removed. Forward parts 556 + 547 + 508 + 483 = 2094 over all 102 files, reverse 568 + 806 + 720 =
+  2094 after the refactor.
+
+- **ENV-SWEEP-LIB-001: the test reset no longer silences once-loaded libraries.** Peer Review
+  bf89d59d, B3. `env.reset` in `Tests/env_togbank.lua` wiped every AceComm/AceEvent handler, so a
+  library that registers once per run (VersionCheck-1.0 registers its comm prefixes on AceComm itself
+  behind a flag that never resets) went deaf for the rest of the run after the first reset. Handlers
+  owned by a LibStub library are now kept; an event left with none is removed. The whole forward run
+  passed with the sparing switched off, so `Tests/envreset_spec.lua` now pins it (red without the
+  fix, checked). Forward-run time on a machine shared with other test runs: 229 s with the sparing off,
+  174 s with it on, heap about 135 MB at the end in both -- one run each, so not a measured speed-up.
+- Peer Review bf89d59d B2 (the bank search should hold newer orders behind an older one of the same
+  item) needed no code change: orders with one item key match the same bank stock, so the bank never
+  helps a newer order it could not help the older one with. A spec pins the review's worked case.
+  (Orders of one item with and without a suffix do not share a key; SUFFIX-KEY-001 above covers them.)
+- **SLOW-REQACTIONS-001: why `Tests/requestsactions_spec.lua` timed out under load.** Peer Review
+  074cdad6 A7. One forward run (20261015-141135) aborted the file at the runner's 60 s per-FILE limit;
+  the example it named is only where the file's total crossed 60 s. The runner's per-example
+  telemetry for that run shows the time was the reset, not the tests: `reset_ms` was over 90% of
+  most examples (47-78% in a few) and most of it was garbage collection (the slowest example: 11.7 s,
+  11.5 s of it reset, 8.2 s collecting). The spec's `load()` called `env.reset()` and then
+  `frames.reset()`. `frames.reset()` runs one full collection (its own `wow.reset()` defers its
+  collection to it, `Tests/wowapi/env/frames.lua:7288-7315`); the bare `wow.reset()` inside
+  `env.reset()` runs another, but only while the hollow frame registry is not empty
+  (`Tests/wowapi/env/wow.lua:2044`). The telemetry says it was not empty: `gc_n` (collections per
+  example) was 2 for each `load()` in the timed-out run (4 and 6 for examples that load two or three
+  times), and is 1 for each `load()` after the change (2 and 3), in a later forward run
+  (telemetry run 20261015T215820). The hollow frame count itself was not read. So every reset
+  collected twice over a heap of about 52 MB (`heap_kb` 53518 at the file's first example in the
+  timed-out run's telemetry; one sample read). The machine was shared with other test runs (that whole
+  forward run took 10m56s against 4m52s for a green one later the same day), and the runner's
+  deadline is `os.clock()`, which on Windows is wall time (the harness's own note, `run.lua:970`), so
+  CPU starvation counts against it. This halves the work; it does not make the file immune to a
+  badly starved machine.
+  `load()` now calls `env.reset({ frames = true })`, the single-reset form `Tests/env_togbank.lua`
+  documents: the file alone went from 10.12 s to 4.21 s CPU, 47 passing before and after, same heap
+  and frame counts. `Tests/browsepersist_spec.lua` had the same pair and got the same change, and
+  so did 12 more spec files that reset twice per example (`browse`, `craftlistwindow`, `escape`, `hideitems`, `item`, `mailbox`, `mailwindow`, `optionslayout`,
+  `search`, `searchbox`, `statusbaryield`, `windowchrome`); each passed alone with the same count
+  before and after. Each of the 12 diffs was read (Peer Review aa437aa8 B6). Every hunk swaps the
+  pair for the single reset, with three exceptions. First, in `craftlistwindow` and
+  `statusbaryield` the frames reset left a shared `loadStack()`/`load()`, and every caller now
+  resets first (checked for both). Second, `mailbox`'s "is ON by default" example used to run
+  `frames.reset()` partway through, after `load(true)` and its first assert. It now resets once
+  at the start, so nothing resets between `load(true)` and the rest of the example. What the old
+  mid-example reset cleared was not read. It passes either way. Third, a stray `wow =package.loaded` spacing slip in
+  `windowchrome` is fixed. The other changes in `browse` (FINISHED-001) and `optionslayout`
+  (ACCOUNT-MODE-001) are their own entries.
+- **FINISHED-001, follow-up (Peer Review f40a8e77 H2).** The Requests window's own "is this order
+  finished" check (`Modules/UI/Requests.lua`, which decides whether Cancel and Complete show) and
+  `ExpireStaleRequests`, `PruneRequests` and the `/reqscan` diagnostic `Guild:ReqScan` (Peer Review
+  7b5e912d) (`Modules/RequestLog.lua`) now call `Guild.IsRequestFinished` instead of their own
+  copies, so the window can no longer offer a Cancel that `CancelRequest` refuses, and `/reqscan`
+  counts as done exactly the set the prune drops. No behaviour change: every path that stores an order gives it a
+  known status (the normaliser maps anything else to "open"), so the old "status is open" test and
+  "not finished" select the same orders. `ExpireStaleRequests` had no spec at all;
+  `Tests/localefill_spec.lua` now runs it on stale open, part-filled, filled, closed-short,
+  cancelled and recent orders and checks which ones it tombstones, and one example pins `/reqscan`'s
+  done count (it had no spec either). `Tests/browse_spec.lua` and
+  `Tests/requestsactions_spec.lua` lift the real function onto their stub Guild tables rather than
+  copying it.
+- **REQSCAN-AGE-001: `/reqscan` reported a recent finished order as expired (Peer Review aa437aa8
+  B2).** It aged a finished order by `updatedAt` alone, so one with no `updatedAt` aged from 0 and
+  counted as "done+expired" while `PruneRequests`, which ages by `updatedAt` and then `date`, kept it.
+  `Guild:ReqScan` (`Modules/RequestLog.lua`) now ages by the prune's own spelling, for the expired
+  count and the age buckets, and its two labels say "updatedAt, else date"; the missing-`updatedAt`
+  count still reads the raw field. Narrow reach: `AddRequest` stamps `updatedAt` and the normaliser
+  fills it from `date`, so only a record that skipped both could show it. A red-first example in
+  `Tests/localefill_spec.lua` (a finished order with no `updatedAt` and today's `date`) failed with
+  "1 done+expired" before the change.
+  Follow-up, REQ-AGE-001 (Peer Review ca7dc86f): the expression `tonumber(req.updatedAt or req.date
+  or 0) or 0` was written out in five places and had a flaw of its own. A non-numeric `updatedAt`
+  string won the `or`, `tonumber` turned it into nil, and the order aged from 0 without falling back
+  to `date`. So `PruneRequests` dropped such a finished order at once, whatever its date. All five
+  sites now call one file-local `requestAgeTs` helper that converts each field on its own:
+  `PruneRequests`, `ExpireStaleRequests`, `ReqScan`, and the duplicate pick in
+  `NormalizeRequestList`. Left as it was: `sanitizeRequest`'s `validateTimestamp(req.updatedAt or
+  req.date or now, now)`, which falls back to now rather than 0 and is the normaliser's own job.
+  Reach is narrow, because `sanitizeRequest` replaces a non-numeric `updatedAt` on every stored path.
+  Only a record not yet normalised can carry one. A red-first `Tests/localefill_spec.lua` example
+  (a finished order with `updatedAt = "garbage"` and today's `date` must survive the prune and show
+  0 expired in `/reqscan`) failed with "1 done+expired" before the helper.
+
 ## [v1.8.1] (2026-10-09) - Oldest Order First
 
 ### Bug Fixes
@@ -686,348 +1059,6 @@ libraries"* -- LibProfessionDB, LibItemDB through `Inventory/Resolve`, LibAceGUI
   deleted; the spec now runs on the harness's.
 - Gate: forward 470 + 504 + 961 = 1,935, reverse 537 + 711 + 687 = 1,935, none failed.
 
-## [v1.6.1] (2026-09-25) - Sister-Guild Failover
-
-### New Features
-
-- **ESC-001: Escape closes the Guild Bank window, and a setting turns Escape off.** A player: *"Bank
-  doesnt close with esc press, but togpm does"*; the operator: *"it should have esc close the window
-  by default."* The escape frame was only CREATED by the first open of Inventory, Search, Requests
-  or Donations, so the Guild Bank window opened on its own never had Escape; closing Inventory also
-  hid it and took the Guild Bank window down. Now one stand-in (`TOGBankClassicEscProxy`) on
-  UISpecialFrames, shown while any window is open, closes them all. Appearance setting "Close
-  windows with Escape" (`db.global.closeOnEscape`, default on). `_G.TOGBankClassic` is gone.
-  Offline: `Tests/escape_spec.lua` (new, 10). Locations: `Modules/UI.lua`, `Modules/Options.lua`,
-  every `Modules/UI/*.lua` window.
-- **XGUILD-SEARCH-001: the Bankers search matches a sister guild's name.** The operator, 2026-09-25:
-  *"the guild tag name needs to be searchable, so i can search for bankers in the sister guild."*
-  `Browse:FilterBankerRows` passes the row's `guildName` to `SearchMatch`. Offline:
-  `Tests/browse_spec.lua` (+1). Locations: `Modules/UI/Browse.lua`.
-- **SSYNC-001: `/togbank ssync [<name>]` starts a sister-guild sync now.** The operator, 2026-09-25:
-  *"do we have a /togbank command to start a cross guild sync? i need that, especially for testing,
-  and if i could do /togbank ssync <name> that would be helpful. it could do a roster lookup so i can
-  be lazy with the realm."* With no name, each listed sister guild's usual peer is asked at once, past
-  the cycle's pending and silent-for-an-hour waits. With a name, that sister member is found in the
-  sister rosters (realm optional, any case; `Guild:FindSisterMembers`) and asked directly -- the
-  hash-list ask and the requests index behind it, the cycle's own `AskFederationPeer` -- with any
-  "left alone" mark on it cleared. It refuses, sending nothing and saying why, when the Sister-guild
-  bank is off, no sister guild is listed, the name is not a sister member, it matches characters on
-  more than one realm, or the member is offline. Offline: `Tests/xguild_spec.lua` (one example).
-  Locations: `Modules/Guild.lua` (`SisterSyncCommand`), `Modules/Chat.lua`, `README.txt`.
-- **XGUILD-NUDGE-001: a GreenWall guild hears you open the bank, and its members pull at once**
-  (`docs/XGUILD_SYNC.md` 4.6, build-order step 7 -- the optional last step, gated on steps 2-6 being
-  seen in game, which the operator closed on 2026-09-16). GreenWall's bridge cannot carry the sync
-  (a CHANNEL send is hardware-gated on Classic, a segment is 255 bytes, the handler is not told the
-  guild -- 1.1 of the design note), but ONE line from a click can ride it: `Browse:Toggle` -- the
-  minimap button, `/togbank`, the legacy window's Browse button -- sends `hlq:<addon version>`
-  through `GreenWallAPI.SendMessage` when the sister-guild bank is on, GreenWall is loaded and its
-  guild channel is JOINED (a segment GreenWall cannot send is parked for its next flush, which may run
-  from its timer, so an un-joined channel refuses rather than risks a blocked send), at most once per
-  sync cycle. A federated client hearing it (`GreenWallAPI.AddMessageHandler`, registered from Core's
-  init) notes the version and treats the line as a TOGBank message from the sender
-  (`Guild:UpdateOnlineMember(..., "greenwall-nudge")`), so `OnFederationPeerProven` asks that guild for
-  its hash list NOW instead of on the next ten-minute cycle -- after Guild Roster places the sender in
-  a LISTED sister roster; echo, a home guildmate and a name only GreenWall's confederation knows are
-  ignored. Nothing runs without GreenWall (`## OptionalDeps: GreenWall` in every TOC, so it loads
-  first when present). Offline: `Tests/xguild_spec.lua` step 7 (three examples; the API's signatures
-  pinned against the installed `GreenWall/API.lua`). Not seen in a client. Locations:
-  `Modules/GreenWall.lua` (new), `Modules/UI/Browse.lua`, `Modules/Guild.lua`, `Core.lua`,
-  the TOCs, `Tests/env_togbank.lua`, `.luarc.json`, `.luacheckrc`.
-
-### Bug Fixes
-
-- **POOL-CLUSTER-001: a released Requests window handed on its broom and envelope.**
-  `ReleaseWindow` (role change, or the body moving into the Guild Bank tab) returned the frame to
-  AceGUI's shared pool with the cluster and officer overlay still shown; they now hide first. Not
-  seen in game. `Tests/requestsactions_spec.lua` +1. Locations: `Modules/UI/Requests.lua`.
-- **REQ-GATE-001: a stranger could pull the guild's request history** (Peer Review on audit
-  `31294783`, F5). `requests-index` / `requests-by-id` now answer only `IsInCurrentGuildRoster`
-  senders (a guildmate, or a sister member while the switch is on). Also F4: `SendBankerOwnersTo`
-  skips the receiver's own guild's entries. `Tests/xguild_spec.lua` +1. Locations: `Modules/Chat.lua`,
-  `Modules/Guild.lua`.
-- **XGUILD-SETTINGS-001: officer settings crossed between sister guilds, and who runs each bank
-  character mostly did not.** The operator, 2026-09-25: *"the banker metadata isn't syncing though"*,
-  then *"we should NOT be syncing the officer settings between sister guilds, this would allow any
-  guild to target another guild and force it into being a sister."* A sister guild's bank character
-  passed `SenderHasGbankNote` (the sister roster's note), its officers `SenderIsOfficer`
-  (`member.isOfficer`) and its GM `SenderIsGM` (rank 0), so `ApplyRemoteSettings` adopted that guild's
-  request limit, shop, discount, Sister-guild bank switch and rank floor as OURS whenever its stamp was
-  newer. And `AnswerFederatedAsker` sent settings only when the answering client was a bank
-  character or officer, while a pull usually asks a plain member -- so the owners rarely crossed.
-  Now a sister member's payload yields only its own guild's bank characters' owners (merged entry by
-  entry, the field stamp moved with it), from ANY member; the answer to a sister guild's ask is the
-  owners alone (`Guild:SendBankerOwnersTo`), from any client. Supersedes `docs/XGUILD_SYNC.md`
-  D1/D4/D6 on settings. Offline: `Tests/xguild_spec.lua` (+2, one existing example rewritten),
-  `Tests/xguildlive_spec.lua` step 6 (the request limit no longer crosses). Locations:
-  `Modules/Guild.lua`, `docs/XGUILD_SYNC.md`.
-- **SCALE-DOCK-001: a Window and Text Size change pulled Search and Requests off the Inventory
-  window.** Peer Review's residual on 593238c3: the scale listener re-applies AceGUI's status table,
-  whose `ClearAllPoints` dropped the hand-made dock. `UI:SetPersistedAnchor` lets a window re-dock
-  right after. Offline: `Tests/browsepersist_spec.lua`. Locations: `Modules/UI.lua`,
-  `Modules/UI/Search.lua`, `Modules/UI/Requests.lua`.
-- **SCALE-FLOOR-002: a released window could still be resized by a Window and Text Size change.**
-  LibAceGUIWidgets now registers its own scale listeners -- the resize handle's and `PersistWindow`'s
-  record (`widget._lagwPersist`) -- and both went into AceGUI's addon-wide pool with the frame.
-  `UI:ForgetPersistedWindow` now removes the record's listener (through the library's public
-  `OnScaleChanged(owner, nil)`; the library has no forget call, asked for on its inbox `3d96003a`)
-  and puts a ClearFrame's handle back on the bounds it had before `UI:PersistWindow` raised them
-  (recorded there as `handle._togOrigBounds`). The handle is NOT destroyed: it is made once in the
-  ClearFrame constructor, and my first version of this fix destroyed it, which would have left the
-  frame's next owner with no resize grips -- caught by this session's own audit before release.
-  Also `browsepersist_spec`'s SCALE-DOCK example used a width under the doubled floor, which the
-  library now correctly raises. Offline: `Tests/browsepersist_spec.lua` (+1 ClearFrame example).
-  Locations: `Modules/UI.lua`, `Tests/browsepersist_spec.lua`.
-- **SETTINGS-STALE-001: an officer whose client still held an old or default setting could push it to
-  the whole guild by changing a DIFFERENT setting.** Found live 2026-09-25: the Sister-guild bank was
-  unticked guild-wide, so the sister guild's inventory handshakes were answered "busy" by every client
-  (a non-member fails `isValidPeer`, `Modules/P2P.lua:136`) while its request queries -- which have no
-  membership gate -- kept crossing. The operator: *"we need to make sure someone logging on for the
-  first time doesn't uncheck it, as that's the default. how do we guard this?"* SETTINGS-004's
-  per-field stamps diff a write's payload against a snapshot of the last settings sent or applied, and
-  that snapshot was EMPTY at two moments -- a session's first write before any settings were heard or
-  sent, and every write after settings were RECEIVED (`ApplyRemoteSettings` cleared it) -- and an empty
-  snapshot stamped EVERY field as freshly written. Now the snapshot is the held settings from the
-  moment the record is bound (`Guild:Init`) and whenever settings are applied (`Guild:SnapshotSettings`),
-  tied to that settings table; a write that still finds none diffs against the DEFAULTS
-  (`Guild:DefaultSettingsFields`), so a default value is never stamped by a write that did not change
-  it. KNOWN COST: v1.6.0 clients still have the old behaviour until they update, so an officer on
-  v1.6.0 can still do this. Offline: `Tests/settings_spec.lua`, two examples, both red with the fix
-  reverted. Locations: `Modules/Guild.lua`.
-- **XGUILD-BOUNCE-001: a sister-guild bank character who logged off stayed "online" to the other
-  guild, which kept asking them for the bank.** The operator, straight after v1.6.0: *"build complete
-  end to end tests for the sister guild sync, still having issues with that"*. Guild Roster never
-  hears "X has gone offline." for another guild's member: its presence for one is a sighting stamp
-  that only ages out (`PRESENCE_TTL`, 900 s) -- and its guild relay carries every name still inside
-  that window and the receiver re-stamps them at receive time (`LibGuildRoster-1.0.lua:3976`,
-  `:4194`, `:3297`, on a 270 s relay interval), so a member who logged off reads online for as long
-  as two guildmates keep relaying (filed to Guild Roster's inbox 2026-09-17). The one authoritative
-  "not online" a client gets for them is the server bouncing a whisper
-  (`ERR_CHAT_PLAYER_NOT_FOUND_S`), which `Events:CHAT_MSG_SYSTEM` already turned into
-  `UpdateOnlineMember(X, false)` -- a flag on `memberRoster` that `IsPlayerOnline`, `FederationPeer`
-  and `_AddSisterMembers` never read for a sister member. So the sister viewer whispered its
-  hash-list ask to the logged-off banker, waited the whole cycle, marked them silent for an hour and
-  only then asked the other member, while the Bankers tab said "yes". Now the bounce is remembered
-  (`Guild.sisterBounced`, frame clock) and outranks the library's sighting for the library's own
-  window (`Guild:SisterSightingHolds`, read by all three sites; the library's stamps are NOT compared
-  against it, because a relay re-stamps within the minute -- measured); a TOGBank message from the
-  member clears it at once; and when the bounced whisper was our ask, the ask is withdrawn, the member
-  is left alone for `FEDERATION_SILENT_FOR`, and the guild is asked through `FederationPeer`'s next
-  choice NOW (`Guild:OnSisterMemberBounced`). Design: `docs/XGUILD_SYNC.md` D9. Offline:
-  `Tests/xguild_spec.lua` (bounce, re-ask, clear, window) and `Tests/xguildlive_spec.lua` step 8 on
-  the real transport stack. Locations: `Modules/Guild.lua`.
-- **LINKCLICK-001: a modified click on an item link does what it does everywhere else in the game.**
-  The operator: *"what shift+click and ctrl+click does to the links in the addon? i'd like it to
-  mirror game functionality"*. Read in both client trees this addon ships (`classic_era`,
-  `classic_anniversary`): a modified click on any item link runs `HandleModifiedItemClick`
-  (`Blizzard_ItemButton/Classic/ItemButtonTemplate.lua:137`) -- `IsModifiedClick("CHATLINK")` (Shift
-  by default, but the PLAYER'S binding) inserts the link through `ChatFrameUtil.InsertLink` (the open
-  chat box, else the auction house's search box, else a macro being edited), `IsModifiedClick("DRESSUP")`
-  (Ctrl by default) previews it with `DressUpItemLink`. The bare `ChatEdit_InsertLink` exists on both
-  clients ONLY as an alias of the real function in `Blizzard_DeprecatedChatInfo/Deprecated_ChatFrame.lua:43`,
-  behind `loadDeprecationFallbacks`, and nothing in either tree calls it. Four defects against that:
-  (1) the item slots (`UI:EventHandler`, Inventory and Search windows) read `IsShiftKeyDown` /
-  `IsControlKeyDown`, so a player who rebound "chat link" or "dress up" got nothing; (2) the Browse
-  and Shop rows handled Shift only, and a Ctrl-click REQUESTED the item; (3) every insert called the
-  deprecated alias, nil with that CVar off; (4) `Events:RegisterEvents` hooked the alias for the
-  "shift-click fills the Search box" feature (`UI:OnInsertLink`), so the hook never saw a shift-click
-  on a bag item or a chat line -- only this addon's own slots -- and raised outright with the CVar off.
-  Now `UI:HandleLinkClick(link)` runs the client's dispatcher (the same logic spelled out for a client
-  without it), consumes the click whenever a link modifier is held so no plain-click action runs under
-  one, and is what every site calls; `UI:InsertLink` prefers `ChatFrameUtil.InsertLink`; the hook is on
-  the function the client calls, the alias only as a fallback, and neither present raises nothing.
-  The mail window's shift-click (take everything, MAILCLICK-002) is unchanged: the game's own inbox
-  has no modified-click handling (`MailFrame.lua:828`), so there is nothing to mirror. Offline:
-  `Tests/linkclick_spec.lua` (new) and `Tests/browse_spec.lua`. Locations: `Modules/UI.lua`,
-  `Modules/UI/Inventory.lua`, `Modules/UI/Search.lua`, `Modules/UI/Browse.lua`, `Modules/Events.lua`,
-  `.luarc.json`, `.luacheckrc`.
-- **SCALE-FLOOR-001: with Window and Text Size under 100%, a window at its minimum had its filter
-  strip past the border.** A player's report against v1.6.0 (2026-09-17, the slider at 80%): *"Window
-  size at minimum has widget overflow after resizing/reloading text in config"*. Two defects, both
-  mine from VISIBILITY-001. (1) LibAceGUIWidgets' `PersistWindow` multiplies a window's floor by the
-  accessibility scale -- right for a window made of its own widgets, whose every region scales -- but
-  TOGBank's floors are sums of FIXED widths too: the Browse strip's stock AceGUI dropdowns, edit boxes,
-  checkbox and button (their template art is fixed; `ScaleStockWidget` grows only the text), the
-  frame's insets, RowList's gutter. At 80% the Guild Bank window's floor fell from 784 to 627 px while
-  the strip's first row still needed 738, so a window dragged to its minimum, or reloaded at a saved
-  size the floor no longer raised, spilled. Now the pixel floor is never below the normal-size one
-  (`minW x max(1, scale)`, handed to the library as `minW x max(1, scale) / scale` so its own multiply
-  lands there). KNOWN COST: under 100% a window cannot be dragged smaller than it can at 100%; the
-  text shrinks, the minimum does not. (2) The library re-applies a floor on a scale change only
-  through a resize handle, which an AceGUI Frame (every TOGBank window) has none of, so the bounds set
-  at draw time stayed at the old scale until the next reload -- a window at the 100% minimum kept it
-  at 200% with twice the text inside (finding filed to LibAceGUIWidgets' inbox 2026-09-17; TOGBank's
-  own listener is the stand-in). `UI:PersistWindow` now re-runs itself on the scale signal for every
-  window -- Inventory, Search, Requests, Browse, Mailbox -- raising a window sitting under the new
-  floor and re-applying the bounds; nothing shrinks on a scale-down. Offline:
-  `Tests/browsepersist_spec.lua` (three examples against the real library and the real Requests
-  floor; two fail without the fix at 627 vs 784); forward A4 882/0, forward B2 936/0, reverse-order
-  1818/0 after it. Locations: `Modules/UI.lua`, `README.txt`.
-
-### Internal
-
-- **SUITE-HEAP-002, harness pin 23d11b1.** `browse_spec`, `requestsactions_spec` and
-  `mailwindow_spec` release their windows; `env.releaseWindow` drops Requests' frame caches. The
-  `GetClassColor` stand-in and `browse_spec`'s fake LibDBIcon are gone. Heap not measured.
-- **UI-OWN-TABLE-001: `TOGBankClassic_UI` is its own table**, reading through to AceGUI-3.0; it
-  was the shared library table itself (Peer Review 35130c29). Escape also closes the owner dialog.
-- **OWNERS-STAMP-001, harness pin 35f697b.** One `Guild:AdvanceOwnersStamp` for both owners-merge
-  routes (Peer Review 31294783). Harness 17d5211 -> 35f697b: `GetClassColor` stand-in, two specs on
-  the rich layer, `canonhash_spec` loads `Inventory/Sync.lua`, windows released in two specs.
-- **USABLE-LIBITEMDB-001: "Usable by me" asks LibItemDB's `ClassProficient`** (ItemDB v0.10.0,
-  MINOR 27; ItemDB inbox 10a85af75c12). The five proficiency tables copied from Dibs and
-  `Usable.ArmorCap` are deleted. One answer changed on purpose: a class off the tables may hold a
-  shield. Offline: `Tests/usable_spec.lua`, `Tests/browse_spec.lua` (the installed library).
-  Locations: `Modules/Usable.lua`.
-- **TOC-MISTS-001: a MoP Classic TOC, and the TBC TOC renamed `_BCC` -> `_TBC`** (the operator,
-  2026-09-25: *"make a mop toc"*, *"update the _BCC toc to be _TBC"*). New `TOGBankClassic_Mists.toc`
-  at Interface 50504: the Era TOC byte for byte apart from the Interface line. Every required
-  dependency already ships MoP (Ace3, VersionCheck-1.0, AceCommQueue-1.0, DeltaSync, LibAceGUIWidgets
-  and LibDBIcon-1.0 list 50504; GuildRoster and ItemDB ship their own `_Mists.toc`, ItemDB with
-  `Data\Mists\` item data). **Loads in a MoP client with no Lua errors** (the operator, 2026-09-25,
-  on a character in no guild); **NOT VERIFIED: every guild feature** -- nothing past loading has run
-  in MoP, and the code has not been read against the MoP API. `TOGBankClassic_BCC.toc` is
-  now `TOGBankClassic_TBC.toc` (same content), matching the fleet's `GuildRoster_TBC.toc` /
-  `ItemDB_TBC.toc`. New lockstep guard `Tests/wiring_spec.lua` (TOC-LOCKSTEP-001): every TOC must
-  equal the Era TOC apart from its Interface line; the ten specs that looped over two TOCs now loop
-  over three. `wow-version-replication.ps1` now also mirrors into `_classic_` (MoP). Locations:
-  `TOGBankClassic_Mists.toc` (new), `TOGBankClassic_TBC.toc` (renamed), `.pkgmeta`,
-  `wow-version-replication.ps1`, `CLAUDE.md`, `Tests/*_spec.lua`.
-- **LIBDBICON-DEP-001: LibDBIcon-1.0 is a required dependency, no longer vendored** (TOGTools inbox
-  contract `1eab38f9`, the operator's decision of 2026-09-25). An embedded copy only updates when
-  TOGBank releases; as a CurseForge required dependency it updates for every player on its own.
-  `Libs/LibDBIcon-1.0/` is deleted, every TOC declares `LibDBIcon-1.0` in `## Dependencies` and no
-  longer load the copy, and `.pkgmeta` lists the slug `libdbicon-1-0`. **LibDataBroker-1.1 stays
-  bundled** on the operator's word (*"change it to not get rid of libdatabroker"*), although the
-  standalone LibDBIcon also loads one (`LibDBIcon-1.0/embeds.xml:6`); LibStub keeps whichever copy
-  has the higher MINOR. No Lua changed -- `Modules/UI/Minimap.lua` still resolves both through
-  LibStub. KNOWN COST: a player installing by hand must also install LibDBIcon-1.0. Seen in an Era
-  client 2026-09-25: the standalone (TOC `## LoadOnDemand: 1`) loads and the minimap button shows;
-  TBC and MoP not checked. Pinned by `Tests/sendresult_spec.lua` ("de-vendored LibDBIcon-1.0").
-  Locations: the TOCs, `.pkgmeta`, `README.txt`, `CLAUDE.md`.
-- **Peer review of this session's own audit, acted on** (inbox `593238c3`, reply `8e933d44`). Three of
-  its four points changed code. (1) `c.offline` is deleted from `Tests/env_fleet.lua`: one concept with
-  two spellings, where the write-only one was the plausible-looking one, so a future guard written
-  against it would have been true for a client taken offline through `F.offline` and false for one
-  created with `opts.offline`. The reviewer also spotted that `Tests/fullsync_spec.lua:864` was a
-  hand-inlined `F.offline` -- the one call site that could not benefit from the change that gave
-  `F.offline` its presence call -- so it now calls the helper and one of the three deletions came
-  free. (2) `GreenWall:Bridge` no longer claims `GetChannelNumbers()[1]` is the guild channel, and the
-  six-line caveat defending that claim is gone; it now accepts any joined channel. **The reviewer's
-  suggested `#numbers == 0` was NOT taken, with a reason:** `GwChannel:is_connected` calls a channel
-  connected only when its number is non-zero, so a channel that exists un-joined reports 0 and a send
-  on it is PARKED for the next flush -- the later non-hardware send this gate exists to prevent. The
-  non-zero test is load-bearing; only the claim about which entry it is was wrong. (3) `Nudge` now
-  stamps the cooldown on a refusal FROM GreenWall, so the one configuration that always fails there
-  costs one attempt per cycle instead of one per window open; a refusal before the send still leaves
-  the cooldown alone, so a client whose GreenWall loads a moment later does not wait a cycle. New
-  example in `Tests/xguild_spec.lua`. The fourth point was routed rather than fixed: the desk's
-  `file move-span` reports success after moving an incomplete span, which is writ's defect and is
-  filed to its inbox. Locations: `Modules/GreenWall.lua`, `Tests/env_fleet.lua`,
-  `Tests/fullsync_spec.lua`, `Tests/xguild_spec.lua`.
-- **GSL-MERGE-001, first step: GuildShoppingList read end to end, and the merge design written**
-  (`docs/GSL_MERGE.md`, new). The operator, 2026-09-16: *"add to the todo list to merge the GSL addon
-  into TOGBank, put it at the bottom"*, with the item's own first step being the read and the design
-  before any code. **Nothing is built and no code was touched.** What the read settled: GuildShopping-
-  List is a second, weaker implementation of machinery this addon already has -- its own guild-note
-  role marker (`[GSL]`), its own whole-state newest-timestamp-wins broadcast, its own name-keyed
-  cache of ONE player's bags and bank, its own 290-line calendar picker, its own two frames -- wrapped
-  around one genuinely new idea, expanding a recipe into reagent demand. So the merge is a new Craft
-  List tab on the rails that already exist (the stamped guild-settings payload for the list, the
-  request log for orders, `Guild:GetAltItemTotal` for what the bank holds), not a port of its code.
-  `LibProfessionDB-1.0` already carries the recipe data keyed by spell id with **reagents keyed by
-  item id**, which deletes GSL's eight vendored `Recipes\*.lua` tables and removes its name-matching
-  at the root -- the same defect class as REQ-001. **Build step 1 was then run rather than assumed**
-  (section 1.5): GSL's eight tables diffed against the library's Vanilla enUS data, 924 of 1,106
-  names matching exactly, and the 182 that do not are GSL's own shorthand (`Crusader (enchant)`
-  against the library's `Enchant Weapon - Crusader`, whose `effect` field is literally `Crusader`;
-  `Blight (polearm)` against `Blight`), names the Vanilla data does not carry and which look like
-  later-expansion recipes (recall, not a lookup -- flagged in the document as its weakest claim), and
-  the Miscellaneous bucket, which is seven Winterspring E'ko turn-in items and not recipes at all. So
-  the shorthand cause is verified and large, and the migration gained two name fallbacks.
-  Both open decisions were answered 2026-09-25: GM, officers and the `[GSL]` note tag edit the list,
-  on a Shopping List tab plus an officer setup tab; the build is the release after v1.6.1.
-  Locations: `docs/GSL_MERGE.md`.
-- **Harness pin `bb80c1b` -> `17d5211`; both XGUILD-LIVE-001 stand-ins are deleted, and the fleet
-  now takes a REAL bounce.** (Two deliveries in the same move: `58ff098` below, and `4ca9566`, which
-  bumped `LibItemDB-1.0`'s `tocOmits` 98 -> 99 after the drift this repo's newly-declared
-  `verify-libs` suite caught at the previous pin. `verify-libs` is now 9/9, 0 failed.) WoWAPITesting delivered the two halves contracted yesterday (`58ff098`).
-  (1) A logged-out client sends nothing: all three of the harness's send seams are gated on the
-  sender being online, so `Tests/env_fleet.lua` no longer shadows each client's own `C_ChatInfo`
-  while it is offline. (2) The server answers the sender of a whisper to a logged-out character with
-  `ERR_CHAT_PLAYER_NOT_FOUND_S`, so `F.bounceIfOffline` -- which MANUFACTURED that line -- is gone.
-  What replaced it is one frame per fleet client registered for `CHAT_MSG_SYSTEM` that hands the
-  event to `Events:CHAT_MSG_SYSTEM`, because a fleet client never runs `Events:RegisterEvents`; the
-  bounce is now real and only its delivery is wired here, with every line kept on `client.sysLines`
-  so a spec can assert what the SERVER said separately from how the addon reacted. Two things cost
-  time and are worth the next session knowing: that frame must be held on the client rather than in
-  a local, because the frames registry keeps its candidate lists WEAK and a frame nothing references
-  is collected and silently stops hearing its event (it received nothing at all, which reads exactly
-  like the harness not firing); and `Tests/xguildlive_spec.lua` step 8 had to stop asserting WHICH
-  whisper bounced. The stand-in only ever bounced whispers handed to it by TOGBank's own Core
-  wrapper, so the first bounce was always that cycle's hash-list ask; the server bounces every
-  whisper to a logged-out character, and the earliest here is the requests-index ask an earlier cycle
-  staggered behind itself, so the viewer learns sooner and never spends the cycle's ask on the
-  banker who is gone. The step now pins the outcome -- exactly one real bounce naming the banker,
-  nothing further asked of it, every failover ask answered, the bank intact -- and the "our own ask
-  bounced, re-ask at once" leg keeps its focused example in `Tests/xguild_spec.lua` step 4. Green in
-  all three orders: forward A4 882/0, forward B2 939/0, reverse-order 1821/0. Locations:
-  `Tests/wowapi` (pointer), `Tests/env_fleet.lua`, `Tests/xguildlive_spec.lua`.
-- **Harness pin `6181ba5` -> `bb80c1b`; the LAGW-RESIZE-FILE-001 stand-in is deleted.** The contract
-  filed earlier today (thread `a6cfd6a8`) was answered ALREADY SHIPPED: WoWAPITesting had landed
-  `2aac908` -- `LibAceGUIWidgets-Resize.lua` in the `LibAceGUIWidgets-1.0` manifest, in TOC order,
-  `tocOmits` unchanged -- hours before the message, so the fix was a pin move and nothing else. The
-  wrapper `Tests/env_togbank.lua` put round `libs.load` is gone. Three more behaviour changes ride
-  the same move and needed nothing here, each checked rather than assumed: `8b36d23` routes the
-  addon-message chatType case-insensitively (TOGBank's own report, inbox `22460a4b` -- the recorded
-  spelling is unchanged, so FILL-ALERT-001's "GUILD" assertions are untouched); `bcd81e3` keys
-  `Settings.GetCategory` on the numeric category id, which is what makes an `AddToBlizOptions`
-  SUB-panel resolvable offline at all; `82387fa` adds `C_Spell.GetSpellName` and `C_Seasons`. The
-  Adoption log's warning for a library that splits a file -- a per-file load line is needed in any
-  spec using `wow.loadAddonFile` as well as the manifest line -- does not reach this addon: the one
-  by-path satellite load here (`browse_spec.lua:326`, the DatePicker) runs after `libs.load`. Green
-  on the new pin in all three orders: forward A4 882/0, forward B2 939/0, reverse-order 1821/0.
-  Locations: `Tests/wowapi` (pointer), `Tests/env_togbank.lua`.
-- **XGUILD-LIVE-001: the sister-guild sync, whole lifecycle, on the real transport stack**
-  (`Tests/xguildlive_spec.lua`, new). Four whole clients in two guilds over each client's real
-  AceCommQueue, AceComm and ChatThrottleLib, in ONE example so each leg starts from the state the
-  previous one left: both guilds log in on the clamp; one "Pull from" by name crosses the rosters,
-  the `gbank` notes and presence on the library's own whispered pull and click-sent /who; both
-  Bankers tabs list the other guild's bank, tagged; the sister viewer's cycle asks by whisper and
-  holds the home bank with the author's canon and nothing between the guilds on GUILD; a sister
-  member's order and the banker's fill (from `Mail:ApplyPendingSend`) cross by whisper at ALERT and
-  are relayed once each way until all four clients agree; an officer's settings write and a who-runs
-  entry ride the next ask without wiping the sister guild's own entry; the sister banker, which never
-  pulled, reaches the home bank through its guildmate's relay and the home banker holds the sister
-  bank; the home banker logs off (step 8, above); a quiet cycle opens no data leg. What its first
-  runs found, 2026-09-17: (a) the `invalid key to 'next'` the previous session stopped on was MY
-  spec bug -- `next(F.held(hb, SB))` passed `F.held`'s second return, the money total, as the key --
-  and steps 5-7 were passing behind it; (b) the harness lets a logged-out client's timers keep
-  SENDING (six Guild Roster messages measured in the 660 s after logout, each re-stamping the banker
-  online on the sister side) and drops a whisper to an offline character silently where the server
-  bounces it -- both stood in by `Tests/env_fleet.lua` (`F.offline` shadows the client's own
-  `C_ChatInfo` send seams, `F.bounceIfOffline` hands the bounce to `Events:CHAT_MSG_SYSTEM`) and
-  filed as harness contract XGUILD-LIVE-001; `F.presence` no longer clears the library's stamps by
-  hand, which had let the failover leg pass without the bounce the addon has to act on; (c) the
-  Guild Roster relay finding and (d) XGUILD-BOUNCE-001, above. Two more spec gaps the same runs
-  surfaced, both mine from earlier sessions: `bankcollect_spec` never loaded `Inventory/Record` and
-  `Inventory/Scan`, which Bank's matchers have read since LINK-AUDIT-001 step 4 -- it passed in the
-  declared halves on a Scan an earlier file left behind and failed alone (REQ-003, two examples);
-  and LibAceGUIWidgets v0.2.0 moved its resize framework into `LibAceGUIWidgets-Resize.lua`, which
-  the harness's hand-copied manifest does not list, so `PersistWindow` called a nil `GetResizeHandle`
-  in 103 window examples -- `Tests/env_togbank.lua` loads the satellite when the library comes up
-  without it (LAGW-RESIZE-FILE-001, harness contract filed; delete on adoption). The WHOLE forward
-  run no longer finishes inside the desk's 15-minute budget, so the full-suite claim is the declared
-  halves: forward A4 (altcompat..logwho incl. `linkclick_spec`, declared today) 879/0, forward B2
-  (mailbox..xguildlive, declared today) 936/0, reverse-order 1815/0 -- after LINKCLICK-001 as well.
-- **MDLINT-BACKLOG-001: every Markdown file in the repo lints clean.** A whole-repo `markdownlint`
-  (60 files) reported 100 violations, all pre-existing and all in five design docs nobody had linted
-  since they were written: `docs/MAIL_INVENTORY_DESIGN.md` (31), `docs/ORDER_FULFILLMENT_LOGIC.md`
-  (18), `docs/MAIL_PERSISTENCE_INVESTIGATION.md` (16), `docs/TESTING.md` (a UTF-8 byte-order mark,
-  8 headings, a table's pipe spacing, a double blank line) and `docs/fulfill-button-plan.md` (10
-  headings, a table). Every one was a blank line missing after a heading (MD022) or a table row's
-  pipe spacing (MD060) bar the BOM and the blank; the text is unchanged. None of these files ships
-  (`docs` is in `.pkgmeta`'s ignore); the point is that the whole-tree lint is now a usable gate.
-
-> Releases **v1.6.0 and older** have been moved to
+> Releases **v1.6.1 and older** have been moved to
 > [`CHANGELOG_ARCHIVE.md`](CHANGELOG_ARCHIVE.md) to keep this file under GitHub's 125,000-character
 > release-body limit. Nothing was deleted; each section moved whole, at a version boundary.

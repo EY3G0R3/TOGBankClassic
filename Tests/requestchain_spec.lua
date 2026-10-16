@@ -278,7 +278,9 @@ describe("REQUEST CHAIN: a mutation reaches another player's list", function()
 		-- when it is the fixture standing still.
 		env.now = env.now + 60
 
-		TOGBankClassic_Guild:CompleteRequest(id, PEER)
+		-- FulfillRequestById is the production path to 'complete' (the Requests window's hand-off
+		-- button); the old CompleteRequest had no caller and was removed (FINISHED-001).
+		TOGBankClassic_Guild:FulfillRequestById(id, 3, PEER)
 		local msg = lastMutation("complete")
 
 		becomeThirdParty()
@@ -326,7 +328,7 @@ describe("REQUEST CHAIN: a mutation reaches another player's list", function()
 	it("REFUSES a complete from someone who is neither banker nor GM", function()
 		addOrder("Silver Bar", 3)
 		local id = orderFor("Silver Bar").id
-		TOGBankClassic_Guild:CompleteRequest(id, PEER)
+		TOGBankClassic_Guild:FulfillRequestById(id, 3, PEER)
 		local msg = lastMutation("complete")
 
 		becomeFreshPeer()

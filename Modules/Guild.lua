@@ -1244,6 +1244,15 @@ function TOGBankClassic_Guild:RequestQuantityNeeded(req)
 	return needed > 0 and needed or 0
 end
 
+--- Oldest = smallest date, with a stable id tiebreak so same-second orders resolve deterministically.
+--- The one definition of "oldest" every fulfillment search and FulfillRequest sort by (moved here
+--- from Mail.lua's tog_olderFirst so FulfillRequest shares it, Peer Review f6aa732c).
+function TOGBankClassic_Guild.RequestOlderFirst(a, b)
+	local da, db = tonumber(a.date) or 0, tonumber(b.date) or 0
+	if da ~= db then return da < db end
+	return tostring(a.id) < tostring(b.id)
+end
+
 function TOGBankClassic_Guild:IsBank(player)
 	if not player then
 		return false

@@ -211,8 +211,8 @@ describe("XGUILD-SYNC-001 fleet: a sister guild's member syncs the home guild's 
 		assert.equal(0, #F.sent({ from = HV, prefix = "togbank-rm" }), "a relayed entry was relayed again")
 		-- The banker completes it: GUILD at home, whispered back to the requester, relayed once in
 		-- the sister guild.
-		local done = F.with(hb, function() return hb.G.TOGBankClassic_Guild:CompleteRequest(id, hb.norm) end)
-		assert.is_true(done)
+		local done = F.with(hb, function() return hb.G.TOGBankClassic_Guild:FulfillRequestById(id, 5, hb.norm) end)
+		assert.equal(5, done)
 		F.tick(2)
 		assert.equal(1, #F.sent({ from = HB, prefix = "togbank-rm", dist = "WHISPER", to = SV }), "the completion did not cross back")
 		local back = F.sent({ from = SV, prefix = "togbank-rm", dist = "GUILD" })

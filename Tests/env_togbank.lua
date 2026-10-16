@@ -281,9 +281,24 @@ function M.reset(opts)
 		-- keyed by the registering object), so it stayed alive and would still have been handed a later
 		-- example's traffic. Its timers went with the harness's timer reset; AceTimer's own table of
 		-- them did not.
+		--
+		-- ENV-SWEEP-LIB-001 (Peer Review bf89d59d B3): only ADDON owners go. A library that loads once
+		-- per run registers once -- VersionCheck-1.0 registers its comm prefixes on AceComm itself,
+		-- behind a commRegistered flag that never resets -- so wiping every owner silenced it for the rest
+		-- of the run. A handler keyed by any LibStub library is spared. An event left with no handlers is
+		-- removed, so the next registration still counts as the first (CallbackHandler tests next()).
+		local libraryOwner = {}
+		for _, lib in pairs(LibStub.libs) do libraryOwner[lib] = true end
 		local function wipeRegistry(registry)
 			if type(registry) == "table" and type(registry.events) == "table" then
-				for event in pairs(registry.events) do registry.events[event] = nil end
+				for event, handlers in pairs(registry.events) do
+					if type(handlers) == "table" then
+						for owner in pairs(handlers) do
+							if not libraryOwner[owner] then handlers[owner] = nil end
+						end
+					end
+					if type(handlers) ~= "table" or next(handlers) == nil then registry.events[event] = nil end
+				end
 			end
 		end
 		local AceComm, AceEvent, AceTimer = LibStub.libs["AceComm-3.0"], LibStub.libs["AceEvent-3.0"], LibStub.libs["AceTimer-3.0"]

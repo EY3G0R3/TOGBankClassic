@@ -10,7 +10,9 @@
 -- The cursor, the send-mail slots and SendMail's record are the HARNESS's (WoWAPITesting 1211a3a,
 -- requested for this file): `C_Container.PickupContainerItem` puts a `wow.bags` stack on
 -- `wow.cursor`, `ClickSendMailItemButton` lands it in `wow.sendMailItems`, `GetSendMailItem` reads
--- it back with the client's five returns, and `SendMail` records `items` and empties the slots.
+-- it back with the client's five returns, and `SendMail` records `items`. Since WoWAPITesting
+-- be92d12 the slots stay full until `wow.completeMailSend()` (the server's MAIL_SEND_SUCCESS), so a
+-- send in this file is confirmed through `confirmSend` below, not by the send click.
 -- This file carried a private model of all four until 2026-09-13; it is gone, so the bags here are
 -- filled in the harness shape (`env.harnessBag`) rather than this env's `setBag`.
 package.path = "./Tests/?.lua;" .. package.path
@@ -37,7 +39,10 @@ end
 
 local function load()
 	env.reset(); env.stubOutput()
-	env.loadModules({ "Modules/Constants.lua", "Modules/Item.lua", "Modules/Guild.lua", "Modules/Bank.lua", "Modules/Mail.lua" })
+	-- Record precedes Mail in every TOC: the oldest-first searches key orders on Record.requestKey.
+	-- Without it this file passed only after an earlier spec file had left Record loaded.
+	env.loadModules({ "Modules/Constants.lua", "Modules/Item.lua", "Modules/Inventory/Record.lua",
+		"Modules/Guild.lua", "Modules/Bank.lua", "Modules/Mail.lua" })
 	Mail, Guild = TOGBankClassic_Mail, TOGBankClassic_Guild
 	env.defineItem(LINEN, { name = "Linen Cloth" })
 	env.defineItem(WOOL,  { name = "Wool Cloth" })
@@ -79,6 +84,13 @@ local function attachedCount()
 	local n = 0
 	for i = 1, ATTACHMENTS_MAX_SEND do if GetSendMailItem(i) then n = n + 1 end end
 	return n
+end
+
+--- MAIL_SEND_SUCCESS for the send SendMail made: the harness empties the slots and fires the event.
+--- Nothing in this file registers the addon's handler for it, so the credit is applied by hand.
+local function confirmSend()
+	wow.completeMailSend()
+	Mail:ApplyPendingSend()
 end
 
 --- The stack in send-mail slot `i`, as the harness holds it (`itemID`, `count`, `link`, `name`).
@@ -148,6 +160,36 @@ describe("MULTIFILL-001: the row's Fulfill icon stacks one requester's orders on
 		assert.equal(1, attachedCount())
 	end)
 
+	-- SEND-RECIPIENT-001 (Peer Review f4c6a142, R1): the send hook kept any pending send under 10 s
+	-- old without looking at who the mail went to. The banker retypes the name box after a row
+	-- Fulfill (or a failed batch send leaves its pending send behind), mails Bob the same Linen, and
+	-- Alice's order was credited for a mail she never got.
+	it("credits nothing to the prepared requester when the mail goes to someone else", function()
+		env.harnessBag(0, 16, { { id = LINEN, count = 20 } })
+		local r1 = order("r1", ALICE, LINEN, 20)
+		assert.is_true((Mail:PrepareFulfillMail(r1)))
+		SendMailNameEditBox:SetText(BOB)
+		Mail:OnSendMail(BOB)
+		assert.is_not_nil(Mail.pendingSend, "the mail to Bob was not tracked at all")
+		assert.equal(BOB, Mail.pendingSend.recipient, "the pending send still names Alice for a mail sent to Bob")
+		assert.is_nil(Mail.pendingSend.requestId, "Alice's order id rode along on Bob's mail")
+		Mail:ApplyPendingSend()
+		for _, c in ipairs(credited) do
+			assert.are_not.equal(ALICE, c.requester, "Alice was credited for a mail sent to Bob")
+		end
+		assert.equal(0, r1.fulfilled, "Alice's order was filled by a mail sent to Bob")
+	end)
+
+	it("keeps the prepared order when the same name is typed in another case", function()
+		env.harnessBag(0, 16, { { id = LINEN, count = 20 } })
+		local r1 = order("r1", ALICE, LINEN, 20)
+		assert.is_true((Mail:PrepareFulfillMail(r1)))
+		Mail:OnSendMail(ALICE:lower())
+		assert.equal("r1", Mail.pendingSend.requestId, "a name in another case dropped the prepared order")
+		Mail:ApplyPendingSend()
+		assert.same({ "r1" }, ids(credited))
+	end)
+
 	-- Self-audit: slot 1 alone was the "is the mail loaded" test. A banker who detaches slot 1 by hand
 	-- leaves slots 2+ loaded; reading that as empty would start a fresh pending send over orders
 	-- still attached, and the mail would go with those credited to nobody.
@@ -177,6 +219,50 @@ describe("MULTIFILL-001: the row's Fulfill icon stacks one requester's orders on
 		Mail:ApplyPendingSend()
 		assert.same({ "r2", "r3" }, ids(credited))
 		assert.equal(0, Guild.Info.requests.r1.fulfilled, "r1 was credited for Linen that never went")
+	end)
+
+	-- LOCALE-SENDTRIM-001 (Peer Review 4d7fc1c4): the send hook cut each entry to what is attached
+	-- under ITS NAME, and the slot's name is the banker's locale while the entry's is the requester's.
+	-- A German requester's order on an English banker's mail matched nothing and was never credited.
+	it("credits an order whose stored name is in another locale, matching the attachment by item id", function()
+		env.harnessBag(0, 16, { { id = LINEN, count = 20 }, { id = WOOL, count = 10 }, { id = WOOL, count = 3 } })
+		local r1 = order("r1", ALICE, LINEN, 20)
+		r1.item = "Leinenstoff"   -- the requester's client named it
+		-- A pre-REQ-001 order carries no id; it was found in the bags by name, so it still matches by name.
+		local r2 = order("r2", ALICE, WOOL, 10)
+		r2.itemID = nil
+		assert.is_true((Mail:PrepareFulfillMail(r1)))
+		assert.is_true((Mail:PrepareFulfillMail(r2)))
+		assert.equal("Linen Cloth", (GetSendMailItem(1)), "precondition: the slot reads in the banker's locale")
+		-- And a stack the banker added by hand still spills.
+		C_Container.PickupContainerItem(0, 3)
+		ClickSendMailItemButton(3)
+		Mail:OnSendMail(ALICE)
+		assert.same({ "r1", "r2" }, ids(Mail.pendingSend.items), "an order was cut from the send by its name")
+		assert.equal(20, Mail.pendingSend.items[1].quantity)
+		assert.equal(10, Mail.pendingSend.items[2].quantity, "the by-name order took the hand-added stack too")
+		assert.equal(1, #Mail.pendingSend.extraItems)
+		assert.equal("Wool Cloth", Mail.pendingSend.extraItems[1].name); assert.equal(3, Mail.pendingSend.extraItems[1].quantity)
+		Mail:ApplyPendingSend()
+		assert.same({ "r1", "r2" }, ids(credited))
+		assert.equal(20, Guild.Info.requests.r1.fulfilled)
+	end)
+
+	-- LOCALE-SENDTRIM-001 self-audit: random-suffix siblings share one base id. With the Bear variant
+	-- detached by hand, an id-only match handed the Bear order the Monkey's slot and credited the wrong one.
+	it("credits the variant still attached, not its detached sibling with the same base id", function()
+		local BRACERS = 9999
+		Mail.pendingSend = { sender = ME, recipient = ALICE, requestId = "bear", items = {
+			{ name = "Bracers of the Bear", itemID = BRACERS, quantity = 1, requestId = "bear" },
+			{ name = "Bracers of the Monkey", itemID = BRACERS, quantity = 1, requestId = "monkey" },
+		} }
+		Mail.pendingSendAt = GetTime()
+		wow.sendMailItems[1] = { itemID = BRACERS, count = 1, name = "Bracers of the Monkey" }
+		Mail:OnSendMail(ALICE)
+		assert.same({ "monkey" }, ids(Mail.pendingSend.items), "the detached variant's order took its sibling's slot")
+		assert.equal(1, Mail.pendingSend.items[1].quantity)
+		assert.same({}, (function() local o = {} for k in pairs(Mail.pendingSend) do if k == "extraItems" then o[#o + 1] = k end end return o end)(),
+			"the attached variant was left over as a hand-added extra")
 	end)
 
 	it("says the mail is full at twelve attachments rather than attaching over the top", function()
@@ -214,8 +300,8 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 		assert.is_true((click()))   -- send
 		assert.equal(1, #sends()); assert.equal(BOB, sends()[1].target)
 		assert.equal(1, #sends()[1].items, "Bob's mail did not carry exactly his one stack")
-		assert.equal(0, attachedCount(), "the send did not empty the slots")
-		Mail:ApplyPendingSend()
+		confirmSend()
+		assert.equal(0, attachedCount(), "the confirmed send did not empty the slots")
 		assert.same({ "r5" }, ids(credited))
 		credited = {}
 		Mail.batchInFlight = false
@@ -236,13 +322,221 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 		assert.equal(2, #sends(), "Alice's three orders went as more than one mail"); assert.equal(ALICE, sends()[2].target)
 		assert.equal(3, #sends()[2].items, "Alice's mail did not go with all three stacks")
 		assert.same({ "r1", "r2", "r3" }, ids(Mail.pendingSend.items))
-		Mail:ApplyPendingSend()
+		-- LOCALE-SENDTRIM-001: every entry carries its order's item id, which the send hook trims by.
+		assert.equal(LINEN, Mail.pendingSend.items[1].itemID); assert.equal(WOOL, Mail.pendingSend.items[2].itemID)
+		assert.equal(LINEN, Mail.pendingSend.items[3].itemID)
+		confirmSend()
 		assert.same({ "r1", "r2", "r3" }, ids(credited))
 		-- r4 (6 Silk, 5 in the bags) was never planned, attached or credited; the stack is whole.
 		assert.equal(0, Guild.Info.requests.r4.fulfilled)
 		local silkLeft = 0
 		for s = 1, 16 do local it = wow.bags[0][s]; if it and it.itemID == SILK then silkLeft = silkLeft + it.count end end
 		assert.equal(5, silkLeft, "the Silk stack was touched")
+	end)
+
+	-- BATCH-TIMER-001 (Peer Review 030b8a0a, N1): each send's 5 s safety timer cleared the flag
+	-- unconditionally, so send A's timer could free a third click while a later send B was unconfirmed.
+	it("lets only the latest send's safety timer free the next click", function()
+		env.harnessBag(0, 16, { { id = LINEN, count = 20 }, { id = WOOL, count = 10 } })
+		order("a", BOB, LINEN, 20, 1000)
+		order("b", ALICE, WOOL, 10, 1001)
+		click(); click(); click()        -- plan, attach, send A at t=0
+		assert.equal(1, #sends())
+		env.advance(1)
+		confirmSend()                    -- A confirms at t=1
+		assert.is_false(Mail.batchInFlight)
+		env.advance(1)
+		click(); click(); click()        -- send B at t=2
+		assert.equal(2, #sends())
+		assert.is_true(Mail.batchInFlight)
+		env.advance(3)                   -- t=5: A's timer is due, B is still unconfirmed
+		assert.is_true(Mail.batchInFlight, "the earlier send's timer freed the click while a later send was pending")
+		local ok, msg = click()
+		assert.is_false(ok, "a click went through while send B was unconfirmed")
+		assert.truthy(msg:find("Waiting for the last order", 1, true), "refused for another reason: " .. tostring(msg))
+		env.advance(2)                   -- t=7: B's own timer frees it
+		assert.is_false(Mail.batchInFlight, "the latest send's own safety timer did not free the click")
+	end)
+
+	-- MAIL-SLOTCAP-001 (Peer Review bf89d59d B1): an order whose stacks need more than one mail's
+	-- twelve slots was attached up to slot 12 and credited in full, so one Linen never left the bags
+	-- and the order read filled.
+	it("mails an order that needs more than twelve stacks in parts, crediting each mail only what it carried", function()
+		local contents = {}
+		for _ = 1, 13 do contents[#contents + 1] = { id = LINEN, count = 1 } end
+		env.harnessBag(0, 16, contents)
+		order("big", ALICE, LINEN, 13, 1000)
+		local ok, msg = click()
+		assert.is_true(ok, msg)
+		assert.equal(12, Mail.batchState.qty, "the first mail was planned for more than twelve stacks hold")
+		assert.truthy(msg:find("12 of 13x", 1, true), msg)
+		assert.truthy(msg:find("the rest goes next", 1, true), msg)
+		assert.is_true((click()))   -- attach
+		assert.equal(12, attachedCount())
+		-- The in-game send hook cuts each entry to what is attached; a capped entry must survive it whole.
+		-- Driven here with the slots full; the real hook through the send click, with the slots full or
+		-- already emptied, is SEND-SNAPSHOT-001's describe below.
+		local function pendingQty()
+			local n = 0
+			for _, it in ipairs(Mail.pendingSend.items) do n = n + it.quantity end
+			return n
+		end
+		Mail:OnSendMail(ALICE)
+		assert.equal(12, pendingQty(), "the send hook cut the capped mail's entries")
+		ok, msg = click()           -- send
+		assert.is_true(ok, msg)
+		assert.equal(12, #sends()[1].items)
+		confirmSend()
+		assert.equal(1, #credited)
+		assert.equal(12, credited[1].qty, "the order was credited for stacks that never went in the mail")
+		assert.equal(12, Guild.Info.requests.big.fulfilled)
+		-- The order is still the oldest; the next mail carries the last one.
+		Mail.batchInFlight = false
+		ok, msg = click()
+		assert.is_true(ok, msg)
+		assert.equal("big", Mail.batchState.req.id)
+		assert.equal(1, Mail.batchState.qty)
+		assert.truthy(msg:find("Order: 1x", 1, true), msg)
+		assert.is_true((click()))   -- attach
+		Mail:OnSendMail(ALICE)
+		assert.equal(1, pendingQty())
+		assert.is_true((click()))   -- send
+		confirmSend()
+		assert.equal(13, Guild.Info.requests.big.fulfilled)
+		assert.equal(2, #sends())
+	end)
+
+	-- SEND-SNAPSHOT-001 (Peer Review 024ada6d): the send hook is a hooksecurefunc POST-hook on SendMail,
+	-- and when the client empties the send slots is not shown by its UI source. Whichever it is, the
+	-- capped mail must credit the 12 it carried. These go through the REAL hook and the real send click,
+	-- and the record is kept through the REAL event registration (Events:RegisterEvents), so a broken
+	-- line in that wiring fails here rather than only in a client (Peer Review 1aa094de F2).
+	describe("the send hook credits what went, whenever the client empties the slots", function()
+		local handlers
+
+		-- env.reset does not touch TOGBankClassic_Core or the addon's UI globals, so whatever wireEvents
+		-- writes outlives this file unless it is put back (Peer Review 104ff6f7 F3): a later file that
+		-- merges into Core and calls RegisterEvents would register into this file's dead `handlers`.
+		local CORE_FIELDS = { "RegisterEvent", "UnregisterEvent", "RegisterMessage", "SendMessage", "ScheduleTimer", "CancelTimer" }
+		local GLOBALS = { "TOGBankClassic_Core", "TOGBankClassic_Events", "TOGBankClassic_UI", "TOGBankClassic_UI_Requests", "TOGBankClassic_UI_Mail" }
+		local saved   -- nil until wireEvents runs; { globals = {name -> value}, core = {field -> value} }
+
+		after_each(function()
+			if not saved then return end
+			for _, name in ipairs(GLOBALS) do _G[name] = saved.globals[name] end
+			if saved.globals.TOGBankClassic_Core then
+				for _, f in ipairs(CORE_FIELDS) do saved.globals.TOGBankClassic_Core[f] = saved.core[f] end
+			end
+			for _, name in ipairs(GLOBALS) do
+				assert.equal(saved.globals[name], _G[name], name .. " was not put back")
+			end
+			for _, f in ipairs(CORE_FIELDS) do
+				assert.equal(saved.core[f], TOGBankClassic_Core and TOGBankClassic_Core[f], "TOGBankClassic_Core." .. f .. " was not put back")
+			end
+			saved = nil
+		end)
+
+		--- Register the addon's events with the handlers captured, as CallbackHandler would hold them.
+		local function wireEvents()
+			saved = { globals = {}, core = {} }
+			for _, name in ipairs(GLOBALS) do saved.globals[name] = _G[name] end
+			for _, f in ipairs(CORE_FIELDS) do saved.core[f] = TOGBankClassic_Core and TOGBankClassic_Core[f] end
+			handlers = {}
+			TOGBankClassic_Core = TOGBankClassic_Core or {}
+			TOGBankClassic_Core.RegisterEvent   = function(_, event, fn) handlers[event] = fn end
+			TOGBankClassic_Core.UnregisterEvent = function(_, event) handlers[event] = nil end
+			TOGBankClassic_Core.RegisterMessage = function() end
+			TOGBankClassic_Core.SendMessage     = function() end
+			TOGBankClassic_Core.ScheduleTimer   = function() return {} end
+			TOGBankClassic_Core.CancelTimer     = function() end
+			env.loadFile("Modules/Events.lua")
+			-- Neither the open-mailbox stand-in nor this env's Send Mail tab has HookScript; those hooks
+			-- are events_spec's.
+			_G.MailFrame.togBankHooked = true
+			if _G.MailFrameTab2 then _G.MailFrameTab2.togBankHooked = true end
+			TOGBankClassic_UI = TOGBankClassic_UI or { OnInsertLink = function() end }
+			TOGBankClassic_UI_Requests = TOGBankClassic_UI_Requests or { isOpen = false }
+			TOGBankClassic_UI_Mail = TOGBankClassic_UI_Mail or { Close = function() end }
+			TOGBankClassic_Events:RegisterEvents()
+		end
+
+		--- Fire an event exactly as CallbackHandler does: the handler receives (eventName, ...).
+		local function fire(event, ...)
+			local fn = handlers[event]
+			assert.is_function(fn, "nothing is registered for " .. event)
+			return fn(event, ...)
+		end
+
+		local function loadTwelve()
+			wireEvents()
+			local contents = {}
+			for _ = 1, 13 do contents[#contents + 1] = { id = LINEN, count = 1 } end
+			env.harnessBag(0, 16, contents)
+			order("big", ALICE, LINEN, 13, 1000)
+			assert.is_true((click()))   -- plan
+			assert.is_true((click()))   -- attach
+			assert.equal(12, attachedCount())
+			-- The client repaints the send slots as the stacks land. The harness fires this event from
+			-- ClickSendMailItemButton too (be92d12), but into its own event system; the handlers here are
+			-- the ones wireEvents captured, so every fire in this describe is by hand.
+			fire("MAIL_SEND_INFO_UPDATE")
+		end
+
+		-- The harness keeps the slots full through SendMail (WoWAPITesting be92d12), so the empty case
+		-- is this file's own SendMail, which empties them inside the call as the harness used to.
+		it("when the slots are already empty in the hook", function()
+			_G.SendMail = function(target, subject, body)
+				wow.mailActions[#wow.mailActions + 1] = { action = "send", target = target, subject = subject, body = body, items = {} }
+				for i = 1, ATTACHMENTS_MAX_SEND do wow.sendMailItems[i] = nil end
+			end
+			loadTwelve()
+			Mail:InitSendHook()
+			assert.is_true((click()))   -- send: SendMail empties the slots, then the hook runs
+			assert.equal(0, attachedCount(), "precondition: the slots were empty when the hook ran")
+			Mail:ApplyPendingSend()
+			assert.equal(1, #credited)
+			assert.equal(12, credited[1].qty, "the send hook read the emptied slots and credited nothing")
+		end)
+
+		it("when the slots still hold the attachments in the hook (the harness's SendMail)", function()
+			loadTwelve()
+			Mail:InitSendHook()
+			assert.is_true((click()))   -- send: the hook runs with the slots still full
+			assert.equal(12, #sends()[1].items, "precondition: the harness's SendMail did not record the twelve")
+			assert.equal(12, attachedCount(), "precondition: the slots were full when the hook ran")
+			confirmSend()
+			assert.equal(0, attachedCount())
+			assert.equal(1, #credited)
+			assert.equal(12, credited[1].qty)
+		end)
+
+		it("does not credit stacks the banker took off the mail before sending it", function()
+			wireEvents()
+			env.harnessBag(0, 16, { { id = LINEN, count = 20 } })
+			assert.is_true((Mail:PrepareFulfillMail(order("r1", ALICE, LINEN, 20))))
+			fire("MAIL_SEND_INFO_UPDATE")
+			ClickSendMailItemButton(1, true)   -- the banker detaches it by hand
+			fire("MAIL_SEND_INFO_UPDATE")
+			wow.time = wow.time + 1            -- and sends in a later frame
+			Mail:InitSendHook()
+			SendMail(ALICE, "", "")
+			Mail:ApplyPendingSend()
+			assert.equal(0, #credited, "the record of an attachment the banker removed was credited")
+		end)
+
+		it("forgets the record when the mailbox closes between attaching and sending", function()
+			wireEvents()
+			env.harnessBag(0, 16, { { id = LINEN, count = 20 } })
+			assert.is_true((Mail:PrepareFulfillMail(order("r1", ALICE, LINEN, 20))))
+			fire("MAIL_SEND_INFO_UPDATE")
+			assert.is_not_nil(Mail.sendSlots, "precondition: the attachment was recorded")
+			ClickSendMailItemButton(1, true)
+			fire("MAIL_SEND_INFO_UPDATE")
+			assert.is_number(Mail.sendSlotsEmptiedAt, "precondition: the empty update was stamped")
+			fire("MAIL_CLOSED")
+			assert.is_nil(Mail.sendSlots, "the record outlived the mailbox")
+			assert.is_nil(Mail.sendSlotsEmptiedAt)
+		end)
 	end)
 
 	-- MULTIFILL-002 (the operator, 2026-09-13, a screenshot of four 1x Elemental orders for one
@@ -317,7 +611,7 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.equal(1, #sends(), "four split orders went as more than one mail"); assert.equal(ALICE, sends()[1].target)
 			assert.equal(4, #sends()[1].items)
 			assert.same({ "e1", "e2", "e3", "e4" }, ids(Mail.pendingSend.items))
-			Mail:ApplyPendingSend()
+			confirmSend()
 			assert.same({ "e1", "e2", "e3", "e4" }, ids(credited))
 			for _, id in ipairs({ AIR, WATER, FIRE, EARTH }) do assert.same({ 4 }, stacksOf(id), "a source stack was not left at 4") end
 		end)
@@ -347,7 +641,7 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.same({ 3 }, stacksOf(AIR), "the Air source was not left at 3")
 			assert.is_true((click()))   -- send
 			assert.equal(1, #sends()); assert.equal(3, #sends()[1].items)
-			Mail:ApplyPendingSend()
+			confirmSend()
 			assert.same({ "m1", "m2", "m3" }, ids(credited))
 		end)
 
@@ -374,7 +668,7 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.is_true((click()))
 			assert.equal(3, attachedCount())
 			assert.is_true((click()))   -- send
-			Mail.batchInFlight = false
+			confirmSend()
 			-- A single split with NO free slot keeps the one-slot wording.
 			Guild.Info.requests = {}
 			contents = {}
@@ -402,9 +696,8 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.is_true((click()))   -- attach
 			assert.is_true((click()))   -- send
 			assert.equal(1, #sends()); assert.equal(1, #sends()[1].items)
-			Mail:ApplyPendingSend()
+			confirmSend()
 			assert.same({ "a1" }, ids(credited))
-			Mail.batchInFlight = false
 			-- The next mail: a2 splits 2 from the 4 left.
 			assert.is_true((click()))
 			assert.equal("a2", Mail.batchState.req.id)
@@ -457,7 +750,7 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.equal(8, slot(1).count)
 			assert.is_true((click()))   -- send
 			assert.equal(1, #sends()); assert.equal(1, #sends()[1].items); assert.equal(8, sends()[1].items[1].count)
-			Mail:ApplyPendingSend()
+			confirmSend()
 			assert.same({ "r1" }, ids(credited))
 			assert.same({ 7 }, stacksOf(LINEN))
 		end)
@@ -525,7 +818,7 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.equal(12, attachedCount())
 			assert.equal(WOOL, slot(12).itemID); assert.equal(8, slot(12).count)
 			assert.is_true((click()))   -- send
-			Mail:ApplyPendingSend()
+			confirmSend()
 			assert.same({ "r1", "r2" }, ids(credited))
 		end)
 

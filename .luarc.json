@@ -24,6 +24,7 @@
         "AutoCompleteEditBox_SetAutoCompleteSource",
         "AutoCompleteEditBox_OnEnterPressed",
         "GetGuildRosterInfo",
+        "GetGameMessageInfo",
         "GetNumGuildMembers",
         "GetGuildInfo",
         "IsInGuild",

@@ -24,12 +24,20 @@ local R, G, calls
 --- size GetNumGuildMembers reports (0 = "not loaded yet").
 local function load(opts)
 	opts = opts or {}
-	env.reset()   -- also stops the replaced Requests module's scale listener (env_togbank, VISIBILITY-001 part 3)
-	frames.reset()
+	-- ONE reset, through the rich model (also stops the replaced Requests module's scale listener,
+	-- env_togbank VISIBILITY-001 part 3). SLOW-REQACTIONS-001: this was env.reset() then
+	-- frames.reset(), two full garbage collections per example over a full run's ~130 MB heap; under
+	-- a loaded CPU those collections were most of the file's time and it crossed the runner's 60s
+	-- per-file limit, which on Windows is wall time.
+	env.reset({ frames = true })
 	env.stubOutput()
 	require("env.libs").load("LibAceGUIWidgets-1.0")
 	env.loadUI()
-	env.loadModules({ "Modules/Constants.lua", "Modules/Item.lua" })
+	env.loadModules({ "Modules/Constants.lua", "Modules/Item.lua", "Modules/RequestLog.lua" })
+	-- FINISHED-001: which buttons a row shows comes from the real "is this order done" check,
+	-- lifted off the real module onto the stub below rather than copied into it.
+	local realIsRequestFinished = TOGBankClassic_Guild.IsRequestFinished
+	assert(type(realIsRequestFinished) == "function", "Guild.IsRequestFinished is missing")
 	env.loadFile("Modules/UI/RowList.lua")
 	env.loadFile("Modules/UI/Requests.lua")
 	R = TOGBankClassic_UI_Requests
@@ -79,6 +87,7 @@ local function load(opts)
 		end,
 		PeerSpeaksDataLeg = function() return true end,
 		GetAltItems = function() return {} end,
+		IsRequestFinished = realIsRequestFinished,
 	}
 	TOGBankClassic_Guild = G
 	TOGBankClassic_UI_StatusBar = { AttachSides = function() return {} end }
@@ -633,6 +642,82 @@ describe("REQUESTS-ACTIONS: the dropdown click-outside catcher, Escape, the help
 		load({ me = GALDOF })
 		R:Open()
 		assert.is_nil(R.HighlightCheckbox)
+	end)
+end)
+
+-- ACCOUNT-MODE-001 (Discord, Terra 2026-10-15: "an 'account mode' ... so that all requests
+-- per-account are shown in the requests window regardless of which toon you're on").
+describe("ACCOUNT-MODE-001: My characters in the Requester filter", function()
+	local TWINK, BOB = "Twink-Testrealm", "Bob-Testrealm"
+
+	--- A member (Galdof) whose account has `chars`, with Options' account methods over the stub db.
+	local function loadAccount(chars, accountMode)
+		load({ me = GALDOF })
+		local O = TOGBankClassic_Options
+		O.db.global.accountCharacters = {}
+		for _, n in ipairs(chars) do O.db.global.accountCharacters[n] = true end
+		O.db.global.requests.accountMode = accountMode or false
+		O.NoteAccountCharacter = function(self, n) if n then self.db.global.accountCharacters[n] = true end end
+		O.GetAccountCharacters = function(self) return self.db.global.accountCharacters end
+		O.IsAccountModeEnabled = function(self) return self.db.global.requests.accountMode == true end
+		O.SetAccountMode = function(self, on) self.db.global.requests.accountMode = on end
+		addReq({ id = "g1", requester = GALDOF })
+		addReq({ id = "t1", requester = TWINK })
+		addReq({ id = "b1", requester = BOB })
+	end
+
+	--- The Requester list's key for "My characters", or nil when it is not offered.
+	local function mineKey()
+		for key, label in pairs(R.cachedRequesterList or {}) do
+			if tostring(label):find("My characters", 1, true) then return key, label end
+		end
+	end
+
+	local function visibleIds()
+		local ids = {}
+		for _, req in ipairs(R:ApplyFilters(R:AllRequests())) do ids[#ids + 1] = req.id end
+		table.sort(ids)
+		return ids
+	end
+
+	after_each(unload)
+
+	it("offers My characters, shows every character's requests when picked, and turns account mode on", function()
+		loadAccount({ GALDOF, TWINK })
+		R:Open()
+		assert.same({ "g1" }, visibleIds(), "a member's list does not start on Me")
+		local key, label = mineKey()
+		assert.is_not_nil(key, "My characters was not offered to an account with two characters")
+		assert.truthy(label:find("(2)", 1, true), label)
+		assert.equal(key, R.cachedRequesterOrder[1], "My characters is not at the top of the list")
+		R.FilterRequester:Fire("OnValueChanged", key)
+		assert.same({ "g1", "t1" }, visibleIds())
+		assert.is_true(TOGBankClassic_Options.db.global.requests.accountMode)
+		-- Picking anything else turns it off again.
+		R.FilterRequester:Fire("OnValueChanged", GALDOF)
+		assert.same({ "g1" }, visibleIds())
+		assert.is_false(TOGBankClassic_Options.db.global.requests.accountMode)
+	end)
+
+	it("starts on My characters on any character once account mode is on", function()
+		loadAccount({ GALDOF, TWINK }, true)
+		R:Open()
+		assert.same({ "g1", "t1" }, visibleIds())
+		assert.equal((mineKey()), R.FilterRequester:GetValue())
+	end)
+
+	it("is not offered to an account with one character, and account mode then falls back to Me", function()
+		loadAccount({ GALDOF }, true)
+		R:Open()
+		assert.is_nil(mineKey())
+		assert.same({ "g1" }, visibleIds())
+	end)
+
+	it("notes the character looking at the list as one of the account's", function()
+		loadAccount({ TWINK })
+		R:Open()
+		assert.is_true(TOGBankClassic_Options.db.global.accountCharacters[GALDOF])
+		assert.is_not_nil(mineKey())
 	end)
 end)
 

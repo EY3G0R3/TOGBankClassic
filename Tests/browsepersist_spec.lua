@@ -24,9 +24,10 @@ describe("BROWSE-006: the Guild Bank window persists its position, size and tab"
 	local function standUp(positions, tab)
 		-- SUITE-HEAP-001: an example that stands up a second world releases the first world's window.
 		if Browse and Browse.Window then env.releaseWindow(Browse.Window); Browse.Window = nil end
-		env.reset()
+		-- One reset through the rich model, not env.reset() then frames.reset(): two full collections
+		-- per call (SLOW-REQACTIONS-001).
+		env.reset({ frames = true })
 		local frames = require("env.frames")
-		frames.reset()
 		-- CLAMP-SCREEN-001: LibAceGUIWidgets' PersistWindow shrinks a saved window to fit the screen
 		-- (MINOR 36, shipped in v0.2.7), and the harness screen is 1024x768 -- smaller than the saved
 		-- sizes these examples persist (1200, 1568, 2000 wide). A 2560x1440 screen holds them, so the

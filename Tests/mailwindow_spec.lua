@@ -39,9 +39,9 @@ local function stubItemDB(items, suffixes)
 end
 
 local function load()
-	env.reset()
+	-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+	env.reset({ frames = true })
 	env.stubOutput()
-	require("env.frames").reset()
 	stubItemDB({
 		[4564] = { name = "Spiked Club", quality = 2, class = 2, subClass = 4, equipLoc = "INVTYPE_WEAPON", itemLevel = 20, reqLevel = 15 },
 		[2589] = { name = "Linen Cloth", quality = 1, class = 7, subClass = 5, equipLoc = "", itemLevel = 5 },

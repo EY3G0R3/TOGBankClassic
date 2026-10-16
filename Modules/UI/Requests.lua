@@ -14,17 +14,18 @@ TOGBankClassic_UI_Requests = {}
 --
 -- SEARCH-006: `search = true` marks a column the ONE search box (above the dropdowns) matches
 -- against -- the operator's Discord ask of 2026-08-19 ("add search on requestors to find someone
--- easily"), then on 2026-09-11 "one bar that filters on all columns". The four text columns are
--- searched; `#`, `Sent` and `Actions` are not -- a number or a button row is not something to
--- search. (SEARCH-005 briefly put a box under each of the four; that row is gone.)
+-- easily"), then on 2026-09-11 "one bar that filters on all columns". SEARCH-007 (operator
+-- 2026-10-15: "the search requests needs to filter off the data in any column, right now it
+-- doesn't"): every column that shows text is searched, `#` and `Sent` included; only `Actions`, a
+-- row of buttons, is not. (SEARCH-005 briefly put a box under each of the four; that row is gone.)
 -- `width` is the RowList's: fixed columns chained either side of the one auto column (the item).
 local COLUMNS = {
 	{ key = "date",      header = "Date",      width = 118, justify = "LEFT", search = true, headerTip = "When the request was submitted. Click to sort." },
 	{ key = "requester", header = "Requester", width = 128, justify = "LEFT", search = true, headerTip = "The guild member who submitted the request. Click to sort." },
 	{ key = "bank",      header = "Bank",      width = 128, justify = "LEFT", search = true, headerTip = "The banker character this request is assigned to. Click to sort." },
-	{ key = "quantity",  header = "#",         width = 36,  justify = "RIGHT",               headerTip = "The number of items requested. Click to sort." },
+	{ key = "quantity",  header = "#",         width = 36,  justify = "RIGHT", search = true, headerTip = "The number of items requested. Click to sort." },
 	{ key = "item",      header = "Item",                   justify = "LEFT", search = true, headerTip = "The item being requested. Click to sort." },
-	{ key = "fulfilled", header = "Sent",      width = 36,  justify = "RIGHT",               headerTip = "How many items have been sent to the requester so far. Click to sort." },
+	{ key = "fulfilled", header = "Sent",      width = 36,  justify = "RIGHT", search = true, headerTip = "How many items have been sent to the requester so far. Click to sort." },
 	{ key = "actions",   header = "Actions",   width = 96,  justify = "LEFT", sortable = false, headerTip = "Fulfill, mark handed over, cancel, delete or re-open the request." },
 }
 
@@ -97,7 +98,30 @@ local pendingCancelReq     = nil
 local pendingCancelActor   = nil
 local pendingCancelUI      = nil
 local FILTER_ANY = "__tog_any__"
+-- ACCOUNT-MODE-001: the Requester filter's "My characters" -- every character of this account.
+local FILTER_MINE = "__tog_mine__"
 local ARCHIVE_DAYS = 30
+
+--- ACCOUNT-MODE-001: this account's characters, with the one logged in always among them.
+local function accountCharacters()
+	local mine = {}
+	local opts = TOGBankClassic_Options
+	if opts and opts.GetAccountCharacters then
+		for name in pairs(opts:GetAccountCharacters()) do mine[name] = true end
+	end
+	local me = TOGBankClassic_Guild:GetNormalizedPlayer()
+	if me and me ~= "" then mine[me] = true end
+	return mine
+end
+
+--- ACCOUNT-MODE-001: true when the account has a character besides the one logged in -- the
+--- only case where "My characters" says anything "Me" does not.
+local function hasOtherCharacters(mine, currentPlayer)
+	for name in pairs(mine) do
+		if name ~= currentPlayer then return true end
+	end
+	return false
+end
 local FILTER_SEPARATOR_ME_ANY = "__tog_sep_me_any__"
 local FILTER_SEPARATOR_ANY_REST = "__tog_sep_any_rest__"
 local FILTER_SEPARATOR_HIST = "__tog_sep_hist__"
@@ -138,6 +162,11 @@ local function handleFilterChange(self, key, widget, value)
 		setFilterValue(self, key, nil)
 	else
 		setFilterValue(self, key, value)
+	end
+	-- ACCOUNT-MODE-001: picking "My characters" turns account mode on for every character; picking
+	-- anything else in the Requester list turns it off.
+	if key == "requester" and TOGBankClassic_Options and TOGBankClassic_Options.SetAccountMode then
+		TOGBankClassic_Options:SetAccountMode(value == FILTER_MINE)
 	end
 	self:DrawRows(false)   -- a new filter starts at the top of the list
 end
@@ -1055,7 +1084,7 @@ function TOGBankClassic_UI_Requests:AddHelpLines()
 	-- pages to be current"): the sub-tabs and filters, the guild tag, the shop order's estimate on
 	-- the date hover, the stale-version mark and the two bottom-row buttons, none of which the text
 	-- mentioned.
-	GameTooltip:AddLine("Every request placed with a bank character, one row each. |cffffd100Requests|r is what is open; |cffffd100Archive|r is what has been filled or cancelled (older than the archive threshold); officers also see |cffffd100Settings|r. Narrow the list with the search box (every word must appear somewhere in the row) and the |cffffd100Requester|r and |cffffd100Bank|r dropdowns; click a column header to sort. A banker from a sister guild wears its guild's name in grey.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine("Every request placed with a bank character, one row each. |cffffd100Requests|r is what is open; |cffffd100Archive|r is what has been filled or cancelled (older than the archive threshold); officers also see |cffffd100Settings|r. Narrow the list with the search box (every word must appear somewhere in the row) and the |cffffd100Requester|r and |cffffd100Bank|r dropdowns; click a column header to sort. With more than one character, |cffffd100My characters|r in the Requester list shows all of their requests together, and the list starts there on every character once picked. A banker from a sister guild wears its guild's name in grey.", 0.9, 0.9, 0.9, true)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Date column:|r", 1, 1, 1, false)
 	GameTooltip:AddLine("Mouseover any row's date to see a timeline tooltip showing when the request was submitted and, if applicable, when it was filled or cancelled -- and, for a shop order, the estimate you were shown when you placed it. A cancelled request's date breathes with a soft glow; if a reason was given, mouse over it to read why.", 0.9, 0.9, 0.9, true)
@@ -1431,7 +1460,7 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		-- SEARCH-006: ONE search box, above the dropdowns. The operator, 2026-09-11: "i don't need
 		-- a search bar for each area, one bar that filters on all columns would work" and "put them
 		-- above the dropdown, not below". Every word typed must appear somewhere across what the
-		-- Date, Requester, Bank and Item columns show (SearchMatches). Its text lives on
+		-- columns show, all but Actions (SearchMatches, SEARCH-007). Its text lives on
 		-- `self.searchText` so it survives a window rebuild (banker status change).
 		-- REQUESTS-STRIP-001 (operator 2026-09-13, screenshot of a non-banker's tab: "the request
 		-- dropdowns overlap the column header row. we need to move the dropdowns up 5 or so px. we
@@ -1470,7 +1499,7 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		searchBox:SetText(self.searchText or "")
 		searchBox:SetCallback("OnTextChanged", function(_, _, text) self:SetSearch(text) end)
 		TOGBankClassic_UI:AttachTooltip(searchBox, "ANCHOR_BOTTOM", "Search requests", {
-			"Only requests with every word you type somewhere in their date, requester, bank or item are shown.",
+			"Only requests with every word you type somewhere in any column are shown: date, status, requester, bank, guild, quantity, item or sent.",
 			"Works together with the Requester / Bank filters below.",
 		})
 		strip:AddChild(searchBox)
@@ -1491,6 +1520,8 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 			GameTooltip:ClearLines()
 			GameTooltip:AddLine("Filter by Requester")
 			GameTooltip:AddLine("Filter the request list to the guild member you select here, or all requesters (Any Requester).", 0.9, 0.9, 0.9, true)
+			-- ACCOUNT-MODE-001
+			GameTooltip:AddLine("My characters shows the requests of every character on your account. Once picked, it is where this list starts on all of them.", 0.9, 0.9, 0.9, true)
 			GameTooltip:Show()
 		end)
 		requesterLabelHit:SetScript("OnLeave", function()
@@ -2204,13 +2235,10 @@ function TOGBankClassic_UI_Requests:ShowSettings(show)
 	end
 end
 
+-- FINISHED-001: the same answer CancelRequest and ReopenRequest use, so the row never offers a Cancel
+-- the guild module would refuse (or hides one it would allow).
 local function isComplete(request)
-	local qty = tonumber(request.quantity or 0) or 0
-	local fulfilled = tonumber(request.fulfilled or 0) or 0
-	if request.status == "cancelled" or request.status == "complete" or request.status == "fulfilled" then
-		return true
-	end
-	return fulfilled >= qty and qty > 0
+	return TOGBankClassic_Guild.IsRequestFinished(request)
 end
 
 local function isPending(request)
@@ -2253,9 +2281,20 @@ local function allCounts(requests)
 	return requesterOpen, requesterTotal, bankOpen, bankTotal
 end
 
-local function buildNameOptions(anyLabel, currentPlayer, openCounts, totalCounts)
+local function buildNameOptions(anyLabel, currentPlayer, openCounts, totalCounts, mine)
 	local list = {}
 	local order = {}
+
+	-- ACCOUNT-MODE-001: "My characters" above "Me", only when the account has more than this one.
+	if mine and hasOtherCharacters(mine, currentPlayer) then
+		local open, total = 0, 0
+		for name in pairs(mine) do
+			open = open + (openCounts[name] or 0)
+			total = total + (totalCounts[name] or 0)
+		end
+		list[FILTER_MINE] = string.format("(%d) My characters", open > 0 and open or total)
+		table.insert(order, FILTER_MINE)
+	end
 
 	-- "Me" entry at top (show open count if any, else total)
 	if currentPlayer and currentPlayer ~= "" then
@@ -2318,8 +2357,8 @@ local function buildNameOptions(anyLabel, currentPlayer, openCounts, totalCounts
 	return list, order
 end
 
-local function buildRequesterOptions(currentPlayer, requesterOpen, requesterTotal)
-	return buildNameOptions("Any Requester", currentPlayer, requesterOpen, requesterTotal)
+local function buildRequesterOptions(currentPlayer, requesterOpen, requesterTotal, mine)
+	return buildNameOptions("Any Requester", currentPlayer, requesterOpen, requesterTotal, mine)
 end
 
 local function buildBankOptions(currentPlayer, bankOpen, bankTotal)
@@ -2751,23 +2790,35 @@ function TOGBankClassic_UI_Requests:SetSearch(text)
 end
 
 --- SEARCH-005: the text a column SHOWS for a request -- what a search must match against, so a
---- player searching for what they can see finds it. Status icons are not part of the date's text.
+--- player searching for what they can see finds it. SEARCH-007: the date column's status glyph is
+--- searchable by its word (open / fulfilled / cancelled), the `#` column as shown ("3x"), and the
+--- Bank column with the sister-guild name XGUILD-LABEL-001 prints beside the banker.
 ---@param req table
 ---@param key string column key
 ---@return string
 function TOGBankClassic_UI_Requests:ColumnText(req, key)
 	if key == "date" then
 		local ts = tonumber(req.date or 0) or 0
-		return ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
+		local status = req.status or "open"
+		if status == "open" and isComplete(req) then status = "fulfilled" end
+		return (ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown") .. " " .. status
 	elseif key == "item" then
 		return TOGBankClassic_Item:RequestDisplayName(req) or ""
+	elseif key == "quantity" then
+		local qty = req.quantity
+		return (qty == nil or qty == "") and "" or (tostring(qty) .. "x")
+	elseif key == "bank" then
+		local bank = tostring(req.bank or "")
+		local G = TOGBankClassic_Guild
+		local guildName = (bank ~= "" and G and G.GuildNameOf) and G:GuildNameOf(bank) or ""
+		return guildName ~= "" and (bank .. " " .. guildName) or bank
 	end
 	return tostring(req[key] or "")
 end
 
 --- SEARCH-006: does a request match the one search? Every word of `query` must appear somewhere
---- across what the searchable columns SHOW -- date, requester, bank, item -- case-insensitive
---- (TOGBankClassic_UI:SearchMatch over the four column texts). Pure: reads only the request and
+--- across what the searchable columns SHOW -- every column but Actions (SEARCH-007) --
+--- case-insensitive (TOGBankClassic_UI:SearchMatch over the column texts). Pure: reads only the request and
 --- the query, so the rule is one function for the UI and the spec. Nil / empty matches everything.
 ---@param req table
 ---@param query string|nil
@@ -2835,12 +2886,20 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 	local requests = info and info.requests or {}
 	local requesterOpen, requesterTotal, bankOpen, bankTotal = allCounts(requests)
 	local currentPlayer = TOGBankClassic_Guild:GetNormalizedPlayer()
+	-- ACCOUNT-MODE-001: noted here as well as at login, in case the name was not known then.
+	if TOGBankClassic_Options and TOGBankClassic_Options.NoteAccountCharacter then
+		TOGBankClassic_Options:NoteAccountCharacter(currentPlayer)
+	end
+	local mine = accountCharacters()
 	if not self.defaultFiltersApplied then
 		if self.requesterFilter ~= nil or self.bankFilter ~= nil then
 			self.defaultFiltersApplied = true
 		elseif currentPlayer and currentPlayer ~= "" then
 			if TOGBankClassic_Guild:IsBank(currentPlayer) then
 				self.bankFilter = currentPlayer
+			elseif TOGBankClassic_Options and TOGBankClassic_Options.IsAccountModeEnabled
+				and TOGBankClassic_Options:IsAccountModeEnabled() and hasOtherCharacters(mine, currentPlayer) then
+				self.requesterFilter = FILTER_MINE
 			else
 				self.requesterFilter = currentPlayer
 			end
@@ -2853,7 +2912,7 @@ function TOGBankClassic_UI_Requests:UpdateFilters()
 		self.FilterGroup:DoLayout()
 	end
 
-	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterOpen, requesterTotal)
+	local requesterList, requesterOrder = buildRequesterOptions(currentPlayer, requesterOpen, requesterTotal, mine)
 
 	-- Only update the requester dropdown if the list has changed
 	local requesterListChanged = false
@@ -2921,9 +2980,11 @@ function TOGBankClassic_UI_Requests:ApplyFilters(requests)
 	end
 
 	local filtered = {}
+	local mine = self.requesterFilter == FILTER_MINE and accountCharacters() or nil   -- ACCOUNT-MODE-001
 	-- Use pairs() since requests is now a map keyed by ID, not an array
 	for _, req in pairs(requests or {}) do
-		if (not self.requesterFilter or req.requester == self.requesterFilter)
+		if (not self.requesterFilter or req.requester == self.requesterFilter
+				or (mine and req.requester and mine[req.requester]))
 			and (not self.bankFilter or req.bank == self.bankFilter)
 			and (not hasSearch or self:SearchMatches(req, search)) then   -- SEARCH-006
 			table.insert(filtered, req)

@@ -692,7 +692,7 @@ describe("XGUILD-SYNC-001 step 5: a request mutation crosses into a sister guild
 		Guild.Info.requests["r2"] = requestFrom(SIS_MEMBER, ME, "r2")
 		Guild.SenderIsGM = function(_, who) return who == ME end
 		clearSent()
-		assert.is_true(Guild:CompleteRequest("r1", ME))
+		assert.equal(5, Guild:FulfillRequestById("r1", 5, ME))
 		local sends = captured("togbank-rm")
 		assert.equal(2, #sends)
 		assert.equal("complete", sends[2].data.logEntries[1].type)

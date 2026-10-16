@@ -133,6 +133,7 @@ read_globals = {
 	-- Player / realm / guild
 	"UnitName", "GetRealmName", "GetNormalizedRealmName", "IsInGuild", "IsInRaid", "GetClassColor",
 	"GetGuildInfo", "GetNumGuildMembers", "GetGuildRosterInfo", "GuildRoster", "C_GuildInfo",
+	"GetGameMessageInfo",
 	"CanViewOfficerNote", "GuildControlGetNumRanks", "GetMoney",
 	-- Items / containers
 	"C_Container", "C_Item", "C_CurrencyInfo", "Item", "GetItemInfo", "GetItemInfoInstant",
@@ -225,10 +226,14 @@ files["Tests"] = {
 	-- bag tables to assert the arithmetic. Exact fields, so every other C_Container write is still
 	-- reported. BankFrame is the same spec's stand-in for the bank being open; IsBankOpen reads
 	-- `BankFrame:IsShown()` and the frame is steered per example.
+	-- GetGameMessageInfo is stood in front of by eventscoverage_spec (EVENTS-UIERR-002): the mail-error
+	-- test is "which error id does this index name", and only a stand-in can say ERR_MAIL_ for one index
+	-- and something else for another, or answer nothing to reach the English fallback. The spec's
+	-- load/restore saves and puts the original back.
 	globals = { "LibStub", "string.trim", "GetItemInfoInstant", "GameTooltip.HookScript",
 		"C_GuildInfo.CanViewOfficerNote", "NUM_CHAT_WINDOWS", "Constants",
 		"C_Container.UseContainerItem", "C_Container.SplitContainerItem",
-		"C_Container.PickupContainerItem", "BankFrame" },
+		"C_Container.PickupContainerItem", "BankFrame", "GetGameMessageInfo" },
 }
 
 -- The harness is a separate public repo (WoWAPITesting) vendored as a submodule; it carries

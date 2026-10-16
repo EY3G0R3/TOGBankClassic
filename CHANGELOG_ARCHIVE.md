@@ -12,6 +12,350 @@ Older releases moved out of the main CHANGELOG.md to keep it under the GitHub re
 Sections are moved here oldest-first as CHANGELOG.md approaches the limit, split at a version
 boundary so each release stays whole. Newest archived release at the top.
 
+<!-- MOVED-TO-ARCHIVE 2026-10-15: v1.6.1, whole, with the desk's `file move-span`, to make room
+     for v1.8.2 (CHANGELOG.md was 115,152 characters, 4,848 under the 120,000 ceiling). -->
+## [v1.6.1] (2026-09-25) - Sister-Guild Failover
+
+### New Features
+
+- **ESC-001: Escape closes the Guild Bank window, and a setting turns Escape off.** A player: *"Bank
+  doesnt close with esc press, but togpm does"*; the operator: *"it should have esc close the window
+  by default."* The escape frame was only CREATED by the first open of Inventory, Search, Requests
+  or Donations, so the Guild Bank window opened on its own never had Escape; closing Inventory also
+  hid it and took the Guild Bank window down. Now one stand-in (`TOGBankClassicEscProxy`) on
+  UISpecialFrames, shown while any window is open, closes them all. Appearance setting "Close
+  windows with Escape" (`db.global.closeOnEscape`, default on). `_G.TOGBankClassic` is gone.
+  Offline: `Tests/escape_spec.lua` (new, 10). Locations: `Modules/UI.lua`, `Modules/Options.lua`,
+  every `Modules/UI/*.lua` window.
+- **XGUILD-SEARCH-001: the Bankers search matches a sister guild's name.** The operator, 2026-09-25:
+  *"the guild tag name needs to be searchable, so i can search for bankers in the sister guild."*
+  `Browse:FilterBankerRows` passes the row's `guildName` to `SearchMatch`. Offline:
+  `Tests/browse_spec.lua` (+1). Locations: `Modules/UI/Browse.lua`.
+- **SSYNC-001: `/togbank ssync [<name>]` starts a sister-guild sync now.** The operator, 2026-09-25:
+  *"do we have a /togbank command to start a cross guild sync? i need that, especially for testing,
+  and if i could do /togbank ssync <name> that would be helpful. it could do a roster lookup so i can
+  be lazy with the realm."* With no name, each listed sister guild's usual peer is asked at once, past
+  the cycle's pending and silent-for-an-hour waits. With a name, that sister member is found in the
+  sister rosters (realm optional, any case; `Guild:FindSisterMembers`) and asked directly -- the
+  hash-list ask and the requests index behind it, the cycle's own `AskFederationPeer` -- with any
+  "left alone" mark on it cleared. It refuses, sending nothing and saying why, when the Sister-guild
+  bank is off, no sister guild is listed, the name is not a sister member, it matches characters on
+  more than one realm, or the member is offline. Offline: `Tests/xguild_spec.lua` (one example).
+  Locations: `Modules/Guild.lua` (`SisterSyncCommand`), `Modules/Chat.lua`, `README.txt`.
+- **XGUILD-NUDGE-001: a GreenWall guild hears you open the bank, and its members pull at once**
+  (`docs/XGUILD_SYNC.md` 4.6, build-order step 7 -- the optional last step, gated on steps 2-6 being
+  seen in game, which the operator closed on 2026-09-16). GreenWall's bridge cannot carry the sync
+  (a CHANNEL send is hardware-gated on Classic, a segment is 255 bytes, the handler is not told the
+  guild -- 1.1 of the design note), but ONE line from a click can ride it: `Browse:Toggle` -- the
+  minimap button, `/togbank`, the legacy window's Browse button -- sends `hlq:<addon version>`
+  through `GreenWallAPI.SendMessage` when the sister-guild bank is on, GreenWall is loaded and its
+  guild channel is JOINED (a segment GreenWall cannot send is parked for its next flush, which may run
+  from its timer, so an un-joined channel refuses rather than risks a blocked send), at most once per
+  sync cycle. A federated client hearing it (`GreenWallAPI.AddMessageHandler`, registered from Core's
+  init) notes the version and treats the line as a TOGBank message from the sender
+  (`Guild:UpdateOnlineMember(..., "greenwall-nudge")`), so `OnFederationPeerProven` asks that guild for
+  its hash list NOW instead of on the next ten-minute cycle -- after Guild Roster places the sender in
+  a LISTED sister roster; echo, a home guildmate and a name only GreenWall's confederation knows are
+  ignored. Nothing runs without GreenWall (`## OptionalDeps: GreenWall` in every TOC, so it loads
+  first when present). Offline: `Tests/xguild_spec.lua` step 7 (three examples; the API's signatures
+  pinned against the installed `GreenWall/API.lua`). Not seen in a client. Locations:
+  `Modules/GreenWall.lua` (new), `Modules/UI/Browse.lua`, `Modules/Guild.lua`, `Core.lua`,
+  the TOCs, `Tests/env_togbank.lua`, `.luarc.json`, `.luacheckrc`.
+
+### Bug Fixes
+
+- **POOL-CLUSTER-001: a released Requests window handed on its broom and envelope.**
+  `ReleaseWindow` (role change, or the body moving into the Guild Bank tab) returned the frame to
+  AceGUI's shared pool with the cluster and officer overlay still shown; they now hide first. Not
+  seen in game. `Tests/requestsactions_spec.lua` +1. Locations: `Modules/UI/Requests.lua`.
+- **REQ-GATE-001: a stranger could pull the guild's request history** (Peer Review on audit
+  `31294783`, F5). `requests-index` / `requests-by-id` now answer only `IsInCurrentGuildRoster`
+  senders (a guildmate, or a sister member while the switch is on). Also F4: `SendBankerOwnersTo`
+  skips the receiver's own guild's entries. `Tests/xguild_spec.lua` +1. Locations: `Modules/Chat.lua`,
+  `Modules/Guild.lua`.
+- **XGUILD-SETTINGS-001: officer settings crossed between sister guilds, and who runs each bank
+  character mostly did not.** The operator, 2026-09-25: *"the banker metadata isn't syncing though"*,
+  then *"we should NOT be syncing the officer settings between sister guilds, this would allow any
+  guild to target another guild and force it into being a sister."* A sister guild's bank character
+  passed `SenderHasGbankNote` (the sister roster's note), its officers `SenderIsOfficer`
+  (`member.isOfficer`) and its GM `SenderIsGM` (rank 0), so `ApplyRemoteSettings` adopted that guild's
+  request limit, shop, discount, Sister-guild bank switch and rank floor as OURS whenever its stamp was
+  newer. And `AnswerFederatedAsker` sent settings only when the answering client was a bank
+  character or officer, while a pull usually asks a plain member -- so the owners rarely crossed.
+  Now a sister member's payload yields only its own guild's bank characters' owners (merged entry by
+  entry, the field stamp moved with it), from ANY member; the answer to a sister guild's ask is the
+  owners alone (`Guild:SendBankerOwnersTo`), from any client. Supersedes `docs/XGUILD_SYNC.md`
+  D1/D4/D6 on settings. Offline: `Tests/xguild_spec.lua` (+2, one existing example rewritten),
+  `Tests/xguildlive_spec.lua` step 6 (the request limit no longer crosses). Locations:
+  `Modules/Guild.lua`, `docs/XGUILD_SYNC.md`.
+- **SCALE-DOCK-001: a Window and Text Size change pulled Search and Requests off the Inventory
+  window.** Peer Review's residual on 593238c3: the scale listener re-applies AceGUI's status table,
+  whose `ClearAllPoints` dropped the hand-made dock. `UI:SetPersistedAnchor` lets a window re-dock
+  right after. Offline: `Tests/browsepersist_spec.lua`. Locations: `Modules/UI.lua`,
+  `Modules/UI/Search.lua`, `Modules/UI/Requests.lua`.
+- **SCALE-FLOOR-002: a released window could still be resized by a Window and Text Size change.**
+  LibAceGUIWidgets now registers its own scale listeners -- the resize handle's and `PersistWindow`'s
+  record (`widget._lagwPersist`) -- and both went into AceGUI's addon-wide pool with the frame.
+  `UI:ForgetPersistedWindow` now removes the record's listener (through the library's public
+  `OnScaleChanged(owner, nil)`; the library has no forget call, asked for on its inbox `3d96003a`)
+  and puts a ClearFrame's handle back on the bounds it had before `UI:PersistWindow` raised them
+  (recorded there as `handle._togOrigBounds`). The handle is NOT destroyed: it is made once in the
+  ClearFrame constructor, and my first version of this fix destroyed it, which would have left the
+  frame's next owner with no resize grips -- caught by this session's own audit before release.
+  Also `browsepersist_spec`'s SCALE-DOCK example used a width under the doubled floor, which the
+  library now correctly raises. Offline: `Tests/browsepersist_spec.lua` (+1 ClearFrame example).
+  Locations: `Modules/UI.lua`, `Tests/browsepersist_spec.lua`.
+- **SETTINGS-STALE-001: an officer whose client still held an old or default setting could push it to
+  the whole guild by changing a DIFFERENT setting.** Found live 2026-09-25: the Sister-guild bank was
+  unticked guild-wide, so the sister guild's inventory handshakes were answered "busy" by every client
+  (a non-member fails `isValidPeer`, `Modules/P2P.lua:136`) while its request queries -- which have no
+  membership gate -- kept crossing. The operator: *"we need to make sure someone logging on for the
+  first time doesn't uncheck it, as that's the default. how do we guard this?"* SETTINGS-004's
+  per-field stamps diff a write's payload against a snapshot of the last settings sent or applied, and
+  that snapshot was EMPTY at two moments -- a session's first write before any settings were heard or
+  sent, and every write after settings were RECEIVED (`ApplyRemoteSettings` cleared it) -- and an empty
+  snapshot stamped EVERY field as freshly written. Now the snapshot is the held settings from the
+  moment the record is bound (`Guild:Init`) and whenever settings are applied (`Guild:SnapshotSettings`),
+  tied to that settings table; a write that still finds none diffs against the DEFAULTS
+  (`Guild:DefaultSettingsFields`), so a default value is never stamped by a write that did not change
+  it. KNOWN COST: v1.6.0 clients still have the old behaviour until they update, so an officer on
+  v1.6.0 can still do this. Offline: `Tests/settings_spec.lua`, two examples, both red with the fix
+  reverted. Locations: `Modules/Guild.lua`.
+- **XGUILD-BOUNCE-001: a sister-guild bank character who logged off stayed "online" to the other
+  guild, which kept asking them for the bank.** The operator, straight after v1.6.0: *"build complete
+  end to end tests for the sister guild sync, still having issues with that"*. Guild Roster never
+  hears "X has gone offline." for another guild's member: its presence for one is a sighting stamp
+  that only ages out (`PRESENCE_TTL`, 900 s) -- and its guild relay carries every name still inside
+  that window and the receiver re-stamps them at receive time (`LibGuildRoster-1.0.lua:3976`,
+  `:4194`, `:3297`, on a 270 s relay interval), so a member who logged off reads online for as long
+  as two guildmates keep relaying (filed to Guild Roster's inbox 2026-09-17). The one authoritative
+  "not online" a client gets for them is the server bouncing a whisper
+  (`ERR_CHAT_PLAYER_NOT_FOUND_S`), which `Events:CHAT_MSG_SYSTEM` already turned into
+  `UpdateOnlineMember(X, false)` -- a flag on `memberRoster` that `IsPlayerOnline`, `FederationPeer`
+  and `_AddSisterMembers` never read for a sister member. So the sister viewer whispered its
+  hash-list ask to the logged-off banker, waited the whole cycle, marked them silent for an hour and
+  only then asked the other member, while the Bankers tab said "yes". Now the bounce is remembered
+  (`Guild.sisterBounced`, frame clock) and outranks the library's sighting for the library's own
+  window (`Guild:SisterSightingHolds`, read by all three sites; the library's stamps are NOT compared
+  against it, because a relay re-stamps within the minute -- measured); a TOGBank message from the
+  member clears it at once; and when the bounced whisper was our ask, the ask is withdrawn, the member
+  is left alone for `FEDERATION_SILENT_FOR`, and the guild is asked through `FederationPeer`'s next
+  choice NOW (`Guild:OnSisterMemberBounced`). Design: `docs/XGUILD_SYNC.md` D9. Offline:
+  `Tests/xguild_spec.lua` (bounce, re-ask, clear, window) and `Tests/xguildlive_spec.lua` step 8 on
+  the real transport stack. Locations: `Modules/Guild.lua`.
+- **LINKCLICK-001: a modified click on an item link does what it does everywhere else in the game.**
+  The operator: *"what shift+click and ctrl+click does to the links in the addon? i'd like it to
+  mirror game functionality"*. Read in both client trees this addon ships (`classic_era`,
+  `classic_anniversary`): a modified click on any item link runs `HandleModifiedItemClick`
+  (`Blizzard_ItemButton/Classic/ItemButtonTemplate.lua:137`) -- `IsModifiedClick("CHATLINK")` (Shift
+  by default, but the PLAYER'S binding) inserts the link through `ChatFrameUtil.InsertLink` (the open
+  chat box, else the auction house's search box, else a macro being edited), `IsModifiedClick("DRESSUP")`
+  (Ctrl by default) previews it with `DressUpItemLink`. The bare `ChatEdit_InsertLink` exists on both
+  clients ONLY as an alias of the real function in `Blizzard_DeprecatedChatInfo/Deprecated_ChatFrame.lua:43`,
+  behind `loadDeprecationFallbacks`, and nothing in either tree calls it. Four defects against that:
+  (1) the item slots (`UI:EventHandler`, Inventory and Search windows) read `IsShiftKeyDown` /
+  `IsControlKeyDown`, so a player who rebound "chat link" or "dress up" got nothing; (2) the Browse
+  and Shop rows handled Shift only, and a Ctrl-click REQUESTED the item; (3) every insert called the
+  deprecated alias, nil with that CVar off; (4) `Events:RegisterEvents` hooked the alias for the
+  "shift-click fills the Search box" feature (`UI:OnInsertLink`), so the hook never saw a shift-click
+  on a bag item or a chat line -- only this addon's own slots -- and raised outright with the CVar off.
+  Now `UI:HandleLinkClick(link)` runs the client's dispatcher (the same logic spelled out for a client
+  without it), consumes the click whenever a link modifier is held so no plain-click action runs under
+  one, and is what every site calls; `UI:InsertLink` prefers `ChatFrameUtil.InsertLink`; the hook is on
+  the function the client calls, the alias only as a fallback, and neither present raises nothing.
+  The mail window's shift-click (take everything, MAILCLICK-002) is unchanged: the game's own inbox
+  has no modified-click handling (`MailFrame.lua:828`), so there is nothing to mirror. Offline:
+  `Tests/linkclick_spec.lua` (new) and `Tests/browse_spec.lua`. Locations: `Modules/UI.lua`,
+  `Modules/UI/Inventory.lua`, `Modules/UI/Search.lua`, `Modules/UI/Browse.lua`, `Modules/Events.lua`,
+  `.luarc.json`, `.luacheckrc`.
+- **SCALE-FLOOR-001: with Window and Text Size under 100%, a window at its minimum had its filter
+  strip past the border.** A player's report against v1.6.0 (2026-09-17, the slider at 80%): *"Window
+  size at minimum has widget overflow after resizing/reloading text in config"*. Two defects, both
+  mine from VISIBILITY-001. (1) LibAceGUIWidgets' `PersistWindow` multiplies a window's floor by the
+  accessibility scale -- right for a window made of its own widgets, whose every region scales -- but
+  TOGBank's floors are sums of FIXED widths too: the Browse strip's stock AceGUI dropdowns, edit boxes,
+  checkbox and button (their template art is fixed; `ScaleStockWidget` grows only the text), the
+  frame's insets, RowList's gutter. At 80% the Guild Bank window's floor fell from 784 to 627 px while
+  the strip's first row still needed 738, so a window dragged to its minimum, or reloaded at a saved
+  size the floor no longer raised, spilled. Now the pixel floor is never below the normal-size one
+  (`minW x max(1, scale)`, handed to the library as `minW x max(1, scale) / scale` so its own multiply
+  lands there). KNOWN COST: under 100% a window cannot be dragged smaller than it can at 100%; the
+  text shrinks, the minimum does not. (2) The library re-applies a floor on a scale change only
+  through a resize handle, which an AceGUI Frame (every TOGBank window) has none of, so the bounds set
+  at draw time stayed at the old scale until the next reload -- a window at the 100% minimum kept it
+  at 200% with twice the text inside (finding filed to LibAceGUIWidgets' inbox 2026-09-17; TOGBank's
+  own listener is the stand-in). `UI:PersistWindow` now re-runs itself on the scale signal for every
+  window -- Inventory, Search, Requests, Browse, Mailbox -- raising a window sitting under the new
+  floor and re-applying the bounds; nothing shrinks on a scale-down. Offline:
+  `Tests/browsepersist_spec.lua` (three examples against the real library and the real Requests
+  floor; two fail without the fix at 627 vs 784); forward A4 882/0, forward B2 936/0, reverse-order
+  1818/0 after it. Locations: `Modules/UI.lua`, `README.txt`.
+
+### Internal
+
+- **SUITE-HEAP-002, harness pin 23d11b1.** `browse_spec`, `requestsactions_spec` and
+  `mailwindow_spec` release their windows; `env.releaseWindow` drops Requests' frame caches. The
+  `GetClassColor` stand-in and `browse_spec`'s fake LibDBIcon are gone. Heap not measured.
+- **UI-OWN-TABLE-001: `TOGBankClassic_UI` is its own table**, reading through to AceGUI-3.0; it
+  was the shared library table itself (Peer Review 35130c29). Escape also closes the owner dialog.
+- **OWNERS-STAMP-001, harness pin 35f697b.** One `Guild:AdvanceOwnersStamp` for both owners-merge
+  routes (Peer Review 31294783). Harness 17d5211 -> 35f697b: `GetClassColor` stand-in, two specs on
+  the rich layer, `canonhash_spec` loads `Inventory/Sync.lua`, windows released in two specs.
+- **USABLE-LIBITEMDB-001: "Usable by me" asks LibItemDB's `ClassProficient`** (ItemDB v0.10.0,
+  MINOR 27; ItemDB inbox 10a85af75c12). The five proficiency tables copied from Dibs and
+  `Usable.ArmorCap` are deleted. One answer changed on purpose: a class off the tables may hold a
+  shield. Offline: `Tests/usable_spec.lua`, `Tests/browse_spec.lua` (the installed library).
+  Locations: `Modules/Usable.lua`.
+- **TOC-MISTS-001: a MoP Classic TOC, and the TBC TOC renamed `_BCC` -> `_TBC`** (the operator,
+  2026-09-25: *"make a mop toc"*, *"update the _BCC toc to be _TBC"*). New `TOGBankClassic_Mists.toc`
+  at Interface 50504: the Era TOC byte for byte apart from the Interface line. Every required
+  dependency already ships MoP (Ace3, VersionCheck-1.0, AceCommQueue-1.0, DeltaSync, LibAceGUIWidgets
+  and LibDBIcon-1.0 list 50504; GuildRoster and ItemDB ship their own `_Mists.toc`, ItemDB with
+  `Data\Mists\` item data). **Loads in a MoP client with no Lua errors** (the operator, 2026-09-25,
+  on a character in no guild); **NOT VERIFIED: every guild feature** -- nothing past loading has run
+  in MoP, and the code has not been read against the MoP API. `TOGBankClassic_BCC.toc` is
+  now `TOGBankClassic_TBC.toc` (same content), matching the fleet's `GuildRoster_TBC.toc` /
+  `ItemDB_TBC.toc`. New lockstep guard `Tests/wiring_spec.lua` (TOC-LOCKSTEP-001): every TOC must
+  equal the Era TOC apart from its Interface line; the ten specs that looped over two TOCs now loop
+  over three. `wow-version-replication.ps1` now also mirrors into `_classic_` (MoP). Locations:
+  `TOGBankClassic_Mists.toc` (new), `TOGBankClassic_TBC.toc` (renamed), `.pkgmeta`,
+  `wow-version-replication.ps1`, `CLAUDE.md`, `Tests/*_spec.lua`.
+- **LIBDBICON-DEP-001: LibDBIcon-1.0 is a required dependency, no longer vendored** (TOGTools inbox
+  contract `1eab38f9`, the operator's decision of 2026-09-25). An embedded copy only updates when
+  TOGBank releases; as a CurseForge required dependency it updates for every player on its own.
+  `Libs/LibDBIcon-1.0/` is deleted, every TOC declares `LibDBIcon-1.0` in `## Dependencies` and no
+  longer load the copy, and `.pkgmeta` lists the slug `libdbicon-1-0`. **LibDataBroker-1.1 stays
+  bundled** on the operator's word (*"change it to not get rid of libdatabroker"*), although the
+  standalone LibDBIcon also loads one (`LibDBIcon-1.0/embeds.xml:6`); LibStub keeps whichever copy
+  has the higher MINOR. No Lua changed -- `Modules/UI/Minimap.lua` still resolves both through
+  LibStub. KNOWN COST: a player installing by hand must also install LibDBIcon-1.0. Seen in an Era
+  client 2026-09-25: the standalone (TOC `## LoadOnDemand: 1`) loads and the minimap button shows;
+  TBC and MoP not checked. Pinned by `Tests/sendresult_spec.lua` ("de-vendored LibDBIcon-1.0").
+  Locations: the TOCs, `.pkgmeta`, `README.txt`, `CLAUDE.md`.
+- **Peer review of this session's own audit, acted on** (inbox `593238c3`, reply `8e933d44`). Three of
+  its four points changed code. (1) `c.offline` is deleted from `Tests/env_fleet.lua`: one concept with
+  two spellings, where the write-only one was the plausible-looking one, so a future guard written
+  against it would have been true for a client taken offline through `F.offline` and false for one
+  created with `opts.offline`. The reviewer also spotted that `Tests/fullsync_spec.lua:864` was a
+  hand-inlined `F.offline` -- the one call site that could not benefit from the change that gave
+  `F.offline` its presence call -- so it now calls the helper and one of the three deletions came
+  free. (2) `GreenWall:Bridge` no longer claims `GetChannelNumbers()[1]` is the guild channel, and the
+  six-line caveat defending that claim is gone; it now accepts any joined channel. **The reviewer's
+  suggested `#numbers == 0` was NOT taken, with a reason:** `GwChannel:is_connected` calls a channel
+  connected only when its number is non-zero, so a channel that exists un-joined reports 0 and a send
+  on it is PARKED for the next flush -- the later non-hardware send this gate exists to prevent. The
+  non-zero test is load-bearing; only the claim about which entry it is was wrong. (3) `Nudge` now
+  stamps the cooldown on a refusal FROM GreenWall, so the one configuration that always fails there
+  costs one attempt per cycle instead of one per window open; a refusal before the send still leaves
+  the cooldown alone, so a client whose GreenWall loads a moment later does not wait a cycle. New
+  example in `Tests/xguild_spec.lua`. The fourth point was routed rather than fixed: the desk's
+  `file move-span` reports success after moving an incomplete span, which is writ's defect and is
+  filed to its inbox. Locations: `Modules/GreenWall.lua`, `Tests/env_fleet.lua`,
+  `Tests/fullsync_spec.lua`, `Tests/xguild_spec.lua`.
+- **GSL-MERGE-001, first step: GuildShoppingList read end to end, and the merge design written**
+  (`docs/GSL_MERGE.md`, new). The operator, 2026-09-16: *"add to the todo list to merge the GSL addon
+  into TOGBank, put it at the bottom"*, with the item's own first step being the read and the design
+  before any code. **Nothing is built and no code was touched.** What the read settled: GuildShopping-
+  List is a second, weaker implementation of machinery this addon already has -- its own guild-note
+  role marker (`[GSL]`), its own whole-state newest-timestamp-wins broadcast, its own name-keyed
+  cache of ONE player's bags and bank, its own 290-line calendar picker, its own two frames -- wrapped
+  around one genuinely new idea, expanding a recipe into reagent demand. So the merge is a new Craft
+  List tab on the rails that already exist (the stamped guild-settings payload for the list, the
+  request log for orders, `Guild:GetAltItemTotal` for what the bank holds), not a port of its code.
+  `LibProfessionDB-1.0` already carries the recipe data keyed by spell id with **reagents keyed by
+  item id**, which deletes GSL's eight vendored `Recipes\*.lua` tables and removes its name-matching
+  at the root -- the same defect class as REQ-001. **Build step 1 was then run rather than assumed**
+  (section 1.5): GSL's eight tables diffed against the library's Vanilla enUS data, 924 of 1,106
+  names matching exactly, and the 182 that do not are GSL's own shorthand (`Crusader (enchant)`
+  against the library's `Enchant Weapon - Crusader`, whose `effect` field is literally `Crusader`;
+  `Blight (polearm)` against `Blight`), names the Vanilla data does not carry and which look like
+  later-expansion recipes (recall, not a lookup -- flagged in the document as its weakest claim), and
+  the Miscellaneous bucket, which is seven Winterspring E'ko turn-in items and not recipes at all. So
+  the shorthand cause is verified and large, and the migration gained two name fallbacks.
+  Both open decisions were answered 2026-09-25: GM, officers and the `[GSL]` note tag edit the list,
+  on a Shopping List tab plus an officer setup tab; the build is the release after v1.6.1.
+  Locations: `docs/GSL_MERGE.md`.
+- **Harness pin `bb80c1b` -> `17d5211`; both XGUILD-LIVE-001 stand-ins are deleted, and the fleet
+  now takes a REAL bounce.** (Two deliveries in the same move: `58ff098` below, and `4ca9566`, which
+  bumped `LibItemDB-1.0`'s `tocOmits` 98 -> 99 after the drift this repo's newly-declared
+  `verify-libs` suite caught at the previous pin. `verify-libs` is now 9/9, 0 failed.) WoWAPITesting delivered the two halves contracted yesterday (`58ff098`).
+  (1) A logged-out client sends nothing: all three of the harness's send seams are gated on the
+  sender being online, so `Tests/env_fleet.lua` no longer shadows each client's own `C_ChatInfo`
+  while it is offline. (2) The server answers the sender of a whisper to a logged-out character with
+  `ERR_CHAT_PLAYER_NOT_FOUND_S`, so `F.bounceIfOffline` -- which MANUFACTURED that line -- is gone.
+  What replaced it is one frame per fleet client registered for `CHAT_MSG_SYSTEM` that hands the
+  event to `Events:CHAT_MSG_SYSTEM`, because a fleet client never runs `Events:RegisterEvents`; the
+  bounce is now real and only its delivery is wired here, with every line kept on `client.sysLines`
+  so a spec can assert what the SERVER said separately from how the addon reacted. Two things cost
+  time and are worth the next session knowing: that frame must be held on the client rather than in
+  a local, because the frames registry keeps its candidate lists WEAK and a frame nothing references
+  is collected and silently stops hearing its event (it received nothing at all, which reads exactly
+  like the harness not firing); and `Tests/xguildlive_spec.lua` step 8 had to stop asserting WHICH
+  whisper bounced. The stand-in only ever bounced whispers handed to it by TOGBank's own Core
+  wrapper, so the first bounce was always that cycle's hash-list ask; the server bounces every
+  whisper to a logged-out character, and the earliest here is the requests-index ask an earlier cycle
+  staggered behind itself, so the viewer learns sooner and never spends the cycle's ask on the
+  banker who is gone. The step now pins the outcome -- exactly one real bounce naming the banker,
+  nothing further asked of it, every failover ask answered, the bank intact -- and the "our own ask
+  bounced, re-ask at once" leg keeps its focused example in `Tests/xguild_spec.lua` step 4. Green in
+  all three orders: forward A4 882/0, forward B2 939/0, reverse-order 1821/0. Locations:
+  `Tests/wowapi` (pointer), `Tests/env_fleet.lua`, `Tests/xguildlive_spec.lua`.
+- **Harness pin `6181ba5` -> `bb80c1b`; the LAGW-RESIZE-FILE-001 stand-in is deleted.** The contract
+  filed earlier today (thread `a6cfd6a8`) was answered ALREADY SHIPPED: WoWAPITesting had landed
+  `2aac908` -- `LibAceGUIWidgets-Resize.lua` in the `LibAceGUIWidgets-1.0` manifest, in TOC order,
+  `tocOmits` unchanged -- hours before the message, so the fix was a pin move and nothing else. The
+  wrapper `Tests/env_togbank.lua` put round `libs.load` is gone. Three more behaviour changes ride
+  the same move and needed nothing here, each checked rather than assumed: `8b36d23` routes the
+  addon-message chatType case-insensitively (TOGBank's own report, inbox `22460a4b` -- the recorded
+  spelling is unchanged, so FILL-ALERT-001's "GUILD" assertions are untouched); `bcd81e3` keys
+  `Settings.GetCategory` on the numeric category id, which is what makes an `AddToBlizOptions`
+  SUB-panel resolvable offline at all; `82387fa` adds `C_Spell.GetSpellName` and `C_Seasons`. The
+  Adoption log's warning for a library that splits a file -- a per-file load line is needed in any
+  spec using `wow.loadAddonFile` as well as the manifest line -- does not reach this addon: the one
+  by-path satellite load here (`browse_spec.lua:326`, the DatePicker) runs after `libs.load`. Green
+  on the new pin in all three orders: forward A4 882/0, forward B2 939/0, reverse-order 1821/0.
+  Locations: `Tests/wowapi` (pointer), `Tests/env_togbank.lua`.
+- **XGUILD-LIVE-001: the sister-guild sync, whole lifecycle, on the real transport stack**
+  (`Tests/xguildlive_spec.lua`, new). Four whole clients in two guilds over each client's real
+  AceCommQueue, AceComm and ChatThrottleLib, in ONE example so each leg starts from the state the
+  previous one left: both guilds log in on the clamp; one "Pull from" by name crosses the rosters,
+  the `gbank` notes and presence on the library's own whispered pull and click-sent /who; both
+  Bankers tabs list the other guild's bank, tagged; the sister viewer's cycle asks by whisper and
+  holds the home bank with the author's canon and nothing between the guilds on GUILD; a sister
+  member's order and the banker's fill (from `Mail:ApplyPendingSend`) cross by whisper at ALERT and
+  are relayed once each way until all four clients agree; an officer's settings write and a who-runs
+  entry ride the next ask without wiping the sister guild's own entry; the sister banker, which never
+  pulled, reaches the home bank through its guildmate's relay and the home banker holds the sister
+  bank; the home banker logs off (step 8, above); a quiet cycle opens no data leg. What its first
+  runs found, 2026-09-17: (a) the `invalid key to 'next'` the previous session stopped on was MY
+  spec bug -- `next(F.held(hb, SB))` passed `F.held`'s second return, the money total, as the key --
+  and steps 5-7 were passing behind it; (b) the harness lets a logged-out client's timers keep
+  SENDING (six Guild Roster messages measured in the 660 s after logout, each re-stamping the banker
+  online on the sister side) and drops a whisper to an offline character silently where the server
+  bounces it -- both stood in by `Tests/env_fleet.lua` (`F.offline` shadows the client's own
+  `C_ChatInfo` send seams, `F.bounceIfOffline` hands the bounce to `Events:CHAT_MSG_SYSTEM`) and
+  filed as harness contract XGUILD-LIVE-001; `F.presence` no longer clears the library's stamps by
+  hand, which had let the failover leg pass without the bounce the addon has to act on; (c) the
+  Guild Roster relay finding and (d) XGUILD-BOUNCE-001, above. Two more spec gaps the same runs
+  surfaced, both mine from earlier sessions: `bankcollect_spec` never loaded `Inventory/Record` and
+  `Inventory/Scan`, which Bank's matchers have read since LINK-AUDIT-001 step 4 -- it passed in the
+  declared halves on a Scan an earlier file left behind and failed alone (REQ-003, two examples);
+  and LibAceGUIWidgets v0.2.0 moved its resize framework into `LibAceGUIWidgets-Resize.lua`, which
+  the harness's hand-copied manifest does not list, so `PersistWindow` called a nil `GetResizeHandle`
+  in 103 window examples -- `Tests/env_togbank.lua` loads the satellite when the library comes up
+  without it (LAGW-RESIZE-FILE-001, harness contract filed; delete on adoption). The WHOLE forward
+  run no longer finishes inside the desk's 15-minute budget, so the full-suite claim is the declared
+  halves: forward A4 (altcompat..logwho incl. `linkclick_spec`, declared today) 879/0, forward B2
+  (mailbox..xguildlive, declared today) 936/0, reverse-order 1815/0 -- after LINKCLICK-001 as well.
+- **MDLINT-BACKLOG-001: every Markdown file in the repo lints clean.** A whole-repo `markdownlint`
+  (60 files) reported 100 violations, all pre-existing and all in five design docs nobody had linted
+  since they were written: `docs/MAIL_INVENTORY_DESIGN.md` (31), `docs/ORDER_FULFILLMENT_LOGIC.md`
+  (18), `docs/MAIL_PERSISTENCE_INVESTIGATION.md` (16), `docs/TESTING.md` (a UTF-8 byte-order mark,
+  8 headings, a table's pipe spacing, a double blank line) and `docs/fulfill-button-plan.md` (10
+  headings, a table). Every one was a blank line missing after a heading (MD022) or a table row's
+  pipe spacing (MD060) bar the BOM and the blank; the text is unchanged. None of these files ships
+  (`docs` is in `.pkgmeta`'s ignore); the point is that the whole-tree lint is now a usable gate.
+
 <!-- MOVED-TO-ARCHIVE 2026-09-25: the rest of v1.6.0 (its heading, Bug Fixes, New Features and
      Improvements), whole, with the desk's `file move-span`, to make room for v1.7.0. Its Internal
      entries were already here, below, under "extended engineering detail". -->

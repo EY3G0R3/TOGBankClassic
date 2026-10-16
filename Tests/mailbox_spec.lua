@@ -325,11 +325,11 @@ describe("MAILUI-001: opening beside the mail frame", function()
 		end)
 
 		it("is ON by default, on before the database exists and for a profile saved before it existed, and a General-tab toggle that reads back", function()
-			env.reset(); load(true); spyOpen()
+			-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+			env.reset({ frames = true }); load(true); spyOpen()
 			-- No Options module at all (load(true)'s world): the banker's window opens as before.
 			assert.is_true(M:AutoOpens())
 			-- The REAL Options: executed, not grepped.
-			require("env.frames").reset()
 			require("env.ace").load("AceDB-3.0", "AceConfig-3.0", "AceConfigDialog-3.0")
 			env.loadUI()
 			env.loadFile("Modules/Options.lua")
@@ -367,8 +367,8 @@ describe("MAILUI-001: opening beside the mail frame", function()
 		-- could be useful for non-bankers too" / "make a 2nd check box that enables/disables it, and
 		-- have it on by default for bankers only".
 		it("has a second General-tab box, off by default, that opens the window on non-bankers too -- and only while the first is on", function()
-			env.reset(); load(false); spyOpen()
-			require("env.frames").reset()
+			-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+			env.reset({ frames = true }); load(false); spyOpen()
 			require("env.ace").load("AceDB-3.0", "AceConfig-3.0", "AceConfigDialog-3.0")
 			env.loadUI()
 			env.loadFile("Modules/Options.lua")
@@ -534,10 +534,10 @@ describe("MAILUI-002: the window", function()
 	local calls
 
 	before_each(function()
-		env.reset()
 		-- The rich frame model BEFORE the widget library loads (browse_spec's rule: Ace3's widget
 		-- files capture CreateFrame at file scope, once per Lua state).
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true })
 		env.stubOutput()
 		require("env.libs").load("LibAceGUIWidgets-1.0")
 		-- SPEC-HYGIENE-001: Constants is loaded ONCE, by load() below -- neither UI.lua, RowList.lua

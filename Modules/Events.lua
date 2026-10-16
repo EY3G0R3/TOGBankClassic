@@ -46,6 +46,7 @@ function TOGBankClassic_Events:RegisterEvents()
 	self:RegisterEvent("MAIL_INBOX_UPDATE")
 	self:RegisterEvent("MAIL_CLOSED")
 	self:RegisterEvent("MAIL_SEND_SUCCESS")
+	self:RegisterEvent("MAIL_SEND_INFO_UPDATE")
 	self:RegisterEvent("UI_ERROR_MESSAGE")
 	self:RegisterEvent("GUILD_ROSTER_UPDATE")
 	self:RegisterEvent("CHAT_MSG_SYSTEM")
@@ -181,6 +182,7 @@ function TOGBankClassic_Events:UnregisterEvents()
 	self:UnregisterEvent("MAIL_INBOX_UPDATE")
 	self:UnregisterEvent("MAIL_CLOSED")
 	self:UnregisterEvent("MAIL_SEND_SUCCESS")
+	self:UnregisterEvent("MAIL_SEND_INFO_UPDATE")
 	self:UnregisterEvent("UI_ERROR_MESSAGE")
 	self:UnregisterEvent("CHAT_MSG_SYSTEM")
 	self:UnregisterEvent("TRADE_SHOW")
@@ -387,6 +389,10 @@ end
 
 function TOGBankClassic_Events:PLAYER_LOGIN(_)
 	TOGBankClassic_Guild:GetPlayer()
+	-- ACCOUNT-MODE-001: every character that logs in joins this account's "My characters".
+	if TOGBankClassic_Options and TOGBankClassic_Options.NoteAccountCharacter then
+		TOGBankClassic_Options:NoteAccountCharacter(TOGBankClassic_Guild:GetNormalizedPlayer())
+	end
 end
 
 function TOGBankClassic_Events:PLAYER_LOGOUT(_)
@@ -661,6 +667,7 @@ function TOGBankClassic_Events:MAIL_CLOSED(_)
 	TOGBankClassic_Mail.isOpen = false
 	TOGBankClassic_Mail.isScanning = false
 	TOGBankClassic_Mail:ResetFulfillStep()  -- FILLALL-001: drop any in-progress stepped fulfillment
+	TOGBankClassic_Mail:ClearSendSnapshot()  -- SEND-SNAPSHOT-001
 	-- LOG-MAIL-001: the inbox comparison ends with the mailbox. NOT a final read here: the inbox
 	-- data may already be gone from the client at this point, and an empty read would count every
 	-- attachment still sitting there as taken.
@@ -691,14 +698,56 @@ function TOGBankClassic_Events:MAIL_SEND_SUCCESS(_)
 	TOGBankClassic_Mail:ApplyPendingSend()
 end
 
-function TOGBankClassic_Events:UI_ERROR_MESSAGE(_, message)
+-- SEND-SNAPSHOT-001: record what is attached, for the send hook (Mail:OnSendInfoUpdate says why).
+function TOGBankClassic_Events:MAIL_SEND_INFO_UPDATE(_)
+	TOGBankClassic_Mail:OnSendInfoUpdate()
+end
+
+-- EVENTS-UIERR-004 (Peer Review 030b8a0a): the inbox raises ERR_MAIL_* errors too, and one of those
+-- landing while a batch send is pending freed the next Fulfill click early. These two can only come
+-- from the inbox, by their text in the classic_era enUS GlobalStrings (Ketho/BlizzardInterfaceResources):
+-- "That item has expired." (taking an expired attachment) and "You can't delete that." (deleting a
+-- mail). ERR_MAIL_DATABASE_ERROR's text names no side, so it may come from either and still counts as
+-- a send failure: a wrong free costs one early click, a wrong block costs the 5 s safety timer on every
+-- failed send. Only the batch flag skips these; the debug dump and the Requests status line still show
+-- them (Peer Review ca15a538 U1), so a failed take is still reported.
+local INBOX_ONLY_MAIL_ERRORS = {
+	ERR_MAIL_ATTACHMENT_EXPIRED = true,
+	ERR_MAIL_DELETE_ITEM_ERROR = true,
+}
+
+-- EVENTS-UIERR-002 (Peer Review 511e37b8 L1, 6639c74e R1): the message is the client's localized
+-- text, so the English word "mail" never matches a mail failure on a French or German client. The
+-- errorType names the error's string id in every language: GetGameMessageInfo(errorType) returns it
+-- (GameErrorDocumentation.lua; Blizzard's UIErrorsFrame calls it with this same messageType). The
+-- English word is only the fallback for a client without the function or an index it does not know
+-- (MayReturnNothing). Returns whether it is a mail error, and the string id when the client named one.
+local function isMailError(errorType, message)
+	local getInfo = _G.GetGameMessageInfo  -- read per call, so a spec's stand-in is seen
+	local errorName = errorType and getInfo and getInfo(errorType)
+	if errorName then
+		return errorName:sub(1, 9) == "ERR_MAIL_", errorName
+	end
+	return message:lower():find("mail") ~= nil
+end
+
+-- COVERAGE-EVENTS-001: the payload is (errorType, message) on every shipped flavour
+-- (Blizzard_APIDocumentationGenerated/SystemDocumentation.lua, UiErrorMessage). This took `(_, message)`,
+-- so `message` was the numeric errorType, no mail error ever matched, and a failed send left
+-- Mail.batchInFlight set -- the next Fulfill click answered "waiting for the last order" until the 5 s
+-- safety timer in Mail's batch send freed it.
+function TOGBankClassic_Events:UI_ERROR_MESSAGE(_, errorType, message)
 	if not message then
 		return
 	end
 
 	-- Capture mail send failures (includes "Internal mail database error")
-	if tostring(message):lower():find("mail") then
-		TOGBankClassic_Mail.batchInFlight = false  -- FILLALL-001: send failed; allow retry
+	local isMail, errorName = isMailError(errorType, tostring(message))
+	if isMail then
+		-- FILLALL-001: send failed; allow retry. EVENTS-UIERR-004: not for an inbox-only error.
+		if not INBOX_ONLY_MAIL_ERRORS[errorName] then
+			TOGBankClassic_Mail.batchInFlight = false
+		end
 		TOGBankClassic_Output:Debug("MAIL", "EVENTS", "UI_ERROR_MESSAGE: %s", tostring(message))
 		if TOGBankClassic_Mail and TOGBankClassic_Mail.DebugSendMailState then
 			TOGBankClassic_Mail:DebugSendMailState(message)

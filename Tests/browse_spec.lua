@@ -20,8 +20,8 @@ describe("BROWSE-001: the row list (FGI's, ported)", function()
 	local RowList, parent
 
 	before_each(function()
-		env.reset(); env.stubOutput()
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		env.loadFile("Modules/UI/RowList.lua")
 		RowList = TOGBankClassic_UI_RowList
 		parent = CreateFrame("Frame", nil, UIParent)
@@ -207,8 +207,8 @@ describe("VISIBILITY-001 part 2: the row list follows the accessibility scale", 
 	local RowList, parent, W
 
 	before_each(function()
-		env.reset(); env.stubOutput()
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		require("env.libs").load("LibAceGUIWidgets-1.0")
 		W = LibStub("LibAceGUIWidgets-1.0")
 		W:SetScale(1)
@@ -331,9 +331,12 @@ local function loadBrowse(opts)
 	-- HIDDEN-MERGE-001: the rows a window draws come from the REAL Guild:GetAltItemsWithOwnHidden,
 	-- lifted off the real module onto the steerable stub below, so the merge under test is the
 	-- shipped one and not a copy of it. Guild.lua needs Item.lua loaded first.
-	env.loadModules({ "Modules/Item.lua", "Modules/Guild.lua" })
+	env.loadModules({ "Modules/Item.lua", "Modules/Guild.lua", "Modules/RequestLog.lua" })
 	local realWithOwnHidden = TOGBankClassic_Guild.GetAltItemsWithOwnHidden
 	assert(type(realWithOwnHidden) == "function", "Guild:GetAltItemsWithOwnHidden is missing")
+	-- FINISHED-001: the Requests tab asks the real "is this order done" check, lifted the same way.
+	local realIsRequestFinished = TOGBankClassic_Guild.IsRequestFinished
+	assert(type(realIsRequestFinished) == "function", "Guild.IsRequestFinished is missing")
 	env.loadUI()
 	env.loadFile("Modules/UI/Search.lua")
 	env.loadFile("Modules/UI/RowList.lua")
@@ -388,6 +391,7 @@ local function loadBrowse(opts)
 		end,
 		GetAltItems = function(_, n) return Store:GetAltView(G, n) end,
 		GetAltItemsWithOwnHidden = realWithOwnHidden,
+		IsRequestFinished = realIsRequestFinished,
 	}
 	TOGBankClassic_Bank = TOGBankClassic_Bank or {}
 	TOGBankClassic_Options = { db = { global = {}, char = {} } }
@@ -425,14 +429,14 @@ end
 
 describe("BROWSE-001: the rows", function()
 	before_each(function()
-		env.reset()
 		-- The rich frame model BEFORE the widget library loads, in every describe of this file:
 		-- Ace3's widget files capture `local CreateFrame = CreateFrame` at file scope and are loaded
 		-- once per Lua state, so whichever spec loads them first fixes the binding for the whole
 		-- run. Loaded here under the hollow env, every later window spec in the suite would build
 		-- hollow AceGUI frames (statusbg:CreateFontString -> nil) -- found as this file's own window
 		-- describe failing when run after this one.
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true })
 		loadBrowse({ states = { [BOB] = { "behind", 1756000000, 1757000000 } } })
 		stock()
 	end)
@@ -623,8 +627,8 @@ end)
 
 describe("BROWSE-001: the window", function()
 	before_each(function()
-		env.reset()
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true })
 		loadBrowse({ me = ALICE, states = { [BOB] = { "behind", 1756000000, 1757000000 } } })
 		stock()
 		TOGBankClassic_UI_StatusBar = { AttachSides = function() return {} end }
@@ -2017,8 +2021,8 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 	local R
 
 	before_each(function()
-		env.reset()
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true })
 		loadBrowse({ me = ALICE, states = { [BOB] = { "behind", 1756000000, 1757000000 } } })
 		stock()
 		env.loadModules({ "Modules/Item.lua" })

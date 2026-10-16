@@ -22,8 +22,8 @@ local function row(id, count, suffix, enchant, name)
 end
 
 local function load(rowsByAlt)
-	env.reset()
-	require("env.frames").reset()
+	-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+	env.reset({ frames = true })
 	env.stubOutput()
 	env.loadFile("Modules/Constants.lua")
 	env.loadFile("Modules/Item.lua")

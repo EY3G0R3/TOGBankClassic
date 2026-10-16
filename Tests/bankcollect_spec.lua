@@ -388,6 +388,226 @@ describe("the mailbox fills orders first come, first served", function()
 		assert.equal(1, #extras)
 		assert.equal("extra", extras[1].req.id)
 	end)
+
+	-- FCFS-SELF-001 (Peer Review bf89d59d): the reservation covered only OTHER people's orders, so a
+	-- requester's own newer order rode along on the stock their own older order was waiting for.
+	it("does not let a requester's newer order ride along ahead of their OWN older one", function()
+		carry(5, 5)
+		order("first", 5,  { date = 100, name = "Wool Cloth", itemID = WOOL })   -- Alice's wool, sent now
+		order("older", 10, { date = 200 })                                        -- Alice's linen: 5 short
+		order("newer", 5,  { date = 300 })                                        -- Alice's linen: fits
+		local extras = Mail:FindMoreOrdersFor(ME, ALICE, "first", {}, 11)
+		assert.equal(0, #extras, "Alice's newer 5x linen spent the stock her older 10x order is waiting on")
+	end)
+
+	-- Peer Review bf89d59d B2's worked case: older wants 20, bags 5, bank 0; newer wants 5. The review
+	-- read the bank step as pulling for the newer order. It cannot: both orders match the same (empty)
+	-- bank stock. With stock, the OLDER order is the one collected for.
+	it("at the bank, never collects for a newer order ahead of an older one of the same item", function()
+		carry(5)
+		order("old", 20, { date = 100 })
+		order("new", 5,  { date = 200 }).requester = BOB
+		assert.is_nil(Mail:FindOldestBankFillableOrder(ME), "pulled for the newer order with an empty bank")
+		vault(20)
+		local req, short = Mail:FindOldestBankFillableOrder(ME)
+		assert.equal("old", req.id)
+		assert.equal(15, short)
+	end)
+
+	it("names the order holding the queue when nothing can be sent", function()
+		carry(5)
+		order("old", 10, { date = 100 })
+		order("new", 5,  { date = 200 }).requester = BOB
+		local savedMailFrame = _G.MailFrame
+		_G.MailFrame = { IsShown = function() return true end }
+		local ok, msg = Mail:FulfillStep(ME)
+		_G.MailFrame = savedMailFrame
+		assert.is_false(ok)
+		assert.truthy(msg:find(ALICE, 1, true), msg)
+		assert.truthy(msg:find("10x Linen Cloth", 1, true), msg)
+	end)
+
+	-- SUFFIX-KEY-001 (Peer Review bf89d59d): an order with no suffix is counted against EVERY variant of
+	-- its item, so it competes with an "of the Bear" order of the same item although their keys differ.
+	-- Such orders still arrive (stored before INV2-SUFFIX-001, from an old client, from another addon).
+	describe("an order with no suffix competes with every variant of its item", function()
+		local BEAR, TIGER = 863, 864
+
+		local function carryVariants(bear, tiger)
+			local contents = {}
+			if bear then contents[#contents + 1] = { id = LINEN, count = bear, suffix = BEAR } end
+			if tiger then contents[#contents + 1] = { id = LINEN, count = tiger, suffix = TIGER } end
+			env.setBag(0, 16, contents)
+		end
+
+		it("holds a newer Bear order behind an older no-suffix order", function()
+			carryVariants(5)
+			order("old", 10, { date = 100 })
+			order("new", 5,  { date = 200, suffixID = BEAR }).requester = BOB
+			assert.is_nil(Mail:FindOldestServiceableOrder(ME),
+				"the newer Bear order spent the stock the older any-variant order is waiting on")
+		end)
+
+		it("holds a newer no-suffix order behind an older Bear order", function()
+			carryVariants(5)
+			order("old", 10, { date = 100, suffixID = BEAR })
+			order("new", 5,  { date = 200 }).requester = BOB
+			assert.is_nil(Mail:FindOldestServiceableOrder(ME),
+				"the newer any-variant order took the Bear stack the older Bear order is waiting on")
+		end)
+
+		it("does not hold a Tiger order behind a Bear order: they never share a stack", function()
+			carryVariants(5, 5)
+			order("old", 10, { date = 100, suffixID = BEAR })
+			order("new", 5,  { date = 200, suffixID = TIGER }).requester = BOB
+			assert.equal("new", (Mail:FindOldestServiceableOrder(ME)).id)
+		end)
+
+		it("keeps an older no-suffix order's claim when a newer Bear order would ride along", function()
+			env.setBag(0, 16, {
+				{ id = WOOL, count = 5 },
+				{ id = LINEN, count = 5, suffix = BEAR },
+			})
+			order("first", 5, { date = 100, name = "Wool Cloth", itemID = WOOL })   -- Alice, sent now
+			order("bobs",  5, { date = 200 }).requester = BOB                         -- Bob: any linen
+			order("extra", 5, { date = 300, suffixID = BEAR })                       -- Alice: Bear linen
+			local extras = Mail:FindMoreOrdersFor(ME, ALICE, "first", {}, 11)
+			assert.equal(0, #extras, "Alice's newer Bear order rode on the 5 linen Bob's older order needs")
+		end)
+
+		it("at the bank, collects for a newer Bear order once an older no-suffix order has the bag stack", function()
+			carryVariants(5)
+			order("old", 5, { date = 100 })
+			order("new", 5, { date = 200, suffixID = BEAR }).requester = BOB
+			env.setBag(VAULT, 24, { { id = LINEN, count = 20, suffix = BEAR } })
+			local req, short = Mail:FindOldestBankFillableOrder(ME)
+			assert.equal("new", req and req.id,
+				"the Bear order was measured against the bag stack the older order already has")
+			assert.equal(5, short)
+		end)
+	end)
+
+	-- NAME-POOL-001 (Peer Review 1aa094de F1): an order with no item id (stored before REQ-001, or from
+	-- an old client) is counted in the bags by name, so it takes every item of that name and competes
+	-- with the orders that carry an id.
+	describe("an order with no item id competes with the orders of its name", function()
+		local function noId(req) req.itemID = nil; return req end
+
+		it("holds a newer id order behind an older no-id order", function()
+			carry(5)
+			noId(order("old", 10, { date = 100 }))
+			order("new", 5, { date = 200 }).requester = BOB
+			assert.is_nil(Mail:FindOldestServiceableOrder(ME),
+				"the newer id order spent the stock the older no-id order is waiting on")
+		end)
+
+		it("holds a newer no-id order behind an older id order", function()
+			carry(5)
+			order("old", 10, { date = 100 })
+			noId(order("new", 5, { date = 200 })).requester = BOB
+			assert.is_nil(Mail:FindOldestServiceableOrder(ME),
+				"the newer no-id order took the linen the older order is waiting on")
+		end)
+
+		it("does not hold an order for a differently named item", function()
+			carry(5, 5)
+			noId(order("old", 10, { date = 100 }))
+			order("wool", 5, { date = 200, name = "Wool Cloth", itemID = WOOL }).requester = BOB
+			assert.equal("wool", (Mail:FindOldestServiceableOrder(ME)).id)
+		end)
+
+		it("matches the name whatever its case", function()
+			carry(5)
+			noId(order("old", 10, { date = 100, name = "linen cloth" }))
+			order("new", 5, { date = 200 }).requester = BOB
+			assert.is_nil(Mail:FindOldestServiceableOrder(ME))
+		end)
+
+		-- Peer Review 104ff6f7 N1: the name key was tostring(item), so every order with no name shared
+		-- the key "nil" and an older nameless no-id order held every nameless order behind it.
+		it("does not let an order with no id and no name hold an id order that has no name either", function()
+			carry(5)
+			noId(order("old", 10, { date = 100 })).item = nil
+			order("new", 5, { date = 200 }).item = nil
+			local req = Mail:FindOldestServiceableOrder(ME)
+			assert.equal("new", req and req.id, "a nameless no-id order held a nameless id order under the key 'nil'")
+		end)
+	end)
+end)
+
+-- COLLECT-LAG-001 (Peer Review bf89d59d): TakeInboxItem is async. The inbox drops the attachment
+-- before the bags show it, so for a moment the pulled stack is in neither. An order reads blocked in
+-- that moment and Fulfill Oldest serves another order; the pull count for the first order used to be
+-- thrown away then, and recomputed from the lagging bag count when that order came back -- pulling
+-- again what was already on its way. The harness's TakeInboxItem only records the take, so each
+-- example stages the lag by hand: the attachment leaves the inbox and does not reach the bags.
+describe("pulling from the mail while a take is still landing", function()
+	local savedMailFrame
+	before_each(function()
+		load()
+		savedMailFrame = _G.MailFrame
+		_G.MailFrame = { IsShown = function() return true end }
+	end)
+	after_each(function() _G.MailFrame = savedMailFrame end)
+
+	local function linenMail(count)
+		local _, link = GetItemInfo(LINEN)
+		wow.mail[#wow.mail + 1] = { sender = "Somebody", items = { { name = "Linen Cloth", id = LINEN, count = count, link = link } } }
+	end
+
+	local function takes()
+		local out = {}
+		for _, a in ipairs(wow.mailActions) do if a.action == "take" then out[#out + 1] = a end end
+		return out
+	end
+
+	--- The last take left the inbox; the bags have not shown it yet.
+	local function inFlight()
+		local t = takes()[#takes()]
+		wow.mail[t.index].items[t.attachment] = nil
+	end
+
+	--- 1.5s later: the in-flight guard's own C_Timer.After has run (COLLECT-GUARD-TIMER-001, Peer
+	--- Review 074cdad6 A4: this used to clear the flag by hand, so a change to how the guard clears
+	--- could not show here).
+	local function guardElapsed()
+		assert.is_true(Mail.collectInFlight, "precondition: the take raised the in-flight guard")
+		env.advance(1.5)
+		assert.is_false(Mail.collectInFlight, "the guard's timer did not clear it after 1.5s")
+	end
+
+	it("keeps an order's pull count while another order is served in the gap", function()
+		order("old", 10, { date = 100 })
+		order("wool", 5, { date = 200, name = "Wool Cloth", itemID = WOOL })
+		env.setBag(0, 16, { { id = WOOL, count = 5 } })
+		linenMail(5); linenMail(5)
+
+		assert.is_true((Mail:FulfillStep(ME)))   -- pulls the first 5 linen for "old"
+		assert.equal(1, #takes(), "precondition: the first click pulled from the mail")
+		inFlight(); guardElapsed()
+
+		-- "old" reads 0 in bags + 5 in mail, short of 10: the wool order is served instead.
+		assert.is_true((Mail:FulfillStep(ME)))
+		assert.equal("wool", Mail.batchState and Mail.batchState.req.id, "precondition: the gap served the wool order")
+		Mail.batchState = nil                    -- that mail went
+		Guild.Info.requests.wool.fulfilled = 5
+		env.setBag(0, 16, {})
+
+		linenMail(5)                             -- more linen arrives; the first 5 still have not landed
+		assert.is_true((Mail:FulfillStep(ME)))   -- the second 5
+		guardElapsed()
+		Mail:FulfillStep(ME)                     -- 10 are on their way: nothing more to pull
+		assert.equal(2, #takes(), "pulled a third stack for an order that needed two; the first was still landing")
+	end)
+
+	it("forgets the pull count when the mailbox closes", function()
+		order("old", 10, { date = 100 })
+		linenMail(5); linenMail(5)
+		assert.is_true((Mail:FulfillStep(ME)))
+		assert.is_table(Mail.collectStates, "precondition: the pull was counted")
+		Mail:ResetFulfillStep()
+		assert.is_nil(Mail.collectStates, "a pull count outlived the mailbox")
+	end)
 end)
 
 describe("Mail:BankCollectStep", function()
@@ -754,12 +974,12 @@ describe("ResetFulfillStep", function()
 
 	it("drops the mailbox AND the bank state together", function()
 		Mail.batchState = { phase = "attach" }
-		Mail.collectState = { pulled = 1 }
+		Mail.collectStates = { r1 = { pulled = 1 } }
 		Mail.bankCollectState = { phase = "return", surplus = 1 }
-		assert.is_not_nil(Mail.batchState); assert.is_not_nil(Mail.collectState); assert.is_not_nil(Mail.bankCollectState)
+		assert.is_not_nil(Mail.batchState); assert.is_not_nil(Mail.collectStates); assert.is_not_nil(Mail.bankCollectState)
 		Mail:ResetFulfillStep()
 		assert.is_nil(Mail.batchState)
-		assert.is_nil(Mail.collectState)
+		assert.is_nil(Mail.collectStates)
 		assert.is_nil(Mail.bankCollectState)
 	end)
 end)

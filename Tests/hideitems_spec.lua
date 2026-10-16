@@ -374,11 +374,11 @@ describe("HIDE-001: the slot, the tooltip and the right click", function()
 	local UI
 
 	before_each(function()
-		env.reset()
-		env.stubOutput()
 		-- The rich frame model, not the hollow default: DrawItem builds a real AceGUI Icon, whose
 		-- constructor needs CreateFontString and CreateTexture to return objects.
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true })
+		env.stubOutput()
 		require("env.ace").load("AceGUI-3.0")
 		UI = env.loadUI()
 		TOGBankClassic_Options = { db = { global = {}, char = {} } }
@@ -463,8 +463,8 @@ describe("HIDE-001: the tooltip hint", function()
 	-- The harness's scanning GameTooltip (pin 830dab2): SetHyperlink fills the item's own lines
 	-- from `tooltipLines`, and the addon's AddLine lands BELOW them, counted by GetLines.
 	before_each(function()
-		env.reset(); env.stubOutput()
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		UI = env.loadUI()
 		env.defineItem(6948, { name = "Hearthstone", tooltipLines = { "Hearthstone", "Unique" } })
 	end)

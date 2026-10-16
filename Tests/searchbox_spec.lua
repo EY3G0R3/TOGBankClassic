@@ -30,12 +30,12 @@ describe("TOGBankSearchBox", function()
 	local UI
 
 	before_each(function()
-		env.reset(); env.stubOutput()
 		-- The rich widget layer, not the hollow default frame: a widget constructor needs
 		-- CreateFrame to return an OBJECT whose template children exist and whose unknown members
 		-- are nil (the hollow frame answers every key with a truthy no-op, so `eb.Instructions` would
 		-- be a function and the placeholder branch would take the wrong path).
-		require("env.frames").reset()
+		-- One reset through the rich model, not env.reset() then frames.reset() (SLOW-REQACTIONS-001).
+		env.reset({ frames = true }); env.stubOutput()
 		UI = loadUIWithLibrary()
 	end)
 
@@ -174,7 +174,9 @@ describe("Requests: ONE search across every column", function()
 		-- reset evicts since the harness's 2026-09-20 change (it used to find one an earlier file left).
 		env.reset({ frames = true }); env.stubOutput()
 		loadUIWithLibrary()
-		env.loadModules({ "Modules/Constants.lua", "Modules/Item.lua" })
+		-- SEARCH-007: the real Guild module answers the sister-guild name (GuildNameOf) the Bank
+		-- column shows, and RequestLog the status word (Guild.IsRequestFinished) the Date column shows.
+		env.loadModules({ "Modules/Constants.lua", "Modules/Item.lua", "Modules/Guild.lua", "Modules/RequestLog.lua" })
 		env.loadFile("Modules/UI/Requests.lua")
 		R = TOGBankClassic_UI_Requests
 		R:Init()
@@ -206,16 +208,24 @@ describe("Requests: ONE search across every column", function()
 		end
 	end)
 
-	it("searches the text a column SHOWS: the formatted date, the names, the item's display name", function()
+	it("searches the text a column SHOWS: the date and its status, the names, the quantity, the item, the sent count", function()
 		local r = req()
-		assert.equal(date("%Y-%m-%d %H:%M", 1757000000), R:ColumnText(r, "date"))
+		assert.equal(date("%Y-%m-%d %H:%M", 1757000000) .. " open", R:ColumnText(r, "date"))
 		assert.equal("Galdof-Azuresong", R:ColumnText(r, "requester"))
 		assert.equal("Togstone-Azuresong", R:ColumnText(r, "bank"))
+		assert.equal("3x", R:ColumnText(r, "quantity"))
+		assert.equal("", R:ColumnText(req({ quantity = "" }), "quantity"))
 		assert.equal("Stone Hammer", R:ColumnText(r, "item"))
-		assert.equal("Unknown", R:ColumnText(req({ date = 0 }), "date"))
+		assert.equal("1", R:ColumnText(req({ fulfilled = 1 }), "fulfilled"))
+		assert.equal("Unknown open", R:ColumnText(req({ date = 0 }), "date"))
+		assert.equal(date("%Y-%m-%d %H:%M", 1757000000) .. " cancelled", R:ColumnText(req({ status = "cancelled" }), "date"))
+		assert.equal(date("%Y-%m-%d %H:%M", 1757000000) .. " fulfilled", R:ColumnText(req({ fulfilled = 3 }), "date"),
+			"an open order sent in full shows the check mark, so it searches as fulfilled")
 	end)
 
-	it("passes a request when EVERY word appears somewhere across the four text columns", function()
+	-- SEARCH-007 (the operator, 2026-10-15: "the search requests needs to filter off the data in any
+	-- column, right now it doesn't"): every column but Actions.
+	it("passes a request when EVERY word appears somewhere across any column", function()
 		local r = req()
 		assert.is_true(R:SearchMatches(r, nil))
 		assert.is_true(R:SearchMatches(r, ""))
@@ -224,7 +234,24 @@ describe("Requests: ONE search across every column", function()
 		assert.is_true(R:SearchMatches(r, "tog"), "the bank column is searched")
 		assert.is_true(R:SearchMatches(r, date("%Y-%m", 1757000000)), "the date as shown is searched")
 		assert.is_false(R:SearchMatches(r, "gald axe"), "one word missing everywhere must fail the row")
-		assert.is_false(R:SearchMatches(req({ quantity = 777 }), "777"), "the quantity is not searched")
+		assert.is_true(R:SearchMatches(req({ quantity = 777 }), "777"), "the # column is searched")
+		assert.is_true(R:SearchMatches(req({ quantity = 777 }), "777x"), "the # column as shown is searched")
+		assert.is_true(R:SearchMatches(req({ fulfilled = 42 }), "42"), "the Sent column is searched")
+		assert.is_true(R:SearchMatches(req({ status = "cancelled" }), "cancelled"), "the status is searched")
+		assert.is_false(R:SearchMatches(r, "cancelled"), "an open request does not match another status")
+	end)
+
+	it("searches the sister guild's name the Bank column shows beside its banker", function()
+		local G = TOGBankClassic_Guild
+		local real = G.GuildNameOf
+		G.GuildNameOf = function(_, name) return name == "Togstone-Azuresong" and "Sister Guild" or "" end
+		local ok, err = pcall(function()
+			assert.equal("Togstone-Azuresong Sister Guild", R:ColumnText(req(), "bank"))
+			assert.is_true(R:SearchMatches(req(), "sister"))
+			assert.equal("", R:ColumnText(req({ bank = "" }), "bank"))
+		end)
+		G.GuildNameOf = real
+		assert(ok, err)
 	end)
 
 	it("SetSearch trims, drops an empty query, and redraws from the top of the list", function()
@@ -416,11 +443,11 @@ describe("Requests: ONE search across every column", function()
 		assert.equal(1, repainted, "turning the glow off did not repaint the Requests window")
 	end)
 
-	it("searches exactly the four text columns, and builds ONE box, above the dropdowns, none under a header", function()
+	it("searches every column but Actions (SEARCH-007), and builds ONE box, above the dropdowns, none under a header", function()
 		local src = env.readFile("Modules/UI/Requests.lua")
 		local with = {}
 		for key in src:gmatch('{ key = "(%w+)",[^\n]-search = true') do with[#with + 1] = key end
-		assert.same({ "date", "requester", "bank", "item" }, with)
+		assert.same({ "date", "requester", "bank", "quantity", "item", "fulfilled" }, with)
 		local boxes = 0
 		for _ in src:gmatch('Create%("TOGBankSearchBox"%)') do boxes = boxes + 1 end
 		assert.equal(1, boxes, "the Requests window must build exactly one search box")

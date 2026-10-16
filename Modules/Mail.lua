@@ -78,10 +78,45 @@ local function tog_mergeTargetIntact(onto)
 	return info ~= nil and info.itemID == onto.itemID and (info.stackCount or 1) == onto.count
 end
 
+--- How many attachments one outgoing mail holds. Peer Review 024ada6d F2: the one spelling of the cap
+--- -- it was written out at nine sites, and the capped-mail message and the planner must agree. A
+--- function rather than a file-scope local because ATTACHMENTS_MAX_SEND is the client's mail frame
+--- constant, read at call time.
+local function tog_mailCap()
+	return ATTACHMENTS_MAX_SEND or 12
+end
+
 --- Attachment slots a plan takes: its whole stacks, plus one for a split that is not merged onto
 --- one of them (MAIL-SPLIT-MERGE-001).
 local function tog_planSlots(plan)
 	return #(plan.stacksToAttach or {}) + ((plan.splitStack and not plan.splitStack.onto) and 1 or 0)
+end
+
+--- MAIL-SLOTCAP-001 (Peer Review bf89d59d B1): a plan needing more attachment slots than one mail
+--- holds (an order for 13 Linen held as 13 single stacks) used to be attached only up to slot 12 and
+--- then credited in full, so the order was marked filled for items that never left the bags. A plan
+--- that does not fit is cut to the first maxSlots whole stacks (CalculateFulfillmentPlan lists them
+--- largest first) with no split, and the quantity returned is what those stacks hold -- the order is
+--- credited that much, stays open, and remains the oldest, so the next click mails the rest.
+--- @return table plan, number qty the quantity this mail carries
+local function tog_capPlanToMail(plan, qty)
+	local maxSlots = tog_mailCap()
+	if tog_planSlots(plan) <= maxSlots then return plan, qty end
+	local stacks, carried = {}, 0
+	for i = 1, maxSlots do
+		local stack = plan.stacksToAttach[i]
+		if not stack then break end
+		stacks[i] = stack
+		carried = carried + stack.count
+	end
+	return {
+		canFulfill = true,
+		stacksToAttach = stacks,
+		splitStack = nil,
+		totalAttachable = carried,
+		requiresMailbox = true,
+		cappedFrom = qty,  -- what the order needs in all; FulfillStep says this mail is only part of it
+	}, carried
 end
 
 -- Initialize split stack popup dialog
@@ -304,13 +339,69 @@ function TOGBankClassic_Mail:InitSendHook()
 	end)
 end
 
+--- The send slots as { name, itemID, quantity } rows, slot order, empty slots skipped.
+local function tog_readSendSlots()
+	local slots = {}
+	for i = 1, tog_mailCap() do
+		local itemName, itemID, _, quantity = GetSendMailItem(i)
+		if itemName and quantity and quantity > 0 then
+			slots[#slots + 1] = { name = itemName, itemID = tonumber(itemID), quantity = quantity }
+		end
+	end
+	return slots
+end
+
+--- SEND-SNAPSHOT-001 (Peer Review 024ada6d, thread 0872fe66): OnSendMail runs in a hooksecurefunc
+--- POST-hook, after SendMail has returned, and reads what went from the send slots. When the client
+--- empties those slots is not in its UI source -- MAIL_SEND_SUCCESS only clears the name, subject and
+--- body boxes (Classic/MailFrame.lua SendMailFrame_Reset) -- so if it empties them inside SendMail,
+--- every addon send would trim to nothing and credit nothing. The slots are therefore also recorded
+--- on MAIL_SEND_INFO_UPDATE, the event Blizzard's frame repaints them on. An empty read keeps the last
+--- record and notes WHEN it went empty: GetTime() is frozen for a frame, so slots that went empty in
+--- the frame of the send were emptied by the send, while slots emptied in an earlier frame were
+--- emptied by the banker and the mail really went without them.
+function TOGBankClassic_Mail:OnSendInfoUpdate()
+	local slots = tog_readSendSlots()
+	if #slots > 0 then
+		self.sendSlots, self.sendSlotsEmptiedAt = slots, nil
+	elseif self.sendSlots and not self.sendSlotsEmptiedAt then
+		self.sendSlotsEmptiedAt = GetTime()
+	end
+end
+
+--- Drop the record (the mailbox closed).
+function TOGBankClassic_Mail:ClearSendSnapshot()
+	self.sendSlots, self.sendSlotsEmptiedAt = nil, nil
+end
+
+--- What this send carried: the live slots, or the record when the send itself emptied them. The
+--- record is consumed either way, so it can never stand in for a later mail.
+function TOGBankClassic_Mail:SendAttachments()
+	local live = tog_readSendSlots()
+	local snap, emptiedAt = self.sendSlots, self.sendSlotsEmptiedAt
+	self:ClearSendSnapshot()
+	local useSnap = #live == 0 and snap ~= nil and (emptiedAt == nil or emptiedAt == GetTime())
+	TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: %d slot(s) attached in the hook, %d recorded on the last update%s",
+		#live, snap and #snap or 0, useSnap and " -- using the record" or "")
+	if useSnap then return snap end
+	return live
+end
+
 function TOGBankClassic_Mail:OnSendMail(recipient)
 	TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: HOOK FIRED for recipient=%s", tostring(recipient))
+	local attached = self:SendAttachments()
 
 	-- If pendingSend was set recently by PrepareFulfillMail (within 10 seconds), keep it
 	-- Otherwise, read items from mail attachments (fallback for non-fulfill mails)
+	-- SEND-RECIPIENT-001 (Peer Review f4c6a142, R1): only for a mail to the same person. A pendingSend
+	-- outlives a failed send, and the banker can retype the name box after a row Fulfill, so a mail to
+	-- Bob carrying the same item would credit Alice's orders. Compared without case, because the
+	-- client sends to a name typed in any case.
 	local now = GetTime()
-	if self.pendingSend and self.pendingSendAt and (now - self.pendingSendAt) < 10 then
+	local normRecipient = TOGBankClassic_Guild:NormalizeName(recipient)
+	local pendingTo = self.pendingSend and self.pendingSend.recipient
+	local sameRecipient = normRecipient ~= nil and pendingTo ~= nil and normRecipient:lower() == pendingTo:lower()
+	if sameRecipient and self.pendingSendAt and (now - self.pendingSendAt) < 10 then
 		-- MULTIORDER-001: addon-generated send. KEEP pending.items exactly as PrepareFulfillMail
 		-- set it — it carries the request's own stored item name (the requester's locale, which
 		-- always compares equal to req.item) and the precise attached quantity, so the targeted
@@ -324,29 +415,64 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 		-- filled that never went. Each entry is cut to what is actually attached under its name,
 		-- in order; an entry cut to nothing is dropped. What is attached beyond the entries is the
 		-- hand-added extra to spill, as before.
-		local attachedByName = {}
-		for attachmentIndex = 1, ATTACHMENTS_MAX_SEND do
-			local itemName, _, _, quantity = GetSendMailItem(attachmentIndex)
-			if itemName and quantity and quantity > 0 then
-				attachedByName[itemName] = (attachedByName[itemName] or 0) + quantity
+		-- LOCALE-SENDTRIM-001 (Peer Review 4d7fc1c4): the cut compared the slot's name (the banker's
+		-- locale) with it.name (the requester's), so in a mixed-locale guild every entry matched
+		-- nothing and the send credited no order. An entry carrying an id is matched to slots by id;
+		-- only an entry without one (or a slot the client gave no id) still falls back to the name.
+		-- An entry has no id only when its request has none (pre-REQ-001), and such a request was
+		-- found in the bags by name, so its name is the banker's own and the fallback still matches.
+		-- Random-suffix siblings ("of the Bear" / "of the Monkey") share one base id, so an id match
+		-- alone could hand one order its sibling's slot when the banker detached its own. So EVERY
+		-- entry first takes slots matching id AND name (same locale: exact), and only after all of
+		-- them have does any entry take what is left by id alone.
+		local pool = {}
+		for _, s in ipairs(attached) do
+			pool[#pool + 1] = { name = s.name, itemID = s.itemID, left = s.quantity }
+		end
+		local function matches(it, p, exact)
+			if it.itemID and p.itemID then
+				return p.itemID == it.itemID and (not exact or p.name == it.name)
+			end
+			return p.name == it.name
+		end
+		local entries = self.pendingSend.items or {}
+		local taken = {}
+		for _, exact in ipairs({ true, false }) do
+			for i, it in ipairs(entries) do
+				local want = it.quantity or 0
+				taken[i] = taken[i] or 0
+				for _, p in ipairs(pool) do
+					if taken[i] >= want then break end
+					if p.left > 0 and matches(it, p, exact) then
+						local n = math.min(p.left, want - taken[i])
+						p.left, taken[i] = p.left - n, taken[i] + n
+					end
+				end
 			end
 		end
 		local kept = {}
-		for _, it in ipairs(self.pendingSend.items or {}) do
-			local have = attachedByName[it.name] or 0
-			local take = math.min(it.quantity or 0, have)
+		for i, it in ipairs(entries) do
+			local take = taken[i]
 			if take > 0 then
 				it.quantity = take
 				kept[#kept + 1] = it
-				attachedByName[it.name] = have - take
 			else
 				TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: %s for request %s is no longer attached -- not credited", tostring(it.name), tostring(it.requestId or self.pendingSend.requestId))
 			end
 		end
 		self.pendingSend.items = kept
-		local extras = {}
-		for itemName, quantity in pairs(attachedByName) do
-			if quantity > 0 then table.insert(extras, { name = itemName, quantity = quantity }) end
+		-- Peer Review f6aa732c F3: grouped by item id when the slot has one, and the id rides along so
+		-- FulfillRequest can match a requester whose order is named in another locale.
+		local leftByKey, extras = {}, {}
+		for _, p in ipairs(pool) do
+			if p.left > 0 then
+				local key = p.itemID or p.name
+				if not leftByKey[key] then
+					leftByKey[key] = { name = p.name, itemID = p.itemID, quantity = 0 }
+					extras[#extras + 1] = leftByKey[key]
+				end
+				leftByKey[key].quantity = leftByKey[key].quantity + p.left
+			end
 		end
 		if #extras > 0 then
 			self.pendingSend.extraItems = extras
@@ -360,14 +486,7 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	self.pendingSendAt = nil
 
 	local sender = TOGBankClassic_Guild:GetNormalizedPlayer()
-	local items = {}
-
-	for attachmentIndex = 1, ATTACHMENTS_MAX_SEND do
-		local itemName, _, _, quantity = GetSendMailItem(attachmentIndex)
-		if itemName and quantity and quantity > 0 then
-			table.insert(items, { name = itemName, quantity = quantity })
-		end
-	end
+	local items = attached
 
 	TOGBankClassic_Output:Debug(
 		"MAIL",
@@ -394,8 +513,6 @@ function TOGBankClassic_Mail:OnSendMail(recipient)
 	end
 
 	TOGBankClassic_Output:Debug("MAIL", "STORE", "OnSendMail: Sender %s IS a banker, setting pendingSend", tostring(sender))
-	local normRecipient = TOGBankClassic_Guild:NormalizeName(recipient)
-
 	self.pendingSend = {
 		sender = sender,
 		recipient = normRecipient,
@@ -414,15 +531,10 @@ end
 function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
 	local recipient = SendMailNameEditBox and SendMailNameEditBox:GetText() or nil
 	local subject = SendMailSubjectEditBox and SendMailSubjectEditBox:GetText() or nil
-	local items = {}
+	-- Peer Review f6aa732c F5: the one reader of the send slots.
+	local items = tog_readSendSlots()
 	local totalCount = 0
-	for attachmentIndex = 1, (ATTACHMENTS_MAX_SEND or 12) do
-		local itemName, itemID, _, quantity = GetSendMailItem(attachmentIndex)
-		if itemName and quantity and quantity > 0 then
-			table.insert(items, { name = itemName, id = itemID, quantity = quantity })
-			totalCount = totalCount + quantity
-		end
-	end
+	for _, item in ipairs(items) do totalCount = totalCount + item.quantity end
 
 	TOGBankClassic_Output:Debug(
 		"MAIL",
@@ -442,7 +554,7 @@ function TOGBankClassic_Mail:DebugSendMailState(contextMessage)
 			"  Attachment %d: %s (id=%s) x%d",
 			i,
 			tostring(item.name),
-			tostring(item.id),
+			tostring(item.itemID),
 			item.quantity
 		)
 	end
@@ -480,9 +592,11 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 	-- attachment across every matching open order for that banker (the pre-existing behaviour).
 	-- MULTIFILL-001: a mail carrying several of one requester's orders has one entry per order,
 	-- each with its own id; the envelope's requestId is the first order's and only a fallback.
+	-- Peer Review f6aa732c F4: every row hands FulfillRequest its item id too, so a manual mail's
+	-- slot rows (named in the banker's locale) still match an order named in the requester's.
 	for _, item in ipairs(pending.items) do
 		local applied = TOGBankClassic_Guild:FulfillRequest(
-			pending.sender, pending.recipient, item.name, item.quantity, item.requestId or pending.requestId)
+			pending.sender, pending.recipient, item.name, item.quantity, item.requestId or pending.requestId, item.itemID)
 		if applied > 0 then
 			TOGBankClassic_Output:Info("  Applied %dx %s toward %s's order(s)", applied, item.name, pending.recipient)
 		end
@@ -491,10 +605,11 @@ function TOGBankClassic_Mail:ApplyPendingSend()
 
 	-- MULTIORDER-001: spill items the banker hand-added to an addon-generated mail (to "save a
 	-- mail") across the recipient's OTHER open orders for this banker. nil requestId = match any
-	-- of that banker's matching orders by name. Empty/absent for fully manual mails.
+	-- of that banker's matching orders (by item id when known, else by name). Empty/absent for
+	-- fully manual mails.
 	for _, item in ipairs(pending.extraItems or {}) do
 		local applied = TOGBankClassic_Guild:FulfillRequest(
-			pending.sender, pending.recipient, item.name, item.quantity, nil)
+			pending.sender, pending.recipient, item.name, item.quantity, nil, item.itemID)
 		if applied > 0 then
 			TOGBankClassic_Output:Info("  Applied %dx %s toward %s's other order(s)", applied, item.name, pending.recipient)
 		end
@@ -721,8 +836,8 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 
 	-- BANKFILL-001 cleanup: `largestStack` was computed here and never read. Deleted rather than
 	-- silenced -- the sort above already means items[1] IS the largest, so anything wanting it can
-	-- say so at the point of use.
-	local smallestStack = items[#items].count
+	-- say so at the point of use. (`smallestStack` went the same way with the dead branch below,
+	-- COVERAGE-MAIL-001.)
 
 	-- PHASE 1: Try greedy exact match (accumulate stacks that fit without exceeding)
 	local accumulated = 0
@@ -863,24 +978,14 @@ function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInB
 		}
 	end
 
-	-- Edge case: single large stack, need to split
-	if accumulated == 0 and smallestStack > qtyNeeded and totalInBags >= qtyNeeded then
-		return {
-			canFulfill = true,
-			reason = string.format("Split from stack of %d.", smallestStack),
-			stacksToAttach = {},
-			splitStack = {
-				bag = items[1].bag,
-				slot = items[1].slot,
-				count = items[1].count,
-				amount = qtyNeeded
-			},
-			totalAttachable = 0,
-			requiresMailbox = true
-		}
-	end
-
-	-- Shouldn't reach here, but fallback
+	-- COVERAGE-MAIL-001: a "single large stack" branch stood here (accumulated == 0 and every stack
+	-- larger than the need). It could not run: for qtyNeeded > 0 that case is PHASE 3's -- items[1] is
+	-- an unattached stack >= the need -- and qtyNeeded == 0 returns at PHASE 1. Only a negative need
+	-- reached it, and then it answered canFulfill with a negative split. Deleted.
+	--
+	-- Reached by a negative need, or when the caller's totalInBags is more than `items` holds (every
+	-- shipped caller passes the sum of `items`): fail closed rather than plan a split from stacks that
+	-- are not there.
 	return {
 		canFulfill = false,
 		reason = "Unable to determine fulfillment strategy.",
@@ -1002,7 +1107,7 @@ end
 --- attached -- crediting them to nobody when the mail went.
 ---@return boolean anyAttached, number|nil firstFree nil when every slot is taken
 local function tog_sendSlots()
-	local maxSlots = ATTACHMENTS_MAX_SEND or 12
+	local maxSlots = tog_mailCap()
 	local any, firstFree = false, nil
 	for i = 1, maxSlots do
 		if GetSendMailItem(i) then any = true elseif not firstFree then firstFree = i end
@@ -1042,7 +1147,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- theirs when pendingSend names the same recipient (set only by this function and FulfillStep,
 	-- so a hand-built mail never qualifies); anyone else's mail is still refused, with their name.
 	local normRecipient = TOGBankClassic_Guild:NormalizeName(requester)
-	local maxSlots = ATTACHMENTS_MAX_SEND or 12
+	local maxSlots = tog_mailCap()
 	local attachmentSlot = 1
 	local anyAttached, firstFree = tog_sendSlots()
 	if anyAttached then
@@ -1134,11 +1239,20 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	-- send already open for this recipient.
 	if attached > 0 then
 		local sender = TOGBankClassic_Guild:GetNormalizedPlayer()
-		local entry = { name = itemName, quantity = attached, requestId = request.id }
+		local entry = { name = itemName, itemID = tonumber(request.itemID), quantity = attached, requestId = request.id }
 		if anyAttached and self.pendingSend and self.pendingSend.recipient == normRecipient then
 			table.insert(self.pendingSend.items, entry)
-			message = string.format("Attached %d %s for %s -- %d orders on this mail. Click Send to complete.",
-				attached, itemName, requester, #self.pendingSend.items)
+			-- COVERAGE-MAIL-001: an order that ran out of slots on this mail must still SAY it is partial.
+			-- This line used to replace the partial notice with "Click Send to complete" for any added
+			-- order, so a banker appending a 20-order to a mail with one slot left was told the order was
+			-- done when only half of it was attached.
+			if attached >= qtyNeeded then
+				message = string.format("Attached %d %s for %s -- %d orders on this mail. Click Send to complete.",
+					attached, itemName, requester, #self.pendingSend.items)
+			else
+				message = string.format("Attached %d of %d %s (partial) -- %d orders on this mail. Click Send, then fulfill again.",
+					attached, qtyNeeded, itemName, #self.pendingSend.items)
+			end
 		else
 			self.pendingSend = {
 				sender = sender,
@@ -1229,19 +1343,71 @@ function TOGBankClassic_Mail:TakeOneInboxItemFor(req)
 	return false
 end
 
--- The pool an order draws from: item id + suffix, or the lowercased name for a legacy order with no
--- id. Every order with the same key competes for the same stacks.
-local function tog_orderKey(req)
-	return TOGBankClassic_Inventory_Record.requestKey(req.itemID, req.suffixID)
-		or ("n:" .. string.lower(tostring(req.item)))
+-- nil for an order with no usable name (Peer Review 104ff6f7 N1): tostring(nil) made every nameless
+-- order share the key "nil", so a nameless no-id order was held by every nameless id order.
+local function tog_nameKey(req)
+	if type(req.item) == "string" and req.item ~= "" then return string.lower(req.item) end
+	return nil
 end
 
--- Oldest = smallest date, with a stable id tiebreak so same-second orders resolve deterministically.
--- The one definition of "oldest" every fulfillment search sorts by.
+-- The key a no-id order of this order's name has; the one spelling tog_orderKey and tog_poolFor share.
+local function tog_noIdKey(req)
+	local name = tog_nameKey(req)
+	return name and ("n:" .. name) or nil
+end
+
+-- The pool an order draws from: item id + suffix, or the lowercased name for a legacy order with no
+-- id. Every order with the same key competes for the same stacks. nil for an order with neither,
+-- which then competes with nothing.
+local function tog_orderKey(req)
+	return TOGBankClassic_Inventory_Record.requestKey(req.itemID, req.suffixID) or tog_noIdKey(req)
+end
+
+-- SUFFIX-KEY-001 (Peer Review bf89d59d): an order with NO suffix is counted against every variant of
+-- its item (CountItemInBags with no suffix matches them all), so it competes with an "of the Bear"
+-- order of the same item, though their keys differ. Such orders still exist: one stored before
+-- INV2-SUFFIX-001, one from an old client, one placed by another addon through Guild:AddRequest. Two
+-- orders compete when they share a key, or share an item id and either has no suffix. A pool sums an
+-- amount per order and answers "how much of it do THIS order's competitors hold" -- the one rule the
+-- mailbox hold, the ride-along reservation and the bank shortfall all apply.
+--
+-- NAME-POOL-001 (Peer Review 1aa094de F1): the same holds one level up. A legacy order with no item id
+-- is counted in the bags by NAME (Bank MatchContainers), so it takes every item of that name, id or
+-- not; it competes with every order whose stored name equals its own, and every such order competes
+-- with it. Over-holding where two items share a name is the safe direction, as for suffixes.
+local function tog_newPool()
+	return { key = {}, id = {}, name = {} }
+end
+
+local function tog_hasSuffix(req)
+	local s = tonumber(req.suffixID)
+	return s ~= nil and s ~= 0
+end
+
+local function tog_poolAdd(pool, req, n)
+	local key = tog_orderKey(req)
+	if key then pool.key[key] = (pool.key[key] or 0) + n end
+	local id = tonumber(req.itemID)
+	if id then pool.id[id] = (pool.id[id] or 0) + n end
+	local name = tog_nameKey(req)
+	if name then pool.name[name] = (pool.name[name] or 0) + n end
+end
+
+local function tog_poolFor(pool, req)
+	local id = tonumber(req.itemID)
+	local name = tog_nameKey(req)
+	if not id then return name and pool.name[name] or 0 end
+	local noIdKey = tog_noIdKey(req)
+	local noId = noIdKey and pool.key[noIdKey] or 0   -- the no-id orders of this order's name
+	if not tog_hasSuffix(req) then return (pool.id[id] or 0) + noId end
+	return (pool.key[tog_orderKey(req)] or 0)
+		+ (pool.key[TOGBankClassic_Inventory_Record.requestKey(id, 0)] or 0)
+		+ noId
+end
+
+-- The one definition of "oldest" lives on Guild (RequestOlderFirst), shared with FulfillRequest.
 local function tog_olderFirst(a, b)
-	local da, db = tonumber(a.date) or 0, tonumber(b.date) or 0
-	if da ~= db then return da < db end
-	return tostring(a.id) < tostring(b.id)
+	return TOGBankClassic_Guild.RequestOlderFirst(a, b)
 end
 
 -- This banker's open orders that still need something, oldest first.
@@ -1274,25 +1440,29 @@ end
 -- first unfillable order for an item blocks every newer order for that item; orders for OTHER items
 -- are unaffected, because they do not compete for the same stacks.
 function TOGBankClassic_Mail:FindOldestServiceableOrder(normActor)
-	local blocked = {}
+	local blocked = tog_newPool()
+	local firstHeld   -- the oldest order holding its item's queue, for the "nothing to send" message
 	for _, req in ipairs(tog_openOrdersOldestFirst(normActor)) do
-		local key = tog_orderKey(req)
-		if not blocked[key] then
+		if tog_poolFor(blocked, req) == 0 then
 			local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(req)
 			local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
 			if totalInBags >= qtyNeeded then
 				local plan = self:CalculateFulfillmentPlan(tog_copyItems(items), qtyNeeded, totalInBags)
-				if plan.canFulfill then return req, true, plan, qtyNeeded end
+				if plan.canFulfill then
+					local mailPlan, mailQty = tog_capPlanToMail(plan, qtyNeeded)
+					return req, true, mailPlan, mailQty
+				end
 			else
 				local inboxQty = tog_inboxQtyFor(req)
 				if inboxQty > 0 and (totalInBags + inboxQty) >= qtyNeeded then
 					return req, false, nil, qtyNeeded  -- bags + mail can cover it; pull the mail items first
 				end
 			end
-			blocked[key] = true
+			tog_poolAdd(blocked, req, 1)
+			firstHeld = firstHeld or req
 		end
 	end
-	return nil
+	return nil, nil, nil, nil, firstHeld
 end
 
 --- MULTIFILL-001: the SAME requester's other open orders for this banker that the bags can fill,
@@ -1321,13 +1491,11 @@ function TOGBankClassic_Mail:FindMoreOrdersFor(normActor, requester, excludeId, 
 	-- FCFS-001: what OTHER people's older orders still need of each item. Their claim on the bags comes
 	-- first, so an extra rides only on stock left over after them -- riding along must not let this
 	-- requester's newer order jump someone else's older one.
-	local reservedBefore = {}
+	local reservedBefore = tog_newPool()
 	for _, req in ipairs(tog_openOrdersOldestFirst(normActor)) do
 		if req.requester ~= requester then
-			local key = tog_orderKey(req)
-			reservedBefore[key] = (reservedBefore[key] or 0) + TOGBankClassic_Guild:RequestQuantityNeeded(req)
+			tog_poolAdd(reservedBefore, req, TOGBankClassic_Guild:RequestQuantityNeeded(req))
 		elseif req.id ~= excludeId and slotsLeft > 0 then
-			local key = tog_orderKey(req)
 			local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(req)
 			local _, items = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
 			local free, total = {}, 0
@@ -1337,7 +1505,7 @@ function TOGBankClassic_Mail:FindMoreOrdersFor(normActor, requester, excludeId, 
 					total = total + it.count
 				end
 			end
-			if total - (reservedBefore[key] or 0) >= qtyNeeded then
+			if total - tog_poolFor(reservedBefore, req) >= qtyNeeded then
 				local plan = self:CalculateFulfillmentPlan(free, qtyNeeded, total)
 				local needSlots = tog_planSlots(plan)
 				if plan.canFulfill and needSlots <= slotsLeft then
@@ -1345,7 +1513,13 @@ function TOGBankClassic_Mail:FindMoreOrdersFor(normActor, requester, excludeId, 
 					if plan.splitStack then claimed[plan.splitStack.bag .. ":" .. plan.splitStack.slot] = true end
 					slotsLeft = slotsLeft - needSlots
 					extras[#extras + 1] = { req = req, plan = plan, qty = qtyNeeded }
+				else
+					-- FCFS-SELF-001 (Peer Review bf89d59d): an order of this requester's that does not ride
+					-- keeps its claim too, so their own newer order of the item cannot spend its stock.
+					tog_poolAdd(reservedBefore, req, qtyNeeded)
 				end
+			else
+				tog_poolAdd(reservedBefore, req, qtyNeeded)
 			end
 		end
 	end
@@ -1355,7 +1529,7 @@ end
 -- Clear any in-progress stepped fulfillment (e.g. when the mailbox closes).
 function TOGBankClassic_Mail:ResetFulfillStep()
 	self.batchState = nil
-	self.collectState = nil
+	self.collectStates = nil
 	self.bankCollectState = nil
 end
 
@@ -1387,13 +1561,18 @@ function TOGBankClassic_Mail:FindOldestBankFillableOrder(normActor)
 	-- "covered" a newer order of the same item, and the newer one was never collected for. The bags
 	-- are now handed out oldest-first, and each order's shortfall is what is left after the older
 	-- orders' share.
-	local given = {}
+	-- SUFFIX-KEY-001: a no-suffix order shares the pool with every variant's orders. For a suffixed
+	-- order the no-suffix orders' share is subtracted whole, though some of it may be another variant's
+	-- stacks -- the error is toward collecting a stack too many, never toward leaving an order short.
+	local given = tog_newPool()
+	-- Peer Review bf89d59d B2 asked for the mailbox's per-item hold here. It is not needed: orders with
+	-- one key match the same bank stock, so when the bank cannot help an older order it cannot help a
+	-- newer one of that item either, and the newer one is never collected for ahead of it.
 	for _, req in ipairs(open) do
 		local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(req)
-		local key = tog_orderKey(req)
 		local inBags = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
-		local free = math.max(0, inBags - (given[key] or 0))
-		given[key] = (given[key] or 0) + math.min(free, qtyNeeded)
+		local free = math.max(0, inBags - tog_poolFor(given, req))
+		tog_poolAdd(given, req, math.min(free, qtyNeeded))
 		local shortfall = qtyNeeded - free
 		if shortfall > 0 and TOGBankClassic_Bank:CountItemInBank(req.item, req.itemID, req.suffixID) > 0 then
 			-- The TRUE shortfall, not capped at what the bank holds: the pick below already takes the
@@ -1419,7 +1598,8 @@ function TOGBankClassic_Mail:ItemsOpenOrdersNeed(normActor)
 		if (req.status or "open") == "open"
 			and req.bank and TOGBankClassic_Guild:NormalizeName(req.bank) == normActor then
 			if tonumber(req.itemID) then needed.id[tonumber(req.itemID)] = true end
-			if type(req.item) == "string" and req.item ~= "" then needed.name[string.lower(req.item)] = true end
+			-- NAMEKEY-ONE-SPELLING-001 (Peer Review 074cdad6 A3): the one name-key rule, not a copy of it.
+			if tog_nameKey(req) then needed.name[tog_nameKey(req)] = true end
 		end
 	end
 	return needed
@@ -1597,8 +1777,15 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 		if (tog_sendSlots()) then
 			return false, "The open mail already has items attached — send or clear it first."
 		end
-		local req, bagsReady, plan, qtyNeeded = self:FindOldestServiceableOrder(normActor)
+		local req, bagsReady, plan, qtyNeeded, held = self:FindOldestServiceableOrder(normActor)
 		if not req then
+			if held then
+				-- BANKCOLLECT-FCFS-001: say which order is first in line, so a banker holding stock for
+				-- a newer order knows why it is not going out.
+				return false, string.format(
+					"Nothing to send yet — %s's order for %dx %s is first in line and your bags and mail can't cover it.",
+					tostring(held.requester), TOGBankClassic_Guild:RequestQuantityNeeded(held), tostring(held.item))
+			end
 			return false, "No orders you can fully fill from your bags or mail right now."
 		end
 
@@ -1609,13 +1796,19 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 			-- Pull only as many as the order is short, then stop — never empty the
 			-- mail of an item just because there are several copies. Taking an inbox
 			-- item is async (it lands in bags a moment later), so we count what we've
-			-- already pulled (collectState.pulled) against the deficit rather than
+			-- already pulled (cs.pulled) against the deficit rather than
 			-- relying on the live bag count, which lags.
-			local cs = self.collectState
-			if not cs or cs.reqId ~= req.id then
+			--
+			-- COLLECT-LAG-001 (Peer Review bf89d59d): kept PER ORDER. For a moment a pulled stack is in
+			-- neither the inbox nor the bags, so this order can read blocked and another be served; one
+			-- shared state was replaced then, and recomputed from the lagging bag count when this order
+			-- came back -- pulling again what was already on its way. Cleared when the mailbox closes.
+			self.collectStates = self.collectStates or {}
+			local cs = self.collectStates[req.id]
+			if not cs then
 				local inBagsNow = TOGBankClassic_Bank:CountItemInBags(req.item, req.itemID, req.suffixID)
-				cs = { reqId = req.id, toPull = math.max(0, qtyNeeded - inBagsNow), pulled = 0 }
-				self.collectState = cs
+				cs = { toPull = math.max(0, qtyNeeded - inBagsNow), pulled = 0 }
+				self.collectStates[req.id] = cs
 			end
 			if cs.pulled >= cs.toPull then
 				-- Already pulled what's needed; just wait for it to arrive in bags.
@@ -1640,7 +1833,7 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 			self.collectInFlight = false
 			return false, "Couldn't pull from the mail just now — click again."
 		end
-		self.collectState = nil  -- bags can cover it now; collecting done
+		if self.collectStates then self.collectStates[req.id] = nil end  -- bags can cover it now; collecting done
 
 		-- Make sure we're on the Send Mail tab so attaching works.
 		if MailFrameTab2 and MailFrameTab2.Click then MailFrameTab2:Click() end
@@ -1653,7 +1846,7 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 		-- an extra planned on its full count would attach the remainder and be credited the plan.
 		if plan.splitStack then claimed[plan.splitStack.bag .. ":" .. plan.splitStack.slot] = true end
 		local used = tog_planSlots(plan)
-		local extras = self:FindMoreOrdersFor(normActor, req.requester, req.id, claimed, (ATTACHMENTS_MAX_SEND or 12) - used)
+		local extras = self:FindMoreOrdersFor(normActor, req.requester, req.id, claimed, tog_mailCap() - used)
 		-- MULTIFILL-002: every split the mail needs -- the first order's and each extra's -- is one
 		-- list, performed together by the SPLIT phase. `extra = nil` marks the first order's.
 		local splits = {}
@@ -1667,10 +1860,17 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 			phase = #splits > 0 and "split" or "attach",
 		}
 		local more = #extras > 0 and string.format(" (+%d more of their orders)", #extras) or ""
-		if #splits > 0 then
-			return true, string.format("Order: %dx %s for %s%s. Click to SPLIT.", qtyNeeded, req.item, req.requester, more)
+		-- MAIL-SLOTCAP-001 self-audit F2 (Peer Review 4d7fc1c4): a capped mail is only part of the
+		-- order, and "Order: 12x" alone reads as the whole of it.
+		local amount = string.format("%dx", qtyNeeded)
+		if plan.cappedFrom then
+			amount = string.format("%d of %dx", qtyNeeded, plan.cappedFrom)
+			more = more .. string.format(" (one mail holds %d stacks; the rest goes next)", tog_mailCap())
 		end
-		return true, string.format("Order: %dx %s for %s%s. Click to ATTACH.", qtyNeeded, req.item, req.requester, more)
+		if #splits > 0 then
+			return true, string.format("Order: %s %s for %s%s. Click to SPLIT.", amount, req.item, req.requester, more)
+		end
+		return true, string.format("Order: %s %s for %s%s. Click to ATTACH.", amount, req.item, req.requester, more)
 	end
 
 	-- SPLIT: split each needed amount into its own free bag slot as its own stack (like the manual
@@ -1756,13 +1956,17 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 			end
 		end
 		local slot = 1
-		local maxSlots = ATTACHMENTS_MAX_SEND or 12
+		local maxSlots = tog_mailCap()
 		local function splitFor(extra)
 			for _, s in ipairs(st.splits or {}) do
 				if s.extra == extra and s.bag then return s end
 			end
 		end
+		-- Returns how many items it attached, which is what the order is credited (MAIL-SLOTCAP-001):
+		-- the plan is capped to one mail in IDLE, so this should equal the plan, but a mail that ran
+		-- out of slots must never be credited for stacks left behind.
 		local function attachOrder(plan, extra)
+			local attached = 0
 			local s = splitFor(extra)
 			-- A merged split rides on its target, which the whole-stack loop below attaches.
 			if s and not s.merged then
@@ -1770,6 +1974,7 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 				C_Container.PickupContainerItem(s.bag, s.slot)
 				ClickSendMailItemButton(slot)
 				slot = slot + 1
+				attached = attached + s.src.amount
 				s.bag, s.slot = nil, nil
 			end
 			for _, stack in ipairs(plan.stacksToAttach) do
@@ -1778,9 +1983,12 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 				C_Container.PickupContainerItem(stack.bag, stack.slot)
 				ClickSendMailItemButton(slot)
 				slot = slot + 1
+				attached = attached + stack.count
 			end
+			if s and s.merged then attached = attached + s.src.amount end
+			return attached
 		end
-		attachOrder(st.plan, nil)
+		st.qty = math.min(st.qty, attachOrder(st.plan, nil))
 		-- MULTIFILL-001: the same person's other orders, planned in IDLE against the slots left. An
 		-- extra that no longer fits is dropped whole -- never half an order -- and stays open for
 		-- the next mail (its split stack, if any, simply sits in the bags).
@@ -1811,9 +2019,11 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 		end
 		-- MULTIFILL-001: one entry per order on the mail, each with its own id (ApplyPendingSend
 		-- credits by item.requestId); the envelope's requestId is the first order's.
-		local items = { { name = req.item, quantity = st.qty, requestId = req.id } }
+		-- LOCALE-SENDTRIM-001: each entry carries its order's item id, which the send hook trims by.
+		local items = { { name = req.item, itemID = tonumber(req.itemID), quantity = st.qty, requestId = req.id } }
 		for _, extra in ipairs(st.extras or {}) do
-			items[#items + 1] = { name = extra.req.item, quantity = extra.qty, requestId = extra.req.id }
+			items[#items + 1] = { name = extra.req.item, itemID = tonumber(extra.req.itemID),
+				quantity = extra.qty, requestId = extra.req.id }
 		end
 		self.pendingSend = {
 			sender    = normActor,
@@ -1824,8 +2034,15 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 		self.pendingSendAt = GetTime()
 		SendMail(st.requester, "Guild Bank Order", "")
 		-- Block re-selecting this order until the send confirms (or 5s safety).
+		-- BATCH-TIMER-001 (Peer Review 030b8a0a, N1): each send's safety timer clears only its own
+		-- send. Unguarded, send A's timer could fire while a later send B was still unconfirmed and
+		-- free a third click before B confirmed.
 		self.batchInFlight = true
-		C_Timer.After(5, function() self.batchInFlight = false end)
+		local gen = (self.sendGen or 0) + 1
+		self.sendGen = gen
+		C_Timer.After(5, function()
+			if self.sendGen == gen then self.batchInFlight = false end
+		end)
 		self.batchState = nil
 		if #items > 1 then
 			return true, string.format("Sent %d orders (%dx %s and %d more) to %s. Click for the next order.", #items, st.qty, req.item, #items - 1, st.requester)
