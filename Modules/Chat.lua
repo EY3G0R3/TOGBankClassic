@@ -474,6 +474,16 @@ local function FormatSyncStatus(status)
 	return ""
 end
 
+-- REQ-GATE-002 (Peer Review 385b8033, T1 a): REQ-GATE-001 gated the request QUERIES to the peers
+-- the inventory sync serves, but not the ANSWERS -- an index (whose tombstones delete orders) or a
+-- by-id record from anyone at all was merged. The same check now stands on every answer branch.
+local function IsRequestSyncPeer(sender, what)
+	if TOGBankClassic_Guild:IsInCurrentGuildRoster(sender) then return true end
+	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "%s from %s dropped: not a guildmate or sister-guild member",
+		tostring(what), tostring(sender))
+	return false
+end
+
 -- SYNC-001 fix: Roster-based validation to prevent cross-guild data bleed
 -- Only accept alt data if both sender and claimed alt are in current guild
 function TOGBankClassic_Chat:IsAltDataAllowed_RosterBased(sender, claimedNorm)
@@ -547,7 +557,9 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 		-- The receiver would never know to query for those records, so re-request the full
 		-- index from the sender. force=true bypasses the per-sender cooldown since this
 		-- is a genuine data loss event, not a speculative re-query.
-		if prefix == "togbank-ri" then
+		-- REQ-GATE-002: only from a peer whose index we would read -- a stranger's corrupt chunk would
+		-- otherwise buy a cooldown-free whisper back on every send.
+		if prefix == "togbank-ri" and IsRequestSyncPeer(sender, "togbank-ri CRC failure") then
 			TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "togbank-ri CRC failure from %s — re-requesting index", sender)
 			TOGBankClassic_Guild:QueryRequestsIndex(sender, "NORMAL", true)
 		end
@@ -664,12 +676,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 			TOGBankClassic_Output:Debug("SYNC", "MERGE", "[SYNC-010] togbank-rm requests-log received from %s, about to call ReceiveRequestMutations", sender)
 		end
 
-		if data.type == "requests-index" then
+		if data.type == "requests-index" and IsRequestSyncPeer(sender, "togbank-rm requests-index") then
 			self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR, "requests index. We accept it by default.")
 			TOGBankClassic_Guild:ReceiveRequestsIndex(data, sender)
 		end
-		if data.type == "requests-by-id" then
-			local status = TOGBankClassic_Guild:ReceiveRequestsById(data)
+		if data.type == "requests-by-id" and IsRequestSyncPeer(sender, "togbank-rm requests-by-id") then
+			local status = TOGBankClassic_Guild:ReceiveRequestsById(data, sender)
 			self:Debug(
 				"REQUESTS",
 				"RECEIVE",
@@ -788,20 +800,22 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	end
 
 	-- togbank-ri: positional request index (v1). Separate prefix from togbank-rd.
-	if prefix == "togbank-ri" then
+	if prefix == "togbank-ri" and IsRequestSyncPeer(sender, prefix) then
 		local liveCount  = tonumber(data[2]) or 0
-		local tombCount  = data[2] and math.max(0, math.floor((#data - 2 - liveCount * 2) / 2)) or 0
+		-- BYID-SYNC-END-001: the `false, chunksToCome` trailer is not a tombstone pair.
+		local trailer    = data[#data - 1] == false and 2 or 0
+		local tombCount  = data[2] and math.max(0, math.floor((#data - 2 - trailer - liveCount * 2) / 2)) or 0
 		self:Debug("REQUESTS", "PROTO2", ">", ColorPlayerName(sender), SHARES_COLOR,
 			string.format("requests index v1 (%d requests, %d tombstones).", liveCount, tombCount))
 		TOGBankClassic_Guild:ReceiveRequestsIndexV1(data, sender)
 	end
 
 	-- togbank-rd2: positional single-record request data (v1).
-	if prefix == "togbank-rd2" then
+	if prefix == "togbank-rd2" and IsRequestSyncPeer(sender, prefix) then
 		local isTombstone = data[3] == false
 		self:Debug("REQUESTS", "PROTO2", ">", ColorPlayerName(sender), SHARES_COLOR,
 			isTombstone and "request tombstone v1." or "request record v1.")
-		TOGBankClassic_Guild:ReceiveRequestsByIdV1(data)
+		TOGBankClassic_Guild:ReceiveRequestsByIdV1(data, sender)
 	end
 
 	-- STORE-002: a guild price list chunk (positional) from the price authority; the ask for one.
@@ -817,15 +831,15 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 	if prefix == "togbank-rd" then
 		TOGBankClassic_Output:Debug("COMMS", "RECEIVE", "[SYNC-003p] togbank-rd received from %s: type=%s", sender, tostring(data.type))
 
-		if data.type == "requests-index" then
+		if data.type == "requests-index" and IsRequestSyncPeer(sender, "togbank-rd requests-index") then
 			local reqCount = data.requests and #data.requests or 0
 			local tombCount = data.tombstones and #data.tombstones or 0
 			self:Debug("REQUESTS", "RECEIVE", ">", ColorPlayerName(sender), SHARES_COLOR,
 				string.format("requests index (%d requests, %d tombstones).", reqCount, tombCount))
 			TOGBankClassic_Guild:ReceiveRequestsIndex(data, sender)
 		end
-		if data.type == "requests-by-id" then
-			local status = TOGBankClassic_Guild:ReceiveRequestsById(data)
+		if data.type == "requests-by-id" and IsRequestSyncPeer(sender, "togbank-rd requests-by-id") then
+			local status = TOGBankClassic_Guild:ReceiveRequestsById(data, sender)
 			self:Debug(
 				"REQUESTS",
 				"RECEIVE",

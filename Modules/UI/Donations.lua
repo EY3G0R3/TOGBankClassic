@@ -58,12 +58,9 @@ function TOGBankClassic_UI_Donations:DrawWindow()
 	donations:SetLayout("Flow")
 	donations:SetWidth(420)   -- DONATION-VALUE-001: room for the Value column
 	donations:EnableResize(false)
-	--handle keyboard events
-	donations.frame:EnableKeyboard(true)
-	donations.frame:SetPropagateKeyboardInput(true)
-	donations.frame:SetScript("OnKeyDown", function(self, event)
-		TOGBankClassic_UI:EventHandler(self, event)
-	end)
+	-- COMBAT-KEY-001: no keyboard hook. The one here routed key presses to UI:EventHandler, which
+	-- acts only on OnClick/OnDragStart, so it did nothing -- while EnableKeyboard (protected) and
+	-- SetPropagateKeyboardInput (restricted) were blocked when the window was first built in combat.
 
 	self.Window = donations
 	TOGBankClassic_UI:ApplyWindowAlpha("donations", donations)

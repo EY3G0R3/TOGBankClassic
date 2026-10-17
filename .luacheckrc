@@ -90,6 +90,8 @@ read_globals = {
 	"Settings",
 	-- Modifier keys and the client's stack dumper (Modules/UI/Inventory.lua)
 	"IsShiftKeyDown", "IsControlKeyDown", "debugstack",
+	-- COMBAT-KEY-001 (Modules/UI/Requests.lua): SetPropagateKeyboardInput is blocked in combat.
+	"InCombatLockdown",
 	-- LINKCLICK-001 (Modules/UI.lua, Modules/Events.lua): the player's modified-click bindings, the
 	-- client's own dispatcher for a modified click on an item link, and the table the client inserts
 	-- links through. All three verified in BOTH the Classic Era and TBC trees:

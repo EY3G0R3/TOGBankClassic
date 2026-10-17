@@ -232,9 +232,12 @@ local REQUEST_LOG = {
 -- Request sync throttling settings
 local REQUESTS_SYNC = {
 	INDEX_QUERY_COOLDOWN = 60,         -- seconds between index queries (one global cooldown)
-	INDEX_INFLIGHT_TIMEOUT = 180,      -- seconds before in-flight index sync is considered stale (must exceed max batch sequence: ceil(requests/BATCH_SIZE) * BATCH_DELAY)
+	INDEX_INFLIGHT_TIMEOUT = 180,      -- seconds of SILENCE before an in-flight index sync is considered stale; each by-id batch sent and each asked answer restarts it (BYID-SYNC-END-001), so it must exceed one batch's answer time, not the whole drain
 	REQUESTS_BY_ID_BATCH_SIZE = 50,    -- max IDs per by-id query (prevents throttle on large syncs)
 	REQUESTS_BY_ID_BATCH_DELAY = 5,    -- seconds between batches (lets peer respond before next batch arrives)
+	-- BYID-ASKED-001: how long an id this client asked for stays answerable. Generous because the
+	-- responder holds its answers back while its own throttle queue is deep (RESPOND_BY_ID_DRAIN_BACKOFF).
+	REQUESTS_BY_ID_ANSWER_WINDOW = 300,
 	-- Responding to incoming requests-by-id queries (queriedRequestsMap drain)
 	RESPOND_BY_ID_BATCH_SIZE     = 50,   -- max IDs to resolve and send per drain tick
 	RESPOND_BY_ID_DRAIN_INTERVAL = 1,    -- seconds between drain ticks

@@ -177,7 +177,19 @@
         "DAYS_ABBR",
         "AUCTION_MAIL_ITEM_STACK",
         "BUYOUT",
-        "HIGH_BIDDER"
+        "HIGH_BIDDER",
+        "CLOSE",
+        "SetItemRef",
+        "HandleModifiedItemClick",
+        "ChatEdit_InsertLink",
+        "FriendsFrame_ShowDropdown",
+        "DEFAULT_CHAT_FRAME",
+        "GameTooltip_SetDefaultAnchor",
+        "UIDropDownMenu_CreateInfo",
+        "CANCEL",
+        "OKAY",
+        "ACCEPT",
+        "Settings"
     ],
     "Lua.diagnostics.disable": [
         "assign-type-mismatch"

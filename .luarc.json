@@ -150,6 +150,7 @@
         "unpack",
         "UISpecialFrames",
         "IsShiftKeyDown",
+        "InCombatLockdown",
         "ChatEdit_InsertLink",
         "ChatFrameUtil",
         "GreenWallAPI",

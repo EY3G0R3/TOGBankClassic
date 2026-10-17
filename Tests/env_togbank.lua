@@ -90,18 +90,25 @@ M.EPOCH = wow.epoch   -- the harness's fixed epoch (2026-01-01 UTC); what `env.n
 --- previous module's status line, browse_spec's "same RowList as the Browse tab" check sees the
 --- previous RowList. Parked and dropped on release, walking the child widgets, because in the
 --- Guild Bank window the list's host is the TabGroup inside it.
+---
+--- SUITE-SPEED-002 (2026-10-16): DETACHED, not just hidden. A hidden frame is still a child of the
+--- pooled frame, so every example's cluster buttons and Settings overlay (with its reason rows) stayed
+--- reachable for the rest of the run: requestsactions_spec alone took the live frame count from
+--- ~13,400 to ~46,200, and every later file ran on a 145 MB heap.
+local function detach(f) f:Hide(); f:SetParent(nil) end
+
 local function forgetFrameCaches(widget)
 	local content, frame = widget.content, widget.frame
 	if content and content.togRequestsListHost then
-		content.togRequestsListHost:Hide()
+		detach(content.togRequestsListHost)
 		content.togRequestsListHost = nil
 	end
 	if frame and frame.togRequestsCluster then
-		for _, f in ipairs(frame.togRequestsCluster.frames) do f:Hide() end
+		for _, f in ipairs(frame.togRequestsCluster.frames) do detach(f) end
 		frame.togRequestsCluster = nil
 	end
 	if frame and frame.togRequestsSettings then
-		frame.togRequestsSettings:Hide()
+		detach(frame.togRequestsSettings)
 		frame.togRequestsSettings = nil
 	end
 	for _, child in ipairs(widget.children or {}) do forgetFrameCaches(child) end

@@ -451,6 +451,14 @@ function TOGBankClassic_UI:KeepAboveResizeSizers(window, buttons)
 	-- could stack across reuse; reading frame fields + a hook-once guard avoids both.
 	parent.togHitboxButtons = buttons
 	parent.togHitboxClose = closeButton
+	-- SUITE-SPEED-002 (Peer Review 7f4d4fdb, S1): cleared when the window is released. Left on the pooled
+	-- Frame, the list kept our released buttons -- and through their OnClick closures our window -- and the
+	-- hook below went on lifting them for whichever window took that Frame next.
+	if window.SetCallback then
+		self:OnWindowRelease(window, "hitbox", function(w)
+			w.frame.togHitboxButtons, w.frame.togHitboxClose = nil, nil
+		end)
+	end
 
 	local function lift()
 		local level = parent:GetFrameLevel() + 10
@@ -526,11 +534,22 @@ TOGBankClassic_UI.CHROME = {
 --- Put the status bar's right edge at `anchor`'s left, the one rule every window follows. Without
 --- `anchor` the window's own leftmost chrome icon is used (DressWindow recorded it); the Requests
 --- cluster passes its own leftmost while it is on the window and hands the edge back on leaving.
+--- The AceGUI Frame's status background. Not simply `statustext:GetParent()`: while the status bar
+--- breathes its left text, that text lives in a left host (StatusBar.lua SetLeftBreathing) whose
+--- parent is the background, and anchoring the host instead broke it for every later life of the
+--- frame (it is cached on the background and only SetAllPoints'd when made). SUITE-SPEED-002.
+local function statusBackground(window)
+	local p = window and (window.statusbg or (window.statustext and window.statustext:GetParent()))
+	local up = p and p.GetParent and p:GetParent()
+	if up and up.togLeftHost == p then return up end
+	return p
+end
+
 ---@param window table AceGUI Frame
 ---@param anchor table|nil the frame the bar ends at
 function TOGBankClassic_UI:AnchorStatusBar(window, anchor)
 	local C = self.CHROME
-	local statusbg = window and window.statustext and window.statustext:GetParent()
+	local statusbg = statusBackground(window)
 	anchor = anchor or (window and window.togChrome and window.togChrome.anchor)
 	if not (statusbg and anchor) then return false end
 	statusbg:ClearAllPoints()
@@ -568,6 +587,15 @@ local function undressWindow(window)
 	end
 	frame.togShareWanted, frame.togShareShown = false, false
 	window.togChrome, window.togBottomIcons = nil, nil
+	-- SUITE-SPEED-002 (Peer Review 7f4d4fdb, S1): AnchorStatusBar ended the bar at one of OUR icons; the next
+	-- acquirer got a bar anchored to a frame it does not own. Back to AceGUI's own anchors (its Frame
+	-- constructor's 15/15 and -132/15).
+	local statusbg = statusBackground(window)
+	if statusbg then
+		statusbg:ClearAllPoints()
+		statusbg:SetPoint("BOTTOMLEFT", 15, 15)
+		statusbg:SetPoint("BOTTOMRIGHT", -132, 15)
+	end
 end
 
 --- The shared bottom row on an AceGUI Frame. Call once per DrawWindow, after the status bar is

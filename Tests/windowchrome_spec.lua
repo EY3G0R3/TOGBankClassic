@@ -61,7 +61,29 @@ describe("POOL-CHROME-001: a released window hands its frame back clean", functi
 		local frame, host, right = win.frame, win.statusCenterHost, win.statusRight
 		right:SetText("3 online")
 		assert.is_true(frame.togChromeHelp:IsShown()); assert.is_true(frame.togChromeGear:IsShown())
+		-- SUITE-SPEED-002 (Peer Review 7f4d4fdb, S1): the bottom-row list and the status bar's right anchor
+		-- both point at frames of ours, and must not ride along either.
+		local bottomBtn = CreateFrame("Button", nil, frame)
+		UI:KeepAboveResizeSizers(win, { bottomBtn })
+		assert.equal(bottomBtn, frame.togHitboxButtons[1])
+		local statusbg = win.statustext:GetParent()
+		local function rightAnchor() for i = 1, statusbg:GetNumPoints() do
+			local p, rel, _, x = statusbg:GetPoint(i)
+			if p == "BOTTOMRIGHT" then return rel, x end
+		end end
+		assert.not_equal(frame, (rightAnchor()), "the bar was never anchored to our chrome; this proves nothing")
+		-- With the left text breathing it lives in a left host on the background; the release must
+		-- re-anchor the background, never that host (it is cached and only SetAllPoints'd when made).
+		win.togStatusBar:SetLeftBreathing(true)
+		local leftHost = statusbg.togLeftHost
+		assert.equal(leftHost, win.statustext:GetParent(), "the left text is not in its host; this proves nothing")
 		win:Release()
+		local _, hostRel = leftHost:GetPoint(1)
+		assert.equal(statusbg, hostRel, "the release re-anchored the left host instead of the background")
+		assert.is_nil(frame.togHitboxButtons, "our bottom-row buttons stayed on the pooled frame")
+		local rel, x = rightAnchor()
+		assert.is_true(rel == nil or rel == frame, "the status bar still ends at one of our icons")
+		assert.equal(-132, x)
 
 		-- The next acquirer -- another addon's plain Frame -- sees none of it.
 		local other = UI:Create("Frame")

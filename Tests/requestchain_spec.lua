@@ -109,6 +109,8 @@ local function loadRequestStack()
 	TOGBankClassic_Guild.UpdateOnlineMember = function() end
 	TOGBankClassic_Guild.IsPlayerOnline = function() return true end
 	TOGBankClassic_Guild.SenderHasGbankNote = function() return true end
+	-- No roster is loaded here; ME and PEER are guildmates (REQ-GATE-002 asks on every by-id answer).
+	TOGBankClassic_Guild.IsInCurrentGuildRoster = function() return true end
 
 	-- Capture the wire rather than sending it. This is the ONLY stub in the chain: everything from
 	-- AddRequest through serialisation, and everything from OnCommReceived through the merge, is the
@@ -895,6 +897,8 @@ describe("SHOP-NOFREE-001: no free requests while the bank is selling", function
 		assert.is_true(arr[15]); assert.equal(75, arr[16]); assert.equal(151, arr[17]); assert.equal(50, arr[18])
 		assert.equal("min buyout, Auctionator", arr[19])
 		becomeFreshPeer()
+		-- BYID-ASKED-001: the peer merges only what it asked ME for, once per ask.
+		TOGBankClassic_Guild:QueryRequestsById(ME, { id })
 		TOGBankClassic_Chat:OnCommReceived("togbank-rd2", msg.body, "WHISPER", ME)
 		local got = TOGBankClassic_Guild.Info.requests[id]
 		assert.is_table(got, "the rd2 record was not applied")
@@ -905,6 +909,7 @@ describe("SHOP-NOFREE-001: no free requests while the bank is selling", function
 		local old = {}
 		for i = 1, 14 do old[i] = arr[i] end
 		old[4] = arr[4] + 10
+		TOGBankClassic_Guild:QueryRequestsById(ME, { id })
 		TOGBankClassic_Chat:OnCommReceived("togbank-rd2", TOGBankClassic_Core:SerializeWithChecksum(old), "WHISPER", ME)
 		got = TOGBankClassic_Guild.Info.requests[id]
 		assert.equal(old[4], got.updatedAt, "precondition: the older-format record was not adopted")

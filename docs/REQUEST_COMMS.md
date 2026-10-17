@@ -765,14 +765,17 @@ itself, which is outside the realistic threat model for a WoW guild addon.
 
 When `QueryRequestsIndex(nil)` broadcasts and every peer already has a matching hash (SYNC-011
 causes them all to stay silent), `EndRequestsIndexSync` is never called. `inFlight` remains set
-for the full `INDEX_INFLIGHT_TIMEOUT` (30 s) before expiring, and `INDEX_QUERY_COOLDOWN` (60 s)
-starts from broadcast time, so the next query is effectively blocked for up to 90 seconds even
-though nothing was wrong.
+for the full `INDEX_INFLIGHT_TIMEOUT` before expiring (180 s of silence since BYID-SYNC-END-001:
+each by-id batch sent, each asked answer and each index chunk restarts it, so it measures silence,
+not the drain), and
+`INDEX_QUERY_COOLDOWN` (60 s) starts from broadcast time, so the next query was blocked even though
+nothing was wrong.
 
-**Fix:** After the wildcard `SendCommMessage`, a `C_Timer.After(5, …)` callback clears `inFlight`
+**Fix:** After the wildcard `SendCommMessage`, a `C_Timer.After(10, …)` callback clears `inFlight`
 if no real response has arrived. If a peer did respond (hash mismatch path), `EndRequestsIndexSync`
-was already called by `ReceiveRequestsIndex` and the timer is a no-op. The 60 s `INDEX_QUERY_COOLDOWN`
-is unaffected — only the 30 s `inFlight` lock is shortened for the silence case.
+was already called by `ReceiveRequestsIndex` and the timer is a no-op. Since BYID-SYNC-END-001 it also
+leaves alone a sync that is fetching records or whose responder has said more index chunks are coming.
+The 60 s `INDEX_QUERY_COOLDOWN` is unaffected — only the `inFlight` lock is shortened for the silence case.
 
 ---
 
@@ -888,6 +891,60 @@ INDEX_INFLIGHT_TIMEOUT = 30  -- seconds before in-flight sync is considered stal
 
 These are currently the live production values. Decide the appropriate production numbers and
 remove or update the comment.
+
+**Since then:** the "quick testing" comment is gone from `Constants.lua`, and `INDEX_INFLIGHT_TIMEOUT`
+is now 180 s of silence: each by-id batch sent, each asked answer and each index chunk restarts it
+(BYID-SYNC-END-001), so it must exceed one batch's answer time, not the whole drain.
+`INDEX_QUERY_COOLDOWN` is still 60 s.
+
+---
+
+### BYID-SYNC-END-001 -- when an index sync ends (Fixed, v1.9.1)
+
+**Severity:** Medium / UX
+**Location:** `RequestLog.lua`: `EnqueueByIdBatches`, `drainByIdQueue`, `SettleRequestsIndexSync`,
+`EndRequestsIndexSync`, `CanQueryRequestsIndex`, `QueryRequestsIndex`, `ReceiveRequestsIndex`
+
+An index sync used to end, and print "Requests synced." for a sync the player started, on the first
+by-id answer. The rules now:
+
+- **It ends when everything it asked for is answered.** `pendingById` maps every id asked to the peer
+  it was asked of, and `SettleRequestsIndexSync` ends the sync only when the by-id queue is empty,
+  `pendingById` is empty and no sender has said more chunks are coming.
+- **The sender says how many chunks are left.** Each `togbank-ri` chunk ends with
+  `false, <chunks still to come>`. An older receiver's tombstone loop stops at the `false`; an older
+  sender sends no trailer and its sync ends as it did before. The count is taken only from the peer
+  a targeted sync reads (or from anyone in a guild-wide sync): another peer's overheard broadcast
+  whose last chunk never arrived used to hold a targeted sync open until the timeout (N1).
+- **A lost chunk is re-asked.** One index counts down by one, so a drop of more than one from a
+  sender the sync is waiting on re-asks that sender for its whole index (G1).
+- **A re-ask stays inside the sync.** A forced ask of one peer while a sync is in flight (CRC or G1)
+  restarts only that peer's chunk count. Every id still awaited stays awaited, and a guild-wide sync
+  stays guild-wide, so it cannot finish before the other peers' records arrive (P3). A re-ask of a
+  peer other than the one a targeted sync reads (a CRC re-ask of another player's guild broadcast)
+  widens that sync to guild-wide, so the first peer's lost chunks are still re-asked and a refusal
+  releases only the refused peer's ids (F1).
+- **Every peer's batches share one queue.** Each queued batch carries its own sender. A sender change
+  used to empty the queue, so another player's guild-wide index, heard by everyone, dropped the sync's
+  unsent batches and those ids were never asked in that sync (K4, P1).
+- **A peer gone offline drops only its own batches.** Every id still awaited of it is released,
+  including those of batches already sent before it logged off (N2); the other peers' batches are
+  still asked, and the sync the player started prints "Request sync incomplete: a bank went offline
+  before answering." A re-ask (CRC or G1) to an offline peer prints "Request sync failed: NAME is
+  offline." when that peer was the sync's only one (P2); in a guild-wide sync it releases that peer's
+  ids and the sync ends as incomplete once the others answer (P3).
+- **Nothing cancels the by-id drain.** A sync begun mid-drain still sends the batches already queued,
+  since the ids they ask for are still missing. The drain's old generation counter had no writer left
+  after P1 and was deleted (N1).
+- **The timeout measures silence** (180 s), and a timed-out sync the player started prints
+  "Request sync timed out." `notify` is cleared on every end, so a later automatic sync never prints
+  for an earlier one (M1).
+- **The 10 s guild-query check belongs to one sync.** `BeginRequestsIndexSync` stamps
+  `state.generation`; the check compares it, because the state table is shared across syncs.
+
+**Not verified in a client.** Known residue: after a G1 re-ask, the old index's remaining chunks can
+settle the new sync before the new index arrives; records are still fetched, and only the completion
+line comes early.
 
 ---
 

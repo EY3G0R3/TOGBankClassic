@@ -3,7 +3,7 @@ TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era, TBC, MoP
                  and WoW Forever
 ================================================================================
 
-Version: 1.8.0
+Version: 1.9.1
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -1033,6 +1033,26 @@ When reporting bugs, please include:
 CHANGELOG HIGHLIGHTS
 ================================================================================
 
+Version 1.9.1:
+--------------
+CHANGES:
+- A request sync you start yourself says when it did not finish
+  ("incomplete", "failed" or "timed out") instead of "Requests synced."
+
+BUG FIXES:
+- Order details are only accepted from guild members, and only for orders
+  TOG Bank asked about
+- An order can no longer be taken over by another player, or closed by its
+  requester sending it again
+- Long or overlapping order lists from several banks are fetched in full
+- No more "action blocked" errors from pressing keys in combat with the
+  Requests window open, or opening a TOG Bank window in combat
+- Leftover filter tooltips and status-bar layout no longer carry over into
+  other addons' windows
+
+COMPATIBILITY: v1.9.1 works with v1.9.0 and v1.8.x. Order lists it sends
+carry one extra marker at the end, which older versions read past.
+
 Version 1.9.0:
 --------------
 NEW FEATURES:
@@ -1048,8 +1068,8 @@ BUG FIXES:
 - An order over twelve stacks is mailed in parts and credited only for what
   each mail carried
 - A mail sent to someone else no longer fills the first person's order
-- Fulfill Oldest no longer pulls an extra stack out of the mail, and no
-  longer lets one person's newer order go out ahead of their older one
+- Collecting from the mailbox for an order no longer takes an extra stack
+- One person's newer order no longer takes stock their own older order needs
 - In a guild with players on different game languages, mailed orders are
   credited correctly
 - A refused mail send frees Fulfill straight away, in any language

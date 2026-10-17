@@ -238,6 +238,18 @@ local function restoreWidgetOnRelease(widget)
 	if widget.label and widget.label.togCancelGlow then
 		TOGBankClassic_UI_Requests:SetCancelGlow(widget, false)
 	end
+	-- SUITE-SPEED-002 (Peer Review 7f4d4fdb, S2): a filter dropdown's label hit frame goes back to the pool
+	-- hidden, or another window's dropdown shows our 'Filter by ...' tooltip.
+	-- Peer Review 584efe3b, P1: the filters also moved the label 3 px right; back to AceGUI's own
+	-- Constructor anchors (AceGUIWidget-DropDown.lua:720-721), which nothing else re-applies.
+	if frame.togLabelHit then
+		frame.togLabelHit:Hide()
+		if widget.label then
+			widget.label:ClearAllPoints()
+			widget.label:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+			widget.label:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+		end
+	end
 end
 
 local function markForRestore(widget)
@@ -1025,6 +1037,40 @@ end
 -- hangs off the filter strip and the host's bottom edge by anchor and lays its own columns out on
 -- OnSizeChanged, so a resize needs nothing from this file.
 
+--- The hover frame over a filter dropdown's label (labels take no mouse), with its tooltip lines.
+--- SUITE-SPEED-002: ONE per dropdown frame, found again. AceGUI pools the Dropdown, and the body is
+--- rebuilt on every visit to the Guild Bank window's Requests tab, so a new frame per build stacked
+--- another invisible, mouse-enabled frame on the pooled dropdown each time -- and a dropdown later
+--- handed to any other window carried a "Filter by ..." tooltip over its label. Hidden on release.
+local function labelHitFor(dropdown, lines)
+	local frame = dropdown.frame
+	local hit = frame.togLabelHit
+	if not hit then
+		hit = CreateFrame("Frame", nil, frame)
+		frame.togLabelHit = hit
+		hit:SetScript("OnEnter", function(f)
+			GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
+			GameTooltip:ClearLines()
+			for i, line in ipairs(f.togLines or {}) do
+				if i == 1 then GameTooltip:AddLine(line) else GameTooltip:AddLine(line, 0.9, 0.9, 0.9, true) end
+			end
+			GameTooltip:Show()
+		end)
+		hit:SetScript("OnLeave", function() TOGBankClassic_UI:HideTooltip() end)
+	end
+	hit.togLines = lines
+	hit:ClearAllPoints()
+	hit:SetPoint("TOPLEFT", frame, "TOPLEFT", 3, 0)
+	hit:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+	hit:SetHeight(TOGBankClassic_UI:UIScaled(18))
+	hit:EnableMouse(true)
+	hit:Show()
+	-- The one release handler hides it; a handler of its own was replaced by scaleStock's at any UI scale
+	-- other than 1 (Peer Review 7f4d4fdb, S2).
+	markForRestore(dropdown)
+	return hit
+end
+
 -- Helper to set up click-outside-to-close behavior for dropdowns
 local function SetupClickOutsideHandler(dropdown)
 	if not dropdown or not dropdown.pullout then return end
@@ -1114,31 +1160,93 @@ end
 --- the Guild Bank window on every tab visit) does not stack a second copy. A no-op while the body
 --- is not on that frame (the key handler finds no dropdowns). REQUESTS-ROWLIST-001: the resize
 --- follow-through that was hooked beside it went with the grid; the RowList resizes by anchor.
-local function hookChromeFrame(frame)
-	if not frame.togRequestsKeyHooked then
-		frame.togRequestsKeyHooked = true
-		frame:EnableKeyboard(true)
-		frame:SetPropagateKeyboardInput(true)
-		frame:SetScript("OnKeyDown", function(f, key)
-			local R = TOGBankClassic_UI_Requests
-			if key == "ESCAPE" then
-				-- Check if any dropdown pullout is open
-				local closedAny = false
-				if R.FilterRequester and R.FilterRequester.pullout and R.FilterRequester.pullout.frame:IsShown() then
-					R.FilterRequester.pullout:Close()
-					closedAny = true
-				end
-				if R.FilterBank and R.FilterBank.pullout and R.FilterBank.pullout.frame:IsShown() then
-					R.FilterBank.pullout:Close()
-					closedAny = true
-				end
-				-- If we closed a dropdown, consume the Esc key
-				f:SetPropagateKeyboardInput(not closedAny)
-			else
-				f:SetPropagateKeyboardInput(true)
-			end
-		end)
+--- COMBAT-KEY-001: SetPropagateKeyboardInput is restricted (HasRestrictions in
+--- SimpleFrameAPIDocumentation) and is blocked for addon code in combat -- the handler used to
+--- call it on EVERY key press, so each key pressed in combat with the window open raised
+--- ADDON_ACTION_BLOCKED. It is now called only when the value changes and never in combat; the
+--- frame sits at "propagate" except between an Escape that closed a dropdown and that key's
+--- release, so in combat nothing is consumed and Escape simply reaches the game.
+--- COMBAT-KEY-002 (Peer Review a21c6a53, P1): a frame that does not propagate blocks EVERY
+--- keybinding while it is shown (warcraft.wiki.gg, API_Frame_SetPropagateKeyboardInput). Combat
+--- starting between a consumed Escape and its release would leave it there for the whole fight,
+--- and a release in combat would pool it that way for any addon's next window. A restore that
+--- combat refuses is queued here and run on PLAYER_REGEN_ENABLED: `true` puts propagation back,
+--- "release" also turns the keyboard off on a frame our hook no longer owns.
+local pendingRestore = {}
+
+local function inCombat() return InCombatLockdown and InCombatLockdown() end
+
+local function setPropagate(frame, propagate)
+	if frame.togPropagate == propagate then return end
+	if inCombat() then
+		if propagate then pendingRestore[frame] = pendingRestore[frame] or true end
+		return
 	end
+	frame.togPropagate = propagate
+	frame:SetPropagateKeyboardInput(propagate)
+end
+
+-- Lockdown has ended when PLAYER_REGEN_ENABLED fires (warcraft.wiki.gg, API:InCombatLockdown), so
+-- nothing here re-queues; the snapshot keeps the walk defined if that ever stopped being true
+-- (Lua 5.1 leaves assigning a just-cleared key during `next` undefined; Peer Review 51eaa37c).
+local function runPendingRestores()
+	local queued = {}
+	for frame, kind in pairs(pendingRestore) do queued[frame] = kind end
+	for frame, kind in pairs(queued) do
+		pendingRestore[frame] = nil
+		setPropagate(frame, true)
+		if kind == "release" and not frame.togRequestsKeyHooked then frame:EnableKeyboard(false) end
+	end
+end
+
+local regenFrame = CreateFrame("Frame")
+regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+regenFrame:SetScript("OnEvent", runPendingRestores)
+
+local function hookChromeFrame(frame)
+	if frame.togRequestsKeyHooked then return end
+	-- COMBAT-KEY-001: built in combat (the tab opened mid-fight), the hook waits for the next build.
+	if inCombat() then return end
+	frame.togRequestsKeyHooked = true
+	frame:EnableKeyboard(true)
+	frame.togPropagate = nil
+	setPropagate(frame, true)
+	frame:SetScript("OnKeyDown", function(f, key)
+		local R = TOGBankClassic_UI_Requests
+		local closedAny = false
+		if key == "ESCAPE" then
+			if R.FilterRequester and R.FilterRequester.pullout and R.FilterRequester.pullout.frame:IsShown() then
+				R.FilterRequester.pullout:Close()
+				closedAny = true
+			end
+			if R.FilterBank and R.FilterBank.pullout and R.FilterBank.pullout.frame:IsShown() then
+				R.FilterBank.pullout:Close()
+				closedAny = true
+			end
+		end
+		-- If we closed a dropdown, consume the Esc key
+		setPropagate(f, not closedAny)
+	end)
+	-- The consumed Escape's release puts the frame back to propagating, so it never sits at
+	-- "consume" waiting for a next key press that combat would stop from undoing it.
+	frame:SetScript("OnKeyUp", function(f) setPropagate(f, true) end)
+end
+
+--- COMBAT-KEY-001 / POOL-CHROME-001: AceGUI pools Frames across every addon, so a released window
+--- must not hand the next acquirer our key scripts. Clearing scripts is allowed in combat; the
+--- protected keyboard half is queued for the end of combat (COMBAT-KEY-002).
+local function unhookChromeFrame(window)
+	local frame = window.frame
+	if not frame.togRequestsKeyHooked then return end
+	frame:SetScript("OnKeyDown", nil)
+	frame:SetScript("OnKeyUp", nil)
+	frame.togRequestsKeyHooked = nil
+	if inCombat() then
+		pendingRestore[frame] = "release"
+		return
+	end
+	setPropagate(frame, true)
+	frame:EnableKeyboard(false)
 end
 
 --- The standalone window: the frame, its persistence and resize bounds, the shared status bar,
@@ -1383,6 +1491,7 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 	TOGBankClassic_UI:OnUIScaleChanged(TOGBankClassic_UI_Requests, Requests_OnUIScaleChanged)
 	self.Host, self.Chrome = host, chrome
 	hookChromeFrame(chrome.frame)
+	TOGBankClassic_UI:OnWindowRelease(chrome, "requestsKeys", unhookChromeFrame)
 	self:BuildBottomCluster(chrome, anchor)
 	local canOfficer = (CanViewOfficerNote and CanViewOfficerNote()) or false
 
@@ -1510,23 +1619,12 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		requesterFilter.label:ClearAllPoints()
 		requesterFilter.label:SetPoint("TOPLEFT", requesterFilter.frame, "TOPLEFT", 3, 0)
 		requesterFilter.label:SetPoint("TOPRIGHT", requesterFilter.frame, "TOPRIGHT", 0, 0)
-		local requesterLabelHit = CreateFrame("Frame", nil, requesterFilter.frame)
-		requesterLabelHit:SetPoint("TOPLEFT", requesterFilter.frame, "TOPLEFT", 3, 0)
-		requesterLabelHit:SetPoint("TOPRIGHT", requesterFilter.frame, "TOPRIGHT", 0, 0)
-		requesterLabelHit:SetHeight(S(18))
-		requesterLabelHit:EnableMouse(true)
-		requesterLabelHit:SetScript("OnEnter", function(self)
-			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			GameTooltip:ClearLines()
-			GameTooltip:AddLine("Filter by Requester")
-			GameTooltip:AddLine("Filter the request list to the guild member you select here, or all requesters (Any Requester).", 0.9, 0.9, 0.9, true)
+		labelHitFor(requesterFilter, {
+			"Filter by Requester",
+			"Filter the request list to the guild member you select here, or all requesters (Any Requester).",
 			-- ACCOUNT-MODE-001
-			GameTooltip:AddLine("My characters shows the requests of every character on your account. Once picked, it is where this list starts on all of them.", 0.9, 0.9, 0.9, true)
-			GameTooltip:Show()
-		end)
-		requesterLabelHit:SetScript("OnLeave", function()
-			TOGBankClassic_UI:HideTooltip()
-		end)
+			"My characters shows the requests of every character on your account. Once picked, it is where this list starts on all of them.",
+		})
 		requesterFilter:SetWidth(S(200))   -- REQUESTS-STRIP-001: a column of Browse's row, not full width
 		requesterFilter:SetCallback("OnValueChanged", function(widget, _, value)
 			handleFilterChange(self, "requester", widget, value)
@@ -1541,21 +1639,10 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 		bankFilter.label:ClearAllPoints()
 		bankFilter.label:SetPoint("TOPLEFT", bankFilter.frame, "TOPLEFT", 3, 0)
 		bankFilter.label:SetPoint("TOPRIGHT", bankFilter.frame, "TOPRIGHT", 0, 0)
-		local bankLabelHit = CreateFrame("Frame", nil, bankFilter.frame)
-		bankLabelHit:SetPoint("TOPLEFT", bankFilter.frame, "TOPLEFT", 3, 0)
-		bankLabelHit:SetPoint("TOPRIGHT", bankFilter.frame, "TOPRIGHT", 0, 0)
-		bankLabelHit:SetHeight(S(18))
-		bankLabelHit:EnableMouse(true)
-		bankLabelHit:SetScript("OnEnter", function(self)
-			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			GameTooltip:ClearLines()
-			GameTooltip:AddLine("Filter by Banker")
-			GameTooltip:AddLine("Filter the request list to the banker you select here, or all bankers (Any Banker).", 0.9, 0.9, 0.9, true)
-			GameTooltip:Show()
-		end)
-		bankLabelHit:SetScript("OnLeave", function()
-			TOGBankClassic_UI:HideTooltip()
-		end)
+		labelHitFor(bankFilter, {
+			"Filter by Banker",
+			"Filter the request list to the banker you select here, or all bankers (Any Banker).",
+		})
 		bankFilter:SetWidth(S(200))
 		bankFilter:SetCallback("OnValueChanged", function(widget, _, value)
 			handleFilterChange(self, "bank", widget, value)

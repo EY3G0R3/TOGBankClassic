@@ -86,12 +86,9 @@ function TOGBankClassic_UI_Inventory:DrawWindow()
 	-- window uses (UI:PersistWindow -> the library's). This used to open-code the status table and a
 	-- SetResizeBounds(500, 500) beside it.
 	TOGBankClassic_UI:PersistWindow(window, "inventory", 550, 500, 500, 500)
-	--handle keyboard events
-	window.frame:EnableKeyboard(true)
-	window.frame:SetPropagateKeyboardInput(true)
-	window.frame:SetScript("OnKeyDown", function(self, event)
-		TOGBankClassic_UI:EventHandler(self, event)
-	end)
+	-- COMBAT-KEY-001: no keyboard hook. The one here routed key presses to UI:EventHandler, which
+	-- acts only on OnClick/OnDragStart, so it did nothing -- while EnableKeyboard (protected) and
+	-- SetPropagateKeyboardInput (restricted) were blocked when the window was first built in combat.
 
 	self.Window = window
 	self.StatusBar = TOGBankClassic_UI_StatusBar:Attach(window)

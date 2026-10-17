@@ -32,37 +32,15 @@ local warnedAbout = {
 
 -- Queue for staggered by-id batch sends (requester side).
 --
--- byIdQueueGen is bumped when sender changes; stale C_Timer callbacks check it and exit silently.
---
--- AUDIT FINDING 35. This used to justify the counter with "(C_Timer has no cancel API in Classic
--- Era)", and that is FALSE ON TWO INDEPENDENT GROUNDS:
---
---   1. Blizzard's generated documentation for THIS FLAVOUR declares both cancellable forms --
---      `C_Timer.NewTicker` and `C_Timer.NewTimer` (UITimerDocumentation.lua:21, :37) -- and the Era
---      client's own UI cancels them routinely, including from its Classic tree
---      (Blizzard_AuctionUI/Classic:2263, Blizzard_Console:316).
---   2. More to the point, THIS ADDON ALREADY HAS ONE. Core.lua:1 embeds AceTimer-3.0, so
---      Core:ScheduleTimer / Core:CancelTimer have been available to every module all along, and
---      Events.lua:163-171 is exactly the stored-handle-cancel-and-replace pattern this comment
---      claimed was unavailable.
---
--- The narrow true statement is about `After`, not about `C_Timer`: `C_Timer.After` returns no
--- handle, so a callback scheduled with it cannot be cancelled, and every site in this file uses
--- `After`. The generation counter is therefore a correct solution to a real problem -- but the
--- reason it is still here is a TRADE-OFF, not a constraint, and recording the false constraint is
--- what would stop anyone reconsidering:
---
---   the drain is fire-and-forget and several batches can be in flight for different senders at
---   once, so cancel-by-handle costs a handle per in-flight batch and the bookkeeping to retire it,
---   against one integer that makes a stale callback self-identify. The counter wins on state, not
---   on availability.
 -- byIdDraining is true while a timer is pending; EnqueueByIdBatches skips re-firing
--- the drain when the same sender sends multiple index chunks.
--- byIdCurrentSender tracks who we are querying so we can accumulate across chunks.
+-- the drain while one is running, so later index chunks join the queue it is draining.
+-- BYID-SYNC-END-001 (Peer Review 79dfbfd2, P1): a byIdCurrentSender used to empty the queue whenever the
+-- sender changed; each queued batch carries its own sender, so every peer's batches now share the queue.
+-- Peer Review f3453dc9, N1: a byIdQueueGen generation let a stale timer exit; the sender change was its last
+-- writer, so it was deleted. Nothing cancels the drain: a sync's end leaves queued batches to go out, since
+-- the ids they ask for are still missing, and a new sync settles only once they have gone.
 local byIdQueue = {}
-local byIdQueueGen = 0
 local byIdDraining = false
-local byIdCurrentSender = nil
 
 -- Pending by-id response map (responder side).
 -- Maps requestId -> querier (player name, or "*" for guild broadcast).
@@ -74,6 +52,22 @@ local byIdCurrentSender = nil
 -- Sending is gated on ChatThrottleLib queue depth <= RESPOND_BY_ID_CTL_THRESHOLD.
 local queriedRequestsMap  = {}   -- [requestId] -> querier
 local queriedRequestsDraining = false
+
+-- BYID-ASKED-001 (Peer Review 385b8033, T1 b): the REQUESTER side's record of what it asked for.
+-- A by-id answer is merged only for an id in here, from the player it was asked of (anyone, for a
+-- query sent to the guild), within REQUESTS_BY_ID_ANSWER_WINDOW, and once. Without it a record or
+-- tombstone nobody asked for -- or one broadcast for another client's query -- was merged whole.
+local requestedById = {}   -- [requestId] -> { [normalized name or "*"] = server time it was asked of them }
+-- BYID-WINDOW-001 (Peer Review 35aa4d69, P1): the window runs from the later of the ask and the last
+-- asked answer that player sent. A big sync's answers queue behind the responder's ChatThrottleLib
+-- and can land long after the ask; while answers keep arriving the responder is slow, not gone.
+local heardFromAt = {}     -- [normalized name or "*"] -> server time of their last asked answer
+
+local function askStillOpen(askedAt, who, now)
+	if not askedAt then return false end
+	local since = math.max(askedAt, heardFromAt[who] or 0)
+	return (now - since) <= REQUESTS_SYNC.REQUESTS_BY_ID_ANSWER_WINDOW
+end
 
 
 local function ctlDepthForDrain()
@@ -95,6 +89,9 @@ end
 -- togbank-ri: positional index wire format (version 1)
 -- {RI_VERSION, liveCount, id1, updatedAt1, ...[liveCount pairs]..., tombId1, tombTs1, ...}
 -- First liveCount stride-2 pairs are live entries; remaining stride-2 pairs are tombstones.
+-- BYID-SYNC-END-001 (Peer Review dc0455df, K1-K3): a chunk may end with `false, chunksToCome` -- how many
+-- chunks of this index still follow it (0 on the last). An older receiver's tombstone loop stops at the
+-- `false`, so it reads the chunk exactly as before; a chunk without it (an older sender) says nothing.
 local RI_VERSION  = 1
 local RD2_VERSION = 1
 
@@ -219,55 +216,80 @@ local function startDrainQueriedRequests()
 	end
 end
 
-local function drainByIdQueue(gen)
+local function drainByIdQueue()
 	byIdDraining = false
-	if gen ~= byIdQueueGen then return end  -- stale callback from a previous sync; abort
 	if #byIdQueue == 0 then return end
 
 	local item = table.remove(byIdQueue, 1)
 	local remaining = #byIdQueue
-	if Guild.requestsIndexSync then
-		Guild.requestsIndexSync.batchSent = (Guild.requestsIndexSync.batchTotal or 0) - remaining
+	local syncState = Guild.requestsIndexSync
+	if syncState then
+		syncState.batchSent = (syncState.batchTotal or 0) - remaining
+		-- BYID-SYNC-END-001 (F4): a batch going out is the sync still working; restart its in-flight clock.
+		if syncState.inFlight then syncState.inFlightSince = GetServerTime() end
 	end
 	TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
 		"Sending by-id batch to %s (%d IDs, %d batch(es) remaining in queue)",
 		tostring(item.sender), #item.ids, remaining)
 
 	if not TOGBankClassic_Guild:QueryRequestsById(item.sender, item.ids) then
+		-- BYID-SYNC-END-001 (Peer Review 79dfbfd2, P1/P2): the whisper is refused only when that peer is offline,
+		-- so only that peer's batches go; another peer's still in the queue are still asked. Nothing this peer
+		-- was to answer is awaited any more, and the sync says it was incomplete rather than 'Requests synced.'.
+		-- Peer Review f3453dc9, N2: that includes the ids of its batches already sent before it logged off, so
+		-- every id still awaited of this peer goes; an id a later peer's index also listed is awaited of that peer.
+		local pending = syncState and syncState.pendingById
+		if pending then
+			for id, askedOf in pairs(pending) do
+				if askedOf == item.sender then pending[id] = nil end
+			end
+		end
+		local kept = {}
+		for _, queued in ipairs(byIdQueue) do
+			if queued.sender ~= item.sender then kept[#kept + 1] = queued end
+		end
 		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
-			"QueryRequestsById send failed for %s -- aborting queue (%d batch(es) dropped)",
-			tostring(item.sender), remaining)
-		byIdQueue = {}
-		byIdQueueGen = byIdQueueGen + 1
-		byIdCurrentSender = nil
-		TOGBankClassic_Guild:EndRequestsIndexSync()
-		TOGBankClassic_Guild:RefreshRequestsUI()
-		return
+			"QueryRequestsById send failed for %s -- dropped its %d queued batch(es)",
+			tostring(item.sender), remaining - #kept)
+		byIdQueue = kept
+		remaining = #kept
+		if syncState then
+			syncState.incomplete = true
+			if syncState.chunksToCome then syncState.chunksToCome[item.sender] = nil end
+			syncState.batchTotal = (syncState.batchSent or 0) + remaining
+		end
+		if remaining == 0 then
+			TOGBankClassic_Guild:SettleRequestsIndexSync()
+			TOGBankClassic_Guild:RefreshRequestsUI()
+			return
+		end
 	end
 
 	if remaining > 0 then
 		byIdDraining = true
-		C_Timer.After(REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, function()
-			drainByIdQueue(gen)
-		end)
+		C_Timer.After(REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_DELAY, drainByIdQueue)
 	else
-		byIdCurrentSender = nil
 		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
 			"By-id queue drained -- all batches sent to %s", tostring(item.sender))
 	end
 end
 
 function Guild:EnqueueByIdBatches(sender, missingIds)
-	-- If sender changed, cancel any in-progress drain and start fresh.
-	-- Same sender: accumulate new batches (multiple index chunks arrive from one sender).
-	if sender ~= byIdCurrentSender then
-		byIdQueueGen = byIdQueueGen + 1
-		byIdQueue = {}
-		byIdCurrentSender = sender
-		if Guild.requestsIndexSync then
-			Guild.requestsIndexSync.batchTotal = 0
-			Guild.requestsIndexSync.batchSent  = 0
-		end
+	-- BYID-SYNC-END-001 (Peer Review 79dfbfd2, P1): every sender's batches join one queue, each carrying its own
+	-- sender, so the drain asks each id of the peer whose index listed it. A sender change used to empty the
+	-- queue, and two peers' indexes arriving in one sync (another player's guild-wide query is heard by
+	-- everyone) dropped each other's unsent batches; those ids were never asked again in that sync.
+	-- A new drain run counts its batches from zero; one already running keeps a running total.
+	if #byIdQueue == 0 and not byIdDraining and Guild.requestsIndexSync then
+		Guild.requestsIndexSync.batchTotal = 0
+		Guild.requestsIndexSync.batchSent  = 0
+	end
+	-- BYID-SYNC-END-001: the ids this sync waits on, each with the peer it is asked of (N2); it ends when every
+	-- one has been answered.
+	if Guild.requestsIndexSync then
+		local pending = Guild.requestsIndexSync.pendingById or {}
+		for _, id in ipairs(missingIds) do pending[id] = sender end
+		Guild.requestsIndexSync.pendingById = pending
 	end
 
 	local batchSize = REQUESTS_SYNC.REQUESTS_BY_ID_BATCH_SIZE
@@ -291,7 +313,7 @@ function Guild:EnqueueByIdBatches(sender, missingIds)
 
 	-- Start drain only if not already running (may be mid-drain from a previous chunk).
 	if not byIdDraining then
-		drainByIdQueue(byIdQueueGen)
+		drainByIdQueue()
 	end
 end
 
@@ -391,7 +413,8 @@ local function deserializeRequestV1(arr)
 	}
 end
 
-local function serializeIndexChunkV1(requestsSlice, tombstonesSlice)
+local function serializeIndexChunkV1(requestsSlice, tombstonesSlice, chunksToCome)
+	---@type any[]
 	local arr = { RI_VERSION, #requestsSlice }
 	for _, entry in ipairs(requestsSlice) do
 		arr[#arr+1] = entry.id
@@ -400,6 +423,10 @@ local function serializeIndexChunkV1(requestsSlice, tombstonesSlice)
 	for _, entry in ipairs(tombstonesSlice) do
 		arr[#arr+1] = entry.id
 		arr[#arr+1] = entry.deletedAt
+	end
+	if chunksToCome then
+		arr[#arr+1] = false
+		arr[#arr+1] = chunksToCome
 	end
 	return arr
 end
@@ -425,7 +452,8 @@ local function deserializeIndexChunkV1(arr)
 		end
 		pos = pos + 2
 	end
-	return requests, tombstones
+	local chunksToCome = arr[pos] == false and tonumber(arr[pos + 1]) or nil
+	return requests, tombstones, chunksToCome
 end
 
 local function generateRequestId()
@@ -928,7 +956,15 @@ function Guild:ApplyRequestSnapshot(payload)
 	-- Merge each incoming request using LWW
 	local stats = { added = 0, updated = 0, kept = 0, tombstoned = 0 }
 	for _, req in iterFunc(incomingList) do
-		if req and req.id then
+		-- SYNC-OWNER-001 (Peer Review 385b8033, T1 c): no client ever changes who placed an order, so a
+		-- synced record naming a different requester for an order we hold is refused -- the snapshot
+		-- path's counterpart of ADD-OWNER-001 on the mutation path.
+		local held = req and req.id and self.Info.requests[req.id]
+		if held and req.requester and held.requester
+			and self:NormalizeName(req.requester) ~= self:NormalizeName(held.requester) then
+			TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestSnapshot: id=%s refused - requester %s is not the held order's %s",
+				tostring(req.id), tostring(req.requester), tostring(held.requester))
+		elseif req and req.id then
 			local result = mergeRequest(self.Info.requests, tombstones, req.id, req)
 			if result then
 				stats[result] = (stats[result] or 0) + 1
@@ -1006,6 +1042,14 @@ function Guild:ApplyRequestMutation(entry, sender)
 	if not entryType or not requestId then
 		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: Missing entryType or requestId (type=%s, id=%s)",
 			tostring(entryType), tostring(requestId))
+		return false
+	end
+	-- MUT-ID-001 (Peer Review eee82c0f, Q1): the merge stores the snapshot under requestId and the
+	-- permission checks look up requests[requestId], so a snapshot whose own id differs would be
+	-- stored under another order's key. Every sender sets both from one value; refuse a mismatch.
+	if entry.request and entry.request.id ~= nil and entry.request.id ~= requestId then
+		TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: id mismatch rejected (requestId=%s, request.id=%s)",
+			tostring(requestId), tostring(entry.request.id))
 		return false
 	end
 
@@ -1116,6 +1160,27 @@ function Guild:ApplyRequestMutation(entry, sender)
 				if claimedRequester and claimedRequester ~= normSender then
 					TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: ADD rejected - sender %s claimed requester %s",
 						normSender, claimedRequester)
+					return false
+				end
+				-- ADD-OWNER-001 (Peer Review e5b7e0c8, R1): an add for an order we already hold must come
+				-- from that order's requester. Otherwise a newer snapshot under someone else's id would
+				-- take the order over, or close it, past the cancel and complete permission checks. A
+				-- requester's own add arriving twice still merges as before.
+				local held = self.Info.requests[requestId]
+				local heldRequester = held and held.requester and self:NormalizeName(held.requester)
+				if held and heldRequester ~= normSender then
+					TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: ADD rejected - sender %s is not the requester (%s) of held id=%s",
+						normSender, tostring(heldRequester), requestId)
+					return false
+				end
+				-- ADD-OPEN-001 (Peer Review 70aaa39f, S1): an add is a new order, sent open with nothing
+				-- Sent (AddRequest). One carrying another status or a Sent count would let the requester
+				-- close their own order past the banker-only complete check, so it is refused.
+				local addStatus = entry.request.status
+				local addSent = tonumber(entry.request.fulfilled or 0) or 0
+				if (addStatus ~= nil and addStatus ~= "open") or addSent > 0 then
+					TOGBankClassic_Output:Debug("SYNC", "APPLY", "ApplyRequestMutation: ADD rejected - not a new open order (status=%s, fulfilled=%s) id=%s",
+						tostring(addStatus), tostring(entry.request.fulfilled), requestId)
 					return false
 				end
 			elseif entryType == "cancel" then
@@ -1321,6 +1386,17 @@ function Guild:EnsureRequestsIndexSyncState()
 	end
 end
 
+--- BYID-SYNC-END-001 (Peer Review e3fd248b, M1): the one place a sync's progress is cleared. Begin, End and the
+--- in-flight timeout each cleared these by hand and had already drifted.
+local function resetIndexSyncProgress(state)
+	state.inFlight = nil
+	state.inFlightSince = 0
+	state.awaitingById = false
+	state.pendingById = {}
+	state.chunksToCome = {}
+	state.incomplete = nil
+end
+
 --- The sender argument callers pass is no longer read (the per-sender cooldown is gone, see below).
 function Guild:CanQueryRequestsIndex(_)
 	self:EnsureRequestsIndexSyncState()
@@ -1331,9 +1407,13 @@ function Guild:CanQueryRequestsIndex(_)
 		if (now - (state.inFlightSince or 0)) < REQUESTS_SYNC.INDEX_INFLIGHT_TIMEOUT then
 			return false
 		end
-		state.inFlight = nil
-		state.inFlightSince = 0
-		state.awaitingById = false
+		-- M1: a sync the user started and that never finished says so, rather than leaving `notify` set
+		-- for the next automatic sync to print 'Requests synced.' for.
+		if state.notify and not TOGBankClassic_Options:IsSyncProgressMuted() then
+			TOGBankClassic_Output:Response("Request sync timed out.")
+		end
+		state.notify = false
+		resetIndexSyncProgress(state)
 	end
 
 	-- COVERAGE-MAIL-001: a per-sender cooldown check followed this, against a `perSender` map written
@@ -1353,11 +1433,26 @@ function Guild:BeginRequestsIndexSync(sender, force)
 	end
 	self:EnsureRequestsIndexSyncState()
 	local now = GetServerTime()
-	self.requestsIndexSync.lastQueryAt = now
-	self.requestsIndexSync.inFlight = sender or "*"
-	self.requestsIndexSync.inFlightSince = now
-	self.requestsIndexSync.awaitingById = false
-	return true
+	local state = self.requestsIndexSync
+	-- Peer Review 5063214b, P3: a forced ask of one peer while a sync runs is a re-ask inside it (a lost or
+	-- corrupt index chunk), not a new sync. Resetting forgot the ids other peers still owe, so a guild-wide
+	-- sync said 'Requests synced.' before their records arrived. Only that peer's index count restarts.
+	-- Peer Review b0f108ef, F1: a re-ask of a peer other than the one a targeted sync reads (a CRC re-ask of
+	-- another peer's guild broadcast) leaves the sync reading two peers, so it widens to guild-wide: G1 still
+	-- re-asks the first peer's lost chunks, and a refusal drops only the refused peer's ids.
+	local reask = force and sender and state.inFlight and true or false
+	if reask then
+		if state.chunksToCome then state.chunksToCome[sender] = nil end
+		if state.inFlight ~= sender then state.inFlight = "*" end
+	else
+		resetIndexSyncProgress(state)
+		state.inFlight = sender or "*"
+	end
+	state.lastQueryAt = now
+	state.inFlightSince = now
+	-- Tells a 10 s guild-query check which sync it was armed for; the state table is the same across syncs.
+	state.generation = (state.generation or 0) + 1
+	return true, reask
 end
 
 function Guild:MarkRequestsIndexAwaitingById()
@@ -1365,15 +1460,58 @@ function Guild:MarkRequestsIndexAwaitingById()
 	self.requestsIndexSync.awaitingById = true
 end
 
-function Guild:EndRequestsIndexSync()
+--- BYID-SYNC-END-001: an asked by-id answer arrived for `id`. It is no longer awaited by the sync, and
+--- (F4) the sync's in-flight clock restarts, so INDEX_INFLIGHT_TIMEOUT measures silence, not the drain.
+function Guild:NoteRequestsIndexAnswer(id)
+	local state = self.requestsIndexSync
+	if not (state and state.awaitingById) then return end
+	if state.pendingById then state.pendingById[id] = nil end
+	if state.inFlight then state.inFlightSince = GetServerTime() end
+end
+
+--- BYID-SYNC-END-001 (Peer Review eeb82a62, F2): the sync ends when nothing is left to ask and every id it
+--- asked for has been answered -- not on the first answer, which printed 'Requests synced.' early and
+--- cleared inFlight while the rest drained. An id never answered leaves it to INDEX_INFLIGHT_TIMEOUT.
+--- Only while the sync is fetching records: a by-id answer outside one has no index sync to end.
+function Guild:EndRequestsIndexSyncIfAnswered()
+	local state = self.requestsIndexSync
+	if not (state and state.awaitingById) then return end
+	self:SettleRequestsIndexSync()
+end
+
+--- BYID-SYNC-END-001 (Peer Review dc0455df, K1/K3): true while a sender has said more of its index is coming.
+--- An index arrives in chunks a second apart and the receiver cannot otherwise tell the last one.
+local function indexChunksToCome(state)
+	for _, n in pairs(state.chunksToCome or {}) do
+		if n > 0 then return true end
+	end
+	return false
+end
+
+--- BYID-SYNC-END-001 (Peer Review dc0455df, K1/K3): end the index sync once every id it asked for is answered
+--- and no sender has said more chunks are coming. The sender says so on each chunk (the togbank-ri trailer),
+--- so the next chunk's arrival or the last answer settles it again; nothing waits on a clock. An older sender
+--- says nothing, and its sync ends as it did before.
+function Guild:SettleRequestsIndexSync()
+	local state = self.requestsIndexSync
+	if state and state.awaitingById and (#byIdQueue > 0 or next(state.pendingById or {}) ~= nil) then return end
+	if state and state.inFlight and indexChunksToCome(state) then return end
+	self:EndRequestsIndexSync()
+end
+
+--- `failure`, when given, is the line a sync the user started prints instead of 'Requests synced.'
+--- (Peer Review 79dfbfd2, P2): a sync that could not reach a peer did not sync.
+function Guild:EndRequestsIndexSync(failure)
 	self:EnsureRequestsIndexSyncState()
 	if self.requestsIndexSync.notify and not TOGBankClassic_Options:IsSyncProgressMuted() then
-		TOGBankClassic_Output:Response("Requests synced.")
-		self.requestsIndexSync.notify = false
+		if not failure and self.requestsIndexSync.incomplete then
+			failure = "Request sync incomplete: a bank went offline before answering."
+		end
+		TOGBankClassic_Output:Response(failure or "Requests synced.")
 	end
-	self.requestsIndexSync.inFlight = nil
-	self.requestsIndexSync.inFlightSince = 0
-	self.requestsIndexSync.awaitingById = false
+	-- M1: cleared even when muted, so a later automatic sync never prints for this one.
+	self.requestsIndexSync.notify = false
+	resetIndexSyncProgress(self.requestsIndexSync)
 end
 
 function Guild:GetRequestsHash()
@@ -1408,7 +1546,8 @@ end
 
 -- Request index query/response for hash-based sync.
 function Guild:QueryRequestsIndex(target, priority, force)
-	if not self:BeginRequestsIndexSync(target, force) then
+	local begun, reask = self:BeginRequestsIndexSync(target, force)
+	if not begun then
 		return false
 	end
 	local payload = {
@@ -1421,8 +1560,21 @@ function Guild:QueryRequestsIndex(target, priority, force)
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	-- Send on old prefix for backwards compat; new clients listen on both
 	if target and target ~= "" then
+		-- SendWhisper refuses only an offline target (Core.lua); a CRC or G1 re-ask lands here when the peer
+		-- logged off mid-index, so the sync failed (Peer Review 79dfbfd2, P2).
 		if not TOGBankClassic_Core:SendWhisper("togbank-r", data, target, priority or "NORMAL") then
-			self:EndRequestsIndexSync()
+			local state = self.requestsIndexSync
+			if reask and state.inFlight == "*" then
+				-- P3: in a guild-wide sync other peers' ids are still owed; only this peer's go, as when its
+				-- by-id batch is refused.
+				for id, askedOf in pairs(state.pendingById or {}) do
+					if askedOf == target then state.pendingById[id] = nil end
+				end
+				state.incomplete = true
+				self:SettleRequestsIndexSync()
+			else
+				self:EndRequestsIndexSync(string.format("Request sync failed: %s is offline.", tostring(target)))
+			end
 			return false
 		end
 	else
@@ -1433,10 +1585,15 @@ function Guild:QueryRequestsIndex(target, priority, force)
 		-- inFlight set for the full REQUESTS_SYNC.INDEX_INFLIGHT_TIMEOUT and blocking any
 		-- reactive re-query triggered by external events in that window.
 		-- The timer fires after 10s; if a real response already cleared inFlight it
-		-- is a no-op, so no explicit cancellation is needed.
+		-- is a no-op, so no explicit cancellation is needed. BYID-SYNC-END-001: nor does it end a sync
+		-- an index answer has set fetching records, or one whose sender has said more chunks are coming --
+		-- the guild was not in sync after all, or the answer is not finished.
 		local syncStateAtBroadcast = self.requestsIndexSync
+		local generationAtBroadcast = syncStateAtBroadcast.generation
 		C_Timer.After(10, function()
-			if self.requestsIndexSync == syncStateAtBroadcast and self.requestsIndexSync.inFlight then
+			if self.requestsIndexSync == syncStateAtBroadcast and self.requestsIndexSync.inFlight
+				and self.requestsIndexSync.generation == generationAtBroadcast
+				and not self.requestsIndexSync.awaitingById and not indexChunksToCome(self.requestsIndexSync) then
 				TOGBankClassic_Output:Debug("SYNC", "APPLY", "QueryRequestsIndex: No index response in 10s (guild in sync) - clearing inFlight")
 				self:EndRequestsIndexSync()
 			end
@@ -1478,10 +1635,11 @@ local function drainIndexChunks()
 	-- ACQ-004: report a refused chunk. Observed in the wild as an AceCommQueue error naming
 	-- this exact queue (togbank-ri / WHISPER / <target>) with no callbackFn to report it.
 	--
-	-- This matters more than a single lost message: the index is CHUNKED, and the receiver has
-	-- no way to tell a short index from a complete one. A dropped chunk leaves them permanently
-	-- unaware of the request IDs it carried -- they will not re-query, because as far as they
-	-- know they received the whole thing.
+	-- This matters more than a single lost message: the index is CHUNKED. A dropped middle chunk
+	-- leaves the receiver permanently unaware of the request IDs it carried -- they will not
+	-- re-query, because nothing says which ids a chunk held. The `false, chunksToCome` trailer
+	-- (BYID-SYNC-END-001) only tells them when the LAST chunk is in: a dropped last chunk now holds
+	-- their sync open until INDEX_INFLIGHT_TIMEOUT instead of letting it end early.
 	local target = chunk.target
 	local onSent = function(_, bytesSent, totalBytes, sendResult)
 		if sendResult == false then
@@ -1606,7 +1764,7 @@ function Guild:SendRequestsIndex(target)
 			chunkRequests[#chunkRequests + 1] = requestsIndex[i]
 		end
 		local chunkTombstones = chunkNum == 1 and tombstonesIndex or {}
-		local payload = serializeIndexChunkV1(chunkRequests, chunkTombstones)
+		local payload = serializeIndexChunkV1(chunkRequests, chunkTombstones, totalChunks - chunkNum)
 		table.insert(pendingIndexChunks, { payload = payload, target = target })
 	end
 
@@ -1642,6 +1800,31 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 	local incomingRequests = payload.requests
 	local incomingTombstones = payload.tombstones
 	if type(incomingRequests) ~= "table" then
+		return
+	end
+	-- BYID-SYNC-END-001 (K1-K3): what this sender says is still coming of its index; nil from an older sender.
+	local syncState = self.requestsIndexSync
+	local chunkLost = false
+	-- Peer Review 20851b90, N1: only from the peer this sync is reading. A targeted sync that overheard another
+	-- peer's guild broadcast recorded that peer's count, and a broadcast whose last chunk never arrived left the
+	-- sync waiting on it until INDEX_INFLIGHT_TIMEOUT -- the same gate the G1 re-ask below already had.
+	if syncState and sender and (syncState.inFlight == "*" or syncState.inFlight == sender) then
+		syncState.chunksToCome = syncState.chunksToCome or {}
+		local before, toCome = syncState.chunksToCome[sender], tonumber(payload.chunksToCome)
+		syncState.chunksToCome[sender] = toCome
+		-- BYID-SYNC-END-001 (Peer Review 5b13bb3a, K5): a chunk arriving is the sync still working, so
+		-- INDEX_INFLIGHT_TIMEOUT measures silence here too, not the length of a long index.
+		syncState.inFlightSince = GetServerTime()
+		-- Peer Review e3fd248b, G1: one index's chunks count down by one (they are queued contiguously), so a
+		-- larger drop is a chunk lost on the way (an AceCommQueue refusal, ACQ-004). A count that rises is a
+		-- new index.
+		chunkLost = before and toCome and toCome < before - 1 or false
+	end
+	if chunkLost then
+		TOGBankClassic_Output:Debug("REQUESTS", "INDEX",
+			"togbank-ri chunk lost from %s -- re-requesting index", tostring(sender))
+		-- The whole index is coming again; reading this chunk now would settle the new sync before it.
+		self:QueryRequestsIndex(sender, "NORMAL", true)
 		return
 	end
 
@@ -1699,7 +1882,9 @@ function Guild:ReceiveRequestsIndex(payload, sender)
 		self:EnqueueByIdBatches(sender, missingIds)
 	else
 		TOGBankClassic_Output:Debug("REQUESTS", "INDEX", "Already in sync with %s (0 missing)", tostring(sender))
-		self:EndRequestsIndexSync()
+		-- BYID-SYNC-END-001 (Peer Review dc0455df, K1): one chunk with nothing missing is not the whole index;
+		-- an earlier chunk's ids may still be awaited and a later chunk may still come.
+		self:SettleRequestsIndexSync()
 		self:RefreshRequestsUI()
 	end
 end
@@ -1707,18 +1892,25 @@ end
 -- Receive a togbank-ri positional index payload and dispatch to ReceiveRequestsIndex.
 function Guild:ReceiveRequestsIndexV1(arr, sender)
 	if not arr or type(arr) ~= "table" then return end
-	local requests, tombstones = deserializeIndexChunkV1(arr)
-	self:ReceiveRequestsIndex({ requests = requests, tombstones = tombstones }, sender)
+	local requests, tombstones, chunksToCome = deserializeIndexChunkV1(arr)
+	self:ReceiveRequestsIndex({ requests = requests, tombstones = tombstones, chunksToCome = chunksToCome }, sender)
 end
 
 -- Receive a single togbank-rd2 positional record or tombstone.
-function Guild:ReceiveRequestsByIdV1(arr)
+function Guild:ReceiveRequestsByIdV1(arr, sender)
 	if not arr or type(arr) ~= "table" then return end
 	if not self.Info then return end
 	self:EnsureRequestsInitialized()
 
 	local id = arr[2]
 	if not id then return end
+	-- BYID-ASKED-001: an answer nobody asked for is not an answer, and does not end a sync either.
+	if not self:TakeRequestedById(id, sender) then
+		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "togbank-rd2 for id=%s from %s dropped: not asked of them",
+			tostring(id), tostring(sender))
+		return
+	end
+	self:NoteRequestsIndexAnswer(id)
 
 	if arr[3] == false then
 		-- Tombstone: {RD2_VERSION, id, false, tombstoneTs}
@@ -1734,8 +1926,7 @@ function Guild:ReceiveRequestsByIdV1(arr)
 		end
 	end
 
-	local shouldEndSync = self.requestsIndexSync and self.requestsIndexSync.awaitingById
-	if shouldEndSync then self:EndRequestsIndexSync() end
+	self:EndRequestsIndexSyncIfAnswered()
 end
 
 function Guild:QueryRequestsById(target, ids, priority)
@@ -1751,13 +1942,65 @@ function Guild:QueryRequestsById(target, ids, priority)
 	}
 	local data = TOGBankClassic_Core:SerializeWithChecksum(payload)
 	-- Send on old prefix for backwards compat; new clients listen on both
+	local from = "*"
 	if target and target ~= "" then
 		if not TOGBankClassic_Core:SendWhisper("togbank-r", data, target, priority or "NORMAL") then
 			return false
 		end
+		from = self:NormalizeName(target) or target
 	else
 		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, priority or "BULK")
 	end
+	-- BYID-ASKED-001: only what was actually asked for, of whom, may be answered. An id asked of a
+	-- second player (an index sync and a SYNC-013 fetch can both ask for it) remembers both askees,
+	-- so whichever answers first lands. Each askee carries its own ask time, so a re-ask of one player
+	-- does not extend another's window. Askees past the window are swept here, so unanswered asks do
+	-- not pile up for the session.
+	local now = GetServerTime()
+	for id, asked in pairs(requestedById) do
+		for who, at in pairs(asked) do
+			if not askStillOpen(at, who, now) then asked[who] = nil end
+		end
+		if next(asked) == nil then requestedById[id] = nil end
+	end
+	for who, at in pairs(heardFromAt) do
+		if (now - at) > REQUESTS_SYNC.REQUESTS_BY_ID_ANSWER_WINDOW then heardFromAt[who] = nil end
+	end
+	for _, id in ipairs(ids) do
+		local asked = requestedById[id] or {}
+		asked[from] = now
+		requestedById[id] = asked
+	end
+	return true
+end
+
+--- BYID-ASKED-001: how many ids are waiting on an answer (the requester-side twin of
+--- GetQueriedRequestsCount).
+function Guild:GetRequestedByIdCount()
+	local n = 0
+	for _ in pairs(requestedById) do n = n + 1 end
+	return n
+end
+
+--- BYID-ASKED-001: true, once, when `id` was asked of `sender` (or of the guild) within the
+--- answer window, counted from the ask or from that askee's last asked answer, whichever is later
+--- (BYID-WINDOW-001). A by-id record or tombstone that fails this is dropped unmerged.
+function Guild:TakeRequestedById(id, sender)
+	local asked = requestedById[id]
+	if not asked then return false end
+	local now = GetServerTime()
+	local name = self:NormalizeName(sender) or ""
+	local who = (askStillOpen(asked[name], name, now) and name) or (askStillOpen(asked["*"], "*", now) and "*")
+	if not who then
+		-- Wrong player: keep the id for whoever it was asked of, unless every one of their windows has closed.
+		for askee, at in pairs(asked) do
+			if askStillOpen(at, askee, now) then return false end
+		end
+		requestedById[id] = nil
+		return false
+	end
+	requestedById[id] = nil
+	heardFromAt[who] = now
 	return true
 end
 
@@ -1798,13 +2041,10 @@ function Guild:EnqueueRequestsById(sender, ids)
 	end
 end
 
-function Guild:ReceiveRequestsById(payload)
-	-- Only clear inFlight if we're actually in the index-sync awaiting-by-id state.
-	-- On-demand fetches (SYNC-013 fulfill race) must not stomp an unrelated index sync.
-	local shouldEndSync = self.requestsIndexSync and self.requestsIndexSync.awaitingById
-
+function Guild:ReceiveRequestsById(payload, sender)
+	-- BYID-MALFORMED-001 (Peer Review 3a1998fa, P5): a malformed payload answers nothing that was asked,
+	-- so like an empty one (BYID-EMPTY-001 below) it must not end the sync; INDEX_INFLIGHT_TIMEOUT frees it.
 	if not payload or type(payload) ~= "table" then
-		if shouldEndSync then self:EndRequestsIndexSync() end
 		return ADOPTION_STATUS.INVALID
 	end
 	if not self.Info then
@@ -1814,20 +2054,44 @@ function Guild:ReceiveRequestsById(payload)
 
 	local requests = payload.requests
 	if not requests or type(requests) ~= "table" then
-		if shouldEndSync then self:EndRequestsIndexSync() end
 		return ADOPTION_STATUS.INVALID
 	end
 
 	TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE",
 		"Received by-id response: %d requests", #requests)
 
-	-- Always end sync regardless of whether snapshot merge succeeded.
-	-- ApplyRequestSnapshot failing means empty/corrupt payload — either way we're done waiting.
+	-- BYID-ASKED-001: keep only the records and tombstones this client asked the sender for.
+	local askedRequests, askedTombstones = {}, {}
+	for _, req in pairs(requests) do
+		if type(req) == "table" and req.id and self:TakeRequestedById(req.id, sender) then
+			askedRequests[#askedRequests + 1] = req
+			self:NoteRequestsIndexAnswer(req.id)
+		end
+	end
+	local carried = next(requests) ~= nil
+	for id, ts in pairs(type(payload.tombstones) == "table" and payload.tombstones or {}) do
+		carried = true
+		if self:TakeRequestedById(id, sender) then
+			askedTombstones[id] = ts
+			self:NoteRequestsIndexAnswer(id)
+		end
+	end
+	-- BYID-EMPTY-001 (Peer Review 35aa4d69, P2): an EMPTY payload answers nothing either, so it must not
+	-- end a sync. No shipped client sends a table by-id (the drain sends togbank-rd2); a stuck sync is
+	-- still freed by INDEX_INFLIGHT_TIMEOUT in CanQueryRequestsIndex.
+	if #askedRequests == 0 and next(askedTombstones) == nil then
+		TOGBankClassic_Output:Debug("REQUESTS", "RECEIVE", "by-id response from %s dropped: %s",
+			tostring(sender), carried and "nothing in it was asked of them" or "it was empty")
+		return ADOPTION_STATUS.IGNORED
+	end
+
+	-- Whether or not the merge succeeded, these ids were answered. Only an index sync awaiting by-id is
+	-- ended, so an on-demand fetch (SYNC-013 fulfill race) never stomps an unrelated sync.
 	local adopted = self:ApplyRequestSnapshot({
-		requests = requests,
-		tombstones = payload.tombstones or {},
+		requests = askedRequests,
+		tombstones = askedTombstones,
 	})
-	if shouldEndSync then self:EndRequestsIndexSync() end
+	self:EndRequestsIndexSyncIfAnswered()
 	return adopted and ADOPTION_STATUS.ADOPTED or ADOPTION_STATUS.INVALID
 end
 

@@ -557,6 +557,10 @@ describe("MAILUI-002: the window", function()
 	end)
 
 	after_each(function()
+		-- SUITE-SPEED-002: hand the window back, as requestsactions_spec does. Each example built a new
+		-- one and kept it: this block took the run's live frames from ~5,600 to ~12,700.
+		if M and M.isOpen then M:Close() end
+		if M and M.Window then env.releaseWindow(M.Window); M.Window = nil end
 		TOGBankClassic_UI_StatusBar = nil
 		local tip = _G.GameTooltip
 		tip.SetInboxItem = nil

@@ -304,6 +304,45 @@ describe("COVERAGE-MAIL-001: applying a received mutation", function()
 		assert.is_false(Guild:ApplyRequestMutation({ type = "reopen", requestId = "a", request = rec("a", { updatedAt = T0, reopenedAt = T0 }) }, OTHER))
 		assert.equal("open", Guild.Info.requests.a.status)
 	end)
+
+	it("MUT-ID-001: refuses a record whose own id differs from the mutation's requestId", function()
+		-- PEER is the requester of both, so the add permission check alone would let this through and
+		-- the newer snapshot of "b" would overwrite order "a".
+		local planted = rec("b", { quantity = 99, updatedAt = T0 })
+		assert.is_false(Guild:ApplyRequestMutation({ type = "add", requestId = "a", request = planted }, PEER))
+		assert.equal("a", Guild.Info.requests.a.id)
+		assert.equal(5, Guild.Info.requests.a.quantity)
+		assert.is_nil(Guild.Info.requests.b)
+	end)
+
+	it("ADD-OWNER-001: refuses an add that would take over or close someone else's order", function()
+		-- OTHER names itself as requester, so the claimed-requester check passes; the ids agree, so
+		-- MUT-ID-001 passes; only the held order's own requester stands in the way.
+		local takeover = rec("a", { requester = OTHER, quantity = 99, updatedAt = T0 })
+		assert.is_false(Guild:ApplyRequestMutation({ type = "add", requestId = "a", request = takeover }, OTHER))
+		local closer = rec("a", { requester = OTHER, status = "cancelled", updatedAt = T0 })
+		assert.is_false(Guild:ApplyRequestMutation({ type = "add", requestId = "a", request = closer }, OTHER))
+		assert.equal(PEER, Guild.Info.requests.a.requester)
+		assert.equal("open", Guild.Info.requests.a.status)
+		assert.equal(5, Guild.Info.requests.a.quantity)
+	end)
+
+	it("ADD-OWNER-001: still merges the requester's own add for an order already held", function()
+		assert.is_true(Guild:ApplyRequestMutation({ type = "add", requestId = "a", request = rec("a", { notes = "again", updatedAt = T0 }) }, PEER))
+		assert.equal("again", Guild.Info.requests.a.notes)
+	end)
+
+	it("ADD-OPEN-001: refuses the requester's own add that closes or fills their order", function()
+		for _, fields in ipairs({
+			{ status = "complete", updatedAt = T0 },
+			{ status = "fulfilled", fulfilled = 5, updatedAt = T0 },
+			{ fulfilled = 5, updatedAt = T0 },
+		}) do
+			assert.is_false(Guild:ApplyRequestMutation({ type = "add", requestId = "a", request = rec("a", fields) }, PEER))
+		end
+		assert.equal("open", Guild.Info.requests.a.status)
+		assert.equal(0, Guild.Info.requests.a.fulfilled)
+	end)
 end)
 
 describe("COVERAGE-MAIL-001: receiving mutation batches", function()
@@ -481,8 +520,9 @@ describe("COVERAGE-MAIL-001: asking for what an index says is missing", function
 
 	it("a by-id tombstone deletes the order; a zero one does nothing", function()
 		Guild:ApplyRequestSnapshot({ requests = { rec("a"), rec("b") } })
-		Guild:ReceiveRequestsByIdV1({ 1, "a", false, T0 })
-		Guild:ReceiveRequestsByIdV1({ 1, "b", false, 0 })
+		Guild:QueryRequestsById(PEER, { "a", "b" })
+		Guild:ReceiveRequestsByIdV1({ 1, "a", false, T0 }, PEER)
+		Guild:ReceiveRequestsByIdV1({ 1, "b", false, 0 }, PEER)
 		assert.is_nil(Guild.Info.requests.a)
 		assert.is_table(Guild.Info.requests.b)
 		assert.equal(T0, Guild.Info.requestsTombstones.a)
@@ -496,17 +536,559 @@ describe("COVERAGE-MAIL-001: asking for what an index says is missing", function
 		assert.equal("GUILD", sends[#sends].dist)
 	end)
 
-	it("ReceiveRequestsById adopts a by-id reply and ends an index sync waiting on it, valid or not", function()
+	-- BYID-MALFORMED-001 (Peer Review 3a1998fa, P5): a malformed by-id answers nothing that was asked, so
+	-- like an empty one (BYID-EMPTY-001) it must not end the sync; INDEX_INFLIGHT_TIMEOUT still frees it.
+	it("ReceiveRequestsById refuses a malformed reply without ending an index sync, and an asked reply ends it", function()
 		Guild:BeginRequestsIndexSync(PEER, true); Guild:MarkRequestsIndexAwaitingById()
-		assert.equal(STATUS.INVALID, Guild:ReceiveRequestsById(nil))
-		assert.is_nil(Guild.requestsIndexSync.inFlight)
-		Guild:BeginRequestsIndexSync(PEER, true); Guild:MarkRequestsIndexAwaitingById()
-		assert.equal(STATUS.INVALID, Guild:ReceiveRequestsById({ requests = "x" }))
-		assert.is_nil(Guild.requestsIndexSync.inFlight)
-		Guild:BeginRequestsIndexSync(PEER, true); Guild:MarkRequestsIndexAwaitingById()
-		assert.equal(STATUS.ADOPTED, Guild:ReceiveRequestsById({ requests = { rec("n") } }))
+		assert.equal(STATUS.INVALID, Guild:ReceiveRequestsById(nil, PEER))
+		assert.is_true(Guild.requestsIndexSync.awaitingById)
+		assert.is_not_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(STATUS.INVALID, Guild:ReceiveRequestsById({ requests = "x" }, PEER))
+		assert.is_true(Guild.requestsIndexSync.awaitingById)
+		assert.is_not_nil(Guild.requestsIndexSync.inFlight)
+		Guild:QueryRequestsById(PEER, { "n" })
+		assert.equal(STATUS.ADOPTED, Guild:ReceiveRequestsById({ requests = { rec("n") } }, PEER))
 		assert.is_table(Guild.Info.requests.n)
 		assert.is_nil(Guild.requestsIndexSync.inFlight)
+	end)
+
+	-- BYID-SYNC-END-001 (Peer Review eeb82a62, F2): the first asked record ended the whole sync, printing
+	-- 'Requests synced.' while the rest were still being asked and letting a second index sync start under them.
+	local function rd2(id)
+		local r = rec(id)
+		return { 1, r.id, r.date, r.updatedAt, r.requester, r.bank, r.item, r.quantity, r.fulfilled, r.status, r.notes, r.itemID }
+	end
+
+	it("a sync stays in flight until every id it asked for is answered", function()
+		TOGBankClassic_Options.IsSyncProgressMuted = function() return false end
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild.requestsIndexSync.notify = true
+		Guild:ReceiveRequestsIndexV1(index(51), PEER)
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "the first record ended the sync")
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		for i = 2, 50 do Guild:ReceiveRequestsByIdV1(rd2("m" .. i), PEER) end
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "ended with the second batch still unsent")
+		env.advance(5)
+		Guild:ReceiveRequestsByIdV1(rd2("m51"), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Requests synced."))
+	end)
+
+	it("a table by-id reply ends the sync only once every id it asked for is answered", function()
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild:ReceiveRequestsIndexV1(index(2), PEER)
+		assert.equal(STATUS.ADOPTED, Guild:ReceiveRequestsById({ requests = { rec("m1") } }, PEER))
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight)
+		Guild:ReceiveRequestsById({ requests = { rec("m2") } }, PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+	end)
+
+	it("a guild query's 10 s silence check does not end a sync that is fetching records", function()
+		assert.is_true(Guild:QueryRequestsIndex(nil, nil, true))
+		Guild:ReceiveRequestsIndexV1(index(51), PEER)
+		env.advance(10)
+		assert.equal("*", Guild.requestsIndexSync.inFlight)
+	end)
+
+	-- BYID-SYNC-END-001 (Peer Review eeb82a62, F4): a long drain outlived INDEX_INFLIGHT_TIMEOUT once the sync
+	-- stays in flight for it, so each asked answer restarts the in-flight clock.
+	it("each asked answer keeps a long sync from timing out", function()
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild:ReceiveRequestsIndexV1(index(51), PEER)
+		env.now = T0 + 170
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		env.now = T0 + 200
+		assert.is_false(Guild:CanQueryRequestsIndex(OTHER))
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight)
+		env.now = T0 + 171 + 180
+		assert.is_true(Guild:CanQueryRequestsIndex(OTHER), "a silent peer is still freed by the timeout")
+	end)
+
+	-- BYID-SYNC-END-001 (Peer Review dc0455df, K1-K3): an index comes in chunks of 20 ids, one a second, and
+	-- the receiver cannot tell the last one. A chunk with nothing missing ended the sync outright (K1); each
+	-- chunk after the first forgot the ids the earlier ones still waited on (K2); and a chunk whose ids were all
+	-- answered before the next arrived ended the sync between chunks (K3). Each chunk now ends with
+	-- `false, <chunks still to come>`, so the receiver knows the last one without a timer.
+	local function chunk(toCome, ...)
+		---@type any[]
+		local arr = { 1, select("#", ...) }
+		for _, id in ipairs({ ... }) do arr[#arr + 1] = id; arr[#arr + 1] = T0 - 1 end
+		if toCome then arr[#arr + 1] = false; arr[#arr + 1] = toCome end
+		return arr
+	end
+	local function notifying()
+		TOGBankClassic_Options.IsSyncProgressMuted = function() return false end
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild.requestsIndexSync.notify = true
+	end
+
+	it("K1: a later chunk with nothing missing does not end a sync still fetching an earlier chunk's ids", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(chunk(1, "m1"), PEER)
+		env.advance(1)
+		Guild:ReceiveRequestsIndexV1(chunk(0), PEER)
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "a 0-missing chunk ended the sync")
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Requests synced."))
+	end)
+
+	it("K2: a second chunk from the same peer adds to the ids awaited instead of replacing them", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(chunk(1, "m1"), PEER)
+		env.advance(1)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "m2"), PEER)
+		assert.equal(2, #sendsOf("togbank-r"))
+		Guild:ReceiveRequestsByIdV1(rd2("m2"), PEER)
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "ended with the first chunk's id unanswered")
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Requests synced."))
+	end)
+
+	it("K3: a chunk answered in full before the next chunk arrives does not end the sync between them", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(chunk(1, "m1"), PEER)
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "ended between chunks")
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		Guild:ReceiveRequestsIndexV1(chunk(0, "m2"), PEER)
+		Guild:ReceiveRequestsByIdV1(rd2("m2"), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Requests synced."))
+	end)
+
+	it("K3: an index of chunks with nothing missing ends on its last chunk, and the 10 s check waits for it", function()
+		assert.is_true(Guild:QueryRequestsIndex(nil, nil, true))
+		Guild:ReceiveRequestsIndexV1(chunk(2), PEER)
+		env.advance(10)
+		assert.equal("*", Guild.requestsIndexSync.inFlight, "ended with two chunks still to come")
+		Guild:ReceiveRequestsIndexV1(chunk(1), PEER)
+		assert.equal("*", Guild.requestsIndexSync.inFlight)
+		Guild:ReceiveRequestsIndexV1(chunk(0), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+	end)
+
+	-- BYID-SYNC-END-001 (Peer Review 5b13bb3a, K4): every client hears every guild-wide index, so another
+	-- peer's chunk switched the by-id sender and forgot the ids already asked of the first; the sync then
+	-- settled on the second peer's answers. K5: chunks arriving did not restart the in-flight clock.
+	it("K4: another peer's index does not forget the ids already asked of the sync's peer", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(chunk(0, "m1"), PEER)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "m2"), OTHER)
+		Guild:ReceiveRequestsByIdV1(rd2("m2"), OTHER)
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "settled on the other peer's answer")
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Requests synced."))
+	end)
+
+	-- Peer Review 79dfbfd2, P1: a sender change emptied the by-id queue, so two peers' indexes interleaved in
+	-- one sync dropped each other's unsent batches and those ids were never asked in that sync.
+	local function byIdAsks()
+		local asked = {}
+		for _, s in ipairs(sendsOf("togbank-r")) do
+			local p = decode(s)
+			if p.type == "requests-by-id" then
+				for _, id in ipairs(p.ids) do asked[id] = s.target end
+			end
+		end
+		return asked
+	end
+
+	it("P1: two peers' interleaved indexes each have every missing id asked of their own peer", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(index(51), PEER)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "x1"), OTHER)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "m52"), PEER)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "x2"), OTHER)
+		env.advance(5); env.advance(5); env.advance(5); env.advance(5)
+		local asked = byIdAsks()
+		for i = 1, 52 do assert.equal(PEER, asked["m" .. i], "m" .. i .. " was not asked of its peer") end
+		assert.equal(OTHER, asked.x1)
+		assert.equal(OTHER, asked.x2)
+		for i = 1, 52 do Guild:ReceiveRequestsByIdV1(rd2("m" .. i), PEER) end
+		Guild:ReceiveRequestsByIdV1(rd2("x1"), OTHER)
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "settled with an id still unanswered")
+		Guild:ReceiveRequestsByIdV1(rd2("x2"), OTHER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Requests synced."))
+	end)
+
+	-- P1/P2: a by-id ask refused because that peer went offline drops only that peer's batches, and the
+	-- sync the user started does not claim success.
+	it("P1: a peer gone offline loses only its own batches, and the sync says it was incomplete", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(index(51), PEER)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "x1"), OTHER)
+		for i = 1, 50 do Guild:ReceiveRequestsByIdV1(rd2("m" .. i), PEER) end
+		local stubWhisper = Core.SendWhisper
+		Core.SendWhisper = function(core, prefix, text, target, ...)
+			if target == PEER then return false end
+			return stubWhisper(core, prefix, text, target, ...)
+		end
+		env.advance(5); env.advance(5)
+		Core.SendWhisper = stubWhisper
+		assert.equal(OTHER, byIdAsks().x1, "the other peer's batch was dropped with the offline peer's")
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight)
+		Guild:ReceiveRequestsByIdV1(rd2("x1"), OTHER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		assert.equal(1, #outputs("Response", "Request sync incomplete: a bank went offline before answering."))
+	end)
+
+	-- Peer Review f3453dc9, N2: the offline branch released the refused batch's ids and the queued ones, but
+	-- not those of a batch already sent before the peer logged off, so the sync waited for the timeout.
+	it("N2: a peer gone offline after its first batch went out ends the sync as incomplete, not on the timeout", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(index(51), PEER)
+		whisperOk = false
+		env.advance(5)
+		assert.is_nil(Guild.requestsIndexSync.inFlight, "waited on the batch sent before the peer logged off")
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		assert.equal(1, #outputs("Response", "Request sync incomplete: a bank went offline before answering."))
+	end)
+
+	-- Peer Review f3453dc9, N1: nothing cancels the by-id drain. A new sync begun mid-drain (a CRC or G1
+	-- re-ask) still sends the batches already queued, because the ids they ask for are still missing.
+	it("N1: a sync begun while by-id batches are queued still sends them to the peer they were for", function()
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild:ReceiveRequestsIndexV1(index(101), PEER)
+		Guild:BeginRequestsIndexSync(PEER, true)
+		env.advance(5); env.advance(5)
+		local asked = byIdAsks()
+		for i = 1, 101 do assert.equal(PEER, asked["m" .. i], "m" .. i .. " was dropped by the new sync") end
+	end)
+
+	it("P2: a re-ask to a peer who logged off says the sync failed, not 'Requests synced.'", function()
+		notifying()
+		whisperOk = false
+		assert.is_false(Guild:QueryRequestsIndex(PEER, "NORMAL", true))
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		assert.equal(1, #outputs("Response", "Request sync failed: " .. PEER .. " is offline."))
+	end)
+
+	it("K5: each index chunk keeps a long index from timing out the sync", function()
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild:ReceiveRequestsIndexV1(chunk(2), PEER)
+		env.now = T0 + 170
+		Guild:ReceiveRequestsIndexV1(chunk(1), PEER)
+		env.now = T0 + 200
+		assert.is_false(Guild:CanQueryRequestsIndex(OTHER), "timed out mid-index")
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight)
+	end)
+
+	-- Peer Review e3fd248b, M1: the in-flight timeout cleared the sync but not `notify`, so the next automatic
+	-- sync printed 'Requests synced.' for the user's sync that never finished.
+	it("M1: a user's sync that times out says so, and the next automatic sync prints nothing", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(chunk(1), PEER)
+		env.now = T0 + 181
+		assert.is_true(Guild:CanQueryRequestsIndex(OTHER))
+		assert.equal(1, #outputs("Response", "Request sync timed out."))
+		assert.is_false(Guild.requestsIndexSync.notify)
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild:ReceiveRequestsIndexV1(chunk(0), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(0, #outputs("Response", "Requests synced."))
+	end)
+
+	it("M1: a muted sync's notify is cleared when it ends, so it never prints later", function()
+		notifying()
+		TOGBankClassic_Options.IsSyncProgressMuted = function() return true end
+		Guild:ReceiveRequestsIndexV1(chunk(0), PEER)
+		assert.is_false(Guild.requestsIndexSync.notify)
+	end)
+
+	-- Peer Review e3fd248b, G1: one index's chunks count down by one, so a bigger drop is a lost chunk; the
+	-- sync re-asks that peer for its whole index instead of reading a short one as complete.
+	local function indexQueriesTo(target)
+		local n = 0
+		for _, s in ipairs(sendsOf("togbank-r")) do
+			if s.target == target and decode(s).type == "requests-index" then n = n + 1 end
+		end
+		return n
+	end
+
+	it("G1: a chunk count that skips one re-asks the sync's peer for its index", function()
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild:ReceiveRequestsIndexV1(chunk(3), PEER)
+		Guild:ReceiveRequestsIndexV1(chunk(2), PEER)
+		assert.equal(0, indexQueriesTo(PEER), "an unbroken countdown re-asked")
+		Guild:ReceiveRequestsIndexV1(chunk(0), PEER)
+		assert.equal(1, indexQueriesTo(PEER))
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "the re-asked sync is not in flight")
+	end)
+
+	it("G1: a rising count is a new index, and another peer's gap is not this sync's to re-ask", function()
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "m1"), PEER)
+		Guild:ReceiveRequestsIndexV1(chunk(4), PEER)
+		Guild:ReceiveRequestsIndexV1(chunk(3), OTHER)
+		Guild:ReceiveRequestsIndexV1(chunk(0), OTHER)
+		assert.equal(0, indexQueriesTo(PEER))
+		assert.equal(0, indexQueriesTo(OTHER))
+	end)
+
+	-- The state table is the same across syncs, so a guild query's 10 s check could end a later sync.
+	it("a guild query's 10 s check does not end a later sync", function()
+		assert.is_true(Guild:QueryRequestsIndex(nil, nil, true))
+		env.advance(5)
+		Guild:EndRequestsIndexSync()
+		Guild:BeginRequestsIndexSync(PEER, true)
+		env.advance(5)
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "the earlier query's check ended this sync")
+	end)
+
+	it("P3: a re-ask of one peer inside a guild-wide sync keeps it guild-wide past the 10 s check", function()
+		assert.is_true(Guild:QueryRequestsIndex(nil, nil, true))
+		env.advance(5)
+		Guild:BeginRequestsIndexSync(PEER, true)
+		env.advance(5)
+		assert.equal("*", Guild.requestsIndexSync.inFlight, "the re-ask narrowed or ended the guild-wide sync")
+	end)
+
+	-- Peer Review 5063214b, P3: a re-ask of one peer during a guild-wide sync reset the whole sync, so the ids
+	-- another peer still owed stopped holding it and 'Requests synced.' printed before their records arrived.
+	it("P3: a re-ask of one peer in a guild-wide sync still waits for the ids another peer owes", function()
+		TOGBankClassic_Options.IsSyncProgressMuted = function() return false end
+		assert.is_true(Guild:QueryRequestsIndex(nil, nil, true))
+		Guild.requestsIndexSync.notify = true
+		Guild:ReceiveRequestsIndexV1(chunk(0, "x1"), OTHER)
+		Guild:ReceiveRequestsIndexV1(chunk(3), PEER)
+		Guild:ReceiveRequestsIndexV1(chunk(1), PEER)
+		assert.equal(1, indexQueriesTo(PEER), "the lost chunk was not re-asked")
+		Guild:ReceiveRequestsIndexV1(chunk(0), PEER)
+		assert.equal("*", Guild.requestsIndexSync.inFlight, "settled with x1 still owed by the other peer")
+		assert.equal(0, #outputs("Response", "Requests synced."))
+		Guild:ReceiveRequestsByIdV1(rd2("x1"), OTHER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Requests synced."))
+	end)
+
+	it("P3: a re-ask refused in a guild-wide sync drops only that peer, and the sync says it was incomplete", function()
+		TOGBankClassic_Options.IsSyncProgressMuted = function() return false end
+		assert.is_true(Guild:QueryRequestsIndex(nil, nil, true))
+		Guild.requestsIndexSync.notify = true
+		Guild:ReceiveRequestsIndexV1(chunk(0, "x1"), OTHER)
+		whisperOk = false
+		assert.is_false(Guild:QueryRequestsIndex(PEER, "NORMAL", true))
+		assert.equal("*", Guild.requestsIndexSync.inFlight, "ended with x1 still owed by the other peer")
+		assert.equal(0, #outputs("Response", "Request sync failed: " .. PEER .. " is offline."))
+		whisperOk = true
+		Guild:ReceiveRequestsByIdV1(rd2("x1"), OTHER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Request sync incomplete: a bank went offline before answering."))
+	end)
+
+	-- Peer Review b0f108ef, F1: a CRC re-ask is not gated on the sync's peer, so a targeted sync of PEER that
+	-- re-asked OTHER moved inFlight to OTHER: PEER's lost chunks stopped being re-asked, and a refused OTHER
+	-- ended the sync 'failed' with PEER's ids still owed.
+	it("F1: a re-ask of another peer during a targeted sync widens it, and the first peer is still read", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(chunk(3, "m1"), PEER)
+		whisperOk = false
+		assert.is_false(Guild:QueryRequestsIndex(OTHER, "NORMAL", true))
+		assert.equal("*", Guild.requestsIndexSync.inFlight, "the refused re-ask ended the sync with m1 still owed")
+		assert.equal(0, #outputs("Response", "Request sync failed: " .. OTHER .. " is offline."))
+		whisperOk = true
+		Guild:ReceiveRequestsIndexV1(chunk(1), PEER)
+		assert.equal(1, indexQueriesTo(PEER), "the first peer's lost chunk was not re-asked")
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Request sync incomplete: a bank went offline before answering."))
+	end)
+
+	-- Peer Review 20851b90, A2: once a re-ask has widened a targeted sync, a refused re-ask of its FIRST peer is
+	-- one peer of a guild-wide sync dropping out, not the whole sync failing; the widened peer's ids still hold it.
+	it("A2: a refused re-ask of the first peer after the sync widened drops only that peer", function()
+		notifying()
+		assert.is_true(Guild:QueryRequestsIndex(OTHER, "NORMAL", true))
+		assert.equal("*", Guild.requestsIndexSync.inFlight)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "x1"), OTHER)
+		whisperOk = false
+		assert.is_false(Guild:QueryRequestsIndex(PEER, "NORMAL", true))
+		assert.equal(0, #outputs("Response", "Request sync failed: " .. PEER .. " is offline."))
+		assert.equal("*", Guild.requestsIndexSync.inFlight, "ended with x1 still owed by the widened peer")
+		assert.equal(OTHER, Guild.requestsIndexSync.pendingById.x1)
+		whisperOk = true
+		Guild:ReceiveRequestsByIdV1(rd2("x1"), OTHER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+		assert.equal(1, #outputs("Response", "Request sync incomplete: a bank went offline before answering."))
+	end)
+
+	-- Peer Review 20851b90, N1: a targeted sync recorded the chunk count of any peer it overheard, so another
+	-- peer's guild broadcast that never finished held the sync open until INDEX_INFLIGHT_TIMEOUT.
+	it("N1: another peer's unfinished broadcast does not hold a targeted sync open", function()
+		notifying()
+		Guild:ReceiveRequestsIndexV1(chunk(2), OTHER)
+		Guild:ReceiveRequestsIndexV1(chunk(0, "m1"), PEER)
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight, "waited on the other peer's broadcast")
+		assert.equal(1, #outputs("Response", "Requests synced."))
+	end)
+
+	it("an older sender's chunk, which says nothing of what is to come, ends the sync once its ids are answered", function()
+		Guild:BeginRequestsIndexSync(PEER, true)
+		Guild:ReceiveRequestsIndexV1(chunk(nil, "m1"), PEER)
+		Guild:ReceiveRequestsByIdV1(rd2("m1"), PEER)
+		assert.is_nil(Guild.requestsIndexSync.inFlight)
+	end)
+end)
+
+-- Peer Review 385b8033, T1: the full-record sync path wrote the request store with no sender, roster or
+-- asked-for check, so one forged by-id record or tombstone did everything MUT-ID-001, ADD-OWNER-001 and
+-- ADD-OPEN-001 refuse on the mutation path. Every example goes through the real receive path.
+describe("T1: by-id answers and indexes are taken only from a peer, only when asked, never as a takeover", function()
+	local STRANGER = "Stranger-Otherrealm"
+	before_each(function()
+		load()
+		Guild:ApplyRequestSnapshot({ requests = { rec("a"), rec("b") } })
+	end)
+	after_each(restore)
+
+	local function deliver(prefix, payload, from)
+		TOGBankClassic_Chat:OnCommReceived(prefix, Core:SerializeWithChecksum(payload), "WHISPER", from)
+	end
+	local function rd2(r)
+		return { 1, r.id, r.date, r.updatedAt, r.requester, r.bank, r.item, r.quantity, r.fulfilled, r.status, r.notes, r.itemID }
+	end
+	local function untouched()
+		assert.equal("open", Guild.Info.requests.a.status)
+		assert.equal(PEER, Guild.Info.requests.a.requester)
+		assert.is_table(Guild.Info.requests.b)
+		assert.equal(0, count(Guild.Info.requestsTombstones))
+	end
+
+	it("REQ-GATE-002: a non-guildmate's record, tombstone or index is dropped, even for an id asked of them", function()
+		Guild:QueryRequestsById(STRANGER, { "a", "b" })
+		deliver("togbank-rd2", rd2(rec("a", { status = "cancelled", updatedAt = T0 })), STRANGER)
+		deliver("togbank-rd2", { 1, "b", false, T0 }, STRANGER)
+		deliver("togbank-rd", { type = "requests-by-id", requests = { rec("a", { status = "cancelled", updatedAt = T0 }) },
+			tombstones = { b = T0 } }, STRANGER)
+		deliver("togbank-rm", { type = "requests-by-id", requests = { rec("a", { status = "cancelled", updatedAt = T0 }) } }, STRANGER)
+		deliver("togbank-ri", { 1, 0, "a", T0, "b", T0 }, STRANGER)
+		deliver("togbank-rd", { type = "requests-index", requests = {}, tombstones = { { id = "a", ts = T0 } } }, STRANGER)
+		deliver("togbank-rm", { type = "requests-index", requests = {}, tombstones = { { id = "b", ts = T0 } } }, STRANGER)
+		untouched()
+	end)
+
+	it("REQ-GATE-002: a corrupt index chunk re-asks a guildmate for the index, never a stranger", function()
+		TOGBankClassic_Chat:OnCommReceived("togbank-ri", "not a payload", "WHISPER", STRANGER)
+		assert.equal(0, #sendsOf("togbank-r"), "a stranger's corrupt chunk bought a whisper back")
+		TOGBankClassic_Chat:OnCommReceived("togbank-ri", "not a payload", "WHISPER", PEER)
+		local q = sendsOf("togbank-r")
+		assert.equal(1, #q); assert.equal(PEER, q[1].target)
+	end)
+
+	it("BYID-ASKED-001: an answer nobody asked for, or from the wrong player, is dropped and does not end a sync", function()
+		Guild:BeginRequestsIndexSync(PEER, true); Guild:MarkRequestsIndexAwaitingById()
+		deliver("togbank-rd2", rd2(rec("a", { status = "cancelled", updatedAt = T0 })), OTHER)
+		deliver("togbank-rd2", { 1, "b", false, T0 }, OTHER)
+		deliver("togbank-rd", { type = "requests-by-id", requests = { rec("a", { status = "cancelled", updatedAt = T0 }) },
+			tombstones = { b = T0 } }, OTHER)
+		Guild:QueryRequestsById(PEER, { "a", "b" })
+		deliver("togbank-rd2", rd2(rec("a", { status = "cancelled", updatedAt = T0 })), OTHER)
+		deliver("togbank-rd2", { 1, "b", false, T0 }, OTHER)
+		untouched()
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "an unasked answer ended the sync")
+	end)
+
+	it("BYID-ASKED-001: an asked-for answer merges once; a repeat, or one after the window, is dropped", function()
+		Guild:QueryRequestsById(PEER, { "a", "b" })
+		deliver("togbank-rd2", rd2(rec("a", { notes = "answered", updatedAt = T0 })), PEER)
+		assert.equal("answered", Guild.Info.requests.a.notes)
+		deliver("togbank-rd2", rd2(rec("a", { status = "cancelled", updatedAt = T0 + 1 })), PEER)
+		assert.equal("open", Guild.Info.requests.a.status, "a second answer to one ask was merged")
+		env.now = T0 + 301
+		deliver("togbank-rd2", { 1, "b", false, T0 + 301 }, PEER)
+		assert.is_table(Guild.Info.requests.b, "an answer after the window was merged")
+	end)
+
+	it("BYID-ASKED-001: an id asked of two players takes whichever answers first, once", function()
+		Guild:QueryRequestsById(PEER, { "a" })
+		Guild:QueryRequestsById(BANK2, { "a" })
+		deliver("togbank-rd2", rd2(rec("a", { notes = "from peer", updatedAt = T0 })), PEER)
+		assert.equal("from peer", Guild.Info.requests.a.notes, "the first askee's answer was dropped")
+		deliver("togbank-rd2", rd2(rec("a", { notes = "from bank", updatedAt = T0 + 1 })), BANK2)
+		assert.equal("from peer", Guild.Info.requests.a.notes, "a second answer to one id was merged")
+	end)
+
+	it("BYID-ASKED-001: an unanswered ask is swept once its window has passed", function()
+		Guild:QueryRequestsById(PEER, { "a", "b" })
+		assert.equal(2, Guild:GetRequestedByIdCount())
+		env.now = T0 + 301
+		Guild:QueryRequestsById(PEER, { "c" })
+		assert.equal(1, Guild:GetRequestedByIdCount(), "expired asks were kept")
+	end)
+
+	it("BYID-ASKED-001: a query sent to the guild can be answered by any guildmate", function()
+		Guild:QueryRequestsById(nil, { "b" })
+		deliver("togbank-rd2", { 1, "b", false, T0 }, OTHER)
+		assert.is_nil(Guild.Info.requests.b)
+		assert.equal(T0, Guild.Info.requestsTombstones.b)
+	end)
+
+	it("BYID-WINDOW-001: a slow responder that keeps answering keeps its window open", function()
+		Guild:QueryRequestsById(PEER, { "a", "b" })
+		env.now = T0 + 250
+		deliver("togbank-rd2", rd2(rec("a", { notes = "late a", updatedAt = T0 + 250 })), PEER)
+		assert.equal("late a", Guild.Info.requests.a.notes)
+		env.now = T0 + 500
+		deliver("togbank-rd2", rd2(rec("b", { notes = "later b", updatedAt = T0 + 500 })), PEER)
+		assert.equal("later b", Guild.Info.requests.b.notes, "a working responder's queued answer was dropped")
+	end)
+
+	it("BYID-WINDOW-001: a re-ask of one player does not extend another player's window", function()
+		Guild:QueryRequestsById(PEER, { "a" })
+		env.now = T0 + 200
+		Guild:QueryRequestsById(BANK2, { "a" })
+		env.now = T0 + 301
+		deliver("togbank-rd2", rd2(rec("a", { notes = "from peer", updatedAt = T0 + 301 })), PEER)
+		assert.equal("", Guild.Info.requests.a.notes, "the first askee's closed window was reopened by the second ask")
+		deliver("togbank-rd2", rd2(rec("a", { notes = "from bank", updatedAt = T0 + 301 })), BANK2)
+		assert.equal("from bank", Guild.Info.requests.a.notes)
+	end)
+
+	it("BYID-EMPTY-001: an empty legacy by-id table from the askee does not end a sync", function()
+		Guild:BeginRequestsIndexSync(PEER, true); Guild:MarkRequestsIndexAwaitingById()
+		Guild:QueryRequestsById(PEER, { "a" })
+		deliver("togbank-rd", { type = "requests-by-id", requests = {}, tombstones = {} }, PEER)
+		assert.equal(PEER, Guild.requestsIndexSync.inFlight, "an empty answer ended the sync")
+	end)
+
+	it("BYID-ASKED-001: a legacy by-id table keeps the asked ids and drops the rest", function()
+		Guild:BeginRequestsIndexSync(PEER, true); Guild:MarkRequestsIndexAwaitingById()
+		Guild:QueryRequestsById(PEER, { "a" })
+		deliver("togbank-rd", { type = "requests-by-id", requests = { rec("a", { notes = "asked", updatedAt = T0 }) },
+			tombstones = { b = T0 } }, PEER)
+		assert.equal("asked", Guild.Info.requests.a.notes)
+		assert.is_table(Guild.Info.requests.b, "an unasked tombstone in the same payload was merged")
+		assert.is_nil(Guild.requestsIndexSync.inFlight, "an asked answer did not end the sync")
+	end)
+
+	it("BYID-ASKED-001: a legacy by-id table from the wrong player after an ask is dropped", function()
+		Guild:QueryRequestsById(PEER, { "a", "b" })
+		deliver("togbank-rd", { type = "requests-by-id", requests = { rec("a", { status = "cancelled", updatedAt = T0 }) },
+			tombstones = { b = T0 } }, OTHER)
+		untouched()
+		deliver("togbank-rd2", rd2(rec("a", { notes = "from peer", updatedAt = T0 })), PEER)
+		assert.equal("from peer", Guild.Info.requests.a.notes, "the wrong player's answer used up the ask")
+	end)
+
+	it("SYNC-OWNER-001: an asked-for record naming another requester for a held order is refused", function()
+		Guild:QueryRequestsById(PEER, { "a" })
+		deliver("togbank-rd2", rd2(rec("a", { requester = OTHER, quantity = 99, updatedAt = T0 })), PEER)
+		Guild:ApplyRequestSnapshot({ requests = { rec("b", { requester = OTHER, status = "cancelled", updatedAt = T0 }) } })
+		assert.equal(PEER, Guild.Info.requests.a.requester)
+		assert.equal(5, Guild.Info.requests.a.quantity)
+		assert.equal(PEER, Guild.Info.requests.b.requester)
+		assert.equal("open", Guild.Info.requests.b.status)
 	end)
 end)
 
@@ -532,7 +1114,12 @@ describe("COVERAGE-MAIL-001: sending our index (togbank-ri)", function()
 		ri = sendsOf("togbank-ri")
 		assert.equal(2, #ri)
 		local second = decode(ri[2])
-		assert.equal(1, second[2]); assert.is_nil(second[5], "the tombstones were repeated in a later chunk")
+		-- BYID-SYNC-END-001: each chunk ends `false, <chunks still to come>`; an older reader's tombstone loop
+		-- stops at the `false`, so the second chunk still carries no tombstones for it.
+		assert.same({ false, 1 }, { first[47], first[48] })
+		assert.equal(1, second[2])
+		assert.same({ false, 0 }, { second[5], second[6] }, "the tombstones were repeated in a later chunk")
+		assert.is_nil(second[7])
 		ri[1].cb(nil, 5, 10, false)
 		assert.equal(1, #outputs("Warn", "Request index chunk (%d ids) to %s was refused - they may be missing requests " ..
 			"until the next index sync"))

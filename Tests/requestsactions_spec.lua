@@ -124,6 +124,20 @@ local function unload()
 	-- SUITE-HEAP-002: every example builds a fresh window (and one builds an Inventory frame to
 	-- dock beside); hand them back so the run's heap does not keep all of them.
 	if R and R.Window then env.releaseWindow(R.Window); R.Window = nil end
+	-- SUITE-SPEED-002: the cancel-reason dialog too. The module builds it once and keeps it, which is
+	-- right in the client; here each example's load builds a new one, and its buttons -- named
+	-- globals in AceGUI's pool -- kept that example's module, window and list alive through their
+	-- OnClick closures for the rest of the run. Measured (Peer Review 7f4d4fdb, S1, with this line off):
+	-- the Confirm button's pendingCancelUI led to a list whose row cells' handlers each reached the next
+	-- example's module and list, so the one pinned dialog held every later window, one more per example.
+	if R and R.CancelDialog then env.releaseWindow(R.CancelDialog); R.CancelDialog = nil end
+	-- Peer Review 7f4d4fdb, S1/S4: the Settings overlay's reason list is a named scroll frame (the scroll
+	-- template needs a name), so the global kept the last overlay -- and through its rows' OnClick
+	-- closures that example's module and window -- until the next overlay replaced it. The template names
+	-- its scroll bar and buttons after it, and each of those reaches the scroll frame through its parent.
+	for name in pairs(_G) do
+		if type(name) == "string" and name:find("^TOGBankClassicReasonsScroll") then _G[name] = nil end
+	end
 	local inv = _G.TOGBankClassic_UI_Inventory
 	if inv and inv.Window then env.releaseWindow(inv.Window); inv.Window = nil end
 	_G.TOGBankClassic_UI_Requests = nil
@@ -487,6 +501,7 @@ describe("REQUESTS-ACTIONS: the Cancel Stale broom and the Fulfill Oldest envelo
 		load({ me = GALDOF })
 		R:Open()
 		assert.is_nil(R.CancelStaleBtn); assert.is_nil(R.FulfillOldestBtn)
+		unload()   -- Peer Review 7f4d4fdb, N1: the next load replaces R, so this window would never be released
 		load({ me = GALDOF, officer = true })
 		R:Open()
 		assert.is_table(R.CancelStaleBtn); assert.is_nil(R.FulfillOldestBtn)
@@ -579,20 +594,100 @@ describe("REQUESTS-ACTIONS: the dropdown click-outside catcher, Escape, the help
 		-- Escape on the window: an open pullout is closed and the key consumed; otherwise it propagates.
 		-- (SetPropagateKeyboardInput is a harness no-op with no getter, so the instance records it.)
 		local frame = R.Window.frame
-		local propagate
-		frame.SetPropagateKeyboardInput = function(_, v) propagate = v end
+		local propagate, setCalls = nil, 0
+		frame.SetPropagateKeyboardInput = function(_, v) propagate = v; setCalls = setCalls + 1 end
 		R.FilterBank.pullout:Open("TOPLEFT", R.FilterBank.frame, "BOTTOMLEFT", 0, 0)
 		frame:Fire("OnKeyDown", "ESCAPE")
 		assert.is_false(R.FilterBank.pullout.frame:IsShown())
 		assert.is_false(propagate, "Escape that closed a dropdown was propagated to the window")
 		frame:Fire("OnKeyDown", "ESCAPE")
 		assert.is_true(propagate, "Escape with nothing to close was consumed")
-		propagate = nil
+		-- COMBAT-KEY-001: an ordinary key on a frame already propagating does not call the setter;
+		-- calling it on every key press is what raised ADDON_ACTION_BLOCKED in combat.
+		setCalls = 0
 		frame:Fire("OnKeyDown", "A")
+		frame:Fire("OnKeyUp", "A")
+		assert.equal(0, setCalls, "the setter ran for a key that changed nothing")
+		-- The consumed Escape's release puts the frame back to propagating.
+		R.FilterBank.pullout:Open("TOPLEFT", R.FilterBank.frame, "BOTTOMLEFT", 0, 0)
+		frame:Fire("OnKeyDown", "ESCAPE")
+		assert.is_false(propagate)
+		frame:Fire("OnKeyUp", "ESCAPE")
+		assert.is_true(propagate, "the consumed Escape's release left the frame consuming keys")
+		-- In combat the setter is never called: the dropdown still closes, Escape is not consumed.
+		wow.inCombat = true
+		setCalls = 0
+		R.FilterBank.pullout:Open("TOPLEFT", R.FilterBank.frame, "BOTTOMLEFT", 0, 0)
+		frame:Fire("OnKeyDown", "ESCAPE")
+		frame:Fire("OnKeyUp", "ESCAPE")
+		frame:Fire("OnKeyDown", "A")
+		assert.is_false(R.FilterBank.pullout.frame:IsShown())
+		assert.equal(0, setCalls, "SetPropagateKeyboardInput was called in combat")
 		assert.is_true(propagate)
+		wow.inCombat = false
 		frame.SetPropagateKeyboardInput = nil
 		-- Installed once per frame.
 		assert.is_true(frame.togRequestsKeyHooked)
+	end)
+
+	it("COMBAT-KEY-001: a body built in combat installs no key hook; the next build out of combat does", function()
+		-- AceGUI pools frames across addons: the release takes our key scripts and marker off the frame.
+		R:Open()
+		local released = R.Window.frame
+		assert.is_function(released:GetScript("OnKeyDown"))
+		R:Close()
+		R:ReleaseWindow()
+		assert.is_nil(released.togRequestsKeyHooked, "the release left the key-hook marker on a pooled frame")
+		assert.is_nil(released:GetScript("OnKeyDown"), "the release left our OnKeyDown on a pooled frame")
+		assert.is_nil(released:GetScript("OnKeyUp"), "the release left our OnKeyUp on a pooled frame")
+		wow.inCombat = true
+		R:Open()
+		assert.is_nil(R.Window.frame.togRequestsKeyHooked, "the key hook was installed in combat")
+		wow.inCombat = false
+		R:Close()
+		R:ReleaseWindow()
+		R:Open()
+		assert.is_true(R.Window.frame.togRequestsKeyHooked, "the next build out of combat did not hook")
+	end)
+
+	-- COMBAT-KEY-002 (Peer Review a21c6a53, P1): a frame left not propagating blocks every
+	-- keybinding while shown, so a restore combat refused must run when combat ends.
+	it("COMBAT-KEY-002: combat starting between a consumed Escape and its release is undone when combat ends", function()
+		R:Open()
+		local frame = R.Window.frame
+		local propagate
+		frame.SetPropagateKeyboardInput = function(_, v) propagate = v end
+		R.FilterBank.pullout:Open("TOPLEFT", R.FilterBank.frame, "BOTTOMLEFT", 0, 0)
+		frame:Fire("OnKeyDown", "ESCAPE")
+		assert.is_false(propagate)
+		wow.inCombat = true
+		frame:Fire("OnKeyUp", "ESCAPE")
+		assert.is_false(propagate, "the setter ran in combat")
+		wow.inCombat = false
+		frames.fireEvent("PLAYER_REGEN_ENABLED")
+		assert.is_true(propagate, "the frame was still consuming every key after combat ended")
+		frame.SetPropagateKeyboardInput = nil
+	end)
+
+	it("COMBAT-KEY-002: a window released in combat while consuming keys is restored and unkeyed when combat ends", function()
+		R:Open()
+		local frame = R.Window.frame
+		local propagate, keyboard
+		frame.SetPropagateKeyboardInput = function(_, v) propagate = v end
+		frame.EnableKeyboard = function(_, v) keyboard = v end
+		R.FilterBank.pullout:Open("TOPLEFT", R.FilterBank.frame, "BOTTOMLEFT", 0, 0)
+		frame:Fire("OnKeyDown", "ESCAPE")
+		assert.is_false(propagate)
+		wow.inCombat = true
+		R:Close()
+		R:ReleaseWindow()
+		assert.is_nil(keyboard, "EnableKeyboard ran in combat")
+		assert.is_false(propagate)
+		wow.inCombat = false
+		frames.fireEvent("PLAYER_REGEN_ENABLED")
+		assert.is_true(propagate, "the pooled frame was left consuming every key")
+		assert.is_false(keyboard, "the pooled frame was left keyboard-enabled")
+		frame.SetPropagateKeyboardInput, frame.EnableKeyboard = nil, nil
 	end)
 
 	it("the help icon's tooltip is the body's help text, and the sub-tabs carry their own", function()
@@ -837,6 +932,31 @@ describe("REQUESTS-ACTIONS: the filter dropdowns, the fulfil icon's states, dock
 		assert(ok, err)
 	end)
 
+	-- SUITE-SPEED-002 (Peer Review 7f4d4fdb, S2): the filter label's hit frame had its own OnRelease, which the
+	-- scaled-font restore replaced at any scale but 1, so the dropdown went back to the pool with it shown.
+	it("a filter dropdown released at a scale other than 1 goes back to the pool with its label hit frame hidden", function()
+		addReq({ quantity = 5 })
+		R:Open()
+		local W = LibStub("LibAceGUIWidgets-1.0")
+		W:SetScale(1)
+		local ok, err = pcall(function()
+			W:SetScale(2)
+			local req, bank = R.FilterRequester, R.FilterBank
+			assert.is_true(req.frame.togLabelHit:IsShown())
+			R:Close()
+			env.releaseWindow(R.Window); R.Window = nil
+			assert.is_false(req.frame.togLabelHit:IsShown(), "the released Requester dropdown kept its hit frame")
+			assert.is_false(bank.frame.togLabelHit:IsShown(), "the released Bank dropdown kept its hit frame")
+			assert.equal("GameFontNormalSmall", req.label:GetFontObject(), "the scaled-font restore was dropped")
+			-- Peer Review 584efe3b, P1: the label goes back on AceGUI's own anchor, not our 3 px shift.
+			local p, rel, _, x = req.label:GetPoint(1)
+			assert.equal("TOPLEFT", p); assert.equal(req.frame, rel)
+			assert.equal(0, x, "the released Requester label kept our 3 px shift")
+		end)
+		W:SetScale(1)   -- suite-wide library state: never leave it moved, even on a failure
+		assert(ok, err)
+	end)
+
 	-- VISIBILITY-001 part 2: the cells the Requests body builds into the RowList scale with it -- the
 	-- five action icons (their size, their spacing and the texture escapes that ARE their glyphs) and
 	-- the cell text. Real LibAceGUIWidgets (loaded by `load`).
@@ -1041,6 +1161,7 @@ describe("REQUESTS-ACTIONS: the officer Settings panel", function()
 		assert.is_false(R.SettingsOverlay:IsShown())
 		assert.is_true(R.ListHost:IsShown())
 		-- A non-officer has no Settings tab at all, and ShowSettings(true) with no panel is a no-op.
+		unload()   -- Peer Review 7f4d4fdb, N1: the next load replaces R, so this window would never be released
 		load({})
 		R:Open()
 		assert.is_nil(R.SettingsOverlay)
@@ -1361,5 +1482,120 @@ describe("REQUESTS-ACTIONS: the custom cancel-reason editor", function()
 		R:_OnReasonDelete(1)
 		R:_OnReasonEdit(1)
 		assert.is_nil(R.ReasonEditIndex)
+	end)
+end)
+
+-- ─── SUITE-SPEED-002: a released window keeps nothing ──────────────────────────
+
+describe("SUITE-SPEED-002: building and releasing the Requests window again leaves no frames behind", function()
+	--- One example's worth: the officer view (the Settings overlay and its reason rows are the
+	--- biggest thing the body builds), a request row drawn, every tab visited, then released.
+	local function cycle()
+		load({ officer = true })
+		addReq()
+		R:Open()
+		for _, tab in ipairs({ "active", "archive", "settings", "active" }) do R.TabGroup:SelectTab(tab) end
+		unload()
+		-- The file's own R still points at this cycle's module, so the newest window is always reachable
+		-- through it; dropped, or the walk below names that instead of what really holds a frame.
+		R = nil
+		collectgarbage("collect"); collectgarbage("collect")
+	end
+
+	--- Where a frame hangs: its parent chain's types, top first, e.g. "Frame(Frame)>Frame>Button".
+	local function chain(f)
+		local parts, p, depth = {}, f, 0
+		while p and depth < 8 do
+			local label = tostring(p._type or "?")
+			if p.obj and p.obj.type then label = label .. "(" .. p.obj.type .. ")" end
+			table.insert(parts, 1, label)
+			p = p.GetParent and p:GetParent() or nil
+			depth = depth + 1
+		end
+		return table.concat(parts, ">")
+	end
+
+	--- What keeps `target` alive: a breadth-first walk from the Lua registry through table keys,
+	--- values and metatables and through function upvalues, skipping weak references. Returns the
+	--- path, so a failure names the holder instead of only counting what it holds.
+	local function holderOf(target)
+		local seen, queue, head = { [target] = false }, { { debug.getregistry(), "registry" } }, 1
+		local function push(v, path)
+			local t = type(v)
+			if (t == "table" or t == "function" or t == "userdata") and seen[v] == nil then
+				seen[v] = true
+				queue[#queue + 1] = { v, path }
+			end
+		end
+		while head <= #queue and head < 3000000 do
+			local node, path = queue[head][1], queue[head][2]
+			head = head + 1
+			if type(node) == "table" then
+				local mt = getmetatable(node)
+				local mode = type(mt) == "table" and rawget(mt, "__mode") or ""
+				local wk, wv = tostring(mode):find("k"), tostring(mode):find("v")
+				for k, v in next, node do
+					if v == target and not wv then return path .. "[" .. tostring(k) .. "]" end
+					if k == target and not wk then return path .. " (as a key)" end
+					if not wv then push(v, path .. "." .. tostring(k)) end
+					if not wk then push(k, path .. "{key " .. tostring(k) .. "}") end
+				end
+				if type(mt) == "table" then push(mt, path .. "<mt>") end
+			elseif type(node) == "function" then
+				local i = 1
+				while true do
+					local name, v = debug.getupvalue(node, i)
+					if not name then break end
+					if v == target then return path .. "^" .. name end
+					push(v, path .. "^" .. name)
+					i = i + 1
+				end
+			end
+		end
+		return "(no strong path found)"
+	end
+
+	it("the third build-and-release holds no more live frames than the second", function()
+		cycle(); cycle()
+		-- Counted per parent chain, not by identity: every reset rebuilds the env's furniture
+		-- (UIParent, GameTooltip, ...), so "not seen before" is mostly a like-for-like replacement.
+		local function histogram()
+			local h = {}
+			for _, f in ipairs(frames.all()) do
+				local key = chain(f)
+				h[key] = (h[key] or 0) + 1
+			end
+			return h
+		end
+		local before = histogram()
+		local n2 = #frames.all()
+		-- Peer Review 7f4d4fdb, S1: the registry keeps every still-reachable frame across resets, so the walk
+		-- below takes its root only from frames the third cycle made, or it names an older example's pin.
+		local existed = setmetatable({}, { __mode = "k" })
+		for _, f in ipairs(frames.all()) do existed[f] = true end
+		cycle()
+		local after, n3 = histogram(), #frames.all()
+		local grown = {}
+		for key, n in pairs(after) do
+			local d = n - (before[key] or 0)
+			if d ~= 0 then grown[#grown + 1] = { key, d } end
+		end
+		table.sort(grown, function(a, b) return a[2] > b[2] end)
+		local lines = {}
+		for i = 1, math.min(15, #grown) do lines[#lines + 1] = grown[i][2] .. "  " .. grown[i][1] end
+		-- A detached root of a chain that grew: what still references it.
+		if n3 ~= n2 and grown[1] then
+			for _, f in ipairs(frames.all()) do
+				if not existed[f] and f ~= _G.UIParent and f.GetParent and f:GetParent() == nil
+					and chain(f) == grown[1][1]:match("^[^>]+") then
+					local kids = f.GetChildren and select("#", f:GetChildren()) or 0
+					if kids > 0 then
+						lines[#lines + 1] = "a detached " .. chain(f) .. " with " .. kids .. " children is held by: " .. holderOf(f)
+						break
+					end
+				end
+			end
+		end
+		assert.equal(n2, n3, "frames kept by one more build-and-release:\n" .. table.concat(lines, "\n"))
 	end)
 end)

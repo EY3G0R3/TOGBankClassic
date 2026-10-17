@@ -12,6 +12,329 @@ Older releases moved out of the main CHANGELOG.md to keep it under the GitHub re
 Sections are moved here oldest-first as CHANGELOG.md approaches the limit, split at a version
 boundary so each release stays whole. Newest archived release at the top.
 
+<!-- MOVED-TO-ARCHIVE 2026-10-17: v1.7.0, whole, with the desk's `file move-span`, to make room
+     for v1.9.1 (CHANGELOG.md was 119,715 bytes, 285 characters under the 120,000 ceiling). -->
+
+## [v1.7.0] (2026-09-26) - The Shopping List
+
+GuildShoppingList merged into TOG Bank (GSL-MERGE-001; the operator, 2026-09-25: *"ok, we can do the gsl
+integration in v1.7.0"*). Design and build order: `docs/GSL_MERGE.md`. The operator's standing rule
+for the whole merge: *"i don't want to build new stuff as much as possible i want to use the
+libraries"* -- LibProfessionDB, LibItemDB through `Inventory/Resolve`, LibAceGUIWidgets.
+
+### New Features
+
+- **GSL-MERGE-001 step 2: the shopping list's model** (`Modules/CraftList.lua`, new;
+  `TOGBankClassic_CraftList`). What the guild wants crafted (a LibProfessionDB recipe) or gathered (a
+  plain item, GuildShoppingList's Miscellaneous bucket), and the gather window. **Writers** (D2, the
+  operator: *"so the GSL player is a tag like gbank, use what is in the GSL app for that. the
+  officers/gm should be able to edit the shopping list"*): the GM, officers, and a home member whose
+  PUBLIC note carries `[GSL]` (GuildShoppingList's own marker, `GuildShoppingList.lua:799`).
+  **Sync:** four fields on the existing guild-settings payload -- `craftList` and `craftListStamps`
+  merged entry by entry (a removal keeps its stamp; the `bankerOwners` rule), `gatherStart` /
+  `gatherEnd` field by field. `BroadcastSettings` now sends from a `[GSL]` member, and
+  `ApplyRemoteSettings` takes ONLY the list from one. The four fields are left out of
+  `SettingsCanon`, so a v1.6.1 client with the same settings still matches (KNOWN COST in the code).
+  A sister guild's list never crosses. **Demand:** a recipe expands into its reagents (LibProfessionDB,
+  by item id) for what the HOME bank does not already hold of the crafted item; each reagent row nets
+  the home bank (`Guild:GetAltItemTotal`) and your bags (`C_Item.GetItemCount`); items are named
+  through `Inventory/Resolve`. **ProfessionDB is a required dependency** in every TOC and `.pkgmeta`
+  (slug `libprofessiondb`). No window yet (step 3). Offline: `Tests/craftlist_spec.lua` (new, 20,
+  on the real ProfessionDB Vanilla Alchemy data; the canon example goes red with the exclusion
+  removed). Locations: `Modules/CraftList.lua`, `Modules/Guild.lua`, the TOCs, `.pkgmeta`,
+  `.luacheckrc`, `.luarc.json`.
+- **GSL-MERGE-001 step 3: the two tabs** (`Modules/UI/CraftList.lua`, new;
+  `TOGBankClassic_UI_CraftList`). In the Guild Bank window, after the existing tabs so none moves:
+  **Shopping List** for everyone (a View dropdown between what the guild wants, with its profession,
+  how many the home bank holds and how many are still needed, and the reagents that takes, with
+  Needed, Bank, You and Missing), and **List Setup** for the list's writers only (a search across
+  LibProfessionDB recipes and, with no profession picked, LibItemDB items; a How many box; left-click
+  puts an entry on the list or changes its count, right-click takes it off; the gather window on
+  LibAceGUIWidgets' date picker). Built on the existing machinery, per the operator's rule: Browse's
+  tab group and `BuildSimpleStrip`, `UI/RowList`, the shared chrome and status line, items named
+  through `Inventory/Resolve`. Profession names and icons come from the client's
+  `C_TradeSkillUI.GetTradeSkillDisplayName` / `GetTradeSkillTexture` (present in the Era, TBC and
+  MoP trees). `Browse:SyncTabs` re-renders the tab strip on open when the set of tabs changed, since
+  the writer role moves with the roster, and `Browse:RememberedTab` now validates its fallback too,
+  so a demoted writer is not reopened on a tab the strip no longer carries. A refused edit says
+  whether the player may not edit the list or the list already holds that count. The quality-coloured
+  item name is one helper, `UI:QualityText`, which the Browse rows now use as well. Offline:
+  `Tests/craftlistwindow_spec.lua` (new, 13, on the real Guild, ProfessionDB Alchemy data, LibItemDB
+  for the item search, AceGUI, Browse and the date pickers; red with List Setup shown to everyone,
+  and red with every open rebuilding the tab strip).
+  `C_TradeSkillUI` comes from the harness (WoWAPITesting `ee56a45`, thread b856f5a5).
+  `Modules/UI/CraftList.lua`, `Modules/UI/Browse.lua`, the three TOCs, `.luacheckrc`,
+  `.luarc.json`.
+- **GSL-MERGE-001 step 4: the Reagent Tracker** (`Modules/UI/CraftTracker.lua`, new;
+  `TOGBankClassic_UI_CraftTracker`; D5). GuildShoppingList's detached overlay as a small window of
+  its own, showing the Shopping List tab's reagent roll-up (`UI_CraftList:ReagentRows`, the same
+  columns), sorted by Missing, persisted as `tracker`. It repaints on a list change, on
+  `BAG_UPDATE_DELAYED` while shown (registered on open, dropped on close, as ItemHighlight does),
+  when bank data lands (`UI_Inventory:RefreshSoon` now fans out to it on its own debounce, since it
+  is often up with neither bank window open), and on a roster change (`Browse:Refresh`). It opens
+  from a Tracker button on the Shopping List strip and from the new `/togbank tracker`. It is
+  deliberately left out of Escape: a gathering overlay that the Escape stand-in counted would close
+  on every Escape pressed in the world instead of the game menu opening. Offline: six examples in
+  `Tests/craftlistwindow_spec.lua`; the bank-data one was red before the `RefreshSoon` fan-out
+  existed, and the bag-update one fires the real event through the harness and asserts the
+  registration on open and its removal on close (Peer Review F5, red with the registration taken
+  out). `Modules/UI/CraftTracker.lua`, `Modules/UI/Inventory.lua`, `Modules/UI/Browse.lua`,
+  `Modules/UI/CraftList.lua`, `Modules/Chat.lua`, the TOCs, `.luacheckrc`, `.luarc.json`,
+  `README.txt`.
+- **GSL-MERGE-001 step 5: GuildShoppingList's list comes across, once** (D9;
+  `CraftList:ImportGSL`, `CraftList.ResolveGSLName`). On a roster refresh
+  (`Guild:RefreshOnlineCache`, both the library and the legacy path, beside the officer-floor
+  publish), a client that may edit the list and whose guild has never had one (no entries and no
+  stamps) reads `GuildShoppingList_SavedItems` (`"<name> x<N>"`) and its gather dates
+  (`GuildShoppingList_Config.GatherStartDate/GatherEndDate`), writes the entries, and publishes
+  once. Each name is matched through LibProfessionDB by recipe name, then effect, then both with a
+  trailing parenthetical stripped, and last as a plain item by its exact name through LibItemDB
+  (GuildShoppingList's Miscellaneous turn-in items). A spelling two recipes or two items share maps
+  to neither (REQ-001); an ambiguous name does not fall through to the effect. Repeats are summed.
+  The entries are stamped `CraftList.IMPORT_STAMP` (1), older than any TOGBank edit, because the
+  first roster refresh can come before this client has heard the guild's list: stamped "now", an
+  import would have overwritten the guild's counts and brought back entries it had removed (Peer
+  Review F1 on self-audit 13180dbf). What matches nothing is reported with `Output:Response`, which
+  no setting mutes, and the names are kept in `db.global.gslImport.unmappedNames` (F2).
+  GuildShoppingList's variables are account-wide, so the import runs once per account. KNOWN COST in
+  the code: on an account with writers in two guilds the list goes to whichever guild such a
+  character logs into first; the gather dates ride the ordinary settings stamp, so the race can
+  still let imported dates replace a guild's newer ones; and on a client that has never held the
+  guild's settings, an import racing an existing list is merged into it rather than refused (Peer
+  Review on daa08281). The
+  migration lives in `Modules/CraftList.lua`, beside the list's other writers, rather than
+  `Modules/Database.lua` as the design first said, because it writes through the list's own rules.
+  Offline: six `Tests/craftlist_spec.lua` examples on the real ProfessionDB Alchemy and Enchanting
+  data and the real LibItemDB, including the race (red with the import stamped now), a recipe effect
+  two recipes share (`Health +5`, red with the ambiguity marking removed) and a name nine items share
+  (Punctured Voodoo Doll, red with the two-ids refusal removed); the importing examples went red
+  with the roster hook removed. And one
+  `Tests/xguildfleet_spec.lua` example: a home `[GSL]` bank character's list reaches its guild,
+  and neither a whisper of it nor a federation pull puts it in the sister guild (red with the
+  XGUILD-SETTINGS-001 gate taken out). `Modules/CraftList.lua`, `Modules/Guild.lua`.
+- **GSL-MERGE-001 step 7: order from a Shopping List row** (D6; `UI_CraftList:OnListRowClick`,
+  `UI_CraftList:OrderSource`). A left click on a row in either view (a wanted item, the item a wanted
+  recipe makes, or a reagent) opens the existing request dialog on the bank character holding the
+  most of it. The row comes from `Browse:BuildRows`, the Browse tab's own rows, so a sister guild's
+  bank character counts as it does there, and the click goes through `Browse:OnBrowseRowClick`, so
+  ordering closed, not-for-sale and the request limit refuse it exactly as on the Browse tab. A
+  view-only bank and a hidden row are skipped when choosing. An enchant (no item) and an item no bank
+  character holds say so on the status line; Shift/Ctrl-click links or previews; a right-click does
+  nothing. A tie goes to the first bank character in name order. Offline: eight
+  `Tests/craftlistwindow_spec.lua` examples (six red before the change). The spec's bank fixture now
+  runs the real `Guild:RebuildBankerRoster` from the banker's gbank note, the path a live client
+  takes on `GUILD_ROSTER_UPDATE`, rather than a hand-set roster (Peer Review on self-audit
+  93c01c04). `Modules/UI/CraftList.lua`.
+- **WANTED-BREATH-001: Still needed breathes** (the operator: "can you have the wanted stuff
+  'breath' using the function from the widgets library?"). On the Shopping List tab's Wanted view
+  the Still needed number pulses through LibAceGUIWidgets' `W:Breathe` (the call the help icon, the
+  cancelled date and the stay-online line make) while it is above zero, and stops at full alpha when
+  the bank covers it. The breath animates a frame, so the column builds its own cell (a frame
+  holding the number) and the list's `onRowRender` paints it; a pooled row reused for a met entry is
+  stopped, not left dim. Offline: one `Tests/craftlistwindow_spec.lua` example (red before).
+  `Modules/UI/CraftList.lua`.
+- **SETUP-SPLIT-001: List Setup split, TOGPM's shopping-list box on top** (the operator: "split
+  the list setup into whats on the list on top and the selection bit on the bottom. lets make it
+  look like TOGPM's 'shopping list' bit at the top of the professions page"). What is on the list is
+  now a bordered box at the top of the tab (`UI_CraftList.SetupBox`, a RowList): icon,
+  quality-coloured name, type, then TOGPM's `-` count `+` and red `x`. It is capped at 40% of the
+  tab's height and scrolls beyond that, as TOGPM's is. The search results sit under it, and an
+  empty search no longer lists the list there. `-` from 1 and `x` take an entry off; every control
+  goes through the list's own writers and the same may-edit gate as a result click
+  (`UI_CraftList:StepEntry` / `RemoveEntry` / `WriteEntry`). TOGPM's "!" alert and reagent expander
+  are not carried: they are per-character craft features with no meaning for a guild list.
+  `OnSetupRowClick`'s branch for on-list rows could no longer be reached and is removed.
+  `Browse:AnchorLists` calls `UI_CraftList:AnchorSetup` to put the box over the results. Offline:
+  the old "empty search lists the list" example is replaced by four (box over results, the
+  controls, a member refused, the height cap). `Modules/UI/CraftList.lua`, `Modules/UI/Browse.lua`.
+- **GATHER-BREATH-001: the gather dates breathe** (the operator, of the Shopping List tab's
+  "3 wanted -- gathering 2026-09-26 to 2026-10-03": "the date isn't breathing"). That line was what
+  "the wanted stuff" in WANTED-BREATH-001 meant, and I built the Still needed pulse instead; the
+  Still needed pulse stays unless the operator wants it gone. The status bar gains
+  `Instance:SetLeftBreathing(on)`: the left text is AceGUI's FontString on the pooled status
+  background, which cannot host the breath (BREATH-001), so the first request moves it onto a frame of
+  the bar's own (cached on the pooled background, as the centre host is, POOL-CHROME-001) and the
+  bar's release hands it back, still. `UI_CraftList:Draw` asks for the breath while the Shopping List
+  tab shows a gather window; `HideLists`, which every tab switch passes through, stops it, so no other
+  tab's line breathes. Offline: two `Tests/statusbaryield_spec.lua` examples on the real bar (the
+  breath and its release) and one `Tests/craftlistwindow_spec.lua` example (on, both views, off on
+  Browse). `Modules/UI/StatusBar.lua`, `Modules/UI/CraftList.lua`.
+- **SETUP-SPLIT-002: the box's scrollbar came in at 3 rows** (the operator: "i don't mind the
+  scrollbar, but we need to expand more than 3 items before we introduce it. how does TOGPM do
+  it?"). TOGPM shows every row until its 40% cap and pads the section past the rows. My box was
+  sized to exactly its rows, and RowList counts rows with `floor`, so one pixel lost to the client's
+  pixel snapping dropped the last row and showed the scrollbar. The box now carries
+  `UICL.SETUP_BOX_SLACK` (2). Offline: a `Tests/craftlistwindow_spec.lua` example shaves a pixel off
+  the box and requires three rows and no scrollbar (red before). Not yet seen in a client.
+  `Modules/UI/CraftList.lua`.
+- **GSL-SENDTO-001: the Shopping List tab says who to send items to** (the operator: "on the
+  shopping list tab, we need to show who is the GSL character, so people know who to send items
+  to"). A "Send items to:" line on the tab's strip names every home-guild member with `[GSL]` in
+  their public note (`CraftList:GSLPlayers`, the same test as `IsGSLPlayer`), online ones first in
+  green, offline ones grey and marked, and tells a guild with none how to name one. Painted by
+  `UI_CraftList:Draw`, which a roster change reaches, so online state stays current. Offline: one
+  `Tests/craftlistwindow_spec.lua` example. `Modules/CraftList.lua`, `Modules/UI/CraftList.lua`.
+- **ITEM-SEARCH-001: every item is searchable on List Setup, whatever the profession** (the
+  operator: "we need to ensure the eko's that make juju's are on the list, why don't we just have
+  the itemdb searchable on the GSL add list?"). The search skipped LibItemDB whenever the Profession
+  dropdown named a profession, so an item no profession makes (the E'kos are Quest items) could not
+  be found from a profession view. A profession now narrows the recipes only. Offline: a
+  `Tests/craftlistwindow_spec.lua` example loads LibItemDB's shipped Quest data and finds all seven
+  E'kos (12430-12436) with Alchemy picked. KNOWN LIMIT: LibItemDB's search is a plain substring, so
+  "eko" without the apostrophe still finds nothing; a punctuation-insensitive match is requested
+  from ItemDB (contract `e860cddb848a`). `Modules/UI/CraftList.lua`.
+- **SETUP-REAGENTS-001: made items show their reagents, TOGPM's expander** (the operator: "i would
+  like to do a TOGPM like thing, where each 'made' item shows the mats to make it. so we can say we
+  need 5 flask OR x reagent y reagent etc. then it can generate a complete reagent list based on the
+  end items required"). In the List Setup box a made item carries TOGPM's `+`; a click opens its
+  reagents under it (indented, at per-craft count times the count wanted, no controls) and `-`
+  closes them. The box is no longer sortable, as TOGPM's is not, so a reagent stays under its item.
+  The complete roll-up across every end item is the Shopping List tab's Reagents view
+  (`CraftList:Demand`), unchanged; a raw reagent can still be put on the list directly as an item.
+  Offline: one `Tests/craftlistwindow_spec.lua` example. `Modules/UI/CraftList.lua`.
+- **SHOPLIST-SPLIT-001: the Shopping List tab laid out like List Setup** (the operator: "the + and
+  the shopping list totals need to be on the shopping list tab as well. the guild needs to see how
+  many dreamfoil etc they need to send ... the shopping list tab needs to be like the list setup
+  tab, the items on the top, but instead of a search bit on the bottom, the bottom rows should be
+  all the reagents we need to make the items in the list"). The wanted items are a bordered box on
+  top (unsorted, so an item's reagents stay under it) and the full reagent roll-up
+  (`CraftList:Demand`, Needed / Bank / You / Missing) is always shown under it; the Show dropdown
+  that switched between the two is removed. A crafted item's `+` opens its reagents at the count
+  still to make (wanted less what the bank holds of it), so an opened item agrees with the roll-up.
+  Because a row click orders the item (step 7), the `+` is a button of its own in the first column
+  (`buildArrowCell`), not a row click as on List Setup. Both boxes are now one builder, one height
+  rule (`UICL:BoxHeight`) and one expander (`UICL.WithReagents`), so the two cannot drift. The
+  status line reads "N wanted, N reagents, N still missing". Offline: two new
+  `Tests/craftlistwindow_spec.lua` examples; the four that drove the old dropdown now open the tab
+  as it is. `Modules/UI/CraftList.lua`.
+- **GSL-BANK-001: the [GSL] character is the shopping list's banker** (the operator: "we also need
+  what is on the GSL player (bank/bags/mail) just like a banker. they are the 'special' banker for
+  the shopping list" / "the missing tab should be what the GSL banker is missing"). One rule now
+  decides what a guild note makes a character a bank, `noteBankRole` in `Modules/Guild.lua`, and
+  the six sites that decide who is a bank ask it instead of testing for `gbank` on their own:
+  `GetBanks`' fallback, `_SisterBankers`, `RebuildBankerRoster`, `IsViewOnlyBank`'s fallback, and
+  both roster builds (library and legacy) plus the sister roster. `SenderHasGbankNote` deliberately
+  stays `gbank`-only, because it grants settings and donation authority, not bank status. An earlier
+  draft of this entry said "every site", which missed it; and because the sister roster stores a
+  `[GSL]`-only character as `isBank`, its sister-guild branch gave such a character that authority
+  until it was changed to re-read the note for `gbank` (new `Tests/xguild_spec.lua` example).
+  `[GSL]` in the PUBLIC note makes a banker flagged `gsl` (the field on
+  `memberRoster`, read by the new `Guild:IsGSLBank`), so the GSL character's own client scans and
+  publishes its bags, bank and mail through the banker pipeline. It is view-only unless the note
+  also says `gbank`: the guild sends to it, and does not order the shopping list's stock back out.
+  It therefore shows on the Browse and Bankers tabs as a view-only bank, and `BankerStores` strips
+  `[GSL]` from its note. On the Shopping List tab the reagent roll-up gains a GSL column
+  (`CraftList:GSLHolds`), Bank no longer counts the GSL character (`CraftList:BankHolds`, both
+  through `HomeBankersHold`), and Missing is the need less what the GSL character holds; Bank and
+  You are shown beside it, not netted out. The Reagent Tracker shows the same columns. Found while
+  wiring it: my new rule made `IsViewOnlyBank`'s fallback depend on being a banker, which broke the
+  existing "GBANK VIEWONLY" case (the banker test is case-sensitive); the fallback keeps the marker's
+  own answer. Offline: two `Tests/craftlistwindow_spec.lua` examples (the note rule, and the GSL
+  column); the roll-up and tracker examples in `craftlistwindow_spec` and `craftlist_spec` now
+  expect the new Missing. `Modules/Guild.lua`, `Modules/CraftList.lua`, `Modules/UI/CraftList.lua`,
+  `Modules/UI/CraftTracker.lua`.
+- **GSL-YOU-001: You and GSL disagreed on the GSL character** (the operator 2026-09-26, with a
+  screenshot of 120 against 160 Dreamfoil: "when i'm on the GSL toon, the GSL and You columns should
+  match"). `CraftList:YouHold` was `C_Item.GetItemCount(itemID)`, bags only. A bank character (the
+  `[GSL]` one included) now reads its own scanned total (`Guild:GetAltItemTotal`: bags, bank and
+  mail), the number the GSL and Bank columns read for it; anyone else gets bags plus bank
+  (`includeBank`, Classic Era `ItemDocumentation.lua:242`). The mail half is only as fresh as the
+  character's last mailbox visit, since the inbox can be read only while it is open
+  (`Modules/Bank.lua:303`). Offline: a `Tests/craftlistwindow_spec.lua` example with bag and mail
+  stock on the GSL character. `Modules/CraftList.lua`.
+- **TRACE-REALM-001: `/togbank dev trace <name>` traced the wrong realm** (the operator's own trace,
+  2026-09-26). A bare name normalised to the PLAYER's realm, so "trace Togcloth" typed on Old
+  Blanchy traced Togcloth-OldBlanchy, which does not exist, and printed the real Togcloth-Azuresong
+  as "banker on the roster: NO". A bare name now resolves to the one bank character (then the one
+  roster member) with that name on any connected realm; an ambiguous name keeps the old reading.
+  Offline: a `Tests/trace_spec.lua` example. `Modules/Chat.lua`.
+- **ESC-SPLIT-001: one window list was doing two jobs** (Peer Review, inbox a0556886).
+  `UI.ALPHA_WINDOWS` was both the transparency-slider list and the Escape registry, so the Reagent
+  Tracker could not get a slider without also being closed by Escape. Escape now reads its own
+  `UI.ESCAPE_WINDOWS` (the seven existing windows); the tracker is in `ALPHA_WINDOWS` only, so it
+  has its own Appearance slider and is also moved by Recenter Windows. Offline: a
+  `Tests/windowalpha_spec.lua` example pins the two lists against each other, and a
+  `Tests/craftlistwindow_spec.lua` example drives the tracker's slider and checks the Escape
+  stand-in stays hidden with only the tracker open; both went red with the tracker added back to
+  the Escape list. `Modules/UI.lua`, `Modules/UI/CraftTracker.lua`.
+
+### Bug Fixes
+
+- **XGUILD-SETTINGS-002: a sister guild's officer still had settings authority behind one branch**
+  (Peer Review F4 on self-audit 13180dbf, traced by them). `SenderHasGbankNote`, `SenderIsGM` and
+  `SenderIsOfficer` each read the SENDER'S guild roster, so they answer true for a sister guild's
+  bank characters, officers and GM -- right where they authorize that guild's bank data, wrong for
+  settings. The XGUILD-SETTINGS-001 branch at the top of `ApplyRemoteSettings` was the only thing
+  between another guild and every officer setting. `SettingsSenderAuthorized` now refuses a sender
+  placed in another guild (the same test that branch uses), and `ApplyRemoteSettings` asks it rather
+  than repeating the three helpers, so the refusal holds even without that branch. The helpers are
+  unchanged. Offline: the `Tests/xguildfleet_spec.lua` list example asserts the home bank character
+  has a gbank note but no settings standing from the sister client (red without the new line), and
+  with the sister branch disabled the home list still stays out. `Modules/Guild.lua`.
+- **SETTINGS-TIE-001: two clients holding different settings at the same stamp never agreed**
+  (Peer Review F1 on the step-2 self-audit). An equal stamp was taken from whichever payload arrived
+  last, so two officers' writes in the same second flipped each client back and forth; the `[GSL]`
+  path also spelled the same rule differently. Both paths now go through one `adoptSettingsField`:
+  a newer stamp wins, an unset field is seeded, and an equal stamp goes to the greater canonical
+  value, so every client picks the same winner. Found while wiring it: `ApplyRemoteSettings` moved
+  the held version BEFORE judging the fields, so a field with no stamp of its own read as exactly
+  the payload's stamp; it now moves after. KNOWN COST in the code: a plain member that sees a tie
+  while the writer holding the greater value is offline asks the other writer once a minute until
+  the two meet. The shopping list's entry merge (`CraftList:Merge`) and the bank-character owner
+  merge (`Guild:MergeBankerOwners`, Peer Review on the follow-up audit) had the same defect per entry:
+  on an equal stamp the list now takes the greater count and the owners the greater name. KNOWN COST
+  in both: a removal or a clear counts as nothing and so always loses a tie, and comes back.
+  `Modules/Guild.lua`, `Modules/CraftList.lua`; `Tests/craftlist_spec.lua` (five examples; the
+  settings and owner ones go red on the old rule).
+- **POOL-CHROME-001: a released TOG Bank window left its "?", gear, share button and status-bar
+  text on AceGUI's pooled frame** (Peer Review F5, which asked for a trace; the trace found the
+  defect, wider than asked). `UI:DressWindow` cached the icons on the frame and never hid them, so
+  the next window built on that frame, another addon's included, showed our help icon and a working
+  gear. The share button's OnShow hook still showed it on a bank character. `StatusBar:Attach` built
+  a NEW centre frame and right-hand text on every attach, left the old ones shown with their last
+  text, and stacked one more OnShow hook per life that redrew a dead bar. Now: one release
+  dispatcher (`UI:OnWindowRelease`, because AceGUI holds a single OnRelease per widget) runs the
+  chrome's and the status bar's clean-up. The bar's sections are cached on the pooled bar and
+  reused, and its show/hide hooks are set once per frame and read the frame's current bar. Seen
+  offline only, not in a client. `Modules/UI.lua`, `Modules/UI/StatusBar.lua`;
+  `Tests/windowchrome_spec.lua` (red without the release step).
+
+### Internal
+
+- **Changelog archive:** the whole v1.6.0 section moved to `CHANGELOG_ARCHIVE.md`. Forward part A8a
+  (A5a plus `craftlist_spec` and `craftlistwindow_spec`) replaces A5a in the gate.
+- **The real LibItemDB in `craftlist_spec`** (Peer Review F2): one describe loads the installed
+  ItemDB with its shipped Vanilla Miscellaneous, Consumable and enUS name data and asserts both
+  entries resolve through it; the existing naming example pins the no-library client fallback.
+- **CurseForge page checked with the harness's `cfhtml.lua`** (declared as the writ suite
+  `cfhtml`): well-formed, 64,542 characters. It flagged two CurseForge links (TOG Profession
+  Master, TOG Tools) against the Discord-only rule for player pages; both names are now plain
+  bold text. `docs/Curseforge_Description.html`.
+- **The whole-client test env was missing `Modules/CraftList.lua`.** `Tests/env_togbank.lua`'s
+  `MODULE_ORDER` is a second copy of the TOC's load order, and every fleet client built from it
+  silently dropped a heard shopping list, so a fleet example about the list would have passed for the
+  wrong reason. Added where the TOC loads it, with `Modules/Usable.lua`, which it also lacked.
+  MODULE-ORDER-001 (Peer Review F6): a `Tests/wiring_spec.lua` example now reads the Era TOC and
+  requires `MODULE_ORDER` to equal its non-UI module lines in order (red with `Usable.lua` removed).
+- **Release docs for v1.7.0:** `README.txt` brought level with the CurseForge page and the code --
+  version 1.7.0, the shopping list in Key Features and the tab lists, a `[GSL]` setup section, the
+  You column counting bags and bank, List Setup (not the Shopping List tab) setting the gather
+  dates, the Reagent Tracker's transparency slider, a v1.7.0 compatibility note, Changelog
+  Highlights and ProfessionDB under Libraries. The CurseForge page gains ProfessionDB under
+  Required (it was a TOC dependency and missing there), List Setup in both tab lists, the `[GSL]`
+  setup step, the You column wording, and two New notes: older versions keep syncing but do not see
+  the list or the `[GSL]` stock, and ProfessionDB is required.
+- **GSL-MERGE-001 step 6, TOGBank's half:** a "Guild Shopping List" section in the CurseForge
+  page's Core Features (telling a GuildShoppingList guild to keep that addon enabled until a list
+  writer has logged in once, since the import can only read its saved variables while it loads),
+  the Shopping List tab in the page's tab lists, and a Shopping List section in `README.txt`.
+  GuildShoppingList's final release is requested from its own workspace (contract `27dae11a3e42`).
+  `docs/Curseforge_Description.html`, `README.txt`, `docs/GSL_MERGE.md`.
+- **Harness pin `23d11b1` -> `ee56a45`** (WoWAPITesting delivered `C_TradeSkillUI`, thread
+  b856f5a5). The spec-local `C_TradeSkillUI` stand-in in `Tests/craftlistwindow_spec.lua` is
+  deleted; the spec now runs on the harness's.
+- Gate: forward 470 + 504 + 961 = 1,935, reverse 537 + 711 + 687 = 1,935, none failed.
+
 <!-- MOVED-TO-ARCHIVE 2026-10-15: v1.6.1, whole, with the desk's `file move-span`, to make room
      for v1.8.2 (CHANGELOG.md was 115,152 characters, 4,848 under the 120,000 ceiling). -->
 ## [v1.6.1] (2026-09-25) - Sister-Guild Failover
