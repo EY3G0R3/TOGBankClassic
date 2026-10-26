@@ -12,6 +12,14 @@
 -- what the wire gave it.
 --
 -- The one seam is the bus (env_fleet's header): whole messages, no chunking, delivered in order.
+--
+-- THE OTHER HALF IS Tests/congestion_spec.lua (self-audit 165b2999 F1): the same fleet on the
+-- THROTTLED wire -- ChatThrottleLib's pipes, AceComm's 255-byte chunks, AceCommQueue on top -- where
+-- messages on different prefixes overtake each other. Anything below that depends on ARRIVAL ORDER
+-- across prefixes is true of this in-order bus only; the one such claim is the "viewer online first"
+-- example (the table travelling ahead of its offer), whose opposite order congestion_spec pins (the
+-- parked offer replayed when the table lands). A new example whose outcome turns on which of two
+-- prefixes lands first earns a throttled twin there; one that turns on a single conversation does not.
 package.path = "./Tests/?.lua;" .. package.path
 local F   = require("env_fleet")
 local env = F.env
@@ -114,6 +122,33 @@ describe("FULL SYNC: a banker publishes, a viewer that holds nothing ends up hol
 			assert.is_true(CYCLE[m.type] == true, "something other than the cycle's broadcasts went to GUILD: " .. tostring(m.type))
 		end
 		quiet(A); quiet(V)
+		noErrors(A); noErrors(V)
+	end)
+
+	-- STATS-P2P-002: /togbank stats' P2P counts come from DeltaSync's numbered-P2P observers (MINOR 29,
+	-- inbox b8b699cd), wired in P2P:Config. Driven here on the REAL library on both clients.
+	it("counts the viewer's ask and the banker's offer through DeltaSync's observers, and no failed ask on a clean sync", function()
+		local c = guild({ V1 })
+		local A, V = c[BANK], c[V1]
+		F.scan(A, bank(5), { bank = {}, money = 100 })
+		F.login(V)
+		F.tick(70)
+		syncedTo(V, A)
+		local function count(cl, field)
+			local n = 0
+			for _, e in ipairs(cl.p2pEvents or {}) do
+				if e.field == field then
+					n = n + 1
+					assert.is_string(e.guild, cl.name .. " counted a P2P event under no guild")
+				end
+			end
+			return n
+		end
+		assert.equal(#F.sent({ type = "sync-request", from = V1 }), count(V, "p2pAsks"), "the viewer's asks were not each counted once")
+		assert.is_true(count(V, "p2pAsks") >= 1, "the viewer asked nothing, so the count proves nothing")
+		assert.equal(0, count(V, "p2pAsksFailed"), "a clean sync counted a failed ask")
+		assert.equal(#F.sent({ type = "hash-offer2", from = BANK, to = V1 }), count(A, "p2pOffered"), "the banker's offers were not each counted once")
+		assert.is_true(count(A, "p2pOffered") >= 1, "the banker offered nothing, so the count proves nothing")
 		noErrors(A); noErrors(V)
 	end)
 

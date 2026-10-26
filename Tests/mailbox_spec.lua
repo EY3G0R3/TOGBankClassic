@@ -386,7 +386,9 @@ describe("MAILUI-001: opening beside the mail frame", function()
 			assert.equal(0, opened)
 			local opens, why = M:AutoOpens()
 			assert.is_false(opens)
-			assert.matches("Mailbox window on non%-bank characters", why)
+			-- Self-audit 7203112b F4: the verdict names the box by its panel label, read off the options
+			-- table rather than copied, so renaming the box without the log text goes red here.
+			assert.truthy(why:find("'" .. second.name .. "'", 1, true), why)
 			-- Ticked: the non-banker's window opens.
 			second.set(nil, true)
 			assert.is_true(TOGBankClassic_Options:IsMailboxAutoOpenForNonBankersEnabled())
@@ -398,7 +400,7 @@ describe("MAILUI-001: opening beside the mail frame", function()
 			assert.is_true(second.disabled(), "not greyed with the master switch off")
 			opens, why = M:AutoOpens()
 			assert.is_false(opens)
-			assert.matches("Open the Mailbox window at a mailbox", why)
+			assert.truthy(why:find("'" .. general.mailboxAutoOpen.name .. "'", 1, true), why)
 			M:OnMailShow()
 			assert.equal(1, opened, "the window opened by itself with the master switch off")
 			-- A profile from before the setting: nil reads as OFF, the bankers-only default.

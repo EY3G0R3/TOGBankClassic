@@ -2188,8 +2188,15 @@ function TOGBankClassic_Guild:AskFederationPeer(key, peer, asked)
 	-- to the peer, staggered past the GUILD query's cooldown (INDEX_QUERY_COOLDOWN, 60 s) so
 	-- the one-at-a-time index state machine is not asked to hold two at once; a home sync
 	-- still in flight then (a large by-id batch) skips this cycle's ask rather than forcing.
+	-- Self-audit 8680287b F5: ONE index ask pending per peer. A /togbank share or a proven-peer ask
+	-- inside the delay used to arm a second timer for the same peer (the cooldown then refused the
+	-- duplicate, but it was a second ask in flight all the same).
+	self.federationIndexPending = self.federationIndexPending or {}
+	if self.federationIndexPending[peer] then return true end
+	self.federationIndexPending[peer] = true
 	local delay = self.FEDERATION_INDEX_DELAY * #asked
 	C_Timer.After(delay, function()
+		self.federationIndexPending[peer] = nil
 		if self:IsPlayerOnline(peer) and self:QueryRequestsIndex(peer, "NORMAL") then
 			TOGBankClassic_Output:Debug("PROTOCOL", "FEDERATION", "asked %s for its requests index", peer)
 		end

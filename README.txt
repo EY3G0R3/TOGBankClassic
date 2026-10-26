@@ -3,7 +3,7 @@ TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era, TBC, MoP
                  and WoW Forever
 ================================================================================
 
-Version: 1.9.1
+Version: 1.10.0
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -298,8 +298,13 @@ FULFILLING ORDERS (bank characters):
     The envelope (Fulfill Oldest) does this on its own: the oldest order
     and that person's other orders you can fill from your bags go out as
     one mail - including ones that need a stack split. One click does every
-    split at once (it tells you if you need free bag slots first), the next
-    attaches everything, the last sends.
+    split it has bag slots for, oldest order first (any order it had no slot
+    for waits for the next mail, and chat says so), the next attaches
+    everything, the last sends.
+  - ANYWHERE ELSE, for an in-person trade: an order that needs a stack split
+    keeps its Fulfill button active. Click it to split off exactly the
+    amount ordered, trade it to the requester, then record the trade with
+    Mark hand-off.
 
   The game never lets you have the bank and a mailbox open at once, so the
   normal flow is: collect at the bank, walk to the mailbox, keep clicking.
@@ -1033,6 +1038,25 @@ When reporting bugs, please include:
 CHANGELOG HIGHLIGHTS
 ================================================================================
 
+Version 1.10.0:
+---------------
+NEW FEATURES:
+- Away from a mailbox, an order that needs a stack split keeps its Fulfill
+  button active: it splits off the exact amount for an in-person trade
+
+CHANGES:
+- The P2P part of the delta sync statistics counts again (asks sent, asks
+  not delivered and why, offers sent); needs DeltaSync 4.7.0 or later
+
+BUG FIXES:
+- Fulfill Oldest splits what your free bag slots allow instead of giving up
+  silently, and says in chat what waits for the next mail
+- Splitting a stack with no free bag slot now says why nothing happened
+- The status bar keeps the "what to do next" message after a split
+
+COMPATIBILITY: v1.10.0 works with v1.9.x. Nothing it sends between players
+changed.
+
 Version 1.9.1:
 --------------
 CHANGES:
@@ -1042,8 +1066,8 @@ CHANGES:
 BUG FIXES:
 - Order details are only accepted from guild members, and only for orders
   TOG Bank asked about
-- An order can no longer be taken over by another player, or closed by its
-  requester sending it again
+- An order can no longer be taken over by another player, or marked filled
+  by its requester sending it again (cancelling your own order still works)
 - Long or overlapping order lists from several banks are fetched in full
 - No more "action blocked" errors from pressing keys in combat with the
   Requests window open, or opening a TOG Bank window in combat

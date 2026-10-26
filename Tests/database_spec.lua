@@ -111,7 +111,10 @@ describe("Database:Load", function()
 		assert.same(keySet(fresh), keySet(repaired))
 		assert.same(keySet(fresh), keySet(reset), "Reset and ResetDeltaMetrics disagree on the metric keys (DB-003)")
 		assert.equal(0, fresh.computeCount, "the timing counters are missing from a fresh record")
-		assert.equal(20, #keySet(fresh))
+		-- 19: STATS-P2P-001 (2026-10-26) removed p2pOffered, p2pRequestsBroadcast, p2pFulfilledByPeer and
+		-- p2pBankerFallback, whose writers moved into DeltaSync; STATS-P2P-002 added p2pAsks,
+		-- p2pAsksFailed and p2pOffered, fed by DeltaSync's observers.
+		assert.equal(19, #keySet(fresh))
 	end)
 
 	it("backfills the timing counters onto a record saved before they existed, without touching the rest", function()

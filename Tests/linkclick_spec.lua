@@ -26,6 +26,19 @@ local function clearModifiers()
 	wow.activeChatWindow = nil
 end
 
+-- The client globals the fallback examples nil or replace. Taken in before_each and put back in
+-- after_each, so a red assertion between cannot leave a nil behind for later files (self-audit
+-- 6e4627dd F3: the examples restored them inline, after their assertions).
+local SWAPPED = { "HandleModifiedItemClick", "DressUpItemLink", "ChatFrameUtil", "ChatEdit_InsertLink" }
+local saved
+local function saveGlobals()
+	saved = {}
+	for _, k in ipairs(SWAPPED) do saved[k] = _G[k] end
+end
+local function restoreGlobals()
+	for _, k in ipairs(SWAPPED) do _G[k] = saved[k] end
+end
+
 describe("LINKCLICK-001: a modified click on an item link does what the game does with it", function()
 	local UI, picked, insertedBefore, dressedBefore
 
@@ -36,10 +49,12 @@ describe("LINKCLICK-001: a modified click on an item link does what the game doe
 		picked = {}
 		_G.PickupItem = function(link) picked[#picked + 1] = link end
 		insertedBefore, dressedBefore = #wow.insertedLinks, #wow.dressUps
+		saveGlobals()
 	end)
 
 	after_each(function()
 		clearModifiers()
+		restoreGlobals()
 	end)
 
 	local function inserted() return #wow.insertedLinks - insertedBefore end
@@ -88,7 +103,6 @@ describe("LINKCLICK-001: a modified click on an item link does what the game doe
 	end)
 
 	it("without the client's dispatcher the same two bindings are honoured through the real insert function and DressUpItemLink", function()
-		local dispatcher, dressUpFn = _G.HandleModifiedItemClick, _G.DressUpItemLink
 		local previews = {}
 		_G.HandleModifiedItemClick = nil
 		_G.DressUpItemLink = function(link) previews[#previews + 1] = link return true end
@@ -100,7 +114,6 @@ describe("LINKCLICK-001: a modified click on an item link does what the game doe
 		wow.modifiedClicks.DRESSUP = true
 		assert.is_true(UI:HandleLinkClick(LINK))
 		assert.same({ LINK }, previews, "the fallback did not preview the item")
-		_G.HandleModifiedItemClick, _G.DressUpItemLink = dispatcher, dressUpFn
 	end)
 
 	it("InsertLink prefers the function the client calls and reports whether anything took the link", function()
@@ -111,7 +124,6 @@ describe("LINKCLICK-001: a modified click on an item link does what the game doe
 		-- With the client's table absent and the alias present (a client that only has the fallback).
 		-- The env's alias IS the real function (as the client's is), so it cannot stand without the
 		-- table; a standalone fallback stands in for it here.
-		local util, alias = _G.ChatFrameUtil, _G.ChatEdit_InsertLink
 		local viaAlias = {}
 		_G.ChatFrameUtil = nil
 		_G.ChatEdit_InsertLink = function(text) viaAlias[#viaAlias + 1] = text return true end
@@ -119,7 +131,6 @@ describe("LINKCLICK-001: a modified click on an item link does what the game doe
 		assert.same({ LINK }, viaAlias)
 		_G.ChatEdit_InsertLink = nil
 		assert.is_false(UI:InsertLink(LINK), "with neither function the insert reported success")
-		_G.ChatFrameUtil, _G.ChatEdit_InsertLink = util, alias
 	end)
 end)
 
@@ -145,9 +156,10 @@ describe("LINKCLICK-001: the Search box fills from a shift-click ANYWHERE, becau
 		TOGBankClassic_UI_Requests = { isOpen = false }
 		_G.ChatFrame_AddMessageEventFilter = function() end
 		_G.MailFrame, _G.MailFrameTab2 = nil, nil
+		saveGlobals()
 	end)
 
-	after_each(function() clearModifiers() end)
+	after_each(function() clearModifiers(); restoreGlobals() end)
 
 	it("a link the client inserts -- a shift-click on a bag item or a chat line -- reaches OnInsertLink, whether or not a chat box took it", function()
 		TOGBankClassic_Events:RegisterEvents()
@@ -159,7 +171,6 @@ describe("LINKCLICK-001: the Search box fills from a shift-click ANYWHERE, becau
 	end)
 
 	it("on a client with only the deprecated alias, the alias is hooked; with neither, registration does not raise", function()
-		local util, alias = _G.ChatFrameUtil, _G.ChatEdit_InsertLink
 		_G.ChatFrameUtil = nil
 		_G.ChatEdit_InsertLink = function() return false end
 		TOGBankClassic_Events:RegisterEvents()
@@ -168,6 +179,5 @@ describe("LINKCLICK-001: the Search box fills from a shift-click ANYWHERE, becau
 		_G.ChatEdit_InsertLink = nil
 		TOGBankClassic_Bank.eventsRegistered = false
 		assert.has_no_error(function() TOGBankClassic_Events:RegisterEvents() end)
-		_G.ChatFrameUtil, _G.ChatEdit_InsertLink = util, alias
 	end)
 end)

@@ -611,7 +611,6 @@ describe("BROWSE-001: the rows", function()
 		assert.is_function(list.onRowEnter, "the Bankers list has no row hover")
 		local shown
 		rawset(GameTooltip, "SetText", function(_, t) shown = t end)   -- the hollow tooltip has no GetText
-		_G.GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor or function() end   -- harness gap (audit 1ebe87b4 F5)
 		list.onRowEnter(by[ALICE])
 		assert.equal(text, shown)
 		list.onRowLeave(by[ALICE])
@@ -788,8 +787,18 @@ describe("BROWSE-001: the window", function()
 		-- The spec tables are untouched: each list fits its own copy.
 		assert.equal(150, Browse.BROWSE_COLUMNS[2].width); assert.equal(44, Browse.BROWSE_COLUMNS[3].width)
 		-- A filter that hides the longest entry does not move the column: the whole catalogue decides.
-		Browse.filters.type = "2"; Browse:DrawBrowse()
+		-- Self-audit f825157e F3: the filter is chosen to EXCLUDE the widest row, and that is asserted --
+		-- the example used to filter on a fixed class and never checked the widest row was gone.
+		local otherClass
+		for _, r in ipairs(all) do
+			if tostring(r.class) ~= tostring(widest.class) then otherClass = tostring(r.class) break end
+		end
+		assert.is_string(otherClass, "the fixture has one item class only; the hidden-widest case cannot be built")
+		Browse.filters.type = otherClass; Browse:DrawBrowse()
 		assert.is_true(#Browse.rowsShown < #all)
+		for _, r in ipairs(Browse.rowsShown) do
+			assert.are_not.equal(widest.type, r.type, "the widest entry is still shown, so the example proves nothing")
+		end
 		assert.equal(fitted, width(Browse.BrowseList, "type"))
 		Browse.filters.type = "any"
 		-- Widths are memoised per text (a redraw per keystroke over every row); a text's width never
@@ -2259,6 +2268,7 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 		-- The fulfil click goes through Mail with that request.
 		local prepared
 		TOGBankClassic_Mail.PrepareFulfillMail = function(_, req) prepared = req return true, "sent" end
+		TOGBankClassic_Mail.IsMailboxOpen = function() return true end   -- HANDOFF-SPLIT-001: at a mailbox
 		list.rows[1].cells.actions.fulfill.togDisabled = false
 		list.rows[1].cells.actions.fulfill:Fire("OnClick")
 		assert.equal(G.Info.requests.r35, prepared, "the fulfil icon acted on the request the row was built for, not the one it shows")
@@ -2398,8 +2408,6 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 		local shown
 		local tip = _G.GameTooltip
 		tip.SetHyperlink = function(_, link) shown = link end
-		-- FrameXML's, which UI:HideTooltip calls on every leave; the frame model does not carry it.
-		_G.GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor or function() end
 		Browse:Open("requests")
 		R.requesterFilter, R.bankFilter = nil, nil
 		R:DrawRows()

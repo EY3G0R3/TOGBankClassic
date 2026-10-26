@@ -27,6 +27,52 @@ local function loadChat()
 	return TOGBankClassic_Chat
 end
 
+-- STATS-P2P-002: the P2P part of the delta statistics, from counters DeltaSync's observers feed
+-- (fullsync_spec drives the real library firing them; this pins what the player reads).
+describe("STATS-P2P-002: /togbank stats prints the P2P asks and offers", function()
+	local function printed()
+		local out = {}
+		for _, c in ipairs(TOGBankClassic_Output.calls) do
+			if c.level == "Response" then
+				out[#out + 1] = string.format(c[1], unpack(c, 2, c.n))
+			end
+		end
+		return table.concat(out, "\n")
+	end
+
+	before_each(function()
+		env.reset(); loadChat()
+		env.loadFile("Modules/Database.lua")
+		TOGBankClassic_Database.db = { global = { debugCategories = {}, debugTags = {} }, faction = {} }
+		TOGBankClassic_Core = env.coreHashStub(4242)
+		TOGBankClassic_Database:Load("Testguild")
+		TOGBankClassic_Guild = { GetGuild = function() return "Testguild" end }
+	end)
+
+	it("says there is nothing yet on a fresh record", function()
+		TOGBankClassic_Chat:PrintDeltaStats()
+		local text = printed()
+		assert.truthy(text:find("No asks or offers yet", 1, true), text)
+		assert.truthy(text:find("No delta sync activity yet", 1, true), text)
+	end)
+
+	it("counts asks, failed asks with their commonest reasons, and offers", function()
+		local D = TOGBankClassic_Database
+		for _ = 1, 4 do D:RecordP2PEvent("Testguild", "p2pAsks") end
+		D:RecordP2PEvent("Testguild", "p2pAsksFailed", "timeout")
+		D:RecordP2PEvent("Testguild", "p2pAsksFailed", "timeout")
+		D:RecordP2PEvent("Testguild", "p2pAsksFailed", "busy")
+		D:RecordP2PEvent("Testguild", "p2pOffered")
+		D:RecordP2PEvent(nil, "p2pAsks")   -- no guild: ignored
+		TOGBankClassic_Chat:PrintDeltaStats()
+		local text = printed()
+		assert.truthy(text:find("Asks sent:           4", 1, true), text)
+		assert.truthy(text:find("Asks not delivered:  3 (timeout 2, busy 1)", 1, true), text)
+		assert.truthy(text:find("Offers sent:         1", 1, true), text)
+		assert.is_nil(text:find("No delta sync activity yet", 1, true), "asks and offers are activity")
+	end)
+end)
+
 -- INV2-RETIRE-003: the live string that exposed CMD-001 was `dev switches inventoryV2 on`; that
 -- switch is retired, and so (N6, 2026-09-14) is `legacyKeyedReceive` which drove these next. They
 -- drive `sendV2Wire` now -- ON by default, which is what makes "off" the observable change -- and

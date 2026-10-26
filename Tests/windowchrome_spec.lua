@@ -21,7 +21,6 @@ describe("VISIBILITY-001 part 2: the status bar's text", function()
 		local UI = env.loadUI()
 		env.loadFile("Modules/Constants.lua")
 		env.loadFile("Modules/UI/StatusBar.lua")
-		_G.GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor or function() end
 		local W = LibStub("LibAceGUIWidgets-1.0")
 		local win = UI:Create("Frame")
 		win:Hide()
@@ -50,7 +49,6 @@ describe("POOL-CHROME-001: a released window hands its frame back clean", functi
 		local UI = env.loadUI()
 		env.loadFile("Modules/Constants.lua")
 		env.loadFile("Modules/UI/StatusBar.lua")
-		_G.GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor or function() end
 		TOGBankClassic_Options = { db = { global = {}, char = {} } }
 
 		local win = UI:Create("Frame")
@@ -125,7 +123,6 @@ describe("WINDOW-CHROME-001: UI:DressWindow", function()
 		require("env.ace").load("AceGUI-3.0")
 		wow = package.loaded["env.wow"]
 		UI = env.loadUI()
-		_G.GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor or function() end   -- harness gap (audit 1ebe87b4 F5)
 		window = UI:Create("Frame")
 		window:Hide()
 		TOGBankClassic_Options = { db = { global = {}, char = {} } }

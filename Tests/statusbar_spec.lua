@@ -136,6 +136,10 @@ describe("StatusBar.GetSlotColor / FormatSlots", function()
 	end)
 end)
 
+-- The `alt.bank.slots` / `alt.bags.slots` / `alt.money` shape these two describes feed is the LIVE
+-- record, written by Bank:Scan (Modules/Bank.lua, the alt.bank/alt.bags assignment) and by the sync
+-- receive (Modules/Chat.lua, localAlt.bank.slots / bags.slots) -- not the retired legacy item rows.
+-- Change those writers and these fixtures move with them (self-audit 7043ef4b F4).
 describe("StatusBar.BuildInventorySummary", function()
 	local SB
 	before_each(function()

@@ -175,8 +175,11 @@ function F.newClient(name, opts)
 			RecordDeltaSent = function() end, RecordDeltaSavings = function() end,
 			RecordDeltaComputeTime = function() end, RecordNoChangeSent = function() end,
 			RecordDeltaFailed = function() end, RecordDeltaReceived = function() end,
-			RecordP2PRequestBroadcast = function() end, RecordP2POffered = function() end,
-			RecordP2PBankerFallback = function() end,
+			-- STATS-P2P-002: recorded, so a spec can see the real DeltaSync's observers fire.
+			RecordP2PEvent = function(_, guild, field, why)
+				c.p2pEvents = c.p2pEvents or {}
+				c.p2pEvents[#c.p2pEvents + 1] = { guild = guild, field = field, why = why }
+			end,
 		}
 		G.TOGBankClassic_Options = {
 			IsIntegrityCheckDiagnosticsEnabled = function() return false end,
@@ -453,9 +456,12 @@ end
 -- The ordered bus
 -- ---------------------------------------------------------------------------
 
+--- A character name without its realm ("Bankchar-Testrealm" -> "Bankchar"); anything else as given.
+--- Exported for the specs (self-audit 165b2999 F2: congestion_spec kept its own copy).
 local function bare(name)
 	return type(name) == "string" and name:match("^([^%-]+)") or name
 end
+F.bare = bare
 
 --- The message-level log entry, on either wire.
 function F.logMessage(from, prefix, text, dist, target, prio, cb, cbArg)

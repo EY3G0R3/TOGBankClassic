@@ -2910,7 +2910,6 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 	local sentCount = metrics.deltasSentCount or 0
 	local sentBytes = metrics.bytesSentDelta or 0
 	local p2pSent = metrics.p2pSentCount or 0
-	local p2pOffered = metrics.p2pOffered or 0
 	local noChangeSent = metrics.noChangeSentCount or 0
 	TOGBankClassic_Output:Response("|cffffff00Outbound (what I served):|r")
 	if sentCount > 0 then
@@ -2928,11 +2927,6 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 		end
 	else
 		TOGBankClassic_Output:Response("  Data sends:        0 (no data served yet)")
-	end
-	if p2pOffered > 0 then
-		local converted = p2pSent
-		TOGBankClassic_Output:Response("  P2P offered/sent:  %d offered, %d sent (%.0f%% resulted in data)",
-			p2pOffered, converted, (converted / p2pOffered) * 100)
 	end
 	TOGBankClassic_Output:Response("  No-change replies: %d", noChangeSent)
 	TOGBankClassic_Output:Response("")
@@ -2952,23 +2946,27 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 	end
 	TOGBankClassic_Output:Response("")
 
-	-- P2P requests: what this client asked peers for
-	local p2pBroadcast = metrics.p2pRequestsBroadcast or 0
-	local p2pFulfilled = metrics.p2pFulfilledByPeer or 0
-	local p2pFallback = metrics.p2pBankerFallback or 0
-	TOGBankClassic_Output:Response("|cffffff00P2P Requests (what I asked peers for):|r")
-	if p2pBroadcast > 0 then
-		local p2pUnresolved = math.max(0, p2pBroadcast - p2pFulfilled - p2pFallback)
-		TOGBankClassic_Output:Response("  Broadcast:           %d", p2pBroadcast)
-		TOGBankClassic_Output:Response("  Peer responded:      %d (%.0f%%)",
-			p2pFulfilled, (p2pFulfilled / p2pBroadcast) * 100)
-		TOGBankClassic_Output:Response("  Fell back to banker: %d (%.0f%%)",
-			p2pFallback, (p2pFallback / p2pBroadcast) * 100)
-		if p2pUnresolved > 0 then
-			TOGBankClassic_Output:Response("  Still pending:       %d", p2pUnresolved)
+	-- STATS-P2P-002: what this client asked holders for, and offered them, counted from DeltaSync's
+	-- numbered-P2P observers (P2P:Config). STATS-P2P-001 removed the old section the same day: its
+	-- counters' writers had moved into DeltaSync with LIBREQ-DS-008, so it always read "No P2P requests
+	-- broadcast yet". No "still pending" figure: a completed ask is the deliveries counted above.
+	local asks, failed, offered = metrics.p2pAsks or 0, metrics.p2pAsksFailed or 0, metrics.p2pOffered or 0
+	TOGBankClassic_Output:Response("|cffffff00P2P (asking and offering):|r")
+	if asks > 0 or offered > 0 then
+		TOGBankClassic_Output:Response("  Asks sent:           %d", asks)
+		if failed > 0 then
+			local reasons = {}
+			for why, n in pairs(metrics.p2pFailReasons or {}) do reasons[#reasons + 1] = { why, n } end
+			table.sort(reasons, function(a, b) if a[2] ~= b[2] then return a[2] > b[2] end return a[1] < b[1] end)
+			local parts = {}
+			for i = 1, math.min(3, #reasons) do parts[#parts + 1] = reasons[i][1] .. " " .. reasons[i][2] end
+			TOGBankClassic_Output:Response("  Asks not delivered:  %d (%s)", failed, table.concat(parts, ", "))
+		else
+			TOGBankClassic_Output:Response("  Asks not delivered:  0")
 		end
+		TOGBankClassic_Output:Response("  Offers sent:         %d", offered)
 	else
-		TOGBankClassic_Output:Response("  No P2P requests broadcast yet")
+		TOGBankClassic_Output:Response("  No asks or offers yet")
 	end
 	TOGBankClassic_Output:Response("")
 
@@ -3015,7 +3013,7 @@ function TOGBankClassic_Chat:PrintDeltaStats()
 		end
 	end
 
-	if sentCount == 0 and totalReceived == 0 and p2pBroadcast == 0 then
+	if sentCount == 0 and totalReceived == 0 and asks == 0 and offered == 0 then
 		TOGBankClassic_Output:Response("No delta sync activity yet")
 	end
 end

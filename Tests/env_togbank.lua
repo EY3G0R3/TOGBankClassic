@@ -486,7 +486,25 @@ function M.loadFile(path)
 end
 
 --- Load the named modules (paths relative to the addon root) in the order given.
+--- LOADER-ORDER-001 (self-audit 38ccb8e0 F4): a list that names Constants.lua must name it before
+--- every other addon module but Compat.lua. wiring_spec once loaded Bank before Constants; 26
+--- examples died at Bank.lua:9 only when that file ran first, and both full-suite orders hid it
+--- because an earlier file had left Constants behind. Constants is the one module the others read
+--- AT LOAD (their local aliases of it); the rest are read at call time, so strict TOC order beyond
+--- this is not enforced -- dozens of loaders list Switches early and nothing depends on that.
 function M.loadModules(paths)
+	local constantsAt
+	for i, p in ipairs(paths) do
+		if p == "Modules/Constants.lua" then constantsAt = i break end
+	end
+	if constantsAt then
+		for i = 1, constantsAt - 1 do
+			local p = paths[i]
+			if p:match("^Modules/") and p ~= "Modules/Compat.lua" then
+				error(string.format("env_togbank.loadModules: %s is listed before Modules/Constants.lua, which it reads at load", p), 2)
+			end
+		end
+	end
 	for _, p in ipairs(paths) do M.loadFile(p) end
 end
 
@@ -839,12 +857,8 @@ function M.standUpClient(who, members, guild)
 		RecordDeltaComputeTime = function() end, RecordNoChangeSent = function() end,
 		RecordDeltaFailed = function() end,
 		RecordDeltaReceived = function() end,
-		-- HLR-CRASH-001: the hash-list reply handler used to die before its request pass, so
-		-- nothing had ever reached the metric it records. Real method (Database.lua:702).
-		RecordP2PRequestBroadcast = function() end,
-		-- HASH-CANON-009: the relay-responder path (Chat.lua togbank-r) records an offer before it
-		-- ACKs; nothing had driven that path on a whole client before. Real method (Database.lua:693).
-		RecordP2POffered = function() end,
+		-- STATS-P2P-001: RecordP2PRequestBroadcast / RecordP2POffered were stubbed here for paths that
+		-- moved into DeltaSync (LIBREQ-DS-008); the methods are gone with their counters.
 	}
 	TOGBankClassic_Options = {
 		IsIntegrityCheckDiagnosticsEnabled = function() return false end,

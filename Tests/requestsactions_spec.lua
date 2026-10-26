@@ -113,8 +113,6 @@ local function load(opts)
 	TOGBankClassic_UI_Browse = nil
 	_G.TOGBankClassic = { Show = function() end, Hide = function() end }
 	_G.CanViewOfficerNote = function() return opts.officer or false end
-	-- Harness gap (audit 1ebe87b4 F5): UI:HideTooltip re-anchors through this FrameXML helper.
-	_G.GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor or function() end
 	_G.GetNumGuildMembers = function() if opts.members ~= nil then return opts.members end return 3 end
 	_G.MailFrame = nil
 end
@@ -883,6 +881,10 @@ describe("REQUESTS-ACTIONS: the filter dropdowns, the fulfil icon's states, dock
 		assert.is_true(icon.togDisabled); assert.equal(0.4, icon:GetAlpha())
 		assert.equal("Partial: 3 of 5", state(true, "Partial: 3 of 5", 3, true))
 		assert.equal("Split the stack first", state(true, "Split the stack first", 5, true))
+		-- HANDOFF-SPLIT-001: away from a mailbox a split order stays clickable, for an in-person trade.
+		assert.equal("Split the stack first Click to split it off to hand over in person, or open a mailbox to mail it.",
+			state(true, "Split the stack first", 5, false))
+		assert.is_false(icon.togDisabled, "a split order was greyed out away from a mailbox")
 		assert.truthy(state(false, "in mail and bank"):find("split between", 1, true))
 		assert.truthy(state(false, "in mail"):find("mail inbox", 1, true))
 		assert.truthy(state(false, "shortfall in bank and mail", 2):find("Have 2 in bags. More available in your bank and mail", 1, true))
@@ -894,6 +896,25 @@ describe("REQUESTS-ACTIONS: the filter dropdowns, the fulfil icon's states, dock
 		G.PeerSpeaksDataLeg = function() return false, "1.3.2" end
 		assert.truthy(state(false, "not found anywhere"):find("is on v1.3.2", 1, true))
 		assert.is_nil(state(false, "in mail"):find("is on v1.3.2", 1, true))
+	end)
+
+	-- HANDOFF-SPLIT-001: the row's Fulfill click mails at a mailbox, and splits for a trade anywhere else.
+	it("routes the fulfil click to the mail at a mailbox, and to the hand-off split away from one", function()
+		addReq({ quantity = 5 })
+		R:Open()
+		local icon = row().cells.actions.fulfill
+		TOGBankClassic_Mail.CanFulfillRequest = function() return true, "Split 5 from stack of 20.", 20 end
+		TOGBankClassic_Mail.PrepareHandoffSplit = function() calls[#calls + 1] = { "PrepareHandoffSplit" }; return false, "split offered" end
+		local mailboxOpen = false
+		TOGBankClassic_Mail.IsMailboxOpen = function() return mailboxOpen end
+		R:_RefreshFulfillButtons(ME, true, false)
+		icon:GetScript("OnClick")(icon)
+		assert.same({ "PrepareHandoffSplit" }, calls[#calls])
+		assert.equal("split offered", status())
+		mailboxOpen = true
+		R:_RefreshFulfillButtons(ME, true, true)
+		icon:GetScript("OnClick")(icon)
+		assert.same({ "PrepareFulfillMail" }, calls[#calls])
 	end)
 
 	-- VISIBILITY-001 part 3: the Requests body's own filter strip. The standalone window is rebuilt on
@@ -1482,6 +1503,203 @@ describe("REQUESTS-ACTIONS: the custom cancel-reason editor", function()
 		R:_OnReasonDelete(1)
 		R:_OnReasonEdit(1)
 		assert.is_nil(R.ReasonEditIndex)
+	end)
+end)
+
+-- ─── The body's guards: calls that arrive before, after or beside a drawn body ──
+-- AUDIT-1ebe F3 (self-audit 1ebe87b4, re-filed 2026-10-26): the last 30 uncovered lines of
+-- Requests.lua were these -- a call reaching the body with no body built, a dialog shown a second
+-- time, a filter that no longer names anyone, a role or tab that no longer applies.
+
+describe("REQUESTS-ACTIONS: the body's guards", function()
+	before_each(function() load() end)
+	after_each(unload)
+
+	it("does nothing to a body that was never built: no filters, no draw, no settings to fill or hide", function()
+		R:UpdateFilters()
+		R:DrawContent()
+		R:PopulateSettings()
+		R:ShowSettings(false)
+		assert.is_nil(R.List); assert.is_nil(R.FilterRequester); assert.is_nil(R.SettingsOverlay)
+		-- The same keys, once there is a body: the nils above are about the body, not a misspelling.
+		load({ officer = true })
+		R:Open()
+		assert.is_not_nil(R.List); assert.is_not_nil(R.FilterRequester); assert.is_not_nil(R.SettingsOverlay)
+	end)
+
+	it("reads an empty guild as no requests", function()
+		G.Info.requests = nil
+		assert.same({}, R:AllRequests())
+	end)
+
+	it("a second Open of an open window is a no-op on the same window", function()
+		addReq()
+		R:Open()
+		local w = R.Window
+		R:Open()
+		assert.equal(w, R.Window)
+		assert.is_true(w.frame:IsShown())
+	end)
+
+	it("falls back to the Active tab when a non-officer's remembered tab is Settings", function()
+		addReq()
+		R.currentTab = "settings"
+		R:Open()
+		assert.equal("active", R.currentTab)
+		assert.is_nil(R.SettingsOverlay, "a non-officer was given the settings panel")
+	end)
+
+	it("builds the officer settings panel once per body", function()
+		load({ officer = true })
+		addReq()
+		R:Open()
+		local overlay = R.SettingsOverlay
+		assert.is_not_nil(overlay)
+		R:BuildSettingsPanel()
+		assert.equal(overlay, R.SettingsOverlay)
+	end)
+
+	it("registers the Cancel Stale and re-open dialogs once, and offers no re-open without StaticPopup", function()
+		addReq({ status = "complete", fulfilled = 5 })
+		R:Open()
+		R.CancelStaleBtn:Fire("OnClick")
+		local stale = StaticPopupDialogs["TOGBankClassic_CancelStale"]
+		R.CancelStaleBtn:Fire("OnClick")
+		assert.equal(stale, StaticPopupDialogs["TOGBankClassic_CancelStale"])
+		local reopen = row().cells.actions.reopen
+		reopen:Fire("OnClick")
+		local dialog = StaticPopupDialogs["TOGBankClassic_ReopenRequest"]
+		reopen:Fire("OnClick")
+		assert.equal(dialog, StaticPopupDialogs["TOGBankClassic_ReopenRequest"])
+		local shown = #wow.popups
+		local show = _G.StaticPopup_Show
+		_G.StaticPopup_Show = nil
+		reopen:Fire("OnClick")
+		_G.StaticPopup_Show = show
+		assert.equal(shown, #wow.popups)
+	end)
+
+	it("keeps a remembered requester filter instead of the banker's default bank filter", function()
+		addReq()
+		R.requesterFilter = GALDOF
+		R:Open()
+		assert.is_true(R.defaultFiltersApplied)
+		assert.equal(GALDOF, R.requesterFilter)
+		assert.is_nil(R.bankFilter, "the banker default was applied over a remembered filter")
+	end)
+
+	it("a separator picked in the Requester list puts the current pick back and filters nothing new", function()
+		addReq()
+		R:Open()
+		R.FilterRequester:Fire("OnValueChanged", GALDOF)
+		assert.equal(GALDOF, R.requesterFilter)
+		R.FilterRequester:Fire("OnValueChanged", "__tog_sep_me_any__")
+		assert.equal(GALDOF, R.requesterFilter)
+		assert.equal(GALDOF, R.FilterRequester:GetValue())
+	end)
+
+	it("orders open requesters by open count, puts a zero-quantity order in history, and re-sends a list whose counts changed", function()
+		addReq({ id = "g1" }); addReq({ id = "g2" })
+		addReq({ id = "a1", requester = ALICE })
+		addReq({ id = "z1", requester = "Zed-Testrealm", quantity = 0 })
+		R:Open()
+		assert.same({ ME, "__tog_sep_me_any__", "__tog_any__", "__tog_sep_any_rest__", GALDOF, ALICE,
+			"__tog_sep_hist__", "Zed-Testrealm" }, R.cachedRequesterOrder)
+		addReq({ id = "a2", requester = ALICE })
+		R:UpdateFilters()
+		assert.equal("(2) " .. ALICE, R.cachedRequesterList[ALICE])
+	end)
+
+	it("drops a requester or bank filter that no longer names anyone in the lists", function()
+		addReq()
+		R:Open()
+		R.requesterFilter, R.bankFilter = "Nobody-Testrealm", "Nobody-Testrealm"
+		R:UpdateFilters()
+		assert.is_nil(R.requesterFilter); assert.is_nil(R.bankFilter)
+		assert.equal("__tog_any__", R.FilterRequester:GetValue())
+		assert.equal("__tog_any__", R.FilterBank:GetValue())
+	end)
+
+	it("embedded, Close leaves the tab to its window and Detach clears the bag highlights", function()
+		addReq()
+		R:Open()
+		local host = TOGBankClassic_UI:Create("Frame")
+		local chrome = TOGBankClassic_UI:DressWindow(host, { help = function() end })
+		local cleared = 0
+		TOGBankClassic_ItemHighlight.ClearAllOverlays = function() cleared = cleared + 1 end
+		R:Embed(host, host, chrome.anchor)
+		assert.is_true(R.embedded); assert.is_true(R.isOpen)
+		cleared = 0
+		R:Close()
+		assert.is_true(R.isOpen, "Close shut an embedded body")
+		R:Detach()
+		assert.equal(1, cleared)
+		assert.is_false(R.isOpen); assert.is_false(R.embedded)
+		env.releaseWindow(host)
+	end)
+end)
+
+-- ─── HANDOFF-SPLIT-001 end to end ──────────────────────────────────────────────
+-- The in-game check, offline: away from a mailbox, a split-needing order's Fulfill icon is live; a
+-- click offers the Split popup; accepting it leaves the exact amount as its own stack in the bags;
+-- the status bar says to trade it and Mark hand-off; the hand-off then records the amount. The real
+-- Requests window over the REAL Mail, Bank, Scan and Record modules and the harness's bags, cursor,
+-- timers and StaticPopup -- the examples above drive the row against a Mail stand-in, and
+-- mailcoverage_spec drives Mail without the row, so nothing joined the two until this.
+-- Not covered, and only a client can: the server's timing of the split (SplitContainerItem then a
+-- PickupContainerItem 0.1 s later), and how the popup draws.
+
+describe("HANDOFF-SPLIT-001 end to end: the row's Fulfill icon, the real Mail, the bags", function()
+	local LINEN = 2589
+
+	before_each(function()
+		load()
+		_G.TOGBankClassic_Mail, _G.TOGBankClassic_Bank = nil, nil
+		StaticPopupDialogs["TOGBANK_SPLIT_STACK"] = nil   -- Mail.lua defines it only when absent
+		env.loadModules({ "Modules/Inventory/Record.lua", "Modules/Inventory/Scan.lua", "Modules/Bank.lua", "Modules/Mail.lua" })
+		G.GetPlayer = G.GetNormalizedPlayer
+		env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+		_G.MailFrame = nil   -- away from any mailbox
+	end)
+	after_each(function()
+		unload()
+		_G.TOGBankClassic_Mail, _G.TOGBankClassic_Bank = nil, nil
+		StaticPopupDialogs["TOGBANK_SPLIT_STACK"] = nil
+	end)
+
+	it("splits the order's amount off for a trade, says so, and the hand-off then records it", function()
+		env.setBag(0, 4, { { id = LINEN, count = 20 } })
+		addReq({ quantity = 5, item = "Linen Cloth", itemID = LINEN })
+		R:Open()
+		local icon = row().cells.actions.fulfill
+		assert.is_true(icon:IsShown(), "no Fulfill icon on a banker's open order")
+		assert.is_false(icon.togDisabled, "the split-needing order's Fulfill icon is greyed away from a mailbox")
+		assert.truthy(icon.togTooltipDetail:find("hand over in person", 1, true), icon.togTooltipDetail)
+		icon:GetScript("OnClick")(icon)
+		local popup = wow.popups[#wow.popups]
+		assert.equal("TOGBANK_SPLIT_STACK", popup and popup.which, "the click offered no Split popup")
+		assert.equal("Split 5 from stack of 20 Linen Cloth to hand to " .. GALDOF .. "?", popup.text1)
+		assert.equal(20, wow.bags[0][1].count, "the stack was split before Split was clicked")
+		popup.info.OnAccept(nil, popup.data)
+		env.advance(0.2)
+		assert.is_nil(wow.cursor, "the split was left on the cursor")
+		assert.equal(15, wow.bags[0][1].count)
+		assert.equal(LINEN, wow.bags[0][2].itemID); assert.equal(5, wow.bags[0][2].count, "the order's amount is not its own stack")
+		assert.equal("Split 5 Linen Cloth complete. Trade the order to " .. GALDOF .. ", then use Mark hand-off.", status())
+		assert.equal("open", G.Info.requests.r1.status, "the split alone credited the order")
+		assert.equal(0, #named("FulfillRequestById"))
+		-- The trade happens in the game; Mark hand-off records it, defaulting to what is owed.
+		row().cells.actions.complete:Fire("OnClick")
+		local hand = wow.popups[#wow.popups]
+		assert.equal("TOGBankClassic_CompleteQty", hand.which)
+		local dialog = CreateFrame("Frame")
+		local eb = CreateFrame("EditBox", nil, dialog)
+		dialog.GetEditBox = function() return eb end
+		dialog.data = hand.data
+		hand.info.OnShow(dialog)
+		assert.equal("5", eb:GetText())
+		hand.info.OnAccept(dialog)
+		assert.same({ "FulfillRequestById", "r1", 5, ME }, named("FulfillRequestById")[1])
 	end)
 end)
 

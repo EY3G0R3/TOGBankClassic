@@ -72,6 +72,10 @@ local function loadWire()
 	local lib = env.freshGuildRoster()
 	env.readyGuildRoster(lib)
 	Guild:RefreshOnlineCache()
+	-- Harness pin 5e98597: C_GuildInfo.GuildControlGetRankFlags is real now and the guild master holds
+	-- every flag, so on the GM's client this roster build publishes the officer floor (SETTINGS-003,
+	-- pinned in settings_spec). That send is not the list's; the examples count from here.
+	sent = {}
 end
 
 local function roster()
@@ -481,7 +485,11 @@ describe("GSL-MERGE-001 step 5: bringing GuildShoppingList's list across (D9)", 
 		Guild.Info = { name = "Otherguild", alts = {}, roster = { alts = {} }, requests = {}, requestsTombstones = {}, settings = {} }
 		Guild:RefreshOnlineCache()
 		assert.same({}, CL:GetList(), "an account's one list was brought into a second guild")
-		assert.equal(0, #settingsSent())
+		-- The GM's client publishes its officer floor to the new guild record (SETTINGS-003); what must
+		-- not go out is a list.
+		for _, payload in ipairs(settingsSent()) do
+			assert.is_true(payload.craftList == nil or next(payload.craftList) == nil, "a list was published after the import had run")
+		end
 	end)
 
 	it("a member who may not edit leaves it for a writer, and a guild that already has a list keeps it", function()

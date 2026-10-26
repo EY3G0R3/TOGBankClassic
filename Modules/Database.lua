@@ -209,10 +209,10 @@ local function newDeltaMetrics()
 		bytesReceived = 0,
 		deltasReceivedFromBanker = 0,
 		deltasReceivedFromPeer = 0,
+		-- STATS-P2P-002: fed by DeltaSync's numbered-P2P observers (MINOR 29, inbox b8b699cd).
+		p2pAsks = 0,
+		p2pAsksFailed = 0,
 		p2pOffered = 0,
-		p2pRequestsBroadcast = 0,
-		p2pFulfilledByPeer = 0,
-		p2pBankerFallback = 0,
 		deltasApplied = 0,
 		deltasFailed = 0,
 		fullSyncFallbacks = 0,
@@ -591,6 +591,21 @@ function TOGBankClassic_Database:RecordNoChangeSent(name)
 	end
 end
 
+-- STATS-P2P-002: one numbered-P2P event, counted under deltaMetrics[field] -- "p2pAsks" (an ask sent),
+-- "p2pAsksFailed" (an ask that ended without a delivery, with its reason tallied in p2pFailReasons)
+-- or "p2pOffered" (an offer sent to a peer). P2P:Config wires DeltaSync's observers to it.
+function TOGBankClassic_Database:RecordP2PEvent(name, field, why)
+	if not name or not field then return end
+	local db = self.db.faction[name]
+	local m = db and db.deltaMetrics
+	if not m then return end
+	m[field] = (m[field] or 0) + 1
+	if why then
+		m.p2pFailReasons = m.p2pFailReasons or {}
+		m.p2pFailReasons[why] = (m.p2pFailReasons[why] or 0) + 1
+	end
+end
+
 -- Record receiving delta data from another client
 function TOGBankClassic_Database:RecordDeltaReceived(name, bytes, isFromBanker)
 	if not name then return end
@@ -601,35 +616,7 @@ function TOGBankClassic_Database:RecordDeltaReceived(name, bytes, isFromBanker)
 			db.deltaMetrics.deltasReceivedFromBanker = (db.deltaMetrics.deltasReceivedFromBanker or 0) + 1
 		else
 			db.deltaMetrics.deltasReceivedFromPeer = (db.deltaMetrics.deltasReceivedFromPeer or 0) + 1
-			db.deltaMetrics.p2pFulfilledByPeer = (db.deltaMetrics.p2pFulfilledByPeer or 0) + 1
 		end
-	end
-end
-
--- Record sending a P2P ACK offer to a requester
-function TOGBankClassic_Database:RecordP2POffered(name)
-	if not name then return end
-	local db = self.db.faction[name]
-	if db and db.deltaMetrics then
-		db.deltaMetrics.p2pOffered = (db.deltaMetrics.p2pOffered or 0) + 1
-	end
-end
-
--- Record broadcasting a P2P request to the guild
-function TOGBankClassic_Database:RecordP2PRequestBroadcast(name)
-	if not name then return end
-	local db = self.db.faction[name]
-	if db and db.deltaMetrics then
-		db.deltaMetrics.p2pRequestsBroadcast = (db.deltaMetrics.p2pRequestsBroadcast or 0) + 1
-	end
-end
-
--- Record falling back to banker after no peer responded
-function TOGBankClassic_Database:RecordP2PBankerFallback(name)
-	if not name then return end
-	local db = self.db.faction[name]
-	if db and db.deltaMetrics then
-		db.deltaMetrics.p2pBankerFallback = (db.deltaMetrics.p2pBankerFallback or 0) + 1
 	end
 end
 

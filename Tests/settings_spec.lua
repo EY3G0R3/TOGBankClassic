@@ -116,14 +116,13 @@ describe("SETTINGS-003: an officer's write reaches the members it governs", func
 	end)
 
 	it("the GM's client READS the floor from C_GuildInfo.GuildControlGetRankFlags at the roster build and broadcasts it once; a member's client never does", function()
-		-- Four ranks; ranks 1 and 2 (orders 1..2) may view officer notes -- index 11 of the flags.
-		_G.GuildControlGetNumRanks = function() return 4 end
-		_G.C_GuildInfo = _G.C_GuildInfo or {}
-		_G.C_GuildInfo.GuildControlGetRankFlags = function(order)
-			local flags = {}
-			flags[Guild.VIEW_OFFICER_NOTE_FLAG] = (order <= 2)
-			return flags
-		end
+		-- Four ranks; ranks 1 and 2 (orders 1..2) may view officer notes -- index 11 of the flags. The
+		-- harness's own C_GuildInfo.GuildControlGetRankFlags and GuildControlGetNumRanks (pinned
+		-- 5e98597; WoWAPITesting inbox 896cd9a3): the guild master holds every flag by default, every
+		-- other rank none until set.
+		local guild = require("env.guild")
+		guild.setRanks({ "Guild Master", "Officer", "Veteran", "Member" })
+		guild.setRankFlags(2, { [Guild.VIEW_OFFICER_NOTE_FLAG] = true })
 		assert.equal(1, Guild:ReadOfficerRankFloor())
 		-- On the member's client (the fixture's), the roster build publishes nothing.
 		clearSent()
@@ -141,10 +140,8 @@ describe("SETTINGS-003: an officer's write reaches the members it governs", func
 		Guild:RefreshOnlineCache()
 		assert.equal(1, #settingsSent(), "an unchanged floor was re-published")
 		-- The API answering nothing (no data on this client): no floor, nothing sent.
-		_G.C_GuildInfo.GuildControlGetRankFlags = function() return {} end
+		for order = 1, 4 do guild.setRankFlags(order, {}) end
 		assert.is_nil(Guild:ReadOfficerRankFloor())
-		_G.C_GuildInfo.GuildControlGetRankFlags = nil
-		_G.GuildControlGetNumRanks = nil
 	end)
 end)
 

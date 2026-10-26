@@ -801,6 +801,27 @@ describe("XGUILD-SYNC-001 step 5: a request mutation crosses into a sister guild
 		assert.equal("requests-by-id", fetches[1].data.type); assert.same({ "far1" }, fetches[1].data.ids)
 		assert.matches("^Sismember", fetches[1].msg.target)
 	end)
+
+	-- Self-audit 8680287b F5: a /togbank share or a proven-peer ask inside the 70 s used to arm a
+	-- second index timer for the same peer; the cooldown refused the duplicate on the wire, so the
+	-- count of index QUERIES attempted is what tells the two apart.
+	it("keeps ONE requests-index ask pending per peer, however many hash-list asks go out to it inside the delay", function()
+		feedSister(nil, { SIS_MEMBER })
+		Guild:RefreshOnlineCache()
+		local attempts = 0
+		local real = Guild.QueryRequestsIndex
+		Guild.QueryRequestsIndex = function(self, ...) attempts = attempts + 1; return real(self, ...) end
+		assert.is_true(Guild:AskFederationPeer(sisterKey, SIS_MEMBER))
+		env.advance(30)
+		assert.is_true(Guild:AskFederationPeer(sisterKey, SIS_MEMBER))
+		env.advance(100)
+		assert.equal(1, attempts, "a second index ask was armed for a peer that already had one pending")
+		-- Once it has fired, the next hash-list ask arms the next one.
+		assert.is_true(Guild:AskFederationPeer(sisterKey, SIS_MEMBER))
+		env.advance(70)
+		assert.equal(2, attempts)
+		Guild.QueryRequestsIndex = real
+	end)
 end)
 
 describe("XGUILD-OWNERS-001: who runs each bank character crosses between sister guilds, entry by entry", function()

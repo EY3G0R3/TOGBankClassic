@@ -59,6 +59,7 @@
   <li>Complex requests (e.g., 175 Runecloth from mixed stacks) handled automatically</li>
   </ul>
 </li>
+<li>Hand-Off Splits: away from a mailbox, an order's Fulfill button splits off the exact amount so you can trade it in person, then record the trade with Mark hand-off</li>
 <li>Optimal Stack Selection: Intelligent bin-packing algorithm selects best stack combinations</li>
 <li>Visual Indicators: Button icons change to show split needed vs. ready to mail</li>
 <li>One Mail Per Person: several orders for the same guildmate go in one mail &mdash; click Fulfill on each and they are added to the mail already open for them, then Send once</li>
@@ -377,6 +378,25 @@
 
 <h2>Recent Updates</h2>
 
+<h3>v1.10.0 - Hand-Off Splits</h3>
+
+<p><strong>New</strong></p>
+<ul>
+<li>Handing an order over in person: away from a mailbox, an order that needs a stack split keeps its Fulfill button active. Click it to split off exactly the amount ordered, then trade it to the requester and record the trade with Mark hand-off. At a mailbox the button mails as before.</li>
+</ul>
+
+<p><strong>Changed</strong></p>
+<ul>
+<li>The P2P part of the delta sync statistics counts again: how many times you asked a guildmate for a bank's data, how many of those asks did not deliver and why, and how many offers you sent. It had stopped counting and always said no requests had been sent. Needs DeltaSync 4.7.0 or later.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>Fulfill Oldest no longer gives up silently when your bags have fewer free slots than the orders need splits. It splits what fits, oldest order first, leaves the rest for the next mail, and says so in chat.</li>
+<li>Splitting a stack with no free bag slot now tells you why nothing happened, in chat and on the status bar.</li>
+<li>After a split, the status bar now keeps the message telling you what to do next instead of replacing it straight away with the request count.</li>
+</ul>
+
 <h3>v1.9.1 - Safer Order Sync</h3>
 
 <p><strong>Changed</strong></p>
@@ -387,7 +407,7 @@
 <p><strong>Fixed</strong></p>
 <ul>
 <li>Order details are now only accepted from members of your guild, and only for orders TOG Bank asked about. Before, a changed copy of an order from anyone could replace it, change who it belongs to, or delete it.</li>
-<li>An order can no longer be taken over by another player, and a requester can no longer mark their own order as filled or closed by sending it again. Only the bank or the guild master can complete an order.</li>
+<li>An order can no longer be taken over by another player, and a requester can no longer mark their own order as filled by sending it again. Only the bank or the guild master can complete an order. You can still cancel your own orders as before.</li>
 <li>A request sync no longer says "Requests synced." after the first order arrives while the rest are still coming. It now waits until every order it asked for is in.</li>
 <li>When two banks send their order lists at the same time, orders from both are now fetched. Before, some of one bank's orders were skipped until the next sync.</li>
 <li>A long list of orders no longer stops partway through, and if part of a bank's list goes missing on the way, TOG Bank asks that bank again.</li>

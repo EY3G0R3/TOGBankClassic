@@ -645,7 +645,9 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.same({ "m1", "m2", "m3" }, ids(credited))
 		end)
 
-		it("refuses the split click up front when the bags have fewer free slots than splits, touching nothing", function()
+		-- SPLIT-ROOM-001 (Discord, 2026-10-24: three orders each needing a split, two free bag slots,
+		-- "none of the stacks will attempt to split"): this used to refuse the whole mail.
+		it("splits what the free slots hold, holds the extra order that does not fit for the next mail, and says so", function()
 			elementals()
 			-- A 16-slot bag with 14 stacks: two free slots, three splits wanted.
 			local contents = { { id = AIR, count = 5 }, { id = WATER, count = 5 }, { id = FIRE, count = 5 } }
@@ -655,31 +657,86 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.is_true((click()))
 			assert.equal(3, #Mail.batchState.splits)
 			local ok, msg = click()
-			assert.is_false(ok)
-			assert.truthy(msg:find("Need 3 free bag slots", 1, true), msg)
-			assert.equal("split", Mail.batchState.phase, "the batch moved on despite refusing")
-			assert.is_nil(wow.cursor); assert.equal(0, env.pendingTimerCount(), "a split was scheduled despite refusing")
-			for _, id in ipairs({ AIR, WATER, FIRE }) do assert.same({ 5 }, stacksOf(id), "a stack was split despite refusing") end
-			-- Make room and the same click goes through.
-			wow.bags[0][14] = nil
-			ok, msg = click()
 			assert.is_true(ok, msg)
+			assert.truthy(msg:find("Splitting 2 stacks (2 items)", 1, true), msg)
+			assert.truthy(msg:find("1 of their orders held for the next mail", 1, true), msg)
+			-- The in-game check's "chat warning shows": the same news goes to chat, not only the status bar.
+			local warned
+			for _, c in ipairs(TOGBankClassic_Output.calls) do
+				if c.level == "Warn" and c[1] == "Not enough free bag slots to split all of %s's orders: %d held for the next mail." then
+					warned = c
+				end
+			end
+			assert.is_table(warned, "the held-back order was not reported in chat")
+			assert.equal(ALICE, warned[2]); assert.equal(1, warned[3])
+			assert.equal(2, #Mail.batchState.splits)
+			assert.equal(1, #Mail.batchState.extras, "the order with no slot was not taken off this mail")
+			assert.equal("e2", Mail.batchState.extras[1].req.id, "the newer order was not the one held back")
 			env.advance(1)
+			assert.same({ 5 }, stacksOf(FIRE), "the held-back order's stack was split anyway")
+			ok, msg = click()   -- attach
+			assert.is_true(ok, msg)
+			assert.equal(2, attachedCount())
+			assert.equal(AIR, slot(1).itemID); assert.equal(WATER, slot(2).itemID)
+			assert.is_true((click()))   -- send
+			assert.equal(1, #sends()); assert.equal(2, #sends()[1].items)
+			confirmSend()
+			assert.same({ "e1", "e2" }, ids(credited))
+			assert.equal("open", Guild.Info.requests.e3.status, "the held-back order was closed")
+			-- The held-back order goes on the next mail, into the slots the first mail freed.
 			assert.is_true((click()))
-			assert.equal(3, attachedCount())
+			assert.equal("e3", Mail.batchState.req.id)
+			assert.is_true((click()))   -- split
+			env.advance(1)
+			assert.is_true((click()))   -- attach
+			assert.equal(FIRE, slot(1).itemID); assert.equal(1, slot(1).count)
 			assert.is_true((click()))   -- send
 			confirmSend()
-			-- A single split with NO free slot keeps the one-slot wording.
-			Guild.Info.requests = {}
-			contents = {}
+			assert.same({ "e1", "e2", "e3" }, ids(credited))
+		end)
+
+		it("refuses, touching nothing, when the oldest order's own split has no free slot", function()
+			elementals()
+			local contents = {}
 			for _ = 1, 16 do contents[#contents + 1] = { id = LINEN, count = 20 } end
 			contents[1] = { id = AIR, count = 5 }
 			env.harnessBag(0, 16, contents)
 			order("one", ALICE, AIR, 1, 1000)
 			assert.is_true((click()))
-			ok, msg = click()
+			local ok, msg = click()
 			assert.is_false(ok)
-			assert.truthy(msg:find("Need one free bag slot", 1, true), msg)
+			assert.truthy(msg:find("Need a free bag slot", 1, true), msg)
+			assert.equal("split", Mail.batchState.phase, "the batch moved on despite refusing")
+			assert.is_nil(wow.cursor); assert.equal(0, env.pendingTimerCount(), "a split was scheduled despite refusing")
+			assert.same({ 5 }, stacksOf(AIR), "the stack was split despite refusing")
+			-- Make room and the same click goes through.
+			wow.bags[0][16] = nil
+			ok, msg = click()
+			assert.is_true(ok, msg)
+			assert.truthy(msg:find("Split 1 Essence of Air into your bags. Click to ATTACH.", 1, true), msg)
+		end)
+
+		it("goes straight to ATTACH when the first order is whole and no extra's split has a slot", function()
+			elementals()
+			-- Full bags: a whole Linen order first, then an Air order that needs a split.
+			local contents = {}
+			for _ = 1, 16 do contents[#contents + 1] = { id = WOOL, count = 10 } end
+			contents[1] = { id = LINEN, count = 20 }
+			contents[2] = { id = AIR, count = 5 }
+			env.harnessBag(0, 16, contents)
+			order("w1", ALICE, LINEN, 20, 1000)
+			order("w2", ALICE, AIR, 2, 1001)
+			assert.is_true((click()))
+			assert.equal(1, #Mail.batchState.splits, "precondition: the extra's split was planned")
+			local ok, msg = click()
+			assert.is_true(ok, msg)
+			assert.truthy(msg:find("Nothing left to split. 1 of their orders held for the next mail", 1, true), msg)
+			assert.equal("attach", Mail.batchState.phase)
+			assert.equal(0, #Mail.batchState.extras)
+			assert.equal(0, env.pendingTimerCount(), "a split was scheduled with no slot for it")
+			assert.is_true((click()))   -- attach
+			assert.equal(1, attachedCount())
+			assert.equal(LINEN, slot(1).itemID)
 		end)
 
 		it("leaves the second of two orders splitting from ONE stack for the next mail, and still fills it there", function()

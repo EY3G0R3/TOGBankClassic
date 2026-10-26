@@ -216,8 +216,9 @@ end
 -- last registration would silently drop the others'. Registered on every marking, not once:
 -- AceGUI wipes a widget's callbacks when it is released.
 -- REQUESTS-ROWLIST-001: the row cells are plain frames on the RowList's pooled rows now, never
--- released to AceGUI, so the fulfil dim and the glow only reach this path through an AceGUI Label
--- someone hands SetCancelGlow (the spec does); the hidden-Show mark is still the Settings tab's.
+-- released to AceGUI, so the fulfil dim (`togDisabled`, on the row's icon buttons) never reaches this
+-- path and is not undone here; the glow reaches it only through an AceGUI Label someone hands
+-- SetCancelGlow (the spec does); the hidden-Show mark is still the Settings tab's.
 local function restoreWidgetOnRelease(widget)
 	local frame = widget and widget.frame
 	if not frame then return end
@@ -230,10 +231,6 @@ local function restoreWidgetOnRelease(widget)
 	if frame.togRequestsHidden then
 		frame.Show = frame.togRequestsOrigShow
 		frame.togRequestsHidden = false
-	end
-	if frame.togDisabled ~= nil then
-		frame.togDisabled = nil
-		frame:SetAlpha(1)
 	end
 	if widget.label and widget.label.togCancelGlow then
 		TOGBankClassic_UI_Requests:SetCancelGlow(widget, false)
@@ -263,10 +260,9 @@ local function scaleStock(widget)
 	return widget
 end
 
+-- Called only from ShowSettings' ipairs over the body's AceGUI widgets, so never with a nil or a
+-- frameless widget.
 local function setWidgetShown(widget, shown)
-	if not widget or not widget.frame then
-		return
-	end
 	local frame = widget.frame
 	if not frame.togRequestsOrigShow then
 		frame.togRequestsOrigShow = frame.Show
@@ -564,9 +560,6 @@ local function showCancelReasonDialog(req, actor, ui)
 end
 
 local function ensureDeleteDialog()
-	if not StaticPopupDialogs then
-		return
-	end
 	if StaticPopupDialogs[DELETE_REQUEST_DIALOG] then
 		return
 	end
@@ -591,9 +584,6 @@ local function ensureDeleteDialog()
 end
 
 local function ensureCancelStaleDialog()
-	if not StaticPopupDialogs then
-		return
-	end
 	if StaticPopupDialogs[CANCEL_STALE_DIALOG] then
 		return
 	end
@@ -648,9 +638,6 @@ local function confirmDeleteRequest(request, actor)
 end
 
 local function ensureReopenDialog()
-	if not StaticPopupDialogs then
-		return
-	end
 	if StaticPopupDialogs[REOPEN_REQUEST_DIALOG] then
 		return
 	end
@@ -1141,7 +1128,7 @@ function TOGBankClassic_UI_Requests:AddHelpLines()
 	GameTooltip:AddLine("|cffffd100Action icons (right side of each row -- mouse over one for its name):|r", 1, 1, 1, false)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Fulfill:|r", 1, 1, 1, false)
-	GameTooltip:AddLine("Sends the item by in-game mail. Click Fulfill on several of one person's requests and each is added to the same mail (up to 12), then Send once. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; wax-sealed letter = item is in your mail inbox, retrieve it first; chest = item is split between your mail and bank; shovel = quantity must be split manually; question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine("Sends the item by in-game mail. Click Fulfill on several of one person's requests and each is added to the same mail (up to 12), then Send once. The icon changes to show what is needed: envelope = ready to send; sealed letter = no mailbox nearby; bag = item is in the bank, go get it first; wax-sealed letter = item is in your mail inbox, retrieve it first; chest = item is split between your mail and bank; shovel = the stack must be split first -- click it to split off the amount (away from a mailbox this is how you hand an order over in person: split, trade it, then Mark hand-off); question mark = item not found in your inventory.", 0.9, 0.9, 0.9, true)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Mark hand-off (check):|r", 1, 1, 1, false)
 	GameTooltip:AddLine("For items handed over directly (not mailed). Asks how many you gave; that amount goes into the Sent column, and the order completes once Sent reaches the amount requested.", 0.9, 0.9, 0.9, true)
@@ -2328,10 +2315,15 @@ local function isComplete(request)
 	return TOGBankClassic_Guild.IsRequestFinished(request)
 end
 
+-- The status a row SHOWS: an "open" order with everything sent reads "fulfilled". The date cell and
+-- the search text (ColumnText) both read this, so what is searchable is what is shown.
+local function shownStatus(request)
+	local status = request.status or "open"
+	if status == "open" and isComplete(request) then return "fulfilled" end
+	return status
+end
+
 local function isPending(request)
-	if not request then
-		return false
-	end
 	local qty = tonumber(request.quantity or 0) or 0
 	if qty <= 0 then
 		return false
@@ -2676,7 +2668,12 @@ local function buildActionsCell(row)
 	local cell = CreateFrame("Frame", nil, row)
 	local R = TOGBankClassic_UI_Requests
 	cell.fulfill = newActionIcon(cell, 1, FULFILL_ICON, "Fulfill request", "", function(req)
-		local _, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
+		local _, message
+		if TOGBankClassic_Mail:IsMailboxOpen() then
+			_, message = TOGBankClassic_Mail:PrepareFulfillMail(req)
+		else
+			_, message = TOGBankClassic_Mail:PrepareHandoffSplit(req)   -- HANDOFF-SPLIT-001
+		end
 		R:SetStatusText(message or "")
 	end)
 	-- COMPLETEQTY-001: instead of silently marking complete, ask how many were handed over
@@ -2886,9 +2883,7 @@ end
 function TOGBankClassic_UI_Requests:ColumnText(req, key)
 	if key == "date" then
 		local ts = tonumber(req.date or 0) or 0
-		local status = req.status or "open"
-		if status == "open" and isComplete(req) then status = "fulfilled" end
-		return (ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown") .. " " .. status
+		return (ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown") .. " " .. shownStatus(req)
 	elseif key == "item" then
 		return TOGBankClassic_Item:RequestDisplayName(req) or ""
 	elseif key == "quantity" then
@@ -3183,7 +3178,10 @@ local function applyFulfillState(button, req, canFulfill, fulfillReason, itemsIn
 	local fulfillEnabled = canFulfill and mailboxOpen
 	local needsSplit     = fulfillReason and string.find(fulfillReason, "Split")
 	local isPartial      = fulfillReason and string.find(fulfillReason, "Partial")
-	local buttonEnabled  = fulfillEnabled or (canFulfill and mailboxOpen and (needsSplit or isPartial))
+	-- HANDOFF-SPLIT-001: an order that needs a split is clickable away from a mailbox too -- the click
+	-- splits it off for an in-person trade.
+	local buttonEnabled  = fulfillEnabled or (canFulfill and needsSplit)
+		or (canFulfill and mailboxOpen and isPartial)
 	button.togDisabled = not buttonEnabled
 	button:SetAlpha(buttonEnabled and 1.0 or 0.4)
 
@@ -3191,7 +3189,9 @@ local function applyFulfillState(button, req, canFulfill, fulfillReason, itemsIn
 	if isPartial then
 		icon = FULFILL_ICON_READY; tooltipDetail = fulfillReason
 	elseif needsSplit then
-		icon = FULFILL_ICON_NEED_SPLIT; tooltipDetail = fulfillReason
+		icon = FULFILL_ICON_NEED_SPLIT
+		tooltipDetail = mailboxOpen and fulfillReason
+			or (fulfillReason .. " Click to split it off to hand over in person, or open a mailbox to mail it.")
 	elseif fulfillEnabled then
 		icon = FULFILL_ICON_READY
 		tooltipDetail = string.format("Attach %d %s to mail for %s.", math.min(itemsInBags, qtyNeeded), TOGBankClassic_Item:RequestDisplayName(req), req.requester or "requester")
@@ -3236,8 +3236,7 @@ end
 --- offline Lua casts silently, so the suite could not see it.
 local function entryFor(req)
 	local completed = isComplete(req)
-	local reqStatus = req.status or "open"
-	if completed and reqStatus == "open" then reqStatus = "fulfilled" end
+	local reqStatus = shownStatus(req)
 	local ts = tonumber(req.date or 0) or 0
 	local dateText = ts > 0 and date("%Y-%m-%d %H:%M", ts) or "Unknown"
 	local glyph

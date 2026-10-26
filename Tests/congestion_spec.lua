@@ -22,7 +22,7 @@ local wow = require("env.wow")
 
 local BANK, V1, V2, V3, V4, V5 = "Bankchar", "Viewer", "Secondviewer", "Thirdviewer", "Fourthviewer", "Fifthviewer"
 
-local function bare(name) return type(name) == "string" and name:match("^([^%-]+)") or name end
+local bare = F.bare
 
 local function bank(rows, changed)
 	local out = {}

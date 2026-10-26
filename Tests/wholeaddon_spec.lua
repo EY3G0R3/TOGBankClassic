@@ -50,8 +50,6 @@ local function standUp(c)
 			RecordDeltaSent = function() end, RecordDeltaSavings = function() end,
 			RecordDeltaComputeTime = function() end, RecordNoChangeSent = function() end,
 			RecordDeltaFailed = function() end, RecordDeltaReceived = function() end,
-			RecordP2PRequestBroadcast = function() end, RecordP2POffered = function() end,
-			RecordP2PBankerFallback = function() end,
 		}
 		G.TOGBankClassic_Options = {
 			IsIntegrityCheckDiagnosticsEnabled = function() return false end,

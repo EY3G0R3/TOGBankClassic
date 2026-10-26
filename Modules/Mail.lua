@@ -137,6 +137,14 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 				emptyBag, emptySlot = tog_findEmptyBagSlot()
 			end
 			if not emptyBag then
+				-- SPLIT-ROOM-001 (Discord, 2026-10-24: "actions should not fail silently"): this
+				-- returned with no word to the banker, so clicking Split with full bags did nothing.
+				local message = string.format("No free bag slot to split %s into. Make room, then click Fulfill again.",
+					tostring(data.itemName))
+				TOGBankClassic_Output:Warn("%s", message)
+				if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+					TOGBankClassic_UI_Requests:SetStatusText(message)
+				end
 				return
 			end
 			-- Step 1: Split - puts amount on cursor
@@ -147,11 +155,18 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 				C_Timer.After(0.05, function()
 					-- Done! The split stack is now in inventory
 					if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
-						local message = string.format("Split %d %s complete. Click Fulfill again to attach items.",
-							data.amount, data.itemName)
-						TOGBankClassic_UI_Requests:SetStatusText(message)
-						-- Refresh the request list to update the fulfill button icon
+						-- HANDOFF-SPLIT-001: a split for an in-person hand-off is traded, not attached.
+						local message = data.handoff
+							and string.format("Split %d %s complete. Trade the order to %s, then use Mark hand-off.",
+								data.amount, data.itemName, tostring(data.requester))
+							or string.format("Split %d %s complete. Click Fulfill again to attach items.",
+								data.amount, data.itemName)
+						-- Refresh the request list to update the fulfill button icon -- FIRST. SPLIT-STATUS-001:
+						-- DrawContent writes its own "Showing N requests" line, and it ran after this message,
+						-- so the banker never saw "Trade the order ..." or "Click Fulfill again" (found by the
+						-- end-to-end example in requestsactions_spec; Cancel Stale had the same order fixed).
 						TOGBankClassic_UI_Requests:DrawContent()
+						TOGBankClassic_UI_Requests:SetStatusText(message)
 					end
 				end)
 			end)
@@ -1269,6 +1284,45 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 	return true, message, attached
 end
 
+--- HANDOFF-SPLIT-001 (Discord, 2026-10-24: "addon does not split the stacks unless i'm creating the
+--- mail. could the individual action button split the stacks please"): away from a mailbox, the
+--- row's Fulfill button splits the order's amount off into its own stack, ready to trade, through the
+--- same Split popup the mail path uses. Nothing is credited here -- the banker records the trade
+--- with Mark hand-off, as before.
+---@return boolean ok, string message
+function TOGBankClassic_Mail:PrepareHandoffSplit(request)
+	if not request or not request.item or not request.requester then
+		return false, "Invalid request."
+	end
+	local itemName, requester = request.item, request.requester
+	local qtyNeeded = TOGBankClassic_Guild:RequestQuantityNeeded(request)
+	if qtyNeeded <= 0 then
+		return false, "Request is already fulfilled."
+	end
+	local totalInBags, items = TOGBankClassic_Bank:CountItemInBags(itemName, request.itemID, request.suffixID)
+	if totalInBags == 0 then
+		return false, "No " .. itemName .. " found in bags."
+	end
+	local plan = self:CalculateFulfillmentPlan(items, qtyNeeded, totalInBags)
+	if not plan.canFulfill then
+		return false, plan.reason
+	end
+	if not plan.splitStack then
+		return false, string.format("Your bags already hold %d %s in whole stacks. Trade them to %s, then use Mark hand-off.",
+			qtyNeeded, itemName, requester)
+	end
+	local s = plan.splitStack
+	local popupText = s.onto
+		and string.format("Split %d from stack of %d %s onto your stack of %d, to hand to %s?",
+			s.amount, s.count, itemName, s.onto.count, requester)
+		or string.format("Split %d from stack of %d %s to hand to %s?", s.amount, s.count, itemName, requester)
+	StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText, nil, {
+		bag = s.bag, slot = s.slot, amount = s.amount, onto = s.onto,
+		itemName = itemName, requester = requester, handoff = true,
+	})
+	return false, string.format("Click Split to make %d %s ready to trade to %s.", qtyNeeded, itemName, requester)
+end
+
 -- FILLALL-001: stepped batch fulfillment. One WoW action per click — split,
 -- attach and send each happen on a separate click (separate frame) so the cursor
 -- and bag state settle between actions; doing it all in one click raced the send
@@ -1901,11 +1955,41 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 			end
 		end
 		local empties = tog_emptyBagSlots(needFree)
+		-- SPLIT-ROOM-001 (Discord, 2026-10-24: three orders each needing a split, two free bag slots,
+		-- and nothing split): fewer free slots than splits used to refuse the WHOLE mail, with only a
+		-- status-bar line to say why. Now the splits that fit go ahead -- the first order's first, as
+		-- it is the oldest -- and each extra order whose split has no slot is left off this mail, still
+		-- open, for the next one. Only a first order with no slot for its own split stops the click.
+		local heldBack = 0
 		if #empties < needFree then
-			if needFree == 1 then
-				return false, "Need one free bag slot to split into — make room, then click again."
+			local kept, dropped, room = {}, {}, #empties
+			for _, s in ipairs(st.splits) do
+				if s.src.onto or room > 0 then
+					if not s.src.onto then room = room - 1 end
+					kept[#kept + 1] = s
+				elseif not s.extra then
+					local message = "Need a free bag slot to split into — make room, then click again."
+					TOGBankClassic_Output:Warn("%s", message)
+					return false, message
+				else
+					dropped[s.extra] = true
+					heldBack = heldBack + 1
+				end
 			end
-			return false, string.format("Need %d free bag slots to split into — make room, then click again.", needFree)
+			local extras = {}
+			for _, extra in ipairs(st.extras or {}) do
+				if not dropped[extra] then extras[#extras + 1] = extra end
+			end
+			st.extras, st.splits = extras, kept
+			TOGBankClassic_Output:Warn("Not enough free bag slots to split all of %s's orders: %d held for the next mail.",
+				tostring(st.requester), heldBack)
+		end
+		local held = heldBack > 0
+			and string.format(" %d of their orders held for the next mail (not enough free bag slots).", heldBack)
+			or ""
+		if #st.splits == 0 then
+			st.phase = "attach"
+			return true, "Nothing left to split." .. held .. " Click to ATTACH."
 		end
 		local total, nextEmpty = 0, 1
 		for i, s in ipairs(st.splits) do
@@ -1934,11 +2018,11 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 			local s = st.splits[1]
 			local item = (s.extra and s.extra.req or st.req).item
 			if s.merged then
-				return true, string.format("Split %d %s onto your stack of %d. Click to ATTACH.", total, item, s.src.onto.count)
+				return true, string.format("Split %d %s onto your stack of %d.%s Click to ATTACH.", total, item, s.src.onto.count, held)
 			end
-			return true, string.format("Split %d %s into your bags. Click to ATTACH.", total, item)
+			return true, string.format("Split %d %s into your bags.%s Click to ATTACH.", total, item, held)
 		end
-		return true, string.format("Splitting %d stacks (%d items) into your bags. Click to ATTACH.", #st.splits, total)
+		return true, string.format("Splitting %d stacks (%d items) into your bags.%s Click to ATTACH.", #st.splits, total, held)
 	end
 
 	-- ATTACH: attach each order's freshly-split stack (now in the bag) then its whole stacks --

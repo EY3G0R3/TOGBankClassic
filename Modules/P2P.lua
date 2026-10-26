@@ -154,7 +154,21 @@ function P2P:Config()
 			local Bank = TOGBankClassic_Bank
 			if Bank and Bank.PublishIfDeferred then Bank:PublishIfDeferred() end
 		end,
+		-- STATS-P2P-002: the /togbank stats P2P counts, from DeltaSync's observers (MINOR 29, inbox
+		-- b8b699cd). An older DeltaSync never calls them, and the counts stay 0.
+		onAsked = function() P2P:Count("p2pAsks") end,
+		onAskFailed = function(_, _, why) P2P:Count("p2pAsksFailed", tostring(why or "unknown")) end,
+		onOffered = function() P2P:Count("p2pOffered") end,
 	}
+end
+
+--- STATS-P2P-002: count one P2P event for the current guild's delta statistics.
+---@param field string the deltaMetrics counter
+---@param why string|nil a failed ask's reason
+function P2P:Count(field, why)
+	local D, g = TOGBankClassic_Database, TOGBankClassic_Guild
+	local guild = g and g.GetGuild and g:GetGuild()
+	if D and D.RecordP2PEvent and guild then D:RecordP2PEvent(guild, field, why) end
 end
 
 --- A message named a canon for a banker (the library's `onAdvertised`; also called directly by

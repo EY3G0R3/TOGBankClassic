@@ -1,5 +1,121 @@
 # TOGBankClassic Changelog
 
+## [v1.10.0] (2026-10-26) - Hand-Off Splits
+
+### New Features
+
+- **HANDOFF-SPLIT-001: the order's Fulfill button splits for an in-person trade.** Discord, #tog-bank,
+  2026-10-24: *"addon does not split the stacks unless i'm creating the mail. could the individual
+  action button split the stacks please"*. Away from a mailbox the row's Fulfill icon was greyed out
+  and did nothing, so a banker handing an order over by trade had to split the stack by hand. An
+  order that needs a split now keeps the icon live away from a mailbox, and clicking it offers the
+  same Split popup the mail path uses, splitting the order's amount into its own stack (or onto the
+  order's partial stack). The status bar then says to trade it and record the trade with Mark
+  hand-off; nothing is credited by the split. At a mailbox the click mails, as before. New
+  `Mail:PrepareHandoffSplit` (`Modules/Mail.lua`); click routing and icon state in
+  `Modules/UI/Requests.lua`. `Tests/mailcoverage_spec.lua`, `Tests/requestsactions_spec.lua`.
+  The Requests '?' help (HELP-CURRENT-001) said the split icon meant "quantity must be split
+  manually"; it now says a click splits, and how the in-person hand-off goes. README.txt's
+  fulfilling section and the CurseForge Key Features gained the hand-off split too.
+
+### Bug Fixes
+
+- **SPLIT-ROOM-001: too few free bag slots for a mail's splits split nothing, with no word in chat.**
+  Discord, #tog-bank, 2026-10-24: *"someone requested three items, which all exist in stacks of 20.
+  Two bag spaces available, none of the stacks will attempt to split, there is not a notification
+  indicating the failed action"*. Two paths. (1) `FulfillStep`'s SPLIT phase (`Modules/Mail.lua`)
+  refused the whole mail when the bags had fewer free slots than the mail had splits, saying so only
+  in the Requests status bar -- `Tests/multifill_spec.lua` pinned exactly that refusal for exactly
+  this scenario. It now splits what fits, the oldest order's split first, and takes each extra
+  order whose split has no slot off this mail; those stay open for the next one. Only an oldest
+  order with no slot for its own split stops the click. Either way a warning is printed to chat as
+  well as the status bar. (2) The per-row Split popup's accept returned with no message at all when
+  no free slot was found; it now says so in chat and the status bar.
+  `Tests/multifill_spec.lua` (the old refusal example rewritten, two added),
+  `Tests/mailcoverage_spec.lua`.
+
+- **SPLIT-STATUS-001: the message after a Split was wiped the moment it appeared.** The Split
+  popup's accept (`Modules/Mail.lua`) set the Requests status line ("Split 5 Linen Cloth complete.
+  Click Fulfill again..." or, for HANDOFF-SPLIT-001, "...Trade the order to X, then use Mark
+  hand-off.") and THEN redrew the list, and the redraw writes its own "Showing N requests" line, so
+  the banker never saw what to do next. It now redraws first, the order Cancel Stale already uses.
+  Found by turning the two in-game checks into offline tests: a new end-to-end example in
+  `Tests/requestsactions_spec.lua` drives the real Requests window over the real Mail, Bank, Scan
+  and Record modules and the harness's bags -- live Fulfill icon away from a mailbox, the Split
+  popup, the 5 in its own stack, the status line, then Mark hand-off recording 5 -- and failed on
+  this line before the fix. `Tests/multifill_spec.lua`'s SPLIT-ROOM-001 example now also asserts the
+  chat warning, not only the status line. What only a client can still show: the server's timing of
+  the split, and how the popup draws.
+- **STATS-P2P-001: the delta statistics no longer print a P2P section that could never fill.**
+  Self-audit 8680287b F7 led here. The "P2P Requests (what I asked peers for)" section and the
+  "P2P offered/sent" line read `p2pRequestsBroadcast`, `p2pBankerFallback` and `p2pOffered`, whose
+  writers (`BroadcastP2PRequest`, the old offer path) moved into DeltaSync with LIBREQ-DS-008.
+  DeltaSync reports neither an ask nor a fallback, so since then the section always read "No P2P
+  requests broadcast yet". The section, the three `Database:RecordP2P*` methods, the counters
+  (and `p2pFulfilledByPeer`, which only ever equalled `deltasReceivedFromPeer`, still printed as
+  "From peers") are gone (`Modules/Chat.lua`, `Modules/Database.lua`); old saved values are ignored.
+  **STATS-P2P-002, the same day:** DeltaSync delivered the observers asked for (inbox b8b699cd;
+  DeltaSync v4.7.0, MINOR 29, adopted from its working tree per LIB-RELEASE-ORDER): `onAsked`,
+  `onAskFailed` and `onOffered` on `InitP2P({mode='numbered'})`. `P2P:Config` (`Modules/P2P.lua`)
+  wires them to `Database:RecordP2PEvent`, which counts `p2pAsks`, `p2pAsksFailed` (with
+  `p2pFailReasons`) and `p2pOffered`, and the stats print a "P2P (asking and offering)" section:
+  asks sent, asks not delivered with the three commonest reasons, offers sent. No "still pending"
+  figure: a completed ask is the deliveries already printed under Inbound. With a DeltaSync older
+  than MINOR 29 the observers are never called and the section reads "No asks or offers yet".
+  `Tests/fullsync_spec.lua` drives the real library on two clients and asserts each sync-request
+  and each offer is counted once and a clean sync counts no failure; `Tests/chatcommand_spec.lua`
+  pins the printout (the stats command had no spec before).
+
+### Internal
+
+- **AUDIT-1ebe F3: `Modules/UI/Requests.lua` at 100% line coverage.** Self-audit 1ebe87b4 (2026-09-13)
+  recorded the file at 65%; by 2026-10-26 it stood at 98.6% with 30 lines uncovered. Eleven
+  examples in `Tests/requestsactions_spec.lua` ("the body's guards") now drive the rest: calls on a
+  body never built, a second Open, a non-officer's remembered Settings tab, the settings panel
+  built once, the Cancel Stale and re-open dialogs registered once, a remembered requester filter
+  over the banker default, a separator picked in the Requester list, requesters ordered by open
+  count with a zero-quantity order in history, a filter that names nobody, and Close/Detach while
+  embedded. Five guards nothing can reach were deleted rather than covered: the `togDisabled`
+  restore in `restoreWidgetOnRelease` (only the RowList's icon buttons carry it, and they are never
+  released to AceGUI), `isPending`'s nil check (its one caller iterates `pairs`), the three
+  `StaticPopupDialogs` absence checks (FrameXML always defines it, and `StaticPopup_Show` right
+  after would fail without it anyway), and `setWidgetShown`'s nil/frameless check (its one caller
+  is an `ipairs` over AceGUI widgets). The "open order with everything sent reads fulfilled" rule
+  is now one helper, `shownStatus`, read by the date cell and the search text (self-audit 7043ef4b
+  F3).
+- **AUDIT-8680 F5: one sister-guild requests-index ask pending per peer.**
+  `Guild:AskFederationPeer` (`Modules/Guild.lua`) armed a fresh 70 s timer on every hash-list ask,
+  so a `/togbank share` or a proven-peer ask inside the delay put a second index query to the same
+  peer in flight (the per-sender cooldown then refused it on the wire). `federationIndexPending`
+  keeps one per peer. `Tests/xguild_spec.lua`.
+- **Harness pin 9f4d90a -> 5e98597 (WoWAPITesting, 2026-10-16 .. 2026-10-26).** Adoption steps taken:
+  `Tests/settings_spec.lua` reads the officer floor through the harness's own
+  `C_GuildInfo.GuildControlGetRankFlags` and `GuildControlGetNumRanks` (`guild.setRanks` /
+  `guild.setRankFlags`) instead of a hand-rolled stub (WoWAPITesting inbox 896cd9a3); the six
+  `GameTooltip_SetDefaultAnchor or function() end` stand-ins in `browse_spec`, `requestsactions_spec`
+  and `windowchrome_spec` are gone (the harness installs it). One behaviour change surfaced, as the
+  Adoption log said it would: with the flags API present the guild master holds every flag, so a
+  fixture that builds the roster as the GM now publishes the officer floor (SETTINGS-003), and
+  `Tests/craftlist_spec.lua` counted that send as a list publish -- its fixture now starts counting
+  after the roster build, and the cross-guild example asserts no payload carries a list. The
+  `libs.forget` calls left in place are deliberate reloads, not recovery from a failed load. Suite
+  2206/0 forward and in reverse (570 + 876 + 760).
+- **LOADER-ORDER-001 (AUDIT-38cc F4): a spec cannot load a module before `Constants.lua` again.**
+  `env.loadModules` (`Tests/env_togbank.lua`) refuses a list that names `Modules/Constants.lua`
+  after another addon module (`Compat.lua` excepted) -- the shape that made wiring_spec's 26
+  examples die at `Bank.lua:9` only when that file ran first. Full TOC order was tried first and
+  refused dozens of loaders that list `Switches.lua` early, which no module depends on at load, so
+  the guard covers the one load-time dependency. Not covered: a spec that loads files one by one
+  through `env.loadFile`. Suite 2206/0 forward with it on, so no current loader had the bad shape.
+  `Tests/env_fleet.lua` exports `F.bare` (congestion_spec kept a copy, AUDIT-165b F2), and
+  `Tests/fullsync_spec.lua`'s header names `congestion_spec.lua` as its throttled-wire half
+  (AUDIT-165b F1).
+- **AUDIT-7203 F4: the Mailbox auto-open verdict's setting names are pinned to the options table.**
+  `Tests/mailbox_spec.lua` reads both toggles' `name` from the registered options instead of
+  copied strings, so renaming a box without the log text goes red. **AUDIT-7043 F4:**
+  `Tests/statusbar_spec.lua` says which writers its slot fixtures stand for (`Bank:Scan` and the sync
+  receive still write `alt.bank.slots` / `alt.bags.slots`; they are not the retired legacy rows).
+
 ## [v1.9.1] (2026-10-17) - Safer Order Sync
 
 ### Bug Fixes
