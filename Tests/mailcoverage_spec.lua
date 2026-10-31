@@ -447,7 +447,9 @@ describe("COVERAGE-MAIL-001: the fulfilment planner", function()
 	it("CanFulfillRequest answers yes, with the bag count and smallest stack, when the bags cover it", function()
 		env.setBag(0, 16, { { id = LINEN, count = 3 }, { id = LINEN, count = 2 } })
 		local ok, reason, inBags, smallest = Mail:CanFulfillRequest(order("r1", ALICE, LINEN, 5))
-		assert.is_true(ok); assert.is_nil(reason); assert.equal(5, inBags); assert.equal(2, smallest)
+		assert.is_true(ok); assert.equal(5, inBags); assert.equal(2, smallest)
+		-- MAIL-ONE-STACK-001: 3 + 2 fits one stack, so the plan moves the 2 onto the 3 first.
+		assert.equal("Split 2 from stack of 2 onto the stack of 3.", reason)
 		-- Short, with nothing anywhere else: the planner's own reason.
 		local ok2, reason2 = Mail:CanFulfillRequest(order("r2", ALICE, LINEN, 8))
 		assert.is_false(ok2); assert.equal("Need 3 more items.", reason2)
@@ -483,6 +485,26 @@ describe("COVERAGE-MAIL-001: CanFulfillRequest's shortfall hint", function()
 	end)
 end)
 
+describe("COVERAGE-MAIL-001: Check and CheckForFulfilledRequest's guard", function()
+	before_each(load)
+	after_each(restore)
+
+	it("Check asks the server for the inbox", function()
+		local realCheckInbox, asked = rawget(_G, "CheckInbox"), 0
+		_G.CheckInbox = function() asked = asked + 1 end
+		Mail:Check()
+		_G.CheckInbox = realCheckInbox
+		assert.equal(1, asked)
+	end)
+
+	it("CheckForFulfilledRequest answers no before the guild's data has loaded", function()
+		Guild.Info = nil
+		assert.is_false(Mail:CheckForFulfilledRequest("Linen Cloth", 1, ALICE))
+		Guild.Info = { name = "Testguild", alts = {} }
+		assert.is_false(Mail:CheckForFulfilledRequest("Linen Cloth", 1, ALICE))
+	end)
+end)
+
 describe("COVERAGE-MAIL-001: PrepareFulfillMail's refusals and slot handling", function()
 	before_each(load)
 	after_each(restore)
@@ -505,6 +527,9 @@ describe("COVERAGE-MAIL-001: PrepareFulfillMail's refusals and slot handling", f
 	end)
 
 	it("steps over a slot still holding an earlier order when the stacks fill the gap", function()
+		-- Silk that stacks to 5, so the two stacks cannot become one (MAIL-ONE-STACK-001) and must
+		-- take two slots.
+		env.defineItem(SILK, { name = "Silk Cloth", stackCount = 5 })
 		env.setBag(0, 16, { { id = LINEN, count = 20 }, { id = WOOL, count = 10 }, { id = SILK, count = 5 }, { id = SILK, count = 5 } })
 		assert.is_true((Mail:PrepareFulfillMail(order("r1", ALICE, LINEN, 20))))
 		assert.is_true((Mail:PrepareFulfillMail(order("r2", ALICE, WOOL, 10))))
@@ -530,6 +555,8 @@ describe("COVERAGE-MAIL-001: PrepareFulfillMail's refusals and slot handling", f
 	it("attaches what fits when the mail runs out of slots, says it is partial, and credits only that", function()
 		local contents = {}
 		for i = 1, 11 do contents[i] = { id = WOOL, count = 1 } end
+		-- Linen that stacks to 10, so the two 10s cannot become one (MAIL-ONE-STACK-001).
+		env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 10 })
 		contents[12] = { id = LINEN, count = 10 }; contents[13] = { id = LINEN, count = 10 }
 		env.setBag(0, 16, contents)
 		for i = 1, 11 do attach(0, i, i) end

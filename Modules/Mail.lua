@@ -72,6 +72,24 @@ local function tog_mergeTarget(attachList, src, amount)
 	return nil
 end
 
+--- How many items the bag slot holds right now (0 when empty).
+local function tog_liveCount(bag, slot)
+	local info = C_Container.GetContainerItemInfo(bag, slot)
+	return info and (info.stackCount or 1) or 0
+end
+
+--- Put `amount` from the stack at bag/slot on the cursor. MAIL-ONE-STACK-001: a plan can move ALL of
+--- a stack onto another, and the client cannot split a whole stack, so that is a plain pickup. Decided
+--- from the LIVE stack, not the plan's count (Peer Review 349c7141 B1): a stack that grew since the
+--- plan must still give up only `amount`. Callers refuse a source that changed before calling this.
+local function tog_liftOntoCursor(bag, slot, amount)
+	if tog_liveCount(bag, slot) <= amount then
+		C_Container.PickupContainerItem(bag, slot)
+	else
+		C_Container.SplitContainerItem(bag, slot, amount)
+	end
+end
+
 --- Whether the merge target recorded by tog_mergeTarget still holds what the plan saw.
 local function tog_mergeTargetIntact(onto)
 	local info = C_Container.GetContainerItemInfo(onto.bag, onto.slot)
@@ -128,10 +146,28 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 		OnAccept = function(_, data)
 			if not data then return end
 			ClearCursor()
+			local function refuse(message)
+				TOGBankClassic_Output:Warn("%s", message)
+				if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
+					TOGBankClassic_UI_Requests:SetStatusText(message)
+				end
+			end
+			-- Peer Review 349c7141 B1: the source stack must still hold what the popup was planned on.
+			if data.count and tog_liveCount(data.bag, data.slot) ~= data.count then
+				return refuse(string.format("Your %s stacks changed since you clicked Fulfill. Click Fulfill again.",
+					tostring(data.itemName)))
+			end
+			local intactOnto = data.onto and tog_mergeTargetIntact(data.onto)
+			-- Peer Review 349c7141 B2: a whole-stack move (MAIL-ONE-STACK-001) is only worth doing onto
+			-- its target; into an empty slot it would just move the stack and change nothing.
+			if data.onto and not intactOnto and data.count and data.amount >= data.count then
+				return refuse(string.format("Your %s stacks changed since you clicked Fulfill. Click Fulfill again.",
+					tostring(data.itemName)))
+			end
 			-- MAIL-SPLIT-MERGE-001: drop the split onto the order's partial stack when the plan found
 			-- one and it is unchanged since the popup opened; otherwise into an empty bag slot.
 			local emptyBag, emptySlot
-			if data.onto and tog_mergeTargetIntact(data.onto) then
+			if intactOnto then
 				emptyBag, emptySlot = data.onto.bag, data.onto.slot
 			else
 				emptyBag, emptySlot = tog_findEmptyBagSlot()
@@ -139,16 +175,11 @@ if not StaticPopupDialogs["TOGBANK_SPLIT_STACK"] then
 			if not emptyBag then
 				-- SPLIT-ROOM-001 (Discord, 2026-10-24: "actions should not fail silently"): this
 				-- returned with no word to the banker, so clicking Split with full bags did nothing.
-				local message = string.format("No free bag slot to split %s into. Make room, then click Fulfill again.",
-					tostring(data.itemName))
-				TOGBankClassic_Output:Warn("%s", message)
-				if TOGBankClassic_UI_Requests and TOGBankClassic_UI_Requests.isOpen then
-					TOGBankClassic_UI_Requests:SetStatusText(message)
-				end
-				return
+				return refuse(string.format("No free bag slot to split %s into. Make room, then click Fulfill again.",
+					tostring(data.itemName)))
 			end
 			-- Step 1: Split - puts amount on cursor
-			C_Container.SplitContainerItem(data.bag, data.slot, data.amount)
+			tog_liftOntoCursor(data.bag, data.slot, data.amount)
 			C_Timer.After(0.1, function()
 				-- Step 2: Place split items into empty slot to "commit" the split
 				C_Container.PickupContainerItem(emptyBag, emptySlot)
@@ -815,16 +846,70 @@ function TOGBankClassic_Mail:OnRetryTimer(mailId)
 	TOGBankClassic_Mail:Open(mailId)
 end
 
+--- MAIL-ONE-STACK-001 (the operator, 2026-10-31, a mail to January-Atiesh carrying 7 Mountain
+--- Silversage as a stack of 5 and a stack of 2: "why does it send a stack of 5 and a stack of 2
+--- instead of making it one stack of 7?"): PHASE 1 takes any stacks that add up exactly, so 5 + 2
+--- went as two attachments (30c each), and MAIL-SPLIT-MERGE-001 only merged when a split was needed
+--- anyway. An order that fits in one stack now goes as ONE attachment: the largest stack smaller than
+--- the order is attached, and the rest is split onto it from the smallest other stack that covers it
+--- (all of a stack when it is exactly the rest, which also tidies the bags). Nil when the order is
+--- over the item's max stack, the max stack is unknown, no other stack covers the rest in one move,
+--- or the two stacks are different items (a name-matched legacy order can mix same-name variants).
+--- Those checks are tog_mergeTarget's, the one merge rule (Peer Review 349c7141 F4).
+--- `items` MUST already be sorted largest first: CalculateFulfillmentPlan relies on tog_calculatePlan
+--- having sorted it in place (Peer Review 349c7141 N1); do not call this on an unsorted list.
+local function tog_oneAttachmentPlan(items, qtyNeeded)
+	local base
+	for _, item in ipairs(items) do
+		if item.count < qtyNeeded then base = item; break end
+	end
+	if not base then return nil end
+	local remaining = qtyNeeded - base.count
+	local src
+	for i = #items, 1, -1 do
+		if items[i] ~= base and items[i].count >= remaining then src = items[i]; break end
+	end
+	if not src then return nil end
+	local onto = tog_mergeTarget({ base }, src, remaining)
+	if not onto then return nil end
+	return {
+		canFulfill = true,
+		reason = string.format("Split %d from stack of %d onto the stack of %d.", remaining, src.count, base.count),
+		stacksToAttach = { { bag = base.bag, slot = base.slot, count = base.count, originalIndex = base.originalIndex } },
+		splitStack = {
+			bag = src.bag,
+			slot = src.slot,
+			count = src.count,
+			amount = remaining,
+			onto = onto,
+		},
+		totalAttachable = base.count,
+		requiresMailbox = true
+	}
+end
+
+local tog_calculatePlan
+
 -- Unified fulfillment plan calculator
 -- Returns plan: {
 --   canFulfill = boolean,
 --   reason = string or nil,
 --   stacksToAttach = {{bag, slot, count, originalIndex}, ...},
---   splitStack = {bag, slot, count, amount} or nil,
+--   splitStack = {bag, slot, count, amount, onto} or nil,
 --   totalAttachable = number,
 --   requiresMailbox = boolean
 -- }
 function TOGBankClassic_Mail:CalculateFulfillmentPlan(items, qtyNeeded, totalInBags)
+	local plan = tog_calculatePlan(items, qtyNeeded, totalInBags)
+	-- MAIL-ONE-STACK-001: a plan taking more than one attachment is replaced by a one-attachment plan
+	-- when there is one.
+	if plan.canFulfill and tog_planSlots(plan) > 1 then
+		return tog_oneAttachmentPlan(items, qtyNeeded) or plan
+	end
+	return plan
+end
+
+tog_calculatePlan = function(items, qtyNeeded, totalInBags)
 	if not items or #items == 0 then
 		return {
 			canFulfill = false,
@@ -1201,6 +1286,7 @@ function TOGBankClassic_Mail:PrepareFulfillMail(request)
 			bag = splitInfo.bag,
 			slot = splitInfo.slot,
 			amount = splitInfo.amount,
+			count = splitInfo.count,   -- MAIL-ONE-STACK-001: all of it is a pickup, not a split
 			onto = splitInfo.onto,   -- MAIL-SPLIT-MERGE-001
 			itemName = itemName,
 			requester = requester
@@ -1317,7 +1403,7 @@ function TOGBankClassic_Mail:PrepareHandoffSplit(request)
 			s.amount, s.count, itemName, s.onto.count, requester)
 		or string.format("Split %d from stack of %d %s to hand to %s?", s.amount, s.count, itemName, requester)
 	StaticPopup_Show("TOGBANK_SPLIT_STACK", popupText, nil, {
-		bag = s.bag, slot = s.slot, amount = s.amount, onto = s.onto,
+		bag = s.bag, slot = s.slot, amount = s.amount, count = s.count, onto = s.onto,
 		itemName = itemName, requester = requester, handoff = true,
 	})
 	return false, string.format("Click Split to make %d %s ready to trade to %s.", qtyNeeded, itemName, requester)
@@ -1945,6 +2031,13 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 	if st.phase == "split" then
 		local needFree = 0
 		for _, s in ipairs(st.splits) do
+			-- Peer Review 349c7141 B1: the SOURCE must also be as planned. A stack that grew or shrank
+			-- since IDLE would move the wrong amount, and a merged target would then never read
+			-- s.expect, so ATTACH would say "Still placing the split" forever.
+			if tog_liveCount(s.src.bag, s.src.slot) ~= s.src.count then
+				self.batchState = nil
+				return false, "Your bags changed since the order was picked — click to start it again."
+			end
 			if s.src.onto then
 				if not tog_mergeTargetIntact(s.src.onto) then
 					self.batchState = nil
@@ -2006,7 +2099,7 @@ function TOGBankClassic_Mail:FulfillStep(actor)
 			local at = (i - 1) * 0.25
 			local function doSplit()
 				ClearCursor()
-				C_Container.SplitContainerItem(s.src.bag, s.src.slot, s.src.amount)   -- onto cursor
+				tog_liftOntoCursor(s.src.bag, s.src.slot, s.src.amount)   -- onto cursor
 			end
 			if i == 1 then doSplit() else C_Timer.After(at, doSplit) end
 			C_Timer.After(at + 0.1, function()

@@ -57,6 +57,7 @@
   <ul>
   <li>Example: Request for 2 Felcloth from a 5-stack? Addon prompts to split precisely 2 items</li>
   <li>Complex requests (e.g., 175 Runecloth from mixed stacks) handled automatically</li>
+  <li>One stack per order: an order that fits in one stack is mailed as one, combining a 5 and a 2 into a 7 first to save the extra postage</li>
   </ul>
 </li>
 <li>Hand-Off Splits: away from a mailbox, an order's Fulfill button splits off the exact amount so you can trade it in person, then record the trade with Mark hand-off</li>
@@ -87,7 +88,7 @@
 <li>Who To Send To: the tab names the guild's shopping-list character (the one with <code>[GSL]</code> in their public note), online first, so everyone knows who to mail what they gather</li>
 <li>Order From The List: click any row to request that item from the bank character holding the most of it &mdash; the same request window, limits and rules as the Browse tab</li>
 <li>Still Needed Stands Out: on the Shopping List tab, the <strong>Still needed</strong> number gently pulses until the bank has enough, and while the guild has gather dates set they pulse gently on the bottom line</li>
-<li>List Setup Tab: the guild master, officers and a member with <code>[GSL]</code> in their public note see what is on the list in a box at the top &mdash; laid out like TOG Profession Master's shopping list, with <strong>-</strong>, <strong>+</strong> and a red <strong>x</strong> on each row, and a click on a crafted item to see the reagents it takes &mdash; and search any recipe or any item in the game by name underneath to add it (items stay searchable whichever profession is picked). They also set the dates the guild is gathering for. Everyone else sees the list but cannot change it</li>
+<li>List Setup Tab: the guild master, officers and a member with <code>[GSL]</code> in their public note see what is on the list in a box at the top &mdash; laid out like Ultimate Profession Master's shopping list, with <strong>-</strong>, <strong>+</strong> and a red <strong>x</strong> on each row, and a click on a crafted item to see the reagents it takes &mdash; and search any recipe or any item in the game by name underneath to add it (items stay searchable whichever profession is picked). They also set the dates the guild is gathering for. Everyone else sees the list but cannot change it</li>
 <li>Reagent Tracker: a small window of the reagents still to gather that stays up while you play and updates as you loot &mdash; open it from the Shopping List tab or with <code>/togbank tracker</code></li>
 <li>One List For The Guild: changes reach everyone online straight away and anyone offline when they next log in</li>
 <li>Replaces GuildShoppingList: a guild that used it gets its list and gather dates copied across automatically. <strong>Keep GuildShoppingList turned on until the guild master, an officer or the <code>[GSL]</code> member has logged in once with both addons</strong> &mdash; the copy can only read GuildShoppingList's list while that addon is enabled. After that, GuildShoppingList can be removed</li>
@@ -347,19 +348,19 @@
 
 <h2>Works With the Rest of the TOG Addons</h2>
 
-<h3>TOG Profession Master</h3>
+<h3>Ultimate Profession Master</h3>
 
-<p>If your guild also runs <strong>TOG Profession Master</strong>, the two talk to each other automatically &mdash; there is nothing to set up on this side beyond having TOGBankClassic loaded.</p>
+<p>If your guild also runs <strong>Ultimate Profession Master</strong>, the two talk to each other automatically &mdash; there is nothing to set up on this side beyond having TOGBankClassic loaded.</p>
 
 <ul>
 <li><strong>Crafters can see guild bank stock without leaving the profession window.</strong> A <strong>[Bank]</strong> button appears next to any reagent your bankers actually hold &mdash; in the recipe breakdown, the cooldown panel, shopping lists and the Reagent Tracker. If nothing is in stock, no button.</li>
 <li><strong>They can request reagents from there too.</strong> Click <strong>[Bank]</strong>, pick which banker to ask, choose a quantity, and the order arrives in TOGBankClassic like any other request &mdash; including your officer-configured limits.</li>
-<li><strong>No duplicate bookkeeping.</strong> TOG Profession Master reads the same stock figures this addon already keeps, so there is only ever one set of numbers to trust.</li>
+<li><strong>No duplicate bookkeeping.</strong> Ultimate Profession Master reads the same stock figures this addon already keeps, so there is only ever one set of numbers to trust.</li>
 </ul>
 
-<h3>TOG Tools</h3>
+<h3>Ultimate Tools</h3>
 
-<p>If you also run <strong>TOG Tools</strong>, its Logs &gt; Guild Bank tab &mdash; empty on Classic Era on its own, because Era has no guild bank &mdash; fills in with this addon's bank log: every bank character's deposits, withdrawals and money, and every request as it is placed, filled, cancelled or reopened, as they happen. TOG Tools keeps the long history; this addon keeps only the most recent entries for its own Log tab. Nothing to set up on either side.</p>
+<p>If you also run <strong>Ultimate Tools</strong>, its Logs &gt; Guild Bank tab &mdash; empty on Classic Era on its own, because Era has no guild bank &mdash; fills in with this addon's bank log: every bank character's deposits, withdrawals and money, and every request as it is placed, filled, cancelled or reopened, as they happen. Ultimate Tools keeps the long history; this addon keeps only the most recent entries for its own Log tab. Nothing to set up on either side.</p>
 
 <h3>Shared Foundations</h3>
 
@@ -377,6 +378,13 @@
 <p>In practice that means a fix to the shared sync layer benefits every TOG addon at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
 
 <h2>Recent Updates</h2>
+
+<h3>v1.10.1 - One Stack Per Order</h3>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>An order that fits in one stack now goes out as one stack. If your bags held, say, a stack of 5 and a stack of 2 for an order of 7, the mail carried both stacks and cost an extra 30c postage; now the 2 is moved onto the 5 first and the order goes as a single stack of 7.</li>
+</ul>
 
 <h3>v1.10.0 - Hand-Off Splits</h3>
 

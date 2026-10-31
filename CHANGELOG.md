@@ -1,5 +1,43 @@
 # TOGBankClassic Changelog
 
+## [v1.10.1] (2026-10-31) - One Stack Per Order
+
+### Bug Fixes
+
+- **MAIL-ONE-STACK-001: an order that fits in one stack went out as several attachments.** The
+  operator, 2026-10-31, with a mail to January-Atiesh carrying 7 Mountain Silversage as a stack of 5
+  and a stack of 2: *"why does it send a stack of 5 and a stack of 2 instead of making it one stack
+  of 7?"*. `CalculateFulfillmentPlan`'s first phase takes any bag stacks that add up exactly, so 5 + 2
+  won over splitting, and MAIL-SPLIT-MERGE-001 only merged when a split was needed anyway; each
+  extra attachment costs 30c postage. `CalculateFulfillmentPlan` (`Modules/Mail.lua`) now replaces
+  any plan that takes more than one attachment with a one-attachment plan when the order fits under
+  the item's max stack: the largest stack smaller than the order is attached, and the rest is moved
+  onto it from the smallest other stack that covers it. Moving all of a stack is a pickup rather
+  than a split (`tog_liftOntoCursor`), because the client cannot split a whole stack; that also
+  frees a bag slot. Applies to Fulfill Oldest, the row's Fulfill icon and the hand-off split. When
+  no single stack covers the rest (7 from 3 + 2 + 2 with nothing bigger), the stacks still go as
+  they are. `Tests/multifill_spec.lua` gains three examples; three `Tests/mailcoverage_spec.lua`
+  examples about slot handling now use items whose max stack rules out a merge, and the planner
+  example now expects the merge. Confirmed in game by the operator the same day: *"tested the fix in
+  game, it works now"*. The cost: a 5 + 2 fill that went straight to ATTACH now takes a SPLIT click
+  first, trading one click for 30c postage.
+- **Peer Review 349c7141 on MAIL-ONE-STACK-001.** B1: the whole-stack move was decided from the
+  plan's stack count, so a source stack that grew between picking the order and the SPLIT click would
+  be moved whole, and ATTACH would then wait forever for a merged count it could never read.
+  `tog_liftOntoCursor` now decides from the live stack, and both the SPLIT phase and the Split popup
+  refuse (the batch restarts) when the source no longer holds what was planned. B2: the popup no
+  longer moves a whole stack into an empty slot when its target changed -- that changed nothing --
+  and says the stacks changed instead. F4: `tog_oneAttachmentPlan` builds its target through
+  `tog_mergeTarget`, so the same-item and max-stack rule lives in one function. N1: its comment now
+  says the list must already be sorted. `Tests/multifill_spec.lua` gains four examples (source grew
+  before SPLIT, popup source changed, popup target changed, unknown max stack).
+
+### Improvements
+
+- The CurseForge page names the sister addons by their current titles, Ultimate Profession Master
+  and Ultimate Tools (Peer Review inbox thread f2dc805e, routing TOGWiki's report). Older patch notes
+  keep the names they shipped with.
+
 ## [v1.10.0] (2026-10-26) - Hand-Off Splits
 
 ### New Features

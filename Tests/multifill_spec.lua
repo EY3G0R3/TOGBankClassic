@@ -898,6 +898,130 @@ describe("MULTIFILL-001: Fulfill Oldest sends one mail per person", function()
 			assert.equal(1, attachedCount()); assert.equal(8, slot(1).count)
 		end)
 
+		-- MAIL-ONE-STACK-001 (the operator, 2026-10-31: "why does it send a stack of 5 and a stack of 2
+		-- instead of making it one stack of 7?"): stacks that add up exactly used to go as they were.
+		it("sends 7 from a 20, a 5 and a 2 as ONE stack of 7, moving the 2 onto the 5", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 20 }, { id = LINEN, count = 5 }, { id = LINEN, count = 2 } })
+			order("r1", ALICE, LINEN, 7, 1000)
+			local ok, msg = click()
+			assert.is_true(ok, msg)
+			local plan = Mail.batchState.plan
+			assert.equal(1, #plan.stacksToAttach); assert.equal(5, plan.stacksToAttach[1].count)
+			assert.equal(2, plan.splitStack.count, "split from the 20 rather than moving the 2")
+			assert.equal(2, plan.splitStack.amount)
+			assert.is_table(plan.splitStack.onto, "the 2 was not planned onto the 5")
+			assert.is_true((click()))   -- split
+			env.advance(0.1)
+			assert.is_nil(wow.cursor, "the moved stack was left on the cursor")
+			assert.same({ 7, 20 }, stacksOf(LINEN), "the 2 did not stack onto the 5")
+			ok, msg = click()           -- attach
+			assert.is_true(ok, msg)
+			assert.equal(1, attachedCount(), "the order went as more than one attachment")
+			assert.equal(7, slot(1).count)
+			assert.is_true((click()))   -- send
+			confirmSend()
+			assert.same({ "r1" }, ids(credited))
+			assert.same({ 20 }, stacksOf(LINEN))
+		end)
+
+		it("splits from a bigger stack onto the order's stack when no small stack covers the rest", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 20 }, { id = LINEN, count = 3 }, { id = LINEN, count = 2 }, { id = LINEN, count = 2 } })
+			order("r1", ALICE, LINEN, 7, 1000)
+			assert.is_true((click()))
+			local plan = Mail.batchState.plan
+			assert.equal(1, #plan.stacksToAttach); assert.equal(3, plan.stacksToAttach[1].count)
+			assert.equal(20, plan.splitStack.count); assert.equal(4, plan.splitStack.amount)
+			assert.is_true((click()))   -- split
+			env.advance(0.1)
+			assert.is_true((click()))   -- attach
+			assert.equal(1, attachedCount()); assert.equal(7, slot(1).count)
+		end)
+
+		it("the row's Fulfill icon moves the whole 2 onto the 5, so the next click attaches one stack of 7", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 2 } })
+			local r1 = order("r1", ALICE, LINEN, 7, 1000)
+			local ok, msg = Mail:PrepareFulfillMail(r1)
+			assert.is_false(ok, msg)
+			local popup = wow.popups[#wow.popups]
+			assert.equal("TOGBANK_SPLIT_STACK", popup.which)
+			assert.truthy(popup.text1:find("Split 2 from stack of 2", 1, true), popup.text1)
+			assert.truthy(popup.text1:find("onto your stack of 5", 1, true), popup.text1)
+			assert.equal(2, popup.data.count, "the popup cannot tell a whole-stack move from a split")
+			popup.info.OnAccept(nil, popup.data)
+			env.advance(0.2)
+			assert.is_nil(wow.cursor, "the moved stack was left on the cursor")
+			assert.same({ 7 }, stacksOf(LINEN))
+			ok, msg = Mail:PrepareFulfillMail(r1)
+			assert.is_true(ok, msg)
+			assert.equal(1, attachedCount()); assert.equal(7, slot(1).count)
+		end)
+
+		-- Peer Review 349c7141 B1: the whole-stack move is decided from the plan's count, so a source
+		-- that changed between the order being picked and the SPLIT click must restart, not move it all.
+		it("restarts when the stack to move grew between picking the order and SPLIT", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 2 } })
+			order("r1", ALICE, LINEN, 7, 1000)
+			assert.is_true((click()))
+			assert.equal(2, Mail.batchState.plan.splitStack.count, "precondition: the 2 is to be moved")
+			wow.bags[0][2].count = 4   -- looted two more onto it
+			local ok, msg = click()
+			assert.is_false(ok); assert.truthy(msg:find("bags changed", 1, true), msg)
+			assert.is_nil(Mail.batchState)
+			assert.is_nil(wow.cursor); assert.same({ 4, 5 }, stacksOf(LINEN), "a stack was moved despite restarting")
+		end)
+
+		it("the popup refuses when the stack to move changed while it was open", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 2 } })
+			assert.is_false((Mail:PrepareFulfillMail(order("r1", ALICE, LINEN, 7, 1000))))
+			local popup = wow.popups[#wow.popups]
+			wow.bags[0][2].count = 4
+			popup.info.OnAccept(nil, popup.data)
+			env.advance(0.2)
+			assert.is_nil(wow.cursor)
+			assert.same({ 4, 5 }, stacksOf(LINEN), "the popup moved a stack that had changed")
+		end)
+
+		-- Peer Review 349c7141 B2: moving the whole 2 into an empty slot would change nothing.
+		it("the popup refuses a whole-stack move when its target stack changed, rather than moving it to a free slot", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 2 } })
+			assert.is_false((Mail:PrepareFulfillMail(order("r1", ALICE, LINEN, 7, 1000))))
+			local popup = wow.popups[#wow.popups]
+			wow.bags[0][1].count = 4   -- the banker used one of the 5
+			popup.info.OnAccept(nil, popup.data)
+			env.advance(0.2)
+			assert.is_nil(wow.cursor)
+			assert.equal(2, wow.bags[0][2].count, "the 2 was moved")
+			assert.is_nil(wow.bags[0][3], "the 2 was moved into a free slot")
+		end)
+
+		-- Self-audit F1: with no known max stack there is no merge, and the old plan stands.
+		it("keeps the stacks as they are when the item's max stack is not known", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 2 } })
+			local realGetItemInfo = _G.GetItemInfo
+			_G.GetItemInfo = function() return nil end
+			local ok, plan = pcall(Mail.CalculateFulfillmentPlan, Mail,
+				{ { bag = 0, slot = 1, count = 5 }, { bag = 0, slot = 2, count = 2 } }, 7, 7)
+			_G.GetItemInfo = realGetItemInfo
+			assert.is_true(ok, plan)
+			assert.equal(2, #plan.stacksToAttach); assert.is_nil(plan.splitStack)
+		end)
+
+		it("keeps the stacks as they are when the order is bigger than one stack holds", function()
+			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 5 })
+			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 2 } })
+			order("r1", ALICE, LINEN, 7, 1000)
+			assert.is_true((click()))
+			local plan = Mail.batchState.plan
+			assert.equal(2, #plan.stacksToAttach); assert.is_nil(plan.splitStack)
+		end)
+
 		it("the popup splits into a free slot instead when the stack changed while it was open", function()
 			env.defineItem(LINEN, { name = "Linen Cloth", stackCount = 20 })
 			env.harnessBag(0, 16, { { id = LINEN, count = 5 }, { id = LINEN, count = 10 } })

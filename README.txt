@@ -301,6 +301,9 @@ FULFILLING ORDERS (bank characters):
     split it has bag slots for, oldest order first (any order it had no slot
     for waits for the next mail, and chat says so), the next attaches
     everything, the last sends.
+    An order that fits in one stack is always mailed as ONE stack: if your
+    bags hold, say, a 5 and a 2 for an order of 7, the 2 is moved onto the 5
+    first, saving the extra 30c postage.
   - ANYWHERE ELSE, for an in-person trade: an order that needs a stack split
     keeps its Fulfill button active. Click it to split off exactly the
     amount ordered, trade it to the requester, then record the trade with
@@ -1037,6 +1040,15 @@ When reporting bugs, please include:
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.10.1:
+---------------
+BUG FIXES:
+- An order that fits in one stack is mailed as one stack: a 5 and a 2 for an
+  order of 7 are combined first instead of going as two attachments
+
+COMPATIBILITY: v1.10.1 works with v1.10.0 and v1.9.x. Nothing it sends between
+players changed.
 
 Version 1.10.0:
 ---------------
