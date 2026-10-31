@@ -1,5 +1,6 @@
 ## Interface: 16001
-## Title: |cffFF8000TOGBankClassic|r
+## Title: |cffFF8000Ultimate Bank|r
+## IconTexture: Interface\AddOns\TOGBankClassic\Textures\UB-MMB-Icon
 ## Notes: A simple way to aggregate, view and request items from the inventories of multiple guild bank alts.
 ## Author: Dominion-Myzrael, GrumpyPlayers (also known as <SG>Soul), Lothsahn, Huntmehuntme-Myzrael, Pimptasty
 ## Version: @project-version@

@@ -211,13 +211,13 @@ function TOGBankClassic_Chat:VerifyCommPrefixes()
 	-- MaxPrefixes first: it is the one a player can act on, and the one that silently breaks sync.
 	if #capped > 0 then
 		TOGBankClassic_Output:Error(
-			"This client has hit its limit on addon message prefixes, so TOGBank cannot receive: %s. " ..
+			"This client has hit its limit on addon message prefixes, so Ultimate Bank cannot receive: %s. " ..
 			"Guild bank data will not sync until you disable another addon and reload.",
 			table.concat(capped, ", "))
 	end
 	if #invalid > 0 then
 		TOGBankClassic_Output:Error(
-			"TOGBank tried to register a malformed comm prefix and the client refused it: %s. " ..
+			"Ultimate Bank tried to register a malformed comm prefix and the client refused it: %s. " ..
 			"This is an addon bug - please report it.",
 			table.concat(invalid, ", "))
 	end
@@ -775,7 +775,7 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				if not self.staleFormatWarned[normSender] then
 					self.staleFormatWarned[normSender] = true
 					TOGBankClassic_Output:Warn(
-						"%s is running an older TOGBank and its bank contents cannot be read. " ..
+						"%s is running an older Ultimate Bank and its bank contents cannot be read. " ..
 						"Ask them to update.", tostring(sender))
 				end
 			end
@@ -1110,7 +1110,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "version",
-		help = "display the TOG Bank version",
+		help = "display the Ultimate Bank version",
 		handler = function()
 			-- BRAND-001 / VERSION-TEXT-001: what a window title says, said the same way here. This
 			-- printed the raw tag under the old name -- "TOGBankClassic version:
@@ -1182,7 +1182,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "share",
-		help = "manually share the contents of your guild bank with other online users of TOGBankClassic; this is done every 10 minutes automatically and whenever you open the Inventory window",
+		help = "manually share the contents of your guild bank with other online users of Ultimate Bank; this is done every 10 minutes automatically and whenever you open the Inventory window",
 		handler = function()
 			-- PERF-021: Warn user if zone-in cooldown is active
 			if TOGBankClassic_Events.zoningCooldown then
@@ -1210,7 +1210,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "reset",
-		help = "reset your own TOGBankClassic database",
+		help = "reset your own Ultimate Bank database",
 		handler = function()
 			local guild = TOGBankClassic_Guild:GetGuild()
 			if not guild then
@@ -1411,7 +1411,7 @@ local COMMAND_REGISTRY = {
 				end
 				table.sort(enabled)
 
-				Out:Response("'TOGBank Debug' tab is ready.")
+				Out:Response("'%s Debug' tab is ready.", TOGBankClassic_Constants.BRAND)
 				if levelOn and #enabled > 0 then
 					Out:Response("Debug output |cff44ff44IS|r flowing to it. Categories on: |cffffff00%s|r",
 						table.concat(enabled, ", "))
@@ -1435,7 +1435,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "debugtabremove",
-		help = "remove the TOGBank Debug chat tab",
+		help = "remove the Ultimate Bank Debug chat tab",
 		expert = true,
 		handler = function()
 			TOGBankClassic_Output:RemoveDebugTab()
@@ -1613,7 +1613,7 @@ local COMMAND_REGISTRY = {
 			end
 			local hostEntry = VC.hosts and VC.hosts["TOGBankClassic"]
 			if not hostEntry then
-				TOGBankClassic_Output:Response("TOGBankClassic not registered with VersionCheck-1.0")
+				TOGBankClassic_Output:Response("Ultimate Bank is not registered with VersionCheck-1.0")
 				return
 			end
 			-- FireBatch resets VersionResponses and VersionCheckActive, then broadcasts VC10_REQ to guild.
@@ -1652,7 +1652,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "wipe",
-		help = "reset your own TOGBankClassic database",
+		help = "reset your own Ultimate Bank database",
 		expert = true,
 		handler = function()
 			TOGBankClassic_Guild:WipeMine()
@@ -1660,7 +1660,7 @@ local COMMAND_REGISTRY = {
 	},
 	{
 		name = "wipeall",
-		help = "officer only: reset your own TOGBankClassic database and that of all online guild members",
+		help = "officer only: reset your own Ultimate Bank database and that of all online guild members",
 		expert = true,
 		handler = function()
 			TOGBankClassic_Guild:Wipe()
@@ -2644,7 +2644,7 @@ local HELP_INSTRUCTIONS = {
 		text = [[
 1. Log in with the guild bank character, ensuring they are in the guild.
 2. Add |cffe6cc80gbank|r to their guild or officer note, then type |cffe6cc80/reload|r.
-3. In addon options (Escape -> Options -> Addons -> TOGBankClassic), click on the |cffe6cc80-|r icon (expand/collapse) to the left of the entry, and check |cffe6cc80Enable for <character>|r is ticked in the |cffe6cc80Bank|r section. It is on by default, so there is usually nothing to change.
+3. In addon options (Escape -> Options -> Addons -> Ultimate Bank), click on the |cffe6cc80-|r icon (expand/collapse) to the left of the entry, and check |cffe6cc80Enable for <character>|r is ticked in the |cffe6cc80Bank|r section. It is on by default, so there is usually nothing to change.
 4. Open your bank and then CLOSE it - the scan runs on close.
 5. Type |cffe6cc80/togbank roster|r and confirm your bank character is listed with a four-digit number.
 6. The guild picks the scan up on the next 10-minute check-in, or straight away if you type |cffe6cc80/togbank share|r.

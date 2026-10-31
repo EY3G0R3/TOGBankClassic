@@ -379,7 +379,26 @@ end
 ---
 --- `VersionText` is for DISPLAY only. Ordering peers is `Guild.EncodeVersion`, which must keep its
 --- own parse: it has to answer for strings this one would hand back unchanged ("dev").
-local BRAND = "TOG Bank"
+---
+--- BRAND-002 (operator, 2026-10-31: "i want to do the same rebranding i did in Dibs and TOGPM with
+--- the bank"): the name is now "Ultimate Bank", drawn in the fleet's brand orange -- the legendary
+--- quality colour Ultimate Dibs and Ultimate Profession Master use (UPM's `addon.BrandColor`).
+--- Display only, as BRAND-001 was: every identifier keeps TOGBankClassic.
+local BRAND = "Ultimate Bank"
+local BRAND_COLOR = "ffFF8000"
+
+--- `text` in the brand orange, for a title, a tooltip header or a chat prefix.
+---@param text string|nil
+---@return string
+local function BrandColored(text)
+	return "|c" .. BRAND_COLOR .. tostring(text or "") .. "|r"
+end
+
+--- "Ultimate Bank" in the brand orange.
+---@return string
+local function BrandName()
+	return BrandColored(BRAND)
+end
 
 --- The version to SHOW a player: the `d.d.d` out of whatever the TOC carries, or the raw string
 --- when it holds no version at all (a dev build shows `@project-version@`, as FGI's does).
@@ -390,11 +409,12 @@ local function VersionText(raw)
 	return raw:match("%d+%.%d+%.%d+") or raw:match("%d+%.%d+") or raw
 end
 
---- "TOG Bank v1.5.0" -- the addon as a player sees it named, everywhere.
+--- "Ultimate Bank v1.5.0", the name in the brand orange -- the addon as a player sees it named,
+--- everywhere (window titles, `/togbank version`).
 ---@return string
 local function BrandVersion()
 	local raw = GetAddOnMetadata and GetAddOnMetadata("TOGBankClassic", "Version") or nil
-	return BRAND .. " v" .. VersionText(raw)
+	return BrandName() .. " v" .. VersionText(raw)
 end
 
 --- RAID-SYNC-001: is sync paused right now? In a raid group, unless the player has ticked "Keep
@@ -432,6 +452,9 @@ TOGBankClassic_Constants = {
 	BankContainers           = BankContainers,
 	SyncPausedByRaid         = SyncPausedByRaid,
 	BRAND                    = BRAND,
+	BRAND_COLOR              = BRAND_COLOR,
+	BrandColored             = BrandColored,
+	BrandName                = BrandName,
 	VersionText              = VersionText,
 	BrandVersion             = BrandVersion,
 }

@@ -23,6 +23,28 @@ local function DescribePrefix(prefix)
     return hostPrefixNames[prefix] or "(Unknown)"
 end
 
+-- BRAND-002: AceConsole's Print/Printf prefix every line with tostring(self), the AceAddon name
+-- "TOGBankClassic" -- kept, because saved data, the minimap position and VersionCheck key on it.
+-- Players read the brand instead, in the brand orange, as Ultimate Profession Master does. Same
+-- contract as AceConsole-3.0's: an optional leading chat frame, then every argument tostring'd and
+-- space-joined.
+function TOGBankClassic_Core:Print(...)
+    local out, first = DEFAULT_CHAT_FRAME, 1
+    local frame = ...
+    if type(frame) == "table" and frame.AddMessage then out, first = frame, 2 end
+    local parts = { TOGBankClassic_Constants.BrandName() .. ":" }
+    for i = first, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+    out:AddMessage(table.concat(parts, " "))
+end
+
+function TOGBankClassic_Core:Printf(...)
+    local frame = ...
+    if type(frame) == "table" and frame.AddMessage then
+        return self:Print(frame, string.format(select(2, ...)))
+    end
+    return self:Print(string.format(...))
+end
+
 -- RAID-SYNC-001: the one raid guard, shared with the receive gate and the status bar.
 local SyncPausedByRaid = TOGBankClassic_Constants.SyncPausedByRaid
 

@@ -238,7 +238,9 @@ describe("WINDOW-CHROME-001: UI:DressWindow", function()
 		-- The gear says what it opens.
 		local c2 = UI:DressWindow(window, { settings = { isOpen = false }, help = function() end })
 		c2.settings:GetScript("OnEnter")(c2.settings)
-		assert.equal("TOGBankClassic Settings\n" .. UI.CHROME.GEAR_TOOLTIP, tipText())
+		-- BRAND-002: the gear names the brand, in the brand orange -- never the folder name.
+		assert.equal("|cffFF8000Ultimate Bank Settings|r\n" .. UI.CHROME.GEAR_TOOLTIP, tipText())
+		assert.is_nil(tipText():find("TOGBank", 1, true), "the gear tooltip still names the folder")
 		c2.settings:GetScript("OnLeave")()
 		assert.is_false(GameTooltip:IsShown())
 	end)

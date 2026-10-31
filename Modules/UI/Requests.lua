@@ -1123,7 +1123,7 @@ function TOGBankClassic_UI_Requests:AddHelpLines()
 	GameTooltip:AddLine("Mouseover any row's date to see a timeline tooltip showing when the request was submitted and, if applicable, when it was filled or cancelled -- and, for a shop order, the estimate you were shown when you placed it. A cancelled request's date breathes with a soft glow; if a reason was given, mouse over it to read why.", 0.9, 0.9, 0.9, true)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Requester column:|r", 1, 1, 1, false)
-	GameTooltip:AddLine("An amber version beside a name means that guildmate is on an old TOG Bank that cannot receive current bank contents -- they requested from an old copy, and the item may be long gone. Ask them to update.", 0.9, 0.9, 0.9, true)
+	GameTooltip:AddLine("An amber version beside a name means that guildmate is on an old Ultimate Bank that cannot receive current bank contents -- they requested from an old copy, and the item may be long gone. Ask them to update.", 0.9, 0.9, 0.9, true)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffd100Action icons (right side of each row -- mouse over one for its name):|r", 1, 1, 1, false)
 	GameTooltip:AddLine(" ")
@@ -3217,7 +3217,7 @@ local function applyFulfillState(button, req, canFulfill, fulfillReason, itemsIn
 		local stale = staleRequesterVersion(req)
 		if stale then
 			tooltipDetail = tooltipDetail .. string.format(
-				" %s is on v%s, which cannot receive current bank contents -- they requested from an old copy of this bank, and the item may be long gone. Ask them to update TOG Bank.",
+				" %s is on v%s, which cannot receive current bank contents -- they requested from an old copy of this bank, and the item may be long gone. Ask them to update Ultimate Bank.",
 				req.requester or "The requester", stale)
 		end
 	else

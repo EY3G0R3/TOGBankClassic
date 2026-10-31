@@ -105,7 +105,7 @@ function TooltipBankerInfo:AppendTo(tooltip, itemID)
 	-- halves here are a character name and a stack count, both short by
 	-- construction, so there is nothing to wrap.
 	tooltip:AddLine(" ")
-	tooltip:AddLine("TOGBankClassic", 1, 0.82, 0, true)  -- gold addon label
+	tooltip:AddLine(TOGBankClassic_Constants.BrandName(), 1, 1, 1, true)  -- BRAND-002: the brand-orange addon label
 	tooltip:AddLine("Bankers:", 0.4, 0.8, 1, true)  -- light blue header
 	for _, entry in ipairs(found) do
 		tooltip:AddDoubleLine(entry.name, tostring(entry.count), 1, 1, 1, 1, 1, 1)

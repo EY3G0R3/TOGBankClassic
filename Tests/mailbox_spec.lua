@@ -898,7 +898,7 @@ describe("MAILUI-002: the window", function()
 	-- on line in the top with TSM but on the left side of that box"): TSM's own placement
 	-- (TradeSkillMaster/Core/UI/MailingUI/Core.lua:163-173 -- 60x16, MailFrame TOPRIGHT -26,-3,
 	-- level +3), shifted left by a button-and-gap when TSM is loaded, in TSM's spot when it is not.
-	it("puts a 'TOG Bank' button on Blizzard's mail frame title bar at MAIL_SHOW, once, for everyone, that toggles the window -- in TSM's spot, or left of TSM4", function()
+	it("puts an 'Ultimate Bank' button on Blizzard's mail frame title bar at MAIL_SHOW, once, for everyone, that toggles the window -- in TSM's spot, or left of TSM4", function()
 		_G.MailFrame = CreateFrame("Frame", "MailFrame", UIParent)
 		load(false)   -- not a banker: no auto-open, but the button still
 		local isLoaded = C_AddOns and C_AddOns.IsAddOnLoaded
@@ -912,9 +912,13 @@ describe("MAILUI-002: the window", function()
 		local point, _, relPoint, x, y = b:GetPoint(1)
 		-- Third round: 74 -> 60 ("it still needs to go left a bit"); fourth: 60 -> 52 ("just a little more left").
 		assert.equal("TOPLEFT", point); assert.equal("TOPLEFT", relPoint); assert.equal(55, x); assert.equal(-3, y)
-		assert.equal(60, b:GetWidth()); assert.equal(16, b:GetHeight())
+		assert.equal(16, b:GetHeight())
 		assert.equal(_G.MailFrame:GetFrameLevel() + 3, b:GetFrameLevel())
-		assert.equal("TOG Bank", b:GetText())
+		-- BRAND-002: the brand is wider than TSM's 60px, so the button is at least 60 and fits its text.
+		assert.equal("Ultimate Bank", b:GetText())
+		local textW = b:GetFontString():GetStringWidth()
+		assert.is_true(b:GetWidth() >= 60, "the button shrank below TSM's width")
+		assert.is_true(b:GetWidth() >= textW, "the button is narrower than its own label")
 		M:OnMailShow()
 		assert.equal(b, M.MailFrameButton, "a second MAIL_SHOW made a second button")
 		b:Fire("OnClick")

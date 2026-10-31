@@ -157,17 +157,30 @@ local function clearChatFrame(frame)
 end
 
 -- Create or get dedicated debug chat frame
+-- BRAND-002: the debug tab is named for the brand. A tab made before the rename is saved by the
+-- client under the old name, so both are recognised and an old one is renamed when it is found.
+local DEBUG_TAB_NAME = TOGBankClassic_Constants.BRAND .. " Debug"
+local LEGACY_DEBUG_TAB_NAME = "TOGBank Debug"
+local function IsDebugTab(name)
+	return name == DEBUG_TAB_NAME or name == LEGACY_DEBUG_TAB_NAME
+end
+local function AdoptDebugTab(i, name)
+	local frame = _G["ChatFrame"..i]
+	if name == LEGACY_DEBUG_TAB_NAME and frame then FCF_SetWindowName(frame, DEBUG_TAB_NAME) end
+	return frame
+end
+
 function TOGBankClassic_Output:GetDebugFrame()
 	-- Return cached frame if we have it
 	if self.debugFrame then
 		return self.debugFrame
 	end
 
-	-- Try to find existing TOGBank Debug tab (even if hidden)
+	-- Try to find the existing debug tab (even if hidden)
 	for i = 1, numChatWindows() do
 		local name = GetChatWindowInfo(i)
-		if name == "TOGBank Debug" then
-			self.debugFrame = _G["ChatFrame"..i]
+		if IsDebugTab(name) then
+			self.debugFrame = AdoptDebugTab(i, name)
 
 			-- Ensure OnShow hook is set to redraw messages when tab becomes visible
 			if not self.debugFrame.togbankHooked then
@@ -191,8 +204,8 @@ function TOGBankClassic_Output:CreateDebugTab()
 	-- Check if tab already exists
 	for i = 1, numChatWindows() do
 		local name = GetChatWindowInfo(i)
-		if name == "TOGBank Debug" then
-			self.debugFrame = _G["ChatFrame"..i]
+		if IsDebugTab(name) then
+			self.debugFrame = AdoptDebugTab(i, name)
 			-- Reconfigure and show existing frame
 			self.debugFrame:SetMaxLines(1000)
 			self.debugFrame:SetFading(false)
@@ -216,7 +229,7 @@ function TOGBankClassic_Output:CreateDebugTab()
 			-- Initial draw of buffered messages
 			self:RedrawDebugMessages()
 
-			TOGBankClassic_Core:Print("TOGBank Debug tab found and shown (ChatFrame"..i..")")
+			TOGBankClassic_Core:Print(DEBUG_TAB_NAME .. " tab found and shown (ChatFrame"..i..")")
 			return true
 		end
 	end
@@ -245,7 +258,7 @@ function TOGBankClassic_Output:CreateDebugTab()
 	local frame = _G["ChatFrame"..frameIndex]
 
 	-- Use WoW's proper API to create a new named window
-	FCF_SetWindowName(frame, "TOGBank Debug")
+	FCF_SetWindowName(frame, DEBUG_TAB_NAME)
 	FCF_SetWindowColor(frame, 0.3, 0.3, 0.3)
 	FCF_SetLocked(frame, false)
 
@@ -281,7 +294,7 @@ function TOGBankClassic_Output:CreateDebugTab()
 	-- Initial draw of buffered messages
 	self:RedrawDebugMessages()
 
-	TOGBankClassic_Core:Print("Created TOGBank Debug chat tab (ChatFrame"..frameIndex..")")
+	TOGBankClassic_Core:Print("Created " .. DEBUG_TAB_NAME .. " chat tab (ChatFrame"..frameIndex..")")
 	TOGBankClassic_Core:Print("You can now right-click the tab to customize or close it")
 	return true
 end
@@ -290,19 +303,19 @@ end
 function TOGBankClassic_Output:RemoveDebugTab()
 	for i = 1, numChatWindows() do
 		local name = GetChatWindowInfo(i)
-		if name == "TOGBank Debug" then
+		if IsDebugTab(name) then
 			local frame = _G["ChatFrame"..i]
 			-- Reset the frame completely
 			FCF_SetWindowName(frame, "Combat Log", i)
 			FCF_ResetChatWindows()
 			frame:Hide()
 			self.debugFrame = nil
-			TOGBankClassic_Core:Print("Removed TOGBank Debug tab - please /reload to complete removal")
+			TOGBankClassic_Core:Print("Removed " .. DEBUG_TAB_NAME .. " tab - please /reload to complete removal")
 			return true
 		end
 	end
 
-	TOGBankClassic_Core:Print("TOGBank Debug tab not found")
+	TOGBankClassic_Core:Print(DEBUG_TAB_NAME .. " tab not found")
 	return false
 end
 
@@ -335,7 +348,7 @@ local function Log(level, prefix, fmt, ...)
 	if level == LOG_LEVEL.DEBUG then
 		local debugFrame = TOGBankClassic_Output:GetDebugFrame()
 		if debugFrame then
-			local fullMessage = "TOGBankClassic: "
+			local fullMessage = TOGBankClassic_Constants.BrandName() .. ": "
 			if prefix then
 				fullMessage = fullMessage .. prefix .. " " .. message
 			else
@@ -360,7 +373,7 @@ local function Log(level, prefix, fmt, ...)
 
 	-- Always store debug-level messages in persistent log (if debug logging enabled)
 	if level == LOG_LEVEL.DEBUG and TOGBankClassic_DebugLogEnabled then
-		local fullMessage = "TOGBankClassic: "
+		local fullMessage = TOGBankClassic_Constants.BRAND .. ": "
 		if prefix then
 			fullMessage = fullMessage .. prefix .. " " .. message
 		else

@@ -1,4 +1,66 @@
-# TOGBankClassic Changelog
+# Ultimate Bank Changelog (formerly TOG Bank / TOGBankClassic)
+
+## [v1.11.0] (2026-10-31) - Now Ultimate Bank
+
+### Improvements
+
+- **BRAND-002: renamed to Ultimate Bank.** The operator, 2026-10-31: *"i want to do the same
+  rebranding i did in Dibs and TOGPM with the bank. I only want to update the curseforge and user
+  facing things, we don't need to update the file structure, folders or anything like that"*, and
+  *"we also need to update the minimap button to use UB-MMB-Icon that i put into the textures
+  folder"*. Supersedes BRAND-001's "TOG Bank". `Constants.BRAND` is now `"Ultimate Bank"`, with
+  `BRAND_COLOR` (`ffFF8000`, the legendary orange Ultimate Profession Master uses as
+  `addon.BrandColor`), `BrandColored(text)` and `BrandName()` beside it in `Modules/Constants.lua`;
+  `BrandVersion()` draws the name in the orange, so every window title (`UI:WindowTitle`) and
+  `/togbank version` read "Ultimate Bank v1.11.0" in the brand colour.
+  Chat: `TOGBankClassic_Core:Print`/`Printf` (`Core.lua`) replace AceConsole's, which prefixed every
+  line with the AceAddon name "TOGBankClassic"; lines now start with an orange "Ultimate Bank:", the
+  way UPM's start "UPM:". The debug frame's prefix follows.
+  Minimap (`Modules/UI/Minimap.lua`): the icon is `Textures/UB-MMB-Icon.tga` (it was
+  `Media/TOGBankClassic_MMB_Icon`), the LDB `text`/`label` and the tooltip title are the brand, the
+  title in orange. Cropped with `iconCoords = { 0.024, 0.914, 0.024, 0.914 }`: measured from the TGA's
+  alpha, this art's visible disc runs x 3..59 and y 2..60 of 64 (centre 31.5 both ways), so it
+  already fills the square and UPM's 0.135..0.825 window (cut for a coin with a 10px margin) would
+  have cropped it. The first cut was the disc centred (0.04..0.945); after seeing it in game the
+  operator asked for "the same small positioning adjustment UPM used to center it", so the window
+  was moved up and left, which draws the art down and right in the slot. UPM's own 0.02 was tried
+  first and moved this art under half a screen pixel (operator: *"are you sure you moved it? it looks
+  like its still in the default position"*): LibDBIcon draws the icon 17px square and trims 5% of the
+  window itself, leaving ~52 texels on 17px, so one pixel is ~0.048 here. Read from UPM's code rather
+  than its comment: UPM's window is a square as wide as its coin, set about half a pixel up and left
+  of the coin's centre. The bank art is the same coin drawn bigger (0.89 of the canvas), so the window
+  is 0.89 square. The full 1px step (UPM's first) was too far here as well (operator, in game: *"now
+  you moved it too far down and right"*), so half of it came back, as on UPM: the window sits 0.024
+  up and left of the coin's centre. Not yet seen in game.
+  All four TOCs: `## Title: |cffFF8000Ultimate Bank|r` and a new
+  `## IconTexture: Interface\AddOns\TOGBankClassic\Textures\UB-MMB-Icon` (the AddOns-list icon).
+  Settings (`Modules/Options.lua`): the AddOns settings category and the options title are the brand.
+  AceConfigDialog keys `BlizOptionsIDMap` by the DISPLAY name and finds a sub-panel's parent by it, so
+  the Bank sub-panel's parent and `GetBlizCategoryID` use `Constants.BRAND` too; the appName stays
+  `TOGBankClassic`.
+  Tooltips and text, a full sweep of every player-visible string naming the addon: the banker block
+  in item tooltips (`Modules/TooltipBankerInfo.lua`, now the orange brand instead of a gold
+  "TOGBankClassic"), the settings gear's tooltip (`Modules/UI.lua`), the share button's tooltip, the
+  Baganator corner-widget name (`Modules/ItemHighlight.lua`), the Requests tab's old-client hint and
+  not-found remedy (`Modules/UI/Requests.lua`), the mail frame's button (`Modules/UI/Mailbox.lua`,
+  which now widens to its label since "Ultimate Bank" does not fit TSM's 60px; its left edge is
+  unchanged and that is not yet seen in game), Escape/Recenter/size-slider/mailbox//bank//gbank
+  option texts, the `/togbank` help lines, the prefix-limit and old-client warnings, the
+  VersionCheck message and the bank-character setup instructions (`Modules/Chat.lua`). The debug
+  chat tab is "Ultimate Bank Debug" (`Modules/Output.lua`); a tab saved under the old "TOGBank Debug"
+  name is still found and renamed.
+  Deliberately unchanged, because changing them would lose data or split the guild: the folder and
+  TOC file names, every SavedVariable, the AceAddon name (the minimap position and VersionCheck key
+  on it), the LDB object and LibDBIcon names, comm prefixes, frame global names, the `/togbank`
+  command, the CurseForge slug, and released versions' notes. Player docs (CurseForge page,
+  `README.txt`) say Ultimate Bank. Release tags move to `UltimateBank-vX.Y.Z` from this release on,
+  as Ultimate Dibs and UPM did; `Constants.VersionText` and VersionCheck read only the digits, so
+  ordering against `TOGBankClassic-v` tags is unaffected.
+  Specs: `Tests/windowtitle_spec.lua` pins the orange title and the chat prefix; the banker-tooltip,
+  gear-tooltip, Requests remedy and mail-button examples assert the brand and that the old name is
+  gone; `env.releaseBlizOptions` (`Tests/env_togbank.lua`) also clears the brand's
+  `BlizOptionsIDMap` entry, without which a second `Options:Init` in one run raised "already been
+  added". Full suite: forward 2221 passed, reverse 571 + 887 + 763 = 2221, 0 failed.
 
 ## [v1.10.1] (2026-10-31) - One Stack Per Order
 

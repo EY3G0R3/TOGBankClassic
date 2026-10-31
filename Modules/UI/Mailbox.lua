@@ -22,7 +22,7 @@
 -- right-click on the mail) takes everything on the mail; Take Shown takes everything the filter
 -- left, and Take Needed (MAILCOLLECT-001) takes what the open orders are short of -- the mailbox's
 -- Fulfill-at-the-bank. It is reachable at any time the mailbox is open: the auto-open (bankers),
--- /togbank mailbox, and a "TOG Bank" button on the mail frame's title bar (beside TSM4's) for
+-- /togbank mailbox, and an "Ultimate Bank" button on the mail frame's title bar (beside TSM4's) for
 -- everyone.
 --
 -- Blizzard's mail frame STAYS. This window opens beside it and closes with it. It never hides
@@ -547,7 +547,7 @@ end
 --- useful for non-bankers too" / "make a 2nd check box that enables/disables it, and have it on
 --- by default for bankers only"): a bank character opens on the master alone; any other
 --- character needs the second box as well, default off. Either way off, the window is still one
---- click away on the mail frame's TOG Bank button or /togbank mailbox. Returns the verdict and,
+--- click away on the mail frame's Ultimate Bank button or /togbank mailbox. Returns the verdict and,
 --- when it is no, which box said so -- MAIL_SHOW logs it, so "ticked but it doesn't pop up" is
 --- answerable from the log: the two boxes and the note look identical from outside.
 function Mailbox:AutoOpens()
@@ -564,7 +564,7 @@ function Mailbox:AutoOpens()
 	return false, string.format("%s is not a bank character (no 'gbank' in the guild note) and the General setting 'Mailbox window on non-bank characters' is off", tostring(player))
 end
 
---- MAILUI-002: the "TOG Bank" button on Blizzard's mail frame, for everyone -- the operator: "it
+--- MAILUI-002: the "Ultimate Bank" button (BRAND-002; "TOG Bank" before) on Blizzard's mail frame, for everyone -- the operator: "it
 --- pops open once the first time i open a mailbox, but then i can't get to it again". Created once,
 --- on the first MAIL_SHOW.
 --- MAILBTN-001 (operator 2026-09-13, screenshot: the button floating in the band under the title):
@@ -588,7 +588,12 @@ function Mailbox:EnsureMailFrameButton()
 	button:SetFrameLevel(host:GetFrameLevel() + 3)
 	button:SetNormalFontObject(GameFontNormalSmall)
 	button:SetHighlightFontObject(GameFontHighlightSmall)
-	button:SetText("TOG Bank")
+	-- BRAND-002: "Ultimate Bank" is wider than TSM's 60px, so the button grows to its text (the left
+	-- edge stays at MAILBTN_X; it widens rightward along the title bar). Not seen in game.
+	button:SetText(TOGBankClassic_Constants.BRAND)
+	local label = button.GetFontString and button:GetFontString()
+	local textW = label and label.GetStringWidth and label:GetStringWidth()
+	if type(textW) == "number" and textW + 12 > MAILBTN_W then button:SetWidth(math.ceil(textW + 12)) end
 	button:SetScript("OnClick", function() Mailbox:Toggle() end)
 	self.MailFrameButton = button
 	return button

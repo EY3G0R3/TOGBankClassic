@@ -2371,7 +2371,9 @@ describe("BROWSE-001: the Requests body inside the Guild Bank window", function(
 		local tip = byId.r1.cells.actions.fulfill.togTooltipDetail
 		assert.truthy(tip:find(NOT_FOUND, 1, true))
 		assert.truthy(tip:find("Oldguy-Testrealm is on v1.3.2, which cannot receive current bank contents", 1, true), tip)
-		assert.truthy(tip:find("Ask them to update TOG Bank", 1, true))
+		-- BRAND-002: the remedy names the brand players install, not the old one.
+		assert.truthy(tip:find("Ask them to update Ultimate Bank", 1, true))
+		assert.is_nil(tip:find("TOG Bank", 1, true), "the remedy still names the old brand")
 		assert.equal(NOT_FOUND, byId.r2.cells.actions.fulfill.togTooltipDetail)
 		-- A finished request from the old client is not marked -- the mark is about what it can still
 		-- request, not a badge on the person.

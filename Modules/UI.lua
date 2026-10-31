@@ -76,7 +76,8 @@ local BACKDROP_PIECES = {
 }
 
 --- The title every TOGBank window carries: the addon and its version, then the window's name --
---- "TOG Bank v1.5.0 - Requests". The Inventory window (the "main window") has always been
+--- "Ultimate Bank v1.5.0 - Requests", the name in the brand orange (BRAND-002; "TOG Bank" under
+--- BRAND-001). The Inventory window (the "main window") has always been
 --- titled this way; the operator, 2026-09-11: "we should make the requests window 'look' like the
 --- main window". One spelling, so the windows cannot drift apart on it.
 ---
@@ -367,7 +368,7 @@ function TOGBankClassic_UI:PersistWindow(window, key, defW, defH, minW, minH)
 			if not self._warnedOldWidgets then
 				self._warnedOldWidgets = true
 				if TOGBankClassic_Output then
-					TOGBankClassic_Output:Warn("LibAceGUIWidgets-1.0 is out of date; update it so TOG Bank windows keep their minimum size.")
+					TOGBankClassic_Output:Warn("LibAceGUIWidgets-1.0 is out of date; update it so Ultimate Bank windows keep their minimum size.")
 				end
 			end
 		end
@@ -528,7 +529,7 @@ TOGBankClassic_UI.CHROME = {
 	GEAR_TEXTURE = "Interface\\Icons\\Trade_Engineering",
 	SHARE_TEXTURE = "Interface\\Buttons\\UI-RefreshButton",
 	GEAR_TOOLTIP = "Open the addon options panel (banker/scan configuration, appearance, debug logging, minimap button).",
-	SHARE_TOOLTIP = "Publish this bank character's contents to the guild right now -- the same as typing /togbank share. TOG Bank also does this by itself every ten minutes; use it when you have just moved items and want guildmates to see them straight away.",
+	SHARE_TOOLTIP = "Publish this bank character's contents to the guild right now -- the same as typing /togbank share. Ultimate Bank also does this by itself every ten minutes; use it when you have just moved items and want guildmates to see them straight away.",
 }
 
 --- Put the status bar's right edge at `anchor`'s left, the one rule every window follows. Without
@@ -663,7 +664,7 @@ function TOGBankClassic_UI:DressWindow(window, opts)
 			gear:SetScript("OnEnter", function(f)
 				GameTooltip:SetOwner(f, "ANCHOR_TOP")
 				GameTooltip:ClearLines()
-				GameTooltip:AddLine("TOGBankClassic Settings")
+				GameTooltip:AddLine(TOGBankClassic_Constants.BrandColored(TOGBankClassic_Constants.BRAND .. " Settings"))
 				GameTooltip:AddLine(C.GEAR_TOOLTIP, 0.9, 0.9, 0.9, true)
 				GameTooltip:Show()
 			end)

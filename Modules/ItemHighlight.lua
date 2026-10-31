@@ -507,7 +507,7 @@ function ItemHighlight:SetupBaganatorWidget()
 	-- pcall: RegisterCornerWidget asserts, and a Baganator API change must not break
 	-- highlighting for everyone else.
 	local ok, err = pcall(API.RegisterCornerWidget,
-		"TOGBank: needed for an order",
+		"Ultimate Bank: needed for an order",
 		"togbank_needed",
 		onUpdate,
 		onInit,

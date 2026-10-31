@@ -279,7 +279,7 @@ local function BuildAppearanceArgs()
 	args["recenterDesc"] = {
 		order = 112,
 		type  = "description",
-		name  = "If a TOG Bank window has ended up off the edge of your screen, this brings every "
+		name  = "If an Ultimate Bank window has ended up off the edge of your screen, this brings every "
 			.. "window back to the middle where you can reach it again. Sizes are kept.",
 	}
 	args["recenter"] = {
@@ -287,7 +287,7 @@ local function BuildAppearanceArgs()
 		type  = "execute",
 		width = "full",
 		name  = "Recenter All Windows",
-		desc  = "Moves every TOG Bank window back to the centre of the screen. Takes effect "
+		desc  = "Moves every Ultimate Bank window back to the centre of the screen. Takes effect "
 			.. "immediately -- no reload needed.",
 		func  = function()
 			local moved = TOGBankClassic_UI:RecenterWindows()
@@ -306,7 +306,7 @@ local function BuildAppearanceArgs()
 		type  = "toggle",
 		width = "full",
 		name  = "Close windows with Escape",
-		desc  = "Pressing Escape closes every open TOG Bank window, like the game's own windows. Turn "
+		desc  = "Pressing Escape closes every open Ultimate Bank window, like the game's own windows. Turn "
 			.. "this off to keep them open; Escape then goes straight to the game menu.",
 		get   = function() return TOGBankClassic_UI:CloseOnEscape() end,
 		set   = function(_, v) TOGBankClassic_UI:SetCloseOnEscape(v) end,
@@ -451,7 +451,7 @@ function TOGBankClassic_Options:Init()
 	-- Main options container
 	local options = {
 		type = "group",
-		name = "TOGBankClassic",
+		name = TOGBankClassic_Constants.BrandName(),
 		childGroups = "tab",
 		args = {
 			general = {
@@ -499,7 +499,7 @@ function TOGBankClassic_Options:Init()
 						type = "range",
 						width = "full",
 						name = "Window and Text Size",
-						desc = "Enlarges the text, icons and row height of every TOGBank window together. 100% is the normal size; raise it if the bank list is hard to read.",
+						desc = "Enlarges the text, icons and row height of every Ultimate Bank window together. 100% is the normal size; raise it if the bank list is hard to read.",
 						min = TOGBankClassic_Options.SCALE_MIN,
 						max = TOGBankClassic_Options.SCALE_MAX,
 						step = 0.1,
@@ -573,13 +573,13 @@ function TOGBankClassic_Options:Init()
 					-- mail window, some folks might not want that" / "put a settings in the general
 					-- settings for that"). ON by default: the auto-open is v1.5.0's shipped behaviour and
 					-- an upgrade must not take it away. Off, the window still opens by hand
-					-- (/togbank mailbox, the TOG Bank button on the mail frame).
+					-- (/togbank mailbox, the Ultimate Bank button on the mail frame).
 					["mailboxAutoOpen"] = {
 						order = 2.66,
 						type = "toggle",
 						width = "full",
 						name = "Open the Mailbox window at a mailbox",
-						desc = "On bank characters, the addon's Mailbox window opens beside the mail frame whenever you open a mailbox. Untick to stop that; /togbank mailbox and the TOG Bank button on the mail frame still open it when you want it.",
+						desc = "On bank characters, the addon's Mailbox window opens beside the mail frame whenever you open a mailbox. Untick to stop that; /togbank mailbox and the Ultimate Bank button on the mail frame still open it when you want it.",
 						set = function(_, v)
 							self.db.global.bank["mailboxAutoOpen"] = v and true or false
 						end,
@@ -655,7 +655,7 @@ function TOGBankClassic_Options:Init()
 						type  = "toggle",
 						width = "full",
 						name  = "Register /bank command",
-						desc  = "When enabled, typing /bank opens the TOGBankClassic window. Disable if another addon uses /bank. Requires /reload to take effect.",
+						desc  = "When enabled, typing /bank opens the Ultimate Bank window. Disable if another addon uses /bank. Requires /reload to take effect.",
 						set   = function(_, v)
 							self.db.global.bank["registerBankCommand"] = v
 							TOGBankClassic_Output:Info("/bank command %s. Requires /reload to take effect.", v and "enabled" or "disabled")
@@ -669,7 +669,7 @@ function TOGBankClassic_Options:Init()
 						type  = "toggle",
 						width = "full",
 						name  = "Register /gbank command",
-						desc  = "When enabled, typing /gbank opens the TOGBankClassic window. Disable if another addon uses /gbank. Requires /reload to take effect.",
+						desc  = "When enabled, typing /gbank opens the Ultimate Bank window. Disable if another addon uses /gbank. Requires /reload to take effect.",
 						set   = function(_, v)
 							self.db.global.bank["registerGbankCommand"] = v
 							TOGBankClassic_Output:Info("/gbank command %s. Requires /reload to take effect.", v and "enabled" or "disabled")
@@ -1033,7 +1033,10 @@ function TOGBankClassic_Options:Init()
 	-- On builds that expose C_SettingsUtil.OpenSettingsPanel, Ace3 can no longer
 	-- override that ID to the category *name*, so it is a number and the name-based
 	-- Settings.OpenToCategory("TOGBankClassic") call errors. Keep the real ID for Open().
-	local _, categoryID = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic", "TOGBankClassic")
+	-- BRAND-002: the second argument is what the AddOns settings list shows, and AceConfigDialog keys
+	-- BlizOptionsIDMap by it -- so the Bank sub-panel's parent and GetBlizCategoryID use the same
+	-- Constants.BRAND. The appName (first argument) stays TOGBankClassic.
+	local _, categoryID = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic", TOGBankClassic_Constants.BRAND)
 	self.blizCategoryID = categoryID
 end
 
@@ -1154,7 +1157,9 @@ function TOGBankClassic_Options:InitGuild()
 	}
 
 	LibStub("AceConfig-3.0"):RegisterOptionsTable("TOGBankClassic/Bank", bankOptions)
-	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic/Bank", "Bank", "TOGBankClassic")
+	-- BRAND-002: the parent is named by its DISPLAY name (AceConfigDialog looks it up in
+	-- BlizOptionsIDMap, which is keyed by that), so it follows the main panel's Constants.BRAND.
+	LibStub("AceConfigDialog-3.0"):AddToBlizOptions("TOGBankClassic/Bank", "Bank", TOGBankClassic_Constants.BRAND)
 end
 
 function TOGBankClassic_Options:GetBankEnabled()
@@ -1390,12 +1395,12 @@ function TOGBankClassic_Options:GetBlizCategoryID()
 		return self.blizCategoryID
 	end
 	local dialog = LibStub("AceConfigDialog-3.0", true)
-	local mapped = dialog and dialog.BlizOptionsIDMap and dialog.BlizOptionsIDMap["TOGBankClassic"]
+	local mapped = dialog and dialog.BlizOptionsIDMap and dialog.BlizOptionsIDMap[TOGBankClassic_Constants.BRAND]
 	if mapped then
 		self.blizCategoryID = mapped
 		return mapped
 	end
-	return "TOGBankClassic"
+	return TOGBankClassic_Constants.BRAND
 end
 
 function TOGBankClassic_Options:Open()

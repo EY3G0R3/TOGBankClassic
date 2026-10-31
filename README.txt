@@ -1,18 +1,18 @@
 ================================================================================
-TOGBankClassic - Guild Bank Inventory Management for WoW Classic Era, TBC, MoP
-                 and WoW Forever
+Ultimate Bank - Guild Bank Inventory Management for WoW Classic Era, TBC, MoP
+                and WoW Forever (formerly TOG Bank / TOGBankClassic)
 ================================================================================
 
-Version: 1.10.0
+Version: 1.11.0
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
 
 ================================================================================
-WHAT IS TOGBANKCLASSIC?
+WHAT IS ULTIMATE BANK?
 ================================================================================
 
-TOGBankClassic is a powerful addon that allows you to view and manage the
+Ultimate Bank is a powerful addon that allows you to view and manage the
 combined inventory of multiple guild bank characters without logging into
 each one. Perfect for guilds that use character banks instead of (or in
 addition to) the guild vault system.
@@ -40,7 +40,7 @@ KEY FEATURES:
   guild wants crafted or gathered, every reagent it takes, what the bank and
   the [GSL] character already hold and what is still missing; click a row to
   order it, and a Reagent Tracker window to gather by
-- A "Window and Text Size" slider (80% to 200%) that enlarges every TOGBank
+- A "Window and Text Size" slider (80% to 200%) that enlarges every Ultimate Bank
   window's writing, icons and rows together (below 100% the writing shrinks;
   a window's smallest size stays what it is at 100%)
 - A guild shop: estimates from your price sources, shop orders, an officer's
@@ -53,7 +53,7 @@ KEY FEATURES:
   bank characters, orders and fills cross between the guilds on their own;
   each guild keeps its own officer settings, a sister member who logs off is
   replaced by the next one online at once, and /togbank ssync syncs now
-- Escape closes every open TOG Bank window (a setting turns that off)
+- Escape closes every open Ultimate Bank window (a setting turns that off)
 - Shift-click and Ctrl-click on items work as they do everywhere in the game
 - Officers can say who runs each bank character; everyone sees it on hover
 - Search across all bank characters simultaneously
@@ -91,7 +91,7 @@ INSTALLATION
 
 METHOD 1: CURSEFORGE APP (RECOMMENDED)
 ---------------------------------------
-The easiest and most reliable way to install and keep TOGBankClassic updated:
+The easiest and most reliable way to install and keep Ultimate Bank updated:
 
 1. Download and install the CurseForge App from:
    https://download.curseforge.com/
@@ -104,9 +104,9 @@ The easiest and most reliable way to install and keep TOGBankClassic updated:
 
 4. Go to the "Get More Addons" section
 
-5. Search for "TOGBankClassic"
+5. Search for "Ultimate Bank" (formerly TOGBankClassic)
 
-6. Click "Install" on the TOGBankClassic addon
+6. Click "Install" on the Ultimate Bank addon
 
 7. Launch the game through the CurseForge App
    (or type /reload if already in-game)
@@ -159,7 +159,7 @@ FOR GUILD BANK CHARACTERS:
 2. Make sure the character is in your guild
 3. Add "gbank" to the character's Public Note OR Officer Note
 4. Type /reload to refresh the addon
-5. Press ESC -> Interface -> AddOns -> TOGBankClassic
+5. Press ESC -> Interface -> AddOns -> Ultimate Bank
 6. Click the [-] icon to expand the Bank section
 7. Tick "Enable for <character>" - that is the one setting that lets this
    character's bank be scanned and shared. (It is on by default, so usually
@@ -208,7 +208,7 @@ SISTER GUILDS (one bank across several guilds):
 If your guild lists sister guilds in the Guild Roster addon (its own settings
 say WHICH guilds are sisters -- and BOTH guilds' officers must list each other:
 a guild that lists yours without your officer listing it back gets nothing from
-you), an officer can open the bank to them: Options > TOG Bank Classic >
+you), an officer can open the bank to them: Options > Ultimate Bank >
 Officer > "Sister-guild bank" (off by default; it syncs to the whole guild, and
 the sister guild's officers tick it on their side too).
 On, their bank characters appear on the Bankers tab, in the Banker column, in
@@ -218,7 +218,7 @@ like your own members do. Orders and fills, bank contents, and who runs each
 bank character travel between the guilds on their own (each guild's officers
 say who runs their own bank characters). Three things to know:
 - Bank contents are fetched from a sister-guild member who is online and runs
-  a current TOGBank. Until Guild Roster has seen someone from that guild online
+  a current Ultimate Bank. Until Guild Roster has seen someone from that guild online
   (its roster pull, or the /who it sends when you click), there is nobody to
   ask yet. Use the latest Guild Roster on both guilds' clients.
 - A sister guild's bank character is recognised by the "gbank" mark in its
@@ -332,7 +332,7 @@ FINDING A REQUEST:
   "(N) My characters" at the top: it lists the requests of all your
   characters together. Once you pick it, the Requests tab opens that way on
   every character until you pick a single requester again. A character is
-  added the first time it logs in with TOG Bank installed.
+  added the first time it logs in with Ultimate Bank installed.
 
 MANUAL SYNC:
   /togbank sync
@@ -455,7 +455,7 @@ THE GUILD SHOPPING LIST:
   /togbank tracker) is a small window of the reagents still to gather that
   stays up while you play and updates as you loot. Escape leaves it open.
 
-  COMING FROM GUILDSHOPPINGLIST: TOG Bank replaces it. The guild's list and
+  COMING FROM GUILDSHOPPINGLIST: Ultimate Bank replaces it. The guild's list and
   gather dates are copied across automatically, once, the first time the
   guild master, an officer or the [GSL] member logs in with BOTH addons
   enabled - the copy can only read GuildShoppingList's list while that addon
@@ -487,7 +487,7 @@ BASIC COMMANDS:
   Displays help information and command list
 
 /togbank version
-  Shows your current TOGBankClassic version
+  Shows your current Ultimate Bank version
 
 /togbank sync
   Manually sync to receive latest data from online users
@@ -543,7 +543,7 @@ Minimap button (click)
   the reason is required and kept).
 
 /togbank reset
-  Resets your TOGBankClassic database (clears all stored data)
+  Resets your Ultimate Bank database (clears all stored data)
 
 
 EXPERT COMMANDS:
@@ -567,13 +567,13 @@ listed alphabetically for easy reference.
   date range, and retention settings
 
 /togbank debugtab
-  Creates a dedicated chat tab called "TOGBank Debug" for debug output
+  Creates a dedicated chat tab called "Ultimate Bank Debug" for debug output
   This keeps debug messages separate from your main chat tabs
   After creating the tab once, use /togbank debug to enable debug logging
   All debug output will automatically go to the debug tab
 
 /togbank debugtabremove
-  Removes the TOGBank Debug chat tab
+  Removes the Ultimate Bank Debug chat tab
 
 /togbank roster
   Lists the guild's bank characters as read from your guild notes, with the
@@ -588,7 +588,7 @@ listed alphabetically for easy reference.
   uses them.
 
 /togbank wipe
-  Resets your own TOGBankClassic database
+  Resets your own Ultimate Bank database
 
 /togbank wipeall
   (OFFICER ONLY) Resets database for all online guild members
@@ -651,7 +651,7 @@ SUPPORTED BAG ADDONS:
       Nothing is dimmed. Baganator only allows other addons to add corner
       markers, so this is the one form available there.
       You can move or remove the marker from Baganator's own customise
-      window, where it is listed as "TOGBank: needed for an order".
+      window, where it is listed as "Ultimate Bank: needed for an order".
 
 RUNNING MORE THAN ONE:
 ----------------------
@@ -885,7 +885,7 @@ SOLUTION:
 
 PROBLEM: Debug output cluttering my chat
 SOLUTION:
-  - Use /togbank debugtab to create a dedicated "TOGBank Debug" chat tab
+  - Use /togbank debugtab to create a dedicated "Ultimate Bank Debug" chat tab
   - All debug messages will go there instead of your main chat
   - This is a one-time setup - the tab persists across sessions
   - Use /togbank debugtabremove to remove the debug tab if needed
@@ -919,12 +919,12 @@ ADVANCED CONFIGURATION
 ================================================================================
 
 OPTIONS PANEL:
-  Press ESC -> Interface -> AddOns -> TOGBankClassic
+  Press ESC -> Interface -> AddOns -> Ultimate Bank
 
   Available settings:
   - General: minimap button, hide in combat, "Window and Text Size" (the
     accessibility slider: 80% to 200%, it enlarges the writing, the icons
-    and the row height of every TOGBank window together, saved for this
+    and the row height of every Ultimate Bank window together, saved for this
     character and restored at login), chat message volume, "Keep
     syncing in a raid group" (off by default), "Open the Mailbox window
     at a mailbox" (on by default; untick it if you would rather open the
@@ -980,7 +980,7 @@ distribution of limited resources. This feature is only available to
 characters with officer note viewing permissions.
 
 To configure request limits:
-1. Press ESC -> Interface -> AddOns -> TOGBankClassic
+1. Press ESC -> Interface -> AddOns -> Ultimate Bank
 2. Click the "Officer" section (only visible to officers)
 3. Adjust the "Maximum Request Amount" slider (1% - 100%)
 4. Changes automatically sync to all guild members
@@ -1032,7 +1032,7 @@ Found a bug? Have a suggestion? We'd love to hear from you!
 - Contact the addon authors in-game
 
 When reporting bugs, please include:
-1. Your TOGBankClassic version (/togbank version)
+1. Your Ultimate Bank version (/togbank version)
 2. Steps to reproduce the problem
 3. Any error messages (enable /togbank debug for details)
 4. Your WoW client version
@@ -1429,7 +1429,7 @@ Special thanks to:
 
 Libraries Used:
 
-Installed automatically alongside TOGBankClassic (required):
+Installed automatically alongside Ultimate Bank (required):
 - Ace3 framework (AceAddon, AceComm, AceConfig, AceDB, AceEvent, AceGUI)
 - VersionCheck-1.0 - tells you when a newer version is available
 - LibGuildRoster - guild roster and online/offline tracking (v1.4.0+)
@@ -1456,12 +1456,12 @@ Bundled with the addon:
 LICENSE
 ================================================================================
 
-TOGBankClassic is released under the GNU General Public License v3.0
+Ultimate Bank is released under the GNU General Public License v3.0
 See LICENSE file for full license text.
 
 ================================================================================
 
-Thank you for using TOGBankClassic!
+Thank you for using Ultimate Bank!
 
 For the latest updates and information, visit:
 https://www.curseforge.com/wow/addons/togbankclassic

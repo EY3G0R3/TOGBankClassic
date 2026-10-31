@@ -630,6 +630,8 @@ function M.releaseBlizOptions()
 	if not ACD then return end
 	ACD.BlizOptions["TOGBankClassic"] = nil
 	ACD.BlizOptions["TOGBankClassic/Bank"] = nil
+	-- BlizOptionsIDMap is keyed by the DISPLAY name, which BRAND-002 made the brand.
+	ACD.BlizOptionsIDMap[TOGBankClassic_Constants and TOGBankClassic_Constants.BRAND or "Ultimate Bank"] = nil
 	ACD.BlizOptionsIDMap["TOGBankClassic"] = nil
 end
 
