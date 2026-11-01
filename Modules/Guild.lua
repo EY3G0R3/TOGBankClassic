@@ -3498,6 +3498,15 @@ function TOGBankClassic_Guild:SettingsSenderAuthorized(sender)
 	return (self:SenderHasGbankNote(sender) or self:SenderIsGM(sender) or self:SenderIsOfficer(sender)) and true or false
 end
 
+--- WIPE-001: may `sender`'s wipe-command clear this client's data? Only the home guild's GM or an
+--- officer -- never a bank character on its note alone, and never another guild's officer (the
+--- sender helpers answer true across sister guilds; see SettingsSenderAuthorized above).
+function TOGBankClassic_Guild:WipeSenderAuthorized(sender)
+	if sender == nil then return false end
+	if self.IsHomeMember and self.GuildOf and self:GuildOf(sender) and not self:IsHomeMember(sender) then return false end
+	return (self:SenderIsGM(sender) or self:SenderIsOfficer(sender)) and true or false
+end
+
 -- SETTINGS-FANOUT-001 (self-audit 4777d14a F2): a behind member's login hlb2 goes to the whole
 -- guild, and every client with standing that heard it answered -- six bankers and two officers
 -- online sent eight identical settings whispers where one does the job. ONE responder is picked,
@@ -4951,13 +4960,7 @@ end
 
 
 
--- Protocol version helper functions
-
--- Check if delta sync should be used
--- Delta protocol delegated to DeltaComms module
-function TOGBankClassic_Guild:ShouldUseDelta()
-	return TOGBankClassic_DeltaComms:ShouldUseDelta()
-end
+-- DEAD-DELTA-FLAGS-001: `ShouldUseDelta`, a wrapper over DeltaComms' with no caller, was here.
 
 -- INV2-RETIRE-003: `UsesSYNC006` ("does this client use the aggregated alt.items format" --
 -- always true, no caller) was deleted here with the aggregate it described.
@@ -4972,9 +4975,17 @@ function TOGBankClassic_Guild:EstimateSize(data)
 	return TOGBankClassic_DeltaComms:EstimateSize(data)
 end
 
+--- WIPE-001: the guard used to read `not guild and not CanViewOfficerNote()`, so it stopped only a
+--- guildless non-officer: any member could send the guild-wide wipe, and a guildless officer reached
+--- the concatenation below with a nil guild. Sending is now officer-only; a "reply" (this client
+--- obeying a wipe it heard) is gated on the SENDER in Chat's receive branch, never on our own rank.
 function TOGBankClassic_Guild:Wipe(type)
 	local guild = TOGBankClassic_Guild:GetGuild()
-	if not guild and not CanViewOfficerNote() then
+	if not guild then
+		return
+	end
+	if type ~= "reply" and not CanViewOfficerNote() then
+		TOGBankClassic_Output:Response("Only officers can wipe every guildmate's Ultimate Bank data. /togbank wipe clears your own.")
 		return
 	end
 	local wipe = "I wiped all addon data from " .. guild .. "."

@@ -44,7 +44,6 @@
 <li>Out-Of-Date Requesters: a request from a guildmate whose addon is too old to see the current bank contents shows their version beside their name, so a banker knows why an item may not be where they expect</li>
 <li>Requests Archive: Requests older than a configurable threshold automatically move to an Archive tab, keeping the main view focused</li>
 <li>Stale Request Management: orders left unfilled past your chosen age close automatically, and officers can clear them in one go with the "Cancel Stale" button</li>
-<li>Priority System: Mark requests as Rush, High, Normal, or Low priority for better organization</li>
 <li>Officer Controls: Officers can configure guild-wide request percentage limits (1-100% of inventory)</li>
 </ul>
 
@@ -73,7 +72,7 @@
 <h3>Guild Shop, Donation Points and One Price List</h3>
 
 <ul>
-<li>Shop Tab: for a guild bank that sells, an officer switches on a fifth tab &mdash; the bank's items with an <strong>Est.</strong> column showing what each is worth, from your price sources, and a hover that says where the figure came from and how old it is. Off by default; most guild banks are not shops, and off, nothing changes</li>
+<li>Shop Tab: for a guild bank that sells, an officer switches on a Shop tab &mdash; the bank's items with an <strong>Est.</strong> column showing what each is worth, from your price sources, and a hover that says where the figure came from and how old it is. Off by default; most guild banks are not shops, and off, nothing changes</li>
 <li>Shop Orders: while the shop is on, every request is a shop order &mdash; the request dialog shows the estimate (with any discount), the order remembers what you were shown, and the bank character sets the real price when it is filled</li>
 <li>Open And Closed: officers close ordering guild-wide for a stocktake or while nobody is around to fill orders, put the whole shop on sale with a percentage <strong>Shop discount</strong>, and take a single item off the list with Ctrl+right-click (it stays visible, marked not for sale)</li>
 <li>Donation Points: what you mail to a bank character earns points, valued the moment it arrives at a rate the officers set &mdash; a cautious market figure, never a spike, never less than a vendor pays &mdash; written down once and never changed. <code>/togbank donations</code> prints the board; the <strong>Donations</strong> window shows it to everyone with your own balance; officers can correct a balance with a reason that is kept</li>
@@ -142,7 +141,7 @@
 
 <ul>
 <li>Automatic Detection: Add "gbank" to Public Note or Officer Note&mdash;addon handles the rest. Write what the bank keeps beside it (&quot;gbank herbs, potions&quot;) and it shows in the Bankers tab's <strong>Stores</strong> column</li>
-<li>Auto-Scan: Configure to scan bank/bags/mail automatically when opened</li>
+<li>Automatic Scans: your bags and bank are read each time you close the bank, and your mail when you use a mailbox &mdash; nothing to configure</li>
 <li>Mail Fulfillment: Receive requests, click Fulfill, send mail&mdash;streamlined 3-step process, with the recipient filled in for you</li>
 <li>Highlight Needed Items: tick <strong>Highlight needed items</strong> on the Requests tab and everything in your bags and bank that no open order needs is greyed out, so what to send stands out &mdash; only the exact variant ordered, for items with a random suffix. It works with the default bags (on WoW Forever the Combined Backpack and the bank tabs too), Bagnon, ElvUI and Baganator, and is remembered between sessions</li>
 <li>Bank Collection: click the same Fulfill button at your bank to pull out what open orders need before you head to the mailbox &mdash; and when your bags are full, it swaps something no order needs into the bank to make room</li>
@@ -270,8 +269,7 @@
 <h3>Resetting Data</h3>
 
 <ul>
-<li><code>/togbank wipe</code> &mdash; clear this guild's stored data (it re-syncs from your guild afterwards)</li>
-<li><code>/togbank wipeall</code> &mdash; clear everything and start fresh</li>
+<li><code>/togbank wipe</code> &mdash; clear this guild's stored data on your own client (it re-syncs from your guild afterwards); <code>/togbank reset</code> does the same</li>
 </ul>
 
 <h3>Troubleshooting</h3>
@@ -296,10 +294,10 @@
 <h3>Key Settings</h3>
 
 <ul>
-<li>General: Minimap button, hide in combat, <strong>Window and Text Size</strong> (80% to 200%, per character), chat message volume, sounds, <strong>Keep syncing in a raid group</strong> (off by default), <strong>Open the Mailbox window at a mailbox</strong> (on by default) and <strong>Mailbox window on non-bank characters</strong> (off by default) and <strong>Show bank stock in item tooltips</strong> (on by default)</li>
+<li>General: Minimap button, hide during combat, <strong>Window and Text Size</strong> (80% to 200%, per character), network status on the status bar, how much the addon says in chat (with separate mutes for sync progress and for warnings), a sound when an order is filled, <strong>Keep syncing in a raid group</strong> (off by default), <strong>Open the Mailbox window at a mailbox</strong> (on by default), <strong>Mailbox window on non-bank characters</strong> (off by default), <strong>Show bank stock in item tooltips</strong> (on by default), and the <code>/bank</code> and <code>/gbank</code> shortcuts</li>
 <li>Appearance: A transparency slider for each window, <strong>Reset All Windows to Solid</strong>, <strong>Recenter All Windows</strong> for a window lost off screen, <strong>Close windows with Escape</strong> (on by default), and <strong>Pulsing glow on cancelled requests</strong> (on by default)</li>
 <li>Bank (bank characters only): <strong>Enable for &lt;character&gt;</strong> &mdash; the one switch that governs whether this bank is scanned and shared &mdash; <strong>Enable donations</strong> (the Donation window at the mailbox for each gift; off by default), <strong>Hide soulbound items from the guild</strong>, and the donation options</li>
-<li>Officer, in three sections: <em>Request settings</em> &mdash; request limits and how long requests stay open; <em>Shop</em> &mdash; <strong>Shop</strong> turns the Shop tab on for a guild bank that sells (off by default), <strong>Shop ordering open</strong> is the shop's open/closed sign, <strong>Shop discount</strong> a percentage off every estimate on the Shop tab; <em>Donations and pricing</em> &mdash; <strong>Donation points per gold</strong>, what a donation earns (1 by default), and <strong>Price authority</strong>, the character whose price sources become the guild's one price list; <em>Sister guilds</em> &mdash; <strong>Sister-guild bank</strong>, which opens this bank to the guilds listed as sisters in Guild Roster (off by default; both guilds' officers must list each other there, or nothing is shared)</li>
+<li>Officer (only shown to those who can read officer notes), in four sections plus your own help notes: <em>Request settings</em> &mdash; request limits, when old requests move to the Archive tab, and how long unfilled requests stay open; <em>Shop</em> &mdash; <strong>Shop</strong> turns the Shop tab on for a guild bank that sells (off by default), <strong>Shop ordering open</strong> is the shop's open/closed sign, <strong>Shop discount</strong> a percentage off every estimate on the Shop tab; <em>Donations and pricing</em> &mdash; <strong>Donation points per gold</strong>, what a donation earns (1 by default), and <strong>Price authority</strong>, the character whose price sources become the guild's one price list; <em>Sister guilds</em> &mdash; <strong>Sister-guild bank</strong>, which opens this bank to the guilds listed as sisters in Guild Roster (off by default; both guilds' officers must list each other there, or nothing is shared)</li>
 <li>Debug: Persistent logging and debug categories</li>
 </ul>
 
@@ -343,10 +341,10 @@
 <li>World of Warcraft Mists of Pandaria Classic (Interface 50504) &mdash; new and not yet tested with a guild; please report anything that looks wrong</li>
 <li>World of Warcraft Forever (Interface 16001) &mdash; new: checked on one bank character, but syncing between several players there has not been tried yet; please report anything that looks wrong</li>
 <li>Works alongside other guild management addons</li>
-<li>Other bag addons are not interfered with, but item highlighting only supports the four listed above &mdash; everything else in the addon works normally regardless of which bag addon you run</li>
+<li>Other bag addons are not interfered with, but item highlighting only supports the default bags and the three listed above &mdash; everything else in the addon works normally regardless of which bag addon you run</li>
 </ul>
 
-<h2>Works With the Rest of the TOG Addons</h2>
+<h2>Works With Our Other Addons</h2>
 
 <h3>Ultimate Profession Master</h3>
 
@@ -364,20 +362,30 @@
 
 <h3>Shared Foundations</h3>
 
-<p>The TOG addons are built on a common set of libraries rather than each reinventing the same plumbing:</p>
+<p>Ultimate Bank and its sister addons are built on a common set of libraries rather than each reinventing the same plumbing:</p>
 
 <ul>
 <li><strong>DeltaSync</strong> &mdash; the guild-sync engine that keeps data current across members</li>
 <li><strong>LibGuildRoster</strong> &mdash; guild roster and online/offline tracking</li>
 <li><strong>AceCommQueue</strong> &mdash; keeps addon traffic orderly so nothing arrives garbled</li>
 <li><strong>ItemDB</strong> &mdash; an offline item database, so item names and details work without waiting on the game to load them</li>
-<li><strong>LibAceGUIWidgets</strong> &mdash; the search box, date picker, pulsing highlights and window-position memory the TOG windows share, so they all look and behave alike</li>
+<li><strong>LibAceGUIWidgets</strong> &mdash; the search box, date picker, pulsing highlights and window-position memory these addons' windows share, so they all look and behave alike</li>
 <li><strong>VersionCheck</strong> &mdash; tells you when a newer version is out</li>
 </ul>
 
-<p>In practice that means a fix to the shared sync layer benefits every TOG addon at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
+<p>In practice that means a fix to the shared sync layer benefits every addon built on it at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
 
 <h2>Recent Updates</h2>
+
+<h3>v1.11.1 - Tidy-Up</h3>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>Clearing every guildmate's addon data at once is now an officer's command only. Before, any guild member could send it, and everyone's addon obeyed.</li>
+<li>Typing a word after <code>/togbank debuglog</code> now shows only the log lines containing it, as the help always said.</li>
+<li>The Requests window's Archive tab tooltip now says what is there: requests older than the archive threshold, open ones included.</li>
+<li>This page and the readme now describe the settings and commands as they really are.</li>
+</ul>
 
 <h3>v1.11.0 - Now Ultimate Bank</h3>
 
@@ -660,7 +668,7 @@
 
 <h2>License</h2>
 
-<p>TOGBankClassic is open-source software. See LICENSE file for details.</p>
+<p>Ultimate Bank is open-source software, released under the MIT License. The full text is in the LICENSE file that ships with the addon.</p>
 
 <h2>Perfect For</h2>
 
@@ -676,16 +684,15 @@
 
 <ol>
 <li>Designate 2-3 bank alts: Spread items across multiple characters for better organization</li>
-<li>Use Officer Notes: Keep Public Notes clean by adding "gbank" to Officer Notes instead</li>
-<li>Regular Scans: Bank alts should scan inventory daily to keep data fresh</li>
+<li>Use Officer Notes: Keep Public Notes clean by adding "gbank" to Officer Notes instead &mdash; unless you share the bank with sister guilds, which can only see the <em>public</em> note</li>
+<li>Regular Scans: Bank alts should open and close their bank regularly to keep data fresh</li>
 <li>Request Limits: Set limits to 50-75% to prevent single members from depleting stocks</li>
-<li>Priority System: Train members to use Normal priority unless truly urgent</li>
-<li>Mail Monitoring: Enable mail scanning to track items in transit</li>
+<li>Visit The Mailbox: Bank alts should open their mailbox now and then, so items in transit are counted</li>
 </ol>
 
 <hr>
 
-<p>Download TOGBankClassic today and revolutionize your guild's bank management!</p>
+<p>Download Ultimate Bank today and revolutionize your guild's bank management!</p>
 
 <p>No more alt-hopping. No more whisper spam. Just efficient, organized guild banking.</p>
 
@@ -700,7 +707,7 @@
 
 <ul>
 <li>Type <code>/togbank debuglog</code> in-game and include the output.</li>
-<li>Mention which game version you are on (Classic Era or Burning Crusade).</li>
+<li>Mention which game version you are on (Classic Era, The Burning Crusade, Mists of Pandaria Classic or WoW Forever).</li>
 <li>Say which bag addon you use, if any &mdash; Bagnon, Baganator, ElvUI or the default bags.</li>
 <li>Quote the wording from the patch notes above, if one of them describes what you are seeing.</li>
 </ul>

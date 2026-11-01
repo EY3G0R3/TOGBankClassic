@@ -275,8 +275,8 @@ local COMM_PREFIX_DESCRIPTIONS = {
 local PROTOCOL = {
 	VERSION = 2,                    -- Current protocol version (bump for breaking changes)
 	SUPPORTS_DELTA = true,          -- This client supports delta updates
-	MIN_DELTA_SIZE_RATIO = 0.3,     -- Only use delta if <30% of full sync size
-	DELTA_SUPPORT_THRESHOLD = 0.05, -- Use delta if >5% of online guild supports it (lowered for testing: 1 of 14 = 7.1%)
+	-- DEAD-DELTA-FLAGS-001: MIN_DELTA_SIZE_RATIO (never read) and DELTA_SUPPORT_THRESHOLD (read only
+	-- by a printout that misreported it as switching delta sync on/off) were deleted here.
 	-- WIRE-SKEW-001: the first addon version whose data leg is the DeltaSync QUERY (v1.5.0 retired
 	-- togbank-state, with no wire back-compat). A peer that announces an OLDER version in its
 	-- hlb2 broadcast cannot answer our query nor send one we read, so it is neither asked nor
@@ -306,12 +306,9 @@ local PEER_TO_PEER = {
 	MAX_ACTIVE_SENDS = 3,
 }
 
--- Feature flags (for easy enable/disable during development/testing)
-local FEATURES = {
-	DELTA_ENABLED = true,           -- Enable delta sync protocol
-	FORCE_DELTA_SYNC = false,       -- Force delta sync (bypass thresholds) for testing
-	FORCE_FULL_SYNC = false,        -- Force full sync (disable delta) for testing
-}
+-- DEAD-DELTA-FLAGS-001: the FEATURES table (DELTA_ENABLED, FORCE_DELTA_SYNC, FORCE_FULL_SYNC) was
+-- here. Its only reader, DeltaComms:ShouldUseDelta, had no caller, so the flags and the dev
+-- commands that set them changed nothing. Dev-time switches live in Modules/Switches.lua.
 
 -- Container geometry, BANKSLOT-001. THE ONE SPELLING of which bag ids are carried and which are the
 -- bank's: Blizzard's own expression from BankFrame.lua:245,
@@ -446,7 +443,6 @@ TOGBankClassic_Constants = {
 	COMM_PREFIX_DESCRIPTIONS = COMM_PREFIX_DESCRIPTIONS,
 	PROTOCOL                 = PROTOCOL,
 	PEER_TO_PEER             = PEER_TO_PEER,
-	FEATURES                 = FEATURES,
 	CarriedBagRange          = CarriedBagRange,
 	BankBagRange             = BankBagRange,
 	BankContainers           = BankContainers,

@@ -132,6 +132,24 @@ describe("CMD-001: /togbank argument plumbing", function()
 		assert.truthy(text:find("Bankchar-Testrealm: no V2 record held", 1, true), "the handler did not run with its banker argument: " .. text)
 	end)
 
+	-- DEBUGLOG-FILTER-001: the handler read only the first word, so the keyword never arrived.
+	it("hands /togbank debuglog its count and its filter, the filter alone, or neither", function()
+		local asked = {}
+		TOGBankClassic_Output.ExportPersistentLogCompact = function(_, count, filter)
+			asked[#asked + 1] = { count = count, filter = filter }
+			return "", 0
+		end
+		TOGBankClassic_Chat:ChatCommand("debuglog 100 MAIL sync")
+		TOGBankClassic_Chat:ChatCommand("debuglog MAIL")
+		TOGBankClassic_Chat:ChatCommand("debuglog 50")
+		TOGBankClassic_Chat:ChatCommand("debuglog")
+		assert.equal(4, #asked)
+		assert.same({ count = 100, filter = "MAIL sync" }, asked[1], "the filter after a count was dropped")
+		assert.same({ count = 500, filter = "MAIL" }, asked[2], "a filter with no count was read as a bad count")
+		assert.same({ count = 50 }, asked[3])
+		assert.same({ count = 500 }, asked[4])
+	end)
+
 	it("leaves a bare dev subcommand working, with no arguments", function()
 		-- A KNOWN state is established first and the assertion is that it is UNCHANGED. An earlier
 		-- form used `is_false` as a stand-in for "unchanged", which only worked while the switch

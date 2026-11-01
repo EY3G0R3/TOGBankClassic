@@ -6,10 +6,8 @@ local ADOPTION_STATUS          = TOGBankClassic_Constants.ADOPTION_STATUS
 local COMM_PREFIX_DESCRIPTIONS = TOGBankClassic_Constants.COMM_PREFIX_DESCRIPTIONS
 local DEBUG_CATEGORY           = TOGBankClassic_Constants.DEBUG_CATEGORY
 local DEBUG_TAGS               = TOGBankClassic_Constants.DEBUG_TAGS
-local FEATURES                 = TOGBankClassic_Constants.FEATURES
 local LOG_LEVEL                = TOGBankClassic_Constants.LOG_LEVEL
 local PEER_TO_PEER             = TOGBankClassic_Constants.PEER_TO_PEER
-local PROTOCOL                 = TOGBankClassic_Constants.PROTOCOL
 local TIMER_INTERVALS          = TOGBankClassic_Constants.TIMER_INTERVALS
 
 -- Store pre-debug log level for restoration
@@ -943,7 +941,12 @@ function TOGBankClassic_Chat:OnCommReceived(prefix, message, distribution, sende
 				self.last_share_sync = now
 			end
 		elseif data.type == "wipe-command" then
-			TOGBankClassic_Guild:Wipe("reply")
+			-- WIPE-001: obeyed only from the home guild's GM or an officer.
+			if TOGBankClassic_Guild:WipeSenderAuthorized(sender) then
+				TOGBankClassic_Guild:Wipe("reply")
+			else
+				TOGBankClassic_Output:Debug("COMMS", "Ignored a wipe-command from %s: not an officer of this guild", tostring(sender))
+			end
 		-- SETTINGS-001: Receive and apply guild-wide settings broadcast from an authorized sender
 		elseif data.type == "guild-settings" then
 			if data.settings then
@@ -1316,20 +1319,22 @@ local COMMAND_REGISTRY = {
 		usage = "[N] [filter]",
 		help = "export last N debug log entries (default 500), optionally filtered by keyword",
 		expert = true,
-		handler = function(arg1)
-			local args = tostring(arg1 or ""):trim()
+		-- DEBUGLOG-FILTER-001: since CMD-001 the dispatcher hands the first word as arg1 and the
+		-- remainder as `rest`; this handler read arg1 alone, so the filter was always dropped. A
+		-- first word that is not a number is the start of the filter ("/togbank debuglog MAIL").
+		handler = function(arg1, rest)
+			local args = (tostring(arg1 or "") .. " " .. tostring(rest or "")):trim()
 			local count, filter = 500, nil
 
-			-- Parse arguments: first is count, rest is filter
 			if args ~= "" then
-				local firstSpace = args:find(" ")
-				if firstSpace then
-					count = tonumber(args:sub(1, firstSpace - 1)) or 500
-					filter = args:sub(firstSpace + 1):trim()
-					if filter == "" then filter = nil end
+				local first, remainder = args:match("^(%S+)%s*(.*)$")
+				if tonumber(first) then
+					count = tonumber(first)
+					filter = remainder
 				else
-					count = tonumber(args) or 500
+					filter = args
 				end
+				if filter == "" then filter = nil end
 			end
 
 			local log, matchCount = TOGBankClassic_Output:ExportPersistentLogCompact(count, filter)
@@ -1441,44 +1446,9 @@ local COMMAND_REGISTRY = {
 			TOGBankClassic_Output:RemoveDebugTab()
 		end,
 	},
-	{
-		name = "forcedelta",
-		help = "force delta sync mode (on|off) - bypass thresholds for testing",
-		expert = true,
-		handler = function(arg)
-			if arg == "on" then
-				FEATURES.FORCE_DELTA_SYNC = true
-				FEATURES.FORCE_FULL_SYNC = false
-				TOGBankClassic_Output:Response("Force delta sync: ENABLED (will always use delta)")
-			elseif arg == "off" then
-				FEATURES.FORCE_DELTA_SYNC = false
-				TOGBankClassic_Output:Response("Force delta sync: DISABLED (normal behavior)")
-			else
-				local status = FEATURES.FORCE_DELTA_SYNC and "ON" or "OFF"
-				TOGBankClassic_Output:Response("Force delta sync: %s", status)
-				TOGBankClassic_Output:Response("Usage: /togbank forcedelta [on|off]")
-			end
-		end,
-	},
-	{
-		name = "forcefull",
-		help = "force full sync mode (on|off) - disable delta for testing",
-		expert = true,
-		handler = function(arg)
-			if arg == "on" then
-				FEATURES.FORCE_FULL_SYNC = true
-				FEATURES.FORCE_DELTA_SYNC = false
-				TOGBankClassic_Output:Response("Force full sync: ENABLED (will never use delta)")
-			elseif arg == "off" then
-				FEATURES.FORCE_FULL_SYNC = false
-				TOGBankClassic_Output:Response("Force full sync: DISABLED (normal behavior)")
-			else
-				local status = FEATURES.FORCE_FULL_SYNC and "ON" or "OFF"
-				TOGBankClassic_Output:Response("Force full sync: %s", status)
-				TOGBankClassic_Output:Response("Usage: /togbank forcefull [on|off]")
-			end
-		end,
-	},
+	-- DEAD-DELTA-FLAGS-001: `dev forcedelta` and `dev forcefull` were here. They flipped
+	-- FEATURES.FORCE_DELTA_SYNC / FORCE_FULL_SYNC, read only by DeltaComms:ShouldUseDelta, which
+	-- nothing called -- so each printed "ENABLED" and changed nothing. Deleted with the flags.
 	{
 		name = "perfstats",
 		help = "show performance metrics for current session",
@@ -2569,8 +2539,6 @@ local DEV_COMMAND_NAMES = {
 	deltaerrors            = true,
 	deltahistory           = true,
 	deltastats             = true,
-	forcedelta             = true,
-	forcefull              = true,
 	hashdebug              = true,
 	hashdump               = true,
 	hashupdate             = true,
@@ -3166,7 +3134,6 @@ function TOGBankClassic_Chat:PrintProtocolInfo()
 
 	-- Get guild delta support
 	local support = TOGBankClassic_Database:GetGuildDeltaSupport(guild)
-	local threshold = PROTOCOL.DELTA_SUPPORT_THRESHOLD
 
 	-- Count versions
 	local db = TOGBankClassic_Database.db.faction[guild]
@@ -3238,15 +3205,10 @@ function TOGBankClassic_Chat:PrintProtocolInfo()
 		TOGBankClassic_Output:Response("")
 	end
 
-	-- Display threshold status
-	-- GLYPH-001: ASCII only -- the client's fonts have no check mark, warning sign or >= glyph, and
-	-- each rendered as an empty box (operator screenshot, 2026-09-13).
-	local statusIcon = support >= threshold and "|cff00ff00[OK]|r" or "|cffff0000[LOW]|r"
-	local statusText = support >= threshold and "enabled" or "disabled"
-	TOGBankClassic_Output:Response("%s Delta sync %s (%.1f%% %s %.0f%% threshold)",
-		statusIcon, statusText, support * 100,
-		support >= threshold and ">=" or "<",
-		threshold * 100)
+	-- DEAD-DELTA-FLAGS-001: this used to print "Delta sync enabled/disabled" against
+	-- DELTA_SUPPORT_THRESHOLD, which governed nothing (the decision it described had no caller), so
+	-- the line could say "disabled" while every transfer ran. The share is reported as a share.
+	TOGBankClassic_Output:Response("Protocol v2 share of recently seen members: %.1f%%", support * 100)
 
 	-- Display recent members
 	if #recentMembers > 0 then

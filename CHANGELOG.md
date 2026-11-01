@@ -1,5 +1,42 @@
 # Ultimate Bank Changelog (formerly TOG Bank / TOGBankClassic)
 
+## [v1.11.1] (2026-10-31) - Tidy-Up
+
+### Bug Fixes
+
+- **WIPE-001: any guild member could wipe every guildmate's data.** `Guild:Wipe`'s guard read
+  `if not guild and not CanViewOfficerNote()`, so it stopped only a guildless non-officer: any member
+  could send `/togbank dev wipeall`, and a guildless officer reached a nil concatenation. The receive
+  branch (`Modules/Chat.lua`, `wipe-command`) never asked who sent it. Sending is now officer-only
+  (with a chat line saying so), and a heard wipe is obeyed only from the home guild's GM or an
+  officer (`Guild:WipeSenderAuthorized`, `Modules/Guild.lua`) -- never a bank character on its note,
+  never a sister guild's officer. Found by the 2026-10-31 docs audit, which also found README.txt
+  calling it officer-only. `Tests/settings_spec.lua` pins both sides.
+- **DEBUGLOG-FILTER-001: `/togbank debuglog [N] [filter]` ignored the filter.** Since CMD-001 the
+  dispatcher hands the first word and the remainder separately; the handler read the first word
+  only. It joins both again, and a non-numeric first word is the filter (`/togbank debuglog MAIL`).
+  `Tests/chatcommand_spec.lua` drives the typed command.
+- **ARCHIVE-TOOLTIP-001:** the Requests window's Archive tab tooltip said "Completed and cancelled
+  requests", but the tab splits by age alone, so an old open request is there too. Both tab tooltips
+  now say what the split is (`Modules/UI/Requests.lua`).
+
+### Internal
+
+- **DEAD-DELTA-FLAGS-001:** deleted `FEATURES` (`DELTA_ENABLED`, `FORCE_DELTA_SYNC`,
+  `FORCE_FULL_SYNC`), `PROTOCOL.MIN_DELTA_SIZE_RATIO` and `PROTOCOL.DELTA_SUPPORT_THRESHOLD`
+  (`Modules/Constants.lua`), `DeltaComms:ShouldUseDelta` and its `Guild:ShouldUseDelta` wrapper, and
+  the `/togbank dev forcedelta` / `forcefull` commands (`Modules/Chat.lua`). The decision function had
+  no caller, so the flags and both commands changed nothing while printing "ENABLED". `/togbank dev
+  protocol` no longer claims delta sync is "enabled/disabled" against the dead threshold; it prints
+  the protocol v2 share.
+- **Docs audit:** `docs/Curseforge_Description.html` and `README.txt` checked against the code.
+  Removed claims of features that do not exist (request priorities, an Auto-Scan setting, a mail
+  scanning setting, developer feature flags), corrected `/togbank wipeall` (it is `/togbank dev
+  wipeall`), the settings locations (the Officer tab's sections), the request flow (not a mail), the
+  license (MIT, not GPL v3), the tab position of Shop, the full General/Bank/Officer settings lists,
+  the request-limit status text, the companion addons' names (Ultimate Tools, Ultimate Profession
+  Master), and the support route (Discord). README.txt gained the v1.11.0 highlights.
+
 ## [v1.11.0] (2026-10-31) - Now Ultimate Bank
 
 ### Improvements

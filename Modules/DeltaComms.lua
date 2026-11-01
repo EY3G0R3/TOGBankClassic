@@ -4,11 +4,6 @@
 
 TOGBankClassic_DeltaComms = {}
 
--- NS-001: aliased as file-scope locals so a foreign global of the same name cannot be read
--- instead. See the header of Modules/Constants.lua.
-local PROTOCOL = TOGBankClassic_Constants.PROTOCOL
-local FEATURES = TOGBankClassic_Constants.FEATURES
-
 -- INV2 step 10: `ValidateDeltaStructure` and `ValidateItemDelta` were deleted here. They validated
 -- the `alt-delta` envelope and its added/modified/removed arrays -- a message shape this addon no
 -- longer sends or accepts. The tuple payload is validated by `Wire.isV2`/`Wire.decode` on the
@@ -313,24 +308,9 @@ end
 
 -- DELTA PROTOCOL FUNCTIONS --
 
--- Check if delta sync should be used
-function TOGBankClassic_DeltaComms:ShouldUseDelta()
-	-- Check force flags first (for testing)
-	if FEATURES and FEATURES.FORCE_DELTA_SYNC then
-		return true
-	end
-
-	-- Check feature flags
-	if not FEATURES or not FEATURES.DELTA_ENABLED then
-		return false
-	end
-	if FEATURES.FORCE_FULL_SYNC then
-		return false
-	end
-
-	-- No guild support threshold - clients will use delta if both sides support it
-	return PROTOCOL.SUPPORTS_DELTA
-end
+-- DEAD-DELTA-FLAGS-001: `ShouldUseDelta` was here, deciding from the FEATURES flags whether to
+-- send a delta. Nothing called it (Guild:ShouldUseDelta, its one wrapper, had no caller either):
+-- the delta/full choice is DeltaSync's. Deleted with the flags and the dev commands that set them.
 
 -- INV2 step 10: `StripDeltaLinks` WAS HERE, and it is deleted rather than bypassed, per the
 -- standing directive.

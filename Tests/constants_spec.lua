@@ -67,7 +67,6 @@ describe("Constants", function()
 		for _, name in ipairs({
 			"ADOPTION_STATUS", "TIMER_INTERVALS", "LOG_LEVEL", "DEBUG_CATEGORY", "DEBUG_TAGS",
 			"REQUEST_LOG", "REQUESTS_SYNC", "COMM_PREFIX_DESCRIPTIONS", "PROTOCOL", "PEER_TO_PEER",
-			"FEATURES",
 		}) do
 			assert.is_not_nil(TOGBankClassic_Constants[name],
 				name .. " is missing from TOGBankClassic_Constants")

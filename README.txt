@@ -3,7 +3,7 @@ Ultimate Bank - Guild Bank Inventory Management for WoW Classic Era, TBC, MoP
                 and WoW Forever (formerly TOG Bank / TOGBankClassic)
 ================================================================================
 
-Version: 1.11.0
+Version: 1.11.1
 Authors: Dominion-Myzrael, GrumpyPlayers (SG Soul), Lothsahn, Huntmehuntme,
          Pimptasty
 Website: https://www.curseforge.com/wow/addons/togbankclassic
@@ -67,7 +67,7 @@ KEY FEATURES:
 - "Highlight needed items" greys out everything in a bank character's bags
   and bank that no open order needs
 - A bank log: deposits, withdrawals, money and every request event, with who
-  was on each side - and handed to TOGTools for the long history
+  was on each side - and handed to Ultimate Tools for the long history
 - Guild-wide request limits for fair resource distribution (officers only),
   enforced however an order is placed
 - A filled order reaches every guildmate's Requests tab the moment it is
@@ -126,7 +126,7 @@ METHOD 2: MANUAL INSTALLATION (NOT RECOMMENDED)
 ------------------------------------------------
 Only use this method if you cannot use the CurseForge App:
 
-1. Download TOGBankClassic from CurseForge:
+1. Download Ultimate Bank from CurseForge:
    https://www.curseforge.com/wow/addons/togbankclassic/files
 
 2. Extract the downloaded ZIP file
@@ -159,7 +159,7 @@ FOR GUILD BANK CHARACTERS:
 2. Make sure the character is in your guild
 3. Add "gbank" to the character's Public Note OR Officer Note
 4. Type /reload to refresh the addon
-5. Press ESC -> Interface -> AddOns -> Ultimate Bank
+5. Press ESC -> Options -> AddOns -> Ultimate Bank
 6. Click the [-] icon to expand the Bank section
 7. Tick "Enable for <character>" - that is the one setting that lets this
    character's bank be scanned and shared. (It is on by default, so usually
@@ -265,8 +265,10 @@ SEARCHING FOR ITEMS:
   status (green current, red behind, yellow an update on its way).
 
 REQUESTING ITEMS:
-  Click an item's row to open the request dialog and send a mail request to
-  the bank character. They'll see your request the next time they log in.
+  Click an item's row to open the request dialog, choose how many, and send
+  the request. It travels to the guild through the addon - you do not mail
+  or whisper anyone - and shows on the bank character's Requests tab, the
+  next time they are online if they are not now. They mail the items to you.
 
   Shift-click an item (a row here, or an item in the Inventory or Search
   windows) to put its link in your chat box - or the auction house search
@@ -368,16 +370,16 @@ HIDING ITEMS FROM THE GUILD (bank characters):
   To the bank log, hiding looks like a withdrawal and showing like a deposit.
 
 THE SHOP TAB (guild banks that SELL items):
-  Off unless an officer turns it on - "Shop", under Requests in the addon's
-  options. Most guild banks are not shops; off, nothing changes. On, the
-  Guild Bank window gains a fifth tab, Shop: the bank's items with an "Est."
+  Off unless an officer turns it on - "Shop", in the Shop section of the
+  Officer settings. Most guild banks are not shops; off, nothing changes. On,
+  the Guild Bank window gains a Shop tab: the bank's items with an "Est."
   column showing what each is worth as an ESTIMATE from your price sources
   (type /itemdb to choose them and scan the auction house), and a hover that
   says where the number came from and how old it is. Every figure is an
   estimate - the bank character sets the real price when the order is
   filled. The whole guild sees the same tab within seconds of the switch.
-  Officers: untick "Ordering open" in the shop settings (under Requests in
-  the options) and nobody can place an order until an officer ticks it
+  Officers: untick "Shop ordering open" in the Shop section of the Officer
+  settings and nobody can place an order until an officer ticks it
   again - a stocktake, a pricing mistake, nobody around to fill orders.
   Anyone who clicks an item is told the guild bank is not taking orders
   right now. "Shop discount" beside it takes a percentage off every
@@ -395,8 +397,8 @@ DONATION POINTS:
   addon values it the moment it takes it out of the mail - a cautious figure
   from its price sources (the lowest current listing or the historical
   price, never a spike) and never less than a vendor would pay - at a rate
-  an officer sets ("Donation points per gold", under Requests in the
-  options; 1 by default). Gold mailed in counts too. The value is written
+  an officer sets ("Donation points per gold", in the Donations and pricing
+  section of the Officer settings; 1 by default). Gold mailed in counts too. The value is written
   down once and never changes, however the market moves afterwards. Points
   are a record for the whole guild: /togbank donations prints the board in
   chat, and /togbank donations window opens the Donations window - the same
@@ -409,7 +411,7 @@ THE GUILD PRICE LIST (one set of prices for everyone):
   Left alone, every client prices from its own price addons, so two bank
   characters can value the same donation differently and the estimate you
   see in the shop depends on what you have installed. An officer can name
-  a "Price authority" (under Requests in the options, with the shop
+  a "Price authority" (in the Donations and pricing section of the Officer
   settings): that character's price sources become the guild's price list,
   sent to everyone in the guild and kept on each client between sessions.
   Donations are then credited from it wherever they arrive, the Shop tab
@@ -471,7 +473,7 @@ THE BANK LOG:
   donation is logged as a deposit, naming the sender, when the bank character
   takes it out of the mail. Type a name, an item or an action in the search
   box, or narrow by date with Since and Until. Only the most recent entries
-  are kept here; if you run TOGTools, its Logs > Guild Bank tab keeps the
+  are kept here; if you run Ultimate Tools, its Logs > Guild Bank tab keeps the
   long history automatically.
 
 ================================================================================
@@ -543,7 +545,8 @@ Minimap button (click)
   the reason is required and kept).
 
 /togbank reset
-  Resets your Ultimate Bank database (clears all stored data)
+  Clears this guild's stored Ultimate Bank data on your own client; it
+  re-syncs from your guild afterwards (the same as /togbank wipe)
 
 
 EXPERT COMMANDS:
@@ -555,8 +558,10 @@ listed alphabetically for easy reference.
   Manually runs database compaction to prune old requests and log entries
 
 /togbank debuglog [N] [filter]
-  Exports last N debug log entries (default 500), optionally filtered by keyword
+  Exports the last N debug log entries (default 500), optionally only those
+  containing a keyword
   Example: /togbank debuglog 100 MAIL
+  Example: /togbank debuglog MAIL
   Example: /togbank debuglog 1000
 
 /togbank debuglogclear
@@ -588,10 +593,12 @@ listed alphabetically for easy reference.
   uses them.
 
 /togbank wipe
-  Resets your own Ultimate Bank database
+  Clears this guild's stored Ultimate Bank data on your own client (the same
+  as /togbank reset)
 
-/togbank wipeall
-  (OFFICER ONLY) Resets database for all online guild members
+/togbank dev wipeall
+  Clears the stored data of EVERY online guild member running the addon, not
+  just yours. A diagnostic command for officers.
   WARNING: This affects everyone - use with caution!
 
 /togbank wipeframes
@@ -836,7 +843,8 @@ SOLUTION:
   - Make sure at least one guild member with bank data is online and has
     the addon installed
   - Try typing /togbank sync to manually request data
-  - Verify bank characters have "gbank" in their note and reporting enabled
+  - Verify bank characters have "gbank" in their note and "Enable for
+    <character>" ticked in their Bank settings
 
 PROBLEM: Data seems outdated
 SOLUTION:
@@ -881,7 +889,7 @@ SOLUTION:
   - Enable debug mode with /togbank debug to see detailed error information
   - For easier debugging, use /togbank debugtab to create a separate chat tab
     for debug output (keeps your General tab clean)
-  - Use /togbank debuglog 500 DELTA to export recent delta-related logs for a bug report
+  - Use /togbank debuglog 500 to export the recent log for a bug report
 
 PROBLEM: Debug output cluttering my chat
 SOLUTION:
@@ -910,22 +918,29 @@ SOLUTION:
 
 PROBLEM: Can't request items
 SOLUTION:
-  - Make sure you're not the bank character (can't mail to yourself)
-  - Check that you have mailbox access
-  - Verify the bank character name is spelled correctly
+  - The bank character may be view-only (its note says viewonly, readonly or
+    gbankro): its items can be seen but not requested
+  - If your guild runs a shop, an officer may have closed shop ordering or
+    taken that item off sale; the request dialog says which
+  - The officers' request limit may already be used up by your own open
+    orders of that item; the request dialog shows how many you have on order
 
 ================================================================================
 ADVANCED CONFIGURATION
 ================================================================================
 
 OPTIONS PANEL:
-  Press ESC -> Interface -> AddOns -> Ultimate Bank
+  Press ESC -> Options -> AddOns -> Ultimate Bank (or shift-click the
+  minimap button)
 
   Available settings:
   - General: minimap button, hide in combat, "Window and Text Size" (the
     accessibility slider: 80% to 200%, it enlarges the writing, the icons
     and the row height of every Ultimate Bank window together, saved for this
-    character and restored at login), chat message volume, "Keep
+    character and restored at login), network status on the status bar,
+    how much the addon says in chat (with separate mutes for sync progress
+    and for warnings), a sound when an order is filled, the /bank and /gbank
+    shortcuts, "Keep
     syncing in a raid group" (off by default), "Open the Mailbox window
     at a mailbox" (on by default; untick it if you would rather open the
     window yourself with /togbank mailbox or the mail frame's button) and
@@ -938,22 +953,27 @@ OPTIONS PANEL:
     windows with Escape" (on by default) and "Pulsing glow on cancelled
     requests" (on by default)
   - Bank (bank characters only): "Enable for <character>" - the one switch
-    that governs whether this bank is scanned and shared - "Enable
-    donations" (the Donation window at the mailbox for each gift; off by
-    default), "Hide soulbound items from the guild", and the donation options
+    that governs whether this bank is scanned and shared - "Report
+    contributions" (the "Received X from Y" chat lines), "Enable donations"
+    (the Donation window at the mailbox for each gift; off by default),
+    "Hide soulbound items from the guild", and a button to reset this
+    character's data
   - Debug: persistent logging and the debug categories (tick LOG to watch
     the bank log being written)
-  - (OFFICERS ONLY) Officer tab: guild-wide request limits, how long a
-    request stays open before it is archived or auto-cancelled, "Shop"
-    (turns the Shop tab on for a guild bank that sells; off by default),
-    "Ordering open" (the shop's open/closed sign), "Shop discount" (a
-    percentage off every estimate on the Shop tab),
-    "Donation points per gold" (what a donation earns; 1 by default),
-    "Price authority" (the character whose price sources become the
-    guild's one price list; blank for none), "Sister-guild bank" (opens
-    this bank to the guilds listed as sisters in Guild Roster; off by
-    default, and both guilds' officers must switch it on), and
-    the help notes appended to each window's ? tooltip. Custom cancel
+  - (OFFICERS ONLY) Officer tab, in sections:
+    Request Settings - "Maximum Request Amount", "Archive Threshold (days)"
+    (when old requests move to the Archive tab) and "Auto-Cancel Stale
+    Requests (days)".
+    Shop - "Shop" (turns the Shop tab on for a guild bank that sells; off by
+    default), "Shop ordering open" (the shop's open/closed sign) and "Shop
+    discount" (a percentage off every estimate on the Shop tab).
+    Donations and pricing - "Donation points per gold" (what a donation
+    earns; 1 by default) and "Price authority" (the character whose price
+    sources become the guild's one price list; blank for none).
+    Sister guilds - "Sister-guild bank" (opens this bank to the guilds
+    listed as sisters in Guild Roster; off by default, and both guilds'
+    officers must switch it on).
+    Guild Help Notes - your own text appended to each window's ? tooltip. Custom cancel
     reasons are on the Requests tab's own Settings sub-tab. Every officer
     setting knows which change is newest, so a bank character who logs in
     holding old values cannot undo yours.
@@ -980,9 +1000,9 @@ distribution of limited resources. This feature is only available to
 characters with officer note viewing permissions.
 
 To configure request limits:
-1. Press ESC -> Interface -> AddOns -> Ultimate Bank
+1. Press ESC -> Options -> AddOns -> Ultimate Bank
 2. Click the "Officer" section (only visible to officers)
-3. Adjust the "Maximum Request Amount" slider (1% - 100%)
+3. Adjust the "Maximum Request Amount" slider (1 to 100, a percentage)
 4. Changes automatically sync to all guild members
 
 How it works:
@@ -994,7 +1014,7 @@ How it works:
   more, not another 50. Once an order is mailed or cancelled, it stops
   counting
 - The limit applies however the order is placed - the request dialog, or
-  another addon's request button (such as TOG Profession Master's [Bank])
+  another addon's request button (such as Ultimate Profession Master's [Bank])
 - Single items (gear, weapons) are protected - members can always request
   at least 1 if available, regardless of percentage
 - The setting syncs guild-wide, so all members use the same limits
@@ -1010,16 +1030,10 @@ Common use cases:
 
 Request interface behavior:
 - Slider maximum is automatically capped at the configured percentage
-- Status text shows: "Available: 100 (Max: 50% = 50)"
+- Status text shows: "Available: 100 (max 50% = 50)", or with orders of
+  your own open: "Available: 100 (max 50%, 30 already on order: 20 more)"
 - Validation message if over limit: "Reduced to max allowed: 50 items
   (50% of 100 available)"
-
-FEATURE FLAGS (for developers):
-  Edit Modules/Constants.lua to adjust:
-  - FEATURES.DELTA_ENABLED: Enable/disable delta sync globally
-  - FEATURES.FORCE_FULL_SYNC: Force full sync (disable delta)
-  - PROTOCOL.MIN_DELTA_SIZE_RATIO: Threshold for delta vs full (default 30%)
-  - PROTOCOL.DELTA_SUPPORT_THRESHOLD: Required adoption % (default 50%)
 
 ================================================================================
 SUPPORT & FEEDBACK
@@ -1027,19 +1041,47 @@ SUPPORT & FEEDBACK
 
 Found a bug? Have a suggestion? We'd love to hear from you!
 
-- Report issues on CurseForge: https://www.curseforge.com/wow/addons/togbankclassic
-- Join our Discord community (if available)
-- Contact the addon authors in-game
+Discord is the only place bug reports and feature requests are tracked;
+reports left as CurseForge comments or elsewhere are likely to be missed.
+
+  Join the Discord: https://discord.com/invite/bY2R5TmBSz
 
 When reporting bugs, please include:
 1. Your Ultimate Bank version (/togbank version)
 2. Steps to reproduce the problem
-3. Any error messages (enable /togbank debug for details)
-4. Your WoW client version
+3. Any error messages, and the output of /togbank debuglog
+4. Which game version you play (Classic Era, The Burning Crusade, Mists of
+   Pandaria Classic or WoW Forever)
+5. Which bag addon you use, if any (Bagnon, Baganator, ElvUI or the
+   default bags)
 
 ================================================================================
 CHANGELOG HIGHLIGHTS
 ================================================================================
+
+Version 1.11.1:
+---------------
+BUG FIXES:
+- Clearing every guildmate's data (/togbank dev wipeall) is an officer's
+  command only, and is obeyed only from your own guild's GM or an officer
+- /togbank debuglog [N] [filter] shows only the lines containing the filter
+- The Archive tab's tooltip says it holds requests by age, open ones included
+
+CHANGES:
+- Removed /togbank dev forcedelta and forcefull, which changed nothing
+
+COMPATIBILITY: v1.11.1 works with v1.11.0 and v1.10.x. A guildmate on an
+older version still obeys a wipe from anyone until they update.
+
+Version 1.11.0:
+---------------
+CHANGES:
+- TOG Bank is now Ultimate Bank: every window, tooltip, chat message, the
+  settings page and the AddOns list carry the new name and icon. Saved data,
+  settings, the minimap button position and /togbank are unchanged
+
+COMPATIBILITY: v1.11.0 works with v1.10.x. Nothing it sends between players
+changed.
 
 Version 1.10.1:
 ---------------
@@ -1422,6 +1464,9 @@ Original Authors:
 - Lothsahn
 - Huntmehuntme-Myzrael
 
+Maintained by:
+- Pimptasty
+
 Special thanks to:
 - All contributors and testers
 - The WoW Classic community
@@ -1450,14 +1495,15 @@ Optional, used when installed:
 
 Bundled with the addon:
 - LibDataBroker-1.1
-- ChatThrottleLib (ships with Ace3's AceComm)
+
+Also used: ChatThrottleLib, which comes with Ace3's AceComm.
 
 ================================================================================
 LICENSE
 ================================================================================
 
-Ultimate Bank is released under the GNU General Public License v3.0
-See LICENSE file for full license text.
+Ultimate Bank is released under the MIT License.
+See the LICENSE file for the full license text.
 
 ================================================================================
 

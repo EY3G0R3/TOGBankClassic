@@ -1,9 +1,8 @@
 -- Switches.lua — the dev-switch registry (INV2).
 --
--- Deliberately NOT added to the bare-global FEATURES table in Constants.lua. That table already
--- carries FEATURES.DELTA_ENABLED / FORCE_DELTA_SYNC / FORCE_FULL_SYNC — switches from a previous
--- round of exactly this exercise that outlived it and are still there. Audit NS-001 flags those
--- eleven bare globals for namespacing; adding to them would make that worse.
+-- Deliberately NOT a FEATURES table in Constants.lua. That table carried DELTA_ENABLED /
+-- FORCE_DELTA_SYNC / FORCE_FULL_SYNC -- switches from a previous round of exactly this exercise that
+-- outlived it, read by nothing that ran; they were deleted by DEAD-DELTA-FLAGS-001 (2026-10-31).
 --
 -- Every switch declares what it gates and when it should be deleted. A switch that outlives its
 -- rework is a bug, not a feature, and `retire` is what makes that checkable rather than

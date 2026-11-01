@@ -1507,8 +1507,10 @@ function TOGBankClassic_UI_Requests:BuildBody(host, chrome, anchor)
 	-- settings panel render below it as separate window children. The "Settings"
 	-- tab is GM/officer-only (CanViewOfficerNote is true for GM and officers).
 	local TAB_TOOLTIPS = {
-		active   = { title = "Requests", body = "Open requests waiting to be fulfilled." },
-		archive  = { title = "Archive",  body = "Completed and cancelled requests." },
+		-- ARCHIVE-TOOLTIP-001: the split is by AGE alone (ApplyTabFilter), not by status -- an old
+		-- request still open is on the Archive tab, a fresh fulfilled one on Requests.
+		active   = { title = "Requests", body = "Requests placed within the archive threshold, whatever their state." },
+		archive  = { title = "Archive",  body = "Requests older than the archive threshold (set by officers), open ones included." },
 		settings = { title = "Settings", body = "Configure request thresholds and custom cancel reasons. Officers only." },
 	}
 	local tabGroup = TOGBankClassic_UI:Create("TabGroup")

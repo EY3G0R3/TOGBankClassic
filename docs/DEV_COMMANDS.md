@@ -42,8 +42,7 @@ To promote a command back to user-facing, just remove its name from `DEV_COMMAND
 - **`/togbank dev clearhistory`** — clear the stored delta chain (`db.deltaHistory`). Forces future syncs to compute new deltas from snapshots rather than replay history.
 - ~~`/togbank dev clearsnapshots`~~ — removed in v1.5.0 (INV2-RETIRE-002). It cleared an SV key that has been nil since PERF-012, and the snapshot cache it was meant to reach went with the legacy alt-delta.
 - **`/togbank dev resetmetrics`** — zero out `db.deltaMetrics`. Useful before a benchmarking run.
-- **`/togbank dev forcedelta on|off`** — flip `FEATURES.FORCE_DELTA_SYNC`. Bypasses size-ratio thresholds, always uses delta. Off by default.
-- **`/togbank dev forcefull on|off`** — flip `FEATURES.FORCE_FULL_SYNC`. Disables delta entirely, always sends full snapshot. Off by default.
+- ~~`/togbank dev forcedelta`~~ / ~~`/togbank dev forcefull`~~ — removed after v1.11.0 (DEAD-DELTA-FLAGS-001). They flipped `FEATURES` flags whose only reader, `ShouldUseDelta`, had no caller, so they changed nothing.
 
 ### Roster
 

@@ -704,7 +704,9 @@ describe("REQUESTS-ACTIONS: the dropdown click-outside catcher, Escape, the help
 		local tabFrame = CreateFrame("Button")
 		R.TabGroup:Fire("OnTabEnter", "archive", tabFrame)
 		assert.is_true(GameTooltip:IsShown())
-		assert.truthy(tipText():find("Completed and cancelled", 1, true), "the Archive tab's tooltip was not shown")
+		-- ARCHIVE-TOOLTIP-001: the tab is by age, open requests included -- the tooltip says so.
+		assert.truthy(tipText():find("older than the archive threshold", 1, true), "the Archive tab's tooltip was not shown")
+		assert.truthy(tipText():find("open ones included", 1, true), "the Archive tooltip still implies only finished requests land there")
 		R.TabGroup:Fire("OnTabLeave")
 		assert.is_false(GameTooltip:IsShown())
 		R.TabGroup:Fire("OnTabEnter", "nonsense", tabFrame)   -- no tip: nothing shown

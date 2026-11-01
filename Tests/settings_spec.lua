@@ -588,3 +588,73 @@ describe("SETTINGS-CANON-001: the maximum request % is ENFORCED by Guild:AddRequ
 		assert.equal(100, Guild:MaxRequestPercent())
 	end)
 end)
+
+-- WIPE-001 (doc audit, 2026-10-31): /togbank dev wipeall could be sent by any member, and every
+-- client that heard it wiped itself without asking who sent it.
+describe("WIPE-001: the guild-wide wipe is an officer's to send, and obeyed only from one", function()
+	local BANKER = "Banker-Testrealm"
+	local resets
+
+	before_each(function()
+		me = MEMBER; roster()
+		env.addGuildMember(BANKER, { rankIndex = 4, online = true, note = "gbank" })
+		loadWire()
+		resets = 0
+		Guild.GetGuild = function() return "Testguild" end
+		Guild.Reset = function() resets = resets + 1 end
+	end)
+
+	local function wipeCommands()
+		local n = 0
+		for _, msg in ipairs(sent) do
+			if msg.prefix == "togbank-hl" then
+				local ok, decoded = TOGBankClassic_Core:DeserializeWithChecksum(msg.body, { sender = me, prefix = msg.prefix })
+				assert.is_true(ok)
+				if decoded.type == "wipe-command" then n = n + 1 end
+			end
+		end
+		return n
+	end
+
+	local function hearWipe(from)
+		TOGBankClassic_Chat:OnCommReceived("togbank-hl",
+			TOGBankClassic_Core:SerializeWithChecksum({ type = "wipe-command", message = "x" }), "GUILD", from)
+	end
+
+	it("a plain member's wipeall wipes nothing and sends nothing; an officer's wipes its own data and broadcasts", function()
+		clearSent()
+		Guild:Wipe()
+		assert.equal(0, resets, "a non-officer's wipeall cleared its own data")
+		assert.equal(0, wipeCommands(), "a non-officer broadcast the guild-wide wipe")
+		me = OFFICER
+		Guild:Wipe()
+		assert.equal(1, resets)
+		assert.equal(1, wipeCommands())
+	end)
+
+	it("with no guild, nothing happens -- an officer included (it used to concatenate a nil guild)", function()
+		me = OFFICER
+		Guild.GetGuild = function() return nil end
+		clearSent()
+		Guild:Wipe()
+		assert.equal(0, resets)
+		assert.equal(0, wipeCommands())
+	end)
+
+	it("a heard wipe-command is obeyed from the GM, and from an officer once the floor is published; never from a member or a bank character", function()
+		hearWipe(MEMBER)
+		assert.equal(0, resets, "a plain member's wipe-command wiped this client")
+		hearWipe(BANKER)
+		assert.equal(0, resets, "a bank character's note let it wipe this client")
+		hearWipe(OFFICER)
+		assert.equal(0, resets, "an officer this client cannot yet judge an officer wiped it")
+		hearWipe(GM)
+		assert.equal(1, resets, "the GM's wipe-command was ignored")
+		hear(GM, { version = env.now, officerRankFloor = 1, stamps = { officerRankFloor = env.now } })
+		hearWipe(OFFICER)
+		assert.equal(2, resets, "an officer's wipe-command was ignored with the floor published")
+		-- Obeying is a reply: it never re-broadcasts the wipe.
+		assert.equal(0, wipeCommands())
+		assert.is_false(Guild:WipeSenderAuthorized(nil))
+	end)
+end)
