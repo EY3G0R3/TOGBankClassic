@@ -136,6 +136,9 @@ read_globals = {
 	"UnitName", "GetRealmName", "GetNormalizedRealmName", "IsInGuild", "IsInRaid", "GetClassColor",
 	"GetGuildInfo", "GetNumGuildMembers", "GetGuildRosterInfo", "GuildRoster", "C_GuildInfo",
 	"GetGameMessageInfo",
+	-- SECRET-001 (Modules/Events.lua): the secret-value test, in every flavour's
+	-- FrameScriptDocumentation.lua. Feature-detected at the call.
+	"issecretvalue",
 	"CanViewOfficerNote", "GuildControlGetNumRanks", "GetMoney",
 	-- Items / containers
 	"C_Container", "C_Item", "C_CurrencyInfo", "Item", "GetItemInfo", "GetItemInfoInstant",

@@ -57,20 +57,23 @@ if (-not $DryRun) {
 #   _classic_era_  Classic Era  (TOGBankClassic.toc,       Interface 11509)
 #   _anniversary_  TBC          (TOGBankClassic_TBC.toc,   Interface 20506)
 #   _classic_      MoP Classic  (TOGBankClassic_Mists.toc, Interface 50504)
-#   _classic_beta_ WoW Forever  (TOGBankClassic_Camelot.toc, Interface 16001; FOREVER-001)
+#   _forever_      WoW Forever  (TOGBankClassic_Camelot.toc, Interface 16001; FOREVER-001)
+#   _classic_beta_ WoW Forever's older install, kept while it is still on disk
 #
 # _retail_ is deliberately absent: there is no TOC for it, so a copy there would
 # sit in the AddOns list permanently flagged "out of date" and never load. Adding
 # a flavour here without also adding its .toc just litters that install. The
 # script copies into every listed version directory that exists on disk, except
 # the one the source tree already lives in (avoids copying onto itself).
-$WowVersions = @("_classic_era_", "_anniversary_", "_classic_", "_classic_beta_")
+$WowVersions = @("_classic_era_", "_anniversary_", "_classic_", "_forever_", "_classic_beta_")
 
-# Build list of addon install directories that actually exist on disk
+# Build list of addon install directories for every version folder that exists on disk.
+# Keyed on the VERSION folder, not its Interface\AddOns: a fresh install (e.g. _forever_ on
+# 2026-11-04) has no AddOns folder yet, and testing for it skipped the install silently.
 $Destinations = foreach ($ver in $WowVersions) {
-    $addonsDir = Join-Path $WowBase "$ver\Interface\AddOns"
-    $dest = Join-Path $addonsDir $AddonName
-    if ((Test-Path $addonsDir) -and ($Source -notlike "$dest*")) {
+    $verDir = Join-Path $WowBase $ver
+    $dest = Join-Path $verDir "Interface\AddOns\$AddonName"
+    if ((Test-Path $verDir) -and ($Source -notlike "$dest*")) {
         if (-not (Test-Path $dest) -and -not $DryRun) {
             New-Item -ItemType Directory -Path $dest -Force | Out-Null
         }

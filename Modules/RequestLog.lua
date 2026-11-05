@@ -1578,7 +1578,8 @@ function Guild:QueryRequestsIndex(target, priority, force)
 			return false
 		end
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, priority or "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, priority or "BULK",
+			TOGBankClassic_Core.OnBroadcastSent, "requests-index ask")
 		-- REQSYNC-003: Optimistic inFlight clear for wildcard broadcasts.
 		-- SYNC-011 causes peers that already match our hash to stay silent, so
 		-- EndRequestsIndexSync() is never called on a fully-synced guild, leaving
@@ -1949,7 +1950,8 @@ function Guild:QueryRequestsById(target, ids, priority)
 		end
 		from = self:NormalizeName(target) or target
 	else
-		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, priority or "BULK")
+		TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, priority or "BULK",
+			TOGBankClassic_Core.OnBroadcastSent, "requests-by-id ask")
 	end
 	-- BYID-ASKED-001: only what was actually asked for, of whom, may be answered. An id asked of a
 	-- second player (an index sync and a SYNC-013 fetch can both ask for it) remembers both askees,

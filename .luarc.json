@@ -28,6 +28,7 @@
         "GetNumGuildMembers",
         "GetGuildInfo",
         "IsInGuild",
+        "issecretvalue",
         "GetNormalizedRealmName",
         "UnitName",
         "GetServerTime",

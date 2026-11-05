@@ -4,6 +4,8 @@
 
 <p>Ultimate Bank is a powerful, feature-rich addon that transforms how your guild manages inventory across multiple bank characters. View, search, and request items from all your guild bank alts without ever logging out—all in one convenient interface.</p>
 
+<p>Pair it with <strong>Ultimate Profession Master</strong> and your crafters see guild bank stock right in their profession window, with a <strong>[Bank]</strong> button to request reagents on the spot &mdash; no setup needed. See <em>Works With Our Other Addons</em> below.</p>
+
 <h2>Core Features</h2>
 
 <h3>One Guild Bank Window</h3>
@@ -18,7 +20,7 @@
 <li>Bankers Tab: one row per bank character &mdash; online or not, what it stores (from its guild note), who runs it (officers set that with a right-click; everyone sees it on hover), whether your copy is current, when it last published, and how much it holds. Click one to browse just that bank. Its search box matches a guild's name too, so typing a sister guild's name lists just its bank characters</li>
 <li>Bank Log: what has moved in and out of the guild bank, newest first &mdash; deposits, withdrawals, money, and every request as it is placed, filled, cancelled or reopened, with who was on each side where the addon can tell</li>
 <li>Remembers Itself: where you put the window, how big you made it and which tab you were on, through reloads and logouts</li>
-<li>The old tab-per-character Inventory window is still there as <code>/togbank legacy</code> while the new one settles</li>
+<li>The old tab-per-character Inventory window is still there as <strong>/togbank legacy</strong> while the new one settles</li>
 </ul>
 
 <h3>Powerful Search and Filters</h3>
@@ -75,7 +77,7 @@
 <li>Shop Tab: for a guild bank that sells, an officer switches on a Shop tab &mdash; the bank's items with an <strong>Est.</strong> column showing what each is worth, from your price sources, and a hover that says where the figure came from and how old it is. Off by default; most guild banks are not shops, and off, nothing changes</li>
 <li>Shop Orders: while the shop is on, every request is a shop order &mdash; the request dialog shows the estimate (with any discount), the order remembers what you were shown, and the bank character sets the real price when it is filled</li>
 <li>Open And Closed: officers close ordering guild-wide for a stocktake or while nobody is around to fill orders, put the whole shop on sale with a percentage <strong>Shop discount</strong>, and take a single item off the list with Ctrl+right-click (it stays visible, marked not for sale)</li>
-<li>Donation Points: what you mail to a bank character earns points, valued the moment it arrives at a rate the officers set &mdash; a cautious market figure, never a spike, never less than a vendor pays &mdash; written down once and never changed. <code>/togbank donations</code> prints the board; the <strong>Donations</strong> window shows it to everyone with your own balance; officers can correct a balance with a reason that is kept</li>
+<li>Donation Points: what you mail to a bank character earns points, valued the moment it arrives at a rate the officers set &mdash; a cautious market figure, never a spike, never less than a vendor pays &mdash; written down once and never changed. <strong>/togbank donations</strong> prints the board; the <strong>Donations</strong> window shows it to everyone with your own balance; officers can correct a balance with a reason that is kept</li>
 <li>One Price List: an officer names a <strong>Price authority</strong>, and that character's price sources become the guild's price list, sent to everyone and kept between sessions &mdash; so two bank characters value the same donation the same way, and the estimate you see does not depend on what you have installed</li>
 </ul>
 
@@ -88,7 +90,7 @@
 <li>Order From The List: click any row to request that item from the bank character holding the most of it &mdash; the same request window, limits and rules as the Browse tab</li>
 <li>Still Needed Stands Out: on the Shopping List tab, the <strong>Still needed</strong> number gently pulses until the bank has enough, and while the guild has gather dates set they pulse gently on the bottom line</li>
 <li>List Setup Tab: the guild master, officers and a member with <code>[GSL]</code> in their public note see what is on the list in a box at the top &mdash; laid out like Ultimate Profession Master's shopping list, with <strong>-</strong>, <strong>+</strong> and a red <strong>x</strong> on each row, and a click on a crafted item to see the reagents it takes &mdash; and search any recipe or any item in the game by name underneath to add it (items stay searchable whichever profession is picked). They also set the dates the guild is gathering for. Everyone else sees the list but cannot change it</li>
-<li>Reagent Tracker: a small window of the reagents still to gather that stays up while you play and updates as you loot &mdash; open it from the Shopping List tab or with <code>/togbank tracker</code></li>
+<li>Reagent Tracker: a small window of the reagents still to gather that stays up while you play and updates as you loot &mdash; open it from the Shopping List tab or with <strong>/togbank tracker</strong></li>
 <li>One List For The Guild: changes reach everyone online straight away and anyone offline when they next log in</li>
 <li>Replaces GuildShoppingList: a guild that used it gets its list and gather dates copied across automatically. <strong>Keep GuildShoppingList turned on until the guild master, an officer or the <code>[GSL]</code> member has logged in once with both addons</strong> &mdash; the copy can only read GuildShoppingList's list while that addon is enabled. After that, GuildShoppingList can be removed</li>
 </ul>
@@ -96,12 +98,13 @@
 <h3>One Bank Across Sister Guilds</h3>
 
 <ul>
-<li>If your guild lists sister guilds in the Guild Roster addon, an officer can open the bank to them: their bank characters appear alongside yours &mdash; on the Bankers tab, in the Banker column, in tooltips and in the request dialog, each tagged with its guild's name &mdash; and their members browse your bank characters and place orders with them like your own</li>
-<li>Orders, fills, bank contents and who runs each bank character travel between the guilds on their own. Off by default; both guilds' officers switch it on, and a sister guild's bank characters are recognised by the <code>gbank</code> mark in their <em>public</em> note</li>
-<li>Each guild keeps its own officer settings &mdash; request limits, the shop, the discount and the sister-guild switch itself are never changed by the other guild</li>
-<li>Keeps going when someone logs off: if the sister guild member you were getting the bank from goes offline, the next online member of that guild is asked straight away</li>
-<li>Catch up now: <code>/togbank ssync</code> asks your sister guilds for their bank at once, and <code>/togbank ssync Name</code> asks one member (the realm can be left off)</li>
-<li>With GreenWall: if your guilds share chat through GreenWall, opening the Guild Bank window tells the other guilds you are there, so their copy of your bank updates within seconds</li>
+<li>Open To Sister Guilds: if your guild lists sister guilds in the Guild Roster addon, an officer can open the bank to them. Off by default; both guilds' officers switch it on</li>
+<li>Their Bankers Beside Yours: a sister guild's bank characters (the <code>gbank</code> mark in their <em>public</em> note) appear on the Bankers tab, in the Banker column, in tooltips and in the request dialog, each tagged with its guild's name</li>
+<li>Order Across Guilds: their members browse and order from your bank characters like your own, and orders, fills, bank contents and who runs each bank character travel between the guilds on their own</li>
+<li>Settings Stay Separate: each guild keeps its own officer settings &mdash; request limits, the shop, the discount and the sister-guild switch itself are never changed by the other guild</li>
+<li>Keeps Going: if the sister guild member you were getting the bank from logs off, the next online member of that guild is asked straight away</li>
+<li>Catch Up Now: <strong>/togbank ssync</strong> asks your sister guilds for their bank at once, and <strong>/togbank ssync Name</strong> asks one member (the realm can be left off)</li>
+<li>Faster With GreenWall: if your guilds share chat through GreenWall, opening the Guild Bank window tells the other guilds you are there, so their copy of your bank updates within seconds</li>
 </ul>
 
 <h3>Blazing-Fast Synchronization</h3>
@@ -109,7 +112,7 @@
 <ul>
 <li><strong>Bank contents travel as compact numbers, not item links.</strong> Your own client rebuilds each item from its ID, so nothing is sent that your game already knows &mdash; measured at 85% less data than the old format across 227 items on a live guild.</li>
 <li><strong>Nothing is sent when nothing changed.</strong> A bank character's contents get a version stamp when they are scanned &mdash; only when something actually changed, so opening the bank to look costs nothing &mdash; and members compare stamps before asking for anything. A stamp says when it was published, so &quot;who has the newest copy&quot; is one glance.</li>
-<li><strong>Seconds, not minutes.</strong> When a bank character's new version is announced &mdash; on the ten-minute check-in, when they open the Inventory window or type <code>/togbank share</code>, or the moment they hide or show an item &mdash; everyone online who is behind on it has the update within seconds; the announcement itself is the offer.</li>
+<li><strong>Seconds, not minutes.</strong> When a bank character's new version is announced &mdash; on the ten-minute check-in, when they open the Inventory window or type <strong>/togbank share</strong>, or the moment they hide or show an item &mdash; everyone online who is behind on it has the update within seconds; the announcement itself is the offer.</li>
 <li><strong>Only what changed.</strong> Catching up on a bank you already hold sends just the few things that moved since your copy, checked against the bank character's own fingerprint before it is applied &mdash; a fraction of the size of the whole bank. Someone who has never seen that bank, or has been away a long time, still gets the full contents.</li>
 <li><strong>Tiny messages.</strong> Every bank character has a permanent four-digit number, the same on everyone's screen, so a guild-wide check-in is a few hundred bytes and a &quot;I have newer copies of these&quot; reply is a single message however many banks it covers.</li>
 <li><strong>No single bottleneck.</strong> Data comes from whichever guild member has the freshest copy, not from one designated player who has to be online. Downloads from different guildmates run at the same time, and the short back-and-forth that sets them up travels on a fast lane of its own, so it is answered even while the other player is busy sending to someone else.</li>
@@ -146,10 +149,10 @@
 <li>Highlight Needed Items: tick <strong>Highlight needed items</strong> on the Requests tab and everything in your bags and bank that no open order needs is greyed out, so what to send stands out &mdash; only the exact variant ordered, for items with a random suffix. It works with the default bags (on WoW Forever the Combined Backpack and the bank tabs too), Bagnon, ElvUI and Baganator, and is remembered between sessions</li>
 <li>Bank Collection: click the same Fulfill button at your bank to pull out what open orders need before you head to the mailbox &mdash; and when your bags are full, it swaps something no order needs into the bank to make room</li>
 <li>Hide Items From The Guild: right-click any item on your own tab to hide it &mdash; your hearthstone, stock you are holding back, old gear. It stays on your tab greyed with a red mark; to everyone else it is as if you do not have it. Right-click again to show it. A Bank setting hides every soulbound item at once</li>
-<li>Numbered Automatically: every bank character gets a permanent four-digit number the first time its bank is scanned &mdash; nothing to type, and it shows beside the name in <code>/togbank roster</code></li>
+<li>Numbered Automatically: every bank character gets a permanent four-digit number the first time its bank is scanned &mdash; nothing to type, and it shows beside the name in <strong>/togbank roster</strong></li>
 <li>Donation Tracking: Optional feature to accept and track donations from guild members; a mailed donation is logged as a deposit, naming the sender, when you take it out of the mail</li>
 <li>Know Before You Log Off: the bottom bar tells you whether your latest update has reached the guild, and warns you in chat if you start the logout countdown while it has not</li>
-<li>Share Button: a circling-arrows button beside the settings gear publishes your bank to the guild straight away, the same as <code>/togbank share</code> &mdash; handy right after you have moved items</li>
+<li>Share Button: a circling-arrows button beside the settings gear publishes your bank to the guild straight away, the same as <strong>/togbank share</strong> &mdash; handy right after you have moved items</li>
 </ul>
 
 <h3>For Officers</h3>
@@ -171,9 +174,9 @@
 <h3>If Something Goes Wrong</h3>
 
 <ul>
-<li><strong>Built-in logging.</strong> Turn it on with <code>/togbank debug</code>, send it to its own chat tab with <code>/togbank debugtab</code>, and grab a copy for a bug report with <code>/togbank debuglog</code>. Off by default, so it costs you nothing when you're not using it.</li>
+<li><strong>Built-in logging.</strong> Turn it on with <strong>/togbank debug</strong>, send it to its own chat tab with <strong>/togbank debugtab</strong>, and grab a copy for a bug report with <strong>/togbank debuglog</strong>. Off by default, so it costs you nothing when you're not using it.</li>
 <li><strong>Update notifications.</strong> You're told when a newer version is out, so you're not silently running an old one while your guild has moved on.</li>
-<li><strong>Diagnostics on request.</strong> If a problem needs digging into, there are extra tools behind <code>/togbank dev</code> that support can walk you through on Discord.</li>
+<li><strong>Diagnostics on request.</strong> If a problem needs digging into, there are extra tools behind <strong>/togbank dev</strong> that support can walk you through on Discord.</li>
 </ul>
 
 <h2>How It Works</h2>
@@ -183,7 +186,7 @@
 <ol>
 <li>Bank Characters: Add "gbank" to character's Public Note or Officer Note</li>
 <li>Check It Is Enabled: In AddOns settings, open the <strong>Bank</strong> section and make sure <strong>Enable for &lt;character&gt;</strong> is ticked. That is the only setting that governs whether this character's bank is scanned and shared, and it is on by default &mdash; so usually there is nothing to do here.</li>
-<li>Scan Inventory: Open your bank and then close it &mdash; the scan runs on close. The guild picks it up on the next ten-minute check-in, or straight away if you type <code>/togbank share</code></li>
+<li>Scan Inventory: Open your bank and then close it &mdash; the scan runs on close. The guild picks it up on the next ten-minute check-in, or straight away if you type <strong>/togbank share</strong></li>
 <li>Done! Inventory is now visible to all guild members using Ultimate Bank</li>
 <li>Shopping List (optional): put <code>[GSL]</code> in the public note of the character the guild sends gathered materials to. It can edit the shopping list, is named on the Shopping List tab, and shares its bags, bank and mail as a view-only bank &mdash; open its bank and a mailbox once so everything it holds is counted. Add <code>gbank</code> as well to make it an ordinary bank people can order from</li>
 </ol>
@@ -224,7 +227,7 @@
 
 <ul>
 <li>No lost orders: every change to an order is tracked, so two people acting at once can't overwrite each other</li>
-<li>Self-correcting: if your data drifts out of step with the guild, the next sync repairs it &mdash; and if it ever gets badly out of shape, <code>/togbank wipe</code> re-fetches everything from your guild</li>
+<li>Self-correcting: if your data drifts out of step with the guild, the next sync repairs it &mdash; and if it ever gets badly out of shape, <strong>/togbank wipe</strong> re-fetches everything from your guild</li>
 <li>Fails safely: when something goes wrong you get a message explaining it rather than silence</li>
 </ul>
 
@@ -249,38 +252,38 @@
 <h3>Everyday Commands</h3>
 
 <ul>
-<li><code>/togbank</code> &mdash; open or close the Guild Bank window, the same as the minimap button (shift-click that for the options)</li>
-<li><code>/togbank legacy</code> &mdash; open or close the old Inventory window, a tab per bank character</li>
-<li><code>/togbank mailbox</code> &mdash; open the Mailbox window while you are at a mailbox (it opens by itself for bank characters &mdash; or for every character, or never, under Settings &gt; General; there is also an <strong>Ultimate Bank</strong> button on the mail frame's title bar)</li>
-<li><code>/togbank donations</code> &mdash; the donation points board and your own balance; <code>/togbank donations window</code> opens the Donations window; <code>/togbank donations &lt;name&gt;</code> for one member; <code>/togbank donations log</code> for the entries your own bank character wrote; officers correct a balance with <code>/togbank donations adjust &lt;name&gt; &lt;points&gt; &lt;reason&gt;</code></li>
-<li><code>/togbank help</code> &mdash; list every available command</li>
-<li><code>/togbank roster</code> &mdash; list the bank characters with their four-digit numbers</li>
-<li><code>/togbank sync</code> &mdash; manually pull the latest data from your guild (automatic every ten minutes)</li>
-<li><code>/togbank ssync</code> &mdash; ask your sister guilds for their bank now; <code>/togbank ssync &lt;name&gt;</code> asks one sister guild member (realm optional). It tells you why if nobody can be asked</li>
-<li><code>/togbank tracker</code> &mdash; open or close the Reagent Tracker, a small window listing the shopping list's reagents still to gather, which stays up while you play</li>
-<li><code>/togbank share</code> &mdash; announce your own bank's current version to the guild now (automatic every ten minutes, whenever you open the Inventory window, and the moment you hide or show an item); on a bank character the circling-arrows button beside the settings gear does the same</li>
-<li><code>/togbank version</code> &mdash; show which version you are running</li>
-<li><code>/togbank wipeframes</code> &mdash; forget every saved window position and size: open windows recentre at once, sizes go back to default on the next reload. For a window that is simply off screen, <strong>Recenter All Windows</strong> under Settings &gt; Appearance moves it without touching sizes</li>
-<li><code>/togbank helpreset</code> &mdash; forget which help icons you have hovered, so they pulse again</li>
+<li><strong>/togbank</strong> &mdash; open or close the Guild Bank window, the same as the minimap button (shift-click that for the options)</li>
+<li><strong>/togbank legacy</strong> &mdash; open or close the old Inventory window, a tab per bank character</li>
+<li><strong>/togbank mailbox</strong> &mdash; open the Mailbox window while you are at a mailbox (it opens by itself for bank characters &mdash; or for every character, or never, under Settings &gt; General; there is also an <strong>Ultimate Bank</strong> button on the mail frame's title bar)</li>
+<li><strong>/togbank donations</strong> &mdash; the donation points board and your own balance; <strong>/togbank donations window</strong> opens the Donations window; <strong>/togbank donations &lt;name&gt;</strong> for one member; <strong>/togbank donations log</strong> for the entries your own bank character wrote; officers correct a balance with <strong>/togbank donations adjust &lt;name&gt; &lt;points&gt; &lt;reason&gt;</strong></li>
+<li><strong>/togbank help</strong> &mdash; list every available command</li>
+<li><strong>/togbank roster</strong> &mdash; list the bank characters with their four-digit numbers</li>
+<li><strong>/togbank sync</strong> &mdash; manually pull the latest data from your guild (automatic every ten minutes)</li>
+<li><strong>/togbank ssync</strong> &mdash; ask your sister guilds for their bank now; <strong>/togbank ssync &lt;name&gt;</strong> asks one sister guild member (realm optional). It tells you why if nobody can be asked</li>
+<li><strong>/togbank tracker</strong> &mdash; open or close the Reagent Tracker, a small window listing the shopping list's reagents still to gather, which stays up while you play</li>
+<li><strong>/togbank share</strong> &mdash; announce your own bank's current version to the guild now (automatic every ten minutes, whenever you open the Inventory window, and the moment you hide or show an item); on a bank character the circling-arrows button beside the settings gear does the same</li>
+<li><strong>/togbank version</strong> &mdash; show which version you are running</li>
+<li><strong>/togbank wipeframes</strong> &mdash; forget every saved window position and size: open windows recentre at once, sizes go back to default on the next reload. For a window that is simply off screen, <strong>Recenter All Windows</strong> under Settings &gt; Appearance moves it without touching sizes</li>
+<li><strong>/togbank helpreset</strong> &mdash; forget which help icons you have hovered, so they pulse again</li>
 </ul>
 
-<p><code>/bank</code> and <code>/gbank</code> can be enabled as shortcuts in the options, if nothing else has claimed them.</p>
+<p><strong>/bank</strong> and <strong>/gbank</strong> can be enabled as shortcuts in the options, if nothing else has claimed them.</p>
 
 <h3>Resetting Data</h3>
 
 <ul>
-<li><code>/togbank wipe</code> &mdash; clear this guild's stored data on your own client (it re-syncs from your guild afterwards); <code>/togbank reset</code> does the same</li>
+<li><strong>/togbank wipe</strong> &mdash; clear this guild's stored data on your own client (it re-syncs from your guild afterwards); <strong>/togbank reset</strong> does the same</li>
 </ul>
 
 <h3>Troubleshooting</h3>
 
 <ul>
-<li><code>/togbank debug</code> &mdash; turn debug messages on or off</li>
-<li><code>/togbank debugtab</code> &mdash; send debug messages to their own chat tab instead of cluttering yours</li>
-<li><code>/togbank debuglog</code> &mdash; print a recent slice of the log to paste into a bug report</li>
+<li><strong>/togbank debug</strong> &mdash; turn debug messages on or off</li>
+<li><strong>/togbank debugtab</strong> &mdash; send debug messages to their own chat tab instead of cluttering yours</li>
+<li><strong>/togbank debuglog</strong> &mdash; print a recent slice of the log to paste into a bug report</li>
 </ul>
 
-<p>There are further diagnostic commands behind <code>/togbank dev</code>, intended for development and support. <code>/togbank dev help</code> lists them; you should not need them in normal play.</p>
+<p>There are further diagnostic commands behind <strong>/togbank dev</strong>, intended for development and support. <strong>/togbank dev help</strong> lists them; you should not need them in normal play.</p>
 
 <h2>Configuration</h2>
 
@@ -294,7 +297,7 @@
 <h3>Key Settings</h3>
 
 <ul>
-<li>General: Minimap button, hide during combat, <strong>Window and Text Size</strong> (80% to 200%, per character), network status on the status bar, how much the addon says in chat (with separate mutes for sync progress and for warnings), a sound when an order is filled, <strong>Keep syncing in a raid group</strong> (off by default), <strong>Open the Mailbox window at a mailbox</strong> (on by default), <strong>Mailbox window on non-bank characters</strong> (off by default), <strong>Show bank stock in item tooltips</strong> (on by default), and the <code>/bank</code> and <code>/gbank</code> shortcuts</li>
+<li>General: Minimap button, hide during combat, <strong>Window and Text Size</strong> (80% to 200%, per character), network status on the status bar, how much the addon says in chat (with separate mutes for sync progress and for warnings), a sound when an order is filled, <strong>Keep syncing in a raid group</strong> (off by default), <strong>Open the Mailbox window at a mailbox</strong> (on by default), <strong>Mailbox window on non-bank characters</strong> (off by default), <strong>Show bank stock in item tooltips</strong> (on by default), and the <strong>/bank</strong> and <strong>/gbank</strong> shortcuts</li>
 <li>Appearance: A transparency slider for each window, <strong>Reset All Windows to Solid</strong>, <strong>Recenter All Windows</strong> for a window lost off screen, <strong>Close windows with Escape</strong> (on by default), and <strong>Pulsing glow on cancelled requests</strong> (on by default)</li>
 <li>Bank (bank characters only): <strong>Enable for &lt;character&gt;</strong> &mdash; the one switch that governs whether this bank is scanned and shared &mdash; <strong>Enable donations</strong> (the Donation window at the mailbox for each gift; off by default), <strong>Hide soulbound items from the guild</strong>, and the donation options</li>
 <li>Officer (only shown to those who can read officer notes), in four sections plus your own help notes: <em>Request settings</em> &mdash; request limits, when old requests move to the Archive tab, and how long unfilled requests stay open; <em>Shop</em> &mdash; <strong>Shop</strong> turns the Shop tab on for a guild bank that sells (off by default), <strong>Shop ordering open</strong> is the shop's open/closed sign, <strong>Shop discount</strong> a percentage off every estimate on the Shop tab; <em>Donations and pricing</em> &mdash; <strong>Donation points per gold</strong>, what a donation earns (1 by default), and <strong>Price authority</strong>, the character whose price sources become the guild's one price list; <em>Sister guilds</em> &mdash; <strong>Sister-guild bank</strong>, which opens this bank to the guilds listed as sisters in Guild Roster (off by default; both guilds' officers must list each other there, or nothing is shared)</li>
@@ -376,6 +379,14 @@
 <p>In practice that means a fix to the shared sync layer benefits every addon built on it at once, and running several of them costs less than the sum of their parts. Each is published separately and installs automatically through the CurseForge app.</p>
 
 <h2>Recent Updates</h2>
+
+<h3>v1.11.2 - Dungeon Combat Errors</h3>
+
+<p><strong>Fixed</strong></p>
+<ul>
+<li>An error about a "secret string value" no longer appears during combat in a dungeon. The game now hides some system messages from addons there, and Ultimate Bank simply ignores them.</li>
+<li>A "message NOT delivered" error no longer pops up when the game refuses one of the bank's background sync messages. The sync tries again on its next round.</li>
+</ul>
 
 <h3>v1.11.1 - Tidy-Up</h3>
 
@@ -706,7 +717,7 @@
 <p><strong>Before reporting a bug, this makes it far easier to fix:</strong></p>
 
 <ul>
-<li>Type <code>/togbank debuglog</code> in-game and include the output.</li>
+<li>Type <strong>/togbank debuglog</strong> in-game and include the output.</li>
 <li>Mention which game version you are on (Classic Era, The Burning Crusade, Mists of Pandaria Classic or WoW Forever).</li>
 <li>Say which bag addon you use, if any &mdash; Bagnon, Baganator, ElvUI or the default bags.</li>
 <li>Quote the wording from the patch notes above, if one of them describes what you are seeing.</li>

@@ -66,6 +66,15 @@ function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target,
         return
     end
     self.raidSuppressNoticed = nil
+    -- GUILD-SEND-001: a GUILD send while not in a guild (a guildless alt, or before guild info
+    -- loads at login) is refused by the client, and AceCommQueue then raises a player-visible
+    -- "message NOT delivered" error on the uncallbacked broadcasts. Drop it here and unblock the
+    -- queue the same way the raid guard does.
+    if distribution == "GUILD" and not IsInGuild() then
+        TOGBankClassic_Output:Debug("COMMS", "SUPPRESS", "< (suppressing) %s %s (not in a guild)", prefix, prefixDesc)
+        if callbackFn then callbackFn(callbackArg, 0, 0, nil) end
+        return
+    end
     if not AceComm_SendCommMessage then
         if callbackFn then callbackFn(callbackArg, 0, 0, nil) end
         return
@@ -76,6 +85,17 @@ function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target,
     TOGBankClassic_Output:Debug("COMMS", "SEND", "< %s %s to %s (%d bytes)", prefix, prefixDesc, dest, bytes)
 
     return AceComm_SendCommMessage(self, prefix, text, distribution, target, prio, callbackFn, callbackArg)
+end
+--- GUILD-SEND-001: the completion callback for fire-and-forget guild broadcasts. With no callback,
+--- AceCommQueue raises a player-visible "message NOT delivered" error when the client refuses a send
+--- (seen 2026-11-05 in dungeon combat, while in a guild). Every caller of this is a periodic sync ask
+--- that the next timer repeats, so a refusal is logged, not shown.
+---@param what string what was being broadcast, for the log
+function TOGBankClassic_Core.OnBroadcastSent(what, _, _, result, reason)
+    if result == false then
+        TOGBankClassic_Output:Debug("COMMS", "SUPPRESS", "< %s refused by the client (%s); the next sync retries",
+            tostring(what), tostring(reason or "refused"))
+    end
 end
 -- AceCommQueue-1.0 must be embedded AFTER the SendCommMessage wrapper above so the queue
 -- wraps the complete chain (raid guard + debug logging) rather than raw AceComm.

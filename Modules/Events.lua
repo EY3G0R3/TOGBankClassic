@@ -551,6 +551,12 @@ end
 -- this message is ERR_CHAT_PLAYER_NOT_FOUND_S and is not in that set. It is the authoritative
 -- signal that stops the addon whispering at someone who is not logged in, so it stays here.
 function TOGBankClassic_Events:CHAT_MSG_SYSTEM(_, message)
+	-- SECRET-001: the client can deliver this message as a secret value; comparing or matching
+	-- one from addon code throws ("attempt to compare local 'message' (a secret string value)").
+	-- A secret cannot be read, so it cannot be the not-found message we look for: ignore it.
+	if issecretvalue and issecretvalue(message) then
+		return
+	end
 	if not message or message == "" then
 		return
 	end

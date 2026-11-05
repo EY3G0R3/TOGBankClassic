@@ -1,5 +1,34 @@
 # Ultimate Bank Changelog (formerly TOG Bank / TOGBankClassic)
 
+## [v1.11.2] (2026-11-05) - Dungeon Combat Errors
+
+### Bug Fixes
+
+- **SECRET-001: `Modules/Events.lua:554: attempt to compare local 'message' (a secret string value,
+  while execution tainted by 'TOGBankClassic')`.** Reported on Discord 2026-11-05 from dungeon combat.
+  The client can hand `CHAT_MSG_SYSTEM` a secret value, and comparing or matching one from addon code
+  throws. `Events:CHAT_MSG_SYSTEM` now returns at once on `issecretvalue(message)` (present in every
+  flavour's `FrameScriptDocumentation.lua`; feature-detected): a secret cannot be the bounced-whisper
+  message it looks for. `Tests/events_spec.lua` drives a stand-in secret whose comparison throws.
+- **GUILD-SEND-001: "AceCommQueue-1.0: message NOT delivered -- the client refused the send and no
+  callbackFn was supplied (prefix=togbank-r ...)".** Same player and moment, passed on by
+  AceCommQueue's workspace. The three `togbank-r` GUILD broadcasts (`Guild:QueryAlt`, the
+  requests-index ask and the requests-by-id ask in `Modules/RequestLog.lua`) sent with no callback, so
+  a refusal reached BugSack. They now pass `TOGBankClassic_Core.OnBroadcastSent` (`Core.lua`), which
+  logs a refusal under COMMS/SUPPRESS; each is a periodic ask the next timer repeats. Which refusal
+  the client gave is not established (the player was in a guild, in dungeon combat). Separately,
+  `Core:SendCommMessage` now drops a GUILD send while `not IsInGuild()` and unblocks the queue the way
+  the raid guard does. `Tests/raidvisibility_spec.lua` pins both.
+
+### Internal
+
+- **wow-version-replication.ps1** also syncs to the new `_forever_` WoW Forever install
+  (`_classic_beta_` stays while it is on disk), and keeps a destination when its version folder
+  exists rather than its `Interface\AddOns` folder, which a fresh install does not have yet.
+- **docs/Curseforge_Description.html:** an opening line pointing crafters at the Ultimate Profession
+  Master pairing, and slash commands in prose set in bold rather than `<code>` to match the rest of
+  the page.
+
 ## [v1.11.1] (2026-10-31) - Tidy-Up
 
 ### Bug Fixes

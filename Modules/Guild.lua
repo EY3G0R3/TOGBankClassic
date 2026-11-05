@@ -2843,7 +2843,8 @@ function TOGBankClassic_Guild:QueryAlt(player, name, version)
 	end
 	self:MarkPendingSync("alt", player, name)
 	local data = TOGBankClassic_Core:SerializeWithChecksum({ player = player, type = "alt", name = name, version = version })
-	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL")
+	TOGBankClassic_Core:SendCommMessage("togbank-r", data, "GUILD", nil, "NORMAL",
+		TOGBankClassic_Core.OnBroadcastSent, "alt query")
 end
 
 -- LIBREQ-DS-008: `QueryAltPullBased` (the v0.8.0 `alt-request` whisper-or-broadcast, "last resort

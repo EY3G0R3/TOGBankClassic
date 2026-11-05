@@ -186,3 +186,46 @@ describe("RAID-VISIBILITY-001: the raid guard says so", function()
 		assert.is_truthy(center:find("stay online", 1, true), center)
 	end)
 end)
+
+-- GUILD-SEND-001, reported from Discord 2026-11-05: BugSack showed AceCommQueue's "message NOT
+-- delivered -- the client refused the send and no callbackFn was supplied (prefix=togbank-r)".
+describe("GUILD-SEND-001: refused guild sends stay out of the player's error frame", function()
+	local savedInGuild, savedHandler, raised
+	before_each(function()
+		env.reset(); client()
+		savedInGuild, savedHandler = _G.IsInGuild, _G.geterrorhandler
+		raised = {}
+		_G.geterrorhandler = function() return function(e) raised[#raised + 1] = e end end
+	end)
+	after_each(function()
+		_G.ChatThrottleLib.SendAddonMessage = ctlSend
+		_G.IsInGuild, _G.geterrorhandler = savedInGuild, savedHandler
+	end)
+
+	it("drops a GUILD send while not in a guild and unblocks the queue's callback", function()
+		_G.IsInGuild = function() return false end
+		local got
+		Core:SendCommMessage("togbank-rg", "payload", "GUILD", nil, "NORMAL",
+			function(arg, sent, total) got = { arg = arg, sent = sent, total = total } end, "tag")
+		assert.equal(0, #wire, "a GUILD send reached the transport with no guild")
+		assert.same({ arg = "tag", sent = 0, total = 0 }, got)
+	end)
+
+	it("a broadcast the client refuses is logged, not raised, when it carries OnBroadcastSent", function()
+		_G.ChatThrottleLib.SendAddonMessage = function(_, _, _, _, _, _, _, cb, cbArg)
+			if cb then cb(cbArg, false) end
+		end
+		local logged = {}
+		TOGBankClassic_Output.Debug = function(_, _, _, fmt, ...) logged[#logged + 1] = string.format(fmt, ...) end
+		Core:SendCommMessage("togbank-rh", "payload", "GUILD", nil, "NORMAL",
+			Core.OnBroadcastSent, "spec broadcast")
+		-- AceCommQueue retries a refused send on a timer before reporting the final outcome.
+		env.flushTimers(20)
+		assert.same({}, raised, "a refused broadcast reached the player's error frame")
+		local found = false
+		for _, m in ipairs(logged) do
+			if m:find("spec broadcast refused by the client", 1, true) then found = true end
+		end
+		assert.is_true(found, "the refusal left no trace in the debug log: " .. table.concat(logged, " | "))
+	end)
+end)

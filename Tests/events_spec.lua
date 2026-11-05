@@ -177,6 +177,23 @@ describe("Events:CHAT_MSG_SYSTEM", function()
 		local ok, err = pcall(fire, handlers, "CHAT_MSG_SYSTEM", "")
 		assert.is_true(ok, "handler raised on an empty message: " .. tostring(err))
 	end)
+
+	-- SECRET-001, reported from Discord 2026-11-05: "attempt to compare local 'message' (a secret
+	-- string value, while execution tainted by 'TOGBankClassic')". Lua 5.1 has no secret values, so
+	-- the message stands in as a table whose comparison and indexing throw, as a real one does.
+	it("ignores a secret message without touching it (SECRET-001)", function()
+		local secret = setmetatable({}, {
+			__eq = function() error("attempt to compare a secret string value") end,
+			__index = function() error("attempt to index a secret string value") end,
+		})
+		local saved = _G.issecretvalue
+		-- Same-object equality is decided before __eq is consulted, so this does not throw.
+		_G.issecretvalue = function(v) return v == secret end
+		local ok, err = pcall(fire, handlers, "CHAT_MSG_SYSTEM", secret)
+		_G.issecretvalue = saved
+		assert.is_true(ok, "handler touched a secret message: " .. tostring(err))
+		assert.same({}, offline)
+	end)
 end)
 
 describe("Events registration symmetry", function()
