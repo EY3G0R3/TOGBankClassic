@@ -92,7 +92,9 @@ end
 --- that the next timer repeats, so a refusal is logged, not shown.
 ---@param what string what was being broadcast, for the log
 function TOGBankClassic_Core.OnBroadcastSent(what, _, _, result, reason)
-    if result == false then
+    -- ACQ-CALLBACK-001: `error` (the send raised) and `rejected` (bad arguments) arrive with
+    -- result nil, and are as lost as a refusal.
+    if result == false or reason == "error" or reason == "rejected" then
         TOGBankClassic_Output:Debug("COMMS", "SUPPRESS", "< %s refused by the client (%s); the next sync retries",
             tostring(what), tostring(reason or "refused"))
     end
@@ -102,6 +104,21 @@ end
 local ACQ = LibStub("AceCommQueue-1.0")
 ACQ:Embed(TOGBankClassic_Core)
 ACQ:RegisterSlashCommand("/acq")
+
+-- ACQ-CALLBACK-001 (AceCommQueue peer review, 2026-11-15: a togbank-hl GUILD send refused once in
+-- combat in Zul'Farrak raised "message NOT delivered ... no callbackFn"): GUILD-SEND-001 gave
+-- OnBroadcastSent to a few call sites, and the rest of TOGBank's ~40 sends still passed none. The
+-- queue keeps the callback it was HANDED (AceCommQueue-1.0.lua Embed), so the default has to be
+-- supplied here, outside the queue -- the wrapper above sits inside it and only ever sees the
+-- queue's own callback. A caller's own callback is passed through untouched.
+local QueuedSendCommMessage = TOGBankClassic_Core.SendCommMessage
+function TOGBankClassic_Core:SendCommMessage(prefix, text, distribution, target, prio, callbackFn, callbackArg)
+    if not callbackFn then
+        callbackFn = TOGBankClassic_Core.OnBroadcastSent
+        callbackArg = tostring(prefix) .. " to " .. ((target and target ~= "") and (tostring(distribution) .. "/" .. target) or tostring(distribution))
+    end
+    return QueuedSendCommMessage(self, prefix, text, distribution, target, prio, callbackFn, callbackArg)
+end
 
 --- The name a directed addon message is ADDRESSED to, from TOGBank's `Name-Realm` spelling: the
 --- realm suffix is stripped for a same-realm target, kept for a cross-realm one. THE ONE address

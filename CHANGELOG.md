@@ -1,5 +1,24 @@
 # Ultimate Bank Changelog (formerly TOG Bank / TOGBankClassic)
 
+## [v1.11.3] (2026-11-15) - Quiet Sync Refusals
+
+### Bug Fixes
+
+- **ACQ-CALLBACK-001: "AceCommQueue-1.0: message NOT delivered -- the client refused the send and no
+  callbackFn was supplied (prefix=togbank-hl queue=togbank-hl GUILD)".** Reported on Discord
+  2026-11-15 (once, in combat inside Zul'Farrak) and passed on by AceCommQueue's workspace.
+  GUILD-SEND-001 fixed this for three `togbank-r` call sites only; I left the other ~40 sends
+  (`togbank-hl` GUILD broadcasts in `Modules/Guild.lua` and `Modules/Donations.lua`, and every
+  whisper) with no callback, so the same error could come from any of them. The default now lives in
+  one place: `Core.lua` wraps the queued `SendCommMessage` after `ACQ:Embed` and hands any send that
+  brings no callback `TOGBankClassic_Core.OnBroadcastSent`, labelled `<prefix> to <dist>[/<target>]`.
+  It has to sit outside the queue because AceCommQueue keeps the callback it was handed
+  (`AceCommQueue-1.0.lua`, `Embed`), while the inner wrapper only sees the queue's own. A caller's
+  own callback passes through untouched. `OnBroadcastSent` now also logs the `error` and `rejected`
+  outcomes, which arrive with result nil. Which refusal the client gave in combat is still not
+  established. `Tests/raidvisibility_spec.lua` pins an uncallbacked refused send (logged, not raised)
+  and a caller's callback passing through.
+
 ## [v1.11.2] (2026-11-05) - Dungeon Combat Errors
 
 ### Bug Fixes

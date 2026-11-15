@@ -228,4 +228,29 @@ describe("GUILD-SEND-001: refused guild sends stay out of the player's error fra
 		end
 		assert.is_true(found, "the refusal left no trace in the debug log: " .. table.concat(logged, " | "))
 	end)
+
+	-- ACQ-CALLBACK-001: the togbank-hl GUILD sends (and every other caller) pass no callback.
+	it("a send with NO callback that the client refuses is logged, not raised", function()
+		_G.ChatThrottleLib.SendAddonMessage = function(_, _, _, _, _, _, _, cb, cbArg)
+			if cb then cb(cbArg, false) end
+		end
+		local logged = {}
+		TOGBankClassic_Output.Debug = function(_, _, _, fmt, ...) logged[#logged + 1] = string.format(fmt, ...) end
+		Core:SendCommMessage("togbank-hl", "payload", "GUILD", nil, "NORMAL")
+		env.flushTimers(20)
+		assert.same({}, raised, "an uncallbacked refused send reached the player's error frame")
+		local found = false
+		for _, m in ipairs(logged) do
+			if m:find("togbank-hl to GUILD refused by the client", 1, true) then found = true end
+		end
+		assert.is_true(found, "the refusal left no trace in the debug log: " .. table.concat(logged, " | "))
+	end)
+
+	it("a caller's own callback is passed through, not replaced by the default", function()
+		local got
+		Core:SendCommMessage("togbank-hl", "payload", "GUILD", nil, "NORMAL",
+			function(arg) got = arg end, "mine")
+		env.flushTimers(20)
+		assert.equal("mine", got)
+	end)
 end)

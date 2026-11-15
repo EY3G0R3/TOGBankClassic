@@ -189,7 +189,9 @@
         "CANCEL",
         "OKAY",
         "ACCEPT",
-        "Settings"
+        "Settings",
+        "ChatFrame_AddMessageEventFilter",
+        "ChatFrameUtil"
     ],
     "Lua.diagnostics.disable": [
         "assign-type-mismatch"
