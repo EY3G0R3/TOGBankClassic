@@ -8,27 +8,18 @@ function TOGBankClassic_UI_Minimap:Init()
 		label = TOGBankClassic_Constants.BRAND,
 		-- BRAND-002: the operator's Ultimate Bank art (Textures/UB-MMB-Icon.tga, 64x64).
 		icon = "Interface/AddOns/TOGBankClassic/Textures/UB-MMB-Icon",
-		-- Centred the way Ultimate Profession Master's button is: LibDBIcon crops by
-		-- dataObject.iconCoords (LibDBIcon-1.0 updateCoord), default a 5% trim. Measured from the
-		-- TGA's alpha, this art's visible disc runs x 3..59 and y 2..60 -- centre 31.5 on both axes,
-		-- so it already fills the square, unlike UPM's (10..53 / 7..52, cropped to 0.135..0.825). The
-		-- window is the disc's 58px, then given UPM's in-game offset: the operator, 2026-10-31, with an
-		-- in-game screenshot of the button, "needs the same small positioning
-		-- adjustment UPM used to center it" -- UPM's window ends 0.02 up and left of its coin ("needs to
-		-- go down 1px and right 1px", then "about 50% of that back up and left"), which draws the art
-		-- down and right in the slot. 0.02 was copied first and was invisible ("are you sure you moved
-		-- it? it looks like its still in the default position"): LibDBIcon draws the icon 17px square
-		-- (TOPLEFT 7,-6 on a 31px button, so 1px high of centre) and trims 5% of the window itself
-		-- (updateCoord), leaving ~52 texels of this art on 17px -- one screen pixel is ~0.048 here, so
-		-- 0.02 moved it under half a pixel. UPM's CODE (one value in its history, 375d1ca): a square
-		-- window as wide as its coin (0.69; coin x 0.156..0.844), placed ~0.02 up and left of the coin's
-		-- centre -- on its scale (~0.0365 per pixel after the trim) the art draws ~0.55px down and right.
-		-- Same art design here, drawn bigger: the coin is 0.89 wide (x 0.047..0.938, centre 0.492 on
-		-- both axes), so the window is 0.89 square. 1px (~0.048) down and right, UPM's first step, was
-		-- too far here as it was there (the operator, in game: "now you moved it too far down and
-		-- right"); half of it back, as UPM did, puts the window 0.024 up and left of the coin's centre.
-		-- Order is { left, right, top, bottom }.
-		iconCoords = { 0.024, 0.914, 0.024, 0.914 },
+		-- ICON-CROP-001: the window holds the WHOLE drawn coin, measured from the TGA by
+		-- Tests/icon_spec.lua (TOGTools' method): opaque non-white pixels run x 4..59, y 2..59 of 64.
+		-- The previous window, { 0.024, 0.914, 0.024, 0.914 }, was fitted by eye for the round minimap
+		-- slot, where LibDBIcon's ring hides the rim -- it cut 1.5 file px off the coin's right and
+		-- bottom, which Ultimate Tools' Square icons bag (no ring, iconCoords drawn as given) showed as
+		-- flat edges (TOGTools, 2026-11-17). Now a 60px square, x 1..60 and y 0..59: the coin
+		-- touches the right and bottom of it and has 3px/2px spare on the left/top, so it still
+		-- draws ~1 file px down and right of centre -- the offset the operator asked for on
+		-- 2026-10-31 ("needs the same small positioning adjustment UPM used to center it"), kept
+		-- without cutting the coin. On the round minimap LibDBIcon trims a further 5% of the window
+		-- itself (updateCoord) and the ring covers that. Order is { left, right, top, bottom }.
+		iconCoords = { 1 / 64, 61 / 64, 0, 60 / 64 },
 		OnEnter = function()
 			self:ShowTooltip()
 		end,

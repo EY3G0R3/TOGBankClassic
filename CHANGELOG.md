@@ -1,5 +1,21 @@
 # Ultimate Bank Changelog (formerly TOG Bank / TOGBankClassic)
 
+## [v1.11.4] (2026-11-18) - Whole Coin Icon
+
+### Bug Fixes
+
+- **ICON-CROP-001: the minimap coin was cut flat at its edges when drawn square.** Reported by
+  TOGTools' workspace 2026-11-17: Ultimate Tools' minimap button bag has a Square icons mode that
+  hides LibDBIcon's ring and draws each icon with the addon's own `iconCoords`. I had fitted ours,
+  `{ 0.024, 0.914, 0.024, 0.914 }` in `Modules/UI/Minimap.lua`, by eye for the round slot, where the
+  ring hides the rim; it cut 1.5 file px off the coin's right and bottom. Measured from
+  `Textures/UB-MMB-Icon.tga`, the coin's opaque non-white pixels run x 4..59, y 2..59 of 64. The
+  window is now `{ 1/64, 61/64, 0, 60/64 }`: a 60px square holding the whole coin, still drawing it
+  ~1 file px down and right of centre, the offset asked for on 2026-10-31. Confirmed in game by the
+  operator 2026-11-18 in the square bag. New `Tests/icon_spec.lua` reads the TGA (TOGTools' method)
+  and pins the window square, holding the coin to within half a pixel, with at most 3px margin and
+  inside the file.
+
 ## [v1.11.3] (2026-11-15) - Quiet Sync Refusals
 
 ### Bug Fixes
